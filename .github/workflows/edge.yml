@@ -5,9 +5,6 @@ on:
     paths:
       - "shingo-edge/**"
       - "protocol/**"
-      # shared/** is a real dependency: Edge's www package imports
-      # shingo/shared and embeds its stylesheets. Without it here, a
-      # change that breaks Edge's build lands with Edge CI never running.
       - "shared/**"
   pull_request:
     paths:
@@ -16,7 +13,6 @@ on:
       - "shared/**"
   workflow_call:
 
-# See core.yml for rationale - same idempotent burst-coalescing.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,24 +21,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
-          # FULL HISTORY, and it is load-bearing.
-          #
-          # TestSchemaConvergesAcrossVintages builds an "aged" database from a
-          # baseline read out of git at a pinned revision — `git show
-          # <rev>:store/schema/...`. actions/checkout defaults to a SHALLOW
-          # clone (fetch-depth 1), where neither an older commit nor a tag
-          # exists, so every pinned vintage fails with "invalid object name"
-          # and the test that exists to catch upgrade-path bugs cannot run at
-          # all.
-          #
-          # Skipping the test when the revision is missing would be worse than
-          # this cost: it would go green in CI while asserting nothing, which is
-          # the exact failure class the convergence test was written to close.
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25.0"
 
@@ -50,13 +33,6 @@ jobs:
         working-directory: shingo-edge
         run: go build ./...
 
-      # The sim files are only ever compiled when someone builds the dev stack
-      # on the sim box, so a signature change made in the plain configuration
-      # goes green here and fails there — days later, to whoever tried to boot
-      # it. That has now happened three times: the gofmt drift in June, and two
-      # call sites on this branch that a plain build could not see. `go build`
-      # is a compile-only check and costs seconds, which is all it takes to
-      # close the class.
       - name: Build (sim)
         working-directory: shingo-edge
         run: go build -tags sim ./...
@@ -71,9 +47,6 @@ jobs:
 
       - name: Test (unit, race)
         working-directory: shingo-edge
-        # Promoted to gating in Phase 2 (2026-05-22) after the
-        # baseline -race run was confirmed clean and PR 2's lock
-        # fixes landed (sse_race_test.go, warlink_tags_race_test.go).
         run: go test -race -count=1 ./...
 
       - name: Coverage report (unit)
@@ -82,14 +55,6 @@ jobs:
 
       - name: Test (Docker integration)
         working-directory: shingo-edge
-        # testcontainers manages its own Postgres container; the
-        # ubuntu-latest runner provides Docker. -count=1 prevents
-        # stale-cache false positives on integration tests;
-        # -timeout=10m accommodates cold-runner container startup.
-        # TODO(stage-2a.2): tighten -timeout to ~2x the observed
-        # runtime once the workflow has run a few times. Standard
-        # warm-runner integration tests should land well under 5m;
-        # 10m exists today only because we lack measured data.
         run: go test -tags=docker -timeout=10m -count=1 -coverprofile=build/coverage-docker ./...
 
       - name: Coverage report (Docker)
@@ -98,6 +63,4 @@ jobs:
 
       - name: Test (Docker integration, race)
         working-directory: shingo-edge
-        # Promoted to gating in Phase 2 (2026-05-22) — see unit race
-        # step above.
         run: go test -tags=docker -race -timeout=25m -count=1 ./...

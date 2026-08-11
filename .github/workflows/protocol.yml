@@ -9,7 +9,6 @@ on:
       - "protocol/**"
   workflow_call:
 
-# See core.yml for rationale - same idempotent burst-coalescing.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -18,9 +17,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25.0"
 
@@ -38,7 +37,6 @@ jobs:
 
       - name: Test (race)
         working-directory: protocol
-        # Promoted to gating in Phase 2 (2026-05-22).
         run: go test -race -count=1 ./...
 
       - name: Coverage report

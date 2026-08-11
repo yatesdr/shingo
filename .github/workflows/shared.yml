@@ -1,17 +1,5 @@
 name: Shared
 
-# shingo/shared is a Go module with its own go.mod and seven test files, and
-# until this workflow existed CI ran NONE of them. It appeared in no matrix,
-# no path filter and no working-directory: not build, not vet, not test, not
-# lint. Core and Edge both import it, and both of their workflows are
-# path-filtered to their own tree plus protocol/**, so a change under
-# shared/** did not even trigger the two modules it can break.
-#
-# The tests it holds are exactly the ones that only pay off when a machine
-# runs them — the status-class drift guard, the emoji ban, the token-presence
-# guard, and now the contrast guards. A drift test nobody runs is not a weak
-# check, it is a comment that compiles.
-
 on:
   push:
     paths:
@@ -23,7 +11,6 @@ on:
       - "protocol/**"
   workflow_call:
 
-# See core.yml for rationale - same idempotent burst-coalescing.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -32,9 +19,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25.0"
 

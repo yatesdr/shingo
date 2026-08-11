@@ -1,18 +1,10 @@
 name: Core
 
-# This workflow triggers on itself as well as on the code it tests.
-# lint.yml already does this; core.yml did not, so a change to the test
-# invocation below could only be exercised by a later, unrelated Go
-# commit. A gate whose own edits do not run it cannot report on them.
 on:
   push:
     paths:
       - "shingo-core/**"
       - "protocol/**"
-      # shared/** is a real dependency: Core's www package imports
-      # shingo/shared (chip_drift_test.go walks shared.Files) and the
-      # templates load its stylesheets. Without it here, a change that
-      # breaks Core's build lands with Core CI never running.
       - "shared/**"
       - ".github/workflows/core.yml"
   pull_request:
@@ -23,11 +15,6 @@ on:
       - ".github/workflows/core.yml"
   workflow_call:
 
-# Coalesce overlapping runs on the same branch / PR so a quick burst
-# of pushes only consumes one CI slot. The cancel-in-progress flag is
-# safe here because the workflow is idempotent (build + tests with
-# -count=1) and the latest commit run is always the one that
-# matters for merge gating.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -36,24 +23,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
-          # FULL HISTORY, and it is load-bearing.
-          #
-          # TestSchemaConvergesAcrossVintages builds an "aged" database from a
-          # baseline read out of git at a pinned revision — `git show
-          # <rev>:store/schema/...`. actions/checkout defaults to a SHALLOW
-          # clone (fetch-depth 1), where neither an older commit nor a tag
-          # exists, so every pinned vintage fails with "invalid object name"
-          # and the test that exists to catch upgrade-path bugs cannot run at
-          # all.
-          #
-          # Skipping the test when the revision is missing would be worse than
-          # this cost: it would go green in CI while asserting nothing, which is
-          # the exact failure class the convergence test was written to close.
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25.0"
 
@@ -61,9 +35,6 @@ jobs:
         working-directory: shingo-core
         run: go build ./...
 
-      # See the matching step in edge.yml: sim-tagged code is compiled nowhere
-      # in CI, so a signature change that misses a sim call site goes green here
-      # and fails on the box that builds the dev stack.
       - name: Build (sim)
         working-directory: shingo-core
         run: go build -tags sim ./...
@@ -78,8 +49,6 @@ jobs:
 
       - name: Test (unit, race)
         working-directory: shingo-core
-        # Promoted to gating in Phase 2 (2026-05-22) after baseline
-        # was confirmed clean.
         run: go test -race -count=1 ./...
 
       - name: Coverage report (unit)
@@ -88,31 +57,6 @@ jobs:
 
       - name: Test (Docker integration)
         working-directory: shingo-core
-        # testcontainers manages its own Postgres container; the
-        # ubuntu-latest runner provides Docker. -count=1 prevents
-        # stale-cache false positives on integration tests;
-        # -timeout=10m accommodates cold-runner container startup.
-        #
-        # -p 1 matches shingo-core/Makefile's `cover` target, which is
-        # this repo's declared invocation for the docker-tagged suite:
-        # "runs sequentially (-p 1) to avoid container contention".
-        # docs/coverage-map.md states the same. 31 of this module's 59
-        # packages carry //go:build docker tests --
-        #   grep -rln 'go:build docker' shingo-core/ --include='*.go' \
-        #     | xargs -n1 dirname | sort -u | wc -l
-        # -- and every one of them shares the single postgres:16-alpine
-        # container and clones the same template_test database; running
-        # those test binaries concurrently is what the Makefile is
-        # declaring unsafe. CI ran without the flag, which is the
-        # divergence, not a tuning choice. The count is a scale
-        # indicator, not a threshold: nothing below re-reads it, so it
-        # may drift without consequence, but the command above is how
-        # to re-derive it rather than trust it.
-        #
-        # TODO(stage-2a.2): tighten -timeout to ~2x the observed
-        # runtime once the workflow has run a few times. Standard
-        # warm-runner integration tests should land well under 5m;
-        # 10m exists today only because we lack measured data.
         run: go test -tags=docker -timeout=10m -count=1 -p 1 -coverprofile=build/coverage-docker ./...
 
       - name: Coverage report (Docker)
@@ -121,8 +65,4 @@ jobs:
 
       - name: Test (Docker integration, race)
         working-directory: shingo-core
-        # Promoted to gating in Phase 2 (2026-05-22).
-        # -p 1 for the same reason as the step above — it is the same
-        # suite against the same shared container, and the race
-        # detector's slowdown makes the contention worse, not better.
         run: go test -tags=docker -race -timeout=25m -count=1 -p 1 ./...

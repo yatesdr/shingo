@@ -2,10 +2,6 @@ name: Lint
 
 on:
   push:
-    # Skip doc-only changes — lint runs Go-only rules, so a README
-    # tweak shouldn't burn a CI minute. Match this set against
-    # core.yml / edge.yml / protocol.yml's path filters so the lint
-    # gate runs whenever the test gates do.
     paths:
       - '**.go'
       - '.golangci.yml'
@@ -20,8 +16,6 @@ on:
 permissions:
   contents: read
 
-# See core.yml for rationale — coalesce burst pushes; the latest
-# commit is the only run that matters.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -31,63 +25,25 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # All five Go modules. integration was missing from the original
-      # matrix even though it carries //go:build docker test files —
-      # adding it here closes that coverage gap (it lints clean today,
-      # both passes). shared was missing for the same reason and worse:
-      # it was in no workflow at all, so its seven test files ran
-      # nowhere in CI. It lints clean today.
       matrix:
         module: [protocol, shared, shingo-core, shingo-edge, integration]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25.0'
 
       - name: golangci-lint
-        # v7 is the first action release that supports golangci-lint v2.x.
-        # v6 errors out with "invalid version string" on any v2.* binary.
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
-          # Pinned to match the version called out in the .golangci.yml
-          # header. Bump in lockstep when upgrading the linter.
           version: v2.11.4
           working-directory: ${{ matrix.module }}
-          # --config points at the repo-root .golangci.yml so all four
-          # modules share the same depguard + forbidigo rules.
-          # --issues-exit-code=1 is the default but stated explicitly
-          # so a future flag-default change can't silently turn lint
-          # into a non-blocking warning.
-          #
-          # --build-tags docker is what CLOSED THE GAP: the default-
-          # config pass compiles only the default build tag, so every
-          # //go:build docker test file (the testcontainers/Postgres
-          # tests) was invisible to CI lint until 2026-07. A single
-          # docker pass is used INSTEAD of a separate default pass
-          # because the docker tag is purely additive here: there are
-          # ZERO //go:build !docker alternate files in the repo, so the
-          # docker build set is a strict superset of the default one
-          # (it adds the docker-tagged files without swapping any
-          # default-tagged alternates). That invariant is load-bearing:
-          # if a !docker alternate is ever introduced, a single
-          # docker-tagged pass would MISS the default-tagged file it
-          # shadows — at that point add a second default-config pass.
-          # (Run `grep -rn '//go:build !docker' --include='*.go' .` to
-          # re-verify the invariant when changing this.)
           args: --build-tags docker --config=${{ github.workspace }}/.golangci.yml --issues-exit-code=1 ./...
-          # GOMODCACHE + analysis cache are enabled by default in v7.
-          # The opt-out switches are skip-cache / skip-save-cache; we
-          # leave both at default (caching on).
 
   swap-mode-literals:
-    # Guards against raw swap-mode strings outside protocol/swap_mode.go
-    # and tests. forbidigo can only match identifier expressions, so
-    # this grep-based check enforces "use the typed constants" instead.
-    # See scripts/check-swap-mode-literals.sh.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: check
         run: bash scripts/check-swap-mode-literals.sh
