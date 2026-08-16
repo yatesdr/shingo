@@ -158,7 +158,12 @@ func collect(db *store.DB, logSource string) *report {
 	r.robotReuse = robotReuse(db)
 	r.lanes = laneShapes(db)
 	r.gated = gatedVsUngated(db)
-	r.dissolves = scalar(db, `SELECT COUNT(*) FROM orders WHERE error_detail = $1`, dispatch.ReshuffleDissolveDetail)
+	// EVERY way a chapter ends, not just the one. This counted
+	// ReshuffleDissolveDetail alone and so under-reported a chapter that ended by
+	// a leg failing — which is the other half of the same measure, and the number
+	// a soak reads to decide whether the dissolve arm is firing at all
+	// (§R.98 stage D).
+	r.dissolves = scalar(db, chapterEndCancelCountQuery(), chapterEndCancelArgs()...)
 	r.depthCost = depthCost(db)
 	r.waitCauses = waitCauses(db)
 	r.dwell = dwellDuration(db)
@@ -1181,6 +1186,27 @@ func yesNo(b bool) string {
 		return "yes"
 	}
 	return "-"
+}
+
+// chapterEndCancelCountQuery / chapterEndCancelArgs build the count over EVERY
+// way a chapter ends, from dispatch's own list, with a placeholder per entry so
+// no driver-array dependency is needed for a two-element IN.
+func chapterEndCancelCountQuery() string {
+	details := dispatch.ChapterEndCancelDetails()
+	ph := make([]string, len(details))
+	for i := range details {
+		ph[i] = fmt.Sprintf("$%d", i+1)
+	}
+	return `SELECT COUNT(*) FROM orders WHERE error_detail IN (` + strings.Join(ph, ",") + `)`
+}
+
+func chapterEndCancelArgs() []any {
+	details := dispatch.ChapterEndCancelDetails()
+	args := make([]any, len(details))
+	for i, d := range details {
+		args[i] = d
+	}
+	return args
 }
 
 func scalar(db *store.DB, q string, args ...any) int {

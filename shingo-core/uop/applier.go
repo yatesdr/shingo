@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 
 	"shingocore/store"
 	"shingocore/store/audit"
@@ -575,10 +576,15 @@ func (s *InventoryDeltaService) AnomalySummary() (AnomalyDeltaSummary, error) {
 		DroppedStaleEpoch:      atomic.LoadInt64(&s.droppedStaleEpoch),
 		DroppedPayloadMismatch: atomic.LoadInt64(&s.droppedPayloadMismatch),
 	}
+	// staged_expires_at is written from a Go value on the injected clock, so it is
+	// compared against that clock and not the database's NOW() (§R.98 stage D).
+	// The sweep that acts on this column (bins.ReleaseExpiredStaged) already does;
+	// this page did not, so the two could tell an operator opposite things about
+	// the same bin the moment the domains diverge.
 	if err := s.db.QueryRow(`SELECT
 		(SELECT COUNT(*) FROM bins WHERE anomaly_at IS NOT NULL AND status != 'retired'),
-		(SELECT COUNT(*) FROM bins WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < NOW())
-	`).Scan(&out.RejectedDeltaBins, &out.StaleStagedBins); err != nil {
+		(SELECT COUNT(*) FROM bins WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < $1::timestamptz)
+	`, clock.Now().UTC()).Scan(&out.RejectedDeltaBins, &out.StaleStagedBins); err != nil {
 		return out, fmt.Errorf("anomaly summary counts: %w", err)
 	}
 	return out, nil

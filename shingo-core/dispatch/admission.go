@@ -595,10 +595,23 @@ var skipsForGatedStoreEntry = admissionSkips{}
 // improvement, so the note said: close it by giving the refusal a dig, or accept
 // it. Not by deleting the line alone.
 //
-// The refusal now HAS a dig. A dig is a service to a lane and is proposed without
-// consuming the demand (proposeLaneClearDig), so admitComplexLanes can refuse on
-// an unreachable pickup AND ask for the corridor to be opened, which is what
-// makes asking safe. Both halves landed together; neither works alone.
+// The refusal now HAS a dig, which is what makes asking safe: admitComplexLanes
+// can refuse on an unreachable pickup AND ask for the corridor to be opened.
+// Both halves landed together; neither works alone.
+//
+// ── AMENDED BY §R.91, AND THIS PARAGRAPH SAID OTHERWISE UNTIL §R.98 ───────
+//
+// It read "a dig is a service to a lane and is proposed without consuming the
+// demand (proposeLaneClearDig)". That was the two-shape rule, and §R.91 replaced
+// it: the demand that causes a dig BECOMES its parent, wears `reshuffling`, and
+// resumes through `queued` into its own lifecycle. The demand is consumed — that
+// is the unification. What survives unchanged is the property this paragraph was
+// really relying on: the refusal has somewhere to send the work, so raising it
+// does not park the order forever.
+//
+// The other half survives too, restated as a status rule by round 2: a dig is
+// owned by the demand that caused it UNLESS a vehicle is already committed, and
+// then it serves the lane.
 var skipsForComplexEntry = admissionSkips{entryWhenGated: true}
 
 // admitPlan asks admission of every lane-touching step in a resolved plan.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"shingo/shared/clock"
 	"shingocore/store/reservations"
 )
 
@@ -183,16 +184,38 @@ func PlaceBinTx(tx *sql.Tx, p BinPlacement) ([]int64, error) {
 	}
 
 	// 6. Staging state.
+	//
+	// ── ONE STATEMENT, ONE CLOCK (§R.98 stage D, ranked first) ────────────
+	//
+	// This wrote `staged_at=NOW()` — the database's clock — beside
+	// `staged_expires_at=$1`, a value computed in Go from the injected clock, on
+	// ONE ROW, in ONE STATEMENT. The two are the start and the end of the same
+	// interval. Under any divergence between the domains the expiry can precede
+	// the stamp, and the sweep that reads the pair (`ReleaseExpiredStaged`, one
+	// file away, on the Go clock) then frees a bin that was staged a moment ago.
+	//
+	// It was harmless on the rig only because the sim clock is wall-clamped, which
+	// is itself a defect being fixed in this same stage — so this corner was one
+	// config flag from live, and it was introduced by THIS campaign's own
+	// placement primitive, into a column it did not audit for a clock.
+	//
+	// The shape now matches bins.Stage/ReleaseStaged exactly: two writers of one
+	// fact, one spelling.
+	//
+	// The `updated_at=NOW()` on the statements above is left alone deliberately —
+	// bins.updated_at genuinely carries both domains across the tree, which is a
+	// column-wide finding and not this statement's contradiction to fix.
+	now := clock.Now().UTC()
 	if p.Staged {
 		if _, err := tx.Exec(`UPDATE bins
-			SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW()
-			WHERE id=$2`, NullableTime(p.ExpiresAt), p.BinID); err != nil {
+			SET status='staged', staged_at=$3, staged_expires_at=$1, updated_at=$3
+			WHERE id=$2`, NullableTime(p.ExpiresAt), p.BinID, now); err != nil {
 			return nil, fmt.Errorf("stage bin %d: %w", p.BinID, err)
 		}
 	} else {
 		if _, err := tx.Exec(`UPDATE bins
-			SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW()
-			WHERE id=$1`, p.BinID); err != nil {
+			SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=$2
+			WHERE id=$1`, p.BinID, now); err != nil {
 			return nil, fmt.Errorf("set available bin %d: %w", p.BinID, err)
 		}
 	}

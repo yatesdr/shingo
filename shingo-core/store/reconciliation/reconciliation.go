@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/messaging"
 )
@@ -246,14 +247,32 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	// because declaring the types is exactly what the driver does not do.
 	// TestListAnomalies_QueuedGetsTheLongerBound exercises this through the
 	// driver, which is the only check that would have caught it.
+	//
+	// ── AND `NOW()` WAS THE WRONG CLOCK (§R.98 stage D) ───────────────────
+	//
+	// `orders.updated_at` is stamped with `clock.Now()` by every one of its ~20
+	// writers (orders/orders.go says so in as many words). Comparing it against
+	// the DATABASE's wall NOW() is the exact mistake AutoConfirmStuckDeliveredOrders
+	// documents and avoids, on the same column, in the same subsystem, two files
+	// away: "a wall-NOW() comparison never fires once the sim clock outruns wall
+	// time (10× → immediately)".
+	//
+	// It matters more here than anywhere else in the census, because this query
+	// IS `ListAnomalies`' runtime-stuck detector — the ONE instrument in the system
+	// that flags a wedged `in_transit` order. Under the rig's clamp the two clocks
+	// agreed and it fired. Remove the clamp, which is the next repair in this same
+	// stage, and every `updated_at` sits in the future and this goes permanently
+	// silent. The one thing that would have said "order 2 has not advanced in
+	// sixteen minutes" was one config flag from saying nothing at all.
+	now := clock.Now().UTC()
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT id, status, updated_at
 		FROM orders
 		WHERE status IN (%s)
-		  AND updated_at < NOW() - (
+		  AND updated_at < $4::timestamptz - (
 		        CASE WHEN status = $3 THEN $2::int ELSE $1::int END * INTERVAL '1 second')
 		ORDER BY updated_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()),
-		int(stuckOrderAge.Seconds()), int(queuedOrderAge.Seconds()), string(protocol.StatusQueued))
+		int(stuckOrderAge.Seconds()), int(queuedOrderAge.Seconds()), string(protocol.StatusQueued), now)
 	if err != nil {
 		return nil, err
 	}
@@ -280,13 +299,19 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 		return nil, err
 	}
 
+	// Same column, same rule: `staged_expires_at` is written from a Go value on
+	// the injected clock (bins.Stage, and the placement primitive since §R.98
+	// stage D), and the sweep that ACTS on it — bins.ReleaseExpiredStaged —
+	// compares it against clock.Now(). One column, two readers, and they used to
+	// be on two clocks: the sweep and this page could give opposite answers about
+	// the same bin.
 	rows, err = db.Query(`
 		SELECT id, status, staged_expires_at
 		FROM bins
 		WHERE status='staged'
 		  AND staged_expires_at IS NOT NULL
-		  AND staged_expires_at < NOW()
-		ORDER BY staged_expires_at ASC`)
+		  AND staged_expires_at < $1::timestamptz
+		ORDER BY staged_expires_at ASC`, now)
 	if err != nil {
 		return nil, err
 	}

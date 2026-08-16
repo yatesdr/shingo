@@ -115,7 +115,23 @@ const reshuffleLegFailedFolderDetail = ReshuffleLegFailedFolderDetail
 // cancel put an advance in the middle of every operator teardown, and re-driving
 // on none of them leaves the disposition to the 30-second sweep.
 func IsChapterEndCancel(reason string) bool {
-	return reason == ReshuffleDissolveDetail || reason == ReshuffleLegFailedDetail
+	for _, d := range ChapterEndCancelDetails() {
+		if reason == d {
+			return true
+		}
+	}
+	return false
+}
+
+// ChapterEndCancelDetails is the same list for readers that need it as DATA
+// rather than as a predicate — a SQL `= ANY(...)`, in practice.
+//
+// It exists because soakstat's dissolve metric counted `ReshuffleDissolveDetail`
+// alone and so under-reported every chapter that ended by a leg failing: a third
+// spelling of the list this function was extracted to prevent (§R.98 stage D).
+// The predicate is now defined over this, so the two cannot drift.
+func ChapterEndCancelDetails() []string {
+	return []string{ReshuffleDissolveDetail, ReshuffleLegFailedDetail}
 }
 
 // compoundGenerations splits a compound's children into the CHAPTER STILL OPEN
@@ -1415,25 +1431,37 @@ func (d *Dispatcher) parkLegOnFleetRefusal(parentOrderID int64, leg *orders.Orde
 // re-plans; doing that on a read that failed would turn a database hiccup into
 // churn across every held leg at once. Holding costs one redrive.
 func (d *Dispatcher) handleStaleDigLeg(parentOrderID int64, leg *orders.Order, sourceNode, destNode *nodes.Node) error {
-	// nodeName, not destNode.Name: this arm is reached on a SOURCE-side
-	// reachability refusal, which a destination-deferred leg can take as readily
-	// as a sealed one — and that leg's destination node is legitimately nil until
-	// its release. The sentence names what is known.
-	dest := nodeName(destNode)
+	// ── THE SENTENCE NAMES THE REFUSAL, WHICH IS ON THE SOURCE SIDE ───────
+	//
+	// This arm is reached on a SOURCE-side reachability refusal: the leg's PICKUP
+	// is behind something. It used to render as "Waiting for a slot at X", which
+	// points an operator at the wrong end of the plan — and for a dwelling leg,
+	// whose destination is legitimately nil until its release, `nodeName` turned
+	// that nil into the literal string "(unbound)", so the board named a slot
+	// that does not exist and never did (§R.98 stage D; the builder's FINDING 2).
+	//
+	// The destination is now passed only when there IS one, and it is passed as
+	// the LANE being dug rather than as a slot being waited for. A nil
+	// destination contributes nothing, which is the honest rendering of a
+	// destination that has not been chosen yet.
+	lane := ""
+	if destNode != nil {
+		lane = destNode.Name
+	}
 	claimed, err := d.obstructionIsSpokenFor(leg, sourceNode)
 	if err != nil {
 		log.Printf("dispatch: compound %d child %d is walled and its obstruction could not be read: %v "+
 			"(holding the leg; a dissolve on an unreadable lane would re-plan on a hiccup)",
 			parentOrderID, leg.ID, err)
-		d.setQueueReason(leg, protocol.QueueWaitingForSlot, CauseAdmissionError,
-			QueueParams{Destination: dest})
+		d.setQueueReason(leg, protocol.QueueStorageRearranging, CauseAdmissionError,
+			QueueParams{Lane: lane})
 		return nil
 	}
 	if claimed {
 		d.dbg("dispatch: compound %d child %d is walled by a bin another order has claimed — holding "+
 			"(the robot carrying it out is what clears this)", parentOrderID, leg.ID)
-		d.setQueueReason(leg, protocol.QueueWaitingForSlot, CauseLaneTargetBuried,
-			QueueParams{Destination: dest})
+		d.setQueueReason(leg, protocol.QueueStorageRearranging, CauseLaneTargetBuried,
+			QueueParams{Lane: lane})
 		return nil
 	}
 	return d.dissolveCompound(parentOrderID, fmt.Sprintf(

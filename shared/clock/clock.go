@@ -97,6 +97,24 @@ func AsSimClock() *SimClock {
 // TTL by the effective speed keeps the real budget at T regardless of how fast
 // the sim runs.
 //
+// ── AND THE PARAGRAPH ABOVE IS ONLY TRUE WHILE THE CLOCK IS RUNNING FAST ──
+//
+// It says "under a fast-forward SimClock that is sim time". `Now()` is sim time
+// only while a fast-forward clock is CATCHING UP; once simulated time passes the
+// wall the clamp pins it, `Now()` becomes wall time, and the compression this
+// compensates for stops existing — while this goes on multiplying, making every
+// envelope TTL `speed`× more generous than the number in the config.
+//
+// Over-generous, so it strands nothing and no wedge is attributable to it. It is
+// recorded because the mechanism is compensating for a condition that is not
+// always present, and because §R.98's whole finding was that this clock's two
+// halves disagree about how fast the world is going. This function is the third
+// place that disagreement is written down (§R.98 stage D, law 14).
+//
+// A clock whose clamp is permanent from t=0 is now refused at construction
+// (BuildSimClock), so the remaining fast-forward configs genuinely do run fast
+// for the window this was written for.
+//
 // Production-safe and dormant: with no SimClock installed (AsSimClock()==nil) or
 // speed<=1 it returns d unchanged, so non-sim builds and 1× runs are untouched.
 func ScaleTTL(d time.Duration) time.Duration {
