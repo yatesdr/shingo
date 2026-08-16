@@ -10,6 +10,7 @@ import (
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // These tests pin the SourceFinder tier cascade — the one seam BOTH intake
@@ -206,7 +207,7 @@ type fakeResolver struct {
 	err    error
 }
 
-func (r *fakeResolver) Resolve(_ *nodes.Node, _ binresolver.ResolveMode, _ string, _ *int64) (*ResolveResult, error) {
+func (r *fakeResolver) Resolve(_ *nodes.Node, _ binresolver.ResolveMode, _ string, _ *int64, _ reservations.DigAsker) (*ResolveResult, error) {
 	return r.result, r.err
 }
 

@@ -14,6 +14,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
 
@@ -23,8 +24,81 @@ func (db *DB) ListLaneSlots(laneID int64) ([]*nodes.Node, error) {
 	return nodes.ListLaneSlots(db.DB, laneID)
 }
 
-// ListHeldLegParentsInLane returns the distinct parents of PENDING compound legs
-// whose source or delivery node is a slot of this lane.
+// LaneHeldLeg is one compound leg waiting on a lane, with the state the liveness
+// floor compares against afterwards to tell whether its pass moved it.
+type LaneHeldLeg struct {
+	OrderID    int64
+	LaneID     int64
+	QueueCause string
+	// State mirrors dispatch.waiterState's tuple — status, wait index, vendor
+	// order — assembled in SQL so the floor's before-snapshot costs one query
+	// rather than one per leg.
+	State string
+}
+
+// ListLaneHeldLegs returns every compound leg not yet handed to the fleet whose
+// source or delivery node is a lane slot, ACROSS ALL LANES.
+//
+// It is ListHeldLegParentsInLane turned inside out, and the two are deliberately
+// kept as separate queries rather than one parameterised by lane. They answer
+// different questions for different callers: the event path knows which lane
+// just changed and wants the parents to re-drive, so it takes a lane and returns
+// parents; the floor knows nothing and wants the whole waiting set WITH the
+// per-leg state it will compare against, so it takes nothing and returns legs.
+// Folding them would give the event path a snapshot it discards and the floor a
+// lane it does not have.
+//
+// SAME POPULATION, THOUGH, and that is the part that must not drift: both use
+// orders.AwaitingFleetSQL, so a leg visible to one is visible to the other. A
+// floor that swept a different set from the one it re-drives would report
+// releases nobody made and miss the ones it did.
+func (db *DB) ListLaneHeldLegs() ([]LaneHeldLeg, error) {
+	// The legs are selected FIRST and the node graph joined to that small set:
+	// "a compound leg not yet with the fleet" is highly selective and the node
+	// join is not, so filtering after would walk orders × slots.
+	//
+	// BOTH NAME FORMS, for the reason ListHeldLegParentsInLane states: node
+	// references are bare ("SLN_002") or dotted ("LANE.SLN_002") depending on
+	// which planner wrote them, and matching one form silently returns nothing
+	// for half the plant. split_part(x, '.', 2) yields the slot half of a dotted
+	// name and '' for a bare one, which matches no node.
+	rows, err := db.DB.Query(fmt.Sprintf(`
+		WITH legs AS (
+			SELECT id, source_node, delivery_node, status, wait_index,
+			       COALESCE(vendor_order_id, '') AS vendor_order_id,
+			       COALESCE(queue_cause, '')     AS queue_cause
+			FROM orders
+			WHERE parent_order_id IS NOT NULL AND %s
+		)
+		SELECT DISTINCT legs.id, l.id, legs.queue_cause,
+		       legs.status || '|' || legs.wait_index::text || '|' || legs.vendor_order_id
+		FROM legs
+		JOIN nodes n ON n.name IN (
+			legs.source_node, legs.delivery_node,
+			split_part(legs.source_node, '.', 2), split_part(legs.delivery_node, '.', 2)
+		)
+		JOIN nodes l ON l.id = n.parent_id
+		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'`,
+		orders.AwaitingFleetSQL("")))
+	if err != nil {
+		return nil, fmt.Errorf("list lane-held legs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []LaneHeldLeg
+	for rows.Next() {
+		var h LaneHeldLeg
+		if err := rows.Scan(&h.OrderID, &h.LaneID, &h.QueueCause, &h.State); err != nil {
+			return nil, fmt.Errorf("scan lane-held leg: %w", err)
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// ListHeldLegParentsInLane returns the distinct parents of compound legs that
+// have not reached the fleet and whose source or delivery node is a slot of this
+// lane.
 //
 // It exists to answer "who is waiting on this lane" for a leg that has no other
 // witness. A leg held at its lane writes no status — it stays `pending` — so it
@@ -34,6 +108,13 @@ func (db *DB) ListLaneSlots(laneID int64) ([]*nodes.Node, error) {
 // the lane instead means the event that actually frees the lane can find it,
 // whoever caused it.
 //
+// THE POPULATION IS orders.AwaitingFleetSQL, NOT `status='pending'`, and the
+// difference is a second leg with no witness: one whose fleet create was refused
+// is rolled back to `sourcing` and parked, holding no vendor order. It is
+// waiting on this lane in exactly the same sense and was invisible here for
+// exactly the same reason. One spelling, shared with GetNextChild — see that
+// function for why vendor_order_id is the authority and a status was the proxy.
+//
 // BOTH NAME FORMS ARE MATCHED. orders.source_node / delivery_node hold whatever
 // the planner wrote, and node references are bare ("SLN_002") or dotted
 // ("LANE.SLN_002") depending on the caller — GetByDotName splits on the dot and
@@ -41,19 +122,19 @@ func (db *DB) ListLaneSlots(laneID int64) ([]*nodes.Node, error) {
 // silently return no parents for half the plant, which is the failure mode this
 // query exists to prevent and would be invisible in exactly the same way.
 func (db *DB) ListHeldLegParentsInLane(laneID int64) ([]int64, error) {
-	rows, err := db.DB.Query(`
+	rows, err := db.DB.Query(fmt.Sprintf(`
 		SELECT DISTINCT o.parent_order_id
 		FROM orders o
 		JOIN nodes n ON n.parent_id = $1
 		LEFT JOIN nodes p ON p.id = n.parent_id
 		WHERE o.parent_order_id IS NOT NULL
-		  AND o.status = 'pending'
+		  AND %s
 		  AND (
 		        o.source_node   = n.name
 		     OR o.delivery_node = n.name
 		     OR o.source_node   = p.name || '.' || n.name
 		     OR o.delivery_node = p.name || '.' || n.name
-		  )`, laneID)
+		  )`, orders.AwaitingFleetSQL("o")), laneID)
 	if err != nil {
 		return nil, fmt.Errorf("list held-leg parents in lane %d: %w", laneID, err)
 	}
@@ -159,7 +240,27 @@ func (db *DB) NodeStyleOrigins(nodeName string) ([]string, error) {
 //
 // Lives at the outer store/ level because it joins nodes to reservations, and
 // cross-aggregate composition is exactly what store/<sub> may not do.
-func (db *DB) ListChildNodesUnlocked(parentID int64) ([]*nodes.Node, error) {
+//
+// ── THE ASKER IS NOT OPTIONAL ─────────────────────────────────────────────
+//
+// This filter used to exempt nobody, and that was its one defect. It arrived as
+// a consolidation of five copies of `if LaneLock.IsLocked(child) { continue }`,
+// which was right about the duplication and wrong about the semantics: IsLocked
+// has no asker, so consolidating onto it made "dig-held" mean "excluded from
+// everyone" — INCLUDING the order the dig was run for.
+//
+// That is not hypothetical. In expose mode the lock is transferred to the
+// complex parent to protect the bin the dig uncovered; the parent then resumes
+// and re-resolves through this very query, which dropped the lane because of
+// the parent's own lock. The parent could not see the bin its own dig exposed,
+// re-resolved to the next buried one, and dug again. See
+// store/reservations/dig_exclusion.go for the full account.
+//
+// Pass reservations.Anyone when there is genuinely no order behind the scan —
+// it reproduces the old owner-blind behaviour exactly, because order ids are
+// never zero.
+func (db *DB) ListChildNodesUnlocked(parentID int64, asker reservations.DigAsker) ([]*nodes.Node, error) {
+	args := append([]any{parentID, string(reservations.ModeDig)}, asker.Args()...)
 	rows, err := db.DB.Query(fmt.Sprintf(`SELECT %s %s
 		WHERE n.parent_id = $1
 		  AND NOT EXISTS (
@@ -168,8 +269,10 @@ func (db *DB) ListChildNodesUnlocked(parentID int64) ([]*nodes.Node, error) {
 			  AND dig_hold.node_id = n.id
 			  AND dig_hold.state IN ('pending','confirmed')
 			  AND dig_hold.mode = $2
+			  AND %s
 		  )
-		ORDER BY n.name`, nodes.SelectCols, nodes.FromClause), parentID, string(reservations.ModeDig))
+		ORDER BY n.name`, nodes.SelectCols, nodes.FromClause,
+		reservations.DigExclusionSQL("dig_hold.order_id", 3, 4)), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list unlocked children of %d: %w", parentID, err)
 	}

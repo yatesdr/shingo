@@ -10,6 +10,7 @@ import (
 	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
 
 // ErrBuried indicates the target bin exists but is blocked by shallower bins.
@@ -88,10 +89,15 @@ func (r *GroupResolver) getGroupAlgorithm(groupID int64, key, defaultVal string)
 }
 
 // ResolveRetrieve finds the best accessible bin across all lanes and direct children.
-func (r *GroupResolver) ResolveRetrieve(group *nodes.Node, payloadCode string) (*ResolveResult, error) {
+//
+// asker is the order this resolution is for. It is what keeps a dig from
+// hiding a lane from the order the dig was RUN for — pass reservations.Anyone
+// only when there is genuinely no order behind the call, which reproduces the
+// owner-blind behaviour this parameter was added to end.
+func (r *GroupResolver) ResolveRetrieve(group *nodes.Node, payloadCode string, asker reservations.DigAsker) (*ResolveResult, error) {
 	algo := r.getGroupAlgorithm(group.ID, "retrieve_algorithm", RetrieveFIFO)
 	strategy := retrieveStrategies[algo]
-	return r.scanForBestBin(group, payloadCode, strategy)
+	return r.scanForBestBin(group, payloadCode, strategy, asker)
 }
 
 // retrieveStrategy controls how a retrieve algorithm scores accessible bins,
@@ -175,8 +181,8 @@ func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode
 // scanForBestBin is the shared scanner for all retrieve algorithms. It iterates
 // child nodes, finds accessible bins, optionally probes for buried bins, and
 // delegates the algorithm-specific decisions to the strategy.
-func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s retrieveStrategy) (*ResolveResult, error) {
-	children, err := r.DB.ListChildNodesUnlocked(group.ID)
+func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s retrieveStrategy, asker reservations.DigAsker) (*ResolveResult, error) {
+	children, err := r.DB.ListChildNodesUnlocked(group.ID, asker)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
@@ -341,24 +347,24 @@ func (r *GroupResolver) classifyEmptyGroup(
 }
 
 // ResolveStore finds the best slot for storing a bin in a node group.
-func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
 	algo := r.getGroupAlgorithm(group.ID, "store_algorithm", StoreLKND)
 	switch algo {
 	case StoreDPTH:
-		return r.resolveStoreDPTH(group, payloadCode, binTypeID)
+		return r.resolveStoreDPTH(group, payloadCode, binTypeID, asker)
 	default:
-		return r.resolveStoreLKND(group, payloadCode, binTypeID)
+		return r.resolveStoreLKND(group, payloadCode, binTypeID, asker)
 	}
 }
 
 // resolveStoreLKND consolidates matching payload codes first, then picks the emptiest slot.
-func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
 	// Lanes that had a usable slot and were refused by the burial guard. Kept so
 	// a group that comes up empty can say whether it is FULL or merely CLOSED —
 	// two conditions with the same disposition (walk on) and completely different
 	// diagnoses. See noteClosedLanes.
 	var closedByClaim []string
-	children, err := r.DB.ListChildNodesUnlocked(group.ID)
+	children, err := r.DB.ListChildNodesUnlocked(group.ID, asker)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
@@ -487,11 +493,11 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 }
 
 // resolveStoreDPTH packs back-to-front regardless of payload. Prefers lanes over direct children.
-func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
 	// See resolveStoreLKND: lanes the burial guard refused, for the diagnosis on
 	// the empty-group path.
 	var closedByClaim []string
-	children, err := r.DB.ListChildNodesUnlocked(group.ID)
+	children, err := r.DB.ListChildNodesUnlocked(group.ID, asker)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}

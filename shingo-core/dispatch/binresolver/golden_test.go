@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
 
 var updateFlag = flag.Bool("update", false, "update golden files")
@@ -189,7 +190,7 @@ func TestGolden_RetrieveAlgorithms(t *testing.T) {
 				f.lockLaneForDig(sc.lockLane) // a dig holds it, owned by some other order
 			}
 			gr := &GroupResolver{DB: f}
-			got, err := gr.ResolveRetrieve(group, payload)
+			got, err := gr.ResolveRetrieve(group, payload, reservations.Anyone)
 
 			gs := goldenScenario{
 				Name:      sc.name,

@@ -275,15 +275,28 @@ func (d *Dispatcher) queueOrderInternal(order *orders.Order, stationID, payloadC
 	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
 }
 
-func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope, sourceNode, destNode *nodes.Node) {
-	vendorOrderID, err := d.dispatchToFleetCore(order, sourceNode, destNode)
-	if err != nil {
-		d.failOrder(order, env, "fleet_failed", err.Error())
-		return
+// dispatchToFleet sends the order and acks the station that asked. IT RETURNS
+// THE REFUSAL RATHER THAN DISPOSING OF IT, and that is the same rule
+// handoverToFleet states one layer down: "FAILING THE ORDER IS THE CALLER'S JOB
+// … the callers already do it and they do it differently."
+//
+// It used to call failOrder itself, which made one disposition — terminal —
+// binding on both callers, and the two are not alike:
+//
+//   - THE REDIRECT has a person waiting on a reply. A fleet that will not take
+//     the order is the end of that request, and the operator is told.
+//   - A COMPOUND LEG has no person and no reply. Failing it fails the parent
+//     through the sibling cascade (HandleChildOrderFailure), and the parent IS
+//     the demand — so a robot-system blip terminated a demand for congestion,
+//     which is the one thing the wait-not-fail rule forbids. `51a97a56` fixed
+//     exactly this on the plain path (DispatchDirect) and the dig path, whose
+//     only caller is this function, never got it.
+func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope, sourceNode, destNode *nodes.Node) error {
+	if _, err := d.dispatchToFleetCore(order, sourceNode, destNode); err != nil {
+		return err
 	}
-
 	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode.Name)
-	_ = vendorOrderID
+	return nil
 }
 
 // payloadForDispatch answers what the robot is actually being asked to carry.
@@ -829,7 +842,13 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 		return
 	}
 
-	d.dispatchToFleet(order, env, sourceNode, newDest)
+	if err := d.dispatchToFleet(order, env, sourceNode, newDest); err != nil {
+		// The redirect's disposition is unchanged: a person typed this node and is
+		// waiting on the reply, so a fleet refusal ends the request rather than
+		// parking it. PrepareRedirect has already cancelled the vendor leg, so
+		// there is nothing left in flight to reconcile.
+		d.failOrder(order, env, "fleet_failed", err.Error())
+	}
 }
 
 // HandleOrderIngest processes an ingest request: an audited manifest-only write

@@ -84,7 +84,7 @@ func TestAdmit_PhysicalChecksIgnoreTheEnforcementMode(t *testing.T) {
 			"mouth-enforced. lane_enforcement chooses who arbitrates mouth mode-sharing; it does not " +
 			"make a single-file corridor shareable")
 	}
-	if err := reservations.ReleaseLanesByOwner(db.DB, stranger.ID); err != nil {
+	if _, err := reservations.ReleaseLanesByOwner(db.DB, stranger.ID); err != nil {
 		t.Fatalf("release the dig: %v", err)
 	}
 

@@ -50,15 +50,21 @@ func TestCompoundChild_IdentityIsMintedNotDerived(t *testing.T) {
 		Status:    StatusPending,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(parent.ID, string(StatusReshuffling), "fixture"), "set Reshuffling")
-	parent, _ = db.GetOrder(parent.ID)
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-CID-BLK")
 	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-CID-TGT")
 	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
 
-	testutil.MustNoErr(t, d.CreateCompoundChildrenOnly(parent, plan), "first plan")
-	if err := d.CreateCompoundChildrenOnly(parent, plan); err != nil {
+	// BOTH PLANS GO THROUGH THE ONE CREATION DOOR, from a live status each time —
+	// which is the real re-plan shape: a dissolve returns the parent to the
+	// acquiring set and the scanner plans again. The fixture used to enter through
+	// CreateCompoundChildrenOnly against a hand-set Reshuffling row; that method is
+	// deleted, and driving the door production drives is what makes the collision
+	// this test pins a collision that can actually happen.
+	testutil.MustNoErr(t, d.CreateCompoundOrder(parent, plan), "first plan")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(parent.ID, string(StatusQueued), "dissolved; re-planning"), "requeue for the re-plan")
+	parent, _ = db.GetOrder(parent.ID)
+	if err := d.CreateCompoundOrder(parent, plan); err != nil {
 		t.Fatalf("re-planning the same parent failed: %v\n"+
 			"A compound that re-plans must not collide with its own earlier children. "+
 			"On a database carrying v71's unique index this is where reshuffling stops.", err)

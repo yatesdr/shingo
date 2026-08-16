@@ -120,6 +120,12 @@ func (e *Engine) Start() {
 	// Start periodic fulfillment sweep (60s safety net)
 	e.fulfillment.StartPeriodicSweep(60 * time.Second)
 
+	// The lane liveness floor — the same safety net for the two populations the
+	// fulfillment sweep does not cover: robots dwelling at a lane's mark, and
+	// compound legs not yet handed to the fleet. Started beside it because it is
+	// the same shape at the same cadence over a different set (F-22).
+	go e.laneLivenessFloorLoop()
+
 	// Start tracker
 	if e.tracker != nil {
 		e.tracker.Start()

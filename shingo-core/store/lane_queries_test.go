@@ -81,7 +81,7 @@ func TestLaneAcceptsInbound(t *testing.T) {
 	if ok, err := db.LaneAcceptsInbound(laneID); err != nil || !ok {
 		t.Fatalf("inbound-held lane: got ok=%v err=%v, want compatible (same-mode share)", ok, err)
 	}
-	if err := reservations.ReleaseLanesByOwner(db.DB, oIn.ID); err != nil {
+	if _, err := reservations.ReleaseLanesByOwner(db.DB, oIn.ID); err != nil {
 		t.Fatalf("release inbound: %v", err)
 	}
 
@@ -93,7 +93,7 @@ func TestLaneAcceptsInbound(t *testing.T) {
 	if ok, err := db.LaneAcceptsInbound(laneID); err != nil || ok {
 		t.Fatalf("outbound-held lane: got ok=%v err=%v, want incompatible", ok, err)
 	}
-	if err := reservations.ReleaseLanesByOwner(db.DB, oOut.ID); err != nil {
+	if _, err := reservations.ReleaseLanesByOwner(db.DB, oOut.ID); err != nil {
 		t.Fatalf("release outbound: %v", err)
 	}
 

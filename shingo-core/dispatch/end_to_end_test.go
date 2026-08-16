@@ -1046,7 +1046,7 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 	if len(children) == 0 {
 		t.Fatal("no compound children created for buried complex order")
 	}
-	// Expose mode (default — no target_nodes configured): unbury only.
+	// Expose mode: unbury only.
 	// Two blockers → two unbury children.
 	if len(children) != 2 {
 		t.Errorf("compound children = %d, want 2 (two blockers, expose mode)", len(children))

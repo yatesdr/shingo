@@ -141,8 +141,7 @@ func digWasDissolved(children []*orders.Order) bool {
 // All children and bin claims are created in a single transaction. The parent
 // is transitioned into StatusReshuffling via lifecycle.BeginReshuffle, so the
 // caller must pass a parent in a status that has Reshuffling as a legal next
-// state (Pending, Sourcing, Queued). Synthetic restore parents that already
-// hold StatusReshuffling at creation use CreateCompoundChildrenOnly instead.
+// state (Pending, Sourcing, Queued). It is the ONLY compound-creation path.
 //
 // THE CHILDREN ARE WRITTEN BEFORE THE PARENT MOVES, and the order is
 // load-bearing. BeginReshuffle used to run first, so a refused claim left the
@@ -166,31 +165,45 @@ func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *Reshuf
 	if err := d.writeCompoundChildren(parentOrder, plan); err != nil {
 		return err
 	}
-	if err := d.lifecycle.BeginReshuffle(parentOrder,
-		fmt.Sprintf("reshuffling: %d steps to unbury bin %d", len(plan.Steps), plan.TargetBin.ID)); err != nil {
+	if err := d.lifecycle.BeginReshuffle(parentOrder, reshuffleBeginDetail(plan)); err != nil {
 		log.Printf("dispatch: begin reshuffle order %d: %v", parentOrder.ID, err)
 	}
 	return d.AdvanceCompoundOrder(parentOrder.ID)
 }
 
-// CreateCompoundChildrenOnly creates the compound's child orders and advances
-// the first one — CreateCompoundOrder minus the lifecycle.BeginReshuffle call,
-// for a parent already sitting at StatusReshuffling, where the transition would
-// log a spurious "illegal transition: reshuffling → reshuffling".
+// reshuffleBeginDetail is the history line a compound parent carries into
+// `reshuffling`. Two shapes, because there are now two kinds of dig: one that
+// exists to reach a BIN, and one that exists to reach a SLOT (window 3's mouth
+// clear, whose plan carries no target bin — see ReshufflePlan.TargetBin).
 //
-// IT HAS NO PRODUCTION CALLER. Its one caller was the synthetic restore-blockers
-// parent, and that subsystem is deleted; what is left uses it are three test
-// fixtures that want children written against a parent they placed at
-// Reshuffling themselves. Recorded rather than removed: deleting it means either
-// rewriting those fixtures to drive CreateCompoundOrder from a live status, or
-// accepting the warning line, and neither is a decision this cleanup should make
-// on its own. C5's report carries it.
-func (d *Dispatcher) CreateCompoundChildrenOnly(parentOrder *orders.Order, plan *ReshufflePlan) error {
-	if err := d.writeCompoundChildren(parentOrder, plan); err != nil {
-		return err
+// It is a function rather than an inline Sprintf because the inline form
+// dereferenced plan.TargetBin unconditionally, which is a nil panic the moment a
+// second kind of plan exists. The nil arm is the reason this is here.
+func reshuffleBeginDetail(plan *ReshufflePlan) string {
+	if plan.TargetBin == nil {
+		return fmt.Sprintf("reshuffling: %d steps to clear the path to %s",
+			len(plan.Steps), nodeName(plan.TargetSlot))
 	}
-	return d.AdvanceCompoundOrder(parentOrder.ID)
+	return fmt.Sprintf("reshuffling: %d steps to unbury bin %d", len(plan.Steps), plan.TargetBin.ID)
 }
+
+// CreateCompoundChildrenOnly WAS HERE AND IS DELETED. It was
+// CreateCompoundOrder minus the BeginReshuffle transition, for a parent already
+// sitting at StatusReshuffling where that transition would log a spurious
+// "illegal transition: reshuffling → reshuffling".
+//
+// Its one production caller was the synthetic restore-blockers parent, and that
+// subsystem went with the restore deletion. What kept it alive afterwards was
+// three TEST fixtures that placed a parent at Reshuffling themselves — so an
+// exported second creation door survived, in the busiest lifecycle in the
+// package, to serve callers that do not ship.
+//
+// The fixtures drive CreateCompoundOrder from a live status now, which is what
+// production does. THERE IS ONE COMPOUND-CREATION PATH: every compound in the
+// system, test or not, writes its children and then moves its parent through
+// BeginReshuffle. Uniformity applied to creation — a second door is a second
+// place for the two halves to get out of order, which is exactly the ordering
+// this function's neighbour spends fifteen lines explaining.
 
 // writeCompoundChildren builds the compound's child orders from the plan and
 // writes them, with their bin claims, in the store's single transaction. It
@@ -294,12 +307,9 @@ func (d *Dispatcher) writeCompoundChildren(parentOrder *orders.Order, plan *Resh
 		// parent retrieve's lineside DeliveryNode.
 		//
 		// Complex-order reshuffles do NOT go through this branch:
-		//   - Expose mode (PlanReshuffleUnburyOnly) emits no retrieve
-		//     step at all — the complex parent resumes and runs its
-		//     own pickup against the now-accessible original slot.
-		//   - Target-node mode (PlanReshuffleToTarget) sets ToNode
-		//     explicitly so DeliveryNode is non-empty when we reach
-		//     this check and the fallback never fires.
+		// PlanReshuffleUnburyOnly emits no retrieve step at all — the
+		// complex parent resumes and runs its own pickup against the
+		// now-accessible original slot.
 		//
 		// Adding a "retrieve" step to PlanReshuffleUnburyOnly without
 		// a ToNode would silently inherit parentOrder.DeliveryNode,
@@ -407,6 +417,13 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			log.Printf("dispatch: load parent compound order %d: %v", parentOrderID, pErr)
 		}
 
+		// SNAPSHOT THE LANES BEFORE ANY DISPOSITION RUNS. Two of the three below
+		// terminalize the parent, and terminalizing deletes its reservations in the
+		// same transaction — so a lane read after the disposition is a lane already
+		// gone, and the dwellers behind it are never woken. One read here covers all
+		// three arms; see unlockLaneForCompound.
+		heldLanes := d.digLanesHeld(parentOrderID)
+
 		// THE PARENT HAS ALREADY LEFT. Every disposition below writes a transition
 		// out of `reshuffling` — Fail, CompleteCompound, ResumeCompound all assume
 		// the parent is still in it — so a parent that has moved on is one this
@@ -465,7 +482,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			// Idempotent — the dissolve released it already. Repeated because this
 			// arm is also reachable when a leg that was already in flight terminates
 			// after the dissolve, and a lane held past a re-plan is a wedge.
-			d.unlockLaneForCompound(parentOrderID)
+			d.unlockLaneForCompound(parentOrderID, heldLanes)
 			return nil
 		}
 
@@ -476,7 +493,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 					log.Printf("dispatch: fail compound order %d: %v", parentOrderID, err)
 				}
 			}
-			d.unlockLaneForCompound(parentOrderID)
+			d.unlockLaneForCompound(parentOrderID, heldLanes)
 			return nil
 		}
 
@@ -540,17 +557,21 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// Sequencing dependency on fulfillment.RunOnce being synchronous
 		// — see lifecycle.go's {Reshuffling, Queued} actionMap entry.
 		//
-		// Lane-lock handling (v7 Step 4.5):
-		//   - target-node mode (PlanReshuffleToTarget): unlock immediately
-		//     — the target bin has already moved out of the lane, no
-		//     re-burial risk.
-		//   - expose mode (PlanReshuffleUnburyOnly): TRANSFER the lock
-		//     from the compound parent to the complex parent, register a
-		//     listener that releases on EventBinEnteredTransit for the
-		//     target bin or on parent cancel/fail. Closes the
+		// Lane-lock handling (v7 Step 4.5), now a two-way split:
+		//   - COORDINATED parent (a complex order's dig — always expose mode):
+		//     TRANSFER the lock from the compound parent to the complex parent
+		//     and register a listener that releases on EventBinEnteredTransit
+		//     for the target bin, or on parent cancel/fail. Closes the
 		//     post-compound / pre-pickup re-burial window.
 		//   - non-complex parents (simple-retrieve, restore): unlock
-		//     immediately (existing behavior).
+		//     immediately — the bin leaves the lane inside the compound.
+		//
+		// It used to be a three-way split, and the third arm was decided by
+		// planUsedExposeMode, which recovered the plan's mode by string-matching
+		// each child's PayloadDesc against "reshuffle retrieve". A human-readable
+		// description field was load-bearing for a lock decision. Target-node
+		// mode is gone, so expose is the only shape a complex dig takes and the
+		// question the sniff answered no longer has two answers.
 		if parent != nil {
 			if IsCoordinated(parent) {
 				if err := d.lifecycle.ResumeCompound(parent); err != nil {
@@ -566,10 +587,10 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			}
 		}
 
-		if parent != nil && IsCoordinated(parent) && planUsedExposeMode(openChildren) {
+		if parent != nil && IsCoordinated(parent) {
 			d.extendLaneLockForExposeMode(parentOrderID, parent, children)
 		} else {
-			d.unlockLaneForCompound(parentOrderID)
+			d.unlockLaneForCompound(parentOrderID, heldLanes)
 		}
 		return nil
 	}
@@ -799,24 +820,113 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	// TerminalizeOrder. A hold is only fail-closed if the thing held can be
 	// released — the same rule that put the take above this line, applied to the
 	// take itself.
-	if err = d.lifecycle.MoveToSourcing(next, "dispatcher", "dispatching reshuffle step"); err != nil {
-		if IsConcurrentTransition(err) {
-			log.Printf("dispatch: child order %d → sourcing lost the CAS: %v — NOT dispatching "+
-				"(another caller won this child); its occupancy row is the winner's, leaving it in place",
-				next.ID, err)
+	//
+	// THE CLAIM IS TAKEN ONCE, NOT ONCE PER ATTEMPT. A leg being re-driven after a
+	// refused fleet create is ALREADY `sourcing` — it never gave the claim up, only
+	// its create failed — and `sourcing → sourcing` is not a legal edge. Claiming
+	// again would land in the arm below as an IllegalTransition, release the
+	// occupancy taken above and return, so the leg would never retry: the park
+	// would be a wedge wearing a cause. The claim is skipped, and the CAS in
+	// handoverToFleet (`sourcing → dispatched`, before the fleet call) is what
+	// arbitrates two callers over an already-claimed leg — which is the job it
+	// already does for every other arm.
+	if next.Status == StatusPending {
+		if err = d.lifecycle.MoveToSourcing(next, "dispatcher", "dispatching reshuffle step"); err != nil {
+			if IsConcurrentTransition(err) {
+				log.Printf("dispatch: child order %d → sourcing lost the CAS: %v — NOT dispatching "+
+					"(another caller won this child); its occupancy row is the winner's, leaving it in place",
+					next.ID, err)
+				return nil
+			}
+			log.Printf("dispatch: child order %d → sourcing refused: %v — NOT dispatching (the status "+
+				"write failed); releasing its lane occupancy", next.ID, err)
+			d.ReleaseLaneOccupancy(next.ID)
 			return nil
 		}
-		log.Printf("dispatch: child order %d → sourcing refused: %v — NOT dispatching (the status "+
-			"write failed); releasing its lane occupancy", next.ID, err)
-		d.ReleaseLaneOccupancy(next.ID)
-		return nil
 	}
 	log.Printf("dispatch: advancing compound order %d, step %d (seq %d)", parentOrderID, next.ID, next.Sequence)
 
 	// Build a synthetic envelope for the child dispatch
 	env := d.syntheticEnvelope(next.StationID)
-	d.dispatchToFleet(next, env, sourceNode, destNode)
+	if err := d.dispatchToFleet(next, env, sourceNode, destNode); err != nil {
+		d.parkLegOnFleetRefusal(parentOrderID, next, destNode, err)
+	}
 	return nil
+}
+
+// parkLegOnFleetRefusal is a dig leg's disposition when the fleet will not take
+// it: WAIT, with a cause, exactly as every other congestion in this system does.
+//
+// ── WHY THIS IS NOT A FAILURE ─────────────────────────────────────────────
+//
+// The leg used to be failed here, and a failed leg fails its parent through the
+// sibling cascade (HandleChildOrderFailure) — and the parent is the DEMAND. So a
+// fleet that was busy for a second terminated a line's request for material,
+// which is the wait-not-fail rule broken on the path that can least afford it:
+// `51a97a56` drew this exact distinction for the plain path ("a fleet that will
+// not take an order right now is congestion") and the compound caller was the
+// arm it did not reach.
+//
+// ── IT UNDOES THE CLAIM, BECAUSE NOTHING ELSE WILL ────────────────────────
+//
+// handoverToFleet CASes the leg to `dispatched` BEFORE it calls the fleet and
+// deliberately does not roll that back, leaving the order "claimed for its
+// caller to dispose of". This is that caller. A leg left at `dispatched` with no
+// vendor order is worse than a failed one: nothing tracks it (loadActiveOrders
+// selects on a non-empty vendor_order_id), no re-drive selects it, and the
+// abandon sweep DOES cover `dispatched` — so the quiet ending is a cancelled
+// child an hour later, which fails the parent anyway, just slower and with no
+// trace of why.
+//
+// `sourcing` is the rollback, and it is the same edge and the same helper the
+// plain path uses (DispatchDirect). It is NOT `pending`: {sourcing → pending} is
+// not in the transition table, and the entry-point write that would force it is
+// the shape lifecycle.go refuses by name ("an entry-point write that skips the
+// state machine is exactly what a future caller reaches for when a transition is
+// refused, and the refusal is usually right"). The re-drive was taught to see a
+// claimed-but-unsent leg instead — orders.AwaitingFleetSQL — which is where the
+// question belonged, since vendor_order_id was always the authority on it.
+//
+// ── THE RELEASERS ARE THE ONES THAT ALREADY EXIST ─────────────────────────
+//
+// GetNextChildOrder selects it again on the next advance, and
+// RedriveHeldCompoundLegs finds it on any lane-clearing event — both through
+// AwaitingFleetSQL. Occupancy is already released by commitToFleet's non-CAS
+// failure arm, so the leg holds nothing while it waits.
+//
+// What this does NOT give it is a floor: with no sibling in flight and a quiet
+// lane, nothing re-asks. That is the same edge-triggered gap F-22 names for the
+// gate evaluator, it is not this fix's to close, and it is strictly better than
+// what it replaces — a wait with a readable cause instead of a dead demand.
+func (d *Dispatcher) parkLegOnFleetRefusal(parentOrderID int64, leg *orders.Order, destNode *nodes.Node, cause error) {
+	// A LOST CAS OWNS NOTHING. Another caller won this leg and is dispatching it;
+	// rolling its status back or writing a cause on it would describe the loser's
+	// failure on the winner's live row. Same rule, same reason, as the occupancy
+	// release in commitToFleet.
+	if IsConcurrentTransition(cause) {
+		log.Printf("dispatch: compound %d child %d — fleet handover lost the CAS: %v (another caller "+
+			"owns this leg; leaving it alone)", parentOrderID, leg.ID, cause)
+		return
+	}
+
+	log.Printf("dispatch: compound %d child %d — the fleet refused the create: %v (parking the leg; "+
+		"the dig waits and the demand survives)", parentOrderID, leg.ID, cause)
+
+	if leg.Status == StatusDispatched {
+		if rbErr := d.lifecycle.MoveToSourcing(leg, "dispatcher", "fleet refused the create"); rbErr != nil {
+			log.Printf("dispatch: compound %d child %d could not be rolled back after a fleet refusal: %v "+
+				"(it is `dispatched` with no vendor order; the stuck sweep is the backstop)",
+				parentOrderID, leg.ID, rbErr)
+			return
+		}
+	}
+
+	dest := ""
+	if destNode != nil {
+		dest = destNode.Name
+	}
+	d.setQueueReason(leg, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate,
+		QueueParams{Destination: dest})
 }
 
 // handleStaleDigLeg disposes of a dig leg refused on REACHABILITY, and the
@@ -933,6 +1043,7 @@ func (d *Dispatcher) obstructionIsSpokenFor(leg *orders.Order, sourceNode *nodes
 // first parking keeps the lane packed without one, and the re-plan simply sees
 // fewer blockers than the first plan did.
 func (d *Dispatcher) dissolveCompound(parentOrderID int64, why string) error {
+	heldLanes := d.digLanesHeld(parentOrderID)
 	children, err := d.db.ListChildOrders(parentOrderID)
 	if err != nil {
 		// Without the child list nothing can be cancelled, so a dissolve cannot be
@@ -968,8 +1079,11 @@ func (d *Dispatcher) dissolveCompound(parentOrderID int64, why string) error {
 		d.lifecycle.CancelOrder(child, parent.StationID, reshuffleDissolveDetail)
 	}
 
-	// Before the parent can re-plan, and unconditionally: see above.
-	d.unlockLaneForCompound(parentOrderID)
+	// Before the parent can re-plan, and unconditionally: see above. The parent
+	// stays `reshuffling` through a dissolve, so nothing has terminalized it and
+	// the snapshot could equally be taken here — it is taken above the cancels for
+	// uniformity with the other teardowns, where the ordering IS load-bearing.
+	d.unlockLaneForCompound(parentOrderID, heldLanes)
 	return nil
 }
 
@@ -990,9 +1104,15 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 
 	// This handler fires once (engine wiring, on the failure event) with no
 	// retry, so an early return on a transient DB error must not leave the lane
-	// locked forever. Release it on every path — unlockLaneForCompound falls
-	// back to an owner-based release when the children can't be read.
-	defer d.unlockLaneForCompound(parentOrderID)
+	// locked forever. Release it on every path — the release is owner-scoped, so
+	// it does not depend on the children being readable.
+	//
+	// THE SNAPSHOT IS TAKEN NOW AND THE RELEASE IS DEFERRED, which is the whole
+	// point of splitting them: the deferred call runs after lifecycle.Fail has
+	// terminalized the parent and deleted its reservations, so a lane read inside
+	// it would find nothing and wake nobody.
+	heldLanes := d.digLanesHeld(parentOrderID)
+	defer d.unlockLaneForCompound(parentOrderID, heldLanes)
 
 	// Cancel remaining non-terminal children (including in-flight)
 	children, err := d.db.ListChildOrders(parentOrderID)
@@ -1030,6 +1150,9 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 // this method also cancels in-flight children (dispatched, in_transit, staged)
 // and their fleet orders. Called when an operator cancels a compound parent directly.
 func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, reason string) {
+	// Before the cancels, which can terminalize this parent's own rows out from
+	// under the release. See unlockLaneForCompound.
+	heldLanes := d.digLanesHeld(parent.ID)
 	children, err := d.db.ListChildOrders(parent.ID)
 	if err != nil {
 		log.Printf("dispatch: cancel compound children for order %d: %v", parent.ID, err)
@@ -1044,7 +1167,7 @@ func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, rea
 		d.lifecycle.CancelOrder(child, stationID, cancelReason)
 	}
 
-	d.unlockLaneForCompound(parent.ID)
+	d.unlockLaneForCompound(parent.ID, heldLanes)
 }
 
 // extendLaneLockForExposeMode runs in AdvanceCompoundOrder's terminal
@@ -1066,38 +1189,124 @@ func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, rea
 // already consumed the row.
 func (d *Dispatcher) extendLaneLockForExposeMode(_ int64, complexParent *orders.Order, _ []*orders.Order) {
 	if d.laneLock == nil {
-		d.unlockLaneForCompound(complexParent.ID)
+		d.unlockLaneForCompound(complexParent.ID, nil)
 		return
 	}
+	// The parent is being RESUMED here, not terminalized, so its rows are still
+	// there and the snapshot is honest. Taken before the release on both fallback
+	// arms for the same reason it is taken early everywhere else.
+	heldLanes := d.digLanesHeld(complexParent.ID)
 	row, err := d.db.GetPendingLaneExtensionByComplexParent(complexParent.ID)
 	if err != nil || row == nil {
 		log.Printf("dispatch: extendLaneLockForExposeMode: no pending_lane_extension for complex %d (%v); releasing lock unconditionally",
 			complexParent.ID, err)
-		d.unlockLaneForCompound(complexParent.ID)
+		d.unlockLaneForCompound(complexParent.ID, heldLanes)
 		return
 	}
-	d.extendLaneLockForComplexParent(complexParent, row.LaneID, row.TargetBinID, row.ExpectedFromNodeID)
+	// THE EXTENSION IS THE ABSENCE OF A RELEASE. There is nothing to arm: the row
+	// looked up above IS the listener, written at intake, and HandleBinTransitForLaneLock
+	// consumes it when the parent picks up. So all that happens on this path is
+	// that the lane is deliberately NOT unlocked, and the only thing worth doing
+	// here is saying so and checking the hold really is this parent's.
+	//
+	// This used to be a call to extendLaneLockForComplexParent, whose whole body
+	// was these three lines. A function named for an action it does not perform is
+	// worse than no function: it reads as the mechanism, so nobody looks for the
+	// real one, and deleting the call looks like deleting the extension.
+	if held := d.laneLock.LockedBy(row.LaneID); held != complexParent.ID {
+		// Defensive against a future path that releases or transfers the hold
+		// between intake and compound terminal. If it is not ours there is nothing
+		// to extend and nothing to release.
+		log.Printf("dispatch: lane %d not held by complex parent %d (held by %d); skipping lane-lock extension",
+			row.LaneID, complexParent.ID, held)
+		return
+	}
+	d.dbg("complex: lane lock extended through pickup for complex parent %d (lane %d, target bin %d, expected from-node %d)",
+		complexParent.ID, row.LaneID, row.TargetBinID, row.ExpectedFromNodeID)
 }
 
-// unlockLaneForCompound finds and unlocks the lane associated with a compound order's children.
-func (d *Dispatcher) unlockLaneForCompound(parentOrderID int64) {
+// unlockLaneForCompound ends a compound's claim on every lane it holds, and
+// re-evaluates each one it freed.
+//
+// ── A DIG LOCK DROPPING IS A LANE-CLEARING EVENT ──────────────────────────
+//
+// It is the one such event the gate's trigger set cannot produce for itself.
+// Every other trigger fires from a BIN or an ORDER changing, and a dig's last
+// leg emits all of them — the pickout, the placement, the child completions, the
+// parent's own terminal — strictly BEFORE this runs, because this is what the
+// completion arm does last. Each of those passes therefore ran while the lock
+// was still held, refused every dweller with lane-dig-active, and left nothing
+// to re-ask afterwards. A robot dwelling at the mark then waits for unrelated
+// traffic to wake the gate, which on a quiet lane never comes.
+//
+// Not window 3's bug, and older than it: any gate-staged order refused behind
+// ANY dig has had this gap since the evaluator landed. Window 3 makes it
+// load-bearing, because a heal dig's whole purpose is to release the dweller
+// that asked for it.
+//
+// ── IT ASKS THE LOCK, NOT THE CHILDREN ────────────────────────────────────
+//
+// This used to resolve the lane by walking the children and taking the first
+// one's source node, with a release-by-owner fallback underneath for when that
+// walk failed. The walk was archaeology — re-deriving at teardown a fact the
+// reservation row already IS — and it was wrong three ways at once:
+//
+//   - IT STOPPED AT THE FIRST LANE. `return` inside the loop, so a parent
+//     holding dig locks on more than one lane released one and leaked the rest.
+//     That is not hypothetical: F-19 measured order 1 holding three at once.
+//   - AFTER A RE-PLAN IT NAMED THE WRONG LANE. ListChildOrders returns every
+//     generation ordered by sequence, so the first child can belong to a
+//     superseded one and point at a lane this dig no longer holds — releasing
+//     nothing and evaluating a lane that did not change.
+//   - THE FALLBACK WOKE NOBODY. UnlockByOwner released the lock and returned;
+//     every dweller behind it lost its only releaser. The path that exists
+//     precisely for when things have gone wrong was the path with no wake-up.
+//
+// ── WHY THE LANES ARE PASSED IN RATHER THAN READ HERE ─────────────────────
+//
+// Because by the time this runs they can already be gone, and an empty answer
+// is indistinguishable from "held nothing". TerminalizeOrder deletes an order's
+// reservations in the same transaction as its status write
+// (TestMouth_TerminalizeOrderDeletesRow), and two of the three dispositions
+// above terminalize the parent BEFORE releasing its lane — so reading the rows
+// here returns nothing on exactly the paths that matter, and every dweller stays
+// parked. Found by TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking, which
+// is the test that exists for this failure.
+//
+// The disposition could have been reordered instead, and deliberately was not:
+// evaluating a lane can create a dig and dispatch its first leg synchronously,
+// and running that re-entrant machinery while the parent is still mid-teardown
+// trades a liveness bug for a concurrency one. The snapshot is taken first, the
+// parent reaches its final state, and the wake-up happens last.
+//
+// held may be empty — a compound that never took a lane, or a second call after
+// the first already released everything. Both are no-ops.
+//
+// Safe to evaluate from here: the evaluator's per-lane mutex is not held on any
+// path that reaches this function, and the pass is idempotent and
+// level-triggered, so a lane with nobody dwelling pays one query. It cannot
+// recur — the pass it drives can only propose another dig if bins still wall the
+// lane, and if any do the newly created dig takes the lock again and the next
+// pass stops at IsLocked.
+func (d *Dispatcher) unlockLaneForCompound(parentOrderID int64, held []int64) {
 	if d.laneLock == nil {
 		return
 	}
-	children, err := d.db.ListChildOrders(parentOrderID)
-	if err == nil {
-		for _, child := range children {
-			if child.SourceNode != "" {
-				sourceNode, err := d.db.GetNodeByDotName(child.SourceNode)
-				if err == nil && sourceNode.ParentID != nil {
-					d.laneLock.Unlock(*sourceNode.ParentID, parentOrderID)
-					return
-				}
-			}
-		}
-	}
-	// Could not resolve the lane from children (DB error, no children, or no
-	// child carries a source node). Release by owning order so a failed or
-	// unreadable compound can't strand the lane lock forever.
+	// Release whatever is still there. The snapshot is what gets evaluated: it
+	// was taken while the rows existed and is therefore the complete set, and the
+	// release can only ever return a subset of it.
 	d.laneLock.UnlockByOwner(parentOrderID)
+	for _, laneID := range held {
+		d.EvaluateLaneReleases(laneID)
+	}
+}
+
+// digLanesHeld snapshots the lanes a compound parent holds, for the teardown that
+// is about to release them. CALL IT BEFORE THE DISPOSITION — see
+// unlockLaneForCompound for why reading it afterwards answers nothing.
+func (d *Dispatcher) digLanesHeld(parentOrderID int64) []int64 {
+	if d.laneLock == nil {
+		return nil
+	}
+	return d.laneLock.LanesHeldBy(parentOrderID)
 }

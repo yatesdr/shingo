@@ -119,10 +119,17 @@ type laneHold struct {
 // resolveOrderLaneHolds computes the mouth holds a plain order needs from its
 // source and destination nodes: the source lane is outbound (the order picks
 // there), the destination lane is inbound (the order drops there). A node that is
-// not a direct lane slot (LaneForNode == nil) contributes no hold, and only lanes
-// whose group is configured for mouth enforcement are included — none/delegated
-// groups contribute nothing, so an unconfigured plant yields zero holds (the gate
-// is a no-op).
+// not a direct lane slot (LaneForNode == nil) contributes no hold.
+//
+// ONLY MARKED LANES CONTRIBUTE, and the mark is on the LANE. The rule used to be
+// written here as "only lanes whose group is configured for mouth enforcement —
+// none/delegated groups contribute nothing", which described a three-way
+// lane_enforcement property on the GROUP that no longer exists: the mode enum
+// was deleted, the mark is the enablement, and `delegated` went with it. The code
+// below has asked laneIsGated — does this lane carry a gate point — since then.
+//
+// The consequence it stated is unchanged and still worth stating: an unmarked
+// plant yields zero holds, so the gate is a no-op at both plants today.
 func (d *Dispatcher) resolveOrderLaneHolds(sourceNode, destNode *nodes.Node) ([]laneHold, error) {
 	var holds []laneHold
 	add := func(n *nodes.Node, mode reservations.Mode) error {
@@ -173,8 +180,11 @@ func (d *Dispatcher) acquireOrderLanes(orderID int64, holds []laneHold) (admitte
 		if aErr := reservations.AcquireLanes(d.db.DB, orderID, mode, laneGateReservedBy, lanes...); aErr != nil {
 			if errors.Is(aErr, reservations.ErrReservationConflict) {
 				// Roll back any holds taken for an earlier mode so the acquire is
-				// all-or-nothing across the order's lanes.
-				_ = reservations.ReleaseLanesByOwner(d.db.DB, orderID)
+				// all-or-nothing across the order's lanes. The freed lanes are
+				// discarded deliberately: nothing was ever admitted into them, so no
+				// dweller is waiting on this release — the caller parks and the
+				// ordinary triggers re-ask.
+				_, _ = reservations.ReleaseLanesByOwner(d.db.DB, orderID)
 				return false, nil
 			}
 			return false, aErr
@@ -428,11 +438,55 @@ func (d *Dispatcher) causeForLaneHolds(orderID int64, holds []laneHold) QueueCau
 //
 // Order-id only, deliberately: laneOwnerFor already answers the parent question,
 // so nothing here needs the order struct and the common path costs no extra read.
+//
+// ── IT IS NOW A CALLER, NOT A SIBLING ─────────────────────────────────────
+//
+// The two comparisons below used to be written out here, and that made this
+// one of three places answering "does a dig hold exclude this order" — the
+// other two being store.ListChildNodesUnlocked (which exempted nobody) and
+// dig planning (which did not ask). They disagreed, and the disagreement
+// arrested the ring: see store/reservations/dig_exclusion.go.
+//
+// The self arm is no longer special-cased ahead of the parent read. It saved
+// one GetOrder on a path that has just done a reservations round trip for
+// DigOwner, and buying that back would mean writing half the predicate out
+// again right underneath a comment saying not to.
 func (d *Dispatcher) ownsDig(orderID, digOwner int64) bool {
-	if digOwner == orderID {
-		return true
+	return !d.digAsker(orderID).ExcludedBy(digOwner)
+}
+
+// digAsker resolves an order ID into the (self, lane owner) pair the dig-lock
+// predicate takes, reading the order to find its parent.
+//
+// Callers that already hold the order struct use digAskerFor and skip the
+// read. The two are one rule: this one loads and delegates.
+func (d *Dispatcher) digAsker(orderID int64) reservations.DigAsker {
+	o, err := d.db.GetOrder(orderID)
+	if err != nil || o == nil {
+		// Same disposition laneOwnerFor takes on an unreadable order: treat it
+		// as its own owner. It narrows the exemption to the order itself, which
+		// is the conservative direction — a missed exemption is a wait, an
+		// invented one is entry into a lane somebody else is excavating.
+		return reservations.AskerFor(orderID, orderID)
 	}
-	return d.laneOwnerFor(orderID) == digOwner
+	return digAskerFor(o)
+}
+
+// digAskerFor builds the dig-lock asker from an order already in hand.
+//
+// THE RULE IS "parent, or self when there is none", and it is written once. It
+// matches laneOwnerFor because it is the same question about lane ownership —
+// laneOwnerFor exists for callers who have only an id and must pay a read for
+// the answer, which most resolution sites do not.
+func digAskerFor(o *orders.Order) reservations.DigAsker {
+	if o == nil {
+		return reservations.Anyone
+	}
+	owner := o.ID
+	if o.ParentOrderID != nil {
+		owner = *o.ParentOrderID
+	}
+	return reservations.AskerFor(o.ID, owner)
 }
 
 // digRefusalFor WAS HERE AND IS NOW admission (admission.go).
@@ -589,7 +643,8 @@ func (d *Dispatcher) laneDisplayName(holds []laneHold) string {
 // AcquireLanesForOrder must not linger and block the lane. Owner-scoped; a no-op
 // when the order holds none.
 func (d *Dispatcher) ReleaseLanesForOrder(orderID int64) error {
-	return reservations.ReleaseLanesByOwner(d.db.DB, orderID)
+	_, err := reservations.ReleaseLanesByOwner(d.db.DB, orderID)
+	return err
 }
 
 // laneOwnerFor resolves the order that OWNS a lane mouth row for a block: the

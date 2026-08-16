@@ -237,7 +237,7 @@ func TestGateChoreo_RetrieveContendedHoldsThenEvaluatorReleases(t *testing.T) {
 // With a single leg there is no sibling, Hold B is satisfied, the leg reaches the
 // fleet, and the only thing that can hold it at the gate is its own parent's dig.
 //
-// The leg delivers to a LINE, which is target-node reshuffle mode
+// The leg delivers to a LINE, which is the shape a simple retrieve dig takes
 // (PlanReshuffleToTarget): the blocker leaves the lane. That keeps the case about
 // the SOURCE gate — an expose-mode leg dropping into a shuffle slot in the same
 // lane would be spliced ahead of its DROPOFF and take gateEntryVerdict's store

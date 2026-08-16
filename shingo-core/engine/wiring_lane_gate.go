@@ -38,8 +38,11 @@ func (e *Engine) wireLaneGateHandlers() {
 				// are the events that actually free a lane, whoever caused it.
 				//
 				// Separate call rather than a branch inside the evaluator because
-				// the evaluator is gate_choreography-only while this refusal is
-				// mode-independent — see RedriveHeldCompoundLegs.
+				// the two act on different POPULATIONS and do different things: the
+				// evaluator appends a tail to a waybill the fleet already holds,
+				// this dispatches a leg for the first time. (It is NOT because the
+				// evaluator is gate_choreography-only — that gate was deleted by
+				// F-05. See RedriveHeldCompoundLegs.)
 				e.dispatcher.RedriveHeldCompoundLegs(id)
 			}
 		}

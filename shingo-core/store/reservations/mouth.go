@@ -232,13 +232,67 @@ func ReleaseLaneHandoff(db Execer, owner, laneID int64) error {
 
 // ReleaseLanesByOwner deletes all of owner's mouth rows (any mode, any lane) —
 // the row dual of LaneLock.UnlockByOwner's cleanup path. Idempotent.
-func ReleaseLanesByOwner(db Execer, owner int64) error {
-	_, err := db.Exec(
-		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind='mouth'`, owner)
+//
+// IT RETURNS THE LANES IT FREED, and that is the whole reason it is a query
+// rather than an Exec. Releasing a lane is a lane-CLEARING event: an order
+// dwelling at that lane's mark is waiting on exactly this, and the release is
+// the last thing that happens, so every event that could have re-asked has
+// already fired while the lane was still held. A caller that cannot name what it
+// just freed cannot wake anybody, and the dwellers wait for unrelated traffic —
+// which on a quiet lane never comes.
+//
+// DELETE ... RETURNING rather than a read followed by a delete, on the same
+// reasoning ConsumePendingLaneExtensionByBin states: one statement means the set
+// released and the set reported cannot come apart.
+//
+// The ids are node ids of LANES (mouth rows are keyed on the lane node), in no
+// particular order. A caller with nothing to wake ignores them.
+func ReleaseLanesByOwner(db Queryer, owner int64) ([]int64, error) {
+	rows, err := db.Query(
+		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind='mouth' RETURNING node_id`, owner)
 	if err != nil {
-		return fmt.Errorf("reservations release-lanes-by-owner: %w", err)
+		return nil, fmt.Errorf("reservations release-lanes-by-owner: %w", err)
 	}
-	return nil
+	defer rows.Close()
+
+	var freed []int64
+	for rows.Next() {
+		var laneID int64
+		if err := rows.Scan(&laneID); err != nil {
+			return nil, fmt.Errorf("reservations release-lanes-by-owner scan: %w", err)
+		}
+		freed = append(freed, laneID)
+	}
+	return freed, rows.Err()
+}
+
+// LanesHeldByOwner returns the lane node ids this order currently holds a mouth
+// row on, in no particular order.
+//
+// It is the SNAPSHOT half of a teardown, and it exists because the release is
+// not the only thing that drops these rows: TerminalizeOrder deletes an order's
+// reservations in the same transaction as its status write, so a compound whose
+// parent has already been failed or confirmed owns nothing by the time its
+// unlock runs. A caller that needs to know which lanes it just freed — in order
+// to wake whoever was waiting behind them — must ask BEFORE the disposition,
+// not after.
+func LanesHeldByOwner(q Queryer, owner int64) ([]int64, error) {
+	rows, err := q.Query(
+		`SELECT node_id FROM reservations WHERE order_id=$1 AND resource_kind='mouth'`, owner)
+	if err != nil {
+		return nil, fmt.Errorf("reservations lanes-held-by-owner: %w", err)
+	}
+	defer rows.Close()
+
+	var held []int64
+	for rows.Next() {
+		var laneID int64
+		if err := rows.Scan(&laneID); err != nil {
+			return nil, fmt.Errorf("reservations lanes-held-by-owner scan: %w", err)
+		}
+		held = append(held, laneID)
+	}
+	return held, rows.Err()
 }
 
 // DigHold is one active dig mouth row: the lane node and its owning order.

@@ -125,25 +125,55 @@ func (d *Dispatcher) gateTargetForLane(lane *nodes.Node) (laneGateTarget, bool, 
 //     plan with no gated lane at all is not this function's problem and passes
 //     through untouched.
 //
-//  2. ONE GATED LANE PER PLAN. A second touch of the SAME lane is fine and
-//     expected - a plan can drop into a slot and pick out of another. A touch of
-//     a DIFFERENT gated lane is refused, because releasing per-wait needs
-//     machinery this deliberately does not build (SYNTH-round6: per-wait release
-//     is the plan-rewriting layer; earn it if a real plan ever needs it). The
-//     second lane's protection is pre-dispatch admission, which is why the
-//     unification landed first.
+//  2. A WAIT PER GATED LANE THE PLAN ENTERS. This rule USED TO BE "one gated lane
+//     per plan", with a second one refused outright, and the refusal was terminal
+//     — a swap whose pickup sits in one marked lane and whose drop-off sits in
+//     another was FAILED at dispatch. That is demand terminated for a request
+//     with nothing wrong with it, which is the one thing the wait-not-fail law
+//     forbids, and the shape becomes ordinary the moment a plant marks a second
+//     lane.
 //
-//  3. THE STEP AFTER THE WAIT MUST BE THE ENTRY. Asserted after the insert rather
-//     than assumed from the loop, so a future edit that moves the index fails the
-//     dispatch loudly instead of shipping a wait that gates nothing.
+//     What the refusal was protecting was never expressible-per-plan: it was
+//     "releasing per-wait is not built". It is built, and it always was —
+//     splitSegment already walks to an arbitrary wait index and reports whether
+//     more remain, appendSegmentAndAdvance already leaves an order unsealed when
+//     they do, and IsGateStaged already reads the wait the order is parked AT
+//     rather than assuming there is one. The assert was the only thing standing
+//     in front of machinery that could already do this; nothing per-wait had to
+//     be added, so the loop below is the whole of the change.
+//
+//     Each wait is released independently by its OWN lane's admission, on that
+//     lane's own events. The robot picks in the first lane, drives to the second
+//     lane's mark, and dwells there until that lane is safe.
+//
+//     A SECOND TOUCH OF THE SAME LANE IN A ROW IS STILL ONE WAIT — a plan can
+//     drop into a slot and pick out of another, and the robot never left. What
+//     starts a new wait is a lane CHANGE, which is also why a step outside any
+//     gated lane resets the tracking: a plan that leaves lane A for the line and
+//     comes back is re-entering, and re-entering is what a gate is for.
+//
+//  3. THE STEP AFTER EACH WAIT MUST BE THE ENTRY IT GATES. Asserted after the
+//     inserts rather than assumed from the loop, so a future edit that moves an
+//     index fails the dispatch loudly instead of shipping a wait that gates
+//     nothing.
 //
 // Returns the plan unchanged with ok=false when no gated lane is on its path,
-// which is every order at both plants today.
+// which is every order at both plants today. The laneGateTarget returned is the
+// FIRST gate — the one the create sends the robot to, and the only one the
+// dispatch-time valve is about.
 func (d *Dispatcher) spliceLaneWait(steps []resolvedStep) ([]resolvedStep, laneGateTarget, bool, error) {
+	// gate is one inserted wait: where it goes, and which lane it guards.
+	type gate struct {
+		idx    int
+		target laneGateTarget
+	}
 	var (
-		target   laneGateTarget
-		entryIdx = -1
-		blankAt  = -1
+		gates   []gate
+		blankAt = -1
+		// inside is the gated lane the robot is currently in, as the walk sees it.
+		// 0 means "not in a gated lane", which is both the start state and what a
+		// step somewhere else resets it to.
+		inside int64
 	)
 	for i, s := range steps {
 		if s.Action != protocol.ActionPickup && s.Action != protocol.ActionDropoff {
@@ -157,13 +187,15 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep) ([]resolvedStep, laneG
 		}
 		node, err := d.db.GetNodeByDotName(s.Node)
 		if err != nil || node == nil {
-			continue // not a Core node we can classify; the claim path surfaces it
+			inside = 0 // somewhere we cannot classify is somewhere else
+			continue   // not a Core node we can classify; the claim path surfaces it
 		}
 		lane, err := d.db.LaneForNode(node.ID)
 		if err != nil {
 			return nil, laneGateTarget{}, false, fmt.Errorf("splice: resolve lane for %q: %w", s.Node, err)
 		}
 		if lane == nil {
+			inside = 0
 			continue
 		}
 		t, gated, err := d.gateTargetForLane(lane)
@@ -171,66 +203,80 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep) ([]resolvedStep, laneG
 			return nil, laneGateTarget{}, false, err
 		}
 		if !gated {
+			inside = 0
 			continue
 		}
-		if entryIdx < 0 {
-			target, entryIdx = t, i
-			continue
+		if lane.ID == inside {
+			continue // still in the lane the last wait let it into
 		}
-		if lane.ID != target.lane.ID {
-			return nil, laneGateTarget{}, false, fmt.Errorf(
-				"splice: plan touches two gated lanes (%s at step %d, %s at step %d) - "+
-					"one gated lane per plan; releasing per-wait is not built",
-				target.lane.Name, entryIdx, lane.Name, i)
-		}
+		gates = append(gates, gate{idx: i, target: t})
+		inside = lane.ID
 	}
-	if entryIdx < 0 {
+	if len(gates) == 0 {
 		return steps, laneGateTarget{}, false, nil // nothing gated on this path
 	}
-	if blankAt >= 0 && blankAt < entryIdx {
+	// Rule 1, against the LAST gate rather than the first: a blank anywhere ahead
+	// of a gated entry makes the plan's lane ORDER undecidable, and the order is
+	// what the waits encode. Same conservatism as before, applied to the whole
+	// sequence instead of to a single entry.
+	if last := gates[len(gates)-1].idx; blankAt >= 0 && blankAt < last {
 		return nil, laneGateTarget{}, false, fmt.Errorf(
 			"splice: step %d has no node yet and precedes the gated entry at step %d - "+
-				"the lane a plan enters first cannot be decided before its steps are concrete",
-			blankAt, entryIdx)
+				"the lanes a plan enters cannot be sequenced before its steps are concrete",
+			blankAt, last)
 	}
 
-	out := make([]resolvedStep, 0, len(steps)+1)
-	out = append(out, steps[:entryIdx]...)
-	out = append(out, resolvedStep{
-		Action:   protocol.ActionWait,
-		Node:     target.gatePoint,
-		WaitKind: WaitKindLane,
-		WaitLane: target.lane.ID,
-	})
-	out = append(out, steps[entryIdx:]...)
+	out := make([]resolvedStep, 0, len(steps)+len(gates))
+	next := 0
+	for i, s := range steps {
+		if next < len(gates) && gates[next].idx == i {
+			out = append(out, resolvedStep{
+				Action:   protocol.ActionWait,
+				Node:     gates[next].target.gatePoint,
+				WaitKind: WaitKindLane,
+				WaitLane: gates[next].target.lane.ID,
+			})
+			next++
+		}
+		out = append(out, s)
+	}
 
-	// Rule 3. The wait is at entryIdx; the step it gates is the one after it.
-	if err := d.assertGatesTheEntry(out, entryIdx, target); err != nil {
+	if err := d.assertEachWaitGatesItsEntry(out); err != nil {
 		return nil, laneGateTarget{}, false, err
 	}
-	return out, target, true, nil
+	return out, gates[0].target, true, nil
 }
 
-// assertGatesTheEntry checks that the step following the inserted wait really
-// enters the lane the wait names. A mis-splice would ship a robot into a gated
-// lane with its wait somewhere harmless - a gate that gates nothing, which reads
-// as working.
-func (d *Dispatcher) assertGatesTheEntry(steps []resolvedStep, waitIdx int, target laneGateTarget) error {
-	if waitIdx+1 >= len(steps) {
-		return fmt.Errorf("splice: wait inserted at %d with no step after it", waitIdx)
-	}
-	next := steps[waitIdx+1]
-	node, err := d.db.GetNodeByDotName(next.Node)
-	if err != nil || node == nil {
-		return fmt.Errorf("splice: step after the wait (%q) does not resolve: %v", next.Node, err)
-	}
-	lane, err := d.db.LaneForNode(node.ID)
-	if err != nil {
-		return fmt.Errorf("splice: resolve lane for %q: %w", next.Node, err)
-	}
-	if lane == nil || lane.ID != target.lane.ID {
-		return fmt.Errorf("splice: wait names lane %s but the step after it (%q) is in %s - "+
-			"the wait would gate nothing", target.lane.Name, next.Node, nodeName(lane))
+// assertEachWaitGatesItsEntry checks that the step following every lane wait
+// really enters the lane that wait names. A mis-splice would ship a robot into a
+// gated lane with its wait somewhere harmless - a gate that gates nothing, which
+// reads as working.
+//
+// It walks the whole plan rather than checking one index, because a plan can now
+// carry several waits and a fault in the second would be invisible to a check
+// aimed at the first. Only WaitKindLane waits are examined: an operator wait is
+// somebody else's and gates nothing by design.
+func (d *Dispatcher) assertEachWaitGatesItsEntry(steps []resolvedStep) error {
+	for i, s := range steps {
+		if s.Action != protocol.ActionWait || s.WaitKind != WaitKindLane {
+			continue
+		}
+		if i+1 >= len(steps) {
+			return fmt.Errorf("splice: lane wait at %d with no step after it", i)
+		}
+		next := steps[i+1]
+		node, err := d.db.GetNodeByDotName(next.Node)
+		if err != nil || node == nil {
+			return fmt.Errorf("splice: step after the wait (%q) does not resolve: %v", next.Node, err)
+		}
+		lane, err := d.db.LaneForNode(node.ID)
+		if err != nil {
+			return fmt.Errorf("splice: resolve lane for %q: %w", next.Node, err)
+		}
+		if lane == nil || lane.ID != s.WaitLane {
+			return fmt.Errorf("splice: the wait at step %d names lane %d but the step after it (%q) "+
+				"is in %s - the wait would gate nothing", i, s.WaitLane, next.Node, nodeName(lane))
+		}
 	}
 	return nil
 }
@@ -390,11 +436,36 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 	// Claim, commit, name it - see fleet_handover.go. It also sets
 	// order.VendorOrderID, which the valve below relies on: IsGateStaged requires
 	// it, and the tail is appended from this struct.
-	// Through the shared seam with NO entering nodes, and that is the whole
-	// statement this arm makes: the create ends at the wait point OUTSIDE the
-	// corridor, so there is no presence to record yet. The row is taken by
-	// appendGateTail below, which is where entry actually happens.
-	if err := d.commitToFleet(order, req, "dispatcher"); err != nil {
+	//
+	// ── IT DECLARES THE PRE-WAIT SEGMENT'S NODES, AND IT USED TO DECLARE NONE ──
+	//
+	// The old statement here was "the create ends at the wait point OUTSIDE the
+	// corridor, so there is no presence to record yet". That is true of the GATED
+	// lane and false of everything else the create does on the way to it. A plan is
+	// spliced immediately before the step entering the gated lane, so every step
+	// BEFORE that goes out in this create — and those steps can work another lane
+	// entirely.
+	//
+	// A reshuffle leg is the ordinary case rather than a corner: it picks a blocker
+	// out of one lane and parks it in another, and if only the PARK lane is marked,
+	// the create sends a robot into the unmarked pickup lane holding nothing. That
+	// is F-12's shape exactly — a robot inside a corridor that admission reports as
+	// empty to the next entrant — reached through the gated door instead of the
+	// complex one.
+	//
+	// FOUND BY THE SEAM ASSERTION, ON THE RIG, WITHIN MINUTES. It refused the
+	// dispatch of a dig leg (LSD_011 in LS_D3 → LSD_004 in the marked LS_D1), which
+	// failed the leg, the parent, and the two-robot swap behind it. The guard was
+	// right and the arm was wrong: the fix is to declare, not to relax the guard.
+	// It is also why "all four arms already satisfied it" was too strong when the
+	// guard landed — the characterization plans had no pre-wait lane touch, and the
+	// plant produced one immediately.
+	//
+	// planNodes is the same walk admitPlan and the complex arm use, so the read and
+	// the write see one set. The gate point contributes nothing: it is a property,
+	// never resolved against nodes, which is what still makes the gated lane's own
+	// row appendGateTail's to take.
+	if err := d.commitToFleet(order, req, "dispatcher", d.planNodes(preWait)...); err != nil {
 		return "", err
 	}
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, order.SourceNode, order.DeliveryNode)

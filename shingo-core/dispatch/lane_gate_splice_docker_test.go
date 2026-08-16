@@ -190,23 +190,37 @@ func TestSplice_FenceHoldsOnASplicedPlan(t *testing.T) {
 	}
 }
 
-// TestSplice_RefusesTwoGatedLanesInOnePlan pins rule 2.
+// TestSplice_TwoGatedLanesGetOneWaitEach pins rule 2, AND IT REPLACES A TEST THAT
+// ASSERTED THE OPPOSITE.
 //
-// Per-wait release machinery is the plan-rewriting layer the design declined to
-// build, so a plan that would need it is refused at splice time rather than
-// shipped with only its first lane gated. The second lane's protection is
-// pre-dispatch admission — which is why the unification landed before this.
+// TestSplice_RefusesTwoGatedLanesInOnePlan stood here and pinned the refusal: a
+// plan touching two marked lanes was rejected at splice time, which failed the
+// order, which terminated the demand. Its stated justification was that "per-wait
+// release machinery is the plan-rewriting layer the design declined to build".
 //
-// MUTATION (verified): drop the different-lane check and keep the first target.
-// The plan splices, and the second lane is entered ungated.
-func TestSplice_RefusesTwoGatedLanesInOnePlan(t *testing.T) {
+// That justification did not survive being looked at. Nothing per-wait needed
+// building: splitSegment already walks to an arbitrary wait index and reports
+// whether more remain, appendSegmentAndAdvance already computes complete =
+// !moreWaits, and IsGateStaged already reads the wait the order is parked AT. The
+// assert was standing in front of machinery that could already do this — and it
+// was standing there terminating demand for a legitimately shaped request, which
+// the wait-not-fail law forbids in the one place that was supposed to enforce it.
+//
+// So the plan gets a wait per lane, each released by its own lane's admission,
+// and the FIRST is what the create sends the robot to.
+//
+// MUTATION (run 2026-08-10): make the splice loop `break` after the first gate.
+// Only lane A gets a wait, the robot drives into lane B with no gate at all, and
+// the second-wait assertion below fires — which is the failure the gate exists to
+// prevent, shipped by the thing that installs it.
+func TestSplice_TwoGatedLanesGetOneWaitEach(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	_, a0, _ := gateChoreoLane(t, db, "SPL-2A", "SPL-2A-GATE")
-	_, b0, _ := gateChoreoLane(t, db, "SPL-2B", "SPL-2B-GATE")
+	laneA, a0, _ := gateChoreoLane(t, db, "SPL-2A", "SPL-2A-GATE")
+	laneB, b0, _ := gateChoreoLane(t, db, "SPL-2B", "SPL-2B-GATE")
 	line := lineNode(t, db, "SPL-2-LINE")
 
 	plan := []resolvedStep{
@@ -215,10 +229,51 @@ func TestSplice_RefusesTwoGatedLanesInOnePlan(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: b0.Name},
 		{Action: protocol.ActionDropoff, Node: line.Name},
 	}
-	if _, _, _, err := d.spliceLaneWait(plan); err == nil {
-		t.Fatal("a plan touching TWO gated lanes was spliced. Only the first lane would get a wait, " +
-			"so the robot enters the second with no gate at all — which is the failure the gate exists " +
-			"to prevent, shipped by the thing that installs it")
+	spliced, target, gated, err := d.spliceLaneWait(plan)
+	if err != nil {
+		t.Fatalf("a swap picking in one marked lane and dropping in another is an ordinary request "+
+			"and must splice: %v", err)
+	}
+	if !gated {
+		t.Fatal("a plan entering two marked lanes is gated")
+	}
+	if target.lane.ID != laneA {
+		t.Errorf("the create's target is lane %d, want the FIRST gate %d — the robot is sent to one "+
+			"mark, not to both at once", target.lane.ID, laneA)
+	}
+
+	var waits []resolvedStep
+	for i, s := range spliced {
+		if s.Action != protocol.ActionWait || s.WaitKind != WaitKindLane {
+			continue
+		}
+		waits = append(waits, s)
+		if i+1 >= len(spliced) {
+			t.Fatalf("wait at %d gates nothing", i)
+		}
+	}
+	if len(waits) != 2 {
+		t.Fatalf("spliced plan carries %d lane wait(s), want 2 — one per marked lane it enters. "+
+			"Plan: %+v", len(waits), spliced)
+	}
+	if waits[0].WaitLane != laneA || waits[0].Node != "SPL-2A-GATE" {
+		t.Errorf("first wait names lane %d at %q, want %d at SPL-2A-GATE", waits[0].WaitLane, waits[0].Node, laneA)
+	}
+	if waits[1].WaitLane != laneB || waits[1].Node != "SPL-2B-GATE" {
+		t.Errorf("second wait names lane %d at %q, want %d at SPL-2B-GATE", waits[1].WaitLane, waits[1].Node, laneB)
+	}
+	// Each wait must sit immediately before the step that enters ITS lane. The
+	// splice asserts this itself; this is the assertion on the assertion, because
+	// a wait in the wrong place reads exactly like a wait in the right one.
+	//
+	// The plan opens with a pickup at the LINE, so the inserted waits land at 1 and
+	// 3 and their entries at 2 and 4 — the point being that neither wait goes to
+	// the front of the plan. Everything an order can do before it dwells, it does.
+	if spliced[2].Node != a0.Name || spliced[4].Node != b0.Name {
+		t.Errorf("waits are not immediately before their entries: %+v", spliced)
+	}
+	if spliced[0].Node != line.Name {
+		t.Errorf("step 0 is %+v, want the line pickup ahead of both gates", spliced[0])
 	}
 }
 

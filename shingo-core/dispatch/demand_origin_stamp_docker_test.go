@@ -293,8 +293,13 @@ func TestOriginPropagation_CompoundChildrenInheritNoDemandToo(t *testing.T) {
 }
 
 // TestOriginPropagation_DigChildrenStampAtTheSeamNotTheCaller pins the stamp on
-// CreateCompoundChildrenOnly ITSELF — the single orders INSERT every derivative
-// order is born from — rather than on CreateCompoundOrder, which merely calls it.
+// writeCompoundChildren ITSELF — the single orders INSERT every derivative order
+// is born from — rather than on CreateCompoundOrder, which merely calls it.
+//
+// It used to enter through CreateCompoundChildrenOnly, which was a wrapper over
+// this same seam for parents already at Reshuffling. That method is deleted (one
+// compound-creation path), and entering at writeCompoundChildren is what the
+// test wanted all along: the seam, not a caller of it.
 //
 // THIS TEST REPLACED THE RESTORE-SYNTHETIC PROOF, and the substitution is not
 // like-for-like. The original was derivative site 2 of 2: the synthetic restore
@@ -307,9 +312,9 @@ func TestOriginPropagation_CompoundChildrenInheritNoDemandToo(t *testing.T) {
 // So this asserts what still has teeth on the surviving dig path. Site 1
 // (TestOriginPropagation_CompoundChildrenCarryTHEPARENTSOriginID) enters through
 // CreateCompoundOrder, which means the stamp could in principle be moved up into
-// that wrapper and site 1 would stay green while CreateCompoundChildrenOnly — a
-// method with its own contract, documented for parents already Reshuffling —
-// silently stopped stamping. Entering at the seam is what closes that.
+// that wrapper and site 1 would stay green while the seam underneath it silently
+// stopped stamping — leaving every future caller of writeCompoundChildren to
+// inherit the gap. Entering at the seam is what closes that.
 //
 // The decoy carries a DIFFERENT origin so a child inheriting from the wrong row
 // fails on the value, not on a presence check.
@@ -325,9 +330,9 @@ func TestOriginPropagation_DigChildrenStampAtTheSeamNotTheCaller(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(decoy), "create decoy")
 
-	// Written directly at Reshuffling — the state CreateCompoundChildrenOnly
-	// exists to serve, and the reason it is a separate method from
-	// CreateCompoundOrder (whose BeginReshuffle would be a no-op transition).
+	// Written directly at Reshuffling. writeCompoundChildren touches the parent's
+	// status not at all — that is its caller's job — so the seam can be entered
+	// against a parent in any state, which is what makes it the seam.
 	parent := &orders.Order{
 		EdgeUUID: "uuid-dig-seam-origin", StationID: "line-1",
 		OrderType: OrderTypeComplex, Status: StatusReshuffling,
@@ -341,7 +346,7 @@ func TestOriginPropagation_DigChildrenStampAtTheSeamNotTheCaller(t *testing.T) {
 	testutil.MustNoErr(t, err, "plan unbury")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	testutil.MustNoErr(t, d.CreateCompoundChildrenOnly(parent, plan), "CreateCompoundChildrenOnly")
+	testutil.MustNoErr(t, d.writeCompoundChildren(parent, plan), "writeCompoundChildren")
 
 	children, err := db.ListChildOrders(parent.ID)
 	testutil.MustNoErr(t, err, "list dig children")

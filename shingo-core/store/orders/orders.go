@@ -146,9 +146,56 @@ func ListChildren(db *sql.DB, parentOrderID int64) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
-// GetNextChild returns the next pending child order for a parent.
+// AwaitingFleetSQL renders "Core has NOT yet handed this leg to the fleet" —
+// the one spelling of the question every compound re-drive asks.
+//
+// ── WHY IT IS A FUNCTION AND NOT A LITERAL AT EACH QUERY ──────────────────
+//
+// The question had three spellings and one of them was the authority:
+//
+//   - GetNextChild                 status='pending'
+//   - ListHeldLegParentsInLane     status='pending'
+//   - the exactly-once guard       vendor_order_id != ""  (compound.go)
+//
+// The third is the real one, and its own comment says so: vendor_order_id "is
+// non-empty once and only once a child has been handed to the fleet, it
+// survives a crash, and it does not depend on what any sibling is doing." The
+// other two used a STATUS as a proxy for it, and the proxy was exact only
+// because nothing ever left `pending` without reaching the fleet.
+//
+// A leg whose fleet CREATE is refused breaks that. It has been claimed
+// (pending → sourcing) and rolled back out of `dispatched`, so it sits at
+// `sourcing` holding no vendor order — not yet with the fleet, and invisible to
+// both status-keyed queries. Terminating it was the old answer (the demand died
+// on a robot-system blip); parking it is the new one, and parking only works if
+// the re-drives can still see it.
+//
+// The status half stays, narrowed to its honest meaning: IsPreDispatch is
+// "still in Core's planning space and has not yet been sent to the fleet
+// vendor", which is this question exactly. A compound child is never `queued`,
+// so on this population the set is {pending, sourcing} — but it is DERIVED from
+// the predicate rather than hand-listed, so a status added to the pre-dispatch
+// family cannot leave one of these queries behind.
+//
+// Rendered rather than written out, on the DigExclusionSQL precedent: there is
+// no second place where the comparison is spelled.
+//
+// alias is the table alias the caller uses ("" for an unaliased `orders`).
+func AwaitingFleetSQL(alias string) string {
+	q := ""
+	if alias != "" {
+		q = alias + "."
+	}
+	return fmt.Sprintf("%sstatus IN (%s) AND COALESCE(%svendor_order_id, '') = ''",
+		q, protocol.PreDispatchStatusSQLList(), q)
+}
+
+// GetNextChild returns the next child order a compound has not yet handed to
+// the fleet — see AwaitingFleetSQL for why that is not the same as `pending`.
 func GetNextChild(db *sql.DB, parentOrderID int64) (*Order, error) {
-	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM orders WHERE parent_order_id=$1 AND status='pending' ORDER BY sequence LIMIT 1`, SelectCols), parentOrderID)
+	row := db.QueryRow(fmt.Sprintf(
+		`SELECT %s FROM orders WHERE parent_order_id=$1 AND %s ORDER BY sequence LIMIT 1`,
+		SelectCols, AwaitingFleetSQL("")), parentOrderID)
 	return ScanOrder(row)
 }
 

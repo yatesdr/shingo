@@ -166,6 +166,30 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		//     there is no episode; blank would land it in the bucket that means
 		//     "we lost a demand link".
 		{"bin move", "engine/bin_move.go", "a person moving one bin from where it is to somewhere else — the operator names the bin, the engineer names the node"},
+		// The first door NOBODY opens. Every other entry on this list starts with
+		// a person or an Edge station; this one starts with the plant noticing
+		// that it has stalled itself — a robot dwelling at a lane's mark behind a
+		// bin no order names and no dig is planned for (F-11). It mints the parent
+		// that OWNS the excavation, because the dweller cannot: {staged →
+		// reshuffling} is not a legal transition and should not become one, so the
+		// demand keeps dwelling and something else does the digging.
+		//
+		// The three questions this list exists to ask, answered:
+		//  1. Projects to the Edge? No. It writes the row directly rather than
+		//     routing through admitOrder — same answer as compound children, and
+		//     for the same reason: this is Core moving Core's own furniture, and
+		//     no station is waiting to hear about it.
+		//  2. Needs the dropoff-capacity gate? Not at this row. The parent names
+		//     endpoints for the terminal-event lane lookup and never dispatches;
+		//     the LEGS are what move, and they are compound children, which take
+		//     the gate through findShuffleSlots → shuffleSlotFree →
+		//     CheckDropoffCapacity when their park slot is chosen.
+		//  3. What origin_class? INHERITED from the dwelling order, id and class
+		//     both — never no_demand. The dig exists because that demand could not
+		//     move, so it is part of what that demand cost the cell. Stamping it
+		//     no_demand would be cheaper and would quietly move the cost of
+		//     digging out of the episode that caused it.
+		{"lane self-heal", "dispatch/lane_heal_dig.go", "nobody — the lane gate finds a robot dwelling behind a bin no one is coming for, and digs it out"},
 	}
 
 	// Each named door has to still be there. A door whose site stops writing

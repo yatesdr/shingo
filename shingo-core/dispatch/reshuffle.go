@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -9,16 +8,6 @@ import (
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
-)
-
-// Property keys for the per-group reshuffle controls added by the
-// complex-order buried-bin reshuffle scope (v6 §3.5). Stored on the
-// NGRP via the existing node-property table; read via
-// store.GetNodeProperty.
-const (
-	// PropReshuffleTargetNodes is a JSON array of direct-child node
-	// names. Empty / unset → expose mode. Non-empty → target-node mode.
-	PropReshuffleTargetNodes = "reshuffle_target_nodes"
 )
 
 // ReshuffleStep describes a single move in a reshuffle plan.
@@ -31,12 +20,31 @@ type ReshuffleStep struct {
 }
 
 // ReshufflePlan describes the full reshuffle needed to access a buried bin.
+//
+// LANE AND SHUFFLESLOTS ARE GONE, and they were write-only for their whole life:
+// every planner filled them and nothing anywhere read either one (verified by
+// grep — the ShuffleSlots hits are testdb.CompoundScenario's field of the same
+// name, a different struct). They were not merely unused, they were an INVITATION
+// to re-derive facts that live somewhere better:
+//
+//   - the LANE a dig holds is the reservation row itself, which is what
+//     LaneLock.UnlockByOwner now returns. Carrying a second copy on the plan
+//     would have handed the teardown path a stale answer after a re-plan — the
+//     exact archaeology that made the old unlock walk wrong.
+//   - the SHUFFLE SLOTS a dig picked are on its steps, as each unbury's ToNode.
+//     A parallel slice of the same nodes is a second spelling that can fall out
+//     of step with the steps it describes.
+//
+// Both are cheap to restore if a reader ever appears; neither should be restored
+// as a convenience.
 type ReshufflePlan struct {
-	TargetBin    *bins.Bin
-	TargetSlot   *nodes.Node
-	Lane         *nodes.Node
-	ShuffleSlots []*nodes.Node
-	Steps        []ReshuffleStep
+	// TargetBin is the bin the dig exists to reach, and it is NIL for a dig that
+	// exists to reach a SLOT (PlanLaneMouthClear). Every reader must handle that:
+	// the one production reader is CreateCompoundOrder's history detail, which
+	// says so.
+	TargetBin  *bins.Bin
+	TargetSlot *nodes.Node
+	Steps      []ReshuffleStep
 }
 
 // blocker bundles a bin sitting in a slot shallower than the target
@@ -48,9 +56,8 @@ type reshuffleBlocker struct {
 }
 
 // findBuriedBlockers returns the bins occupying the slots in front of
-// targetSlotID, shallowest first — the dig list. Shared between
-// PlanReshuffle, PlanReshuffleUnburyOnly, PlanReshuffleToTarget, and the
-// lane gate's retrieve classifier.
+// targetSlotID, shallowest first — the dig list. Shared between every planner
+// and the lane gate's retrieve classifier.
 //
 // "In front of" is store/nodes.BlockersInFrontOf and nothing else. This used
 // to walk ListLaneSlots comparing GetSlotDepth against a targetDepth the
@@ -87,15 +94,15 @@ func findBuriedBlockers(db *store.DB, targetSlotID int64) ([]reshuffleBlocker, e
 	return blockers, nil
 }
 
-// planUnbury is the excavation, which is all three planners agree on: check the
+// planUnbury is the excavation, which is what every planner agrees on: check the
 // slot has a lane, list what is in front of the target, find somewhere to park
 // each of those, and emit one unbury step per blocker, shallowest first.
 //
-// The three exported planners were three copies of this with different tails —
-// nothing, a retrieve, or a retrieve to a named node — and the copies had already
-// started to drift: two counted their sequence with a running `seq` and the third
-// with `i + 1`, which agreed only because the loop was the first thing in the
-// plan. That is the kind of difference nobody chooses.
+// The exported planners were copies of this with different tails — nothing, or a
+// retrieve — and the copies had already started to drift: some counted their
+// sequence with a running `seq` and one with `i + 1`, which agreed only because
+// the loop was the first thing in the plan. That is the kind of difference
+// nobody chooses.
 //
 // It returns the next sequence number so a caller that appends knows where to
 // carry on. Blockers are NOT restocked by any of the three — they lie where the
@@ -119,10 +126,8 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 	}
 
 	plan := &ReshufflePlan{
-		TargetBin:    target,
-		TargetSlot:   targetSlot,
-		Lane:         lane,
-		ShuffleSlots: shuffleSlots,
+		TargetBin:  target,
+		TargetSlot: targetSlot,
 	}
 	seq := 1
 	// Front-to-back order = shallowest first, which is the order a robot can
@@ -145,9 +150,9 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 //
 // The retrieve step's ToNode is deliberately left nil — compound.go backfills the
 // parent retrieve's lineside DeliveryNode, which for a simple retrieve IS the
-// destination. Complex-order reshuffles use PlanReshuffleUnburyOnly or
-// PlanReshuffleToTarget instead, because a complex parent's DeliveryNode is its
-// LAST step's node and that fallback would send the bin to the wrong place.
+// destination. Complex-order reshuffles use PlanReshuffleUnburyOnly instead,
+// because a complex parent's DeliveryNode is its LAST step's node and that
+// fallback would send the bin to the wrong place.
 func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane *nodes.Node, groupID int64) (*ReshufflePlan, error) {
 	plan, seq, err := planUnbury(db, target, targetSlot, lane, groupID)
 	if err != nil {
@@ -172,92 +177,74 @@ func PlanReshuffleUnburyOnly(db *store.DB, target *bins.Bin, targetSlot *nodes.N
 	return plan, err
 }
 
-// PlanReshuffleToTarget unburies the blockers AND moves the target bin to a
-// specific direct-child node of the group ("target-node mode"). The complex
-// parent re-resolves against the group after the compound completes, finds the
-// target bin at the configured target node, and dispatches normally.
+// PlanLaneMouthClear plans the excavation that makes targetSlot reachable and
+// STOPS THERE: this dig exists to open a path, not to fetch anything.
 //
-// targetNode must be set explicitly so the retrieve step's DeliveryNode is
-// non-empty — otherwise compound.go's fallback would default it to
-// parentOrder.DeliveryNode, which is the last step's node for a complex parent
-// (extractEndpoints), not the first dropoff.
-func PlanReshuffleToTarget(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane *nodes.Node, groupID int64, targetNode *nodes.Node) (*ReshufflePlan, error) {
-	// Before the reads, so a caller that forgot the node is told so rather than
-	// finding out after a lane walk.
-	if targetNode == nil {
-		return nil, fmt.Errorf("target-node mode requires a non-nil target node")
-	}
-	plan, seq, err := planUnbury(db, target, targetSlot, lane, groupID)
+// The other two planners are both built around a target BIN somebody wants —
+// PlanReshuffle retrieves it, PlanReshuffleUnburyOnly exposes it for a parent
+// that will come back for it. Window 3's dig has no such bin. What is wanted is the SLOT, and the order that
+// wants it is already standing at the lane's mark with a robot under it. So the
+// plan is planUnbury and nothing after it, and TargetBin stays nil.
+//
+// AN EMPTY EXCAVATION IS AN ERROR, NOT A NO-OP PLAN. A plan with no steps would
+// still create a parent, take the lane's dig lock, complete on the next tick and
+// release it — a lot of machinery for a lane nothing was blocking. The caller has
+// already established that the lane IS blocked, so no blockers here means the
+// lane moved underneath us between the two reads, and the right answer is to do
+// nothing and re-ask on the next pass.
+func PlanLaneMouthClear(db *store.DB, targetSlot, lane *nodes.Node, groupID int64) (*ReshufflePlan, error) {
+	plan, _, err := planUnbury(db, nil, targetSlot, lane, groupID)
 	if err != nil {
 		return nil, err
 	}
-	plan.Steps = append(plan.Steps, ReshuffleStep{
-		Sequence: seq,
-		StepType: protocol.StepRetrieve,
-		BinID:    target.ID,
-		FromNode: targetSlot,
-		ToNode:   targetNode,
-	})
+	if len(plan.Steps) == 0 {
+		return nil, fmt.Errorf("%w: slot %s", ErrNothingInTheWay, targetSlot.Name)
+	}
 	return plan, nil
 }
 
-// ReshuffleTargetNodes parses the JSON array stored under the
-// PropReshuffleTargetNodes property. It is a per-LANE override with a
-// group fallback: a lane that sets its own targets wins, otherwise the
-// group's value applies (mirrors the node→parent fallback used for
-// staging_ttl). Pass laneID=0 to read the group value directly. Returns
-// an empty slice when both are unset or malformed (treat malformed as
-// expose mode rather than failing — the configurator validates on save).
-func ReshuffleTargetNodes(db *store.DB, laneID, groupID int64) []string {
-	raw := ""
-	if laneID != 0 {
-		raw = db.GetNodeProperty(laneID, PropReshuffleTargetNodes)
-	}
-	if raw == "" {
-		raw = db.GetNodeProperty(groupID, PropReshuffleTargetNodes)
-	}
-	if raw == "" {
-		return nil
-	}
-	var names []string
-	if err := json.Unmarshal([]byte(raw), &names); err != nil {
-		return nil
-	}
-	out := make([]string, 0, len(names))
-	for _, n := range names {
-		if n != "" {
-			out = append(out, n)
-		}
-	}
-	return out
-}
+// ErrNothingInTheWay means a path-clearing dig was asked for against a slot that
+// nothing is in front of. Transient by nature — the lane changed between the
+// decision and the plan — so callers do nothing and re-ask, exactly as they do
+// for ErrNoShuffleSlot.
+var ErrNothingInTheWay = errors.New("nothing is in front of the target slot")
 
 // findShuffleSlots locates empty accessible slots for temporary shuffle storage.
 // Pass 1: direct physical children of the group (always accessible).
 // Pass 2: accessible empty slots in regular lanes.
 //
-// Direct-child nodes named in the group's reshuffle_target_nodes
-// property are skipped in both passes so the bin handoff destination
-// for complex-order target-node mode reshuffles stays reserved. The
-// exclusion applies to ALL reshuffle paths on the group (simple
-// retrieve too) — they share this helper. Document on the admin
-// page that configuring target nodes shrinks the shuffle pool for
-// the whole group.
+// It used to narrow the pool on CONFIGURATION — reserving a handoff destination
+// for the deleted target-node mode (tombstone: complex_reshuffle.go). Every
+// remaining exclusion is about what a dig may physically do.
 func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.Node, error) {
 	children, err := db.ListChildNodes(groupID)
 	if err != nil {
 		return nil, err
 	}
 
-	excluded := make(map[string]bool)
-	for _, name := range ReshuffleTargetNodes(db, laneID, groupID) {
-		excluded[name] = true
-	}
-
-	// A GATED DIG MAY NOT PARK ITS BLOCKER IN A DIFFERENT GATED LANE, because
-	// spliceLaneWait refuses a plan that touches two of them — one wait per plan,
-	// and releasing per-wait is machinery the transform deliberately does not
-	// build (lane_gate_dispatch.go rule 2).
+	// A GATED DIG DOES NOT PARK ITS BLOCKER IN A DIFFERENT GATED LANE.
+	//
+	// ── THE REASON THIS WAS ADDED IS GONE; THE EXCLUSION IS KEPT ANYWAY ───
+	//
+	// It was added because spliceLaneWait REFUSED a plan touching two gated lanes,
+	// so such a leg could not be dispatched at all. Multi-gate plans are built now
+	// (lane_gate_dispatch.go rule 2), and that leg would dispatch cleanly: a wait
+	// at each mark, each released by its own lane.
+	//
+	// What survives the change is a different objection, and it is about the DIG
+	// rather than about the plan. A dig holds its lane EXCLUSIVELY for the whole
+	// excavation. Sending one of its legs to dwell at another lane's mark makes
+	// the dug lane's exclusive hold last as long as a SECOND lane's congestion —
+	// a wait, lawful and self-clearing, but one that keeps a whole corridor shut
+	// while it lasts and blocks every unrelated order aimed at it. Parking in an
+	// ungated slot costs the dig nothing and takes no second lane hostage.
+	//
+	// So this is now a CONSERVATISM rather than an impossibility, and it is worth
+	// saying which, because the next person to widen the shuffle pool will come
+	// looking here: the constraint that forced it has been lifted, and lifting
+	// this too is a real option with a measurable cost on both sides. What it
+	// buys is pool width, which the dig cascade (F-10) is sensitive to. What it
+	// risks is lane-hold duration. Neither is guessed at cheaply — measure it.
 	//
 	// Found on the lane-stress rig 2026-08-09, within minutes of it coming up:
 	// every dig out of a marked lane whose blocker landed in the marked empty
@@ -282,6 +269,83 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 	// fine, and so is one touching the same gated lane twice.
 	dugLaneGated := db.GetNodeProperty(laneID, PropLaneGatePoint) != ""
 
+	// NEVER RE-BURY A BIN AN EXPOSE HOLD IS PROTECTING — NOT EVEN YOUR OWN.
+	//
+	// This is F-19, and it is the one that stopped the lane-stress plant dead.
+	//
+	// A dig that finishes in EXPOSE mode does not release its lane. The lock is
+	// TRANSFERRED to the complex parent and held until that parent walks back and
+	// picks up the bin it just uncovered (compound.go extendLaneLockForExposeMode),
+	// with the promise written down as "closes the post-compound / pre-pickup
+	// re-burial window". The lock kept other robots OUT. It did nothing about the
+	// slots the excavation had just emptied, which this function went on handing
+	// out as shuffle space — so the window it named stayed wide open.
+	//
+	// So the parent's NEXT dig parked its blockers into the lane its LAST dig had
+	// just emptied, and because Pass 2 fills DEEPEST-FIRST it packed from the back
+	// forward and entombed the exposed bin under a full lane. Measured 2026-08-10:
+	// order 1 ran three generations and twelve legs in eight minutes, dug bins
+	// 2/3/4 out twice, never picked anything up, and took another lane lock each
+	// time. Eight of twenty-two lanes ended up held and the plant stopped creating
+	// orders entirely.
+	//
+	// ── WHY THIS IS PER-SLOT AND NOT "SKIP DIG-LOCKED LANES" ──────────────
+	//
+	// The blunt rule was tried first and TestCrossFlow_TwoDigsOneLane caught it.
+	// A lane whose dig is still RUNNING is a legitimate place to park: its target
+	// is buried anyway, the mouth slot is genuinely free, and refusing it starves a
+	// dig that had somewhere to go — wait-not-fail broken in the other direction.
+	// The two cases look identical from the lane and differ entirely in what is
+	// being protected:
+	//
+	//	dig still excavating -> target still buried  -> parking changes nothing
+	//	dig finished, EXPOSED -> target reachable NOW -> parking undoes the whole dig
+	//
+	// pending_lane_extensions is exactly the second case written down, and
+	// ExpectedFromNodeID is the slot being protected. So the exclusion is only the
+	// slots that would sit IN FRONT of it — shallower in that lane — and the rest of
+	// the lane stays available.
+	//
+	// "NOT EVEN YOUR OWN" IS THE LOAD-BEARING HALF. Every other ownership test here
+	// exempts the owner — ownsDig, the claim CAS, admission — and exempting it here
+	// is precisely what let a parent bury its own prize. Owner-blind on purpose.
+	//
+	// ── THIS IS NOT THE DIG-LOCK QUESTION, AND MUST NOT BE FOLDED INTO IT ──
+	//
+	// reservations.DigAsker.ExcludedBy now gives the dig LOCK one spelling across
+	// admission and sourcing, and the obvious next step — route this reader
+	// through it too — is wrong twice over, so it is refused here in writing.
+	//
+	// Different FACT: the lock is a mouth row on a lane; this reads
+	// pending_lane_extensions, which exists only for a dig that has already
+	// finished in expose mode. A lane can carry either without the other.
+	//
+	// Different ANSWER for the owner: the dig-lock question exempts the asker,
+	// this one must not, per the paragraph above. Unifying them would hand the
+	// exemption to exactly the caller the exemption breaks.
+	//
+	// And the blunt version was already tried and reverted:
+	// TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace fails if a lane whose dig is
+	// still RUNNING is refused as parking, because that lane's target is buried
+	// anyway and refusing it starves a dig that had somewhere to go.
+	protectedDepth := map[int64]int{} // lane -> depth of a bin an expose hold protects
+	exts, hErr := db.ListPendingLaneExtensions()
+	if hErr != nil {
+		// Cannot tell what is protected, so cannot safely offer anything. Reported
+		// as congestion (which waits and retries) rather than geometry (which kills
+		// the order) — the same disposition every other shortfall here takes.
+		return nil, fmt.Errorf("%w: could not read expose holds: %v", ErrNoShuffleSlot, hErr)
+	}
+	for _, e := range exts {
+		slot, sErr := db.GetNode(e.ExpectedFromNodeID)
+		if sErr != nil || slot == nil || slot.Depth == nil || slot.ParentID == nil {
+			continue
+		}
+		if cur, seen := protectedDepth[*slot.ParentID]; !seen || *slot.Depth > cur {
+			protectedDepth[*slot.ParentID] = *slot.Depth
+		}
+	}
+
 	var available []*nodes.Node
 
 	// A candidate whose reachability could not be READ is not a candidate — fail
@@ -301,9 +365,6 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 	for i := len(children) - 1; i >= 0; i-- {
 		c := children[i]
 		if !c.Enabled || c.IsSynthetic {
-			continue
-		}
-		if excluded[c.Name] {
 			continue
 		}
 		if !shuffleSlotFree(db, c) {
@@ -328,8 +389,8 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 		}
 		// NEVER park a blocker back into the lane it is being dug out of. laneID
 		// was a parameter of this function that Pass 2 never compared against
-		// anything — it was read once, at the top, for the reshuffle_target_nodes
-		// override — so the loop happily offered the dug lane's own free slots. On
+		// anything — it was read once, at the top, for the deleted config override
+		// — so the loop happily offered the dug lane's own free slots. On
 		// a lane holding [empty, blocker, target] that means moving the blocker
 		// from depth 2 to depth 1, leaving it in front of the target the dig
 		// exists to uncover.
@@ -342,10 +403,7 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 			continue
 		}
 		if dugLaneGated && db.GetNodeProperty(c.ID, PropLaneGatePoint) != "" {
-			continue // the splice cannot express two gated lanes on one plan
-		}
-		if excluded[c.Name] {
-			continue
+			continue // a dig leg dwelling at a second mark holds two lanes at once
 		}
 		slots, err := db.ListLaneSlots(c.ID)
 		if err != nil {
@@ -357,7 +415,10 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 			if !slot.Enabled {
 				continue
 			}
-			if excluded[slot.Name] {
+			// IN FRONT OF A PROTECTED, ALREADY-EXPOSED BIN. Strictly shallower is
+			// the whole test: deeper slots in the same lane are behind it and
+			// cannot bury it, so they stay usable. See protectedDepth above.
+			if d, guarded := protectedDepth[c.ID]; guarded && slot.Depth != nil && *slot.Depth < d {
 				continue
 			}
 			acc, err := db.IsSlotAccessible(slot.ID)

@@ -253,7 +253,7 @@ func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, dest
 		return nil
 	}
 	requested := order.DeliveryNode
-	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, nil)
+	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, nil, digAskerFor(order))
 	if err != nil {
 		// A full group (ResolutionCapacity — "no available slot in node group
 		// X") must NOT fail the operator's action. Leave the synthetic

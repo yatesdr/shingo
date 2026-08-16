@@ -5,36 +5,23 @@ import (
 	"log"
 
 	"shingo/protocol"
-	"shingocore/store/orders"
 )
 
-// extendLaneLockForComplexParent is called by AdvanceCompoundOrder's terminal
-// block in expose mode. The lane is ALREADY held by the complex parent — intake
-// took the hold keyed by the complex parent's order id, and the compound parent
-// IS the complex parent, they share an order row. The default path would release
-// it here; this function's whole job is to NOT do that, so the lane stays held
-// across the resume → re-resolve → pickup gap where the target bin would
-// otherwise be re-buried.
+// extendLaneLockForComplexParent WAS HERE AND IS DELETED, inlined into its one
+// caller (compound.go extendLaneLockForExposeMode).
 //
-// It no longer registers anything. The listener is the pending_lane_extensions
-// row, written at intake, and it is already there — so all that remains is the
-// decision not to release, plus the sanity check that the hold is really this
-// parent's.
-func (d *Dispatcher) extendLaneLockForComplexParent(complexParent *orders.Order, laneID, targetBinID, expectedFromNode int64) {
-	if d.laneLock == nil {
-		return
-	}
-	// Defensive against a future path that releases or transfers the hold between
-	// intake and compound terminal. If it is not ours there is nothing to extend
-	// and nothing to release.
-	if held := d.laneLock.LockedBy(laneID); held != complexParent.ID {
-		log.Printf("dispatch: lane %d not held by complex parent %d (held by %d); skipping lane-lock extension",
-			laneID, complexParent.ID, held)
-		return
-	}
-	d.dbg("complex: lane lock extended through pickup for complex parent %d (lane %d, target bin %d, expected from-node %d)",
-		complexParent.ID, laneID, targetBinID, expectedFromNode)
-}
+// It was named for an action it did not perform. Once the listener became the
+// pending_lane_extensions row — written at intake, consumed by
+// HandleBinTransitForLaneLock below — there was nothing left to arm, and the
+// body was a LockedBy sanity check plus a debug line. It mutated nothing. The
+// "extension" it named is the ABSENCE of a release: the caller reaches its end
+// without unlocking, and that is the whole mechanism.
+//
+// Worth stating rather than deleting silently, because the SHAPE is the thing. A
+// function named for the mechanism, sitting where the mechanism would be, is
+// where the next reader stops looking — and deleting its call site would then
+// read as deleting the extension itself, when the extension is a path that
+// simply does not call unlock.
 
 // HandleBinTransitForLaneLock is called by engine wiring on
 // EventBinEnteredTransit. If a lane-lock-extension listener is waiting on this
@@ -127,25 +114,4 @@ func (d *Dispatcher) RecoverPendingLaneExtensions() error {
 		d.HandleComplexParentTerminalForLaneLock(row.ComplexParentID)
 	}
 	return nil
-}
-
-// planUsedExposeMode reports whether the compound's child orders
-// match the expose-mode shape (no "retrieve" step). The two complex-
-// parent planners differ in step list emission:
-//
-//   - PlanReshuffleUnburyOnly (expose mode) — only "unbury" steps.
-//   - PlanReshuffleToTarget (target-node mode) — "unbury" steps + one
-//     "retrieve" step.
-//
-// CreateCompoundChildrenOnly tags each child's PayloadDesc as
-// "reshuffle <stepType>: bin N" so we can detect by prefix without
-// re-parsing the plan.
-func planUsedExposeMode(children []*orders.Order) bool {
-	for _, c := range children {
-		if len(c.PayloadDesc) >= len("reshuffle retrieve") &&
-			c.PayloadDesc[:len("reshuffle retrieve")] == "reshuffle retrieve" {
-			return false
-		}
-	}
-	return true
 }

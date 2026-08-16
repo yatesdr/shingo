@@ -270,7 +270,7 @@ func dispatchSimpleViaScanner(t *testing.T, d *Dispatcher, db *store.DB, orderUU
 		if lerr := d.ReleaseLanesForOrder(o.ID); lerr != nil {
 			t.Fatalf("scanner-mirror release lanes after fleet fail %s: %v", orderUUID, lerr)
 		}
-		d.setQueueReason(o, protocol.QueueFleetUnavailable, QueueCause("fleet-error"), QueueParams{})
+		d.setQueueReason(o, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
 		if qerr := d.lifecycle.MoveToSourcing(o, "test-scanner", "fleet unavailable, retrying"); qerr != nil {
 			t.Fatalf("scanner-mirror park after fleet fail %s: %v", orderUUID, qerr)
 		}

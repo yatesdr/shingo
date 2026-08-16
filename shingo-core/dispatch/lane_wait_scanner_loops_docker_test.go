@@ -9,6 +9,7 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // lane_wait_scanner_loops_docker_test.go — the two per-tick loops learn that not
@@ -60,7 +61,7 @@ func TestReResolve_LaneWaitIsExemptEvenWhenItsNameCollides(t *testing.T) {
 		{Action: protocol.ActionWait, Node: grp.Name, WaitKind: WaitKindLane, WaitLane: 41},
 		{Action: protocol.ActionDropoff, Node: sd.LineNode.Name},
 	}
-	out, _, err := d.reResolveComplexSteps(steps, sd.Payload.Code)
+	out, _, err := d.reResolveComplexSteps(steps, sd.Payload.Code, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("reResolveComplexSteps: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestReResolve_OperatorWaitStillPassesThrough(t *testing.T) {
 		{Action: protocol.ActionWait, Node: sd.LineNode.Name}, // drive-to-and-hold
 		{Action: protocol.ActionDropoff, Node: sd.LineNode.Name},
 	}
-	out, changed, err := d.reResolveComplexSteps(steps, sd.Payload.Code)
+	out, changed, err := d.reResolveComplexSteps(steps, sd.Payload.Code, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("reResolveComplexSteps: %v", err)
 	}

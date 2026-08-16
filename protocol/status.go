@@ -663,6 +663,25 @@ var (
 	operatorVisibleStatusSQLList       = buildStatusSQLList(IsOperatorVisible)
 )
 
+// StatusSQLList is buildStatusSQLList for callers OUTSIDE this package that
+// need a population the named projectors above do not already spell.
+//
+// The named projectors stay the way to ask for a predicate this package owns —
+// they are precomputed, and predicateProjectorPairs makes adding one a
+// deliberate act. This is for a consumer whose population is its own: soakstat's
+// stall checker partitions the non-terminal statuses into three progress kinds
+// with different thresholds, and that split belongs to the checker, not here.
+//
+// Exported so such a consumer derives its set from the ENUM rather than typing
+// the values out. Hand-listed populations are how `pending` and `sourcing` came
+// to fall through all three of the stall checker's kinds — watched by nothing,
+// in the exact statuses where a held leg waits.
+//
+// Returns "" when nothing matches. A caller splicing this into `status IN (%s)`
+// must handle that: `IN ()` is a syntax error, and an empty population is a
+// question about nothing rather than a query returning nothing.
+func StatusSQLList(pred func(Status) bool) string { return buildStatusSQLList(pred) }
+
 // buildStatusSQLList walks every known status, filters by the predicate,
 // quotes each value, and joins with commas. Sorted lex for deterministic
 // output so drift tests (status_test.go) can pin the exact string form.

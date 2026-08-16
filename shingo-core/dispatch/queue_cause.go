@@ -15,29 +15,38 @@ package dispatch
 // existed. So the underlying strings are free to change; they are a Core
 // vocabulary, not a contract. They are NOT changing here.
 //
-// ── SCOPE: THE LANE/GATE FAMILY ONLY ──────────────────────────────────────
+// ── SCOPE: EVERY CAUSE THIS PACKAGE AND fulfillment/ SET ──────────────────
 //
-// The full queue_cause surface is about 28 values across dispatch/ and
-// fulfillment/, including computed ones and three pass-throughs from other
-// subsystems. Only the lane and gate family is named here, deliberately: this
-// type exists to make the admission convergence's diff readable, and a version
-// that renamed 28 values across two modules would bury the change it is meant
-// to clarify.
+// It was the lane/gate family only, and the rest were left VISIBLE rather than
+// named: setQueueReason takes this type, so an un-named cause appeared at its
+// call site as an explicit QueueCause("…") conversion, and that conversion was
+// the to-do list. The list is now worked — every cause a Core wait can carry is
+// a constant below, and TestNoLiteralQueueCauseConversions keeps it that way.
 //
-// The rest are not forgotten — they are VISIBLE. setQueueReason takes this
-// type, so every un-named cause now appears at its call site as an explicit
-// QueueCause("...") conversion. That conversion IS the to-do list: grep for it
-// and the remaining work enumerates itself, which a comment promising a
-// follow-up would not.
+// The reason it had to be finished is causeReleasers (queue_releasers.go): the
+// inventory pairs each cause with what ends the wait, and it can only be TOTAL
+// over a set that is enumerable. A literal conversion is a cause no table can
+// see and no drift test can miss.
 //
-// ── ONE VALUE THAT IS DELIBERATELY NOT UNIFIED ────────────────────────────
+// NEVER CROSSES THE WIRE — see above; that is unchanged and is what makes the
+// naming safe to do in bulk. The strings are a Core vocabulary, and NOT ONE OF
+// THEM CHANGES HERE. Naming a value is not renaming it: the histogram an
+// engineer groups by has to stay continuous across this commit, so every
+// constant below carries the literal its call site already wrote.
 //
-// CauseLaneLockRace is "lock-race", and fulfillment/scanner.go sets the same
-// literal for a BIN reservation race. Two different facts wearing one string,
-// and typing the lane one does not merge them — the scanner's stays untyped and
-// keeps its value. Collapsing them would change what the forensic record means
-// for one of the two, which is a behaviour change and not this brief's. Naming
-// the lane one is what makes the collision visible at all.
+// ── TWO COLLISIONS, BOTH KEPT AND BOTH NOW VISIBLE ────────────────────────
+//
+// CauseLaneLockRace and CauseBinLockRace are BOTH "lock-race" — a lane dig-lock
+// race and a bin reservation race, two facts one string. CauseComplexSlotReserve
+// ("slot-reserve") and CauseStoreSlotContended ("slot-reserved") are two facts
+// one CHARACTER apart.
+//
+// Neither is collapsed and neither is re-spelled: changing either value rewrites
+// what the forensic record means for one of the pair, which is a behaviour change
+// this commit does not get to make. What changes is that both collisions are now
+// declared in one block where a reader trips over them, instead of living in two
+// files that never mention each other. The lock-race pair is carried into
+// causeReleasers as a single row that says so, and is reported as a finding.
 type QueueCause string
 
 // The lane/gate family. Values are unchanged from the literals they replace —
@@ -107,6 +116,19 @@ const (
 	// CauseGateAppendFailed — the fleet refused the tail append past the retry threshold.
 	CauseGateAppendFailed QueueCause = "gate-append-failed"
 
+	// ── The fleet refused the CREATE ──────────────────────────────────────
+
+	// CauseFleetRefusedCreate — the fleet would not take the order. Congestion in
+	// the robot system, not a fault in the plan: the vocabulary already says so
+	// (protocol.QueueFleetUnavailable, "Robot system not responding — retrying").
+	//
+	// THE VALUE IS THE ONE THE PLAIN PATH ALREADY WROTE. fulfillment/scanner.go
+	// set the literal "fleet-error" at its two fleet-refusal arms long before this
+	// type existed; naming it here rather than minting a new string keeps the
+	// histogram continuous across the two paths, which is the whole reason an
+	// engineer groups by this column. Typing it is the change; the string is not.
+	CauseFleetRefusedCreate QueueCause = "fleet-error"
+
 	// ── Undetermined: a read failed, so the answer is not known ───────────
 	// These are the fail-closed arms, and they are their own group on purpose.
 	// A wait tagged with one of these is NOT a routine wait — it is Core
@@ -136,4 +158,47 @@ const (
 	// about the plant that an operator can act on, this is a failed read that
 	// says nothing about whether material is there.
 	CauseLoaderSourceUnreadable QueueCause = "loader-source-unreadable"
+
+	// ── Sourcing and reservation contention (fulfillment/) ────────────────
+	// The pre-dispatch family. Every one of these parks an order in the
+	// ACQUIRING set, whose floor is the fulfillment scanner's own periodic
+	// sweep — which is why none of them was ever part of the F-22 class.
+
+	// CauseDestNodeUnresolved — the delivery node could not be resolved right now.
+	// A DESTINATION failure, deliberately parked under waiting_for_slot rather
+	// than waiting_for_material: it used to point the operator at inventory for a
+	// node lookup (F6 of the 2026-07-20 queue-reason study).
+	CauseDestNodeUnresolved QueueCause = "dest-node-unresolved"
+	// CauseStoreSlotContended — ReserveStorageDropoff lost its destination slot.
+	// ONE CHARACTER from CauseComplexSlotReserve and a different fact; see the
+	// type doc. This one is a plain store's single slot.
+	CauseStoreSlotContended QueueCause = "slot-reserved"
+	// CauseBinLockRace — the bin was reserved by a concurrent order in the
+	// Find→Reserve window. SAME STRING as CauseLaneLockRace and a different fact;
+	// see the type doc.
+	CauseBinLockRace QueueCause = "lock-race"
+	// CauseClaimFailed — a pending hold was reaped, or a bin was claimed by
+	// another order between reserve and confirm. Set on both the plain and the
+	// complex path, which is why it is one constant rather than two.
+	CauseClaimFailed QueueCause = "claim-failed"
+
+	// ── Complex-order preflight (complex_dispatch.go) ─────────────────────
+	// Also pre-dispatch, and also floored by the scanner: DispatchPreparedComplex
+	// is gated on IsAcquiring, so an order carrying any of these is by
+	// construction still in the acquiring set.
+
+	// CauseNGRPResolve — a step still names a node GROUP that has no free child.
+	CauseNGRPResolve QueueCause = "ngrp-resolve"
+	// CauseReserveHolding — the complex reserve is incomplete. QueueParams.Partial
+	// distinguishes "holding part of the set" from "holding nothing and blocked on
+	// every need" — the SPR ALN_006 lie was rendering the second as the first.
+	CauseReserveHolding QueueCause = "reserve-holding"
+	// CauseComplexSlotReserve — the multi-slot reserve did not complete. ONE
+	// CHARACTER from CauseStoreSlotContended and a different fact; see the type doc.
+	CauseComplexSlotReserve QueueCause = "slot-reserve"
+	// CauseDropoffCapacity — a concrete storage dropoff is full or has inbound
+	// traffic already committed to it.
+	CauseDropoffCapacity QueueCause = "dropoff-capacity"
+	// CauseSwapHold — a two-robot swap leg is waiting on its sibling.
+	CauseSwapHold QueueCause = "swap-hold"
 )

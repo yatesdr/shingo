@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
 
 // group_resolver_burial_test.go — a lane the burial guard closed is a DIVERT,
@@ -59,7 +60,7 @@ func TestBurialDivert_ClosedLaneFallsToASibling(t *testing.T) {
 			f.storeSlot[open.ID] = openSlot
 
 			gr := &GroupResolver{DB: &claimClosedStore{fakeStore: f, closed: map[int64]bool{closed.ID: true}}}
-			got, err := gr.ResolveStore(group, "P1", nil)
+			got, err := gr.ResolveStore(group, "P1", nil, reservations.Anyone)
 			if err != nil {
 				t.Fatalf("resolve: %v — one closed lane must not fail the group; the scan walks on", err)
 			}
@@ -96,7 +97,7 @@ func TestBurialDivert_AllLanesClosedParksUnderTheExistingShape(t *testing.T) {
 				fakeStore: f,
 				closed:    map[int64]bool{a.ID: true, b.ID: true},
 			}}
-			_, err := gr.ResolveStore(group, "P1", nil)
+			_, err := gr.ResolveStore(group, "P1", nil, reservations.Anyone)
 			if err == nil {
 				t.Fatal("every lane closed: the group must refuse")
 			}

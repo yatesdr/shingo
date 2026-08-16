@@ -33,6 +33,7 @@ import (
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // Intent distinguishes what kind of bin the caller needs. It is keyed on the
@@ -68,6 +69,15 @@ type SourceNeed struct {
 	DeliveryNode string
 	Intent       Intent
 	NodeLocal    bool
+
+	// Asker is the order this need belongs to, for the dig-lock question on the
+	// NGRP tier. The zero value is reservations.Anyone, which every dig
+	// excludes — the same answer this path gave before the field existed, so a
+	// construction site that does not set it is unchanged rather than wrong.
+	// FindSource fills it; callers building a need by hand should too when they
+	// have an order, or a resuming complex parent cannot see the bin its own
+	// dig uncovered.
+	Asker reservations.DigAsker
 }
 
 // Outcome is the closed disposition set FindSource returns.
@@ -468,7 +478,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// fell through to plant-wide FIFO on a capacity/buried error).
 	if intent == IntentFull && srcNode != nil && srcNode.IsSynthetic &&
 		srcNode.NodeTypeCode == protocol.NodeClassNGRP && f.resolver != nil {
-		result, err := f.resolver.Resolve(srcNode, binresolver.ResolveModeRetrieve, payloadCode, nil)
+		result, err := f.resolver.Resolve(srcNode, binresolver.ResolveModeRetrieve, payloadCode, nil, need.Asker)
 		if err != nil {
 			switch class, payload := classifyResolutionError(err); class {
 			case ResolutionBuried:

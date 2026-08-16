@@ -71,16 +71,24 @@ sim:
       tag_name: WELD-2_COUNTER
       tick_interval: 10s
       uop_per_tick: 1
-    # Component-leg drains (loader-fed, 5/min each): WELD-3 drains CLIP (single-window
-    # loader leg), WELD-4 drains STUD (dedicated loader leg). Slower than the press
-    # loaders (6/min) so the component markets stay biased toward recovery.
+    # Component-leg drains: WELD-3 drains CLIP (single-window loader leg), WELD-4
+    # drains STUD (dedicated loader leg).
+    #
+    # THE COMMENT HERE USED TO SAY "5/min each ... slower than the press loaders
+    # (6/min) so the component markets stay biased toward recovery", above two
+    # entries set to 10s/1uop — which is 6/min, the same as everything else. The
+    # bias it described did not exist, and a component payload that only enters the
+    # plant through a loader round trip is exactly the one that cannot afford to be
+    # drained as fast as it is replenished.
+    #
+    # 12s/1uop is 5/min, which is what the intent was. The presses stay at 10s.
     - plc_name: WELD-3
       tag_name: WELD-3_COUNTER
-      tick_interval: 10s
+      tick_interval: 12s
       uop_per_tick: 1
     - plc_name: WELD-4
       tag_name: WELD-4_COUNTER
-      tick_interval: 10s
+      tick_interval: 12s
       uop_per_tick: 1
   operators:
     enabled: true

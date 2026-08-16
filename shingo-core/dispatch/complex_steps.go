@@ -25,7 +25,7 @@ import (
 // don't need to re-format. The wrapped reason from resolveStepNode
 // preserves the original resolver substring so
 // classifyResolutionError's ResolutionCapacity branch can match.
-func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payloadCode string) ([]resolvedStep, error) {
+func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payloadCode string, asker reservations.DigAsker) ([]resolvedStep, error) {
 	var resolved []resolvedStep
 	for i, step := range steps {
 		switch step.Action {
@@ -36,7 +36,7 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 				resolved = append(resolved, resolvedStep{Action: protocol.ActionDropoff, Empty: step.Empty})
 				continue
 			}
-			nodeName, group, err := d.resolveStepNode(step, payloadCode)
+			nodeName, group, err := d.resolveStepNode(step, payloadCode, asker)
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
@@ -45,7 +45,7 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 			// Wait may optionally include a node (drive-to-and-hold).
 			// If present, resolve it; otherwise it's a bare wait (split point only).
 			if step.Node != "" {
-				nodeName, group, err := d.resolveStepNode(step, payloadCode)
+				nodeName, group, err := d.resolveStepNode(step, payloadCode, asker)
 				if err != nil {
 					return nil, fmt.Errorf("step %d: %w", i, err)
 				}
@@ -76,7 +76,7 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 //   - err: the first resolution error encountered. Caller distinguishes
 //     capacity (queue, retry next tick), buried (replay reshuffle), and
 //     other errors (fail) via classifyResolutionError.
-func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode string) (newSteps []resolvedStep, changed bool, err error) {
+func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode string, asker reservations.DigAsker) (newSteps []resolvedStep, changed bool, err error) {
 	newSteps = make([]resolvedStep, 0, len(steps))
 	for i, step := range steps {
 		if step.Node == "" {
@@ -117,7 +117,7 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 		// Step still references an NGRP; re-attempt resolution. Carry Empty so
 		// the produce empty-leg distinction survives replay re-resolution.
 		ps := protocol.ComplexOrderStep{Action: step.Action, Node: step.Node, Empty: step.Empty}
-		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode)
+		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode, asker)
 		if resolveErr != nil {
 			return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
 		}
@@ -154,7 +154,7 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 // (exclusions rule #7, complex_steps.go arm) is deleted with them. The
 // Reshuffle→blind-dispatch mappings below preserve pre-fold behaviour
 // byte-for-byte; surfacing the burial is a C(ii) decision.
-func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode string) (string, string, error) {
+func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode string, asker reservations.DigAsker) (string, string, error) {
 	if step.Node != "" {
 		node, err := d.db.GetNodeByDotName(step.Node)
 		if err != nil {
@@ -178,6 +178,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 					SourceNode:  step.Node,
 					PayloadCode: payloadCode,
 					Intent:      IntentEmpty,
+					Asker:       asker,
 				})
 				switch res.Outcome {
 				case OutcomeFound:
@@ -206,7 +207,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			if step.Action == protocol.ActionDropoff {
 				mode = binresolver.ResolveModeStore
 			}
-			result, err := d.resolver.Resolve(node, mode, payloadCode, nil)
+			result, err := d.resolver.Resolve(node, mode, payloadCode, nil, asker)
 			if err != nil {
 				return "", "", fmt.Errorf("cannot resolve group %s: %w", step.Node, err)
 			}
@@ -236,6 +237,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			res := d.finder.FindSourceForNeed(SourceNeed{
 				PayloadCode: payloadCode,
 				Intent:      intent,
+				Asker:       asker,
 			})
 			switch res.Outcome {
 			case OutcomeFound:
@@ -670,6 +672,7 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 			DeliveryNode: order.DeliveryNode,
 			Intent:       IntentFull,
 			NodeLocal:    true,
+			Asker:        digAskerFor(order),
 		})
 		switch MapFinderOutcome(res) {
 		case OutcomeFound:
@@ -797,6 +800,7 @@ func (d *Dispatcher) recalcBuriedNeed(order *orders.Order, hb *heldReservation, 
 			DeliveryNode: order.DeliveryNode,
 			Intent:       IntentFull,
 			NodeLocal:    true,
+			Asker:        digAskerFor(order),
 		})
 		switch MapFinderOutcome(res) {
 		case OutcomeFound:

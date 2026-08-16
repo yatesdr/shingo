@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
 
 // TestResolveStore_ResolveAround_PrefersCompatibleLane proves the arm end-to-end
@@ -45,7 +46,7 @@ func TestResolveStore_ResolveAround_PrefersCompatibleLane(t *testing.T) {
 		}
 
 		gr := &GroupResolver{DB: f}
-		res, err := gr.ResolveStore(group, "", nil)
+		res, err := gr.ResolveStore(group, "", nil, reservations.Anyone)
 		if err != nil {
 			t.Fatalf("ResolveStore: %v", err)
 		}

@@ -207,3 +207,93 @@ func TestGatedDig_NoUngatedSlotWaitsRatherThanPickingOne(t *testing.T) {
 		t.Errorf("%d leg(s) survive a refused plan — a half-built compound is worse than no plan", legs)
 	}
 }
+
+// TestDig_NeverParksIntoALaneAnotherDigIsHolding is F-19 — the defect that
+// stopped the lane-stress plant dead at order 70.
+//
+// THE CASCADE, as measured 2026-08-10. A complex parent digs LS_D1 out to expose
+// the PANEL-A it wants. The dig completes in EXPOSE mode, so its lane lock is not
+// released — it is transferred to the parent and held until the parent picks the
+// bin up (extendLaneLockForExposeMode), whose documented purpose is "closes the
+// post-compound / pre-pickup re-burial window".
+//
+// Before the parent picks up, it re-plans for a second buried bin elsewhere — and
+// findShuffleSlots hands that dig the slots LS_D1 just freed. Pass 2 fills
+// DEEPEST-FIRST, so it packs from the back forward and entombs the exposed bin
+// behind a full lane. The parent then digs the third lane, buries the second
+// lane's prize, and so on: three generations, twelve legs, eight minutes, bins
+// 2/3/4 dug out twice, nothing ever picked up, and a lane lock accumulated per
+// generation until eight of twenty-two lanes were held and the plant stopped
+// creating orders.
+//
+// The lock stopped another robot ENTERING. It never stopped the lane's freed
+// slots being handed out as shuffle space, because this function did not ask.
+//
+// THE EXCLUSION IS OWNER-BLIND ON PURPOSE, which is what this test pins. Every
+// other ownership test in the system exempts the owner — ownsDig, the claim CAS,
+// admission — and exempting it here is precisely what let a parent bury its own
+// prize. So the dig below is owned by the SAME order that holds the other lane's
+// lock, and it still must not park there.
+//
+// MUTATION (run 2026-08-10): delete the `digLocked[c.ID]` skip in Pass 2. The
+// blocker is planned straight into the lane the same parent is holding open, on
+// top of the bin it is waiting to collect.
+func TestDig_NeverParksIntoALaneAnotherDigIsHolding(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, dug, _, open, dugSlots, bp := setupGatedDigGroup(t, db, true)
+
+	createTestBinAtNode(t, db, bp.Code, dugSlots[0].ID, "BIN-F19-BLK")
+	target := createTestBinAtNode(t, db, bp.Code, dugSlots[1].ID, "BIN-F19-TGT")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	order := &orders.Order{EdgeUUID: "f19", StationID: "line-1", OrderType: OrderTypeRetrieve,
+		Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: "LINE-F19"}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+
+	// THE OPEN LANE HOLDS AN EXPOSED BIN UNDER AN EXPOSE-MODE EXTENSION — the state
+	// a completed expose dig leaves behind while its parent walks back to collect
+	// it. The bin sits at the BACK; the slots in front of it are the ones the last
+	// excavation emptied, and are exactly what must not be refilled.
+	//
+	// Same owning order as the dig about to be planned, deliberately: exempting the
+	// owner is what let a parent bury its own prize.
+	openSlots, err := db.ListLaneSlots(open.ID)
+	testutil.MustNoErr(t, err, "list open-lane slots")
+	exposed := createTestBinAtNode(t, db, bp.Code, openSlots[len(openSlots)-1].ID, "BIN-F19-EXPOSED")
+	_, err = db.InsertPendingLaneExtension(&store.PendingLaneExtension{
+		ComplexParentID:    order.ID,
+		LaneID:             open.ID,
+		TargetBinID:        exposed.ID,
+		ExpectedFromNodeID: openSlots[len(openSlots)-1].ID,
+	})
+	testutil.MustNoErr(t, err, "register the expose hold")
+
+	_, pe := d.planner.planBuriedReshuffle(order, &BuriedError{Bin: target, Slot: dugSlots[1], LaneID: dug.ID})
+	if pe == nil {
+		var dest string
+		_ = db.DB.QueryRow(
+			`SELECT delivery_node FROM orders WHERE parent_order_id = $1 ORDER BY sequence LIMIT 1`,
+			order.ID).Scan(&dest)
+		destNode, _ := db.GetNodeByDotName(dest)
+		destLane, _ := db.LaneForNode(destNode.ID)
+		if destLane != nil && destLane.ID == open.ID {
+			t.Fatalf("the dig parked its blocker into %s, which THIS SAME ORDER is holding under a "+
+				"dig lock. That lane's free slots are the product of an excavation somebody is still "+
+				"waiting on; filling them re-buries the bin the lock exists to protect. Deepest-first "+
+				"packing means it fills from the back, so the exposed bin ends up behind a full lane. "+
+				"That is the cascade that stopped the plant at order 70.", open.Name)
+		}
+		t.Fatalf("blocker went to %q — the only free slots were in a dig-locked lane, so this must "+
+			"have waited with no-shuffle-slot instead of planning", dest)
+	}
+	if pe.Code != codeNoShuffleSlot {
+		t.Fatalf("refused with %q (%s), want %q — every candidate lane was dig-locked, which is "+
+			"congestion and must WAIT, not geometry", pe.Code, pe.Detail, codeNoShuffleSlot)
+	}
+	if !pe.Transient() {
+		t.Errorf("no-shuffle-slot came back NON-transient, which terminates the demand. A lock frees "+
+			"as soon as any dig completes. Detail: %s", pe.Detail)
+	}
+}

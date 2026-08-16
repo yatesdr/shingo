@@ -67,6 +67,47 @@ func (e *Engine) robotRefreshLoop() {
 	}
 }
 
+// laneLivenessFloorInterval is the MAXIMUM WAIT the floor imposes, not a poll
+// rate: the longest an order that could be released can sit after the event that
+// should have freed it went missing. Events do the work continuously; on a
+// healthy plant this pass finds nothing.
+//
+// 60s, matching the fulfillment scanner's sweep, because they are the same kind
+// of thing over different populations and two different numbers would invite the
+// question of why.
+const laneLivenessFloorInterval = 60 * time.Second
+
+// laneLivenessFloorLoop is F-22's floor: the periodic pass over the two wait
+// populations that had only event releasers — gate-staged dwellers and compound
+// legs Core has not yet handed to the fleet.
+//
+// It is the third and fourth instances of a shape this system already had twice
+// (the fulfillment sweep, AdvanceStuckReshuffleParents), which is why it is
+// eleven lines: everything it needs is level-triggered and idempotent already,
+// so the loop is a trigger and nothing else. See dispatch.SweepLaneWaiters.
+func (e *Engine) laneLivenessFloorLoop() {
+	if e.dispatcher == nil {
+		return
+	}
+	ticker := time.NewTicker(laneLivenessFloorInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-e.stopChan:
+			return
+		case <-ticker.C:
+			// The count is deliberately not logged when zero. Every release it
+			// makes writes its own recovery_actions record naming the order and
+			// the cause; a periodic "floor released 0" line would be the cry-wolf
+			// AdvanceStuckReshuffleParents warns about, one level up.
+			if n := e.dispatcher.SweepLaneWaiters(); n > 0 {
+				e.logFn("engine: lane liveness floor released %d order(s) an event should have — "+
+					"see recovery_actions (%s) for the causes", n, "lane_floor_release")
+			}
+		}
+	}
+}
+
 // stagedBinSweepLoop periodically releases staged bins whose expiry has passed.
 func (e *Engine) stagedBinSweepLoop() {
 	interval := e.cfg.Staging.SweepInterval

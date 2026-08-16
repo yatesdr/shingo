@@ -81,14 +81,52 @@ func (l *LaneLock) Unlock(laneID, orderID int64) {
 	}
 }
 
-// UnlockByOwner releases any lane held by the given order, looked up by owner
-// rather than lane id. Used on failure/cleanup paths where the caller knows the
-// owning order but cannot resolve the lane id from the order's children (e.g. a
-// DB read failed or the children are gone). Safe no-op if the order holds none.
-func (l *LaneLock) UnlockByOwner(orderID int64) {
-	if err := reservations.ReleaseLanesByOwner(l.db, orderID); err != nil {
+// UnlockByOwner releases every lane held by the given order, looked up by owner
+// rather than lane id, and RETURNS THE LANES IT FREED. Safe no-op if the order
+// holds none.
+//
+// The owner is the whole key on purpose. Resolving "which lane does this dig
+// hold" from anywhere else — the order's children, a column, a plan struct — is
+// deriving a fact the reservation row already IS, and the derivation was wrong
+// in two ways at once: it answered with the FIRST child's lane, so a compound
+// that took locks on more than one lane leaked the rest, and after a re-plan the
+// first child belongs to a superseded generation and names a lane the dig no
+// longer holds.
+//
+// The returned ids are what the caller must re-evaluate: a dropped lane lock is
+// a lane-clearing event, and it is the one event the gate's trigger set cannot
+// produce for itself (every other trigger fires from a bin or an order changing,
+// and all of those have already fired by the time a dig releases).
+//
+// On a read/write failure it returns nothing, which costs the dwellers a wake-up
+// rather than correctness — the rows are either gone or still there, and the
+// next release or event re-asks.
+func (l *LaneLock) UnlockByOwner(orderID int64) []int64 {
+	freed, err := reservations.ReleaseLanesByOwner(l.db, orderID)
+	if err != nil {
 		log.Printf("lanelock: release-by-owner failed for order %d: %v", orderID, err)
+		return nil
 	}
+	return freed
+}
+
+// LanesHeldBy snapshots the lanes this order holds, for a caller that will tear
+// the order down and then needs to wake whoever was waiting behind those lanes.
+//
+// TAKE IT BEFORE THE TEARDOWN. Terminalizing an order deletes its reservations
+// in the same transaction as the status write, so this read is empty for any
+// order that has already been failed or confirmed — and an empty answer there
+// is indistinguishable from "held nothing", which is how a dropped lane silently
+// wakes nobody.
+//
+// A read failure returns nothing, which costs a wake-up rather than correctness.
+func (l *LaneLock) LanesHeldBy(orderID int64) []int64 {
+	held, err := reservations.LanesHeldByOwner(l.db, orderID)
+	if err != nil {
+		log.Printf("lanelock: lanes-held read failed for order %d: %v", orderID, err)
+		return nil
+	}
+	return held
 }
 
 // DigOwner returns the order ID holding the dig on this lane, 0 if unheld, and

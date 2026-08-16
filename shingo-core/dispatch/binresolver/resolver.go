@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
 
 // ResolveResult carries the resolved node and optionally a specific bin.
@@ -37,8 +38,14 @@ const (
 )
 
 // NodeResolver resolves a synthetic node to a physical child node.
+//
+// asker names the order the resolution is FOR. Only the NGRP path consults it,
+// and only to answer the dig-lock question about candidate lanes, but it sits
+// on the interface rather than on the group resolver because the caller with
+// the order in hand is out here — every production call site has one. Pass
+// reservations.Anyone where none exists.
 type NodeResolver interface {
-	Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64) (*ResolveResult, error)
+	Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error)
 }
 
 // DefaultResolver resolves synthetic nodes using the database.
@@ -63,7 +70,7 @@ func (r *DefaultResolver) dbg(format string, args ...any) {
 
 // Resolve selects the best physical child of a synthetic node for the given
 // direction of travel.
-func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(syntheticNode.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", syntheticNode.Name, err)
@@ -77,9 +84,9 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 		gr := &GroupResolver{DB: r.DB, DebugLog: r.DebugLog}
 		switch mode {
 		case ResolveModeRetrieve:
-			return gr.ResolveRetrieve(syntheticNode, payloadCode)
+			return gr.ResolveRetrieve(syntheticNode, payloadCode, asker)
 		case ResolveModeStore:
-			return gr.ResolveStore(syntheticNode, payloadCode, binTypeID)
+			return gr.ResolveStore(syntheticNode, payloadCode, binTypeID, asker)
 		}
 	}
 

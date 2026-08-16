@@ -28,6 +28,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"shingo/protocol"
@@ -152,11 +153,77 @@ func orderCounts(db *store.DB) counts {
 	c.completed = scalar(db, `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusConfirmed))
 	c.failed = scalar(db, `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusFailed))
 	c.cancelled = scalar(db, `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusCancelled))
-	c.queued = scalar(db, `SELECT COUNT(*) FROM orders WHERE status IN ('pending','queued','sourcing')`)
+	// Pre-dispatch, from the predicate rather than typed out: {pending, queued,
+	// sourcing} is IsPreDispatch, and a status joining that family must join this
+	// count with it.
+	c.queued = scalar(db, fmt.Sprintf(
+		`SELECT COUNT(*) FROM orders WHERE status IN (%s)`, protocol.PreDispatchStatusSQLList()))
 	c.inFlight = scalar(db, fmt.Sprintf(
-		`SELECT COUNT(*) FROM orders WHERE status NOT IN (%s) AND status NOT IN ('pending','queued','sourcing')`,
-		protocol.TerminalStatusSQLList()))
+		`SELECT COUNT(*) FROM orders WHERE status NOT IN (%s) AND status NOT IN (%s)`,
+		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList()))
 	return c
+}
+
+// stallPopulation is one PROGRESS KIND the stall checker watches: which orders
+// belong to it, how long one of them may sit before it is worth a line, and the
+// words for the report.
+//
+// The predicate is the definition and the SQL is rendered FROM it, so the set
+// the query returns and the set the drift test reasons about cannot come apart.
+// Writing the clause out by hand is what let `pending` and `sourcing` fall
+// through every kind — the bug the derivation exists to make impossible.
+type stallPopulation struct {
+	label string
+	after string // a Postgres interval literal
+	match func(protocol.Status) bool
+}
+
+// clause renders the population as a SQL predicate over `status`.
+//
+// A kind whose predicate matches no status renders `FALSE` rather than an empty
+// `IN ()`, which is a syntax error. That case is a definition mistake, not a
+// runtime one — the partition test catches it — so this only has to fail
+// harmlessly rather than diagnose.
+func (p stallPopulation) clause() string {
+	list := protocol.StatusSQLList(p.match)
+	if list == "" {
+		return "FALSE"
+	}
+	return fmt.Sprintf("status IN (%s)", list)
+}
+
+// stallPopulations PARTITIONS the non-terminal statuses. Every one of them is in
+// exactly one kind, which is what makes "nothing is stalled" a statement about
+// the whole plant rather than about the statuses somebody remembered.
+//
+// The three kinds are progress shapes, not lifecycle stages:
+//
+//   - DWELLING AT A MARK is a robot committed and standing still. Core owes it a
+//     decision, so the threshold is the length of somebody else's lane transit.
+//   - PARKED is pre-dispatch: no robot is committed, the order is waiting for
+//     material, a slot, a lane or the fleet. Long waits here are legitimate.
+//     IsPreDispatch is exactly this set — {pending, sourcing, queued} — and using
+//     the predicate rather than naming `queued` is the fix.
+//   - IN FLIGHT is everything else non-terminal: handed over, moving, or waiting
+//     on a human (delivered), plus the compound parent's own `reshuffling`.
+var stallPopulations = []stallPopulation{
+	{
+		label: "dwelling at a mark",
+		after: "90 seconds",
+		match: func(s protocol.Status) bool { return s == protocol.StatusStaged },
+	},
+	{
+		label: "parked",
+		after: "15 minutes",
+		match: protocol.IsPreDispatch,
+	},
+	{
+		label: "in flight",
+		after: "20 minutes",
+		match: func(s protocol.Status) bool {
+			return !protocol.IsTerminal(s) && !protocol.IsPreDispatch(s) && s != protocol.StatusStaged
+		},
+	},
 }
 
 // digDistribution answers catalog 3.8: how many robots a dig actually costs.
@@ -439,9 +506,12 @@ func checkInvariants(db *store.DB) []string {
 		      AND r.node_id = l.id AND r.state <> 'released'
 		WHERE o.vendor_order_id <> ''
 		  AND o.status NOT IN (%s)
-		  AND o.status NOT IN ('pending','queued','sourcing','staged')
+		  AND o.status NOT IN (%s)
+		  AND o.status <> '%s'
 		  AND r.id IS NULL
-		ORDER BY o.id LIMIT 12`, protocol.TerminalStatusSQLList())); err == nil {
+		ORDER BY o.id LIMIT 12`,
+		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.StatusStaged)); err == nil {
 		for rows.Next() {
 			var id int
 			var status, lane string
@@ -457,12 +527,33 @@ func checkInvariants(db *store.DB) []string {
 
 	// A hold outliving its order. Terminalization releases by order, so a live
 	// reservation owned by a terminal order is an orphan nothing will clear.
-	if n := scalar(db, fmt.Sprintf(`
-		SELECT COUNT(*) FROM reservations r
+	//
+	// BROKEN OUT BY KIND, because the kinds fail differently and one of them is
+	// what this soak was specifically asked to watch. A leaked `occupancy` row is
+	// a lane that reads OCCUPIED FOREVER to every future entrant — the F-12 fix's
+	// exact failure mode, and the one that silently removes a corridor from the
+	// plant. A leaked `slot` or `mouth` row is narrower. A bare total cannot tell
+	// them apart, and "N reservations leaked" is not an answer to "did complex
+	// occupancy release on every path".
+	if rows, err := db.DB.Query(fmt.Sprintf(`
+		SELECT r.resource_kind, COUNT(*) FROM reservations r
 		JOIN orders o ON o.id = r.order_id
 		WHERE r.state <> 'released'
-		  AND o.status IN (%s)`, protocol.TerminalStatusSQLList())); n > 0 {
-		v = append(v, fmt.Sprintf("%d reservation(s) held by a TERMINAL order", n))
+		  AND o.status IN (%s)
+		GROUP BY 1 ORDER BY 1`, protocol.TerminalStatusSQLList())); err == nil {
+		for rows.Next() {
+			var kind string
+			var n int
+			if err := rows.Scan(&kind, &n); err != nil {
+				continue
+			}
+			detail := ""
+			if kind == "occupancy" {
+				detail = " — that lane reads OCCUPIED to every future entrant, permanently"
+			}
+			v = append(v, fmt.Sprintf("%d %s reservation(s) held by a TERMINAL order%s", n, kind, detail))
+		}
+		rows.Close()
 	}
 
 	// A wait with no cause on the row. The operator sentence is the whole point
@@ -474,6 +565,75 @@ func checkInvariants(db *store.DB) []string {
 		  AND (queue_cause IS NULL OR queue_cause = '')
 		  AND created_at < now() - interval '5 minutes'`); n > 0 {
 		v = append(v, fmt.Sprintf("%d order(s) queued 5min+ with NO cause on the row", n))
+	}
+
+	// ── THE FLOOR TRIPWIRE ─────────────────────────────────────────────────
+	//
+	// Every release the lane liveness floor made is a recovery_actions row, and
+	// this is the histogram BY CAUSE. It is the batch's deliverable, not a
+	// health check: each cause with a non-zero count is a wait whose event
+	// releaser did not fire, ranked by how often, which is the worklist an
+	// emitter hunt runs on instead of a hunch.
+	//
+	// EXPECTED TO TREND TO ZERO as the emitters are found — except for
+	// fleet-error, which is absence-class. Nothing emits "the fleet became
+	// willing", so floor releases under it are the DESIGN and a fleet-health
+	// signal rather than a missing subscription. It is separated here rather
+	// than suppressed, for the same reason the burial shadow counts its known
+	// gap apart instead of hiding it.
+	if rows, err := db.DB.Query(`
+		SELECT COALESCE(NULLIF(split_part(split_part(detail, 'cause "', 2), '"', 1), ''), '(none)'),
+		       COUNT(*)
+		FROM recovery_actions
+		WHERE action = $1
+		GROUP BY 1 ORDER BY 2 DESC`, dispatch.FloorReleaseAction); err == nil {
+		for rows.Next() {
+			var cause string
+			var n int
+			if err := rows.Scan(&cause, &n); err != nil {
+				continue
+			}
+			if cause == string(dispatch.CauseFleetRefusedCreate) {
+				v = append(v, fmt.Sprintf("FLOOR-RELEASE (expected, absence-class): %d under %s — "+
+					"no event exists for this; read it as fleet health, not a missing emitter", n, cause))
+				continue
+			}
+			v = append(v, fmt.Sprintf("FLOOR-RELEASE: %d order(s) freed by the periodic floor under "+
+				"cause %s — an event should have done this; see causeReleasers for which", n, cause))
+		}
+		rows.Close()
+	}
+
+	// ── OBSERVED VS DECLARED ───────────────────────────────────────────────
+	//
+	// The plant's own rows, grouped by what they are waiting under, minus the
+	// declared inventory. A (status, cause) pair the plant produces and the table
+	// does not describe is a hold class nobody designed a way out of — the exact
+	// shape of F-22, found from the other end.
+	//
+	// It reads the DECLARED set from dispatch rather than a copy, so this cannot
+	// drift into checking a stale list: totality guarantees those keys are the
+	// whole cause vocabulary.
+	declared := map[string]bool{}
+	for _, c := range dispatch.DeclaredQueueCauses() {
+		declared[c] = true
+	}
+	if rows, err := db.DB.Query(`
+		SELECT DISTINCT status, COALESCE(queue_cause, '')
+		FROM orders
+		WHERE COALESCE(queue_cause, '') <> ''`); err == nil {
+		for rows.Next() {
+			var status, cause string
+			if err := rows.Scan(&status, &cause); err != nil {
+				continue
+			}
+			if !declared[cause] {
+				v = append(v, fmt.Sprintf("UNDECLARED WAIT: orders sit at status=%s under cause %q, "+
+					"which has no causeReleasers row — nothing on record says what ends it, and no "+
+					"floor claims it", status, cause))
+			}
+		}
+		rows.Close()
 	}
 
 	// ── THE STALL CHECKER ──────────────────────────────────────────────────
@@ -509,22 +669,26 @@ func checkInvariants(db *store.DB) []string {
 	// 15m would have missed all three staged rows, which are the ones that
 	// mattered. If a kind ever needs a fourth threshold, add it here rather than
 	// widening one of these.
-	for _, s := range []struct {
-		label  string
-		clause string
-		after  string
-	}{
-		{"dwelling at a mark", "status = 'staged'", "90 seconds"},
-		{"parked", "status = 'queued'", "15 minutes"},
-		{"in flight", fmt.Sprintf("status NOT IN (%s) AND status NOT IN ('queued','staged','pending','sourcing')",
-			protocol.TerminalStatusSQLList()), "20 minutes"},
-	} {
+	//
+	// THE POPULATIONS ARE DERIVED FROM THE STATUS ENUM, NOT HAND-LISTED, and that
+	// is a fix rather than tidying. The "parked" kind used to be `status='queued'`
+	// alone while "in flight" excluded queued, staged, pending AND sourcing — so
+	// `pending` and `sourcing` matched NONE of the three and were watched by
+	// nothing. Those are the pre-dispatch statuses where a held compound leg and a
+	// rolled-back fleet refusal both wait, which is to say the checker was blind
+	// in exactly the place a stall is cheapest to miss.
+	//
+	// stallPopulations carries a Go predicate per kind and renders its own SQL, so
+	// the set the checker queries and the set the drift test reasons about are one
+	// thing. TestStallPopulationsPartitionTheNonTerminalStatuses fails if a new
+	// status lands in none of them or in two.
+	for _, s := range stallPopulations {
 		rows, err := db.DB.Query(fmt.Sprintf(`
 			SELECT id, status, COALESCE(NULLIF(queue_cause,''), '(no cause on the row)'),
 			       EXTRACT(EPOCH FROM (now() - updated_at))::int
 			FROM orders
 			WHERE %s AND updated_at < now() - interval '%s'
-			ORDER BY updated_at LIMIT 12`, s.clause, s.after))
+			ORDER BY updated_at LIMIT 12`, s.clause(), s.after))
 		if err != nil {
 			continue
 		}
@@ -583,15 +747,29 @@ func readLog(source string) *logStats {
 	for _, line := range strings.Split(body, "\n") {
 		switch {
 		case strings.Contains(line, "burial-shadow"):
-			// The two halves mean opposite things: a soft hold buried is DATA
-			// (re-planning was always going to be paid for), a hard claim buried
-			// is a TRIPWIRE whose expected value is zero.
-			if strings.Contains(line, "hard") || strings.Contains(line, "claim") {
-				s.hardN++
-			} else {
-				s.softN++
+			// THESE LINES ARE A RUNNING TALLY, NOT AN EVENT — and counting them as
+			// events is a mistake this tool made and reported for an hour.
+			//
+			// logBurialShadow re-emits the same sentence on EVERY reconciliation
+			// sweep for as long as the tally is non-zero, which is every two
+			// seconds. Counting occurrences therefore measures UPTIME SINCE THE
+			// FIRST BURIAL, not burials: one bypass read as 22, then 322, then
+			// however long the run lasts. It made a single incident look like the
+			// plant hemorrhaging, on the one number the summary line calls a
+			// tripwire.
+			//
+			// So take the LAST value each line reports, not a count of them. The
+			// two halves still mean opposite things: a soft hold buried is DATA
+			// (re-planning was always going to be paid for), a hard claim buried is
+			// a should-be-zero.
+			if n, ok := tallyValue(line, "BYPASS="); ok {
+				s.hardN = n
+			}
+			if n, ok := tallyValue(line, "soft-hold burials "); ok {
+				s.softN = n
 			}
 		case strings.Contains(line, "the dig always wins on a positional blocker"):
+			// This one IS per-event — one line per steal, at the steal.
 			s.stealN++
 		}
 	}
@@ -726,4 +904,31 @@ func scalar(db *store.DB, q string, args ...any) int {
 		return 0
 	}
 	return n
+}
+
+// tallyValue pulls the integer immediately following `prefix` out of a running
+// tally line, e.g. "BYPASS=3" or "soft-hold burials 12 (longest ...)".
+//
+// It exists because the burial-shadow lines are re-emitted every sweep, so the
+// only honest reading is the VALUE they carry rather than how many times they
+// were printed. Returns false when the prefix is absent or not followed by
+// digits, so a format change degrades to "no reading" instead of to a wrong one.
+func tallyValue(line, prefix string) (int, bool) {
+	i := strings.Index(line, prefix)
+	if i < 0 {
+		return 0, false
+	}
+	rest := line[i+len(prefix):]
+	end := 0
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }

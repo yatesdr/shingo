@@ -198,26 +198,6 @@
           </select>
         </div>
       </div>
-      <!-- Complex-order buried-reshuffle controls (NGRP only) -->
-      <div class="grid grid-2 text-sm">
-        <div class="form-group">
-          <label>Reshuffle Target Nodes</label>
-          <div id="nf-reshuffle-targets-chips" class="tag-list"></div>
-          <select id="nf-reshuffle-targets-add" class="text-sm" data-action-change="addReshuffleTarget">
-            <option value="">+ Add target node…</option>
-          </select>
-          <div class="text-muted" style="font-size:0.75rem">
-            Empty = expose mode (target stays in lane). Configured = target-node mode (target moves to first empty configured node). Reduces shuffle-slot pool.
-          </div>
-        </div>
-        <!-- "Restore Blockers After Pickup" WAS HERE AND IS DELETED. The
-             restore-blockers subsystem went in July: its table was dropped, a
-             boot one-shot cancels any leftover orders, and no Go code has read
-             reshuffle_restore_blockers since. The control was still offering the
-             choice, and still rendering "On — restock blockers to original
-             positions", which described behaviour the system no longer has.
-             Blockers now lie where the dig parks them, always. -->
-      </div>
       </div>
     </div>
 

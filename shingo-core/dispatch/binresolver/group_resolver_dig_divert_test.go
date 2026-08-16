@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
 
 // group_resolver_dig_divert_test.go — a store never picks a lane a dig owns.
@@ -51,7 +52,7 @@ func TestDigDivert_StoreSkipsALockedLane(t *testing.T) {
 			f.lockLaneForDig(dug.ID)
 
 			gr := &GroupResolver{DB: f}
-			got, err := gr.ResolveStore(group, "P1", nil)
+			got, err := gr.ResolveStore(group, "P1", nil, reservations.Anyone)
 			if err != nil {
 				t.Fatalf("resolve: %v — a dug lane must cost a walk, not the group", err)
 			}
@@ -89,7 +90,7 @@ func TestDigDivert_AllLanesLockedParksUnderTheExistingShape(t *testing.T) {
 			f.lockLaneForDig(b.ID)
 
 			gr := &GroupResolver{DB: f}
-			if _, err := gr.ResolveStore(group, "P1", nil); err == nil {
+			if _, err := gr.ResolveStore(group, "P1", nil, reservations.Anyone); err == nil {
 				t.Fatal("every lane dug: the group must refuse so the caller parks")
 			} else if got, want := err.Error(), "no available slot in node group grp"; got != want {
 				t.Fatalf("err = %q, want exactly %q — the classifier substring-matches this and takes "+
@@ -119,7 +120,7 @@ func TestDigDivert_DirectChildrenAreNotLanesAndAreNotSkipped(t *testing.T) {
 	f.lockLaneForDig(dug.ID)
 
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveStore(group, "P1", nil)
+	got, err := gr.ResolveStore(group, "P1", nil, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("resolve: %v — the group still has its parking, which no dig can hold", err)
 	}

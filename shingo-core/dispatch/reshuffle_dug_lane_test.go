@@ -69,7 +69,7 @@ func dugLaneFixture(t *testing.T, db *store.DB, prefix string, extraLanes int) (
 //
 // findShuffleSlots takes laneID — the lane being dug — but Pass 2 never compared
 // it against anything. The parameter was read once, at the top, to look up the
-// per-lane reshuffle_target_nodes override, and then the loop iterated EVERY
+// per-lane property override it used to carry, and then the loop iterated EVERY
 // LANE child of the group including the one the dig is emptying. So a blocker
 // lifted out of lane L could be parked back into another slot of lane L.
 //

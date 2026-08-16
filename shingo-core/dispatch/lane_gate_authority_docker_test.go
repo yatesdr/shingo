@@ -69,7 +69,7 @@ func TestAuthority_StationCannotCancelAReshuffleLeg(t *testing.T) {
 		o.Status = protocol.StatusReshuffling
 	})
 	leg := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		// Exactly what CreateCompoundChildrenOnly writes: the parent's station,
+		// Exactly what writeCompoundChildren writes: the parent's station,
 		// a Core-minted edge uuid, a parent pointer.
 		o.StationID = parent.StationID
 		o.OrderType = OrderTypeMove

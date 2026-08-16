@@ -7,25 +7,25 @@ import (
 
 	"shingo/protocol"
 	"shingocore/store"
-	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
 // planBuriedReshuffleAtIntake plans and dispatches a buried-bin reshuffle
 // compound for a complex parent that HandleComplexOrderRequest has already
-// created, acked and announced. Branches on the source group's
-// reshuffle_target_nodes property:
+// created, acked and announced. The plan is expose mode
+// (PlanReshuffleUnburyOnly): blockers move out of the way, the target bin stays
+// where it is, and the parent resumes and re-runs its original first pickup
+// against the now-accessible original slot.
 //
-//   - empty → expose mode (PlanReshuffleUnburyOnly). Parent resumes
-//     and re-runs its original first pickup against the now-
-//     accessible original slot.
-//   - non-empty with at least one empty target → target-node mode
-//     (PlanReshuffleToTarget). Compound moves the target bin to the
-//     first empty configured target; parent re-resolves against the
-//     group on resume and finds it at the target node.
-//   - non-empty with all targets occupied → leave parent Queued with
-//     queue_reason. Scanner replays on bin/order events; once a
-//     target frees the next replay proceeds.
+// THERE IS NO MODE SELECTION HERE ANY MORE. This used to branch on the group's
+// reshuffle_target_nodes property into a second planner that relocated the
+// target bin to a configured node. That property was never set at either plant
+// — Hopkinsville carries no reshuffle_* property at all, Springfield carries
+// exactly one and its value is the empty array, which selected THIS path — and
+// the dig path had never fired in production at all (0 compound children
+// against 2,199 coordinated orders across four months). It was a second planner
+// with a second set of downstream discriminations, paid for continuously and
+// never once used.
 //
 // Lane contention: if the buried lane is already locked or TryLock
 // races, leave the parent Queued with queue_reason — same disposition
@@ -41,7 +41,7 @@ import (
 // had a creation half to fold.
 func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCode, stationID string, buried *BuriedError) {
 	// Resolve the lane's parent group so the planner has the group ID
-	// for shuffle-slot search and the target_nodes property read.
+	// for the shuffle-slot search.
 	// A READ THAT FAILED IS NOT A LANE THAT IS MISSING — see read_vs_missing.go.
 	// Releaser for the park: this parent stays `queued`, which is in the acquiring
 	// set, so the fulfillment scanner's ordinary retry brings it back through
@@ -91,26 +91,7 @@ func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCod
 		return
 	}
 
-	// Mode selection: empty target_nodes → expose mode; non-empty →
-	// target-node mode (or queue when all targets occupied).
-	targetNodeNames := ReshuffleTargetNodes(d.db, lane.ID, groupID)
-	var plan *ReshufflePlan
-	if len(targetNodeNames) == 0 {
-		plan, err = PlanReshuffleUnburyOnly(d.db, buried.Bin, buried.Slot, lane, groupID)
-	} else {
-		targetNode, allOccupied, terr := d.pickEmptyReshuffleTarget(groupID, targetNodeNames)
-		if terr != nil {
-			d.failOrderInternal(order, "reshuffle_error", terr.Error())
-			return
-		}
-		if allOccupied {
-			d.setQueueReason(order, protocol.QueueStorageRearranging, QueueCause("targets-occupied"),
-				QueueParams{Lane: lane.Name, Payload: payloadCode})
-			d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
-			return
-		}
-		plan, err = PlanReshuffleToTarget(d.db, buried.Bin, buried.Slot, lane, groupID, targetNode)
-	}
+	plan, err := PlanReshuffleUnburyOnly(d.db, buried.Bin, buried.Slot, lane, groupID)
 	// NO FREE SHUFFLE SLOT IS CONGESTION HERE TOO. planBuriedReshuffle grew this
 	// arm when sim order 21 died of it on 2026-07-10; the two complex sites are
 	// the same call with the same error and never got it, so the identical
@@ -166,12 +147,12 @@ func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCod
 			fmt.Sprintf("cannot create compound order: %v", err))
 		return
 	}
-	// Expose-mode only: persist the lane-extension entry NOW so the
-	// listener at AdvanceCompoundOrder terminal can look up the
-	// target bin ID directly instead of re-deriving from lane state.
-	// Target-node mode releases the lane immediately at terminal —
-	// no row needed.
-	if len(targetNodeNames) == 0 {
+	// Persist the lane-extension entry NOW so the listener at
+	// AdvanceCompoundOrder terminal can look up the target bin ID directly
+	// instead of re-deriving from lane state. Unconditional since target-node
+	// mode went: every complex dig is an expose, and every expose holds its lane
+	// past completion.
+	{
 		if _, err := d.db.InsertPendingLaneExtension(&store.PendingLaneExtension{
 			ComplexParentID:    order.ID,
 			LaneID:             buried.LaneID,
@@ -232,28 +213,12 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 		return
 	}
 
-	targetNodeNames := ReshuffleTargetNodes(d.db, lane.ID, groupID)
-	var plan *ReshufflePlan
-	if len(targetNodeNames) == 0 {
-		plan, err = PlanReshuffleUnburyOnly(d.db, buried.Bin, buried.Slot, lane, groupID)
-	} else {
-		targetNode, allOccupied, terr := d.pickEmptyReshuffleTarget(groupID, targetNodeNames)
-		if terr != nil {
-			d.failOrderInternal(order, "reshuffle_error", terr.Error())
-			return
-		}
-		if allOccupied {
-			d.setQueueReason(order, protocol.QueueStorageRearranging, QueueCause("targets-occupied"),
-				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
-			return
-		}
-		plan, err = PlanReshuffleToTarget(d.db, buried.Bin, buried.Slot, lane, groupID, targetNode)
-	}
+	plan, err := PlanReshuffleUnburyOnly(d.db, buried.Bin, buried.Slot, lane, groupID)
 	// Congestion, not geometry — see the sibling site in planBuriedReshuffleAtIntake.
 	//
-	// No emit here, matching this function's own targets-occupied arm above: this
-	// path is entered from the scanner with the parent already acquiring, so
-	// leaving it queued with a cause IS the retry.
+	// No emit here, matching the lane-locked arm above: this path is entered from
+	// the scanner with the parent already acquiring, so leaving it queued with a
+	// cause IS the retry.
 	if errors.Is(err, ErrNoShuffleSlot) {
 		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseNoShuffleSlot,
 			QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
@@ -285,9 +250,9 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 			fmt.Sprintf("cannot create compound order on replay: %v", err))
 		return
 	}
-	// Same expose-mode-only persistence as the intake path. See the
-	// comment in planBuriedReshuffleAtIntake.
-	if len(targetNodeNames) == 0 {
+	// Same persistence as the intake path. See the comment in
+	// planBuriedReshuffleAtIntake.
+	{
 		if _, err := d.db.InsertPendingLaneExtension(&store.PendingLaneExtension{
 			ComplexParentID:    order.ID,
 			LaneID:             buried.LaneID,
@@ -299,34 +264,4 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 	}
 	d.dbg("complex: replay compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
 
-}
-
-// pickEmptyReshuffleTarget walks the configured target-node names in
-// order and returns the first one with zero bins. Returns
-// (nil, true, nil) when all configured targets are occupied — the
-// caller queues the parent in that case rather than falling back to
-// expose mode. Validation failures (target name doesn't resolve, or
-// resolves to a synthetic / lane / non-direct-child) return a
-// non-nil error.
-func (d *Dispatcher) pickEmptyReshuffleTarget(groupID int64, names []string) (target *nodes.Node, allOccupied bool, err error) {
-	if len(names) == 0 {
-		return nil, false, nil
-	}
-	for _, name := range names {
-		node, gErr := d.db.GetNodeByDotName(name)
-		if gErr != nil || node == nil {
-			return nil, false, fmt.Errorf("reshuffle target %s not found in group %d", name, groupID)
-		}
-		if node.ParentID == nil || *node.ParentID != groupID {
-			return nil, false, fmt.Errorf("reshuffle target %s is not a direct child of group %d", name, groupID)
-		}
-		if node.IsSynthetic || node.NodeTypeCode == protocol.NodeClassLANE {
-			return nil, false, fmt.Errorf("reshuffle target %s must be a non-synthetic, non-lane node", name)
-		}
-		cnt, _ := d.db.CountBinsByNode(node.ID)
-		if cnt == 0 && node.ClaimedBy == nil {
-			return node, false, nil
-		}
-	}
-	return nil, true, nil
 }

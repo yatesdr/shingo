@@ -1,0 +1,418 @@
+package dispatch
+
+// THE RELEASER INVENTORY — for every wait Core can record, what ends it.
+//
+// ── WHY IT IS A TABLE AND NOT PROSE ───────────────────────────────────────
+//
+// The doctrine is that every machine-owned wait has (a) a named event releaser,
+// (b) a periodic floor that re-evaluates it, and (c) a record when the floor is
+// what freed it. Prose cannot be asserted. F-22 was not a missing idea — the
+// evaluator's own doc said "a dropped event costs only latency until the next
+// firing" — it was that nothing checked whether a next firing could exist. Every
+// individual comment was defensible; nothing connected them.
+//
+// So the connection is data. causeReleasers is TOTAL over the QueueCause
+// constants (TestEveryQueueCauseHasAReleaser), the populations it references
+// each carry an event set and a floor (TestEveryWaitPopulationHasBothPaths), and
+// the events it names are really subscribed to the re-driver that serves that
+// population (engine's TestDeclaredReleaserEventsAreSubscribed).
+//
+// ── AND IT IS THE FLOOR'S VOCABULARY ──────────────────────────────────────
+//
+// The liveness floor records the cause an order was carrying when the floor —
+// rather than an event — freed it. `what` is the sentence that record prints:
+// it says what SHOULD have ended the wait, so the record reads as "this event
+// did not fire" rather than "something was slow". The histogram of floor
+// releases grouped by cause is therefore a ranked worklist of missing emitters,
+// which is the artifact the emitter hunt runs on.
+//
+// ── HONEST ENTRIES ONLY ───────────────────────────────────────────────────
+//
+// A cause whose row cannot be written truthfully carries a `finding` instead of
+// a plausible sentence. Two exist today and both are reported rather than
+// papered over: the fleet-refusal cause has NO event (nothing emits "the fleet
+// became willing"), and one declared cause has no producer at all.
+
+// WaitPopulation names a set of orders that wait together because one mechanism
+// re-drives all of them. It is the unit the wiring and the floors are built on —
+// causes are what a wait MEANS, populations are how it ends.
+type WaitPopulation string
+
+const (
+	// PopAcquiring is {queued, sourcing}: pre-dispatch, no robot committed. The
+	// fulfillment scanner is both its event consumer and its floor.
+	PopAcquiring WaitPopulation = "acquiring"
+	// PopGateStaged is an order `staged` at a lane's mark — a robot physically
+	// parked, holding an unsealed waybill only Core can append to. The lane-gate
+	// evaluator releases it.
+	PopGateStaged WaitPopulation = "gate-staged"
+	// PopCompoundLeg is a dig leg Core has not yet handed to the fleet
+	// (orders.AwaitingFleetSQL). It writes no status while it waits, so the lane
+	// re-drive is the only thing that can find it.
+	PopCompoundLeg WaitPopulation = "compound-leg"
+	// PopCompoundParent is a compound parent sitting in `reshuffling` while its
+	// children run. It is in the table because the status partition classifies
+	// `reshuffling` to it — no CAUSE names it, because a parent in reshuffling
+	// carries no queue cause; its wait is "my children are not finished", which
+	// is structural rather than a refusal.
+	PopCompoundParent WaitPopulation = "compound-parent"
+	// PopNone is the honest answer for a declared cause nothing produces. It is
+	// not a population; it is the absence of one, named so the totality test can
+	// tell "no orders wait under this" from "nobody wrote the row".
+	PopNone WaitPopulation = "none"
+)
+
+// populationReleaser is the mechanism half: which events re-ask the question for
+// this population, which periodic pass backstops them, and the function both go
+// through. The event names are STRINGS because this package cannot import
+// engine (engine imports dispatch); engine's subscription test resolves them.
+type populationReleaser struct {
+	population WaitPopulation
+	// redriver is the function an event handler and the floor BOTH call. One
+	// name here is the claim that the floor is a trigger for existing
+	// level-triggered machinery rather than a second decision-maker.
+	redriver string
+	events   []string
+	floor    string
+}
+
+// waitPopulations is the mechanism table. Every population has both paths, which
+// is the doctrine's (a) and (b), and TestEveryWaitPopulationHasBothPaths asserts
+// it rather than trusting this comment.
+var waitPopulations = []populationReleaser{
+	{
+		population: PopAcquiring,
+		redriver:   "fulfillment.Scanner.RunOnce",
+		events: []string{
+			"EventBinUpdated", "EventOrderCompleted", "EventOrderCancelled",
+			"EventOrderFailed", "EventOrderSkipped", "EventOrderQueued",
+			"EventBlockCompleted",
+		},
+		floor: "fulfillment.Scanner.StartPeriodicSweep (60s)",
+	},
+	{
+		population: PopGateStaged,
+		redriver:   "Dispatcher.EvaluateLaneReleases",
+		events: []string{
+			"EventBlockCompleted", "EventBinEnteredTransit", "EventBinUpdated",
+			"EventOrderCompleted", "EventOrderCancelled", "EventOrderFailed",
+			"EventOrderSkipped",
+		},
+		floor: "Dispatcher.SweepLaneWaiters (60s)",
+	},
+	{
+		population: PopCompoundLeg,
+		redriver:   "Dispatcher.RedriveHeldCompoundLegs",
+		events: []string{
+			"EventBlockCompleted", "EventBinEnteredTransit", "EventBinUpdated",
+			"EventOrderCompleted", "EventOrderCancelled", "EventOrderFailed",
+			"EventOrderSkipped",
+		},
+		floor: "Dispatcher.SweepLaneWaiters (60s)",
+	},
+	{
+		// Already floored before this batch — AdvanceStuckReshuffleParents was the
+		// second instance of the shape the lane floor is the third and fourth of.
+		// Listed so the doctrine's table is the whole picture rather than the part
+		// this batch happened to build.
+		population: PopCompoundParent,
+		redriver:   "Dispatcher.AdvanceCompoundOrder",
+		events: []string{
+			"EventOrderCompleted", "EventOrderCancelled", "EventOrderFailed",
+			"EventOrderSkipped",
+		},
+		floor: "ReconciliationService.AdvanceStuckReshuffleParents (reconcile interval)",
+	},
+}
+
+// causeReleaser is the meaning half: which populations can carry this cause, the
+// sentence describing what ends it, and the two flags that make the table
+// answerable rather than merely descriptive.
+type causeReleaser struct {
+	cause QueueCause
+	// populations is every set an order carrying this cause can be sitting in.
+	// More than one is normal and not a smell: the same physical refusal reads
+	// the same whether the order is parked pre-dispatch or dwelling at a mark,
+	// which is the point of sharing the vocabulary across both.
+	populations []WaitPopulation
+	// what the floor's recovery record prints — what SHOULD have ended this wait.
+	what string
+	// bridgeNote, when non-empty, means THE A BATCH MUST READ THIS ROW: the
+	// releaser chain or the frequency of this cause involves the expose-bridge
+	// machinery (pending_lane_extensions, HandleBinTransitForLaneLock, the
+	// transferred lock outliving its compound). The marked subset is exactly what
+	// the deletion has to re-cover, which turns "nothing depends on the bridge"
+	// from a hope into a checked list.
+	bridgeNote string
+	// finding, when non-empty, is why this row could not be written honestly. It
+	// is data, not a TODO: the entry still exists so totality holds, and the text
+	// is the defect.
+	finding string
+}
+
+var causeReleasers = []causeReleaser{
+	// ── Ordering: the move is safe, it is not this order's turn ───────────
+	{
+		cause:       CauseLaneDeeperPending,
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged},
+		what:        "the deeper cross-origin store PLACES its bin, dropping its inbound mouth row",
+	},
+	{
+		cause:       CauseLaneGroupActive,
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged},
+		what:        "the active cross-origin group finishes with the lane",
+	},
+
+	// ── Admission: the lane cannot take this move now ─────────────────────
+	{
+		cause:       CauseLaneDigActive,
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged, PopCompoundLeg},
+		what:        "the dig holding this lane releases it (unlockLaneForCompound, which evaluates the lane it frees)",
+		bridgeNote: "EXPOSE DIGS RELEASE ELSEWHERE. A plain dig's lock drops at unlockLaneForCompound; " +
+			"an expose dig's is TRANSFERRED to the complex parent and dropped by " +
+			"HandleBinTransitForLaneLock on the parent's pickup (or the parent-terminal handler, or " +
+			"the boot prune). Deleting the bridge must leave the first path covering every case.",
+	},
+	{
+		cause:       CauseLaneTargetBuried,
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged, PopCompoundLeg},
+		what:        "the bin in front is moved — by a dig, or by whoever claimed it carrying it out",
+	},
+	{
+		cause:       CauseLaneHeldDig,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the dig holding the mouth releases it",
+		bridgeNote:  "Same transferred-lock chain as CauseLaneDigActive; see that row.",
+	},
+	{
+		cause:       CauseLaneHeldTraffic,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the different-mode holder releases its mouth row (placement, pickout, or terminal)",
+	},
+	{
+		cause:       CauseLaneHeldUnreadable,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the lane becomes readable — this is an absence of an answer, not a busy lane",
+	},
+	{
+		cause:       CauseLaneOccupied,
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged, PopCompoundLeg},
+		what:        "the robot inside the lane places or picks, releasing its occupancy row",
+	},
+	{
+		cause:       CauseLaneLocked,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the other reshuffle finishes and drops its lane lock",
+		bridgeNote:  "Same transferred-lock chain as CauseLaneDigActive; see that row.",
+	},
+	{
+		// ONE ROW FOR TWO CONSTANTS, and that is not a modelling choice — it is
+		// forced. CauseLaneLockRace and CauseBinLockRace are both "lock-race", the
+		// table is keyed by the VALUE an order actually carries, and TOTALITY
+		// refuses a second row for the same key. The collision cannot be papered
+		// over here even if somebody wanted to.
+		cause:       CauseLaneLockRace,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "immediate — whichever race was lost, the winner proceeds and this order re-plans on the next scan",
+		finding: "ONE STRING, TWO FACTS. This value is written by CauseLaneLockRace (a lane DIG-LOCK " +
+			"race, dispatch) and by CauseBinLockRace (a BIN reservation race in the Find→Reserve " +
+			"window, fulfillment). Different waits, different things being contended — and a " +
+			"queue_cause histogram cannot separate them, so this row describes both and is exact " +
+			"about neither. Kept rather than collapsed: re-spelling either value rewrites what rows " +
+			"already in the plant's orders table mean. The two DO share a releaser shape (both clear " +
+			"as soon as the winner moves on, both are floored by the scanner), which is why the " +
+			"collision costs forensics rather than liveness.",
+	},
+	{
+		cause:       CauseIntakeBuried,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the dig planned for this burial completes and the parent re-resolves",
+	},
+	{
+		cause:       CauseReshuffleCongestion,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "whatever the more specific arms would have named — this is the unmapped fallback",
+	},
+	{
+		cause:       CauseNoShuffleSlot,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "any order anywhere in the group releases a slot",
+		bridgeNote: "FREQUENCY, NOT RELEASER. findShuffleSlots narrows the pool by the protectedDepth " +
+			"rule, which reads pending_lane_extensions (F-19). Deleting the bridge WIDENS the pool and " +
+			"should make this cause rarer; it does not change what ends the wait. A batch should expect " +
+			"this row's count to fall, and be suspicious if it rises.",
+	},
+	{
+		cause:       CauseDigBlockerClaimed,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the order holding the blocker finishes carrying it out of the lane",
+	},
+
+	// ── The gate's own failures ───────────────────────────────────────────
+	{
+		cause:       CauseGateRebindUnavailable,
+		populations: []WaitPopulation{PopGateStaged},
+		what:        "a slot in the lane frees, so the dweller's bin has somewhere to re-bind to",
+	},
+	{
+		cause:       CauseGateAppendFailed,
+		populations: []WaitPopulation{PopGateStaged},
+		what:        "the fleet accepts the tail append on a later pass — a robot-system condition, not a lane one",
+	},
+
+	// ── Undetermined: a read failed, so the answer is not known ───────────
+	{
+		cause:       CauseLaneAcquireError,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the mouth read succeeds — Core declining to answer, not a busy lane",
+	},
+	{
+		cause:       CauseLaneEntryError,
+		populations: []WaitPopulation{PopNone},
+		what:        "",
+		finding: "DECLARED, NEVER SET. No production site writes this cause — verified by grep across " +
+			"dispatch/ and fulfillment/; the only references are its own declaration and the value test " +
+			"that pins its string. Nothing can wait under it, so it is not a liveness hole; it is dead " +
+			"vocabulary that makes the cause surface look wider than it is. Left in place because " +
+			"queue_cause_pure_test.go pins the value and deleting it is a decision for the owner, not " +
+			"for the batch that noticed.",
+	},
+	{
+		cause:       CauseAdmissionError,
+		populations: []WaitPopulation{PopGateStaged, PopCompoundLeg},
+		what:        "the read Core needed succeeds — an undetermined answer, not a busy lane",
+	},
+	{
+		cause:       CauseReadFailed,
+		populations: []WaitPopulation{PopAcquiring, PopCompoundLeg},
+		what:        "the database answers again",
+	},
+	{
+		cause:       CauseLoaderSourceUnreadable,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the loader pool becomes readable — says nothing about whether material is there",
+	},
+
+	// ── The fleet refused the create ──────────────────────────────────────
+	{
+		cause:       CauseFleetRefusedCreate,
+		populations: []WaitPopulation{PopAcquiring, PopCompoundLeg},
+		what:        "NOTHING — no event exists; the floor is the only thing that re-asks",
+		finding: "ABSENCE-CLASS, AND THE FLOOR IS THE ANSWER. \"The fleet became willing\" is not an " +
+			"event: no Core subscription fires when a saturated or disconnected RDS starts accepting " +
+			"creates again, and inventing one would mean polling the vendor to manufacture a signal " +
+			"whose only consumer is this wait. So this row's honest releaser is the periodic pass, and " +
+			"the doctrine's (a) is genuinely unsatisfiable here rather than merely unbuilt. " +
+			"CONSEQUENCE FOR THE TRIPWIRE: floor releases under this cause are EXPECTED and are not " +
+			"emitter gaps. They are the one cause that must be read as a fleet-health signal rather " +
+			"than as a missing subscription, which is why the histogram is grouped by cause.",
+	},
+
+	// ── Sourcing and reservation contention (fulfillment/) ────────────────
+	{
+		cause:       CauseDestNodeUnresolved,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the delivery node resolves — a node-graph fact, not an inventory one",
+	},
+	{
+		cause:       CauseStoreSlotContended,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the contended destination slot frees, or a sibling slot opens",
+	},
+	{
+		cause:       CauseClaimFailed,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the bin frees, or the finder picks a different one on the next scan",
+	},
+
+	// ── Complex-order preflight ───────────────────────────────────────────
+	{
+		cause:       CauseNGRPResolve,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "a child of the node group frees",
+	},
+	{
+		cause:       CauseReserveHolding,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the rest of the reserve set becomes available",
+	},
+	{
+		cause:       CauseComplexSlotReserve,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the remaining destination slots free",
+	},
+	{
+		cause:       CauseDropoffCapacity,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the storage dropoff frees, or its committed inbound traffic lands",
+	},
+	{
+		cause:       CauseSwapHold,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the sibling swap leg claims its bin, clearing the gate",
+	},
+}
+
+// DeclaredWaitPopulation is the exported view of one mechanism row, for the
+// cross-package subscription check.
+//
+// It exists because the claim and its proof cannot live in the same package:
+// dispatch declares which events release which population and cannot verify one
+// of them, since engine owns the subscriptions and the import only runs one way.
+// So the table is exported READ-ONLY — a shape engine's test can walk, with no
+// setter and no way to reach the slice itself.
+type DeclaredWaitPopulation struct {
+	Population string
+	Redriver   string
+	Events     []string
+	Floor      string
+}
+
+// DeclaredWaitPopulations returns the mechanism table for engine's
+// TestDeclaredReleaserEventsAreSubscribed. Copies, so a caller cannot edit the
+// declaration it is checking.
+func DeclaredWaitPopulations() []DeclaredWaitPopulation {
+	out := make([]DeclaredWaitPopulation, 0, len(waitPopulations))
+	for _, p := range waitPopulations {
+		out = append(out, DeclaredWaitPopulation{
+			Population: string(p.population),
+			Redriver:   p.redriver,
+			Events:     append([]string(nil), p.events...),
+			Floor:      p.floor,
+		})
+	}
+	return out
+}
+
+// DeclaredQueueCauses returns every cause the inventory covers.
+//
+// Exported for the soak's OBSERVED-VS-DECLARED cross-check: group the plant's
+// own rows by queue_cause and subtract this set, and what is left is a hold
+// class nobody designed a way out of. TestEveryQueueCauseHasAReleaser is what
+// makes the subtraction meaningful — it guarantees these keys are exactly the
+// declared constants, so "observed but not here" cannot mean "we forgot to add
+// it to a second list".
+func DeclaredQueueCauses() []string {
+	out := make([]string, 0, len(causeReleasers))
+	for _, r := range causeReleasers {
+		out = append(out, string(r.cause))
+	}
+	return out
+}
+
+// FloorReleaseAction is the recovery_actions verb the liveness floor writes,
+// exported so the soak can group by it.
+const FloorReleaseAction = floorReleaseAction
+
+// releaserFor returns the row for a cause, and whether one exists. The floor
+// uses it to print `what` on its recovery record; a cause with no row prints a
+// blunt fallback rather than a wrong sentence, and the totality test is what
+// keeps that fallback unreachable.
+func releaserFor(c QueueCause) (causeReleaser, bool) {
+	for _, r := range causeReleasers {
+		if r.cause == c {
+			return r, true
+		}
+	}
+	return causeReleaser{}, false
+}

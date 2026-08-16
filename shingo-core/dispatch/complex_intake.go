@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // HandleComplexOrderRequest processes a multi-step transport order from
@@ -54,7 +55,12 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// queue_reason, and DispatchPreparedComplex re-resolves on each
 	// scanner tick. Structural / unknown-action / unknown-node errors
 	// still reject synchronously — those aren't fixable by waiting.
-	resolvedSteps, err := d.resolveComplexSteps(p.Steps, payloadCode)
+	// reservations.Anyone, and it is not a shortcut: the order row does not
+	// exist yet, so there is no id a dig could be held for. Every dig excludes
+	// it, which is correct — a lane somebody else is excavating is no place to
+	// resolve a brand-new order into. The asker starts mattering on replay
+	// (complex_dispatch.go), where the parent may own a lock.
+	resolvedSteps, err := d.resolveComplexSteps(p.Steps, payloadCode, reservations.Anyone)
 	var (
 		queueReason string
 		queueCode   protocol.QueueCode

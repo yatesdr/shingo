@@ -405,22 +405,25 @@ type admissionSkips struct {
 //   - FULL retrieve from an NGRP source → binresolver/group_resolver.go:241
 //     raises BuriedError, same disposition.
 //
-// NOT ANSWERED for a HELD-BIN order (fulfillment/scanner.go dispatchHeldBin,
-// which never calls the finder — it reuses a bin claimed on an earlier tick, and
-// a later store can bury it in between). That is the empty cell in the audit
-// table above, and it is a REAL floor gap.
+// IT WAS NOT ANSWERED for a HELD-BIN order, AND THAT GAP IS CLOSED — window 2,
+// `3326c1bb`. Stated in the past tense because the shape of the fix is the
+// reason this skip is now scoped rather than blanket.
 //
-// It survives here anyway, and the reason is the releaser condition rather than
-// the line condition: admission refusing a held-bin order on burial would park
-// it with NOTHING to unbury it. PlanBuriedReshuffle is wired to the FINDER's
-// outcome, not to an admission verdict, and dispatchHeldBin does not call the
-// finder — so the refusal would be permanent. That trades "drives to a slot it
-// cannot reach" for "never moves again", which is not obviously the better floor
-// failure and is not a refactor's call to make.
+// The gap was real: dispatchHeldBin reuses a bin claimed on an earlier tick and
+// never calls the finder, so a later store can bury it in between and nothing
+// looked. It could not be closed by refusing here, because a refusal needs a
+// releaser and PlanBuriedReshuffle was wired to the FINDER's outcome — an order
+// parked on burial with no finder in its path would never move again, which is
+// a worse floor failure than driving to a slot it cannot reach.
 //
-// OPEN, unchanged in substance by this task: close it by routing a
-// held-bin burial into reshuffle planning (giving the refusal a releaser), or
-// accept it. Do not close it by deleting this line alone.
+// So the releaser was built first. fulfillment/scanner.go digForBuriedHeldBin
+// routes a held-bin burial into reshuffle planning directly, which is what made
+// the refusal safe; EntryKind below then splits the two plain callers so the
+// held-bin one asks the question and the fresh-bin one keeps the skip its finder
+// has already answered. Neither half works alone, which is why the skip stayed
+// blanket for as long as it did.
+//
+// THIS SKIP SET IS NOW THE FRESH-BIN CALLER'S ONLY. See skipsForEntry.
 var skipsForPlainEntry = admissionSkips{reachability: true, entryWhenGated: true}
 
 // EntryKind names WHICH plain-entry caller is asking, because the two answer the

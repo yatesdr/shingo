@@ -498,9 +498,18 @@ demands:
   # Loader demands key on the loader identity (synthetic PLK_LOADER, or the single-window
   # anchor node). The seed derives demand_registry from the loader aggregate; these
   # thresholds stamp onto each loader's payload/home UOPThreshold. ~2 bins worth each.
-  - {payload: BRKT, node: PLK_LOADER, replenish_uop_threshold: 40}
-  - {payload: CLIP, node: PLK_X1, replenish_uop_threshold: 40}
-  - {payload: STUD, node: PLK_X2, replenish_uop_threshold: 40}
+  #
+  # THRESHOLDS ARE COVER TIME, NOT A BIN COUNT, and 40 was one bin exactly.
+  # A component payload enters the plant ONLY through a loader round trip —
+  # Core raises a replenish, a robot carries an empty carrier to the window, the
+  # operator loads it, and it travels back out to the market and on to the line.
+  # That is several robot legs against a line draining 5 uop/min, so 40 UOP of
+  # cover is under 8 minutes and any contention or downtime inside that window
+  # starves the cell outright. 80 is two bins, ~16 minutes, which is slack rather
+  # than a promise.
+  - {payload: BRKT, node: PLK_LOADER, replenish_uop_threshold: 80}
+  - {payload: CLIP, node: PLK_X1, replenish_uop_threshold: 80}
+  - {payload: STUD, node: PLK_X2, replenish_uop_threshold: 80}
   # Unloader is event/auto-push driven (informational threshold 0).
   - {payload: ASSY, node: FGN_001, replenish_uop_threshold: 0}
 

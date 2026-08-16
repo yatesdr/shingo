@@ -91,15 +91,20 @@ func (s *laneGateSerializer) lock(laneID int64) func() {
 // RedriveHeldCompoundLegs re-drives every compound parent holding a PENDING leg
 // in this lane. Called on the same lane-clearing events as EvaluateLaneReleases.
 //
-// WHY THIS IS SEPARATE FROM THE EVALUATOR, and it is not a preference. The
-// evaluator returns immediately unless the group is gate_choreography, because
-// what it does — appending a tail to a robot already dwelling at a wait point —
-// only exists in that mode. The refusal this recovers from is MODE-INDEPENDENT:
-// admission asks physical questions (is a robot inside, does another dig own this
-// lane, is the target reachable) with no enforcement-mode gate at all, so a leg
-// can be held on a `none` group, which is what both plants run. Routing this
-// through the evaluator would make the recovery inherit a mode gate the refusal
-// does not have, and the wedge would survive everywhere it actually happens.
+// WHY THIS IS SEPARATE FROM THE EVALUATOR, and it is not a preference. It is NOT
+// because the evaluator is mode-gated — it no longer is. That gate was deleted
+// (F-05: it stranded every robot already dwelling when a mark was cleared, which
+// is the one thing the enablement rollback rule promises it will not do), and the
+// reasoning that used to sit here rested on it.
+//
+// The real reason is the POPULATION. The evaluator's candidates are gate-staged
+// orders: a vendor order exists, a robot is parked at a wait point, and releasing
+// one means appending a tail to a waybill the fleet already holds. A held
+// compound leg is none of those things — it has no vendor order, it is `pending`,
+// and "releasing" it means dispatching it for the first time. Two different sets,
+// two different actions, one shared question: has this lane changed. Folding them
+// would mean one loop branching on which kind of thing it was looking at, which
+// is how the two answers drift.
 //
 // LEVEL-TRIGGERED, like the evaluator: it derives everything from live state, so
 // a duplicate firing is a no-op (AdvanceCompoundOrder re-reads and re-admits), a
@@ -160,13 +165,46 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 		return
 	}
 
+	// THE PASS RUNS UNDER THE LANE'S MUTEX; THE HEAL RUNS AFTER IT. Firing a dig
+	// creates a compound, which dispatches its first leg synchronously, which emits
+	// events, which the bus delivers ON THIS GOROUTINE to subscribers that call
+	// EvaluateLaneReleases for this same lane. The per-lane mutex is not reentrant,
+	// so doing it inside the pass is a self-deadlock — the same shape the dissolve
+	// site documents for scanMu (compound.go). Split rather than made reentrant: a
+	// reentrant lock here would let a nested pass append a tail against state the
+	// outer pass is halfway through changing, which is what the mutex is for.
+	//
+	// Outside it, the nested pass is harmless and bounded: it finds the dig lock
+	// held, refuses everyone with lane-dig-active, and returns.
+	heal, wanted := d.evaluateLaneReleasesPass(lane)
+	if wanted {
+		d.healLaneMouth(lane, heal)
+	}
+}
+
+// evaluateLaneReleasesPass is the pass proper — everything that happens under the
+// lane's mutex. It returns the one heal the caller should fire afterwards, if any.
+//
+// ONE PER PASS, not one per candidate, and the reason is that a dig is a fact
+// about the LANE rather than about the order that noticed. The wall in front of a
+// depth-2 store is the same wall in front of the depth-4 store behind it, so one
+// excavation frees them all; a second request would find the lane locked by the
+// first and do nothing. Returning one keeps that obvious instead of relying on the
+// lock to absorb the duplicates.
+func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bool) {
+	laneID := lane.ID
 	unlock := d.laneGates.lock(laneID)
 	defer unlock()
+
+	var (
+		heal       healRequest
+		healWanted bool
+	)
 
 	candidates, err := d.gateStagedForLane(lane)
 	if err != nil {
 		log.Printf("lane gate: list staged orders for lane %s: %v", lane.Name, err)
-		return
+		return heal, false
 	}
 
 	// Deepest first — but be clear about what this sort does and does not buy,
@@ -211,13 +249,42 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 	// PICKUP against where its bin actually sits. Those are different facts about
 	// different ends of the order.
 	released := 0
+	// WINDOW 3's QUESTION IS ASKED OF EVERY CANDIDATE THAT DID NOT GET IN, whatever
+	// stopped it. A Tier-2 park, a lane-occupied refusal and a failed re-bind can
+	// all be sitting on top of the same unclaimed bin, so keying the heal on a
+	// particular refusal cause would find it from one arm and miss it from the other
+	// two. The refusal is the PROMPT; mouthHealNeeded reads the physics and answers.
+	propose := func(c gateCandidate) {
+		if healWanted {
+			return // one dig per pass — see the function doc
+		}
+		if req, ok := d.mouthHealNeeded(lane, c); ok {
+			heal, healWanted = req, true
+		}
+	}
 	for _, c := range candidates {
 		// Re-read per candidate rather than reusing one snapshot: a re-bind by an
 		// earlier candidate in this pass moves its depth and its bound node, and
 		// the classifier's view has to see that.
 		v, cErr := d.gateEntryVerdict(lane, c.order, c.node, c.retrieve)
 		if cErr != nil {
+			// AND THE CAUSE GOES ON THE ROW, exactly as the refusal arm below does
+			// it. This arm logged and continued, so a robot dwelling at a mark
+			// because Core could not READ the lane was indistinguishable, on the row,
+			// from one nobody had evaluated yet — and the two are investigated
+			// differently. `dcb2c014` gave the refusal arm its cause and left this one
+			// blank, which is the same gap it closed, one branch over.
+			//
+			// CauseAdmissionError, not a lane cause: an undetermined answer is Core
+			// declining, not a busy lane. Same distinction, same constant, as the
+			// compound leg's admission-error arm (compound.go).
+			//
+			// The order stays a candidate — the set is derived from durable order
+			// state, never from a verdict — so the next firing re-asks, and the cause
+			// is cleared on entry like every other.
 			log.Printf("lane gate: classifier error for order %d on lane %s: %v", c.order.ID, lane.Name, cErr)
+			d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseAdmissionError,
+				QueueParams{Lane: lane.Name})
 			continue
 		}
 		if !v.Admitted() {
@@ -244,6 +311,7 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 			d.setQueueReason(c.order, protocol.QueueWaitingForSlot, v.Cause(),
 				QueueParams{Lane: lane.Name})
 			d.dbg("lane gate: order %d still held at %s (%s)", c.order.ID, lane.Name, v.Cause())
+			propose(c)
 			continue
 		}
 		var rErr error
@@ -254,6 +322,7 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 		}
 		if rErr != nil {
 			log.Printf("lane gate: release order %d into lane %s: %v", c.order.ID, lane.Name, rErr)
+			propose(c)
 			continue
 		}
 		// CLEARED ON ENTRY. The cause described a wait that is over; leaving it
@@ -266,6 +335,7 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 	if released > 0 {
 		log.Printf("lane gate: released %d order(s) into lane %s", released, lane.Name)
 	}
+	return heal, healWanted
 }
 
 // gateCandidate is one gate-staged order with the destination and depth the

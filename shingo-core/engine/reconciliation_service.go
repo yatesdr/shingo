@@ -93,7 +93,14 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 				continue
 			}
 			if summary.Status != "ok" {
-				s.logFn("engine: reconciliation status=%s anomalies=%d stuck=%d staged=%d stale_edges=%d outbox=%d dead_letters=%d",
+				// `expired_staged_bins`, NOT `staged`. This field counts BINS whose
+				// staging expired (the staged_bin_expired anomaly); it has nothing to do
+				// with orders in status `staged`, which sit two fields to its left under
+				// `stuck`. The short label cost a live diagnosis on 2026-08-10: a pure
+				// staging deadlock — eight orders in status `staged`, robots parked at
+				// marks — was read off this line as `stuck=8 staged=0`, and the 0 was
+				// taken to mean no order was staged. It meant no BIN had expired.
+				s.logFn("engine: reconciliation status=%s anomalies=%d stuck=%d expired_staged_bins=%d stale_edges=%d outbox=%d dead_letters=%d",
 					summary.Status,
 					summary.TotalAnomalies,
 					summary.StuckOrders,
