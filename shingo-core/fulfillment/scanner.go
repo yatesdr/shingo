@@ -256,7 +256,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// re-finds. This is the length-1 idempotency that let the sourcing-reentry
 	// guard dissolve: re-entry reuses the claimed bin (FindSource is not consulted,
 	// no second bin). Otherwise fall through to find + claim via the shared
-	// SourceFinder. The ★ node-driven destination reserve happens just before each
+	// SourceFinder. The node-driven destination reserve happens just before each
 	// dispatch (in dispatchHeldBin here, and after the source claim in the finder
 	// path below) — after the malformed-order guards, so an invalid order fails
 	// without acquiring a reservation.
@@ -328,16 +328,20 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		// planBuriedReshuffle's lane lock — the second gets ErrReshuffleWait.
 		//
 		// Being able to re-plan on a LATER tick is also what finally makes the buried
-		// path wait-not-fail (D18-Q4). "No free shuffle slot" is congestion, and at
+		// path wait-not-fail. "No free shuffle slot" is congestion, and at
 		// intake it had nowhere to go but a terminal fail (sim order 21, 2026-07-10).
 		// Here it just waits: ErrReshuffleWait keeps the order queued, and the next
 		// tick tries again once a slot frees.
 		if err := s.dispatcher.PlanBuriedReshuffle(order, res.Buried); err != nil {
 			if errors.Is(err, dispatch.ErrReshuffleWait) {
-				// Congestion — the lane is busy, or no shuffle slot is free right now.
-				// Stay queued and retry next tick. NEVER fail: the lane is not broken,
-				// it is crowded.
-				s.setQueueReason(order, protocol.QueueStorageRearranging, dispatch.QueueCause("reshuffle-congestion"),
+				// Congestion — the lane is busy, no shuffle slot is free right now, or a
+				// blocker is claimed by an order still carrying it out. Stay queued and
+				// retry next tick. NEVER fail: the lane is not broken, it is crowded.
+				//
+				// The cause comes off the error rather than being written flat here: the
+				// three waits clear on three different signals, and a row that says only
+				// "congestion" cannot tell an engineer which one to go look at.
+				s.setQueueReason(order, protocol.QueueStorageRearranging, dispatch.ReshuffleWaitCause(err),
 					dispatch.QueueParams{Payload: order.PayloadCode})
 				return false
 			}
@@ -473,7 +477,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	if !s.admitDepthOrder(order, destNode) {
 		return false
 	}
-	if !s.admitLanes(order, sourceNode, destNode) {
+	if ok, _ := s.admitLanes(order, sourceNode, destNode, dispatch.EntryFreshBin); !ok {
 		return false
 	}
 
@@ -493,9 +497,15 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	}
 
 	// Dispatch to fleet — use DispatchDirect which handles fleet creation.
-	// On failure, DispatchDirect sets status to failed. We override back to sourcing
-	// since this is a transient fleet issue, not a permanent failure, and release
-	// the now-hard claim so the requeue re-soft-acquires next tick.
+	// On failure the order stays where it is and we move it back to sourcing: a
+	// fleet that will not take an order right now is a transient robot-system
+	// issue, not a permanent failure. The hard claim is released so the requeue
+	// re-soft-acquires next tick.
+	//
+	// This rollback did not work for as long as DispatchDirect terminalized first:
+	// `failed` has no outgoing edges, so the MoveToSourcing below was an illegal
+	// transition, logged and dropped, and every fleet rejection killed the order
+	// under a comment saying it did not.
 	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
 		s.logFn("fulfillment: fleet dispatch failed for order %d, re-queuing: %v", order.ID, err)
@@ -546,7 +556,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		s.logFn("fulfillment: held-bin order %d dest node %q not found: %v", order.ID, order.DeliveryNode, err)
 		return false
 	}
-	// ★ (Re)secure the destination slot reserve-only before dispatch (node-driven;
+	// (Re)secure the destination slot reserve-only before dispatch (node-driven;
 	// a no-op for non-storage dests). Owner-idempotent, so a store that reserved at
 	// intake passes through; a loser (or a slot that filled) requeues holding its
 	// bin, never dropping into an occupied slot (#115/#117, generalized).
@@ -572,7 +582,13 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	if !s.admitDepthOrder(order, destNode) {
 		return false
 	}
-	if !s.admitLanes(order, sourceNode, destNode) {
+	// EntryHeldBin: this caller skips nothing, because it never called the finder
+	// and so has no answer to the reachability question. A buried verdict is
+	// turned into a dig rather than a permanent park.
+	if ok, cause := s.admitLanes(order, sourceNode, destNode, dispatch.EntryHeldBin); !ok {
+		if cause == dispatch.CauseLaneTargetBuried {
+			return s.digForBuriedHeldBin(order)
+		}
 		return false
 	}
 	// Confirm-at-dispatch: the held bin is still SOFT (pending reservation from the
@@ -617,8 +633,16 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 // or a transient error) so the caller returns false too. A no-op that returns
 // true when no mouth-enforced lane group is on the order's path — byte-identical
 // when the gate is off.
-func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.Node) bool {
-	admitted, cause, lane, err := s.dispatcher.AcquireLanesForOrder(order.ID, sourceNode, destNode)
+//
+// kind says WHICH caller is asking. The two plain-entry callers answer the
+// reachability question differently and only one of them has an answer; see
+// dispatch.EntryKind.
+//
+// The CAUSE comes back with the verdict so a caller can act on a specific
+// refusal rather than only on "no". dispatchHeldBin needs that: a buried refusal
+// there has no releaser unless it plans one.
+func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.Node, kind dispatch.EntryKind) (bool, dispatch.QueueCause) {
+	admitted, cause, lane, err := s.dispatcher.AcquireLanesForOrder(order, sourceNode, destNode, kind)
 	if err != nil {
 		s.logFn("fulfillment: lane acquire for order %d errored: %v (retrying)", order.ID, err)
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseLaneAcquireError,
@@ -626,7 +650,7 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane acquire error, retrying"); qerr != nil {
 			s.logFn("fulfillment: order %d → sourcing after lane acquire error: %v", order.ID, qerr)
 		}
-		return false
+		return false, dispatch.CauseLaneAcquireError
 	}
 	if !admitted {
 		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
@@ -634,9 +658,74 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane contended"); qerr != nil {
 			s.logFn("fulfillment: order %d → sourcing after lane conflict: %v", order.ID, qerr)
 		}
+		return false, cause
+	}
+	return true, ""
+}
+
+// digForBuriedHeldBin turns a lane-target-buried refusal on the held-bin path
+// into the dig that clears it.
+//
+// WHY IT EXISTS: the held-bin caller reuses a bin claimed on an earlier tick and
+// never calls the finder, so nothing looked at whether that bin is still
+// reachable — and nothing prevents a later store burying it, because the
+// store-slot selector's accessibility clause asks only whether the CANDIDATE slot
+// is reachable, never what sits behind it (store/nodes/lanes.go). Admission now
+// sees the burial. Without this, seeing it would only turn "drives to a slot it
+// cannot reach" into "never moves again", which is not the better failure.
+//
+// It is the same disposition the FRESH path already has for the same fact
+// (tryFulfill's OutcomeReshuffle arm), reached from the caller that has no
+// finder result to carry it.
+//
+// THE DROPOFF-CAPACITY PRECONDITION IS ALREADY MET, and that is not incidental:
+// planning a reshuffle COMMITS the delivery (dispatcher.go PlanBuriedReshuffle),
+// so it may only be done against a destination known clear. tryFulfill runs
+// CheckDropoffCapacity before it routes to dispatchHeldBin — same tick, same
+// goroutine, under scanMu — exactly as it does before the fresh path's arm.
+//
+// THE PARENT TRANSITION IS LEGAL, and this is worth stating so nobody "fixes"
+// it: CreateCompoundOrder moves the parent into Reshuffling via BeginReshuffle
+// and requires a status that has Reshuffling as a legal next state — Pending,
+// Sourcing or Queued (dispatch/compound.go). A held-bin order is in `sourcing`
+// by the time it reaches here (dispatchHeldBin calls MoveToSourcing before the
+// lane admit), which is in that set.
+//
+// THE HELD BIN STAYS HELD, and the dig cannot collide with what this order
+// already holds:
+//   - Its BIN is the dig's TARGET, not a blocker. findBuriedBlockers returns
+//     slots strictly SHALLOWER than the target, so the order's own bin is never
+//     one of the things being moved.
+//   - Its DESTINATION slot cannot be chosen as a shuffle spot. shuffleSlotFree
+//     runs CheckDropoffCapacity with no order excluded, and this order is
+//     `sourcing` and inbound to that node — non-excluded by
+//     CountInFlightByDeliveryNode — so its own delivery slot reads occupied to
+//     the shuffle picker.
+//
+// WAIT, NEVER FAIL, on congestion: ErrReshuffleWait means the lane is
+// busy or no shuffle slot is free right now. The order keeps its held bin and
+// retries next tick.
+func (s *Scanner) digForBuriedHeldBin(order *orders.Order) bool {
+	buried, err := s.dispatcher.BuriedForHeldBin(order)
+	if err != nil {
+		s.logFn("fulfillment: held-bin order %d is buried but its dig could not be described: %v",
+			order.ID, err)
 		return false
 	}
-	return true
+	if err := s.dispatcher.PlanBuriedReshuffle(order, buried); err != nil {
+		if errors.Is(err, dispatch.ErrReshuffleWait) {
+			s.setQueueReason(order, protocol.QueueStorageRearranging,
+				dispatch.ReshuffleWaitCause(err), dispatch.QueueParams{Payload: order.PayloadCode})
+			return false
+		}
+		s.logFn("fulfillment: held-bin order %d buried-reshuffle plan failed: %v", order.ID, err)
+		if s.failFn != nil {
+			s.failFn(order.ID, "reshuffle_failed", err.Error())
+		}
+		return false
+	}
+	s.logFn("fulfillment: held-bin order %d was buried after it took its hold — dig planned", order.ID)
+	return false
 }
 
 // admitDepthOrder holds a store at dispatch until it is safe to enter its lane
@@ -647,7 +736,7 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 // returns true when no mouth-enforced lane group is on the path — byte-identical
 // when the gate is off.
 func (s *Scanner) admitDepthOrder(order *orders.Order, destNode *nodes.Node) bool {
-	park, cause, err := s.dispatcher.AdmitLaneEntry(order, destNode)
+	v, err := s.dispatcher.AdmitLaneEntry(order, destNode)
 	if err != nil {
 		s.logFn("fulfillment: lane-entry check for order %d errored: %v (retrying)", order.ID, err)
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseLaneEntryError,
@@ -657,8 +746,8 @@ func (s *Scanner) admitDepthOrder(order *orders.Order, destNode *nodes.Node) boo
 		}
 		return false
 	}
-	if park {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
+	if !v.Admitted() {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, v.Cause(),
 			dispatch.QueueParams{Destination: destNode.Name})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane entry deferred (depth order)"); qerr != nil {
 			s.logFn("fulfillment: order %d → sourcing after lane-entry defer: %v", order.ID, qerr)

@@ -3,6 +3,8 @@ package binresolver
 import (
 	"errors"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -351,6 +353,11 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binT
 
 // resolveStoreLKND consolidates matching payload codes first, then picks the emptiest slot.
 func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+	// Lanes that had a usable slot and were refused by the burial guard. Kept so
+	// a group that comes up empty can say whether it is FULL or merely CLOSED —
+	// two conditions with the same disposition (walk on) and completely different
+	// diagnoses. See noteClosedLanes.
+	var closedByClaim []string
 	children, err := r.DB.ListChildNodesUnlocked(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
@@ -396,8 +403,11 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 
 			slot, err := r.DB.FindStoreSlotInLane(child.ID)
 			if err != nil {
+				if errors.Is(err, nodes.ErrLaneClosedByClaim) {
+					closedByClaim = append(closedByClaim, child.Name)
+				}
 				r.dbg("LKND: FindStoreSlotInLane lane=%s: %v", child.Name, err)
-				continue // lane is full
+				continue // lane is full, or closed to stores by a claim
 			}
 
 			count, _ := r.DB.CountBinsInLane(child.ID)
@@ -469,6 +479,7 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 	}
 
 	if len(candidates) == 0 {
+		r.noteClosedLanes(group, closedByClaim)
 		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
 	}
 
@@ -477,6 +488,9 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 
 // resolveStoreDPTH packs back-to-front regardless of payload. Prefers lanes over direct children.
 func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+	// See resolveStoreLKND: lanes the burial guard refused, for the diagnosis on
+	// the empty-group path.
+	var closedByClaim []string
 	children, err := r.DB.ListChildNodesUnlocked(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
@@ -514,8 +528,11 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 
 		slot, err := r.DB.FindStoreSlotInLane(child.ID)
 		if err != nil {
+			if errors.Is(err, nodes.ErrLaneClosedByClaim) {
+				closedByClaim = append(closedByClaim, child.Name)
+			}
 			r.dbg("DPTH: FindStoreSlotInLane lane=%s: %v", child.Name, err)
-			continue // lane is full
+			continue // lane is full, or closed to stores by a claim
 		}
 		return &ResolveResult{Node: slot}, nil
 	}
@@ -547,7 +564,35 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 		}
 	}
 
+	r.noteClosedLanes(group, closedByClaim)
 	return nil, fmt.Errorf("no available slot in node group %s", group.Name)
+}
+
+// noteClosedLanes reports a group that came up empty with at least one lane
+// refused by the burial guard rather than genuinely full.
+//
+// LOUD, and only on the whole-group failure. A single closed lane is a non-event
+// — the scan walks to a sibling and the store lands — so per-lane logging would
+// be noise at dispatch volume. A group where every lane is either full or closed
+// is the condition that actually costs something: the store parks, and it parks
+// for as long as the claims last.
+//
+// The message stays out of the returned error deliberately. The queue-reason
+// classifier reads that message by substring and takes the group name as
+// everything after "node group " to end of string (dispatch/complex.go), so any
+// suffix here would surface inside the operator sentence as part of the group's
+// name. The park keeps its existing shape; this line is the engineer-facing half.
+//
+// Repeats per resolution attempt, which for a parked store means per scanner
+// tick. That is intended: a single line is a lane doing its job, and a stream of
+// them is the signal — sustained closure means the claims are not clearing, which
+// is a stalled robot or a stalled dig, and that is the incident to chase.
+func (r *GroupResolver) noteClosedLanes(group *nodes.Node, closed []string) {
+	if len(closed) == 0 {
+		return
+	}
+	log.Printf("store slot: node group %s has no free slot; %d lane(s) closed to stores by a claimed bin deeper in them: %s",
+		group.Name, len(closed), strings.Join(closed, ", "))
 }
 
 // binTypeAllowed checks whether a bin type is permitted at a node via effective bin types.

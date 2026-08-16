@@ -302,8 +302,7 @@ func ListDigHolds(q Queryer) ([]DigHold, error) {
 // THIS ROW NOW ARBITRATES — read carefully, because the mechanism did not change
 // and the sentence it replaces did not become false by itself. What changed is
 // the caller: the compound scheduler's sibling-in-flight guard is gone, and
-// dispatch.laneOccupiedForChild reads these rows to decide whether a leg may
-// enter. So a lane's at-most-one-inside now RESTS on this table, where it used
+// dispatch.admit reads these rows to decide whether a leg may enter. So a lane's at-most-one-inside now RESTS on this table, where it used
 // to rest on there being one child at a time and this being a witness to it.
 //
 // The SQL is unchanged and still permissive: the NOT EXISTS is keyed on

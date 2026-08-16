@@ -47,6 +47,10 @@ type fakeFinderDB struct {
 	// same tier-6 block, which used to fall through to OutcomeFound just as
 	// silently as the first.
 	nodeErr map[int64]error
+	// loaderHomesErr makes the loader-pool membership read FAIL. It stands for all
+	// five reads sourceFromDedicatedLoader can fail on; they share one disposition
+	// and one arm at the caller, so one of them exercises it.
+	loaderHomesErr error
 
 	fifoCalls        int
 	globalEmptyCalls int
@@ -184,6 +188,9 @@ func (f *fakeFinderDB) GetLoader(id int64) (*loaders.Loader, error) {
 }
 
 func (f *fakeFinderDB) ListLoaderHomes(loaderID int64) ([]loaders.Home, error) {
+	if f.loaderHomesErr != nil {
+		return nil, f.loaderHomesErr
+	}
 	var out []loaders.Home
 	for _, h := range f.homes {
 		if h.LoaderID == loaderID {

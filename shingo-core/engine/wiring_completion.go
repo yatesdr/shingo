@@ -371,6 +371,12 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 		e.logFn("WARN: multi-bin delivery for order %d evicted a stale bin record (bin %d) to _TRANSIT — a delivery cannot physically complete onto an occupied slot; recover via the anomalies page",
 			order.ID, ghostID)
 	}
+	// The burial shadow instrument. Explicit here because the multi-bin arrival
+	// goes through the store aggregate rather than BinService.ApplyArrival, which
+	// calls it for itself. Post-commit and result-free either way.
+	for _, inst := range instructions {
+		e.binService.NoteBurialShadow(inst.BinID, inst.ToNodeID, order.ID)
+	}
 
 	for i, inst := range instructions {
 		bin, err := e.db.GetBin(inst.BinID)
@@ -604,6 +610,11 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 	for _, ghostID := range evictedGhosts {
 		e.logFn("WARN: multi-bin arrival for order %d evicted a stale bin record (bin %d) to _TRANSIT — a delivery cannot physically complete onto an occupied slot; recover via the anomalies page",
 			order.ID, ghostID)
+	}
+	// The burial shadow instrument — same reason as the delivery-side multi-bin
+	// arrival above: this path does not go through BinService.ApplyArrival.
+	for _, inst := range instructions {
+		e.binService.NoteBurialShadow(inst.BinID, inst.ToNodeID, order.ID)
 	}
 
 	// Emit BinUpdatedEvent only for bins that actually moved

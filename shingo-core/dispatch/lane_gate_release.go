@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
@@ -87,6 +88,41 @@ func (s *laneGateSerializer) lock(laneID int64) func() {
 	return m.Unlock
 }
 
+// RedriveHeldCompoundLegs re-drives every compound parent holding a PENDING leg
+// in this lane. Called on the same lane-clearing events as EvaluateLaneReleases.
+//
+// WHY THIS IS SEPARATE FROM THE EVALUATOR, and it is not a preference. The
+// evaluator returns immediately unless the group is gate_choreography, because
+// what it does — appending a tail to a robot already dwelling at a wait point —
+// only exists in that mode. The refusal this recovers from is MODE-INDEPENDENT:
+// admission asks physical questions (is a robot inside, does another dig own this
+// lane, is the target reachable) with no enforcement-mode gate at all, so a leg
+// can be held on a `none` group, which is what both plants run. Routing this
+// through the evaluator would make the recovery inherit a mode gate the refusal
+// does not have, and the wedge would survive everywhere it actually happens.
+//
+// LEVEL-TRIGGERED, like the evaluator: it derives everything from live state, so
+// a duplicate firing is a no-op (AdvanceCompoundOrder re-reads and re-admits), a
+// dropped one costs only latency, and no subscriber has to agree about ordering.
+// A timer would be a backstop for this; the lane-clearing event is the mechanism.
+//
+// No per-lane mutex. AdvanceCompoundOrder does its own arbitration — the status
+// CAS is the atomic claim on a child, and the occupancy row is the lane's — so
+// serializing here would add a second, weaker answer to a question already
+// settled underneath.
+func (d *Dispatcher) RedriveHeldCompoundLegs(laneID int64) {
+	parents, err := d.db.ListHeldLegParentsInLane(laneID)
+	if err != nil {
+		log.Printf("lanegate: list held legs in lane %d: %v", laneID, err)
+		return
+	}
+	for _, parentID := range parents {
+		if err := d.AdvanceCompoundOrder(parentID); err != nil {
+			log.Printf("lanegate: re-drive compound %d after lane %d cleared: %v", parentID, laneID, err)
+		}
+	}
+}
+
 // EvaluateLaneReleases runs one release pass over a lane: every gate-staged order
 // the classifier now admits gets its tail appended and is released into the lane.
 //
@@ -109,14 +145,11 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 	unlock := d.laneGates.lock(laneID)
 	defer unlock()
 
-	candidates, err := d.gateStagedInLane(lane)
+	candidates, err := d.gateStagedForLane(lane)
 	if err != nil {
 		log.Printf("lane gate: list staged orders for lane %s: %v", lane.Name, err)
 		return
 	}
-	// NOTE: no early return on an empty store set — a lane can have staged RETRIEVES
-	// and no staged stores, and bailing here would skip the retrieve release loop
-	// below. Both loops no-op cleanly on an empty candidate slice.
 
 	// Deepest first — but be clear about what this sort does and does not buy,
 	// because it is easy to mistake it for the safety mechanism.
@@ -128,11 +161,16 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 	// (Verified: reversing this comparison leaves every gate scenario and the
 	// 200-seed soak green, whereas disabling Tier-2 walls 160/200 seeds.)
 	//
-	// What it buys is ordering agreement. The appends leave in the same sequence
-	// as the depth-derived RDS priorities they carry (laneDispatchPriority, larger
-	// = deeper = served first), so Core's append order and the fleet's own
-	// dispatch order do not disagree, and the deepest admissible order goes out on
-	// this pass rather than the next firing.
+	// What it buys is that the deepest admissible order goes out on THIS pass
+	// rather than the next firing.
+	//
+	// It used to buy more: the appends left in the same sequence as the
+	// depth-derived RDS priorities they carried, so Core's append order and the
+	// fleet's own dispatch order could not disagree. That boost is deleted (see
+	// lane_gate.go), so the fleet now sequences these however it sequences equal
+	// priorities, and this sort no longer has a counterpart on the RDS side. The
+	// safety property is unaffected — that is Tier 2's, stated below, not this
+	// sort's.
 	//
 	// Tier 1 rides on the same loop: a SAME-ORIGIN partner is skipped by the
 	// classifier rather than depth-gated, so a press pair is released together in
@@ -144,57 +182,45 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 		return candidates[i].order.ID < candidates[j].order.ID // deterministic
 	})
 
+	// ONE LOOP. There used to be two, because there were two candidate queries —
+	// one matching delivery_node for stores, one matching source_node for
+	// retrieves. Direction is now read off the PLAN (the first actionable step
+	// after the wait: a pickup means the robot is going in to take something out),
+	// so which query found the order stops being how Core knows what it is.
+	//
+	// What stays per-direction is the release itself, and legitimately so: a store
+	// re-binds its DROPOFF against the lane as it stands, a retrieve re-binds its
+	// PICKUP against where its bin actually sits. Those are different facts about
+	// different ends of the order.
 	released := 0
 	for _, c := range candidates {
 		// Re-read per candidate rather than reusing one snapshot: a re-bind by an
-		// earlier candidate in this pass moves its depth and its delivery_node, and
+		// earlier candidate in this pass moves its depth and its bound node, and
 		// the classifier's view has to see that.
-		park, cause, cErr := d.laneEntryCause(lane, c.order, c.dest)
+		v, cErr := d.gateEntryVerdict(lane, c.order, c.node, c.retrieve)
 		if cErr != nil {
 			log.Printf("lane gate: classifier error for order %d on lane %s: %v", c.order.ID, lane.Name, cErr)
 			continue
 		}
-		if park {
-			d.dbg("lane gate: order %d still held at %s (%s)", c.order.ID, lane.Name, cause)
+		if !v.Admitted() {
+			// STAYS A CANDIDATE. The candidate set is derived from the order's own
+			// durable state — gate-staged, wait_kind lane, wait_lane this lane — and
+			// never from a verdict, so a refusal here removes nothing. The next
+			// firing re-derives the same set and re-asks. That matters more since
+			// the unification: a gate-staged retrieve is now refused while a plain
+			// store holds occupancy, which is a condition that clears on an event
+			// this evaluator is already subscribed to.
+			d.dbg("lane gate: order %d still held at %s (%s)", c.order.ID, lane.Name, v.Cause())
 			continue
 		}
-		if err := d.releaseGatedOrder(c.order, lane); err != nil {
-			log.Printf("lane gate: release order %d into lane %s: %v", c.order.ID, lane.Name, err)
-			continue
+		var rErr error
+		if c.retrieve {
+			rErr = d.releaseGatedRetrieve(c.order, lane)
+		} else {
+			rErr = d.releaseGatedOrder(c.order, lane)
 		}
-		released++
-	}
-
-	// Retrieves dwelling at the gate (source-side staged). A retrieve's lane is its
-	// SOURCE, so it is never in the store candidate set (which matches delivery_node);
-	// it has its own candidate query and its own classifier. Same pass, same per-lane
-	// mutex, same deepest-first order — though for a retrieve "deepest" just sequences
-	// the releases and does not buy the wall-prevention the store sort does (a retrieve
-	// frees a slot rather than walling one). The release condition is the retrieve
-	// classifier's: no dig holds the lane and the wanted bin is not buried.
-	retrieveCandidates, err := d.gateStagedRetrievesInLane(lane)
-	if err != nil {
-		log.Printf("lane gate: list staged retrieves for lane %s: %v", lane.Name, err)
-		return
-	}
-	sort.SliceStable(retrieveCandidates, func(i, j int) bool {
-		if retrieveCandidates[i].depth != retrieveCandidates[j].depth {
-			return retrieveCandidates[i].depth > retrieveCandidates[j].depth
-		}
-		return retrieveCandidates[i].order.ID < retrieveCandidates[j].order.ID
-	})
-	for _, c := range retrieveCandidates {
-		park, cause, cErr := d.laneGateRetrieveCause(lane, c.order)
-		if cErr != nil {
-			log.Printf("lane gate: retrieve classifier error for order %d on lane %s: %v", c.order.ID, lane.Name, cErr)
-			continue
-		}
-		if park {
-			d.dbg("lane gate: retrieve order %d still held at %s (%s)", c.order.ID, lane.Name, cause)
-			continue
-		}
-		if err := d.releaseGatedRetrieve(c.order, lane); err != nil {
-			log.Printf("lane gate: release retrieve %d into lane %s: %v", c.order.ID, lane.Name, err)
+		if rErr != nil {
+			log.Printf("lane gate: release order %d into lane %s: %v", c.order.ID, lane.Name, rErr)
 			continue
 		}
 		released++
@@ -209,44 +235,46 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 // ordering and the classifier need.
 type gateCandidate struct {
 	order *orders.Order
-	dest  *nodes.Node
+	// node is the LANE-RELEVANT node: the slot the order's next step works —
+	// its dropoff target for a store, its pickup slot for a retrieve. It was
+	// called `dest` when two queries produced it and the retrieve query had to
+	// explain that it carried the source there instead.
+	node  *nodes.Node
 	depth int
+	// retrieve is the direction, read off the plan (a pickup after the wait)
+	// rather than inferred from which query found the order.
+	retrieve bool
 }
 
-// gateStagedInLane returns the orders currently dwelling at this lane's gate.
+// gateStagedForLane returns every order dwelling at THIS lane's gate.
 //
-// It reuses ActiveLaneStores (the classifier's own active-set query) rather than
-// adding one: the staged set is a SUBSET of the lane's active stores, picked out
-// by IsGateStaged — created unsealed, tail not yet appended, robot committed.
+// ── IT KEYS ON THE WAIT STEP, NOT ON AN ENDPOINT COLUMN ───────────────────
+//
+// Two queries used to do this: one matching delivery_node against the lane's
+// slot names (stores), one matching source_node (retrieves). Both asked "is one
+// END of this order in my lane", and that is not the question. The question is
+// "is this order parked at a wait that belongs to me", and the answer is written
+// on the wait itself (WaitKind/WaitLane, stamped when the wait is minted).
+//
+// The endpoint form had a structural blind spot rather than a bug: an order
+// whose lane entry is INTERIOR to its plan — an evac that picks at a line, drops
+// into a lane, and delivers to a line — has neither endpoint in the lane, so
+// NEITHER query could see it and no evaluator would ever release it. It dwelt
+// until the abandon sweep. Nothing in the plain valve produced that shape, which
+// is why it never bit; the splice produces it routinely.
+//
+// DIRECTION COMES FROM THE PLAN. The first actionable step after the wait says
+// what the robot is going in to do: a pickup is a retrieve (it takes something
+// out), a dropoff is a store. That node is also the lane-relevant one — what the
+// classifier reads and what the depth sort orders on — so one walk answers all
+// three.
 //
 // Faulted orders are excluded. A faulted leg is mid-recovery, not dead, and
 // appending to it would race the recovery; the operator-release path refuses a
-// faulted order for the same reason (complex_release.go). It re-enters the staged
-// set on its own once it recovers, because nothing about its row changed.
-func (d *Dispatcher) gateStagedInLane(lane *nodes.Node) ([]gateCandidate, error) {
-	slots, err := d.db.ListLaneSlots(lane.ID)
-	if err != nil || len(slots) < 2 {
-		return nil, err // depth-1 (or unreadable) lane — nothing to sequence
-	}
-	lanePrefix := lane.Name + "."
-	slotNames := make([]string, 0, 2*len(slots))
-	nodeByName := make(map[string]*nodes.Node, 2*len(slots))
-	depthByName := make(map[string]int, 2*len(slots))
-	for _, s := range slots {
-		dep, dErr := d.db.GetSlotDepth(s.ID)
-		if dErr != nil {
-			return nil, dErr
-		}
-		// Both spellings, for the same reason admitLaneEntry matches both: a
-		// delivery_node is written BARE or DOT-qualified depending on the path
-		// that wrote it, and a dotted row invisible here would be a staged order
-		// the evaluator never releases.
-		slotNames = append(slotNames, s.Name, lanePrefix+s.Name)
-		nodeByName[s.Name], nodeByName[lanePrefix+s.Name] = s, s
-		depthByName[s.Name], depthByName[lanePrefix+s.Name] = dep, dep
-	}
-
-	active, err := d.db.ActiveLaneStores(slotNames)
+// faulted order for the same reason (complex_release.go). It re-enters the set
+// on its own once it recovers, because nothing about its row changed.
+func (d *Dispatcher) gateStagedForLane(lane *nodes.Node) ([]gateCandidate, error) {
+	active, err := d.db.ActiveGateCandidates()
 	if err != nil {
 		return nil, err
 	}
@@ -255,61 +283,111 @@ func (d *Dispatcher) gateStagedInLane(lane *nodes.Node) ([]gateCandidate, error)
 		if !IsGateStaged(o) || o.Status == StatusFaulted {
 			continue
 		}
-		dest := nodeByName[o.DeliveryNode]
-		if dest == nil {
+		var steps []resolvedStep
+		if uErr := json.Unmarshal([]byte(o.StepsJSON), &steps); uErr != nil {
+			// IsGateStaged already parsed this and logged; it cannot be true here
+			// on an unparseable plan. Defensive only.
 			continue
 		}
-		out = append(out, gateCandidate{order: o, dest: dest, depth: depthByName[o.DeliveryNode]})
+		w, ok := waitAt(steps, o.WaitIndex)
+		if !ok || w.WaitLane != lane.ID {
+			continue // parked at somebody else's wait, or at none
+		}
+		entry, isRetrieve, ok := laneEntryAfterWait(steps, o.WaitIndex)
+		if !ok {
+			log.Printf("lane gate: order %d is parked at a wait for lane %s with no actionable step "+
+				"after it — its tail cannot be built", o.ID, lane.Name)
+			continue
+		}
+		node, nErr := d.db.GetNodeByDotName(entry.Node)
+		if nErr != nil || node == nil {
+			log.Printf("lane gate: order %d's lane entry %q does not resolve: %v", o.ID, entry.Node, nErr)
+			continue
+		}
+		// The wait says which lane owns it; this checks the PLAN agrees. A
+		// disagreement is a mis-spliced plan, and it is loud rather than skipped
+		// quietly, because the order would otherwise dwell with no diagnosis.
+		entryLane, lErr := d.db.LaneForNode(node.ID)
+		if lErr != nil {
+			return nil, lErr
+		}
+		if entryLane == nil || entryLane.ID != lane.ID {
+			log.Printf("lane gate: order %d waits for lane %s but its next step %q is in %s — "+
+				"mis-spliced plan, refusing to release it here",
+				o.ID, lane.Name, entry.Node, nodeName(entryLane))
+			continue
+		}
+		depth, dErr := d.db.GetSlotDepth(node.ID)
+		if dErr != nil {
+			return nil, dErr
+		}
+		out = append(out, gateCandidate{order: o, node: node, depth: depth, retrieve: isRetrieve})
 	}
 	return out, nil
 }
 
-// gateStagedRetrievesInLane is the retrieve mirror of gateStagedInLane: orders
-// dwelling at this lane's gate whose SOURCE (not delivery) node is a lane slot.
+// gateEntryVerdict is the ONE question asked before a gate-staged order is let
+// into its lane, at both moments it is asked: the valve's immediate check at
+// create time, and every evaluator pass afterwards.
 //
-// The same slot-name/depth index is built once and shared conceptually with the
-// store query, but the active-set read is ActiveLaneRetrieves (source_node match)
-// rather than ActiveLaneStores (delivery_node match) — a staged retrieve's
-// delivery_node is the line, so the store query would never see it. The candidate's
-// depth is its SOURCE slot depth (how deep it must reach into the lane), and the
-// lane-relevant node — src — is what the retrieve classifier reads.
-func (d *Dispatcher) gateStagedRetrievesInLane(lane *nodes.Node) ([]gateCandidate, error) {
-	slots, err := d.db.ListLaneSlots(lane.ID)
-	if err != nil || len(slots) < 2 {
-		return nil, err
+// A RETRIEVE asks the physical questions and nothing else. Ordering does not
+// apply to it — retrieves do not wall each other, they free each other, and the
+// mouth gate already serialises same-mode sharers.
+//
+// A STORE asks the physical questions AND the ordering tiers, in that order.
+// Physical first because a refusal there is absolute: a dig excludes everything,
+// and there is no point asking whose turn it is on a lane nobody may enter. The
+// tiers then answer the question the physical checks do not — a lane that IS open
+// can still be one this order should not enter yet, because a deeper cross-origin
+// store has not placed.
+//
+// The store's skip set is documented at skipsForGatedStoreEntry — it now skips
+// NOTHING, so a partner released earlier in this same pass is visible to the next
+// candidate through its occupancy row.
+func (d *Dispatcher) gateEntryVerdict(lane *nodes.Node, order *orders.Order, entry *nodes.Node, isRetrieve bool) (GateVerdict, error) {
+	if isRetrieve {
+		return d.laneGateRetrieveCause(entry, order)
 	}
-	lanePrefix := lane.Name + "."
-	slotNames := make([]string, 0, 2*len(slots))
-	nodeByName := make(map[string]*nodes.Node, 2*len(slots))
-	depthByName := make(map[string]int, 2*len(slots))
-	for _, s := range slots {
-		dep, dErr := d.db.GetSlotDepth(s.ID)
-		if dErr != nil {
-			return nil, dErr
-		}
-		slotNames = append(slotNames, s.Name, lanePrefix+s.Name)
-		nodeByName[s.Name], nodeByName[lanePrefix+s.Name] = s, s
-		depthByName[s.Name], depthByName[lanePrefix+s.Name] = dep, dep
+	v, err := d.admit(admissionSituation{
+		order:    order,
+		destNode: entry,
+		skip:     skipsForGatedStoreEntry,
+	})
+	if err != nil || !v.Admitted() {
+		return v, err
 	}
+	return d.laneEntryCause(lane, order, entry)
+}
 
-	active, err := d.db.ActiveLaneRetrieves(slotNames)
-	if err != nil {
-		return nil, err
-	}
-	var out []gateCandidate
-	for _, o := range active {
-		if !IsGateStaged(o) || o.Status == StatusFaulted {
+// laneEntryAfterWait returns the first actionable step after the wait at
+// waitIndex, and whether it is a PICKUP (the retrieve direction).
+//
+// It is the same enumeration waitAt and splitSegment use — every ActionWait
+// counts, bare or not — walked one step further to the work the wait is gating.
+func laneEntryAfterWait(steps []resolvedStep, waitIndex int) (resolvedStep, bool, bool) {
+	seen, start := 0, -1
+	for i, s := range steps {
+		if s.Action != protocol.ActionWait {
 			continue
 		}
-		src := nodeByName[o.SourceNode]
-		if src == nil {
-			continue
+		if seen == waitIndex {
+			start = i + 1
+			break
 		}
-		// dest on a retrieve candidate is the line node, not a lane slot — carry it
-		// for the append's dropoff, but the lane-relevant node and depth are src.
-		out = append(out, gateCandidate{order: o, dest: src, depth: depthByName[o.SourceNode]})
+		seen++
 	}
-	return out, nil
+	if start < 0 {
+		return resolvedStep{}, false, false
+	}
+	for _, s := range steps[start:] {
+		switch s.Action {
+		case protocol.ActionPickup:
+			return s, true, true
+		case protocol.ActionDropoff:
+			return s, false, true
+		}
+	}
+	return resolvedStep{}, false, false
 }
 
 // outbound mirror of laneEntryCause. A retrieve dwelling at the gate is parked
@@ -340,30 +418,33 @@ func (d *Dispatcher) gateStagedRetrievesInLane(lane *nodes.Node) ([]gateCandidat
 // SHALLOWER makes the old slot read buried — by the very bin the order wants —
 // and a bin moved DEEPER behind another makes the old slot read clear, which
 // would append a pickup into a walled slot.
-func (d *Dispatcher) laneGateRetrieveCause(lane *nodes.Node, order *orders.Order) (park bool, cause QueueCause, err error) {
-	digOwner, err := d.laneLock.DigOwner(lane.ID)
-	if err != nil {
-		// Unreadable dig row: the caller logs and leaves the order parked, which is
-		// the same fail-closed disposition the burial read below takes. DigOwner
-		// rather than IsLocked precisely so this arm exists — IsLocked would have
-		// answered "held" and hidden the failure as a routine wait.
-		return false, "", err
-	}
-	if digOwner != 0 && !d.isOwnDigLeg(order, digOwner) {
-		return true, CauseLaneDigActive, nil // someone else's dig holds the lane
-	}
-	target, _, err := d.pickupSlotNow(order, lane)
-	if err != nil {
-		return false, "", err // bin unreadable or gone from the lane: caller logs, order stays parked
-	}
-	blockers, err := findBuriedBlockers(d.db, target.ID)
-	if err != nil {
-		return false, "", err // unreadable lane: the caller logs and leaves the order parked
-	}
-	if len(blockers) > 0 {
-		return true, CauseLaneTargetBuried, nil // a shallower bin still sits in front of the wanted slot
-	}
-	return false, "", nil // lane safe: no dig, bin reachable — release
+// ── IT IS ADMISSION, ASKED AT THE SOURCE END, AND IT SKIPS NOTHING ────────
+//
+// The body was a third copy of the physical questions and is now one call. It
+// briefly carried a skip set (dig and burial, not occupancy); the unification
+// retired it — see the note where skipsForGateStagedRetrieve used to be. A
+// gate-staged retrieve now asks every physical question, which is the same set
+// a compound leg asks, which is the point of there being one function.
+//
+// Both of admission's arms behave as the hand-written version did: an unreadable
+// dig row PROPAGATES rather than resolving to an answer (DigOwner rather than
+// IsLocked, so the failure cannot hide as a routine wait), and the caller's
+// disposition for an error and for a refusal is the same — log it and leave the
+// order parked at the gate, which is exactly what a gate wait is for.
+//
+// IT CANNOT BLOCK ITSELF on the occupancy it now asks about: a gate-staged
+// retrieve takes its own occupancy row when its TAIL is appended
+// (appendGateTail), which is strictly after this verdict admits.
+//
+// sourceNode rather than the lane, because admission resolves lanes itself and
+// a caller handing it a pre-resolved one would be a second answer to
+// "which lane is this". Both callers have the node: the valve from its own
+// dispatch arguments, the evaluator from its candidate row.
+func (d *Dispatcher) laneGateRetrieveCause(sourceNode *nodes.Node, order *orders.Order) (GateVerdict, error) {
+	return d.admit(admissionSituation{
+		order:      order,
+		sourceNode: sourceNode,
+	})
 }
 
 // pickupSlotNow answers ONE question — which slot does this retrieve's wanted bin
@@ -420,40 +501,20 @@ func (d *Dispatcher) pickupSlotNow(order *orders.Order, lane *nodes.Node) (slot 
 	return at, true, nil
 }
 
-// isOwnDigLeg reports whether `order` is a LEG of the dig holding the lane.
+// isOwnDigLeg WAS HERE AND IS NOW ownsDig (lane_gate.go).
 //
-// A reshuffle leg's source is a lane slot, so it stages at the gate like any
-// other lane-sourced order; without this the classifier parked it behind its own
-// parent's dig, and that dig only ends when the leg it is parking runs. The lock
-// is not a reason to keep out the work it exists to perform.
+// It reported whether `order` is a LEG of the dig holding the lane, and it was
+// the same predicate as ownsDig minus the owner arm. Two answers to one
+// question, on a question the convergence reduced to one function — so one had
+// to go, and this was the one whose missing arm was reachable (a resumed dig
+// owner re-entering its own lane; a wedge, pinned by
+// TestAcquireLanesForOrder_OwnDigAdmitsTheDigOwner).
 //
-// PARENT IDENTITY, and it is not an approximation of something better. Both
-// planners take the dig as the buried retrieve's own order id and then make that
-// order the compound parent (complex_reshuffle.go planBuriedReshuffleAtIntake /
-// handleComplexBuriedOnReplay, planning_service.go planBuriedReshuffle), so
-// "owner of the dig" and "parent of the leg" are the same number by construction.
-// A lane carries exactly one dig claim because reservations.admitMouth refuses a
-// second one outright, so there is no group of digs for parent identity to be a
-// coarse stand-in for.
-//
-// ── The two lines that make this wrong if they move ───────────────────────
-//
-//  1. reservations.AcquireLanes' dig rule. If it ever admits two claims on one
-//     lane, "the dig" stops being singular, the parent stops identifying it, and
-//     this exemption has to become claim-scoped. Nothing else changes the answer.
-//  2. The narrowing to CHILDREN (owner != order.ID) is load-bearing, not a
-//     shortcut past laneOwnerFor's plain-order case. The dig owner is a real
-//     order with a real source slot; if it were ever itself gate-staged — which is
-//     what "a buried retrieve pre-positions at the gate" (dispatcher.go) would
-//     mean applied to the digger rather than a bystander — laneOwnerFor would
-//     return its own id, match, and release it into the lane its own dig is still
-//     working. Today it cannot: the planners divert it to Reshuffling before it
-//     ever reaches the fleet, so it carries no vendor order and IsGateStaged is
-//     false. Give the digger a pre-position and this line is the one to revisit.
-func (d *Dispatcher) isOwnDigLeg(order *orders.Order, digOwner int64) bool {
-	owner := d.laneOwnerFor(order.ID)
-	return owner != order.ID && owner == digOwner
-}
+// BOTH of its load-bearing notes moved with it rather than being dropped: the
+// parent-identity argument, and the warning about what its narrowing to
+// CHILDREN protected — a gate-staged digger being released into its own dig.
+// See ownsDig for the current statement of both, including the line to revisit
+// if a digger is ever given a pre-position.
 
 // releaseGatedOrder binds the dropoff against the lane as it stands, appends the
 // tail, and seals the order.
@@ -722,14 +783,37 @@ func (d *Dispatcher) LaneIDsForOrder(orderID int64) []int64 {
 	if err != nil || order == nil {
 		return nil
 	}
+	seen := map[int64]bool{}
 	var out []int64
-	for _, name := range []string{order.DeliveryNode, order.SourceNode} {
-		if id := d.LaneIDForNodeName(name); id != 0 {
+	add := func(id int64) {
+		if id != 0 && !seen[id] {
+			seen[id] = true
 			out = append(out, id)
 		}
 	}
-	if len(out) == 2 && out[0] == out[1] {
-		out = out[:1]
+	for _, name := range []string{order.DeliveryNode, order.SourceNode} {
+		add(d.LaneIDForNodeName(name))
+	}
+	// AND EVERY LANE THE PLAN NAMES A WAIT FOR, which the endpoints do not cover.
+	//
+	// Same blind spot the candidate query had, on the trigger side: an order whose
+	// lane entry is interior to its plan touches a lane that neither endpoint
+	// column names, so a terminal event for it would re-evaluate the wrong lanes
+	// (or none) and leave whoever was waiting on that lane waiting for the sweep.
+	//
+	// The endpoints are KEPT rather than replaced: an order genuinely works its
+	// source and destination lanes whether or not a wait was ever spliced for
+	// them, and this function's job is "which lanes did this order touch", not
+	// "which lane was it gated for".
+	if order.StepsJSON != "" {
+		var steps []resolvedStep
+		if uErr := json.Unmarshal([]byte(order.StepsJSON), &steps); uErr == nil {
+			for _, s := range steps {
+				if s.Action == protocol.ActionWait && s.WaitKind == WaitKindLane {
+					add(s.WaitLane)
+				}
+			}
+		}
 	}
 	return out
 }

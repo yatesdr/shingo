@@ -84,7 +84,9 @@ type QueueParams struct {
 // unclassified capacity error reads "Waiting for material", not
 // "Waiting for an empty bin", which is what it used to say.
 //
-// Wording is owner-pinned; a snapshot test pins the exact strings.
+// The wording is fixed, and a snapshot test pins the exact strings: these
+// sentences are read on the floor, so changing one is a change to what an
+// operator is told, not a copy edit.
 func FormatQueueSentence(code protocol.QueueCode, p QueueParams) string {
 	var s string
 	switch code {

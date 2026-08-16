@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"shingo/protocol"
@@ -136,6 +137,100 @@ func FindStoreSlotInLane(db *sql.DB, laneID int64) (*Node, error) {
 // every row, and `n.claimed_by = 0` never matches (claimed_by is NULL or a real
 // id). That equivalence is what lets FindStoreSlotInLane delegate here unchanged.
 func FindStoreSlotInLaneExcluding(db *sql.DB, laneID, excludeOrderID int64) (*Node, error) {
+	n, err := findStoreSlot(db, laneID, excludeOrderID, true)
+	if err == nil {
+		return n, nil
+	}
+	// WHY THE MISS HAPPENED, asked only on the miss. The callers dispose of a
+	// full lane and a claim-closed lane differently — a full lane is the routine
+	// case and stays quiet, a closed one is rare, new, and the thing the floor
+	// watches — and they cannot tell them apart from an empty result. Re-asking
+	// with the burial clause OFF answers it exactly: if a slot appears without
+	// the clause and not with it, the clause is the reason and nothing else is.
+	//
+	// It costs one extra query per MISS, never per hit, and misses are already
+	// the path that walks to the next lane.
+	if open, oErr := findStoreSlot(db, laneID, excludeOrderID, false); oErr == nil && open != nil {
+		return nil, fmt.Errorf("no empty slot in lane %d: %w", laneID, ErrLaneClosedByClaim)
+	}
+	return nil, err
+}
+
+// ErrLaneClosedByClaim reports that a lane had a usable slot and the burial
+// guard refused it — a bin a robot is already coming for sits deeper.
+//
+// It exists so a caller can tell "this lane is full" (routine, quiet) from "this
+// lane is closed to stores right now" (rare, watchable, and self-clearing when
+// the claim clears). Both are the same disposition — try the next lane — so the
+// sentinel changes reporting, never control flow.
+var ErrLaneClosedByClaim = errors.New("lane closed to stores: a claimed bin sits deeper")
+
+// findStoreSlot is the selector body. `guard` toggles THE BURIAL CLAUSE, and the
+// off form exists only to attribute a miss (see the caller); nothing in
+// production takes a slot with the guard off.
+//
+// ── THE BURIAL GUARD — HARD CLAIMS ONLY ───────────────────────────────────
+//
+// The clause consults `bins.claimed_by` and NOTHING ELSE. A pending (soft)
+// reservation deeper in the lane does NOT refuse a placement. That asymmetry is
+// deliberate, and it is the whole design:
+//
+//   - A SOFT hold is a plan, and plans get recalculated. An order parked
+//     pre-dispatch holding a bin that gets buried re-resolves on its next tick
+//     and turns the burial into a dig (the held-bin path asks reachability and
+//     a buried verdict becomes PlanBuriedReshuffle, 3326c1bb). The cure already
+//     runs; the cost of the burial is time, not a fault.
+//   - A HARD claim is a robot in motion. `claimed_by` is written at
+//     ConfirmForDispatch, immediately before the fleet call, and cleared at
+//     arrival, so it means "a robot is on its way to this bin, or holding it".
+//     Burying that has no cure at all: the robot arrives at a slot it cannot
+//     reach, and nothing re-plans a job the fleet already owns.
+//
+// The soft-inclusive form was worked out and rejected; the reasoning is in
+// FINDINGS-claim-lifecycle-and-burial-guard-2026-08-09.md §4. Short version:
+// soft holds have no time bound (reaping keys on the holder's liveness, never on
+// age), so two cross-lane moves each parked on the other's soft hold refuse each
+// other forever — both holders alive, both correct, and no janitor able to break
+// it because neither claim is stale.
+//
+// ── WHY THIS FORM CANNOT CYCLE, stated here so nobody re-derives it ───────
+//
+// A deadlock needs a cycle of "X waits on Y". Every edge this clause can create
+// runs from a REFUSED STORE to a HOLDER IN MOTION, and there is no edge back:
+//
+//   - The clause only ever refuses a STORE (this is the store-slot selector).
+//   - It only respects holds of parties already moving: a hard claim lives from
+//     confirm to pickup, which is a robot's drive time, and it is cleared by
+//     arrival or by terminalization — neither of which can be blocked by a
+//     parked store.
+//   - A parked store holds nothing the holder needs. Its bin is at a press or a
+//     line, its slot reservation is in a lane the holder is leaving, not
+//     entering.
+//
+// So the wait-for graph is bipartite and one-directional: stores wait on movers,
+// movers wait on nothing here. No cycle can close. The rejected soft form broke
+// exactly this property, because a parked order's soft hold made a WAITER into a
+// HOLDER and closed the loop.
+//
+// ── DIGS ARE STRUCTURALLY EXEMPT, and get no arm here ─────────────────────
+//
+// A reshuffle picks its shuffle slots through findShuffleSlots
+// (dispatch/reshuffle.go), which does not call this selector at all. So the
+// moves that exist to UNBURY things can never be refused by a burial guard —
+// the deadlock a self-blind guard would cause is prevented by the call graph,
+// not by an exemption, and an exemption added here would be dead code that
+// looked load-bearing.
+func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node, error) {
+	burial := "true"
+	if guard {
+		burial = fmt.Sprintf(`NOT EXISTS (
+			SELECT 1 FROM nodes held
+			JOIN bins held_bin ON held_bin.node_id = held.id
+			WHERE held_bin.claimed_by IS NOT NULL
+			  AND held_bin.claimed_by <> $2
+			  AND %s
+		  )`, helpers.ShallowerInSameLane("n", "held"))
+	}
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s
 		WHERE n.parent_id = $1
 		  AND n.is_synthetic = false
@@ -164,8 +259,14 @@ func FindStoreSlotInLaneExcluding(db *sql.DB, laneID, excludeOrderID int64) (*No
 		  -- bin there. excludeOrderID exempts an order from its OWN holds; it can
 		  -- never exempt it from a physical bin.
 		  AND %s
+		  -- The burial guard. Owner-aware through the SAME excludeOrderID
+		  -- convention as the three clauses above: an order may always place
+		  -- relative to its OWN claim, which is what lets the gate re-bind
+		  -- re-resolve a slot behind a bin it is itself coming for.
+		  AND %s
 		ORDER BY COALESCE(n.depth, 0) DESC
-		LIMIT 1`, SelectCols, FromClause, protocol.TerminalStatusSQLList(), helpers.ReachableSQL("n")), laneID, excludeOrderID)
+		LIMIT 1`, SelectCols, FromClause, protocol.TerminalStatusSQLList(),
+		helpers.ReachableSQL("n"), burial), laneID, excludeOrderID)
 	n, err := ScanNode(row)
 	if err != nil {
 		return nil, fmt.Errorf("no empty slot in lane %d", laneID)

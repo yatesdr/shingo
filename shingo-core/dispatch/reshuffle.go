@@ -87,28 +87,35 @@ func findBuriedBlockers(db *store.DB, targetSlotID int64) ([]reshuffleBlocker, e
 	return blockers, nil
 }
 
-// PlanReshuffle creates a plan to unbury a target bin in a lane.
-// Steps: move blockers front-to-back to shuffle slots, then retrieve the target.
-// Blockers are NOT restocked — they lie where the unbury parked them (deepest-
-// first parking keeps the lane bubble-free), and are ordinary findable inventory.
+// planUnbury is the excavation, which is all three planners agree on: check the
+// slot has a lane, list what is in front of the target, find somewhere to park
+// each of those, and emit one unbury step per blocker, shallowest first.
 //
-// Used by simple-retrieve reshuffles where the unburied bin is
-// delivered to the parent retrieve's lineside DeliveryNode. Complex-
-// order reshuffles use PlanReshuffleUnburyOnly or PlanReshuffleToTarget
-// instead — see Step 3.5 of the buried-bin reshuffle scope.
-func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane *nodes.Node, groupID int64) (*ReshufflePlan, error) {
+// The three exported planners were three copies of this with different tails —
+// nothing, a retrieve, or a retrieve to a named node — and the copies had already
+// started to drift: two counted their sequence with a running `seq` and the third
+// with `i + 1`, which agreed only because the loop was the first thing in the
+// plan. That is the kind of difference nobody chooses.
+//
+// It returns the next sequence number so a caller that appends knows where to
+// carry on. Blockers are NOT restocked by any of the three — they lie where the
+// unbury parked them. Deepest-first parking (findShuffleSlots) keeps the lane
+// packed without a restock, and a parked blocker is ordinary findable inventory
+// where it sits. The old restore-blockers subsystem, which moved them back and
+// left permanent air bubbles when it was off, is gone.
+func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, groupID int64) (*ReshufflePlan, int, error) {
 	if targetSlot.ParentID == nil {
-		return nil, fmt.Errorf("target slot has no parent lane")
+		return nil, 0, fmt.Errorf("target slot has no parent lane")
 	}
 
 	blockers, err := findBuriedBlockers(db, targetSlot.ID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	shuffleSlots, err := findShuffleSlots(db, lane.ID, groupID, len(blockers))
 	if err != nil {
-		return nil, fmt.Errorf("find shuffle slots: %w", err)
+		return nil, 0, fmt.Errorf("find shuffle slots: %w", err)
 	}
 
 	plan := &ReshufflePlan{
@@ -117,10 +124,9 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 		Lane:         lane,
 		ShuffleSlots: shuffleSlots,
 	}
-
 	seq := 1
-
-	// Step 1: Move blockers to shuffle slots (front-to-back order = shallowest first)
+	// Front-to-back order = shallowest first, which is the order a robot can
+	// physically take them out in.
 	for i, b := range blockers {
 		plan.Steps = append(plan.Steps, ReshuffleStep{
 			Sequence: seq,
@@ -131,110 +137,59 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 		})
 		seq++
 	}
+	return plan, seq, nil
+}
 
-	// Step 2: Retrieve the target (this is the actual order delivery)
+// PlanReshuffle creates a plan to unbury a target bin in a lane and then retrieve
+// it: the excavation, then the delivery.
+//
+// The retrieve step's ToNode is deliberately left nil — compound.go backfills the
+// parent retrieve's lineside DeliveryNode, which for a simple retrieve IS the
+// destination. Complex-order reshuffles use PlanReshuffleUnburyOnly or
+// PlanReshuffleToTarget instead, because a complex parent's DeliveryNode is its
+// LAST step's node and that fallback would send the bin to the wrong place.
+func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane *nodes.Node, groupID int64) (*ReshufflePlan, error) {
+	plan, seq, err := planUnbury(db, target, targetSlot, lane, groupID)
+	if err != nil {
+		return nil, err
+	}
 	plan.Steps = append(plan.Steps, ReshuffleStep{
 		Sequence: seq,
 		StepType: protocol.StepRetrieve,
 		BinID:    target.ID,
 		FromNode: targetSlot,
 	})
-
-	// No restock step: blockers stay in the shuffle slots the unbury moved them
-	// to. "Blockers lie" — deepest-first parking keeps the lane packed and
-	// bubble-free, and a parked blocker is ordinary findable inventory.
 	return plan, nil
 }
 
-// PlanReshuffleUnburyOnly creates a plan that only moves blockers out
-// of the way, leaving the target bin in its original lane slot.
-// Complex-order reshuffles use this variant in "expose mode" — the
-// complex parent resumes after the compound completes and runs its
-// original first pickup against the now-accessible slot.
-//
-// No retrieve step (the parent handles that) and no restock step: blockers lie
-// where the unbury parked them. The old restore-blockers subsystem — which moved
-// blockers back after pickup and left permanent air bubbles when off (the former
-// KNOWN ISSUE here) — is gone; deepest-first shuffle-slot parking (findShuffleSlots)
-// keeps the lane packed without it, so a parked blocker is ordinary findable
-// inventory where it sits.
+// PlanReshuffleUnburyOnly creates a plan that only moves blockers out of the way,
+// leaving the target bin in its original lane slot — "expose mode". The complex
+// parent resumes after the compound completes and runs its original first pickup
+// against the now-accessible slot, so the parent owns the retrieve and this plan
+// must not.
 func PlanReshuffleUnburyOnly(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane *nodes.Node, groupID int64) (*ReshufflePlan, error) {
-	if targetSlot.ParentID == nil {
-		return nil, fmt.Errorf("target slot has no parent lane")
-	}
-
-	blockers, err := findBuriedBlockers(db, targetSlot.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	shuffleSlots, err := findShuffleSlots(db, lane.ID, groupID, len(blockers))
-	if err != nil {
-		return nil, fmt.Errorf("find shuffle slots: %w", err)
-	}
-
-	plan := &ReshufflePlan{
-		TargetBin:    target,
-		TargetSlot:   targetSlot,
-		Lane:         lane,
-		ShuffleSlots: shuffleSlots,
-	}
-	for i, b := range blockers {
-		plan.Steps = append(plan.Steps, ReshuffleStep{
-			Sequence: i + 1,
-			StepType: protocol.StepUnbury,
-			BinID:    b.bin.ID,
-			FromNode: b.slot,
-			ToNode:   shuffleSlots[i],
-		})
-	}
-	return plan, nil
+	plan, _, err := planUnbury(db, target, targetSlot, lane, groupID)
+	return plan, err
 }
 
-// PlanReshuffleToTarget creates a plan that unburies the blockers AND
-// moves the target bin to a specific direct-child node of the group
-// ("target-node mode"). The complex parent re-resolves against the
-// group after the compound completes, finds the target bin at the
-// configured target node, and dispatches normally.
+// PlanReshuffleToTarget unburies the blockers AND moves the target bin to a
+// specific direct-child node of the group ("target-node mode"). The complex
+// parent re-resolves against the group after the compound completes, finds the
+// target bin at the configured target node, and dispatches normally.
 //
-// targetNode must be set explicitly so the retrieve step's
-// DeliveryNode is non-empty — otherwise compound.go's fallback would
-// default it to parentOrder.DeliveryNode, which is the last step's
-// node for a complex parent (extractEndpoints), not the first dropoff.
+// targetNode must be set explicitly so the retrieve step's DeliveryNode is
+// non-empty — otherwise compound.go's fallback would default it to
+// parentOrder.DeliveryNode, which is the last step's node for a complex parent
+// (extractEndpoints), not the first dropoff.
 func PlanReshuffleToTarget(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane *nodes.Node, groupID int64, targetNode *nodes.Node) (*ReshufflePlan, error) {
-	if targetSlot.ParentID == nil {
-		return nil, fmt.Errorf("target slot has no parent lane")
-	}
+	// Before the reads, so a caller that forgot the node is told so rather than
+	// finding out after a lane walk.
 	if targetNode == nil {
 		return nil, fmt.Errorf("target-node mode requires a non-nil target node")
 	}
-
-	blockers, err := findBuriedBlockers(db, targetSlot.ID)
+	plan, seq, err := planUnbury(db, target, targetSlot, lane, groupID)
 	if err != nil {
 		return nil, err
-	}
-
-	shuffleSlots, err := findShuffleSlots(db, lane.ID, groupID, len(blockers))
-	if err != nil {
-		return nil, fmt.Errorf("find shuffle slots: %w", err)
-	}
-
-	plan := &ReshufflePlan{
-		TargetBin:    target,
-		TargetSlot:   targetSlot,
-		Lane:         lane,
-		ShuffleSlots: shuffleSlots,
-	}
-	seq := 1
-	for i, b := range blockers {
-		plan.Steps = append(plan.Steps, ReshuffleStep{
-			Sequence: seq,
-			StepType: protocol.StepUnbury,
-			BinID:    b.bin.ID,
-			FromNode: b.slot,
-			ToNode:   shuffleSlots[i],
-		})
-		seq++
 	}
 	plan.Steps = append(plan.Steps, ReshuffleStep{
 		Sequence: seq,
@@ -301,8 +256,8 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 
 	var available []*nodes.Node
 
-	// A candidate whose reachability could not be READ is not a candidate (D2,
-	// fail closed) — but it is not a fault either, and the difference matters
+	// A candidate whose reachability could not be READ is not a candidate — fail
+	// closed — but it is not a fault either, and the difference matters
 	// here more than anywhere else. planBuriedReshuffle maps a bare error from
 	// this function to codeReshuffle, which is TERMINAL; only ErrNoShuffleSlot
 	// is transient. So an unreadable candidate is skipped and counted, and if
@@ -413,7 +368,7 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 // blocker landed on the first, and ApplyArrival's EvictStaleGhostsTx threw the
 // first bin to _TRANSIT. Observed on the houseserver sim 2026-07-13: lane 1 and
 // lane 2 each unburied into SMN_008 + SMN_009 three seconds apart, orphaning two
-// bins and leaving lane 1's restore compound with nothing to restock (D83a).
+// bins and leaving lane 1's restore compound with nothing to restock.
 //
 // CheckDropoffCapacity is the gate every OTHER dropoff in the system passes
 // through, and it already tests exactly what was missing: occupied, OR an order
@@ -446,8 +401,8 @@ func shuffleSlotFree(db *store.DB, n *nodes.Node) bool {
 // mapped it to codeReshuffle, and codeReshuffle was not in Transient(). Sim order
 // 21 on the 2026-07-10 houseserver run died exactly this way ("cannot plan
 // reshuffle: need 1 slot, 0 available"), which is what surfaced it. That is
-// inconsistent with the D18-Q4 wait-not-fail principle the simple path upholds,
-// and D79's reshuffle-disposition rider assigned the fix to this fast-follow:
-// once the scanner can spawn reshuffles on replay, a buried retrieve retries
-// across ticks (waits for a slot) instead of one-shot-failing at intake.
+// inconsistent with the wait-not-fail rule the simple path upholds, and the fix
+// had to wait for the scanner: once it can spawn reshuffles on replay, a buried
+// retrieve retries across ticks (waits for a slot) instead of one-shot-failing at
+// intake.
 var ErrNoShuffleSlot = errors.New("no free shuffle slot")

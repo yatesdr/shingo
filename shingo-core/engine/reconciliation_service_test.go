@@ -437,9 +437,20 @@ func TestPreDispatchNotSwept(t *testing.T) {
 // (fleet cancel, bin unclaim, edge notify) on a robot that is physically holding a
 // bin mid-order. A gate-staged order is not stuck; Core simply owes it a decision.
 //
-// The control is the second order: identical status, identical age, but no gated
-// plan — it must still be swept, so this proves the exemption is narrow rather
-// than having quietly disabled the sweep.
+// TWO controls, both identical in status and age, and together they say what the
+// exemption keys on:
+//
+//   - no plan at all → swept. The exemption is narrow, not a disabled sweep.
+//   - a plan whose wait is UNSTAMPED → swept. This is the one that changed: the
+//     exemption used to key on plan-PRESENCE (steps_json non-empty, wait_index 0,
+//     not coordinated), and it now keys on the KIND of the wait the order is
+//     parked at. An order dwelling on a station's wait is a human's to answer for
+//     and gets the operator-gated bound, not Core's exemption.
+//
+// This test caught the change the moment the predicate was rewritten, because its
+// fixture had been hand-written in the old shape. That is the argument against the
+// compatibility fallback in miniature: with a fallback, this fixture would have
+// kept passing while no longer representing anything the valve produces.
 func TestGateStagedNotSwept(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -454,17 +465,29 @@ func TestGateStagedNotSwept(t *testing.T) {
 		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
 		return o
 	}
-	// Dwelling at a lane gate: carries the gated plan, wait_index still 0, and a
-	// vendor order (a robot really is committed).
+	// Dwelling at a lane gate: the plan the valve actually writes — its wait
+	// carries wait_kind "lane" and the lane whose evaluator owns it — wait_index
+	// still 0, and a vendor order (a robot really is committed).
 	gateStaged := mk("gate-staged", func(o *orders.Order) {
-		o.StepsJSON = `[{"action":"pickup","node":"ALN_003"},{"action":"wait","node":"LANE-WAIT"},{"action":"dropoff","node":"SMN_001"}]`
+		o.StepsJSON = `[{"action":"pickup","node":"ALN_003"},` +
+			`{"action":"wait","node":"LANE-WAIT","wait_kind":"lane","wait_lane":42},` +
+			`{"action":"dropoff","node":"SMN_001"}]`
 	})
 	testutil.MustNoErr(t, db.UpdateOrderVendor(gateStaged.ID, "sg-gate-staged", "WAITING", ""), "vendor")
-	// Control: same status, same age, no gated plan — genuinely runtime-stuck.
+	// Control 1: same status, same age, no plan at all — genuinely runtime-stuck.
 	plainStaged := mk("plain-staged", nil)
 	testutil.MustNoErr(t, db.UpdateOrderVendor(plainStaged.ID, "sg-plain-staged", "WAITING", ""), "vendor")
+	// Control 2: a plan whose wait is UNSTAMPED — a station's wait, not Core's.
+	// Byte-identical to control 1 in every column the old predicate looked at
+	// except steps_json, which is exactly what the old predicate keyed on.
+	stationStaged := mk("station-staged", func(o *orders.Order) {
+		o.StepsJSON = `[{"action":"pickup","node":"ALN_003"},` +
+			`{"action":"wait","node":"ALN_003"},` +
+			`{"action":"dropoff","node":"SMN_001"}]`
+	})
+	testutil.MustNoErr(t, db.UpdateOrderVendor(stationStaged.ID, "sg-station-staged", "WAITING", ""), "vendor")
 
-	for _, id := range []int64{gateStaged.ID, plainStaged.ID} {
+	for _, id := range []int64{gateStaged.ID, plainStaged.ID, stationStaged.ID} {
 		if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '10 hours' WHERE id = $1`, id); err != nil {
 			t.Fatalf("backdate %d: %v", id, err)
 		}
@@ -489,8 +512,13 @@ func TestGateStagedNotSwept(t *testing.T) {
 	if !got[plainStaged.ID] {
 		t.Error("the control staged order was NOT swept — the exemption must be narrow, not a disabled sweep")
 	}
-	if n != 1 {
-		t.Errorf("abandoned count = %d, want 1 (the control only)", n)
+	if !got[stationStaged.ID] {
+		t.Error("an order carrying a plan whose wait is UNSTAMPED was exempted. The exemption is for " +
+			"waits CORE owes a decision on; a station's wait is a human's, and it answers to the " +
+			"operator-gated bound instead. Keying on plan-presence is the predicate this replaced")
+	}
+	if n != 2 {
+		t.Errorf("abandoned count = %d, want 2 (both controls)", n)
 	}
 }
 

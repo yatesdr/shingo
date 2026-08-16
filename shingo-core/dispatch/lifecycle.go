@@ -590,25 +590,17 @@ func (s *LifecycleService) MarkPending(ord *orders.Order, reason string) error {
 	return nil
 }
 
-// MarkReshuffling writes Reshuffling as the initial status for a
-// synthetic restore-blockers parent — same entry-point pattern as
-// MarkPending. The synthetic parent is created via CreateOrder
-// (which writes Pending) and immediately moved to Reshuffling so
-// the fulfillment scanner's ListQueuedOrders query never returns
-// it. transition() would reject Pending → Reshuffling on the strict
-// path since the order has no compound children yet; this bypass
-// is the same shape as MarkPending's initial-write rationale.
+// MarkReshuffling IS DELETED. It wrote Reshuffling as an INITIAL status,
+// bypassing transition() and its validity check, for exactly one caller: the
+// synthetic restore-blockers parent. That subsystem is gone — v70 dropped its
+// table, a regression test keeps it dropped, and a boot one-shot cancels any
+// leftover rows — so the bypass had no caller and existed only as an offer.
 //
-// Restricted to the synthetic restore parent path. Real intake
-// flows that need Reshuffling go through BeginReshuffle (from
-// Pending / Sourcing / Queued).
-func (s *LifecycleService) MarkReshuffling(ord *orders.Order, reason string) error {
-	if err := s.db.UpdateOrderStatus(ord.ID, string(StatusReshuffling), reason); err != nil {
-		return fmt.Errorf("mark reshuffling order %d: %w", ord.ID, err)
-	}
-	ord.Status = StatusReshuffling
-	return nil
-}
+// Worth stating rather than deleting silently, because the SHAPE is the thing:
+// an entry-point write that skips the state machine is exactly what a future
+// caller reaches for when a transition is refused, and the refusal is usually
+// right. Every live path into Reshuffling goes through BeginReshuffle, from
+// Pending / Sourcing / Queued, which the transition table allows.
 
 // ── Action implementations ──────────────────────────────────────────────
 

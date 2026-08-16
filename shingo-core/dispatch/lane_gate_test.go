@@ -27,12 +27,12 @@ func TestAcquireLanesForOrder_GatedByConfig(t *testing.T) {
 	b := testdb.CreateOrder(t, db)
 
 	// Store into the free mouth lane (line → slot, inbound): admitted.
-	admitted, _, _, err := d.AcquireLanesForOrder(a.ID, line, slot)
+	admitted, _, _, err := d.AcquireLanesForOrder(a, line, slot, EntryFreshBin)
 	if err != nil || !admitted {
 		t.Fatalf("free lane: admitted=%v err=%v, want admitted", admitted, err)
 	}
 	// Retrieve from the same lane (slot → line, outbound): different mode → conflict.
-	admitted, cause, laneName, err := d.AcquireLanesForOrder(b.ID, slot, line)
+	admitted, cause, laneName, err := d.AcquireLanesForOrder(b, slot, line, EntryFreshBin)
 	if err != nil {
 		t.Fatalf("conflict acquire err: %v", err)
 	}
@@ -48,69 +48,14 @@ func TestAcquireLanesForOrder_GatedByConfig(t *testing.T) {
 
 	// A non-mouth group is a no-op — admitted with no hold (byte-identical).
 	_, _, noneSlot := gatedLane(t, db, "AFO-NONE", "")
-	admitted, _, _, err = d.AcquireLanesForOrder(a.ID, line, noneSlot)
+	admitted, _, _, err = d.AcquireLanesForOrder(a, line, noneSlot, EntryFreshBin)
 	if err != nil || !admitted {
 		t.Fatalf("non-mouth group: admitted=%v err=%v, want admitted no-op", admitted, err)
 	}
 }
 
-// TestLaneDispatchPriority_DeeperFirst: a store into a mouth-enforced lane gets an
-// RDS priority from its target slot depth. RDS serves the LARGEST priority first
-// (vendor manual: "a larger number indicates a higher order priority"), so the
-// DEEPER slot must get the LARGER value to be dispatched into the single-file lane
-// first: priority = base + slot depth. The direction invariant (deeper > shallower)
-// is asserted explicitly, not just the arithmetic. A non-mouth group, a non-lane
-// node, and nil are all no-ops (the caller keeps order.Priority — byte-identical).
-func TestLaneDispatchPriority_DeeperFirst(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-
-	// gatedLane builds S0 (depth 0) + S1 (depth 1).
-	_, laneID, s0 := gatedLane(t, db, "PRIO", "mouth")
-	slots, err := db.ListLaneSlots(laneID)
-	if err != nil {
-		t.Fatalf("list lane slots: %v", err)
-	}
-	var deepest *nodes.Node // depth 1
-	for _, s := range slots {
-		if dpt, _ := db.GetSlotDepth(s.ID); dpt == 1 {
-			deepest = s
-		}
-	}
-	if deepest == nil {
-		t.Fatal("fixture should have a depth-1 slot")
-	}
-
-	// Deeper slot (depth 1) → base + 1 (the LARGER value → served first).
-	deepP, ok := d.laneDispatchPriority(deepest)
-	if !ok || deepP != laneShareBasePriority+1 {
-		t.Errorf("deepest slot: got priority=%d ok=%v, want %d", deepP, ok, laneShareBasePriority+1)
-	}
-	// Shallower slot (depth 0) → base.
-	shallowP, ok := d.laneDispatchPriority(s0)
-	if !ok || shallowP != laneShareBasePriority {
-		t.Errorf("shallow slot: got priority=%d ok=%v, want %d", shallowP, ok, laneShareBasePriority)
-	}
-	// The rationale that actually matters: larger wins at RDS, so a deeper target
-	// MUST outrank a shallower one. If this ever flips, deeper-first is broken.
-	if deepP <= shallowP {
-		t.Errorf("deeper slot priority (%d) must be LARGER than shallower (%d) — larger wins at RDS", deepP, shallowP)
-	}
-
-	// Non-mouth group → no override.
-	_, _, noneS0 := gatedLane(t, db, "PRIO-NONE", "")
-	if _, ok := d.laneDispatchPriority(noneS0); ok {
-		t.Error("non-mouth lane must not override priority")
-	}
-	// Non-lane node and nil → no override.
-	if _, ok := d.laneDispatchPriority(lineNode(t, db, "PRIO-LINE")); ok {
-		t.Error("non-lane node must not override priority")
-	}
-	if _, ok := d.laneDispatchPriority(nil); ok {
-		t.Error("nil node must not override priority")
-	}
-}
+// The depth-priority test that lived here was deleted with the boost it covered
+// (lane_gate.go). Core no longer invents a priority for lane-bound moves.
 
 // TestLaneGateRelease_InboundAndOutbound: the §4 early handoff — a store's
 // inbound hold frees when it drops, a retrieve's outbound hold frees when its bin
@@ -124,7 +69,7 @@ func TestLaneGateRelease_InboundAndOutbound(t *testing.T) {
 	store := testdb.CreateOrder(t, db)
 	retrieve := testdb.CreateOrder(t, db)
 
-	if adm, _, _, _ := d.AcquireLanesForOrder(store.ID, line, slot); !adm {
+	if adm, _, _, _ := d.AcquireLanesForOrder(store, line, slot, EntryFreshBin); !adm {
 		t.Fatal("store must be admitted on a free lane")
 	}
 	if gateMouthRows(t, db, laneID) != 1 {
@@ -135,7 +80,7 @@ func TestLaneGateRelease_InboundAndOutbound(t *testing.T) {
 		t.Fatalf("inbound row not released on dropoff = %d, want 0", n)
 	}
 
-	if adm, _, _, _ := d.AcquireLanesForOrder(retrieve.ID, slot, line); !adm {
+	if adm, _, _, _ := d.AcquireLanesForOrder(retrieve, slot, line, EntryFreshBin); !adm {
 		t.Fatal("retrieve must be admitted after the store released")
 	}
 	if gateMouthRows(t, db, laneID) != 1 {
@@ -159,7 +104,7 @@ func TestLaneGateRelease_ChildRoutesToParent(t *testing.T) {
 	child := testdb.CreateOrder(t, db, func(o *orders.Order) { o.ParentOrderID = &parent.ID })
 
 	// The parent owns the inbound hold.
-	if adm, _, _, _ := d.AcquireLanesForOrder(parent.ID, line, slot); !adm {
+	if adm, _, _, _ := d.AcquireLanesForOrder(parent, line, slot, EntryFreshBin); !adm {
 		t.Fatal("parent must be admitted")
 	}
 	if gateMouthRows(t, db, laneID) != 1 {
@@ -245,8 +190,14 @@ func TestLaneGate_EnforcementMode(t *testing.T) {
 	if got := d.laneEnforcementMode(gMouth); got != LaneEnforceMouth {
 		t.Errorf("mouth = %q, want mouth", got)
 	}
-	if got := d.laneEnforcementMode(gDeleg); got != LaneEnforceDelegated {
-		t.Errorf("delegated = %q, want delegated", got)
+	// `delegated` was DELETED, so it is now just another unrecognized string and
+	// must read as none — same as gJunk below. This is not a migration assertion:
+	// the property is set on no node at either plant (verified live 2026-08-08),
+	// so there is nothing in the field to degrade gracefully. It pins that
+	// deleting a mode cannot accidentally promote a stale value to an ACTIVE one.
+	if got := d.laneEnforcementMode(gDeleg); got != LaneEnforceNone {
+		t.Errorf("retired 'delegated' = %q, want none — a deleted mode must fall to the "+
+			"inactive default, never to an active mode", got)
 	}
 	if got := d.laneEnforcementMode(gJunk); got != LaneEnforceNone {
 		t.Errorf("unrecognized = %q, want none", got)
@@ -288,28 +239,18 @@ func TestLaneGate_ChoreographyKeepsCoreMachineryOn(t *testing.T) {
 		return nil
 	}
 
-	_, mouthLane, _ := gatedLane(t, db, "HAZ-MOUTH", "mouth")
 	_, choreoLane, choreoS0 := gatedLane(t, db, "HAZ-CHOREO", "gate_choreography")
 	_, delegLane, delegS0 := gatedLane(t, db, "HAZ-DELEG", "delegated")
-	mouthS1, choreoS1, delegS1 := deepestOf(mouthLane), deepestOf(choreoLane), deepestOf(delegLane)
 
-	// (1) Depth priority — the laneDispatchPriority site.
-	wantDeep, ok := d.laneDispatchPriority(mouthS1)
-	if !ok {
-		t.Fatal("mouth arm must produce a depth priority (fixture broken)")
-	}
-	gotDeep, ok := d.laneDispatchPriority(choreoS1)
-	if !ok || gotDeep != wantDeep {
-		t.Errorf("choreography depth priority = %d ok=%v, want %d — the arm lost depth sequencing", gotDeep, ok, wantDeep)
-	}
-	if _, ok := d.laneDispatchPriority(delegS1); ok {
-		t.Error("delegated must NOT take a Core depth priority — RDS owns that mouth")
-	}
+	// (1) Depth priority WAS the third axis here. Deleted with the boost — Core no
+	// longer stamps a priority for lane-bound moves, so there is nothing for a new
+	// arm to silently lose. The hazard this test guards is now two axes wide; the
+	// HAZ-MOUTH fixture went with it, since it existed only to feed this check.
 
 	// (2) Mouth holds — the resolveOrderLaneHolds site, via the exported wrapper.
 	line := lineNode(t, db, "HAZ-LINE")
 	a := testdb.CreateOrder(t, db)
-	if adm, _, _, err := d.AcquireLanesForOrder(a.ID, line, choreoS0); err != nil || !adm {
+	if adm, _, _, err := d.AcquireLanesForOrder(a, line, choreoS0, EntryFreshBin); err != nil || !adm {
 		t.Fatalf("choreography store must be admitted on a free lane: adm=%v err=%v", adm, err)
 	}
 	// Errorf, not Fatalf: the three axes fail independently under the hazard, and
@@ -319,12 +260,12 @@ func TestLaneGate_ChoreographyKeepsCoreMachineryOn(t *testing.T) {
 	}
 	// The hold is real, not decorative: a different-mode order must now conflict.
 	b := testdb.CreateOrder(t, db)
-	if adm, _, _, err := d.AcquireLanesForOrder(b.ID, choreoS0, line); err != nil || adm {
+	if adm, _, _, err := d.AcquireLanesForOrder(b, choreoS0, line, EntryFreshBin); err != nil || adm {
 		t.Errorf("outbound into an inbound-held choreography lane: adm=%v err=%v, want conflict", adm, err)
 	}
 	// Delegated takes no hold at all.
 	c := testdb.CreateOrder(t, db)
-	if adm, _, _, err := d.AcquireLanesForOrder(c.ID, line, delegS0); err != nil || !adm {
+	if adm, _, _, err := d.AcquireLanesForOrder(c, line, delegS0, EntryFreshBin); err != nil || !adm {
 		t.Fatalf("delegated must admit as a no-op: adm=%v err=%v", adm, err)
 	}
 	if n := gateMouthRows(t, db, delegLane); n != 0 {
@@ -360,38 +301,38 @@ func TestLaneGate_ChoreographyKeepsCoreMachineryOn(t *testing.T) {
 		}
 		return laneNode, s0, shallow
 	}
-	policyCause := func(prefix, enforcement string) (bool, QueueCause, *nodes.Node, *orders.Order) {
+	policyCause := func(prefix, enforcement string) (GateVerdict, *nodes.Node, *orders.Order) {
 		t.Helper()
 		laneNode, s0, shallow := buildContended(prefix, enforcement)
-		park, cause, err := d.laneEntryCause(laneNode, shallow, s0)
+		v, err := d.laneEntryCause(laneNode, shallow, s0)
 		if err != nil {
 			t.Fatalf("[%s] laneEntryCause: %v", prefix, err)
 		}
-		return park, cause, s0, shallow
+		return v, s0, shallow
 	}
 
-	wantPark, wantCause, mouthS0, mouthOrder := policyCause("HAZ-CLS-MOUTH", "mouth")
-	if !wantPark || wantCause == "" {
+	want, mouthS0, mouthOrder := policyCause("HAZ-CLS-MOUTH", "mouth")
+	if want.Admitted() || want.Cause() == "" {
 		t.Fatal("mouth arm's policy must park behind a deeper store (fixture broken)")
 	}
-	gotPark, gotCause, choreoS0, choreoOrder := policyCause("HAZ-CLS-CHOREO", "gate_choreography")
-	if gotPark != wantPark || gotCause != wantCause {
-		t.Errorf("choreography POLICY = (park=%v, %q), want (park=%v, %q) — the arm lost depth ordering",
-			gotPark, gotCause, wantPark, wantCause)
+	got, choreoS0, choreoOrder := policyCause("HAZ-CLS-CHOREO", "gate_choreography")
+	if got.Admitted() != want.Admitted() || got.Cause() != want.Cause() {
+		t.Errorf("choreography POLICY = (admitted=%v, %q), want (admitted=%v, %q) — the arm lost depth ordering",
+			got.Admitted(), got.Cause(), want.Admitted(), want.Cause())
 	}
 
 	// Dispositions, each asserted for what it is.
-	if park, _, err := d.AdmitLaneEntry(mouthOrder, mouthS0); err != nil || !park {
-		t.Errorf("mouth disposition: park=%v err=%v, want a pre-dispatch park", park, err)
+	if v, err := d.AdmitLaneEntry(mouthOrder, mouthS0); err != nil || v.Admitted() {
+		t.Errorf("mouth disposition: admitted=%v err=%v, want a pre-dispatch park", v.Admitted(), err)
 	}
-	if park, _, err := d.AdmitLaneEntry(choreoOrder, choreoS0); err != nil || park {
-		t.Errorf("choreography disposition: park=%v err=%v, want NO park — the valve stages the robot instead", park, err)
+	if v, err := d.AdmitLaneEntry(choreoOrder, choreoS0); err != nil || !v.Admitted() {
+		t.Errorf("choreography disposition: admitted=%v err=%v, want admit — the valve stages the robot instead", v.Admitted(), err)
 	}
 
 	// delegated runs no Core classifier at all.
 	_, delS0, delOrder := buildContended("HAZ-CLS-DELEG", "delegated")
-	if park, _, err := d.AdmitLaneEntry(delOrder, delS0); err != nil || park {
-		t.Errorf("delegated must not run the Core depth classifier: park=%v err=%v", park, err)
+	if v, err := d.AdmitLaneEntry(delOrder, delS0); err != nil || !v.Admitted() {
+		t.Errorf("delegated must not run the Core depth classifier: admitted=%v err=%v", v.Admitted(), err)
 	}
 }
 

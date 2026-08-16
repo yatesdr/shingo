@@ -8,7 +8,9 @@ package store
 
 import (
 	"fmt"
+	"time"
 
+	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/nodes"
@@ -19,6 +21,53 @@ import (
 // (ascending).
 func (db *DB) ListLaneSlots(laneID int64) ([]*nodes.Node, error) {
 	return nodes.ListLaneSlots(db.DB, laneID)
+}
+
+// ListHeldLegParentsInLane returns the distinct parents of PENDING compound legs
+// whose source or delivery node is a slot of this lane.
+//
+// It exists to answer "who is waiting on this lane" for a leg that has no other
+// witness. A leg held at its lane writes no status — it stays `pending` — so it
+// is invisible to every query that looks for work in progress, and the only
+// releaser its own dispatch path names is a SIBLING's dropoff completion. With no
+// sibling running there is nothing to come back, which is the wedge. Keying on
+// the lane instead means the event that actually frees the lane can find it,
+// whoever caused it.
+//
+// BOTH NAME FORMS ARE MATCHED. orders.source_node / delivery_node hold whatever
+// the planner wrote, and node references are bare ("SLN_002") or dotted
+// ("LANE.SLN_002") depending on the caller — GetByDotName splits on the dot and
+// falls back to a bare lookup, so both are live. Matching only one form would
+// silently return no parents for half the plant, which is the failure mode this
+// query exists to prevent and would be invisible in exactly the same way.
+func (db *DB) ListHeldLegParentsInLane(laneID int64) ([]int64, error) {
+	rows, err := db.DB.Query(`
+		SELECT DISTINCT o.parent_order_id
+		FROM orders o
+		JOIN nodes n ON n.parent_id = $1
+		LEFT JOIN nodes p ON p.id = n.parent_id
+		WHERE o.parent_order_id IS NOT NULL
+		  AND o.status = 'pending'
+		  AND (
+		        o.source_node   = n.name
+		     OR o.delivery_node = n.name
+		     OR o.source_node   = p.name || '.' || n.name
+		     OR o.delivery_node = p.name || '.' || n.name
+		  )`, laneID)
+	if err != nil {
+		return nil, fmt.Errorf("list held-leg parents in lane %d: %w", laneID, err)
+	}
+	defer rows.Close()
+
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan held-leg parent: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // GetSlotDepth returns the depth for a node, or 0 if not set.
@@ -250,4 +299,95 @@ func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes
 		return nil, nil, err
 	}
 	return bin, slot, nil
+}
+
+// SpokenForBin is one bin in a lane that some live order has a hold on -- the
+// shadow instrument's row (service/burial_shadow.go). It is a READ for
+// measurement only.
+type SpokenForBin struct {
+	BinID    int64
+	BinLabel string
+	SlotName string
+	Depth    int
+	// HolderID is the live order holding the bin, resolved claim-first: a hard
+	// claim names its owner directly, and a bin with only a soft reservation is
+	// held by whoever reserved it.
+	HolderID     int64
+	HolderStatus string
+	// HolderIsChild says the holder is a compound leg. It keys on the ORDER SHAPE
+	// rather than on the absence of a reservation row deliberately: a leg is a leg
+	// whether or not it has a ledger row.
+	HolderIsChild bool
+	// HardClaim is bins.claimed_by. Its absence with a live reservation present is
+	// the SOFT hold -- a plan, not a robot, and the class the burial guard
+	// deliberately does not respect.
+	HardClaim bool
+	// HeldSince is when the hold started: the reservation row's created_at, or the
+	// holder order's own created_at for a compound leg whose claim is stamped in
+	// the same transaction that inserts it (store/orders.go CreateCompoundChildren)
+	// and so shares its timestamp exactly.
+	HeldSince time.Time
+}
+
+// SpokenForBinsBehind returns every live-held bin sitting DEEPER in its lane than
+// the slot `placedNodeID` -- the bins a placement there buries.
+//
+// ONE DEFINITION OF IN-FRONT-OF. The geometry comes from
+// helpers.ShallowerInSameLane, the same expression the burial guard's clause
+// composes (store/nodes/lanes.go findStoreSlot) and the same one reachability
+// composes. The guard refuses on the hard-claim subset, this observes the whole
+// set; spelling the depth relation twice is the drift
+// TestReachabilityHasExactlyOneSpelling exists to catch, and it does.
+//
+// LIVE HOLDER ONLY. A hold whose order is terminal is not a hold -- the terminal
+// chokepoint releases it in the same transaction as the status write. Filtering
+// here means the instrument never reports a burial of a bin nobody is waiting for.
+func (db *DB) SpokenForBinsBehind(placedNodeID int64) ([]SpokenForBin, error) {
+	rows, err := db.Query(fmt.Sprintf(`
+		WITH placed AS (SELECT id, parent_id, depth FROM nodes WHERE id = $1)
+		SELECT b.id, b.label, held.name, held.depth,
+		       (b.claimed_by IS NOT NULL) AS hard_claim,
+		       o.id, o.status, (o.parent_order_id IS NOT NULL) AS is_child,
+		       COALESCE(r.created_at, o.created_at) AS held_since
+		FROM nodes held
+		CROSS JOIN placed
+		JOIN bins b ON b.node_id = held.id AND b.status <> 'retired'
+		LEFT JOIN reservations r
+		       ON r.bin_id = b.id AND r.resource_kind = 'bin'
+		      AND r.state IN ('pending','confirmed')
+		JOIN orders o ON o.id = COALESCE(b.claimed_by, r.order_id)
+		WHERE %s
+		  AND COALESCE(held.is_synthetic, false) = false
+		  AND (b.claimed_by IS NOT NULL OR r.order_id IS NOT NULL)
+		  AND o.status NOT IN (%s)
+		ORDER BY held.depth ASC`,
+		helpers.ShallowerInSameLane("placed", "held"), protocol.TerminalStatusSQLList()), placedNodeID)
+	if err != nil {
+		return nil, fmt.Errorf("spoken-for bins behind node %d: %w", placedNodeID, err)
+	}
+	defer rows.Close()
+	var out []SpokenForBin
+	for rows.Next() {
+		var s SpokenForBin
+		if err := rows.Scan(&s.BinID, &s.BinLabel, &s.SlotName, &s.Depth,
+			&s.HardClaim, &s.HolderID, &s.HolderStatus, &s.HolderIsChild, &s.HeldSince); err != nil {
+			return nil, fmt.Errorf("spoken-for bins scan: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// OrderIsCompoundLeg reports whether an order is a compound (dig) child. The
+// burial instrument asks it about the PLACING order: a dig leg picks its
+// destination through findShuffleSlots, which does not consult the store-slot
+// selector, so a dig burying a claimed bin is a known uncovered path rather than
+// a guard bypass.
+func (db *DB) OrderIsCompoundLeg(orderID int64) (bool, error) {
+	var isChild bool
+	err := db.QueryRow(`SELECT parent_order_id IS NOT NULL FROM orders WHERE id=$1`, orderID).Scan(&isChild)
+	if err != nil {
+		return false, fmt.Errorf("order %d compound-leg check: %w", orderID, err)
+	}
+	return isChild, nil
 }

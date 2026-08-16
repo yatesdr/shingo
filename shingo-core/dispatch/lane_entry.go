@@ -33,7 +33,7 @@ import (
 //     gate) → park until the group completes, so a newcomer never interleaves with
 //     it.
 //
-// Completion is the release signal (the owner's config fallback): a blocker clears
+// Completion is the release signal: a blocker clears
 // when its order leaves the active set. Releasing on ENTRY instead (letting a
 // shallower store co-occupy behind a deeper one still being placed) needs an
 // entry/XY signal that is a plant-runtime dependency — deferred; see the phase log.
@@ -109,40 +109,47 @@ func (d *Dispatcher) laneEntryOriginFor(order *orders.Order) (string, error) {
 
 // AdmitLaneEntry is the fulfillment-facing tiered-entry gate: it reports whether a
 // store must PARK (with an operator cause) before entering its lane, so entry is
-// deepest-first. park=false for every non-lane / non-mouth-enforced destination —
+// deepest-first. Admitted for every non-lane / non-mouth-enforced destination —
 // byte-identical when the gate is off.
-func (d *Dispatcher) AdmitLaneEntry(order *orders.Order, destNode *nodes.Node) (park bool, cause QueueCause, err error) {
+func (d *Dispatcher) AdmitLaneEntry(order *orders.Order, destNode *nodes.Node) (GateVerdict, error) {
 	return d.admitLaneEntry(order, destNode)
 }
 
 // admitLaneEntry is the tiered-entry gate for a store whose DROPOFF (destNode) is a
-// slot in a mouth-enforced lane group. It returns park=true (with an operator
-// cause) when the order must wait, and park=false otherwise — including for every
+// slot in a mouth-enforced lane group. It REFUSES (with an operator cause) when
+// the order must wait, and admits otherwise — including for every
 // non-lane / non-mouth-enforced destination, so the gate is byte-identical when no
 // group enforces the mouth. Depth-1 lanes are exempt (single slot, no ordering).
 //
 // It is the DISPOSITION half of the tiered arm — "park the order before it is
 // dispatched". The gate_choreography arm answers the same classifier question with
 // a different disposition (ship the robot to the lane's wait point and append its
-// tail when the lane is safe), so this returns park=false for that mode and the
+// tail when the lane is safe), so this ADMITS for that mode and the
 // valve in dispatchToFleetCore takes over. Same policy, different instrument.
-func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (park bool, cause QueueCause, err error) {
+func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (GateVerdict, error) {
 	if destNode == nil {
-		return false, "", nil
+		return Admitted(), nil
 	}
 	lane, err := d.db.LaneForNode(destNode.ID)
-	if err != nil || lane == nil || lane.ParentID == nil {
-		return false, "", err // not a lane slot, or a lane with no group
+	if err != nil {
+		// UNDETERMINED, and splitting it out of the line below is the change.
+		// This arm used to return park=false ALONGSIDE the error, so a caller
+		// reading the verdict before the error was told to enter a lane nothing
+		// had checked. The zero verdict refuses, so that reading is now safe.
+		return GateVerdict{}, err
+	}
+	if lane == nil || lane.ParentID == nil {
+		return Admitted(), nil // not a lane slot, or a lane with no group
 	}
 	mode := d.laneEnforcementMode(*lane.ParentID)
-	if !laneGateActive(mode) {
-		return false, "", nil // Core does not own this group's mouth → byte-identical
+	if !sequencesLaneEntry(mode) {
+		return Admitted(), nil // Core does not sequence this group's entries → byte-identical
 	}
 	if mode == LaneEnforceGateChoreography {
 		// The valve never parks: the order dispatches now as an unsealed waybill
 		// ending at the lane's wait point, and the classifier decides at APPEND
 		// time whether the tail goes out immediately or the robot dwells.
-		return false, "", nil
+		return Admitted(), nil
 	}
 	return d.laneEntryCause(lane, order, destNode)
 }
@@ -153,10 +160,13 @@ func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (
 // park, the gate arm turns the same cause into "dwell at the wait point".
 //
 // Callers must have already established that Core owns this lane's mouth.
-func (d *Dispatcher) laneEntryCause(lane *nodes.Node, order *orders.Order, destNode *nodes.Node) (park bool, cause QueueCause, err error) {
+func (d *Dispatcher) laneEntryCause(lane *nodes.Node, order *orders.Order, destNode *nodes.Node) (GateVerdict, error) {
 	slots, err := d.db.ListLaneSlots(lane.ID)
-	if err != nil || len(slots) < 2 {
-		return false, "", err // depth-1 (or unreadable) lane — nothing to order
+	if err != nil {
+		return GateVerdict{}, err // unreadable lane — undetermined, never an admit
+	}
+	if len(slots) < 2 {
+		return Admitted(), nil // depth-1 lane: one slot, nothing to order
 	}
 	// The active-set query matches order.delivery_node by string, but delivery_node
 	// can be written BARE ("SMN_001", from a node's .Name — engine/orders.go) or
@@ -169,7 +179,7 @@ func (d *Dispatcher) laneEntryCause(lane *nodes.Node, order *orders.Order, destN
 	for _, s := range slots {
 		dep, dErr := d.db.GetSlotDepth(s.ID)
 		if dErr != nil {
-			return false, "", dErr
+			return GateVerdict{}, dErr
 		}
 		slotNames = append(slotNames, s.Name, lanePrefix+s.Name)
 		depthByName[s.Name] = dep
@@ -178,17 +188,17 @@ func (d *Dispatcher) laneEntryCause(lane *nodes.Node, order *orders.Order, destN
 
 	active, err := d.db.ActiveLaneStores(slotNames)
 	if err != nil {
-		return false, "", err
+		return GateVerdict{}, err
 	}
 
 	self, others, err := d.buildLaneEntryView(order, destNode, lane.ID, active, depthByName)
 	if err != nil {
-		return false, "", err
+		return GateVerdict{}, err
 	}
 	if c := classifyLaneEntry(self, others); c != "" {
-		return true, c, nil
+		return Refused(c), nil
 	}
-	return false, "", nil
+	return Admitted(), nil
 }
 
 // stillWorkingLaneMouth filters the active-store set down to the orders that can

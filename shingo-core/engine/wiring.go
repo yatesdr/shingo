@@ -258,6 +258,38 @@ func (e *Engine) wireEventHandlers() {
 			}
 			e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, kind)
 		}
+
+		// A DISSOLVED DIG'S CANCELS RE-DRIVE THEIR COMPOUND, so the terminal arm can
+		// return the parent to the acquiring set. The dissolve deliberately does not
+		// transition the parent itself: {Reshuffling → Queued} fires the SYNCHRONOUS
+		// fulfillment scanner, and the dissolve is reachable from inside that scanner
+		// (tryFulfill → PlanBuriedReshuffle → CreateCompoundOrder →
+		// AdvanceCompoundOrder) under a non-reentrant scanMu. This is the hop that
+		// breaks the loop — the same reason triggerFulfillment above spawns rather
+		// than calls.
+		//
+		// SCOPED TO DISSOLVE CANCELS, and narrowly, because the first version was
+		// not. Re-driving on EVERY child cancel put an advance in the middle of every
+		// other teardown, and the operator-cancel path is the one that bit: it
+		// cancels the children BEFORE the parent, so the re-drive arrived while the
+		// parent still read `reshuffling`, dissolved the next leg, and raced the
+		// parent's own cancel to a `failed` finish. An operator asked for cancelled
+		// and got failed.
+		//
+		// The other teardowns need nothing from this: they are ending the compound,
+		// not re-planning it, and the reconciliation sweep remains their backstop
+		// exactly as before.
+		if e.dispatcher != nil && ev.Reason == dispatch.ReshuffleDissolveDetail {
+			if order, err := e.db.GetOrder(ev.OrderID); err == nil && order.ParentOrderID != nil {
+				parentID := *order.ParentOrderID
+				go func() {
+					if err := e.dispatcher.AdvanceCompoundOrder(parentID); err != nil {
+						e.logFn("engine: advance dissolved compound %d after leg %d cancelled: %v",
+							parentID, ev.OrderID, err)
+					}
+				}()
+			}
+		}
 	}, EventOrderCancelled)
 
 	// â"€â"€ Audit-only subscriptions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -310,6 +342,16 @@ func (e *Engine) wireEventHandlers() {
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCompleted)
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCancelled)
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderFailed)
+	// EventOrderSkipped — the one terminal this set was missing, and the
+	// unification is what made the gap matter. TerminalizeOrder releases an
+	// order's reservations in the same transaction as the status write for EVERY
+	// terminal including skip (store/orders.go → reservations.ReleaseByOrder), so
+	// a skipped order frees its lane occupancy exactly as a cancelled one does —
+	// but only the other three re-drove the scanner, so a plain order parked on
+	// that occupancy waited for the ticker instead of for the event. The lane-gate
+	// evaluator already subscribed to all four (engine/wiring_lane_gate.go); this
+	// makes the two trigger sets agree.
+	e.Events.SubscribeTypes(triggerFulfillment, EventOrderSkipped)
 	// EventBinEnteredTransit is the slot-vacancy signal added in Phase 1
 	// of the bin-transit-state project â€" every pickup that moves a bin
 	// to _TRANSIT frees its source slot, which can unblock queued orders

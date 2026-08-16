@@ -118,11 +118,44 @@ func (h *Handlers) apiRobotMoveTo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// LANES ARE OFF-LIMITS TO THIS DOOR, and the refusal is STATIC — never, not
+	// not-right-now.
+	//
+	// Every other way a robot enters a lane goes through admission, which can
+	// answer "not yet" because there is an order to park and something to wake it
+	// when the lane clears. This command has neither: no order row, no queue, no
+	// releaser. An admission ask here could only refuse-and-forget, which asks an
+	// operator to guess when to retry, and an admission PASS would put an
+	// unrecorded robot in a corridor that the next order's occupancy read cannot
+	// see — the collision the unification exists to prevent, arriving through the
+	// one door that keeps no record.
+	//
+	// So the rule is geometry, not state: if the destination resolves into a lane,
+	// this door says no. It costs nothing to maintain — no hold, no cause, no
+	// event to wire — and it does not remove a capability, because the two things
+	// an operator actually wants a robot in a lane FOR are both still there. Move
+	// a bin: use a bin move, which is an order and goes through the gate. Drive a
+	// robot for maintenance: use the vendor's own console, which is outside Core,
+	// which is honestly where an ungoverned move belongs.
+	lane, err := h.engine.Dispatcher().LaneForNode(destNode.ID)
+	if err != nil {
+		h.jsonError(w, "could not tell whether "+destNode.Name+" is in a lane: "+err.Error(),
+			http.StatusInternalServerError)
+		return
+	}
+	if lane != nil {
+		h.jsonError(w, "manual robot moves cannot target lane slots ("+destNode.Name+" is in lane "+
+			lane.Name+"); use a bin move, or the fleet console for maintenance",
+			http.StatusBadRequest)
+		return
+	}
+
 	// The occupancy gate, kept. It was written for the order door and its
 	// reason survives the door: a robot sent to an occupied spot arrives and
 	// stops, and the operator finds out by watching. Nothing downstream would
 	// catch it either — the block carries no binTask, so the position gate
-	// waves it through. This is the only place left to refuse.
+	// waves it through. This is the only place left to refuse for a non-lane
+	// destination.
 	if h.rejectIfOccupied(w, destNode) {
 		return
 	}

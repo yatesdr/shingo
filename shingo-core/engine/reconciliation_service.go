@@ -7,6 +7,7 @@ import (
 	"shingo/protocol"
 	"shingo/shared/clock"
 	"shingocore/dispatch"
+	"shingocore/service"
 	"shingocore/store/messaging"
 	"shingocore/store/orders"
 	"shingocore/store/reconciliation"
@@ -39,6 +40,16 @@ type ReconciliationService struct {
 	// `reshuffling` when a child→parent terminal event was missed (crash) or
 	// never fired (the cancelled-child vector has no child→parent event arm).
 	advanceCompound func(parentID int64) error
+	// burialTally reads the burial shadow instrument's since-boot counts
+	// (service/burial_shadow.go). Late-bound like the callbacks above, and for
+	// the same wiring reason: BinService is constructed after this service.
+	//
+	// It rides THIS loop rather than getting a timer of its own because the
+	// numbers are a soak reading, not an alert — one periodic line beside the
+	// other tallies is exactly the cadence a week of data wants, and a second
+	// loop would be a second thing to reason about for a measurement that is
+	// meant to be deleted once it has answered.
+	burialTally func() service.BurialTally
 }
 
 func newReconciliationService(db ReconciliationStore, logFn LogFunc) *ReconciliationService {
@@ -116,8 +127,40 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 			} else if n > 0 {
 				s.logFn("engine: reaped %d orphaned reservations from terminal/gone orders", n)
 			}
+			s.logBurialShadow()
 		}
 	}
+}
+
+// logBurialShadow reports the burial instrument, and it reports two different
+// kinds of thing on one line.
+//
+// The SOFT count is data: placements that buried a plan, which the design says
+// happen and the held-bin path turns into digs. It is silent at zero — a plant
+// where nothing ever buries a plan should not spend a line every sweep saying so,
+// and no burial-shadow lines in a week of journal is itself an answer.
+//
+// The BYPASS count is a should-be-zero, and it sits here beside the other
+// should-be-zeros for that reason. The burial guard refuses a placement in front
+// of a hard claim at the store-slot selector, so a non-zero bypass means a
+// placement path reached a lane without consulting it. It is logged even when the
+// soft count is zero, and it says so loudly.
+func (s *ReconciliationService) logBurialShadow() {
+	if s.burialTally == nil {
+		return // not wired (tests, or a build without BinService)
+	}
+	t := s.burialTally()
+	if t.Bypass > 0 {
+		s.logFn("burial-shadow BYPASS=%d (expected 0) — placements buried a hard-claimed bin without "+
+			"going through the store-slot selector; grep %q for the offending placements",
+			t.Bypass, "burial-shadow: GUARD BYPASS")
+	}
+	if t.Soft == 0 && t.DigUncovered == 0 {
+		return
+	}
+	s.logFn("burial-shadow tally (since boot): soft-hold burials %d (longest held at burial %s), "+
+		"dig-uncovered %d",
+		t.Soft, t.SoftLongestHeld.Round(time.Second), t.DigUncovered)
 }
 
 // AutoConfirmStuckDeliveredOrders confirms delivered orders that have been
@@ -359,11 +402,27 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout, operatorGatedTimeout
 		// is Core owing it a decision.
 		//
 		// This is distinct from the operator-gated swap leg handled below:
-		// IsGateStaged is the NON-coordinated lane-mouth wait (Core owes the
-		// decision), whereas IsOperatorGatedStaging is a coordinated two-robot
-		// swap leg (a human owes the decision) and gets a longer bound, not an
-		// exemption. Mutually exclusive by construction — IsGateStaged returns
-		// false for any Coordinated order.
+		// IsGateStaged is a wait CORE owes a decision on, whereas
+		// IsOperatorGatedStaging is one a HUMAN owes, and the second gets a
+		// longer bound rather than an exemption.
+		//
+		// ⛔ THEY ARE NO LONGER MUTUALLY EXCLUSIVE, and the reasoning that used
+		// to sit here — "by construction, IsGateStaged returns false for any
+		// Coordinated order" — is now false. IsGateStaged asks which WAIT the
+		// order is parked at, not what class of order it is, and a coordinated
+		// plan can hold an operator wait and a lane wait at once. A coordinated
+		// order parked at a lane wait satisfies BOTH predicates.
+		//
+		// THE ORDERING IS WHAT DISAMBIGUATES, and it is already right: this
+		// check runs first, so whichever wait the order is actually parked at
+		// decides which party owes it. Parked at the lane wait → Core owes it →
+		// exempt. Parked at the operator wait → IsGateStaged is false, it falls
+		// through, and the longer human-scale bound applies. The wait kind names
+		// the party, which is the whole point of putting the kind on the step.
+		//
+		// So this is a re-derivation, not a repair: the code did the right thing
+		// for a reason that has changed underneath it. Moving these two checks
+		// past each other would now be a behaviour change.
 		//
 		// Skipping here rather than in the SQL keeps the exemption next to the
 		// re-check above, where a reader looking at what the sweep cancels will

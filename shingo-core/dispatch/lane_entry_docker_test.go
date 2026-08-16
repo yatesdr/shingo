@@ -54,9 +54,9 @@ func TestAdmitLaneEntry_ParksDeeperPending(t *testing.T) {
 			o.Status = "in_transit"
 		})
 
-		park, cause, err := d.AdmitLaneEntry(shallow, s0)
-		if err != nil || !park || cause != CauseLaneDeeperPending {
-			t.Fatalf("[%s] deep active: park=%v cause=%q err=%v, want park %q", prefix, park, cause, err, CauseLaneDeeperPending)
+		v, err := d.AdmitLaneEntry(shallow, s0)
+		if err != nil || v.Admitted() || v.Cause() != CauseLaneDeeperPending {
+			t.Fatalf("[%s] deep active: admitted=%v cause=%q err=%v, want refused with %q", prefix, v.Admitted(), v.Cause(), err, CauseLaneDeeperPending)
 		}
 	}
 
@@ -112,7 +112,7 @@ func TestAdmitLaneEntry_ReleasesOnPlacement(t *testing.T) {
 
 	// The deeper store commits to the fleet: it takes its inbound mouth row and
 	// gets a vendor order id, exactly as the scanner does before DispatchDirect.
-	if adm, _, _, aErr := d.AcquireLanesForOrder(deep.ID, line, s1); aErr != nil || !adm {
+	if adm, _, _, aErr := d.AcquireLanesForOrder(deep, line, s1, EntryFreshBin); aErr != nil || !adm {
 		t.Fatalf("deep store must be admitted on a free lane: adm=%v err=%v", adm, aErr)
 	}
 	if err := db.UpdateOrderVendor(deep.ID, "sg-teplace-deep", "RUNNING", ""); err != nil {
@@ -123,9 +123,9 @@ func TestAdmitLaneEntry_ReleasesOnPlacement(t *testing.T) {
 	}
 
 	// In flight, not yet placed → the shallow store parks (unchanged behavior).
-	park, cause, err := d.AdmitLaneEntry(shallow, s0)
-	if err != nil || !park || cause != CauseLaneDeeperPending {
-		t.Fatalf("before placement: park=%v cause=%q err=%v, want park %q", park, cause, err, CauseLaneDeeperPending)
+	v, err := d.AdmitLaneEntry(shallow, s0)
+	if err != nil || v.Admitted() || v.Cause() != CauseLaneDeeperPending {
+		t.Fatalf("before placement: admitted=%v cause=%q err=%v, want refused with %q", v.Admitted(), v.Cause(), err, CauseLaneDeeperPending)
 	}
 
 	// The deeper store's dropoff block completes — the bin is DOWN. Its order is
@@ -144,9 +144,9 @@ func TestAdmitLaneEntry_ReleasesOnPlacement(t *testing.T) {
 
 	// A′: the shallow store admits NOW, on placement, without waiting for the
 	// deeper order to complete.
-	park, cause, err = d.AdmitLaneEntry(shallow, s0)
-	if err != nil || park {
-		t.Fatalf("after placement: park=%v cause=%q err=%v, want admit", park, cause, err)
+	v, err = d.AdmitLaneEntry(shallow, s0)
+	if err != nil || !v.Admitted() {
+		t.Fatalf("after placement: admitted=%v cause=%q err=%v, want admit", v.Admitted(), v.Cause(), err)
 	}
 
 	// A deeper store that never reached the fleet still blocks: it holds no mouth
@@ -155,9 +155,9 @@ func TestAdmitLaneEntry_ReleasesOnPlacement(t *testing.T) {
 		o.DeliveryNode = s1.Name
 		o.Status = "queued"
 	})
-	park, cause, err = d.AdmitLaneEntry(shallow, s0)
-	if err != nil || !park || cause != CauseLaneDeeperPending {
-		t.Fatalf("undispatched deeper store: park=%v cause=%q err=%v, want park %q", park, cause, err, CauseLaneDeeperPending)
+	v, err = d.AdmitLaneEntry(shallow, s0)
+	if err != nil || v.Admitted() || v.Cause() != CauseLaneDeeperPending {
+		t.Fatalf("undispatched deeper store: admitted=%v cause=%q err=%v, want refused with %q", v.Admitted(), v.Cause(), err, CauseLaneDeeperPending)
 	}
 }
 
@@ -179,7 +179,7 @@ func TestAdmitLaneEntry_OffIsAdmit(t *testing.T) {
 	shallow := testdb.CreateOrder(t, db, func(o *orders.Order) { o.DeliveryNode = s0.Name; o.Status = "queued" })
 	_ = testdb.CreateOrder(t, db, func(o *orders.Order) { o.DeliveryNode = s1.Name; o.Status = "in_transit" })
 
-	if park, _, err := d.AdmitLaneEntry(shallow, s0); err != nil || park {
-		t.Fatalf("non-mouth group must admit (byte-identical); park=%v err=%v", park, err)
+	if v, err := d.AdmitLaneEntry(shallow, s0); err != nil || !v.Admitted() {
+		t.Fatalf("non-mouth group must admit (byte-identical); admitted=%v err=%v", v.Admitted(), err)
 	}
 }

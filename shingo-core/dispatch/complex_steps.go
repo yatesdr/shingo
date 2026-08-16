@@ -11,6 +11,7 @@ import (
 	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // resolveComplexSteps validates and resolves all steps, returning concrete node names.
@@ -79,6 +80,24 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 	newSteps = make([]resolvedStep, 0, len(steps))
 	for i, step := range steps {
 		if step.Node == "" {
+			newSteps = append(newSteps, step)
+			continue
+		}
+		if step.WaitKind == WaitKindLane {
+			// A LANE WAIT IS EXEMPT, EXPLICITLY. Its node is an RDS map point,
+			// not a Core node — deliberately, so a point that never holds a bin
+			// stays out of the node graph (PropLaneGatePoint). So the lookup
+			// below cannot find it and it would ride the "node vanished —
+			// unrecoverable" arm: the right OUTCOME (passed through untouched)
+			// reached by a branch that means something else.
+			//
+			// That matters beyond tidiness. That arm is where a genuinely
+			// missing node lands, and a reader debugging one should not have to
+			// know that every gated plan takes it too. Naming the case also
+			// makes it fail loudly if a plant ever configures a gate point that
+			// HAPPENS to collide with a Core node name — without this, such a
+			// wait would be looked up, possibly found to be an NGRP, and
+			// re-resolved into a storage slot, silently re-aiming the gate.
 			newSteps = append(newSteps, step)
 			continue
 		}
@@ -360,6 +379,43 @@ func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, 
 	return
 }
 
+// waitAt returns the wait step an order with this wait_index is PARKED AT, and
+// whether there is one.
+//
+// ── IT MUST COUNT WAITS EXACTLY AS splitSegment DOES ──────────────────────
+//
+// That is why it lives here rather than beside its caller. splitSegment skips
+// past (waitIndex+1) waits to find what to release NEXT; this returns the wait
+// it stopped at — the one whose tail has not gone out. Same enumeration, one
+// step apart, so the two must agree on what counts as a wait or the predicate
+// built on this would name a different wait than the release built on that.
+//
+// BOTH SPELLINGS COUNT. A bare wait (no node) emits no RDS block, but it is
+// still a split point and splitSegment still counts it, so a plan whose
+// operator wait is bare must not shift the numbering here. Block-EMISSION and
+// wait-COUNTING are different questions and only the first cares about Node.
+//
+// ok=false when waitIndex is past the last wait, which is the released state:
+// the shared append helper advances wait_index only after the fleet accepted
+// the segment, so an order that has consumed its final wait indexes past the
+// end. That is the same condition splitSegment reports as a nil segment.
+func waitAt(steps []resolvedStep, waitIndex int) (resolvedStep, bool) {
+	if waitIndex < 0 {
+		return resolvedStep{}, false
+	}
+	seen := 0
+	for _, s := range steps {
+		if s.Action != protocol.ActionWait {
+			continue
+		}
+		if seen == waitIndex {
+			return s, true
+		}
+		seen++
+	}
+	return resolvedStep{}, false
+}
+
 // mintVendorOrderID is the ONE place an order-backed fleet order id is made.
 //
 // It exists next to mintBlockID because the two are one mechanism: every block id
@@ -534,15 +590,32 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 	changed := false
 	for i := range out {
 		step := out[i]
-		if step.Action == protocol.ActionWait {
-			// Widening stops at the first wait. Post-wait steps execute after
-			// an Edge release, against a FUTURE world state — the classic
+		if step.Action == protocol.ActionWait && step.WaitKind != WaitKindLane {
+			// Widening stops at the first OPERATOR wait. Post-wait steps execute
+			// after an Edge release, against a FUTURE world state — the classic
 			// single-order swap's post-wait line pickup removes a bin that
 			// arrives only once THIS order's pre-wait blocks deliver it.
 			// Judging those steps against current pools would park orders
 			// whose conditions resolve mid-flight. The release path owns
 			// them, mirroring the block split the fleet dispatch itself
 			// makes at the wait.
+			//
+			// A LANE WAIT IS NOT SUCH A BOUNDARY, and the distinction is the
+			// whole reason the kind is on the step. What an operator wait
+			// separates is two states of the WORLD: the station reports
+			// something that has not happened yet. A lane wait separates two
+			// states of one LANE, and everything after it works the same pools,
+			// against the same inventory, as everything before it — Core is
+			// merely deciding when the corridor is free.
+			//
+			// Stopping at one would silently un-widen every supply pickup after
+			// the lane, which is the SPR-74379 failure this function exists to
+			// fix (a supply pickup at an empty pinned home while the only bin of
+			// that payload sat one slot over): the order terminal-skips "no bin
+			// at any source node", the swap peer unwinds its partner, and
+			// autoreorder re-fires the pair every ~50s. The splice inserts lane
+			// waits into plans that previously had none, so without this line
+			// the fix would have quietly stopped covering them.
 			break
 		}
 		if step.Action != protocol.ActionPickup || step.Empty || isRemovalPickup(step, order.ProcessNode) {
@@ -553,12 +626,38 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 			// consume the hold so a second identical need can't ride the same
 			// reservation past the finder.
 			hb.used = true
+
+			// WINDOW 4. This skip is why a complex order could wait forever on a
+			// bin it can no longer reach.
+			//
+			// The skip itself is right and stays: the finder is owner-blind, so
+			// re-resolving a need the order already holds would reject its own bin
+			// and park it on the resource it is holding — a self-park with no exit.
+			// But "I hold it" and "I can still get it" are different questions, and
+			// only the first was being asked. A store buries the held bin: the
+			// burial guard permits it (hard claims only, by ruling — a soft hold is
+			// a plan), nothing on the complex path re-asks reachability, and no dig
+			// is wired to a complex need the way window 2 wired the plain path. The
+			// swap waits on a bin behind a wall.
+			//
+			// So ask the second question, and only when the first says yes.
+			buried, err := d.heldNeedUnreachable(hb)
+			if err != nil {
+				d.dbg("widen: order %d could not check reachability of held bin %d (%v) — keeping the hold",
+					order.ID, hb.binID, err)
+				continue
+			}
+			if buried == nil {
+				continue // still reachable: nothing has changed for this need
+			}
+			rewritten, res := d.recalcBuriedNeed(order, hb, buried, anchorFor(step), &out[i])
+			if res != nil {
+				return out, changed, res
+			}
+			changed = changed || rewritten
 			continue
 		}
-		anchor := step.Group
-		if anchor == "" {
-			anchor = step.Node
-		}
+		anchor := anchorFor(step)
 		if anchor == "" {
 			continue
 		}
@@ -596,4 +695,138 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 		}
 	}
 	return out, changed, nil
+}
+
+// anchorFor is where a supply pickup shops: its persisted Group stamp when it has
+// one (the pool it was widened within), else the node it names.
+func anchorFor(step resolvedStep) string {
+	if step.Group != "" {
+		return step.Group
+	}
+	return step.Node
+}
+
+// heldNeedUnreachable asks whether a bin this order already holds can still be
+// GOT — the second question the own-hold skip never asked.
+//
+// Returns nil when the bin is reachable, or when the hold is not the kind of
+// thing this question applies to (a slot row, a stray whose node could not be
+// resolved, a bin outside any lane). Returns a BuriedError describing the dig
+// that would clear it otherwise.
+//
+// A READ THAT FAILS RETURNS AN ERROR, and the caller keeps the hold. The opposite
+// default would release a live reservation on a database hiccup and send a swap
+// shopping for a bin it already had.
+func (d *Dispatcher) heldNeedUnreachable(hb *heldReservation) (*BuriedError, error) {
+	if hb.kind == reservations.KindSlot || hb.binID == 0 || hb.nodeID == 0 {
+		return nil, nil
+	}
+	lane, err := d.db.LaneForNode(hb.nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve lane for held bin %d: %w", hb.binID, err)
+	}
+	if lane == nil {
+		return nil, nil // not in a lane: nothing can be in front of it
+	}
+	blockers, err := findBuriedBlockers(d.db, hb.nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("blockers in front of held bin %d: %w", hb.binID, err)
+	}
+	if len(blockers) == 0 {
+		return nil, nil
+	}
+	bin, err := d.db.GetBin(hb.binID)
+	if err != nil || bin == nil {
+		return nil, fmt.Errorf("reload held bin %d: %w", hb.binID, err)
+	}
+	slot, err := d.db.GetNode(hb.nodeID)
+	if err != nil || slot == nil {
+		return nil, fmt.Errorf("reload slot %d for held bin %d: %w", hb.nodeID, hb.binID, err)
+	}
+	return &BuriedError{Bin: bin, Slot: slot, LaneID: lane.ID}, nil
+}
+
+// recalcBuriedNeed is the reserve treated as what it is — a plan.
+//
+// The order holds a bin it can no longer reach. The reservation says otherwise,
+// so the reservation is wrong, and the cheapest correction is usually not a dig:
+// for a fungible need, another bin of the same payload sitting in the open is
+// better than excavating this one. So the hold is RELEASED and the need
+// re-resolved, in that order, because the finder is owner-blind and would
+// otherwise refuse to see anything while this order still holds something.
+//
+// Returns (rewritten, nil) when a substitute was found and the step now points at
+// it. Returns (false, reshuffle result) when there is no substitute — a named
+// bin, or nothing else of the payload — which the caller routes to the same
+// buried-bin planner the plain path uses; the complex parent resumes after the
+// dig and re-resolves, exactly as it does for a burial found at intake.
+// (false, nil) means nothing could be done safely and the hold stands.
+//
+// THE RELEASE IS NOT UNDONE on the dig arm, deliberately. A reservation held
+// across an excavation is a promise about a bin the dig may relocate, which is
+// the stale bookkeeping the steal contract exists to stop. The parent re-resolves
+// when it resumes; if something else takes the bin meanwhile, that is the reserve
+// recalculating, which is what a reserve is for.
+func (d *Dispatcher) recalcBuriedNeed(order *orders.Order, hb *heldReservation, buried *BuriedError, anchor string, step *resolvedStep) (rewritten bool, hold *SourceResult) {
+	log.Printf("dispatch: complex order %d holds bin %d at %s, which is now buried — releasing the "+
+		"hold and re-resolving the need (a reserve is a plan, and this one is out of date)",
+		order.ID, hb.binID, hb.nodeName)
+
+	if err := d.db.ReleaseReservation(order.ID, hb.binID); err != nil {
+		// Keep the hold rather than proceed half-released: re-resolving while the
+		// row still stands would let the order reserve a SECOND bin for one need.
+		d.dbg("widen: order %d could not release its hold on buried bin %d (%v) — keeping it",
+			order.ID, hb.binID, err)
+		return false, nil
+	}
+
+	// THE ANCHOR MAY BE A GROUP, and here that is the point rather than something
+	// to skip. The widen loop above skips synthetic anchors because NGRP
+	// resolution is reResolveComplexSteps' job; this is a different question —
+	// "is there another bin that would do" — and for a need anchored on a
+	// supermarket the answer is the whole group. The finder handles both shapes:
+	// its tier 1 resolves a synthetic NGRP through the group resolver, which
+	// prefers ACCESSIBLE bins and only reports a burial when every candidate is
+	// walled; a concrete anchor takes the node-local tier. NodeLocal keeps the
+	// plant-wide scan unreachable either way — a swap shops its own supermarket,
+	// not the whole plant.
+	if anchor != "" {
+		res := d.finder.FindSourceForNeed(SourceNeed{
+			SourceNode:   anchor,
+			PayloadCode:  order.PayloadCode,
+			DeliveryNode: order.DeliveryNode,
+			Intent:       IntentFull,
+			NodeLocal:    true,
+		})
+		switch MapFinderOutcome(res) {
+		case OutcomeFound:
+			// A substitute only counts if it is a DIFFERENT bin and actually
+			// reachable — re-resolving to the same buried bin, or to another one
+			// behind the same wall, is the recalculation congratulating itself. The
+			// group resolver already prefers accessible bins; the check also covers
+			// the node-local tier, whose post-find reachability arm is empty-intent
+			// only.
+			if res.Bin != nil && res.Node != nil && res.Bin.ID != hb.binID {
+				if reachable, rerr := d.db.IsSlotAccessible(res.Node.ID); rerr == nil && reachable {
+					log.Printf("dispatch: complex order %d re-resolved its buried need to bin %d at %s "+
+						"— no dig needed", order.ID, res.Bin.ID, res.Node.Name)
+					step.Node = res.Node.Name
+					step.Group = anchor
+					return true, nil
+				}
+			}
+		case OutcomeReshuffle:
+			// Every candidate in the anchor is buried, and the finder has already
+			// worked out which one is cheapest to dig. Prefer its answer to ours:
+			// it looked at the whole group, this function only at the bin the order
+			// happened to be holding.
+			if res.Buried != nil {
+				resCopy := res
+				return false, &resCopy
+			}
+		}
+	}
+
+	// No substitute: the bin this order needs is the buried one, so dig for it.
+	return false, &SourceResult{Outcome: OutcomeReshuffle, Buried: buried}
 }

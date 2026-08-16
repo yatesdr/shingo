@@ -1138,21 +1138,25 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 	})
 	dispatchSimpleViaScanner(t, d, db, "fleet-fail-1")
 
-	// Order should be received then failed
+	// Received, then PARKED — not failed.
+	//
+	// This asserted a fleet_failed terminal for as long as DispatchDirect
+	// terminalized on a refused create. It cannot: the fleet being unavailable is
+	// congestion, the scanner's rollback exists to wait it out, and that rollback
+	// was unreachable while the order was already terminal. What the plant sees
+	// now is an order holding its place until the robot system answers.
 	if len(emitter.received) != 1 {
 		t.Fatalf("received events = %d, want 1", len(emitter.received))
 	}
-	if len(emitter.failed) != 1 {
-		t.Fatalf("failed events = %d, want 1", len(emitter.failed))
-	}
-	if emitter.failed[0].errorCode != "fleet_failed" {
-		t.Errorf("error code = %q, want %q", emitter.failed[0].errorCode, "fleet_failed")
+	if len(emitter.failed) != 0 {
+		t.Fatalf("failed events = %d, want 0 — a fleet refusal must not terminate demand", len(emitter.failed))
 	}
 
-	// Verify order status is failed
-	testdb.AssertOrderStatus(t, db, "fleet-fail-1", StatusFailed)
+	testdb.AssertOrderStatus(t, db, "fleet-fail-1", StatusSourcing)
 
-	// Verify bin was unclaimed after fleet failure
+	// The bin is released either way, and that half is unchanged: the robot never
+	// committed, so nothing may keep holding the bin while the order waits — it
+	// re-soft-acquires on the retry.
 	b, _ := db.GetBin(bin.ID)
 	if b.ClaimedBy != nil {
 		t.Errorf("bin should be unclaimed after fleet failure, ClaimedBy = %v", b.ClaimedBy)

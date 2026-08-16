@@ -144,8 +144,14 @@ func TestGateWait_StationReleaseIsRefused(t *testing.T) {
 // fence from being "HandleOrderRelease never appends".
 //
 // A coordinated order's waits are STATION waits — its plan is Edge-authored and its
-// preconditions are physical at the station. IsGateStaged returns false for it by
-// its first clause (`!order.Coordinated`), so the fence must not touch it.
+// preconditions are physical at the station, so the fence must not touch it.
+//
+// It used to say IsGateStaged returns false here "by its first clause
+// (`!order.Coordinated`)". That clause is gone: the answer now comes from the WAIT,
+// which is unstamped on an Edge-authored plan and therefore an operator wait. The
+// assertion is unchanged and the reason is better — this order is not exempt
+// because of what KIND of order it is, but because of whose wait it is parked at.
+// See lane_gate_wait_kind_docker_test.go for the plan that holds both.
 //
 // MUTATION (verified): widen the fence from IsGateStaged(order) to
 // `order.StepsJSON != ""`. This test's "append calls = 1" assertion fires, because

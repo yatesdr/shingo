@@ -44,11 +44,16 @@ type planningError struct {
 // the values are part of a persisted, compared contract: renaming a constant is
 // safe, changing the string it holds is not.
 //
-// Every one of these except codeLoaderSource is the SAME STRING as a
-// protocol.TermCode, and used to be spelled out a second time here — two
-// vocabularies for one contract, kept equal by nobody. They are bound to the
-// protocol constants now, so the compiler holds them together and the warning
-// above has something enforcing it.
+// Every one of these is the SAME STRING as a protocol.TermCode, and used to be
+// spelled out a second time here — two vocabularies for one contract, kept equal
+// by nobody. They are bound to the protocol constants now, so the compiler holds
+// them together and the warning above has something enforcing it.
+//
+// There used to be one exception, codeLoaderSource, carrying the note "it never
+// reaches a terminal row". It did: the finder raised it as a structural outcome,
+// which every caller terminal-fails. It is gone now — a failed read of a loader
+// pool waits (source_finder.go), so there is nothing left to classify — and with
+// it the exception this list had to keep explaining.
 //
 // This is also where a terminal code on an order row comes from: the planner
 // returns one of these, failOrder hands it to lifecycle.Fail, and it lands in
@@ -70,11 +75,17 @@ const (
 	codeNoStorage     = string(protocol.TermNoStorage)
 	codeNoSourceBin   = string(protocol.TermNoSourceBin)
 	// codeNoShuffleSlot is TRANSIENT: the reshuffle has nowhere to park blockers
-	// right now. See ErrNoShuffleSlot + the D79 reshuffle-disposition rider.
+	// right now. See ErrNoShuffleSlot.
 	codeNoShuffleSlot = string(protocol.TermNoShuffleSlot)
-	// codeLoaderSource is the one with no protocol twin: it never reaches a
-	// terminal row, it only classifies a loader-sourcing planning failure.
-	codeLoaderSource = "loader_source"
+	// codeBlockerClaimed is TRANSIENT: a bin the dig must move is held by an order
+	// outside the compound. See store.BlockerClaimedError — the holder is a live
+	// order, usually a robot mid-pickup, so the digger waits for it.
+	codeBlockerClaimed = string(protocol.TermBlockerClaimed)
+	// codeReadFailed is TRANSIENT: a read Core needed did not answer. Distinct
+	// from codeInvalidNode, which is the same shape of question answered "there is
+	// nothing there" — see read_vs_missing.go for why the two must not share a
+	// disposition.
+	codeReadFailed = string(protocol.TermReadFailed)
 )
 
 func (e *planningError) Error() string {
@@ -106,17 +117,27 @@ func (e *planningError) Unwrap() error {
 //   - claim_failed: a source bin existed but was claimed by a concurrent order in the
 //     TOCTOU gap between FindSourceBin and ClaimBin.
 //   - lane_locked: the buried source bin's lane is mid-reshuffle for another order.
+//   - no_shuffle_slot: the dig has nowhere to park its blockers right now.
+//   - blocker_claimed: a bin the dig must move is held by an order outside the
+//     compound.
 //
-// Both resolve within moments. Failing them drops an order that just needed to wait —
-// and multi-window loaders pulling empties in parallel make this contention routine.
-// The reshuffle/complex dispatch path already queues lane_locked; Transient() makes
+// Failing any of them drops an order that just needed to wait — and multi-window
+// loaders pulling empties in parallel make this contention routine. The
+// reshuffle/complex dispatch path already queues lane_locked; Transient() makes
 // every simple-planner path (retrieve, store, ingest) agree.
+//
+// They do NOT all clear on the same timescale, and the set must not be read as
+// if they did. claim_failed is a lost race and clears in the next moment;
+// blocker_claimed waits out a robot's drive time, minutes. Both WAIT — the
+// disposition is the same — but a caller that retries on a tight loop is right
+// for one and wasteful for the other, and anything that reports on these codes
+// should keep them apart rather than average them into "contention".
 func (e *planningError) Transient() bool {
 	if e == nil {
 		return false
 	}
 	switch e.Code {
-	case codeClaimFailed, codeLaneLocked, codeNoShuffleSlot:
+	case codeClaimFailed, codeLaneLocked, codeNoShuffleSlot, codeBlockerClaimed, codeReadFailed:
 		return true
 	}
 	return false
@@ -229,8 +250,8 @@ func (s *PlanningService) Plan(order *orders.Order, env *protocol.Envelope, payl
 // The disposition (queue vs reshuffle vs terminal) lives in the finder, so
 // intake and scanner-replay can no longer drift on it. OutcomeWait now writes
 // queue_reason (intake used to queue silently on no-source); OutcomeStructural
-// re-raises the finder's TermCode verbatim (the codeStructural/codeLoaderSource/
-// codeNode strings are the persisted contract intake already used).
+// re-raises the finder's TermCode verbatim (the codeStructural / codeNode
+// strings are the persisted contract intake already used).
 func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bins.Bin, *nodes.Node, *PlanningResult, *planningError, bool) {
 	res := s.finder.FindSource(order, intent)
 	// mapFinderOutcome is the shared admission point (see finder_outcome.go):
@@ -416,20 +437,61 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 }
 
 func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *BuriedError) (*PlanningResult, *planningError) {
+	// ASKS A DIFFERENT QUESTION FROM admission, and does not delegate.
+	//
+	// "May I CLAIM this lane for a dig" is an acquisition precondition. "May this
+	// move happen now" is about one leg against the lane as it stands. They are
+	// not the same question and the tell is decisive: a buried retrieve is buried
+	// BY CONSTRUCTION — BuriedError carries the slot the wanted bin sits behind —
+	// so admission's reachability arm would refuse every reshuffle plan with
+	// lane-target-buried. A planner that consulted admission could never plan the
+	// reshuffle that fixes the burial.
+	//
+	// Occupancy is wrong here for the same reason at lower stakes: somebody
+	// transiently inside a lane is no reason to refuse to PLAN, and the legs get
+	// admitted individually anyway.
+	//
+	// IsLocked rather than DigOwner is right at this site: it fails closed by
+	// discarding the read error, and this caller has no way to report one.
 	if s.laneLock.IsLocked(buried.LaneID) {
 		return nil, &planningError{Code: codeLaneLocked, Detail: fmt.Sprintf("lane %d is locked by another reshuffle", buried.LaneID)}
 	}
+	// THREE OUTCOMES, NOT TWO. This read used to be `if err != nil ||
+	// lane.ParentID == nil`, which filed a database that did not answer under the
+	// same terminal as a lane that is not there.
+	//
+	// Releaser for the park: this planner is reached from the fulfillment
+	// scanner's OutcomeReshuffle arm (fulfillment/scanner.go tryFulfill) and from
+	// its held-bin dig, so the ordinary retry loop re-drives it — no new
+	// subscription, and a read that failed once usually succeeds next time.
 	lane, err := s.db.GetNode(buried.LaneID)
-	if err != nil || lane.ParentID == nil {
-		return nil, &planningError{Code: codeReshuffle, Detail: "cannot determine node group for lane", Err: err}
+	if readFailed(err) {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{})
+		return nil, &planningError{
+			Code:   codeReadFailed,
+			Detail: fmt.Sprintf("could not read lane %d, retrying: %v", buried.LaneID, err),
+			Err:    err,
+		}
+	}
+	if err != nil || lane == nil {
+		return nil, &planningError{
+			Code:   codeInvalidNode,
+			Detail: configFailureID("lane node", buried.LaneID),
+			Err:    err,
+		}
+	}
+	if lane.ParentID == nil {
+		return nil, &planningError{
+			Code:   codeInvalidNode,
+			Detail: fmt.Sprintf("config failure: lane %s is not in a node group, so it has nowhere to park a blocker", lane.Name),
+		}
 	}
 	plan, err := PlanReshuffle(s.db, buried.Bin, buried.Slot, lane, *lane.ParentID)
 	if err != nil {
 		// "No free shuffle slot" is CONGESTION, not a fault — a slot frees as soon
-		// as any other order clears one. It must wait and retry, never fail (D18-Q4
-		// wait-not-fail; the D79 reshuffle-disposition rider, surfaced by sim order
-		// 21). Every other planning failure here is real lane geometry and stays
-		// terminal.
+		// as any other order clears one. It must wait and retry, never fail: demand
+		// does not terminate for congestion (surfaced by sim order 21). Every other
+		// planning failure here is real lane geometry and stays terminal.
 		if errors.Is(err, ErrNoShuffleSlot) {
 			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
 		}
@@ -440,6 +502,29 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 	}
 	if err := s.createCompound(order, plan); err != nil {
 		s.laneLock.Unlock(buried.LaneID, order.ID)
+		// A blocker held by an order outside the compound is CONGESTION, and the
+		// purest kind: the commonest holder is a dispatched retrieve whose robot is
+		// at that moment driving that very bin out of this lane. The blocker is
+		// ceasing to exist. Same shape as ErrNoShuffleSlot three lines up — park
+		// with a cause, re-plan when the lane changes — and it rides this arm's
+		// unlock rather than a second one, so the lane is free for whoever can use
+		// it while we wait.
+		//
+		// The releaser is already wired, and nothing is added for it: the shallow
+		// bin's pickup moves it to _TRANSIT and its arrival clears the claim, both
+		// of which fire bin events the fulfillment scanner is subscribed to, and
+		// the holder going terminal releases through TerminalizeOrder and emits as
+		// well. The next scan re-runs findBuriedBlockers against a lane that no
+		// longer contains the bin, and the dig plans clean.
+		if errors.Is(err, store.ErrBlockerClaimed) {
+			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
+				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
+			return nil, &planningError{
+				Code:   codeBlockerClaimed,
+				Detail: fmt.Sprintf("cannot dig yet: %v", err),
+				Err:    err,
+			}
+		}
 		return nil, &planningError{Code: codeReshuffle, Detail: fmt.Sprintf("cannot create compound order: %v", err), Err: err}
 	}
 	// createCompound already transitioned the parent to Reshuffling via

@@ -187,6 +187,18 @@ const (
 	TermClaimFailed TermCode = "claim_failed"
 	// TermLaneLocked: the lane was held by another order and stayed held.
 	TermLaneLocked TermCode = "lane_locked"
+	// TermReadFailed: a read Core needed did not answer. Transient — the planner
+	// parks and retries — so it is not expected on a terminal row; declared here
+	// because every planning code is bound to this vocabulary. A node that is
+	// genuinely absent is TermInvalidNode, and the two must not be confused: one
+	// is a database hiccup, the other is a human's job to fix.
+	TermReadFailed TermCode = "read_failed"
+	// TermBlockerClaimed: a bin a dig had to move was claimed by an order outside
+	// the compound. Congestion — the planner treats it as transient and parks —
+	// so it is not expected on a terminal row; declared here because every
+	// planning code except the loader one is bound to this vocabulary, and a
+	// future terminal path for it must not have to invent a string.
+	TermBlockerClaimed TermCode = "blocker_claimed"
 	// TermReshuffleError: reshuffle planning failed structurally.
 	TermReshuffleError TermCode = "reshuffle_error"
 	// TermStructural: the request is malformed in a way retrying cannot fix.
@@ -222,6 +234,8 @@ func AllTermCodes() []TermCode {
 		TermNodeError,
 		TermClaimFailed,
 		TermLaneLocked,
+		TermReadFailed,
+		TermBlockerClaimed,
 		TermReshuffleError,
 		TermStructural,
 		TermUnknownType,

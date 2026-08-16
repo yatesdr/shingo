@@ -193,7 +193,7 @@ func isFullCarrier(b *bins.Bin) bool {
 // why this is derived here rather than carried on the order: the Edge would have
 // to be told, and a rule a caller has to remember is one that gets forgotten.
 //
-// A declared mix is HONOURED, NOT APPROXIMATED (owner ruling, 2026-08-02). If the
+// A declared mix is HONOURED, NOT APPROXIMATED. If the
 // type the loader is short of is not available anywhere, the pull WAITS. It does
 // not substitute another type — declaring a mix and then ignoring it when it is
 // inconvenient makes declaring it pointless. A loader that wants any-type
@@ -514,7 +514,28 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		}
 		chosen, node, isLoaderPos, lerr := f.sourceFromDedicatedLoader(need.SourceNode, payloadCode, loaderIntent)
 		if lerr != nil {
-			return SourceResult{Outcome: OutcomeStructural, TermCode: codeLoaderSource, Err: lerr}
+			// WAIT, NOT FAIL, and this arm is the callee's own stated disposition
+			// finally being honoured. Every error sourceFromDedicatedLoader returns
+			// wraps a database read — the source node, the loader home, the loader,
+			// its members, the bins across them — and each of those returns says so
+			// in a comment: "Propagate so the order queues instead", "propagates →
+			// the order queues". This site did the opposite, mapping all five to a
+			// structural terminal, so a momentary read failure while sourcing from a
+			// dedicated loader KILLED the order.
+			//
+			// A read that failed is not a fact about the plant. The releaser is the
+			// ordinary one — the scanner re-runs on its event set and on the sweep,
+			// and a read that failed once usually succeeds next time. The cause is in
+			// the undetermined family (queue_cause.go) so a histogram keeps it apart
+			// from an honest empty pool: this is Core declining to answer, not the
+			// loader being out of material.
+			f.debug("finder: loader source for %s unreadable (%v) — holding", need.SourceNode, lerr)
+			return SourceResult{
+				Outcome:     OutcomeWait,
+				QueueCode:   protocol.QueueWaitingForMaterial,
+				QueueCause:  string(CauseLoaderSourceUnreadable),
+				QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
+			}
 		}
 		if isLoaderPos {
 			if chosen == nil {
@@ -697,14 +718,34 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	}
 
 	// Resolve the bin's node if a tier set `bin` without one (tiers 1 and 5).
-	// A missing/unreadable node is the terminal codeNode intake raises.
+	//
+	// A bin with no node at all is a broken row and stays terminal. The LOOKUP
+	// splits three ways for the reason in read_vs_missing.go: a node that is not
+	// there is configuration a human fixes, and a read that did not answer is a
+	// hiccup that must not kill the order. This site mapped both to a terminal.
+	//
+	// Releaser for the park: the finder's two callers are intake planning and the
+	// scanner's replay, and the scanner re-runs on its whole event set plus the
+	// sweep — so the retry is the loop that was going to run anyway.
 	if binNode == nil {
 		if bin.NodeID == nil {
-			return SourceResult{Outcome: OutcomeStructural, TermCode: codeNode, Err: fmt.Errorf("source bin %d has no node", bin.ID)}
+			return SourceResult{Outcome: OutcomeStructural, TermCode: codeNode,
+				Err: fmt.Errorf("source bin %d has no node", bin.ID)}
 		}
 		n, err := f.db.GetNode(*bin.NodeID)
-		if err != nil {
-			return SourceResult{Outcome: OutcomeStructural, TermCode: codeNode, Err: fmt.Errorf("resolve node for bin %d: %w", bin.ID, err)}
+		if readFailed(err) {
+			f.debug("finder: could not read node %d for bin %d (%v) — holding", *bin.NodeID, bin.ID, err)
+			return SourceResult{
+				Outcome:     OutcomeWait,
+				QueueCode:   protocol.QueueWaitingForMaterial,
+				QueueCause:  string(CauseReadFailed),
+				QueueParams: QueueParams{Payload: payloadCode},
+			}
+		}
+		if err != nil || n == nil {
+			return SourceResult{Outcome: OutcomeStructural, TermCode: codeInvalidNode,
+				Err: fmt.Errorf("%s (source bin %d points at it)",
+					configFailureID("node", *bin.NodeID), bin.ID)}
 		}
 		binNode = n
 	}

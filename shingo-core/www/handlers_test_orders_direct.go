@@ -43,12 +43,16 @@ func (h *Handlers) apiDirectOrderSubmit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// vendor_order_id is empty on a lane park — there is no fleet order yet — so
+	// the wait is reported rather than left to be inferred from a blank field.
 	h.jsonOK(w, map[string]any{
 		"order_id":        result.OrderID,
 		"vendor_order_id": result.VendorOrderID,
 		"from":            result.FromNode,
 		"to":              result.ToNode,
 		"bin":             result.BinLabel,
+		"queued":          result.Queued,
+		"queue_reason":    result.QueueReason,
 	})
 }
 

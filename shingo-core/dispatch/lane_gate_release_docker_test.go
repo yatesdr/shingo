@@ -106,7 +106,7 @@ func TestGateRelease_ReleasesWhenLaneClears(t *testing.T) {
 		o.DeliveryNode = s1.Name
 		o.Status = "in_transit"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(deep.ID, line, s1); err != nil || !adm {
+	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, s1, EntryFreshBin); err != nil || !adm {
 		t.Fatalf("blocker must take its mouth row: adm=%v err=%v", adm, err)
 	}
 	if err := db.UpdateOrderVendor(deep.ID, "sg-grclear-deep", "RUNNING", ""); err != nil {
@@ -262,7 +262,7 @@ func TestGateRelease_DoubleFireAppendsOnce(t *testing.T) {
 		ord.Status = "in_transit"
 	})
 	deepSlot := laneSlotsByDepth(t, db, laneID)[1]
-	if adm, _, _, err := d.AcquireLanesForOrder(blocker.ID, line, deepSlot); err != nil || !adm {
+	if adm, _, _, err := d.AcquireLanesForOrder(blocker, line, deepSlot, EntryFreshBin); err != nil || !adm {
 		t.Fatalf("blocker mouth row: adm=%v err=%v", adm, err)
 	}
 	if err := db.UpdateOrderVendor(blocker.ID, "sg-grdbl-deep", "RUNNING", ""); err != nil {
@@ -326,7 +326,7 @@ func TestGateRelease_DeepestFirstAndTier1(t *testing.T) {
 		o.DeliveryNode = slots[1].Name
 		o.Status = "in_transit"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(blocker.ID, line, slots[1]); err != nil || !adm {
+	if adm, _, _, err := d.AcquireLanesForOrder(blocker, line, slots[1], EntryFreshBin); err != nil || !adm {
 		t.Fatalf("blocker mouth row: adm=%v err=%v", adm, err)
 	}
 	if err := db.UpdateOrderVendor(blocker.ID, "sg-grord-blocker", "RUNNING", ""); err != nil {
@@ -392,7 +392,7 @@ func TestGateRelease_RebindKeepsItsOwnSlot(t *testing.T) {
 		o.DeliveryNode = slots[2].Name
 		o.Status = "in_transit"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(blocker.ID, line, slots[2]); err != nil || !adm {
+	if adm, _, _, err := d.AcquireLanesForOrder(blocker, line, slots[2], EntryFreshBin); err != nil || !adm {
 		t.Fatalf("blocker mouth row: adm=%v err=%v", adm, err)
 	}
 	if err := db.UpdateOrderVendor(blocker.ID, "sg-grbind-blocker", "RUNNING", ""); err != nil {
@@ -479,7 +479,7 @@ func TestGateRelease_AppendFailureStaysStaged(t *testing.T) {
 		o.DeliveryNode = s1.Name
 		o.Status = "in_transit"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(blocker.ID, line, s1); err != nil || !adm {
+	if adm, _, _, err := d.AcquireLanesForOrder(blocker, line, s1, EntryFreshBin); err != nil || !adm {
 		t.Fatalf("blocker mouth row: adm=%v err=%v", adm, err)
 	}
 	if err := db.UpdateOrderVendor(blocker.ID, "sg-grfail-blocker", "RUNNING", ""); err != nil {

@@ -169,6 +169,11 @@ func New(c Config) *Engine {
 	}
 	e.binManifest = service.NewBinManifestService(e.db, epochAnnounce)
 	e.binService = service.NewBinService(e.db, e.binManifest)
+	// The burial shadow instrument's tally, read once per reconciliation sweep.
+	// Bound here rather than at construction because BinService does not exist
+	// when newReconciliationService runs — the same ordering every other
+	// late-bound callback on that service works around.
+	e.reconciliation.burialTally = e.binService.BurialShadowTally
 	e.orderService = service.NewOrderService(e.db, e.fleet)
 	e.nodeService = service.NewNodeService(e.db)
 

@@ -505,6 +505,18 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		h.jsonError(w, err.Error(), binMoveStatus(err))
 		return
 	}
+	// A lane that would not take the move yet is not a refusal — the order is
+	// real and the scanner drives it in when the lane clears. Reporting it as
+	// `dispatched` would tell the operator a robot is coming that is not; the
+	// status and the reason together are what the screen renders.
+	if result.Queued {
+		h.jsonOK(w, map[string]any{
+			"order_id":     result.OrderID,
+			"status":       protocol.StatusQueued,
+			"queue_reason": result.QueueReason,
+		})
+		return
+	}
 	h.jsonOK(w, map[string]any{
 		"order_id": result.OrderID,
 		"status":   protocol.StatusDispatched,

@@ -23,7 +23,46 @@ type resolvedStep struct {
 	// payload-matching full. Threaded through resolution + claim so the
 	// distinction survives steps_json persistence and scanner replay.
 	Empty bool `json:"empty,omitempty"`
+
+	// ── WHO RELEASES THIS WAIT ────────────────────────────────────────────
+	//
+	// Meaningful only on an ActionWait step. One plan can hold an operator wait
+	// and a lane wait at the same time, and no column on the order row can say
+	// which one the order is parked at — wait_index names a POSITION, and the
+	// kind is a property of the step in that position. So it lives here.
+	//
+	// This is the final form of core_staged/edge_staged: the distinction is
+	// real, and it is on the STEP rather than on the status.
+	//
+	// ZERO VALUE IS THE OPERATOR WAIT, which is what every plan ever written
+	// carries, so nothing needs migrating and an unstamped step keeps exactly
+	// the meaning it had. WaitKindLane is stamped by the one thing that creates
+	// a lane wait.
+	WaitKind string `json:"wait_kind,omitempty"`
+	// WaitLane is the lane whose evaluator owns this wait — 0 unless WaitKind
+	// is WaitKindLane.
+	//
+	// A NODE ID, not a name, and it is the one field here that is not a name.
+	// Node and Group are names because they are RESOLVED against the node graph
+	// and re-resolved as the plant changes (an NGRP becomes a concrete child).
+	// This is not resolved against anything: it is an identity pin, written once
+	// when the wait is created and read only by Core's own routing, whose entire
+	// API is already keyed on lane id (EvaluateLaneReleases, laneGates.lock,
+	// LaneIDsForGateEvent, ListHeldLegParentsInLane). A name would need a lookup
+	// per candidate on the release path and would not survive a lane rename —
+	// and unlike Node, nothing downstream re-derives it from the plant.
+	WaitLane int64 `json:"wait_lane,omitempty"`
 }
+
+// WaitKindLane marks a wait ONLY the lane evaluator may advance: its
+// precondition is a lane fact (a dig, a robot inside, a slot reachable) that
+// nothing outside Core can observe.
+//
+// The absence of this value means an OPERATOR wait — a station reports
+// something Core genuinely cannot see, and HandleOrderRelease advances it. That
+// asymmetry is deliberate: the older, larger population is the one that needs
+// no marker.
+const WaitKindLane = "lane"
 
 // claimedBin records which bin was claimed at which pickup step.
 type claimedBin struct {

@@ -101,7 +101,52 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		return st.err
 	}
 
+	if st := d.admitComplexLanes(order, resolvedSteps); st.done {
+		return st.err
+	}
+
 	return d.dispatchComplexToFleet(order, resolvedSteps)
+}
+
+// admitComplexLanes is the physical question, asked for a coordinated order for
+// the first time.
+//
+// A complex order never went through the scanner's admit — it branches to
+// DispatchPreparedComplex on IsCoordinated — and the valve only guards a GATED
+// lane. Every lane at both plants is ungated, so the orders that do most of the
+// plant's lane work (the changeover swaps) reached the fleet with nothing asked:
+// not whether a dig owned the lane, not whether another robot was already inside
+// it. The gated arm's version of this hole is recorded beside
+// skipsForGatedStoreEntry; this is the same hole on the population that exists.
+//
+// LAST, after the sources are claimed and the destination reserved, and that
+// ordering is deliberate. The refusal is a WAIT, so the order must keep what it
+// has while it waits — an order that dropped its claims here would re-race for
+// them every pass and could starve behind an order that arrived later.
+//
+// THE RELEASER is the one every lane wait rides: the order stays acquiring, and
+// the scanner re-runs DispatchPreparedComplex on the lane-clearing event set
+// (wiring.go) — a placement completing, a bin entering transit, an order
+// finishing. Nothing new is subscribed for this.
+func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
+	v, err := d.admitPlan(order, resolvedSteps, skipsForComplexEntry)
+	if err != nil {
+		// FAIL CLOSED, with a cause that says so. An unreadable lane is a busy
+		// lane; an undetermined answer is Core declining, not a lane that is
+		// honestly occupied, and the two are investigated differently.
+		log.Printf("dispatch: admission for complex order %d: %v (holding)", order.ID, err)
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseAdmissionError,
+			QueueParams{Destination: order.DeliveryNode})
+		return dispatchStep{done: true, err: err}
+	}
+	if !v.Admitted() {
+		d.dbg("complex: order %d held at lane %s (%s)", order.ID, v.Lane(), v.Cause())
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, v.Cause(),
+			QueueParams{Destination: v.Lane()})
+		return dispatchStep{done: true, err: fmt.Errorf("complex order %d held at lane %s: %s",
+			order.ID, v.Lane(), v.Cause())}
+	}
+	return dispatchStep{}
 }
 
 // prepareComplexSteps re-resolves and widens the order's stored steps (Phase A),
@@ -343,6 +388,43 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 // exits (no actionable blocks before the wait, or the fleet backend rejecting the
 // create), each of which terminal-fails the order via failOrderInternal.
 func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps []resolvedStep) error {
+	// THE SPLICE, AND THIS IS WHERE IT LIVES FOR COORDINATED ORDERS.
+	//
+	// A coordinated order never reaches dispatchToFleetCore — the scanner branches
+	// on IsCoordinated to DispatchPreparedComplex, and this is its fleet create. So
+	// the two dispatcher conditions that used to exclude coordinated orders from
+	// the valve were inert, and deleting them was tidying: the transform had to be
+	// installed HERE to reach this population at all.
+	//
+	// BEFORE splitAtWait, so the inserted wait is part of the split the create is
+	// built from — everything up to the lane goes out now, and the rest becomes the
+	// tail. An order does all the work it can before it dwells.
+	//
+	// RUNS ONCE. DispatchPreparedComplex refuses a non-acquiring order, and a
+	// successful dispatch leaves the order `dispatched`, so this phase cannot
+	// re-enter and re-splice. An earlier phase parking the order means this never
+	// ran and nothing was persisted.
+	spliced, target, gated, err := d.spliceLaneWait(resolvedSteps)
+	if err != nil {
+		// A refusal here is structural — two gated lanes in one plan, or a lane
+		// entry that is not concrete yet. Both are plans Core cannot gate safely,
+		// and shipping them ungated is the failure the gate exists to prevent.
+		d.failOrderInternal(order, "invalid_steps", err.Error())
+		return err
+	}
+	if gated {
+		// One valve, shared with the plain path. nil load sequence: F4c is scoped
+		// to the simple transport path and complex has never been expanded.
+		if _, gErr := d.dispatchGated(order, target, spliced, order.PayloadCode, nil); gErr != nil {
+			d.failOrderInternal(order, "fleet_failed", gErr.Error())
+			return gErr
+		}
+		log.Printf("dispatch: complex order %d dispatched gated into lane %s (%d steps)",
+			order.ID, target.lane.Name, len(spliced))
+		d.setQueueReason(order, "", "", QueueParams{})
+		return nil
+	}
+
 	preWait, hasWait := splitAtWait(resolvedSteps)
 	vendorOrderID := mintVendorOrderID(order.ID)
 	// Complex orders are not load-sequence expanded (nil): the F4c advanced load
@@ -363,25 +445,24 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 		Complete:   false, // staged: a multi-wait complex order dwells (Complete=false) until its final segment is released
 	}
 	d.dbg("complex: creating staged order %s with %d initial blocks (hasWait=%v)", vendorOrderID, len(blocks), hasWait)
-	if _, err := d.backend.CreateOrder(req); err != nil {
-		log.Printf("dispatch: fleet create staged order failed: %v", err)
+	// Claim, commit, name it — see fleet_handover.go.
+	if err := d.handoverToFleet(order, req, "scanner"); err != nil {
 		d.failOrderInternal(order, "fleet_failed", err.Error())
 		return err
 	}
 	if !hasWait {
 		// No wait — fleet can complete the order immediately.
+		//
+		// This now runs AFTER the id write rather than between the create and it.
+		// The gap it moves across is two database statements, and nothing reads
+		// the vendor's completion flag in between; the create is Complete:false
+		// either way, so the fleet cannot finish the order early in that window.
 		if err := d.backend.ReleaseOrder(vendorOrderID, nil, true); err != nil {
 			log.Printf("dispatch: fleet mark complete failed: %v", err)
 		}
 	}
 
 	log.Printf("dispatch: complex order %d dispatched as %s (%d steps)", order.ID, vendorOrderID, len(resolvedSteps))
-	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
-		log.Printf("dispatch: update order %d vendor: %v", order.ID, err)
-	}
-	if err := d.lifecycle.Dispatch(order, vendorOrderID, "scanner"); err != nil {
-		log.Printf("dispatch: complex order %d → dispatched: %v", order.ID, err)
-	}
 	// Successful dispatch — clear any stale queue_reason from a prior
 	// blocked replay attempt.
 	d.setQueueReason(order, "", "", QueueParams{})

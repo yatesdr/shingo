@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
@@ -41,10 +42,25 @@ import (
 func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCode, stationID string, buried *BuriedError) {
 	// Resolve the lane's parent group so the planner has the group ID
 	// for shuffle-slot search and the target_nodes property read.
+	// A READ THAT FAILED IS NOT A LANE THAT IS MISSING — see read_vs_missing.go.
+	// Releaser for the park: this parent stays `queued`, which is in the acquiring
+	// set, so the fulfillment scanner's ordinary retry brings it back through
+	// handleComplexBuriedOnReplay.
 	lane, err := d.db.GetNode(buried.LaneID)
-	if err != nil || lane == nil || lane.ParentID == nil {
-		d.dbg("complex: buried lane %d lookup failed (%v) — failing parent %d", buried.LaneID, err, order.ID)
-		d.failOrderInternal(order, "reshuffle_error", "cannot determine node group for buried lane")
+	if readFailed(err) {
+		d.dbg("complex: could not read buried lane %d for parent %d (%v) — holding", buried.LaneID, order.ID, err)
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed,
+			QueueParams{Payload: payloadCode})
+		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+		return
+	}
+	if err != nil || lane == nil {
+		d.failOrderInternal(order, codeInvalidNode, configFailureID("lane node", buried.LaneID))
+		return
+	}
+	if lane.ParentID == nil {
+		d.failOrderInternal(order, codeInvalidNode, fmt.Sprintf(
+			"config failure: lane %s is not in a node group, so it has nowhere to park a blocker", lane.Name))
 		return
 	}
 	groupID := *lane.ParentID
@@ -65,6 +81,9 @@ func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCod
 		QueueParams{Lane: lane.Name, Payload: payloadCode})
 
 	// Lane-contention: leave the parent Queued for scanner replay.
+	// Asks "may I CLAIM this lane for a dig", not "may this move happen now" —
+	// see planning_service.go planBuriedReshuffle for why delegating to admission
+	// would refuse every reshuffle plan by construction.
 	if d.laneLock.IsLocked(buried.LaneID) {
 		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneLocked,
 			QueueParams{Lane: lane.Name, Payload: payloadCode})
@@ -108,6 +127,17 @@ func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCod
 
 	if err := d.CreateCompoundOrder(order, plan); err != nil {
 		d.laneLock.Unlock(buried.LaneID, order.ID)
+		// Congestion, not a fault: see planning_service.go planBuriedReshuffle for
+		// why a blocker held outside the compound waits. The parent is still
+		// `queued` (CreateCompoundOrder writes the children before it moves the
+		// parent), so the scanner's replay picks it up and this is a park, not a
+		// stall.
+		if errors.Is(err, store.ErrBlockerClaimed) {
+			d.setQueueReason(order, protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
+				QueueParams{Lane: lane.Name, Payload: payloadCode})
+			d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+			return
+		}
 		d.failOrderInternal(order, "reshuffle_error",
 			fmt.Sprintf("cannot create compound order: %v", err))
 		return
@@ -148,13 +178,30 @@ func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCod
 // in a multi-pickup complex order shouldn't be punished with a
 // terminal fail.
 func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *BuriedError) {
+	// Same three-way split as the intake twin. This path is entered from the
+	// scanner with the parent already acquiring, so leaving it queued with a cause
+	// IS the retry — the releaser is the scan that brought us here.
 	lane, err := d.db.GetNode(buried.LaneID)
-	if err != nil || lane == nil || lane.ParentID == nil {
-		d.failOrderInternal(order, "reshuffle_error", "cannot determine node group for buried lane")
+	if readFailed(err) {
+		d.dbg("complex: could not read buried lane %d for parent %d (%v) — holding", buried.LaneID, order.ID, err)
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed,
+			QueueParams{Payload: order.PayloadCode})
+		return
+	}
+	if err != nil || lane == nil {
+		d.failOrderInternal(order, codeInvalidNode, configFailureID("lane node", buried.LaneID))
+		return
+	}
+	if lane.ParentID == nil {
+		d.failOrderInternal(order, codeInvalidNode, fmt.Sprintf(
+			"config failure: lane %s is not in a node group, so it has nowhere to park a blocker", lane.Name))
 		return
 	}
 	groupID := *lane.ParentID
 
+	// Asks "may I CLAIM this lane for a dig", not "may this move happen now" —
+	// see planning_service.go planBuriedReshuffle for why delegating to admission
+	// would refuse every reshuffle plan by construction.
 	if d.laneLock.IsLocked(buried.LaneID) {
 		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneLocked,
 			QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
@@ -191,6 +238,15 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 	}
 	if err := d.CreateCompoundOrder(order, plan); err != nil {
 		d.laneLock.Unlock(buried.LaneID, order.ID)
+		// Same congestion arm as the intake twin above. This path is entered from
+		// the scanner with the parent already `queued`, so leaving it queued with a
+		// cause IS the retry — the next scan re-plans against a lane the holder has
+		// by then left.
+		if errors.Is(err, store.ErrBlockerClaimed) {
+			d.setQueueReason(order, protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
+				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
+			return
+		}
 		d.failOrderInternal(order, "reshuffle_error",
 			fmt.Sprintf("cannot create compound order on replay: %v", err))
 		return

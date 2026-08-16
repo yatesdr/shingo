@@ -49,18 +49,50 @@ import "fmt"
 // and dispatch.classifyLaneEntry, and folding it in here would change admission
 // behaviour plant-wide while looking like a tidy-up.
 
+// ShallowerInSameLane is the GEOMETRY, alone: `shallow` sits strictly in front
+// of `deep` in the same lane. No occupancy, no claim, no order — just which slot
+// the mouth reaches first. Both arguments name `nodes` rows already in scope: a
+// table alias, or a derived table exposing id/parent_id/depth (see
+// nodes.BlockersInFrontOf).
+//
+// ── WHY THE GEOMETRY IS SEPARATE FROM LaneBlockerPredicate ────────────────
+//
+// It was extracted, not invented, and the extraction is what keeps the
+// one-spelling rule true rather than merely asserted. Reachability asks "is an
+// OCCUPIED slot in front of my target"; the store-side burial guard
+// (nodes.FindStoreSlotInLaneExcluding) asks the mirror — "would MY EMPTY
+// candidate be in front of a bin somebody has claimed". Same geometry, opposite
+// occupancy: the guard's candidate is empty by definition, so it cannot reuse
+// LaneBlockerPredicate, whose EXISTS(bins) term would be false for exactly the
+// slot it is asking about.
+//
+// Written as a second literal, that would have been a second definition of
+// in-front-of — the thing TestReachabilityHasExactlyOneSpelling exists to catch,
+// and it does catch it. So the comparison stays in ONE string literal here and
+// both predicates compose from it. The guard's rule survives the extraction: the
+// drift test still finds exactly one depth comparison, and now two readers agree
+// by construction instead of by review.
+func ShallowerInSameLane(shallow, deep string) string {
+	return fmt.Sprintf(`%[1]s.parent_id = %[2]s.parent_id
+			  AND %[1]s.id != %[2]s.id
+			  AND %[1]s.depth IS NOT NULL
+			  AND %[2]s.depth IS NOT NULL
+			  AND %[1]s.depth < %[2]s.depth`, shallow, deep)
+}
+
 // LaneBlockerPredicate is the definition: `blocker` is an occupied slot sitting
 // strictly shallower than `target` in the same lane. Both arguments name `nodes`
 // rows already in scope — a table alias, or a derived table exposing
 // id/parent_id/depth (see nodes.BlockersInFrontOf). Returns a bare boolean
 // expression so callers can put it wherever they need it.
+//
+// It is now the OCCUPANCY term plus ShallowerInSameLane, which is what it always
+// meant; the three choices settled above (correlated sibling scope, explicit
+// self-exclusion, NULL depth ignored) live in the geometry half and are
+// unchanged.
 func LaneBlockerPredicate(blocker, target string) string {
-	return fmt.Sprintf(`EXISTS (SELECT 1 FROM bins lane_blocker_bin WHERE lane_blocker_bin.node_id = %[1]s.id)
-			  AND %[1]s.parent_id = %[2]s.parent_id
-			  AND %[1]s.id != %[2]s.id
-			  AND %[1]s.depth IS NOT NULL
-			  AND %[2]s.depth IS NOT NULL
-			  AND %[1]s.depth < %[2]s.depth`, blocker, target)
+	return fmt.Sprintf(`EXISTS (SELECT 1 FROM bins lane_blocker_bin WHERE lane_blocker_bin.node_id = %s.id)
+			  AND %s`, blocker, ShallowerInSameLane(blocker, target))
 }
 
 // laneBlockerScan is the sibling scan wrapped by ReachableSQL and BuriedSQL:

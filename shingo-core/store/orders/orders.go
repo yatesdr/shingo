@@ -564,30 +564,51 @@ func ActiveByDeliveryNodes(db *sql.DB, names []string) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
-// ActiveBySourceNodes is the source-node mirror of ActiveByDeliveryNodes: every
-// non-terminal order whose source_node is one of `names`. The lane-gate release
-// evaluator uses it to find staged RETRIEVES (whose source — not delivery — is a
-// lane slot) the way ActiveByDeliveryNodes finds staged stores. Same non-terminal
-// status set, the other end of the order.
-func ActiveBySourceNodes(db *sql.DB, names []string) ([]*Order, error) {
-	if len(names) == 0 {
-		return nil, nil
-	}
-	ph := make([]string, len(names))
-	args := make([]any, len(names))
-	for i, n := range names {
-		ph[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = n
-	}
+// ActiveGateCandidates returns every non-terminal order that COULD be parked at
+// a lane wait: it reached the fleet (a vendor order) and it carries a plan.
+//
+// ── WHY IT IS NOT KEYED ON THE LANE ───────────────────────────────────────
+//
+// The lane a gate wait belongs to lives on the WAIT STEP inside steps_json
+// (resolvedStep.WaitLane), and steps_json is TEXT, not jsonb — there is no
+// containment operator to key on, and the wait that matters is the one at
+// wait_index, which means COUNTING waits. A LIKE on the rendered field would
+// have to distinguish lane 4 from lane 42 by punctuation, which is the kind of
+// clever that breaks silently.
+//
+// So the narrowing is done here on the two columns that ARE indexed facts, and
+// the wait-step test happens in Go (dispatch.gateStagedForLane). The residual
+// set is orders that are in flight AND carry a plan, which is small: it is
+// bounded by what the fleet is currently doing, not by history.
+//
+// THIS REPLACED TWO ENDPOINT QUERIES. ActiveByDeliveryNodes/ActiveBySourceNodes
+// found gate-staged orders by matching an endpoint column against a lane's slot
+// names, which structurally missed any order whose lane entry is INTERIOR to its
+// plan — neither its first actionable step nor its last. A spliced plan has
+// exactly that shape whenever the lane is not an endpoint.
+func ActiveGateCandidates(db *sql.DB) ([]*Order, error) {
 	rows, err := db.Query(fmt.Sprintf(
-		`SELECT %s FROM orders WHERE source_node IN (%s) AND status NOT IN (%s) ORDER BY id`,
-		SelectCols, strings.Join(ph, ", "), protocol.TerminalStatusSQLList()), args...)
+		`SELECT %s FROM orders
+		  WHERE vendor_order_id <> '' AND steps_json <> ''
+		    AND status NOT IN (%s)
+		  ORDER BY id`,
+		SelectCols, protocol.TerminalStatusSQLList()))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return ScanOrders(rows)
 }
+
+// ActiveBySourceNodes WAS HERE AND IS DELETED, with its only caller.
+//
+// It was the source-node mirror of ActiveByDeliveryNodes, and the lane-gate
+// evaluator used the pair to find gate-staged retrieves and stores by matching
+// an ENDPOINT column against a lane's slot names. Candidate discovery now keys
+// on the wait step (ActiveGateCandidates above), which is both the right
+// question and the one that can see an order whose lane entry is interior to its
+// plan. ActiveByDeliveryNodes survives because the tiered-entry classifier still
+// legitimately asks "which active stores target this lane's slots".
 
 // CountActive returns the number of orders in non-terminal statuses, using
 // the same WHERE clause as ListActive so the count matches the list exactly.

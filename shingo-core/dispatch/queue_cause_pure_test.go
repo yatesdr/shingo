@@ -43,6 +43,7 @@ func TestQueueCause_ValuesAreUnchanged(t *testing.T) {
 		{CauseLaneHeldDig, "lane-held-dig"},
 		{CauseLaneHeldTraffic, "lane-held-traffic"},
 		{CauseLaneHeldUnreadable, "lane-held-unreadable"},
+		{CauseLaneOccupied, "lane-occupied"},
 		{CauseLaneLocked, "lane-locked"},
 		{CauseLaneLockRace, "lock-race"},
 		{CauseIntakeBuried, "intake-buried"},
@@ -76,7 +77,7 @@ func TestQueueCause_NoFamilyLiteralsRemain(t *testing.T) {
 	t.Parallel()
 	family := []string{
 		"lane-deeper-pending", "lane-group-active", "lane-dig-active", "lane-target-buried",
-		"lane-held-dig", "lane-held-traffic", "lane-held-unreadable", "lane-locked", "intake-buried",
+		"lane-held-dig", "lane-held-traffic", "lane-held-unreadable", "lane-occupied", "lane-locked", "intake-buried",
 		"gate-rebind-unavailable", "gate-append-failed", "lane-acquire-error", "lane-entry-error",
 		// "lock-race" is NOT here: fulfillment sets that same literal for an
 		// unrelated bin race, so its presence as a literal is correct there. See

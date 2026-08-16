@@ -29,6 +29,11 @@ import (
 type BinService struct {
 	db       *store.DB
 	manifest *BinManifestService
+	// burials is the burial shadow instrument's since-boot tally
+	// (burial_shadow.go). It rides on BinService because ApplyArrival is the
+	// order-driven arrival funnel and therefore the seam; it observes and never
+	// gates.
+	burials burialShadow
 }
 
 func NewBinService(db *store.DB, manifest *BinManifestService) *BinService {
@@ -667,6 +672,14 @@ func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	if _, err := tx.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2`, toNodeID, binID); err != nil {
 		return false, fmt.Errorf("move bin: %w", err)
 	}
+	// The claiming order, read before the claim is cleared: it is the order whose
+	// placement this is, and the burial instrument needs it to tell a guarded
+	// placement from a dig leg's. Read here rather than threaded through the
+	// signature so no caller has to remember to supply it.
+	var placedBy int64
+	if err := tx.QueryRow(`SELECT COALESCE(claimed_by, 0) FROM bins WHERE id=$1`, binID).Scan(&placedBy); err != nil {
+		return false, fmt.Errorf("read placing order for bin %d: %w", binID, err)
+	}
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
 		return false, fmt.Errorf("unclaim bin: %w", err)
 	}
@@ -711,6 +724,12 @@ func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit arrival bin %d: %w", binID, err)
 	}
+
+	// The burial shadow instrument, AFTER the commit and with its result
+	// discarded — the placement is already durable, so there is nothing here
+	// that could refuse it. It observes; see burial_shadow.go for why arrival is
+	// the seam and why this returns nothing.
+	s.NoteBurialShadow(binID, toNodeID, placedBy)
 	return evicted, nil
 }
 

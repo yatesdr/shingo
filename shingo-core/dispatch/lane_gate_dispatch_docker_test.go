@@ -153,7 +153,7 @@ func TestGateChoreo_ContendedCreatesUnsealedAndHolds(t *testing.T) {
 		o.DeliveryNode = s1.Name
 		o.Status = "in_transit"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(deeper.ID, line, s1); err != nil || !adm {
+	if adm, _, _, err := d.AcquireLanesForOrder(deeper, line, s1, EntryFreshBin); err != nil || !adm {
 		t.Fatalf("deeper store must take its inbound mouth row: adm=%v err=%v", adm, err)
 	}
 	if err := db.UpdateOrderVendor(deeper.ID, "sg-gchold-deep", "RUNNING", ""); err != nil {

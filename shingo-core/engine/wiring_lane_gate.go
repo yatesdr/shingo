@@ -30,6 +30,17 @@ func (e *Engine) wireLaneGateHandlers() {
 		for _, id := range laneIDs {
 			if id != 0 {
 				e.dispatcher.EvaluateLaneReleases(id)
+				// A COMPOUND LEG HELD AT THIS LANE IS WAITING ON THE SAME FACT.
+				// It is not gate-staged and has no vendor order, so the evaluator
+				// cannot see it — its candidate query keys on IsGateStaged. Its
+				// dispatch path names a sibling's dropoff as its releaser, and with
+				// no sibling in flight nothing was ever going to come back. These
+				// are the events that actually free a lane, whoever caused it.
+				//
+				// Separate call rather than a branch inside the evaluator because
+				// the evaluator is gate_choreography-only while this refusal is
+				// mode-independent — see RedriveHeldCompoundLegs.
+				e.dispatcher.RedriveHeldCompoundLegs(id)
 			}
 		}
 	}
