@@ -420,12 +420,19 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 		}
 		resp["rows"] = rows
 		activeOrders, _ := h.engine.OrderService().ListActiveOrders()
+		// KEYED BY ORDER ID, which is what reads it. These two maps were built
+		// keyed on *o.BinID — a BIN id — and then indexed below with
+		// *b.ClaimedBy, which is the claiming ORDER. Both are int64 and both are
+		// dense small integers, so the lookup never failed loudly; it just
+		// answered about whichever order happened to share a number with the bin.
+		// Every transit row's destination and robot on this dashboard was drawn
+		// from an unrelated order, and read as authoritative.
 		orderDest := make(map[int64]string, len(activeOrders))
 		orderRobot := make(map[int64]string, len(activeOrders))
 		for _, o := range activeOrders {
-			if o.BinID != nil && o.DeliveryNode != "" {
-				orderDest[*o.BinID] = o.DeliveryNode
-				orderRobot[*o.BinID] = o.RobotID
+			if o.DeliveryNode != "" {
+				orderDest[o.ID] = o.DeliveryNode
+				orderRobot[o.ID] = o.RobotID
 			}
 		}
 		payloadSet := make(map[string]bool, len(payloads))
@@ -494,12 +501,15 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 		allBins, bErr := h.engine.BinService().ListBins()
 		if bErr == nil {
 			activeOrders, _ := h.engine.OrderService().ListActiveOrders()
+			// Keyed by ORDER id — see the identical block in the payload-mode
+			// branch above for what the bin-keyed version did. The same fourteen
+			// lines carry the same defect twice in this one handler.
 			orderDest := make(map[int64]string, len(activeOrders))
 			orderRobot := make(map[int64]string, len(activeOrders))
 			for _, o := range activeOrders {
-				if o.BinID != nil && o.DeliveryNode != "" {
-					orderDest[*o.BinID] = o.DeliveryNode
-					orderRobot[*o.BinID] = o.RobotID
+				if o.DeliveryNode != "" {
+					orderDest[o.ID] = o.DeliveryNode
+					orderRobot[o.ID] = o.RobotID
 				}
 			}
 			payloadSet := make(map[string]bool, len(rows))

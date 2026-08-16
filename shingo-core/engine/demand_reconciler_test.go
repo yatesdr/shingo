@@ -95,9 +95,9 @@ func openCellEpisode(t *testing.T, db *store.DB, stationID, payloadCode, process
 	if err := db.UpsertDemandOrigin(store.DemandOrigin{
 		OriginID:   originID,
 		Revision:   1,
-		EpisodeKey: protocol.CellEpisodeKey(processID, payloadCode, protocol.EpisodeDirectionSupply),
+		EpisodeKey: protocol.CellEpisodeKey(processID, payloadCode, protocol.ClaimRoleConsume),
 		Kind:       protocol.EpisodeKindCell,
-		Direction:  protocol.EpisodeDirectionSupply,
+		Direction:  protocol.ClaimRoleConsume,
 		StationID:  stationID,
 		ProcessID:  processID,
 		OpenedAt:   time.Now().UTC().Add(-age),
@@ -333,9 +333,9 @@ func TestDemandReconciler_ChildlessOnAnUnreachableEdgeIsNotAFinding(t *testing.T
 	if err := db.UpsertDemandOrigin(store.DemandOrigin{
 		OriginID:   originID,
 		Revision:   1,
-		EpisodeKey: protocol.CellEpisodeKey("SNF7", "PANEL-RC4", protocol.EpisodeDirectionSupply),
+		EpisodeKey: protocol.CellEpisodeKey("SNF7", "PANEL-RC4", protocol.ClaimRoleConsume),
 		Kind:       protocol.EpisodeKindCell,
-		Direction:  protocol.EpisodeDirectionSupply,
+		Direction:  protocol.ClaimRoleConsume,
 		StationID:  "PLANT.DARK",
 		ProcessID:  "SNF7",
 		OpenedAt:   time.Now().UTC().Add(-6 * time.Hour),
@@ -509,13 +509,13 @@ func TestDemandReconciler_InferredCloseStepsAsideForTheRealOne(t *testing.T) {
 	registerActiveEdge(t, db, "PLANT.LINE1")
 
 	originID := uuid.NewString()
-	key := protocol.CellEpisodeKey("SNF11", "PANEL-RC5", protocol.EpisodeDirectionEvacuate)
+	key := protocol.CellEpisodeKey("SNF11", "PANEL-RC5", protocol.ClaimRoleProduce)
 	base := store.DemandOrigin{
 		OriginID:   originID,
 		Revision:   1,
 		EpisodeKey: key,
 		Kind:       protocol.EpisodeKindCell,
-		Direction:  protocol.EpisodeDirectionEvacuate,
+		Direction:  protocol.ClaimRoleProduce,
 		StationID:  "PLANT.LINE1",
 		ProcessID:  "SNF11",
 		OpenedAt:   time.Now().UTC().Add(-2 * time.Hour),

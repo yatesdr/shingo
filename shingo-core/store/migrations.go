@@ -962,6 +962,21 @@ func (db *DB) runVersionedMigrations() error {
 		{79, "add orders.dig_target_node (the bin a service dig uncovers, and what releases its lane)",
 			v79DigTargetNode,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "dig_target_node") }},
+
+		// v80 makes the junction's stated grain real. "One row per claimed bin"
+		// is what UpdateOrderBinDestNode is written against and what binForStep
+		// assumes; nothing enforced it, and a retried allocation inserted the same
+		// row again on every pass. See v80OrderBinsOneRowPerBin.
+		{80, "dedupe order_bins and enforce one row per (order, bin)",
+			v80OrderBinsOneRowPerBin,
+			func(q schema.Querier) bool { return schema.IndexExists(q, "order_bins_order_bin_uniq") }},
+
+		// v81 is a DATA migration, not a shape one: no ALTER, so no matching edit
+		// in the DDL constants. It rewrites values inside two columns. See
+		// v81EpisodeRoleVocabulary for why it is owed at all.
+		{81, "demand_origins: episodes are produce or consume, not supply or evacuate",
+			v81EpisodeRoleVocabulary,
+			func(q schema.Querier) bool { return noLegSpelledEpisodesLeft(q) }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1542,6 +1557,53 @@ func v77CompoundSealedness(tx *sql.Tx) error {
 func v79DigTargetNode(tx *sql.Tx) error {
 	_, err := tx.Exec(
 		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS dig_target_node TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// v80OrderBinsOneRowPerBin dedupes order_bins and makes its documented grain a
+// constraint.
+//
+// ── THE GRAIN WAS ALWAYS "ONE ROW PER CLAIMED BIN" ────────────────────────
+//
+// UpdateOrderBinDestNode is written against it in so many words — it keys on the
+// bin because "the junction has one row per claimed bin, so the bin is its
+// natural grain" — and binForStep reads the first row matching a step index as
+// if it were the only one. Nothing enforced it. InsertOrderBin was a bare INSERT,
+// so every re-run of an allocation added the same row again.
+//
+// It only shows up when an order retries, and it grows with the retry. Measured
+// on the lane-stress rig 2026-08-13, during a window in which five demands were
+// stuck in a re-drive loop: 2,472 junction rows for a handful of orders, 450 of
+// them identical for one (order, step, bin). Behaviour was unaffected — the
+// first match wins and every duplicate is the same row — so this is write
+// amplification and a forensics hazard rather than a wrong answer. Left alone it
+// grows without bound for as long as an order is stuck, which is exactly when
+// somebody is reading the table to find out why.
+//
+// ── DEDUPE KEEPS THE OLDEST, NOT THE NEWEST ───────────────────────────────
+//
+// The rows are identical in everything but id, so the choice cannot change an
+// answer; the oldest is kept because it is the one binForStep has been returning
+// (ListOrderBins orders by step_index and the scan takes the first match), so
+// nothing that reads this table sees a different row after the migration than
+// before it.
+//
+// The constraint is the point. With it, InsertOrderBin can be an upsert and the
+// duplicate cannot come back — a later reader adding a second insert path gets a
+// conflict instead of silent growth.
+// The table is v9's, so it exists by the time this runs on every database that
+// reaches v80 — no existence guard, which would be dead code that looked
+// load-bearing.
+func v80OrderBinsOneRowPerBin(tx *sql.Tx) error {
+	if _, err := tx.Exec(`
+		DELETE FROM order_bins a
+		 USING order_bins b
+		 WHERE a.order_id = b.order_id AND a.bin_id = b.bin_id AND a.id > b.id`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS order_bins_order_bin_uniq
+		    ON order_bins (order_id, bin_id)`)
 	return err
 }
 
@@ -3696,4 +3758,103 @@ func v76LaneOccupancyKind(tx *sql.Tx) error {
 func v78DropPendingLaneExtensions(tx *sql.Tx) error {
 	_, err := tx.Exec(`DROP TABLE IF EXISTS pending_lane_extensions`)
 	return err
+}
+
+// v81EpisodeRoleVocabulary rewrites demand_origins so an episode is PRODUCE or
+// CONSUME, which are the claim's own two roles, instead of SUPPLY or EVACUATE,
+// which were a second vocabulary for the same fact.
+//
+// ── WHY THERE WAS A SECOND VOCABULARY, AND WHAT IT COST ───────────────────
+//
+// A claim has exactly one role, so an episode was only ever one direction: the
+// direction was never independent information, it was a synonym chosen at each
+// mint site. protocol/episode_key.go's own header warns that two spellings of
+// one identity is how they drift, and that the drift is SILENT — a mismatched
+// key does not error, it just fails to find the open episode.
+//
+// It drifted exactly there. backfillCellOrigin built its join key with the
+// supply spelling while a produce cell only ever opens in the other one, so the
+// join asked for `cell|PRESS-2|PANEL-B|supply` against an open row reading
+// `cell|PRESS-2|PANEL-B|evacuate` and could not match, ever. Every sequential
+// backfill in the plant reached Core with no origin and landed as an orphan.
+// The tree also carried a hand-written dictionary back the other way, in
+// demand_reconciler.go, translating the episode's word into the claim's field
+// that the word came from.
+//
+// ── WHY THIS MIGRATION IS OWED AT ALL ─────────────────────────────────────
+//
+// episode_key.go says these strings are "FREE TO CHANGE, AND ONLY UNTIL THE
+// FIRST DEPLOY", on the evidence that no plant had run migration 59 and so no
+// stored key existed to invalidate. THAT PRECONDITION HAS EXPIRED: Springfield
+// is at schema_migrations 67 (DEPLOY-WATCH-LIST-2026-07-27), and 59 is the
+// migration that creates demand_origins. Its history is stored in the old
+// spelling, so the note's own terms make this a migration.
+//
+// ── WHY IT IS SAFE, STATED RATHER THAN ASSUMED ────────────────────────────
+//
+// NOTHING RE-PARSES A STORED CELL KEY. protocol.ParseEpisodeKey is called on
+// Core only for INBOUND wire messages (messaging/demand_origin_handler.go) and
+// on Edge only for the CHANGEOVER kind, whose keys this does not touch. So the
+// rewrite cannot break a reader mid-flight; it changes what history says, and
+// history is read by the episode surface, which renders the value.
+//
+// AN EPISODE OPEN ACROSS THE DEPLOY STILL CLOSES. Edge's reconciling sweep
+// iterates the open ROWS and closes each off its own stored key rather than
+// reconstructing one, so a row written before the cutover is closed by the key
+// it was written with. That was already the answer to renaming a process
+// mid-episode; it is the answer here too.
+//
+// THE PARTIAL UNIQUE INDEX IS NOT AT RISK. It is on demand_origins(episode_key)
+// WHERE closed_at IS NULL. This rewrite is injective — supply and evacuate map
+// to distinct roles, and no cell key already ends in a role word, because until
+// this commit the parser rejected any fourth component that was not one of the
+// two leg words. So two rows cannot collide onto one key.
+//
+// SCOPED BY PREFIX, not by a bare value match. Only cell keys carry this
+// component; threshold and changeover keys have their own shapes and their
+// direction column is empty. Matching on the value alone would be a predicate
+// that happens to be equivalent today and stops being so the moment any other
+// kind stores a word in that column.
+func v81EpisodeRoleVocabulary(tx *sql.Tx) error {
+	for _, m := range []struct{ from, to string }{
+		{"supply", "consume"},
+		{"evacuate", "produce"},
+	} {
+		if _, err := tx.Exec(`
+			UPDATE demand_origins
+			   SET episode_key = left(episode_key, length(episode_key) - length($1)) || $2,
+			       direction   = $2
+			 WHERE episode_key LIKE 'cell|%'
+			   AND episode_key LIKE '%|' || $1`, m.from, m.to); err != nil {
+			return fmt.Errorf("rewrite %s episodes to %s: %w", m.from, m.to, err)
+		}
+		// The direction column on its own, for any row whose key was already
+		// rewritten (a re-run) or whose key is not a cell key but whose column
+		// somehow carries a leg word. Idempotent either way.
+		if _, err := tx.Exec(
+			`UPDATE demand_origins SET direction = $2 WHERE direction = $1`, m.from, m.to); err != nil {
+			return fmt.Errorf("rewrite %s direction column to %s: %w", m.from, m.to, err)
+		}
+	}
+	return nil
+}
+
+// noLegSpelledEpisodesLeft is v81's post-condition: no demand_origins row still
+// carries the retired leg vocabulary, in either the key or the column.
+//
+// It reads the DATA rather than a schema object, because v81 changes no schema
+// object — ColumnExists and IndexExists cannot answer a question about values.
+// A read failure answers FALSE, which re-runs an idempotent migration; the
+// opposite default would record a migration as applied on a database it could
+// not see.
+func noLegSpelledEpisodesLeft(q schema.Querier) bool {
+	var n int
+	if err := q.QueryRow(`
+		SELECT count(*) FROM demand_origins
+		 WHERE direction IN ('supply', 'evacuate')
+		    OR episode_key LIKE '%|supply'
+		    OR episode_key LIKE '%|evacuate'`).Scan(&n); err != nil {
+		return false
+	}
+	return n == 0
 }

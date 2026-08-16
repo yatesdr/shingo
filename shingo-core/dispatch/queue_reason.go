@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingocore/store"
 )
 
 // QueueParams carries the values the operator-visible sentence is generated from.
@@ -24,7 +25,7 @@ import (
 //   - QueueWaitingForMaterial: Payload + Kind + Partial + Group (+ Step)
 //   - QueueWaitingForSlot:     Destination + BlockingBins/InboundOrders +
 //     DestUnresolved (+ Step)
-//   - QueueStorageRearranging: Lane + Payload, or Lane + HoldingTarget (+ Step)
+//   - QueueStorageRearranging: Lane + Payload + DigOrderID/DigTarget (+ Step)
 //   - QueueWaitingForPartner:  Sibling
 //   - QueueFleetUnavailable:   none
 type QueueParams struct {
@@ -43,6 +44,27 @@ type QueueParams struct {
 	Destination string
 	// Lane is the storage lane being rearranged (burial / reshuffle).
 	Lane string
+	// DigOrderID and DigTarget name the EXCAVATION this order is waiting on: the
+	// dig's order id, and the slot holding the bin it is uncovering.
+	//
+	// ── WHY A WAIT NAMES THE DIG AND NOT JUST THE LANE ────────────────────
+	//
+	// "Rearranging lane LSD_01 to reach PANEL-B" is true and it is one word plus
+	// a lookup. An operator watching a demand sit there has to go and find which
+	// dig is running, what it is digging for, and whether it is the one that will
+	// release them — three questions, on a different page, against a lane that may
+	// have had several digs on it during the wait.
+	//
+	// The dig id is the join key for all three. Naming it, with the target slot,
+	// turns the wait into a sentence that can be acted on without leaving the
+	// board: THIS order is waiting for THAT dig to uncover THAT slot.
+	//
+	// Both are optional. A wait that genuinely has no identifiable dig — a lane
+	// held by an ordinary order, a plan refused before any dig was proposed —
+	// renders exactly as it did before, because a dig id we could not resolve
+	// must not be invented. Zero and empty are "not known", not "none".
+	DigOrderID int64
+	DigTarget  string
 	// Sibling is the partner order's edge UUID in a two-robot swap.
 	Sibling string
 
@@ -70,15 +92,6 @@ type QueueParams struct {
 	// lookup failure), rather than resolvable-but-full. Different problem,
 	// different fix, so it gets its own sentence.
 	DestUnresolved bool
-	// HoldingTarget is the slot a FINISHED reshuffle is holding its lane for:
-	// the bin it dug out, still standing there, not yet collected.
-	//
-	// It inverts the rest of this struct, which is why it is named rather than
-	// folded into Lane. Every other field describes something the order is
-	// waiting to GET; this one describes what the order has already DONE and is
-	// refusing to walk away from. Rendered by rearrangingSentence's first arm,
-	// which is the only sentence in the file whose subject is not blocked.
-	HoldingTarget string
 }
 
 // FormatQueueSentence renders the operator-visible sentence for a queue code +
@@ -167,26 +180,42 @@ func slotSentence(p QueueParams) string {
 // rearrangingSentence reads Lane and Payload, both of which callers already
 // pass. On a plant with many lanes, "storage is being rearranged" without
 // naming the lane or the part is not actionable.
+//
+// AND IT NAMES THE DIG when the dig is known. The lane alone left the operator
+// with one word and a lookup: which excavation, uncovering what, and is it the
+// one that frees me. See QueueParams.DigOrderID.
 func rearrangingSentence(p QueueParams) string {
+	s := "Rearranging storage to reach this material"
 	switch {
-	// THE FINISHED REARRANGEMENT, and it goes first because it is the one shape
-	// here that is not a complaint. The lane is clear, the dig worked, and the
-	// order is holding the corridor shut on purpose so the bin it uncovered is
-	// still uncovered when somebody comes for it. An operator reading the board
-	// needs to see that this is not a stall.
-	case p.HoldingTarget != "" && p.Lane != "":
-		return fmt.Sprintf("Lane %s is clear — holding it until the bin at %s is collected",
-			p.Lane, p.HoldingTarget)
-	case p.HoldingTarget != "":
-		return fmt.Sprintf("Holding this lane until the bin at %s is collected", p.HoldingTarget)
 	case p.Lane != "" && p.Payload != "":
-		return fmt.Sprintf("Rearranging lane %s to reach %s", p.Lane, p.Payload)
+		s = fmt.Sprintf("Rearranging lane %s to reach %s", p.Lane, p.Payload)
 	case p.Lane != "":
-		return fmt.Sprintf("Rearranging lane %s to reach this material", p.Lane)
+		s = fmt.Sprintf("Rearranging lane %s to reach this material", p.Lane)
 	case p.Payload != "":
-		return fmt.Sprintf("Rearranging storage to reach %s", p.Payload)
+		s = fmt.Sprintf("Rearranging storage to reach %s", p.Payload)
+	}
+	return s + digClause(p)
+}
+
+// digClause appends the excavation's identity to a rearranging sentence.
+//
+// Three shapes, because the two facts arrive independently: a dig resolved from
+// a lane lock always has an id and may have no target (a dig clearing a slot to
+// drop into uncovers nothing), while a target with no id means the resolution
+// failed and inventing one would be worse than saying less.
+//
+// Empty when neither is known, so an ordinary lane-locked wait reads exactly as
+// it did before this existed.
+func digClause(p QueueParams) string {
+	switch {
+	case p.DigOrderID != 0 && p.DigTarget != "":
+		return fmt.Sprintf(" — dig %d is uncovering %s", p.DigOrderID, p.DigTarget)
+	case p.DigOrderID != 0:
+		return fmt.Sprintf(" — dig %d is working this lane", p.DigOrderID)
+	case p.DigTarget != "":
+		return fmt.Sprintf(" — uncovering %s", p.DigTarget)
 	default:
-		return "Rearranging storage to reach this material"
+		return ""
 	}
 }
 
@@ -229,4 +258,77 @@ func plural(n int, one, many string) string {
 		return fmt.Sprintf("%d %s", n, one)
 	}
 	return fmt.Sprintf("%d %s", n, many)
+}
+
+// digWaitFor resolves the excavation an order is waiting behind, for the
+// sentence. Returns the dig's order id and the slot it is uncovering; zero and
+// empty when there is no dig on that lane or the read fails.
+//
+// ── IT ASKS THE LOCK, WHICH IS THE ONE PLACE THAT KNOWS ───────────────────
+//
+// The lane lock's rows ARE the record of which dig holds which lane, and
+// DigOwner is its one spelling of that question. Deriving it any other way — a
+// child walk, a status scan — is the archaeology unlockLaneForCompound had to
+// unlearn, and it was wrong three separate ways there.
+//
+// A READ FAILURE ANSWERS "NOT KNOWN", not "no dig". The caller renders the
+// sentence without the clause, which is exactly what it rendered before this
+// existed. A wait sentence is the wrong place to fail: the order is parked
+// either way, and an operator is better served by the lane alone than by a dig
+// id that might name the wrong excavation.
+// It is a FREE FUNCTION, not a method, because two types ask it: the Dispatcher
+// (the complex-reshuffle park arms) and the PlanningService (the plain path's
+// right-of-way refusal). Both hold the same two fields; a method on either would
+// have produced a second spelling on the other.
+func digWaitFor(db *store.DB, laneLock *LaneLock, laneID int64) (int64, string) {
+	if laneLock == nil || laneID == 0 {
+		return 0, ""
+	}
+	digID, err := laneLock.DigOwner(laneID)
+	if err != nil || digID == 0 {
+		return 0, ""
+	}
+	return digID, digTargetOf(db, digID)
+}
+
+// digTargetOf reads the slot a dig is uncovering. Empty when the order cannot be
+// read, or when it is a dig that uncovers no bin (one clearing a slot to drop
+// into) — both of which render as the id alone.
+func digTargetOf(db *store.DB, digID int64) string {
+	if digID == 0 {
+		return ""
+	}
+	dig, err := db.GetOrder(digID)
+	if err != nil || dig == nil {
+		return ""
+	}
+	return dig.DigTargetNode
+}
+
+// digWaitByLaneName is digWaitFor for the call sites that hold a lane NAME
+// rather than an id — the right-of-way refusal names the lane it was refused by,
+// not the one it was planning against.
+func digWaitByLaneName(db *store.DB, laneLock *LaneLock, laneName string) (int64, string) {
+	if laneName == "" {
+		return 0, ""
+	}
+	lane, err := db.GetNodeByDotName(laneName)
+	if err != nil || lane == nil {
+		return 0, ""
+	}
+	return digWaitFor(db, laneLock, lane.ID)
+}
+
+// digWaitForEpisode names the excavation already serving this demand's episode.
+//
+// The one-dig-per-episode arm refuses because the plant is ALREADY digging for
+// this demand — on a different lane than the one just refused, which is why the
+// lane in that sentence cannot answer "what am I waiting for". The dig id comes
+// off the result structurally (serviceDigResult.blockingDig), not out of the
+// error text.
+func digWaitForEpisode(db *store.DB, res serviceDigResult) (int64, string) {
+	if res.blockingDig == 0 {
+		return 0, ""
+	}
+	return res.blockingDig, digTargetOf(db, res.blockingDig)
 }

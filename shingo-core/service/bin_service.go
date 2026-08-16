@@ -14,7 +14,6 @@ import (
 	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
-	"shingocore/store/reservations"
 )
 
 // BinService centralizes bin validation and mutation. Handlers call BinService
@@ -697,85 +696,30 @@ func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	}
 	defer tx.Rollback()
 
-	// Stale-ghost reconciliation, shared with ApplyMultiBinArrival via
-	// EvictStaleGhostsTx so the single-bin and multi-bin arrival paths cannot
-	// drift. A completed delivery is physical proof the slot was empty, so a
-	// different bin still recorded at this destination is a stale ghost — evicted
-	// to _TRANSIT (unclaimed + anomaly_at) so it surfaces in ListAnomalies and is
-	// recoverable via RecoverTransitAnomaly; the newcomer is never rejected.
-	// Synthetic nodes are exempt (handled inside the helper).
-	evictedGhosts, err := s.db.EvictStaleGhostsTx(tx, toNodeID, binID)
+	// ONE PLACEMENT, shared with store.ApplyMultiBinArrival and
+	// recovery.RepairConfirmedOrderCompletion. Everything that used to be spelled
+	// out here — the ghost eviction, the node_id write, the owner-scoped unclaim,
+	// the coupled bin reservation, the destination slot's claim and reservation,
+	// the staging state — is helpers.PlaceBinTx now, so the three writers cannot
+	// drift. Reached through the *store.DB delegate because service/ cannot import
+	// store/internal.
+	//
+	// releaseClaim is the ONE thing this file still decides, and it is the
+	// handoff-versus-set-down distinction the two exported methods above exist to
+	// express. See ApplyIntermediateStore for what conflating them cost.
+	evictedGhosts, err := s.db.PlaceBinTx(tx, store.BinPlacement{
+		BinID:                  binID,
+		ToNodeID:               toNodeID,
+		PlacedByOrder:          placedByOrder,
+		ReleaseClaim:           releaseClaim,
+		ReleaseDestinationSlot: true,
+		Staged:                 staged,
+		ExpiresAt:              expiresAt,
+	})
 	if err != nil {
 		return false, err
 	}
 	evicted := len(evictedGhosts) > 0
-
-	if _, err := tx.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2`, toNodeID, binID); err != nil {
-		return false, fmt.Errorf("move bin: %w", err)
-	}
-	// The placing order now arrives as a parameter. It was read here instead,
-	// from the bin's own claim before that claim was cleared — "so no caller has
-	// to remember to supply it" — and that inference is unsound for the one case
-	// the burial instrument exists to classify.
-	//
-	// A dig leg is a compound child, and compound children deliberately overlap
-	// claims: CreateCompoundChildren writes claims for every step in one
-	// transaction and the last step's UPDATE wins for any bin appearing in
-	// several. So a child's placement routinely reads claimed_by as a SIBLING's
-	// id, or as 0 once a claim has been cleared ahead of it. The instrument then
-	// asks OrderIsCompoundLeg about the wrong order — or, at 0, skips the question
-	// entirely and defaults digPlacement to false.
-	//
-	// The visible cost is a miscount in the number the guard is judged by. Bin 58
-	// into LSD_028 is a reshuffle unbury leg: it reported as DIG-UNCOVERED (the
-	// known, accepted gap) on one run and as GUARD BYPASS (expected ZERO) on the
-	// next, from the same placement, because the claim happened to be cleared the
-	// second time. Every caller has its own order in hand, so supply it.
-	// Both of these are skipped for a mid-plan set-down: the order has not
-	// finished with the bin, so neither the claim nor the reservation that
-	// tracks it has ended. See ApplyIntermediateStore.
-	if releaseClaim {
-		if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
-			return false, fmt.Errorf("unclaim bin: %w", err)
-		}
-		// A bin's reservation lives exactly as long as its claim: release it in the
-		// same tx that clears claimed_by, so the delivered bin frees for
-		// re-reservation now rather than lingering (blocked) until the owning order's
-		// terminal transition.
-		if err := reservations.ReleaseByBin(tx, binID); err != nil {
-			return false, fmt.Errorf("release reservation on arrival bin %d: %w", binID, err)
-		}
-	}
-	// Release the destination slot's dispatch-time claim (the store dual of the
-	// bin claim): the bin has arrived, so the dropoff claim is fulfilled. Atomic
-	// with the arrival; a no-op for LINE deliveries (never slot-claimed).
-	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, toNodeID); err != nil {
-		return false, fmt.Errorf("release destination slot claim node %d: %w", toNodeID, err)
-	}
-	// ...and its slot RESERVATION, in the SAME tx (the slot dual of the bin
-	// ReleaseByBin above): a slot's reservation lives exactly as long as its
-	// hard claim, so the slot frees for re-reservation at delivery. No-op for a
-	// LINE delivery (never slot-reserved).
-	if err := reservations.ReleaseByNode(tx, toNodeID); err != nil {
-		return false, fmt.Errorf("release slot reservation on arrival node %d: %w", toNodeID, err)
-	}
-	if staged {
-		// nullableTime: pass UTC time or nil, mirroring helpers.NullableTime
-		// from the (internal) store helpers package — inlined here because
-		// internal/ blocks cross-package imports.
-		var expiresVal any
-		if expiresAt != nil {
-			expiresVal = expiresAt.UTC()
-		}
-		if _, err := tx.Exec(`UPDATE bins SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW() WHERE id=$2`,
-			expiresVal, binID); err != nil {
-			return false, fmt.Errorf("stage bin: %w", err)
-		}
-	} else {
-		if _, err := tx.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
-			return false, fmt.Errorf("set available bin: %w", err)
-		}
-	}
 
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit arrival bin %d: %w", binID, err)

@@ -98,13 +98,16 @@ func (e *Engine) openEpisodeForProduce(
 	discretionary := trigger == protocol.EpisodeTriggerOperator &&
 		claim.UOPCapacity > 0 && remaining < claim.UOPCapacity
 
+	// No direction argument — see openCellEpisode. This path's claim is a produce
+	// one, and RequestEmptyBin's claim is the SAME produce claim: both now open
+	// or join the one episode for this cell's circle, where before this site
+	// opened an evacuate row and that one opened a supply row for the same cell.
 	originID, _, err := e.openCellEpisode(
-		node.ProcessID, claim,
-		protocol.EpisodeDirectionEvacuate, trigger,
+		node.ProcessID, claim, trigger,
 		plan.OrderCount(), remaining, discretionary,
 	)
 	if err != nil {
-		e.logFn("demand_episode: open evacuate episode node=%s: %v", node.Name, err)
+		e.logFn("demand_episode: open %s episode node=%s: %v", claim.Role, node.Name, err)
 	}
 	if originID == "" {
 		// No episode, so nothing to attach to. Say NOTHING rather than
@@ -288,7 +291,7 @@ func (e *Engine) dispatchComplexLeg(nodeID int64, quantity int64, steps []protoc
 	if autoConfirm {
 		dn = ""
 	}
-	return e.orderMgr.CreateComplexOrderSiblingWithOrigin(&nodeID, quantity, dn, processNodeName, steps, autoConfirm, "", siblingUUID, origin)
+	return e.orderMgr.CreateComplexOrderSibling(&nodeID, quantity, dn, processNodeName, steps, autoConfirm, "", siblingUUID, origin)
 }
 
 // resetProduceRuntime stamps the dispatched legs on the runtime and, when

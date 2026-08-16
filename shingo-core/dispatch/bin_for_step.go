@@ -167,6 +167,54 @@ func (d *Dispatcher) binForStep(order *orders.Order, steps []resolvedStep, stepI
 // and refuses — definitively, under a cause that says the plant moved something,
 // when in fact Core failed a query. So the error propagates and the caller holds
 // the candidate as undetermined.
+// entryStepIndex is which step of an order's plan its NEXT lane entry is for.
+//
+// ── wait_index 0 MEANS TWO THINGS AND THE GATE BELIEVED THE WRONG ONE ─────
+//
+// It is the index of the wait an order is parked at, and it is also the zero
+// value of a column every order is born with. Those are not the same statement.
+// An order that has never been dispatched is not parked at wait 0 — it is not
+// parked at anything, and its next lane entry is the FIRST step of its plan.
+//
+// laneEntryAfterWait, asked with a bare 0, answers for wait 0 either way: it
+// finds the first wait in the plan and returns the work AFTER it. On a two-robot
+// swap that is the far side of the exchange, so a demand sitting in `sourcing`
+// waiting to fetch a bin OUT OF STORAGE was asked about the bin at the MACHINE.
+// That bin is at a station, no station is inside a lane, and the answer is
+// ErrPickupNotInLane — CauseGatePickupElsewhere, re-asked and re-refused on every
+// pass, with no event in the world that can change it.
+//
+// Measured on the lane-stress rig 2026-08-13: FIVE demands, every one of them
+// stuck this way from the first minute of the window to the last, each being
+// re-driven and re-refused several times a second. Order 32's plan begins
+// `pickup LSC_023` and its junction says step 0 is bin 42, which is standing at
+// LSC_023 inside the very lane it was being refused from. The right answer was
+// in the junction the whole time; the wrong step index is what asked for it.
+//
+// THIS IS F-25's FAMILY, ENTERED THROUGH THE OTHER DOOR. binForStep fixed "which
+// bin does this step want"; this fixes "which step is this order's entry", and
+// the failure they produce is the same sentence — a swap refused entry forever
+// because it was checked against the machine-side bin.
+//
+// IsPreDispatch IS THE PREDICATE, not a status list written out again: pending,
+// sourcing and queued are exactly the states in which no robot has been sent, so
+// no wait has been reached, so wait_index cannot mean what it says. Everything
+// else keeps laneEntryAfterWait, which is correct for an order that really is
+// standing at a mark.
+func entryStepIndex(order *orders.Order, steps []resolvedStep) (int, bool) {
+	if protocol.IsPreDispatch(order.Status) {
+		for i, s := range steps {
+			switch s.Action {
+			case protocol.ActionPickup, protocol.ActionDropoff:
+				return i, true
+			}
+		}
+		return -1, false
+	}
+	_, idx, _, ok := laneEntryAfterWait(steps, order.WaitIndex)
+	return idx, ok
+}
+
 func (d *Dispatcher) wantedBin(order *orders.Order) (stepBin, error) {
 	if order == nil {
 		return stepBin{}, nil
@@ -189,7 +237,7 @@ func (d *Dispatcher) wantedBin(order *orders.Order) (stepBin, error) {
 		// will not resolve on a retry. Holding on it would park the order forever.
 		return fromOrder, nil
 	}
-	_, idx, _, ok := laneEntryAfterWait(steps, order.WaitIndex)
+	idx, ok := entryStepIndex(order, steps)
 	if !ok {
 		return fromOrder, nil
 	}

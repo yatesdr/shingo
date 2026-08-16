@@ -169,3 +169,97 @@ func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 		t.Error("a dispatched order stale for 1h was not flagged; the longer bound must apply to queued ONLY, not widen to every status")
 	}
 }
+
+// TestCompletionAnomalies_ACompoundParentIsNotAMissingBin pins the exemption
+// that turned a permanently-red health strip back into an instrument.
+//
+// ── WHAT WAS BEING REPORTED ───────────────────────────────────────────────
+//
+// completed_order_missing_bin was written for a SINGLE-BIN order whose
+// UpdateOrderBinID never persisted: it reaches FINISHED with its bin still
+// sitting at source, and nothing else notices. A real defect, worth a row.
+//
+// A COMPOUND PARENT matched it too, and matched it forever. A parent carries no
+// bin by construction — a service dig's parent is a container with no cargo and
+// no robot, and a plain buried retrieve re-parents the demand so its own fetch
+// becomes a leg. The condition is permanent for that shape, so every dig the
+// plant ever ran added one more permanent anomaly.
+//
+// Measured on the lane-stress rig 2026-08-13: twelve anomalies, ten service digs
+// and two buried retrieves, every one a parent whose legs had delivered
+// correctly — including the final retrieve legs to the line. ZERO completed
+// orders with no bin and no legs, so the predicate had no true positives at all,
+// and the strip read "Core degraded" for the whole run on the strength of them.
+//
+// ── AND THE TRUE POSITIVE STILL FIRES ─────────────────────────────────────
+//
+// The second half is the one that matters: a childless order that completed
+// without a bin is still the defect this was built for, and exempting parents
+// must not quietly exempt it too.
+//
+// MUTATION: drop the child-rows clause. The parent is reported again, and the
+// count in the first half goes to 2.
+func TestCompletionAnomalies_ACompoundParentIsNotAMissingBin(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	node := &nodes.Node{Name: "CP-DEST", Enabled: true}
+	if err := db.CreateNode(node); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	// A COMPOUND PARENT: no bin of its own, one leg that carries the bin.
+	parent := &orders.Order{EdgeUUID: "cp-parent", StationID: "edge.1", OrderType: "move",
+		Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+	if err := orders.Create(db.DB, parent); err != nil {
+		t.Fatalf("create the compound parent: %v", err)
+	}
+	bin := testdb.CreateBinAtNode(t, db, "PART-A", node.ID, "CP-BIN")
+	leg := &orders.Order{EdgeUUID: "cp-leg", StationID: "edge.1", OrderType: "move",
+		Status: "pending", Quantity: 1, DeliveryNode: node.Name,
+		ParentOrderID: &parent.ID, BinID: &bin.ID}
+	if err := orders.Create(db.DB, leg); err != nil {
+		t.Fatalf("create the leg: %v", err)
+	}
+	if err := orders.Complete(db.DB, parent.ID); err != nil {
+		t.Fatalf("complete the parent: %v", err)
+	}
+
+	anomalies, err := reconciliation.ListOrderCompletionAnomalies(db.DB)
+	if err != nil {
+		t.Fatalf("list anomalies: %v", err)
+	}
+	for _, a := range anomalies {
+		if a.OrderID == parent.ID {
+			t.Fatalf("compound parent %d was reported as %q. It carries no bin because its LEGS do — "+
+				"the condition is permanent for this shape, so every dig the plant runs would add one "+
+				"more anomaly that can never be cleared", parent.ID, a.Issue)
+		}
+	}
+
+	// ── THE TRUE POSITIVE IS UNTOUCHED ───────────────────────────────────────
+	childless := &orders.Order{EdgeUUID: "cp-childless", StationID: "edge.1", OrderType: "retrieve",
+		Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+	if err := orders.Create(db.DB, childless); err != nil {
+		t.Fatalf("create the childless order: %v", err)
+	}
+	if err := orders.Complete(db.DB, childless.ID); err != nil {
+		t.Fatalf("complete the childless order: %v", err)
+	}
+
+	anomalies, err = reconciliation.ListOrderCompletionAnomalies(db.DB)
+	if err != nil {
+		t.Fatalf("re-list anomalies: %v", err)
+	}
+	var found bool
+	for _, a := range anomalies {
+		if a.OrderID == childless.ID && a.Issue == "completed_order_missing_bin" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("order %d completed with no bin and no legs and was NOT reported. That is the defect "+
+			"this anomaly exists for — an order that reached FINISHED with its bin still at source",
+			childless.ID)
+	}
+}

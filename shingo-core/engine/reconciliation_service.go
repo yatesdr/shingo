@@ -388,46 +388,15 @@ func (s *ReconciliationService) AdvanceStuckReshuffleParents() (int, error) {
 		return 0, nil
 	}
 
+	// A THIRD REASON A PARENT IN THIS SET WAS NOT STUCK used to be filtered here:
+	// a service dig held its lane past its last blocker until the bin it uncovered
+	// was collected, which put it in `reshuffling`, sealed, with every child
+	// terminal — every clause of the SELECT above and none of the meaning. That
+	// hold is gone. A finished dig hands its corridor to the order collecting the
+	// bin and terminates on the ordinary path, so a dig appearing here is stuck in
+	// the plain sense this sweep was written for, and re-driving it is right.
 	advanced := 0
 	for _, id := range parentIDs {
-		// THE THIRD REASON A PARENT IN THIS SET IS NOT STUCK (§R.76). A service
-		// dig holds its lane past its last blocker until the bin it uncovered is
-		// collected, which puts it in `reshuffling`, sealed, with every child
-		// terminal — every clause of the SELECT above, and none of the meaning.
-		//
-		// IT IS FILTERED HERE AND NOT IN THE SQL, deliberately. The question is
-		// "is a bin still standing at that slot", and expressing it as a join
-		// would make this the SECOND spelling of a predicate that already exists
-		// in Go — the two would then be free to disagree about what the hold
-		// means, which is the failure law 3's rider is about. The SELECT stays a
-		// cheap shape filter and the meaning is asked once, in one place, by
-		// everything that asks it.
-		//
-		// The cost of skipping is nil: AdvanceCompoundOrder refuses these parents
-		// itself, so correctness never rested on this line. What rests on it is
-		// the RECOVERY RECORD below — without the skip this sweep would write an
-		// advance_stuck_reshuffle row every pass for a dig that is doing exactly
-		// what it is supposed to, and a recovery log that fires when nothing was
-		// recovered destroys the reader's ability to believe the ones that mean
-		// something.
-		//
-		// NOT FAIL-OPEN, and that is ruled rather than incidental: a dig whose
-		// target nobody collects is NOT rescued on a timer here, because
-		// "rescuing" it means dropping the lane and re-exposing the bin. That
-		// case surfaces as a tripwire row for a human.
-		parent, gErr := s.db.GetOrder(id)
-		if gErr != nil {
-			s.logFn("engine: could not read reshuffle parent %d while checking whether it still owes "+
-				"its target bin: %v (skipping this pass rather than re-driving it blind)", id, gErr)
-			continue
-		}
-		owes, oErr := s.db.DigStillOwesItsTarget(parent)
-		if oErr != nil {
-			s.logFn("engine: %v", oErr)
-		}
-		if owes {
-			continue
-		}
 		if err := s.advanceCompound(id); err != nil {
 			s.logFn("engine: re-drive stuck reshuffle parent %d: %v (skipping this pass; loop retries)", id, err)
 			continue

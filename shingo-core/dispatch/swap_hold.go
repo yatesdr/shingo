@@ -231,10 +231,41 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 // The acquiring states (queued/sourcing) a leg is held FROM read as
 // not-committed, and so do the failure states where it will not do its part; a
 // faulted sibling may recover, so the held leg stays held.
+//
+// ── RESHUFFLING IS AN EXPLICIT ARM, AND IT WAS CORRECT BY ACCIDENT ────────
+//
+// A leg waiting on a dig wears `reshuffling`. It landed in `default` and read as
+// NOT COMMITTED, which is the right answer — it fails both halves of what this
+// predicate means: it holds no vendor order, and it is not en route. But the
+// paragraph above enumerates the not-committed cases as "acquiring" and
+// "failure", and `reshuffling` is neither. Nothing recorded the decision because
+// nobody had made one.
+//
+// That is a live hazard rather than a tidiness point. The plausible mistake is
+// specific and someone will make it: a leg in `reshuffling` is visibly DOING
+// something — robots are moving, blockers are being carried out — so adding it
+// to the committed list reads as a correction. It is not. Committed means
+// committed TO THIS SWAP'S OWN WORK, and a leg mid-dig has not started that
+// work; releasing its partner early is the line clearing with no replacement
+// coming, which is ALN_003 (2026-06-03), the incident the supply-side hold
+// exists for.
+//
+// IT IS ABOUT TO MATTER MUCH MORE. Under §R.91 the demand that raises a dig
+// BECOMES the dig's parent and wears `reshuffling` while it runs — so a swap leg
+// in `reshuffling` goes from a state this predicate never really saw to an
+// ordinary one. Round 2 flagged it for exactly that reason: settle it before the
+// unification arrives and finds it undecided.
+//
+// Written as its own arm rather than folded into `default` so that a future
+// editor has to delete a paragraph to get the answer wrong, instead of adding a
+// constant to a list.
 func swapLegCommittedToFleet(sib *orders.Order) bool {
 	switch sib.Status {
 	case StatusDispatched, StatusInTransit, StatusStaged, StatusDelivered, StatusConfirmed:
 		return true
+	case StatusReshuffling:
+		// Mid-dig. No vendor order, not en route: the partner keeps waiting.
+		return false
 	default:
 		return false
 	}

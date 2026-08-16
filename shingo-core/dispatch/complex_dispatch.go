@@ -773,7 +773,7 @@ func (d *Dispatcher) proposeDigForBuriedPickup(order *orders.Order, laneName str
 			res.parent.ID, lane.Name, order.ID, target.Name)
 	case serviceDigLaneBusy, serviceDigNoShuffleSlot, serviceDigBlockerClaimed,
 		serviceDigNothingInTheWay, serviceDigReadFailed, serviceDigParkingHeldByDig,
-		serviceDigGroupCannotAfford, serviceDigGroupOwesCollection:
+		serviceDigEpisodeAlreadyDigging:
 		// All of them self-clear and all of them already have a releaser the demand is
 		// sitting on. Nothing to arrange and nothing new to tell anyone. Right of
 		// way joins the list rather than getting its own arm because this caller

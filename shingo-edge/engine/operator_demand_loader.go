@@ -356,7 +356,7 @@ func (e *Engine) createLoaderEmpties(loader *domain.Loader, payload domain.Paylo
 				return made, fmt.Errorf("%s: no process_node for delivery target %s: %w", source.logTag(), deliveryNode, nerr)
 			}
 			nodeID := node.ID
-			order, cerr := e.orderMgr.CreateRetrieveOrderWithOrigin(
+			order, cerr := e.orderMgr.CreateRetrieveOrder(
 				&nodeID, true, 1, deliveryNode, loaderEmptySource(loader), "",
 				"standard", string(payload), false, true, origin,
 			)

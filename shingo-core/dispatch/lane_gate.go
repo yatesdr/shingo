@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingocore/service"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -686,6 +687,12 @@ func (d *Dispatcher) AcquireLanesForOrder(order *orders.Order, sourceNode, destN
 // would dig out the wrong thing.
 func (d *Dispatcher) BuriedForHeldBin(order *orders.Order) (*BuriedError, error) {
 	if order == nil || order.BinID == nil {
+		if order != nil {
+			// SHADOWED: "holds no bin" is the folder's permanent state as well as
+			// the fault this error was written for.
+			owns, oerr := d.db.OrderOwnsNoCargo(order.ID)
+			service.NoteFolderShadow(service.FolderSiteBuriedForHeldBin, order.ID, true, owns, oerr)
+		}
 		return nil, fmt.Errorf("buried-for-held-bin: order holds no bin")
 	}
 	slot, err := d.db.GetNodeByDotName(order.SourceNode)

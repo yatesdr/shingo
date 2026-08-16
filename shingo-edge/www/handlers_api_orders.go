@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/engine"
+	ordermgr "shingoedge/orders"
 )
 
 // MaxBatchRetrieveCount is the maximum number of orders in a batch retrieve request.
@@ -136,9 +137,12 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// NoDemand: an order posted to the HTTP API is a direct command. Somebody
+	// wanted it, but it belongs to no cell episode and never will — see the
+	// Origin type for why that is the distinction the class records.
 	order, err := h.engine.OrderManager().CreateMoveOrder(
 		processNodeID, req.Quantity, req.SourceNode, req.DeliveryNode,
-		h.engine.AppConfig().Web.AutoConfirm,
+		h.engine.AppConfig().Web.AutoConfirm, ordermgr.NoDemand(),
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -168,7 +172,7 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 	}
 
 	order, err := h.engine.OrderManager().CreateComplexOrder(
-		processNodeID, req.Quantity, "", "", req.Steps,
+		processNodeID, req.Quantity, "", "", req.Steps, ordermgr.NoDemand(),
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

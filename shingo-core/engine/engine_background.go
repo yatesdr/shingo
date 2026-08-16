@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"shingocore/dispatch"
 	"shingocore/fleet"
 )
 
@@ -121,18 +120,12 @@ func (e *Engine) laneLivenessFloorLoop() {
 					"usable-capacity claim", n, "dig_standoff_detected")
 			}
 
-			// AND THE OTHER WAY A DIG HOLDS FOREVER: not waiting on another dig,
-			// but holding its own lane for a bin whose episode has ended. It rides
-			// the same pass because it asks the same population one more question,
-			// and because both are alarms rather than actions — nothing here
-			// releases anything, by ruling.
-			if n := e.dispatcher.SweepReshufflesHoldingTargets(); n > 0 {
-				e.logFn("engine: %d RESHUFFLE(S) are holding a lane for a bin nobody is coming for — "+
-					"the demand that caused the dig is gone and the hold is keyed on the bin "+
-					"leaving, so it will not end on its own. See recovery_actions (%s). A human "+
-					"rules each one; the escape hatch is the Core-side hard release",
-					n, dispatch.UnfetchedTargetAction)
-			}
+			// THE OTHER WAY A DIG HELD FOREVER — its own lane, for a bin whose
+			// demand had gone — was swept from here and no longer can be. A
+			// finished dig hands its corridor to the order collecting the bin and
+			// terminates, so the population this asked about does not exist; and
+			// the waste it was really measuring is recorded at the moment it
+			// happens instead (dispatch.AbandonedExcavationAction).
 		}
 	}
 }

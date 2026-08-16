@@ -17,6 +17,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	ordermgr "shingoedge/orders"
 )
 
 // MarketBinInfo describes one bin available in the outbound supermarket for
@@ -131,8 +132,10 @@ func (e *Engine) PullFromMarket(nodeID int64, sourceCoreName string) error {
 	}
 	payload := bins[0].PayloadCode
 
+	// NoDemand: a pullback is an operator moving stock between market and window.
+	// It serves no cell's level and belongs to no episode.
 	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1,
-		sourceCoreName, node.CoreNodeName, payload, true)
+		sourceCoreName, node.CoreNodeName, payload, true, ordermgr.NoDemand())
 	if err != nil {
 		return fmt.Errorf("pull from market: create order: %w", err)
 	}

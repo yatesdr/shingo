@@ -41,6 +41,50 @@ type Plant struct {
 	ReportingPoints  []ReportingPoint `yaml:"reporting_points"`
 	CellConfigs      []CellConfig     `yaml:"cell_configs"`
 	LinesideBuckets  []LinesideBucket `yaml:"lineside_buckets"`
+	// Headroom is the storage-slack rule the census at birth asserts (§R.78).
+	Headroom Headroom `yaml:"headroom,omitempty"`
+	// BaselineFrozenAt names the ruling that froze this spec as a MEASUREMENT
+	// BASELINE, and it is provenance rather than a setting.
+	//
+	// A/B comparisons are only meaningful against an unchanged seed, so a spec
+	// that a published number was measured on cannot be corrected without
+	// invalidating the number. Setting this records that the spec is knowingly
+	// preserved with whatever defects it has, and downgrades the census at birth
+	// from a refusal to a loud report — the findings are still printed in full,
+	// because the point is that they are KNOWN, not that they are acceptable.
+	//
+	// NOT A SETTING TO REACH FOR. A new spec that will not pass the census is a
+	// spec to fix. This exists for seeds that already have numbers attached, and
+	// the value must name the ruling so a reader can go and find out which.
+	BaselineFrozenAt string `yaml:"baseline_frozen_at,omitempty"`
+}
+
+// Headroom is the rule that a storage group must always keep somewhere to dig
+// INTO: a group filled to the brim cannot conduct an excavation at all, because
+// there is nowhere to stand a blocker while the lane is opened.
+//
+// Owner's number (§R.78): one full lane's worth, always free. Eleven lanes of
+// five is fifty-five slots and fifty bins, not fifty-five.
+//
+// It is config rather than a constant because the right slack is a property of a
+// plant's traffic, not of the software, and because a number in a spec is a
+// number somebody can argue with. The DEFAULT is one lane's worth — a spec that
+// says nothing gets the rule, which is the polarity that matters: headroom has
+// to be opted OUT of explicitly, never forgotten into.
+type Headroom struct {
+	// FreeLanes is how many of the group's deepest lane's worth of slots must be
+	// left empty at birth. Nil means the default of one. Zero is legal and means
+	// "no headroom guaranteed", which is a statement a spec author has to make on
+	// purpose.
+	FreeLanes *int `yaml:"free_lanes,omitempty"`
+}
+
+// LanesFree returns the configured headroom, defaulting to one lane's worth.
+func (h Headroom) LanesFree() int {
+	if h.FreeLanes == nil {
+		return 1
+	}
+	return *h.FreeLanes
 }
 
 // Payload is a part type with its bin capacity.

@@ -165,7 +165,7 @@ func TestCreateComplexOrderSibling_CarriesSiblingUUID(t *testing.T) {
 	const supplyUUID = "supply-uuid-abc123"
 	evac, err := mgr.CreateComplexOrderSibling(nil, 1, "AMR Supermarket", "ALN_003",
 		[]protocol.ComplexOrderStep{{Action: "pickup", Node: "ALN_003"}, {Action: "dropoff", Node: "AMR Supermarket"}},
-		true, "", supplyUUID)
+		true, "", supplyUUID, NoDemand())
 	testutil.MustNoErr(t, err, "create evac leg")
 
 	var req protocol.ComplexOrderRequest
@@ -184,7 +184,7 @@ func TestCreateRetrieveOrder_HappyPath(t *testing.T) {
 	emitter := &capturingEmitter{}
 	mgr := NewManager(db, emitter, "edge.station")
 
-	order, err := mgr.CreateRetrieveOrder(nil, false, 7, "LINE-1", "SRC-A", "STAGE-1", "LOAD-A", "PL-42", false, false)
+	order, err := mgr.CreateRetrieveOrder(nil, false, 7, "LINE-1", "SRC-A", "STAGE-1", "LOAD-A", "PL-42", false, false, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateRetrieveOrder: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestCreateRetrieveOrder_PayloadMetaFromStyleClaim(t *testing.T) {
 		Description: "Auto Test Payload",
 	}), "UpsertCatalog")
 
-	order, err := mgr.CreateRetrieveOrder(&nid, false, 1, "LINE-1", "", "", "", "", false, false)
+	order, err := mgr.CreateRetrieveOrder(&nid, false, 1, "LINE-1", "", "", "", "", false, false, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateRetrieveOrder: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestCreateMoveOrder_HappyPath(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	order, err := mgr.CreateMoveOrder(nil, 3, "SRC-M", "DST-M", false)
+	order, err := mgr.CreateMoveOrder(nil, 3, "SRC-M", "DST-M", false, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestCreateMoveOrderWithUOP_ThreadsRemainingUOP(t *testing.T) {
 	mgr := NewManager(db, testEmitter{}, "edge")
 
 	remaining := 5
-	if _, err := mgr.CreateMoveOrderWithUOP(nil, 1, "SRC", "DST", &remaining, false); err != nil {
+	if _, err := mgr.CreateMoveOrderWithUOP(nil, 1, "SRC", "DST", &remaining, false, NoDemand()); err != nil {
 		t.Fatalf("CreateMoveOrderWithUOP: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -306,7 +306,7 @@ func TestCreateComplexOrder_PersistsStepsAndQueuesEnvelope(t *testing.T) {
 		{Action: "pickup", Node: "A"},
 		{Action: "dropoff", Node: "B"},
 	}
-	order, err := mgr.CreateComplexOrder(nil, 2, "DEL-C", "", steps)
+	order, err := mgr.CreateComplexOrder(nil, 2, "DEL-C", "", steps, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateComplexOrder: %v", err)
 	}
@@ -1087,7 +1087,7 @@ func TestLookupPayloadMeta_NilProcessNode_NoLookup(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	if _, err := mgr.CreateMoveOrder(nil, 1, "S", "D", false); err != nil {
+	if _, err := mgr.CreateMoveOrder(nil, 1, "S", "D", false, NoDemand()); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -1108,7 +1108,7 @@ func TestLookupPayloadMeta_ActiveStyleOnly(t *testing.T) {
 	active := sid
 	testutil.MustNoErr(t, db.SetActiveStyle(pid, &active), "SetActiveStyle")
 
-	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false); err != nil {
+	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false, NoDemand()); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -1137,7 +1137,7 @@ func TestLookupPayloadMeta_TargetStyleOverridesActiveDuringChangeover(t *testing
 	_ = db.SetActiveStyle(pid, &active)
 	_ = db.SetTargetStyle(pid, &target)
 
-	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false); err != nil {
+	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false, NoDemand()); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -1155,7 +1155,7 @@ func TestLookupPayloadMeta_NoActiveStyleFallsThrough(t *testing.T) {
 	_, _, nid := seedProcessStyleNode(t, db, "P-NA", "S-NA", "CN-NA")
 	// Don't set ActiveStyleID — lookup should early-return empty.
 
-	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false); err != nil {
+	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false, NoDemand()); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -1524,7 +1524,7 @@ func TestCreateComplexOrder_AutoConfirmSplit(t *testing.T) {
 		{Action: "dropoff", Node: "AMRSM"},
 	}
 
-	manual, err := mgr.CreateComplexOrder(nil, 1, "LINE1", "LINE1", steps)
+	manual, err := mgr.CreateComplexOrder(nil, 1, "LINE1", "LINE1", steps, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateComplexOrder: %v", err)
 	}
@@ -1532,7 +1532,7 @@ func TestCreateComplexOrder_AutoConfirmSplit(t *testing.T) {
 		t.Errorf("CreateComplexOrder: AutoConfirm=true, want false (lineside delivery requires operator press)")
 	}
 
-	auto, err := mgr.CreateComplexOrderWithAutoConfirm(nil, 1, "", "LINE1", steps)
+	auto, err := mgr.CreateComplexOrderWithAutoConfirm(nil, 1, "", "LINE1", steps, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateComplexOrderWithAutoConfirm: %v", err)
 	}

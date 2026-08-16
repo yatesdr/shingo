@@ -363,6 +363,89 @@ func ListDigHolds(q Queryer) ([]DigHold, error) {
 	return out, rows.Err()
 }
 
+// HandOffLaneToPicker converts the dig hold on laneID into picker's OUTBOUND
+// hold, in one transaction under the lane's advisory lock. It reports whether
+// the hold moved.
+//
+// ── WHY THE MODE CHANGES, AND WHY THAT IS THE WHOLE MECHANISM ─────────────
+//
+// An excavation ends with a bin standing at an open lane mouth and the demand it
+// was dug for not yet dispatched. The dig's own need for the corridor is over —
+// everything after this is somebody else's pickup — but the SLOTS IN FRONT of
+// that bin are now the cheapest shuffle candidates in the group, and the next
+// order to want one re-buries the bin the excavation was run to expose.
+//
+// What has to be excluded is therefore precisely a DROP into that lane. That is
+// what an outbound hold says, in the vocabulary that already exists: outbound
+// excludes inbound and dig, and shares with other outbound holders — who can
+// only take bins OUT, and so cannot re-bury anything.
+//
+// It also means the picker's own dispatch needs no special case. AcquireLanes
+// for its source lane asks for outbound, finds its own row, and is idempotent.
+// A dig-mode row would have made that call an ERROR — admitMouth refuses one
+// owner two modes on one lane — so handing the corridor over as a dig would have
+// blocked the very order it was held for.
+//
+// ── AND WHY IT ENDS ON ITS OWN ────────────────────────────────────────────
+//
+// Because the new owner is a LIVE ORDER. Its per-visit release drops the row
+// when its bin clears the lane, and its terminalization drops the row whatever
+// happens to it. There is no state left behind that outlives an order, which is
+// what a hold parked on a finished dig was.
+//
+// Returns false with no error when the dig row is already gone (the release
+// raced this) — the caller has nothing to do, and nothing has been broken.
+func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy string) (bool, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("reservations hand-off-lane: begin: %w", err)
+	}
+	defer tx.Rollback() // no-op once committed
+
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, laneID); err != nil {
+		return false, fmt.Errorf("reservations hand-off-lane: lock lane %d: %w", laneID, err)
+	}
+	res, err := tx.Exec(
+		`DELETE FROM reservations
+		  WHERE order_id=$1 AND resource_kind='mouth' AND node_id=$2 AND mode=$3`,
+		digOwner, laneID, string(ModeDig))
+	if err != nil {
+		return false, fmt.Errorf("reservations hand-off-lane: drop dig row: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, nil // the dig no longer holds it: nothing to hand over
+	}
+
+	// THE PICKER MAY ALREADY HOLD THIS LANE — it can be gate-staged at the mouth
+	// with its own outbound row while the dig works behind it. Inserting a second
+	// row would put one owner on one lane twice, which is the incoherent state
+	// admitMouth exists to refuse. Reuse whatever is there.
+	holders, err := activeMouthRows(tx, laneID)
+	if err != nil {
+		return false, err
+	}
+	for _, h := range holders {
+		if h.OrderID != picker {
+			continue
+		}
+		if h.Mode == ModeOutbound {
+			return true, tx.Commit() // already holds it the right way round
+		}
+		// It holds the lane INBOUND: it is dropping into this lane, not picking
+		// from it, so it is not the bin's collector and this is not its hold to
+		// take. The dig row is gone and the lane is free, which is the honest
+		// outcome — a corridor held for a collector that is not coming.
+		return false, tx.Commit()
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode)
+		 VALUES ($1, 'mouth', $2, 'confirmed', $3, $4)`,
+		picker, laneID, reservedBy, string(ModeOutbound)); err != nil {
+		return false, fmt.Errorf("reservations hand-off-lane: insert outbound row: %w", err)
+	}
+	return true, tx.Commit()
+}
+
 // ── Hold B: who is INSIDE the lane ────────────────────────────────────────
 //
 // A reshuffle's CLAIM on a lane and a robot's PRESENCE in it are different facts

@@ -281,46 +281,63 @@ func (db *DB) ListChildNodesUnlocked(parentID int64, asker reservations.DigAsker
 	return nodes.ScanNodes(rows)
 }
 
-// CountOutstandingDigClaims counts the digs already running in a group that still
-// owe a blocker a slot — the room the group has committed but not yet spent.
+// LanesOccupiedInGroup returns the lanes of a group that a robot is currently
+// inside — Hold B, the presence row, not the dig claim.
 //
-// ── WHY A COUNT AND NOT A SET OF SLOTS ────────────────────────────────────
+// ── WHY PARKING HAS TO ASK THIS ───────────────────────────────────────────
 //
-// A running dig needs A slot, not a PARTICULAR one: the destination is chosen at
-// release, when the robot is standing there holding the blocker, and that late
-// choice is the whole point of the dwell. So what a dig holds against the group is
-// one slot's WORTH, and the affordability question is arithmetic rather than
-// allocation. Reserving a specific slot at dig start would give the same number
-// and take away the freshness the release-time chooser exists for.
+// A single-file lane takes one robot at a time, and admission enforces that: a
+// destination in an occupied lane is refused with CauseLaneOccupied. What was
+// missing is that the CANDIDATE LIST did not know, so the release-time resolver
+// offered a slot in a lane somebody was already driving into, got refused, and
+// walked on — to the next candidate, which is the next slot SHALLOWER IN THE SAME
+// LANE. Placing there buries the deeper slot it just skipped.
 //
-// ── WHY THE CLAIM ENDS AT THE BIND, NOT AT THE PLACEMENT ──────────────────
+// That is how LS_C4 came out of the closing run as X X . X: a four-slot empty
+// lane, filled by two digs taking turns, with a hole at depth 3 that nothing can
+// reach. The lane was the group's entire spare capacity.
 //
-// A leg with no delivery_node is a blocker with nowhere to go: it counts. The
-// moment the dwell chooses, claimStoreSlot takes a real slot reservation, and that
-// slot stops being unclaimed — so it leaves the usable pool by the ordinary route,
-// counted once, by the mechanism that owns it. Counting the claim until the bin
-// physically lands would count the same slot twice for the length of a drive, and
-// a capacity oracle that double-counts refuses digs the group can afford. The two
-// mechanisms hand over cleanly at the bind and there is no instant where the slot
-// is invisible to both.
+// So an occupied lane leaves the pool at the source. The resolver moves to a
+// DIFFERENT lane rather than to a worse slot in this one, which is what "one
+// robot per lane" was supposed to mean all along.
 //
-// ── THE EXEMPTION IS THE DIG-LOCK EXEMPTION, DELIBERATELY ─────────────────
-//
-// "Whose claims count against me" and "whose digs shut me out" are the same
-// question about the same relationship, so this interpolates the same rendered
-// predicate rather than spelling a second comparison. A dig re-planning a later
-// generation of its own episode must not be refused for the room its own earlier
-// generation is holding — that is not a second dig, it is this one.
-// It is the COUNT aggregation over ListOutstandingDigClaims, which is the same
-// count-at-plan / name-them-at-diagnosis split the resolver already uses: one
-// predicate, two readers. Admission needs the number; the standoff tripwire needs
-// the identities, and neither gets its own idea of what "owing" means.
-func (db *DB) CountOutstandingDigClaims(groupID int64, asker reservations.DigAsker) (int, error) {
-	owners, err := db.ListOutstandingDigClaims(groupID, asker)
-	return len(owners), err
+// NOT FOLDED INTO ListChildNodesUnlocked, deliberately: that read is shared with
+// SOURCING, where a robot being inside a lane is not a reason to refuse to take a
+// bin out of it. Presence excludes a lane as a PLACE TO PUT SOMETHING, which is a
+// narrower question than that query answers.
+func (db *DB) LanesOccupiedInGroup(groupID int64) (map[int64]bool, error) {
+	rows, err := db.DB.Query(`
+		SELECT DISTINCT r.node_id
+		FROM reservations r
+		JOIN nodes lane ON lane.id = r.node_id
+		WHERE r.resource_kind = 'occupancy'
+		  AND r.state IN ('pending','confirmed')
+		  AND lane.parent_id = $1`, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("list occupied lanes in group %d: %w", groupID, err)
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan occupied lane in group %d: %w", groupID, err)
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
-// ListOutstandingDigClaims names the digs CountOutstandingDigClaims counts.
+// ListOutstandingDigClaims names the digs in a group that still owe a blocker a
+// slot: a lane held under a dig claim with at least one non-terminal leg carrying
+// no destination.
+//
+// THE ADMISSION LEDGER THAT USED TO COUNT THESE IS GONE (§R.79). It required a
+// new dig to fit on top of the room already owed, which was the wrong unit and
+// the wrong idea — see planUnbury. The remaining reader is the standoff tripwire,
+// which needs the IDENTITIES: an edge in the holder-of-holder graph only means
+// something for a dig that is actually waiting for parking, and a dig owing
+// nothing cannot be a link in a cycle whatever else it is doing.
 func (db *DB) ListOutstandingDigClaims(groupID int64, asker reservations.DigAsker) ([]int64, error) {
 	args := append([]any{string(reservations.ModeDig), groupID}, asker.Args()...)
 	rows, err := db.DB.Query(fmt.Sprintf(`
@@ -355,89 +372,33 @@ func (db *DB) ListOutstandingDigClaims(groupID int64, asker reservations.DigAske
 	return out, rows.Err()
 }
 
-// ListDigsHoldingTargetsInGroup names the digs in a group that have finished
-// excavating and are holding their lane for a bin nobody has collected yet.
-//
-// It is the DISJOINT COMPLEMENT of ListOutstandingDigClaims above, and the two
-// must not be merged even though they read the same holds. That one selects digs
-// with a leg still owed a destination — work not yet done, room owed. This one
-// selects digs with no such leg and a bin still standing at their target — work
-// finished, collection owed. A dig is in at most one of them, and they feed
-// different decisions: the first is how much room admission must reserve, the
-// second is whether admission should be starting anything at all.
-//
-// THE OWING QUESTION IS ASKED IN GO, not folded into the SQL. dig_target_node is
-// a dot-name, so a join would need name resolution here and would become a
-// second spelling of DigStillOwesItsTarget in another language — free to
-// disagree with the three readers that already share one. The hold count in a
-// single group is a handful, so the loop is cheaper than the divergence.
-func (db *DB) ListDigsHoldingTargetsInGroup(groupID int64, asker reservations.DigAsker) ([]int64, error) {
-	args := append([]any{string(reservations.ModeDig), groupID}, asker.Args()...)
-	rows, err := db.DB.Query(fmt.Sprintf(`
-		SELECT DISTINCT dig_hold.order_id
-		FROM reservations dig_hold
-		JOIN nodes lane ON lane.id = dig_hold.node_id
-		JOIN orders dig ON dig.id = dig_hold.order_id
-		WHERE dig_hold.resource_kind = 'mouth'
-		  AND dig_hold.mode = $1
-		  AND dig_hold.state IN ('pending','confirmed')
-		  AND lane.parent_id = $2
-		  AND %s
-		  AND COALESCE(dig.dig_target_node, '') <> ''`,
-		reservations.DigExclusionSQL("dig_hold.order_id", 3, 4)), args...)
-	if err != nil {
-		return nil, fmt.Errorf("list digs holding targets in group %d: %w", groupID, err)
-	}
-	defer rows.Close()
-	var candidates []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("list digs holding targets in group %d scan: %w", groupID, err)
-		}
-		candidates = append(candidates, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	var out []int64
-	for _, id := range candidates {
-		dig, err := db.GetOrder(id)
-		if err != nil {
-			// FAIL TOWARDS REFUSING A NEW DIG. An unreadable hold is not evidence
-			// that the group is clear, and admitting on an unknown ledger is the
-			// direction that made the famine.
-			return nil, fmt.Errorf("list digs holding targets in group %d: could not read dig %d: %w",
-				groupID, id, err)
-		}
-		owes, oErr := db.DigStillOwesItsTarget(dig)
-		if oErr != nil && owes {
-			return nil, oErr
-		}
-		if owes {
-			out = append(out, id)
-		}
-	}
-	return out, nil
-}
-
 // DigStillOwesItsTarget reports whether a service dig's lane must stay held
 // because the bin its excavation uncovered has not left yet.
 //
-// ── THE ONE SPELLING OF THE QUESTION, FOR ALL THREE OF ITS READERS ────────
+// ── THE ONE SPELLING OF THE QUESTION, AND IT NOW HAS ONE READER ───────────
 //
 // A dig still owing its target sits in `reshuffling` with every child terminal,
-// which is the exact shape three different pieces of machinery read as FINISHED:
-// AdvanceCompoundOrder's completion arm, AdvanceStuckReshuffleParents, and
-// maybeReleaseDigOnLastBlockerOut. All three ask this, and nothing else may —
-// everything else that walks a compound's children is asking a different
-// question ("is anything running", "is this leg live") and a shared spelling of
+// which is the exact shape a completion arm reads as FINISHED. This header used
+// to name THREE readers — AdvanceCompoundOrder's completion arm,
+// AdvanceStuckReshuffleParents, and maybeReleaseDigOnLastBlockerOut — and that
+// was true when the hold spanned the excavation AND the retrieval.
+//
+// TWO OF THEM WENT WITH THE HAND-BACK. The demand is no longer re-parented into
+// its own dig, so nothing resumes, so the lane no longer has to be held past the
+// compound's completion; handOffDugLane replaced the extended hold with a
+// handoff to whoever is actually collecting. What survives is that one caller
+// (dispatch/dig_lock_release.go, which asks it as the first of its two halves
+// and whose own header already says "one reader instead of three").
+//
+// The rule underneath is unchanged and still binds: nothing ELSE may ask this.
+// Everything else that walks a compound's children is asking a different
+// question ("is anything running", "is this leg live"), and a shared spelling of
 // the wrong question is worse than two spellings of right ones (law 3's rider).
 //
-// It lives in the store rather than in dispatch because two of those three
-// readers are in different packages, and because the question is entirely a
-// matter of record: one order row, one node, one bin count.
+// It stays in the store rather than moving to dispatch alongside its one
+// surviving reader because the question is entirely a matter of record — one
+// order row, one node, one bin count — and because the reader count is the thing
+// that just proved volatile.
 //
 // ── IT IS A PHYSICAL FACT, WHICH IS THE WHOLE POINT (law 4) ───────────────
 //
@@ -490,36 +451,66 @@ func (db *DB) DigStillOwesItsTarget(parent *orders.Order) (bool, error) {
 	return n > 0, nil
 }
 
-// CountLiveOrdersInEpisode counts the non-terminal orders sharing an origin,
-// excluding one — the caller's own row.
+// CollectorForDigTarget returns the live demand a finished service dig should
+// hand its corridor to, or nil when nothing in the plant is still coming.
 //
-// It answers "is anybody still coming" for a service dig holding a lane, and it
-// asks it through the ORIGIN because that is the only tie a dig has to the
-// demand it serves. A requester pointer was proposed for this and ruled out
-// (§R.40): a dig is a service to a LANE, so the relation is one-to-many, a
-// stamp would claim one-to-one, and it goes stale on exactly the event that
-// matters here — the requester being cancelled.
+// ── WHAT A BURIED DEMAND ACTUALLY RECORDS, WHICH IS ALMOST NOTHING ────────
 //
-// The origin does not go stale, because it names the EPISODE rather than a row.
-// If every order in the episode has reached a terminal status while the dig is
-// still holding, the thing the excavation was run for is over and the bin it
-// uncovered is never going to be collected by it.
+// It waits `queued` with its ORIGINAL source — the line it was asked from — and
+// nothing else. Verified on the lane-stress rig 2026-08-13, against all five
+// digs then running: the bin each was excavating towards had claimed_by NULL, no
+// bin reservation, no slot reservation, and no order anywhere naming its slot.
+// The demand cannot claim what it cannot reach, and it does not re-plan until the
+// lane opens, so at the moment an excavation ends its collector does not exist as
+// a recorded intent. Asking "who wants this slot" gets nobody, every time.
 //
-// An empty originID is not answerable and the caller must not guess: see
-// SweepReshufflesHoldingTargets, which reports the gap rather than bridging it.
-func (db *DB) CountLiveOrdersInEpisode(originID string, excludeOrderID int64) (int, error) {
-	if originID == "" {
-		return 0, fmt.Errorf("no origin to count against")
+// THE ORIGIN IS THE ONLY TIE, and it is a real one: a service dig inherits the
+// origin of the demand that could not move, precisely so the cost of digging
+// lands in that demand's episode. If anything in that episode is still live, the
+// thing the excavation was run for has not finished and the bin it uncovered is
+// what that episode is waiting on.
+//
+// This is the conclusion §R.40 reached from the other end. It ruled out a
+// requester POINTER because a dig serves a lane and the relation is one-to-many,
+// and because a pointer goes stale on the event that matters — the requester
+// being cancelled. The episode does not go stale: it names the work rather than
+// a row, and an episode with nothing live in it is over.
+//
+// ── THE PREFERENCE, AND WHY IT IS AN ORDER BY RATHER THAN A FILTER ────────
+//
+// An order that has ALREADY resolved onto the target slot is the collector
+// beyond doubt — source_node says so — and it goes first. But a demand still
+// waiting out the dig has not resolved onto anything, so requiring that match
+// would return nobody in the ordinary case. Preference, not requirement.
+//
+// EXCLUDES LEGS AND OTHER DIGS. A leg is somebody's child and owns no demand of
+// its own; another dig in the same episode is a peer excavation, not a
+// collector, and one demand can raise several (two of the five on the rig shared
+// one episode). Handing a corridor to either would hand it to something that is
+// never going to collect anything.
+func (db *DB) CollectorForDigTarget(parent *orders.Order) (*orders.Order, error) {
+	if parent == nil || parent.OriginID == "" {
+		// No origin is not answerable and must not be guessed at. An order created
+		// without one is its own defect (origin_class 'orphan'); what it costs here
+		// is a corridor released a scan early, which is the recoverable direction.
+		return nil, nil
 	}
-	var n int
-	err := db.QueryRow(fmt.Sprintf(
-		`SELECT COUNT(*) FROM orders
-		  WHERE origin_id = $1 AND id <> $2 AND status NOT IN (%s)`,
-		protocol.TerminalStatusSQLList()), originID, excludeOrderID).Scan(&n)
+	row := db.QueryRow(fmt.Sprintf(
+		`SELECT %s FROM orders
+		  WHERE origin_id = $1 AND id <> $2 AND status NOT IN (%s)
+		    AND parent_order_id IS NULL AND dig_target_node = ''
+		  ORDER BY (source_node = $3) DESC, id
+		  LIMIT 1`,
+		orders.SelectCols, protocol.TerminalStatusSQLList()),
+		parent.OriginID, parent.ID, parent.DigTargetNode)
+	o, err := orders.ScanOrder(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	if err != nil {
-		return 0, fmt.Errorf("count live orders in episode %s: %w", originID, err)
+		return nil, fmt.Errorf("collector for dig %d's target %s: %w", parent.ID, parent.DigTargetNode, err)
 	}
-	return n, nil
+	return o, nil
 }
 
 // LaneAcceptsInbound reports whether a lane currently has no mouth hold that
@@ -831,6 +822,39 @@ func (db *DB) OrderIsCompoundLeg(orderID int64) (bool, error) {
 // walled in. F-19 is that scenario, and it still passes — the guard changed
 // spelling, not meaning.
 //
+// ── THE CLAIM IS NOT THE ONLY SPELLING OF "COMING FOR IT" ─────────────────
+//
+// bin_id is the other one, and reading only claimed_by is how this guard went
+// blind on the lane-stress rig 2026-08-13.
+//
+// The specimen, from the rig's own rows. Dig 8 was raised for order 1 and parked
+// its first blocker — bin 6 — at LSD_010, the back of LS_D2. A blocker in a
+// parking slot is an ordinary reachable bin of an ordinary style, and it was the
+// most reachable one of its style in the group, so order 1 RESOLVED ONTO IT:
+// bin_id 6, source_node LSD_010. The dig's next leg then parked bin 8 at LSD_007,
+// two slots in front of it, and walled in the bin its own demand was now coming
+// for. Order 1 has sat `staged` under lane-target-buried ever since.
+//
+// This guard was asked and answered NOTHING. Bin 6's claimed_by was NULL,
+// because a claim is taken and released around each movement while bin_id is the
+// resolve's durable record of which bin this order is for — and the burial
+// happened in exactly the interval between two claims. Asked with bin_id, the
+// same query returns LSD_006 through LSD_009: the four slots in front of it, one
+// of which is the slot the burial used.
+//
+// IT IS PAIRED WITH source_node, WHICH IS WHAT MAKES IT A DIRECTION. bin_id
+// alone says "this order's bin", not "this order is coming for it" — a store's
+// bin_id goes on pointing at its bin after it has PLACED it, and a bare aim term
+// therefore lets an order close a lane behind itself. An order coming to collect
+// names the slot the bin is standing in; one that has delivered names where it
+// came from. Together the two columns say the thing this guard needs and neither
+// says alone.
+//
+// THE TERMINAL FILTER IS NOT OPTIONAL WITH THIS TERM. claimed_by is reaped when
+// an order terminalizes; bin_id is not, and a finished order's bin_id would
+// otherwise protect a bin forever. It is written as a status filter on the holder
+// rather than as a second lookup so both spellings pass the same liveness test.
+//
 // THE ASKER IS NOT EXEMPT HERE, and that is one deliberate difference from the
 // store side, which excludes the requesting order. A dig asking "where may I park
 // this blocker" must not be allowed to bury a bin ITS OWN compound claimed a
@@ -854,6 +878,93 @@ func (db *DB) OrderIsCompoundLeg(orderID int64) (bool, error) {
 // re-key faithful to what the deleted bridge actually protected: a
 // pending_lane_extensions row existed only for a bin a FINISHED dig had already
 // UNCOVERED — i.e. a reachable one — never for a target still under a wall.
+// LiveServiceDigInEpisode returns the id of a service dig already running for
+// this episode, or 0 when there is none.
+//
+// A service dig is an order that names a dig target; "running" is any
+// non-terminal status. Both halves matter: a terminal dig is finished work and a
+// plain buried retrieve carries no target, because it IS the demand and cannot
+// compete with itself.
+//
+// It answers "has this demand already got an excavation going", and the answer
+// gates raising a second one. See serviceDigEpisodeAlreadyDigging for the
+// standoff that made this necessary and for why the ORIGIN is the key.
+//
+// An empty origin is not answerable and must not be guessed at: an order with no
+// episode gets no limit, which is the same disposition every other episode-keyed
+// reader takes and the honest one — the alternative is to serialise every
+// unattributed dig in the plant against every other.
+//
+// ── IT NOW SAYS WHETHER IT ASKED, AND THAT IS THE WHOLE CHANGE ────────────
+//
+// asked=false means the question was never put to the database. It used to
+// return (0, nil) for that, which is the same pair it returns for "I asked and
+// there is no dig running" — so the caller's gate read a refusal-to-answer as a
+// clean bill of health and let the dig through. The GATE'S BEHAVIOUR IS
+// UNCHANGED and deliberately so: an unattributed demand still gets no limit,
+// because serialising every originless dig in the plant against every other is
+// the worse failure. What changes is that the caller can now RECORD that its
+// admission control did not run, instead of being unable to tell.
+//
+// This is the house rule about a check knowing whether it had its input, applied
+// to a reader rather than to a check: a bare zero cannot distinguish absence of
+// data from absence of a finding, so the reader must return both facts.
+func (db *DB) LiveServiceDigInEpisode(originID string) (digID int64, asked bool, err error) {
+	if originID == "" {
+		return 0, false, nil
+	}
+	var id int64
+	qErr := db.QueryRow(fmt.Sprintf(
+		`SELECT id FROM orders
+		  WHERE origin_id = $1 AND dig_target_node <> '' AND status NOT IN (%s)
+		  ORDER BY id LIMIT 1`, protocol.TerminalStatusSQLList()), originID).Scan(&id)
+	if qErr == sql.ErrNoRows {
+		return 0, true, nil
+	}
+	if qErr != nil {
+		return 0, false, fmt.Errorf("live service dig in episode %s: %w", originID, qErr)
+	}
+	return id, true, nil
+}
+
+// SlotsThatWouldEntombASpokenForSlot returns the slots in a group that a dig
+// must not park a blocker in, because doing so would seal an EMPTY slot deeper
+// in the same lane that a live order is coming to fill.
+//
+// It is the dig's half of EntombsASpokenForSlotSQL; the store selector asks the
+// same question inline, of one candidate, which is exactly how the two halves of
+// the burial guard beside it are already arranged. Group-scoped and read once
+// per pass, for the same reason the burial set is: it is asked per candidate and
+// the answer cannot change mid-pass without the pass being wrong anyway.
+//
+// OWNER-BLIND, and that is the load-bearing half. A dig is exempt from its own
+// dig lock everywhere else, and the exemption here would let a compound entomb a
+// slot its own next leg is driving to — which costs the plant the same slot as
+// anybody else entombing it would. The burial exclusion makes the identical
+// argument in the identical words: not even your own.
+func (db *DB) SlotsThatWouldEntombASpokenForSlot(groupID int64) (map[int64]bool, error) {
+	rows, err := db.DB.Query(fmt.Sprintf(`
+		SELECT DISTINCT n.id
+		FROM nodes n
+		JOIN nodes lane ON lane.id = n.parent_id
+		WHERE lane.parent_id = $1
+		  AND %s`, helpers.EntombsASpokenForSlotSQL("n", "0", protocol.TerminalStatusSQLList())), groupID)
+	if err != nil {
+		return nil, fmt.Errorf("slots that would entomb a spoken-for slot in group %d: %w", groupID, err)
+	}
+	defer rows.Close()
+
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan entombing slot: %w", err)
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 func (db *DB) SlotsBlockedByHardClaims(groupID int64) (map[int64]bool, error) {
 	rows, err := db.DB.Query(fmt.Sprintf(`
 		SELECT DISTINCT n.id
@@ -864,11 +975,14 @@ func (db *DB) SlotsBlockedByHardClaims(groupID int64) (map[int64]bool, error) {
 			SELECT 1 FROM nodes held
 			JOIN bins held_bin ON held_bin.node_id = held.id
 			JOIN orders holder ON holder.id = held_bin.claimed_by
+			                   OR (holder.bin_id = held_bin.id AND holder.source_node = held.name)
 			WHERE held_bin.status <> 'retired'
 			  AND holder.parent_order_id IS NULL
+			  AND holder.status NOT IN (%s)
 			  AND %s
 			  AND %s
-		  )`, helpers.ShallowerInSameLane("n", "held"), helpers.ReachableSQL("held")), groupID)
+		  )`, protocol.TerminalStatusSQLList(),
+		helpers.ShallowerInSameLane("n", "held"), helpers.ReachableSQL("held")), groupID)
 	if err != nil {
 		return nil, fmt.Errorf("slots blocked by hard claims in group %d: %w", groupID, err)
 	}

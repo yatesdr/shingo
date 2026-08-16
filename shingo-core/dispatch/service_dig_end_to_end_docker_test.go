@@ -11,6 +11,7 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // service_dig_end_to_end_docker_test.go — THE A BATCH'S PROOF.
@@ -47,6 +48,16 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	demand := mkQueuedComplexParent(t, db, "uuid-e2e-service-dig", bp.Code)
+	// AN ORIGIN, because production always stamps one and the corridor handoff
+	// needs it: a service dig inherits the origin of the demand that could not
+	// move, and that episode is the only tie between the two rows. An order
+	// created without one is its own defect (origin_class 'orphan'), and what it
+	// costs here is a corridor released a scan early rather than handed over.
+	_, err := db.Exec(`UPDATE orders SET origin_id = $1, origin_class = 'demand' WHERE id = $2`,
+		"55555555-5555-5555-5555-555555555555", demand.ID)
+	testutil.MustNoErr(t, err, "stamp the demand's origin")
+	demand, err = db.GetOrder(demand.ID)
+	testutil.MustNoErr(t, err, "reload the demand with its origin")
 
 	// ── THE BURIAL ────────────────────────────────────────────────────────
 	d.handleComplexBuriedOnReplay(demand, &BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID})
@@ -95,59 +106,52 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 	// batch changes how legs pipeline.
 	driveDigToCompletion(t, db, d, dig)
 
-	// (4) THE TARGET IS REACHABLE, AND THE LANE IS STILL HELD — BY THE DIG ITSELF.
+	// (4) THE TARGET IS REACHABLE, AND THE CORRIDOR HAS CHANGED HANDS.
 	//
-	// This assertion used to read "the lane is open and the lock is gone. No lock
-	// outlives the compound any more; that was the bridge." §R.76 amended the
-	// first half and left the second half exactly as true, and the difference
-	// between them is the whole point:
+	// This assertion has been through three shapes and the differences are the
+	// argument, so all three are here:
 	//
 	//	THE EXPOSE BRIDGE transferred the lock to the COMPLEX PARENT, parked the
 	//	fact in pending_lane_extensions, and released it when a re-parented demand
-	//	came back through ResumeCompound. A lock changed owner, outlived its
-	//	compound, and depended on another order's lifecycle to end.
+	//	came back through ResumeCompound. A side table, and a resumption path that
+	//	existed only for this case.
 	//
-	//	ARM 2 does none of that. The lock never leaves the dig that took it, there
-	//	is no side table, and it ends on a PHYSICAL fact — the bin leaving — which
-	//	no order's death can strand. The dig has not completed; it is holding.
+	//	THE DIG-SIDE HOLD kept the lock on the dig until the bin left, keyed on a
+	//	physical fact so no order's death could strand it. It closed the exposure
+	//	and opened a worse hole: the dig never terminated, and when the episode
+	//	ended without collecting the bin, the corridor was shut with no releaser in
+	//	the world. Five at once on the lane-stress rig.
 	//
-	// What it buys is the window this test used to open. The demand below is
-	// `queued` and coming for that bin, protected by nothing but a hard claim; the
-	// moment that claim is cancelled the slots this dig just emptied are ordinary
-	// shuffle candidates, and the bin is re-buried before the demand is re-driven.
+	//	THE HANDOFF, which is this. The lane goes to the live demand in the dig's
+	//	episode as that demand's OWN outbound hold, and the dig finishes. Outbound
+	//	excludes exactly what has to be excluded — a drop into the lane, the only
+	//	way the uncovered bin can be re-buried — and the hold now sits inside an
+	//	ordinary order's lifetime, so it cannot outlive the work it was taken for.
 	acc, err := db.IsSlotAccessible(slots[1].ID)
 	testutil.MustNoErr(t, err, "ask whether the target is reachable now")
 	if !acc {
 		t.Fatal("the target slot is still walled after the dig completed — the excavation did not " +
 			"actually excavate")
 	}
-	if !d.laneLock.IsLocked(lane.ID) {
-		t.Fatal("the lane was released the moment the blocker landed, leaving the bin the demand is " +
-			"queued for standing at an open mouth with only its claim over it (§R.76)")
-	}
-	stillDigging, err := db.GetOrder(dig.ID)
-	testutil.MustNoErr(t, err, "reload the dig")
-	if protocol.IsTerminal(stillDigging.Status) {
-		t.Fatalf("the dig is %q while it still holds the lane — THAT would be a lock outliving its "+
-			"compound, which is the bridge shape and stays deleted. The hold is the dig's own",
-			stillDigging.Status)
-	}
-
-	// (4b) AND IT ENDS WHEN THE DEMAND TAKES ITS BIN. Any mover ends it; here it
-	// is the customer the excavation was run for, which is the ordinary case.
-	testutil.MustNoErr(t, db.MoveBinToTransit(target.ID, transitNode(t, db, "E2E-TRANSIT").ID),
-		"the demand lifts the bin the dig uncovered")
-	d.maybeReleaseDigOnLastBlockerOut(lane.ID)
 	if d.laneLock.IsLocked(lane.ID) {
-		t.Error("the lane is still dig-locked after the target left it — the excavation is done and " +
-			"the bin is gone, so the corridor is held for nothing")
+		t.Fatalf("lane %s is still DIG-locked after the excavation finished. The digging is over; "+
+			"what remains is the demand's own pickup, and a corridor held by a dig with nothing left "+
+			"to do in it is an order that can never terminate", lane.Name)
+	}
+	holders, err := reservations.ActiveMouthRows(db.DB, lane.ID)
+	testutil.MustNoErr(t, err, "read the lane's mouth holds after the dig finished")
+	if len(holders) != 1 || holders[0].OrderID != demand.ID || holders[0].Mode != reservations.ModeOutbound {
+		t.Fatalf("lane %s holds %+v after its dig finished, want one OUTBOUND row for the demand %d. "+
+			"Releasing outright leaves the bin the demand is queued for standing at an open mouth, "+
+			"with the slots the dig just emptied as the cheapest shuffle candidates in the group",
+			lane.Name, holders, demand.ID)
 	}
 	finished, err := db.GetOrder(dig.ID)
-	testutil.MustNoErr(t, err, "reload the dig after the target left")
+	testutil.MustNoErr(t, err, "reload the dig")
 	if !protocol.IsTerminal(finished.Status) {
-		t.Errorf("the dig is %q after releasing its lane — it owes nothing and holds nothing, and a "+
-			"row parked in `reshuffling` forever is one every census has to learn to ignore",
-			finished.Status)
+		t.Fatalf("the dig is %q with its corridor already handed over. It owes nothing and holds "+
+			"nothing, and a row parked in `reshuffling` forever is one every census and every stall "+
+			"checker has to learn to ignore", finished.Status)
 	}
 
 	// (5) THE DEMAND IS STILL EXACTLY WHERE IT WAS, and still readable. It was

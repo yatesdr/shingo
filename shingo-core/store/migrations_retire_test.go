@@ -24,8 +24,13 @@ import (
 // migrations (v71–v75) sit above v70, and v76 (the lane-occupancy resource_kind)
 // above those, so the head is 76 rather than 70. v78 dropped
 // pending_lane_extensions, the expose bridge's table, with the machinery that
-// read it; v79 — orders.dig_target_node, the bin a service dig uncovers and the
-// fact its lane's release now keys on — is the current head.
+// read it; v79 added orders.dig_target_node, the slot a service dig uncovers;
+// v80 deduped order_bins and enforced one row per (order, bin), the grain the
+// junction always claimed and never had; v81 — demand_origins episodes become
+// produce/consume instead of supply/evacuate, retiring the second vocabulary for
+// the claim's own role — is the current head. v81 is a DATA migration: it alters
+// no schema object, which is why its post-condition reads rows rather than
+// asking ColumnExists.
 //
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
@@ -37,8 +42,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 79 {
-		t.Errorf("head migration = %d, want 79", got)
+	if got := store.LatestMigrationVersion(); got != 81 {
+		t.Errorf("head migration = %d, want 81", got)
 	}
 }
 

@@ -684,6 +684,7 @@ CREATE TABLE public.orders (
     origin_id uuid,
     origin_class text DEFAULT ''::text NOT NULL,
     open_for_children boolean DEFAULT false NOT NULL,
+    dig_target_node text DEFAULT ''::text NOT NULL,
     orphan_aged_at timestamp with time zone
 );
 
@@ -1354,6 +1355,8 @@ CREATE UNIQUE INDEX idx_supply_refusals_open ON public.supply_refusals USING btr
 CREATE INDEX idx_supply_refusals_payload ON public.supply_refusals USING btree (payload_code, refused_at DESC);
 
 CREATE INDEX ix_process_styles_active ON public.process_styles USING btree (process_id) WHERE is_active;
+
+CREATE UNIQUE INDEX order_bins_order_bin_uniq ON public.order_bins USING btree (order_id, bin_id);
 
 CREATE UNIQUE INDEX uq_reservations_bin_active ON public.reservations USING btree (bin_id) WHERE ((resource_kind = 'bin'::text) AND (state = ANY (ARRAY['pending'::text, 'confirmed'::text])));
 

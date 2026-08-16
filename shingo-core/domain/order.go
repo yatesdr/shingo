@@ -139,12 +139,16 @@ type Order struct {
 	// the dig, because what the lock protects is the bin's exposure and nothing
 	// else.
 	//
-	// THE THIRD LEGITIMATE NON-TERMINAL STATE. A dig still owing its target
-	// sits in `reshuffling` with every child terminal, which is the exact shape
-	// the two readers named above call FINISHED -- so both of them consult
-	// this, and so does maybeReleaseDigOnLastBlockerOut, which is the third and
-	// last. Everything else that walks the child list is still asking a
-	// different question and still must not consult it.
+	// A LEGITIMATE NON-TERMINAL STATE. A dig still owing its target sits in
+	// `reshuffling` with every child terminal, which is the exact shape a
+	// completion arm reads as FINISHED.
+	//
+	// This paragraph used to name three readers that consult it. Two went with
+	// the hand-back: the demand is no longer re-parented into its own dig, so
+	// nothing resumes and the lane is not held past the compound's completion.
+	// ONE reader survives (dispatch/dig_lock_release.go's handoff). The rule is
+	// unchanged — everything else that walks the child list is asking a
+	// different question and still must not consult this.
 	//
 	// Empty is the safe reading in both languages, for the same reason
 	// OpenForChildren is named for its exception: a bare orders.Order has no

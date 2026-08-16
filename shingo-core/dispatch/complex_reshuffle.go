@@ -87,8 +87,15 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 	case serviceDigLaneBusy:
 		// Very often a dig serving the same wall for somebody else, which is the
 		// 1:many shape a service dig is FOR. Its completion re-drives every waiter.
+		//
+		// NAME THAT DIG. "Somebody else's excavation on your lane" is precisely
+		// the wait an operator cannot resolve from the board: the lane is not
+		// theirs, the dig is not theirs, and the only actionable fact is which
+		// excavation has to finish.
+		digID, digTarget := digWaitFor(d.db, d.laneLock, lane.ID)
 		park(protocol.QueueStorageRearranging, CauseLaneLocked,
-			QueueParams{Lane: lane.Name, Payload: payloadCode})
+			QueueParams{Lane: lane.Name, Payload: payloadCode,
+				DigOrderID: digID, DigTarget: digTarget})
 
 	case serviceDigNoShuffleSlot:
 		// Congestion. A freed slot anywhere in the group releases it. The complex
@@ -101,27 +108,32 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 		// Right of way. The lane NAMED here is the one the rule refused, not the one
 		// being dug — an operator asking "why is nothing happening" needs the lane
 		// that has to free, and it is somebody else's.
+		parkingLane := parkingLaneOf(res.err, lane.Name)
+		holdID, holdTarget := digWaitByLaneName(d.db, d.laneLock, parkingLane)
 		park(protocol.QueueStorageRearranging, CauseDigHoldsParking,
-			QueueParams{Lane: parkingLaneOf(res.err, lane.Name), Payload: payloadCode})
-
-	case serviceDigGroupCannotAfford:
-		// The usable-capacity claim. The lane named is the one being dug, because
-		// there is no other lane to point at — the shortage is the GROUP's, and the
-		// arithmetic that produced it is in the error the log carries.
-		park(protocol.QueueStorageRearranging, CauseGroupRoomClaimed,
-			QueueParams{Lane: lane.Name, Payload: payloadCode})
-
-	case serviceDigGroupOwesCollection:
-		// The lane named is the one being dug, for the same reason as the arm
-		// above: the rule is the GROUP's. The error carries which reshuffle and
-		// which slot, and the log line has it.
-		park(protocol.QueueStorageRearranging, CauseGroupOwesCollection,
-			QueueParams{Lane: lane.Name, Payload: payloadCode})
+			QueueParams{Lane: parkingLane, Payload: payloadCode,
+				DigOrderID: holdID, DigTarget: holdTarget})
 
 	case serviceDigBlockerClaimed:
 		// The commonest holder is a robot already carrying that bin out of the lane.
+		blockerDigID, blockerTarget := digWaitFor(d.db, d.laneLock, lane.ID)
 		park(protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
-			QueueParams{Lane: lane.Name, Payload: payloadCode})
+			QueueParams{Lane: lane.Name, Payload: payloadCode,
+				DigOrderID: blockerDigID, DigTarget: blockerTarget})
+
+	case serviceDigEpisodeAlreadyDigging:
+		// This demand is already being dug for, somewhere else. Not a refusal by
+		// anybody else and not congestion: the plant is working on it, and raising
+		// a second excavation for one bin is what put two of them in a mutual hold
+		// on the rig. The releaser is that dig finishing, which re-drives this.
+		// THE DIG IS THE WHOLE ANSWER HERE. "This demand is already being dug
+		// for, somewhere else" is unactionable without naming where: the
+		// excavation is on a DIFFERENT lane than the one just refused, so the
+		// lane in this sentence is not the one that has to free.
+		ownDigID, ownDigTarget := digWaitForEpisode(d.db, res)
+		park(protocol.QueueStorageRearranging, CauseEpisodeAlreadyDigging,
+			QueueParams{Lane: lane.Name, Payload: payloadCode,
+				DigOrderID: ownDigID, DigTarget: ownDigTarget})
 
 	case serviceDigNothingInTheWay:
 		// The lane moved between the resolve and the plan, which is the outcome we

@@ -6,31 +6,54 @@ import (
 
 	"shingo/protocol"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
+
+// digHandoffReservedBy tags the mouth row a finished dig hands to the order
+// collecting its bin, so a reader looking at a lane's holders can tell an
+// ordinary outbound hold from one that came out of an excavation.
+const digHandoffReservedBy = "dighandoff"
 
 // FLIP 2 — the dug lane's dig claim drops when the last blocker LEAVES THE LANE,
 // not when the compound terminates.
 //
-// ── AMENDED (§R.76): A SERVICE DIG HOLDS UNTIL ITS TARGET BIN IS COLLECTED ─
+// ── AMENDED: THE EXCAVATION ENDS, AND THE CORRIDOR CHANGES HANDS ──────────
 //
 // Flip 2 as first built was right about transport and wrong about one shape. A
 // SERVICE dig — one raised to clear a lane for somebody else, which owns no
 // retrieve of its own — finished the moment its last blocker placed, dropped its
 // claim, and left the bin it had just uncovered standing at an open lane mouth.
-// Nothing then held that corridor. What kept the next order from taking the very
-// slots the dig had emptied was the CLAIM on the target bin, checked by
-// SlotsBlockedByHardClaims, and a claim is a thing that can be cancelled. Cancel
-// it and on the next pass those slots are ordinary shuffle candidates: the bin
-// gets re-buried by the traffic the excavation was run to get ahead of.
+// Nothing then held that corridor, and the slots the dig had just emptied were
+// the cheapest shuffle candidates in the group: the bin got re-buried by the
+// traffic the excavation was run to get ahead of.
 //
-// So the claim now spans the excavation AND the retrieval it was raised for. The
-// release asks one more question — is the target bin still standing there — and
-// that question is deliberately PHYSICAL rather than about any order's status,
-// because the point is to stop depending on an order that may not survive.
+// The first fix for that was to make the dig KEEP its lane until the bin it
+// uncovered was collected. It closed the re-burial window and opened a worse
+// one. A dig holding for its target is a finished order that never terminates —
+// a third non-terminal state, invisible to every stall checker, holding a
+// corridor on behalf of a demand it has no way to ask about. On the lane-stress
+// rig 2026-08-13 five of them held five lanes, and no live order wanted any of
+// the five slots they were holding for: every demand had re-resolved onto a bin
+// somewhere else while the digging went on. The holds were against a snapshot
+// the plant had moved past, and together they were the wedge.
 //
-// The plain buried retrieve is untouched and needs nothing: it re-parents the
-// demand, so the fetch is one of its own legs and legStillNeedsLane already sees
-// it sitting in the lane. Only the service shape had no leg to see.
+// So the dig does not hold and does not linger. IT HANDS THE CORRIDOR TO THE
+// ORDER THAT IS ACTUALLY COMING FOR THE BIN — looked up now, from what the plant
+// wants now — as that order's own outbound hold, and then finishes. Three things
+// follow, and they are the point:
+//
+//	THE HOLD ENDS BY ITSELF. Its owner is a live order. Its per-visit release
+//	drops it when the bin clears the lane and its terminalization drops it
+//	whatever else happens, so no hold can outlive the work it was taken for.
+//
+//	A DEMAND THAT MOVED ON HOLDS NOTHING. No collector, no handoff, lane free.
+//
+//	THE DIG TERMINATES ON ITS ORDINARY PATH. No guard in the completion arm, no
+//	carve-out in the reconciliation sweep, no re-drive to un-stick it later.
+//
+// The plain buried retrieve is untouched and needs none of this: it re-parents
+// the demand, so the fetch is one of its own legs and legStillNeedsLane already
+// sees it sitting in the lane. Only the service shape had no leg to see.
 //
 // ── WHAT IT COSTS TODAY ───────────────────────────────────────────────────
 //
@@ -100,9 +123,9 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 		}
 	}
 
-	// NOTHING OF THIS DIG'S OWN WORK IS IN THE LANE ANY MORE — but a service dig
-	// still owes the bin it uncovered, and that debt outlives every one of its
-	// legs. Ask before releasing.
+	// NOTHING OF THIS DIG'S OWN WORK IS IN THE LANE ANY MORE. If it uncovered a
+	// bin, the corridor changes hands here rather than opening; if it did not, it
+	// opens.
 	//
 	// FAIL CLOSED ON AN UNREADABLE PARENT, like every other read in this file. The
 	// compound's own teardown (unlockLaneForCompound) is the backstop, so a lane
@@ -113,27 +136,8 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 			"released (%v) — keeping the claim", digOwner, laneID, pErr)
 		return
 	}
-	owes, oErr := d.db.DigStillOwesItsTarget(parent)
-	if oErr != nil {
-		// The predicate has already chosen the disposition and returned it; this
-		// only says so. A misconfigured target releases the lane and is LOUD,
-		// because a hold nothing in the world can end is worse than an early one.
-		log.Printf("dig lock: %v", oErr)
-	}
-	if owes {
-		// LAW 8: owner, cause and releaser, on the parent itself. Without this the
-		// board shows a reshuffle in `reshuffling` with every child confirmed and
-		// no explanation — which is indistinguishable from the stall this is not.
-		lane, lErr := d.db.GetNode(laneID)
-		laneName := fmt.Sprintf("%d", laneID)
-		if lErr == nil && lane != nil {
-			laneName = lane.Name
-		}
-		d.setQueueReason(parent, protocol.QueueStorageRearranging, CauseReshuffleHoldsTarget,
-			QueueParams{Lane: laneName, HoldingTarget: parent.DigTargetNode})
-		d.dbg("dig lock: compound %d keeps lane %s — its blockers are out, but the bin it uncovered "+
-			"at %s has not been collected yet", digOwner, laneName, parent.DigTargetNode)
-		return
+	if d.handOffDugLane(parent, laneID) {
+		return // the corridor now belongs to the order collecting the bin
 	}
 
 	// Release and wake: a corridor that just became enterable is exactly the
@@ -150,29 +154,81 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 	// lane naming THIS one, so evaluating only the lane that just freed re-asks
 	// everyone except the population the cause was invented for.
 	d.EvaluateDwellersSharingGroupWith(laneID)
+}
 
-	// AND FINISH THE PARENT, IF THIS RELEASE IS WHAT IT WAS WAITING FOR.
-	//
-	// A service dig that held for its target has ALREADY been through
-	// AdvanceCompoundOrder's completion arm and been turned away, and the event
-	// that would ordinarily bring it back — its last child reaching a terminal
-	// status — fired while it was still holding and does not fire twice. Without
-	// this the parent sits in `reshuffling` forever with its lane already
-	// released: not a wedge, because it holds nothing, but a permanent row every
-	// census and every stall checker has to learn to ignore, which is the exact
-	// shape abandonHealParent exists to avoid creating.
-	//
-	// Narrow on purpose. Only a parent that named a target reaches this, so the
-	// ordinary dig's teardown is bit-for-bit what it was. AdvanceCompoundOrder is
-	// the same call every child terminal event makes and it no-ops on a compound
-	// whose children are still running, so the guard is about not changing
-	// untouched paths rather than about safety.
-	if parent.DigTargetNode != "" && parent.Status == protocol.StatusReshuffling {
-		if err := d.AdvanceCompoundOrder(digOwner); err != nil {
-			log.Printf("dig lock: compound %d released lane %d but could not be finished: %v "+
-				"(the reconciliation floor will re-drive it — it owes nothing now)", digOwner, laneID, err)
-		}
+// handOffDugLane gives laneID to the order coming to collect the bin this dig
+// uncovered, and reports whether it did. False means the lane is the caller's to
+// release: this dig uncovered nothing, or nobody is coming for what it uncovered.
+//
+// ── IT IS ASKED IN TWO HALVES, AND BOTH ARE PHYSICAL ──────────────────────
+//
+// IS ANYTHING STANDING THERE (DigStillOwesItsTarget) — the same predicate, the
+// same one spelling, now with one reader instead of three. A dig whose target
+// slot is empty uncovered nothing worth protecting: either the excavation was
+// for a slot rather than a bin (a dweller clearing somewhere to drop), or the bin
+// has already gone. Nothing to hand over.
+//
+// IS ANYBODY COMING (CollectorForDigTarget) — asked NOW, through the episode
+// that raised the dig, because that is the only tie a buried demand has to the
+// bin it is waiting for. This is the half that was missing: without it a corridor
+// is held for a demand that walked away, and the release is keyed on an event
+// that will never happen.
+//
+// ── EVERY DOUBT FALLS THE SAME WAY, AND IT IS NOT THE USUAL WAY ───────────
+//
+// Towards RELEASING. That is the opposite of the rest of this file, and it is
+// deliberate: everything above is deciding whether a dig is still WORKING, where
+// an early release drives another order into a live excavation. This decides who
+// owns an already-finished corridor, where the failure is a lane shut with
+// nothing running in it — no robot to finish, no leg to terminate, nothing whose
+// completion re-asks. A missed handoff costs the exposure window the ordinary
+// mouth gate covers on the demand's next dispatch; a wrong hold costs the lane.
+func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
+	if parent == nil {
+		return false
 	}
+	standing, sErr := d.db.DigStillOwesItsTarget(parent)
+	if sErr != nil {
+		// The predicate has already chosen the disposition and returned it; this
+		// only says so. A misconfigured target releases the lane and is LOUD,
+		// because a hold nothing in the world can end is worse than an early one.
+		log.Printf("dig lock: %v", sErr)
+	}
+	if !standing {
+		return false
+	}
+
+	laneName := fmt.Sprintf("%d", laneID)
+	if lane, err := d.db.GetNode(laneID); err == nil && lane != nil {
+		laneName = lane.Name
+	}
+
+	picker, err := d.db.CollectorForDigTarget(parent)
+	if err != nil {
+		log.Printf("dig lock: could not look up who is collecting %s after dig %d cleared %s: %v "+
+			"(releasing the lane — a corridor held on an unanswered question has no releaser)",
+			parent.DigTargetNode, parent.ID, laneName, err)
+		return false
+	}
+	if picker == nil {
+		d.recordExcavationWithNobodyComing(parent, laneName)
+		return false
+	}
+
+	handed, hErr := reservations.HandOffLaneToPicker(d.db.DB, laneID, parent.ID, picker.ID, digHandoffReservedBy)
+	if hErr != nil {
+		log.Printf("dig lock: could not hand lane %s from dig %d to order %d (%v) — leaving the dig's "+
+			"claim in place; the compound's own teardown releases it", laneName, parent.ID, picker.ID, hErr)
+		return true // the row may or may not have moved: do not release on top of a failed write
+	}
+	if !handed {
+		return false
+	}
+	log.Printf("dig lock: dig %d cleared %s and handed it to order %d, which is collecting the bin at "+
+		"%s. The corridor is now that order's outbound hold: nothing may drop into %s until it has "+
+		"its bin, and the hold ends with that order however it ends",
+		parent.ID, laneName, picker.ID, parent.DigTargetNode, laneName)
+	return true
 }
 
 // legStillNeedsLane reports whether one open leg of a dig still has business

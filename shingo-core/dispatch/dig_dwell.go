@@ -480,6 +480,12 @@ func (d *Dispatcher) dwellDestination(leg *orders.Order, lane *nodes.Node) (*nod
 			if errors.As(err, &held) {
 				return nil, RefusedAt(CauseDigHoldsParking, held.Lane), nil
 			}
+			// Hold B's version of the same courtesy: name the lane whose robot has
+			// to leave, rather than reporting a full group.
+			var busy *LaneOccupiedParkingError
+			if errors.As(err, &busy) {
+				return nil, RefusedAt(CauseLaneOccupied, busy.Lane), nil
+			}
 			if !errors.Is(err, ErrNoShuffleSlot) {
 				return nil, GateVerdict{}, err
 			}

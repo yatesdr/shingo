@@ -201,7 +201,7 @@ func TestOpenCellEpisode_SecondFireJoinsRatherThanMints(t *testing.T) {
 	eng, db, procID, procName, claim := episodeFixture(t, "JOIN-PROC", "ALN_006", 50)
 
 	first, joined, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false)
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestOpenCellEpisode_SecondFireJoinsRatherThanMints(t *testing.T) {
 	}
 
 	second, joined, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerOperator, 2, 38, false)
+		protocol.EpisodeTriggerOperator, 2, 38, false)
 	if err != nil {
 		t.Fatalf("second fire: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestOpenCellEpisode_SecondFireJoinsRatherThanMints(t *testing.T) {
 		t.Errorf("the join minted a new origin (%s != %s) — 07-21 would render as 484 demands", second, first)
 	}
 
-	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.ClaimRoleConsume)
 	open, err := db.GetOpenDemandOrigin(key)
 	if err != nil {
 		t.Fatalf("read open episode: %v", err)
@@ -233,14 +233,51 @@ func TestOpenCellEpisode_SecondFireJoinsRatherThanMints(t *testing.T) {
 		t.Errorf("rerequest_count = %d, want 1 — the count is the signal, not a second row", open.RerequestCount)
 	}
 
-	// The two directions are two demands, and must not collide.
-	evac, _, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionEvacuate, protocol.EpisodeTriggerAutoreorder, 2, 40, false)
-	if err != nil {
-		t.Fatalf("evacuate open: %v", err)
+	// ── TWO ROLES ON ONE PROCESS ARE TWO DEMANDS, AND MUST NOT COLLIDE ──────
+	//
+	// This block used to open a second episode on THIS SAME CLAIM with the other
+	// direction word, and assert the two did not collide. That state is not one
+	// the plant can produce: a claim has exactly one role (evaluateProduceLevel
+	// says so in as many words), so a single claim was only ever one direction —
+	// the fixture was pinning key separation with an input that could not exist,
+	// and it is unconstructible now that the role comes off the claim.
+	//
+	// The PROPERTY it was reaching for is real and is kept: one process can run a
+	// consume cell and a produce cell for the same payload at the same time, and
+	// those are two circles. So the second episode is opened from a second CLAIM,
+	// which is how the plant actually makes one.
+	produceNode := "ALN_006-P"
+	if _, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: procID, CoreNodeName: produceNode, Code: produceNode, Name: produceNode,
+		Sequence: 2, Enabled: true,
+	}); err != nil {
+		t.Fatalf("create the produce node: %v", err)
 	}
-	if evac == first {
-		t.Error("supply and evacuate at one cell are two demands, not one")
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: claim.StyleID, CoreNodeName: produceNode, Role: protocol.ClaimRoleProduce,
+		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PANEL-B",
+		UOPCapacity: 300, ReorderPoint: 50, AutoReorder: true,
+		InboundSource: "SYN_MARKET", OutboundDestination: "SYN_MARKET",
+		InboundStaging: "SLN_001", OutboundStaging: "SLN_011",
+	}); err != nil {
+		t.Fatalf("upsert the produce claim: %v", err)
+	}
+	produceClaim, err := db.GetStyleNodeClaimByNode(claim.StyleID, produceNode)
+	if err != nil || produceClaim == nil {
+		t.Fatalf("read the produce claim: %v", err)
+	}
+
+	other, joined, err := eng.openCellEpisode(procID, produceClaim,
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false)
+	if err != nil {
+		t.Fatalf("open the produce cell's episode: %v", err)
+	}
+	if joined {
+		t.Error("the produce cell JOINED the consume cell's episode — the role is part of the key " +
+			"precisely so one process's two cells stay two demands")
+	}
+	if other == first {
+		t.Error("produce and consume at one process are two demands, not one")
 	}
 }
 
@@ -252,20 +289,20 @@ func TestCloseCellEpisode_IsIdempotent(t *testing.T) {
 	eng, db, procID, procName, claim := episodeFixture(t, "CLOSE-PROC", "ALN_007", 50)
 
 	if _, _, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
-	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
+	eng.closeCellEpisode(procID, "PANEL-B", protocol.ClaimRoleConsume, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
+	eng.closeCellEpisode(procID, "PANEL-B", protocol.ClaimRoleConsume, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
-	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.ClaimRoleConsume)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("after close the episode must be gone, got err=%v", err)
 	}
 
 	// And the place is reusable: the next falling edge opens a NEW episode.
 	next, joined, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false)
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false)
 	if err != nil || joined || next == "" {
 		t.Errorf("after a close the next crossing opens a fresh episode: id=%q joined=%v err=%v", next, joined, err)
 	}
@@ -288,7 +325,7 @@ func TestCloseEpisode_KeepsRowWhenEnqueueFails(t *testing.T) {
 	eng, db, procID, procName, claim := episodeFixture(t, "ENQFAIL-PROC", "ALN_009", 50)
 
 	origin, _, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false)
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -296,9 +333,9 @@ func TestCloseEpisode_KeepsRowWhenEnqueueFails(t *testing.T) {
 		t.Fatalf("drop outbox: %v", err)
 	}
 
-	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
+	eng.closeCellEpisode(procID, "PANEL-B", protocol.ClaimRoleConsume, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
-	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.ClaimRoleConsume)
 	open, err := db.GetOpenDemandOrigin(key)
 	if err != nil {
 		t.Fatalf("episode must survive a close whose state never got enqueued, got err=%v", err)
@@ -321,7 +358,7 @@ func TestDemandOrigin_SurvivesRestart(t *testing.T) {
 	eng, db, procID, _, claim := episodeFixture(t, "RESTART-PROC", "ALN_008", 50)
 
 	original, _, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false)
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -329,7 +366,7 @@ func TestDemandOrigin_SurvivesRestart(t *testing.T) {
 	// A whole new Engine over the same database — the restart.
 	restarted := testEngine(t, db)
 	after, joined, err := restarted.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 38, false)
+		protocol.EpisodeTriggerAutoreorder, 2, 38, false)
 	if err != nil {
 		t.Fatalf("post-restart fire: %v", err)
 	}
@@ -430,7 +467,7 @@ func TestConsumeOrders_CarryTheEpisodesOrigin(t *testing.T) {
 	}
 	_ = res
 
-	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.ClaimRoleConsume)
 	open, err := db.GetOpenDemandOrigin(key)
 	if err != nil {
 		t.Skipf("no episode opened in this fixture (%v) — the stamping path is covered by the unit assertions below", err)
@@ -467,5 +504,185 @@ func TestOrigin_ClassesAreStampedNotInferred(t *testing.T) {
 	var unstated orders.Origin
 	if unstated.ID != "" || unstated.Class != "" {
 		t.Errorf("the zero Origin must state nothing, got %+v", unstated)
+	}
+}
+
+// TestBackfillCellOrigin_JoinsAnOpenEpisodeAndNeverMintsOne is the orphan
+// bucket's largest single source, closed.
+//
+// ── WHAT WAS WRONG ────────────────────────────────────────────────────────
+//
+// The sequential backfill created Order B through the UNATTRIBUTED constructor.
+// Every one of them reached Core with no origin and landed as an orphan, and on
+// the lane-stress rig 2026-08-13 that was seven backfills in a 17-minute window
+// — the whole of the complex-order orphan bucket.
+//
+// It is the same defect the changeover applier carries a paragraph about and the
+// same one operatorRequestOrigin was written to close for the HMI button. The
+// machinery was built and the doors were wired one at a time; this is the door
+// nothing had opened.
+//
+// ── AND WHY IT JOINS RATHER THAN OPENS ────────────────────────────────────
+//
+// A backfill exists because an earlier order for the same cell started moving.
+// Something else asked; this is the plant continuing to serve that ask, so it is
+// never itself the origin of a demand. Minting here would open an episode
+// attributed to a trigger that did not happen — and would need a trigger
+// constant for "a previous order moved", which is not a demand event.
+//
+// So the second half of this test is as load-bearing as the first: with nothing
+// open, the backfill attaches NOTHING and lets Core classify, which is the same
+// posture every other unattributed create site takes.
+//
+// MUTATION: point cellEpisodeOrigin at openCellEpisode instead of
+// joinOpenCellEpisode. The second half fires — a backfill mints an episode
+// nobody asked for, and every subsequent one joins that phantom.
+func TestBackfillCellOrigin_JoinsAnOpenEpisodeAndNeverMintsOne(t *testing.T) {
+	eng, db, procID, _, claim := episodeFixture(t, "BACKFILL-PROC", "ALN_009", 50)
+
+	node, err := db.GetProcessNodeByCoreNodeName("ALN_009")
+	if err != nil || node == nil {
+		t.Fatalf("read the process node: %v", err)
+	}
+
+	// ── NOTHING OPEN: the backfill attaches nothing and mints nothing ────────
+	if got := eng.cellEpisodeOrigin(node, claim); got.ID != "" || got.Class != "" {
+		t.Fatalf("backfill origin = %+v with no episode open, want the zero value. A backfill is "+
+			"never the origin of a demand — something else asked — so minting one here would open an "+
+			"episode attributed to a trigger that did not happen", got)
+	}
+	if open, err := db.GetOpenDemandOrigin(
+		protocol.CellEpisodeKey("BACKFILL-PROC", "PANEL-B", protocol.ClaimRoleConsume)); err == nil && open != nil {
+		t.Fatalf("the backfill MINTED episode %s. Every later backfill would then join a phantom "+
+			"demand nobody expressed", open.OriginID)
+	}
+
+	// ── AN EPISODE OPEN: the backfill joins it ───────────────────────────────
+	want, _, err := eng.openCellEpisode(procID, claim,
+		protocol.EpisodeTriggerAutoreorder, 1, 40, false)
+	if err != nil {
+		t.Fatalf("open the cell's episode: %v", err)
+	}
+	got := eng.cellEpisodeOrigin(node, claim)
+	if got.ID != want {
+		t.Fatalf("backfill origin = %q, want the cell's open episode %q. Order B is the plant "+
+			"continuing to serve the demand that produced Order A, so it belongs to that demand's "+
+			"episode — and an order with no origin is invisible to every instrument keyed on one",
+			got.ID, want)
+	}
+	if got.Class != protocol.OriginClassAttached {
+		t.Errorf("backfill origin class = %q, want %q — an order carrying an episode IS attached",
+			got.Class, protocol.OriginClassAttached)
+	}
+}
+
+// produceClaimFixture is episodeFixture with the cell re-declared as a PRODUCE
+// one. The shared fixture hardcodes the consume role, which is exactly why the
+// defect below survived it: on a consume claim the retired supply spelling and
+// the role agree, so every existing episode test passed while the produce half
+// of the plant could not attribute a single backfill.
+func produceClaimFixture(t *testing.T, procName, node string) (*Engine, *store.DB, int64, *processes.NodeClaim) {
+	t.Helper()
+	eng, db, procID, _, claim := episodeFixture(t, procName, node, 50)
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: claim.StyleID, CoreNodeName: node, Role: protocol.ClaimRoleProduce,
+		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PANEL-B",
+		UOPCapacity: 300, ReorderPoint: 50, AutoReorder: true,
+		InboundSource: "SYN_MARKET", OutboundDestination: "SYN_MARKET",
+		InboundStaging: "SLN_001", OutboundStaging: "SLN_011",
+	}); err != nil {
+		t.Fatalf("re-declare the claim as produce: %v", err)
+	}
+	produce, err := db.GetStyleNodeClaimByNode(claim.StyleID, node)
+	if err != nil || produce == nil {
+		t.Fatalf("read the produce claim: %v", err)
+	}
+	if produce.Role != protocol.ClaimRoleProduce {
+		t.Fatalf("fixture claim role = %q, want produce — this test is only about the produce half",
+			produce.Role)
+	}
+	return eng, db, procID, produce
+}
+
+// TestBackfillCellOrigin_JoinsTheProduceCellsEpisode is PANEL-B: the line four
+// reviewers converged on, and the reason every sequential backfill in the plant
+// reached Core as an orphan.
+//
+// cellEpisodeOrigin built its join key with a HARDCODED supply spelling. A
+// produce cell only ever opens its episode in the other one, and the spelling is
+// part of the key's identity — so the join asked for
+// `cell|PRESS-2|PANEL-B|supply` while the open row read
+// `cell|PRESS-2|PANEL-B|evacuate`. It could not match, ever. The miss returns no
+// origin, attribution never blocks transport, and Core honestly stamps orphan.
+// Seven backfills in a 17-minute window on the lane-stress rig 2026-08-13, seven
+// orphans, and they were the whole of the complex-order orphan bucket. An
+// earlier fix (7a38f0a9) wired this join up and KEPT the key, which is exactly
+// why it did not take.
+//
+// WHY NO EXISTING TEST CAUGHT IT: episodeFixture declares a consume claim, and
+// on a consume claim the retired spelling and the role agree. Every episode test
+// in this file passed throughout. The bug lived entirely in the half of the
+// plant the fixture did not build.
+//
+// THE FIX IS NOT A CONSTANT SWAP, which is what makes this test worth its
+// length. Correcting the hardcoded word to the other hardcoded word would fix
+// this cell and break the consume one. The role comes OFF THE CLAIM, so a
+// produce cell's backfill joins the produce episode because the claim says
+// produce — under §R.87, the backfill serves the cell's circle, and the circle's
+// identity is the cell's role.
+//
+// MUTATION (verified): hardcode either role in cellEpisodeOrigin's key. With
+// consume, this test fires and its consume sibling above stays green — which is
+// the original defect exactly. With produce, this one goes green and the sibling
+// fires, which is the same defect wearing the other word.
+func TestBackfillCellOrigin_JoinsTheProduceCellsEpisode(t *testing.T) {
+	eng, db, procID, claim := produceClaimFixture(t, "PANELB-PROC", "PRESS-2")
+
+	node, err := db.GetProcessNodeByCoreNodeName("PRESS-2")
+	if err != nil || node == nil {
+		t.Fatalf("read the process node: %v", err)
+	}
+
+	// The produce cell opens its episode, exactly as FinalizeProduceNode does.
+	want, _, err := eng.openCellEpisode(procID, claim,
+		protocol.EpisodeTriggerAutoreorder, 1, 40, false)
+	if err != nil {
+		t.Fatalf("open the produce cell's episode: %v", err)
+	}
+	if want == "" {
+		t.Fatal("the produce cell opened no episode, so this test cannot ask its question")
+	}
+
+	// And the backfill for that same cell must find it.
+	got := eng.cellEpisodeOrigin(node, claim)
+	if got.ID == "" {
+		t.Fatalf("the backfill attached NOTHING while episode %s was open for its own cell. That is "+
+			"the orphan: an order with no origin is invisible to every instrument keyed on the "+
+			"episode, and a service dig raised for it cannot look up who is collecting its target — "+
+			"so it hands its corridor to nobody and files a 'cleared a lane for a bin nobody is "+
+			"coming for' alarm against a demand that was, in fact, coming", want)
+	}
+	if got.ID != want {
+		t.Fatalf("backfill origin = %q, want the produce cell's open episode %q", got.ID, want)
+	}
+	if got.Class != protocol.OriginClassAttached {
+		t.Errorf("backfill origin class = %q, want %q", got.Class, protocol.OriginClassAttached)
+	}
+
+	// AND THE KEY IS THE ROLE'S, not a leg's. Reading it back is what keeps this
+	// test honest if someone later re-introduces a second vocabulary: the join
+	// could be made to work by translating at both ends, and this asserts that
+	// the stored identity is the claim's own word rather than a translation of it.
+	open, err := db.GetOpenDemandOrigin(
+		protocol.CellEpisodeKey("PANELB-PROC", "PANEL-B", protocol.ClaimRoleProduce))
+	if err != nil || open == nil {
+		t.Fatalf("the produce cell's episode is not stored under its role's key: %v", err)
+	}
+	if open.OriginID != want {
+		t.Errorf("episode at the produce key = %q, want %q", open.OriginID, want)
+	}
+	if open.Direction != protocol.ClaimRoleProduce {
+		t.Errorf("stored direction = %q, want %q — the column carries the claim's role now, not a "+
+			"leg name", open.Direction, protocol.ClaimRoleProduce)
 	}
 }

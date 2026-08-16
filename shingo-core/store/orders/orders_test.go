@@ -915,6 +915,68 @@ func TestUpdateBinIDAndListByBinID(t *testing.T) {
 
 // -------- Order <-> Bin junction: InsertOrderBin, ListOrderBins, DeleteOrderBins
 
+// TestOrderBinsJunction_ReRecordingAClaimUpdatesInPlace pins the grain the
+// junction always claimed to have and did not enforce.
+//
+// "One row per claimed bin" is what UpdateOrderBinDestNode is written against —
+// it keys on the bin and says so — and what binForStep assumes when it reads the
+// first row matching a step index as if it were the only one. InsertOrderBin was
+// a bare INSERT, so every re-run of an allocation added the same row again.
+//
+// Measured on the lane-stress rig 2026-08-13, during a window in which five
+// demands were stuck in a re-drive loop: 2,472 junction rows for a handful of
+// orders, 450 of them identical for one (order, step, bin). Nothing read a wrong
+// answer — the duplicates were identical and the first match wins — so the cost
+// was writes, unbounded growth for as long as an order stayed stuck, and a table
+// nobody could read during the incident that produced it.
+//
+// THE SECOND HALF IS WHY IT IS AN UPDATE AND NOT DO NOTHING. An allocation that
+// retries after the plan moved carries a NEW step index for the same bin, and
+// DO NOTHING would keep the stale one while reporting success — a junction that
+// disagrees with the plan, which is the one thing binForStep cannot survive.
+func TestOrderBinsJunction_ReRecordingAClaimUpdatesInPlace(t *testing.T) {
+	t.Parallel()
+	d := testdb.Open(t)
+	fx := testdb.SetupStandardData(t, d)
+	db := d.DB
+
+	bin := testdb.CreateBinAtNode(t, d, "PART-A", fx.StorageNode.ID, "BIN-DUP")
+	o := newPendingOrder("junction-dup")
+	o.OrderType = "compound"
+	testutil.MustNoErr(t, orders.Create(db, o), "Create order")
+
+	for i := 0; i < 3; i++ {
+		testutil.MustNoErr(t, orders.InsertOrderBin(db, o.ID, bin.ID, 1, "pick", "STORAGE-A1", ""),
+			"re-record the same claim")
+	}
+	list, err := orders.ListOrderBins(db, o.ID)
+	if err != nil {
+		t.Fatalf("ListOrderBins: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("len = %d after recording one claim three times, want 1. A retried allocation must "+
+			"not grow the junction: on the rig this reached 450 identical rows for a single bin while "+
+			"its order sat stuck", len(list))
+	}
+
+	// AND A MOVED PLAN REWRITES THE ROW rather than being silently dropped.
+	testutil.MustNoErr(t, orders.InsertOrderBin(db, o.ID, bin.ID, 4, "pick", "STORAGE-A2", "LINE1-IN"),
+		"re-record the claim at a new step")
+	list, err = orders.ListOrderBins(db, o.ID)
+	if err != nil {
+		t.Fatalf("ListOrderBins after the re-plan: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("len = %d, want 1", len(list))
+	}
+	if list[0].StepIndex != 4 || list[0].NodeName != "STORAGE-A2" || list[0].DestNode != "LINE1-IN" {
+		t.Errorf("the junction row is (step %d, %s -> %s), want (4, STORAGE-A2 -> LINE1-IN). A "+
+			"conflict that keeps the OLD row leaves the junction disagreeing with the plan, and "+
+			"binForStep would hand the gate a bin for a step that no longer exists",
+			list[0].StepIndex, list[0].NodeName, list[0].DestNode)
+	}
+}
+
 func TestOrderBinsJunction(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)

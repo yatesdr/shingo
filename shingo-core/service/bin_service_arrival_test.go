@@ -55,7 +55,12 @@ func TestApplyArrival(t *testing.T) {
 			claimer := testdb.CreateOrder(t, db)
 			testdb.ClaimBinForTest(t, db, bin.ID, claimer.ID)
 
-			evicted, err := svc.ApplyArrival(bin.ID, destNode.ID, tc.staged, tc.expiresAt, 0)
+			// placedByOrder is the CLAIMER, which is what a handoff is and what
+			// every production caller passes: an order delivering the bin it owns.
+			// It used to be 0 here, which no longer means "clear whatever claim is
+			// there" — the unclaim is owner-scoped, because an unscoped one erased
+			// other orders' claims on the rig.
+			evicted, err := svc.ApplyArrival(bin.ID, destNode.ID, tc.staged, tc.expiresAt, claimer.ID)
 			testutil.MustNoErr(t, err, "ApplyArrival")
 			if evicted {
 				t.Errorf("evicted = true, want false (arrival onto an empty destination must not evict)")
@@ -143,7 +148,7 @@ func TestApplyArrival_EvictsStaleGhostOnOccupiedPhysicalNode(t *testing.T) {
 	arrivingOrder := testdb.CreateOrder(t, db)
 	testdb.ClaimBinForTest(t, db, arriving.ID, arrivingOrder.ID)
 
-	evicted, err := svc.ApplyArrival(arriving.ID, destNode.ID, false, nil, 0)
+	evicted, err := svc.ApplyArrival(arriving.ID, destNode.ID, false, nil, arrivingOrder.ID)
 	testutil.MustNoErr(t, err, "ApplyArrival")
 	if !evicted {
 		t.Fatal("evicted = false, want true (occupied physical destination must evict the stale ghost)")
@@ -264,7 +269,7 @@ func TestApplyArrival_GhostEvictionKeepsALiveHolderClaim(t *testing.T) {
 	arrivingOrder := testdb.CreateOrder(t, db)
 	testdb.ClaimBinForTest(t, db, arriving.ID, arrivingOrder.ID)
 
-	evicted, err := svc.ApplyArrival(arriving.ID, destNode.ID, false, nil, 0)
+	evicted, err := svc.ApplyArrival(arriving.ID, destNode.ID, false, nil, arrivingOrder.ID)
 	testutil.MustNoErr(t, err, "ApplyArrival")
 	if !evicted {
 		t.Fatal("evicted = false, want true — the occupied physical destination must still be reconciled")
@@ -335,4 +340,91 @@ func TestListAnomalies_SeesAStrayOnAnySyntheticNode(t *testing.T) {
 	}
 	t.Errorf("a bin unclaimed on synthetic node %q is not on the anomalies page — nothing lists it, "+
 		"no floor covers it, and no selector will hand it out, so it is stranded silently", grp.Name)
+}
+
+// TestApplyArrival_DoesNotClearAnotherOrdersClaim is the integrity defect that
+// failed two swaps and cancelled their partners on the lane-stress rig
+// 2026-08-13.
+//
+// ── THE SPECIMEN ──────────────────────────────────────────────────────────
+//
+// Dig leg order 9 carried blocker bin 6 out of LSD_011 and set it down at
+// LSD_010. A blocker in a parking slot is an ordinary reachable bin of an
+// ordinary style — which is exactly what a demand resolves onto — and order 1
+// had already claimed it. Order 9's arrival cleared that claim, because the
+// unclaim was `WHERE id=$1` and nothing else.
+//
+// Everything after that followed: order 1 picked up its OWN bin with no claim on
+// it, so its intermediate set-down found "0 bins in transit under this claim" and
+// never recorded, and at final delivery the ledger check refused a robot carrying
+// a bin nobody owned. Order 1 failed on cargo_ledger_mismatch and took its
+// two-robot swap partner (order 7) with it. Twice in one window.
+//
+// The ledger check is right and the failure is honest — Core genuinely could not
+// identify what the robot was carrying. What produced the state it refused was
+// one unscoped UPDATE.
+//
+// MUTATION: drop the claimed_by predicate from applyArrival's unclaim. The
+// foreign claim is cleared again and the assertion fires — which is the rig's
+// own failure, one layer upstream of where it surfaced.
+func TestApplyArrival_DoesNotClearAnotherOrdersClaim(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := newBinSvc(db)
+
+	bt := &bins.BinType{Code: "FC-BT", Description: "tote"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
+	start := &nodes.Node{Name: "FC-START", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(start), "create start node")
+	dest := &nodes.Node{Name: "FC-DEST", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(dest), "create dest node")
+
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "FC-BIN", NodeID: &start.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
+
+	// THE DEMAND owns the bin. THE DIG LEG is putting it down. Two unrelated
+	// orders, which is the whole fixture: a dig parks a blocker, and the bin it
+	// parks is the most reachable one of its style in the group.
+	demand := testdb.CreateOrder(t, db)
+	digLeg := testdb.CreateOrder(t, db)
+	testdb.ClaimBinForTest(t, db, bin.ID, demand.ID)
+
+	if _, err := svc.ApplyArrival(bin.ID, dest.ID, false, nil, digLeg.ID); err != nil {
+		t.Fatalf("ApplyArrival: %v", err)
+	}
+
+	got, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "reload the bin")
+
+	// THE BIN IS PLACED EITHER WAY. The placement is not in question.
+	if got.NodeID == nil || *got.NodeID != dest.ID {
+		t.Fatalf("bin is at %v, want %d — the placement itself must be unaffected", got.NodeID, dest.ID)
+	}
+	// AND ITS OWNER STILL OWNS IT.
+	if got.ClaimedBy == nil || *got.ClaimedBy != demand.ID {
+		t.Fatalf("bin %d is claimed by %v after order %d placed it, want order %d. A handoff gives up "+
+			"THIS order's claim, not whoever's is there: order %d never let go of this bin, and a bin "+
+			"whose owner has been erased is one the delivery ledger cannot identify — which fails the "+
+			"order, and its two-robot swap partner with it",
+			bin.ID, got.ClaimedBy, digLeg.ID, demand.ID, demand.ID)
+	}
+
+	// AND THE PLACER'S OWN CLAIM IS STILL GIVEN UP, which is the half that must
+	// not regress: scoping the unclaim must not turn into never unclaiming.
+	own := &bins.Bin{BinTypeID: bt.ID, Label: "FC-OWN", NodeID: &start.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(own), "create the placer's own bin")
+	dest2 := &nodes.Node{Name: "FC-DEST-2", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(dest2), "create second dest")
+	testdb.ClaimBinForTest(t, db, own.ID, digLeg.ID)
+
+	if _, err := svc.ApplyArrival(own.ID, dest2.ID, false, nil, digLeg.ID); err != nil {
+		t.Fatalf("ApplyArrival for the placer's own bin: %v", err)
+	}
+	after, err := db.GetBin(own.ID)
+	testutil.MustNoErr(t, err, "reload the placer's own bin")
+	if after.ClaimedBy != nil {
+		t.Errorf("the placing order's own claim survived its delivery (claimed_by = %v). A handoff IS "+
+			"the end of that order's ownership, and a claim that outlives it blocks re-reservation "+
+			"until the order terminalizes", after.ClaimedBy)
+	}
 }

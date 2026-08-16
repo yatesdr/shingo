@@ -104,7 +104,8 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 	if toClaim.InboundStaging != "" {
 		steps := BuildStageSteps(toClaim)
 		if steps != nil {
-			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.InboundStaging, toClaim.CoreNodeName, steps)
+			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.InboundStaging, toClaim.CoreNodeName, steps,
+				e.changeoverOrigin(ctx.changeover.ID))
 			if err != nil {
 				return nil, err
 			}
@@ -117,7 +118,8 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 	// so the changeover retrieve honours the configured supermarket; empty
 	// preserves Core's global FIFO fallback for legacy claims.
 	retrieveEmpty := toClaim.Role == protocol.ClaimRoleProduce
-	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, toClaim.InboundSource, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm, false)
+	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, toClaim.InboundSource, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm, false,
+		e.changeoverOrigin(ctx.changeover.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +139,8 @@ func (e *Engine) EvacuateNode(processID, nodeID int64, partialQty int64) (*order
 	// Use claim-based release
 	if fromClaim := findActiveClaim(e.db, ctx.node); fromClaim != nil && fromClaim.OutboundStaging != "" {
 		steps := BuildReleaseSteps(fromClaim)
-		order, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&ctx.node.ID, 1, "", fromClaim.CoreNodeName, steps)
+		order, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&ctx.node.ID, 1, "", fromClaim.CoreNodeName, steps,
+			e.changeoverOrigin(ctx.changeover.ID))
 		if err != nil {
 			return nil, err
 		}
@@ -177,7 +180,8 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 	if toClaim.InboundStaging != "" {
 		steps := BuildStagedDeliverSteps(toClaim)
 		if steps != nil {
-			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, toClaim.CoreNodeName, steps)
+			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, toClaim.CoreNodeName, steps,
+				e.changeoverOrigin(ctx.changeover.ID))
 			if err != nil {
 				return nil, err
 			}

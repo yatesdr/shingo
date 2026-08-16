@@ -15,6 +15,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared/clock"
+	"shingocore/service"
 	"shingocore/store/orders"
 )
 
@@ -236,7 +237,14 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 	}
 
 	// Single-bin path
+	//
+	// SHADOWED: the diagnostic below reads a NULL bin_id as "planMove may have
+	// failed to persist BinID", which is true of a broken order AND true of a
+	// coordinator, whose bin_id is NULL permanently and correctly. See
+	// service.NoteFolderShadow.
 	if order.BinID == nil {
+		owns, oerr := e.db.OrderOwnsNoCargo(order.ID)
+		service.NoteFolderShadow(service.FolderSiteDeliverySettle, order.ID, true, owns, oerr)
 		// Bin-stuck-at-source diagnostic: this is the failure mode where
 		// planMove's UpdateOrderBinID didn't persist (or was never called)
 		// but the order still progressed to FINISHED. Without a log here,
@@ -473,7 +481,7 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 		return refusals
 	}
 
-	evictedGhosts, err := e.db.ApplyMultiBinArrival(instructions)
+	evictedGhosts, err := e.db.ApplyMultiBinArrival(order.ID, instructions)
 	if err != nil {
 		e.logFn("engine: multi-bin delivery arrival for order %d: %v", order.ID, err)
 		return refusals
@@ -537,7 +545,12 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 
 	// Legacy single-bin path: idempotent safety net — bin should already be at
 	// dest from handleOrderDelivered, but re-apply in case delivery arrival failed.
+	//
+	// SHADOWED (silent skip): a coordinator relies on this returning, and so does
+	// a defective order — the same branch for opposite reasons.
 	if order.BinID == nil {
+		owns, oerr := e.db.OrderOwnsNoCargo(order.ID)
+		service.NoteFolderShadow(service.FolderSiteCompletionNet, order.ID, true, owns, oerr)
 		return
 	}
 
@@ -698,7 +711,7 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 		return
 	}
 
-	evictedGhosts, err := e.db.ApplyMultiBinArrival(instructions)
+	evictedGhosts, err := e.db.ApplyMultiBinArrival(order.ID, instructions)
 	if err != nil {
 		e.logFn("engine: multi-bin arrival for order %d: %v", order.ID, err)
 		return

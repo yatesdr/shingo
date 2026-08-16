@@ -162,83 +162,32 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 		return nil, 0, err
 	}
 
-	// ── THE COUNT CHECK IS NOW AN AFFORDABILITY CHECK (§R.75/§R.76) ───────
+	// ── CAN THIS GROUP CLEAR THESE BLOCKERS? THAT IS THE WHOLE QUESTION ───
 	//
-	// It used to ask "are there len(blockers) slots I could use", which is true
-	// for every dig in the group at once and therefore admits them all. The
-	// famine is what that costs: three digs each counted the same six mouth
-	// slots, all three started, and each one's slots were the others' only
-	// source — a group that could afford one dig running three.
+	// A CLAIMS LEDGER STOOD HERE AND IS DELETED (§R.79 supersedes §R.75/§R.76
+	// arm 1). It counted the room already owed to running digs and required this
+	// dig to fit on top of it. Two things were wrong with it and the closing run
+	// showed both.
 	//
-	// So the question gains the room already owed. Every dig running in this
-	// group holds one slot's worth from its start until it binds a destination
-	// for its blocker, and this dig has to fit on top of that.
+	// It counted the wrong UNIT: `outstanding` was a count of DIGS, added to
+	// len(blockers), a count of SLOTS. And correcting the unit would not have
+	// helped, because a dig's instantaneous claim genuinely IS one slot — a
+	// compound dispatches one child at a time — while its cost to the group is
+	// every blocker it will park, permanently, since blockers are never
+	// restocked. The ledger was an estimate of a future it could not see.
 	//
-	// ONE PREDICATE, TWO AGGREGATIONS, and the law-3 rider is satisfied by
-	// construction rather than by a shared helper: admission asks findShuffleSlots
-	// for a COUNT it must reach, the release-time resolver asks the same function
-	// for ONE candidate it can use. Same walk, same exclusions, same reachability
-	// and claim rules — the only difference is the number. Adding the claims to
-	// the number is the entire change; nothing here re-implements "usable".
+	// What actually keeps two digs from eating each other is OWNERSHIP, not
+	// arithmetic: one robot per lane, enforced where the candidates are built
+	// (shuffleSlotsFrom now drops occupied lanes), so a dig fills a lane it owns
+	// deepest-first and cannot strand slots behind itself. A dig that can find
+	// somewhere to put its blockers runs; one that cannot, waits.
 	//
-	// The read failing is CONGESTION, not geometry: an unreadable claim count
-	// must not kill a demand, and admitting a dig on an unknown ledger is the
-	// one direction that recreates the famine. It waits and re-asks.
-	// ── ARM 3: RESOLVE WHAT IS ALREADY DUG BEFORE DIGGING MORE (§R.76) ────
-	//
-	// Asked BEFORE the affordability check below, and the order matters. A dig
-	// holding an uncollected bin is not counted by CountOutstandingDigClaims —
-	// it owes no blocker a destination, so by that measure it costs the group
-	// nothing — while it is in fact holding a whole lane shut. Admitting a new
-	// dig against the room the held lane is not using is how a group ends up
-	// with two excavations and one collection outstanding.
-	//
-	// The two checks are deliberately separate rather than one widened count:
-	// they refuse for different reasons, clear on different events, and a soak
-	// has to be able to tell "the room is spent" from "the room is coming back
-	// as soon as somebody picks that bin up".
-	if held, hErr := db.ListDigsHoldingTargetsInGroup(groupID, asker); hErr != nil {
-		// The read failing is congestion, same disposition as the count below:
-		// an unreadable ledger must not kill a demand, and it must not admit a
-		// dig either.
-		return nil, 0, fmt.Errorf("%w: could not ask whether this group owes a collection: %v",
-			ErrNoShuffleSlot, hErr)
-	} else if len(held) > 0 {
-		name := fmt.Sprintf("%d", groupID)
-		if g, gErr := db.GetNode(groupID); gErr == nil && g != nil {
-			name = g.Name
-		}
-		slot := ""
-		if dig, dErr := db.GetOrder(held[0]); dErr == nil && dig != nil {
-			slot = dig.DigTargetNode
-		}
-		return nil, 0, &GroupOwesCollectionError{Group: name, Dig: held[0], Slot: slot}
-	}
-
-	outstanding, cErr := db.CountOutstandingDigClaims(groupID, asker)
-	if cErr != nil {
-		return nil, 0, fmt.Errorf("%w: could not count the group's outstanding dig claims: %v",
-			ErrNoShuffleSlot, cErr)
-	}
-	if _, err := findShuffleSlots(db, lane.ID, groupID, len(blockers)+outstanding, asker, nil); err != nil {
-		// WHICH SHORTAGE WAS IT? Only worth asking when something is actually
-		// owed, and only in the refusal path — the common case pays one query, as
-		// it always did. If the pool WOULD have been wide enough without the
-		// claims, the claims are the finding and they get their own cause; if it
-		// would not, the group is simply short and the existing arms answer.
-		//
-		// Right of way is not re-attributed here: it is asked inside
-		// findShuffleSlots and comes back typed either way, so a DigParkingHeldError
-		// from the widened ask still describes the pool this dig faces.
-		if outstanding > 0 {
-			if _, plain := findShuffleSlots(db, lane.ID, groupID, len(blockers), asker, nil); plain == nil {
-				name := fmt.Sprintf("%d", groupID)
-				if g, gErr := db.GetNode(groupID); gErr == nil && g != nil {
-					name = g.Name
-				}
-				return nil, 0, &GroupCannotAffordError{Group: name, Need: len(blockers), Claims: outstanding}
-			}
-		}
+	// So the question is the plain one again, and the owner's ruling on it stands
+	// unchanged: if the count cannot be satisfied, that is an engineering and
+	// configuration capacity problem, not a dispatch one. The seed has to carry
+	// enough reachable room to clear a lane, which is what the census at birth
+	// asserts before a single order runs.
+	if _, err := findShuffleSlots(db, lane.ID, groupID, len(blockers), asker, nil); err != nil {
 		return nil, 0, fmt.Errorf("find shuffle slots: %w", err)
 	}
 
@@ -588,12 +537,36 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 	// ONE SPELLING with the store selector's own burial clause — both go through
 	// helpers.ShallowerInSameLane (see SlotsBlockedByHardClaims, and the drift test
 	// that keeps them agreeing).
+	// Hold B across the group: which lanes have a robot in them right now. Read
+	// once, for the same reason the burial set is — it is asked per candidate and
+	// the answer cannot change mid-pass without the pass being wrong anyway.
+	var occupiedSkipped []*nodes.Node
+	occupied, oErr := db.LanesOccupiedInGroup(groupID)
+	if oErr != nil {
+		// Same disposition as the burial read below: cannot tell who is inside, so
+		// cannot safely offer anything. Congestion, which waits and retries.
+		return nil, fmt.Errorf("%w: could not read lane occupancy: %v", ErrNoShuffleSlot, oErr)
+	}
+
 	blocked, hErr := db.SlotsBlockedByHardClaims(groupID)
 	if hErr != nil {
 		// Cannot tell what is protected, so cannot safely offer anything. Reported
 		// as congestion (which waits and retries) rather than geometry (which kills
 		// the order) — the same disposition every other shortfall here takes.
 		return nil, fmt.Errorf("%w: could not read hard claims: %v", ErrNoShuffleSlot, hErr)
+	}
+
+	// AND THE MIRROR OF IT: slots whose use would seal an EMPTY slot deeper in
+	// the same lane that somebody is driving to fill. The burial set protects a
+	// bin a robot is coming to collect; this protects a slot a robot is coming to
+	// fill, and the cost of getting it wrong is worse — a walled bin can still be
+	// dug out, a walled empty slot is capacity gone for the life of the plant
+	// (nothing is in anybody's way, so no dig is ever raised against it).
+	//
+	// Read once, beside the burial set, for the same reason.
+	entombing, eErr := db.SlotsThatWouldEntombASpokenForSlot(groupID)
+	if eErr != nil {
+		return nil, fmt.Errorf("%w: could not read spoken-for slots: %v", ErrNoShuffleSlot, eErr)
 	}
 
 	var available []*nodes.Node
@@ -652,6 +625,22 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		if c.ID == laneID {
 			continue
 		}
+		// ONE ROBOT PER LANE, ASKED HERE AND NOT ONLY AT ADMISSION.
+		//
+		// Admission already refuses a destination in a lane somebody is inside
+		// (CauseLaneOccupied). Asking it only there is not enough, because of what
+		// the resolver does with a refusal: it excludes that SLOT and asks again,
+		// and the next candidate is the next slot shallower IN THE SAME LANE.
+		// Placing there buries the deeper slot it just walked past.
+		//
+		// The closing run left LS_C4 — a four-slot empty lane, the group's whole
+		// spare capacity — as X X . X, with two digs having taken turns in it.
+		// Dropping the lane at the source sends the resolver to a DIFFERENT lane
+		// instead of to a worse slot in this one.
+		if occupied[c.ID] {
+			occupiedSkipped = append(occupiedSkipped, c)
+			continue
+		}
 		if dugLaneGated && db.GetNodeProperty(c.ID, PropLaneGatePoint) != "" {
 			continue // a dig leg dwelling at a second mark holds two lanes at once
 		}
@@ -670,6 +659,15 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 			// bury it, so they stay usable. The set is computed once above, by the
 			// same clause the store selector uses.
 			if blocked[slot.ID] {
+				continue
+			}
+			// AND NOT IN FRONT OF AN EMPTY SLOT SOMEBODY IS DRIVING TO. Parking
+			// here would seal it, and a sealed empty slot is not recoverable the
+			// way a sealed bin is: nothing stands in anybody's way, so no dig is
+			// ever raised against it. LSD_003 on the lane-stress rig 2026-08-13 is
+			// this exactly — a dig leg parked at d2 while order 57 was still
+			// driving to d3.
+			if entombing[slot.ID] {
 				continue
 			}
 			acc, err := db.IsSlotAccessible(slot.ID)
@@ -701,6 +699,15 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		if held := digHeldParking(db, laneID, groupID, children, count, len(available), exclude); held != nil {
 			return nil, held
 		}
+		// AND THE SAME QUESTION FOR HOLD B. Dropping occupied lanes at the source is
+		// what stops the resolver falling back to a shallower slot in a lane it was
+		// just refused from — but a lane silently missing from the pool would leave
+		// the waiter reporting "the group is full", which sends an operator to make
+		// room when what is happening is that a robot is in the way and about to
+		// leave. Different releaser, so a different cause (law 8).
+		if len(occupiedSkipped) > 0 {
+			return nil, &LaneOccupiedParkingError{Lane: occupiedSkipped[0].Name, Short: count - len(available)}
+		}
 		detail := ""
 		if unreadable > 0 {
 			detail = fmt.Sprintf(" (%d candidate(s) unreadable, treated as unusable)", unreadable)
@@ -710,84 +717,28 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 	return available, nil
 }
 
-// ErrGroupCannotAffordDig is the usable-capacity claim refusing: the group has
-// room, and every bit of it is already owed to a dig that is running.
+// ErrLaneOccupiedParking is Hold B refusing: the parking this dig needs is in a
+// lane a robot is currently inside.
 //
-// ── WHY THIS IS NOT ErrNoShuffleSlot ──────────────────────────────────────
-//
-// They park the same order in the same way and they are different findings. "The
-// group is full" is a plant that is out of space and clears when anything at all
-// places. "The group cannot afford another dig" is a plant with space that has
-// already promised it, and it clears when a running dig binds its blocker's
-// destination or dies. Folding them would hide the one number that says whether
-// admission is doing its job: a group refusing digs while empty slots stand in it
-// is either correct (the slots are spoken for) or a bug (the claims are stale),
-// and a soak cannot tell those apart from a `no-shuffle-slot` count.
-//
-// TRANSIENT, like both its siblings. Serialization under famine is the ruled
-// behaviour, not a failure: a group that can only afford one dig at a time runs
-// them one at a time, and slow beats frozen.
-var ErrGroupCannotAffordDig = errors.New("the group's usable room is already claimed by the digs it is running")
+// TRANSIENT, and the shortest-lived of the parking refusals — it clears when that
+// robot places its bin and drives out, which is a matter of seconds rather than
+// the length of another dig. That is exactly why it must not be reported as
+// ErrNoShuffleSlot: "the group is full" sends somebody to make room, and nothing
+// needs making.
+var ErrLaneOccupiedParking = errors.New("the parking this dig needs is in a lane a robot is inside")
 
-// GroupCannotAffordError carries the arithmetic, because the number is the whole
-// finding: an operator or a soak needs to see that the room exists and is owed.
-type GroupCannotAffordError struct {
-	Group  string // the node group whose room ran out
-	Need   int    // slots this dig would need
-	Claims int    // slots already owed to digs running in the group
+// LaneOccupiedParkingError names the lane that has to clear.
+type LaneOccupiedParkingError struct {
+	Lane  string
+	Short int
 }
 
-func (e *GroupCannotAffordError) Error() string {
-	return fmt.Sprintf("%s: group %s needs %d slot(s) for this dig on top of %d already owed to "+
-		"running digs, and cannot count that many", ErrGroupCannotAffordDig, e.Group, e.Need, e.Claims)
+func (e *LaneOccupiedParkingError) Error() string {
+	return fmt.Sprintf("%s: %s is occupied and this dig is %d slot(s) short without it",
+		ErrLaneOccupiedParking, e.Lane, e.Short)
 }
 
-func (e *GroupCannotAffordError) Unwrap() error { return ErrGroupCannotAffordDig }
-
-// ErrGroupOwesACollection is arm 3 refusing: a dig in this group has already
-// dug a bin out and nobody has collected it yet, so no NEW excavation starts
-// here until that one is resolved (§R.76).
-//
-// ── IT IS AN ORDERING RULE, AND ORDERING IS THE CHEAPEST THING WE HAVE ────
-//
-// The two moves compete for the same group and they are not symmetric. Finishing
-// a collection RETURNS room: the bin leaves, the dig's lane releases, and the
-// slots that dig was holding come back to the pool. Starting an excavation
-// CONSUMES room, and holds it for as long as the dig runs. Under famine, doing
-// the second while the first is outstanding is how a group talks itself into
-// having nothing left — which is the shape §R.75 found on the rig.
-//
-// So the rule is: resolve what is already dug before digging more.
-//
-// ── WHY IT COULD NOT BE A SORT ORDER, WHICH WAS ASKED FIRST ───────────────
-//
-// The obvious reading of "collection outranks dig starts" is a priority in the
-// acquiring queue. It cannot be: ListAcquiring orders {queued, sourcing} by
-// priority and age, and a dig start is not a row in it — proposeLaneClearDig is
-// driven from the lane-gate evaluator, not from the scanner. The two things
-// being sequenced never meet in a list, so the ordering has to be enforced where
-// the later one is admitted, which is here.
-//
-// TRANSIENT, and it names a releaser an operator can act on: the bin at the slot
-// this error names has to leave. Same family as its two siblings above — the
-// group is not full, it is BUSY, and the difference is what a soak needs to see.
-var ErrGroupOwesACollection = errors.New("a dig in this group is holding a bin nobody has collected yet")
-
-// GroupOwesCollectionError names the dig and the slot, because "wait" without
-// either is a sentence an operator cannot act on.
-type GroupOwesCollectionError struct {
-	Group string // the node group being refused
-	Dig   int64  // the dig holding a bin that has not been collected
-	Slot  string // where that bin is standing
-}
-
-func (e *GroupOwesCollectionError) Error() string {
-	return fmt.Sprintf("%s: reshuffle %d in group %s dug out the bin at %s and it has not been "+
-		"collected — resolving that returns room to the group, starting another dig spends it",
-		ErrGroupOwesACollection, e.Dig, e.Group, e.Slot)
-}
-
-func (e *GroupOwesCollectionError) Unwrap() error { return ErrGroupOwesACollection }
+func (e *LaneOccupiedParkingError) Unwrap() error { return ErrLaneOccupiedParking }
 
 // ErrDigHoldsTheParking is right of way refusing: this dig could park its
 // blockers if it were allowed into a lane another dig holds, and it is not.

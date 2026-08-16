@@ -52,6 +52,9 @@ func (s *TagVerifyService) VerifyTag(orderUUID, tagID, location string) *store.T
 	}
 
 	if order.BinID == nil {
+		// SHADOWED — reachability by a coordinator was NOT established by reading.
+		owns, oerr := s.db.OrderOwnsNoCargo(order.ID)
+		NoteFolderShadow(FolderSiteTagVerify, order.ID, true, owns, oerr)
 		return &store.TagVerifyResult{Match: true, Detail: "no bin assigned — accepting scan"}
 	}
 

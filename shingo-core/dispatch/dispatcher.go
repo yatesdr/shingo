@@ -717,8 +717,11 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 	// cancelCompoundChildren is idempotent for non-compound orders —
 	// ListChildOrders returns an empty slice and the loop no-ops — so the
 	// unconditional call costs one extra SELECT per cancel of a plain order.
-	d.lifecycle.CancelOrder(order, stationID, p.Reason)
-	d.cancelCompoundChildren(order, stationID, p.Reason)
+	// ONE DOOR. It takes the lane snapshot before the parent's cancel deletes the
+	// reservations that are the lock, then cancels parent-then-children in that
+	// order. See CancelOrderWithCascade for why both orderings matter and why
+	// they are in tension.
+	d.CancelOrderWithCascade(order, stationID, p.Reason)
 	d.replies.SendCancelled(env, p.OrderUUID, p.Reason)
 }
 

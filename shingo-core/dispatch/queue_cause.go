@@ -113,72 +113,18 @@ const (
 	// is the planner refusing to write a plan that would need one. Same fact about
 	// the world, opposite side of the commit.
 	CauseDigHoldsParking QueueCause = "dig-holds-parking"
-	// CauseGroupRoomClaimed — the usable-capacity claim refusing at dig admission
-	// (§R.75/§R.76): the group HAS reachable, unclaimed, dig-free room, and all of
-	// it is already owed to digs that are running. This dig does not start.
+	// CauseEpisodeAlreadyDigging — this demand already has an excavation running,
+	// so a second one is not raised for it.
 	//
-	// THE THIRD MEMBER OF A FAMILY THAT MUST NOT COLLAPSE. CauseNoShuffleSlot is
-	// "there is no room"; CauseDigHoldsParking is "the room is inside somebody
-	// else's excavation"; this is "the room is unclaimed and already spent". They
-	// park the same order identically and they clear on different events, which is
-	// the test this vocabulary applies: no-shuffle-slot clears when anything
-	// places, dig-holds-parking clears when a named dig releases a lane, and this
-	// clears when a running dig binds its blocker's destination or dies.
+	// READ IT ON THE FLOOR AS "already digging for this". An operator seeing it
+	// should understand that work IS happening for this part, on another lane, and
+	// that nothing is stuck.
 	//
-	// It is also the number that says whether admission is working. A group
-	// refusing digs with empty slots standing in it is either correct — the slots
-	// are owed — or a bug, and a soak cannot tell those apart if this is filed as
-	// a full group. Serialization under famine is RULED behaviour, so a steady
-	// count here is not by itself a defect.
-	CauseGroupRoomClaimed QueueCause = "group-room-claimed"
-	// CauseReshuffleHoldsTarget — a reshuffle has finished digging and is holding
-	// its lane until the bin it uncovered is picked up (§R.76). Every one of its
-	// legs is terminal; what it is waiting for is a retrieval it does not own.
-	//
-	// READ IT ON THE FLOOR AS "this reshuffle is holding the lane for its target
-	// bin". That is the sentence the name is built to produce, and it is the
-	// whole reason this is not spelled with the words the design discussion used:
-	// an operator who sees this has to know, without a glossary, which bin and
-	// which lane are not moving.
-	//
-	// THE FIRST CAUSE THAT NAMES A COMPOUND PARENT, and that is a change to what
-	// `reshuffling` means rather than one more row. Until now a parent in that
-	// status carried no cause because its wait was structural — "my children are
-	// not finished" — and needed no explaining. This one is a real wait, with a
-	// real releaser, on a parent whose children ARE finished, and it has to say so
-	// or the parent reads as the stall it looks exactly like.
-	//
-	// It is not CauseLaneTargetBuried, which is the opposite side of the same
-	// lane: that is an order waiting for a reshuffle, this is the reshuffle
-	// waiting for that order. Filing them together would make a group's dig
-	// traffic read as one undifferentiated queue and hide which half is stuck.
-	//
-	// ITS RELEASER IS A PHYSICAL EVENT AND ITS FLOOR IS AN ALARM. The target bin
-	// leaving the lane ends it, by any mover. Nothing re-drives it on a timer, and
-	// that is ruled rather than missing: releasing a reshuffle whose target nobody
-	// collected would re-open the exposure window this cause exists to close, so
-	// the never-collected case surfaces as a tripwire row for a human rather than
-	// as a timeout.
-	CauseReshuffleHoldsTarget QueueCause = "reshuffle-holds-target-bin"
-	// CauseGroupOwesCollection — arm 3 refusing a NEW dig because one in this
-	// group has already dug a bin out that nobody has collected (§R.76). It is
-	// CauseReshuffleHoldsTarget seen from the other side: that one is on the
-	// reshuffle doing the holding, this one is on the demand refused because of
-	// it.
-	//
-	// THE FOURTH MEMBER OF THE FAMILY, and the vocabulary only earns its keep if
-	// the four stay apart. no-shuffle-slot is "there is no room";
-	// dig-holds-parking is "the room is inside somebody else's excavation";
-	// group-room-claimed is "the room is unclaimed and already spent"; this is
-	// "the room is coming back as soon as somebody picks that bin up". Four
-	// different releasers, and a soak that cannot tell them apart cannot tell a
-	// working admission gate from a stuck one.
-	//
-	// It is the one of the four that is pure ORDERING rather than shortage. The
-	// group may have plenty of room; the rule is that resolving a collection
-	// RETURNS room while starting an excavation SPENDS it, so under famine doing
-	// the second first is how a group talks itself into having nothing left.
-	CauseGroupOwesCollection QueueCause = "group-owes-collection"
+	// It is NOT CauseLaneLocked, which says somebody ELSE holds the corridor. This
+	// one says the wait is on our own excavation, and the distinction matters
+	// because the two clear on different events and only one of them is anybody
+	// else's fault.
+	CauseEpisodeAlreadyDigging QueueCause = "episode-already-digging"
 	// CauseDigBlockerClaimed — a bin the dig must move is hard-claimed by an order
 	// outside the compound, most often a dispatched retrieve whose robot is already
 	// carrying it out of the lane. Distinct from CauseLaneLocked (a whole lane

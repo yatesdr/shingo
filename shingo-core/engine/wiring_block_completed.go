@@ -42,6 +42,7 @@ import (
 	"shingo/protocol"
 	"shingo/shared/clock"
 	"shingocore/domain"
+	"shingocore/service"
 	"shingocore/store/orders"
 	"shingocore/store/telemetry"
 )
@@ -245,6 +246,12 @@ func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, 
 	// Single-bin fallback.
 	order, err := e.db.GetOrder(orderID)
 	if err != nil || order == nil || order.BinID == nil {
+		if err == nil && order != nil && order.BinID == nil {
+			// SHADOWED: the single-bin fallback gives up here for a coordinator
+			// and for a defect alike.
+			owns, oerr := e.db.OrderOwnsNoCargo(order.ID)
+			service.NoteFolderShadow(service.FolderSiteBlockCompleted, order.ID, true, owns, oerr)
+		}
 		return 0, 0, 0, false
 	}
 	bin, err := e.db.GetBin(*order.BinID)

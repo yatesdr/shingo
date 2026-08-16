@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"log"
 
+	ordermgr "shingoedge/orders"
+
 	"shingoedge/domain"
 )
 
@@ -137,8 +139,10 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 	// The buffer is currently occupied by the partial we'll move via Order B, so
 	// Core will queue this delivery until Order B's pickup frees the slot.
 	nodeIDCopy := nodeID
+	// NoDemand, both legs: a consolidation is housekeeping the system schedules
+	// for itself. No cell is waiting on either order.
 	orderA, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeIDCopy, 1,
-		node.CoreNodeName, bufferCoreName, "", true)
+		node.CoreNodeName, bufferCoreName, "", true, ordermgr.NoDemand())
 	if err != nil {
 		return fmt.Errorf("clear loader home: create empty-out order: %w", err)
 	}
@@ -165,7 +169,7 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 func (e *Engine) dispatchBufferConsolidation(c homeConsolidation) {
 	nodeID := c.homeProcessNodeID
 	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1,
-		c.bufferCoreName, c.homeCoreName, c.payload, true)
+		c.bufferCoreName, c.homeCoreName, c.payload, true, ordermgr.NoDemand())
 	if err != nil {
 		e.logFn("home_consolidation: create Order B (buffer→home) %s→%s: %v",
 			c.bufferCoreName, c.homeCoreName, err)

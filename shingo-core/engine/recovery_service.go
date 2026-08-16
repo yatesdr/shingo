@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/domain"
+	"shingocore/service"
 )
 
 // RecoveryService owns the operator-triggered recovery actions
@@ -37,6 +38,9 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 		return fmt.Errorf("order %d is not awaiting completion recovery", orderID)
 	}
 	if order.BinID == nil {
+		// SHADOWED — reachability by a coordinator was NOT established by reading.
+		owns, oerr := s.db.OrderOwnsNoCargo(order.ID)
+		service.NoteFolderShadow(service.FolderSiteRecoveryReapply, order.ID, true, owns, oerr)
 		return fmt.Errorf("order %d has no bin to complete", orderID)
 	}
 	if order.DeliveryNode == "" {

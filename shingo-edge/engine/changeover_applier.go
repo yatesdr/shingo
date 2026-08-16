@@ -47,13 +47,7 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	// Read once per action rather than per leg, so both legs of a swap take the
 	// SAME origin — one demand served by two rows, which is what
 	// CreateComplexOrderSiblingWithOrigin documents.
-	origin := ordermgr.Origin{}
-	if originID, oerr := e.db.GetChangeoverOriginID(nodeTask.ProcessChangeoverID); oerr != nil {
-		e.logFn("changeover: read episode for changeover %d: %v — orders will be unattributed",
-			nodeTask.ProcessChangeoverID, oerr)
-	} else if originID != "" {
-		origin = ordermgr.Attached(originID)
-	}
+	origin := e.changeoverOrigin(nodeTask.ProcessChangeoverID)
 
 	var supplyID, evacID *int64
 	if action.SupplyOrder != nil {
@@ -189,7 +183,7 @@ func (e *Engine) createPlannedOrder(nodeID int64, spec *changeover.OrderSpec, si
 }
 
 func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderSpec, siblingUUID string, origin ordermgr.Origin) (int64, error) {
-	o, err := e.orderMgr.CreateComplexOrderSiblingWithOrigin(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps, c.AutoConfirm, c.PayloadCode, siblingUUID, origin)
+	o, err := e.orderMgr.CreateComplexOrderSibling(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps, c.AutoConfirm, c.PayloadCode, siblingUUID, origin)
 	if err != nil {
 		return 0, err
 	}
@@ -197,7 +191,7 @@ func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderS
 }
 
 func (e *Engine) createRetrieveFromSpec(nodeID int64, r *changeover.RetrieveOrderSpec, origin ordermgr.Origin) (int64, error) {
-	o, err := e.orderMgr.CreateRetrieveOrderWithOrigin(&nodeID, r.RetrieveEmpty, 1, r.DeliveryNode, r.SourceNode, r.StagingNode, r.LoadType, r.PayloadCode, r.AutoConfirm, false, origin)
+	o, err := e.orderMgr.CreateRetrieveOrder(&nodeID, r.RetrieveEmpty, 1, r.DeliveryNode, r.SourceNode, r.StagingNode, r.LoadType, r.PayloadCode, r.AutoConfirm, false, origin)
 	if err != nil {
 		return 0, err
 	}
@@ -230,4 +224,38 @@ func derefID(id *int64) int64 {
 		return 0
 	}
 	return *id
+}
+
+// changeoverOrigin returns the demand episode a changeover's orders belong to.
+//
+// ONE SPELLING, FIVE SITES. These three lines were written once, in
+// applyNodeAction, and the four operator-driven changeover entry points
+// (StageNodeChangeoverMaterial, EvacuateNode, DeliverNewMaterialForChangeover,
+// and the release path) each created their orders through the unattributed
+// constructors instead. So an AUTO-planned changeover leg carried its episode
+// and an OPERATOR-driven one for the same changeover did not — the same
+// changeover, attributed or orphaned depending on which button produced it.
+//
+// openChangeoverEpisode mints the origin and stamps it onto the changeover row
+// precisely so any site can read it back. This is that read, spelled once,
+// because a change to it now has to land in five places — which is the rule
+// this collapse exists under.
+//
+// A READ FAILURE DOES NOT BLOCK THE CHANGEOVER. Attribution never blocks
+// transport; the leg is created carrying nothing and Core classifies it, which
+// is what happened at every one of these sites before.
+func (e *Engine) changeoverOrigin(processChangeoverID int64) ordermgr.Origin {
+	originID, err := e.db.GetChangeoverOriginID(processChangeoverID)
+	if err != nil {
+		e.logFn("changeover: read episode for changeover %d: %v — orders will be unattributed",
+			processChangeoverID, err)
+		return ordermgr.Origin{}
+	}
+	if originID == "" {
+		// The changeover has no episode. Not an error and not no_demand: the
+		// episode exists for every changeover this build opens, so an empty one
+		// here means an older row, and Core's orphan class is the true answer.
+		return ordermgr.Origin{}
+	}
+	return ordermgr.Attached(originID)
 }

@@ -90,7 +90,11 @@ func (e *Engine) createLoaderOutbound(processNodeID int64, coreNodeName, outboun
 		e.debugFn("loader-outbound: %s already owes an outbound move — skipping duplicate from %s", coreNodeName, via)
 		return 0, false
 	}
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&processNodeID, 1, coreNodeName, outbound, payloadCode, true)
+	// NoDemand: nothing asked for this. A loaded bin owes an outbound move, and
+	// the guard above is the system deciding to file it — the definition of
+	// structurally originless.
+	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&processNodeID, 1, coreNodeName, outbound, payloadCode, true,
+		orders.NoDemand())
 	if err != nil {
 		log.Printf("loader-outbound: create outbound move for %s → %s (%s): %v", coreNodeName, outbound, via, err)
 		return 0, false

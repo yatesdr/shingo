@@ -509,31 +509,16 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 		// would file it as a full group. The demand parks with the lane that has to
 		// free, and the dig is NOT started — no lock has been taken at this point,
 		// which is what makes the refusal free.
-		// THE AFFORDABILITY REFUSAL, asked beside right of way and ahead of the
-		// general shortage for the same reason: it is the specific finding, and the
-		// general arm would file "the group is committed" as "the group is full".
-		// Nothing is held here either — the lock is taken below this block.
-		var afford *GroupCannotAffordError
-		if errors.As(err, &afford) {
-			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseGroupRoomClaimed,
-				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
-			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
-		}
-		// THE ORDERING REFUSAL, asked beside the other two and ahead of the general
-		// shortage. It is the least shortage-like of the three — the group may have
-		// plenty of room — so filing it as a full group would send an operator to
-		// make space when what is wanted is for somebody to collect a bin already
-		// standing in the open. Nothing is held here either.
-		var owes *GroupOwesCollectionError
-		if errors.As(err, &owes) {
-			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseGroupOwesCollection,
-				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
-			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
-		}
 		var held *DigParkingHeldError
 		if errors.As(err, &held) {
+			// Name the dig holding that parking. The lane in this sentence is
+			// SOMEBODY ELSE'S — the one right of way refused us — so without the
+			// excavation's id the operator has a lane they do not own and no way
+			// to tell which dig has to finish.
+			holdID, holdTarget := digWaitByLaneName(s.db, s.laneLock, held.Lane)
 			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseDigHoldsParking,
-				QueueParams{Lane: held.Lane, Payload: order.PayloadCode})
+				QueueParams{Lane: held.Lane, Payload: order.PayloadCode,
+					DigOrderID: holdID, DigTarget: holdTarget})
 			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
 		}
 		if errors.Is(err, ErrNoShuffleSlot) {

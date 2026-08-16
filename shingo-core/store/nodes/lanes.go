@@ -223,13 +223,53 @@ var ErrLaneClosedByClaim = errors.New("lane closed to stores: a claimed bin sits
 func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node, error) {
 	burial := "true"
 	if guard {
+		// ── COMING FOR IT HAS TWO SPELLINGS, AND THIS ASKED ONE ───────────
+		//
+		// claimed_by is the hold; bin_id is the resolve's durable record of which
+		// bin an order is for. A claim is taken and released around each movement,
+		// so a demand that has picked its bin and is waiting to be dispatched
+		// often holds no claim at all — and that wait is not a sliver, it is most
+		// of the order's life.
+		//
+		// Measured on the lane-stress rig 2026-08-13: order 22 had resolved onto
+		// bin 30 at LSC_033 and was parked under reserve-holding. Order 29, an
+		// ordinary store, was offered LSC_032 — one slot in front of it — and took
+		// it. This clause was asked and said yes, because at that instant nothing
+		// had bin 30 claimed. Order 22 spent the rest of the window walled in
+		// behind a bin that arrived after it had chosen.
+		//
+		// The dig side of this guard carries the same term for the same reason
+		// (SlotsBlockedByHardClaims). The two remain deliberately different in
+		// POLICY — this one exempts the requesting order and does not require the
+		// protected bin to be reachable — and are now the same about the FACT.
+		//
+		// ── THE AIM IS "COMING FOR IT", NOT "CARRYING IT" ─────────────────
+		//
+		// bin_id alone says neither. A store order's bin_id goes on pointing at
+		// its bin after it has PLACED it, so a bare aim term lets a store close
+		// the lane behind itself: four dwellers in one burst stalled at the mark
+		// with the corridor empty, because the one that had just placed was still
+		// "aiming" at what it had put down (TestStoreBurst_DivertedOntoAMarkedLane).
+		//
+		// source_node is what makes it a direction. An order coming to collect a
+		// bin names the slot that bin is standing in; an order that has delivered
+		// one names where it came FROM, which is not this lane. So the two columns
+		// together say the thing this guard needs and neither says alone: THIS
+		// order is coming to THIS slot for THIS bin.
+		//
+		// THE TERMINAL FILTER IS LOAD-BEARING TOO. claimed_by is reaped when an
+		// order terminalizes and bin_id is not, so without it a finished order's
+		// aim would close a lane to stores for the life of the plant. It is a
+		// filter on the HOLDER so both spellings pass one liveness test.
 		burial = fmt.Sprintf(`NOT EXISTS (
 			SELECT 1 FROM nodes held
 			JOIN bins held_bin ON held_bin.node_id = held.id
-			WHERE held_bin.claimed_by IS NOT NULL
-			  AND held_bin.claimed_by <> $2
+			JOIN orders holder ON holder.id = held_bin.claimed_by
+			                   OR (holder.bin_id = held_bin.id AND holder.source_node = held.name)
+			WHERE holder.id <> $2
+			  AND holder.status NOT IN (%s)
 			  AND %s
-		  )`, helpers.ShallowerInSameLane("n", "held"))
+		  )`, protocol.TerminalStatusSQLList(), helpers.ShallowerInSameLane("n", "held"))
 	}
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s
 		WHERE n.parent_id = $1
@@ -249,6 +289,30 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 			  AND o.status NOT IN (%s)
 			  AND o.id <> $2
 		  )
+		  -- THE MIRROR OF ALL THREE IS DELIBERATELY *NOT* ASKED HERE, and that
+		  -- is a decision rather than an omission. The clauses above refuse to
+		  -- PICK a slot somebody else holds and say nothing about the slots in
+		  -- front of it, so a store can seal a deeper slot somebody is driving to
+		  -- — which is how LSD_010 became a permanent bubble on the lane-stress
+		  -- rig 2026-08-13.
+		  --
+		  -- Refusing it here breaks the thing that makes stores work. A burst of
+		  -- five stores into one lane packs back-to-front, so every one of them
+		  -- is by construction aimed in front of a deeper sibling's target; a
+		  -- guard on that shape refuses all five and the lane sits empty
+		  -- (TestStoreBurst_FiveAtOneDugLane, TestGateRelease_DeepestFirstAndTier1,
+		  -- eight more).
+		  --
+		  -- SEQUENCING IS ALREADY THIS PATH'S ANSWER. laneEntryCause's tiers hold
+		  -- a shallower store until the deeper one has PLACED, so the ordinary
+		  -- burst never entombs anything — the deep slot is filled first and the
+		  -- shallow one lands behind a bin, not in front of a hole. What produced
+		  -- the rig's bubble was the deeper order DYING mid-sequence (order 7,
+		  -- cancelled by the claim-wipe defect), which no placement rule can see
+		  -- coming.
+		  --
+		  -- The dig's shuffle search has no tiers and no sequencing, which is why
+		  -- it carries the guard instead: see SlotsThatWouldEntombASpokenForSlot.
 		  -- Accessibility guard: a slot is only a valid pick if no OCCUPIED slot
 		  -- sits shallower in the same lane. The deepest-empty slot can otherwise
 		  -- be stranded behind a shallow bubble (an occupied slot with empties

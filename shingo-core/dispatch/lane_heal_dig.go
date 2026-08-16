@@ -202,7 +202,7 @@ func (d *Dispatcher) healLaneMouth(lane *nodes.Node, req healRequest) {
 	case serviceDigNoGroup:
 		log.Printf("lane gate: %s walls order %d but is in no node group, so a dig has nowhere "+
 			"to park a blocker — the dweller cannot be healed from here", lane.Name, req.order.ID)
-	case serviceDigNoShuffleSlot, serviceDigNothingInTheWay:
+	case serviceDigNoShuffleSlot, serviceDigNothingInTheWay, serviceDigEpisodeAlreadyDigging:
 		d.dbg("lane gate: cannot clear %s for order %d yet: %v", lane.Name, req.order.ID, res.err)
 	case serviceDigBlockerClaimed:
 		d.dbg("lane gate: heal dig for %s lost a blocker to a live claim: %v", lane.Name, res.err)
@@ -244,19 +244,34 @@ const (
 	// AND HOLDS NOTHING, which is the whole point of refusing here rather than at
 	// the leg: this outcome is reached before createServiceDigParent.
 	serviceDigParkingHeldByDig
-	// serviceDigGroupCannotAfford — the usable-capacity claim (§R.75/§R.76): the
-	// group's dig-free room is real and already owed to the digs running in it.
-	// Congestion, on the narrowest releaser of the three — a running dig binding
-	// its blocker's destination. LIKE THE ROW ABOVE, NOTHING IS HELD: the refusal
-	// happens inside the planner, before any parent is minted or lane taken, which
-	// is what makes serialization under famine cheap enough to be the ruled answer.
-	serviceDigGroupCannotAfford
-	// serviceDigGroupOwesCollection — arm 3 (§R.76): a dig in this group has
-	// already uncovered a bin and nobody has collected it. Not a shortage at all —
-	// the group may be half empty — but an ORDERING rule, because resolving that
-	// collection returns room and starting this excavation would spend it. Nothing
-	// is held here either; the refusal is in the planner.
-	serviceDigGroupOwesCollection
+	// serviceDigEpisodeAlreadyDigging — the demand this would serve already has a
+	// service dig running. Congestion of a kind the plant makes for itself, and
+	// the releaser is that dig finishing.
+	//
+	// ── WHY ONE EPISODE GETS ONE EXCAVATION AT A TIME ─────────────────────
+	//
+	// A buried demand does not wait for its dig: it re-resolves onto whatever it
+	// can reach, and a lane under excavation is the one place it cannot. So it
+	// picks a second bin, finds THAT buried, and raises a second dig — for the
+	// same one bin it needs. The two then compete for the same scarce parking.
+	//
+	// Measured on the lane-stress rig 2026-08-13: digs 2 and 8, both raised for
+	// order 1, ended in a closed mutual hold — dig 2 holding LS_D1 and needing
+	// parking only LS_D3 could give, dig 8 holding LS_D3 and needing parking only
+	// LS_D1 could give. Every wait individually lawful, the walk closed. That is
+	// the standoff the tripwire reported, and the second dig is what made it
+	// possible: right of way (§R.61) is a PLAN-TIME rule, and both digs planned
+	// before either had taken its lane.
+	//
+	// It also ends the excavation this plant was already wasting. A demand that
+	// re-resolves leaves its first dig digging towards a bin nobody now wants —
+	// which is the whole of the dig_target_abandoned population.
+	//
+	// SCOPED TO THE EPISODE rather than to a requester pointer, for the reason
+	// §R.40 gives: a dig serves a LANE and one dig serves every demand behind it,
+	// so there is no 1:1 identity to key on. The origin is the tie a dig has, and
+	// two live excavations inside one episode is the shape being refused.
+	serviceDigEpisodeAlreadyDigging
 	// serviceDigNothingInTheWay — the lane moved between the decision and the
 	// plan. That is the outcome we wanted; re-ask.
 	serviceDigNothingInTheWay
@@ -301,18 +316,6 @@ func classifyPlanError(err error) serviceDigOutcome {
 		// refactor makes it wrap, this arm must still be asked first or every right-
 		// of-way refusal reports as a full group and loses the order it was naming.
 		return serviceDigParkingHeldByDig
-	case errors.Is(err, ErrGroupCannotAffordDig):
-		// ALSO ABOVE ErrNoShuffleSlot, for the same reason and with the same
-		// hazard: it does not wrap the general one today, and if it ever does this
-		// arm must stay first or every affordability refusal reports as a full
-		// group — which is precisely the confusion the cause split exists to end.
-		return serviceDigGroupCannotAfford
-	case errors.Is(err, ErrGroupOwesACollection):
-		// ALSO ABOVE ErrNoShuffleSlot, and this one is the least like it of the
-		// three: the group is not short of anything. Filing it as a full group
-		// would tell an operator to go and make room, when what is needed is for
-		// somebody to pick up a bin that is already sitting in the open.
-		return serviceDigGroupOwesCollection
 	case errors.Is(err, ErrNoShuffleSlot):
 		return serviceDigNoShuffleSlot
 	case errors.Is(err, ErrNothingInTheWay):
@@ -335,6 +338,15 @@ type serviceDigResult struct {
 	parent  *orders.Order
 	steps   int
 	err     error
+	// blockingDig is the excavation that caused the refusal, when the refusal
+	// names one — today the already-digging arm, whose whole content is "another
+	// dig is serving this episode".
+	//
+	// CARRIED STRUCTURALLY, not parsed back out of err. The id is already in the
+	// error text ("dig %d is already excavating for this episode"), and reading it
+	// back would be the PayloadDesc scar: a human sentence mined for a machine
+	// fact, which breaks the day somebody improves the wording.
+	blockingDig int64
 }
 
 // proposeLaneClearDig is THE ONE WRITER of a service dig: it mints a plain
@@ -378,6 +390,39 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 		return serviceDigResult{outcome: serviceDigLaneBusy}
 	}
 
+	// ONE EPISODE, ONE EXCAVATION AT A TIME.
+	//
+	// Asked BEFORE the plan and before the parent, like the two guards around it,
+	// because the answer does not change while the other dig runs: planning and
+	// minting here would produce an order to cancel on every event, which is the
+	// 16,947-cancellation shape this function has already paid for twice.
+	//
+	// A READ FAILURE DOES NOT REFUSE. Every other guard here fails closed, and
+	// this one must not: "I could not tell whether another dig is running" would,
+	// fail-closed, stop every dig in the plant on a database stutter. The cost of
+	// being wrong in this direction is the standoff the tripwire already watches
+	// for; the cost in the other is the whole excavation system.
+	//
+	// AND IT IS SILENTLY OFF FOR A DEMAND WITH NO EPISODE, which is recorded
+	// rather than repaired — see noteUngatedDigProposal. The gate is keyed on the
+	// origin, so a requester without one cannot be limited by it: every guard
+	// below runs, and this one does not. That is not new and it is not being
+	// changed here; closing the origin leak is what switches it on, and doing
+	// both in one step would make a dispatch-shaping change arrive disguised as
+	// a labelling fix. The count is how we will know how big that population was.
+	dig, asked, err := d.db.LiveServiceDigInEpisode(requester.OriginID)
+	switch {
+	case err != nil:
+		d.dbg("dispatch: could not check for a running dig in episode %s (%v) — proceeding",
+			requester.OriginID, err)
+	case !asked:
+		d.noteUngatedDigProposal(requester)
+	case dig != 0:
+		return serviceDigResult{outcome: serviceDigEpisodeAlreadyDigging,
+			blockingDig: dig,
+			err:         fmt.Errorf("dig %d is already excavating for this episode", dig)}
+	}
+
 	// reservations.Anyone IS THE RIGHT ASKER HERE, and it is not a shortcut.
 	//
 	// The asker exists to exempt the dig's OWN lane from right of way, and this
@@ -409,7 +454,10 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// order holds, and it was measured on the lane-stress rig 2026-08-13: 38,203
 	// parents created and cancelled over 2h15m, a steady 200-290 a minute, every one
 	// of them ending "heal dig not started: a blocker was claimed while the dig was
-	// being written". Bin 17 was claimed by a frozen complex order for the whole
+	// being written" — the wording that measurement was taken under, kept here
+	// verbatim so the record and the rig log still line up. The message reads
+	// "service dig not started" now; see abandonServiceDigParent for why the old
+	// one named one caller of three. Bin 17 was claimed by a frozen complex order for the whole
 	// window, so the answer never changed, and each cancellation was itself a
 	// terminal event that re-drove the proposer that had just been refused.
 	//
@@ -456,6 +504,36 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 		}
 	}
 
+	// ── THE CHILDLESS WINDOW IS STILL OPEN, AND IT IS NOT CLOSED HERE ────────
+	//
+	// Between this INSERT and the compound write two steps down, the parent row
+	// exists with no legs — so "does this order own legs?"
+	// (helpers.OwnsNoCargoSQL) answers FALSE about an order it is permanently
+	// TRUE of. A SYNTHETIC parent is a folder from birth: it never carries a bin.
+	// A crash in that gap leaves a childless dig parent at `pending`, which is
+	// invisible to the fulfillment scanner by design (`pending` ∉ IsAcquiring)
+	// and therefore invisible to everything that would clean it up.
+	//
+	// CLOSING IT IS A LOCK-ORDERING DECISION, NOT A MECHANICAL FIX, which is why
+	// it is not taken here. The obvious cure — insert the parent inside the same
+	// transaction as its legs — cannot work as written, because the lane lock two
+	// lines down is keyed on parent.ID and the parent has no id until it is
+	// inserted. The three ways out all change behaviour in a subsystem with a
+	// documented deadlock history (digs 2 and 8, the mutual hold) and a
+	// documented cancellation-churn history (16,947):
+	//
+	//   1. take the lane lock AFTER the compound write — then losing the lane
+	//      means abandoning a fully-written compound, claims and all, where
+	//      today it abandons a bare parent row;
+	//   2. key the lock on something that exists first (the requester, a
+	//      reservation) and hand it over — the lock has no re-key operation and
+	//      adding one to THIS lock is not a batch-tail change;
+	//   3. sweep childless dig parents at boot — a healer, which this house
+	//      refuses by default.
+	//
+	// The predicate work this window threatens is SHADOWED rather than cut over
+	// (service/folder_shadow.go), so nothing depends on the window being shut
+	// yet. It is the owner's call before the cutover commit.
 	parent, err := d.createServiceDigParent(lane, target, requester, plan)
 	if err != nil {
 		return serviceDigResult{outcome: serviceDigUnplannable, err: err}
@@ -466,7 +544,7 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 		// an ordinary order's mouth hold all reported a dig that did not exist —
 		// and the reason a reader believes a cancellation is that it names the
 		// right thing. AcquireLanes refuses on any other owner's hold.
-		d.abandonHealParent(parent, "lane "+lane.Name+" was taken between the check and the claim")
+		d.abandonServiceDigParent(parent, "lane "+lane.Name+" was taken between the check and the claim")
 		return serviceDigResult{outcome: serviceDigLaneBusy}
 	}
 	if err := d.CreateCompoundOrder(parent, plan); err != nil {
@@ -476,10 +554,10 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 			// The transaction is the authority and this is its answer: wait. The
 			// claim holder is carrying the bin out, which is a lane-clearing event
 			// every waiter is already subscribed to.
-			d.abandonHealParent(parent, "a blocker was claimed while the dig was being written")
+			d.abandonServiceDigParent(parent, "a blocker was claimed while the dig was being written")
 			return serviceDigResult{outcome: serviceDigBlockerClaimed, err: err}
 		}
-		d.abandonHealParent(parent, "the dig could not be written")
+		d.abandonServiceDigParent(parent, "the dig could not be written")
 		return serviceDigResult{outcome: serviceDigUnplannable, err: err}
 	}
 	return serviceDigResult{outcome: serviceDigStarted, parent: parent, steps: len(plan.Steps)}
@@ -565,7 +643,7 @@ func (d *Dispatcher) createServiceDigParent(lane, target *nodes.Node, requester 
 	return parent, nil
 }
 
-// abandonHealParent retires a heal parent that never became a dig.
+// abandonServiceDigParent retires a service-dig parent that never became a dig.
 //
 // It exists because the parent is minted BEFORE the lane lock and the compound
 // transaction, and either can refuse. Leaving the row at `pending` would leave an
@@ -576,8 +654,27 @@ func (d *Dispatcher) createServiceDigParent(lane, target *nodes.Node, requester 
 // {pending → cancelled} is legal, and CancelOrder releases whatever the row might
 // have picked up on the way. Nothing else in the system knows this order existed:
 // it was never dispatched, never claimed a bin, and never had children.
-func (d *Dispatcher) abandonHealParent(parent *orders.Order, why string) {
-	d.lifecycle.CancelOrder(parent, parent.StationID, "heal dig not started: "+why)
+//
+// ── "HEAL DIG" WAS THE WRONG WORD, ON 38,203 ROWS ─────────────────────────
+//
+// The reason it read "heal dig not started" is that window 3 — the gate-dweller
+// heal — is the caller this was written for. But proposeLaneClearDig is the ONE
+// writer of a service dig and it serves ALL THREE service-dig callers: the
+// gate-dweller heal, the buried complex demand, and the admission path. Every
+// one of them lands here on a refusal, and every one of their cancellations said
+// "heal dig".
+//
+// The rig population is 38,203 rows. Anybody filtering that record for the heal
+// path's behaviour was reading two other callers' refusals as if they were window
+// 3's, and anybody looking for the OTHER two callers' refusals found nothing under
+// any name they would have searched. A label that names one caller of three is
+// worse than no label: it does not merely fail to inform, it misinforms with
+// confidence.
+//
+// The function is renamed with the message, because a function named for one
+// caller is how the message came to be named for one caller.
+func (d *Dispatcher) abandonServiceDigParent(parent *orders.Order, why string) {
+	d.lifecycle.CancelOrder(parent, parent.StationID, "service dig not started: "+why)
 }
 
 // binIsUnclaimed is the pre-check half of fact 3, kept as a named predicate so the

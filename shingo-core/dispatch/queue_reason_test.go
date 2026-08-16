@@ -116,6 +116,35 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want: "Rearranging storage to reach this material",
 		},
 		{
+			// THE OWNER'S REDUNDANCY COMPLAINT. "Rearranging lane L12 to reach
+			// X" is true and it is one word plus a lookup: which excavation,
+			// uncovering what, and is it the one that frees me. All three are
+			// answerable from the dig id, so the wait names it.
+			name: "storage rearranging names the dig and what it is uncovering",
+			code: protocol.QueueStorageRearranging,
+			params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06",
+				DigOrderID: 4471, DigTarget: "LSD_011"},
+			want: "Rearranging lane L12 to reach 74368-6SA0A.06 — dig 4471 is uncovering LSD_011",
+		},
+		{
+			// A dig that uncovers no bin — one clearing a slot to drop into —
+			// still names itself. The id is the join key; the target is extra.
+			name:   "storage rearranging names a dig with no target",
+			code:   protocol.QueueStorageRearranging,
+			params: QueueParams{Lane: "L12", DigOrderID: 4471},
+			want:   "Rearranging lane L12 to reach this material — dig 4471 is working this lane",
+		},
+		{
+			// AND AN UNRESOLVED DIG CHANGES NOTHING. A lane held by an ordinary
+			// order, or a lock read that failed, renders exactly as it did before
+			// the clause existed — a dig id that could not be resolved must not be
+			// invented, and zero means "not known", never "none".
+			name:   "storage rearranging with no dig resolved is unchanged",
+			code:   protocol.QueueStorageRearranging,
+			params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06"},
+			want:   "Rearranging lane L12 to reach 74368-6SA0A.06",
+		},
+		{
 			// (F3) Sibling was passed at the swap-hold call site and never read.
 			// The pre-code free text explained which leg this is and what it
 			// waits for; this restores that.

@@ -184,17 +184,26 @@ CREATE TABLE IF NOT EXISTS orders (
 -- from a hand-applied index; this constant declared the plain one, so a fresh
 -- install built a database the plants did not match.
 --
--- The restore- exemption (migration 73) is TEMPORARY and has a stated expiry.
--- "restore-<parentID>-<binID>" is the synthetic restore parent's edge_uuid, and
--- it is not decoration: that parent sets no parent_order_id, so the string is
--- parsed back to rebuild the link to its complex parent. It cannot be minted
--- without deleting the link, and a re-restore of the same parent and bin
--- legitimately repeats it. When refactor-phase1 deletes the put-back subsystem
--- the format goes with it -- drop the exemption then and restore the plain
--- predicate. (Compound children USED to need an exemption too; they now mint a
--- real UUID instead, which is why only one prefix is listed here.)
+-- The restore- exemption is RETIRED. It read
+--     AND edge_uuid NOT LIKE 'restore-%'
+-- and it outlived the thing it existed for: "restore-<parentID>-<binID>" was the
+-- synthetic restore parent's edge_uuid, parsed back to rebuild the link to its
+-- complex parent, and both the format and the put-back subsystem that minted it
+-- are gone (v70 dropped pending_restocks; migration 73 dropped the exemption).
+-- UUID means UUID for every order now — compound children mint a real one.
+--
+-- IT WAS LEFT HERE, WHICH MADE THIS CONSTANT THE ONE COPY OUT OF THREE THAT
+-- STILL CLAIMED THE EXEMPTION. Migration 73's own comment says the plain
+-- predicate "is what the schema snapshot and postgres_ddl.go declare" — true of
+-- schema.snapshot.sql:1321, false here until this edit. The baseline runs ahead
+-- of the versioned migrations on every startup, so a fresh install built the
+-- exempting index from this constant and then had v73 DROP and rebuild it; the
+-- end state converged, which is exactly why nothing caught the disagreement.
+-- What it cost was the constant's standing as the answer to "what shape is this
+-- index" -- two live declarations of one index, and the next reader believing
+-- whichever they opened first.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid)
-    WHERE edge_uuid <> '' AND edge_uuid NOT LIKE 'restore-%';
+    WHERE edge_uuid <> '';
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_vendor ON orders(vendor_order_id);
 CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node);

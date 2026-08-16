@@ -541,40 +541,37 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			return nil
 		}
 
-		// THE SECOND REASON A FINISHED-LOOKING RESHUFFLE IS NOT FINISHED (§R.76),
-		// and it sits here rather than beside the sealedness check above because it
-		// is the same question asked of a different fact: sealedness asks whether
-		// more work may still be ADDED, this asks whether the work already done has
-		// been COLLECTED.
+		// A SERVICE DIG THAT UNCOVERED A BIN USED TO BE HELD HERE, and is not any
+		// more. The reasoning was that its legs carry blockers out and nothing else,
+		// so when the last one confirms the bin the excavation was raised to expose
+		// is standing at an open mouth with only its claim over it — and completing
+		// drops the lane, whereupon the next shuffle search finds the very slots
+		// this dig emptied.
 		//
-		// A service dig owns no retrieve. Its legs carry blockers out and that is
-		// all, so when the last one confirms, every clause of "finished" is true and
-		// the bin the excavation was raised to uncover is sitting at an open lane
-		// mouth with nothing but its claim over it. Completing here drops the lane
-		// (unlockLaneForCompound, below) and the next order's shuffle slot search
-		// finds the very slots this dig emptied. Holding is what makes a cancelled
-		// claim survivable.
+		// The exposure is real and the hold was the wrong instrument for it: it made
+		// a finished order into a permanent non-terminal row, holding a corridor on
+		// behalf of a demand it could not ask about, and demands re-resolve while a
+		// dig runs. So the corridor CHANGES HANDS instead — to the live demand in
+		// the episode this dig was raised for, as that demand's own outbound hold —
+		// and the dig terminates on the ordinary path like every other compound.
 		//
-		// RETURNS BEFORE THE LANE HANDLING, for the same reason the sealedness guard
-		// does: the lane is the thing being kept.
+		// IT HAPPENS HERE AS WELL AS AT THE LAST BLOCKER'S EXIT, and that is not a
+		// second spelling: it is the same call, at the second of the two events that
+		// can arrive first. The exit fires when a bin enters transit and this fires
+		// when the last leg terminalizes, and which one wins depends on the leg. A
+		// handoff on the losing path is a no-op — the dig row it moves is already
+		// gone — so asking twice costs a read and asking once loses the corridor
+		// whenever the other event got there first.
 		//
-		// The releaser is maybeReleaseDigOnLastBlockerOut, which fires on every bin
-		// leaving this lane and re-drives this function once the target is gone. A
-		// nil parent stays on the pre-existing path, again matching the guard above
-		// — an unreadable parent is somebody else's problem and widening it here
-		// would be a second decision smuggled into this one.
+		// BEFORE THE TERMINALIZATION BELOW, necessarily: TerminalizeOrder deletes
+		// the parent's reservations in the same transaction as its status write, so
+		// a handoff attempted after it finds nothing to hand over.
 		if parent != nil {
-			owes, oErr := d.db.DigStillOwesItsTarget(parent)
-			if oErr != nil {
-				log.Printf("dispatch: %v", oErr)
-			}
-			if owes {
-				d.dbg("dispatch: compound %d dug its lane out but the bin at %s has not been collected "+
-					"— holding the lane and staying in reshuffling", parentOrderID, parent.DigTargetNode)
-				return nil
+			for _, laneID := range heldLanes {
+				d.handOffDugLane(parent, laneID)
 			}
 		}
-
+		//
 		// All children reached a terminal status with none failed -> compound
 		// order is complete. Route on whether the parent has its OWN work to
 		// resume after the reshuffle — Stage 4 keys this on the coordinated-plan
@@ -1281,14 +1278,66 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 	}
 }
 
+// CancelOrderWithCascade is THE cancel door. Both entry points that cancel an
+// order on somebody's instruction go through it: the Edge/wire cancel
+// (HandleOrderCancel) and the web-UI cancel (engine.TerminateOrder).
+//
+// ── WHY IT IS ONE DOOR AND NOT TWO CALLS ──────────────────────────────────
+//
+// engine.TerminateOrder called lifecycle.CancelOrder and stopped. No cascade, no
+// lane release, no wake. Cancelling a dig parent from the operations page
+// therefore left its legs RUNNING — with live vendor orders, claimed bins, and a
+// lane still held by a parent that no longer exists. The wire door had gotten
+// the cascade (deliberately unconditional, see HandleOrderCancel); the UI door
+// was never given it, and the two doors are indistinguishable from the operator's
+// side.
+//
+// Three things have to happen in one order and it is not the obvious one, which
+// is exactly why they belong in a function rather than in a convention:
+//
+//  1. SNAPSHOT THE LANES FIRST, while the parent still holds them. The rows ARE
+//     the lock, and TerminalizeOrder deletes an order's reservations in the same
+//     transaction as its status write — so a snapshot taken after step 2 is
+//     EMPTY, and an empty snapshot is indistinguishable from "held nothing".
+//     That is the whole defect: the wake loop ran over an empty set and every
+//     dweller behind the lane waited out the 60-second floor.
+//  2. CANCEL THE PARENT, before the children. The reverse order raced: the
+//     redrive that a child's cancellation triggers admitted the next leg, hit a
+//     reachability refusal, DISSOLVED the dig, and the terminal arm raced the
+//     parent's own cancel to a `failed` finish — an operator asked for cancelled
+//     and got failed. Cancelling the parent first makes the teardown atomic from
+//     every observer's point of view.
+//  3. CASCADE, then release the lanes from the snapshot taken in step 1.
+//
+// Steps 1 and 2 are in tension — the snapshot must precede the very write that
+// makes step 2 atomic — and reading the lanes inside the cascade got that
+// tension backwards.
+func (d *Dispatcher) CancelOrderWithCascade(order *orders.Order, stationID, reason string) {
+	heldLanes := d.digLanesHeld(order.ID)
+	d.lifecycle.CancelOrder(order, stationID, reason)
+	d.cancelCompoundChildren(order, stationID, reason, heldLanes)
+}
+
 // cancelCompoundChildren cancels all non-terminal children of a compound order.
 // Unlike HandleChildOrderFailure (which only cancels pending/sourcing children),
 // this method also cancels in-flight children (dispatched, in_transit, staged)
 // and their fleet orders. Called when an operator cancels a compound parent directly.
-func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, reason string) {
-	// Before the cancels, which can terminalize this parent's own rows out from
-	// under the release. See unlockLaneForCompound.
-	heldLanes := d.digLanesHeld(parent.ID)
+//
+// heldLanes IS TAKEN BY THE CALLER, and that is not a style choice. This used to
+// read it here — `heldLanes := d.digLanesHeld(parent.ID)` as its first line —
+// which is before the CHILDREN are cancelled but AFTER the parent already was,
+// on the only path that calls it. The parent's cancel deletes its reservations
+// in the same transaction as its status write, and the reservations are the
+// lane lock, so the snapshot read an already-emptied set every time. The wake
+// loop then iterated nothing and every dweller behind that lane waited out the
+// 60-second floor.
+//
+// unlockLaneForCompound's own header predicted this failure in general terms
+// ("two of the three dispositions above terminalize the parent BEFORE releasing
+// its lane — so reading the rows here returns nothing on exactly the paths that
+// matter") and the fix it describes is passing the snapshot in. This is the
+// caller that had not been converted.
+func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, reason string, heldLanes []int64) {
 	children, err := d.db.ListChildOrders(parent.ID)
 	if err != nil {
 		log.Printf("dispatch: cancel compound children for order %d: %v", parent.ID, err)

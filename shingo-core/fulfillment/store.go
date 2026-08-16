@@ -32,6 +32,10 @@ type Store interface {
 	// {queued, sourcing} (the acquiring set, widened from queued-only).
 	ListAcquiringOrders() ([]*orders.Order, error)
 	GetOrder(id int64) (*orders.Order, error)
+	// OwnsNoCargo distinguishes a COORDINATOR (owns legs, NULL bin_id
+	// permanently and correctly) from a defective single-bin order. Shadowed
+	// at dispatchHeldBin for one window before the spelling is cut over.
+	OrderOwnsNoCargo(orderID int64) (bool, error)
 	// CapacityDB: the capacity gate self-excludes the caller's own order.
 	CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode string, excludeID int64) (int, error)
 

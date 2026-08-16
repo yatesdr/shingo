@@ -178,33 +178,33 @@ func TestAdvanceStuckReshuffleParents_SkipsOpenParent(t *testing.T) {
 	}
 }
 
-// TestAdvanceStuckReshuffleParents_SkipsAParentStillHoldingItsTarget is the
-// THIRD reason a parent in this set is not stuck (§R.76), and it is the same
-// kind of guard as sealedness above for the same kind of reason.
+// TestAdvanceStuckReshuffleParents_RescuesADigThatNamesATarget is the deletion
+// of a carve-out, pinned so it cannot come back by accident.
 //
-// A service dig holds its lane past its last blocker until the bin it uncovered
-// is collected. That leaves it sealed, in `reshuffling`, with every child
-// terminal — every clause of the sweep's SELECT, and none of its meaning. The
-// sweep runs on the periodic ticker, so without this guard it would re-drive the
-// dig into AdvanceCompoundOrder's refusal and then write an
-// advance_stuck_reshuffle recovery row EVERY PASS, for a dig doing exactly what
-// it is supposed to be doing.
+// A service dig used to hold its lane past its last blocker until the bin it
+// uncovered was collected, which left it sealed, in `reshuffling`, with every
+// child terminal — every clause of this sweep's SELECT and none of its meaning.
+// So the sweep learned to skip such a parent, or it would have re-driven a
+// working dig into AdvanceCompoundOrder's refusal and written an
+// advance_stuck_reshuffle recovery row every pass, forever.
 //
-// Correctness never rested on this line — AdvanceCompoundOrder refuses these
-// itself. The forensic record does, which is the same argument
-// SkipsOpenParent's header makes at greater length.
+// THE HOLD IS GONE. A finished dig hands its corridor to the live demand in the
+// episode it was raised for and terminates on the ordinary path, so a dig
+// sitting in `reshuffling` with every child terminal is stuck in exactly the
+// plain sense this sweep was written for — and re-driving it is the rescue, not
+// a false record of one.
 //
-// THE TWO PARENTS ARE IDENTICAL IN EVERY CLAUSE THE SELECT LOOKS AT, and differ
-// only in a physical fact about the world: whether a bin is still standing at
-// the slot each one names. Both name a target; one target is still there. That
-// is what makes this a test of the predicate rather than of the fixture — a
-// control whose dig_target_node was simply blank would be excluded by the empty
-// -string arm and would pass with the real check removed.
+// THE FIXTURE IS THE OLD TEST'S, UNCHANGED, AND THE EXPECTATION IS INVERTED.
+// Both parents name a target slot and differ only in whether a bin is still
+// standing there, which was the whole of the deleted predicate. Both must now be
+// re-driven: the sweep does not ask that question any more, and a parent whose
+// target bin is still standing would otherwise be the one row it silently
+// refused to rescue.
 //
-// MUTATION (verified): delete the `if owes { continue }` arm from
-// AdvanceStuckReshuffleParents. This fires with advanced = [holding, collected]
-// — both selected — which is the false recovery record, once per tick.
-func TestAdvanceStuckReshuffleParents_SkipsAParentStillHoldingItsTarget(t *testing.T) {
+// MUTATION: restore the `if owes { continue }` arm. This fires with advanced =
+// [collected] alone — the parent whose target bin is still standing is skipped,
+// which is a dig left in `reshuffling` with nothing coming to release it.
+func TestAdvanceStuckReshuffleParents_RescuesADigThatNamesATarget(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := newReconService(t, db)
@@ -233,16 +233,16 @@ func TestAdvanceStuckReshuffleParents_SkipsAParentStillHoldingItsTarget(t *testi
 		return p.ID, slot.Name
 	}
 
-	holding, holdingSlot := mk("dig-holding", true)
+	standing, standingSlot := mk("dig-standing", true)
 	collected, _ := mk("dig-collected", false)
 
 	n, err := svc.AdvanceStuckReshuffleParents()
 	testutil.MustNoErr(t, err, "AdvanceStuckReshuffleParents")
 
-	if len(advanced) != 1 || advanced[0] != collected {
-		t.Fatalf("advanced = %v (n=%d), want exactly [%d]. Parent %d is holding its lane because a bin "+
-			"is still standing at %s — re-driving it writes a recovery record for a rescue that did "+
-			"not happen, on every tick, forever", advanced, n, collected, holding, holdingSlot)
+	if len(advanced) != 2 {
+		t.Fatalf("advanced = %v (n=%d), want both %d and %d. A dig no longer holds its lane for the "+
+			"bin at %s, so a dig parked in `reshuffling` with every child terminal is stranded and "+
+			"this sweep is what un-strands it", advanced, n, standing, collected, standingSlot)
 	}
 }
 

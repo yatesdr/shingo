@@ -420,3 +420,159 @@ func TestMultiBinSettle_LandedBinGetsNoInstruction(t *testing.T) {
 			*gotFlight.ClaimedBy)
 	}
 }
+
+// TestMultiBinSettle_CompoundChildScopesItsUnclaim is THE ONE TEST that settles
+// whether store/order_bins.go's unclaim is guarded-by-caller or live. The
+// source-of-truth round split on it — one reading called it a drifted copy of
+// the pre-445f79eb shape, the other called it safe by caller precondition — and
+// a dispute about what a caller permits is answered by running the caller, not
+// by reading the SQL. Reading the SQL only ever answers "is this UPDATE
+// scoped", which is a narrower question that looks exactly like the one asked.
+//
+// SO IT RUNS THE CALLER. applyMultiBinArrivalForOrder is the delivery-time
+// settle, and its guard is refuseArrival.
+//
+// THE VERDICT IS: BOTH READINGS WERE PARTLY RIGHT, AND IT IS LIVE.
+//
+// For an ORDINARY order the caller precondition is complete. refuseArrival
+// refuses any bin whose claimed_by is not that order, and the R.26 assert
+// commits NOTHING when any leg is refused — so the unclaim provably cannot meet
+// a foreign claim by that door. That is the safe-by-caller reading, and within
+// its population it holds.
+//
+// But refuseArrival's first line is `if order.ParentOrderID != nil { return
+// nil }`. A compound child skips the ownership question ENTIRELY. The exemption
+// was written for siblings, whose claims legitimately overlap — and it does not
+// ask whether the claim it is waving through belongs to a sibling. So a dig leg
+// reaches the writer holding whatever claim was on the bin, which is the
+// lane-stress scenario 445f79eb was written for (order 9 setting bin 6 down at
+// LSD_010 and wiping order 1's claim) arriving through the multi-bin door
+// instead of the single-bin one that got fixed.
+//
+// TWO ARMS, because the fix has two ways to be wrong and only one of them is
+// the obvious one. Over-tightening is the other: scope strictly to the placer
+// and a sibling's claim survives the whole compound, stalling re-reservation of
+// bins the dig has finished with — which is why 445f79eb exempts same-compound
+// and why that exemption is asserted here rather than assumed.
+//
+// MUTATION (verified): make the claimed_by predicate in ApplyMultiBinArrival
+// always true — i.e. restore the unconditional unclaim — and the STRANGER arm
+// fires with the rig's own failure, "claimed by nobody, not by this order".
+// Delete the EXISTS clause instead and the SIBLING arm fires.
+func TestMultiBinSettle_CompoundChildScopesItsUnclaim(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newTestEngine(t, db, testdb.NewSuccessBackend())
+
+	bt := &bins.BinType{Code: "SCOPE-BT", Description: "tote"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
+	transit, err := db.GetNodeByName(domain.TransitNodeName)
+	testutil.MustNoErr(t, err, "lookup _TRANSIT")
+	src := &nodes.Node{Name: "SCOPE-SRC", Enabled: true}
+	destF := &nodes.Node{Name: "SCOPE-DEST-F", Enabled: true}
+	destS := &nodes.Node{Name: "SCOPE-DEST-S", Enabled: true}
+	for _, n := range []*nodes.Node{src, destF, destS} {
+		testutil.MustNoErr(t, db.CreateNode(n), "create "+n.Name)
+	}
+
+	// The compound: a parent and the child leg doing the placing.
+	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.OrderType = "complex"
+		o.Status = "in_transit"
+	})
+	child := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.OrderType = "complex"
+		o.ParentOrderID = &parent.ID
+		o.SourceNode = src.Name
+		o.DeliveryNode = destS.Name
+		o.Status = "delivered"
+	})
+
+	// Both claim holders stay OUT of the acquiring set, for the reason spelled
+	// out in TestMultiBinSettle_RefusalWritesNothing: a `queued` order with no
+	// payload code is structurally failed by the running fulfillment scanner,
+	// and failing it releases the very claim these arms assert on. That is a
+	// race that passes locally and flakes in CI.
+	sibling := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.ParentOrderID = &parent.ID
+		o.Status = "in_transit"
+	})
+	stranger := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+	for _, o := range []*orders.Order{sibling, stranger} {
+		if protocol.IsAcquiring(o.Status) {
+			t.Fatalf("fixture: claim holder is %q, which is in the acquiring set — the scanner will "+
+				"fail it and release the claim under test; keep it out of {queued, sourcing}", o.Status)
+		}
+	}
+
+	// ARM 1 — a STRANGER's claim. Not a sibling, not the placer. This is the
+	// blocker bin an ordinary demand had already claimed.
+	foreign := &bins.Bin{BinTypeID: bt.ID, Label: "SCOPE-FOREIGN", NodeID: &transit.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(foreign), "create foreign bin")
+	testdb.ClaimBinForTest(t, db, foreign.ID, stranger.ID)
+	testutil.MustNoErr(t, db.InsertOrderBin(child.ID, foreign.ID, 0, "dropoff", src.Name, destF.Name),
+		"junction row: the stranger-claimed leg")
+
+	// ARM 2 — a SIBLING's claim, which the compound exemption must still clear.
+	shared := &bins.Bin{BinTypeID: bt.ID, Label: "SCOPE-SIBLING", NodeID: &transit.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(shared), "create sibling-claimed bin")
+	testdb.ClaimBinForTest(t, db, shared.ID, sibling.ID)
+	testutil.MustNoErr(t, db.InsertOrderBin(child.ID, shared.ID, 1, "dropoff", src.Name, destS.Name),
+		"junction row: the sibling-claimed leg")
+
+	obs, err := db.ListOrderBins(child.ID)
+	testutil.MustNoErr(t, err, "list junction rows")
+	if len(obs) != 2 {
+		t.Fatalf("junction rows = %d, want 2", len(obs))
+	}
+
+	refusals := eng.applyMultiBinArrivalForOrder(child, obs)
+
+	// THE SETTLING OBSERVATION, and it is this assertion rather than the claim
+	// ones that answers the round's question. Zero refusals on a batch where
+	// BOTH bins are claimed by somebody other than the placer is the caller
+	// precondition being absent: the writer is reached with foreign claims in
+	// hand, so its unclaim is the only thing standing between a stranger's claim
+	// and the floor. If this ever reads non-zero the guard has been tightened
+	// and the writer's scoping is belt-and-braces rather than the guarantee.
+	if len(refusals) != 0 {
+		t.Fatalf("refusals = %d, want 0 — refuseArrival exempts compound children "+
+			"(order.ParentOrderID != nil) from the ownership question entirely, so this batch "+
+			"must reach the writer unguarded. A refusal here means the caller now guards this "+
+			"path and the dispute has moved.", len(refusals))
+	}
+
+	// ARM 1: placed, and the stranger still owns it. Attribution never blocks
+	// transport — the bin lands either way — but the order coming for it keeps
+	// its claim.
+	gotForeign, err := db.GetBin(foreign.ID)
+	testutil.MustNoErr(t, err, "reload the stranger-claimed bin")
+	if gotForeign.NodeID == nil || *gotForeign.NodeID != destF.ID {
+		t.Errorf("stranger-claimed bin is at %v, want destF (%d) — the placement itself is never "+
+			"refused; only the claim is spared", gotForeign.NodeID, destF.ID)
+	}
+	if gotForeign.ClaimedBy == nil {
+		t.Errorf("stranger-claimed bin: claim cleared by a compound child that does not own it. " +
+			"This is the 445f79eb defect reached through the multi-bin door — the stranger next " +
+			"picks up its OWN bin with no claim on it, its intermediate set-down finds 0 bins in " +
+			"transit under this claim, and final delivery refuses a robot carrying a bin nobody owns.")
+	} else if *gotForeign.ClaimedBy != stranger.ID {
+		t.Errorf("stranger-claimed bin claim = %d, want stranger %d", *gotForeign.ClaimedBy, stranger.ID)
+	}
+
+	// ARM 2: placed, and the sibling's claim IS cleared. Same compound is the
+	// same owner; leaving it would strand the bin claimed until the compound
+	// terminalized and stall re-reservation of bins the dig has finished with.
+	gotShared, err := db.GetBin(shared.ID)
+	testutil.MustNoErr(t, err, "reload the sibling-claimed bin")
+	if gotShared.NodeID == nil || *gotShared.NodeID != destS.ID {
+		t.Errorf("sibling-claimed bin is at %v, want destS (%d)", gotShared.NodeID, destS.ID)
+	}
+	if gotShared.ClaimedBy != nil {
+		t.Errorf("sibling-claimed bin still claimed by %d — CreateCompoundChildren writes claims for "+
+			"every step in one transaction and the last write wins, so a leg routinely finds a "+
+			"SIBLING's id on the bin it is putting down. Same compound is the same owner: scoping "+
+			"strictly to the placer stalls re-reservation of bins the dig has finished with.",
+			*gotShared.ClaimedBy)
+	}
+}

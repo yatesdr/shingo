@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"shingoedge/domain"
+	ordermgr "shingoedge/orders"
 	"shingoedge/store/orders"
 )
 
@@ -74,6 +75,12 @@ func (e *Engine) CreateRetrieveForAPI(req APIRetrieveRequest) ([]*orders.Order, 
 					req.ProcessNodeID, req.RetrieveEmpty, req.Quantity,
 					deliveryNode, req.SourceNode, req.StagingNode, req.LoadType,
 					req.PayloadCode, req.AutoConfirm, false,
+					// NoDemand: a direct API command belongs to no cell episode and
+					// never will. Not "nobody wanted it" — the caller did — but the
+					// demand grain measures EPISODES, and this order is structurally
+					// outside them. Leaving it unstated put it in the orphan bucket
+					// beside the genuinely lost origins.
+					ordermgr.NoDemand(),
 				)
 				if cerr != nil {
 					return n, cerr
@@ -123,6 +130,7 @@ func (e *Engine) createRetrieveDirect(req APIRetrieveRequest, count int) ([]*ord
 			req.ProcessNodeID, req.RetrieveEmpty, req.Quantity,
 			req.DeliveryNode, req.SourceNode, req.StagingNode, req.LoadType,
 			req.PayloadCode, req.AutoConfirm, false,
+			ordermgr.NoDemand(), // see createRetrieveForLoader
 		)
 		if err != nil {
 			// A partial batch is reported as what it is: the orders that exist

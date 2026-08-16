@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch"
+	"shingocore/service"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -547,6 +548,14 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// the liveness floor kept reporting as "(none)" — a gap in the arms, never in
 	// the releaser inventory.
 	if order.BinID == nil {
+		// SHADOWED. "A construction bug" is true of a broken order and FALSE of a
+		// coordinator, whose NULL bin_id is permanent and correct — so this arm
+		// would file a fault against a folder. Reachability here was NOT
+		// established by reading (the scanner's own coordinator skip and
+		// reshuffling ∉ IsAcquiring both guard upstream), which is exactly why
+		// the spelling is measured before it is cut.
+		owns, oerr := s.db.OrderOwnsNoCargo(order.ID)
+		service.NoteFolderShadow(service.FolderSiteHeldBinDispatch, order.ID, true, owns, oerr)
 		// The plain path only routes here when order.BinID != nil, so a nil here
 		// is a construction bug — surface it, don't dispatch with no bin.
 		s.logFn("fulfillment: order %d reached dispatchHeldBin with no claimed bin; skipping", order.ID)

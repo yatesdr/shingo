@@ -61,7 +61,7 @@ func TestApplyMultiBinArrival_EvictsStaleGhostOnOccupiedPhysicalNode(t *testing.
 	testdb.ClaimBinForTest(t, db, arrA.ID, order.ID)
 	testdb.ClaimBinForTest(t, db, arrB.ID, order.ID)
 
-	evicted, err := db.ApplyMultiBinArrival([]orders.BinArrivalInstruction{
+	evicted, err := db.ApplyMultiBinArrival(order.ID, []orders.BinArrivalInstruction{
 		{BinID: arrA.ID, ToNodeID: destA.ID}, // collides with the ghost
 		{BinID: arrB.ID, ToNodeID: destB.ID}, // empty destination
 	})
@@ -134,7 +134,7 @@ func TestApplyMultiBinArrival_SyntheticDestNotEvicted(t *testing.T) {
 	order := testdb.CreateOrder(t, db)
 	testdb.ClaimBinForTest(t, db, arriving.ID, order.ID)
 
-	evicted, err := db.ApplyMultiBinArrival([]orders.BinArrivalInstruction{
+	evicted, err := db.ApplyMultiBinArrival(order.ID, []orders.BinArrivalInstruction{
 		{BinID: arriving.ID, ToNodeID: syn.ID},
 	})
 	testutil.MustNoErr(t, err, "ApplyMultiBinArrival")
@@ -173,7 +173,7 @@ func TestApplyMultiBinArrival_EvictsMultipleGhostsAtOneNode(t *testing.T) {
 	order := testdb.CreateOrder(t, db)
 	testdb.ClaimBinForTest(t, db, arriving.ID, order.ID)
 
-	evicted, err := db.ApplyMultiBinArrival([]orders.BinArrivalInstruction{
+	evicted, err := db.ApplyMultiBinArrival(order.ID, []orders.BinArrivalInstruction{
 		{BinID: arriving.ID, ToNodeID: dest.ID},
 	})
 	testutil.MustNoErr(t, err, "ApplyMultiBinArrival")

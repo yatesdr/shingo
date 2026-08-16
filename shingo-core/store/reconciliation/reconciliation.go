@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/store/internal/helpers"
 	"shingocore/store/messaging"
 )
 
@@ -125,6 +126,34 @@ func ListOrderCompletionAnomalies(db *sql.DB) ([]*CompletionAnomaly, error) {
 		SELECT o.id AS order_id, NULL::bigint AS bin_id, o.status AS order_status, '' AS bin_status, 'completed_order_missing_bin' AS issue, COALESCE(o.completed_at, o.updated_at) AS observed_at
 		FROM orders o
 		WHERE o.completed_at IS NOT NULL AND o.bin_id IS NULL
+		  -- A COMPOUND PARENT CARRIES NO BIN, so asking it for one is asking the
+		  -- wrong row. Its legs hold the bins: a service dig's parent is a
+		  -- container with no cargo and no robot, and a plain buried retrieve
+		  -- re-parents the demand so its own fetch becomes a leg.
+		  --
+		  -- The anomaly was written for a different shape — a SINGLE-BIN order
+		  -- whose UpdateOrderBinID never persisted, which reaches FINISHED with
+		  -- its bin still sitting at source (see wiring_completion.go's diagnostic
+		  -- for the same failure caught one layer up). Every compound parent
+		  -- matched it too, and matched it forever, because the condition is
+		  -- permanent for that shape.
+		  --
+		  -- Measured on the lane-stress rig 2026-08-13: TWELVE anomalies, ten
+		  -- service digs and two buried retrieves, every one of them a compound
+		  -- parent whose legs had delivered correctly. Zero completed orders with
+		  -- no bin AND no legs — the predicate had no true positives at all, and
+		  -- the strip read "Core degraded" for the whole run because of it.
+		  --
+		  -- THE EXEMPTION IS THE CHILD ROWS, not the order type or a flag. Whether
+		  -- an order owns legs is the fact that decides whose bin it is, it is
+		  -- true of both compound shapes, and it cannot drift from a label.
+		  --
+		  -- THE PREDICATE IS NOW SHARED. This clause was spelled inline here and
+		  -- nowhere else, while seven other sites asked the same question as
+		  -- order.BinID == nil -- which is true of a coordinator AND true of a
+		  -- defect. This site was right and alone. helpers.OwnsNoCargoSQL is that
+		  -- spelling, lifted so the other seven can reach it.
+		  AND NOT `+helpers.OwnsNoCargoSQL("o")+`
 		UNION ALL
 		SELECT o.id AS order_id, o.bin_id AS bin_id, o.status AS order_status, COALESCE(b.status, '') AS bin_status, 'confirmed_without_completed_at' AS issue, COALESCE(o.completed_at, o.updated_at) AS observed_at
 		FROM orders o

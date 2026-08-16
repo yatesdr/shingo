@@ -9,6 +9,21 @@
 # The owner's seed ruling: not SPR, not HK — "fledgling systems, not good datapoints".
 # Purpose-built, many lanes, hammered.
 #
+# ── FROZEN, AND IT SHIPS WITH TWO KNOWN DEFECTS (§R.78) ────────────────────────────────
+#
+# This file is the baseline every A/B on this stream is measured against — the 113-order
+# figure exists on THIS seed and nowhere else — so it is not corrected, because correcting
+# it would delete the comparison it exists for.
+#
+# The census at birth reports two air bubbles in SYN_COMP every time it loads, by name:
+# LSC_012 behind LSC_009, and LSC_019 behind LSC_017. They are seeded, not drilled — no
+# bin was ever at either slot and no order ever named one (§R.77) — and they are most of
+# why this group runs at a 2.7% working margin. Passing on a config this hostile is the
+# stronger result, which is why the closing run stays here.
+#
+# lane-stress-packed.yaml is the corrected successor and is where new baselines are cut.
+baseline_frozen_at: "§R.78"
+#
 # ── WHAT IS DELIBERATE HERE ───────────────────────────────────────────────────────────
 #
 # 1. TWO MARKETS, SPLIT BY AREA, NOT BY EMPTY/FULL. SYN_STAMP carries the panel loop;

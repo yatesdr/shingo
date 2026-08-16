@@ -955,23 +955,28 @@ func TestDwell_ComposesWithTheGatedEntry(t *testing.T) {
 // with a loaded robot standing in the corridor. So this test drives the two
 // moments separately and asserts opposite things about them.
 //
-// EXTENDED BY §R.76, WHICH INVERTED ONE OF ITS ASSERTIONS. The test now walks the
-// claim's whole life on a SERVICE dig — lift, drive-out, land, and the target's
-// exit — because arm 2 moved the release from the last blocker leaving to the
-// TARGET BIN leaving. The old assertion is quoted at the site that used to make
-// it rather than deleted, so the change of mind is readable from the test.
+// EXTENDED TO THE HANDOFF. The test walks a SERVICE dig's corridor through its
+// whole life — lift, drive-out, land — because the excavation ending is not the
+// corridor ending: the bin the dig uncovered is standing at an open mouth, and
+// what protects it is that the lane CHANGES HANDS to the order collecting it, as
+// that order's own outbound hold, rather than being held by a dig that never
+// terminates.
 //
 // The four moments, and what each one is proving:
 //
-//	LIFT        the claim survives a dweller's own pick (§7.4, unchanged)
-//	DRIVE-OUT   the claim survives the last blocker leaving  (arm 2, site 3)
-//	LAND        the claim survives every child going terminal (arm 2, site 1)
-//	TARGET OUT  the claim drops, and the parent finishes      (the releaser)
+//	LIFT        the dig claim survives a dweller's own pick (§7.4, unchanged)
+//	DRIVE-OUT   the corridor passes to the collector, still shut to drops
+//	LAND        the dig parent TERMINATES — it owes nothing and holds nothing
+//	COLLECTED   the collector's own hold is the last thing, and it ends with it
 //
 // MUTATION: delete the holdsOccupancyThroughDwell arm from legStillNeedsLane. The
 // first assertion fires — the claim drops at the LIFT, while the robot is still
 // standing in the lane, and the dig's own remaining legs (exempt from their
 // parent's lock by design) are free to queue in behind it.
+//
+// MUTATION: make handOffDugLane return false unconditionally. The DRIVE-OUT
+// assertion fires — the lane goes fully free with the uncovered bin standing in
+// it, which is the re-burial window.
 func TestFlip2_TheDigKeepsItsLaneWhileALegDwellsInIt(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -985,11 +990,20 @@ func TestFlip2_TheDigKeepsItsLaneWhileALegDwellsInIt(t *testing.T) {
 	// on that leg, which is what makes the two moments below separable — a plain
 	// buried retrieve would keep the lane for its own tail's target and hide the
 	// arm this test is about.
+	//
+	// IT CARRIES AN ORIGIN, and that is what makes it the collector rather than
+	// fixture decoration: createServiceDigParent inherits the requester's origin,
+	// and the episode is the only tie a dig has to the demand it was raised for.
+	// A buried demand records nothing else — no claim on the bin, no reservation,
+	// no source_node naming the slot — because it cannot claim what it cannot
+	// reach.
 	requester := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "dwflip-req"
 		o.OrderType = OrderTypeRetrieve
 		o.PayloadCode = bp.Code
 		o.DeliveryNode = lineNode(t, db, "DWFLIP-LINE").Name
+		o.OriginID = "44444444-4444-4444-4444-444444444444"
+		o.OriginClass = "demand"
 		o.Status = protocol.StatusPending
 	})
 	plan, err := PlanLaneMouthClear(db, dugSlots[1], dug, grp.ID, reservations.Anyone)
@@ -1025,91 +1039,91 @@ func TestFlip2_TheDigKeepsItsLaneWhileALegDwellsInIt(t *testing.T) {
 		t.Fatalf("the leg was released onto %q, want the free parking %s", released.DeliveryNode, park.Name)
 	}
 
-	// ── AND THE CLAIM STAYS, WHICH INVERTS WHAT THIS TEST USED TO ASSERT ──────
+	// ── AND THE CORRIDOR CHANGES HANDS ────────────────────────
 	//
 	// The sentence that stood here was: "lane %s is still dig-claimed after its
 	// last blocker left it. What remains of this compound is transport — the robot
 	// is driving to %s — and holding the corridor for that is the cost flip 2
 	// exists to remove."
 	//
-	// It is quoted rather than deleted because it was right about transport and is
-	// wrong about THIS shape, and the difference is the whole of §R.76. This is a
-	// SERVICE dig: it owns no retrieve, so when its blocker leaves, DWFLIP-TGT —
-	// the bin the excavation was raised to uncover — is standing at an open lane
-	// mouth. Flip 2 as first built dropped the claim right here, and the only
-	// thing then keeping the next order out of the slots this dig had just emptied
-	// was the hard CLAIM on that bin. Claims get cancelled. When one did, the bin
-	// was re-buried by the traffic the dig had been run to get ahead of.
-	//
-	// So the corridor is held for the retrieval as well as the excavation, and the
-	// cost flip 2 removes is now measured from the TARGET's exit rather than the
-	// last blocker's.
-	if !d.laneLock.IsLocked(dug.ID) {
-		t.Fatalf("lane %s released its claim when the last blocker left, with %s still sitting in it. "+
-			"That is the naked-target window: nothing but a cancellable claim then stands between the "+
-			"bin this dig uncovered and the next order's shuffle slot (§R.76)", dug.Name, dugSlots[1].Name)
+	// It is quoted rather than deleted because it was right about transport and
+	// incomplete about this shape. This is a SERVICE dig: it owns no retrieve, so
+	// when its blocker leaves, DWFLIP-TGT — the bin the excavation was raised to
+	// uncover — is standing at an open lane mouth. Releasing outright here is the
+	// re-burial window; holding it under the dig is a finished order that never
+	// terminates. So the lane is HANDED to the order collecting the bin, and it is
+	// that order's hold from this moment on.
+	if owner := digHoldOwner(t, db, dug.ID); owner != 0 {
+		t.Fatalf("lane %s is still held as a DIG (by order %d) after the excavation finished. The "+
+			"excavation is over — what remains is somebody else's pickup — so the corridor belongs to "+
+			"the collector now, not to a dig with nothing left to do in it", dug.Name, owner)
+	}
+	holders, err := reservations.ActiveMouthRows(db.DB, dug.ID)
+	testutil.MustNoErr(t, err, "read the lane's mouth holds after the handoff")
+	if len(holders) != 1 || holders[0].OrderID != requester.ID || holders[0].Mode != reservations.ModeOutbound {
+		t.Fatalf("lane %s holds %+v after its dig finished, want exactly one OUTBOUND hold for the "+
+			"collector %d. Outbound is the whole mechanism: it excludes a drop into the lane — which "+
+			"is the only way the uncovered bin can be re-buried — while admitting the collector's own "+
+			"dispatch idempotently", dug.Name, holders, requester.ID)
 	}
 
-	// The parent is still open at this point because its leg is still driving, so
-	// the hold above is site 3's (maybeReleaseDigOnLastBlockerOut) and not site
-	// 1's. Landing the leg makes every child terminal and moves the question to
-	// AdvanceCompoundOrder, which must refuse for the same reason.
+	// ── LAND: AND THE DIG TERMINATES ON THE ORDINARY PATH ───────────────
+	//
+	// It owes nothing and holds nothing, so there is no arm to refuse it and no
+	// re-drive to un-stick it later. A dig that held past this point was a third
+	// non-terminal state — invisible to every stall checker, holding a corridor on
+	// behalf of a demand it could not ask about — and that is what the handoff
+	// above exists to make unnecessary.
 	//
 	// AdvanceCompoundOrder IS CALLED EXPLICITLY, and that is not fixture noise.
 	// landLeg terminalizes the leg through the store, which is not the path that
 	// re-drives the parent — in production the leg's terminal event is what calls
-	// this. Without the explicit call the assertion below passes on site 3's hold
-	// alone and says nothing about the completion arm, which a mutation caught.
+	// this.
 	landLeg(t, d, db, legs[0])
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(parent.ID), "re-drive the parent after its last leg landed")
 
-	held, err := db.GetOrder(parent.ID)
-	testutil.MustNoErr(t, err, "reload the dig parent")
-	if protocol.IsTerminal(held.Status) {
-		t.Fatalf("the dig parent is %q with %s still in its lane. Every clause of 'finished' is true — "+
-			"sealed, children all terminal — and the completion arm has to refuse anyway, because "+
-			"completing releases the lane (unlockLaneForCompound) and exposes the bin",
-			held.Status, dugSlots[1].Name)
-	}
-	if !d.laneLock.IsLocked(dug.ID) {
-		t.Fatalf("lane %s lost its claim when the dig's last leg landed", dug.Name)
-	}
-	// LAW 8, on a compound parent, which is the first time anything writes one.
-	// Without it the board shows a reshuffle whose children are all confirmed and
-	// gives an operator no way to tell it apart from the stall it resembles.
-	if QueueCause(held.QueueCause) != CauseReshuffleHoldsTarget {
-		t.Errorf("the holding parent's queue_cause is %q, want %q. A wait with no cause is the one "+
-			"thing law 8 forbids, and this parent looks exactly like a stuck reshuffle",
-			held.QueueCause, CauseReshuffleHoldsTarget)
-	}
-
-	// ── THE TARGET LEAVES, BY A MOVER WITH NO CONNECTION TO THE DIG ───────────
-	//
-	// No order, no claim, no leg — the bin simply stops being in the lane. That is
-	// the release condition stated as a physical fact (law 4), and it is what
-	// makes a cancelled claim survivable: the hold cannot outlive the exposure it
-	// was protecting, because it is keyed on the exposure and not on a demand.
-	tgt := mustBinAt(t, db, dugSlots[1])
-	testutil.MustNoErr(t, db.MoveBinToTransit(tgt.ID, transitNode(t, db, "DWFLIP-OUT").ID),
-		"carry the target out of the lane")
-	d.maybeReleaseDigOnLastBlockerOut(dug.ID)
-
-	if d.laneLock.IsLocked(dug.ID) {
-		t.Errorf("lane %s is still dig-claimed after %s left it. Nothing of this dig remains — the "+
-			"excavation is done and the bin it uncovered is gone — so the corridor is being held for "+
-			"nothing", dug.Name, dugSlots[1].Name)
-	}
-	// AND THE PARENT FINISHES. The event that would ordinarily complete it — its
-	// last child going terminal — fired while it was still holding and does not
-	// fire twice, so the release has to be its own redrive. Without that the row
-	// sits in `reshuffling` forever holding nothing.
 	done, err := db.GetOrder(parent.ID)
-	testutil.MustNoErr(t, err, "reload the dig parent after the target left")
+	testutil.MustNoErr(t, err, "reload the dig parent")
 	if !protocol.IsTerminal(done.Status) {
-		t.Errorf("the dig parent is %q after its lane was released and its target collected. It owes "+
-			"nothing and holds nothing, and a permanent row in `reshuffling` is something every census "+
-			"and every stall checker then has to learn to ignore", done.Status)
+		t.Fatalf("the dig parent is %q with every child terminal and its corridor already handed to "+
+			"order %d. A finished dig that will not finish is a permanent row every census and every "+
+			"stall checker has to learn to ignore", done.Status, requester.ID)
 	}
+	// AND THE PARENT'S OWN TEARDOWN MUST NOT TAKE THE HANDED-OVER ROW WITH IT.
+	// unlockLaneForCompound releases by OWNER and the row's owner changed, so this
+	// is structural rather than lucky — asserted because if it ever stops being
+	// true the corridor opens at the exact moment the dig ends.
+	holders, err = reservations.ActiveMouthRows(db.DB, dug.ID)
+	testutil.MustNoErr(t, err, "read the lane's mouth holds after the dig terminated")
+	if len(holders) != 1 || holders[0].OrderID != requester.ID {
+		t.Fatalf("lane %s holds %+v after the dig terminated, want the collector %d's hold to survive "+
+			"the dig's teardown", dug.Name, holders, requester.ID)
+	}
+
+	// ── COLLECTED: the collector's hold is the last thing, and it ends with it ─
+	//
+	// The corridor is now inside an ordinary order's lifetime, which is the point:
+	// however that order ends — collected, cancelled, failed — its rows go with it,
+	// so no hold can outlive the work it was taken for. That is the property the
+	// dig-held version could not have, because a dig holding for a bin has no
+	// lifetime left of its own.
+	testutil.MustNoErr(t, db.FailOrderAtomic(requester.ID, "collector went away"),
+		"terminalize the collector")
+	holders, err = reservations.ActiveMouthRows(db.DB, dug.ID)
+	testutil.MustNoErr(t, err, "read the lane's mouth holds after the collector terminated")
+	if len(holders) != 0 {
+		t.Errorf("lane %s still holds %+v after its collector %d reached a terminal status. A hold "+
+			"that survives its owner is the stranded corridor the handoff exists to make impossible",
+			dug.Name, holders, requester.ID)
+	}
+}
+
+// digHoldOwner reads the dig-mode mouth hold on a lane, 0 when there is none.
+func digHoldOwner(t *testing.T, db *store.DB, laneID int64) int64 {
+	t.Helper()
+	owner, err := reservations.DigHoldOwner(db.DB, laneID)
+	testutil.MustNoErr(t, err, "read the dig hold owner")
+	return owner
 }
 
 // TestDwell_TheChosenSlotCannotBeBuriedBeforeTheRobotArrives is the regression
@@ -1352,7 +1366,7 @@ func TestNoReturnToADugLane_ALegalSlotStillBinds(t *testing.T) {
 // is no space for the release to reveal.
 //
 // It does NOT stand in for a dig that owes capacity. Owing is derived from a
-// dig's open legs (CountOutstandingDigClaims), so a legless one owes nothing, and
+// dig's open legs, so a legless one owes nothing, and
 // any test about the usable-capacity claim built on this fixture would pass
 // without exercising it. Those live in dig_admission_capacity_docker_test.go and
 // use real compounds for that reason.

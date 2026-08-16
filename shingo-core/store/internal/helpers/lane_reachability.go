@@ -122,3 +122,109 @@ func ReachableSQL(target string) string {
 func BuriedSQL(target string) string {
 	return fmt.Sprintf("EXISTS (\n\t\t\t%s\n\t\t  )", laneBlockerScan(target))
 }
+
+// EntombsASpokenForSlotSQL is true iff placing a bin at `candidate` would seal
+// an EMPTY slot deeper in the same lane that a live order is coming to fill.
+//
+// ── THE BUBBLE, AND WHY THE EXISTING GUARDS CANNOT SEE IT ─────────────────
+//
+// Every selector already refuses to PICK a slot somebody else holds — by slot
+// claim, by slot reservation, or by another order's delivery_node. All three
+// remove the deeper slot from the candidate pool and say nothing about the
+// shallower ones. So the selector, offered a lane whose deep slot is spoken for,
+// happily fills a shallow one, and the deep slot is now behind a bin. If the
+// order that was coming for it never arrives, that slot is lost for the life of
+// the plant: no robot can reach it, and no dig will ever be raised against it,
+// because the bin in front is not in anybody's way.
+//
+// Measured on the lane-stress rig 2026-08-13, both of the run's new bubbles:
+//
+//	LSD_010 (d5) was order 7's delivery node. Stores took d2 and d3 while it
+//	waited, order 7 was cancelled, and d5 was walled behind them forever.
+//	LSD_003 (d3) was order 57's delivery node. A dig leg parked its blocker at
+//	d2 while order 57 was still driving, and d3 emptied later behind it.
+//
+// Both are lawful placements by every rule that existed. Neither is recoverable.
+//
+// ── IT IS THE MIRROR OF THE BURIAL GUARD ──────────────────────────────────
+//
+// That one protects a deeper BIN somebody is coming to collect. This protects a
+// deeper EMPTY SLOT somebody is coming to fill. Same geometry — composed from
+// ShallowerInSameLane, so there is still exactly one definition of "in front of"
+// — opposite occupancy, and the same three ownership spellings the pickers
+// already use.
+//
+// ownerParam is the SQL placeholder holding the asking order's id; pass a
+// literal 0 for an owner-blind reader. A dig is deliberately owner-blind here,
+// for the reason the burial exclusion states about itself: "not even your own"
+// is the load-bearing half, and a compound that entombs a slot its own next leg
+// is driving to has cost itself the same slot as anybody else would.
+func EntombsASpokenForSlotSQL(candidate, ownerParam, terminalStatusList string) string {
+	return fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM nodes spoken
+			 WHERE %s
+			   AND NOT EXISTS (SELECT 1 FROM bins spoken_bin WHERE spoken_bin.node_id = spoken.id)
+			   AND (
+			        (spoken.claimed_by IS NOT NULL AND spoken.claimed_by <> %[2]s)
+			     OR EXISTS (SELECT 1 FROM reservations spoken_res
+			                 WHERE spoken_res.node_id = spoken.id
+			                   AND spoken_res.resource_kind = 'slot'
+			                   AND spoken_res.state IN ('pending','confirmed')
+			                   AND spoken_res.order_id <> %[2]s)
+			     OR EXISTS (SELECT 1 FROM orders spoken_ord
+			                 WHERE spoken_ord.delivery_node = spoken.name
+			                   AND spoken_ord.status NOT IN (%[3]s)
+			                   AND spoken_ord.id <> %[2]s)
+			   )
+		  )`, ShallowerInSameLane(candidate, "spoken"), ownerParam, terminalStatusList)
+}
+
+// ── ONE SPELLING FOR "DOES THIS ORDER MOVE A BIN OF ITS OWN?" ─────────────
+//
+// A compound PARENT is a folder. It owns legs, it never touches a bin, and its
+// bin_id is NULL for that reason and permanently. A defective single-bin order
+// also has a NULL bin_id — because planMove failed to persist one, which is a
+// real fault worth a diagnostic.
+//
+// `order.BinID == nil` is TRUE OF BOTH AND CANNOT TELL THEM APART. That is the
+// whole defect: it is a true answer to a narrower question, and it reads exactly
+// like the answer the caller wanted.
+//
+// Measured at the pin commit, on the lane-stress rig 2026-08-13: the bin-state
+// reconciliation strip reported TWELVE anomalies — ten service digs and two
+// buried retrieves, every one of them a compound parent whose legs had delivered
+// correctly. Zero true positives. The strip read "Core degraded" for the whole
+// run because a coordinator and a broken order are indistinguishable under the
+// bin-id spelling.
+//
+// THE EXEMPTION IS THE CHILD ROWS, not the order type and not a flag — the
+// tree's own ruling, at store/reconciliation/reconciliation.go, which is the one
+// site that already had this right. Child rows are written in the SAME
+// TRANSACTION as the parent's transition (dispatch.CreateCompoundOrder writes
+// children BEFORE BeginReshuffle, deliberately), so the fact cannot drift. A
+// label beside it can.
+//
+// SPELLED ONCE, HERE, beside ShallowerInSameLane and for the same reason: one
+// geometry, one spelling. Two copies of a predicate is how the Go loop in
+// dispatch/reshuffle.go came to disagree with the SQL about lane reachability,
+// and that disagreement was silent for months.
+
+// OwnsNoCargoSQL is the SQL half: `alias` names an `orders` row already in
+// scope, and the fragment is TRUE when that order owns legs — i.e. it is a
+// coordinator and moves no bin of its own.
+//
+// Returns a bare boolean expression so a caller can put it wherever it needs it,
+// matching LaneBlockerPredicate's contract.
+func OwnsNoCargoSQL(alias string) string {
+	return fmt.Sprintf(
+		`EXISTS (SELECT 1 FROM orders leg WHERE leg.parent_order_id = %s.id)`, alias)
+}
+
+// IsLegSQL is the other half of the pair the round ruled on: leg-ness, which
+// needs no join because the pointer is on the row itself.
+//
+// It is here so the two live together — a reader looking up one finds the other,
+// and neither gets re-spelled inline because it looked too small to share.
+func IsLegSQL(alias string) string {
+	return fmt.Sprintf(`%s.parent_order_id IS NOT NULL`, alias)
+}

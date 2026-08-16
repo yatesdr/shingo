@@ -28,10 +28,37 @@ type BinArrivalInstruction struct {
 	ExpiresAt *time.Time
 }
 
-// InsertOrderBin records a claimed bin and its resolved destination for a complex order.
+// InsertOrderBin records a claimed bin and its resolved destination for a complex
+// order. Idempotent per (order, bin): re-recording a claim updates the row rather
+// than adding a second one.
+//
+// ── IT WAS A BARE INSERT, AND ALLOCATION RETRIES ───────────────────────────
+//
+// The grain has always been one row per claimed bin — UpdateOrderBinDestNode
+// keys on the bin and says so, and binForStep reads the first row matching a
+// step index as if it were the only one. Nothing enforced it, so every re-run of
+// an allocation added the same row again. Measured on the lane-stress rig
+// 2026-08-13, during a window in which five demands were stuck in a re-drive
+// loop: 2,472 rows for a handful of orders, 450 of them identical for one
+// (order, step, bin), growing for as long as the orders stayed stuck.
+//
+// Nothing read a wrong answer — the duplicates are identical and the first match
+// wins — so what this costs is writes and the ability to read the table during
+// an incident, which is exactly when somebody does.
+//
+// ON CONFLICT DO UPDATE rather than DO NOTHING, because the two differ on the
+// case that matters: an allocation that retries after the plan moved carries a
+// NEW step index or destination for the same bin, and DO NOTHING would keep the
+// stale one while reporting success. The unique index (v80) is what makes either
+// possible.
 func InsertOrderBin(db *sql.DB, orderID, binID int64, stepIndex int, action, nodeName, destNode string) error {
 	_, err := db.Exec(`INSERT INTO order_bins (order_id, bin_id, step_index, action, node_name, dest_node)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (order_id, bin_id) DO UPDATE
+		SET step_index = EXCLUDED.step_index,
+		    action     = EXCLUDED.action,
+		    node_name  = EXCLUDED.node_name,
+		    dest_node  = EXCLUDED.dest_node`,
 		orderID, binID, stepIndex, action, nodeName, destNode)
 	if err != nil {
 		return fmt.Errorf("insert order_bin: %w", err)

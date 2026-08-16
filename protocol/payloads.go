@@ -1323,8 +1323,13 @@ type DemandOriginState struct {
 	// rather than formatting their own.
 	EpisodeKey string `json:"episode_key"`
 	Kind       string `json:"kind"`
-	Direction  string `json:"direction,omitempty"`
-	Trigger    string `json:"trigger,omitempty"`
+	// Direction carries the cell's ROLE — produce or consume. Typed, and the two
+	// values are the claim's own; "supply"/"evacuate" were a second vocabulary
+	// for the same fact and are retired (see protocol/episode_key.go). The JSON
+	// key stays `direction` so the wire shape is unchanged; only the value
+	// domain moved, which migration 81 carries for stored rows.
+	Direction ClaimRole `json:"direction,omitempty"`
+	Trigger   string    `json:"trigger,omitempty"`
 	// TriggerRef is the claim key or ProcessChangeoverID behind the mint —
 	// forensic, not identity.
 	TriggerRef string `json:"trigger_ref,omitempty"`
