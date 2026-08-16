@@ -12,6 +12,7 @@ import (
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // reshuffleFailDetail is shared between the parent's status update and the
@@ -34,6 +35,19 @@ const ReshuffleDissolveDetail = "reshuffle dissolved: the dig's plan went stale;
 
 // reshuffleDissolveDetail is the in-package spelling of the same constant.
 const reshuffleDissolveDetail = ReshuffleDissolveDetail
+
+// ReshuffleDissolveFolderDetail is the dissolve's OTHER ending: a service-dig
+// parent, which is cancelled rather than re-queued (§R.93.1).
+//
+// A separate string on purpose. The two endings are different facts — one demand
+// went back to be re-planned, one folder was thrown away — and a reader counting
+// dissolves needs to be able to tell them apart. soakstat counts dissolves off
+// ReshuffleDissolveDetail; folding this into it would report a cancelled folder
+// as a demand re-planning, which is the conflation this whole ruling is about.
+const ReshuffleDissolveFolderDetail = "reshuffle dissolved: the dig's plan went stale; the dig is cancelled (a folder does not re-plan)"
+
+// reshuffleDissolveFolderDetail is the in-package spelling of the same constant.
+const reshuffleDissolveFolderDetail = ReshuffleDissolveFolderDetail
 
 // compoundGenerations splits a compound's children into the CHAPTER STILL OPEN
 // and the closed ones behind it, and reports whether anything was superseded.
@@ -473,7 +487,46 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			// the fold makes that real, a dissolve must also seal the parent, or the
 			// re-plan inherits an open marker and this arm stops being reachable.)
 			if parent != nil {
-				if err := d.lifecycle.Queue(parent, "dispatcher", reshuffleDissolveDetail); err != nil {
+				// ── A FOLDER IS NOT A DEMAND. ONLY DEMANDS RE-PLAN. (§R.93.1) ──
+				//
+				// The arm above says "Reshuffling → Queued for BOTH kinds", meaning a
+				// plain parent and a coordinated one. There is a THIRD kind, and it
+				// had no arm: a SERVICE DIG parent is a folder — no bin, no payload,
+				// no demand of its own, and no destination at all once its plan is
+				// gone. Returning it to the acquiring set hands the fulfillment
+				// scanner a folder to source material for.
+				//
+				// Measured on the rig 2026-08-14, dig 51:
+				//
+				//   DISSOLVING dig 51 — child 52 is walled by a bin no order is
+				//                       coming for ... the demand survives.
+				//   engine: order 51 queued for payload ""
+				//   fulfillment: dest node "" not found for order 51   ← then forever
+				//
+				// It sourced a bin ("bin found, soft-holding"), soft-held it away from
+				// real demands, parked on dest-node-unresolved — a wait nothing in the
+				// world can end — and retried the lookup roughly once a second for the
+				// rest of the run.
+				//
+				// AND THE CORPSE BLOCKED ITS OWN REPLACEMENT, which is the part that
+				// actually stops the plant. A phantom stays NON-TERMINAL and keeps its
+				// dig_target_node, so arm 3's one-dig-per-episode gate counts it as a
+				// live excavation and refuses to raise another dig for that episode.
+				// Order 29 — the gate dweller the dig existed to free — sat at the
+				// mark for the whole 17-minute window with its only releaser dissolved
+				// into a bin-sourcing order.
+				//
+				// CANCEL IS THE WHOLE FIX, and it works by subtraction: the ordinary
+				// cancel path releases the soft-held bin, terminalizing clears arm 3's
+				// gate, and window 3 re-proposes for the dweller on its next
+				// evaluation. Nothing new runs.
+				//
+				// "the demand survives" still holds — it was never this row. The demand
+				// is the DWELLER, which is untouched by this cancel and is precisely
+				// what gets its dig re-proposed.
+				if parent.DigTargetNode != "" {
+					d.lifecycle.CancelOrder(parent, parent.StationID, reshuffleDissolveFolderDetail)
+				} else if err := d.lifecycle.Queue(parent, "dispatcher", reshuffleDissolveDetail); err != nil {
 					log.Printf("dispatch: dissolved compound %d could not return its parent to the "+
 						"acquiring set: %v (the demand is stranded in reshuffling; the reconciliation "+
 						"sweep is the backstop)", parentOrderID, err)
@@ -785,7 +838,30 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		if v.Cause() == CauseLaneTargetBuried {
 			return d.handleStaleDigLeg(parentOrderID, next, sourceNode, destNode)
 		}
-		d.dbg("dispatch: compound %d child %d held at its lane (%s)", parentOrderID, next.ID, v.Cause())
+		// NAME THE OCCUPANT. This line printed the CAUSE and nothing else, and the
+		// cause is the one thing a reader already knows — they are reading a
+		// refusal. What they need is WHO, and on 2026-08-14 its absence cost the
+		// whole diagnosis: "compound 51 child 52 held at its lane (lane-occupied)"
+		// could not distinguish a sibling leg of the same dig dwelling inside the
+		// corridor (self-clearing, benign) from a complex order that entered before
+		// the dig took the lane and is invisible to CanTake, which reads mouth rows
+		// only and a complex order takes none. Those are opposite diagnoses and the
+		// log could not tell them apart.
+		//
+		// One read, on a path that has ALREADY refused, so it is off the hot path by
+		// construction. A read failure prints nothing extra rather than failing the
+		// refusal — the disposition is unchanged either way, and a diagnostic must
+		// never be the thing that breaks a wait.
+		occupantNote := ""
+		if v.Cause() == CauseLaneOccupied {
+			if sourceNode != nil && sourceNode.ParentID != nil {
+				if occ, oerr := reservations.OccupantsOf(d.db.DB, *sourceNode.ParentID); oerr == nil {
+					occupantNote = fmt.Sprintf(" occupants=%v", occ)
+				}
+			}
+		}
+		d.dbg("dispatch: compound %d child %d held at its lane (%s)%s",
+			parentOrderID, next.ID, v.Cause(), occupantNote)
 		// THE WAIT GOES ON THE ROW. Every other wait in the system records why it
 		// is waiting; this one wrote nothing at all — no status (the leg stays
 		// `pending`), no queue_code, no queue_cause — so its only trace was a debug

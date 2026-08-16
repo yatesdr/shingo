@@ -49,8 +49,32 @@ type MouthHold struct {
 // row). All-or-nothing is structural — a conflict on any lane rolls the whole tx
 // back, so there are no partial takes and no advisory lock survives (the durable
 // state is the ROWS; the advisory lock is only the serializer and never outlives
-// the tx). Depth-1 lanes are EXEMPT: a single-slot lane is already serialized by
-// its slot reservation, so no mouth row is taken for it.
+// the tx).
+//
+// ── EVERY LANE YIELDS A ROW, INCLUDING SINGLE-SLOT ONES ───────────────────
+//
+// It used to read, here and at LaneLock: "Depth-1 lanes are EXEMPT: a
+// single-slot lane is already serialized by its slot reservation, so no mouth
+// row is taken for it", justified at the lock by "Digs never touch depth-1
+// lanes: nothing can be buried in a lane with one slot."
+//
+// Both sentences are quoted rather than deleted because the second one is
+// FALSE, and it is false in a way that reads true. It is true of the lane a dig
+// EXCAVATES — nothing can be buried behind one slot — and false of the lane a
+// dig PARKS A BLOCKER IN, which is the other end of every leg it writes. The
+// lane-stress seed says so in its own words: LS_S1, LS_S2 and LS_S3 are depth 1
+// and the file calls them "the cheapest shuffle destinations in the group".
+//
+// The first sentence is not false, it is narrow. A slot reservation serializes
+// who may have THAT SLOT; it says nothing about who is driving in the corridor
+// to reach it, which is what a mouth row is for. Those are the same fact only
+// while a lane has exactly one thing in it to contend over, and a robot parking
+// a blocker meets a robot coming out with a bin regardless of how many slots
+// there are.
+//
+// The exemption was inert while nothing acquired mouth rows on unmarked lanes.
+// It stops being inert the moment acquisition universalizes, and a single-slot
+// lane full of shuffle traffic is the last place to leave a hole.
 //
 // A mouth row is inserted 'confirmed': it confirms at fleet-create ("robot
 // committed"), with no pending phase — a mouth hold has no paired hard-claim step
@@ -60,6 +84,63 @@ type MouthHold struct {
 // every dispatch path already implements); any other error is a transient DB
 // failure.
 func AcquireLanes(db *sql.DB, owner int64, mode Mode, reservedBy string, laneIDs ...int64) error {
+	return AcquireLanesFor(db, owner, mode, Anyone, reservedBy, laneIDs...)
+}
+
+// AcquireLanesFor is AcquireLanes for a hold taken ON BEHALF OF another order:
+// beneficiary's own mouth rows do not refuse it.
+//
+// ── WHY A HOLD HAS A BENEFICIARY AT ALL ───────────────────────────────────
+//
+// A dig is not work anyone wants for its own sake. It is raised to rescue a
+// demand that cannot move, and that demand is frequently holding the very lane
+// the dig has to take: a gate-staged order keeps its outbound row until it
+// places, and the wall it is staged behind is exactly what the dig is for.
+//
+// Owner-blind, that is a two-cycle with itself. X waits for a dig; the dig is
+// refused because X waits. Measured on the lane-stress rig 2026-08-10: LS_C5
+// held one outbound row belonging to a gate-staged order, 16,947 heal parents
+// were created and cancelled against it, and no dig ever started. The pre-check
+// (DigAdmissible) stopped the order churn; it could not start the dig, because
+// the acquire was answering the same owner-blind question one layer down.
+//
+// So the rescue is told who it is rescuing, and the rescued order's own hold
+// stops being an obstacle to it. Nobody ELSE's does — a dig still excludes
+// every other owner, which is the whole content of ModeDig.
+//
+// ── THE TWO SHAPES, AND WHY ONE OF THEM UPGRADES ──────────────────────────
+//
+// The beneficiary is either a DIFFERENT order from the hold's owner or the SAME
+// one, and both occur today:
+//
+//	SERVICE DIG (owner ≠ beneficiary) — the gate-dweller heal mints a synthetic
+//	parent, because {staged → reshuffling} is not a legal transition. The
+//	dweller's outbound row is skipped and the parent's dig row is inserted
+//	beside it. Two rows, two owners, and the end of the dig already expects
+//	exactly this: HandOffLaneToPicker's "THE PICKER MAY ALREADY HOLD THIS LANE"
+//	arm is written for the same pairing, from the other side.
+//
+//	PLAIN DIG (owner == beneficiary) — planBuriedReshuffle re-parents the demand
+//	onto its own excavation, so the order asking for the dig row is the order
+//	already holding an outbound one. Inserting a second row would put one owner
+//	on one lane twice, which is the incoherent state admitMouth exists to
+//	refuse. Its row is UPGRADED to dig instead: one owner, one lane, one row,
+//	and the strongest mode wins. That is the mirror of HandOffLaneToPicker,
+//	which walks the same row back down to outbound when the excavation ends.
+//
+// ── THE ASYMMETRY THIS DOES NOT CLOSE ─────────────────────────────────────
+//
+// The row does not RECORD its beneficiary, so the exemption only runs in one
+// direction: the dig may ignore the dweller, but the dweller re-asking for its
+// own outbound hold would still be refused by the dig raised to rescue it.
+//
+// Not reachable today, and named rather than left to be discovered: the mouth
+// holds are taken just before the fleet commit, a gate-staged order has already
+// made that commit, and resolveOrderLaneHolds yields nothing at all on an
+// unmarked lane. It becomes reachable the moment mouth acquisition
+// universalizes (§R.96 stage 2), and the durable form of the fix is a
+// beneficiary column on the row, not a second exemption written somewhere else.
+func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, reservedBy string, laneIDs ...int64) error {
 	lanes := sortedUniqueLanes(laneIDs)
 	if len(lanes) == 0 {
 		return nil
@@ -71,19 +152,12 @@ func AcquireLanes(db *sql.DB, owner int64, mode Mode, reservedBy string, laneIDs
 	defer tx.Rollback() // no-op once committed; the rollback path is what makes it all-or-nothing
 
 	for _, lane := range lanes {
-		exempt, err := laneDepth1Exempt(tx, lane)
-		if err != nil {
-			return err
-		}
-		if exempt {
-			continue
-		}
 		// Transaction-scoped advisory lock on the lane id: serializes concurrent
 		// acquirers of THIS lane. xact-scoped, so a crash cannot strand it.
 		if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, lane); err != nil {
 			return fmt.Errorf("reservations acquire-lanes: lock lane %d: %w", lane, err)
 		}
-		verdict, err := admitMouth(tx, lane, owner, mode)
+		verdict, err := admitMouth(tx, lane, owner, mode, beneficiary)
 		if err != nil {
 			return err
 		}
@@ -92,6 +166,17 @@ func AcquireLanes(db *sql.DB, owner int64, mode Mode, reservedBy string, laneIDs
 			continue // owner already holds this lane in this mode
 		case admitConflict:
 			return ErrReservationConflict
+		case admitUpgrade:
+			// The owner holds this lane in a weaker mode and is now digging it for
+			// itself. UPDATE rather than INSERT: one owner on one lane is one row.
+			if _, err := tx.Exec(
+				`UPDATE reservations SET mode=$1, reserved_by=$2
+				  WHERE order_id=$3 AND resource_kind='mouth' AND node_id=$4
+				    AND state IN ('pending','confirmed')`,
+				string(mode), reservedBy, owner, lane,
+			); err != nil {
+				return fmt.Errorf("reservations acquire-lanes: upgrade lane %d: %w", lane, err)
+			}
 		case admitFresh:
 			if _, err := tx.Exec(
 				`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode)
@@ -113,35 +198,58 @@ type mouthVerdict int
 const (
 	admitFresh mouthVerdict = iota
 	admitIdempotent
+	admitUpgrade
 	admitConflict
 )
 
 // admitMouth reads the lane's active mouth rows and applies the admission rule
-// for (owner, mode). It must be called with the lane's advisory lock held.
-func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode) (mouthVerdict, error) {
+// for (owner, mode), on behalf of beneficiary. It must be called with the lane's
+// advisory lock held. Pass Anyone for a hold taken for nobody in particular,
+// which is the owner-blind rule this had before beneficiaries existed.
+func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode, beneficiary DigAsker) (mouthVerdict, error) {
 	holders, err := activeMouthRows(tx, laneID)
 	if err != nil {
 		return admitConflict, err
 	}
 	ownerHolds := false
+	ownerHoldsOtherMode := Mode("")
 	for _, h := range holders {
 		if h.OrderID == owner {
 			if h.Mode == mode {
 				ownerHolds = true
 				continue // our own row — idempotent
 			}
-			// An order is one mode per lane (§2). Two modes on one lane is a
-			// caller bug — surface it loudly rather than insert an incoherent
-			// second row.
-			return admitConflict, fmt.Errorf(
-				"reservations acquire-lanes: order %d already holds lane %d as %s, cannot also hold as %s",
-				owner, laneID, h.Mode, mode)
+			// An order is one mode per lane (§2). DECIDED AFTER THE LOOP, not
+			// here: a foreign conflict is the stronger refusal and must win
+			// regardless of which row activeMouthRows happens to return first.
+			// Returning from inside the loop made the answer depend on the id
+			// ordering of unrelated orders.
+			ownerHoldsOtherMode = h.Mode
+			continue
+		}
+		if beneficiary.Owns(h.OrderID) {
+			// The order this hold is being taken FOR. Its own row is not an
+			// obstacle to its own rescue — see AcquireLanesFor's header for the
+			// two-cycle this arm exists to break.
+			continue
 		}
 		// A different owner holds the lane. dig excludes everyone (either side);
 		// otherwise only an exact same-mode share is admitted.
 		if mode == ModeDig || h.Mode == ModeDig || h.Mode != mode {
 			return admitConflict, nil
 		}
+	}
+	if ownerHoldsOtherMode != "" {
+		if mode == ModeDig && beneficiary.Owns(owner) {
+			// The owner is digging the lane FOR ITSELF while holding it in a
+			// weaker mode — the plain re-parented shape. Upgrade the row it has.
+			return admitUpgrade, nil
+		}
+		// Still a caller bug — surface it loudly rather than insert an
+		// incoherent second row.
+		return admitConflict, fmt.Errorf(
+			"reservations acquire-lanes: order %d already holds lane %d as %s, cannot also hold as %s",
+			owner, laneID, ownerHoldsOtherMode, mode)
 	}
 	if ownerHolds {
 		return admitIdempotent, nil
@@ -179,12 +287,28 @@ func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode) (mouthVerdict, error
 // the lane's advisory lock; this only stops the caller paying for an order row
 // to be told something it could have asked first. A read error reports NOT
 // admissible — fail closed, same direction as IsLocked.
-func DigAdmissible(q Queryer, laneID int64) (bool, error) {
+//
+// ── AND IT ASKS ON BEHALF OF SOMEBODY ─────────────────────────────────────
+//
+// It used to be `len(holders) == 0`, which made the rescued order's own hold
+// refuse its rescue — the other half of the 16,947 story, and the half that
+// survived the pre-check being added. The exemption is AcquireLanesFor's, read
+// off the same rows, so the cheap question and the authoritative one still
+// answer alike; see that header for what a beneficiary is and why.
+//
+// Pass Anyone for a dig serving nobody in particular: Owns matches no row, so
+// the rule collapses to the len()==0 it was.
+func DigAdmissible(q Queryer, laneID int64, beneficiary DigAsker) (bool, error) {
 	holders, err := activeMouthRows(q, laneID)
 	if err != nil {
 		return false, err
 	}
-	return len(holders) == 0, nil
+	for _, h := range holders {
+		if !beneficiary.Owns(h.OrderID) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // activeMouthRows returns the active (pending or confirmed) mouth holds on laneID.
@@ -603,20 +727,16 @@ func DigHoldOwner(q Queryer, laneID int64) (int64, error) {
 	return owner, rows.Err()
 }
 
-// laneDepth1Exempt reports whether laneID is a single-slot (depth-1) lane, which
-// is exempt from mouth rows: its one slot's reservation already serializes it
-// (§8). Counts the lane's real (non-synthetic) child slots — a lane with 0 or 1
-// slot cannot trap a robot, so it needs no mouth gate.
-func laneDepth1Exempt(tx *sql.Tx, laneID int64) (bool, error) {
-	var n int
-	if err := tx.QueryRow(
-		`SELECT count(*) FROM nodes WHERE parent_id=$1 AND is_synthetic=false`,
-		laneID,
-	).Scan(&n); err != nil {
-		return false, fmt.Errorf("reservations acquire-lanes: count slots lane %d: %w", laneID, err)
-	}
-	return n <= 1, nil
-}
+// laneDepth1Exempt WAS HERE. It counted a lane's real child slots and returned
+// true for 0 or 1, and AcquireLanes skipped those lanes entirely.
+//
+// Its own words: "a lane with 0 or 1 slot cannot trap a robot, so it needs no
+// mouth gate." Trapping was never what the mouth row was for — it arbitrates
+// the CORRIDOR, and a single-slot lane has one. See the note on AcquireLanes for
+// the sentence that made this look safe and why it is not.
+//
+// Deleted rather than left unused: an exemption with no caller is an exemption
+// waiting for one.
 
 // sortedUniqueLanes returns the lane ids ascending with duplicates removed — the
 // deadlock-free lock order AcquireLanes takes them in.

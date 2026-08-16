@@ -70,6 +70,28 @@ func AskerFor(orderID, laneOwner int64) DigAsker {
 	return DigAsker{OrderID: orderID, LaneOwner: laneOwner}
 }
 
+// Owns reports whether orderID is this asker — itself, or the order that holds
+// lane locks on its behalf.
+//
+// IT IS THE POSITIVE SPELLING, AND IT IS THE ONE THE COMPARISON LIVES IN.
+// ExcludedBy is written in terms of it rather than beside it, so the pair
+// cannot drift the way the three readers above did.
+//
+// The two questions are duals and both are asked. ExcludedBy asks it of a DIG
+// row about an order that wants the lane ("does this excavation keep me out");
+// Owns asks it of an ORDINARY row about the dig being raised ("is this hold one
+// of the rescue's own"). Same comparison, opposite direction of travel.
+//
+// orderID == 0 owns nothing: Anyone (the zero asker) must match no row, or an
+// owner-blind call site would silently start exempting rows whose owner failed
+// to read.
+func (a DigAsker) Owns(orderID int64) bool {
+	if orderID == 0 {
+		return false
+	}
+	return orderID == a.OrderID || orderID == a.LaneOwner
+}
+
 // ExcludedBy reports whether a dig held by digOwner shuts this asker out.
 //
 // digOwner == 0 means no dig holds the lane, which excludes nobody. Note the
@@ -79,7 +101,7 @@ func (a DigAsker) ExcludedBy(digOwner int64) bool {
 	if digOwner == 0 {
 		return false
 	}
-	return digOwner != a.OrderID && digOwner != a.LaneOwner
+	return !a.Owns(digOwner)
 }
 
 // Args returns the two bind values DigExclusionSQL's placeholders take, in the

@@ -262,22 +262,49 @@ func TestMouth_ReleaseIsOwnerScoped(t *testing.T) {
 
 // TestMouth_Depth1Exempt: a single-slot lane takes NO mouth row, so even
 // conflicting modes both "succeed" (the slot reservation serializes it).
-func TestMouth_Depth1Exempt(t *testing.T) {
+// TestMouth_Depth1IsGatedLikeAnyOtherLane INVERTS TestMouth_Depth1Exempt, which
+// asserted that a single-slot lane took no mouth row and admitted opposing modes
+// freely: "B acquire opposite mode on depth-1 lane must be exempt (no
+// conflict)", "mouth rows on depth-1 lane = %d, want 0 (exempt)".
+//
+// The exemption's justification was "digs never touch depth-1 lanes: nothing can
+// be buried in a lane with one slot" — true of the lane a dig EXCAVATES, false
+// of the lane it PARKS A BLOCKER IN. The lane-stress seed's LS_S1..S3 are
+// single-slot and it calls them "the cheapest shuffle destinations in the
+// group", so digs touch them constantly and every visit was ungated.
+//
+// Inverted in place rather than deleted and rewritten: the assertion that
+// changed sign is the record of what changed.
+func TestMouth_Depth1IsGatedLikeAnyOtherLane(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
-	lane := laneWithSlots(t, db, "LANE-D1", 1) // depth-1 → exempt
+	lane := laneWithSlots(t, db, "LANE-D1", 1)
 	a := testdb.CreateOrder(t, db)
 	b := testdb.CreateOrder(t, db)
 
 	if err := reservations.AcquireLanes(db.DB, a.ID, reservations.ModeInbound, "test", lane); err != nil {
 		t.Fatalf("A acquire on depth-1 lane: %v", err)
 	}
-	if err := reservations.AcquireLanes(db.DB, b.ID, reservations.ModeOutbound, "test", lane); err != nil {
-		t.Fatalf("B acquire opposite mode on depth-1 lane must be exempt (no conflict): %v", err)
+	if got := mouthCount(t, db, lane); got != 1 {
+		t.Fatalf("mouth rows on depth-1 lane = %d, want 1 — a one-slot lane still has a corridor, "+
+			"and the row arbitrates the corridor rather than the slot", got)
 	}
-	if got := mouthCount(t, db, lane); got != 0 {
-		t.Fatalf("mouth rows on depth-1 lane = %d, want 0 (exempt)", got)
+	if err := reservations.AcquireLanes(db.DB, b.ID, reservations.ModeOutbound, "test", lane); err != reservations.ErrReservationConflict {
+		t.Fatalf("B acquire opposite mode on a depth-1 lane: want ErrReservationConflict, got %v — "+
+			"a robot parking a blocker meets a robot coming out with a bin regardless of how many "+
+			"slots the lane has", err)
+	}
+
+	// A DIG TAKES ONE TOO, which is the arm the exemption actually cost: a dig
+	// parking a blocker in a single-slot lane held nothing there at all.
+	digLane := laneWithSlots(t, db, "LANE-D1-DIG", 1)
+	dig := testdb.CreateOrder(t, db)
+	if err := reservations.AcquireLanes(db.DB, dig.ID, reservations.ModeDig, "test", digLane); err != nil {
+		t.Fatalf("dig acquire on depth-1 lane: %v", err)
+	}
+	if got := mouthCount(t, db, digLane); got != 1 {
+		t.Fatalf("dig mouth rows on depth-1 lane = %d, want 1", got)
 	}
 }
 
@@ -429,5 +456,162 @@ func TestAuditLaneGeometry(t *testing.T) {
 	}
 	if !sawNest {
 		t.Errorf("audit did not flag the nested lane; warnings=%v", warnings)
+	}
+}
+
+// TestMouth_BeneficiaryOwnHoldDoesNotRefuseItsOwnDig is the LS_C5 rule at the
+// row layer: a dig raised ON BEHALF OF an order is not refused by that order's
+// own mouth hold, and IS still refused by anybody else's.
+//
+// Two owners, two rows, one lane, and that pairing is deliberate — the dweller
+// is staged at the mouth, not inside the lane, and HandOffLaneToPicker is
+// already written for finding the picker holding the lane when the dig ends.
+//
+// MUTATION (verified): widen the exemption to every holder — the owner-blind
+// precondition fires ("the fixture is not reproducing LS_C5"). The narrowness
+// assertion at the bottom of this test is the same rule stated positively;
+// TestDigAdmissible_ below is where that widening trips a real assertion.
+func TestMouth_BeneficiaryOwnHoldDoesNotRefuseItsOwnDig(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	testdb.SetupStandardData(t, db)
+	lane := laneWithSlots(t, db, "LANE-BENEF", 3)
+
+	dweller := testdb.CreateOrder(t, db)
+	digParent := testdb.CreateOrder(t, db)
+	stranger := testdb.CreateOrder(t, db)
+
+	if err := reservations.AcquireLanes(db.DB, dweller.ID, reservations.ModeOutbound, "test", lane); err != nil {
+		t.Fatalf("dweller acquire outbound: %v", err)
+	}
+
+	// Owner-blind, this is the refusal that ran 16,947 times.
+	if err := reservations.AcquireLanes(db.DB, digParent.ID, reservations.ModeDig, "test", lane); err != reservations.ErrReservationConflict {
+		t.Fatalf("owner-blind dig into the dweller's lane: want conflict, got %v — the fixture is not "+
+			"reproducing LS_C5", err)
+	}
+
+	// On the dweller's behalf, it admits.
+	benef := reservations.AskerFor(dweller.ID, dweller.ID)
+	if err := reservations.AcquireLanesFor(db.DB, digParent.ID, reservations.ModeDig, benef, "test", lane); err != nil {
+		t.Fatalf("dig raised FOR the dweller must admit past the dweller's own row, got: %v", err)
+	}
+	if got := mouthCount(t, db, lane); got != 2 {
+		t.Fatalf("mouth rows = %d, want 2 (the dweller's outbound and the dig) — the exemption admits "+
+			"the dig beside the hold, it does not evict it", got)
+	}
+
+	// And the exemption is exactly one order wide: a dig for a THIRD order is
+	// still refused by the dweller's row.
+	other := laneWithSlots(t, db, "LANE-BENEF2", 3)
+	if err := reservations.AcquireLanes(db.DB, dweller.ID, reservations.ModeOutbound, "test", other); err != nil {
+		t.Fatalf("dweller acquire outbound on second lane: %v", err)
+	}
+	if err := reservations.AcquireLanesFor(db.DB, digParent.ID, reservations.ModeDig,
+		reservations.AskerFor(stranger.ID, stranger.ID), "test", other); err != reservations.ErrReservationConflict {
+		t.Fatalf("dig for an unrelated order: want conflict, got %v — only the rescued order's own "+
+			"holds are exempt", err)
+	}
+}
+
+// TestMouth_PlainDigUpgradesTheOwnersOwnHold is the same rule where the owner
+// and the beneficiary are ONE order — planBuriedReshuffle re-parents the demand
+// onto its own excavation, so the order asking for the dig row is the order
+// already holding an outbound one.
+//
+// Owner-blind this was not a wait but a WEDGE: admitMouth refuses one owner two
+// modes on one lane, so the demand could never dig the lane it was holding and
+// the answer would never change. The row is upgraded instead — one owner, one
+// lane, one row, strongest mode wins.
+//
+// MUTATION (verified): disable the admitUpgrade arm — the acquire comes back
+// "order N already holds lane L as outbound, cannot also hold as dig", which is
+// the wedge itself.
+func TestMouth_PlainDigUpgradesTheOwnersOwnHold(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	testdb.SetupStandardData(t, db)
+	lane := laneWithSlots(t, db, "LANE-UPGRADE", 3)
+	demand := testdb.CreateOrder(t, db)
+
+	if err := reservations.AcquireLanes(db.DB, demand.ID, reservations.ModeOutbound, "test", lane); err != nil {
+		t.Fatalf("demand acquire outbound: %v", err)
+	}
+	// Owner-blind, its own row wedges it out of its own dig.
+	err := reservations.AcquireLanes(db.DB, demand.ID, reservations.ModeDig, "test", lane)
+	if err == nil {
+		t.Fatal("owner-blind, one owner holding one lane in two modes must be refused — the fixture " +
+			"is not reproducing the wedge")
+	}
+	if !strings.Contains(err.Error(), "cannot also hold as") {
+		t.Fatalf("owner-blind refusal should be the loud two-modes error, got: %v", err)
+	}
+
+	self := reservations.AskerFor(demand.ID, demand.ID)
+	if err := reservations.AcquireLanesFor(db.DB, demand.ID, reservations.ModeDig, self, "lanelock", lane); err != nil {
+		t.Fatalf("a demand digging the lane it holds must upgrade its own row, got: %v", err)
+	}
+	rows, err := reservations.ActiveMouthRows(db.DB, lane)
+	if err != nil {
+		t.Fatalf("read mouth rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("mouth rows = %d, want 1 — one owner on one lane is ONE row, not two", len(rows))
+	}
+	if rows[0].OrderID != demand.ID || rows[0].Mode != reservations.ModeDig {
+		t.Fatalf("row = %+v, want order %d in mode dig", rows[0], demand.ID)
+	}
+	// And the upgraded row still excludes everyone else, which is what makes it
+	// a real dig claim rather than a relabelled outbound hold.
+	other := testdb.CreateOrder(t, db)
+	if err := reservations.AcquireLanes(db.DB, other.ID, reservations.ModeOutbound, "test", lane); err != reservations.ErrReservationConflict {
+		t.Fatalf("outbound into the upgraded dig's lane: want conflict, got %v", err)
+	}
+}
+
+// TestDigAdmissible_AgreesWithTheAcquireAboutTheBeneficiary pins the two
+// readers together. The pre-check exists because they used to ask different
+// questions; a pre-check that refuses what the acquire would admit is the same
+// defect with the answers swapped round.
+//
+// MUTATION (verified): revert DigAdmissible to `len(holders) == 0` — the
+// beneficiary arm fires. MUTATION (verified): widen the exemption to every
+// holder — the stranger arm fires. This test is where the exemption's WIDTH is
+// pinned, because both directions are plain assertions here.
+func TestDigAdmissible_AgreesWithTheAcquireAboutTheBeneficiary(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	testdb.SetupStandardData(t, db)
+	lane := laneWithSlots(t, db, "LANE-PRECHECK", 3)
+	dweller := testdb.CreateOrder(t, db)
+	stranger := testdb.CreateOrder(t, db)
+
+	if err := reservations.AcquireLanes(db.DB, dweller.ID, reservations.ModeOutbound, "test", lane); err != nil {
+		t.Fatalf("dweller acquire outbound: %v", err)
+	}
+
+	blind, err := reservations.DigAdmissible(db.DB, lane, reservations.Anyone)
+	if err != nil {
+		t.Fatalf("DigAdmissible(Anyone): %v", err)
+	}
+	if blind {
+		t.Error("Anyone must keep the owner-blind answer: a held lane is not admissible")
+	}
+
+	forDweller, err := reservations.DigAdmissible(db.DB, lane, reservations.AskerFor(dweller.ID, dweller.ID))
+	if err != nil {
+		t.Fatalf("DigAdmissible(dweller): %v", err)
+	}
+	if !forDweller {
+		t.Error("a dig raised for the order holding the lane must be admissible — this is the " +
+			"pre-check half of the LS_C5 two-cycle")
+	}
+
+	forStranger, err := reservations.DigAdmissible(db.DB, lane, reservations.AskerFor(stranger.ID, stranger.ID))
+	if err != nil {
+		t.Fatalf("DigAdmissible(stranger): %v", err)
+	}
+	if forStranger {
+		t.Error("a dig raised for an unrelated order must still be refused")
 	}
 }

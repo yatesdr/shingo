@@ -34,10 +34,21 @@ import (
 //     digs, so a lane an ordinary order was inside looked free to it. Rows know
 //     about every mode, and AcquireLanes refuses dig-versus-anything. This is a
 //     behaviour change and it is the safe direction.
-//   - Depth-1 lanes take no mouth row at all (AcquireLanes exempts them — a
-//     single-slot lane is already serialized by its slot reservation), so
-//     TryLock reports success and IsLocked then reports false. Digs never touch
-//     depth-1 lanes: nothing can be buried in a lane with one slot.
+//
+//   - Depth-1 lanes ARE NOW GATED LIKE ANY OTHER, and this bullet used to say
+//     the opposite: "Depth-1 lanes take no mouth row at all (AcquireLanes
+//     exempts them — a single-slot lane is already serialized by its slot
+//     reservation), so TryLock reports success and IsLocked then reports false.
+//     Digs never touch depth-1 lanes: nothing can be buried in a lane with one
+//     slot."
+//
+//     The last sentence is false. It is true of the lane a dig EXCAVATES and
+//     false of the lane it PARKS A BLOCKER IN — the lane-stress seed's LS_S1,
+//     LS_S2 and LS_S3 are single-slot lanes it calls "the cheapest shuffle
+//     destinations in the group". So digs touch them constantly, and every one
+//     of those visits was ungated. The consequence the bullet described is gone
+//     with it: TryLock on a single-slot lane now writes a row, and IsLocked
+//     then reports true.
 type LaneLock struct {
 	db *sql.DB
 }
@@ -58,7 +69,23 @@ const mirrorReservedBy = "lanelock"
 // recoverable (the caller queues and retries); starting one on a lane whose
 // state could not be established is not.
 func (l *LaneLock) TryLock(laneID, orderID int64) bool {
-	err := reservations.AcquireLanes(l.db, orderID, reservations.ModeDig, mirrorReservedBy, laneID)
+	return l.TryLockFor(laneID, orderID, reservations.Anyone)
+}
+
+// TryLockFor is TryLock for a dig raised to rescue a particular order:
+// beneficiary's own mouth holds do not refuse it.
+//
+// EVERY PRODUCTION DIG COMES THROUGH HERE, because every dig is raised for
+// somebody — a service dig for a gate dweller (owner is the synthetic parent,
+// beneficiary the dweller) or a plain re-parented retrieve (owner and
+// beneficiary are the same order, and its own hold is upgraded rather than
+// refused). TryLock above is the beneficiary-less form, which is what a test
+// fixture parking a foreign dig on a lane actually means.
+//
+// The rule and its limits live on reservations.AcquireLanesFor; this only
+// carries the asker down to it.
+func (l *LaneLock) TryLockFor(laneID, orderID int64, beneficiary reservations.DigAsker) bool {
+	err := reservations.AcquireLanesFor(l.db, orderID, reservations.ModeDig, beneficiary, mirrorReservedBy, laneID)
 	if err == nil {
 		return true
 	}
@@ -174,7 +201,16 @@ func (l *LaneLock) IsLocked(laneID int64) bool {
 // under the lane's advisory lock is still the arbiter, and the window between
 // this and that is real. What it removes is the certainty of losing.
 func (l *LaneLock) CanTake(laneID int64) bool {
-	ok, err := reservations.DigAdmissible(l.db, laneID)
+	return l.CanTakeFor(laneID, reservations.Anyone)
+}
+
+// CanTakeFor is CanTake for a dig raised to rescue a particular order — the
+// pre-check paired with TryLockFor, asking the same question with the same
+// exemption. Asking the blind one here and the aware one at the acquire would
+// leave the pre-check refusing digs the acquire would have admitted, which is
+// the 16,947 shape with the two answers swapped round.
+func (l *LaneLock) CanTakeFor(laneID int64, beneficiary reservations.DigAsker) bool {
+	ok, err := reservations.DigAdmissible(l.db, laneID, beneficiary)
 	if err != nil {
 		log.Printf("lanelock: dig-admissible read failed for lane %d: %v (treated as held)", laneID, err)
 		return false

@@ -585,3 +585,97 @@ func TestStaleDig_DissolveMarkerIsWhatSeparatesItFromAFailure(t *testing.T) {
 		t.Error("a cleanly finished set is not a dissolve")
 	}
 }
+
+// TestStaleDig_DissolvedFolderIsCancelledNotRequeued is §R.93.1.
+//
+// ── THE THIRD KIND ────────────────────────────────────────────────────────
+//
+// The dissolve arm returns a parent to the acquiring set and says so in its own
+// words: "Reshuffling → Queued for BOTH kinds", meaning a plain parent and a
+// coordinated one. Both really are demands and really can re-plan.
+//
+// There is a THIRD kind and it had no arm. A SERVICE DIG parent is a FOLDER: no
+// bin, no payload, no demand of its own, and — once its plan is gone — no
+// destination either. Handed to the fulfillment scanner it is treated as a
+// demand and sourced for.
+//
+// ── WHAT THAT COST, MEASURED ──────────────────────────────────────────────
+//
+// Rig, 2026-08-14, dig 51:
+//
+//	DISSOLVING dig 51 — child 52 is walled by a bin no order is coming for
+//	engine: order 51 queued for payload ""
+//	fulfillment: dest node "" not found for order 51      ← then ~1/sec, forever
+//
+// It sourced a bin and soft-held it away from real demands, parked on
+// dest-node-unresolved — a named wait nothing in the world can end — and retried
+// for the rest of the run.
+//
+// AND THE CORPSE BLOCKED ITS OWN REPLACEMENT, which is what actually stops the
+// plant. A phantom stays NON-TERMINAL and keeps its dig_target_node, so arm 3's
+// one-dig-per-episode gate counts it as a live excavation and refuses to raise
+// another dig for that episode. Order 29 — the gate dweller the dig existed to
+// free — sat at the mark for the whole 17-minute window.
+//
+// ── THE ASSERTION IS TERMINALITY, NOT THE STATUS NAME ─────────────────────
+//
+// What frees arm 3 is the parent leaving the non-terminal set; `cancelled` is
+// how it gets there. So the test asserts terminal first and the marker second —
+// a future disposition that terminalizes differently still passes the thing that
+// matters, and the message says which property broke.
+//
+// MUTATION (verified): restore the unconditional Queue and this fails on the
+// terminality assertion, naming arm 3.
+func TestStaleDig_DissolvedFolderIsCancelledNotRequeued(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	// A SERVICE DIG parent: dig_target_node set, which is the one place that
+	// column is ever written and the only shape that owns no retrieve of its own.
+	folder := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "sd-folder-dissolve"
+		o.OrderType = OrderTypeMove
+		o.Status = protocol.StatusReshuffling
+		o.DigTargetNode = "LSD_008"
+	})
+	leg := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "sd-folder-dissolve-leg"
+		o.OrderType = OrderTypeMove
+		o.ParentOrderID = &folder.ID
+		o.Sequence = 1
+		o.Status = protocol.StatusPending
+	})
+	// Cancel the leg carrying the dissolve marker — the state a dissolve leaves.
+	_, cerr := db.TerminalizeOrder(leg.ID, protocol.StatusCancelled, reshuffleDissolveDetail)
+	testutil.MustNoErr(t, cerr, "cancel the leg as a dissolve")
+
+	testutil.MustNoErr(t, d.AdvanceCompoundOrder(folder.ID), "re-drive the dissolved folder")
+
+	after, err := db.GetOrder(folder.ID)
+	testutil.MustNoErr(t, err, "reload the folder")
+
+	// (a) TERMINAL. This is the property arm 3 reads.
+	if !protocol.IsTerminal(after.Status) {
+		t.Fatalf("the dissolved dig folder is %q — NOT terminal. arm 3's one-dig-per-episode gate "+
+			"counts any non-terminal order carrying a dig_target_node as a live excavation, so this "+
+			"row now refuses every replacement dig for its episode and the dweller it was raised for "+
+			"waits with its only releaser already dead.", after.Status)
+	}
+
+	// (b) AND IT MUST NOT BE ACQUIRING, which is the specific wrong answer.
+	if protocol.IsAcquiring(after.Status) {
+		t.Errorf("the folder is %q — in the acquiring set. The fulfillment scanner will source a bin "+
+			"for an order that carries no payload and has no destination: 'queued for payload \"\"' "+
+			"followed by 'dest node \"\" not found' once a second, forever.", after.Status)
+	}
+
+	// (c) The marker says WHICH ending this was. soakstat counts dissolves off the
+	// demand marker; a folder cancelled under that string would be reported as a
+	// demand re-planning, which is the conflation this ruling is about.
+	if after.Status == protocol.StatusCancelled && after.ErrorDetail != reshuffleDissolveFolderDetail {
+		t.Errorf("the folder was cancelled with %q, want the folder marker — the two endings are "+
+			"different facts and a reader counting dissolves has to tell them apart",
+			after.ErrorDetail)
+	}
+}

@@ -209,775 +209,7 @@ func (db *DB) runVersionedMigrations() error {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	migrations := []migration{
-		// v1–v7: legacy migrations. verify=nil — these are old, the
-		// schema they install is varied and partially data-shaped, and
-		// any drift is operator-driven on ancient DBs nobody has
-		// anymore. If a plant ever proves otherwise, add verify here.
-		{1, "convert boolean columns to native BOOLEAN", v1BooleanColumns, nil},
-		{2, "add depth column to nodes", v2DepthColumn, nil},
-		{3, "drop dead columns", v3DropDeadColumns, nil},
-		{4, "drop vestigial payload_id from orders", v4DropOrderPayloadID, nil},
-		{5, "backfill mission telemetry for completed orders", v5MissionTelemetryBackfill, nil},
-		{6, "consolidate legacy migrations", v6LegacyConsolidation, nil},
-		{7, "drop vestigial default_manifest_json from payloads", v7DropDefaultManifestJSON, nil},
-
-		// v8+: simple column-adding migrations. Verify is a single
-		// information_schema query — cheap and reliable.
-		{8, "add payload_code column to orders", v8OrderPayloadCode,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "payload_code") }},
-		{9, "create order_bins junction table for multi-bin complex orders", v9OrderBins,
-			func(q schema.Querier) bool { return schema.TableExists(q, "order_bins") }},
-		{10, "add wait_index column to orders for multi-wait complex orders", v10OrderWaitIndex,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "wait_index") }},
-
-		// v11–v13: FK fixes. Verify would inspect
-		// information_schema.referential_constraints which is fiddly
-		// and the failure mode is rare (a wrong FK on a fresh DB).
-		// Leave nil — if a plant hits it, write the verify then.
-		{11, "fix payload_bin_types FK to reference payloads instead of blueprints", v11FixPayloadBinTypesFK, nil},
-		{12, "fix payload_manifest FK to reference payloads instead of blueprints", v12FixPayloadManifestFK, nil},
-		{13, "fix node_payloads FK to reference payloads instead of blueprints", v13FixNodePayloadsFK, nil},
-
-		// v14+: bin-transit-state migrations. These ARE the ones the
-		// plant ALN_001-class deploy bug damaged, so verify is
-		// non-negotiable here.
-		{14, "add process_node column to orders", v14OrderProcessNode,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "process_node") }},
-		{15, "add bin transit synthetic node and bins.anomaly_at", v15BinTransitState,
-			verifyV15BinTransitState},
-		{16, "add queue_reason column to orders", v16OrderQueueReason,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "queue_reason") }},
-
-		// v17: UOP bin-as-truth refactor — audit log + delta apply
-		// infrastructure, in final shape. Pre-production rollout
-		// collapsed the staged Phases 0–4 sub-migrations into a
-		// single migration once the design stabilized; the staged
-		// versions never ran against a production DB.
-		//
-		// Net effect of v17 = v17a + v18 + v20 (auth-only) + v21
-		// from the original plan: bin_uop_audit table with metadata
-		// column; lineside_buckets table; inventory_delta_dedup
-		// table. The shadow column / shadow table / per-station
-		// flip flag are absent — they served the rollable cutover
-		// machinery, which we don't need without a production
-		// audience.
-		{17, "uop bin-as-truth: audit log + delta apply infrastructure", v17UOPBinAsTruth,
-			func(q schema.Querier) bool {
-				return schema.TableExists(q, "bin_uop_audit") &&
-					schema.TableExists(q, "lineside_buckets") &&
-					schema.TableExists(q, "inventory_delta_dedup") &&
-					schema.ColumnExists(q, "bin_uop_audit", "metadata")
-			}},
-		{18, "add skip_auto_confirm column to orders", v18OrderSkipAutoConfirm,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "skip_auto_confirm") }},
-		{19, "promote retrieve_empty from payload_desc magic string to OrderType", v19PromoteRetrieveEmptyOrderType, nil},
-
-		// v20: UOP-threshold replenishment (C-push).
-		//   - lineside_buckets.payload_code lets Core sum bins +
-		//     buckets per payload for SystemUOPForPayload. Populated
-		//     going-forward by Edge's capture.go at emit time; no SQL
-		//     backfill — Springfield is a fresh install and no plant
-		//     has the pre-feature row shape.
-		//   - demand_registry.replenish_uop_threshold is the per-
-		//     (loader, payload) trigger value the threshold monitor
-		//     compares against. Default 0 = opt-out / legacy bin-count.
-		{20, "uop-threshold replenishment: payload_code + replenish_uop_threshold",
-			v20UOPThresholdReplenishment,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "lineside_buckets", "payload_code") &&
-					schema.ColumnExists(q, "demand_registry", "replenish_uop_threshold")
-			}},
-
-		// v21 (Round-3 Obs 8, 2026-05-21): replace lineside_buckets.node_id
-		// with core_node_name. The pre-fix BIGINT node_id mixed Edge's
-		// process_nodes.id with Core's nodes.id namespace, producing
-		// cross-plant attribution bugs (Springfield 6883 stuck-bucket,
-		// Hopkinsville Core-only orphan). The TRUNCATE that follows
-		// deploy (operator action — see Round-3 SME doc) is what
-		// clears the now-orphaned rows; this migration only adjusts
-		// the schema shape.
-		{21, "lineside_buckets node_id → core_node_name (Round-3 Obs 8)",
-			v21LinesideBucketsCoreNodeName,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "lineside_buckets", "core_node_name") &&
-					!schema.ColumnExists(q, "lineside_buckets", "node_id")
-			}},
-		// v22 ties dedup state to a bin's load-lifecycle. Pre-fix the
-		// inventory_delta_dedup PK was (station, scope_kind, scope_key),
-		// which made the dedup row outlive any single load of a bin. A
-		// stale Edge seq counter (deploy reset, restore from backup,
-		// cache loss) could then poison the next load's delta stream —
-		// observed in the field as "bin uop_remaining stuck at the load
-		// value while Edge tile counts down independently". Extending
-		// the PK with epoch and bumping bins.delta_epoch at every
-		// lifecycle boundary (SetForProduction, ClearForReuseTx) gives
-		// each load its own dedup space.
-		{22, "bins.delta_epoch + inventory_delta_dedup PK epoch column",
-			v22BinDeltaEpoch,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "bins", "delta_epoch") &&
-					schema.ColumnExists(q, "inventory_delta_dedup", "epoch")
-			}},
-
-		// v23 (complex-order buried-reshuffle scope, v7) added the
-		// pending_restocks table for the restore-blockers subsystem. That
-		// subsystem is RETIRED — blockers lie now — and v70 drops the table.
-		//
-		// v23's body still creates the table so the migration history stays
-		// intact, but its verify is now ALWAYS-TRUE on purpose: keying it on
-		// TableExists would make the self-heal RESURRECT the retired table on
-		// every boot after v70 drops it (verify fails → re-run v23 → re-create).
-		// A retired table's ABSENCE is the correct state, so v23's application is
-		// tracked by schema_migrations alone. The framework must never resurrect a
-		// retired table.
-		{23, "add pending_restocks table for crash-safe restore listeners (retired at v70)",
-			v23PendingRestocks,
-			func(schema.Querier) bool { return true }},
-
-		// v24 (post-v7 cleanup) adds the pending_lane_extensions table.
-		// Same shape as pending_restocks but for the lane-lock
-		// extension listener in expose mode. Persisting the target bin
-		// ID at scheduling time replaces the v7-era at-fire-time
-		// derivation (walk lane, exclude blockers) — which only worked
-		// because of a contextual invariant (lane locked, no
-		// unrelated bins) that a future lane-lock refactor could
-		// silently break.
-		{24, "add pending_lane_extensions table for crash-safe lane-hold listeners",
-			v24PendingLaneExtensions,
-			func(q schema.Querier) bool { return schema.TableExists(q, "pending_lane_extensions") }},
-
-		// v25 adds nodes.claimed_by — the store dual of bins.claimed_by — so a
-		// destination slot can be atomically claimed at dispatch (Hopkinsville
-		// #115/#117: two complex orders dispatching into the same supermarket
-		// slot). MUST be a real versioned migration, not folded into the v6
-		// legacy block: every node read selects n.claimed_by, so a DB missing the
-		// column fails ALL node queries (no nodes on Core/Edge). The verify gate
-		// makes the self-heal re-run it on any DB where the column is absent.
-		{25, "add nodes.claimed_by slot claim (store dual of bins.claimed_by)",
-			v25SlotClaiming,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "nodes", "claimed_by") }},
-
-		// v26 adds orders.sibling_order_uuid — the Core mirror of Edge's
-		// orders.sibling_order_id. The two legs of a two-robot swap arrive as
-		// independent ComplexOrderRequests, and the second one carries the
-		// first's UUID in SiblingOrderUUID; that field is the whole pairing
-		// mechanism. (This used to say Edge sends a "TypeOrderSiblingLink"
-		// message — no such wire type has ever existed.) Stored as the edge
-		// UUID, not a resolved id FK, so arrival order doesn't matter.
-		{26, "add sibling_order_uuid column to orders",
-			v26OrderSiblingUUID,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "sibling_order_uuid") }},
-
-		// v27 adds the dashboards table — saved floor-display definitions
-		// for the wall-display platform (task board + three kinds since). A
-		// row is a named, station-scoped view of Core's live data, served
-		// chromeless at /wall-display/{id}?kiosk=1. Pure presentation config;
-		// it owns no operational state, so there is no data to backfill.
-		//
-		// The TABLE is still `dashboards` after the round-5 page rename, and
-		// deliberately: it matches the /api/.../dashboards namespace and the
-		// Go type, and renaming it would leave those three disagreeing for a
-		// name nobody reads off a screen.
-		{27, "add dashboards table for the floor display platform",
-			v27Dashboards,
-			func(q schema.Querier) bool { return schema.TableExists(q, "dashboards") }},
-
-		// v28 promotes bin_uop_audit to the first-class inventory event log
-		// (inventory refactor §16 PR 2): node_id / station / detail JSONB +
-		// a (op, applied_at) index for op-filtered timelines (the footprint
-		// velocity query, §16 PR 1). Additive — existing rows get NULLs.
-		{28, "enrich bin_uop_audit with node_id/station/detail + (op, applied_at) index",
-			v28BinUOPAuditEnrich,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_uop_audit", "node_id") }},
-
-		// v29 adds the per-mission robot-alarm snapshot column for the
-		// failure-Pareto enrichment (Q-026). Additive; populated when a mission
-		// ends FAILED (write side is the remaining Q-026 ingestion).
-		{29, "add mission_telemetry.robot_alarms_json for the failure-Pareto robot-alarm snapshot (Q-026)",
-			v29MissionRobotAlarms,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "mission_telemetry", "robot_alarms_json") }},
-
-		// v30 adds cell_config — the operator-defined grouping of production
-		// Processes into named cells for the /missions Cells D section and the
-		// /heartbeat kiosk (Phase E, Q-025). A cell groups one primary Process
-		// plus optional sub-Processes; process ids match cell_part_events.process_id
-		// (the Process grain the PLC counters tick at — NOT process nodes, which
-		// are the bin path). No seed data: plant cells are configured via
-		// /admin/cells after deploy.
-		{30, "add cell_config for operator-defined production-cell grouping (Q-025, Phase E)",
-			v30CellConfig,
-			func(q schema.Querier) bool { return schema.TableExists(q, "cell_config") }},
-		{31, "add payloads.robot_group for SEER robot-dispatch group selection",
-			v31PayloadRobotGroup,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "payloads", "robot_group") }},
-
-		// v32 adds downtime_events + downtime_event_dedup for persisted downtime
-		// start/end events (G9). Partitioned monthly by started_at (same pattern
-		// as cell_part_events). Replaces derived-only gap analysis with explicit
-		// persisted events for OEE availability dashboards. (Authored as v31 on the
-		// sim branch; renumbered to v32 when local-dev-env rebased onto main, which
-		// carries payloads.robot_group as v31.)
-		{32, "add downtime_events for persisted downtime start/end events (G9)",
-			v32DowntimeEvents,
-			func(q schema.Querier) bool { return schema.TableExists(q, "downtime_events") }},
-		{33, "add edge_cells for the auto-derived cell catalog (Q-034)",
-			v33EdgeCells,
-			func(q schema.Querier) bool { return schema.TableExists(q, "edge_cells") }},
-		// v34: Core-owned bin-loader aggregate. The loader's identity +
-		// per-position/per-payload replenishment config move from Edge
-		// style_node_claims to Core. These tables back the Core-owned loader read
-		// path — the aggregate the Edge syncs from and resolves loaders against.
-		// UNIQUE(position_node_id) is THE invariant — one payload per home
-		// position, one loader per node — making the SLN_002 misconfiguration
-		// unrepresentable. min_stock/uop_threshold default 0 (no silent floor; the
-		// magic-2 default was removed). buffer_dest models the overflow area (SME
-		// Q4 — runtime resolution lands with the read-cutover). No UNIQUE on
-		// (loader_id, payload_code) for homes: same payload on two home positions
-		// is legitimate (D1, allow+warn).
-		{34, "add bin-loader aggregate (bin_loaders/homes/payloads) for the Core-owned loader cutover",
-			v34BinLoaderAggregate,
-			func(q schema.Querier) bool {
-				return schema.TableExists(q, "bin_loaders") &&
-					schema.TableExists(q, "bin_loader_homes") &&
-					schema.TableExists(q, "bin_loader_payloads")
-			}},
-		// v35: per-position ordering for dedicated_positions loaders. The
-		// Nodes-page grid-drag editor lets an operator drag position nodes into a
-		// loader and reorder them; sort_order persists that sequence (the physical
-		// position order) so it survives reload and can drive future layout UI.
-		// Additive, default 0 — existing homes keep their implicit
-		// position_node_id order until first reordered.
-		{35, "add sort_order to bin_loader_homes for drag-reorder of dedicated positions",
-			v35LoaderHomeSortOrder,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loader_homes", "sort_order") }},
-		// v36: archived_at for loader SOFT-delete (step 7). DeleteLoader will set this
-		// instead of cascading the loader + its homes/payloads away, so the stamped
-		// bin_uop_audit history survives a retired loader. Additive, NULL = active.
-		{36, "add bin_loaders.archived_at for loader soft-delete",
-			v36LoaderArchivedAt,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "archived_at") }},
-		// v37: loader_id on bin_uop_audit — the resolved loader surrogate stamped at
-		// EVENT time so loads (set_for_production) and unloads (release-family ops) group
-		// per loader. PLAIN value column, NO REFERENCES / NO cascade: archiving or
-		// deleting a loader must NOT destroy its audit history, and a node later
-		// reassigned to a different loader keeps each event's historical attribution.
-		{37, "add bin_uop_audit.loader_id (non-cascading) for per-loader load/unload analytics",
-			v37BinUOPAuditLoaderID,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_uop_audit", "loader_id") }},
-		// v38: loader_id on demand_registry — the loader IDENTITY behind a binding, set
-		// from the aggregate at re-derive time (the step-4 cutover). The threshold
-		// monitor mints LoaderKey="loader:<id>" from it onto the signal so the Edge
-		// resolves the loader by its token instead of core_node_name (which doubles as
-		// identity+member today). NULL for legacy ClaimSync-populated rows. Plain value
-		// (no FK — the registry is rebuilt full-state per station, not cascaded).
-		{38, "add demand_registry.loader_id for the loader-identity cutover",
-			v38DemandRegistryLoaderID,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "demand_registry", "loader_id") }},
-		// v39: drop bin_loaders.core_node_name (+ its UNIQUE(core_node_name, role)).
-		// The loader's identity is its surrogate id (minted onto the wire as the
-		// loader_key token); every delivery target is an explicit member node
-		// (windows/positions, FK'd to nodes). So the loader no longer borrows the
-		// universal node id, and the synthetic anchor string a multi-window loader had
-		// to invent is gone. Postgres drops the dependent UNIQUE with the column. The
-		// aggregate is rebuilt by seeddev / migrateloaders, so there is no data to keep.
-		{39, "drop bin_loaders.core_node_name + its UNIQUE (loader identity is the surrogate id)",
-			v39DropLoaderCoreNodeName,
-			func(q schema.Querier) bool { return !schema.ColumnExists(q, "bin_loaders", "core_node_name") }},
-		// v40: rename the replenishment enum value auto→threshold (role-aware) + swap the
-		// CHECK. Once the legacy bin-count floor is retired, "auto" only ever meant
-		// threshold-driven, so the model is operator|threshold. Conversion is role-aware:
-		// a produce auto loader is threshold (UOP kanban autoreorder); a consume auto loader
-		// (the AutoPush drain) becomes operator — consume's single mode is the window-queue
-		// drain, there is no consume threshold mode. min_stock columns are left dormant.
-		{40, "loader replenishment auto→threshold (role-aware) + CHECK (operator,threshold)",
-			v40LoaderReplenishmentThreshold,
-			v40CheckAllowsThreshold},
-		// v41: home_kind discriminator on bin_loader_homes. A dedicated loader's
-		// member is either a payload-pinned/unassigned HOME position or a
-		// kept-partial BUFFER slot. Before this a buffer was an overloaded
-		// blank-payload row — indistinguishable from an unpinned home (the D4
-		// foot-gun). Additive, DEFAULT 'home' so every existing row is a home
-		// (intentional buffers don't exist in prod config yet); buffers are
-		// written explicitly. CHECK pins the domain.
-		{41, "add home_kind to bin_loader_homes (home|buffer discriminator)",
-			v41LoaderHomeKind,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loader_homes", "home_kind") }},
-		// v42: dormant reservations table for the plan/apply → reservation-sourcing
-		// refactor (Phase 1). Created empty and unused in Phase 0 so that Phase 1 can
-		// land the write path without a flag day: the table exists on all environments
-		// before any production code writes to it.
-		{42, "create reservations table (dormant; Phase-1 reservation-sourcing seam)",
-			v42Reservations,
-			func(q schema.Querier) bool { return schema.TableExists(q, "reservations") }},
-		// v43: partial unique index on reservations(bin_id) that makes Acquire
-		// exactly-one-winner. Without this the Phase-1 reserve-then-confirm flow
-		// has no DB-level enforcement: two concurrent Acquires on the same bin
-		// could both insert pending rows and both think they won the race.
-		// WHERE state IN ('pending','confirmed') leaves cancelled/expired rows
-		// outside the constraint so a bin freed by Expire or Release can be
-		// immediately re-reserved without violating the index.
-		{43, "add uq_reservations_bin_active partial unique index (Phase-1 race gate)",
-			v43ReservationsBinActiveIndex,
-			func(q schema.Querier) bool {
-				return schema.IndexExists(q, "uq_reservations_bin_active")
-			}},
-		// v44: reservation resource_kind (bin|slot|mouth) + node_id target + per-kind
-		// partial unique indexes — the slot-reservation substrate. Additive and
-		// dormant (bin path keeps working via the 'bin' DEFAULT); folds the schema
-		// riders (state CHECK, expires_at nullable, reason column dropped). The
-		// resource_kind column is the self-heal marker.
-		{44, "reservations resource_kind + node_id + per-kind indexes (slot substrate)",
-			v44ReservationsSlotKind,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "reservations", "resource_kind") }},
-
-		// v45 adds orders.source_intent — the order-builder Stage-4 data home for
-		// the sourcing reads that used to branch on OrderType (retrieve_empty's
-		// empty-carrier intent, move's node-local sourcing, the empty-payload
-		// guard). Backfills existing rows from order_type so in-flight orders keep
-		// the right intent across the deploy window.
-		{45, "add orders.source_intent (order-builder sourcing data home)",
-			v45OrderSourceIntent,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "source_intent") }},
-
-		// v46 adds orders.coordinated — the dispatch-provenance discriminator
-		// (whether an order carries an Edge-authored multi-leg plan). It REPLACES
-		// IsCoordinated's StepsJSON != "" heuristic, which becomes unsound once F1
-		// persists simple plans to steps_json. Stamped at Core intake going forward;
-		// backfilled from steps_json so in-flight orders keep today's exact
-		// classification across the deploy window (no order changes routing).
-		{46, "add orders.coordinated (dispatch-provenance discriminator)",
-			v46OrderCoordinated,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "coordinated") }},
-
-		// v47 adds orders.remaining_uop — the operator's declared release-correction
-		// count, carried from intake to the single claim point. The claim moves from
-		// intake to the scanner, and the scanner has no envelope; a move's
-		// manifest-sync count (CreateMoveOrderWithUOP → OrderRequest.RemainingUOP)
-		// therefore rides on the order row so the scanner can seed the same atomic
-		// claim+sync. NULLABLE with no default: NULL is the "no sync" semantic (plain
-		// claim), matching the *int nil the claim path already understands. No
-		// backfill — in-flight orders already claimed at intake, so a NULL is exactly
-		// right for them. Bridge column: retires when F2 carries the count in the plan.
-		{47, "add orders.remaining_uop (operator release-correction count for the moved claim)",
-			v47OrderRemainingUOP,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "remaining_uop") }},
-
-		// v48 adds the structured companions to orders.queue_reason: queue_code
-		// (the operator-visible category, one of protocol.QueueCode) and
-		// queue_cause (the engineer-only call-site tag). queue_reason keeps
-		// carrying the generated sentence — zero display regression — and the
-		// two new columns let the floor/analytics GROUP BY the code instead of
-		// parsing prose. Both NULLABLE with no default: NULL = a pre-schema row
-		// (no backfill); a cleared reason writes NULL on both. Cause never
-		// leaves Core.
-		{48, "add orders.queue_code + queue_cause (structured queue-reason companions)",
-			v48OrderQueueCodeCause,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "orders", "queue_code") &&
-					schema.ColumnExists(q, "orders", "queue_cause")
-			}},
-
-		// v49 creates the Core mirror for the plant-claims feed (Edge → Core
-		// subject plant.claims). process_styles holds the styles a process can
-		// run; style_claims holds the sourceability subset of each style's node
-		// claims (node, role, swap_mode, payload, capacity, reorder). Both are
-		// REPLACED per-process on every message, so a periodic full snapshot
-		// rebuilds late joiners (no Kafka compaction). The dirty index the
-		// recompute reads is built in code from the cache, not stored.
-		{49, "create process_styles + style_claims mirror for plant-claims feed",
-			v49PlantClaimsMirror,
-			func(q schema.Querier) bool {
-				return schema.TableExists(q, "process_styles") &&
-					schema.TableExists(q, "style_claims")
-			}},
-
-		// v50 adds the advanced load sequence surface: a nullable
-		// advanced_load_sequence NAME on payloads (the switch — empty/NULL =
-		// today's single load block, byte-identical) and the load_sequences
-		// registry (sequence name → ordered binTask-name list). The registry is
-		// editable data, not constants: a plant names its RDS-side binTask keys
-		// differently, so the task list lives in a table. Seeded with one row
-		// (Child cart interlock → the four-name sequence from the evidence doc).
-		{50, "add payloads.advanced_load_sequence + load_sequences registry",
-			v50AdvancedLoadSequence,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "payloads", "advanced_load_sequence") &&
-					schema.TableExists(q, "load_sequences")
-			}},
-		// NUMBERING COLLISION — RESOLVED 2026-07-30. Kept as a record, not a warning.
-		//
-		// v51 is taken HERE, on main. The lane campaign (refactor-phase1) also
-		// carried a v51 and a v52 — the reservations mode column and the
-		// pending_restocks drop. When that branch was transplanted onto main those
-		// two were renumbered to v69 and v70 (NOT to v52/v53 as the original note
-		// predicted: main had run on to v68 by then). Both now sit at the tail of
-		// this list.
-		//
-		// Why it mattered: the list is keyed by integer, so two v51s would not
-		// conflict at compile time. The second would silently never run against a
-		// database that had already recorded 51, and the schema would diverge
-		// per-plant depending on which build reached it first.
-		//
-		// The standing rule this leaves behind: a migration number is claimed the
-		// moment it lands on main. A long-lived branch must renumber to the tail
-		// at transplant time, and no-resurrect tests pin the retired numbers.
-		{51, "add process_styles.is_active (running style from the plant-claims feed)",
-			v51ProcessStyleActive,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "process_styles", "is_active")
-			}},
-		// v52: R1 shadow read-model. Edge's periodic per-consuming-node lineside
-		// on-hand, its OWN table (NOT bins), so Core can compute the monitor's
-		// lineside term both ways (ledger vs Edge reports) and log
-		// firing-decision disagreements — SHADOW, deciding off the ledger.
-		//
-		// NUMBERING: v52 was claimed HERE on branch monitor-collapse-r1, and the
-		// lane campaign's competing v52 (the pending_restocks drop) was renumbered
-		// to v70 at transplant, 2026-07-30 — see the resolved collision note above
-		// v51. This migration is a pure additive CREATE TABLE with no dependency on
-		// any constraint, so it would have renumbered trivially had it been the one
-		// to move; it did not have to.
-		{52, "add edge_lineside_reports (R1 shadow read-model for the lineside term)",
-			v52EdgeLinesideReports,
-			func(q schema.Querier) bool { return schema.TableExists(q, "edge_lineside_reports") }},
-		{53, "backfill mission_telemetry.robot_id from orders (was written blank)",
-			v53BackfillTelemetryRobotID, nil},
-		{54, "backfill mission_events.robot_id from orders (the other half of 53)",
-			v54BackfillMissionEventRobotID, nil},
-		{55, "order_history += code, actor, ref (the reason, typed, pointing at what it concerns)",
-			v55OrderHistoryReasonColumns,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "order_history", "ref") }},
-		{56, "sourceability_events — persist the verdict changes the monitor already computes",
-			v56SourceabilityEvents,
-			func(q schema.Querier) bool { return schema.TableExists(q, "sourceability_events") }},
-		{57, "rename legacy downtime_events partitions to the aligned form",
-			v57RenameDowntimePartitions, nil},
-		// FOUND BY TestSchemaConvergesAcrossVintages, and the first thing it
-		// found. A database installed before 2026-05-21 carries
-		// DEFAULT '' on lineside_buckets.core_node_name; one installed after
-		// does not, because the baseline CREATE TABLE declares the column
-		// without one.
-		//
-		// The default was never intent — v21's own comment says it exists "so
-		// existing orphaned rows don't break the column add", which is a
-		// mechanical requirement of ADD COLUMN NOT NULL on a populated table.
-		// It then stayed forever.
-		//
-		// It matters because '' is the UNKNOWN value for this column and the
-		// table has UNIQUE (station, core_node_name, pair_key, style_id,
-		// part_number). At a plant, an insert that omitted the node would
-		// silently write '' and collide unrelated nodes' buckets; on a fresh
-		// install the same insert errors. Every insert site supplies the
-		// column, so dropping the default takes nothing away.
-		{58, "drop lineside_buckets.core_node_name's DEFAULT (converge aged DBs with fresh)",
-			v58DropLinesideCoreNodeNameDefault,
-			func(q schema.Querier) bool { return !columnHasDefault(q, "lineside_buckets", "core_node_name") }},
-		// The demand grain. demand_origins is Core's history of every episode;
-		// orders gains the link back to the demand it served.
-		//
-		// The verify checks the LAST thing this migration creates, not the
-		// first. Everything here runs in one transaction (runOneMigration), so
-		// a partial apply is not reachable — but a post-condition that passes
-		// while the tail is missing would be a self-heal that never heals, and
-		// which end it checks costs nothing to get right.
-		{59, "demand_origins + orders.origin_id/origin_class (the demand grain)",
-			v59DemandOrigins,
-			func(q schema.Querier) bool {
-				return schema.TableExists(q, "demand_origins") &&
-					schema.ColumnExists(q, "orders", "origin_class")
-			}},
-		// WHICH MECHANISM CLOSED IT. The reconciling sweep deliberately uses the
-		// SAME close_reason codes as the notification paths, so the surface does
-		// not grow a second vocabulary for the same facts about the plant. The
-		// cost of that choice is that a silent failure of every notification
-		// path looks identical to a healthy system — the sweep quietly picks up
-		// all the work and every surface stays green. closed_by makes the
-		// sweep's share of the work a number somebody can look at.
-		//
-		// Separate migration rather than an edit to 59: 59 is pushed, and a
-		// migration anyone may already have run is not a file you go back and
-		// change.
-		{60, "demand_origins.closed_by (which mechanism ended the episode)",
-			v60DemandOriginClosedBy,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "demand_origins", "closed_by") }},
-		// AGING IS A TIMESTAMP, NOT A FOURTH CLASS. origin_class answers HOW
-		// DID THIS ORDER RELATE TO A DEMAND — attached, structurally
-		// originless, or it should have had an episode and didn't. That is a
-		// create-time fact and it is true forever. The reconciling sweep was
-		// overwriting it with `orphan_aged`, which leaves the row unable to
-		// answer what it was classified as when it was created: a FACT
-		// OVERWRITTEN BY A DERIVATION, the uopCache mistake in a fourth
-		// costume.
-		//
-		// It also matches the shape this schema already uses everywhere for
-		// exactly this — closed_at beside close_reason, anomaly_at beside the
-		// bin: a nullable timestamp NEXT TO the fact, never a state value
-		// inside it.
-		//
-		// AN AGED ORPHAN IS STILL A FINDING. Aging changes which lane it sits
-		// in and who is expected to act on it, not whether it is a problem.
-		// Never deleted, never auto-attached.
-		{61, "orders.orphan_aged_at (aging is a timestamp, not a fourth origin_class)",
-			v61OrphanAgedAt,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "orphan_aged_at") }},
-		// THE DRAWN NETWORK BECOMES THE DRIVEN NETWORK. A scene edge is a lane
-		// the fleet actually drives, and SEER states its shape with two
-		// cubic-Bezier handles that shingo discarded at decode. The map drew
-		// the chord instead, which at Springfield puts the painted lane up to
-		// 1.30 m from the real one (LM10-LM113, a 7.17 m aisle), so robots
-		// visibly leave the network as painted, and the route lengths derived
-		// from those segments run up to 24% short.
-		//
-		// FOUR NULLABLE COLUMNS, NOT FOUR ZEROED ONES. The origin is a real
-		// coordinate on a plant map; a straight aisle whose handles defaulted
-		// to (0,0) would render sweeping tens of metres across the floor. NULL
-		// is the only value that means "this lane has no bend", and it must be
-		// distinguishable from a bend that happens to pass near (0,0).
-		//
-		// SINGLE-HOMED HERE, NOT IN THE BASELINE — B9. Nothing indexes these,
-		// so they carry none of the claim orders.origin_id has, and an ALTER
-		// runs identically on the fresh and aged convergence paths.
-		//
-		// No backfill. Scene sync deletes and re-inserts every area on each
-		// pass, so the handles arrive on the first sync after deploy. Until
-		// then every row reads NULL, which renders as today's straight line —
-		// the pre-migration behaviour exactly, not a wrong bend.
-		{62, "scene_edges control handles (draw the lane the robot drives)",
-			v62SceneEdgeControlHandles,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "scene_edges", "ctrl2_y") }},
-		// TWO IDENTITY SYSTEMS FOR ONE SET OF PROCESSES, RECONCILED.
-		//
-		// v59 declared demand_origins.process_id as BIGINT, holding an Edge
-		// SQLite row id. The DEPLOYED process_styles.process_id and
-		// style_claims.process_id are TEXT, holding the Edge process NAME
-		// ("SNF2") — as is PlantClaimsReport.ProcessID on the wire. So Core held
-		// two descriptions of the same processes with no query able to put them
-		// side by side, which killed two Phase 6 designs outright.
-		//
-		// FREE NOW, EXPENSIVE LATER, and that is the whole reason it is here.
-		// v59 is above every plant's applied version, so no plant has this table
-		// and no row is being rewritten anywhere. After the first plant runs v59
-		// this stops being a column type and becomes a data migration on live
-		// forensic history.
-		//
-		// A NEW MIGRATION RATHER THAN AN EDIT TO v59, for the reason v60 already
-		// records on itself: v59 is pushed, and a migration anyone may already
-		// have run is not a file you go back and change. A fresh database
-		// therefore creates the column as BIGINT and converts it one step later,
-		// which is the same two-step v58 and v61 take.
-		{63, "demand_origins.process_id BIGINT -> TEXT (one identity for a process, not two)",
-			v63DemandOriginProcessIDText,
-			func(q schema.Querier) bool {
-				return schema.ColumnType(q, "demand_origins", "process_id") == "text"
-			}},
-		// THE STATEMENT THAT HANDLES A DUPLICATE EDGE IS THE STATEMENT THAT
-		// DESTROYS THE EVIDENCE OF ONE.
-		//
-		// edge_registry.station_id is UNIQUE and Register's upsert explicitly
-		// sets `hostname = excluded.hostname` on conflict. So two Pis configured
-		// with the same station id never collide: they take turns owning one
-		// row, each register overwriting the other's hostname, and nothing
-		// anywhere records that a second machine exists. Today's Edge defaults
-		// (namespace `plant-a`, line `line-1`) guarantee that shape on the
-		// second Pi, and install-edge.sh writes a config carrying only
-		// database_path — so a fresh install cannot come up as anything else.
-		//
-		// bound_hostname holds the FIRST hostname to register a station and is
-		// never reassigned by a register. The conflict_* three record the most
-		// recent mismatching claimant, when, and how many there have been.
-		//
-		// THE BACKFILL IS WHAT MAKES THIS SILENT AT THE PLANTS. Setting
-		// bound_hostname = hostname for the existing rows binds each live plant
-		// to the box it is already running on, so the first register after
-		// deploy matches and nothing fires. A DEFAULT '' with no backfill would
-		// instead have the first register CLAIM the lease, which is the same end
-		// state one register later — but it would leave a window where a swap
-		// during the deploy silently rebound the station, and the whole point is
-		// that no rebind is silent.
-		//
-		// DETECTOR, NOT GATE — deliberately, and the reason is in the signal
-		// rather than in caution. A differing hostname is equally the signature
-		// of a legitimate box replacement, which Core cannot presently
-		// distinguish because it has no enrollment step to ask about. Refusing
-		// on it would turn a reimaged Pi into a plant with no Edge.
-		{64, "edge_registry bound_hostname + conflict_* (two machines, one station id)",
-			v64EdgeRegistryHostnameBinding,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "edge_registry", "bound_hostname") &&
-					schema.ColumnExists(q, "edge_registry", "conflict_at")
-			}},
-		// PREREQUISITE of per-edge identity. `station` is one-valued today, so
-		// this merges nothing; it stops being one-valued the moment each edge
-		// gets its own id, and then a station-scoped write against a
-		// station-blind SUM double-counts physical inventory. See the function
-		// comment for why the repo has already made this mistake in this key.
-		{65, "lineside_buckets: drop station from the uniqueness key (identity prerequisite)",
-			v65LinesideBucketsDropStationFromKey,
-			func(q schema.Querier) bool {
-				var n int
-				if err := q.QueryRow(`
-					SELECT count(*) FROM pg_constraint con
-					JOIN pg_class rel ON rel.oid = con.conrelid
-					WHERE rel.relname = 'lineside_buckets'
-					  AND con.contype = 'u'
-					  AND pg_get_constraintdef(con.oid) LIKE '%station%'`).Scan(&n); err != nil {
-					return false
-				}
-				return n == 0
-			}},
-		// EDGE IDENTITY. Backfilling station_uid = station_id is what makes
-		// this deployable ahead of the Edge that knows about uids: for one
-		// window the uid and the legacy routing string are the same characters,
-		// so a legacy Edge's register resolves against the uid key unchanged.
-		// See the function comment — the compatibility is in the data, not in a
-		// branch, which is why nothing has to be unwound later.
-		{66, "edge_registry: station_uid + display_name + binding lease; line_ids retired",
-			v66EdgeIdentity,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "edge_registry", "station_uid") &&
-					schema.ColumnExists(q, "edge_registry", "bound_at") &&
-					!schema.ColumnExists(q, "edge_registry", "line_ids")
-			}},
-		{67, "edge_registry.claimed_at — an edge may introduce itself; a human says what it is",
-			v67EdgeClaim,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "edge_registry", "claimed_at")
-			}},
-		{68, "supply_refusals — a person's statement that they cannot supply a call",
-			v68SupplyRefusals,
-			func(q schema.Querier) bool {
-				return schema.TableExists(q, "supply_refusals")
-			}},
-		// v69 adds the lane-mouth substrate to reservations: a nullable mode tag
-		// (inbound|outbound|dig, carried only by mouth rows) + a plain read index
-		// on (resource_kind, node_id). Additive and dormant — v44 already made
-		// 'mouth' a legal kind with a node_id target and no unique mouth index, so
-		// this only supplies the mode column the admission rule reads and the index
-		// it reads through. The mode column is the self-heal marker.
-		//
-		// Carried the number 51 on refactor-phase1 and was renumbered to 69 when
-		// that branch was transplanted onto main (2026-07-30) — see the renumber
-		// note above v51.
-		{69, "add reservations.mode + (resource_kind,node_id) read index (lane-mouth substrate)",
-			v69ReservationsMouthMode,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "reservations", "mode") }},
-
-		// v70 retires the restore-blockers subsystem's table. pending_restocks is
-		// no code's concern anymore (the subsystem is deleted; blockers lie). DROP
-		// IF EXISTS so a fresh DB (which created it at v23) and a deployed DB (which
-		// may hold rows) both end without it. Paired with v23's now-always-true
-		// verify so the self-heal never resurrects it. The self-heal marker is the
-		// table's ABSENCE.
-		//
-		// Carried the number 52 on refactor-phase1 and was renumbered to 70 when
-		// that branch was transplanted onto main (2026-07-30) — see the renumber
-		// note above v51.
-		{70, "drop pending_restocks (retire the restore-blockers subsystem)",
-			v70DropPendingRestocks,
-			func(q schema.Querier) bool { return !schema.TableExists(q, "pending_restocks") }},
-
-		// THE INDEX SPRINGFIELD ALREADY HAS, WRITTEN DOWN.
-		//
-		// A `\d orders` at Springfield (2026-08-02) returns a UNIQUE index on
-		// edge_uuid, partial on `edge_uuid <> ''`. Nothing in this repository
-		// creates it: postgres_ddl.go and the schema snapshot both declare a
-		// PLAIN index, and no migration touches it. So it was applied by hand,
-		// and a fresh install gets a database the plant's schema does not match —
-		// the exact drift the DDL constants exist to prevent.
-		//
-		// PARTIAL, and that is not a stylistic choice. Springfield holds 23 rows
-		// with an empty edge_uuid (all of them cancelled store orders from April,
-		// from the door that wrote a row before the planner rejected it). A plain
-		// unique index would fail outright on those rows. The plant has already
-		// proved which form works.
-		//
-		// Numbered 71 deliberately: the lane campaign on refactor-phase1 runs up
-		// to 70, so this cannot collide with it whichever lands first. See the
-		// numbering warning above v51.
-		{71, "orders.edge_uuid unique (partial) — match the index the plants already run",
-			v71OrdersUUIDUnique,
-			func(q schema.Querier) bool { return uuidIndexIsUnique(q) }},
-		// A DATA migration, not a shape one: no ALTER, so no matching edit in
-		// the DDL constants. It moves the value, not the column.
-		{72, "core-spot becomes core-operator, in every table that stores it",
-			v72StationCoreOperator,
-			func(q schema.Querier) bool { return noCoreSpotLeft(q) }},
-		// v73 drops the temporary exemption the restore-blockers subsystem needed.
-		// That subsystem (and its derived "restore-<parentID>-<binID>" edge_uuid
-		// that was parsed back to recover a link) is RETIRED by v70 and the
-		// subsystem deletion in this merge. UUID now means UUID for every order:
-		// compound children mint a real UUID (dispatch/compound.go), and no live
-		// code creates restore names anymore. So the index goes back to the plain
-		// not-blank predicate v71 always intended — which is what the schema
-		// snapshot and postgres_ddl.go declare. Springfield and Hopkinsville have
-		// zero restore history, and a fresh seed cannot regenerate restore rows,
-		// so nothing the plants carry collides with a plain unique index. The
-		// only databases that ever held duplicate restore names were house-server
-		// dev volumes, which dev-reset clears.
-		{73, "orders.edge_uuid unique — restore exemption retired (back to plain predicate)",
-			v73OrdersUUIDPlain,
-			func(q schema.Querier) bool { return uuidIndexIsUnique(q) && !uuidIndexExemptsRestore(q) }},
-		// v74: whether a shared-window loader spreads its inbound empties across
-		// its windows, or funnels them to the first one, becomes a property of the
-		// loader instead of a plant-wide Edge config key. DEFAULT FALSE = spread,
-		// which is what the Edge flag already resolved to when unset — so every
-		// existing loader keeps behaving exactly as it does today. Inert for
-		// dedicated loaders: their positions never shared a budget to begin with.
-		{74, "add funnel_windows to bin_loaders (per-loader window spreading)",
-			v74LoaderFunnelWindows,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "funnel_windows") }},
-		// v75: what carriers a loader wants, and which of them each window can
-		// physically take. Two tables because they answer two different
-		// questions — see v75LoaderCarrierMix. Both start EMPTY, and empty means
-		// exactly today's behaviour: no declared mix, every window takes
-		// anything.
-		{75, "add the loader carrier mix (per-loader quota, per-window capability)",
-			v75LoaderCarrierMix,
-			func(q schema.Querier) bool { return schema.TableExists(q, "bin_loader_quotas") }},
-		// v76: the second lane hold. A dig's CLAIM on a lane (mode='dig') and a
-		// robot's presence INSIDE it are different facts with different
-		// lifetimes, and until now there was only one row to carry both. See
-		// v76LaneOccupancyKind.
-		{76, "allow resource_kind='occupancy' — the in-lane hold, separate from the claim",
-			v76LaneOccupancyKind,
-			func(q schema.Querier) bool {
-				return schema.CheckConstraintAllows(q, "reservations", "reservations_resource_kind_check", "occupancy")
-			}},
-
-		// v77 adds orders.open_for_children -- sealedness on a compound parent,
-		// carried explicitly rather than derived. NO BACKFILL, and that is a
-		// ruling rather than an omission: see v77CompoundSealedness.
-		{77, "add orders.open_for_children (compound sealedness, explicit)",
-			v77CompoundSealedness,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "open_for_children") }},
-		{78, "drop pending_lane_extensions (the expose bridge, deleted with the two-shape ruling)",
-			v78DropPendingLaneExtensions,
-			func(q schema.Querier) bool { return !schema.TableExists(q, "pending_lane_extensions") }},
-
-		// v79 adds orders.dig_target_node -- the slot a service dig exists to
-		// uncover. The dig lock now spans the excavation AND the retrieval it was
-		// raised for, and this column says whose departure ends the hold. See
-		// v79DigTargetNode.
-		{79, "add orders.dig_target_node (the bin a service dig uncovers, and what releases its lane)",
-			v79DigTargetNode,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "dig_target_node") }},
-
-		// v80 makes the junction's stated grain real. "One row per claimed bin"
-		// is what UpdateOrderBinDestNode is written against and what binForStep
-		// assumes; nothing enforced it, and a retried allocation inserted the same
-		// row again on every pass. See v80OrderBinsOneRowPerBin.
-		{80, "dedupe order_bins and enforce one row per (order, bin)",
-			v80OrderBinsOneRowPerBin,
-			func(q schema.Querier) bool { return schema.IndexExists(q, "order_bins_order_bin_uniq") }},
-
-		// v81 is a DATA migration, not a shape one: no ALTER, so no matching edit
-		// in the DDL constants. It rewrites values inside two columns. See
-		// v81EpisodeRoleVocabulary for why it is owed at all.
-		{81, "demand_origins: episodes are produce or consume, not supply or evacuate",
-			v81EpisodeRoleVocabulary,
-			func(q schema.Querier) bool { return noLegSpelledEpisodesLeft(q) }},
-	}
+	migrations := migrationList()
 
 	// Record the head version for LatestMigrationVersion, derived from the list
 	// itself — adding a migration above updates it with no separate bookkeeping.
@@ -3857,4 +3089,836 @@ func noLegSpelledEpisodesLeft(q schema.Querier) bool {
 		return false
 	}
 	return n == 0
+}
+
+// migrationList is the numbered migration chain, as DATA.
+//
+// EXTRACTED SO IT HAS A SECOND READER. It lived inside
+// runVersionedMigrations, so the only thing that could see it was the loop
+// that ran it — and a property OF the list (no two entries with contradictory
+// post-conditions) had nowhere to be asserted from. v24 and v78 spent an
+// unknown number of boots re-running each other because of that.
+func migrationList() []migration {
+	return []migration{
+		// v1–v7: legacy migrations. verify=nil — these are old, the
+		// schema they install is varied and partially data-shaped, and
+		// any drift is operator-driven on ancient DBs nobody has
+		// anymore. If a plant ever proves otherwise, add verify here.
+		{1, "convert boolean columns to native BOOLEAN", v1BooleanColumns, nil},
+		{2, "add depth column to nodes", v2DepthColumn, nil},
+		{3, "drop dead columns", v3DropDeadColumns, nil},
+		{4, "drop vestigial payload_id from orders", v4DropOrderPayloadID, nil},
+		{5, "backfill mission telemetry for completed orders", v5MissionTelemetryBackfill, nil},
+		{6, "consolidate legacy migrations", v6LegacyConsolidation, nil},
+		{7, "drop vestigial default_manifest_json from payloads", v7DropDefaultManifestJSON, nil},
+
+		// v8+: simple column-adding migrations. Verify is a single
+		// information_schema query — cheap and reliable.
+		{8, "add payload_code column to orders", v8OrderPayloadCode,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "payload_code") }},
+		{9, "create order_bins junction table for multi-bin complex orders", v9OrderBins,
+			func(q schema.Querier) bool { return schema.TableExists(q, "order_bins") }},
+		{10, "add wait_index column to orders for multi-wait complex orders", v10OrderWaitIndex,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "wait_index") }},
+
+		// v11–v13: FK fixes. Verify would inspect
+		// information_schema.referential_constraints which is fiddly
+		// and the failure mode is rare (a wrong FK on a fresh DB).
+		// Leave nil — if a plant hits it, write the verify then.
+		{11, "fix payload_bin_types FK to reference payloads instead of blueprints", v11FixPayloadBinTypesFK, nil},
+		{12, "fix payload_manifest FK to reference payloads instead of blueprints", v12FixPayloadManifestFK, nil},
+		{13, "fix node_payloads FK to reference payloads instead of blueprints", v13FixNodePayloadsFK, nil},
+
+		// v14+: bin-transit-state migrations. These ARE the ones the
+		// plant ALN_001-class deploy bug damaged, so verify is
+		// non-negotiable here.
+		{14, "add process_node column to orders", v14OrderProcessNode,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "process_node") }},
+		{15, "add bin transit synthetic node and bins.anomaly_at", v15BinTransitState,
+			verifyV15BinTransitState},
+		{16, "add queue_reason column to orders", v16OrderQueueReason,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "queue_reason") }},
+
+		// v17: UOP bin-as-truth refactor — audit log + delta apply
+		// infrastructure, in final shape. Pre-production rollout
+		// collapsed the staged Phases 0–4 sub-migrations into a
+		// single migration once the design stabilized; the staged
+		// versions never ran against a production DB.
+		//
+		// Net effect of v17 = v17a + v18 + v20 (auth-only) + v21
+		// from the original plan: bin_uop_audit table with metadata
+		// column; lineside_buckets table; inventory_delta_dedup
+		// table. The shadow column / shadow table / per-station
+		// flip flag are absent — they served the rollable cutover
+		// machinery, which we don't need without a production
+		// audience.
+		{17, "uop bin-as-truth: audit log + delta apply infrastructure", v17UOPBinAsTruth,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "bin_uop_audit") &&
+					schema.TableExists(q, "lineside_buckets") &&
+					schema.TableExists(q, "inventory_delta_dedup") &&
+					schema.ColumnExists(q, "bin_uop_audit", "metadata")
+			}},
+		{18, "add skip_auto_confirm column to orders", v18OrderSkipAutoConfirm,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "skip_auto_confirm") }},
+		{19, "promote retrieve_empty from payload_desc magic string to OrderType", v19PromoteRetrieveEmptyOrderType, nil},
+
+		// v20: UOP-threshold replenishment (C-push).
+		//   - lineside_buckets.payload_code lets Core sum bins +
+		//     buckets per payload for SystemUOPForPayload. Populated
+		//     going-forward by Edge's capture.go at emit time; no SQL
+		//     backfill — Springfield is a fresh install and no plant
+		//     has the pre-feature row shape.
+		//   - demand_registry.replenish_uop_threshold is the per-
+		//     (loader, payload) trigger value the threshold monitor
+		//     compares against. Default 0 = opt-out / legacy bin-count.
+		{20, "uop-threshold replenishment: payload_code + replenish_uop_threshold",
+			v20UOPThresholdReplenishment,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "lineside_buckets", "payload_code") &&
+					schema.ColumnExists(q, "demand_registry", "replenish_uop_threshold")
+			}},
+
+		// v21 (Round-3 Obs 8, 2026-05-21): replace lineside_buckets.node_id
+		// with core_node_name. The pre-fix BIGINT node_id mixed Edge's
+		// process_nodes.id with Core's nodes.id namespace, producing
+		// cross-plant attribution bugs (Springfield 6883 stuck-bucket,
+		// Hopkinsville Core-only orphan). The TRUNCATE that follows
+		// deploy (operator action — see Round-3 SME doc) is what
+		// clears the now-orphaned rows; this migration only adjusts
+		// the schema shape.
+		{21, "lineside_buckets node_id → core_node_name (Round-3 Obs 8)",
+			v21LinesideBucketsCoreNodeName,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "lineside_buckets", "core_node_name") &&
+					!schema.ColumnExists(q, "lineside_buckets", "node_id")
+			}},
+		// v22 ties dedup state to a bin's load-lifecycle. Pre-fix the
+		// inventory_delta_dedup PK was (station, scope_kind, scope_key),
+		// which made the dedup row outlive any single load of a bin. A
+		// stale Edge seq counter (deploy reset, restore from backup,
+		// cache loss) could then poison the next load's delta stream —
+		// observed in the field as "bin uop_remaining stuck at the load
+		// value while Edge tile counts down independently". Extending
+		// the PK with epoch and bumping bins.delta_epoch at every
+		// lifecycle boundary (SetForProduction, ClearForReuseTx) gives
+		// each load its own dedup space.
+		{22, "bins.delta_epoch + inventory_delta_dedup PK epoch column",
+			v22BinDeltaEpoch,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "bins", "delta_epoch") &&
+					schema.ColumnExists(q, "inventory_delta_dedup", "epoch")
+			}},
+
+		// v23 (complex-order buried-reshuffle scope, v7) added the
+		// pending_restocks table for the restore-blockers subsystem. That
+		// subsystem is RETIRED — blockers lie now — and v70 drops the table.
+		//
+		// v23's body still creates the table so the migration history stays
+		// intact, but its verify is now ALWAYS-TRUE on purpose: keying it on
+		// TableExists would make the self-heal RESURRECT the retired table on
+		// every boot after v70 drops it (verify fails → re-run v23 → re-create).
+		// A retired table's ABSENCE is the correct state, so v23's application is
+		// tracked by schema_migrations alone. The framework must never resurrect a
+		// retired table.
+		{23, "add pending_restocks table for crash-safe restore listeners (retired at v70)",
+			v23PendingRestocks,
+			func(schema.Querier) bool { return true }},
+
+		// v24 (post-v7 cleanup) adds the pending_lane_extensions table.
+		// Same shape as pending_restocks but for the lane-lock
+		// extension listener in expose mode. Persisting the target bin
+		// ID at scheduling time replaces the v7-era at-fire-time
+		// derivation (walk lane, exclude blockers) — which only worked
+		// because of a contextual invariant (lane locked, no
+		// unrelated bins) that a future lane-lock refactor could
+		// silently break.
+		// ── ITS VERIFY IS ALWAYS-TRUE BECAUSE v78 RETIRES ITS TABLE ──────────
+		//
+		// It used to assert TableExists("pending_lane_extensions"), which is the
+		// exact NEGATION of v78's verify. Both are recorded applied, so on EVERY
+		// BOOT the self-heal saw each one's post-condition fail and re-ran it:
+		// v24 re-created the table, v78 re-dropped it, forever. Observed on the
+		// rig at 2026-08-14 11:18:59, two lines in the first three of a run log:
+		//
+		//   migrations: v24 (...) recorded as applied but post-condition fails — re-running
+		//   migrations: v78 (...) recorded as applied but post-condition fails — re-running
+		//
+		// The END STATE was always right (both are idempotent and v78 runs last),
+		// which is why it survived. What it cost is the self-heal's only alarm:
+		// "recorded as applied but post-condition fails" is how a genuinely
+		// missing migration announces itself, and printing it twice on every
+		// healthy boot is how a reader learns to skip that line.
+		//
+		// v23 is the same shape retired by v70 and was given exactly this
+		// treatment, title included. A DROP migration's verify contradicts its
+		// CREATE's by construction; the CREATE stops asserting a state it no
+		// longer owns.
+		{24, "add pending_lane_extensions table for crash-safe lane-hold listeners (retired at v78)",
+			v24PendingLaneExtensions,
+			func(schema.Querier) bool { return true }},
+
+		// v25 adds nodes.claimed_by — the store dual of bins.claimed_by — so a
+		// destination slot can be atomically claimed at dispatch (Hopkinsville
+		// #115/#117: two complex orders dispatching into the same supermarket
+		// slot). MUST be a real versioned migration, not folded into the v6
+		// legacy block: every node read selects n.claimed_by, so a DB missing the
+		// column fails ALL node queries (no nodes on Core/Edge). The verify gate
+		// makes the self-heal re-run it on any DB where the column is absent.
+		{25, "add nodes.claimed_by slot claim (store dual of bins.claimed_by)",
+			v25SlotClaiming,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "nodes", "claimed_by") }},
+
+		// v26 adds orders.sibling_order_uuid — the Core mirror of Edge's
+		// orders.sibling_order_id. The two legs of a two-robot swap arrive as
+		// independent ComplexOrderRequests, and the second one carries the
+		// first's UUID in SiblingOrderUUID; that field is the whole pairing
+		// mechanism. (This used to say Edge sends a "TypeOrderSiblingLink"
+		// message — no such wire type has ever existed.) Stored as the edge
+		// UUID, not a resolved id FK, so arrival order doesn't matter.
+		{26, "add sibling_order_uuid column to orders",
+			v26OrderSiblingUUID,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "sibling_order_uuid") }},
+
+		// v27 adds the dashboards table — saved floor-display definitions
+		// for the wall-display platform (task board + three kinds since). A
+		// row is a named, station-scoped view of Core's live data, served
+		// chromeless at /wall-display/{id}?kiosk=1. Pure presentation config;
+		// it owns no operational state, so there is no data to backfill.
+		//
+		// The TABLE is still `dashboards` after the round-5 page rename, and
+		// deliberately: it matches the /api/.../dashboards namespace and the
+		// Go type, and renaming it would leave those three disagreeing for a
+		// name nobody reads off a screen.
+		{27, "add dashboards table for the floor display platform",
+			v27Dashboards,
+			func(q schema.Querier) bool { return schema.TableExists(q, "dashboards") }},
+
+		// v28 promotes bin_uop_audit to the first-class inventory event log
+		// (inventory refactor §16 PR 2): node_id / station / detail JSONB +
+		// a (op, applied_at) index for op-filtered timelines (the footprint
+		// velocity query, §16 PR 1). Additive — existing rows get NULLs.
+		{28, "enrich bin_uop_audit with node_id/station/detail + (op, applied_at) index",
+			v28BinUOPAuditEnrich,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_uop_audit", "node_id") }},
+
+		// v29 adds the per-mission robot-alarm snapshot column for the
+		// failure-Pareto enrichment (Q-026). Additive; populated when a mission
+		// ends FAILED (write side is the remaining Q-026 ingestion).
+		{29, "add mission_telemetry.robot_alarms_json for the failure-Pareto robot-alarm snapshot (Q-026)",
+			v29MissionRobotAlarms,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "mission_telemetry", "robot_alarms_json") }},
+
+		// v30 adds cell_config — the operator-defined grouping of production
+		// Processes into named cells for the /missions Cells D section and the
+		// /heartbeat kiosk (Phase E, Q-025). A cell groups one primary Process
+		// plus optional sub-Processes; process ids match cell_part_events.process_id
+		// (the Process grain the PLC counters tick at — NOT process nodes, which
+		// are the bin path). No seed data: plant cells are configured via
+		// /admin/cells after deploy.
+		{30, "add cell_config for operator-defined production-cell grouping (Q-025, Phase E)",
+			v30CellConfig,
+			func(q schema.Querier) bool { return schema.TableExists(q, "cell_config") }},
+		{31, "add payloads.robot_group for SEER robot-dispatch group selection",
+			v31PayloadRobotGroup,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "payloads", "robot_group") }},
+
+		// v32 adds downtime_events + downtime_event_dedup for persisted downtime
+		// start/end events (G9). Partitioned monthly by started_at (same pattern
+		// as cell_part_events). Replaces derived-only gap analysis with explicit
+		// persisted events for OEE availability dashboards. (Authored as v31 on the
+		// sim branch; renumbered to v32 when local-dev-env rebased onto main, which
+		// carries payloads.robot_group as v31.)
+		{32, "add downtime_events for persisted downtime start/end events (G9)",
+			v32DowntimeEvents,
+			func(q schema.Querier) bool { return schema.TableExists(q, "downtime_events") }},
+		{33, "add edge_cells for the auto-derived cell catalog (Q-034)",
+			v33EdgeCells,
+			func(q schema.Querier) bool { return schema.TableExists(q, "edge_cells") }},
+		// v34: Core-owned bin-loader aggregate. The loader's identity +
+		// per-position/per-payload replenishment config move from Edge
+		// style_node_claims to Core. These tables back the Core-owned loader read
+		// path — the aggregate the Edge syncs from and resolves loaders against.
+		// UNIQUE(position_node_id) is THE invariant — one payload per home
+		// position, one loader per node — making the SLN_002 misconfiguration
+		// unrepresentable. min_stock/uop_threshold default 0 (no silent floor; the
+		// magic-2 default was removed). buffer_dest models the overflow area (SME
+		// Q4 — runtime resolution lands with the read-cutover). No UNIQUE on
+		// (loader_id, payload_code) for homes: same payload on two home positions
+		// is legitimate (D1, allow+warn).
+		{34, "add bin-loader aggregate (bin_loaders/homes/payloads) for the Core-owned loader cutover",
+			v34BinLoaderAggregate,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "bin_loaders") &&
+					schema.TableExists(q, "bin_loader_homes") &&
+					schema.TableExists(q, "bin_loader_payloads")
+			}},
+		// v35: per-position ordering for dedicated_positions loaders. The
+		// Nodes-page grid-drag editor lets an operator drag position nodes into a
+		// loader and reorder them; sort_order persists that sequence (the physical
+		// position order) so it survives reload and can drive future layout UI.
+		// Additive, default 0 — existing homes keep their implicit
+		// position_node_id order until first reordered.
+		{35, "add sort_order to bin_loader_homes for drag-reorder of dedicated positions",
+			v35LoaderHomeSortOrder,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loader_homes", "sort_order") }},
+		// v36: archived_at for loader SOFT-delete (step 7). DeleteLoader will set this
+		// instead of cascading the loader + its homes/payloads away, so the stamped
+		// bin_uop_audit history survives a retired loader. Additive, NULL = active.
+		{36, "add bin_loaders.archived_at for loader soft-delete",
+			v36LoaderArchivedAt,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "archived_at") }},
+		// v37: loader_id on bin_uop_audit — the resolved loader surrogate stamped at
+		// EVENT time so loads (set_for_production) and unloads (release-family ops) group
+		// per loader. PLAIN value column, NO REFERENCES / NO cascade: archiving or
+		// deleting a loader must NOT destroy its audit history, and a node later
+		// reassigned to a different loader keeps each event's historical attribution.
+		{37, "add bin_uop_audit.loader_id (non-cascading) for per-loader load/unload analytics",
+			v37BinUOPAuditLoaderID,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_uop_audit", "loader_id") }},
+		// v38: loader_id on demand_registry — the loader IDENTITY behind a binding, set
+		// from the aggregate at re-derive time (the step-4 cutover). The threshold
+		// monitor mints LoaderKey="loader:<id>" from it onto the signal so the Edge
+		// resolves the loader by its token instead of core_node_name (which doubles as
+		// identity+member today). NULL for legacy ClaimSync-populated rows. Plain value
+		// (no FK — the registry is rebuilt full-state per station, not cascaded).
+		{38, "add demand_registry.loader_id for the loader-identity cutover",
+			v38DemandRegistryLoaderID,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "demand_registry", "loader_id") }},
+		// v39: drop bin_loaders.core_node_name (+ its UNIQUE(core_node_name, role)).
+		// The loader's identity is its surrogate id (minted onto the wire as the
+		// loader_key token); every delivery target is an explicit member node
+		// (windows/positions, FK'd to nodes). So the loader no longer borrows the
+		// universal node id, and the synthetic anchor string a multi-window loader had
+		// to invent is gone. Postgres drops the dependent UNIQUE with the column. The
+		// aggregate is rebuilt by seeddev / migrateloaders, so there is no data to keep.
+		{39, "drop bin_loaders.core_node_name + its UNIQUE (loader identity is the surrogate id)",
+			v39DropLoaderCoreNodeName,
+			func(q schema.Querier) bool { return !schema.ColumnExists(q, "bin_loaders", "core_node_name") }},
+		// v40: rename the replenishment enum value auto→threshold (role-aware) + swap the
+		// CHECK. Once the legacy bin-count floor is retired, "auto" only ever meant
+		// threshold-driven, so the model is operator|threshold. Conversion is role-aware:
+		// a produce auto loader is threshold (UOP kanban autoreorder); a consume auto loader
+		// (the AutoPush drain) becomes operator — consume's single mode is the window-queue
+		// drain, there is no consume threshold mode. min_stock columns are left dormant.
+		{40, "loader replenishment auto→threshold (role-aware) + CHECK (operator,threshold)",
+			v40LoaderReplenishmentThreshold,
+			v40CheckAllowsThreshold},
+		// v41: home_kind discriminator on bin_loader_homes. A dedicated loader's
+		// member is either a payload-pinned/unassigned HOME position or a
+		// kept-partial BUFFER slot. Before this a buffer was an overloaded
+		// blank-payload row — indistinguishable from an unpinned home (the D4
+		// foot-gun). Additive, DEFAULT 'home' so every existing row is a home
+		// (intentional buffers don't exist in prod config yet); buffers are
+		// written explicitly. CHECK pins the domain.
+		{41, "add home_kind to bin_loader_homes (home|buffer discriminator)",
+			v41LoaderHomeKind,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loader_homes", "home_kind") }},
+		// v42: dormant reservations table for the plan/apply → reservation-sourcing
+		// refactor (Phase 1). Created empty and unused in Phase 0 so that Phase 1 can
+		// land the write path without a flag day: the table exists on all environments
+		// before any production code writes to it.
+		{42, "create reservations table (dormant; Phase-1 reservation-sourcing seam)",
+			v42Reservations,
+			func(q schema.Querier) bool { return schema.TableExists(q, "reservations") }},
+		// v43: partial unique index on reservations(bin_id) that makes Acquire
+		// exactly-one-winner. Without this the Phase-1 reserve-then-confirm flow
+		// has no DB-level enforcement: two concurrent Acquires on the same bin
+		// could both insert pending rows and both think they won the race.
+		// WHERE state IN ('pending','confirmed') leaves cancelled/expired rows
+		// outside the constraint so a bin freed by Expire or Release can be
+		// immediately re-reserved without violating the index.
+		{43, "add uq_reservations_bin_active partial unique index (Phase-1 race gate)",
+			v43ReservationsBinActiveIndex,
+			func(q schema.Querier) bool {
+				return schema.IndexExists(q, "uq_reservations_bin_active")
+			}},
+		// v44: reservation resource_kind (bin|slot|mouth) + node_id target + per-kind
+		// partial unique indexes — the slot-reservation substrate. Additive and
+		// dormant (bin path keeps working via the 'bin' DEFAULT); folds the schema
+		// riders (state CHECK, expires_at nullable, reason column dropped). The
+		// resource_kind column is the self-heal marker.
+		{44, "reservations resource_kind + node_id + per-kind indexes (slot substrate)",
+			v44ReservationsSlotKind,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "reservations", "resource_kind") }},
+
+		// v45 adds orders.source_intent — the order-builder Stage-4 data home for
+		// the sourcing reads that used to branch on OrderType (retrieve_empty's
+		// empty-carrier intent, move's node-local sourcing, the empty-payload
+		// guard). Backfills existing rows from order_type so in-flight orders keep
+		// the right intent across the deploy window.
+		{45, "add orders.source_intent (order-builder sourcing data home)",
+			v45OrderSourceIntent,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "source_intent") }},
+
+		// v46 adds orders.coordinated — the dispatch-provenance discriminator
+		// (whether an order carries an Edge-authored multi-leg plan). It REPLACES
+		// IsCoordinated's StepsJSON != "" heuristic, which becomes unsound once F1
+		// persists simple plans to steps_json. Stamped at Core intake going forward;
+		// backfilled from steps_json so in-flight orders keep today's exact
+		// classification across the deploy window (no order changes routing).
+		{46, "add orders.coordinated (dispatch-provenance discriminator)",
+			v46OrderCoordinated,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "coordinated") }},
+
+		// v47 adds orders.remaining_uop — the operator's declared release-correction
+		// count, carried from intake to the single claim point. The claim moves from
+		// intake to the scanner, and the scanner has no envelope; a move's
+		// manifest-sync count (CreateMoveOrderWithUOP → OrderRequest.RemainingUOP)
+		// therefore rides on the order row so the scanner can seed the same atomic
+		// claim+sync. NULLABLE with no default: NULL is the "no sync" semantic (plain
+		// claim), matching the *int nil the claim path already understands. No
+		// backfill — in-flight orders already claimed at intake, so a NULL is exactly
+		// right for them. Bridge column: retires when F2 carries the count in the plan.
+		{47, "add orders.remaining_uop (operator release-correction count for the moved claim)",
+			v47OrderRemainingUOP,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "remaining_uop") }},
+
+		// v48 adds the structured companions to orders.queue_reason: queue_code
+		// (the operator-visible category, one of protocol.QueueCode) and
+		// queue_cause (the engineer-only call-site tag). queue_reason keeps
+		// carrying the generated sentence — zero display regression — and the
+		// two new columns let the floor/analytics GROUP BY the code instead of
+		// parsing prose. Both NULLABLE with no default: NULL = a pre-schema row
+		// (no backfill); a cleared reason writes NULL on both. Cause never
+		// leaves Core.
+		{48, "add orders.queue_code + queue_cause (structured queue-reason companions)",
+			v48OrderQueueCodeCause,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "orders", "queue_code") &&
+					schema.ColumnExists(q, "orders", "queue_cause")
+			}},
+
+		// v49 creates the Core mirror for the plant-claims feed (Edge → Core
+		// subject plant.claims). process_styles holds the styles a process can
+		// run; style_claims holds the sourceability subset of each style's node
+		// claims (node, role, swap_mode, payload, capacity, reorder). Both are
+		// REPLACED per-process on every message, so a periodic full snapshot
+		// rebuilds late joiners (no Kafka compaction). The dirty index the
+		// recompute reads is built in code from the cache, not stored.
+		{49, "create process_styles + style_claims mirror for plant-claims feed",
+			v49PlantClaimsMirror,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "process_styles") &&
+					schema.TableExists(q, "style_claims")
+			}},
+
+		// v50 adds the advanced load sequence surface: a nullable
+		// advanced_load_sequence NAME on payloads (the switch — empty/NULL =
+		// today's single load block, byte-identical) and the load_sequences
+		// registry (sequence name → ordered binTask-name list). The registry is
+		// editable data, not constants: a plant names its RDS-side binTask keys
+		// differently, so the task list lives in a table. Seeded with one row
+		// (Child cart interlock → the four-name sequence from the evidence doc).
+		{50, "add payloads.advanced_load_sequence + load_sequences registry",
+			v50AdvancedLoadSequence,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "payloads", "advanced_load_sequence") &&
+					schema.TableExists(q, "load_sequences")
+			}},
+		// NUMBERING COLLISION — RESOLVED 2026-07-30. Kept as a record, not a warning.
+		//
+		// v51 is taken HERE, on main. The lane campaign (refactor-phase1) also
+		// carried a v51 and a v52 — the reservations mode column and the
+		// pending_restocks drop. When that branch was transplanted onto main those
+		// two were renumbered to v69 and v70 (NOT to v52/v53 as the original note
+		// predicted: main had run on to v68 by then). Both now sit at the tail of
+		// this list.
+		//
+		// Why it mattered: the list is keyed by integer, so two v51s would not
+		// conflict at compile time. The second would silently never run against a
+		// database that had already recorded 51, and the schema would diverge
+		// per-plant depending on which build reached it first.
+		//
+		// The standing rule this leaves behind: a migration number is claimed the
+		// moment it lands on main. A long-lived branch must renumber to the tail
+		// at transplant time, and no-resurrect tests pin the retired numbers.
+		{51, "add process_styles.is_active (running style from the plant-claims feed)",
+			v51ProcessStyleActive,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "process_styles", "is_active")
+			}},
+		// v52: R1 shadow read-model. Edge's periodic per-consuming-node lineside
+		// on-hand, its OWN table (NOT bins), so Core can compute the monitor's
+		// lineside term both ways (ledger vs Edge reports) and log
+		// firing-decision disagreements — SHADOW, deciding off the ledger.
+		//
+		// NUMBERING: v52 was claimed HERE on branch monitor-collapse-r1, and the
+		// lane campaign's competing v52 (the pending_restocks drop) was renumbered
+		// to v70 at transplant, 2026-07-30 — see the resolved collision note above
+		// v51. This migration is a pure additive CREATE TABLE with no dependency on
+		// any constraint, so it would have renumbered trivially had it been the one
+		// to move; it did not have to.
+		{52, "add edge_lineside_reports (R1 shadow read-model for the lineside term)",
+			v52EdgeLinesideReports,
+			func(q schema.Querier) bool { return schema.TableExists(q, "edge_lineside_reports") }},
+		{53, "backfill mission_telemetry.robot_id from orders (was written blank)",
+			v53BackfillTelemetryRobotID, nil},
+		{54, "backfill mission_events.robot_id from orders (the other half of 53)",
+			v54BackfillMissionEventRobotID, nil},
+		{55, "order_history += code, actor, ref (the reason, typed, pointing at what it concerns)",
+			v55OrderHistoryReasonColumns,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "order_history", "ref") }},
+		{56, "sourceability_events — persist the verdict changes the monitor already computes",
+			v56SourceabilityEvents,
+			func(q schema.Querier) bool { return schema.TableExists(q, "sourceability_events") }},
+		{57, "rename legacy downtime_events partitions to the aligned form",
+			v57RenameDowntimePartitions, nil},
+		// FOUND BY TestSchemaConvergesAcrossVintages, and the first thing it
+		// found. A database installed before 2026-05-21 carries
+		// DEFAULT '' on lineside_buckets.core_node_name; one installed after
+		// does not, because the baseline CREATE TABLE declares the column
+		// without one.
+		//
+		// The default was never intent — v21's own comment says it exists "so
+		// existing orphaned rows don't break the column add", which is a
+		// mechanical requirement of ADD COLUMN NOT NULL on a populated table.
+		// It then stayed forever.
+		//
+		// It matters because '' is the UNKNOWN value for this column and the
+		// table has UNIQUE (station, core_node_name, pair_key, style_id,
+		// part_number). At a plant, an insert that omitted the node would
+		// silently write '' and collide unrelated nodes' buckets; on a fresh
+		// install the same insert errors. Every insert site supplies the
+		// column, so dropping the default takes nothing away.
+		{58, "drop lineside_buckets.core_node_name's DEFAULT (converge aged DBs with fresh)",
+			v58DropLinesideCoreNodeNameDefault,
+			func(q schema.Querier) bool { return !columnHasDefault(q, "lineside_buckets", "core_node_name") }},
+		// The demand grain. demand_origins is Core's history of every episode;
+		// orders gains the link back to the demand it served.
+		//
+		// The verify checks the LAST thing this migration creates, not the
+		// first. Everything here runs in one transaction (runOneMigration), so
+		// a partial apply is not reachable — but a post-condition that passes
+		// while the tail is missing would be a self-heal that never heals, and
+		// which end it checks costs nothing to get right.
+		{59, "demand_origins + orders.origin_id/origin_class (the demand grain)",
+			v59DemandOrigins,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "demand_origins") &&
+					schema.ColumnExists(q, "orders", "origin_class")
+			}},
+		// WHICH MECHANISM CLOSED IT. The reconciling sweep deliberately uses the
+		// SAME close_reason codes as the notification paths, so the surface does
+		// not grow a second vocabulary for the same facts about the plant. The
+		// cost of that choice is that a silent failure of every notification
+		// path looks identical to a healthy system — the sweep quietly picks up
+		// all the work and every surface stays green. closed_by makes the
+		// sweep's share of the work a number somebody can look at.
+		//
+		// Separate migration rather than an edit to 59: 59 is pushed, and a
+		// migration anyone may already have run is not a file you go back and
+		// change.
+		{60, "demand_origins.closed_by (which mechanism ended the episode)",
+			v60DemandOriginClosedBy,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "demand_origins", "closed_by") }},
+		// AGING IS A TIMESTAMP, NOT A FOURTH CLASS. origin_class answers HOW
+		// DID THIS ORDER RELATE TO A DEMAND — attached, structurally
+		// originless, or it should have had an episode and didn't. That is a
+		// create-time fact and it is true forever. The reconciling sweep was
+		// overwriting it with `orphan_aged`, which leaves the row unable to
+		// answer what it was classified as when it was created: a FACT
+		// OVERWRITTEN BY A DERIVATION, the uopCache mistake in a fourth
+		// costume.
+		//
+		// It also matches the shape this schema already uses everywhere for
+		// exactly this — closed_at beside close_reason, anomaly_at beside the
+		// bin: a nullable timestamp NEXT TO the fact, never a state value
+		// inside it.
+		//
+		// AN AGED ORPHAN IS STILL A FINDING. Aging changes which lane it sits
+		// in and who is expected to act on it, not whether it is a problem.
+		// Never deleted, never auto-attached.
+		{61, "orders.orphan_aged_at (aging is a timestamp, not a fourth origin_class)",
+			v61OrphanAgedAt,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "orphan_aged_at") }},
+		// THE DRAWN NETWORK BECOMES THE DRIVEN NETWORK. A scene edge is a lane
+		// the fleet actually drives, and SEER states its shape with two
+		// cubic-Bezier handles that shingo discarded at decode. The map drew
+		// the chord instead, which at Springfield puts the painted lane up to
+		// 1.30 m from the real one (LM10-LM113, a 7.17 m aisle), so robots
+		// visibly leave the network as painted, and the route lengths derived
+		// from those segments run up to 24% short.
+		//
+		// FOUR NULLABLE COLUMNS, NOT FOUR ZEROED ONES. The origin is a real
+		// coordinate on a plant map; a straight aisle whose handles defaulted
+		// to (0,0) would render sweeping tens of metres across the floor. NULL
+		// is the only value that means "this lane has no bend", and it must be
+		// distinguishable from a bend that happens to pass near (0,0).
+		//
+		// SINGLE-HOMED HERE, NOT IN THE BASELINE — B9. Nothing indexes these,
+		// so they carry none of the claim orders.origin_id has, and an ALTER
+		// runs identically on the fresh and aged convergence paths.
+		//
+		// No backfill. Scene sync deletes and re-inserts every area on each
+		// pass, so the handles arrive on the first sync after deploy. Until
+		// then every row reads NULL, which renders as today's straight line —
+		// the pre-migration behaviour exactly, not a wrong bend.
+		{62, "scene_edges control handles (draw the lane the robot drives)",
+			v62SceneEdgeControlHandles,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "scene_edges", "ctrl2_y") }},
+		// TWO IDENTITY SYSTEMS FOR ONE SET OF PROCESSES, RECONCILED.
+		//
+		// v59 declared demand_origins.process_id as BIGINT, holding an Edge
+		// SQLite row id. The DEPLOYED process_styles.process_id and
+		// style_claims.process_id are TEXT, holding the Edge process NAME
+		// ("SNF2") — as is PlantClaimsReport.ProcessID on the wire. So Core held
+		// two descriptions of the same processes with no query able to put them
+		// side by side, which killed two Phase 6 designs outright.
+		//
+		// FREE NOW, EXPENSIVE LATER, and that is the whole reason it is here.
+		// v59 is above every plant's applied version, so no plant has this table
+		// and no row is being rewritten anywhere. After the first plant runs v59
+		// this stops being a column type and becomes a data migration on live
+		// forensic history.
+		//
+		// A NEW MIGRATION RATHER THAN AN EDIT TO v59, for the reason v60 already
+		// records on itself: v59 is pushed, and a migration anyone may already
+		// have run is not a file you go back and change. A fresh database
+		// therefore creates the column as BIGINT and converts it one step later,
+		// which is the same two-step v58 and v61 take.
+		{63, "demand_origins.process_id BIGINT -> TEXT (one identity for a process, not two)",
+			v63DemandOriginProcessIDText,
+			func(q schema.Querier) bool {
+				return schema.ColumnType(q, "demand_origins", "process_id") == "text"
+			}},
+		// THE STATEMENT THAT HANDLES A DUPLICATE EDGE IS THE STATEMENT THAT
+		// DESTROYS THE EVIDENCE OF ONE.
+		//
+		// edge_registry.station_id is UNIQUE and Register's upsert explicitly
+		// sets `hostname = excluded.hostname` on conflict. So two Pis configured
+		// with the same station id never collide: they take turns owning one
+		// row, each register overwriting the other's hostname, and nothing
+		// anywhere records that a second machine exists. Today's Edge defaults
+		// (namespace `plant-a`, line `line-1`) guarantee that shape on the
+		// second Pi, and install-edge.sh writes a config carrying only
+		// database_path — so a fresh install cannot come up as anything else.
+		//
+		// bound_hostname holds the FIRST hostname to register a station and is
+		// never reassigned by a register. The conflict_* three record the most
+		// recent mismatching claimant, when, and how many there have been.
+		//
+		// THE BACKFILL IS WHAT MAKES THIS SILENT AT THE PLANTS. Setting
+		// bound_hostname = hostname for the existing rows binds each live plant
+		// to the box it is already running on, so the first register after
+		// deploy matches and nothing fires. A DEFAULT '' with no backfill would
+		// instead have the first register CLAIM the lease, which is the same end
+		// state one register later — but it would leave a window where a swap
+		// during the deploy silently rebound the station, and the whole point is
+		// that no rebind is silent.
+		//
+		// DETECTOR, NOT GATE — deliberately, and the reason is in the signal
+		// rather than in caution. A differing hostname is equally the signature
+		// of a legitimate box replacement, which Core cannot presently
+		// distinguish because it has no enrollment step to ask about. Refusing
+		// on it would turn a reimaged Pi into a plant with no Edge.
+		{64, "edge_registry bound_hostname + conflict_* (two machines, one station id)",
+			v64EdgeRegistryHostnameBinding,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "edge_registry", "bound_hostname") &&
+					schema.ColumnExists(q, "edge_registry", "conflict_at")
+			}},
+		// PREREQUISITE of per-edge identity. `station` is one-valued today, so
+		// this merges nothing; it stops being one-valued the moment each edge
+		// gets its own id, and then a station-scoped write against a
+		// station-blind SUM double-counts physical inventory. See the function
+		// comment for why the repo has already made this mistake in this key.
+		{65, "lineside_buckets: drop station from the uniqueness key (identity prerequisite)",
+			v65LinesideBucketsDropStationFromKey,
+			func(q schema.Querier) bool {
+				var n int
+				if err := q.QueryRow(`
+					SELECT count(*) FROM pg_constraint con
+					JOIN pg_class rel ON rel.oid = con.conrelid
+					WHERE rel.relname = 'lineside_buckets'
+					  AND con.contype = 'u'
+					  AND pg_get_constraintdef(con.oid) LIKE '%station%'`).Scan(&n); err != nil {
+					return false
+				}
+				return n == 0
+			}},
+		// EDGE IDENTITY. Backfilling station_uid = station_id is what makes
+		// this deployable ahead of the Edge that knows about uids: for one
+		// window the uid and the legacy routing string are the same characters,
+		// so a legacy Edge's register resolves against the uid key unchanged.
+		// See the function comment — the compatibility is in the data, not in a
+		// branch, which is why nothing has to be unwound later.
+		{66, "edge_registry: station_uid + display_name + binding lease; line_ids retired",
+			v66EdgeIdentity,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "edge_registry", "station_uid") &&
+					schema.ColumnExists(q, "edge_registry", "bound_at") &&
+					!schema.ColumnExists(q, "edge_registry", "line_ids")
+			}},
+		{67, "edge_registry.claimed_at — an edge may introduce itself; a human says what it is",
+			v67EdgeClaim,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "edge_registry", "claimed_at")
+			}},
+		{68, "supply_refusals — a person's statement that they cannot supply a call",
+			v68SupplyRefusals,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "supply_refusals")
+			}},
+		// v69 adds the lane-mouth substrate to reservations: a nullable mode tag
+		// (inbound|outbound|dig, carried only by mouth rows) + a plain read index
+		// on (resource_kind, node_id). Additive and dormant — v44 already made
+		// 'mouth' a legal kind with a node_id target and no unique mouth index, so
+		// this only supplies the mode column the admission rule reads and the index
+		// it reads through. The mode column is the self-heal marker.
+		//
+		// Carried the number 51 on refactor-phase1 and was renumbered to 69 when
+		// that branch was transplanted onto main (2026-07-30) — see the renumber
+		// note above v51.
+		{69, "add reservations.mode + (resource_kind,node_id) read index (lane-mouth substrate)",
+			v69ReservationsMouthMode,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "reservations", "mode") }},
+
+		// v70 retires the restore-blockers subsystem's table. pending_restocks is
+		// no code's concern anymore (the subsystem is deleted; blockers lie). DROP
+		// IF EXISTS so a fresh DB (which created it at v23) and a deployed DB (which
+		// may hold rows) both end without it. Paired with v23's now-always-true
+		// verify so the self-heal never resurrects it. The self-heal marker is the
+		// table's ABSENCE.
+		//
+		// Carried the number 52 on refactor-phase1 and was renumbered to 70 when
+		// that branch was transplanted onto main (2026-07-30) — see the renumber
+		// note above v51.
+		{70, "drop pending_restocks (retire the restore-blockers subsystem)",
+			v70DropPendingRestocks,
+			func(q schema.Querier) bool { return !schema.TableExists(q, "pending_restocks") }},
+
+		// THE INDEX SPRINGFIELD ALREADY HAS, WRITTEN DOWN.
+		//
+		// A `\d orders` at Springfield (2026-08-02) returns a UNIQUE index on
+		// edge_uuid, partial on `edge_uuid <> ''`. Nothing in this repository
+		// creates it: postgres_ddl.go and the schema snapshot both declare a
+		// PLAIN index, and no migration touches it. So it was applied by hand,
+		// and a fresh install gets a database the plant's schema does not match —
+		// the exact drift the DDL constants exist to prevent.
+		//
+		// PARTIAL, and that is not a stylistic choice. Springfield holds 23 rows
+		// with an empty edge_uuid (all of them cancelled store orders from April,
+		// from the door that wrote a row before the planner rejected it). A plain
+		// unique index would fail outright on those rows. The plant has already
+		// proved which form works.
+		//
+		// Numbered 71 deliberately: the lane campaign on refactor-phase1 runs up
+		// to 70, so this cannot collide with it whichever lands first. See the
+		// numbering warning above v51.
+		{71, "orders.edge_uuid unique (partial) — match the index the plants already run",
+			v71OrdersUUIDUnique,
+			func(q schema.Querier) bool { return uuidIndexIsUnique(q) }},
+		// A DATA migration, not a shape one: no ALTER, so no matching edit in
+		// the DDL constants. It moves the value, not the column.
+		{72, "core-spot becomes core-operator, in every table that stores it",
+			v72StationCoreOperator,
+			func(q schema.Querier) bool { return noCoreSpotLeft(q) }},
+		// v73 drops the temporary exemption the restore-blockers subsystem needed.
+		// That subsystem (and its derived "restore-<parentID>-<binID>" edge_uuid
+		// that was parsed back to recover a link) is RETIRED by v70 and the
+		// subsystem deletion in this merge. UUID now means UUID for every order:
+		// compound children mint a real UUID (dispatch/compound.go), and no live
+		// code creates restore names anymore. So the index goes back to the plain
+		// not-blank predicate v71 always intended — which is what the schema
+		// snapshot and postgres_ddl.go declare. Springfield and Hopkinsville have
+		// zero restore history, and a fresh seed cannot regenerate restore rows,
+		// so nothing the plants carry collides with a plain unique index. The
+		// only databases that ever held duplicate restore names were house-server
+		// dev volumes, which dev-reset clears.
+		{73, "orders.edge_uuid unique — restore exemption retired (back to plain predicate)",
+			v73OrdersUUIDPlain,
+			func(q schema.Querier) bool { return uuidIndexIsUnique(q) && !uuidIndexExemptsRestore(q) }},
+		// v74: whether a shared-window loader spreads its inbound empties across
+		// its windows, or funnels them to the first one, becomes a property of the
+		// loader instead of a plant-wide Edge config key. DEFAULT FALSE = spread,
+		// which is what the Edge flag already resolved to when unset — so every
+		// existing loader keeps behaving exactly as it does today. Inert for
+		// dedicated loaders: their positions never shared a budget to begin with.
+		{74, "add funnel_windows to bin_loaders (per-loader window spreading)",
+			v74LoaderFunnelWindows,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_loaders", "funnel_windows") }},
+		// v75: what carriers a loader wants, and which of them each window can
+		// physically take. Two tables because they answer two different
+		// questions — see v75LoaderCarrierMix. Both start EMPTY, and empty means
+		// exactly today's behaviour: no declared mix, every window takes
+		// anything.
+		{75, "add the loader carrier mix (per-loader quota, per-window capability)",
+			v75LoaderCarrierMix,
+			func(q schema.Querier) bool { return schema.TableExists(q, "bin_loader_quotas") }},
+		// v76: the second lane hold. A dig's CLAIM on a lane (mode='dig') and a
+		// robot's presence INSIDE it are different facts with different
+		// lifetimes, and until now there was only one row to carry both. See
+		// v76LaneOccupancyKind.
+		{76, "allow resource_kind='occupancy' — the in-lane hold, separate from the claim",
+			v76LaneOccupancyKind,
+			func(q schema.Querier) bool {
+				return schema.CheckConstraintAllows(q, "reservations", "reservations_resource_kind_check", "occupancy")
+			}},
+
+		// v77 adds orders.open_for_children -- sealedness on a compound parent,
+		// carried explicitly rather than derived. NO BACKFILL, and that is a
+		// ruling rather than an omission: see v77CompoundSealedness.
+		{77, "add orders.open_for_children (compound sealedness, explicit)",
+			v77CompoundSealedness,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "open_for_children") }},
+		{78, "drop pending_lane_extensions (the expose bridge, deleted with the two-shape ruling)",
+			v78DropPendingLaneExtensions,
+			func(q schema.Querier) bool { return !schema.TableExists(q, "pending_lane_extensions") }},
+
+		// v79 adds orders.dig_target_node -- the slot a service dig exists to
+		// uncover. The dig lock now spans the excavation AND the retrieval it was
+		// raised for, and this column says whose departure ends the hold. See
+		// v79DigTargetNode.
+		{79, "add orders.dig_target_node (the bin a service dig uncovers, and what releases its lane)",
+			v79DigTargetNode,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "dig_target_node") }},
+
+		// v80 makes the junction's stated grain real. "One row per claimed bin"
+		// is what UpdateOrderBinDestNode is written against and what binForStep
+		// assumes; nothing enforced it, and a retried allocation inserted the same
+		// row again on every pass. See v80OrderBinsOneRowPerBin.
+		{80, "dedupe order_bins and enforce one row per (order, bin)",
+			v80OrderBinsOneRowPerBin,
+			func(q schema.Querier) bool { return schema.IndexExists(q, "order_bins_order_bin_uniq") }},
+
+		// v81 is a DATA migration, not a shape one: no ALTER, so no matching edit
+		// in the DDL constants. It rewrites values inside two columns. See
+		// v81EpisodeRoleVocabulary for why it is owed at all.
+		{81, "demand_origins: episodes are produce or consume, not supply or evacuate",
+			v81EpisodeRoleVocabulary,
+			func(q schema.Querier) bool { return noLegSpelledEpisodesLeft(q) }},
+	}
+}
+
+// MigrationsFailingTheirPostCondition returns every RECORDED-APPLIED migration
+// whose verify is false right now — the set the self-heal would re-run on the
+// next boot.
+//
+// On a freshly migrated database this must be EMPTY. A non-empty answer means
+// those migrations re-run on every single boot, each printing "recorded as
+// applied but post-condition fails" — which is the self-heal's only alarm, and
+// an alarm that fires on every healthy boot is one nobody reads.
+//
+// The shape that produces it: a CREATE whose verify asserts its table exists,
+// retired later by a DROP whose verify asserts it does not. Both recorded, both
+// failing, forever. The end state stays correct — they are idempotent and the
+// drop runs last — which is exactly why it can survive unnoticed.
+func (db *DB) MigrationsFailingTheirPostCondition() []string {
+	var out []string
+	for _, m := range migrationList() {
+		if m.verify == nil {
+			continue
+		}
+		var applied bool
+		if err := db.QueryRow(
+			`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, m.version,
+		).Scan(&applied); err != nil || !applied {
+			continue
+		}
+		if !m.verify(db.DB) {
+			out = append(out, fmt.Sprintf("v%d (%s)", m.version, m.name))
+		}
+	}
+	return out
 }

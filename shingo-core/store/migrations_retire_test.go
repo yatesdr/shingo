@@ -112,3 +112,47 @@ func TestRetireReshuffleRestore_NoOpClean(t *testing.T) {
 		t.Fatalf("cancelled = %d on a clean DB, want 0", n)
 	}
 }
+
+// TestMigrate_NoMigrationOscillatesOnEveryBoot pins the rule the v24/v78 pair
+// broke, rather than just that pair.
+//
+// ── THE FAILURE ───────────────────────────────────────────────────────────
+//
+// A CREATE migration whose verify asserts its table EXISTS, retired later by a
+// DROP whose verify asserts it does NOT, gives the self-heal two recorded-applied
+// migrations with mutually exclusive post-conditions. Every boot re-runs both:
+// the create re-creates, the drop re-drops. The end state is right — they are
+// idempotent and the drop runs last — which is exactly why it survived.
+//
+// What it costs is the self-heal's ONLY alarm. "recorded as applied but
+// post-condition fails" is how a genuinely missing migration announces itself,
+// and printing it twice on every healthy boot is how a reader learns to skip it.
+// Observed on the rig 2026-08-14, two lines in the first three of a run log.
+//
+// ── THE ASSERTION ─────────────────────────────────────────────────────────
+//
+// After a full migration chain, a SECOND pass must re-run nothing. That is the
+// general property; it catches this pair and any future one, without this test
+// needing to know which tables are retired.
+//
+// MUTATION (verified): restore v24's TableExists verify and this fails naming
+// both v24 and v78.
+func TestMigrate_NoMigrationOscillatesOnEveryBoot(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t) // the full chain has already run once here
+
+	// A second pass over an already-migrated database must find every recorded
+	// migration's post-condition satisfied, and therefore re-run none of them.
+	// MigrateForTest logs a "re-running" line per failure; the observable we can
+	// assert on is the verify set itself.
+	stale := db.MigrationsFailingTheirPostCondition()
+	if len(stale) > 0 {
+		t.Errorf("%d migration(s) report applied-but-post-condition-failing on a freshly migrated "+
+			"database, so every boot re-runs them: %v\n\n"+
+			"A CREATE whose verify asserts its table exists, retired by a DROP whose verify asserts "+
+			"it does not, oscillates forever. The end state stays correct, so the only cost is the "+
+			"self-heal's alarm — and an alarm that fires on every healthy boot is one nobody reads. "+
+			"The CREATE stops asserting a state it no longer owns: give it an always-true verify and "+
+			"say so in its title, as v23 does for v70.", len(stale), stale)
+	}
+}

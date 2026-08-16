@@ -135,6 +135,16 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 			QueueParams{Lane: lane.Name, Payload: payloadCode,
 				DigOrderID: ownDigID, DigTarget: ownDigTarget})
 
+	case serviceDigLaneOccupied:
+		// A robot from another order is inside the corridor. Congestion with the
+		// shortest releaser on the board — that machine places or picks and the
+		// occupancy row goes — and it is a DIFFERENT wait from CauseLaneLocked
+		// above: nobody is excavating, the lane is simply in use. Filing it under
+		// the dig cause would send an operator looking for an excavation that
+		// does not exist.
+		park(protocol.QueueStorageRearranging, CauseLaneOccupied,
+			QueueParams{Lane: lane.Name, Payload: payloadCode})
+
 	case serviceDigNothingInTheWay:
 		// The lane moved between the resolve and the plan, which is the outcome we
 		// wanted. Keep CauseIntakeBuried; the next scan finds the bin reachable.

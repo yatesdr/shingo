@@ -544,7 +544,15 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 		}
 		return nil, &planningError{Code: codeReshuffle, Detail: fmt.Sprintf("cannot plan reshuffle: %v", err), Err: err}
 	}
-	if !s.laneLock.TryLock(buried.LaneID, order.ID) {
+	// THE SAME ASKER THE PLANNER GOT, ONE LAYER DOWN. This dig is the demand's
+	// own — owner and beneficiary are one order — so a mouth hold it already
+	// carries on this lane is UPGRADED to the dig rather than refusing it.
+	// Owner-blind, that pairing was not a wait but a wedge: admitMouth refuses
+	// one owner two modes on one lane, so a demand that had taken an outbound
+	// hold could never dig the lane it was holding, and the answer would never
+	// change. Unreachable while the lane gate yields no holds; reachable the
+	// moment it does (§R.96 stage 2), which is why it is closed first.
+	if !s.laneLock.TryLockFor(buried.LaneID, order.ID, digAskerFor(order)) {
 		return nil, &planningError{Code: codeLaneLocked, Detail: "lane locked concurrently"}
 	}
 	if err := s.createCompound(order, plan); err != nil {

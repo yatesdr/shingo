@@ -13,6 +13,7 @@ import (
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/payloads"
+	"shingocore/store/reservations"
 )
 
 // ── WINDOW 3, THE F-11 SCENARIO, END TO END ───────────────────────────────
@@ -657,5 +658,246 @@ func robotRunsDigLeg(t *testing.T, db *store.DB, leg *orders.Order, destNodeID i
 		destNodeID, *leg.BinID), "the robot places the blocker")
 	if _, err := db.TerminalizeOrder(leg.ID, StatusConfirmed, "test harness: the leg placed its bin"); err != nil {
 		t.Fatalf("terminalize dig leg %d: %v", leg.ID, err)
+	}
+}
+
+// TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue is the LS_C5
+// two-cycle, reproduced and then broken.
+//
+// ── THE SHAPE, WHICH IS THE WHOLE FINDING ─────────────────────────────────
+//
+// The 16,947-order runaway had two halves and only one of them was closed.
+//
+// The first half was CHURN: the pre-check asked "does a DIG hold this lane"
+// while the acquire refused on any other owner's mouth row, so every lane event
+// minted a heal parent and cancelled it. CanTake fixed that, and
+// TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent pins it.
+//
+// The second half survived, because closing the first half made the refusal
+// CHEAP rather than making it WRONG: the row at LS_C5 belonged to THE ORDER THE
+// DIG WAS BEING RAISED FOR. A gate-staged dweller keeps its outbound hold until
+// it places; the wall it is staged behind is exactly what the dig would clear.
+// So the dweller waited for a dig that was refused because the dweller was
+// waiting, and the answer could never change — 16,947 attempts, zero digs, the
+// plant doing nothing else.
+//
+// A cheaper refusal is still a refusal. The rescue has to be told who it is
+// rescuing.
+//
+// ── WHAT IS NOT EXEMPTED, AND WHY THE NEGATIVE HALF IS HERE ───────────────
+//
+// Only the requester's own holds. A dig still excludes every other owner —
+// that is the entire content of ModeDig — so the second half of this test puts
+// a THIRD order's outbound row on the same lane and requires the refusal back.
+// Without it, "the exemption is narrow" would be an unverified claim, and an
+// exemption that quietly widened would read exactly the same in the log.
+//
+// MUTATION (verified): revert DigAdmissible to `len(holders) == 0` — assertion
+// (b) fires, reporting the dig refused with the requester's own hold as the
+// obstacle.
+//
+// MUTATION (verified, and it fires EARLIER THAN INTENDED — stated because a
+// mutation note that overclaims is worse than none): widening the exemption to
+// every holder trips assertion (a), the fixture's own precondition, before the
+// stranger half is ever reached. The narrowness of the exemption is therefore
+// NOT pinned here — it is pinned at the row layer, where
+// TestDigAdmissible_AgreesWithTheAcquireAboutTheBeneficiary's "a dig raised for
+// an unrelated order must still be refused" is a real assertion rather than a
+// precondition and fires on that same mutation. Assertions (d) and (e) below
+// are the dispatch-level statement of the same rule and are worth keeping, but
+// they are not what makes the widening red.
+func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	wall, _, w, _, bp := healLaneFixture(t, db, "HL6")
+	line := lineNode(t, db, "HL6-LINE")
+
+	// The wall: unclaimed, in the mouth, wanted by nobody. A heal is warranted.
+	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL6-WALL")
+	if blocker.ClaimedBy != nil {
+		t.Fatalf("fixture bug: the walling bin must be UNCLAIMED")
+	}
+
+	// THE REQUESTER, HOLDING THE LANE IT IS WAITING BEHIND. Its bin is at w[1],
+	// behind the wall, so its hold is `outbound` on this very lane — the row
+	// LS_C5 was carrying.
+	requester := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w[1].Name
+		o.DeliveryNode = line.Name
+		o.Status = "in_transit"
+	})
+	if adm, _, _, err := d.AcquireLanesForOrder(requester, w[1], line, EntryHeldBin); err != nil || !adm {
+		t.Fatalf("the requester must take its own outbound mouth row on the wall lane: adm=%v err=%v", adm, err)
+	}
+
+	// (a) THE FIXTURE REPRODUCES THE RUNAWAY. Asked owner-blind, this lane is
+	// still refused — if it were not, the test would pass without the fix.
+	if d.laneLock.CanTake(wall.ID) {
+		t.Fatal("precondition: owner-blind, an ordinary mouth row must still refuse the dig; " +
+			"this fixture is not reproducing LS_C5")
+	}
+
+	res := d.proposeLaneClearDig(wall, w[1], requester)
+
+	// (b) AND ASKED ON THE REQUESTER'S BEHALF, THE DIG STARTS.
+	if res.outcome != serviceDigStarted {
+		t.Fatalf("the dig was refused (%v). The only mouth row on %s belongs to order %d — the order "+
+			"this dig exists to rescue. It waits for the dig; the dig is refused because it waits; "+
+			"and nothing in the plant can break that. On the rig: 16,947 attempts, zero digs",
+			res.outcome, wall.Name, requester.ID)
+	}
+	if res.parent == nil {
+		t.Fatal("serviceDigStarted with no parent")
+	}
+	if !d.laneLock.IsLocked(wall.ID) {
+		t.Error("the dig started but took no lane lock")
+	}
+
+	// (c) THE REQUESTER STILL HOLDS ITS OWN LANE. The exemption lets the dig in
+	// beside it; it does not evict the order that was already there. Losing the
+	// row would let a third party drop into the lane while the dig runs.
+	rows, err := reservations.ActiveMouthRows(db.DB, wall.ID)
+	testutil.MustNoErr(t, err, "read mouth rows")
+	var sawRequester, sawDig bool
+	for _, h := range rows {
+		if h.OrderID == requester.ID && h.Mode == reservations.ModeOutbound {
+			sawRequester = true
+		}
+		if h.OrderID == res.parent.ID && h.Mode == reservations.ModeDig {
+			sawDig = true
+		}
+	}
+	if !sawRequester {
+		t.Errorf("the requester's outbound row is gone from %s: %+v", wall.Name, rows)
+	}
+	if !sawDig {
+		t.Errorf("the dig's own row is missing from %s: %+v", wall.Name, rows)
+	}
+
+	// ── THE NEGATIVE HALF: A STRANGER'S ROW STILL REFUSES ────────────────────
+	wall2, _, w2, _, bp2 := healLaneFixture(t, db, "HL7")
+	line2 := lineNode(t, db, "HL7-LINE")
+	blocker2 := createTestBinAtNode(t, db, bp2.Code, w2[0].ID, "BIN-HL7-WALL")
+	if blocker2.ClaimedBy != nil {
+		t.Fatalf("fixture bug: the second walling bin must be UNCLAIMED")
+	}
+	requester2 := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w2[1].Name
+		o.DeliveryNode = line2.Name
+		o.Status = protocol.StatusPending
+	})
+	stranger := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w2[0].Name
+		o.DeliveryNode = line2.Name
+		o.Status = "in_transit"
+	})
+	if adm, _, _, err := d.AcquireLanesForOrder(stranger, w2[0], line2, EntryHeldBin); err != nil || !adm {
+		t.Fatalf("the stranger must take an outbound mouth row: adm=%v err=%v", adm, err)
+	}
+
+	// (d) the pre-check refuses...
+	if d.laneLock.CanTakeFor(wall2.ID, digAskerFor(requester2)) {
+		t.Error("a lane held by an unrelated order was reported admissible to a dig for a different " +
+			"order — the exemption is meant to be the requester's own holds and nobody else's")
+	}
+	// (e) ...and so does the writer, without minting an order to find out.
+	res2 := d.proposeLaneClearDig(wall2, w2[1], requester2)
+	if res2.outcome != serviceDigLaneBusy {
+		t.Errorf("outcome is %v, want serviceDigLaneBusy — order %d holds %s and is not the order "+
+			"this dig serves", res2.outcome, stranger.ID, wall2.Name)
+	}
+	if n := healParentsMinted(t, db, wall2.Name); n != 0 {
+		t.Errorf("%d heal parent(s) minted for a lane a stranger holds", n)
+	}
+}
+
+// TestWindow3_ADigIsNotStartedIntoALaneWithARobotInIt moves the occupancy
+// question into the one writer, and pins that it is asked there.
+//
+// ── WHY THE MOUTH CHECK ABOVE IT IS NOT THE SAME QUESTION ─────────────────
+//
+// Two holds, two lifetimes. A mouth row says who may WORK the corridor; an
+// occupancy row says who is physically IN it. CanTake reads only the first, and
+// a complex order takes no mouth row anywhere — DispatchPreparedComplex never
+// acquires one — so the commonest robot in the plant is invisible to it. A dig
+// could pass the mouth check and take the lane with a machine already inside.
+//
+// The leg would then be refused by admission's arm 2, which reads the same
+// occupancy row. That is not the same outcome: by then the dig EXISTS and HOLDS
+// THE LANE, so the plant gets a locked corridor with a parked excavation in
+// front of it instead of a clean refusal that costs nothing.
+//
+// ── AND WHY IT IS THE WRITER RATHER THAN A THIRD COPY ─────────────────────
+//
+// mouthHealNeeded asks it as its fact 4 and keeps doing so. The two complex
+// callers asked nothing, and the complex arm carries the traffic. This test
+// goes through proposeLaneClearDig directly for that reason: a gate-routed
+// fixture would be answered by fact 4 and would pass with the fix reverted.
+//
+// MUTATION (verified): delete the occupancy loop in proposeLaneClearDig —
+// assertion (a) reports a dig started into an occupied lane, and (b) reports
+// the lane locked behind it.
+// MUTATION (verified): drop the requester exemption (refuse on any occupant) —
+// assertion (c) fires, which is the LS_C5 two-cycle arriving through the other
+// hold: the order's own presence refusing its own rescue.
+func TestWindow3_ADigIsNotStartedIntoALaneWithARobotInIt(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	wall, _, w, _, bp := healLaneFixture(t, db, "HL8")
+	line := lineNode(t, db, "HL8-LINE")
+
+	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL8-WALL")
+	if blocker.ClaimedBy != nil {
+		t.Fatalf("fixture bug: the walling bin must be UNCLAIMED")
+	}
+	requester := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[1].Name
+		o.Status = protocol.StatusPending
+	})
+
+	// A ROBOT IS IN THERE. Owned by an unrelated order, and holding NO mouth row
+	// — which is the complex shape, and the reason the check above cannot see it.
+	inside := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w[2].Name
+		o.DeliveryNode = line.Name
+		o.Status = "in_transit"
+	})
+	testutil.MustNoErr(t, reservations.AcquireOccupancy(db.DB, inside.ID, wall.ID), "put a robot in the lane")
+	if !d.laneLock.CanTakeFor(wall.ID, digAskerFor(requester)) {
+		t.Fatal("precondition: the MOUTH is takeable — this test is about the INSIDE, and a mouth-level " +
+			"refusal would let it pass with the fix reverted")
+	}
+
+	res := d.proposeLaneClearDig(wall, w[1], requester)
+
+	// (a) THE DIG IS REFUSED, AND AS CONGESTION RATHER THAN A FAULT. Law 1: the
+	// robot inside is going to place or pick, and that drops the row.
+	if res.outcome != serviceDigLaneOccupied {
+		t.Errorf("outcome is %v, want serviceDigLaneOccupied — order %d is inside %s and an excavation "+
+			"would send a second robot in beside it", res.outcome, inside.ID, wall.Name)
+	}
+	if n := healParentsMinted(t, db, wall.Name); n != 0 {
+		t.Errorf("%d heal parent(s) minted for a lane with a robot in it", n)
+	}
+
+	// (b) AND NO LANE LOCK WAS TAKEN. This is the half admission's arm 2 cannot
+	// undo: it refuses the LEG, by which time the dig owns the corridor.
+	if d.laneLock.IsLocked(wall.ID) {
+		t.Error("a dig took the lane while another order's robot was inside it")
+	}
+
+	// (c) THE REQUESTER'S OWN PRESENCE IS NOT AN OBSTACLE. Same rule as the mouth
+	// one line above: an order's own hold must not refuse its own rescue.
+	testutil.MustNoErr(t, reservations.ReleaseOccupancy(db.DB, inside.ID, wall.ID), "the robot leaves")
+	testutil.MustNoErr(t, reservations.AcquireOccupancy(db.DB, requester.ID, wall.ID), "the requester is inside")
+	res2 := d.proposeLaneClearDig(wall, w[1], requester)
+	if res2.outcome != serviceDigStarted {
+		t.Errorf("outcome is %v, want serviceDigStarted — the only occupancy row on %s belongs to the "+
+			"order the dig is being raised for, and its own presence must not refuse its own rescue",
+			res2.outcome, wall.Name)
 	}
 }

@@ -216,6 +216,10 @@ func (d *Dispatcher) healLaneMouth(lane *nodes.Node, req healRequest) {
 			lane.Name, req.order.ID, len(req.blockers), res.err)
 	case serviceDigLaneBusy:
 		// somebody holds this lane; whatever frees it re-drives the gate
+	case serviceDigLaneOccupied:
+		// A robot is inside; its placement or pickup drops the occupancy row and
+		// re-drives the gate. The dweller keeps the cause it already carries.
+		d.dbg("lane gate: not digging %s for order %d yet: %v", lane.Name, req.order.ID, res.err)
 	}
 }
 
@@ -235,6 +239,19 @@ const (
 	// serviceDigLaneBusy — somebody holds the lane. Whatever frees it re-drives
 	// every waiter, so there is nothing to arrange.
 	serviceDigLaneBusy
+	// serviceDigLaneOccupied — a robot from another order is INSIDE the lane
+	// (Hold B), so an excavation would put a second one in there with it.
+	//
+	// A DIFFERENT FACT FROM serviceDigLaneBusy, which is about the MOUTH. A
+	// mouth hold says who may work the corridor; an occupancy row says who is
+	// physically in it, and the two have different lifetimes on purpose (see
+	// the Hold B note in reservations/mouth.go). A dig can pass the mouth and
+	// still be about to drive into an occupied lane, which is exactly the shape
+	// this refuses.
+	//
+	// The releaser is live and already tabled: CauseLaneOccupied — "the robot
+	// inside the lane places or picks, releasing its occupancy row".
+	serviceDigLaneOccupied
 	// serviceDigNoShuffleSlot — congestion. The pool frees as soon as anything
 	// anywhere in the group places.
 	serviceDigNoShuffleSlot
@@ -386,8 +403,64 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// Measured on the lane-stress rig 2026-08-10: LS_C5 held one `outbound` mouth
 	// row belonging to a staged order. 16,947 heal parents were created and
 	// cancelled against it, no dig ever started, and the plant did nothing else.
-	if !d.laneLock.CanTake(lane.ID) {
+	//
+	// AND IT IS ASKED ON THE REQUESTER'S BEHALF, which is the other half of that
+	// story. The row at LS_C5 belonged to THE ORDER THE DIG WAS BEING RAISED FOR:
+	// a gate-staged dweller keeps its outbound hold until it places, and the wall
+	// it is staged behind is precisely what this dig would clear. Owner-blind,
+	// that is a two-cycle with itself — the dweller waits for the dig, the dig is
+	// refused because the dweller waits — and no number of cheaper refusals ever
+	// gets out of it. The requester's own hold is not an obstacle to the
+	// requester's own rescue; everybody else's still is.
+	digFor := digAskerFor(requester)
+	if !d.laneLock.CanTakeFor(lane.ID, digFor) {
 		return serviceDigResult{outcome: serviceDigLaneBusy}
+	}
+
+	// AND IS ANYBODY PHYSICALLY IN THERE. The mouth and the inside are two
+	// different holds with two different lifetimes, and passing the first says
+	// nothing about the second: a complex order takes NO mouth row anywhere
+	// (DispatchPreparedComplex never acquires one), so the check above is blind
+	// to the commonest robot in the plant. A dig could therefore take the lane
+	// with a machine already inside it, and its first leg would be sent in
+	// beside that machine.
+	//
+	// It did not, quite, because admission's arm 2 refuses the LEG on the same
+	// row — but by then the dig exists and holds the lane, so the outcome is a
+	// locked corridor with a parked excavation in front of it rather than a
+	// clean refusal. The refusal belongs where the decision is made.
+	//
+	// ONE OF THREE CALLERS ASKED THIS. mouthHealNeeded has it as its fact 4 and
+	// keeps it (it gets to skip the plan entirely); the two complex callers
+	// asked nothing, and the complex arm is the one that carries the traffic.
+	// Three copies of one predicate is what law 3 is about, so the ONE WRITER of
+	// a service dig asks it once and every caller inherits it — the same
+	// disposition, and for the same reason, as the blocker-claim check below.
+	//
+	// THE REQUESTER IS EXEMPT, matching fact 4 and matching the mouth question
+	// one line up: an order's own presence must not refuse its own rescue, or
+	// this is the LS_C5 two-cycle again wearing the other hold.
+	//
+	// SCOPED TO THE DUG LANE, not to the lanes the plan will park blockers in.
+	// Those are a real question and they are NOT asked here: the plan does not
+	// exist yet at this point, and moving this below the plan would pay for a
+	// plan to discover a refusal that was knowable without one. The parking
+	// lanes are answered at the leg, by admission's own arm 2. Named rather than
+	// left as an apparent oversight.
+	//
+	// A read that fails REFUSES, like every other guard on this path: "I could
+	// not tell whether a robot is in there" must not read as "go ahead".
+	occupants, err := reservations.OccupantsOf(d.db.DB, lane.ID)
+	if err != nil {
+		return serviceDigResult{outcome: serviceDigReadFailed, err: err}
+	}
+	for _, occ := range occupants {
+		if !digFor.Owns(occ) {
+			return serviceDigResult{
+				outcome: serviceDigLaneOccupied,
+				err:     fmt.Errorf("order %d is inside lane %s", occ, lane.Name),
+			}
+		}
 	}
 
 	// ONE EPISODE, ONE EXCAVATION AT A TIME.
@@ -514,31 +587,60 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// invisible to the fulfillment scanner by design (`pending` ∉ IsAcquiring)
 	// and therefore invisible to everything that would clean it up.
 	//
-	// CLOSING IT IS A LOCK-ORDERING DECISION, NOT A MECHANICAL FIX, which is why
-	// it is not taken here. The obvious cure — insert the parent inside the same
-	// transaction as its legs — cannot work as written, because the lane lock two
-	// lines down is keyed on parent.ID and the parent has no id until it is
-	// inserted. The three ways out all change behaviour in a subsystem with a
-	// documented deadlock history (digs 2 and 8, the mutual hold) and a
-	// documented cancellation-churn history (16,947):
+	// ── HOW BIG IT ACTUALLY IS, MEASURED RATHER THAN ASSUMED ────────────────
 	//
-	//   1. take the lane lock AFTER the compound write — then losing the lane
-	//      means abandoning a fully-written compound, claims and all, where
-	//      today it abandons a bare parent row;
-	//   2. key the lock on something that exists first (the requester, a
-	//      reservation) and hand it over — the lock has no re-key operation and
-	//      adding one to THIS lock is not a batch-tail change;
-	//   3. sweep childless dig parents at boot — a healer, which this house
-	//      refuses by default.
+	// Smaller than this comment first claimed. Two harms, very different sizes:
 	//
-	// The predicate work this window threatens is SHADOWED rather than cut over
-	// (service/folder_shadow.go), so nothing depends on the window being shut
-	// yet. It is the owner's call before the cutover commit.
+	//   THE PREDICATE IS WRONG for microseconds — and NOTHING READS IT. The seven
+	//   BinID==nil sites are shadowed, not cut (service/folder_shadow.go changes
+	//   no behaviour); OrderOwnsNoCargo has no other production caller; and
+	//   reconciliation's completed_order_missing_bin needs completed_at, which a
+	//   `pending` parent has not got.
+	//
+	//   A CRASH HERE leaves a childless `pending` dig parent — permanent, but NOT
+	//   silent. StatusPending is in protocol.IsRuntimeStuckCandidate, so
+	//   ListAnomalies flags the row after 30 minutes with a cancel action. A
+	//   pending order is normally transient, so it is a low-noise signal.
+	//
+	// So the cost of the window is a 30-minute blind spot on a crash, ending in
+	// an operator-actionable board entry.
+	//
+	// ── AND THE OPTIONS, ONE OF WHICH IS IMPOSSIBLE ─────────────────────────
+	//
+	// The obvious cure — insert the parent inside the same transaction as its
+	// legs — cannot work AS WRITTEN, because the lane lock two lines down is
+	// keyed on parent.ID and the parent has no id until it is inserted.
+	//
+	//   1. LOCK AFTER the compound write: does not close the window (the parent
+	//      is still childless while the legs are written) and makes losing the
+	//      lane race abandon a fully-written compound, claims and all, on a path
+	//      whose measured refusal populations are 16,947 and 38,203.
+	//   2. LOCK UNDER A PLACEHOLDER, then re-key: IMPOSSIBLE. reservations.order_id
+	//      is NOT NULL REFERENCES orders(id), so a sentinel cannot be inserted;
+	//      and the one real order in scope early — the requester — is gate-staged
+	//      at this very mouth holding an outbound row, which admitMouth refuses to
+	//      pair with a dig row for the same owner.
+	//   3. SWEEP childless dig parents: a healer, which this house refuses by
+	//      default, for a condition the anomalies board already reports.
+	//   4. ONE TRANSACTION — insert the parent, acquire the lane ON THAT TX, write
+	//      the legs, commit. Closes it completely: a conflict rolls back to no
+	//      parent at all. Needs AcquireLanes and CreateCompoundChildren split into
+	//      tx-taking bodies (mechanical; the second was built and reverted once),
+	//      and it holds pg_advisory_xact_lock(lane) across the claim CAS instead
+	//      of just the acquire — a latency change in the machinery with the
+	//      documented deadlock history, and the part that wants a soak.
+	//
+	// Option 4 is the recommendation, sequenced into the §R.91 unification batch:
+	// that batch re-parents P2/P3 and leaves the gate-dweller heal as this
+	// function's ONLY caller, so closing the window there is one caller instead
+	// of three and is not done twice. See
+	// GitHub/DECISION-heal-window-lock-ordering-2026-08-14.md. Owner's ruling
+	// pending; nothing here is built.
 	parent, err := d.createServiceDigParent(lane, target, requester, plan)
 	if err != nil {
 		return serviceDigResult{outcome: serviceDigUnplannable, err: err}
 	}
-	if !d.laneLock.TryLock(lane.ID, parent.ID) {
+	if !d.laneLock.TryLockFor(lane.ID, parent.ID, digFor) {
 		// NOT NECESSARILY A DIG, and saying so cost a whole investigation. This
 		// read "another dig took lane X first" for any refusal, so 16,947 losses to
 		// an ordinary order's mouth hold all reported a dig that did not exist —
