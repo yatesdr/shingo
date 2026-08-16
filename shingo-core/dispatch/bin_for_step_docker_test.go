@@ -59,7 +59,7 @@ func TestPickupSlot_AsksWhichBinTHISSTEPWants(t *testing.T) {
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	lane, _, w, _, bp := healLaneFixture(t, db, "STEPBIN")
+	lane, _, w, _, bp := clearLaneFixture(t, db, "STEPBIN")
 	cell := lineNode(t, db, "STEPBIN-CELL")
 
 	// The FRESH bin, in the lane — what the robot is actually coming in for.
@@ -126,7 +126,7 @@ func TestPickupSlot_BinElsewhereIsARefusalNotAnError(t *testing.T) {
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	lane, _, w, _, bp := healLaneFixture(t, db, "STEPBINX")
+	lane, _, w, _, bp := clearLaneFixture(t, db, "STEPBINX")
 	away := lineNode(t, db, "STEPBINX-AWAY")
 
 	gone := createTestBinAtNode(t, db, bp.Code, away.ID, "BIN-STEPBINX-GONE")
@@ -183,7 +183,7 @@ func TestPickupSlot_UnreadableJunctionIsUndeterminedNotElsewhere(t *testing.T) {
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	lane, _, w, _, bp := healLaneFixture(t, db, "STEPBINR")
+	lane, _, w, _, bp := clearLaneFixture(t, db, "STEPBINR")
 	cell := lineNode(t, db, "STEPBINR-CELL")
 
 	// The F-25 shape: two claimed bins, bin_id naming the one at the MACHINE,

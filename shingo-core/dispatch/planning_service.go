@@ -515,10 +515,18 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 			// SOMEBODY ELSE'S — the one right of way refused us — so without the
 			// excavation's id the operator has a lane they do not own and no way
 			// to tell which dig has to finish.
-			holdID, holdTarget := digWaitByLaneName(s.db, s.laneLock, held.Lane)
-			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseDigHoldsParking,
+			// AND WHICH KIND OF HOLDER, because §R.101 put two of them behind one
+			// refusal. A reshuffle and a demand sourcing from the lane both remove
+			// it from the dig-free pool, and they clear on different events — see
+			// CauseDemandHoldsParking. Reporting both as a dig sends the operator
+			// looking for an excavation that was never planned.
+			parkingCause := CauseDigHoldsParking
+			if !held.HolderIsExcavation {
+				parkingCause = CauseDemandHoldsParking
+			}
+			s.setQueueReason(order, protocol.QueueStorageRearranging, parkingCause,
 				QueueParams{Lane: held.Lane, Payload: order.PayloadCode,
-					DigOrderID: holdID, DigTarget: holdTarget})
+					DigOrderID: digWaitByLaneName(s.db, s.laneLock, held.Lane)})
 			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
 		}
 		// THE MOUTH'S TWO REFUSALS, BOTH TRANSIENT (§R.96 stage 2). Neither is a

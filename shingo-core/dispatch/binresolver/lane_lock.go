@@ -12,9 +12,15 @@ import (
 //
 // THE DURABLE ROW IS THE LOCK. There is no in-memory map: a lane is held iff a
 // dig mouth reservation row exists for it, and every question and every change
-// goes to that row. LaneLock is a named wrapper over four reads and writes, kept
-// because "does a dig hold this lane" reads better than an inline query at the
-// four call sites that ask it.
+// goes to that row. LaneLock is a named wrapper over those reads and writes,
+// kept because "does a dig hold this lane" reads better than an inline query at
+// the call sites that ask it.
+//
+// SINCE §R.101 THAT SENTENCE IS TWO QUESTIONS, and the methods below are split
+// accordingly: DigOwner / IsLocked / LockedBy ask whether the lane is held
+// EXCLUSIVELY, which is what every keep-out decision needs and what a source
+// hold answers yes to; ExcavationOwner asks whether what holds it is a
+// reshuffle, which is what a REPORT needs. See reservations.IsExcavation.
 //
 // It used to be a map with the rows mirrored alongside, memory authoritative for
 // the grant. That arrangement had TWO WRITERS FOR ONE FACT, and it failed
@@ -59,8 +65,12 @@ func NewLaneLockWithDB(db *sql.DB) *LaneLock {
 	return &LaneLock{db: db}
 }
 
-// reservedBy tags the dig mouth rows the lane lock writes, for forensics.
-const mirrorReservedBy = "lanelock"
+// reservedBy tags the dig mouth rows the lane lock writes. It is no longer only
+// forensics: since §R.101 gave every demand's source hold the dig MODE, this tag
+// is what separates an excavation from a source lock, and reservations.
+// IsExcavation is the one reader of it. Every production dig comes through
+// TryLockFor, so every excavation carries it.
+const mirrorReservedBy = reservations.ByExcavation
 
 // TryLock attempts to lock a lane for a given order. Returns false if the lane
 // is already held — by another dig, or by an ordinary order's mouth hold.
@@ -167,6 +177,23 @@ func (l *LaneLock) LanesHeldBy(orderID int64) []int64 {
 // disposition with a guess.
 func (l *LaneLock) DigOwner(laneID int64) (int64, error) {
 	return reservations.DigHoldOwner(l.db, laneID)
+}
+
+// ExcavationOwner returns the order whose EXCAVATION holds this lane, or 0 when
+// the lane's dig hold is §R.101's source lock (a demand owning the lane it
+// resolved onto) or there is none.
+//
+// IT IS NOT A KEEP-OUT READ AND MUST NOT BECOME ONE. DigOwner above answers
+// whether anything may enter, and a source lock excludes exactly as hard as a
+// reshuffle — that is §R.101's ruling and gating on this instead would reverse
+// it. This answers only what to CALL a refusal that has already been decided, at
+// the two sites that put a word in front of an engineer: admission's cause and
+// the lane-hold classifier. See reservations.IsExcavation.
+//
+// The read error is UNANSWERED, like DigOwner's, because both callers already
+// have a refusal in hand and want to choose a name rather than be handed one.
+func (l *LaneLock) ExcavationOwner(laneID int64) (int64, error) {
+	return reservations.ExcavationOwner(l.db, laneID)
 }
 
 // IsLocked reports whether a dig holds this lane.

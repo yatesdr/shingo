@@ -39,7 +39,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, dig_target_node`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children`
 
 // Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
 // CountActive) return EVERY order type. They used to exclude reshuffle_restore —
@@ -67,7 +67,7 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass, &o.OpenForChildren, &o.DigTargetNode)
+		&originID, &o.OriginClass, &o.OpenForChildren)
 	if err != nil {
 		return nil, err
 	}
@@ -120,22 +120,17 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 // At a plant the two clocks agree to ~40ms (0 of 1878 rows affected), so this
 // is a sim-fidelity fix, not a plant-correctness one.
 //
-// dig_target_node IS BOUND HERE, and open_for_children deliberately is not, so
-// the difference is worth one sentence. Openness CHANGES over a compound's life
-// and has exactly one writer for that reason; a dig's target is a BIRTH fact —
-// createServiceDigParent knows the slot it is excavating toward before it knows
-// the order's id, and no later transition may revise it. Binding it at creation
-// is what makes it immutable: there is nothing to keep in step with, because
-// there is no second write.
+// open_for_children is deliberately NOT bound here: it CHANGES over a compound's
+// life and has exactly one writer for that reason.
 func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
-	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, origin_id, origin_class, dig_target_node, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $23) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, origin_id, origin_class, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $22) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
 		helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
 		helpers.NullableInt64(o.BinID), o.PayloadCode, o.SkipAutoConfirm, o.SiblingOrderUUID, o.SourceIntent, o.Coordinated,
-		helpers.NullableText(o.OriginID), o.OriginClass, o.DigTargetNode,
+		helpers.NullableText(o.OriginID), o.OriginClass,
 		now)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
@@ -828,7 +823,7 @@ func ListStalledChapters(db *sql.DB, since time.Time, limit int) ([]int64, error
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT p.id
 		FROM orders p
-		WHERE p.status = 'reshuffling'
+		WHERE p.status IN ('reshuffling', 'staged')
 		  AND p.updated_at < $1
 		  AND EXISTS (
 			SELECT 1 FROM orders c

@@ -104,16 +104,7 @@ func (h *Handlers) apiDirectOrdersList(w http.ResponseWriter, r *http.Request) {
 
 // apiDirectComplexOrderSubmit creates complex orders directly through the dispatcher (no Kafka).
 func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		CycleMode           protocol.SwapMode `json:"cycle_mode"`
-		Location            string            `json:"location"`
-		InboundStaging      string            `json:"inbound_staging"`
-		OutboundStaging     string            `json:"outbound_staging"`
-		InboundSource       string            `json:"inbound_source"`
-		OutboundDestination string            `json:"outbound_destination"`
-		PayloadCode         string            `json:"payload_code"`
-		Priority            int               `json:"priority"`
-	}
+	var req complexSwapRequest
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
@@ -132,13 +123,7 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 
 	switch req.CycleMode {
 	case protocol.SwapModeSequential:
-		steps := []protocol.ComplexOrderStep{
-			{Action: "dropoff", Node: req.Location},
-			{Action: "wait"},
-			{Action: "pickup", Node: req.Location},
-			dropoffStep(req.OutboundDestination),
-		}
-		uid := h.dispatchComplex(src, dst, req.PayloadCode, steps, req.Priority, "", "")
+		uid := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapSequentialSteps(req), req.Priority, "", "")
 		results = append(results, map[string]any{"role": string(protocol.SwapModeSequential), "order_uuid": uid})
 
 	case protocol.SwapModeTwoRobot:
@@ -150,24 +135,11 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 		// uuid — the order the Edge uses, and the only order that works: the
 		// pointer rides the second leg because it is the only one that can
 		// know the other's uuid.
-		resupplySteps := []protocol.ComplexOrderStep{
-			pickupStepDirect(req.InboundSource),
-			{Action: "dropoff", Node: req.InboundStaging},
-			{Action: "wait"},
-			{Action: "pickup", Node: req.InboundStaging},
-			{Action: "dropoff", Node: req.Location},
-		}
-		uid1 := h.dispatchComplex(src, dst, req.PayloadCode, resupplySteps, req.Priority, req.Location, "")
+		uid1 := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapResupplySteps(req), req.Priority, req.Location, "")
 		results = append(results, map[string]any{"role": "resupply", "order_uuid": uid1})
 
 		// Removal
-		removalSteps := []protocol.ComplexOrderStep{
-			{Action: "dropoff", Node: req.Location},
-			{Action: "wait"},
-			{Action: "pickup", Node: req.Location},
-			dropoffStep(req.OutboundDestination),
-		}
-		uid2 := h.dispatchComplex(src, dst, req.PayloadCode, removalSteps, req.Priority, req.Location, uid1)
+		uid2 := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapRemovalSteps(req), req.Priority, req.Location, uid1)
 		results = append(results, map[string]any{"role": "removal", "order_uuid": uid2})
 
 	case protocol.SwapModeSingleRobot:
@@ -175,19 +147,7 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 			h.jsonError(w, "inbound_staging and outbound_staging required for single robot", http.StatusBadRequest)
 			return
 		}
-		steps := []protocol.ComplexOrderStep{
-			pickupStepDirect(req.InboundSource),
-			{Action: "dropoff", Node: req.InboundStaging},
-			{Action: "dropoff", Node: req.Location},
-			{Action: "wait"},
-			{Action: "pickup", Node: req.Location},
-			{Action: "dropoff", Node: req.OutboundStaging},
-			{Action: "pickup", Node: req.InboundStaging},
-			{Action: "dropoff", Node: req.Location},
-			{Action: "pickup", Node: req.OutboundStaging},
-			dropoffStep(req.OutboundDestination),
-		}
-		uid := h.dispatchComplex(src, dst, req.PayloadCode, steps, req.Priority, "", "")
+		uid := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapSingleRobotSteps(req), req.Priority, "", "")
 		results = append(results, map[string]any{"role": string(protocol.SwapModeSingleRobot), "order_uuid": uid})
 
 	default:

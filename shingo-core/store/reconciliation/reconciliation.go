@@ -284,15 +284,36 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 		if err := rows.Scan(&orderID, &status, &updatedAt); err != nil {
 			return nil, err
 		}
+		// ── IT RECOMMENDED THE ONE ACT THIS HOUSE RULED IS NEVER RIGHT ────
+		//
+		// The value here was `cancel_stuck_order`, and the board turned that into
+		// its only affordance for this row: a single button reading "Cancel Stuck
+		// Order", beside an Issue cell reading `active_order_stuck` and nothing
+		// else. Cancelling a stuck order is ruled 4/4 never the answer — the
+		// order is stuck because something in the plant is stuck, and cancelling
+		// it destroys the evidence while leaving the robot exactly where it was.
+		//
+		// So the recommendation names the act that IS right: go and look. The
+		// operator can still cancel — the repair endpoint still accepts
+		// `cancel_stuck_order` and RecordRecoveryAction still writes it, because
+		// that verb records something a human genuinely did — but the board no
+		// longer proposes it.
+		//
+		// AND THE ROW NOW SAYS WHAT IS WRONG. Detail was populated here and
+		// rendered by neither the template nor the JS, so the operator got an
+		// enum and a button. A row that names no robot, node or bin and offers
+		// one destructive act is not a diagnosis.
 		anomalies = append(anomalies, &Anomaly{
 			Category:          "order_runtime",
 			Severity:          "degraded",
 			Issue:             "active_order_stuck",
-			RecommendedAction: "cancel_stuck_order",
+			RecommendedAction: "investigate_stuck_order",
 			OrderID:           &orderID,
 			OrderStatus:       status,
 			ObservedAt:        &updatedAt,
-			Detail:            "order has not advanced within the allowed age threshold",
+			Detail: "the order has not advanced within the allowed age threshold. Find what its " +
+				"robot is doing before anything else — cancelling clears the row and leaves the " +
+				"plant as it was",
 		})
 	}
 	if err := rows.Err(); err != nil {

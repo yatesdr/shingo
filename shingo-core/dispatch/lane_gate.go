@@ -13,67 +13,34 @@ import (
 	"shingocore/store/reservations"
 )
 
-// THE ENFORCEMENT MODE IS GONE, AND THE MARK REPLACED IT.
+// THE MARK IS THE GATE'S WHOLE CONFIGURATION. A lane is gated if, and only if,
+// it has a point for its robots to dwell at (PropLaneGatePoint on the LANE) —
+// one fact, set by the person who knows the aisle, and the thing they set IS the
+// thing that makes it true.
 //
-// There used to be a LaneEnforcementMode property on the lane's GROUP —
-// none / mouth / gate_choreography — selecting whether Core gated the lane and
-// how. It is deleted, along with its type, its constants, its reader, and the
-// `lane_enforcement` key itself. Nothing migrates: the property was never set on
-// any node at either plant (verified live 2026-08-08, zero rows both cores) and
-// this branch has never been deployed to one. It exits without ever having had a
-// writer.
+// Collision safety does not live on it. The physical questions — is a foreign
+// dig holding this lane, is a robot inside it, is the target reachable — are
+// asked on every lane-entry path unconditionally, and occupancy rows are written
+// unconditionally. The mark chooses only the WAITING ROOM: park before dispatch,
+// or drive out and dwell at a point.
 //
-// WHAT REPLACES IT IS THE WAITING POINT. A lane is gated if, and only if, it has
-// a mark for its robots to dwell at (PropLaneGatePoint on the LANE). One fact,
-// set by the person who knows the aisle, and the thing they set IS the thing that
-// makes it true — rather than a switch that has to agree with a separate mark for
-// anything to work.
+// So enablement is per-lane and incremental. No marks exist at either plant, so
+// every lane parks orders pre-dispatch today; a lane goes gated the day a human
+// places its mark, and rollback is clearing it (robots already dwelling complete
+// under the old rules).
 //
-// THE RULING IS SAFE BY CONSTRUCTION, and that is worth stating because "we
-// deleted the enforcement switch" reads alarming. Collision safety never lived on
-// the mode. Since the unification the physical questions — is a foreign dig
-// holding this lane, is a robot inside it, is the target reachable — are asked on
-// every lane-entry path with no mode consulted anywhere, and occupancy rows are
-// written unconditionally. The mode only ever chose the WAITING ROOM: park before
-// dispatch, or drive out and dwell at a point. So removing it cannot open a
-// collision; it removes the ability to configure the two waiting rooms
-// inconsistently.
-//
-// AND ENABLEMENT BECOMES PER-LANE AND INCREMENTAL. Nothing changes at deploy —
-// no marks exist anywhere, so every lane keeps parking orders pre-dispatch. Each
-// lane goes gated the day a human places its mark, and rollback is clearing it
-// (robots already dwelling complete under the old rules). The global flip this
-// was once sequenced around does not exist.
+// (A three-valued `lane_enforcement` group property and a hardcoded
+// `laneShareBasePriority` both stood here and are gone. Neither was ever set or
+// applied at a plant — verified live 2026-08-08, zero rows on both cores — and
+// this branch has never been deployed to one, so neither leaves a note under law
+// 16. The ledger carries them.)
 
-// laneGateReservedBy tags the mouth rows the gate writes, for forensics.
-const laneGateReservedBy = "lanegate"
-
-// THE HARDCODED LANE PRIORITY BOOST WAS DELETED HERE.
-//
-// It was `laneShareBasePriority = 30`, added to a lane-bound move's target slot
-// depth and written into CreateOrderRequest.Priority, so co-admitted stores would
-// enter a single-file lane deepest-first. RDS serves the LARGEST priority first.
-//
-// Why it went: it is left over from an earlier attempt at this, and priority is
-// latent ability rather than something the system plans around. Lane entries are
-// first-come-first-serve until they are not.
-//
-// Why deleting it is safe, stated without inventing a migration story: the value
-// was only ever applied when the group's lane_enforcement selected it, and that
-// property is set on no node at either plant (verified live 2026-08-08, zero rows
-// both cores) — nor has this branch ever been deployed to one. The number never
-// reached a fleet. The configuration that would have activated it does not exist.
-//
-// THE PRIORITY MECHANISM IS DELIBERATELY UNTOUCHED. CreateOrderRequest.Priority,
-// the order's own priority column, and every path that carries a priority remain
-// exactly as they were — that is dormant capability, not dead code. What was
-// removed is Core INVENTING a number for lane-bound moves.
-//
-// Worth knowing when priority does start mattering — pre-clearing blockers ahead
-// of a predicted changeover is the shape to expect: this boost wrote into
-// the SAME field an operator boost uses, and under larger-wins a base of 30
-// silently outranked the RDS team's conventional 10. That collision is why it was
-// raised. It is now gone, and the field is clean for whoever needs it next.
+// laneGateReservedBy tags the mouth rows the gate writes. It used to say "for
+// forensics" and that is no longer all it is: §R.101 gave the SOURCE hold the
+// dig mode, so this tag is the only thing separating a demand that owns the lane
+// it sources from and a reshuffle that is excavating one. See
+// reservations.IsExcavation.
+const laneGateReservedBy = reservations.BySourceLock
 
 // laneWaitPoint returns the map point a lane's robots dwell at while Core decides
 // whether they may enter, or "" when the lane has none.
@@ -226,6 +193,7 @@ type laneHold struct {
 // exactly what an unmarked lane has always done with every other refusal.
 func (d *Dispatcher) resolveOrderLaneHolds(sourceNode, destNode *nodes.Node) ([]laneHold, error) {
 	var holds []laneHold
+	seen := map[int64]int{} // laneID -> index into holds; one entry per lane
 	add := func(n *nodes.Node, mode reservations.Mode) error {
 		if n == nil {
 			return nil
@@ -237,6 +205,31 @@ func (d *Dispatcher) resolveOrderLaneHolds(sourceNode, destNode *nodes.Node) ([]
 		if lane == nil || lane.ParentID == nil {
 			return nil // not a lane slot, or a lane with no group — no hold
 		}
+		// ── ONE OWNER, ONE LANE, ONE HOLD — THE STRONGER MODE WINS ─────────
+		//
+		// The source arm and the dest arm can resolve to the SAME lane: an
+		// order that picks from a lane and drops back into it, same-lane
+		// source+destination. Undeduped, that is two rows for one owner on one
+		// lane — the incoherent state admitMouth exists to refuse — and the
+		// refusal it raises does NOT wrap ErrReservationConflict (it is the
+		// "still a caller bug" arm, and AcquireLanesFor returns its error
+		// before the verdict switch translates it), so acquireOrderLanes'
+		// conflict rollback never fires: the first mode's row is committed in
+		// its own transaction, the error path returns without releasing it,
+		// and every retry meets the order's own committed row. The lane is
+		// wedged by the order that needs it, permanently.
+		//
+		// The same rule resolvePlanLaneHolds states a plan walk's version of:
+		// an order that both picks from and drops into a lane owns it for the
+		// whole visit, and dig is the stronger mode. Reachable through the
+		// operator bin-move door, which is how it surfaced.
+		if i, ok := seen[lane.ID]; ok {
+			if holds[i].mode != reservations.ModeDig && mode == reservations.ModeDig {
+				holds[i].mode = reservations.ModeDig
+			}
+			return nil
+		}
+		seen[lane.ID] = len(holds)
 		holds = append(holds, laneHold{laneID: lane.ID, mode: mode})
 		return nil
 	}
@@ -454,7 +447,7 @@ func (d *Dispatcher) releaseOrderLaneFor(orderID int64, node *nodes.Node) error 
 // nothing is inside the lanes this reported.
 func (d *Dispatcher) TakeLaneOccupancy(orderID int64, nodes ...*nodes.Node) error {
 	for _, laneID := range d.lanesFor(nodes...) {
-		if err := reservations.AcquireOccupancy(d.db.DB, orderID, laneID); err != nil {
+		if _, err := reservations.AcquireOccupancy(d.db.DB, orderID, laneID); err != nil {
 			return fmt.Errorf("take occupancy for order %d on lane %d: %w", orderID, laneID, err)
 		}
 	}
@@ -468,14 +461,21 @@ func (d *Dispatcher) TakeLaneOccupancy(orderID int64, nodes ...*nodes.Node) erro
 // Same semantics as the node-taking form: idempotent per (order, lane), and the
 // error is RETURNED rather than logged, because a presence that could not be
 // recorded reads as an empty lane to the next entrant.
-func (d *Dispatcher) takeLaneOccupancyByID(orderID, laneID int64) error {
+//
+// It carries the take's own report out (AcquireOccupancy's first return):
+// took=true means THIS call inserted the row, took=false means the row was
+// already there — a dweller's release re-taking the source-lane row its own
+// dispatch took. The append's failure rollback gives back only what it took,
+// so the two outcomes have to be distinguishable at the release site.
+func (d *Dispatcher) takeLaneOccupancyByID(orderID, laneID int64) (took bool, err error) {
 	if laneID == 0 {
-		return nil // not a lane-owned wait — nothing to record
+		return false, nil // not a lane-owned wait — nothing to record
 	}
-	if err := reservations.AcquireOccupancy(d.db.DB, orderID, laneID); err != nil {
-		return fmt.Errorf("take occupancy for order %d on lane %d: %w", orderID, laneID, err)
+	took, err = reservations.AcquireOccupancy(d.db.DB, orderID, laneID)
+	if err != nil {
+		return false, fmt.Errorf("take occupancy for order %d on lane %d: %w", orderID, laneID, err)
 	}
-	return nil
+	return took, nil
 }
 
 // ReleaseLaneOccupancy records that an order is out of every lane it occupied.
@@ -564,11 +564,32 @@ type laneHoldRead struct {
 // table. A pure classifier can be handed the failure directly. (The gathering
 // half is a loop and a call; the decision is what had the bug.)
 //
-// Precedence is deliberate and is the fix:
+// Precedence is deliberate and is the fix. It used to read:
 //
 //	a readable dig anywhere  -> lane-held-dig        (definite, and it wins)
 //	otherwise any failed read -> lane-held-unreadable (we cannot rule a dig out)
 //	otherwise                 -> lane-held-traffic    (definite)
+//
+// and it now reads:
+//
+//	a readable EXCAVATION     -> lane-held-dig        (definite, and it wins)
+//	otherwise any failed read -> lane-held-unreadable (we cannot rule one out)
+//	otherwise a source lock   -> lane-held-source     (definite, §R.101)
+//	otherwise                 -> lane-held-traffic    (definite)
+//
+// ── WHY THE MIDDLE ROW HAD TO BE ADDED (§R.101) ───────────────────────────
+//
+// The old table had "a dig" meaning mode='dig', which was the same thing as an
+// excavation until §R.101 gave every demand's SOURCE hold that mode. After it,
+// every ordinary retrieve holding the lane it sources from was reported as a
+// dig — and the paragraph below about a dig stall and a traffic stall being
+// investigated differently is exactly why that matters: the engineer goes
+// looking for a reshuffle that was never planned. It also made lane-held-traffic
+// nearly unreachable, since a source lock outranked it on every lane a demand
+// had resolved onto.
+//
+// The kind comes off reserved_by (reservations.IsExcavation), a fact every
+// writer already stamped and nothing read.
 //
 // It used to `continue` past a failed read and fall through to traffic, so a
 // dig-held lane whose row could not be read was filed as ordinary traffic
@@ -584,19 +605,31 @@ type laneHoldRead struct {
 // would hide an answer we actually have.
 func classifyLaneHoldCause(orderID int64, reads []laneHoldRead) QueueCause {
 	unreadable := false
+	sourceLocked := false
 	for _, r := range reads {
 		if r.err != nil {
 			unreadable = true
 			continue
 		}
 		for _, row := range r.rows {
-			if row.OrderID != orderID && row.Mode == reservations.ModeDig {
+			if row.OrderID == orderID || row.Mode != reservations.ModeDig {
+				continue
+			}
+			if reservations.IsExcavation(row.ReservedBy) {
 				return CauseLaneHeldDig
 			}
+			// A dig-mode row that is not an excavation is §R.101's source lock.
+			// Recorded rather than returned: an excavation on a LATER lane is the
+			// stronger fact and must still win, the same way it wins over an
+			// unreadable sibling.
+			sourceLocked = true
 		}
 	}
 	if unreadable {
 		return CauseLaneHeldUnreadable
+	}
+	if sourceLocked {
+		return CauseLaneHeldSource
 	}
 	return CauseLaneHeldTraffic
 }

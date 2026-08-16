@@ -24,7 +24,7 @@ import (
 // carries it to the fleet. Divergence-free.
 //
 // NEVER-2N — the park's placement MUST consult the Core in-flight authority (the
-// SAME order-truth restock gates on, CountInFlightOrdersByDeliveryNode /
+// SAME order-truth restock gates on, the in-flight delivery-node counts /
 // planning_service.go's CheckDropoffCapacity) — NEVER a bespoke count. Committing
 // DeliveryNode=home makes this order in-flight to the home, so a later restock's
 // own gate sees it and yields; and if a restock got there first, this read sees it

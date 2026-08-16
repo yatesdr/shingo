@@ -14,7 +14,7 @@ import (
 
 // The lane-gate RELEASE EVALUATOR — Core as traffic cop.
 //
-// Increment 3 gave every lane-bound order on a gate_choreography group the
+// Increment 3 gave every lane-bound order on a gated group the
 // uniform unsealed shape, and appended the tail immediately when the classifier
 // already admitted. A CONTENDED order was created unsealed and then dwelled with
 // nothing to release it. This is that release.
@@ -276,7 +276,7 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 	// refused it. A Tier-2 park, a lane-occupied refusal and a failed re-bind can
 	// all be sitting on top of the same unclaimed bin, so keying the heal on a
 	// particular refusal cause would find it from one arm and miss it from the other
-	// two. The refusal is the PROMPT; mouthHealNeeded reads the physics and answers.
+	// two. The refusal is the PROMPT; acceptanceDigNeeded reads the physics and answers.
 	//
 	// ── AND NOT OF A CANDIDATE CORE COULD NOT JUDGE. THAT IS DELIBERATE. ──
 	//
@@ -288,7 +288,7 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 	//     lock exclusively, and commits robots. That is the largest action this
 	//     evaluator can take, and taking it because Core could not read the lane
 	//     is deciding to dig on no evidence.
-	//   - mouthHealNeeded reads the same database that just failed to answer. It
+	//   - acceptanceDigNeeded reads the same database that just failed to answer. It
 	//     would either fail too — a dig proposed on a coin flip of which query
 	//     recovered first — or succeed on partial state and propose an excavation
 	//     from it.
@@ -371,7 +371,7 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 			// actually waiting on is "where does this blocker go", and the resolver
 			// both answers it and acts on the answer.
 			//
-			// AND IT PROPOSES NO HEAL. mouthHealNeeded proposes an excavation of THIS
+			// AND IT PROPOSES NO HEAL. acceptanceDigNeeded proposes an excavation of THIS
 			// lane's mouth, which is the wall a refused ENTRANT is sitting behind. A
 			// dweller is behind no wall here: its lane is already being dug, by the
 			// very parent this leg belongs to. What it lacks is somewhere in the

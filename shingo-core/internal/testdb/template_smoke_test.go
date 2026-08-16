@@ -144,3 +144,36 @@ func TestTemplateDB_TerminateBackendRate(t *testing.T) {
 		t.Logf("pg_terminate_backend rate: %d / %d (%.2f%%, threshold %.1f%%)", fired, created, ratio*100, threshold*100)
 	}
 }
+
+// TestTemplateDB_RanItsTests is the Sunday-smoke instrument's other half
+// (fix-batch 2a): a test that can only pass by RUNNING, in the package the
+// gate's docker step always visits.
+//
+// THE PROBLEM IT EXISTS FOR: `t.Skipf` on a docker failure makes `go test` exit
+// 0 with every integration test skipped, and non-verbose output prints nothing
+// per skipped test — so "green" and "Docker was down and 327 files ran nothing"
+// are indistinguishable from the exit code. A smoke that only checks the exit
+// code is a smoke that cannot see its own blindness.
+//
+// THE INTERESTING NUMBER LIVES ONE LEVEL UP, and this test does not pretend to
+// hold it. Per-package test counts are `go test`'s own output — `ok
+// shingocore/dispatch 22.8s` — and the gate log already carries them. What this
+// test pins is the base of that chain from inside the run: the package the gate
+// always visits had a live Open(), its counters moved, and (the part the smoke
+// greps for) the sentinel was NOT emitted. A run where this passes and the
+// sentinel fired is a contradiction, and the smoke treats it as one.
+//
+// MUTATION (verified): delete the Open() call. The count assertion fires — the
+// counters did not move, which is the skip-everything shape wearing a green
+// exit code.
+func TestTemplateDB_RanItsTests(t *testing.T) {
+	before := TestDatabasesCreated()
+	db := Open(t)
+	after := TestDatabasesCreated()
+	if after <= before {
+		t.Fatalf("TestDatabasesCreated did not advance (%d -> %d) — Open() cloned nothing, which is "+
+			"the skip-everything shape: every docker test in this package skipped and the exit "+
+			"code was still 0", before, after)
+	}
+	_ = db
+}

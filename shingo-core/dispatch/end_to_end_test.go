@@ -1054,7 +1054,7 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 
 	// The legs exist, on the DIG rather than on the demand. Same excavation, same
 	// count; only the parent changed.
-	children := serviceDigChildren(t, db, o)
+	children := laneClearChildren(t, db, o)
 	// Expose mode: unbury only.
 	// Two blockers → two unbury children.
 	if len(children) != 2 {
@@ -1063,7 +1063,7 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 	// EVERY LEG HANGS OFF THE DIG, AND NONE OFF THE DEMAND. The second half is the
 	// one worth asserting: it is what "the demand was not consumed" looks like in
 	// the orders table, and it is the shape a regression would break first.
-	dig := serviceDigFor(t, db, o)
+	dig := laneClearFor(t, db, o)
 	for _, c := range children {
 		if c.ParentOrderID == nil || *c.ParentOrderID != dig.ID {
 			t.Errorf("leg %d ParentOrderID = %v, want the service dig %d", c.ID, c.ParentOrderID, dig.ID)

@@ -33,7 +33,7 @@ func TestJunctionInvariant_RunsOnTheDispatchPathNotOnlyInTests(t *testing.T) {
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	_, _, w, _, bp := healLaneFixture(t, db, "JINV")
+	_, _, w, _, bp := clearLaneFixture(t, db, "JINV")
 	binOne := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-JINV-1")
 	cell := lineNode(t, db, "JINV-CELL")
 
@@ -96,7 +96,7 @@ func TestReindexFailure_ParksTheDemandInsteadOfKillingIt(t *testing.T) {
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	_, _, w, _, bp := healLaneFixture(t, db, "REIDXFAIL")
+	_, _, w, _, bp := clearLaneFixture(t, db, "REIDXFAIL")
 	cell := lineNode(t, db, "REIDXFAIL-CELL")
 	binOne := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-REIDXFAIL-1")
 
@@ -157,7 +157,7 @@ func TestReindexOrderBins_LandsTheJunctionOnTheSplicedPlan(t *testing.T) {
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	_, _, w, _, bp := healLaneFixture(t, db, "REIDX")
+	_, _, w, _, bp := clearLaneFixture(t, db, "REIDX")
 	// The two bins order 7 carried: the fresh one from the lane and the active
 	// one at the machine.
 	fresh := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-REIDX-FRESH")
@@ -226,7 +226,7 @@ func TestReindexOrderBins_ShiftThroughAnOccupiedIndex(t *testing.T) {
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	_, _, w, _, bp := healLaneFixture(t, db, "REIDXOCC")
+	_, _, w, _, bp := clearLaneFixture(t, db, "REIDXOCC")
 	first := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-REIDXOCC-1")
 	second := createTestBinAtNode(t, db, bp.Code, w[1].ID, "BIN-REIDXOCC-2")
 

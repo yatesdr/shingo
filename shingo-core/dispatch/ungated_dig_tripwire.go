@@ -31,7 +31,7 @@ import (
 // the origin leak — every create site carrying an episode — switches this gate
 // ON for a population that has never had it, which is a DISPATCH-SHAPING change:
 // digs that used to be admitted will start being refused with
-// serviceDigEpisodeAlreadyDigging. Landing that inside a commit whose stated
+// laneClearEpisodeAlreadyDigging. Landing that inside a commit whose stated
 // business is labelling is how a behaviour change arrives unannounced and gets
 // attributed to the wrong cause a week later.
 //

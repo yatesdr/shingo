@@ -7,8 +7,26 @@ import (
 	"shingocore/store/reservations"
 )
 
+// digRow is a foreign EXCAVATION's mouth row. It read
+//
+//	return reservations.MouthHold{OrderID: orderID, Mode: reservations.ModeDig}
+//
+// and the tag is added rather than the assertions changed, because "a dig" is
+// what this file has always meant by it and the mode was a complete spelling of
+// that until §R.101. That ruling gave every demand's SOURCE hold the dig mode
+// too, so an untagged dig-mode row is now ambiguous where it used to be exact —
+// and the classifier reads reserved_by to tell the two apart. Every assertion
+// below is unchanged and still passes: the fixture says out loud what it was
+// already relying on.
+//
+// The source-lock half of the same table is pinned in lane_hold_kind_test.go,
+// which is where the §R.101 argument lives.
 func digRow(orderID int64) reservations.MouthHold {
-	return reservations.MouthHold{OrderID: orderID, Mode: reservations.ModeDig}
+	return reservations.MouthHold{
+		OrderID:    orderID,
+		Mode:       reservations.ModeDig,
+		ReservedBy: reservations.ByExcavation,
+	}
 }
 
 func inboundRow(orderID int64) reservations.MouthHold {

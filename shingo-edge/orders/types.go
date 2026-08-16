@@ -155,5 +155,7 @@ func StationOwnsWait(stepsJSON string, waitIndex int) bool {
 
 // waitKindStation mirrors dispatch.WaitKindStation — see the note on the Edge's
 // other copy in engine/material_orders.go. Duplicated because Edge cannot import
-// Core; pinned by TestStationOwnsWait_MatchesCoreConstant.
+// Core. NOT PINNED: the engine copy is (TestWaitKindStation_MatchesCore), this
+// one is not, and the note that claimed it was named a test that has never
+// existed.
 const waitKindStation = "station"

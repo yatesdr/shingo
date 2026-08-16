@@ -154,10 +154,10 @@ func TestMouthConsultation_BothRefusalsAreTransient(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		err  error
-		want serviceDigOutcome
+		want laneClearOutcome
 	}{
-		{"mouth held", &LaneMouthHeldParkingError{Lane: "L", Short: 1}, serviceDigLaneBusy},
-		{"cannot see", &MouthUnreadableError{Lanes: []string{"L"}, Short: 1}, serviceDigReadFailed},
+		{"mouth held", &LaneMouthHeldParkingError{Lane: "L", Short: 1}, laneClearLaneBusy},
+		{"cannot see", &MouthUnreadableError{Lanes: []string{"L"}, Short: 1}, laneClearReadFailed},
 	} {
 		if got := classifyPlanError(tc.err); got != tc.want {
 			t.Errorf("%s classified as %v, want %v — an unplannable verdict is the terminal one, and "+

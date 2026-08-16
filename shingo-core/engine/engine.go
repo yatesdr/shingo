@@ -6,7 +6,7 @@
 //
 //   engine_lifecycle.go   Start, Stop, loadActiveOrders
 //   engine_accessors.go   one-liner subsystem getters + SetCountGroupRunner
-//   engine_messaging.go   SendToEdge, SendDataToEdge, RunFulfillmentScan
+//   engine_messaging.go   SendDataToEdge, RunFulfillmentScan
 //   engine_connection.go  checkConnectionStatus, connectionHealthLoop
 //   engine_reconfigure.go ReconfigureDatabase/Fleet/CountGroups/Messaging
 //   engine_scene_sync.go  SyncScenePoints, SyncFleetNodes, UpdateNodeZones, SceneSync

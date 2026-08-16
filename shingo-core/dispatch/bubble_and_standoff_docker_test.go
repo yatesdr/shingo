@@ -8,6 +8,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/orders"
 )
 
@@ -164,15 +165,15 @@ func TestServiceDig_UngatedProposalIsCounted(t *testing.T) {
 	})
 
 	ResetUngatedDigTally()
-	if res := d.proposeLaneClearDig(first, firstSlots[1], demand, digOwnedByRequester); res.outcome != serviceDigStarted {
+	if res := d.proposeLaneClearDig(first, firstSlots[1], demand); res.outcome != laneClearStarted {
 		t.Fatalf("the first dig did not start (outcome %v, err %v)", res.outcome, res.err)
 	}
-	res := d.proposeLaneClearDig(second, secondSlots[1], demand, digOwnedByRequester)
+	res := d.proposeLaneClearDig(second, secondSlots[1], demand)
 
 	// THE GATE IS OFF. Whatever else the second proposal runs into — parking,
 	// geometry — it must not be the episode limit, because there is no episode.
-	if res.outcome == serviceDigEpisodeAlreadyDigging {
-		t.Fatalf("the second proposal was refused as serviceDigEpisodeAlreadyDigging for a demand with "+
+	if res.outcome == laneClearEpisodeAlreadyDigging {
+		t.Fatalf("the second proposal was refused as laneClearEpisodeAlreadyDigging for a demand with "+
 			"no origin. The gate cannot be keyed without one; a refusal here means it is guessing, "+
 			"which serialises every unattributed dig in the plant against every other (err %v)", res.err)
 	}
@@ -230,16 +231,17 @@ func TestServiceDig_OneEpisodeGetsOneExcavationAtATime(t *testing.T) {
 		o.OriginClass = "demand"
 	})
 
-	if res := d.proposeLaneClearDig(first, firstSlots[1], demand, digOwnedByRequester); res.outcome != serviceDigStarted {
+	if res := d.proposeLaneClearDig(first, firstSlots[1], demand); res.outcome != laneClearStarted {
 		t.Fatalf("the FIRST dig did not start (outcome %v, err %v) — this test is about the second one",
 			res.outcome, res.err)
 	}
 
 	// THE SECOND ASK, for a different lane and a different bin, on behalf of the
 	// same demand. It is refused, and the refusal names itself.
-	res := d.proposeLaneClearDig(second, secondSlots[1], demand, digOwnedByRequester)
-	if res.outcome != serviceDigEpisodeAlreadyDigging {
-		t.Fatalf("the second dig's outcome is %v, want serviceDigEpisodeAlreadyDigging. This demand "+
+	before := countOrders(t, db)
+	res := d.proposeLaneClearDig(second, secondSlots[1], demand)
+	if res.outcome != laneClearEpisodeAlreadyDigging {
+		t.Fatalf("the second dig's outcome is %v, want laneClearEpisodeAlreadyDigging. This demand "+
 			"needs ONE bin and already has an excavation running for it; a second one competes with "+
 			"the first for the same parking, which is how digs 2 and 8 ended up holding each other's "+
 			"lanes with neither able to finish", res.outcome)
@@ -252,12 +254,21 @@ func TestServiceDig_OneEpisodeGetsOneExcavationAtATime(t *testing.T) {
 		t.Errorf("lane %s was taken by a dig that was refused — the guard must run before the acquire",
 			second.Name)
 	}
-	live, err := db.ListOrders(string(protocol.StatusCancelled), 50)
-	testutil.MustNoErr(t, err, "list cancelled orders")
-	for _, o := range live {
-		if o.DigTargetNode == secondSlots[1].Name {
-			t.Errorf("order %d was minted for the refused dig and then cancelled. The guard is asked "+
-				"before createServiceDigParent precisely so a refusal costs no row", o.ID)
-		}
+	// AND NOTHING WAS WRITTEN AT ALL — counted rather than identified, so the
+	// assertion cannot go stale behind a column or a marker.
+	after := countOrders(t, db)
+	if after != before {
+		t.Errorf("%d order row(s) appeared across a refused dig (%d → %d). The guard is asked before "+
+			"the plan and before the parent precisely so a refusal costs a read — an order minted and "+
+			"cancelled per pass is the churn this file has measured twice (16,947 and 38,203)",
+			after-before, before, after)
 	}
+}
+
+// countOrders is the whole orders table, for the before/after around a refusal.
+func countOrders(t *testing.T, db *store.DB) int {
+	t.Helper()
+	var n int
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT count(*) FROM orders`).Scan(&n), "count orders")
+	return n
 }

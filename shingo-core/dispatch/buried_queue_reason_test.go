@@ -68,7 +68,7 @@ func TestBuriedIntake_QueueReasonReachesOrderHistory(t *testing.T) {
 	// excursion here means it was re-parented". The demand IS the dig now, so
 	// `reshuffling` is the successful arm and `queued` would mean no excavation
 	// was taken at all.
-	serviceDigFor(t, db, order)
+	laneClearFor(t, db, order)
 	if order.Status != StatusReshuffling {
 		t.Fatalf("demand status = %q, want %q — a demand that created a dig becomes its parent and "+
 			"wears reshuffling while it runs", order.Status, StatusReshuffling)

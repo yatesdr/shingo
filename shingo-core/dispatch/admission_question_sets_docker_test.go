@@ -167,7 +167,7 @@ func TestQuestionSet_PlainEntryStillAsksOccupancyOnAnUnmarkedLane(t *testing.T) 
 		t.Fatalf("resolve line node: %v", err)
 	}
 	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "qs-mouth-occ-inside" })
-	if err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
+	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestQuestionSet_GateStagedRetrieveAsksOccupancy(t *testing.T) {
 	wanted := testdb.CreateBinAtNode(t, db, "DEFAULT", shallow.ID, "QS-RETR-OCC-BIN")
 
 	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "qs-retr-occ-inside" })
-	if err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
+	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestQuestionSet_CompoundLegSkipsNothing(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "qs-compound-inside" })
-	if err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
+	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}
 

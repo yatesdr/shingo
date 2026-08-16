@@ -114,6 +114,7 @@
             <th style="width:140px;">Order Status</th>
             <th style="width:120px;">Bin Status</th>
             <th>Issue</th>
+            <th>Detail</th>
             <th style="width:180px;">Action</th>
           </tr>
         </thead>
@@ -129,6 +130,7 @@
               <td>{{.OrderStatus}}</td>
               <td>{{if .BinStatus}}{{.BinStatus}}{{else}}-{{end}}</td>
               <td>{{.Issue}}</td>
+              <td>{{.Detail}}</td>
               <td>
                 {{if eq .RecommendedAction "reapply_completion"}}
                 <button class="btn btn-sm" data-action="repairAnomaly:reapply_completion:{{.OrderID}}:0">Reapply Completion</button>
@@ -136,8 +138,8 @@
                 <button class="btn btn-sm" data-action="repairAnomaly:release_terminal_claim:{{.OrderID}}:{{.BinID}}">Release Claim</button>
                 {{else if eq .RecommendedAction "release_staged_bin"}}
                 <button class="btn btn-sm" data-action="repairAnomaly:release_staged_bin:0:{{.BinID}}">Release Staged Bin</button>
-                {{else if eq .RecommendedAction "cancel_stuck_order"}}
-                <button class="btn btn-sm" data-action="repairAnomaly:cancel_stuck_order:{{.OrderID}}:0">Cancel Stuck Order</button>
+                {{else if eq .RecommendedAction "investigate_stuck_order"}}
+                <span class="text-muted">Investigate — see detail</span>
                 {{else}}
                 <span class="text-muted">Manual review</span>
                 {{end}}
@@ -146,7 +148,7 @@
             {{end}}
           {{else}}
             <tr>
-              <td colspan="9" class="text-muted">No anomalies detected.</td>
+              <td colspan="10" class="text-muted">No anomalies detected.</td>
             </tr>
           {{end}}
         </tbody>

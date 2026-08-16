@@ -14,7 +14,7 @@ import (
 	"shingocore/store/reservations"
 )
 
-// service_dig_end_to_end_docker_test.go — THE A BATCH'S PROOF.
+// lane_clear_end_to_end_docker_test.go — THE A BATCH'S PROOF.
 //
 // Everything else in this batch pins a piece: the demand keeps its status, the
 // legs hang off the dig, the causes are right, the bridge is gone. None of them
@@ -34,7 +34,7 @@ import (
 // end-to-end.
 //
 // MUTATION (verified): make proposeLaneClearDig return early with
-// serviceDigLaneBusy — i.e. suppress the proposal. The demand parks with
+// laneClearLaneBusy — i.e. suppress the proposal. The demand parks with
 // CauseIntakeBuried and never moves; the "a dig was raised" assertion fires, and
 // the parked row is exactly what the stall checker would report, which is the
 // honest failure mode rather than a wedge.
@@ -87,7 +87,7 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 
 	// (2) A SERVICE DIG EXISTS, and it belongs to the demand's episode — which is
 	// the only tie between them now that there is no requester pointer (§R.40).
-	dig := serviceDigFor(t, db, demand)
+	dig := laneClearFor(t, db, demand)
 	if dig.OriginID != demand.OriginID || dig.OriginClass != demand.OriginClass {
 		t.Errorf("dig origin = (%q, %q), want the demand's (%q, %q) — the cost of digging belongs to "+
 			"the episode that caused it", dig.OriginID, dig.OriginClass, demand.OriginID, demand.OriginClass)
@@ -265,7 +265,7 @@ func TestServiceDig_StaleDigDissolves_DemandUntouched(t *testing.T) {
 	buried := &BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID}
 
 	d.handleComplexBuriedOnReplay(demand, buried)
-	dig := serviceDigFor(t, db, demand)
+	dig := laneClearFor(t, db, demand)
 
 	before, err := db.GetOrder(demand.ID)
 	testutil.MustNoErr(t, err, "read the demand before the dissolve")

@@ -214,7 +214,7 @@ func TestHandover_IDWriteFailureCancelsTheFleetOrder(t *testing.T) {
 // two-block transport, a Complete:false plan split at a wait, and a Complete:false
 // unsealed waybill ending at a gate point are three different jobs. This asserts
 // the plain path still ships the shape it shipped before the extraction — the one
-// every plant actually runs, since no group sets lane_enforcement.
+// every plant actually runs, since no lane carries a mark.
 func TestHandover_RequestShapesUnchanged(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

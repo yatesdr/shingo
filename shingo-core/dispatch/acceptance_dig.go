@@ -1,7 +1,9 @@
 package dispatch
 
 import (
+	"fmt"
 	"log"
+	"time"
 
 	"shingo/protocol"
 	"shingocore/store/nodes"
@@ -75,10 +77,20 @@ type acceptanceRequest struct {
 //     robot to an occupied slot. Retrieves are exempt because a retrieve's entry
 //     slot holding a bin is the entire point.
 //
-//  3. NOBODY IS COMING FOR ANY BLOCKER. A hard claim is a robot in motion, so the
-//     bin is leaving anyway and the correct disposition is the one the floor
-//     already has: wait. This mirrors the burial guard's own hard-claims-only rule
-//     rather than inventing a second definition of "somebody is coming".
+//  3. NOBODY LIVE IS COMING FOR ANY BLOCKER. A hard claim is a robot in motion,
+//     so the bin is leaving anyway and the correct disposition is the one the
+//     floor already has: wait.
+//
+//     THE WORD "LIVE" IS THE 2e CORRECTION, and the old text is kept here because
+//     it is what the arm believed: "A hard claim is a robot in motion, so the bin
+//     is leaving anyway… This mirrors the burial guard's own hard-claims-only rule
+//     rather than inventing a second definition of 'somebody is coming'." It
+//     mirrored the burial guard faithfully and asked the question with a bare
+//     `ClaimedBy == nil`, which reads IDENTICALLY for a robot driving the bin out
+//     and for an order that stopped moving an hour ago. The second one suppressed
+//     the dig forever. The question is now put to blockersSpokenFor — §R.98 stage
+//     C's liveness-scoped predicate, the same one the dissolve path uses — so a
+//     dead claim is not a releaser and does not stand in a dig's way.
 //
 //  4. THE LANE IS OTHERWISE QUIET. An occupied lane is being worked, and whoever
 //     is inside it may be the releaser. Digging into a corridor that already has a
@@ -115,14 +127,23 @@ func (d *Dispatcher) acceptanceDigNeeded(lane *nodes.Node, c gateCandidate) (acc
 		}
 	}
 
-	for _, b := range blockers {
-		if !binIsUnclaimed(b.bin) {
-			// fact 3: somebody IS coming. This is the floor's ordinary wait and it
-			// ends by itself when that robot carries the bin out.
-			d.dbg("lane gate: order %d is walled in %s by bin %d, but it is claimed by order %d — waiting",
-				c.order.ID, lane.Name, b.bin.ID, *b.bin.ClaimedBy)
-			return acceptanceRequest{}, false
-		}
+	spokenFor, lErr := d.blockersSpokenFor(blockers)
+	if lErr != nil {
+		// Unreadable answers NO, like every other read in this function: the
+		// disposition for "I could not tell" is to leave the order dwelling and
+		// re-ask, and digging into a lane whose claims we could not read is the
+		// expensive direction to be wrong in.
+		log.Printf("lane gate: could not read who is coming for the blockers in front of %s for "+
+			"order %d: %v — not summoning a dig", c.node.Name, c.order.ID, lErr)
+		return acceptanceRequest{}, false
+	}
+	if spokenFor {
+		// fact 3: somebody IS coming, and that somebody is moving. This is the
+		// floor's ordinary wait and it ends by itself when that robot carries the
+		// bin out.
+		d.dbg("lane gate: order %d is walled in %s and at least one blocker has a LIVE claimant — "+
+			"waiting", c.order.ID, lane.Name)
+		return acceptanceRequest{}, false
 	}
 
 	occupants, err := reservations.OccupantsOf(d.db.DB, lane.ID)
@@ -158,33 +179,131 @@ func (d *Dispatcher) acceptanceDigNeeded(lane *nodes.Node, c gateCandidate) (acc
 // Summon-before-lock is outlawed by name: it would leave the corridor open to
 // ordinary traffic for the length of an excavation.
 func (d *Dispatcher) summonOwnDigs(lane *nodes.Node, req acceptanceRequest) {
-	res := d.proposeLaneClearDig(lane, req.entry, req.order, digOwnedByRequester)
+	res := d.proposeLaneClearDig(lane, req.entry, req.order)
 	switch res.outcome {
-	case serviceDigStarted:
+	case laneClearStarted:
 		log.Printf("lane gate: order %d is walled at %s and has summoned its own dig (%d steps). Its "+
 			"robot stays at the mark holding its bin; when the chapter closes Core appends its tail "+
 			"where it stands", req.order.ID, lane.Name, res.steps)
-	case serviceDigLaneBusy:
+	case laneClearLaneBusy:
 		// Someone else owns the corridor. An ordinary wait with a real releaser,
 		// and the row already carries the classifier's cause saying so.
 		d.dbg("lane gate: order %d cannot dig %s open — the lane is held", req.order.ID, lane.Name)
-	case serviceDigBlockerClaimed:
-		// A robot is already carrying the wall out. The wait ends when it does.
-		d.setQueueReason(req.order, protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
-			QueueParams{Lane: lane.Name})
-	case serviceDigNothingInTheWay:
+	case laneClearBlockerClaimed:
+		d.parkOnClaimedBlocker(lane, req, res)
+	case laneClearNothingInTheWay:
 		d.dbg("lane gate: order %d needs no dig at %s after all — the lane changed under the verdict",
 			req.order.ID, lane.Name)
-	case serviceDigLaneOccupied, serviceDigNoShuffleSlot, serviceDigParkingHeldByDig,
-		serviceDigEpisodeAlreadyDigging:
+	case laneClearLaneOccupied, laneClearNoShuffleSlot, laneClearParkingHeldByDig,
+		laneClearEpisodeAlreadyDigging:
 		// Congestion, each with its own live releaser, and the classifier's cause
 		// on the row already names the one that applies. Nothing to arrange.
 		d.dbg("lane gate: order %d cannot dig %s open yet (%v)", req.order.ID, lane.Name, res.outcome)
+	case laneClearNoGroup, laneClearSlotNotInLane, laneClearUnplannable:
+		// Geometry: the lane is in no group, the slot belongs to no lane, the plan
+		// could not be built. Same arm and same shape as the complex path's
+		// (complex_dispatch.go), for the same reason this is LOUD: nothing in the
+		// plant will clear any of these on its own — no bin moving anywhere changes
+		// which nodes exist — so the dweller's wait has no releaser, and a quiet
+		// line here is a robot standing at a mark with nobody told why. §R.45
+		// ruled a slot attached to no lane keeps failing loudly WITH THE SLOT
+		// NAMED; res.err carries the slot from the planner's sentinel.
+		//
+		// The order is NOT failed: a committed robot cannot be re-planned, and the
+		// next pass re-asks in case the configuration is fixed underneath it. Every
+		// arm here leaves the floor exactly as it found it.
+		log.Printf("lane gate: order %d is walled at %s (entry %s) and no dig can be planned there "+
+			"(%v): %v — the robot is waiting on a corridor nothing is going to open; this is a "+
+			"configuration fault, not congestion",
+			req.order.ID, lane.Name, req.entry.Name, res.outcome, res.err)
 	default:
-		// Unplannable: no shuffle slot, bad geometry, a write that failed. The
-		// order keeps the cause the classifier wrote and the next pass re-asks —
-		// every failure arm here leaves the floor exactly as it found it.
+		// Anything a future outcome adds. Held to the old default's shape — loud,
+		// floor untouched — so an unnamed outcome can never fall silent just by
+		// existing.
 		log.Printf("lane gate: order %d could not dig %s open (%v): %v",
 			req.order.ID, lane.Name, res.outcome, res.err)
+	}
+}
+
+// StoppedBlockerAction is the recovery-action name a dig blocked by a STOPPED
+// order is filed under. EXPORTED so the log line and the row it points at cannot
+// drift — a reader told to search recovery_actions for a name that is not the one
+// written there is worse served than one told nothing.
+const StoppedBlockerAction = "dig_blocker_order_stopped"
+
+// parkOnClaimedBlocker is the fork §R.115 ruled: the plan was refused because a
+// bin it must move is hard-claimed, and the two worlds behind that one refusal
+// get different waits because they have different releasers.
+//
+//   - THE HOLDER IS MOVING. A robot is carrying the wall out. Ordinary congestion,
+//     the wait ends by itself, and it stays exactly as quiet as it always was.
+//
+//   - THE HOLDER HAS STOPPED WITHOUT TERMINATING. Nothing in the plant is going to
+//     move that bin: the claim CAS will not take it from a live order (and must
+//     not — R.30's JackUnload maximum is longer than any stall window we run), the
+//     orphan sweep only reaches TERMINAL holders, and no timer is allowed to reap
+//     it (§R.115 refused the age-based reaper and the automatic dissolve by name).
+//     The releaser is a PERSON, so the wait says so and the alarm names who has to
+//     act on what.
+//
+// ── WHY THIS ARM CAN TELL THEM APART AND THE OTHER TWO DOORS CANNOT ───────
+//
+// Because the acceptance arm asked (fact 3, blockersSpokenFor) before it summoned.
+// The complex doors and the plain path do not ask the liveness question, so they
+// cannot honestly write the stopped cause and they keep the congestion tag. That
+// is a scope statement, not a gap: one spelling of "is somebody coming" exists,
+// and only its callers may report what it answered.
+//
+// ── THE ALARM FIRES ON THE EDGE, NOT ON THE PASS ──────────────────────────
+//
+// setQueueReason no-ops when the sentence, code and cause are all unchanged, so
+// "the row actually changed" IS "this is a new wait", and the alarm rides that
+// edge. It has to: this arm re-runs on every lane event, and an alarm per pass is
+// the 38,203-row shape this house has already paid for once. What stays
+// continuously visible is the WAIT — the operator sentence naming the stopped
+// order sits on the board for as long as the condition lasts — while the alarm is
+// the durable, timestamped row that says a person was told. A wait that flips to
+// another cause and back re-alarms, which is honest: it is a new wait.
+func (d *Dispatcher) parkOnClaimedBlocker(lane *nodes.Node, req acceptanceRequest, res laneClearResult) {
+	stopped, still, err := d.claimantStopped(res.blockerClaimant)
+	if err != nil {
+		// Unreadable answers "congestion", which is the direction that costs
+		// nothing: the wait stays quiet, the next pass re-asks, and we have not
+		// called an engineer out on a database hiccup.
+		log.Printf("lane gate: could not read whether order %d (holding bin %d in front of order %d) "+
+			"is still moving: %v — waiting under the ordinary claimed-blocker cause",
+			res.blockerClaimant, res.blockerBin, req.order.ID, err)
+		stopped = false
+	}
+	if !stopped {
+		// A robot is already carrying the wall out. The wait ends when it does.
+		d.setQueueReason(req.order, protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
+			QueueParams{Lane: lane.Name})
+		return
+	}
+
+	if !d.setQueueReason(req.order, protocol.QueueStorageRearranging, CauseDigBlockerStopped,
+		QueueParams{Lane: lane.Name, StoppedOrderID: res.blockerClaimant}) {
+		return // already standing under this wait; the row said so once and still does
+	}
+
+	detail := fmt.Sprintf("STOPPED ORDER IS BLOCKING A DIG: order %d has a robot standing at %s and "+
+		"cannot get in, because bin %d in front of it is hard-claimed by ORDER %d — and order %d has "+
+		"not moved for %s. Nothing automatic will clear this: the claim is not taken from a live "+
+		"order, the orphan sweep only releases claims held by TERMINAL orders, and this house does "+
+		"not reap holds on a timer. RESOLVE ORDER %d BY HAND — it is usually a configuration fault "+
+		"or a genuine breakdown. The moment it moves, is cancelled, or gives up its claim, the next "+
+		"lane pass plans the dig and the waiting robot goes. IF ORDER %d TURNS OUT TO BE FINE, that "+
+		"is the named watch item: a robot legitimately sitting at a jack-unload can exceed this "+
+		"window (measured p50 91s, max 959s), and one confirmed false alarm is the trigger to split "+
+		"it from the re-plan window.",
+		req.order.ID, lane.Name, res.blockerBin, res.blockerClaimant, res.blockerClaimant,
+		still.Round(time.Second), res.blockerClaimant, res.blockerClaimant)
+
+	log.Printf("lane gate: !! %s", detail)
+	if err := d.db.RecordRecoveryAction(StoppedBlockerAction, "order", res.blockerClaimant,
+		detail, "system"); err != nil {
+		log.Printf("lane gate: could not record the stopped blocker %d for order %d: %v",
+			res.blockerClaimant, req.order.ID, err)
 	}
 }

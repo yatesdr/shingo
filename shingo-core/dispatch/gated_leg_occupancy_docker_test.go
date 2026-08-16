@@ -51,8 +51,8 @@ func TestGatedLeg_TakesNoOccupancyOnTheLaneItStandsOutsideOf(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, backend)
 
 	// The rig's orientation exactly: pick out of an UNGATED lane, place into a
-	// GATED one. healLaneFixture marks `wall` and leaves `park` unmarked.
-	wall, park, w, p, bp := healLaneFixture(t, db, "PHANTOM")
+	// GATED one. clearLaneFixture marks `wall` and leaves `park` unmarked.
+	wall, park, w, p, bp := clearLaneFixture(t, db, "PHANTOM")
 	createTestBinAtNode(t, db, bp.Code, p[0].ID, "BIN-PHANTOM")
 
 	// THE LANE MUST BE CONTENDED, or the leg never dwells and there is no phantom

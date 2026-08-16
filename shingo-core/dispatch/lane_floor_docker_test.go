@@ -58,7 +58,7 @@ func TestFloor_WakesAQuiescedPlantAndRecordsTheDefect(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	lane, _, w, _, _ := healLaneFixture(t, db, "FLOORF22")
+	lane, _, w, _, _ := clearLaneFixture(t, db, "FLOORF22")
 	line := lineNode(t, db, "FLOORF22-LINE")
 
 	// A dig holds the lane, so the dweller parks behind it with a readable cause.
@@ -132,7 +132,14 @@ func TestFloor_WakesAQuiescedPlantAndRecordsTheDefect(t *testing.T) {
 		t.Errorf("the record does not name the population, so the loud case cannot be told from the "+
 			"quiet one at read time:\n  %s", detail)
 	}
-	if !strings.Contains(detail, "unlockLaneForCompound") {
+	// THE PROBE MOVED, THE ASSERTION DID NOT. This looked for the literal
+	// "unlockLaneForCompound" — a Go identifier that was in the releaser prose and
+	// is no longer, because that prose is rendered verbatim into
+	// recovery_actions.detail and read by a human on the Recovery tab. The
+	// question is unchanged: does the record say what SHOULD have ended this wait.
+	// It is now asked against the sentence rather than against a symbol name,
+	// which is what the record is supposed to contain.
+	if !strings.Contains(detail, "the dig holding this lane releases it") {
 		t.Errorf("the record does not say what SHOULD have ended the wait, so it reads as 'something "+
 			"was slow' rather than 'this event did not fire':\n  %s", detail)
 	}
@@ -161,7 +168,7 @@ func TestFloor_IsSilentWhenItFreesNobody(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	lane, _, w, _, _ := healLaneFixture(t, db, "FLOORQUIET")
+	lane, _, w, _, _ := clearLaneFixture(t, db, "FLOORQUIET")
 	line := lineNode(t, db, "FLOORQUIET-LINE")
 
 	// The dig KEEPS the lane. The dweller is genuinely blocked, so a pass over it

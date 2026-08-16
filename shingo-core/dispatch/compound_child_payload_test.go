@@ -40,7 +40,7 @@ func TestCompoundChild_CarriesTheBinsPayloadCode(t *testing.T) {
 	// demand, which was its own dig's parent; a complex demand is now a customer
 	// of a lane-clear dig and the legs hang off THAT. What this test is about —
 	// what a reshuffle leg carries — is unchanged, so it follows the legs.
-	children := serviceDigChildren(t, db, parent)
+	children := laneClearChildren(t, db, parent)
 
 	for _, c := range children {
 		if c.BinID == nil {

@@ -45,7 +45,7 @@ func admitOrder(t *testing.T, db *store.DB, uuid string, slot *nodes.Node) *orde
 //
 // It used to assert that an ungated lane always admits — dig planted, verdict
 // admitted, "the gate must be a no-op where it is switched off". That was wrong,
-// and wrong in the direction that matters: lane_enforcement selects who owns
+// and wrong in the direction that matters: configuration selects who arbitrates
 // mouth MODE-SHARING, not whether a corridor is single-file. The facts admission
 // reads are written unconditionally — TakeLaneOccupancy resolves lanes with no
 // mode check and both reshuffle planners take the dig lock without one — so
@@ -81,7 +81,7 @@ func TestAdmit_PhysicalChecksIgnoreTheEnforcementMode(t *testing.T) {
 	}
 	if v.Admitted() {
 		t.Errorf("admitted into a lane another reshuffle is digging, because the group is not " +
-			"mouth-enforced. lane_enforcement chooses who arbitrates mouth mode-sharing; it does not " +
+			"mouth-enforced. Configuration chooses who arbitrates mouth mode-sharing; it does not " +
 			"make a single-file corridor shareable")
 	}
 	if _, err := reservations.ReleaseLanesByOwner(db.DB, stranger.ID); err != nil {
@@ -90,7 +90,7 @@ func TestAdmit_PhysicalChecksIgnoreTheEnforcementMode(t *testing.T) {
 
 	// And so does an occupant.
 	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "adm-off-inside" })
-	if err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
+	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}
 	v, err = d.admit(admissionSituation{order: order, sourceNode: s0})
@@ -127,7 +127,15 @@ func TestAdmit_ForeignDigRefusesAndOwnDigDoesNot(t *testing.T) {
 		o.EdgeUUID = "adm-dig-parent"
 		o.Status = protocol.StatusReshuffling
 	})
-	if err := reservations.AcquireLanes(db.DB, digger.ID, reservations.ModeDig, "test", laneID); err != nil {
+	// TAGGED AS AN EXCAVATION, because that is what this fixture has always been:
+	// a reshuffle parent in `reshuffling`, holding the lane for the length of a
+	// dig. The tag used to be `"test"` and the mode alone carried the meaning.
+	// §R.101 gave every demand's SOURCE hold mode='dig' as well, so the kind is
+	// read off reserved_by now (reservations.IsExcavation) and an untagged row
+	// reads as a source lock — which is what the cause assertion below started
+	// seeing. The assertion is unchanged.
+	if err := reservations.AcquireLanes(db.DB, digger.ID, reservations.ModeDig,
+		reservations.ByExcavation, laneID); err != nil {
 		t.Fatalf("acquire dig: %v", err)
 	}
 
@@ -178,7 +186,7 @@ func TestAdmit_OccupantRefusesAndSelfDoesNot(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "adm-occ-inside" })
-	if err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
+	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}
 
@@ -195,7 +203,7 @@ func TestAdmit_OccupantRefusesAndSelfDoesNot(t *testing.T) {
 	// The order already inside is not blocked by itself. Its own row is the only
 	// one left, so nothing else can be supplying the verdict.
 	insideAgain := admitOrder(t, db, "adm-occ-inside-2", s0)
-	if err := reservations.AcquireOccupancy(db.DB, insideAgain.ID, laneID); err != nil {
+	if _, err := reservations.AcquireOccupancy(db.DB, insideAgain.ID, laneID); err != nil {
 		t.Fatalf("acquire second occupancy: %v", err)
 	}
 	if err := reservations.ReleaseAllOccupancy(db.DB, inside.ID); err != nil {
@@ -293,9 +301,11 @@ func TestAdmit_BuriedRefusesAtThePickupEndOnly(t *testing.T) {
 //     reached through production code rather than injected, with everything
 //     upstream satisfied so this arm is the first that can fail.
 //
-// MUTATION (verified): return admittedVerdict() alongside the error in
+// MUTATION (re-driven 2026-08-16): return Admitted() alongside the error in
 // admitLane's pickupSlotNow arm. The second half fires; the type half stays
-// green, which is the split showing they are different claims.
+// green, which is the split showing they are different claims. The note used to
+// name `admittedVerdict()`, which is not a symbol in this tree — the recipe was
+// unperformable as written.
 func TestAdmit_UndeterminedIsNeverAdmitted(t *testing.T) {
 	t.Parallel()
 

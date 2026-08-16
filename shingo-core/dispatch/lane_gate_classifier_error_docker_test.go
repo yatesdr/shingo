@@ -68,7 +68,7 @@ func TestLaneGate_ClassifierErrorWritesACause(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	lane, _, w, _, _ := healLaneFixture(t, db, "CLSERR")
+	lane, _, w, _, _ := clearLaneFixture(t, db, "CLSERR")
 	line := lineNode(t, db, "CLSERR-LINE")
 
 	// A foreign dig owns the lane, which is what keeps the dweller at the mark

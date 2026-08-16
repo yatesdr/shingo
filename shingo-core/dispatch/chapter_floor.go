@@ -110,6 +110,29 @@ func (d *Dispatcher) SweepStalledChapters() ChapterSweepResult {
 		return out
 	}
 	for _, parentID := range parents {
+		// ── `staged` IS TWO POPULATIONS, AND THIS WATCHDOG WANTS ONE OF THEM ──
+		//
+		// The SQL below now admits both statuses, because a §R.104 parent digs
+		// its own lane open from `staged` and is exactly the wedge this pass
+		// exists for: its chapter can go quiet with no vehicle committed, and
+		// nothing else will dissolve it — the evaluator skips it (an open
+		// chapter is a running dig) and the dissolver used to refuse it ("not
+		// reshuffling").
+		//
+		// But `staged` is also the OPERATOR's word for a robot staged at a
+		// station wait, and those rows are the abandon sweep's: AbandonStuckOrders
+		// selects `staged` and exempts exactly IsGateStaged, so the ownership
+		// line is already drawn there in one spelling. This filter reads the
+		// same predicate off the same row, and a staged parent this pass does
+		// not recognize falls through untouched.
+		parent, pErr := d.db.GetOrder(parentID)
+		if pErr != nil || parent == nil {
+			log.Printf("chapter floor: could not reload parent %d: %v (holding)", parentID, pErr)
+			continue
+		}
+		if parent.Status == protocol.StatusStaged && !IsGateStaged(parent) {
+			continue // an operator-staged row: AbandonStuckOrders owns it
+		}
 		legs, lErr := d.db.ListChildOrders(parentID)
 		if lErr != nil {
 			log.Printf("chapter floor: could not read the legs of compound %d: %v (holding)", parentID, lErr)

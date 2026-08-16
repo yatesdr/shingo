@@ -50,11 +50,17 @@ func digHolder(t *testing.T, db *store.DB, uuid string) *orders.Order {
 // TestAcquireLanesForOrder_ForeignDigRefuses is the floor defect.
 //
 // The dig row is written UNCONDITIONALLY — LaneLock.TryLock takes a ModeDig lane
-// reservation with no enforcement-mode check (binresolver/lane_lock.go:60-69) —
-// and on `none` it was read by nobody on this path. resolveOrderLaneHolds drops
-// every lane with no gate mark (laneIsGated, lane_gate.go:139), so a `none`
+// reservation with no configuration check — and it was read by nobody on this
+// path.
+//
+// THE MECHANISM NAMED HERE IS GONE, and the paragraph read: "resolveOrderLaneHolds
+// drops every lane with no gate mark (laneIsGated, lane_gate.go:139), so a `none`
 // group yields zero holds, and AcquireLanesForOrder then returns admitted on
-// len(holds)==0 (lane_gate.go:420-422) before anything consults the dig.
+// len(holds)==0 before anything consults the dig." §R.96 stage 2 removed that
+// skip: every lane yields its holds now, marked or not (resolveOrderLaneHolds'
+// own header retracts the claim in the same words). The defect this test pins is
+// unchanged — a plain retrieve walking past a foreign dig — and it is reached by
+// the holds being read rather than by their being absent.
 //
 // The compound path already asks this question mode-independently
 // (admission.go:230-261, whose comment says so in as many words). Plain orders do

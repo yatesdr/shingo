@@ -44,19 +44,6 @@ const ReshuffleDissolveDetail = "reshuffle dissolved: the dig's plan went stale;
 // reshuffleDissolveDetail is the in-package spelling of the same constant.
 const reshuffleDissolveDetail = ReshuffleDissolveDetail
 
-// ReshuffleDissolveFolderDetail is the dissolve's OTHER ending: a service-dig
-// parent, which is cancelled rather than re-queued (§R.93.1).
-//
-// A separate string on purpose. The two endings are different facts — one demand
-// went back to be re-planned, one folder was thrown away — and a reader counting
-// dissolves needs to be able to tell them apart. soakstat counts dissolves off
-// ReshuffleDissolveDetail; folding this into it would report a cancelled folder
-// as a demand re-planning, which is the conflation this whole ruling is about.
-const ReshuffleDissolveFolderDetail = "reshuffle dissolved: the dig's plan went stale; the dig is cancelled (a folder does not re-plan)"
-
-// reshuffleDissolveFolderDetail is the in-package spelling of the same constant.
-const reshuffleDissolveFolderDetail = ReshuffleDissolveFolderDetail
-
 // ── GATE 1: A DIG FAILURE IS CONGESTION, NOT THE DEMAND'S FAULT (§R.91) ────
 //
 // ReshuffleLegFailedDetail marks a chapter closed because one of its LEGS
@@ -88,21 +75,11 @@ const reshuffleDissolveFolderDetail = ReshuffleDissolveFolderDetail
 // because a chapter that ended because its plan went stale and a chapter that
 // ended because a leg died leave the demand in identical shape. The strings stay
 // apart because the two are different facts and a reader counting them needs to
-// tell them apart; that is the same reason ReshuffleDissolveFolderDetail is not
-// folded into ReshuffleDissolveDetail.
+// tell them apart.
 const ReshuffleLegFailedDetail = "reshuffle dissolved: a dig leg failed; the demand re-plans"
 
 // reshuffleLegFailedDetail is the in-package spelling of the same constant.
 const reshuffleLegFailedDetail = ReshuffleLegFailedDetail
-
-// ReshuffleLegFailedFolderDetail is the leg-failure ending for a FOLDER — a
-// service-dig parent, which is cancelled rather than re-queued (§R.93.1). A
-// folder is not a demand and only demands re-plan; its requester is untouched
-// and window 3 proposes it a fresh dig.
-const ReshuffleLegFailedFolderDetail = "reshuffle dissolved: a dig leg failed; the dig is cancelled (a folder does not re-plan)"
-
-// reshuffleLegFailedFolderDetail is the in-package spelling of the same constant.
-const reshuffleLegFailedFolderDetail = ReshuffleLegFailedFolderDetail
 
 // IsChapterEndCancel reports whether a child's cancel reason means "this
 // chapter is over", as opposed to any of the teardowns that mean "this compound
@@ -826,55 +803,56 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			// the fold makes that real, a dissolve must also seal the parent, or the
 			// re-plan inherits an open marker and this arm stops being reachable.)
 			if parent != nil {
-				// ── A FOLDER IS NOT A DEMAND. ONLY DEMANDS RE-PLAN. (§R.93.1) ──
-				//
-				// The arm above says "Reshuffling → Queued for BOTH kinds", meaning a
-				// plain parent and a coordinated one. There is a THIRD kind, and it
-				// had no arm: a SERVICE DIG parent is a folder — no bin, no payload,
-				// no demand of its own, and no destination at all once its plan is
-				// gone. Returning it to the acquiring set hands the fulfillment
-				// scanner a folder to source material for.
-				//
-				// Measured on the rig 2026-08-14, dig 51:
-				//
-				//   DISSOLVING dig 51 — child 52 is walled by a bin no order is
-				//                       coming for ... the demand survives.
-				//   engine: order 51 queued for payload ""
-				//   fulfillment: dest node "" not found for order 51   ← then forever
-				//
-				// It sourced a bin ("bin found, soft-holding"), soft-held it away from
-				// real demands, parked on dest-node-unresolved — a wait nothing in the
-				// world can end — and retried the lookup roughly once a second for the
-				// rest of the run.
-				//
-				// AND THE CORPSE BLOCKED ITS OWN REPLACEMENT, which is the part that
-				// actually stops the plant. A phantom stays NON-TERMINAL and keeps its
-				// dig_target_node, so arm 3's one-dig-per-episode gate counts it as a
-				// live excavation and refuses to raise another dig for that episode.
-				// Order 29 — the gate dweller the dig existed to free — sat at the
-				// mark for the whole 17-minute window with its only releaser dissolved
-				// into a bin-sourcing order.
-				//
-				// CANCEL IS THE WHOLE FIX, and it works by subtraction: the ordinary
-				// cancel path releases the soft-held bin, terminalizing clears arm 3's
-				// gate, and window 3 re-proposes for the dweller on its next
-				// evaluation. Nothing new runs.
-				//
-				// "the demand survives" still holds — it was never this row. The demand
-				// is the DWELLER, which is untouched by this cancel and is precisely
-				// what gets its dig re-proposed.
-				//
-				// AND THE WORDS COME FROM HOW THE CHAPTER ENDED, not from which arm
+				// THE WORDS COME FROM HOW THE CHAPTER ENDED, not from which arm
 				// reached this line. Under gate 1 a failed leg lands here too, and
 				// telling a demand its "plan went stale" when a robot broke down
 				// would put the wrong sentence in front of the operator reading the
 				// board. One path, one disposition, two vocabularies.
-				folderDetail, demandDetail := reshuffleDissolveFolderDetail, reshuffleDissolveDetail
+				demandDetail := reshuffleDissolveDetail
 				if chapterEndedInFailure(children) {
-					folderDetail, demandDetail = reshuffleLegFailedFolderDetail, reshuffleLegFailedDetail
+					demandDetail = reshuffleLegFailedDetail
 				}
-				if parent.DigTargetNode != "" {
-					d.lifecycle.CancelOrder(parent, parent.StationID, folderDetail)
+				// ── A STAGED PARENT HAS NO DISPOSITION TO TAKE (§R.104/§R.104a) ──
+				//
+				// The arms above write transitions OUT of `reshuffling`, and the
+				// old code below offered this parent two: Queue and Cancel. BOTH
+				// ARE ILLEGAL HERE, and for different reasons.
+				//
+				// Queue is refused by the state machine: `{staged → queued}` is
+				// not among staged's successors (protocol/types.go), so the old
+				// arm's every run on this shape logged "could not return its
+				// parent to the acquiring set" and stranded the demand at the
+				// mark. Cancel is worse than illegal — it is wrong: the demand's
+				// own work did not fail, its dig did (§R.91), and the robot is
+				// standing at the mark with a plan that is still the plan (the
+				// splice-append resume, §R.104a).
+				//
+				// SO THE DISPOSITION IS NO TRANSITION, AND THE PARENT PARKS WITH
+				// A CAUSE. Its successors are all transitions, so `staged` is the
+				// truth about it; it keeps the status it never left and waits for
+				// the machinery that re-asks the lane. That machinery is live on
+				// both halves: the evaluator re-asks on every lane event and the
+				// 60s lane floor (PopGateStaged's floor), and the all-terminal
+				// half is additionally covered by the widened chapter watchdog.
+				//
+				// TERMINAL STAGED PARENTS EXCLUDED, and that exclusion is
+				// load-bearing: IsGateStaged does not test status, so an
+				// operator-cancelled staged dweller reaches this fork through the
+				// :740 carve-out above, and parking it would immortalize a wait
+				// whose row a human already ended. Those fall through to the
+				// existing arms, whose guards (the state machine) already refuse
+				// them harmlessly.
+				if IsGateStaged(parent) && !protocol.IsTerminal(parent.Status) {
+					// Lane only, deliberately: the sentence's dig clause reads
+					// "dig N is WORKING this lane", which is what this cause
+					// exists to say is no longer true. The cause column carries
+					// the exact fact; the sentence stays at the lane.
+					d.setQueueReason(parent, protocol.QueueStorageRearranging, CauseStagedDigFailed,
+						QueueParams{Lane: d.firstLaneName(heldLanes)})
+					log.Printf("dispatch: compound %d lost a dig leg while staged at its mark — "+
+						"no transition (staged has no path to queued; the demand is not what failed, "+
+						"§R.91); the lane is re-asked on the next pass and the resume stays the "+
+						"splice-append", parentOrderID)
 				} else if err := d.lifecycle.Queue(parent, "dispatcher", demandDetail); err != nil {
 					log.Printf("dispatch: dissolved compound %d could not return its parent to the "+
 						"acquiring set: %v (the demand is stranded in reshuffling; the reconciliation "+
@@ -884,6 +862,31 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			// Idempotent — the dissolve released it already. Repeated because this
 			// arm is also reachable when a leg that was already in flight terminates
 			// after the dissolve, and a lane held past a re-plan is a wedge.
+			//
+			// ── EXCEPT A STAGED PARENT, WHICH KEEPS ITS LANE WHEN IT STILL OWES IT
+			// ONE (§R.105 item 7) ──
+			//
+			// The order-wide release below is the re-plan path's, and it is
+			// owner-blind: the planner whose next question is "may I take this
+			// lane" must not find it locked by a demand that just re-queued. A
+			// staged parent is not re-queueing — the robot is at the mark and the
+			// resume is the splice-append — so dropping its corridor here would
+			// readmit traffic into the lane mid-story, the exact window §R.104a's
+			// ordering (lock → dig → append) exists to close.
+			//
+			// The per-lane decider is already the right answer and needs no new
+			// predicate: holderStillOwesTheLane keeps the lane for a store whose
+			// destination sits in it ("still owes this lane a drop"), and
+			// legStillNeedsLane keeps it for a retrieve whose bin has not left.
+			// When the parent no longer owes the lane anything, the decider
+			// releases and wakes it — same call, same fork as the success path
+			// a hundred lines below ("AFTER the disposition, necessarily").
+			if IsGateStaged(parent) && !protocol.IsTerminal(parent.Status) {
+				for _, laneID := range heldLanes {
+					d.maybeReleaseDigOnLastBlockerOut(laneID)
+				}
+				return nil
+			}
 			d.unlockLaneForCompound(parentOrderID, heldLanes)
 			return nil
 		}
@@ -1652,14 +1655,43 @@ func (d *Dispatcher) obstructionIsSpokenFor(leg *orders.Order, sourceNode *nodes
 	if err != nil {
 		return false, fmt.Errorf("stale-dig disposition: blockers in front of slot %d: %w", target.ID, err)
 	}
-	// A DEFINITE YES OUTRANKS AN UNREADABLE ROW. The scan runs to the end rather
-	// than returning on the first error, because one live claimant is enough for
-	// the lane to clear itself no matter how many of its neighbours were
-	// unreadable. Only when nothing live was found does the unreadable row decide,
-	// and then it decides HOLD — the caller's error arm says why, and it is the
-	// same reason an unreadable lane holds one level up: a dissolve throws away a
-	// plan, and doing that on a database hiccup is churn across every held leg at
-	// once.
+	spoken, err := d.blockersSpokenFor(blockers)
+	if err != nil {
+		return false, fmt.Errorf("stale-dig disposition: %w", err)
+	}
+	return spoken, nil
+}
+
+// blockersSpokenFor is the ONE spelling of "is somebody coming for these bins".
+//
+// It is §R.98 stage C's ruling (54c60fee), lifted out of obstructionIsSpokenFor
+// when the acceptance arm's fact 3 turned out to need the identical question
+// over a blocker set it had already read. Two callers, one semantics — the
+// stale-dig disposition and the gate's dig summons — where there used to be one
+// ruled predicate here and a bare `ClaimedBy == nil` one file over that read a
+// dead holder as a releaser.
+//
+// HARD CLAIMS ONLY, and that is the same line the burial guard draws: claimed_by
+// is written at ConfirmForDispatch immediately before the fleet call, so it means
+// a robot is in motion. A soft reservation is a plan, and a plan does not move a
+// bin.
+//
+// AND THE CLAIMANT HAS TO BE ALIVE, which is the whole of the ruling: a claim is
+// "somebody coming" only while its holder is non-terminal and advancing inside
+// the stall window. NOT OWNER-SCOPED, for the reason obstructionIsSpokenFor's own
+// header names: a dig's legs claim the bins in front of each other by
+// construction, so a live sibling carrying a blocker out is a releaser whatever
+// arm is asking.
+//
+// A DEFINITE YES OUTRANKS AN UNREADABLE ROW. The scan runs to the end rather
+// than returning on the first error, because one live claimant is enough for
+// the lane to clear itself no matter how many of its neighbours were
+// unreadable. Only when nothing live was found does the unreadable row decide,
+// and then it decides HOLD — the caller's error arm says why, and it is the
+// same reason an unreadable lane holds one level up: dissolving a plan, or
+// digging a corridor, on a database hiccup is churn across every held leg at
+// once.
+func (d *Dispatcher) blockersSpokenFor(blockers []reshuffleBlocker) (bool, error) {
 	var readErr error
 	for _, b := range blockers {
 		if b.bin.ClaimedBy == nil {
@@ -1667,15 +1699,17 @@ func (d *Dispatcher) obstructionIsSpokenFor(leg *orders.Order, sourceNode *nodes
 		}
 		live, err := d.claimantIsMoving(*b.bin.ClaimedBy)
 		if err != nil {
-			readErr = fmt.Errorf("stale-dig disposition: liveness of claimant %d on bin %d: %w",
+			readErr = fmt.Errorf("liveness of claimant %d on bin %d: %w",
 				*b.bin.ClaimedBy, b.bin.ID, err)
 			continue
 		}
 		if live {
+			d.dbg("dig liveness: bin %d is claimed by order %d, which is moving — somebody IS coming",
+				b.bin.ID, *b.bin.ClaimedBy)
 			return true, nil
 		}
-		d.dbg("stale-dig disposition: bin %d in front of leg %d is claimed by order %d, which is not "+
-			"moving — that claim is not a releaser", b.bin.ID, leg.ID, *b.bin.ClaimedBy)
+		d.dbg("dig liveness: bin %d is claimed by order %d, which is not moving — that claim is not "+
+			"a releaser", b.bin.ID, *b.bin.ClaimedBy)
 	}
 	if readErr != nil {
 		return false, readErr
@@ -1719,6 +1753,49 @@ func (d *Dispatcher) claimantIsMoving(claimantID int64) (bool, error) {
 		return false, nil
 	}
 	return clock.Now().UTC().Sub(claimant.UpdatedAt.UTC()) < claimantStallWindow, nil
+}
+
+// claimantStopped reports the population §R.115 ruled is A PERSON'S JOB: the
+// order holding a hard claim has STOPPED WITHOUT TERMINATING. It returns how
+// long that order has been standing still, because the alarm this feeds is
+// judged on exactly that number.
+//
+// IT IS NOT claimantIsMoving INVERTED, AND LAW 3'S RIDER IS WHY. That predicate
+// answers "is this claim a releaser", and it answers NO for three different
+// worlds: an order that stalled, an order that reached a terminal status and has
+// not been swept yet, and a claim whose order row cannot be read. Only the first
+// is anybody's job. A TERMINAL claimant already has a machine releaser —
+// ReleaseOrphanedClaims sweeps exactly `claimed_by IN (SELECT id FROM orders
+// WHERE status IN (terminal))` on the background pass (reconciliation.go) — so
+// naming an engineer for it would be calling a human out to watch a sweep run.
+// Two questions; a shared spelling would be a shared spelling of the wrong one.
+//
+// THE SAME WINDOW, NOT A SECOND ONE (§R.115a). The orchestrator proposed a
+// longer threshold here on the argument that a false positive costs an
+// engineer's trip rather than our own re-plan; the owner declined on law 13 — a
+// second threshold is earned by measurement, not by anticipation. So the
+// accepted risk is stated rather than discovered: R.30 measured mid-order
+// JackUnload waits at p50 91s and MAX 959s, and 959s is longer than this window,
+// so this WILL occasionally name a healthy order. That is why the alarm carries
+// the order id and the elapsed time — one row to check — and why "how often did
+// it accuse an order that turned out to be fine" is a named watch item. ONE
+// confirmed false alarm re-opens the split.
+//
+// NAMED BLIND SPOT: a claim whose order row is MISSING answers false here. Such
+// a claim is unreleasable — the orphan sweep's subquery matches no row for it
+// either — so it would be a person's job if it happened, and it is left out
+// because nothing in this tree deletes orders and the branch could not be
+// demonstrated. It renders under the ordinary congestion cause if it ever does.
+func (d *Dispatcher) claimantStopped(claimantID int64) (bool, time.Duration, error) {
+	claimant, err := d.db.GetOrder(claimantID)
+	if err != nil {
+		return false, 0, err
+	}
+	if claimant == nil || protocol.IsTerminal(claimant.Status) {
+		return false, 0, nil
+	}
+	still := clock.Now().UTC().Sub(claimant.UpdatedAt.UTC())
+	return still >= claimantStallWindow, still, nil
 }
 
 // dissolveCompound abandons a dig without terminating the demand behind it.
@@ -1774,7 +1851,24 @@ func (d *Dispatcher) dissolveCompound(parentOrderID int64, why string) error {
 	// compound is ending, and dissolving would cancel its legs under a marker that
 	// tells the terminal arm to resurrect the parent. The teardown paths cancel
 	// children BEFORE the parent, so this window is real rather than theoretical.
-	if parent.Status != StatusReshuffling {
+	//
+	// ── A STAGED PARENT HAS NOT LEFT EITHER: IT NEVER ENTERED (§R.104) ──
+	//
+	// The same reading as the guard in AdvanceCompoundOrder twenty lines into its
+	// disposition fork: this reads "not `reshuffling`" as "moved on", which was
+	// true while every compound parent passed through that status. A parent that
+	// dug its own lane open from the mark never took the transition — `staged` is
+	// the truth about it, and refusing the dissolve here leaves hasOpenDigChapter
+	// true forever, which is the wedge: the evaluator will not append while a
+	// chapter is open, and nothing can close a chapter the dissolver refuses to
+	// touch.
+	//
+	// The dissolve is SAFE for this shape precisely because it never transitions
+	// the parent — no Queue, no Cancel, no resurrection: the legs are cancelled
+	// under the dissolve marker and the terminal arm's `!IsGateStaged(parent)`
+	// fork (added with this same reading, above) parks the parent with a cause
+	// instead of moving it.
+	if parent.Status != StatusReshuffling && !IsGateStaged(parent) {
 		d.dbg("dispatch: not dissolving compound %d — its parent is %s, so the dig is being torn down, "+
 			"not re-planned", parentOrderID, parent.Status)
 		return nil
@@ -1794,6 +1888,18 @@ func (d *Dispatcher) dissolveCompound(parentOrderID int64, why string) error {
 	// stays `reshuffling` through a dissolve, so nothing has terminalized it and
 	// the snapshot could equally be taken here — it is taken above the cancels for
 	// uniformity with the other teardowns, where the ordering IS load-bearing.
+	//
+	// A STAGED PARENT SPLITS THE SAME WAY THE FORK DOES (§R.105 item 7): it is not
+	// re-planning, so the order-wide release is not its path — the decider keeps
+	// the lane for exactly as long as the parent still owes it something, and
+	// hands off the rest. See the fork in AdvanceCompoundOrder for the reasoning;
+	// both sites are the same rule at two doors.
+	if IsGateStaged(parent) && !protocol.IsTerminal(parent.Status) {
+		for _, laneID := range heldLanes {
+			d.maybeReleaseDigOnLastBlockerOut(laneID)
+		}
+		return nil
+	}
 	d.unlockLaneForCompound(parentOrderID, heldLanes)
 	return nil
 }

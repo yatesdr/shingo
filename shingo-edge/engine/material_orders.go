@@ -64,9 +64,11 @@ const waitKindStation = "station"
 // and the inbound/outbound staging designation lives HERE, in the cell config,
 // which Core does not have. We are the only party that knows.
 //
-// Springfield, 2026-08-12: AMR-04 held a bin for 48 minutes at a full SLN_003,
-// the fleet reporting RUNNING with no error, until an admin cancelled the order
-// two hours in. Nothing had ever asked whether the node was free.
+// Undeclared, nothing asks whether the node is free: a second order takes it
+// while the first robot is on its way, and that robot arrives holding a bin it
+// cannot put down. (A Springfield 2026-08-12 attribution stood here; §R.112's
+// plant queries falsified it — protocol.ComplexOrderStep.ExclusiveSlot carries
+// the one full record. The gap is reachable on its own terms.)
 //
 // ── A CONSTRUCTOR, FOR THE REASON stationWait IS ONE ──────────────────────
 //

@@ -63,7 +63,7 @@ func (e *Engine) wireLaneGateHandlers() {
 				// the two act on different POPULATIONS and do different things: the
 				// evaluator appends a tail to a waybill the fleet already holds,
 				// this dispatches a leg for the first time. (It is NOT because the
-				// evaluator is gate_choreography-only — that gate was deleted by
+				// evaluator is gated-lane-only — that gate was deleted by
 				// F-05. See RedriveHeldCompoundLegs.)
 				e.dispatcher.RedriveHeldCompoundLegs(id)
 			}

@@ -150,7 +150,7 @@ func TestEveryTerminalTransitionReleasesEveryHoldKind(t *testing.T) {
 			if err := reservations.AcquireLanes(db.DB, ord.ID, reservations.ModeInbound, "test", laneID); err != nil {
 				t.Fatalf("%s: acquire mouth: %v", label, err)
 			}
-			if err := reservations.AcquireOccupancy(db.DB, ord.ID, laneID); err != nil {
+			if _, err := reservations.AcquireOccupancy(db.DB, ord.ID, laneID); err != nil {
 				t.Fatalf("%s: acquire occupancy: %v", label, err)
 			}
 

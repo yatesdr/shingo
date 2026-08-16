@@ -193,11 +193,8 @@ func gateMouthRows(t *testing.T, db *store.DB, laneID int64) int {
 // TestLaneGate_MarkIsTheEnablement replaces the two enforcement-mode tests that
 // stood here.
 //
-// They pinned a three-valued property on the GROUP: that `mouth` and
-// `gate_choreography` both switched Core's machinery on, that the retired
-// `delegated` and any junk string fell to `none`, and that the two active arms
-// behaved identically. All of it described a switch that no plant ever set and
-// that is now deleted.
+// They pinned a three-valued enforcement property on the GROUP, and every arm
+// of it described a switch no plant ever set. It is deleted.
 //
 // What replaces it is one fact on the LANE: the waiting point. There is nothing
 // to fall back from and no pair of arms to keep in step — a lane has a mark or it
@@ -401,6 +398,57 @@ func TestLaneGate_AcquireAllOrNothingAcrossModes(t *testing.T) {
 	}
 }
 
+// TestLaneGate_SameLaneSourceAndDest_OneHoldStrongestMode pins the dedupe
+// fix-batch 2b exists for.
+//
+// The source arm and the dest arm of resolveOrderLaneHolds can resolve to the
+// SAME lane — an order that picks a bin out of a lane and drops back into it,
+// reachable through the operator bin-move door. Before the dedupe, that
+// produced TWO holds for one owner on one lane, and acquireOrderLanes took
+// them in two calls whose order a Go map chose at random: whichever mode
+// committed first left a row the second mode then conflicted with — through
+// admitMouth's "still a caller bug" arm, whose error does not wrap
+// ErrReservationConflict, so the conflict rollback never fired, the committed
+// row survived, and every retry met the order's own row. The lane was wedged
+// by the order that needed it, permanently.
+//
+// The deduped answer is one hold, dig: an order that both picks from and drops
+// into a lane owns it for the whole visit, the same rule
+// resolvePlanLaneHolds states for a plan walk.
+//
+// MUTATION (verified): delete the dedupe (restore the plain append). The
+// holds-length assertion fires — and, driven through acquireOrderLanes, the
+// wedge itself is pinned by the sibling test below.
+func TestLaneGate_SameLaneSourceAndDest_OneHoldStrongestMode(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	_, laneID, slot := gatedLane(t, db, "SAME-LANE", "mouth")
+
+	// Same node is both source and destination: the operator bin-move shape.
+	holds, err := d.resolveOrderLaneHolds(slot, slot)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(holds) != 1 || holds[0].laneID != laneID || holds[0].mode != reservations.ModeDig {
+		t.Fatalf("same-lane holds = %+v, want ONE dig hold on lane %d — two rows for one owner on "+
+			"one lane is the incoherent state admitMouth refuses, and the refusal it raises never "+
+			"triggers the conflict rollback", holds, laneID)
+	}
+
+	// And the acquire admits: one row, no self-conflict, no wedge.
+	mover := testdb.CreateOrder(t, db)
+	admitted, err := d.acquireOrderLanes(mover.ID, holds)
+	if err != nil || !admitted {
+		t.Fatalf("same-lane acquire: admitted=%v err=%v — the deduped hold set must acquire "+
+			"cleanly; before the fix this was the wedge (the order's own committed row refusing "+
+			"its own second mode)", admitted, err)
+	}
+	if n := gateMouthRows(t, db, laneID); n != 1 {
+		t.Fatalf("lane rows after same-lane acquire = %d, want 1", n)
+	}
+}
+
 func TestLaneGate_ReleaseDropsHold(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -434,7 +482,16 @@ func TestLaneGate_CauseDig(t *testing.T) {
 	digger := testdb.CreateOrder(t, db)
 	waiter := testdb.CreateOrder(t, db)
 
-	if err := reservations.AcquireLanes(db.DB, digger.ID, reservations.ModeDig, "test", laneID); err != nil {
+	// THE TAG IS THE FIXTURE SAYING WHAT IT ALWAYS MEANT. This planted the row
+	// with the reservedBy `"test"`, which was exact while mode='dig' had one
+	// meaning. §R.101 gave every demand's SOURCE hold that mode, so the kind is
+	// now read off reserved_by (reservations.IsExcavation) and an untagged row is
+	// a source lock — which is what this test started reporting. The assertion is
+	// unchanged: a foreign EXCAVATION is lane-held-dig, and the fixture now says
+	// it is one. The source-lock half of the table is pinned in
+	// lane_hold_kind_test.go.
+	if err := reservations.AcquireLanes(db.DB, digger.ID, reservations.ModeDig,
+		reservations.ByExcavation, laneID); err != nil {
 		t.Fatalf("digger acquire: %v", err)
 	}
 	holds, _ := d.resolveOrderLaneHolds(line, slot) // waiter wants inbound

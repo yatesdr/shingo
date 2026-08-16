@@ -48,7 +48,7 @@ func TestOccupancy_ReleasedWhenTheRobotLeavesNotWhenItDrops(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	lane, park, w, p, _ := healLaneFixture(t, db, "EXITOCC")
+	lane, park, w, p, _ := clearLaneFixture(t, db, "EXITOCC")
 	line := lineNode(t, db, "EXITOCC-LINE")
 
 	// THE LEAVER: an order that entered the lane and is picking a bin OUT of it.
@@ -180,7 +180,7 @@ func TestOccupancy_ExitReleasesTheLEGsRowNotItsParents(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	lane, _, w, _, _ := healLaneFixture(t, db, "LEGOCC")
+	lane, _, w, _, _ := clearLaneFixture(t, db, "LEGOCC")
 	line := lineNode(t, db, "LEGOCC-LINE")
 
 	// A dig: a parent in `reshuffling` and the leg that is actually in the lane.

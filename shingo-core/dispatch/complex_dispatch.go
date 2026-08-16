@@ -33,8 +33,10 @@ import (
 // The cost of the wrong sentence was that nobody re-read the code: the
 // predicate's NAME, this comment, and its other caller's comment all promised
 // staging coverage, so a reviewer checking "are staging dropoffs gated?" got
-// three confirmations and no gate. SPR AMR-04 held a bin 48 minutes at a full
-// SLN_003 (2026-08-12).
+// three confirmations and no gate. (An incident attribution stood here; §R.112
+// falsified it — see protocol.ComplexOrderStep.ExclusiveSlot. The three
+// confirmations and the missing gate are what this paragraph is about, and they
+// were real.)
 //
 // Staging is now covered by DECLARATION instead —
 // protocol.ComplexOrderStep.ExclusiveSlot, set by the author of the plan —
@@ -721,9 +723,12 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	//
 	// AND THE SIBLING PREMISE HAS EXPIRED. The justification above used to end
 	// "and Core has no SiblingOrderID to model that". It does now:
-	// orders.sibling_order_id is stamped at intake (complex_intake.go), linked
+	// orders.sibling_order_uuid is stamped at intake (complex_intake.go), linked
 	// durably by LinkOrderSiblingsByEdgeUUID, and already read by the swap-hold
-	// gate a few lines above. So the reason for making this a blunt role test
+	// gate a few lines above. (This named `sibling_order_id`, which is EDGE's
+	// column — an INTEGER FK in SQLite. Core's is sibling_order_uuid, TEXT,
+	// holding the peer's edge UUID. The two services genuinely differ here and
+	// the error travelled as far as the round prompt.) So the reason for making this a blunt role test
 	// rather than a modelled dependency no longer holds on its own terms.
 	//
 	// It is left AS IS deliberately. Re-deriving the line-node rule from the
@@ -849,7 +854,15 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 // from and is discarded after formatting. Best-effort: a failed write is logged
 // and swallowed (queue_reason is advisory HMI/queue metadata, never a correctness
 // gate), leaving the in-memory fields matching the persisted values.
-func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) {
+//
+// RETURNS WHETHER THIS CALL ACTUALLY WROTE A NEW WAIT, which is a fact only this
+// function holds and which one caller needs: the stopped-blocker alarm
+// (parkOnClaimedBlocker) fires on the EDGE of a wait rather than on every pass
+// that re-asserts it, and the unchanged short-circuit below is exactly that edge.
+// A false is either "the row already said this" or "the write failed" — neither
+// is a new wait, and both are already logged or harmless. Callers that do not
+// care ignore it, which is every other one.
+func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) bool {
 	reason := FormatQueueSentence(code, params)
 	// The cause is part of what this writes, so it is part of what makes a
 	// second call redundant. Comparing only reason and code meant a call that
@@ -859,15 +872,16 @@ func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode
 	// and then narrows the cause to lane-locked or lock-race. Without the cause
 	// in this comparison, the narrower tag never lands.
 	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == string(cause) {
-		return
+		return false
 	}
 	if err := d.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
 		log.Printf("dispatch: set queue_reason (%s) for order %d: %v", cause, order.ID, err)
-		return
+		return false
 	}
 	order.QueueReason = reason
 	order.QueueCode = string(code)
 	order.QueueCause = string(cause)
+	return true
 }
 
 // failOrderInternal is the scanner-path failure helper. Same as
@@ -929,15 +943,15 @@ func (d *Dispatcher) proposeDigForBuriedPickup(order *orders.Order, laneName str
 	}
 	// §R.91: this demand is `queued` with no vehicle committed to it, so it takes
 	// its own excavation and resumes through `queued` when the corridor opens.
-	res := d.proposeLaneClearDig(lane, target, order, digOwnedByRequester)
+	res := d.proposeLaneClearDig(lane, target, order)
 	switch res.outcome {
-	case serviceDigStarted:
+	case laneClearStarted:
 		log.Printf("dispatch: service dig %d created for %s — complex order %d's pickup at %s is "+
 			"walled in and admission refused it; the demand keeps waiting with its cause",
 			res.parent.ID, lane.Name, order.ID, target.Name)
-	case serviceDigLaneBusy, serviceDigNoShuffleSlot, serviceDigBlockerClaimed,
-		serviceDigNothingInTheWay, serviceDigReadFailed, serviceDigParkingHeldByDig,
-		serviceDigEpisodeAlreadyDigging, serviceDigLaneOccupied:
+	case laneClearLaneBusy, laneClearNoShuffleSlot, laneClearBlockerClaimed,
+		laneClearNothingInTheWay, laneClearReadFailed, laneClearParkingHeldByDig,
+		laneClearEpisodeAlreadyDigging, laneClearLaneOccupied:
 		// All of them self-clear and all of them already have a releaser the demand is
 		// sitting on. Nothing to arrange and nothing new to tell anyone. Right of
 		// way joins the list rather than getting its own arm because this caller
@@ -945,7 +959,7 @@ func (d *Dispatcher) proposeDigForBuriedPickup(order *orders.Order, laneName str
 		// already parked with its own cause, which is what this site's header means
 		// by "one proposer, two reporting policies".
 		d.dbg("complex: no dig for %s yet on behalf of order %d (%v)", lane.Name, order.ID, res.err)
-	case serviceDigNoGroup, serviceDigSlotNotInLane, serviceDigUnplannable:
+	case laneClearNoGroup, laneClearSlotNotInLane, laneClearUnplannable:
 		// Geometry. The demand is NOT failed here: admission's refusal is about one
 		// lane on one tick, and the demand may still be re-planned onto another
 		// source. Loud, because nothing will clear it on its own.

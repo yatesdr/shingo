@@ -415,7 +415,7 @@ func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
 // (blockId/goodsId are cosmetic) — both preserved here.
 //
 // It is also the single fleet-create seam for every plain order, which is why the
-// gate_choreography valve branches HERE rather than in the scanner: routing on the
+// gated-lane valve branches HERE rather than in the scanner: routing on the
 // destination at the one create site is what makes "every lane-bound order ships
 // unsealed" structurally true, instead of true-for-the-callers-we-remembered. Both
 // callers (Kafka/envelope and UI/scanner) inherit it.
@@ -825,7 +825,7 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 	//
 	// Refusing rather than guarding the valve is deliberate. A !Coordinated guard on
 	// the valve alone would make this fall through to UNGATED dispatch — a robot
-	// entering a gate_choreography lane with no gate at all, which is the failure the
+	// entering a gated lane with no gate at all, which is the failure the
 	// gate exists to prevent. That trades a plan bug for a lane-safety bug.
 	//
 	// Refused HERE and not at Edge's API because whether a destination is a gated

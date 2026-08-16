@@ -30,7 +30,7 @@ import (
 func stageDwellerBehindAWall(t *testing.T, db *store.DB, d *Dispatcher, tag string) (
 	wall *nodes.Node, dweller *orders.Order, blocker *bins.Bin) {
 	t.Helper()
-	wallLane, _, w, _, bp := healLaneFixture(t, db, tag)
+	wallLane, _, w, _, bp := clearLaneFixture(t, db, tag)
 	line := lineNode(t, db, tag+"-LINE")
 
 	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {

@@ -3,6 +3,7 @@ package dispatch
 import (
 	"errors"
 	"fmt"
+	"log"
 
 	"shingo/protocol"
 	"shingocore/store/nodes"
@@ -174,8 +175,11 @@ import (
 //     back to meaning what it says rather than doubling as a class separator.
 //
 //     Still true, and worth keeping: admitMouth cannot see a compound leg. That
-//     is the MOUTH's business (mode-sharing), not presence, and it stays gated on
-//     lane_enforcement where it belongs.
+//     is the MOUTH's business (mode-sharing), not presence, and it stays with
+//     the acquire where it belongs. (This said "gated on lane_enforcement".
+//     There is no such property — it was deleted with its type, constants and
+//     reader, having never been set at either plant. The mouth is universal now,
+//     which makes the sentence wrong twice over.)
 //
 // ── FAIL-CLOSED IS A PROPERTY OF THE TYPE, NOT OF THE CALLER ──────────────
 //
@@ -316,9 +320,9 @@ type admissionSituation struct {
 // conditional on the lane and carries its justification.
 type admissionSkips struct {
 	reachability bool
-	// entryWhenGated defers the WHOLE in-lane decision to the gate, on a lane
-	// whose group is gate_choreography and only there. It is a statement about
-	// the CALLER's moment, not about any one question.
+	// entryWhenGated defers the WHOLE in-lane decision to the gate, on a MARKED
+	// lane and only there. It is a statement about the CALLER's moment, not about
+	// any one question.
 	//
 	// A caller sets it when its dispatch does not enter the lane: on a gated
 	// group every lane-bound order is created unsealed ending at the lane's WAIT
@@ -339,10 +343,10 @@ type admissionSkips struct {
 	// If the dispatch does not enter the lane, NONE of the in-lane questions are
 	// about it. Same question, asked once, at the moment it is about.
 	//
-	// It is narrow on purpose. Only gate_choreography moves the entry moment; a
-	// `mouth` lane has no wait point and its dispatch drives straight in, so
-	// deferring there would mean nobody asks at all. Pinned by
-	// TestQuestionSet_PlainEntryStillAsksOccupancyOnAMouthLane.
+	// It is narrow on purpose. Only a MARK moves the entry moment; an unmarked
+	// lane has no wait point and its dispatch drives straight in, so deferring
+	// there would mean nobody asks at all. Pinned by
+	// TestQuestionSet_PlainEntryStillAsksOccupancyOnAnUnmarkedLane.
 	entryWhenGated bool
 }
 
@@ -377,7 +381,7 @@ type admissionSkips struct {
 // answer" cuts both ways, and a read taken at a different moment from the write
 // is the same defect wearing the other shoe.
 //
-// On a gate_choreography lane the TAKE moved: appendGateTail takes occupancy at
+// On a gated lane the TAKE moved: appendGateTail takes occupancy at
 // the tail append, not at the create, because a gated create sends the robot to
 // the wait point OUTSIDE the corridor and a row taken there would declare a robot
 // present in a lane it is deliberately parked next to
@@ -683,8 +687,8 @@ func (d *Dispatcher) admitPlan(order *orders.Order, steps []resolvedStep, skip a
 }
 
 // entryDeferredToGate reports whether this caller's dispatch stops OUTSIDE the
-// lane — the gate_choreography case, where the create ends at the wait point and
-// only the tail append puts a robot in the corridor.
+// lane — the marked-lane case, where the create ends at the wait point and only
+// the tail append puts a robot in the corridor.
 //
 // False unless the caller declared entryWhenGated, so a caller that forgets
 // the field asks the question, which is the same forgetting-is-safe discipline as
@@ -761,18 +765,26 @@ func (d *Dispatcher) admitLane(s admissionSituation, node *nodes.Node, isSource 
 	// lanesFor with no mode check, and both reshuffle planners take and test the
 	// dig lock without consulting one either.
 	//
-	// lane_enforcement selects who owns MOUTH MODE-SHARING (inbound/outbound
-	// compatibility, depth sequencing) — that is AcquireLanesForOrder's business
-	// and it is correctly gated there. Gating these too would mean an ungated
-	// group, which is what both plants actually run, silently stopped serialising
-	// compound legs: occupancy rows still written, never read, two robots into one
-	// corridor. This version briefly did exactly that, and its own test asserted
-	// it was right.
+	// MOUTH MODE-SHARING (inbound/outbound compatibility, depth sequencing) is
+	// AcquireLanesForOrder's business and stays there. It is a separate question,
+	// not a switch over this one — and this paragraph used to say a
+	// `lane_enforcement` property "selects who owns" it and "is correctly gated
+	// there", which is false in both halves: the property was deleted with its
+	// type, its constants and its reader, having never been set on any node at
+	// either plant, and the mouth is now taken on every lane whether or not
+	// anyone drew a mark on the map.
+	//
+	// The warning the paragraph existed to give survives intact, because it was
+	// never about the property: gating the PHYSICAL questions on any
+	// configuration would mean an ordinary group silently stopped serialising
+	// compound legs — occupancy rows still written, never read, two robots into
+	// one corridor. This version briefly did exactly that, and its own test
+	// asserted it was right.
 	//
 	// THE ONE MODE READ BELOW IS NOT THAT, and the distinction is the whole of
 	// entryWhenGated: it does not gate a QUESTION on a mode, it asks whether
 	// THIS CALLER's dispatch is the moment the lane is entered. On a
-	// gate_choreography lane it is not — the create stops at the wait point and the
+	// gated lane it is not — the create stops at the wait point and the
 	// gate decides — so a caller that says so is deferring the questions to the
 	// moment they are about, not dropping them. Only a caller that declares the
 	// flag can reach the read at all; every other caller's answer is
@@ -810,7 +822,36 @@ func (d *Dispatcher) admitLane(s admissionSituation, node *nodes.Node, isSource 
 		return GateVerdict{}, fmt.Errorf("admission: dig owner for lane %d: %w", lane.ID, err)
 	}
 	if digOwner != 0 && !d.ownsDig(s.order.ID, digOwner) {
-		return RefusedAt(CauseLaneDigActive, lane.Name), nil
+		// ── THE REFUSAL IS DECIDED; ONLY ITS NAME IS CHOSEN HERE (§R.101) ──
+		//
+		// A foreign dig-mode row excludes this order whichever KIND it is, and
+		// that stays true: §R.101 rules that a demand owns the lane it sourced
+		// from until the bin leaves by its mover, so gating on the excavation
+		// read instead of DigOwner above would let a second order into a lane a
+		// demand owns. The read below cannot admit anybody; it can only pick
+		// between two words for a refusal already made.
+		//
+		// It is asked here rather than left to the caller because this arm is the
+		// one that names the lane, and lane-dig-active was telling engineers to
+		// go and find an excavation that a plain retrieve's source hold had
+		// simply been misfiled as.
+		//
+		// A FAILED READ KEEPS THE OLDER NAME rather than failing admission. The
+		// refusal is correct either way and the order parks either way; turning a
+		// good refusal into an error because a forensic label could not be
+		// resolved would trade a right answer for none. lane-dig-active is the
+		// conservative choice of the two — it sends a reader looking for the
+		// bigger thing.
+		cause := CauseLaneDigActive
+		excavator, xErr := d.laneLock.ExcavationOwner(lane.ID)
+		switch {
+		case xErr != nil:
+			log.Printf("admission: could not tell whether lane %d's hold is an excavation: %v "+
+				"(labelling the refusal %s)", lane.ID, xErr, CauseLaneDigActive)
+		case excavator == 0:
+			cause = CauseLaneHeldSource
+		}
+		return RefusedAt(cause, lane.Name), nil
 	}
 
 	// 2. SOMEBODY IS INSIDE. Hold B — the per-leg occupancy row, taken at

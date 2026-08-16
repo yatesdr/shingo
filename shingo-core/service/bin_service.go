@@ -688,7 +688,7 @@ func (s *BinService) ApplyIntermediateStore(binID, toNodeID int64, staged bool, 
 // eviction, the move, the destination slot's claim and reservation release,
 // staging state, the burial instrument — is identical, and deliberately so:
 // two copies of this would drift the way the arrival paths drifted before
-// EvictStaleGhostsTx pulled their ghost handling together.
+// EvictStaleGhostBinsTx pulled their ghost handling together.
 func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time, releaseClaim bool, placedByOrder int64) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {

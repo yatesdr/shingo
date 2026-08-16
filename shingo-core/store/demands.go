@@ -24,10 +24,6 @@ func (db *DB) ListDemands() ([]*demands.Demand, error) { return demands.List(db.
 
 func (db *DB) GetDemand(id int64) (*demands.Demand, error) { return demands.Get(db.DB, id) }
 
-func (db *DB) GetDemandByCatID(catID string) (*demands.Demand, error) {
-	return demands.GetByCatID(db.DB, catID)
-}
-
 func (db *DB) IncrementProduced(catID string, qty int64) error {
 	return demands.IncrementProduced(db.DB, catID, qty)
 }

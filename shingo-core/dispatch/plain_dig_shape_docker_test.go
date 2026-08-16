@@ -99,7 +99,7 @@ func TestPlainBuriedRetrieve_KeepsDemandAsItsOwnDigParent(t *testing.T) {
 	}
 }
 
-// serviceDigFor finds the lane-clear dig raised on a demand's behalf, which is
+// laneClearFor finds the lane-clear dig raised on a demand's behalf, which is
 // USUALLY THE DEMAND ITSELF now.
 //
 // ── THE LOOKUP KEY WAS THE RULING, AND THE RULING CHANGED ─────────────────
@@ -121,7 +121,7 @@ func TestPlainBuriedRetrieve_KeepsDemandAsItsOwnDigParent(t *testing.T) {
 // its dig genuinely is a different order with no pointer back. Everything the
 // quoted paragraph says about episodes and 1:many is still true of THAT shape,
 // and the shape-based search below is still how a test finds it.
-func serviceDigFor(t *testing.T, db *store.DB, demand *orders.Order) *orders.Order {
+func laneClearFor(t *testing.T, db *store.DB, demand *orders.Order) *orders.Order {
 	t.Helper()
 
 	// THE DEMAND IS ITS OWN DIG (§R.91) — the ordinary case. Asked first, because
@@ -165,14 +165,14 @@ func serviceDigFor(t *testing.T, db *store.DB, demand *orders.Order) *orders.Ord
 	return nil
 }
 
-// serviceDigChildren is the legs of the dig raised for this demand. Its own
+// laneClearChildren is the legs of the dig raised for this demand. Its own
 // header used to read "what used to be ListChildOrders(demand.ID) before the
 // demand stopped being its own dig" — under §R.91 that is what it is again for
-// every shape but the gate-dweller folder, and serviceDigFor is what tells them
+// every shape but the gate-dweller folder, and laneClearFor is what tells them
 // apart.
-func serviceDigChildren(t *testing.T, db *store.DB, demand *orders.Order) []*orders.Order {
+func laneClearChildren(t *testing.T, db *store.DB, demand *orders.Order) []*orders.Order {
 	t.Helper()
-	dig := serviceDigFor(t, db, demand)
+	dig := laneClearFor(t, db, demand)
 	kids, err := db.ListChildOrders(dig.ID)
 	testutil.MustNoErr(t, err, "list the service dig's legs")
 	return kids

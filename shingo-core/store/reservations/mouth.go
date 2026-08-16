@@ -22,10 +22,56 @@ const (
 	ModeDig      Mode = "dig"
 )
 
-// MouthHold is one active mouth row on a lane: the owning order and its mode.
+// ── WHAT A mode='dig' ROW IS: ONE SPELLING, TWO QUESTIONS (§R.101, law 3) ──
+//
+// ModeDig answers "is this lane held exclusively". Until §R.101 that was the
+// same question as "is an EXCAVATION running here", because a dig was the only
+// thing that ever took the mode. §R.101 generalized every demand's SOURCE hold
+// from outbound to dig — a demand owns the lane it resolves onto until the bin
+// leaves by its mover — and the two questions came apart without the readers
+// being told.
+//
+// Nothing about exclusivity changed and nothing here changes it: admitMouth's
+// rule is still that a dig excludes every other owner and is excluded by every
+// other owner, whichever kind it is. What splits is only what the row is CALLED
+// when something reports it — and the readers that report it name an excavation:
+// the lane-hold cause classifier, and admission's refusal. A wait that says an
+// excavation is running when a plain retrieve is sourcing sends the next
+// engineer to look for a dig that was never planned. It is the §17.5/§17.8
+// family — not an alarm that fails to fire, an alarm with the wrong name on it.
+//
+// So the kind is read off reserved_by, which every writer already stamps and
+// which had ZERO readers before this. Law 15 on our own terms: the fact is
+// recorded, so it is read rather than re-derived.
+const (
+	// ByExcavation — a reshuffle compound working this lane. LaneLock.TryLockFor,
+	// which is the one door every production dig comes through.
+	ByExcavation = "lanelock"
+	// BySourceLock — §R.101's source hold: an ordinary demand owns the lane it
+	// resolved onto. Exclusive, and not an excavation. Written by the lane gate.
+	BySourceLock = "lanegate"
+	// ByDigHandoff — the outbound row a finished dig hands to the bin's collector
+	// (HandOffLaneToPicker). Never a dig row, so never a kind this predicate has
+	// to rule on; named here so the three tags are in one place.
+	ByDigHandoff = "dighandoff"
+)
+
+// IsExcavation reports whether a mouth row's reserved_by tag says a reshuffle
+// owns the lane, as opposed to §R.101's source lock.
+//
+// UNTAGGED ROWS ARE NOT EXCAVATIONS, and that is the safe direction for every
+// caller this has: they all decide what to CALL a refusal that has already been
+// made elsewhere. Guessing "excavation" on an unknown tag is the wrong-name
+// failure this exists to stop; guessing "source lock" costs a reader one extra
+// question and never moves a robot.
+func IsExcavation(reservedBy string) bool { return reservedBy == ByExcavation }
+
+// MouthHold is one active mouth row on a lane: the owning order, its mode, and
+// the tag saying which kind of hold it is (see IsExcavation).
 type MouthHold struct {
-	OrderID int64
-	Mode    Mode
+	OrderID    int64
+	Mode       Mode
+	ReservedBy string
 }
 
 // AcquireLanes takes a mode-tagged mouth hold on each lane for owner, all-or-
@@ -134,12 +180,19 @@ func AcquireLanes(db *sql.DB, owner int64, mode Mode, reservedBy string, laneIDs
 // direction: the dig may ignore the dweller, but the dweller re-asking for its
 // own outbound hold would still be refused by the dig raised to rescue it.
 //
-// Not reachable today, and named rather than left to be discovered: the mouth
-// holds are taken just before the fleet commit, a gate-staged order has already
-// made that commit, and resolveOrderLaneHolds yields nothing at all on an
-// unmarked lane. It becomes reachable the moment mouth acquisition
-// universalizes (§R.96 stage 2), and the durable form of the fix is a
-// beneficiary column on the row, not a second exemption written somewhere else.
+// IT IS REACHABLE NOW, and this paragraph used to say the opposite: "Not
+// reachable today, and named rather than left to be discovered: the mouth holds
+// are taken just before the fleet commit, a gate-staged order has already made
+// that commit, and resolveOrderLaneHolds yields nothing at all on an unmarked
+// lane. It becomes reachable the moment mouth acquisition universalizes (§R.96
+// stage 2)."
+//
+// That moment has been and gone — §R.96 stage 2 landed, and resolveOrderLaneHolds
+// now yields holds on every lane, marked or not (see its own header, which
+// retracts the same claim). So the asymmetry is live rather than pending: a
+// dweller re-asking for its own outbound hold is refused by the dig raised to
+// rescue it. The durable form of the fix is still a beneficiary column on the
+// row, not a second exemption written somewhere else.
 func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, reservedBy string, laneIDs ...int64) error {
 	lanes := sortedUniqueLanes(laneIDs)
 	if len(lanes) == 0 {
@@ -163,6 +216,40 @@ func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, r
 		}
 		switch verdict {
 		case admitIdempotent:
+			// ── THE TAG IS PROMOTED, NEVER DEMOTED ────────────────────────
+			//
+			// The row is already this owner's in this mode, so there is nothing
+			// to do about the HOLD. There can still be something to do about
+			// what it is CALLED, and before §R.101 there never was: a demand
+			// that dug the lane it was holding arrived here holding an OUTBOUND
+			// row, so the verdict was admitUpgrade and the tag was rewritten by
+			// that arm's UPDATE. §R.101 made the source hold a dig too, which
+			// turned that upgrade into this no-op and froze the tag at whatever
+			// wrote first.
+			//
+			// MEASURED, not reasoned: a demand takes its source hold (lanegate),
+			// planBuriedReshuffle re-parents it onto its own excavation and
+			// TryLockFor acquires with lanelock — and the row still read
+			// lanegate. A genuine excavation wearing the source-lock tag is
+			// exactly the wrong-name failure IsExcavation exists to prevent,
+			// pointing the wrong way.
+			//
+			// Promotion only. A dig row that has been an excavation stays one
+			// until it is released or handed off, so a later gate acquire by the
+			// same owner cannot talk it back down — the compound legs of a live
+			// dig do re-enter through the lane gate, and letting them demote the
+			// parent's tag would be the same bug with the clock turned round.
+			if IsExcavation(reservedBy) {
+				if _, err := tx.Exec(
+					`UPDATE reservations SET reserved_by=$1
+					  WHERE order_id=$2 AND resource_kind='mouth' AND node_id=$3
+					    AND state IN ('pending','confirmed')
+					    AND COALESCE(reserved_by, '') <> $1`,
+					reservedBy, owner, lane,
+				); err != nil {
+					return fmt.Errorf("reservations acquire-lanes: promote lane %d: %w", lane, err)
+				}
+			}
 			continue // owner already holds this lane in this mode
 		case admitConflict:
 			return ErrReservationConflict
@@ -314,7 +401,7 @@ func DigAdmissible(q Queryer, laneID int64, beneficiary DigAsker) (bool, error) 
 // activeMouthRows returns the active (pending or confirmed) mouth holds on laneID.
 func activeMouthRows(q Queryer, laneID int64) ([]MouthHold, error) {
 	rows, err := q.Query(
-		`SELECT order_id, mode FROM reservations
+		`SELECT order_id, mode, COALESCE(reserved_by, '') FROM reservations
 		 WHERE resource_kind='mouth' AND node_id=$1 AND state IN ('pending','confirmed')
 		 ORDER BY order_id`,
 		laneID,
@@ -327,7 +414,7 @@ func activeMouthRows(q Queryer, laneID int64) ([]MouthHold, error) {
 	for rows.Next() {
 		var h MouthHold
 		var mode sql.NullString
-		if err := rows.Scan(&h.OrderID, &mode); err != nil {
+		if err := rows.Scan(&h.OrderID, &mode, &h.ReservedBy); err != nil {
 			return nil, fmt.Errorf("reservations active-mouth-rows scan: %w", err)
 		}
 		h.Mode = Mode(mode.String)
@@ -615,8 +702,25 @@ func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy 
 // (node_id) WHERE resource_kind='occupancy' and an INSERT that reports the
 // conflict. That is a real option and not what is here today; do not read the
 // idempotent-insert shape as a decision against it.
-func AcquireOccupancy(db Execer, owner, nodeID int64) error {
-	_, err := db.Exec(
+//
+// ── THE TAKE REPORTS WHETHER IT TOOK ─────────────────────────────────────
+//
+// The return says which of the two idempotent outcomes happened: took=true,
+// this call INSERTED the row; took=false, the row was already there and the
+// INSERT matched nothing. The gated append's failure rollback is the consumer:
+// it may give back a row THIS CALL took and no other, because a dweller's
+// release re-takes the source-lane row its own dispatch took — a no-op here —
+// and dropping that one on an append failure declares an occupied corridor
+// empty to the next entrant (the phantom-absence twin of §R.54's phantom row).
+//
+// The insert's own RowsAffected is the ONLY non-racy spelling of that answer.
+// A caller that reads the table first and decides from what it saw races every
+// other writer: "absent" read, row inserted by someone in between, insert here
+// no-ops — and the caller releases a row it did not take. The INSERT .. WHERE
+// NOT EXISTS decides and reports in one statement, so the answer is a property
+// of the row rather than of the interleaving.
+func AcquireOccupancy(db Execer, owner, nodeID int64) (bool, error) {
+	res, err := db.Exec(
 		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by)
 		 SELECT $1, 'occupancy', $2, 'confirmed', $3
 		 WHERE NOT EXISTS (
@@ -627,9 +731,13 @@ func AcquireOccupancy(db Execer, owner, nodeID int64) error {
 		owner, nodeID, "lane-occupancy",
 	)
 	if err != nil {
-		return fmt.Errorf("reservations acquire-occupancy: %w", err)
+		return false, fmt.Errorf("reservations acquire-occupancy: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("reservations acquire-occupancy rows: %w", err)
+	}
+	return n > 0, nil
 }
 
 // ReleaseOccupancy records that orderID has left nodeID. Owner-scoped and
@@ -698,6 +806,32 @@ func OccupantsOf(q Queryer, nodeID int64) ([]int64, error) {
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// ExcavationOwner returns the order whose EXCAVATION holds laneID, or 0 if the
+// lane's dig rows are all §R.101 source locks (or there are none).
+//
+// THE SIBLING OF DigHoldOwner, NOT A REPLACEMENT FOR IT, and the pairing is the
+// whole of the split. DigHoldOwner answers the EXCLUSIVITY question — may
+// anything else be in this corridor — and every keep-out decision keeps asking
+// it, unchanged, because §R.101's source lock excludes exactly as hard as a
+// reshuffle does. This answers the NAMING question — is what holds it an
+// excavation — and only the sites that put a word in front of a human ask it.
+//
+// Deciding admission on this instead would let a second order into a lane a
+// demand owns, which is §R.101 reversed. The two are one row read two ways, and
+// the difference between them is a sentence, never a robot.
+func ExcavationOwner(q Queryer, laneID int64) (int64, error) {
+	holders, err := activeMouthRows(q, laneID)
+	if err != nil {
+		return 0, err
+	}
+	for _, h := range holders {
+		if h.Mode == ModeDig && IsExcavation(h.ReservedBy) {
+			return h.OrderID, nil
+		}
+	}
+	return 0, nil
 }
 
 // DigHoldOwner returns the order holding a dig on laneID, or 0 if none — the

@@ -430,7 +430,8 @@ func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
 			// test cannot recognise a staging node — it is a station with no
 			// parent, so isConcreteStorageDropoff rejects it and both destination
 			// gates stand down, leaving the node reserved by nothing and checked
-			// by nothing (SPR AMR-04: 48 minutes holding a bin at a full SLN_003).
+			// by nothing — so a second order takes it while the first robot is on
+			// its way.
 			//
 			// Everywhere else the Edge has to declare it, because the staging
 			// designation lives in the cell config Core does not have. HERE the

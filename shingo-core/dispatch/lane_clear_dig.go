@@ -3,7 +3,6 @@ package dispatch
 import (
 	"errors"
 	"fmt"
-	"log"
 
 	"shingo/protocol"
 	"shingocore/store"
@@ -13,10 +12,15 @@ import (
 	"shingocore/store/reservations"
 )
 
-// WINDOW 3 — THE STAGED-ORDER HEAL DIG.
+// THE STAGED-ORDER LANE CLEAR — a dig raised at the GATE, for an order that is
+// already past every planner.
 //
-// The last self-heal window, and the one the other three left behind. A robot is
-// standing at a lane's mark holding an unsealed waybill. It cannot go in, because
+// (This was headed "WINDOW 3", one of a numbered set of self-heal windows whose
+// numbering lives only in the campaign docs. The number told a reader nothing
+// they could look up; the sentence below is what it meant. The other three are
+// named in the table further down, which is where the set is actually useful.)
+//
+// A robot is standing at a lane's mark holding an unsealed waybill. It cannot go in, because
 // a bin sits in the corridor in front of the slot it is aimed at. And NOBODY IS
 // COMING FOR THAT BIN: it carries no claim, no order names it, no dig is planned
 // against it. Every wait in this system is supposed to name the thing that will
@@ -31,7 +35,7 @@ import (
 //
 //	fresh-bin retrieve   source_finder's accessibility check → OutcomeReshuffle
 //	NGRP full retrieve   group_resolver raises BuriedError
-//	held-bin retrieve    window 2's re-check → BuriedForHeldBin
+//	held-bin retrieve    admission's re-check → BuriedForHeldBin
 //	complex pickup       the NGRP re-resolve / supply widen → handleComplexBuriedOnReplay
 //
 // All four are asked BEFORE the order is dispatched. A gate-staged order is past
@@ -75,7 +79,7 @@ import (
 // window 3's bug — a gate-staged order refused behind ANY dig has always had that
 // gap, and the traffic on a busy lane is the only thing that has been hiding it.
 
-// serviceDigOutcome names what a lane-clear proposal actually did.
+// laneClearOutcome names what a lane-clear proposal actually did.
 //
 // It exists because the two callers owe their requester different things. The
 // gate's dweller already carries a cause explaining its wait, so every refusal
@@ -83,18 +87,18 @@ import (
 // has to name which refusal happened. One proposer, two reporting policies —
 // rather than two proposers that drift, which is the shape this file's own
 // history (and F-04) argues against.
-type serviceDigOutcome int
+type laneClearOutcome int
 
 const (
-	// serviceDigStarted — the dig exists and its first leg is dispatching.
-	serviceDigStarted serviceDigOutcome = iota
-	// serviceDigLaneBusy — somebody holds the lane. Whatever frees it re-drives
+	// laneClearStarted — the dig exists and its first leg is dispatching.
+	laneClearStarted laneClearOutcome = iota
+	// laneClearLaneBusy — somebody holds the lane. Whatever frees it re-drives
 	// every waiter, so there is nothing to arrange.
-	serviceDigLaneBusy
-	// serviceDigLaneOccupied — a robot from another order is INSIDE the lane
+	laneClearLaneBusy
+	// laneClearLaneOccupied — a robot from another order is INSIDE the lane
 	// (Hold B), so an excavation would put a second one in there with it.
 	//
-	// A DIFFERENT FACT FROM serviceDigLaneBusy, which is about the MOUTH. A
+	// A DIFFERENT FACT FROM laneClearLaneBusy, which is about the MOUTH. A
 	// mouth hold says who may work the corridor; an occupancy row says who is
 	// physically in it, and the two have different lifetimes on purpose (see
 	// the Hold B note in reservations/mouth.go). A dig can pass the mouth and
@@ -103,17 +107,17 @@ const (
 	//
 	// The releaser is live and already tabled: CauseLaneOccupied — "the robot
 	// inside the lane places or picks, releasing its occupancy row".
-	serviceDigLaneOccupied
-	// serviceDigNoShuffleSlot — congestion. The pool frees as soon as anything
+	laneClearLaneOccupied
+	// laneClearNoShuffleSlot — congestion. The pool frees as soon as anything
 	// anywhere in the group places.
-	serviceDigNoShuffleSlot
-	// serviceDigParkingHeldByDig — right of way (§R.61): the group has room and it
+	laneClearNoShuffleSlot
+	// laneClearParkingHeldByDig — right of way (§R.61): the group has room and it
 	// is inside a lane another dig holds. Congestion like the row above, on a
 	// narrower releaser — the named dig releasing its lane. THE DIG DID NOT START
 	// AND HOLDS NOTHING, which is the whole point of refusing here rather than at
 	// the leg: this outcome is reached before createServiceDigParent.
-	serviceDigParkingHeldByDig
-	// serviceDigEpisodeAlreadyDigging — the demand this would serve already has a
+	laneClearParkingHeldByDig
+	// laneClearEpisodeAlreadyDigging — the demand this would serve already has a
 	// service dig running. Congestion of a kind the plant makes for itself, and
 	// the releaser is that dig finishing.
 	//
@@ -140,29 +144,29 @@ const (
 	// §R.40 gives: a dig serves a LANE and one dig serves every demand behind it,
 	// so there is no 1:1 identity to key on. The origin is the tie a dig has, and
 	// two live excavations inside one episode is the shape being refused.
-	serviceDigEpisodeAlreadyDigging
-	// serviceDigNothingInTheWay — the lane moved between the decision and the
+	laneClearEpisodeAlreadyDigging
+	// laneClearNothingInTheWay — the lane moved between the decision and the
 	// plan. That is the outcome we wanted; re-ask.
-	serviceDigNothingInTheWay
-	// serviceDigNoGroup — the lane is in no node group, so a dig has nowhere to
+	laneClearNothingInTheWay
+	// laneClearNoGroup — the lane is in no node group, so a dig has nowhere to
 	// park a blocker. Config geometry, not congestion.
-	serviceDigNoGroup
-	// serviceDigBlockerClaimed — a blocker was claimed while the dig was being
+	laneClearNoGroup
+	// laneClearBlockerClaimed — a blocker was claimed while the dig was being
 	// written. The holder is carrying it out, which is the releaser.
-	serviceDigBlockerClaimed
-	// serviceDigReadFailed — the database did not answer while the excavation was
+	laneClearBlockerClaimed
+	// laneClearReadFailed — the database did not answer while the excavation was
 	// being planned. NOT a fact about the lane: the plant is healthy and the same
 	// question usually answers on the next sweep. Waits under CauseReadFailed
 	// (PLAN §R.45).
-	serviceDigReadFailed
-	// serviceDigSlotNotInLane — the target slot is a child of no lane, so there is
+	laneClearReadFailed
+	// laneClearSlotNotInLane — the target slot is a child of no lane, so there is
 	// no corridor to dig. A configuration fault: no bin moving anywhere will ever
 	// change it, so it fails loudly and names the slot.
-	serviceDigSlotNotInLane
-	// serviceDigUnplannable — anything else out of the planner. Should now be
+	laneClearSlotNotInLane
+	// laneClearUnplannable — anything else out of the planner. Should now be
 	// empty: every remaining path is either a read or the geometry above. Kept
 	// fail-closed for whatever a future planner adds.
-	serviceDigUnplannable
+	laneClearUnplannable
 )
 
 // classifyPlanError maps an excavation planner's error onto the disposition its
@@ -175,20 +179,20 @@ const (
 // sql.ErrNoRows — including every sentinel above it — so the named outcomes have
 // to be asked first. Get that backwards and a configuration fault parks forever
 // under a cause nothing can clear, which is worse than the failure it replaced.
-func classifyPlanError(err error) serviceDigOutcome {
+func classifyPlanError(err error) laneClearOutcome {
 	switch {
 	case err == nil:
-		return serviceDigStarted
+		return laneClearStarted
 	case errors.Is(err, ErrDigHoldsTheParking):
 		// ABOVE ErrNoShuffleSlot ON PURPOSE. The two are siblings and this one is
 		// the specific: it does not wrap the general one today, and if a later
 		// refactor makes it wrap, this arm must still be asked first or every right-
 		// of-way refusal reports as a full group and loses the order it was naming.
-		return serviceDigParkingHeldByDig
+		return laneClearParkingHeldByDig
 	case errors.Is(err, ErrLaneMouthHeld):
 		// The mouth's own refusal, and ABOVE ErrNoShuffleSlot for the reason right
 		// of way is: it names a lane, and reporting it as a full group loses the
-		// name. Without this arm it falls to serviceDigUnplannable — the terminal
+		// name. Without this arm it falls to laneClearUnplannable — the terminal
 		// verdict — for what is an ordinary wait with a live releaser.
 		//
 		// ErrMouthUnreadable, its sibling, gets NO arm here on purpose: readFailed
@@ -196,26 +200,26 @@ func classifyPlanError(err error) serviceDigOutcome {
 		// first, and the mutation that deleted the arm broke nothing — which is
 		// law 3's rider catching two spellings of one question before they had a
 		// chance to disagree.
-		return serviceDigLaneBusy
+		return laneClearLaneBusy
 	case errors.Is(err, ErrNoShuffleSlot):
-		return serviceDigNoShuffleSlot
+		return laneClearNoShuffleSlot
 	case errors.Is(err, ErrNothingInTheWay):
-		return serviceDigNothingInTheWay
+		return laneClearNothingInTheWay
 	case errors.Is(err, ErrSlotNotInLane):
-		return serviceDigSlotNotInLane
+		return laneClearSlotNotInLane
 	case readFailed(err):
 		// The same predicate the layer above already uses for the lane read — ONE
 		// spelling of "the database did not answer", not a second (law 3).
-		return serviceDigReadFailed
+		return laneClearReadFailed
 	}
-	return serviceDigUnplannable
+	return laneClearUnplannable
 }
 
-// serviceDigResult is the proposal's answer. parent and steps are set only when
+// laneClearResult is the proposal's answer. parent and steps are set only when
 // the dig actually started; err carries the planner's or the transaction's own
 // error for the caller's log.
-type serviceDigResult struct {
-	outcome serviceDigOutcome
+type laneClearResult struct {
+	outcome laneClearOutcome
 	parent  *orders.Order
 	steps   int
 	err     error
@@ -228,54 +232,24 @@ type serviceDigResult struct {
 	// back would be the PayloadDesc scar: a human sentence mined for a machine
 	// fact, which breaks the day somebody improves the wording.
 	blockingDig int64
+	// blockerClaimant and blockerBin name the hard claim that refused the dig:
+	// which bin the plan could not move and which order is holding it. Set only
+	// on laneClearBlockerClaimed.
+	//
+	// CARRIED FOR THE SAME REASON blockingDig IS, and used for more: §R.115 rules
+	// that a claim held by an order which has STOPPED is a person's job, so the
+	// caller has to be able to ask about that order by id — go and read whether it
+	// is still moving, name it in the operator's wait, and name it in the alarm.
+	// Scraping "blocker bin %d is claimed by order %d" back out of err would be the
+	// PayloadDesc scar: a human sentence mined for a machine fact, broken the day
+	// somebody improves the wording.
+	blockerClaimant int64
+	blockerBin      int64
 }
 
-// digOwnership says who OWNS the excavation proposeLaneClearDig is about to
-// write, and it is the whole of §R.91's unification expressed as two values.
-//
-// ── THE RULING ────────────────────────────────────────────────────────────
-//
-// "All demand that creates a dig should become the parent." A demand that
-// cannot move re-parents onto its own excavation, wears `reshuffling` while it
-// runs, and resumes through `queued` into its normal lifecycle. That is what
-// the plain buried retrieve has always done, and the two complex paths now do
-// it too.
-//
-// ── AND THE ONE CARVE-OUT, WHICH IS PHYSICS ───────────────────────────────
-//
-// The gate-dweller heal keeps a folder, and not by a near miss: {staged →
-// reshuffling} is not a legal transition and should not become one. A staged
-// order is a robot at a point holding an unsealed waybill; moving it to
-// `reshuffling` would say the demand is being re-planned while a vehicle is
-// committed to it. The answer is not a new state for the dweller — it is that
-// the dweller does not move at all, and something else digs.
-//
-// The law-14 restatement the round supplied: "a dig is owned by the demand that
-// caused it, UNLESS a vehicle is already committed to that demand — in which
-// case the dig is a service to the lane." One predicate, physical, checkable in
-// one place. That place is the caller, because only the caller knows whether it
-// is holding a dweller.
-type digOwnership int
-
-const (
-	// digOwnedByRequester — the demand becomes the dig's parent (§R.91). The
-	// caller's order is re-parented onto the plan and comes back through
-	// `queued` when the corridor is open.
-	digOwnedByRequester digOwnership = iota
-	// digOwnedByFolder IS DELETED (§R.104). It named the gate-dweller carve-out:
-	// a synthetic parent owning the dig because a staged order supposedly could
-	// not. A staged order owns its dig without moving at all, so the value has no
-	// producer, no consumer, and nothing it could describe.
-	//
-	// The TYPE survives with one value on purpose. It is the statement that dig
-	// ownership is a settled question with one answer — and the place a future
-	// second answer would have to argue for itself, rather than appearing as an
-	// untyped bool somebody added to a signature.
-)
-
 // proposeLaneClearDig is THE ONE WRITER of a lane-clear dig: it takes the lane
-// and writes the excavation that makes `target` reachable. Who ends up owning
-// it is `own` — see digOwnership.
+// and writes the excavation that makes `target` reachable. The demand that asked
+// for it becomes its parent (§R.91) — there is no other kind of dig.
 //
 // ── IT USED TO SAY "IT NEVER TOUCHES THE REQUESTER" ───────────────────────
 //
@@ -316,11 +290,11 @@ const (
 // PlanReshuffle, where every caller of this function has a target SLOT and calls
 // PlanLaneMouthClear. Same ruling, two planners (pinned by
 // TestPlainBuriedRetrieve_KeepsDemandAsItsOwnDigParent).
-func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *orders.Order, own digOwnership) serviceDigResult {
+func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *orders.Order) laneClearResult {
 	if lane.ParentID == nil {
 		// A lane with no group has nowhere to park a blocker. Same terminal-shaped
 		// geometry planBuriedReshuffle names, and equally not worth an order.
-		return serviceDigResult{outcome: serviceDigNoGroup}
+		return laneClearResult{outcome: laneClearNoGroup}
 	}
 	// ASK THE QUESTION THE ACQUIRE WILL ANSWER, NOT A NARROWER ONE.
 	//
@@ -345,7 +319,7 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// requester's own rescue; everybody else's still is.
 	digFor := digAskerFor(requester)
 	if !d.laneLock.CanTakeFor(lane.ID, digFor) {
-		return serviceDigResult{outcome: serviceDigLaneBusy}
+		return laneClearResult{outcome: laneClearLaneBusy}
 	}
 
 	// AND IS ANYBODY PHYSICALLY IN THERE. The mouth and the inside are two
@@ -361,7 +335,7 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// locked corridor with a parked excavation in front of it rather than a
 	// clean refusal. The refusal belongs where the decision is made.
 	//
-	// ONE OF THREE CALLERS ASKED THIS. mouthHealNeeded has it as its fact 4 and
+	// ONE OF THREE CALLERS ASKED THIS. acceptanceDigNeeded has it as its fact 4 and
 	// keeps it (it gets to skip the plan entirely); the two complex callers
 	// asked nothing, and the complex arm is the one that carries the traffic.
 	// Three copies of one predicate is what law 3 is about, so the ONE WRITER of
@@ -383,12 +357,12 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// not tell whether a robot is in there" must not read as "go ahead".
 	occupants, err := reservations.OccupantsOf(d.db.DB, lane.ID)
 	if err != nil {
-		return serviceDigResult{outcome: serviceDigReadFailed, err: err}
+		return laneClearResult{outcome: laneClearReadFailed, err: err}
 	}
 	for _, occ := range occupants {
 		if !digFor.Owns(occ) {
-			return serviceDigResult{
-				outcome: serviceDigLaneOccupied,
+			return laneClearResult{
+				outcome: laneClearLaneOccupied,
 				err:     fmt.Errorf("order %d is inside lane %s", occ, lane.Name),
 			}
 		}
@@ -422,7 +396,7 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	case !asked:
 		d.noteUngatedDigProposal(requester)
 	case dig != 0:
-		return serviceDigResult{outcome: serviceDigEpisodeAlreadyDigging,
+		return laneClearResult{outcome: laneClearEpisodeAlreadyDigging,
 			blockingDig: dig,
 			err:         fmt.Errorf("dig %d is already excavating for this episode", dig)}
 	}
@@ -447,7 +421,7 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 		// outcomes have to be asked first. Get that backwards and a configuration
 		// fault parks forever under a cause nothing can clear, which is worse than
 		// the failure it replaced.
-		return serviceDigResult{outcome: classifyPlanError(err), err: err}
+		return laneClearResult{outcome: classifyPlanError(err), err: err}
 	}
 
 	// ASK THE QUESTION THE TRANSACTION WILL ANSWER, ONE LAYER DOWN.
@@ -471,7 +445,7 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// changes here. What changes is that discovering it stops costing an order row,
 	// a claim transaction and a cancellation.
 	//
-	// IT LIVES HERE, NOT IN THE CALLERS. mouthHealNeeded asks it as its fact 3 and
+	// IT LIVES HERE, NOT IN THE CALLERS. acceptanceDigNeeded asks it as its fact 3 and
 	// keeps doing so (it gets to skip the plan entirely), but the two complex
 	// callers did not ask at all, and the rig's loop came through one of them. Three
 	// copies of one predicate is what law 3 is about, so the ONE WRITER of a service
@@ -496,14 +470,16 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 		if bErr != nil {
 			// Fail closed, and as a READ rather than as a fact about the lane — the
 			// same disposition every other unreadable answer on this path takes.
-			return serviceDigResult{outcome: serviceDigReadFailed, err: bErr}
+			return laneClearResult{outcome: laneClearReadFailed, err: bErr}
 		}
 		if !binIsUnclaimed(b) {
 			d.dbg("dispatch: not digging %s for order %d — blocker bin %d is claimed by order %d, "+
 				"which is carrying it out", lane.Name, requester.ID, step.BinID, *b.ClaimedBy)
-			return serviceDigResult{
-				outcome: serviceDigBlockerClaimed,
-				err:     fmt.Errorf("blocker bin %d is claimed by order %d", step.BinID, *b.ClaimedBy),
+			return laneClearResult{
+				outcome:         laneClearBlockerClaimed,
+				err:             fmt.Errorf("blocker bin %d is claimed by order %d", step.BinID, *b.ClaimedBy),
+				blockerClaimant: *b.ClaimedBy,
+				blockerBin:      step.BinID,
 			}
 		}
 	}
@@ -538,42 +514,41 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// ResumeCompound — Reshuffling → Queued — rather than confirming it. Its own
 	// work is still owed and the scanner re-resolves it against the corridor the
 	// dig just opened. No new status edge: both transitions already exist.
-	if own == digOwnedByRequester {
-		if !d.laneLock.TryLockFor(lane.ID, requester.ID, digFor) {
-			return serviceDigResult{outcome: serviceDigLaneBusy}
-		}
-		if err := d.CreateCompoundOrder(requester, plan); err != nil {
-			d.laneLock.Unlock(lane.ID, requester.ID)
-			if errors.Is(err, store.ErrBlockerClaimed) {
-				return serviceDigResult{outcome: serviceDigBlockerClaimed, err: err}
-			}
-			return serviceDigResult{outcome: serviceDigUnplannable, err: err}
-		}
-		return serviceDigResult{outcome: serviceDigStarted, parent: requester, steps: len(plan.Steps)}
+	if !d.laneLock.TryLockFor(lane.ID, requester.ID, digFor) {
+		return laneClearResult{outcome: laneClearLaneBusy}
 	}
-
-	// ── THERE IS NO OTHER ARM (§R.104) ────────────────────────────────────
-	//
-	// A folder arm stood here: mint a synthetic parent, lock the lane in ITS name,
-	// write the legs under it, and abandon it on any of three failures. It served
-	// exactly one caller — the gate-dweller heal — on the reasoning that a staged
-	// order could not own a dig because {staged → reshuffling} is illegal.
-	//
-	// It is deleted. A staged order owns its dig without moving at all, so every
-	// dig in the system now has a live order for a parent and `own` has one value.
-	// The parameter survives as the statement that it does.
-	log.Printf("dispatch: BUG: proposeLaneClearDig reached with ownership %v for order %d — every dig "+
-		"is owned by the demand that caused it; there is no other kind", own, requester.ID)
-	return serviceDigResult{outcome: serviceDigUnplannable,
-		err: fmt.Errorf("no dig ownership other than the requester's exists")}
+	if err := d.CreateCompoundOrder(requester, plan); err != nil {
+		d.laneLock.Unlock(lane.ID, requester.ID)
+		if errors.Is(err, store.ErrBlockerClaimed) {
+			return laneClearResult{outcome: laneClearBlockerClaimed, err: err}
+		}
+		return laneClearResult{outcome: laneClearUnplannable, err: err}
+	}
+	return laneClearResult{outcome: laneClearStarted, parent: requester, steps: len(plan.Steps)}
 }
 
-// binIsUnclaimed is the pre-check half of fact 3, kept as a named predicate so the
-// decision and the transaction that enforces it can be read side by side.
+// binIsUnclaimed is the plan-time pre-check of a dig's blocker claims, kept as a
+// named predicate so the decision and the transaction that enforces it can be
+// read side by side.
 //
 // It is NOT the authority. store.ErrBlockerClaimed out of the compound transaction
 // is, because that test and the claim happen together under one lock; this one is
 // a read taken earlier and can be stale by the time the write runs. It is here to
 // keep the common case from minting an order it would immediately cancel, and the
 // stale case is handled where it lands.
+//
+// AND IT IS DELIBERATELY NOT THE LIVENESS QUESTION — law 3's rider, asked and
+// answered NO. Since 2e the acceptance arm's "is somebody coming" is
+// blockersSpokenFor, which scopes a claim by whether its holder is still moving.
+// This one does not, because it pre-checks a DIFFERENT question — MAY THIS DIG
+// TAKE THIS BIN — and that answer belongs to the claim CAS alone. Taking a hard
+// claim off an order sitting in a legitimate JackUnload wait (R.30 measured p50
+// 91s and max 959s against a 3-minute stall window) would take a bin off a robot
+// that is mid-job, which §R.114 refused and §R.115 did not reopen. So the
+// plan-time read refuses on ANY claim, the transaction decides, and what the
+// STOPPED case gets is a named wait and an alarm rather than a stolen bin. Two
+// questions, two spellings, on purpose.
+//
+// The old header called this "the pre-check half of fact 3". It is not: fact 3
+// moved to blockersSpokenFor, and this predicate stayed where it was.
 func binIsUnclaimed(b *bins.Bin) bool { return b != nil && b.ClaimedBy == nil }

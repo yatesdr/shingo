@@ -117,19 +117,31 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 		},
 		{
 			// THE OWNER'S REDUNDANCY COMPLAINT. "Rearranging lane L12 to reach
-			// X" is true and it is one word plus a lookup: which excavation,
-			// uncovering what, and is it the one that frees me. All three are
-			// answerable from the dig id, so the wait names it.
-			name: "storage rearranging names the dig and what it is uncovering",
+			// X" is true and it is one word plus a lookup: which excavation, and
+			// is it the one that frees me. Both are answerable from the dig id,
+			// so the wait names it.
+			//
+			// THE CASE THAT WENT, quoted because it is what the floor used to be
+			// told and this row is the record of the change:
+			//
+			//	name:   "storage rearranging names the dig and what it is uncovering"
+			//	params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06",
+			//	            DigOrderID: 4471, DigTarget: "LSD_011"},
+			//	want:   "Rearranging lane L12 to reach 74368-6SA0A.06 — dig 4471 is uncovering LSD_011"
+			//
+			// It had already stopped being reachable in the field: DigTarget came
+			// from digTargetOf, reading a column whose only writer was deleted with
+			// the folder, so every plant has rendered the sentence below since. The
+			// test was the last place the long sentence still appeared to work.
+			name: "storage rearranging names the dig",
 			code: protocol.QueueStorageRearranging,
 			params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06",
-				DigOrderID: 4471, DigTarget: "LSD_011"},
-			want: "Rearranging lane L12 to reach 74368-6SA0A.06 — dig 4471 is uncovering LSD_011",
+				DigOrderID: 4471},
+			want: "Rearranging lane L12 to reach 74368-6SA0A.06 — dig 4471 is working this lane",
 		},
 		{
-			// A dig that uncovers no bin — one clearing a slot to drop into —
-			// still names itself. The id is the join key; the target is extra.
-			name:   "storage rearranging names a dig with no target",
+			// The id is the join key, and it is the whole clause now.
+			name:   "storage rearranging with a dig and no payload",
 			code:   protocol.QueueStorageRearranging,
 			params: QueueParams{Lane: "L12", DigOrderID: 4471},
 			want:   "Rearranging lane L12 to reach this material — dig 4471 is working this lane",

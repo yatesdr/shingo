@@ -73,10 +73,12 @@ func TestLoaderSourceUnreadable_Waits(t *testing.T) {
 // the error, and it always did. What changed is that the order is still alive to
 // act on it.
 //
-// MUTATION (verified): put the lifecycle.Fail back. The status assertion fires
-// (failed, want the order still live) and the follow-on MoveToSourcing assertion
-// fires with it, which is the pair that matters — being alive is only useful if
-// the recovery transition is legal from where you are.
+// NO MUTATION NOTE, because there is nothing here to mutate. This test builds no
+// order, calls no DispatchDirect and reads no status — it asserts against the
+// static transition table, and putting lifecycle.Fail back would not change one
+// line of it. A note claiming "the status assertion fires and the follow-on
+// MoveToSourcing assertion fires with it" stood here and named two assertions
+// this function has never contained.
 func TestDispatchDirect_FleetRefusalIsNotTerminal(t *testing.T) {
 	// The state machine is the whole subject, so assert against it directly
 	// rather than against a comment: `failed` is terminal and the scanner's

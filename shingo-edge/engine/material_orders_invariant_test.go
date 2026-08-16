@@ -180,9 +180,9 @@ func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
 // the wait stamp above — a fact the far side cannot infer, carried on the wire
 // rather than guessed at.
 //
-// Springfield, 2026-08-12: AMR-04 held a bin for 48 minutes at a full SLN_003,
-// the fleet reporting the robot RUNNING with no error, until an admin cancelled
-// the order two hours in.
+// Undeclared, two orders can take one staging node and the second robot arrives
+// to find it full. (A Springfield attribution stood here; §R.112 falsified it —
+// see protocol.ComplexOrderStep.ExclusiveSlot.)
 //
 // LINE DROPOFFS MUST NOT BE DECLARED, and that half is asserted too. Gating a
 // supply leg on a line node its sibling evac is on the way to clear re-creates
@@ -258,8 +258,8 @@ func TestEveryStagingDropoffIsDeclared(t *testing.T) {
 						"Core cannot tell a staging node from a line node — one STATION node type, an "+
 						"advisory Kind that is never persisted, and the staging designation living in "+
 						"OUR cell config. Undeclared, both of Core's destination gates stand down and "+
-						"a second order is free to take the node: SPR AMR-04 held a bin 48 minutes at "+
-						"a full SLN_003. Build it with stagingDropoff().", name, i, s.Node)
+						"a second order is free to take the node, so the first robot arrives to find "+
+						"it full. Build it with stagingDropoff().", name, i, s.Node)
 				}
 			}
 			if line[s.Node] && s.ExclusiveSlot {

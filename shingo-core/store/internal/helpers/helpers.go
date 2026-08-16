@@ -122,8 +122,7 @@ func InsertID(db QueryRower, query string, args ...any) (int64, error) {
 // completion-repair (recovery.RepairConfirmedOrderCompletion) — so the paths
 // cannot drift and no caller can forget the synthetic exemption. It lives in
 // store/internal so store-layer and recovery-sub-package callers reach it
-// without an import cycle; *store.DB.EvictStaleGhostsTx is a thin delegate for
-// the service layer, which cannot import internal/.
+// without an import cycle.
 //
 // See docs/storage-protections.md for how this arrival-time tier composes with
 // the dispatch-time protections and the two plant-verified vendor facts.

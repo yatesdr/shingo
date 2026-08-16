@@ -82,7 +82,51 @@ const (
 	// test gets cloned from. Must be a valid Postgres identifier; underscores
 	// only.
 	templateDBName = "template_test"
+
+	// envRequireDocker, when set (any value), turns "docker is down, skip the
+	// integration tests" into a FAILURE. The gate and the Sunday smoke set it:
+	// their whole point is to run the docker suites, and a run where 327 files
+	// skipped together exits 0 — "green" and "docker was down and nothing ran"
+	// are indistinguishable from the exit code alone (the 2026-08-15 audit's
+	// unit 2a, found the hard way: the docker step was green while Docker
+	// Desktop was still starting).
+	//
+	// Unset (the default, and what a hand-run of one package sees) keeps the
+	// old skip behavior — a developer without Docker still gets a useful unit
+	// run rather than a wall of failures.
+	envRequireDocker = "SHINGO_TEST_REQUIRE_DOCKER"
 )
+
+// dockerDownReported keeps the down-sentinel to one line per process: every
+// docker-tagged test in the package funnels through the same two arms below, and
+// a package with a hundred of them should not print a hundred identical lines.
+var dockerDownReported atomic.Bool
+
+// dockerDownSentinel is the exact line noteDockerDown prints. A function
+// rather than an inline format so the pure test pins the REAL string the
+// runtime emits — a copy in the test would keep passing while the runtime's
+// line drifted, which is a fence that matches nothing.
+//
+// The prefix is a CONTRACT: scripts/gate.sh greps `^SHINGO-DOCKER-DOWN`
+// against every module's log. Drift it and the gate's blind-spot check goes
+// blind itself.
+func dockerDownSentinel(err error) string {
+	return fmt.Sprintf("SHINGO-DOCKER-DOWN: skipping integration tests: %v", err)
+}
+
+// noteDockerDown emits the sentinel the smoke and the gate log-grep for. A
+// SKIP is invisible in non-verbose `go test` output — skipped tests print
+// nothing — so the one line that says what happened has to come from here, to
+// stderr, which `go test` passes through even non-verbose.
+//
+// The line's shape is pinned by TestRequireDockerSentinelShape (pure test): if
+// the wording changes, the smoke's grep changes with it or the instrument goes
+// quietly blind, which is the exact failure mode it exists to prevent.
+func noteDockerDown(t testing.TB, err error) {
+	if dockerDownReported.CompareAndSwap(false, true) {
+		fmt.Fprintln(os.Stderr, dockerDownSentinel(err))
+	}
+}
 
 // templateName is the database every test is cloned from.
 //
@@ -113,6 +157,36 @@ func templateName() string {
 		return sanitizeIdent(n, templateDBName)
 	}
 	return templateDBName
+}
+
+// ownContainerHint is the sentence a connect failure needs and did not have.
+//
+// A connect or CREATE DATABASE failure here has two completely different causes
+// and the error text alone cannot tell them apart. Against the GATE's shared
+// server it means something is actually wrong. Against a container this process
+// started for itself, the overwhelmingly likely cause is CONTENTION: a bare
+// `go test -tags docker ./...` gives every package its own Postgres, a dozen of
+// them start at once, and the losers report "failed SASL auth: timeout" or a
+// context deadline — which reads exactly like a code failure and is not one.
+//
+// Measured 2026-08-16: a hand-run of the module produced a different set of
+// five-to-eight failures on every pass, none reproducible in isolation, while
+// `gate.sh docker` — one shared server, -p 4 — was clean on the same tree. That
+// cost half an hour of looking for a bug that was not there, which is the whole
+// reason this sentence exists. The intermittent has been on the ledger's watch
+// list since R.37 and this is what it actually was.
+//
+// Silent when the gate set SHINGO_TEST_PG: there the failure is real and a hint
+// pointing at the thing already in use would be noise.
+func ownContainerHint() string {
+	if os.Getenv(envSharedPG) != "" {
+		return ""
+	}
+	return "\n\nNOTE: this process started its own Postgres container because " + envSharedPG +
+		" is unset. Running the whole module that way gives EVERY package its own server, and " +
+		"under that load connect timeouts are expected and non-deterministic — they are not a " +
+		"finding about the code. Use `bash scripts/gate.sh docker`, which points every package at " +
+		"one shared server and caps package parallelism. A single package by hand is fine as-is."
 }
 
 // sanitizeIdent forces s into something safe to splice into `CREATE DATABASE
@@ -559,6 +633,10 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 		if r := recover(); r != nil {
 			msg := fmt.Sprint(r)
 			if strings.Contains(strings.ToLower(msg), "docker") {
+				noteDockerDown(t, fmt.Errorf("%s", msg))
+				if os.Getenv(envRequireDocker) != "" {
+					t.Fatalf("SHINGO-DOCKER-DOWN (required): %s", msg)
+				}
 				t.Skipf("skipping integration test: %s", msg)
 			}
 			panic(r)
@@ -568,6 +646,10 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 	containerOnce.Do(startContainer)
 	if containerErr != nil {
 		if strings.Contains(strings.ToLower(containerErr.Error()), "docker") {
+			noteDockerDown(t, containerErr)
+			if os.Getenv(envRequireDocker) != "" {
+				t.Fatalf("SHINGO-DOCKER-DOWN (required): start postgres container: %v", containerErr)
+			}
 			t.Skipf("skipping integration test: %v", containerErr)
 		}
 		t.Fatalf("start postgres container: %v", containerErr)
@@ -594,7 +676,7 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 	}
 	defer admin.Close()
 	if _, err := admin.Exec(fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", dbName, templateName())); err != nil {
-		t.Fatalf("create test database %s from template: %v", dbName, err)
+		t.Fatalf("create test database %s from template: %v%s", dbName, err, ownContainerHint())
 	}
 	atomic.AddInt64(&testDBsCreated, 1)
 
@@ -610,7 +692,7 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 	}
 	db, err := store.OpenWithoutMigrate(cfg)
 	if err != nil {
-		t.Fatalf("open test db %s: %v", dbName, err)
+		t.Fatalf("open test db %s: %v%s", dbName, err, ownContainerHint())
 	}
 
 	t.Cleanup(func() {

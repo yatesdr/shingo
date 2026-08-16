@@ -488,6 +488,12 @@ func (d *Dispatcher) dwellDestination(leg *orders.Order, lane *nodes.Node) (*nod
 			// first or the specific cause is swallowed by the general one.
 			var held *DigParkingHeldError
 			if errors.As(err, &held) {
+				// The holder is a reshuffle or a demand sourcing from the lane
+				// (§R.101), and they clear on different events — see
+				// CauseDemandHoldsParking.
+				if !held.HolderIsExcavation {
+					return nil, RefusedAt(CauseDemandHoldsParking, held.Lane), nil
+				}
 				return nil, RefusedAt(CauseDigHoldsParking, held.Lane), nil
 			}
 			// Hold B's version of the same courtesy: name the lane whose robot has
@@ -593,7 +599,7 @@ func (d *Dispatcher) bindChosenDestination(leg *orders.Order, lane, dest *nodes.
 	// bindDwellTail writing delivery_node there is a window in which that slot
 	// still reads free to everybody. That window is the 2026-07-13 specimen with a
 	// different clock on it — two digs picked SMN_008/SMN_009 three seconds apart,
-	// a blocker landed on a blocker, EvictStaleGhostsTx threw a bin to _TRANSIT and
+	// a blocker landed on a blocker, EvictStaleGhostBinsTx threw a bin to _TRANSIT and
 	// two bins were orphaned.
 	//
 	// claimStoreSlot is the sanctioned door and it is exclusive per node: the loser

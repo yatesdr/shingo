@@ -95,7 +95,7 @@ const WaitKindStation = "station"
 // THE DRAIN WINDOW LIVES HERE, in one place, so there is exactly one thing to
 // change when it closes. Untagged reads as station-owned today — the historical
 // default, so no plan in flight changes meaning — and the drift tests
-// (TestEveryEdgeAuthoredWaitIsStamped, TestSplicedWaitIsAlwaysStamped) already
+// (TestEveryEdgeAuthoredWaitIsStamped, TestSplice_FenceHoldsOnASplicedPlan) already
 // fail on any NEW untagged wait from either author. When the last pre-ruling
 // order has drained, delete the `== ""` arm and an untagged wait becomes what it
 // should be: unowned, and refused by both fences.

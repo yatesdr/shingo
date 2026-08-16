@@ -40,19 +40,8 @@ func (db *DB) ShiftOrderBinSteps(orderID int64, shift map[int]int) error {
 	return orders.ShiftOrderBinSteps(db.DB, orderID, shift)
 }
 
-// EvictStaleGhostsTx is the *store.DB entry point to the shared stale-ghost
-// reconciliation (helpers.EvictStaleGhostBinsTx) for callers that reach the
-// store through *store.DB but cannot import store/internal — notably
-// service.BinService.ApplyArrival. Store-internal callers (ApplyMultiBinArrival)
-// and the recovery sub-package call the helper directly. See
-// helpers.EvictStaleGhostBinsTx for the mechanism and plant-verified rationale.
-func (db *DB) EvictStaleGhostsTx(tx *sql.Tx, toNodeID, keepBinID int64) ([]int64, error) {
-	return helpers.EvictStaleGhostBinsTx(tx, toNodeID, keepBinID)
-}
-
 // BinPlacement re-exports helpers.BinPlacement so the service layer can name the
-// primitive's arguments. service/ cannot import store/internal — the same reason
-// EvictStaleGhostsTx above exists.
+// primitive's arguments. service/ cannot import store/internal.
 type BinPlacement = helpers.BinPlacement
 
 // PlaceBinTx is the *store.DB entry point to THE ONE PLACEMENT

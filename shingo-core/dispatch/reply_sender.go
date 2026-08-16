@@ -24,10 +24,6 @@ func newReplySender(db *store.DB, topic, stationID string, debug func(string, ..
 	}
 }
 
-func (s *ReplySender) CoreAddress() protocol.Address {
-	return s.src
-}
-
 func (s *ReplySender) SendReply(msgType, eventType, stationID, correlationID string, payload any) error {
 	dst := protocol.Address{Role: protocol.RoleEdge, Station: stationID}
 	reply, err := protocol.NewReply(msgType, s.src, dst, correlationID, payload)

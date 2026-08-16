@@ -285,7 +285,7 @@ var causeReleasers = []causeReleaser{
 		// that the group is full, which is CauseNoShuffleSlot and clears differently.
 		what: "the dig holding this lane releases it — at its last blocker's exit (flip 2, or for a " +
 			"service dig when the bin it uncovered is collected) or at " +
-			"its teardown (unlockLaneForCompound); both evaluate the lane they free",
+			"its teardown; both re-evaluate the lane they free",
 	},
 	{
 		cause:       CauseLaneTargetBuried,
@@ -296,6 +296,26 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseLaneHeldDig,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "the dig holding the mouth releases it",
+	},
+	{
+		cause:       CauseLaneHeldSource,
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged, PopCompoundLeg},
+		// SHORTER THAN A DIG'S WAIT, AND THAT IS THE POINT OF THE SPLIT. The
+		// holder is one ordinary demand that resolved onto a bin in this lane
+		// (§R.101), so what ends the wait is a single robot carrying a single bin
+		// out — not a reshuffle finishing. The order is already dispatched by the
+		// time the lock exists, so there is nothing to raise and nobody to fetch.
+		//
+		// The release is the same event the outbound holds have always used: the
+		// pickup moves the bin to _TRANSIT and HandleTransitForLaneGate drops both
+		// of the owner's rows on the lane it left; a holder going terminal releases
+		// through TerminalizeOrder. Both fire bin/order events the waiters are
+		// subscribed to, and both wake the lane they free.
+		//
+		// A row standing under this cause for a long time is a stalled DEMAND, not
+		// a stalled dig — go and look at the robot carrying its bin.
+		what: "the holding demand's robot carries its bin out of the lane, or that demand ends; " +
+			"either way its hold is dropped and the lane it frees is re-evaluated",
 	},
 	{
 		cause:       CauseLaneHeldTraffic,
@@ -326,14 +346,30 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseLaneLockRace,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "immediate — whichever race was lost, the winner proceeds and this order re-plans on the next scan",
-		finding: "ONE STRING, TWO FACTS. This value is written by CauseLaneLockRace (a lane DIG-LOCK " +
-			"race, dispatch) and by CauseBinLockRace (a BIN reservation race in the Find→Reserve " +
-			"window, fulfillment). Different waits, different things being contended — and a " +
-			"queue_cause histogram cannot separate them, so this row describes both and is exact " +
-			"about neither. Kept rather than collapsed: re-spelling either value rewrites what rows " +
-			"already in the plant's orders table mean. The two DO share a releaser shape (both clear " +
-			"as soon as the winner moves on, both are floored by the scanner), which is why the " +
-			"collision costs forensics rather than liveness.",
+		// THE FIRST HALF OF THIS ROW WAS FACTUALLY WRONG, and it read: "This value
+		// is written by CauseLaneLockRace (a lane DIG-LOCK race, dispatch) and by
+		// CauseBinLockRace (a BIN reservation race in the Find→Reserve window,
+		// fulfillment)."
+		//
+		// Censused at the tree: CauseLaneLockRace has NO production writer. Its
+		// only references are its own declaration, this row, and the test that
+		// pins its string — the same shape as CauseLaneEntryError below, and it
+		// went unnoticed because the collision made the value look busy. So a
+		// "lock-race" row in a plant's orders table today can only have come from
+		// the bin race.
+		//
+		// The collision is still real and still worth the warning: the two values
+		// are identical, so if the lane race ever gains a writer a histogram
+		// cannot separate them, and nothing about the string would change to say
+		// so.
+		finding: "ONE STRING, TWO CAUSES DECLARED AGAINST IT. Only one has a writer: a row under " +
+			"this value comes from a BIN reservation race — two orders wanted the same bin between " +
+			"it being found and it being reserved. The lane dig-lock race declares the same string " +
+			"and produces nothing, so nothing today is ambiguous, but a histogram could not " +
+			"separate them if it did. Kept rather than re-spelled: changing either value rewrites " +
+			"what rows already in the plant's orders table mean. Both would clear the same way — as " +
+			"soon as the winner moves on — which is why the collision costs forensics rather than " +
+			"liveness.",
 	},
 	{
 		cause:       CauseIntakeBuried,
@@ -377,8 +413,60 @@ var causeReleasers = []causeReleaser{
 	},
 	{
 		cause:       CauseDigBlockerClaimed,
-		populations: []WaitPopulation{PopAcquiring},
-		what:        "the order holding the blocker finishes carrying it out of the lane",
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged},
+		// THIS ROW IS NOW THE LIVE-HOLDER HALF ONLY, and that is what makes the
+		// sentence true. It used to cover every claimed blocker, including one held
+		// by an order that had stopped — for which "finishes carrying it out" names
+		// a releaser that is not coming (§R.115). The stopped half moved to
+		// CauseDigBlockerStopped below; what is left here is the case the sentence
+		// was always written for: a dispatched retrieve whose robot is at that
+		// moment driving that very bin out of this lane.
+		//
+		// PopGateStaged joins PopAcquiring because the acceptance arm can park a
+		// DWELLER here — a robot standing at the mark whose own dig was refused by
+		// a live claim. Same physical refusal, same releaser, read the same on the
+		// board whether the order is pre-dispatch or at a mark, which is the
+		// table's own rule for sharing a cause across populations.
+		//
+		// AND THE SENTENCE GAINED ITS SECOND CLAUSE, because the row covers a
+		// second machine releaser it never named. Old text, in full: "the order
+		// holding the blocker finishes carrying it out of the lane". True for a
+		// robot in motion and false for a holder that has already ENDED —
+		// TerminalizeOrder releases claims in its own transaction, but a claim that
+		// leaked past it (a crash mid-transaction is the documented case) is
+		// cleared by ReleaseOrphanedClaims on the background sweep, not by anybody
+		// finishing a drive. Both are machine releasers and both belong here; what
+		// does NOT is a holder that has stopped and not terminated, which no sweep
+		// reaches and which is the row below.
+		what: "the order holding the blocker finishes carrying it out of the lane — or, if that order " +
+			"has already ended, the reconciliation sweep releases the claim it left behind",
+	},
+	{
+		cause: CauseDigBlockerStopped,
+		// PopGateStaged only, and by construction rather than by policy: the
+		// acceptance arm is the one caller that asks the liveness question before
+		// it summons, so it is the one place that can know the holder has stopped.
+		// The two complex doors and the plain path do not ask, so they cannot write
+		// this cause and their waits stay under the congestion tag above.
+		populations: []WaitPopulation{PopGateStaged},
+		// THE RELEASER IS A NAMED HUMAN, and law 1's structure is owner / cause /
+		// releaser — not owner / cause / automation. §R.45 is the standing
+		// precedent: a slot attached to no lane keeps failing loudly with the slot
+		// named PRECISELY BECAUSE a person has to fix it. §R.115 rules this the
+		// same shape, and the cost is accepted on the record rather than hidden: a
+		// dweller can wait on a human.
+		//
+		// The floor still re-asks every 60s, which is what makes the human's fix
+		// land without anybody pressing anything: the moment that order moves,
+		// terminates or has its claim released, the next pass plans the dig and the
+		// robot goes. So the row below is not "nothing will ever end this" — it is
+		// "the event that ends this is somebody's action, and here is who and
+		// what".
+		what: "an engineer resolves the stopped order named in the wait — it moves, it is cancelled, " +
+			"or its claim is released — and the next lane pass plans the dig it was blocking. Core " +
+			"does NOT resolve it automatically: an order stopped without terminating is a config " +
+			"fault or a breakdown, and dissolving it would be the machine guessing at something it " +
+			"cannot classify",
 	},
 	{
 		// THE ROBOT IS AT THE MARK AND THE DIGGING IS ITS OWN (§R.104).
@@ -399,6 +487,31 @@ var causeReleasers = []causeReleaser{
 			"plan was never re-planned, only preceded)",
 	},
 	{
+		// THE SAME ROBOT, ONE CHAPTER LATER. CauseStagedOwnDig describes the wait
+		// while the excavation runs; this describes the wait after its chapter
+		// stopped short — a leg failed, or the plan went stale and was dissolved —
+		// and the demand, which owns its own digs (§R.104), has to wait for Core to
+		// re-ask the lane before anything can happen next.
+		//
+		// NO TRANSITION IS THE DISPOSITION, and that is not a shrug: the parent's
+		// successors from `staged` do not include `queued` (protocol/types.go), so
+		// the old arm's Queue was illegal; Cancel was worse — the demand's own
+		// work is not what failed (§R.91). The robot stays at the mark, the plan
+		// stays valid, and the releaser is the machinery that re-asks.
+		//
+		// THE RELEASER IS LIVE ON BOTH HALVES. The lane floor lists PopGateStaged
+		// (SweepLaneWaiters, 60s) and the evaluator re-asks on every lane event;
+		// the all-terminal half is additionally covered by the widened chapter
+		// watchdog (SweepStalledChapters), which admits staged parents now. A
+		// quiesced plant wakes this wait within a floor tick, which is the amended
+		// bar (§R.93: zero waits without a LIVE releaser).
+		cause:       CauseStagedDigFailed,
+		populations: []WaitPopulation{PopGateStaged},
+		what: "Core re-asks the lane — on the next lane event or the 60s lane floor — and either " +
+			"raises a replacement dig chapter (the lane is still walled) or appends the tail " +
+			"where the robot stands (the lane is clear and the resume is the splice-append)",
+	},
+	{
 		// THE ONLY CAUSE IN THIS TABLE WHOSE WAITER IS A PARENT. Every other row
 		// describes an order refused at a door; this one describes a demand whose
 		// own excavation has gone quiet with a robot still out on it.
@@ -408,8 +521,15 @@ var causeReleasers = []causeReleaser{
 		// the fleet says so, at whatever pace the plant runs at, and R.30 measured
 		// that pace at up to 959 seconds for a single mid-order wait. The chapter's
 		// terminal arm then returns the demand on the ordinary path.
-		cause:       CauseChapterLegInFlight,
-		populations: []WaitPopulation{PopCompoundParent},
+		cause: CauseChapterLegInFlight,
+		// TWO POPULATIONS SINCE THE WIDENED WATCHDOG, and the second is the
+		// §R.104 shape: a staged dweller whose dig legs are missions the fleet
+		// still holds. markChapterWaiting stamps the parent whichever status it
+		// wears, so the row has to cover the population the waiter actually sits
+		// in — PopGateStaged, floored by the lane floor exactly as the other
+		// staged causes are. Same fact, same releaser (the mission ending), and
+		// the waiter's status is not a different wait.
+		populations: []WaitPopulation{PopCompoundParent, PopGateStaged},
 		what: "the open leg's mission terminates — the fleet reports it delivered, failed or " +
 			"cancelled — and the chapter's terminal arm returns the demand",
 	},
@@ -457,8 +577,24 @@ var causeReleasers = []causeReleaser{
 		// floors it, exactly as it does for that cause's dwelling population.
 		what: "the dig holding the parking lane releases it — at its last blocker's exit (flip 2, or " +
 			"for a service dig when the bin it uncovered is collected) or at " +
-			"its teardown (unlockLaneForCompound); both evaluate the lane they free, and the group " +
-			"evaluate wakes dwellers whose pool that lane is in",
+			"its teardown; both re-evaluate the lane they free, and dwellers whose parking pool that " +
+			"lane is in are woken",
+	},
+	{
+		cause:       CauseDemandHoldsParking,
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged},
+		// THE SHORTER HALF OF RIGHT OF WAY. Same refusal as the row above — the
+		// group had room and the room was in a lane this dig may not plan into —
+		// and a different holder, so a different thing to wait for and a different
+		// place to go and look. The lane frees when one already-dispatched demand's
+		// robot takes its bin out, not when a reshuffle finishes.
+		//
+		// Floor coverage is the row above's, unchanged: the parked proposer is
+		// re-asked by the planning scan, and a dweller's WaitLane is the DUG lane,
+		// so SweepLaneWaiters (60s) reaches it.
+		what: "the demand holding the parking lane finishes sourcing from it — its robot carries the " +
+			"bin out, or the demand ends; either way its hold is dropped, the lane it frees is " +
+			"re-evaluated, and dwellers whose parking pool that lane is in are woken",
 	},
 
 	// ── The gate's own failures ───────────────────────────────────────────
@@ -471,7 +607,7 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseGatePickupElsewhere,
 		populations: []WaitPopulation{PopGateStaged},
 		what: "the bin returns to this lane, or the release re-binds the pickup against where it " +
-			"actually sits (rebindGatedPickup) — the wait is about the PLANT, not about a failed read",
+			"actually sits — the wait is about the PLANT, not about a failed read",
 	},
 	{
 		cause:       CauseStationWait,
@@ -479,7 +615,7 @@ var causeReleasers = []causeReleaser{
 		what: "the STATION releases it — the line clears, the tooling finishes, an operator presses " +
 			"Release. Core does not advance this one and must not: the precondition is a fact only " +
 			"the station can observe, so a floor here would send a robot into a working cell. A row " +
-			"standing under this cause for a long time is a DWELL to surface to a human (item 7), " +
+			"standing under this cause for a long time is a DWELL to surface to a human, " +
 			"not a wait to re-drive; Core's hard release is the escape hatch until that exists",
 	},
 	{
@@ -505,11 +641,11 @@ var causeReleasers = []causeReleaser{
 		populations: []WaitPopulation{PopNone},
 		what:        "",
 		finding: "DECLARED, NEVER SET. No production site writes this cause — verified by grep across " +
-			"dispatch/ and fulfillment/; the only references are its own declaration and the value test " +
-			"that pins its string. Nothing can wait under it, so it is not a liveness hole; it is dead " +
-			"vocabulary that makes the cause surface look wider than it is. Left in place because " +
-			"queue_cause_pure_test.go pins the value and deleting it is a decision for the owner, not " +
-			"for the batch that noticed.",
+			"every dispatch and fulfillment path; the only references are its own declaration and the " +
+			"test that pins its string. Nothing can wait under it, so it is not a liveness hole; it " +
+			"is dead vocabulary that makes the cause surface look wider than it is. Left in place " +
+			"because deleting a declared value is a decision for the owner, not for the batch that " +
+			"noticed.",
 	},
 	{
 		cause:       CauseAdmissionError,
@@ -525,7 +661,7 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseHeldBinMissing,
 		populations: []WaitPopulation{PopAcquiring},
 		finding: "NO EVENT RELEASES THIS, and that is correct rather than a gap: the order reached " +
-			"the held-bin path with no bin_id, which the routing into that path makes impossible, so " +
+			"the held-bin path naming no bin, which the routing into that path makes impossible, so " +
 			"it is a construction bug and not a wait. Nothing in the plant will change it. A floor " +
 			"release under this cause means the order moved for some other reason; a row SITTING " +
 			"under it means somebody needs to look at how that order was built. It carries a cause " +
@@ -544,7 +680,7 @@ var causeReleasers = []causeReleaser{
 		populations: []WaitPopulation{PopAcquiring, PopCompoundLeg},
 		what:        "NOTHING — no event exists; the floor is the only thing that re-asks",
 		finding: "ABSENCE-CLASS, AND THE FLOOR IS THE ANSWER. \"The fleet became willing\" is not an " +
-			"event: no Core subscription fires when a saturated or disconnected RDS starts accepting " +
+			"event: nothing in Core is notified when a saturated or disconnected fleet starts accepting " +
 			"creates again, and inventing one would mean polling the vendor to manufacture a signal " +
 			"whose only consumer is this wait. So this row's honest releaser is the periodic pass, and " +
 			"the doctrine's (a) is genuinely unsatisfiable here rather than merely unbuilt. " +

@@ -323,15 +323,15 @@ func (d *Dispatcher) recordFloorRelease(w floorWaiter) {
 		// does not carry; until it does, the reader is given the discriminator
 		// rather than a guess.
 		cause = "(none)"
-		should = "THE ROW CARRIED NO CAUSE, and that is TWO possible defects. Either (a) an arm " +
-			"refused this order without calling setQueueReason — look for one, and the log will " +
-			"show a refusal for it; or (b) NOTHING EVER EVALUATED IT, in which case there is no arm " +
-			"to find and the defect is the missing event that should have triggered an evaluation " +
-			"before the floor's tick. Check the log for a refusal naming this order: if there is " +
-			"none, it is (b). This is not an inventory gap either way"
+		should = "THE ROW CARRIED NO CAUSE, and that is TWO possible defects. Either (a) something " +
+			"refused this order without recording a reason — the log will show a refusal for it; " +
+			"or (b) NOTHING EVER EVALUATED IT, in which case there is no refusal to find and the " +
+			"defect is the missing event that should have triggered an evaluation before the " +
+			"floor's tick. Check the log for a refusal naming this order: if there is none, it is " +
+			"(b). This is not an inventory gap either way"
 	case !ok:
-		should = "no releaser is on file for this cause — causeReleasers has no row, which is itself " +
-			"the defect"
+		should = "no releaser is on file for this cause — the releaser inventory has no row for it, " +
+			"which is itself the defect"
 	case r.finding != "":
 		should = r.finding
 	case r.what != "":

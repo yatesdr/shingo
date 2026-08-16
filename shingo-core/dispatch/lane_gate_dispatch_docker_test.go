@@ -40,7 +40,7 @@ func gateChoreoLane(t *testing.T, db *store.DB, name, gatePoint string) (laneID 
 
 // TestGateChoreo_OpenValveCreatesUnsealedThenAppends is the uniform-shape gate.
 //
-// ⚖ The ruling is that EVERY lane-bound order on a gate_choreography group ships
+// ⚖ The ruling is that EVERY lane-bound order on a gated group ships
 // unsealed ending at the wait point — there is NO bypass class for the
 // uncontended case. So even with the lane completely clear, the create must be
 // Complete:false with a Wait block and NO dropoff, and the dropoff must arrive as
@@ -191,7 +191,7 @@ func TestGateChoreo_ContendedCreatesUnsealedAndHolds(t *testing.T) {
 // TestGateChoreo_MissingGatePointIsAnError WAS HERE AND IS DELETED, because the
 // state it tested cannot be reached any more.
 //
-// It pinned a MISCONFIGURATION: a group set to gate_choreography whose lane had
+// It pinned a MISCONFIGURATION: a group given a mark whose lane had
 // no wait point. That was a real hazard when the two were separate facts — the
 // switch said "gate this lane" and the point said "there is nowhere to wait" —
 // and the right answer was to fail the dispatch loudly rather than silently ship
@@ -230,7 +230,7 @@ func TestGateChoreo_NonGatedLaneIsUnchanged(t *testing.T) {
 
 	for i, c := range backend.CreateRequests() {
 		if !c.Complete {
-			t.Errorf("create %d: non-gate-choreography lane must stay SEALED (Complete=true)", i)
+			t.Errorf("create %d: unmarked lane must stay SEALED (Complete=true)", i)
 		}
 		if len(c.Blocks) != 2 {
 			t.Errorf("create %d: blocks = %d, want the unchanged 2-block shape", i, len(c.Blocks))

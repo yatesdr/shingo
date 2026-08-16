@@ -17,9 +17,9 @@ import (
 // ── THE COMPLAINT ─────────────────────────────────────────────────────────
 //
 // "Rearranging lane LSD_01 to reach PANEL-B" is true, and it is one word plus a
-// lookup. An operator watching a demand sit there has three questions the board
-// could not answer: which excavation is running, what is it uncovering, and is
-// it the one that will free me. All three join on the dig's order id.
+// lookup. An operator watching a demand sit there has questions the board could
+// not answer: which excavation is running, and is it the one that will free me.
+// Both join on the dig's order id.
 //
 // This drives the REAL park path — proposeLaneClearDig refuses because the lane
 // is already dig-locked, the complex arm parks the demand — and reads the
@@ -41,14 +41,13 @@ func TestDigWait_SentenceNamesTheExcavation(t *testing.T) {
 	createTestBinAtNode(t, db, bp.Code, laneSlots[0].ID, "DIGWAIT-BLOCKER")
 	createTestBinAtNode(t, db, bp.Code, laneSlots[1].ID, "DIGWAIT-TARGET")
 
-	// AN EXCAVATION IS ALREADY RUNNING on that lane, uncovering the target slot.
+	// AN EXCAVATION IS ALREADY RUNNING on that lane.
 	// This is the ordinary 1:many shape — one dig serves every demand behind the
 	// same wall — and it is the wait the operator cannot resolve from the board.
 	dig := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "digwait-dig"
 		o.OrderType = OrderTypeMove
 		o.Status = protocol.StatusReshuffling
-		o.DigTargetNode = laneSlots[1].Name
 	})
 	if !d.laneLock.TryLock(lane.ID, dig.ID) {
 		t.Fatal("precondition: the dig must hold the lane")
@@ -62,16 +61,15 @@ func TestDigWait_SentenceNamesTheExcavation(t *testing.T) {
 		o.Status = protocol.StatusQueued
 	})
 
-	res := d.proposeLaneClearDig(lane, laneSlots[1], demand, digOwnedByRequester)
-	if res.outcome != serviceDigLaneBusy {
-		t.Fatalf("outcome = %v, want serviceDigLaneBusy — this test is about the wait a demand "+
+	res := d.proposeLaneClearDig(lane, laneSlots[1], demand)
+	if res.outcome != laneClearLaneBusy {
+		t.Fatalf("outcome = %v, want laneClearLaneBusy — this test is about the wait a demand "+
 			"gets when somebody else's dig already holds its lane", res.outcome)
 	}
 
 	// Park it the way the complex arm does, then read what the board would show.
-	digID, digTarget := digWaitFor(d.db, d.laneLock, lane.ID)
 	d.setQueueReason(demand, protocol.QueueStorageRearranging, CauseLaneLocked,
-		QueueParams{Lane: lane.Name, Payload: bp.Code, DigOrderID: digID, DigTarget: digTarget})
+		QueueParams{Lane: lane.Name, Payload: bp.Code, DigOrderID: digWaitFor(d.laneLock, lane.ID)})
 
 	got, err := db.GetOrder(demand.ID)
 	testutil.MustNoErr(t, err, "reload the parked demand")
@@ -82,11 +80,7 @@ func TestDigWait_SentenceNamesTheExcavation(t *testing.T) {
 			"demand has to leave the board to find which dig is running, and on a lane that has had "+
 			"several during the wait there is no way to tell which one frees them", got.QueueReason)
 	}
-	// (b) AND WHAT IT IS UNCOVERING.
-	if !strings.Contains(got.QueueReason, laneSlots[1].Name) {
-		t.Errorf("the wait does not name the slot being uncovered. It reads:\n  %s", got.QueueReason)
-	}
-	// (c) The lane and payload it already carried are still there — the clause is
+	// (b) The lane and payload it already carried are still there — the clause is
 	// additive, not a replacement.
 	if !strings.Contains(got.QueueReason, lane.Name) || !strings.Contains(got.QueueReason, bp.Code) {
 		t.Errorf("the wait lost its lane or payload. It reads:\n  %s", got.QueueReason)
@@ -107,13 +101,13 @@ func TestDigWait_UnresolvableDigRendersExactlyAsBefore(t *testing.T) {
 	_, lane, _, _, _, _, bp := setupDwellGroup(t, db, "DIGWAITNONE", 2, true)
 
 	// No dig holds this lane.
-	digID, digTarget := digWaitFor(d.db, d.laneLock, lane.ID)
-	if digID != 0 || digTarget != "" {
-		t.Fatalf("resolved dig %d/%q on a lane no dig holds", digID, digTarget)
+	digID := digWaitFor(d.laneLock, lane.ID)
+	if digID != 0 {
+		t.Fatalf("resolved dig %d on a lane no dig holds", digID)
 	}
 
 	withClause := FormatQueueSentence(protocol.QueueStorageRearranging,
-		QueueParams{Lane: lane.Name, Payload: bp.Code, DigOrderID: digID, DigTarget: digTarget})
+		QueueParams{Lane: lane.Name, Payload: bp.Code, DigOrderID: digID})
 	without := FormatQueueSentence(protocol.QueueStorageRearranging,
 		QueueParams{Lane: lane.Name, Payload: bp.Code})
 

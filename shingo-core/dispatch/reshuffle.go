@@ -305,7 +305,7 @@ var ErrNothingInTheWay = errors.New("nothing is in front of the target slot")
 // drawer as the named escalation. Reservations do not ride along — law 13.
 //
 // WHY THIS IS A CONSTRUCTION AND NOT INCIDENCE REDUCTION: the plan precedes the
-// lock (lane_heal_dig.go's PlanLaneMouthClear → TryLock; planning_service.go's
+// lock (lane_clear_dig.go's PlanLaneMouthClear → TryLock; planning_service.go's
 // PlanReshuffle → TryLock). A dig that cannot count a dig-free pool never starts,
 // so it holds nothing, so it cannot be half of a hold-and-wait. That is where the
 // dig→dig wait-for graph loses its edges rather than merely its cycles.
@@ -878,23 +878,36 @@ func (e *MouthUnreadableError) Unwrap() error { return ErrMouthUnreadable }
 // a fault — same disposition (wait and retry), different releaser. Callers that
 // only need "congestion, park it" may test either; callers that name a cause to
 // an operator must test this one FIRST, because it names an order.
-var ErrDigHoldsTheParking = errors.New("the parking this dig needs is inside a lane another dig holds")
+// It read "…is inside a lane another dig holds". Since §R.101 the holder is not
+// always a dig — see DigParkingHeldError.HolderIsExcavation.
+var ErrDigHoldsTheParking = errors.New("the parking this dig needs is inside a lane another order holds")
 
 // DigParkingHeldError carries who is holding the parking, so the wait can name
 // its releaser instead of describing a shortage.
 type DigParkingHeldError struct {
-	Lane     string // a lane that would have satisfied the count, held by a dig
-	HolderID int64  // the dig order holding it, or 0 if it could not be read back
-	Short    int    // how many slots short the dig-free pool came
+	Lane     string // a lane that would have satisfied the count, held by another order
+	HolderID int64  // the order holding it, or 0 if it could not be read back
+	Short    int    // how many slots short the pool came
+	// HolderIsExcavation says which KIND of hold removed the lane, and the two
+	// have different releasers: a reshuffle finishes, a demand's robot carries one
+	// bin out. Before §R.101 only a dig could take mode='dig', so this sentence
+	// said "held by dig %d" unconditionally — and then said it about every
+	// ordinary retrieve sourcing from the lane. Measured on the rig this session:
+	// a plain source lock produced "lane PROBE2-SIB is held by dig 2".
+	HolderIsExcavation bool
 }
 
 func (e *DigParkingHeldError) Error() string {
-	if e.HolderID != 0 {
-		return fmt.Sprintf("%s: %d slot(s) short, and lane %s is held by dig %d",
-			ErrDigHoldsTheParking, e.Short, e.Lane, e.HolderID)
+	holder := "a dig"
+	if !e.HolderIsExcavation {
+		holder = "a demand sourcing from it"
 	}
-	return fmt.Sprintf("%s: %d slot(s) short, and lane %s is held by a dig",
-		ErrDigHoldsTheParking, e.Short, e.Lane)
+	if e.HolderID != 0 {
+		return fmt.Sprintf("%s: %d slot(s) short, and lane %s is held by %s (order %d)",
+			ErrDigHoldsTheParking, e.Short, e.Lane, holder, e.HolderID)
+	}
+	return fmt.Sprintf("%s: %d slot(s) short, and lane %s is held by %s",
+		ErrDigHoldsTheParking, e.Short, e.Lane, holder)
 }
 
 func (e *DigParkingHeldError) Unwrap() error { return ErrDigHoldsTheParking }
@@ -964,15 +977,19 @@ func digHeldParking(db *store.DB, laneID, groupID int64, unlocked []*nodes.Node,
 	// The pool WAS wide enough. Name a lane the rule removed, and the dig on it.
 	c := removed[0]
 	holder := int64(0)
+	excavation := false
 	if holds, hErr := reservations.ActiveMouthRows(db.DB, c.ID); hErr == nil {
 		for _, h := range holds {
 			if h.Mode == reservations.ModeDig {
 				holder = h.OrderID
+				excavation = reservations.IsExcavation(h.ReservedBy)
 				break
 			}
 		}
 	}
-	return &DigParkingHeldError{Lane: c.Name, HolderID: holder, Short: count - have}
+	return &DigParkingHeldError{
+		Lane: c.Name, HolderID: holder, Short: count - have, HolderIsExcavation: excavation,
+	}
 }
 
 // shuffleSlotFree reports whether a dig may park a blocker in this node.
@@ -983,7 +1000,7 @@ func digHeldParking(db *store.DB, laneID, groupID int64, unlocked []*nodes.Node,
 // compete for the same shuffle slots. This used to test "is the node empty RIGHT
 // NOW" (CountBinsByNode == 0) and nothing else — so a slot with another dig's
 // blocker already in flight to it looked free. Both digs picked it, the second
-// blocker landed on the first, and ApplyArrival's EvictStaleGhostsTx threw the
+// blocker landed on the first, and ApplyArrival's EvictStaleGhostBinsTx threw the
 // first bin to _TRANSIT. Observed on the houseserver sim 2026-07-13: lane 1 and
 // lane 2 each unburied into SMN_008 + SMN_009 three seconds apart, orphaning two
 // bins and leaving lane 1's restore compound with nothing to restock.

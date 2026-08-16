@@ -650,7 +650,8 @@ func TestComplexHoldingSlotsAsReservationsAcrossTicks(t *testing.T) {
 	}
 }
 
-// TestDeclaredStagingDropoffIsReserved is the SPR AMR-04 fix, both directions.
+// TestDeclaredStagingDropoffIsReserved is the staging-declaration fix, both
+// directions.
 //
 // ── THE DEFECT ────────────────────────────────────────────────────────────
 //
@@ -661,9 +662,10 @@ func TestComplexHoldingSlotsAsReservationsAcrossTicks(t *testing.T) {
 // name and its comment both promised coverage that was not there, which is why
 // nobody re-read it.
 //
-// Springfield, 2026-08-12: AMR-04 held a bin 48 minutes at a full SLN_003, the
-// fleet reporting RUNNING with no error, until an admin cancelled the order two
-// hours in.
+// Reachable without an incident under it: two orders take the same node and the
+// second robot arrives to find it full. (A Springfield attribution stood here;
+// §R.112 falsified it — see protocol.ComplexOrderStep.ExclusiveSlot for the one
+// full record. This test is what holds the fix, which is the point.)
 //
 // ── WHY A DECLARATION AND NOT A WIDER PREDICATE ───────────────────────────
 //
@@ -728,8 +730,7 @@ func TestDeclaredStagingDropoffIsReserved(t *testing.T) {
 	t.Run("declared — the node is reserved", func(t *testing.T) {
 		if !run(t, "DECL", true) {
 			t.Fatal("a DECLARED staging dropoff reserved nothing. Nothing then stops a second order " +
-				"taking the node, and the first robot arrives to find it occupied — SPR AMR-04, " +
-				"48 minutes")
+				"taking the node, and the first robot arrives to find it occupied")
 		}
 	})
 
@@ -878,11 +879,12 @@ func TestDeclaredStagingOccupiedByABinQueues(t *testing.T) {
 // bin step 1 exists to remove. A capacity gate that reads the floor and stops
 // there parks the order waiting for a node that only the parked order would have
 // cleared. Nothing else ever will, so it waits forever: strictly worse than the
-// 48-minute stall this whole change is about, because a stall ends.
+// contention this whole change is about, because a collision resolves and a
+// permanent wedge does not.
 //
 // This is the 2b05dce deadlock one rung in — the clearing leg belongs to THIS
 // order rather than a sibling. The difference is that Core can see it: the plan
-// is in hand, so no declaration and no SiblingOrderID is needed to know the node
+// is in hand, so no declaration and no sibling link is needed to know the node
 // will be free on arrival.
 //
 // ── AND THE RESERVATION STILL HAPPENS ─────────────────────────────────────

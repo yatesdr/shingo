@@ -494,7 +494,7 @@ func (s *BinManifestService) Unconfirm(binID int64) error {
 }
 
 // ClearAndClaim atomically clears manifest and claims the bin for an order.
-// Closes the TOCTOU race where ClaimBin + ClearBinManifest are separate txns.
+// Closes the TOCTOU race where ClaimBin + the manifest clear are separate txns.
 func (s *BinManifestService) ClearAndClaim(binID, orderID int64) error {
 	tx, err := s.db.Begin()
 	if err != nil {

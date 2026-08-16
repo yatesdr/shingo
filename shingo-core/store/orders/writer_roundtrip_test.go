@@ -87,7 +87,6 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		// That is the property worth pinning: if this ever stops surviving the
 		// INSERT, a service dig's lane releases on the last blocker and the bin
 		// it uncovered sits in an open lane with nothing but its claim.
-		"DigTargetNode": "ROUNDTRIP-DIG-TARGET",
 	}
 
 	// Fields the writer does not take from the struct. Keyed by struct field,

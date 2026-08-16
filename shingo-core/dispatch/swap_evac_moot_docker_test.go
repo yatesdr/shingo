@@ -14,7 +14,7 @@ import (
 )
 
 // mootPayload creates a payload for these fixtures. Inline rather than shared:
-// healLaneFixture builds a whole gated lane group, which this shape does not
+// clearLaneFixture builds a whole gated lane group, which this shape does not
 // need — the deadlock is about a press pair, not a lane.
 func mootPayload(t *testing.T, db *store.DB, code string) *payloads.Payload {
 	t.Helper()

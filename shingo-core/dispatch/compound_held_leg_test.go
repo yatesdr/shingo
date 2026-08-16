@@ -37,7 +37,7 @@ func TestCompound_HeldLegResumesWhenTheLaneClears(t *testing.T) {
 	// A FOREIGN order is inside the lane — not a sibling, so its completion is
 	// not wired to re-drive this parent.
 	foreign := digHolder(t, db, "HELD-foreign-occupant")
-	if err := reservations.AcquireOccupancy(db.DB, foreign.ID, lane); err != nil {
+	if _, err := reservations.AcquireOccupancy(db.DB, foreign.ID, lane); err != nil {
 		t.Fatalf("foreign occupancy: %v", err)
 	}
 
@@ -134,7 +134,7 @@ func TestCompound_HeldLegOnItsDESTINATIONLaneResumes(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(child), "create store leg")
 
 	foreign := digHolder(t, db, "DESTHELD-foreign-occupant")
-	if err := reservations.AcquireOccupancy(db.DB, foreign.ID, lane); err != nil {
+	if _, err := reservations.AcquireOccupancy(db.DB, foreign.ID, lane); err != nil {
 		t.Fatalf("foreign occupancy: %v", err)
 	}
 

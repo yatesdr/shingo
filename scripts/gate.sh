@@ -524,10 +524,36 @@ step_docker() {
     echo "          each package will start its own (adds roughly 5s per package)." >&2
   fi
 
+  # ── THE SKIP-TOGETHER TRAP (fix-batch 2a) ─────────────────────────────
+  #
+  # testdb.Skipf's when the container fails with a docker error, and `go test`
+  # exits 0 when every test skips: a docker step that runs green while the
+  # daemon is down is a lying green, and the exit code cannot tell them apart.
+  # SHINGO_TEST_REQUIRE_DOCKER turns the skip into a failure inside every
+  # package, AND the sentinel line the packages emit is checked here against
+  # the logs the run itself produced — two spellings of the same answer, so
+  # neither can go quietly blind.
+  #
+  # The untagged step_test keeps the old behavior deliberately: a developer
+  # without Docker still gets a useful unit run from `bash scripts/gate.sh`.
+  # Requiring docker there would turn every laptop-unit-run into a wall of
+  # failures and teach people to ignore the gate.
+  export SHINGO_TEST_REQUIRE_DOCKER=1
   for m in $mods; do
     echo "  docker: $m"
     ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p "$p" ./... >"$logdir/docker-$m.log" 2>&1 ) \
       || { failed=1; echo "  --- $m ($logdir/docker-$m.log) ---"; grep -Ev '^ok |no test files' "$logdir/docker-$m.log" | head -30; }
+    # The per-package ok-count the Sunday smoke asserts on. `ok  pkg  1.2s`
+    # only prints when that package's binary ran and passed; a package whose
+    # tests all skipped still prints ok, so the smoke's assertion is on the
+    # sentinel being ABSENT and the count being non-zero IN THE PACKAGES THAT
+    # CARRY DOCKER TESTS — testdb's RanItsTests is the canary that cannot skip
+    # green.
+    if grep -q '^SHINGO-DOCKER-DOWN' "$logdir/docker-$m.log"; then
+      echo "  FAIL docker ($m): the run reported docker down —" \
+           "the exit code was 0 and the tests skipped. Not a green gate." >&2
+      failed=1
+    fi
   done
   # Explicit teardown as well as the trap: the trap covers the interrupted run,
   # this covers the normal one, and it takes the server down before the verdict

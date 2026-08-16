@@ -81,7 +81,7 @@ func setupTwoLanesOneShuffle(t *testing.T, db *store.DB) (grp *nodes.Node, laneA
 // both proceed. findShuffleSlots used to ask only "is this node empty RIGHT NOW",
 // which is true of a slot that another dig already has a blocker in flight to. So
 // both digs picked the same slot, the second blocker landed on the first, and
-// EvictStaleGhostsTx threw the first bin to _TRANSIT. On the sim, lane 1 and lane
+// EvictStaleGhostBinsTx threw the first bin to _TRANSIT. On the sim, lane 1 and lane
 // 2 each unburied into SMN_008 + SMN_009 three seconds apart: two bins orphaned,
 // and lane 1's restore compound left with nothing to restock.
 //

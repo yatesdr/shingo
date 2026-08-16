@@ -63,7 +63,7 @@ func TestCompound_UnlockReleasesEveryLaneItHeldAndWakesEachOne(t *testing.T) {
 
 	// Two MARKED lanes in one group. laneA is where the dig's children work;
 	// laneB is the second lane the same dig locked — invisible to a children walk.
-	laneA, laneB, a, b, _ := healLaneFixture(t, db, "TWOLANE")
+	laneA, laneB, a, b, _ := clearLaneFixture(t, db, "TWOLANE")
 	testutil.MustNoErr(t,
 		db.SetNodeProperty(laneB.ID, PropLaneGatePoint, "TWOLANE-PARK-WAIT"), "mark laneB")
 	laneB, _ = db.GetNode(laneB.ID)
@@ -192,7 +192,7 @@ func TestCancelDoor_WakesLanesWhenAnOperatorCancelsADig(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	laneA, laneB, a, b, _ := healLaneFixture(t, db, "CANCELWAKE")
+	laneA, laneB, a, b, _ := clearLaneFixture(t, db, "CANCELWAKE")
 	testutil.MustNoErr(t,
 		db.SetNodeProperty(laneB.ID, PropLaneGatePoint, "CANCELWAKE-PARK-WAIT"), "mark laneB")
 	laneB, _ = db.GetNode(laneB.ID)

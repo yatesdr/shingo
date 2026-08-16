@@ -243,7 +243,7 @@ func TestStacked_BuriedIrreplaceableNeed_InALockedLane_InAFullGroup(t *testing.T
 		t.Fatalf("the demand is %q, want %q — every obstacle has cleared, so it must now be digging",
 			digging.Status, protocol.StatusReshuffling)
 	}
-	legs := legsOf(t, db, serviceDigFor(t, db, digging).ID)
+	legs := legsOf(t, db, laneClearFor(t, db, digging).ID)
 	// Expose mode: the unbury alone. The complex parent owns its own pickup and
 	// runs it against the now-accessible slot after the compound.
 	if len(legs) != 1 {

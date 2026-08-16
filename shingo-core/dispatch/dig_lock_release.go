@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"fmt"
 	"log"
 
 	"shingo/protocol"
@@ -12,7 +11,7 @@ import (
 // digHandoffReservedBy tags the mouth row a finished dig hands to the order
 // collecting its bin, so a reader looking at a lane's holders can tell an
 // ordinary outbound hold from one that came out of an excavation.
-const digHandoffReservedBy = "dighandoff"
+const digHandoffReservedBy = reservations.ByDigHandoff
 
 // FLIP 2 — the dug lane's dig claim drops when the last blocker LEAVES THE LANE,
 // not when the compound terminates.
@@ -193,33 +192,32 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 	d.EvaluateDwellersSharingGroupWith(laneID)
 }
 
-// handOffDugLane gives laneID to the order coming to collect the bin this dig
-// uncovered, and reports whether it did. False means the lane is the caller's to
-// release: this dig uncovered nothing, or nobody is coming for what it uncovered.
+// handOffDugLane keeps the corridor a demand just excavated, as that demand's own
+// OUTBOUND hold, and reports whether it did. False means the lane is the caller's
+// to release: this demand's fetch was one of its own legs, so nothing is left
+// standing at the mouth to protect.
 //
-// ── IT IS ASKED IN TWO HALVES, AND BOTH ARE PHYSICAL ──────────────────────
+// ── IT LOOKS LIKE A STUB AND IT IS NOT. READ THE PIN FIRST ────────────────
 //
-// IS ANYTHING STANDING THERE (DigStillOwesItsTarget) — the same predicate, the
-// same one spelling, now with one reader instead of three. A dig whose target
-// slot is empty uncovered nothing worth protecting: either the excavation was
-// for a slot rather than a bin (a dweller clearing somewhere to drop), or the bin
-// has already gone. Nothing to hand over.
+// This is §R.91's gate-2 self-handoff. It has been boarded for deletion once
+// already and was live when anybody actually checked, so before removing it read
+// dig_self_handoff_docker_test.go, which says what breaks without it.
 //
-// IS ANYBODY COMING (CollectorForDigTarget) — asked NOW, through the episode
-// that raised the dig, because that is the only tie a buried demand has to the
-// bin it is waiting for. This is the half that was missing: without it a corridor
-// is held for a demand that walked away, and the release is keyed on an event
-// that will never happen.
+// ── WHAT IT PROTECTS: THE NAKED-TARGET WINDOW ─────────────────────────────
 //
-// ── EVERY DOUBT FALLS THE SAME WAY, AND IT IS NOT THE USUAL WAY ───────────
+// Releasing outright ends the excavation with the demand's bin standing at an
+// open lane mouth and the demand not yet dispatched, while the slots the dig just
+// emptied are the cheapest shuffle candidates in the group — so the next order
+// wanting one re-buries the bin the dig was run to expose.
 //
-// Towards RELEASING. That is the opposite of the rest of this file, and it is
-// deliberate: everything above is deciding whether a dig is still WORKING, where
-// an early release drives another order into a live excavation. This decides who
-// owns an already-finished corridor, where the failure is a lane shut with
-// nothing running in it — no robot to finish, no leg to terminate, nothing whose
-// completion re-asks. A missed handoff costs the exposure window the ordinary
-// mouth gate covers on the demand's next dispatch; a wrong hold costs the lane.
+// ── THE REMAINING DOUBT FALLS TOWARDS RELEASING ───────────────────────────
+//
+// That is the opposite of the rest of this file, and it is deliberate: everything
+// above is deciding whether a dig is still WORKING, where an early release drives
+// another order into a live excavation. This decides who owns an already-finished
+// corridor, where the failure is a lane shut with nothing running in it. A missed
+// handoff costs the exposure window the ordinary mouth gate covers on the
+// demand's next dispatch; a wrong hold costs the lane.
 func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 	if parent == nil {
 		return false
@@ -227,18 +225,12 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 
 	// ── GATE 2: THE SELF-HANDOFF (§R.91) ──────────────────────────────────
 	//
-	// A RE-PARENTED DEMAND IS ITS OWN COLLECTOR, and the two questions below
-	// cannot ask that. They are written for a FOLDER: "is anything standing at
-	// the target" reads DigTargetNode, which only createServiceDigParent writes,
-	// and "is anybody coming" looks through the episode for a DIFFERENT order.
-	// A demand that took its own excavation records no target and is not somebody
-	// else, so both answer no and the corridor is released outright.
-	//
-	// That is the naked-target window. The excavation ends with the demand's bin
-	// standing at an open lane mouth and the demand not yet dispatched, and the
-	// slots the dig just emptied are the cheapest shuffle candidates in the group
-	// — so the next order wanting one re-buries the bin the dig was run to
-	// expose, in the gap between the resume and the demand's own dispatch.
+	// A RE-PARENTED DEMAND IS ITS OWN COLLECTOR. The excavation ends with the
+	// demand's bin standing at an open lane mouth and the demand not yet
+	// dispatched, and the slots the dig just emptied are the cheapest shuffle
+	// candidates in the group — so the next order wanting one re-buries the bin
+	// the dig was run to expose, in the gap between the resume and the demand's
+	// own dispatch.
 	//
 	// WHY THE MODE IS OUTBOUND and not "keep the dig": what has to be excluded is
 	// precisely a DROP into that lane. Outbound says that in the vocabulary that
@@ -258,69 +250,24 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 	// SCOPED TO A PARENT THAT STILL OWES ITS OWN WORK. A plain retrieve's fetch is
 	// one of its own legs — the bin leaves the lane inside the compound — so there
 	// is nothing standing at the mouth to protect and legStillNeedsLane already
-	// covered it. That is the same reason DigTargetNode is not written on one.
-	if parent.DigTargetNode == "" {
-		if !IsCoordinated(parent) {
-			return false // its fetch was one of its own legs; nothing is left standing
-		}
-		handed, hErr := reservations.HandOffLaneToPicker(
-			d.db.DB, laneID, parent.ID, parent.ID, digHandoffReservedBy)
-		if hErr != nil {
-			log.Printf("dig lock: could not convert dig %d's own claim on lane %d to its outbound "+
-				"hold (%v) — leaving the claim in place; the compound's own teardown releases it",
-				parent.ID, laneID, hErr)
-			return true // the row may or may not have moved: do not release on top of a failed write
-		}
-		if !handed {
-			return false
-		}
-		log.Printf("dig lock: demand %d finished its own excavation of lane %d and kept the corridor "+
-			"as an OUTBOUND hold. Nothing may drop into it until the demand has its bin, and the "+
-			"hold ends with the demand however it ends", parent.ID, laneID)
-		return true
+	// covered it.
+	if !IsCoordinated(parent) {
+		return false // its fetch was one of its own legs; nothing is left standing
 	}
-
-	standing, sErr := d.db.DigStillOwesItsTarget(parent)
-	if sErr != nil {
-		// The predicate has already chosen the disposition and returned it; this
-		// only says so. A misconfigured target releases the lane and is LOUD,
-		// because a hold nothing in the world can end is worse than an early one.
-		log.Printf("dig lock: %v", sErr)
-	}
-	if !standing {
-		return false
-	}
-
-	laneName := fmt.Sprintf("%d", laneID)
-	if lane, err := d.db.GetNode(laneID); err == nil && lane != nil {
-		laneName = lane.Name
-	}
-
-	picker, err := d.db.CollectorForDigTarget(parent)
-	if err != nil {
-		log.Printf("dig lock: could not look up who is collecting %s after dig %d cleared %s: %v "+
-			"(releasing the lane — a corridor held on an unanswered question has no releaser)",
-			parent.DigTargetNode, parent.ID, laneName, err)
-		return false
-	}
-	if picker == nil {
-		d.recordExcavationWithNobodyComing(parent, laneName)
-		return false
-	}
-
-	handed, hErr := reservations.HandOffLaneToPicker(d.db.DB, laneID, parent.ID, picker.ID, digHandoffReservedBy)
+	handed, hErr := reservations.HandOffLaneToPicker(
+		d.db.DB, laneID, parent.ID, parent.ID, digHandoffReservedBy)
 	if hErr != nil {
-		log.Printf("dig lock: could not hand lane %s from dig %d to order %d (%v) — leaving the dig's "+
-			"claim in place; the compound's own teardown releases it", laneName, parent.ID, picker.ID, hErr)
+		log.Printf("dig lock: could not convert dig %d's own claim on lane %d to its outbound "+
+			"hold (%v) — leaving the claim in place; the compound's own teardown releases it",
+			parent.ID, laneID, hErr)
 		return true // the row may or may not have moved: do not release on top of a failed write
 	}
 	if !handed {
 		return false
 	}
-	log.Printf("dig lock: dig %d cleared %s and handed it to order %d, which is collecting the bin at "+
-		"%s. The corridor is now that order's outbound hold: nothing may drop into %s until it has "+
-		"its bin, and the hold ends with that order however it ends",
-		parent.ID, laneName, picker.ID, parent.DigTargetNode, laneName)
+	log.Printf("dig lock: demand %d finished its own excavation of lane %d and kept the corridor "+
+		"as an OUTBOUND hold. Nothing may drop into it until the demand has its bin, and the "+
+		"hold ends with the demand however it ends", parent.ID, laneID)
 	return true
 }
 

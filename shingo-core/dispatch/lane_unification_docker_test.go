@@ -61,7 +61,7 @@ func TestUnification_PlainStoreParksOnAnOccupiedLane(t *testing.T) {
 	}
 
 	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "uni-ask-inside" })
-	if err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
+	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}
 
@@ -187,7 +187,7 @@ func TestUnification_PlainRetrieveParksOnAnOccupiedSourceLane(t *testing.T) {
 		t.Fatalf("resolve line: %v", err)
 	}
 	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "uni-ret-inside" })
-	if err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
+	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}
 

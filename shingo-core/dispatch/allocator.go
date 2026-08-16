@@ -126,8 +126,11 @@ type slotNeed struct {
 // are seeded parentless (cmd/seeddev/seed_core.go — stations pass nil where the
 // slot loop one block above passes its lane id). Staging never reached the
 // LANE/NGRP test at all. So a staging dropoff was reserved by nothing and
-// capacity-checked by nothing, and the first anyone knew of it was a robot
-// standing at a full staging node: Springfield AMR-04, 48 minutes, 2026-08-12.
+// capacity-checked by nothing, so two orders can take one node and the second
+// robot arrives to find it full. (This named the Springfield 2026-08-12 hold as
+// the first anyone knew of it. §R.112's plant queries falsified that attribution
+// — see protocol.ComplexOrderStep.ExclusiveSlot for the one full record. The gap
+// is reachable on its own terms and the fix keeps its standing.)
 //
 // ── WHY THE FIX IS A DECLARATION AND NOT A WIDER PREDICATE ────────────────
 //

@@ -29,24 +29,34 @@ package dispatch
 // see and no drift test can miss.
 //
 // NEVER CROSSES THE WIRE — see above; that is unchanged and is what makes the
-// naming safe to do in bulk. The strings are a Core vocabulary, and NOT ONE OF
-// THEM CHANGES HERE. Naming a value is not renaming it: the histogram an
-// engineer groups by has to stay continuous across this commit, so every
-// constant below carries the literal its call site already wrote.
+// naming safe to do in bulk. The strings are a Core vocabulary, and the bulk
+// NAMING commit changed none of them: naming a value is not renaming it, and the
+// histogram an engineer groups by had to stay continuous across it.
+//
+// (Since then exactly one value HAS been re-spelled, deliberately and on its own
+// argument — see the one-character pair below. The rule is not "values never
+// change", it is "a value changes only when the ambiguity costs more than the
+// discontinuity", and it is decided one value at a time.)
 //
 // ── TWO COLLISIONS, BOTH KEPT AND BOTH NOW VISIBLE ────────────────────────
 //
 // CauseLaneLockRace and CauseBinLockRace are BOTH "lock-race" — a lane dig-lock
-// race and a bin reservation race, two facts one string. CauseComplexSlotReserve
-// ("slot-reserve") and CauseStoreSlotContended ("slot-reserved") are two facts
-// one CHARACTER apart.
+// race and a bin reservation race, two facts one string. That pair is KEPT: only
+// one of the two has a writer at all (censused at the tree — see the row in
+// causeReleasers, whose own text was wrong about this), so nothing today is
+// actually ambiguous, and re-spelling either value rewrites what rows already in
+// a plant's orders table mean.
 //
-// Neither is collapsed and neither is re-spelled: changing either value rewrites
-// what the forensic record means for one of the pair, which is a behaviour change
-// this commit does not get to make. What changes is that both collisions are now
-// declared in one block where a reader trips over them, instead of living in two
-// files that never mention each other. The lock-race pair is carried into
-// causeReleasers as a single row that says so, and is reported as a finding.
+// THE ONE-CHARACTER PAIR IS NOT KEPT, and that is the difference. It read:
+// "CauseComplexSlotReserve ("slot-reserve") and CauseStoreSlotContended
+// ("slot-reserved") are two facts one CHARACTER apart... neither is re-spelled".
+// Both have live writers, both land in durable rows, and one character is not a
+// distinction anybody makes on a board read under pressure — the reason the two
+// were documented together is the reason to fix one of them. The complex value
+// is now "complex-slot-reserve", which also makes it match its own constant
+// name; the store value is untouched, so exactly one histogram series is
+// interrupted rather than two, and an old "slot-reserve" row is unambiguously
+// pre-change rather than newly meaning something else.
 type QueueCause string
 
 // The lane/gate family. Values are unchanged from the literals they replace —
@@ -71,6 +81,25 @@ const (
 	CauseLaneTargetBuried QueueCause = "lane-target-buried"
 	// CauseLaneHeldDig — the mouth acquire lost to a dig holder.
 	CauseLaneHeldDig QueueCause = "lane-held-dig"
+	// CauseLaneHeldSource — the lane is held EXCLUSIVELY by an ordinary demand
+	// that resolved onto a bin in it (§R.101's source lock), not by an excavation.
+	//
+	// SPLIT FROM CauseLaneHeldDig AND CauseLaneDigActive ON THE RELEASER, which is
+	// the only reason a cause ever splits. A dig clears when the reshuffle ends —
+	// several legs, a teardown, minutes. A source lock clears when ONE robot
+	// carries ONE bin out of the lane, and the order it clears for is already
+	// dispatched. Different waits, different lengths, different things to go and
+	// look at.
+	//
+	// It exists because §R.101 generalized the source hold to mode='dig' and every
+	// reader kept saying "dig". An engineer sent to find the excavation behind a
+	// lane-dig-active wait finds no reshuffle, no parent, no legs — because there
+	// is none, and the wait was correct about the lane and wrong about the reason.
+	// Not an alarm that fails to fire; an alarm with the wrong name on it.
+	//
+	// THE REFUSAL IT LABELS IS UNCHANGED. §R.101 rules that a demand owns the lane
+	// it sources from until the bin leaves by its mover, and it still does.
+	CauseLaneHeldSource QueueCause = "lane-held-source"
 	// CauseLaneHeldTraffic — the mouth acquire lost to a different-mode holder.
 	// DEFINITE: every one of the order's lanes was read and none held a dig.
 	CauseLaneHeldTraffic QueueCause = "lane-held-traffic"
@@ -113,6 +142,22 @@ const (
 	// is the planner refusing to write a plan that would need one. Same fact about
 	// the world, opposite side of the commit.
 	CauseDigHoldsParking QueueCause = "dig-holds-parking"
+	// CauseDemandHoldsParking — right of way refused this dig, and the lane it was
+	// refused by is held by an ordinary DEMAND sourcing from it (§R.101), not by
+	// an excavation.
+	//
+	// THE SAME SPLIT AS CauseLaneHeldSource, at the planner instead of at the
+	// mouth, and split for the same reason: the releaser. CauseDigHoldsParking's
+	// releaser is a reshuffle ending — several legs and a teardown. This one's is
+	// one robot carrying one bin out of a lane it is already dispatched for.
+	//
+	// It is reachable and was measured rather than reasoned: a source lock on a
+	// sibling lane produced "lane LS_SIB is held by dig 2" out of
+	// DigParkingHeldError, naming an excavation that did not exist. §R.61's
+	// right-of-way rule is written about digs — "a dig must not plan into a lane
+	// another dig holds" — and §R.101 widened the population it removes without
+	// widening the words it removes them under.
+	CauseDemandHoldsParking QueueCause = "demand-holds-parking"
 	// CauseEpisodeAlreadyDigging — this demand already has an excavation running,
 	// so a second one is not raised for it.
 	//
@@ -134,6 +179,30 @@ const (
 	// it must not be filed under lock-race — the wait is a robot's drive time, not
 	// a lost microsecond.
 	CauseDigBlockerClaimed QueueCause = "dig-blocker-claimed"
+	// CauseDigBlockerStopped — the same wall, and the opposite fact about it: the
+	// order hard-claiming the bin the dig must move HAS STOPPED WITHOUT
+	// TERMINATING. Nothing in the plant is going to move that bin.
+	//
+	// IT IS A SEPARATE CAUSE BECAUSE IT HAS A SEPARATE RELEASER, which is the only
+	// thing this vocabulary is for. CauseDigBlockerClaimed's releaser is a robot
+	// finishing its drive; this one's is A PERSON — §R.115: "it's really a config
+	// error or an engineer needs to resolve the stopped order." Writing this
+	// population under the congestion tag would tell an operator to wait for a
+	// robot that is not coming, and a wait naming the wrong releaser is worse than
+	// one naming none.
+	//
+	// FOURTH MEMBER OF THE FAMILY §R.45 OPENED: a config-fault-class wait,
+	// diagnosed by a human from a named row rather than cleared by a sweep. Like
+	// the slot attached to no lane, it stays LOUD with the subject named — the
+	// stopped order's id is in the operator sentence and in the alarm row, because
+	// a wait whose releaser is a person is worth nothing if the person cannot see
+	// it.
+	//
+	// NOT terminal-status machinery and NOT a reaper. §R.115 refused both by name:
+	// an order that stopped without terminating is usually a config fault or a
+	// real breakdown, and dissolving it automatically is the machine guessing at
+	// something it cannot classify.
+	CauseDigBlockerStopped QueueCause = "dig-blocker-order-stopped"
 	// CauseStagedOwnDig — a robot is standing at a lane's mark while the order it
 	// belongs to digs that lane open with its OWN children (§R.104).
 	//
@@ -161,6 +230,24 @@ const (
 	// three floor ticks AND a vehicle is committed to a leg". A chapter quiet that
 	// long with NO vehicle committed does not get a cause — it gets dissolved.
 	CauseChapterLegInFlight QueueCause = "chapter-leg-in-flight"
+	// CauseStagedDigFailed — the order is standing at its mark in `staged` (§R.104)
+	// and its OWN dig chapter stopped short: a leg failed or the plan went stale
+	// and was dissolved. The robot is committed and its plan is intact — the
+	// splice-append resume — so it takes no transition out of `staged`, which
+	// would be illegal, and no Cancel, which would end a demand whose own work is
+	// not what failed. It waits for the machinery that re-asks the lane.
+	//
+	// The difference from CauseStagedOwnDig is the chapter's direction: that cause
+	// says "my dig is running, wait for it to close"; this one says "my dig
+	// STOPPED, wait for the re-ask". Two different sentences because two different
+	// releasers — the operator reading the board needs to know whether the lane's
+	// own excavation is coming or Core is re-raising one.
+	//
+	// The difference from CauseChapterLegInFlight is the waiter's shape: that one
+	// is a `reshuffling` parent whose leg is a live mission; this one is a staged
+	// dweller whose legs have already landed terminal. Same physical fact — a dig
+	// for this demand is not running — opposite sides of the commit.
+	CauseStagedDigFailed QueueCause = "staged-dig-failed"
 
 	// ── The gate's own failures ───────────────────────────────────────────
 
@@ -259,8 +346,8 @@ const (
 	// node lookup (F6 of the 2026-07-20 queue-reason study).
 	CauseDestNodeUnresolved QueueCause = "dest-node-unresolved"
 	// CauseStoreSlotContended — ReserveStorageDropoff lost its destination slot.
-	// ONE CHARACTER from CauseComplexSlotReserve and a different fact; see the
-	// type doc. This one is a plain store's single slot.
+	// This one is a plain store's single slot; the multi-slot complex reserve is
+	// CauseComplexSlotReserve, which the two used to be one character apart from.
 	CauseStoreSlotContended QueueCause = "slot-reserved"
 	// CauseBinLockRace — the bin was reserved by a concurrent order in the
 	// Find→Reserve window. SAME STRING as CauseLaneLockRace and a different fact;
@@ -289,9 +376,11 @@ const (
 	// distinguishes "holding part of the set" from "holding nothing and blocked on
 	// every need" — the SPR ALN_006 lie was rendering the second as the first.
 	CauseReserveHolding QueueCause = "reserve-holding"
-	// CauseComplexSlotReserve — the multi-slot reserve did not complete. ONE
-	// CHARACTER from CauseStoreSlotContended and a different fact; see the type doc.
-	CauseComplexSlotReserve QueueCause = "slot-reserve"
+	// CauseComplexSlotReserve — the multi-slot reserve did not complete. It was
+	// "slot-reserve", one character from CauseStoreSlotContended's "slot-reserved"
+	// and a different fact; see the type doc for why this one moved and that one
+	// did not.
+	CauseComplexSlotReserve QueueCause = "complex-slot-reserve"
 	// CauseDropoffCapacity — a concrete storage dropoff is full or has inbound
 	// traffic already committed to it.
 	CauseDropoffCapacity QueueCause = "dropoff-capacity"

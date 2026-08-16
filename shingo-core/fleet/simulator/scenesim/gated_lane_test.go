@@ -10,7 +10,7 @@ import (
 
 // Harness for the UNIFORM gated shape (increment 3).
 //
-// Production ships EVERY lane-bound store on a gate_choreography group as an
+// Production ships EVERY lane-bound store on a gated group as an
 // unsealed waybill ending at the lane's wait point, and appends the dropoff tail
 // when the lane is safe — immediately, back to back with the create, when it
 // already is. There is no bypass class, so the open and contended cases differ
@@ -424,8 +424,8 @@ func TestGateChoreo_SoakZeroWalls(t *testing.T) {
 		}
 	}
 	if walled > 0 || violated > 0 {
-		t.Errorf("gate_choreography soak must be clean: %d/%d seeds walled, %d/%d fired a checker", walled, seeds, violated, seeds)
+		t.Errorf("gated-lane soak must be clean: %d/%d seeds walled, %d/%d fired a checker", walled, seeds, violated, seeds)
 	}
-	t.Logf("GATE_CHOREOGRAPHY soak: %d/%d walled, %d/%d fired a checker, %d/%d seeds exercised a real gate release — clean",
+	t.Logf("GATED-LANE soak: %d/%d walled, %d/%d fired a checker, %d/%d seeds exercised a real gate release — clean",
 		walled, seeds, violated, seeds, dwelt, seeds)
 }

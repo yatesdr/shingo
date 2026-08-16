@@ -9,11 +9,12 @@ import (
 	"shingocore/fleet"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
-// The gate_choreography valve — the UNIFORM gated shape.
+// The gated-lane valve — the UNIFORM gated shape.
 //
-// EVERY lane-bound order on a gate_choreography group ships UNSEALED, ending at
+// EVERY lane-bound order on a gated group ships UNSEALED, ending at
 // the lane's wait point. There is NO bypass class for the uncontended case; an
 // early append is what makes an open gate invisible.
 //
@@ -51,7 +52,7 @@ import (
 // DWELLS with no release path — nothing appends its tail until the release
 // evaluator lands in increment 4. That is expected behavior for this increment,
 // asserted as such in the harness, and it is why the arm ships inert: no plant
-// sets lane_enforcement=gate_choreography.
+// sets a gate mark.
 
 // PropLaneGatePoint is the node-property key, read on the LANE node, naming the
 // RDS map point where a robot dwells while Core decides whether it may enter.
@@ -76,7 +77,7 @@ type laneGateTarget struct {
 // ok=false for a lane with no group or a group on any other arm, so a plant that
 // has not configured the arm never reaches the valve at all.
 //
-// A gate_choreography group whose lane has NO gate point configured is a
+// A gated group whose lane has NO gate point configured is a
 // MISCONFIGURATION, and it is reported as an error rather than silently falling
 // back to the sealed shape. Falling back would reintroduce exactly the bypass
 // class the uniform ruling exists to forbid, and it would do so invisibly, on the
@@ -91,7 +92,7 @@ func (d *Dispatcher) gateTargetForLane(lane *nodes.Node) (laneGateTarget, bool, 
 		return laneGateTarget{}, false, nil
 	}
 	// THE MARK IS THE WHOLE ANSWER. This used to ask two things — is the group
-	// configured gate_choreography, and does the lane have a wait point — and had
+	// configured as gated, and does the lane have a wait point — and had
 	// to treat "configured but no point" as a misconfiguration error, because the
 	// two could disagree. They cannot disagree now: there is one fact.
 	gatePoint := d.laneWaitPoint(lane.ID)
@@ -495,7 +496,7 @@ func IsGateStaged(order *orders.Order) bool {
 // through resolvedStep, so they PRESERVE the stamp rather than dropping it.
 // Both valve functions now stamp. So an unstamped lane wait would have to come
 // from a build older than this field, and none can be in flight: the gate has
-// never run at a plant, `lane_enforcement` is set on no node at either plant,
+// never run at a plant, no lane carries a mark at either plant,
 // and this branch has never been deployed to one.
 //
 // AND IT WOULD HIDE THE NEXT BUG. The splice lands next, and it becomes a THIRD
@@ -771,19 +772,41 @@ func (d *Dispatcher) appendGateTail(order *orders.Order, what string) error {
 	if !ok {
 		return fmt.Errorf("gated order %d has no wait at wait_index %d", order.ID, order.WaitIndex)
 	}
-	dwelling := waitGatesAnAppend(steps, order.WaitIndex)
-	if err := d.takeLaneOccupancyByID(order.ID, w.WaitLane); err != nil {
+	// ── THE ROLLBACK GIVES BACK WHAT THIS CALL TOOK, AND NOTHING ELSE ────────
+	//
+	// The take reports which of its two idempotent outcomes happened, and that —
+	// not the plan's shape — decides the rollback. The plan-shape guard this
+	// replaced (waitGatesAnAppend here) was STRUCTURALLY DEAD on exactly the arm
+	// it was written for: the dwell's release binds the tail BEFORE appending
+	// (bindDwellTail — the plan first, the column second, §R.5's crash ordering),
+	// so by the time this function reads the plan the dwell wait has an
+	// actionable step after it and `dwelling` read false for every dweller. The
+	// failed dweller append then ran the INBOUND rollback — an order-wide
+	// ReleaseLaneOccupancy that also dropped the dweller's dispatch-time
+	// source-lane row — declaring an occupied corridor empty to the next leg.
+	// Two robots nose to tail, from a guard that never once fired true.
+	//
+	// The take's own insert is the only witness that survives both writers: it
+	// says "took" for an inbound append entering an open row, and "already
+	// there" for a dweller re-taking the row its dispatch took. The rollback
+	// keys on it, per-lane through ReleaseOccupancyForLane rather than the
+	// order-wide release, so a leg inside TWO lanes loses neither row to the
+	// other's failure.
+	took, err := d.takeLaneOccupancyByID(order.ID, w.WaitLane)
+	if err != nil {
 		return err
 	}
 	if err := d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, what); err != nil {
 		// The robot never got the tail. For an INBOUND wait that means it is still
-		// at the gate, still outside, and the row this call took must go.
+		// at the gate, still outside, and the row this call took must go — THIS
+		// lane's row, not every lane's: the corridor the robot was sent into is
+		// the one whose row is a leftover.
 		//
-		// FOR A DWELLER IT MEANS THE OPPOSITE, and releasing here would be the
-		// phantom-absence twin of §R.54's phantom row: the robot is standing INSIDE
-		// the lane holding a bin, this call took nothing, and dropping the row would
-		// declare an occupied corridor empty to the next leg. Nothing is rolled back
-		// because nothing was acquired.
+		// FOR A DWELLER, took=false: this call inserted nothing, so there is
+		// nothing to give back, and the source-lane row its dispatch took stands
+		// until the dwell's own release drops it — releasing here would be the
+		// phantom-absence twin of §R.54's phantom row, a robot standing in a
+		// corridor the table says is empty.
 		//
 		// AND THE INBOUND SENTENCE HAS ITS OWN EXCEPTION (§R.98 stage A3). An
 		// AppendLandedError says the fleet took the segment and the failure is
@@ -791,8 +814,11 @@ func (d *Dispatcher) appendGateTail(order *orders.Order, what string) error {
 		// row is not a leftover to clean up, it is the true one. Rolling it back
 		// declares the same occupied corridor empty, arrived at from the other
 		// direction.
-		if !dwelling && !IsAppendLanded(err) {
-			d.ReleaseLaneOccupancy(order.ID)
+		if took && !IsAppendLanded(err) {
+			if relErr := reservations.ReleaseOccupancyForLane(d.db.DB, order.ID, w.WaitLane); relErr != nil {
+				log.Printf("lanegate: rollback occupancy for order %d on lane %d after failed append: %v",
+					order.ID, w.WaitLane, relErr)
+			}
 		}
 		return err
 	}

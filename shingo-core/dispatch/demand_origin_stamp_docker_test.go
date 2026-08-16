@@ -194,7 +194,7 @@ func TestOriginPropagation_ReshuffleChildrenInheritFromTheBuriedParent(t *testin
 	// demand, which was its own dig's parent; a complex demand is now a customer
 	// of a lane-clear dig and the legs hang off THAT. What this test is about —
 	// what a reshuffle leg carries — is unchanged, so it follows the legs.
-	children := serviceDigChildren(t, db, parent)
+	children := laneClearChildren(t, db, parent)
 	for _, c := range children {
 		wantOrigin(t, c, "reshuffle child of the buried parent", testOriginID, protocol.OriginClassAttached)
 	}

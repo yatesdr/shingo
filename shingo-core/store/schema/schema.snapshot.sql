@@ -684,7 +684,6 @@ CREATE TABLE public.orders (
     origin_id uuid,
     origin_class text DEFAULT ''::text NOT NULL,
     open_for_children boolean DEFAULT false NOT NULL,
-    dig_target_node text DEFAULT ''::text NOT NULL,
     orphan_aged_at timestamp with time zone,
     destination_resolved_at timestamp with time zone
 );

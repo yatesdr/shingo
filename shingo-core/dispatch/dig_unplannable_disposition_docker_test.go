@@ -155,7 +155,7 @@ func TestDigUnplannable_BinReadStutter_Waits(t *testing.T) {
 	reloaded, err := db.GetOrder(demand.ID)
 	testutil.MustNoErr(t, err, "reload after the outage")
 	d.planBuriedReshuffleAtIntake(reloaded, reloaded.PayloadCode, "line-1", buried)
-	serviceDigFor(t, db, reloaded)
+	laneClearFor(t, db, reloaded)
 }
 
 // SITUATION 4 — the slot is a child of no lane.

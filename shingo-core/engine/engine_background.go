@@ -138,10 +138,9 @@ func (e *Engine) laneLivenessFloorLoop() {
 
 			// THE OTHER WAY A DIG HELD FOREVER — its own lane, for a bin whose
 			// demand had gone — was swept from here and no longer can be. A
-			// finished dig hands its corridor to the order collecting the bin and
-			// terminates, so the population this asked about does not exist; and
-			// the waste it was really measuring is recorded at the moment it
-			// happens instead (dispatch.AbandonedExcavationAction).
+			// finished dig keeps its corridor as its own outbound hold and that
+			// hold ends with the demand, so the population this asked about does
+			// not exist.
 		}
 	}
 }

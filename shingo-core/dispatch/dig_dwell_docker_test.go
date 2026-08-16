@@ -505,7 +505,7 @@ func TestDwell_HoldsItsLaneUntilItDrivesOut(t *testing.T) {
 // different lanes — so they are released under different mutexes and nothing else
 // serializes them. The 2026-07-13 specimen is what that window costs: two digs
 // picked SMN_008/SMN_009 three seconds apart, a blocker landed on a blocker,
-// EvictStaleGhostsTx threw a bin to _TRANSIT, two bins orphaned.
+// EvictStaleGhostBinsTx threw a bin to _TRANSIT, two bins orphaned.
 //
 // The DIVERSION half — two dwellers, two distinct slots — is pinned end to end by
 // TestFindShuffleSlots_TwoDigsDivertOntoDifferentSlots. What that test cannot
@@ -814,7 +814,8 @@ func TestDwell_WaitsWhenTheWalkIsExhausted(t *testing.T) {
 	// A ROBOT INSIDE THE SIBLING LANE, not a dig holding it. The lane stays in the
 	// pool — this is exactly the case right of way does not remove.
 	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "dwexh-inside" })
-	testutil.MustNoErr(t, reservations.AcquireOccupancy(db.DB, inside.ID, sib.ID), "occupy the sibling lane")
+	_, aErr := reservations.AcquireOccupancy(db.DB, inside.ID, sib.ID)
+	testutil.MustNoErr(t, aErr, "occupy the sibling lane")
 
 	d.EvaluateWaitLaneForStagedOrder(legs[0].ID)
 	held, err := db.GetOrder(legs[0].ID)
@@ -974,9 +975,13 @@ func TestDwell_ComposesWithTheGatedEntry(t *testing.T) {
 // standing in the lane, and the dig's own remaining legs (exempt from their
 // parent's lock by design) are free to queue in behind it.
 //
-// MUTATION: make handOffDugLane return false unconditionally. The DRIVE-OUT
-// assertion fires — the lane goes fully free with the uncovered bin standing in
-// it, which is the re-burial window.
+// NO MUTATION NOTE for handOffDugLane. One stood here claiming that making it
+// return false unconditionally fires the DRIVE-OUT assertion. RE-DRIVEN
+// 2026-08-16: it does not — this test PASSES under that exact mutation. The
+// self-handoff is covered by dig_self_handoff_docker_test.go and, end to end, by
+// TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan; it was never
+// covered here. Four false MUTATION notes have now been found on this branch and
+// all four were found the same way — by running them.
 func TestFlip2_TheDigKeepsItsLaneWhileALegDwellsInIt(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

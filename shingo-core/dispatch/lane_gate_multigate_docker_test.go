@@ -206,7 +206,7 @@ func TestMultiGate_SecondGateGetsWindow3sRescue(t *testing.T) {
 
 	// Lane B here is the WALL lane from the window 3 fixture: marked, three deep,
 	// and in a group with an ungated lane to park a blocker in.
-	wall, park, w, _, bp := healLaneFixture(t, db, "MG2")
+	wall, park, w, _, bp := clearLaneFixture(t, db, "MG2")
 	laneA, a0, _ := gateChoreoLane(t, db, "MG2-A", "MG2-A-GATE")
 
 	createTestBinAtNode(t, db, bp.Code, a0.ID, "BIN-MG2")

@@ -225,7 +225,7 @@ func TestAdvanceStuckReshuffleParents_RescuesADigThatNamesATarget(t *testing.T) 
 			createTestBinAtNode(t, db, bp.Code, slot.ID, uuid+"-BIN")
 		}
 		p := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeMove,
-			Status: protocol.StatusReshuffling, Quantity: 1, DigTargetNode: slot.Name}
+			Status: protocol.StatusReshuffling, Quantity: 1}
 		testutil.MustNoErr(t, db.CreateOrder(p), "create dig parent "+uuid)
 		c := &orders.Order{EdgeUUID: uuid + "-c1", StationID: "line-1", OrderType: protocol.OrderTypeMove,
 			Status: protocol.StatusConfirmed, ParentOrderID: &p.ID, Quantity: 1}
@@ -668,8 +668,18 @@ func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 			if a.Category != "order_runtime" {
 				t.Errorf("anomaly category = %q, want order_runtime", a.Category)
 			}
-			if a.RecommendedAction != "cancel_stuck_order" {
-				t.Errorf("recommended action = %q", a.RecommendedAction)
+			// IT USED TO ASSERT `cancel_stuck_order`, AND THAT IS THE CHANGE. The
+			// board turned that recommendation into this row's only affordance —
+			// a "Cancel Stuck Order" button — and cancelling a stuck order is
+			// ruled 4/4 never the answer: it clears the row and leaves the robot
+			// exactly where it was, minus the evidence.
+			if a.RecommendedAction != "investigate_stuck_order" {
+				t.Errorf("recommended action = %q, want investigate_stuck_order — the board must not "+
+					"propose the one act this house ruled is never right", a.RecommendedAction)
+			}
+			if a.Detail == "" {
+				t.Error("the anomaly carries no detail. The row renders an enum, an order id and a " +
+					"recommendation; without a sentence saying what is wrong it is not a diagnosis")
 			}
 			break
 		}

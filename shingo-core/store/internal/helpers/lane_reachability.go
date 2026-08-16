@@ -219,12 +219,3 @@ func OwnsNoCargoSQL(alias string) string {
 	return fmt.Sprintf(
 		`EXISTS (SELECT 1 FROM orders leg WHERE leg.parent_order_id = %s.id)`, alias)
 }
-
-// IsLegSQL is the other half of the pair the round ruled on: leg-ness, which
-// needs no join because the pointer is on the row itself.
-//
-// It is here so the two live together — a reader looking up one finds the other,
-// and neither gets re-spelled inline because it looked too small to share.
-func IsLegSQL(alias string) string {
-	return fmt.Sprintf(`%s.parent_order_id IS NOT NULL`, alias)
-}

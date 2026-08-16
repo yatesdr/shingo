@@ -32,7 +32,7 @@ func gateEntryIndexFor(t *testing.T, o *orders.Order) int {
 	return idx
 }
 
-// stageGatedStore dispatches a store into a gate_choreography lane and returns it
+// stageGatedStore dispatches a store into a gated lane and returns it
 // reloaded. Whether it ends up gate-staged or released is the valve's decision —
 // the caller asserts which.
 func stageGatedStore(t *testing.T, db *store.DB, d *Dispatcher, line, slot *nodes.Node, apply func(*orders.Order)) *orders.Order {
@@ -81,7 +81,7 @@ func deepenLane(t *testing.T, db *store.DB, laneID int64, name string, slotCount
 	}
 }
 
-// laneSlots returns a gate_choreography lane's slots ordered shallow → deep.
+// laneSlots returns a gated lane's slots ordered shallow → deep.
 func laneSlotsByDepth(t *testing.T, db *store.DB, laneID int64) []*nodes.Node {
 	t.Helper()
 	slots, err := db.ListLaneSlots(laneID)
@@ -544,7 +544,7 @@ func TestGateRelease_AppendFailureStaysStaged(t *testing.T) {
 }
 
 // TestGateRelease_IgnoresNonGatedLanes: the evaluator is a no-op for every lane
-// whose group is not gate_choreography, so the fallback arm and unconfigured
+// whose group is not gated, so the fallback arm and unconfigured
 // plants never see it.
 func TestGateRelease_IgnoresNonGatedLanes(t *testing.T) {
 	t.Parallel()

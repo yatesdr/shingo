@@ -39,29 +39,29 @@ func TestClassifyPlanError(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
-		want serviceDigOutcome
+		want laneClearOutcome
 	}{
-		{"no error", nil, serviceDigStarted},
+		{"no error", nil, laneClearStarted},
 
 		// The two that already waited, unchanged by the ruling.
-		{"no free shuffle slot", fmt.Errorf("%w: need 2 but 0 available", ErrNoShuffleSlot), serviceDigNoShuffleSlot},
-		{"nothing in the way", fmt.Errorf("%w: slot S3", ErrNothingInTheWay), serviceDigNothingInTheWay},
+		{"no free shuffle slot", fmt.Errorf("%w: need 2 but 0 available", ErrNoShuffleSlot), laneClearNoShuffleSlot},
+		{"nothing in the way", fmt.Errorf("%w: slot S3", ErrNothingInTheWay), laneClearNothingInTheWay},
 
 		// SITUATION 4 — the configuration fault. Asked BEFORE readFailed, or it
 		// would be swallowed as a stutter.
-		{"slot in no lane", fmt.Errorf("%w: GRP-L1-S2", ErrSlotNotInLane), serviceDigSlotNotInLane},
+		{"slot in no lane", fmt.Errorf("%w: GRP-L1-S2", ErrSlotNotInLane), laneClearSlotNotInLane},
 
 		// SITUATIONS 1-3 — every planner read failure, whatever its depth.
-		{"situation 3: shuffle-pool read failed", transport, serviceDigReadFailed},
+		{"situation 3: shuffle-pool read failed", transport, laneClearReadFailed},
 		{"situation 1: blockers read failed",
-			fmt.Errorf("blockers in front of slot 7: %w", errors.New("driver: bad connection")), serviceDigReadFailed},
+			fmt.Errorf("blockers in front of slot 7: %w", errors.New("driver: bad connection")), laneClearReadFailed},
 		{"situation 2: bins-at-slot read failed",
-			fmt.Errorf("list bins at blocker slot S1: %w", errors.New("driver: bad connection")), serviceDigReadFailed},
+			fmt.Errorf("list bins at blocker slot S1: %w", errors.New("driver: bad connection")), laneClearReadFailed},
 
 		// ABSENCE IS NOT A FAILED READ, which is the whole distinction the
 		// disposition rests on. sql.ErrNoRows means "there is nothing there" — a
 		// fact, not a hiccup — so it must NOT be treated as a stutter to wait out.
-		{"genuine absence is not a stutter", fmt.Errorf("lookup: %w", sql.ErrNoRows), serviceDigUnplannable},
+		{"genuine absence is not a stutter", fmt.Errorf("lookup: %w", sql.ErrNoRows), laneClearUnplannable},
 	}
 
 	for _, tc := range cases {
@@ -94,7 +94,7 @@ func TestClassifyPlanError_SentinelsBeatReadFailed(t *testing.T) {
 			t.Fatalf("premise changed: readFailed(%v) is now false, so the ordering hazard this test "+
 				"guards no longer exists — re-read classifyPlanError before deleting anything", e)
 		}
-		if got := classifyPlanError(e); got == serviceDigReadFailed {
+		if got := classifyPlanError(e); got == laneClearReadFailed {
 			t.Errorf("%v classified as a read failure — the sentinels must be asked before "+
 				"readFailed(), or a configuration fault parks forever under a cause nothing clears", e)
 		}

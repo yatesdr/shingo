@@ -31,7 +31,7 @@ import (
 // reason is that the guard alone silently picks the worse of two failures:
 //
 //   - guard only → the redirect falls through to UNGATED dispatch, which puts a
-//     robot into a gate_choreography lane with no gate at all. Mixed ungated
+//     robot into a gated lane with no gate at all. Mixed ungated
 //     traffic in a single-file lane is precisely what the gate exists to prevent.
 //   - refuse → the order keeps its plan and its choreography, and the operator
 //     gets told no.
@@ -67,7 +67,7 @@ import (
 //     passes (the guard does its job) and the delivery_node assertion fires
 //     instead. That is the fall-through outcome in the flesh: the order keeps its
 //     plan, is re-pointed at a gated lane slot, and is dispatched UNGATED into a
-//     gate_choreography lane. The guard alone does not fix this; it changes which
+//     gated lane. The guard alone does not fix this; it changes which
 //     way it breaks, from a destroyed plan to an ungated robot in a gated lane.
 //   - remove both → the "plan survived" assertion fires, with
 //     [pickup, wait@GCREDIR-WAIT, dropoff@GCREDIR-S1] in place of the original.
@@ -104,7 +104,7 @@ func TestRedirect_CoordinatedOrderIsRefused(t *testing.T) {
 		t.Fatal("fixture has no step plan, so there is nothing for the redirect to destroy")
 	}
 
-	// Redirect it into a slot of a gate_choreography lane.
+	// Redirect it into a slot of a gated lane.
 	d.HandleOrderRedirect(env, &protocol.OrderRedirect{
 		OrderUUID:       o.EdgeUUID,
 		NewDeliveryNode: s1.Name,

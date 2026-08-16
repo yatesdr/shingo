@@ -27,7 +27,7 @@ import (
 //
 // These tests build that lane and assert that the plant fixes itself.
 
-// healLaneFixture builds the F-11 geometry.
+// clearLaneFixture builds the F-11 geometry.
 //
 //	GRP-HEAL
 //	├── HEAL-WALL (MARKED)   W0 depth 0  <- the unclaimed bin nobody wants
@@ -38,7 +38,7 @@ import (
 // HEAL-PARK is deliberately UNMARKED: a dig out of a marked lane may not park a
 // blocker in a different marked lane (findShuffleSlots, the F-03 fix), so a marked
 // park lane would make this test about that exclusion instead of about the heal.
-func healLaneFixture(t *testing.T, db *store.DB, name string) (wall, park *nodes.Node, w, p []*nodes.Node, bp *payloads.Payload) {
+func clearLaneFixture(t *testing.T, db *store.DB, name string) (wall, park *nodes.Node, w, p []*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
 	grpType, err := db.GetNodeTypeByCode("NGRP")
 	testutil.MustNoErr(t, err, "NGRP type")
@@ -125,7 +125,7 @@ func TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	wall, park, w, _, bp := healLaneFixture(t, db, "HL1")
+	wall, park, w, _, bp := clearLaneFixture(t, db, "HL1")
 	line := lineNode(t, db, "HL1-LINE")
 
 	// The deeper store: dispatched, holding its inbound mouth row, not yet placed.
@@ -307,7 +307,7 @@ func TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking(t *testing.T) {
 //
 // MUTATION (run 2026-08-10, and the FIRST FORM OF THIS TEST DID NOT CATCH IT —
 // worth recording, because the reason is the interesting part). Dropping the
-// `binIsUnclaimed` arm from mouthHealNeeded leaves the test green if it only
+// `binIsUnclaimed` arm from acceptanceDigNeeded leaves the test green if it only
 // asserts "no dig ran": the compound transaction refuses the foreign-claimed bin
 // on its own and rolls the whole thing back, so no child, no lane lock, no dig.
 // The deeper law holds without the pre-check — which is exactly what makes the
@@ -322,7 +322,7 @@ func TestWindow3_ClaimedBlockerWaitsInsteadOfDigging(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	wall, _, w, _, bp := healLaneFixture(t, db, "HL2")
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL2")
 	line := lineNode(t, db, "HL2-LINE")
 
 	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
@@ -357,16 +357,6 @@ func TestWindow3_ClaimedBlockerWaitsInsteadOfDigging(t *testing.T) {
 			"A hard claim means the bin is leaving on its own; the correct disposition is the wait "+
 			"the floor already has.", parent.ID, blocker.ID, carrier.ID)
 	}
-	// AND NOT EVEN A PARENT. The compound transaction would have refused this dig
-	// anyway (store.ErrBlockerClaimed), so the assertion above passes with or
-	// without the pre-check — it is the ORDER ROW that tells them apart. Minting a
-	// parent per lane event and cancelling it again is churn with a paper trail,
-	// on a lane whose wait was correct all along.
-	if n := healParentsMinted(t, db, wall.Name); n != 0 {
-		t.Errorf("%d heal parent(s) were minted and abandoned for %s. The blocker is hard-claimed, "+
-			"so the compound was always going to be refused; asking one read earlier is what keeps "+
-			"the evaluator from writing an order per firing to find that out.", n, wall.Name)
-	}
 	if d.laneLock.IsLocked(wall.ID) {
 		t.Error("no dig was warranted, so no lane lock may have been taken")
 	}
@@ -388,7 +378,7 @@ func TestWindow3_ClaimedBlockerWaitsInsteadOfDigging(t *testing.T) {
 // rebindGatedDropoff already does whenever one is reachable) or another lane.
 //
 // MUTATION (run 2026-08-10): drop the store-slot-emptiness arm from
-// mouthHealNeeded. A dig is created for a lane that is simply FULL, and it repeats
+// acceptanceDigNeeded (fact 2). A dig is created for a lane that is simply FULL, and it repeats
 // every time the lane is re-evaluated as long as the fill lasts.
 func TestWindow3_OccupiedSlotIsNotAWallToDigOut(t *testing.T) {
 	t.Parallel()
@@ -396,7 +386,7 @@ func TestWindow3_OccupiedSlotIsNotAWallToDigOut(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	wall, _, w, _, bp := healLaneFixture(t, db, "HL3")
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL3")
 	line := lineNode(t, db, "HL3-LINE")
 
 	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
@@ -426,23 +416,32 @@ func TestWindow3_OccupiedSlotIsNotAWallToDigOut(t *testing.T) {
 			"corridor would deliver the robot to a slot that already has a bin in it; the answer to "+
 			"a taken slot is a re-bind, not an excavation.", parent.ID)
 	}
-	if n := healParentsMinted(t, db, wall.Name); n != 0 {
-		t.Errorf("%d heal parent(s) minted for a lane that is simply full", n)
-	}
 	if d.laneLock.IsLocked(wall.ID) {
 		t.Error("no dig was warranted, so no lane lock may have been taken")
 	}
 }
 
-// healParentsMinted counts every heal parent this lane has ever had, cancelled
-// ones included.
+// THE "NOT EVEN A ROW" ASSERTIONS ARE GONE, AND NOTHING REPLACES THEM. Read this
+// before writing another one.
 //
-// digParentFor cannot answer this: it looks for a child, and a heal that was
-// refused by the compound transaction has no children — the whole write rolled
-// back. The parent row is the only trace such an attempt leaves, which is what
-// makes it the right thing to count when the claim is "we did not even try".
-// TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent is the
-// 16,947-order runaway, reproduced and then prevented.
+// Six assertions here called healParentsMinted, which counted
+// `payload_desc LIKE 'clear <lane>:%'` — a string only the deleted folder minter
+// ever wrote. It returned 0 for every input, so all six compared 0 to 0 and the
+// 16,947-family fix below was pinned by nothing.
+//
+// The obvious repair — count the orders table before and after — was built and
+// then MUTATION-TESTED, and it is a dead net too. With the blocker pre-check
+// disabled the refusal still writes nothing: the dig's parent is a demand that
+// already existed, its children go in one transaction, and that transaction rolls
+// back. The row-and-cancel trail the 16,947 and 38,203 measurements were made of
+// belonged to the FOLDER, and the folder is gone.
+//
+// So the failure mode those assertions guarded is now structurally impossible
+// rather than merely absent, and no state assertion can tell the pre-check from
+// its absence: same outcome, same lock, same rows. What the pre-check still buys
+// is COST — a plan build and a transaction per lane event — which is real and is
+// not assertable from here without a call-counting seam nobody has asked for.
+// The outcome and lock assertions each test already makes are the live cover.
 //
 // ── TWO READERS, TWO QUESTIONS, A DURABLE WRITE BETWEEN THEM ─────────────
 //
@@ -469,15 +468,19 @@ func TestWindow3_OccupiedSlotIsNotAWallToDigOut(t *testing.T) {
 // the floor, only whether Core writes an order to find out. That is what makes
 // this a churn fix rather than a policy change.
 //
-// MUTATION (fires): restore `if d.laneLock.IsLocked(lane.ID) { return }` →
-// assertion (a) reports a minted, cancelled heal parent.
+// NO MUTATION NOTE. The recipe that stood here — restore
+// `if d.laneLock.IsLocked(lane.ID) { return }` and watch "assertion (a) report a
+// minted, cancelled heal parent" — is unperformable: assertion (a) was the dead
+// row count, now deleted, and the guard runs before any write, so restoring the
+// narrower pre-check adds a redundant early return and changes no observable
+// state. What this test still pins is the OUTCOME and the untaken lock.
 func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	wall, _, w, _, bp := healLaneFixture(t, db, "HL4")
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL4")
 	line := lineNode(t, db, "HL4-LINE")
 
 	// The Tier-2 blocker that parks the dweller, exactly as the positive test
@@ -538,12 +541,6 @@ func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.
 	d.EvaluateLaneReleases(wall.ID)
 
 	// (a) NO ORDER WAS WRITTEN TO DISCOVER A REFUSAL THAT WAS KNOWABLE.
-	if n := healParentsMinted(t, db, wall.Name); n != 0 {
-		t.Errorf("%d heal parent(s) were minted for %s and cancelled. An ordinary order holds the "+
-			"lane's mouth, so AcquireLanes was always going to refuse the dig — and the pre-check "+
-			"asked about DIGS instead, so it said go. On the rig this repeated on every lane event: "+
-			"16,947 orders, no dig, the plant doing nothing else", n, wall.Name)
-	}
 
 	// (b) AND NO LOCK WAS TAKEN. The outcome is identical to before the fix; only
 	// the paper trail differs.
@@ -562,8 +559,8 @@ func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.
 // the answer never changed — and each cancellation was a terminal event that
 // re-drove the proposer that had just been refused, so the loop fed itself.
 //
-// WHY THE EXISTING FACT-3 CHECK DID NOT CATCH IT: mouthHealNeeded asks about
-// claimed blockers, but mouthHealNeeded is the LANE GATE's route into the
+// WHY THE EXISTING FACT-3 CHECK DID NOT CATCH IT: acceptanceDigNeeded asks about
+// claimed blockers, but acceptanceDigNeeded is the LANE GATE's route into the
 // proposer. The rig's loop came through a complex demand's walled pickup
 // (proposeDigForBuriedPickup), which asked nothing. That is why the check now
 // lives in proposeLaneClearDig — the one writer of a service dig — instead of in
@@ -580,7 +577,7 @@ func TestWindow3_ClaimedBlockerRefusesTheHealBeforeMintingAParent(t *testing.T) 
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	wall, _, w, _, bp := healLaneFixture(t, db, "HL5")
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL5")
 	line := lineNode(t, db, "HL5-LINE")
 
 	// The wall, and a live order carrying it out — the commonest holder by a wide
@@ -606,21 +603,15 @@ func TestWindow3_ClaimedBlockerRefusesTheHealBeforeMintingAParent(t *testing.T) 
 			"refusal would let it pass with the fix reverted")
 	}
 
-	res := d.proposeLaneClearDig(wall, w[1], requester, digOwnedByRequester)
+	res := d.proposeLaneClearDig(wall, w[1], requester)
 
 	// (a) NO ORDER WAS WRITTEN TO DISCOVER A REFUSAL THAT WAS KNOWABLE.
-	if n := healParentsMinted(t, db, wall.Name); n != 0 {
-		t.Errorf("%d heal parent(s) were minted for %s and cancelled. The blocker was already claimed "+
-			"when the plan was built, so the claim CAS was always going to refuse — and on the rig this "+
-			"repeated on every event for 2h15m: 38,203 orders, no dig, and each cancellation re-driving "+
-			"the next attempt", n, wall.Name)
-	}
 
 	// (b) AND IT IS STILL A WAIT, NOT A FAULT. Law 1: a claimed blocker is
 	// congestion. The outcome has to be the one whose releaser is the holder
 	// carrying the bin out, or the requester parks under something that never clears.
-	if res.outcome != serviceDigBlockerClaimed {
-		t.Errorf("outcome is %v, want serviceDigBlockerClaimed — the holder is a live order driving "+
+	if res.outcome != laneClearBlockerClaimed {
+		t.Errorf("outcome is %v, want laneClearBlockerClaimed — the holder is a live order driving "+
 			"that bin out of the lane, which is the releaser the requester's wait names", res.outcome)
 	}
 
@@ -628,15 +619,6 @@ func TestWindow3_ClaimedBlockerRefusesTheHealBeforeMintingAParent(t *testing.T) 
 	if d.laneLock.IsLocked(wall.ID) {
 		t.Error("a dig lock was taken for a dig that was never going to be written")
 	}
-}
-
-func healParentsMinted(t *testing.T, db *store.DB, laneName string) int {
-	t.Helper()
-	var n int
-	testutil.MustNoErr(t, db.DB.QueryRow(
-		`SELECT count(*) FROM orders WHERE payload_desc LIKE $1`, "clear "+laneName+":%").Scan(&n),
-		"count heal parents")
-	return n
 }
 
 // execAt is a one-line raw write for the two places these tests have to play the
@@ -740,7 +722,7 @@ func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	wall, _, w, _, bp := healLaneFixture(t, db, "HL6")
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL6")
 	line := lineNode(t, db, "HL6-LINE")
 
 	// The wall: unclaimed, in the mouth, wanted by nobody. A heal is warranted.
@@ -768,17 +750,17 @@ func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T
 			"this fixture is not reproducing LS_C5")
 	}
 
-	res := d.proposeLaneClearDig(wall, w[1], requester, digOwnedByRequester)
+	res := d.proposeLaneClearDig(wall, w[1], requester)
 
 	// (b) AND ASKED ON THE REQUESTER'S BEHALF, THE DIG STARTS.
-	if res.outcome != serviceDigStarted {
+	if res.outcome != laneClearStarted {
 		t.Fatalf("the dig was refused (%v). The only mouth row on %s belongs to order %d — the order "+
 			"this dig exists to rescue. It waits for the dig; the dig is refused because it waits; "+
 			"and nothing in the plant can break that. On the rig: 16,947 attempts, zero digs",
 			res.outcome, wall.Name, requester.ID)
 	}
 	if res.parent == nil {
-		t.Fatal("serviceDigStarted with no parent")
+		t.Fatal("laneClearStarted with no parent")
 	}
 	if !d.laneLock.IsLocked(wall.ID) {
 		t.Error("the dig started but took no lane lock")
@@ -810,7 +792,7 @@ func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T
 	}
 
 	// ── THE NEGATIVE HALF: A STRANGER'S ROW STILL REFUSES ────────────────────
-	wall2, _, w2, _, bp2 := healLaneFixture(t, db, "HL7")
+	wall2, _, w2, _, bp2 := clearLaneFixture(t, db, "HL7")
 	line2 := lineNode(t, db, "HL7-LINE")
 	blocker2 := createTestBinAtNode(t, db, bp2.Code, w2[0].ID, "BIN-HL7-WALL")
 	if blocker2.ClaimedBy != nil {
@@ -836,13 +818,10 @@ func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T
 			"order — the exemption is meant to be the requester's own holds and nobody else's")
 	}
 	// (e) ...and so does the writer, without minting an order to find out.
-	res2 := d.proposeLaneClearDig(wall2, w2[1], requester2, digOwnedByRequester)
-	if res2.outcome != serviceDigLaneBusy {
-		t.Errorf("outcome is %v, want serviceDigLaneBusy — order %d holds %s and is not the order "+
+	res2 := d.proposeLaneClearDig(wall2, w2[1], requester2)
+	if res2.outcome != laneClearLaneBusy {
+		t.Errorf("outcome is %v, want laneClearLaneBusy — order %d holds %s and is not the order "+
 			"this dig serves", res2.outcome, stranger.ID, wall2.Name)
-	}
-	if n := healParentsMinted(t, db, wall2.Name); n != 0 {
-		t.Errorf("%d heal parent(s) minted for a lane a stranger holds", n)
 	}
 }
 
@@ -864,7 +843,7 @@ func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T
 //
 // ── AND WHY IT IS THE WRITER RATHER THAN A THIRD COPY ─────────────────────
 //
-// mouthHealNeeded asks it as its fact 4 and keeps doing so. The two complex
+// acceptanceDigNeeded asks it as its fact 4 and keeps doing so. The two complex
 // callers asked nothing, and the complex arm carries the traffic. This test
 // goes through proposeLaneClearDig directly for that reason: a gate-routed
 // fixture would be answered by fact 4 and would pass with the fix reverted.
@@ -880,7 +859,7 @@ func TestWindow3_ADigIsNotStartedIntoALaneWithARobotInIt(t *testing.T) {
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	wall, _, w, _, bp := healLaneFixture(t, db, "HL8")
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL8")
 	line := lineNode(t, db, "HL8-LINE")
 
 	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL8-WALL")
@@ -899,22 +878,20 @@ func TestWindow3_ADigIsNotStartedIntoALaneWithARobotInIt(t *testing.T) {
 		o.DeliveryNode = line.Name
 		o.Status = "in_transit"
 	})
-	testutil.MustNoErr(t, reservations.AcquireOccupancy(db.DB, inside.ID, wall.ID), "put a robot in the lane")
+	_, occErr := reservations.AcquireOccupancy(db.DB, inside.ID, wall.ID)
+	testutil.MustNoErr(t, occErr, "put a robot in the lane")
 	if !d.laneLock.CanTakeFor(wall.ID, digAskerFor(requester)) {
 		t.Fatal("precondition: the MOUTH is takeable — this test is about the INSIDE, and a mouth-level " +
 			"refusal would let it pass with the fix reverted")
 	}
 
-	res := d.proposeLaneClearDig(wall, w[1], requester, digOwnedByRequester)
+	res := d.proposeLaneClearDig(wall, w[1], requester)
 
 	// (a) THE DIG IS REFUSED, AND AS CONGESTION RATHER THAN A FAULT. Law 1: the
 	// robot inside is going to place or pick, and that drops the row.
-	if res.outcome != serviceDigLaneOccupied {
-		t.Errorf("outcome is %v, want serviceDigLaneOccupied — order %d is inside %s and an excavation "+
+	if res.outcome != laneClearLaneOccupied {
+		t.Errorf("outcome is %v, want laneClearLaneOccupied — order %d is inside %s and an excavation "+
 			"would send a second robot in beside it", res.outcome, inside.ID, wall.Name)
-	}
-	if n := healParentsMinted(t, db, wall.Name); n != 0 {
-		t.Errorf("%d heal parent(s) minted for a lane with a robot in it", n)
 	}
 
 	// (b) AND NO LANE LOCK WAS TAKEN. This is the half admission's arm 2 cannot
@@ -926,10 +903,11 @@ func TestWindow3_ADigIsNotStartedIntoALaneWithARobotInIt(t *testing.T) {
 	// (c) THE REQUESTER'S OWN PRESENCE IS NOT AN OBSTACLE. Same rule as the mouth
 	// one line above: an order's own hold must not refuse its own rescue.
 	testutil.MustNoErr(t, reservations.ReleaseOccupancy(db.DB, inside.ID, wall.ID), "the robot leaves")
-	testutil.MustNoErr(t, reservations.AcquireOccupancy(db.DB, requester.ID, wall.ID), "the requester is inside")
-	res2 := d.proposeLaneClearDig(wall, w[1], requester, digOwnedByRequester)
-	if res2.outcome != serviceDigStarted {
-		t.Errorf("outcome is %v, want serviceDigStarted — the only occupancy row on %s belongs to the "+
+	_, reqErr := reservations.AcquireOccupancy(db.DB, requester.ID, wall.ID)
+	testutil.MustNoErr(t, reqErr, "the requester is inside")
+	res2 := d.proposeLaneClearDig(wall, w[1], requester)
+	if res2.outcome != laneClearStarted {
+		t.Errorf("outcome is %v, want laneClearStarted — the only occupancy row on %s belongs to the "+
 			"order the dig is being raised for, and its own presence must not refuse its own rescue",
 			res2.outcome, wall.Name)
 	}

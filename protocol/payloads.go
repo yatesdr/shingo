@@ -380,10 +380,33 @@ type ComplexOrderStep struct {
 	// staging designation lives in the EDGE cell config, which Core does not
 	// have. The sender is the only party that knows.
 	//
-	// Springfield, 2026-08-12: AMR-04 held a bin for 48 minutes unable to place
-	// at SLN_003, with the fleet reporting the robot RUNNING and no error.
-	// Order 4580 was cancelled by an admin after 2h05m. Nothing was broken —
-	// nothing had ever asked whether SLN_003 was free.
+	// ── THE INCIDENT THIS WAS ATTRIBUTED TO WAS NOT THIS BUG (§R.112) ─────
+	//
+	// This field and its fix are UNCHANGED and keep their standing. What is
+	// struck is the causal claim, which stood here and at fourteen other sites:
+	//
+	//	"Springfield, 2026-08-12: AMR-04 held a bin for 48 minutes unable to
+	//	place at SLN_003, with the fleet reporting the robot RUNNING and no
+	//	error. Order 4580 was cancelled by an admin after 2h05m. Nothing was
+	//	broken — nothing had ever asked whether SLN_003 was free."
+	//
+	// The plant queries say otherwise. Order 4580's DESTINATION was ALN_004;
+	// SLN_003 was a mid-route waypoint, not the node it could not place at. The
+	// sibling order ran the identical route on the same robot and completed
+	// twelve minutes earlier. The fleet wedged. Whatever held AMR-04 for 48
+	// minutes, an unreserved staging node was not it.
+	//
+	// It is quoted once, here, rather than at each of the fifteen sites that
+	// carried it: a false sentence reproduced fifteen times to mark its own
+	// deletion is the disease this round is treating.
+	//
+	// THE GAP IS STILL REAL AND STILL REACHABLE, which is why nothing else
+	// moves. A declared staging dropoff is reserved by nothing and checked by
+	// nothing; two orders can take the same node and the second robot arrives to
+	// find it full. That argument stands on the code above without an incident
+	// under it, and it is the argument the fix should always have carried —
+	// TestDeclaredStagingDropoffIsReserved and the two invariant walks are what
+	// hold it, not a story.
 	//
 	// This is WaitKind's mirror, and the same rule: carried across the wire so
 	// the far side does not have to guess. There it was Core knowing something

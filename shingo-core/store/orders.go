@@ -368,12 +368,6 @@ func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
 	return orders.UpdateStatus(db.DB, id, status, detail)
 }
 
-// UpdateOrderStatusFrom is the compare-and-swap status write — see
-// orders.UpdateStatusFrom. Returns false when the order already moved on.
-func (db *DB) UpdateOrderStatusFrom(id int64, from, to, detail string) (bool, error) {
-	return orders.UpdateStatusFrom(db.DB, id, from, to, detail)
-}
-
 // UpdateOrderStatusFromWithReason is the CAS status write plus the typed
 // reason for the history row (migration 55). The →queued row is the important
 // caller: orders.queue_code is overwritten in place, so the history row is the
@@ -441,14 +435,7 @@ func (db *DB) ListOrders(status string, limit int) ([]*orders.Order, error) {
 	return orders.List(db.DB, status, limit)
 }
 
-// ListOrdersFiltered returns orders matching the given filter with pagination.
-func (db *DB) ListOrdersFiltered(f orders.Filter) ([]*orders.Order, error) {
-	return orders.ListFiltered(db.DB, f)
-}
-
 func (db *DB) ListActiveOrders() ([]*orders.Order, error) { return orders.ListActive(db.DB) }
-
-func (db *DB) ListActiveBoardOrders() ([]*orders.Order, error) { return orders.ListActiveBoard(db.DB) }
 
 // ListActiveBoardOrdersFiltered scopes the board to a set of station IDs.
 // Empty stations = plant-wide (same as ListActiveBoardOrders).
@@ -787,12 +774,6 @@ func (db *DB) ReleaseClaimByOrder(orderID int64) error {
 	return tx.Commit()
 }
 
-// CountInFlightOrdersByDeliveryNode counts non-queued, non-terminal active
-// orders targeting a delivery node.
-func (db *DB) CountInFlightOrdersByDeliveryNode(deliveryNode string) (int, error) {
-	return orders.CountInFlightByDeliveryNode(db.DB, deliveryNode)
-}
-
 // CountInFlightOrdersByDeliveryNodeExcluding counts in-flight orders for a
 // delivery node, excluding a specific order ID (the caller's own row).
 // Phase 4c of bin-transit-state: planning-time capacity gates need to
@@ -807,13 +788,6 @@ func (db *DB) CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode string, ex
 // replenishment bound. See orders.CountLiveByOrigin.
 func (db *DB) CountLiveOrdersByOrigin(originID string) (int, error) {
 	return orders.CountLiveByOrigin(db.DB, originID)
-}
-
-// CountLiveOrdersByDeliveryNode counts every non-terminal order pointed at a
-// node, `queued` included and regardless of origin — "is this window spoken
-// for". See orders.CountLiveByDeliveryNode.
-func (db *DB) CountLiveOrdersByDeliveryNode(deliveryNode string) (int, error) {
-	return orders.CountLiveByDeliveryNode(db.DB, deliveryNode)
 }
 
 // CountLiveCarrierRequestsByDeliveryNode counts every non-terminal order that

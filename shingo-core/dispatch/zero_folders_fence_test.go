@@ -51,8 +51,8 @@ func TestFence_NoFolderCanEverBeMinted(t *testing.T) {
 		{"abandonServiceDigParent",
 			"cancelled a half-written folder. Nothing can be half-written when nothing is written."},
 		{"digOwnedByFolder",
-			"named the carve-out. Dig ownership has one answer now, and digOwnership carries one " +
-				"value to say so."},
+			"named the carve-out. Dig ownership has one answer — the demand that caused the dig — " +
+				"so there is no ownership parameter to carry a second one."},
 		{"healLaneMouth",
 			"fired the folder's dig on a dweller's behalf. The dweller fires its own — see " +
 				"summonOwnDigs, which took its call site."},
@@ -84,45 +84,5 @@ func TestFence_NoFolderCanEverBeMinted(t *testing.T) {
 	}
 }
 
-// And the durable half: the column the folder used to carry has no writer, so
-// nothing can be marked as one.
-//
-// dig_target_node was arm 2's fact — "this folder owes a prize" — and only
-// createServiceDigParent ever wrote it. It is left in the schema rather than
-// migrated away in the same breath as the funeral, and this test is what stops
-// that from being a quiet resurrection point: a writer appearing here means
-// something is minting the shape again under a different name.
-//
-// READERS ARE NOT BANNED. Two survive (CollectorForDigTarget and the handoff that
-// consults it), both now writer-less and both reported as such rather than
-// deleted unasked. A reader of a column nothing writes answers "no" forever,
-// which is correct and harmless; a WRITER would make it lie again.
-func TestFence_NothingWritesTheFolderColumn(t *testing.T) {
-	sources := scanCoreSources(t)
-	for path, src := range sources {
-		if strings.Contains(path, "migrations") || strings.Contains(path, "schema") {
-			continue // the column's declaration is not a writer
-		}
-		// THE GO FIELD, NOT THE SQL. The canonical order INSERT names every column
-		// including this one and always will — that is the one order writer doing
-		// its job, not a folder minter. What carries the fact is the STRUCT FIELD,
-		// and nothing sets it any more: the value reaching that INSERT is the zero
-		// value on every path in the system.
-		//
-		// Readers are untouched (`parent.DigTargetNode == ""`, and the comparisons
-		// in the handoff and the tripwire). Only an assignment is the shape coming
-		// back.
-		for i, line := range strings.Split(src, "\n") {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "//") {
-				continue
-			}
-			if strings.Contains(line, "DigTargetNode:") ||
-				(strings.Contains(line, "DigTargetNode =") && !strings.Contains(line, "==")) {
-				t.Errorf("%s:%d assigns DigTargetNode\n\t%s\nThe column is the folder's, the folder "+
-					"is deleted, and a writer is the shape coming back wearing the old label.",
-					path, i+1, trimmed)
-			}
-		}
-	}
-}
+// The BAN LIST above is this fence: those names can come back as new code, which
+// is the only way the folder returns.

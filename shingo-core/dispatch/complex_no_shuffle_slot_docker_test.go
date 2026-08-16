@@ -159,7 +159,7 @@ func assertDugAfterSlotFreed(t *testing.T, db *store.DB, parent *orders.Order) {
 	//
 	// The demand-side half is kept and inverted, because it is the half that would
 	// catch the regression: a demand that acquired legs again has been re-parented.
-	kids := serviceDigChildren(t, db, after)
+	kids := laneClearChildren(t, db, after)
 	if len(kids) == 0 {
 		t.Fatalf("a shuffle slot freed and the retry still planned nothing — status %q, "+
 			"queue_reason %q. The park has no releaser, which makes it a stall wearing a queue reason",

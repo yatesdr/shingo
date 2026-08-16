@@ -97,13 +97,13 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 	// it. A folder's requester can cancel and leave it digging towards a bin
 	// nobody wants, which is the whole of the dig_target_abandoned population;
 	// a demand that IS its dig takes the dig with it when it goes.
-	res := d.proposeLaneClearDig(lane, buried.Slot, order, digOwnedByRequester)
+	res := d.proposeLaneClearDig(lane, buried.Slot, order)
 	switch res.outcome {
-	case serviceDigStarted:
+	case laneClearStarted:
 		d.dbg("complex: service dig %d proposed for demand %d — %d step(s) clearing %s to reach %s",
 			res.parent.ID, order.ID, res.steps, lane.Name, buried.Slot.Name)
 
-	case serviceDigLaneBusy:
+	case laneClearLaneBusy:
 		// Very often a dig serving the same wall for somebody else, which is the
 		// 1:many shape a service dig is FOR. Its completion re-drives every waiter.
 		//
@@ -111,36 +111,33 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 		// the wait an operator cannot resolve from the board: the lane is not
 		// theirs, the dig is not theirs, and the only actionable fact is which
 		// excavation has to finish.
-		digID, digTarget := digWaitFor(d.db, d.laneLock, lane.ID)
 		park(protocol.QueueStorageRearranging, CauseLaneLocked,
 			QueueParams{Lane: lane.Name, Payload: payloadCode,
-				DigOrderID: digID, DigTarget: digTarget})
+				DigOrderID: digWaitFor(d.laneLock, lane.ID)})
 
-	case serviceDigNoShuffleSlot:
+	case laneClearNoShuffleSlot:
 		// Congestion. A freed slot anywhere in the group releases it. The complex
 		// sites lacked this arm while the plain path had it, so identical congestion
 		// terminated a complex demand and waited for a plain one.
 		park(protocol.QueueStorageRearranging, CauseNoShuffleSlot,
 			QueueParams{Lane: lane.Name, Payload: payloadCode})
 
-	case serviceDigParkingHeldByDig:
+	case laneClearParkingHeldByDig:
 		// Right of way. The lane NAMED here is the one the rule refused, not the one
 		// being dug — an operator asking "why is nothing happening" needs the lane
 		// that has to free, and it is somebody else's.
 		parkingLane := parkingLaneOf(res.err, lane.Name)
-		holdID, holdTarget := digWaitByLaneName(d.db, d.laneLock, parkingLane)
 		park(protocol.QueueStorageRearranging, CauseDigHoldsParking,
 			QueueParams{Lane: parkingLane, Payload: payloadCode,
-				DigOrderID: holdID, DigTarget: holdTarget})
+				DigOrderID: digWaitByLaneName(d.db, d.laneLock, parkingLane)})
 
-	case serviceDigBlockerClaimed:
+	case laneClearBlockerClaimed:
 		// The commonest holder is a robot already carrying that bin out of the lane.
-		blockerDigID, blockerTarget := digWaitFor(d.db, d.laneLock, lane.ID)
 		park(protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
 			QueueParams{Lane: lane.Name, Payload: payloadCode,
-				DigOrderID: blockerDigID, DigTarget: blockerTarget})
+				DigOrderID: digWaitFor(d.laneLock, lane.ID)})
 
-	case serviceDigEpisodeAlreadyDigging:
+	case laneClearEpisodeAlreadyDigging:
 		// This demand is already being dug for, somewhere else. Not a refusal by
 		// anybody else and not congestion: the plant is working on it, and raising
 		// a second excavation for one bin is what put two of them in a mutual hold
@@ -149,12 +146,11 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 		// for, somewhere else" is unactionable without naming where: the
 		// excavation is on a DIFFERENT lane than the one just refused, so the
 		// lane in this sentence is not the one that has to free.
-		ownDigID, ownDigTarget := digWaitForEpisode(d.db, res)
 		park(protocol.QueueStorageRearranging, CauseEpisodeAlreadyDigging,
 			QueueParams{Lane: lane.Name, Payload: payloadCode,
-				DigOrderID: ownDigID, DigTarget: ownDigTarget})
+				DigOrderID: digWaitForEpisode(res)})
 
-	case serviceDigLaneOccupied:
+	case laneClearLaneOccupied:
 		// A robot from another order is inside the corridor. Congestion with the
 		// shortest releaser on the board — that machine places or picks and the
 		// occupancy row goes — and it is a DIFFERENT wait from CauseLaneLocked
@@ -164,23 +160,23 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 		park(protocol.QueueStorageRearranging, CauseLaneOccupied,
 			QueueParams{Lane: lane.Name, Payload: payloadCode})
 
-	case serviceDigNothingInTheWay:
+	case laneClearNothingInTheWay:
 		// The lane moved between the resolve and the plan, which is the outcome we
 		// wanted. Keep CauseIntakeBuried; the next scan finds the bin reachable.
 		d.dbg("complex: nothing left in the way of %s for demand %d — re-asking on the next scan",
 			buried.Slot.Name, order.ID)
 
-	case serviceDigReadFailed:
+	case laneClearReadFailed:
 		// A STUTTER IS NOT A FACT ABOUT THE LANE (PLAN §R.45).
 		d.dbg("complex: could not read %s while planning a dig for demand %d (%v) — holding",
 			lane.Name, order.ID, res.err)
 		park(protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{Payload: payloadCode})
 
-	case serviceDigNoGroup:
+	case laneClearNoGroup:
 		d.failOrderInternal(order, codeInvalidNode, fmt.Sprintf(
 			"config failure: lane %s is not in a node group, so it has nowhere to park a blocker", lane.Name))
 
-	case serviceDigSlotNotInLane, serviceDigUnplannable:
+	case laneClearSlotNotInLane, laneClearUnplannable:
 		// Only a person editing configuration can fix this, so no amount of waiting
 		// changes it (§R.45: "config error? yeah fail loudly so the engineer can fix").
 		d.failOrderInternal(order, "reshuffle_error",

@@ -90,7 +90,7 @@ func TestLaneGateWiring_HeldCompoundLegResumesOnLaneClearingEvent(t *testing.T) 
 		OrderType: "retrieve", Status: protocol.StatusReshuffling, Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(foreign), "create foreign occupant")
-	if err := reservations.AcquireOccupancy(db.DB, foreign.ID, lane); err != nil {
+	if _, err := reservations.AcquireOccupancy(db.DB, foreign.ID, lane); err != nil {
 		t.Fatalf("foreign occupancy: %v", err)
 	}
 

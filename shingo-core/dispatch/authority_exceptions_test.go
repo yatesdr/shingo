@@ -190,7 +190,7 @@ func TestComplexDispatch_AsksAdmission(t *testing.T) {
 	askAt := strings.Index(fn, "admitComplexLanes(")
 	if askAt < 0 {
 		t.Fatal("DispatchPreparedComplex does not ask admission. The gated valve does not cover this: " +
-			"it only stands in front of a gate_choreography lane, and neither plant has one")
+			"it only stands in front of a gated lane, and neither plant has one")
 	}
 	sendAt := strings.Index(fn, "dispatchComplexToFleet(")
 	if sendAt < 0 {

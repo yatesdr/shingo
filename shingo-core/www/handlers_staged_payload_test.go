@@ -163,7 +163,7 @@ func TestStagedOrder_DeclaresTheStagingDropoffExclusive(t *testing.T) {
 				t.Errorf("step %d: the staging dropoff at %s is not declared exclusive.\n"+
 					"Core's role test cannot see a staging node, so undeclared it is reserved by "+
 					"nothing and capacity-checked by nothing — a second order takes it and the "+
-					"first robot arrives to a full node holding a bin (SPR AMR-04, 48 minutes).\n"+
+					"first robot arrives to a full node holding a bin.\n"+
 					"steps_json: %s", i, staging.Name, order.StepsJSON)
 			}
 		case delivery.Name:

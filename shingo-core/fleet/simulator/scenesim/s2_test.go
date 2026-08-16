@@ -21,8 +21,8 @@ func wideLaneScene(t *testing.T, slotCount int) *Scene {
 		{ID: 2, Name: "LANE", NodeTypeCode: "LANE", ParentID: idPtr(1)},
 		{ID: 100, Name: "LINE", NodeTypeCode: "STOR"},
 		{ID: 101, Name: "AISLE"},
-		// GATE is the lane's wait point — the map position a gate_choreography
-		// robot dwells at while Core decides whether it may enter. It is a plain
+		// GATE is the lane's wait point — the map position a robot bound for a
+		// MARKED lane dwells at while Core decides whether it may enter. It is a plain
 		// position, never a lane child, mirroring production where the wait point
 		// is a node PROPERTY on the lane (dispatch.PropLaneGatePoint) and not part
 		// of the lane's geometry. Inert for every non-gate scenario.

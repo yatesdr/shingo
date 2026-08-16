@@ -372,149 +372,6 @@ func (db *DB) ListOutstandingDigClaims(groupID int64, asker reservations.DigAske
 	return out, rows.Err()
 }
 
-// DigStillOwesItsTarget reports whether a service dig's lane must stay held
-// because the bin its excavation uncovered has not left yet.
-//
-// ── THE ONE SPELLING OF THE QUESTION, AND IT NOW HAS ONE READER ───────────
-//
-// A dig still owing its target sits in `reshuffling` with every child terminal,
-// which is the exact shape a completion arm reads as FINISHED. This header used
-// to name THREE readers — AdvanceCompoundOrder's completion arm,
-// AdvanceStuckReshuffleParents, and maybeReleaseDigOnLastBlockerOut — and that
-// was true when the hold spanned the excavation AND the retrieval.
-//
-// TWO OF THEM WENT WITH THE HAND-BACK, and they did not come back with §R.91.
-// The paragraph read: "The demand is no longer re-parented into its own dig, so
-// nothing resumes, so the lane no longer has to be held past the compound's
-// completion." The demand is re-parented and does resume — but this predicate
-// asks about a FOLDER's outstanding target, and a re-parented demand records
-// none: its collector is itself, and gate 2's self-handoff takes that branch
-// before this is reached (dig_lock_release.go). So the reader count is still
-// one, for a different reason than it was.
-//
-// The rule underneath is unchanged and still binds: nothing ELSE may ask this.
-// Everything else that walks a compound's children is asking a different
-// question ("is anything running", "is this leg live"), and a shared spelling of
-// the wrong question is worse than two spellings of right ones (law 3's rider).
-//
-// It stays in the store rather than moving to dispatch alongside its one
-// surviving reader because the question is entirely a matter of record — one
-// order row, one node, one bin count — and because the reader count is the thing
-// that just proved volatile.
-//
-// ── IT IS A PHYSICAL FACT, WHICH IS THE WHOLE POINT (law 4) ───────────────
-//
-// The question is "is a bin still standing at that slot", NOT "is some order
-// still coming for it". That is deliberate and it is what makes a cancelled
-// claim harmless: the hold ends when the TARGET BIN leaves, by any mover,
-// including one with no connection to the demand that asked for the dig. Keying
-// on an order would put the release back inside the lifetime of a thing that can
-// be cancelled — which is the exposure window this exists to close, rebuilt one
-// layer up.
-//
-// ── THE TWO FAILURE DIRECTIONS ARE NOT THE SAME, AND THE SPLIT IS RULED ───
-//
-// A READ that fails is transient and has a releaser: the next pass asks again.
-// It returns true — keep the claim — because a lane held one pass too long
-// costs a wait, while a lane released early leaves the target bin exposed to
-// the next order's shuffle slot, which is the re-burial this arm exists to
-// prevent. Fail closed.
-//
-// A TARGET NODE THAT DOES NOT EXIST is a config fault, not a stutter, and it
-// gets the OPPOSITE disposition: no bin can ever stand at a node that is not
-// there, so no bin can ever leave it, so holding would be a wait with no
-// releaser in the world — the unfloored-forever trap. It returns false and an
-// error, so the lane is released and the caller says so loudly. This is the same
-// split the reshuffle planners already make between a momentary read failure and
-// a slot attached to no lane.
-//
-// The error is returned alongside a usable answer rather than instead of one, so
-// no caller has to re-decide the disposition and get it different.
-func (db *DB) DigStillOwesItsTarget(parent *orders.Order) (bool, error) {
-	if parent == nil || parent.DigTargetNode == "" {
-		return false, nil // not a service dig, or one minted before v79: nothing outstanding
-	}
-	target, err := db.GetNodeByDotName(parent.DigTargetNode)
-	if err != nil {
-		return true, fmt.Errorf("dig %d: could not read its target slot %q: %w",
-			parent.ID, parent.DigTargetNode, err)
-	}
-	if target == nil {
-		return false, fmt.Errorf("dig %d names target slot %q, which does not exist — releasing its "+
-			"lane, because a bin cannot leave a node that is not there and holding would be a wait "+
-			"nothing in the world can end. Find what wrote this name",
-			parent.ID, parent.DigTargetNode)
-	}
-	n, err := db.CountBinsByNode(target.ID)
-	if err != nil {
-		return true, fmt.Errorf("dig %d: could not count bins at its target slot %s: %w",
-			parent.ID, target.Name, err)
-	}
-	return n > 0, nil
-}
-
-// CollectorForDigTarget returns the live demand a finished service dig should
-// hand its corridor to, or nil when nothing in the plant is still coming.
-//
-// ── WHAT A BURIED DEMAND ACTUALLY RECORDS, WHICH IS ALMOST NOTHING ────────
-//
-// It waits `queued` with its ORIGINAL source — the line it was asked from — and
-// nothing else. Verified on the lane-stress rig 2026-08-13, against all five
-// digs then running: the bin each was excavating towards had claimed_by NULL, no
-// bin reservation, no slot reservation, and no order anywhere naming its slot.
-// The demand cannot claim what it cannot reach, and it does not re-plan until the
-// lane opens, so at the moment an excavation ends its collector does not exist as
-// a recorded intent. Asking "who wants this slot" gets nobody, every time.
-//
-// THE ORIGIN IS THE ONLY TIE, and it is a real one: a service dig inherits the
-// origin of the demand that could not move, precisely so the cost of digging
-// lands in that demand's episode. If anything in that episode is still live, the
-// thing the excavation was run for has not finished and the bin it uncovered is
-// what that episode is waiting on.
-//
-// This is the conclusion §R.40 reached from the other end. It ruled out a
-// requester POINTER because a dig serves a lane and the relation is one-to-many,
-// and because a pointer goes stale on the event that matters — the requester
-// being cancelled. The episode does not go stale: it names the work rather than
-// a row, and an episode with nothing live in it is over.
-//
-// ── THE PREFERENCE, AND WHY IT IS AN ORDER BY RATHER THAN A FILTER ────────
-//
-// An order that has ALREADY resolved onto the target slot is the collector
-// beyond doubt — source_node says so — and it goes first. But a demand still
-// waiting out the dig has not resolved onto anything, so requiring that match
-// would return nobody in the ordinary case. Preference, not requirement.
-//
-// EXCLUDES LEGS AND OTHER DIGS. A leg is somebody's child and owns no demand of
-// its own; another dig in the same episode is a peer excavation, not a
-// collector, and one demand can raise several (two of the five on the rig shared
-// one episode). Handing a corridor to either would hand it to something that is
-// never going to collect anything.
-func (db *DB) CollectorForDigTarget(parent *orders.Order) (*orders.Order, error) {
-	if parent == nil || parent.OriginID == "" {
-		// No origin is not answerable and must not be guessed at. An order created
-		// without one is its own defect (origin_class 'orphan'); what it costs here
-		// is a corridor released a scan early, which is the recoverable direction.
-		return nil, nil
-	}
-	row := db.QueryRow(fmt.Sprintf(
-		`SELECT %s FROM orders
-		  WHERE origin_id = $1 AND id <> $2 AND status NOT IN (%s)
-		    AND parent_order_id IS NULL AND dig_target_node = ''
-		  ORDER BY (source_node = $3) DESC, id
-		  LIMIT 1`,
-		orders.SelectCols, protocol.TerminalStatusSQLList()),
-		parent.OriginID, parent.ID, parent.DigTargetNode)
-	o, err := orders.ScanOrder(row)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("collector for dig %d's target %s: %w", parent.ID, parent.DigTargetNode, err)
-	}
-	return o, nil
-}
-
 // LaneAcceptsInbound reports whether a lane currently has no mouth hold that
 // would block an inbound (store) share. It is compatible when every active mouth
 // row is inbound — same-mode sharing is legal (§2) — and incompatible when any
@@ -979,13 +836,11 @@ func (db *DB) OrderIsCompoundLeg(orderID int64) (bool, error) {
 // LiveServiceDigInEpisode returns the id of a service dig already running for
 // this episode, or 0 when there is none.
 //
-// ── RE-POINTED AT THE RECOGNITION PREDICATE (§R.104) ──────────────────────
+// ── IT ASKS THE LIVE QUESTION (§R.104) ────────────────────────────────────
 //
-// It read `dig_target_node <> ”` — a column only the FOLDER minting ever wrote.
-// With the folder deleted the column has no writer at all, so this question went
-// permanently blind: every episode would report no excavation running and arm
-// 3's one-dig-per-episode gate would admit a second one every time. A dying
-// instrument, and the kind that answers cheerfully.
+// A non-terminal order with a non-terminal child IS an excavation running. Keying
+// this on a column instead is how it goes blind: arm 3's one-dig-per-episode gate
+// then admits a second dig every time, cheerfully.
 //
 // It now asks the live question instead of a proxy for it: is there a
 // non-terminal order in this episode with a non-terminal CHILD. That is the
@@ -1001,7 +856,7 @@ func (db *DB) OrderIsCompoundLeg(orderID int64) (bool, error) {
 // target-based spelling would now exclude all of them.
 //
 // It answers "has this demand already got an excavation going", and the answer
-// gates raising a second one. See serviceDigEpisodeAlreadyDigging for the
+// gates raising a second one. See laneClearEpisodeAlreadyDigging for the
 // standoff that made this necessary and for why the ORIGIN is the key.
 //
 // An empty origin is not answerable and must not be guessed at: an order with no

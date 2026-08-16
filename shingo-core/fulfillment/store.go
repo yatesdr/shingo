@@ -74,7 +74,7 @@ type Store interface {
 //     ReleaseReservation (soft), transitions via Lifecycle, fails via failFn.
 //   - 3-cleanup: FindSourceBinFIFO + FindEmptyCompatibleBin (the finder owns
 //     source lookup now), GetNode (the finder returns the bin's node), and the
-//     non-excluding CountInFlightOrdersByDeliveryNode (only the self-excluding
+//     non-excluding in-flight count (only the self-excluding
 //     variant is used, by the capacity gate).
 
 // Compile-time check that *store.DB satisfies Store. If the store

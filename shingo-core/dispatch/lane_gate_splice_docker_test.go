@@ -26,7 +26,7 @@ import (
 // the tests that were written against the builders the splice replaced.
 
 // complexIntoGatedLane submits a complex store whose dropoff is a slot of a
-// gate_choreography lane, and returns the order after dispatch.
+// gated lane, and returns the order after dispatch.
 func complexIntoGatedLane(t *testing.T, d *Dispatcher, db *store.DB, env *protocol.Envelope,
 	uuid, sourceNode, slotName, payload string) *orders.Order {
 	t.Helper()
@@ -350,7 +350,7 @@ func TestSplice_RefusesAnUnresolvedStepBeforeTheEntry(t *testing.T) {
 }
 
 // TestSplice_UngatedPlanIsUntouched is the narrowness assertion, and it covers
-// every order at both plants: no group anywhere sets lane_enforcement, so the
+// every order at both plants: no lane anywhere carries a mark, so the
 // walk finds nothing gated and the plan comes back byte-identical.
 func TestSplice_UngatedPlanIsUntouched(t *testing.T) {
 	t.Parallel()

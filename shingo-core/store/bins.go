@@ -53,9 +53,6 @@ func (db *DB) MoveBinClearingStaging(binID, toNodeID int64, clearStaging bool) e
 	return bins.MoveAndClearStaging(db.DB, binID, toNodeID, clearStaging)
 }
 
-// ListAvailableBins returns bins with no manifest.
-func (db *DB) ListAvailableBins() ([]*bins.Bin, error) { return bins.ListAvailable(db.DB) }
-
 // ClaimBin marks a bin as claimed by an order.
 func (db *DB) ClaimBin(binID, orderID int64) error { return bins.Claim(db.DB, binID, orderID) }
 

@@ -35,7 +35,7 @@ func TestCompoundChild_CarriesTheLocalSourceIntent(t *testing.T) {
 	// demand, which was its own dig's parent; a complex demand is now a customer
 	// of a lane-clear dig and the legs hang off THAT. What this test is about —
 	// what a reshuffle leg carries — is unchanged, so it follows the legs.
-	children := serviceDigChildren(t, db, parent)
+	children := laneClearChildren(t, db, parent)
 
 	for _, c := range children {
 		if c.SourceIntent != SourceIntentLocal {
@@ -79,7 +79,7 @@ func TestCompoundChild_StaysOutOfTheSourceFinder(t *testing.T) {
 	// demand, which was its own dig's parent; a complex demand is now a customer
 	// of a lane-clear dig and the legs hang off THAT. What this test is about —
 	// what a reshuffle leg carries — is unchanged, so it follows the legs.
-	children := serviceDigChildren(t, db, parent)
+	children := laneClearChildren(t, db, parent)
 
 	acquiring, err := db.ListAcquiringOrders()
 	testutil.MustNoErr(t, err, "list the orders the finder would consider")

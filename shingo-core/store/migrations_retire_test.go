@@ -13,39 +13,52 @@ import (
 )
 
 // TestMigrate_PendingRestocksRetired: after the full migration chain the retired
-// restore-blockers table is gone (v70) and the head version is current (77, after
-// the refactor-phase1 merge brought v69/v70 in under main's v71–v75).
+// restore-blockers table is gone (v70) and the head version is the last element
+// of the list.
+//
+// ── THE INSTRUMENT, AND THE SECOND TIME IT HAS BEEN USED ──────────────────
 //
 // The drop was v52 on refactor-phase1 and became v70 at transplant — main had
 // claimed 52 and run on to 68. The head-version assertion is the one that would
 // have caught a missed renumber loudly: latestMigrationVersion is read off the
-// LAST list element, so a drop left at 52 would report the head as 52 while
-// later migrations sat above it. After the catch-up merge, main's loader/index
-// migrations (v71–v75) sit above v70, and v76 (the lane-occupancy resource_kind)
-// above those, so the head is 76 rather than 70. v78 dropped
-// pending_lane_extensions, the expose bridge's table, with the machinery that
-// read it; v79 added orders.dig_target_node, the slot a service dig uncovers;
-// v80 deduped order_bins and enforced one row per (order, bin), the grain the
-// junction always claimed and never had; v81 rewrote demand_origins episodes to
-// produce/consume instead of supply/evacuate, retiring the second vocabulary for
-// the claim's own role — a DATA migration, which is why its post-condition reads
-// rows rather than asking ColumnExists; v82 — orders.destination_resolved_at,
-// the instant intake's store-slot selector chose a destination, so the burial
-// tripwire can stop using the fleet-commit as a stand-in for it — is the current
-// head.
+// LAST list element, not the maximum, so a migration left at a low number
+// reports that low number as the head while later ones sit above it.
+//
+// THIS RENUMBER IS THE SECOND TRANSPLANT, and it is bigger than the first. Both
+// plants run origin/main at schema 83; this branch has never been to a plant.
+// The two trees had assigned 77–82 to six pairs of unrelated migrations, so the
+// branch's work moved to 84–88 (77→84 open_for_children, 78→85 the
+// pending_lane_extensions drop, 80→86 the order_bins dedupe, 81→87 the
+// episode-role rewrite, 82→88 destination_resolved_at). The branch's old v79 is
+// not in that list: it added orders.dig_target_node, which the same batch
+// deleted, so the migration was removed rather than renumbered.
+//
+// v76 KEPT ITS NUMBER, deliberately. main has no v76 — it skipped the number and
+// left a note saying the lane-occupancy migration on this branch holds it — so
+// there is no collision to resolve and no row for it at either plant. The
+// migrator tests membership per version (`WHERE version = $1`), not `> max`, so
+// an unrecorded 76 runs once, in list order, exactly like the 84–88 block.
+//
+// v73 IS MAIN'S NOW. Both trees had recorded a v73 and they were OPPOSITE: main
+// adds the `restore-%` exemption to idx_orders_uuid, this branch removed it.
+// Since a plant ran main's, 73 means main's, and the removal became v89 at the
+// end. v73's post-condition is retired to always-true for the same reason v23's
+// and v24's are — a live post-condition that a later migration undoes makes the
+// two re-run each other on every boot.
 //
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
-// purpose, which is the only thing that distinguishes "v79 was added" from
-// "v79 was added below v78 and the head silently did not move".
+// purpose, which is the only thing that distinguishes "a migration was added"
+// from "a migration was added below the head and the head silently did not
+// move".
 func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 82 {
-		t.Errorf("head migration = %d, want 82", got)
+	if got := store.LatestMigrationVersion(); got != 89 {
+		t.Errorf("head migration = %d, want 89", got)
 	}
 }
 

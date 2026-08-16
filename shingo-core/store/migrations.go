@@ -764,34 +764,6 @@ func v77CompoundSealedness(tx *sql.Tx) error {
 	return err
 }
 
-// v79DigTargetNode adds orders.dig_target_node: the slot a service dig exists
-// to uncover, and the fact its lane's release now keys on.
-//
-// NO BACKFILL, and for a harder reason than v77's. v77 could argue its default
-// was TRUE of every existing row; here the honest statement is that the question
-// did not exist. A dig that ran before this migration released its lane when its
-// last blocker placed, its target bin was covered by the CLAIM rather than by the
-// lock, and it is long finished. Writing a target onto those rows would invent a
-// hold that never existed -- and worse, the new release path would read it as a
-// debt still outstanding and keep a completed dig's lane shut against a bin that
-// left hours ago. The default states the true thing about every historical row:
-// this order has no target bin outstanding.
-//
-// TEXT AND NOT A NODE ID, matching source_node / delivery_node / process_node --
-// the three columns on this table that already name a node. An id would join
-// more cheaply, but it would make this the only one of the four spelled
-// differently, and the release path resolves the name through GetNodeByDotName,
-// which is the same call compound dispatch already makes for every leg it ships.
-//
-// Additive and non-breaking on its own: nothing reads the column in this
-// migration's commit, so a Core rolled back across it loses a column nothing
-// consulted.
-func v79DigTargetNode(tx *sql.Tx) error {
-	_, err := tx.Exec(
-		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS dig_target_node TEXT NOT NULL DEFAULT ''`)
-	return err
-}
-
 // v80OrderBinsOneRowPerBin dedupes order_bins and makes its documented grain a
 // constraint.
 //
@@ -824,7 +796,7 @@ func v79DigTargetNode(tx *sql.Tx) error {
 // duplicate cannot come back — a later reader adding a second insert path gets a
 // conflict instead of silent growth.
 // The table is v9's, so it exists by the time this runs on every database that
-// reaches v80 — no existence guard, which would be dead code that looked
+// reaches v86 — no existence guard, which would be dead code that looked
 // load-bearing.
 func v80OrderBinsOneRowPerBin(tx *sql.Tx) error {
 	if _, err := tx.Exec(`
@@ -2785,7 +2757,23 @@ func noCoreSpotLeft(q schema.Querier) bool {
 //
 // The verify confirms the index is both unique AND free of the restore
 // exemption, so a self-heal re-run can never silently leave the carve-out in.
-func v73OrdersUUIDPlain(tx *sql.Tx) error {
+// v73OrdersUUIDUniqueExemptRestore is main's v73, carried here unchanged so the
+// two trees agree on what version 73 did. Its effect is undone by v89.
+func v73OrdersUUIDUniqueExemptRestore(tx *sql.Tx) error {
+	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_orders_uuid`); err != nil {
+		return fmt.Errorf("drop idx_orders_uuid: %w", err)
+	}
+	if _, err := tx.Exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid)
+		     WHERE edge_uuid <> '' AND edge_uuid NOT LIKE 'restore-%'`); err != nil {
+		return fmt.Errorf("create restore-exempt idx_orders_uuid: %w", err)
+	}
+	return nil
+}
+
+// v89OrdersUUIDPlain retires the restore exemption. This is the change that used
+// to be numbered 73 on this branch.
+func v89OrdersUUIDPlain(tx *sql.Tx) error {
 	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_orders_uuid`); err != nil {
 		return fmt.Errorf("drop idx_orders_uuid: %w", err)
 	}
@@ -3084,10 +3072,10 @@ func v81EpisodeRoleVocabulary(tx *sql.Tx) error {
 	return nil
 }
 
-// noLegSpelledEpisodesLeft is v81's post-condition: no demand_origins row still
+// noLegSpelledEpisodesLeft is v87's post-condition: no demand_origins row still
 // carries the retired leg vocabulary, in either the key or the column.
 //
-// It reads the DATA rather than a schema object, because v81 changes no schema
+// It reads the DATA rather than a schema object, because v87 changes no schema
 // object — ColumnExists and IndexExists cannot answer a question about values.
 // A read failure answers FALSE, which re-runs an idempotent migration; the
 // opposite default would record a migration as applied on a database it could
@@ -3140,7 +3128,7 @@ func v82DestinationResolvedAt(tx *sql.Tx) error {
 // EXTRACTED SO IT HAS A SECOND READER. It lived inside
 // runVersionedMigrations, so the only thing that could see it was the loop
 // that ran it — and a property OF the list (no two entries with contradictory
-// post-conditions) had nowhere to be asserted from. v24 and v78 spent an
+// post-conditions) had nowhere to be asserted from. v24 and v85 spent an
 // unknown number of boots re-running each other because of that.
 func migrationList() []migration {
 	return []migration{
@@ -3277,18 +3265,18 @@ func migrationList() []migration {
 		// because of a contextual invariant (lane locked, no
 		// unrelated bins) that a future lane-lock refactor could
 		// silently break.
-		// ── ITS VERIFY IS ALWAYS-TRUE BECAUSE v78 RETIRES ITS TABLE ──────────
+		// ── ITS VERIFY IS ALWAYS-TRUE BECAUSE v85 RETIRES ITS TABLE ──────────
 		//
 		// It used to assert TableExists("pending_lane_extensions"), which is the
-		// exact NEGATION of v78's verify. Both are recorded applied, so on EVERY
+		// exact NEGATION of v85's verify. Both are recorded applied, so on EVERY
 		// BOOT the self-heal saw each one's post-condition fail and re-ran it:
-		// v24 re-created the table, v78 re-dropped it, forever. Observed on the
+		// v24 re-created the table, v85 re-dropped it, forever. Observed on the
 		// rig at 2026-08-14 11:18:59, two lines in the first three of a run log:
 		//
 		//   migrations: v24 (...) recorded as applied but post-condition fails — re-running
-		//   migrations: v78 (...) recorded as applied but post-condition fails — re-running
+		//   migrations: v85 (...) recorded as applied but post-condition fails — re-running
 		//
-		// The END STATE was always right (both are idempotent and v78 runs last),
+		// The END STATE was always right (both are idempotent and v85 runs last),
 		// which is why it survived. What it cost is the self-heal's only alarm:
 		// "recorded as applied but post-condition fails" is how a genuinely
 		// missing migration announces itself, and printing it twice on every
@@ -3298,7 +3286,7 @@ func migrationList() []migration {
 		// treatment, title included. A DROP migration's verify contradicts its
 		// CREATE's by construction; the CREATE stops asserting a state it no
 		// longer owns.
-		{24, "add pending_lane_extensions table for crash-safe lane-hold listeners (retired at v78)",
+		{24, "add pending_lane_extensions table for crash-safe lane-hold listeners (retired at v85)",
 			v24PendingLaneExtensions,
 			func(schema.Querier) bool { return true }},
 
@@ -3870,9 +3858,22 @@ func migrationList() []migration {
 		// so nothing the plants carry collides with a plain unique index. The
 		// only databases that ever held duplicate restore names were house-server
 		// dev volumes, which dev-reset clears.
-		{73, "orders.edge_uuid unique — restore exemption retired (back to plain predicate)",
-			v73OrdersUUIDPlain,
-			func(q schema.Querier) bool { return uuidIndexIsUnique(q) && !uuidIndexExemptsRestore(q) }},
+		// v73 IS MAIN'S, VERBATIM, AND ITS VERIFY IS RETIRED. Both trees have
+		// already recorded a v73 and they are OPPOSITE: main's adds the
+		// `restore-%` exemption to idx_orders_uuid, the branch's removed it. A
+		// plant ran MAIN's, so 73 has to mean what the plant did — otherwise the
+		// branch's post-condition fails against a row that is legitimately there
+		// and self-heal drops and rebuilds the index on every boot.
+		//
+		// The branch's change is not lost; it is v89, at the end, where a change
+		// this tree makes belongs. Which is exactly why this verify must be
+		// always-true: v89 UNDOES what this one does, so a live post-condition
+		// here would be false the moment v89 ran, and the two would take turns
+		// re-running forever. Same treatment as v23 (retired at v70) and v24
+		// (retired at v85) — see their entries.
+		{73, "orders.edge_uuid unique — exempt the restore parent's derived name (retired at v89)",
+			v73OrdersUUIDUniqueExemptRestore,
+			func(schema.Querier) bool { return true }},
 		// v74: whether a shared-window loader spreads its inbound empties across
 		// its windows, or funnels them to the first one, becomes a property of the
 		// loader instead of a plant-wide Edge config key. DEFAULT FALSE = spread,
@@ -3900,44 +3901,49 @@ func migrationList() []migration {
 				return schema.CheckConstraintAllows(q, "reservations", "reservations_resource_kind_check", "occupancy")
 			}},
 
-		// v77 adds orders.open_for_children -- sealedness on a compound parent,
+		// v84 adds orders.open_for_children -- sealedness on a compound parent,
 		// carried explicitly rather than derived. NO BACKFILL, and that is a
 		// ruling rather than an omission: see v77CompoundSealedness.
-		{77, "add orders.open_for_children (compound sealedness, explicit)",
+		{84, "add orders.open_for_children (compound sealedness, explicit)",
 			v77CompoundSealedness,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "open_for_children") }},
-		{78, "drop pending_lane_extensions (the expose bridge, deleted with the two-shape ruling)",
+		{85, "drop pending_lane_extensions (the expose bridge, deleted with the two-shape ruling)",
 			v78DropPendingLaneExtensions,
 			func(q schema.Querier) bool { return !schema.TableExists(q, "pending_lane_extensions") }},
 
-		// v79 adds orders.dig_target_node -- the slot a service dig exists to
-		// uncover. The dig lock now spans the excavation AND the retrieval it was
-		// raised for, and this column says whose departure ends the hold. See
-		// v79DigTargetNode.
-		{79, "add orders.dig_target_node (the bin a service dig uncovers, and what releases its lane)",
-			v79DigTargetNode,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "dig_target_node") }},
-
-		// v80 makes the junction's stated grain real. "One row per claimed bin"
+		// v86 makes the junction's stated grain real. "One row per claimed bin"
 		// is what UpdateOrderBinDestNode is written against and what binForStep
 		// assumes; nothing enforced it, and a retried allocation inserted the same
 		// row again on every pass. See v80OrderBinsOneRowPerBin.
-		{80, "dedupe order_bins and enforce one row per (order, bin)",
+		{86, "dedupe order_bins and enforce one row per (order, bin)",
 			v80OrderBinsOneRowPerBin,
 			func(q schema.Querier) bool { return schema.IndexExists(q, "order_bins_order_bin_uniq") }},
 
-		// v81 is a DATA migration, not a shape one: no ALTER, so no matching edit
+		// v87 is a DATA migration, not a shape one: no ALTER, so no matching edit
 		// in the DDL constants. It rewrites values inside two columns. See
 		// v81EpisodeRoleVocabulary for why it is owed at all.
-		{81, "demand_origins: episodes are produce or consume, not supply or evacuate",
+		{87, "demand_origins: episodes are produce or consume, not supply or evacuate",
 			v81EpisodeRoleVocabulary,
 			func(q schema.Querier) bool { return noLegSpelledEpisodesLeft(q) }},
 
-		{82, "orders: record when intake chose the destination, for the burial tripwire",
+		{88, "orders: record when intake chose the destination, for the burial tripwire",
 			v82DestinationResolvedAt,
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "orders", "destination_resolved_at")
 			}},
+
+		// v89 retires the `restore-%` exemption from idx_orders_uuid — the change
+		// this branch used to make AS v73, expressed here as its own new version
+		// instead of as a second definition of a number both trees have recorded.
+		//
+		// LAST IN THE LIST, AND THAT IS LOAD-BEARING TWICE OVER.
+		// latestMigrationVersion is read off the LAST ELEMENT rather than the
+		// maximum, so anything appended below this silently walks the reported
+		// head backwards; and this must run AFTER v73, which is the thing it
+		// undoes.
+		{89, "orders.edge_uuid unique — restore exemption retired (back to plain predicate)",
+			v89OrdersUUIDPlain,
+			func(q schema.Querier) bool { return uuidIndexIsUnique(q) && !uuidIndexExemptsRestore(q) }},
 	}
 }
 
