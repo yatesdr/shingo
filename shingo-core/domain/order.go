@@ -144,11 +144,15 @@ type Order struct {
 	// completion arm reads as FINISHED.
 	//
 	// This paragraph used to name three readers that consult it. Two went with
-	// the hand-back: the demand is no longer re-parented into its own dig, so
-	// nothing resumes and the lane is not held past the compound's completion.
-	// ONE reader survives (dispatch/dig_lock_release.go's handoff). The rule is
-	// unchanged — everything else that walks the child list is asking a
-	// different question and still must not consult this.
+	// the hand-back, under: "the demand is no longer re-parented into its own
+	// dig, so nothing resumes and the lane is not held past the compound's
+	// completion." §R.91 made that false — a demand does resume — but the reader
+	// count did not change, because this column is a FOLDER's record of a debt
+	// and a re-parented demand writes none. Its collector is itself, and gate 2's
+	// self-handoff takes that branch before this is read. ONE reader survives
+	// (dispatch/dig_lock_release.go's handoff). The rule is unchanged —
+	// everything else that walks the child list is asking a different question
+	// and still must not consult this.
 	//
 	// Empty is the safe reading in both languages, for the same reason
 	// OpenForChildren is named for its exception: a bare orders.Order has no

@@ -250,7 +250,7 @@ func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, 
 			// SHADOWED: the single-bin fallback gives up here for a coordinator
 			// and for a defect alike.
 			owns, oerr := e.db.OrderOwnsNoCargo(order.ID)
-			service.NoteFolderShadow(service.FolderSiteBlockCompleted, order.ID, true, owns, oerr)
+			service.NoteFolderShadow(service.FolderSiteBlockCompleted, order.ID, owns, oerr)
 		}
 		return 0, 0, 0, false
 	}

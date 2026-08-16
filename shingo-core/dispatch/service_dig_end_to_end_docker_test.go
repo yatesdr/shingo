@@ -62,12 +62,16 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 	// ── THE BURIAL ────────────────────────────────────────────────────────
 	d.handleComplexBuriedOnReplay(demand, &BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID})
 
-	// (1) THE DEMAND DID NOT MOVE. This is the assertion the whole batch is for.
+	// (1) THE DEMAND TOOK THE DIG (§R.91). This assertion is inverted; it read
+	// `want StatusQueued` — "it was re-parented into its own dig again, which is
+	// the status excursion the two-shape ruling deletes". The owner's ruling
+	// restores the excursion deliberately: a demand that creates a dig becomes
+	// its parent, and comes back through `queued` when the corridor opens.
 	parked, err := db.GetOrder(demand.ID)
 	testutil.MustNoErr(t, err, "reload the demand after the burial")
-	if parked.Status != StatusQueued {
-		t.Fatalf("demand status = %q, want %q — it was re-parented into its own dig again, which is "+
-			"the status excursion the two-shape ruling deletes", parked.Status, StatusQueued)
+	if parked.Status != StatusReshuffling {
+		t.Fatalf("demand status = %q, want %q — nothing is committed to this order, so it owns the "+
+			"excavation it caused", parked.Status, StatusReshuffling)
 	}
 	if parked.QueueCause != string(CauseIntakeBuried) {
 		t.Errorf("queue_cause = %q, want %q — the operator has to be able to read why it is waiting",
@@ -76,8 +80,9 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 	if strings.TrimSpace(parked.QueueReason) == "" {
 		t.Error("queue_reason is blank — this is the sentence on the board while the dig runs")
 	}
-	if kids, _ := db.ListChildOrders(demand.ID); len(kids) != 0 {
-		t.Fatalf("the demand owns %d legs — it became the dig instead of being served by one", len(kids))
+	if kids, _ := db.ListChildOrders(demand.ID); len(kids) == 0 {
+		t.Fatal("the demand owns no legs — it did not take the excavation, so nothing is digging " +
+			"for it and its wait has no releaser")
 	}
 
 	// (2) A SERVICE DIG EXISTS, and it belongs to the demand's episode — which is
@@ -146,36 +151,61 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 			"with the slots the dig just emptied as the cheapest shuffle candidates in the group",
 			lane.Name, holders, demand.ID)
 	}
+	// THE DIG IS THE DEMAND, so it does not terminate — it RESUMES. This assertion
+	// read `IsTerminal(finished.Status)`, under: "the dig is %q with its corridor
+	// already handed over. It owes nothing and holds nothing, and a row parked in
+	// `reshuffling` forever is one every census and every stall checker has to
+	// learn to ignore."
+	//
+	// That was right about a FOLDER, which is exactly what owes nothing once its
+	// corridor is handed over. A re-parented demand owes its own pickup, so
+	// ResumeCompound puts it back in the acquiring set and the concern the old
+	// text names — a row parked in `reshuffling` forever — is answered by it
+	// LEAVING reshuffling rather than by terminating.
 	finished, err := db.GetOrder(dig.ID)
 	testutil.MustNoErr(t, err, "reload the dig")
-	if !protocol.IsTerminal(finished.Status) {
-		t.Fatalf("the dig is %q with its corridor already handed over. It owes nothing and holds "+
-			"nothing, and a row parked in `reshuffling` forever is one every census and every stall "+
-			"checker has to learn to ignore", finished.Status)
+	if finished.Status != StatusQueued {
+		t.Fatalf("the demand is %q after its own excavation finished, want %q — it still owes its "+
+			"own pickup and must go back to the acquiring set for the scanner to re-resolve it",
+			finished.Status, StatusQueued)
 	}
 
-	// (5) THE DEMAND IS STILL EXACTLY WHERE IT WAS, and still readable. It was
+	// (5) THE DEMAND IS BACK IN THE ACQUIRING SET WITH ITS OWN PLAN INTACT. This
+	// block used to read "THE DEMAND IS STILL EXACTLY WHERE IT WAS ... It was
 	// never touched by any of the above: no resume, no status change, no
-	// re-parenting. The scanner re-resolves it from here on the ordinary
-	// lane-clearing events, and it dispatches its OWN plan.
+	// re-parenting." Under §R.91 it was re-parented, excursed and resumed — and
+	// the half that matters is unchanged: its own steps are untouched, and the
+	// scanner dispatches ITS OWN plan against the corridor it just opened.
 	after, err := db.GetOrder(demand.ID)
 	testutil.MustNoErr(t, err, "reload the demand after the dig finished")
 	if after.Status != StatusQueued {
 		t.Fatalf("demand status = %q after the dig, want %q — something moved it", after.Status, StatusQueued)
 	}
-	if kids, _ := db.ListChildOrders(demand.ID); len(kids) != 0 {
-		t.Fatalf("the demand acquired %d legs while the dig ran", len(kids))
+	if kids, _ := db.ListChildOrders(demand.ID); len(kids) == 0 {
+		t.Fatal("the demand owns no legs — it did not take the excavation")
 	}
 
-	// ZERO STATUS EXCURSIONS, asserted against the history rather than the row:
-	// the row only shows where it ended up, and the claim is about the whole trip.
+	// THE EXCURSION IS THE POINT, and this loop used to forbid it. Its text:
+	// "ZERO STATUS EXCURSIONS, asserted against the history rather than the row:
+	// the row only shows where it ended up, and the claim is about the whole
+	// trip", failing on any history row at `reshuffling` with "a complex demand
+	// is a CUSTOMER of a dig now and must never be re-planned into one".
+	//
+	// §R.91: it must be. The history is still the right place to look, because
+	// the row only shows where it ended up — but what it has to show is the round
+	// TRIP, reshuffling and back, rather than the absence of one. A demand that
+	// never entered reshuffling never took its own dig.
 	history, err := db.ListOrderHistory(demand.ID)
 	testutil.MustNoErr(t, err, "list the demand's history")
+	excursed := false
 	for _, h := range history {
 		if h.Status == protocol.StatusReshuffling {
-			t.Errorf("the demand passed through %q (history %d) — a complex demand is a CUSTOMER of "+
-				"a dig now and must never be re-planned into one", h.Status, h.ID)
+			excursed = true
 		}
+	}
+	if !excursed {
+		t.Error("the demand never passed through `reshuffling` — it did not take its own excavation, " +
+			"so something else was digging and the ruling did not land")
 	}
 }
 
@@ -263,14 +293,30 @@ func TestServiceDig_StaleDigDissolves_DemandUntouched(t *testing.T) {
 	// this: a demand nothing will dig for again is stranded, however untouched.
 	// The lane is quiet now (the dissolve released it), so the next scan plans a
 	// fresh dig — which is what the scanner does on every lane-clearing event.
-	d.handleComplexBuriedOnReplay(after, buried)
-	fresh := serviceDigFor(t, db, after)
-	if fresh.ID == dig.ID {
-		t.Fatalf("the re-proposal found the dissolved dig %d rather than a new one", dig.ID)
+	//
+	// IT CANNOT BE IDENTIFIED BY BEING A DIFFERENT ORDER any more. The check used
+	// to be `fresh.ID == dig.ID` → "the re-proposal found the dissolved dig %d
+	// rather than a new one", which worked while the dig was a separate row.
+	// Under §R.91 the demand IS the dig, so both generations live under the same
+	// id and the new chapter is identified by its LEGS instead: a fresh
+	// non-terminal leg that was not in the dissolved set.
+	dissolvedLegs, err := db.ListChildOrders(dig.ID)
+	testutil.MustNoErr(t, err, "list the dissolved chapter's legs")
+	wasThere := map[int64]bool{}
+	for _, c := range dissolvedLegs {
+		wasThere[c.ID] = true
 	}
-	legs, err := db.ListChildOrders(fresh.ID)
-	testutil.MustNoErr(t, err, "list the fresh dig's legs")
-	if len(legs) == 0 {
-		t.Error("the fresh dig has no legs — the demand re-proposed but nothing was planned")
+	d.handleComplexBuriedOnReplay(after, buried)
+	legs, err := db.ListChildOrders(after.ID)
+	testutil.MustNoErr(t, err, "list the demand's legs after the re-proposal")
+	freshLegs := 0
+	for _, c := range legs {
+		if !wasThere[c.ID] && !protocol.IsTerminal(c.Status) {
+			freshLegs++
+		}
+	}
+	if freshLegs == 0 {
+		t.Errorf("the re-proposal planned nothing new — the demand owns %d legs and every one of "+
+			"them belongs to the dissolved chapter, so its wait has no releaser", len(legs))
 	}
 }

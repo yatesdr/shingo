@@ -244,7 +244,7 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 	// service.NoteFolderShadow.
 	if order.BinID == nil {
 		owns, oerr := e.db.OrderOwnsNoCargo(order.ID)
-		service.NoteFolderShadow(service.FolderSiteDeliverySettle, order.ID, true, owns, oerr)
+		service.NoteFolderShadow(service.FolderSiteDeliverySettle, order.ID, owns, oerr)
 		// Bin-stuck-at-source diagnostic: this is the failure mode where
 		// planMove's UpdateOrderBinID didn't persist (or was never called)
 		// but the order still progressed to FINISHED. Without a log here,
@@ -550,7 +550,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 	// a defective order — the same branch for opposite reasons.
 	if order.BinID == nil {
 		owns, oerr := e.db.OrderOwnsNoCargo(order.ID)
-		service.NoteFolderShadow(service.FolderSiteCompletionNet, order.ID, true, owns, oerr)
+		service.NoteFolderShadow(service.FolderSiteCompletionNet, order.ID, owns, oerr)
 		return
 	}
 

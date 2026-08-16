@@ -5,6 +5,7 @@ package dispatch
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 )
@@ -46,10 +47,19 @@ func TestHandleChildOrderFailure_ReleasesTheLane(t *testing.T) {
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.Status = StatusReshuffling
 	})
+	// A leg that ACTUALLY DIED, plus one still pending behind it. The old
+	// fixture had a single pending child and passed it in as the failed one,
+	// which meant nothing was ever cancelled and nothing closed.
+	deadLeg := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.ParentOrderID = &parent.ID
+		o.Status = StatusFailed
+		o.ErrorDetail = "the robot stopped responding"
+	})
 	child := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.ParentOrderID = &parent.ID
 		o.Status = StatusPending
 	})
+	_ = child
 
 	if !d.laneLock.TryLock(lane, parent.ID) {
 		t.Fatal("TryLock failed")
@@ -58,9 +68,24 @@ func TestHandleChildOrderFailure_ReleasesTheLane(t *testing.T) {
 		t.Fatal("precondition: the lane must actually be locked, or this test is the old one again")
 	}
 
-	d.HandleChildOrderFailure(parent.ID, child.ID)
+	d.HandleChildOrderFailure(parent.ID, deadLeg.ID)
+
+	// THE DISPOSITION IS THE SECOND STEP AND IT IS WHAT RELEASES THE LANE.
+	// HandleChildOrderFailure used to terminalize the parent and drop the lane
+	// itself; under gate 1 (§R.91) it only closes the chapter, and the corridor
+	// stays the parent's until the cancelled legs have landed — a lane released
+	// with a still-moving leg inside it is the re-burial window Hold A exists to
+	// close. In the plant the cancel above emits and the engine's chapter-end arm
+	// makes this call on another goroutine.
+	testutil.MustNoErr(t, d.AdvanceCompoundOrder(parent.ID), "dispose of the closed chapter")
 
 	if d.laneLock.IsLocked(lane) {
-		t.Error("lane still locked after HandleChildOrderFailure; want released")
+		t.Error("lane still locked after the chapter closed; want released")
+	}
+	after, err := db.GetOrder(parent.ID)
+	testutil.MustNoErr(t, err, "reload parent")
+	if after.Status != StatusQueued {
+		t.Errorf("parent status = %q, want %q — the demand survives its dig's failure",
+			after.Status, StatusQueued)
 	}
 }

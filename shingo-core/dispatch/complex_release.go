@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 
@@ -338,6 +339,32 @@ func (d *Dispatcher) hardReleasePhysicalVerdict(order *orders.Order, steps []res
 	return fmt.Sprintf("%s at %s", v.Cause(), lane.Name), nil
 }
 
+// AppendLandedError marks a failure that happened AFTER the fleet took the
+// blocks. The append is the one irreversible step in a release: past it the
+// robot has the segment and is driving it, whatever Core failed to write next.
+//
+// It exists because "the release did not complete" is two facts with opposite
+// rollbacks. When the append never landed, the robot got nothing, every row the
+// call took must go back, and the same segment can be retried. When the append
+// DID land, the robot is moving — dropping the occupancy row it drove into
+// would declare an occupied corridor empty (§R.54's phantom row, inverted), and
+// retrying the segment would append it twice.
+//
+// Both are errors. Neither is success. The rollback arms ask which one.
+type AppendLandedError struct{ err error }
+
+func (e AppendLandedError) Error() string { return e.err.Error() }
+func (e AppendLandedError) Unwrap() error { return e.err }
+
+// IsAppendLanded reports whether the fleet already has the blocks — i.e. the
+// failure is downstream of the irreversible step and nothing may be rolled back.
+func IsAppendLanded(err error) bool {
+	var a AppendLandedError
+	return errors.As(err, &a)
+}
+
+func appendLanded(err error) error { return AppendLandedError{err: err} }
+
 func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.Order, segment []resolvedStep, moreWaits bool, blockOffset int) {
 	if err := d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "complex release"); err != nil {
 		d.sendError(env, order.EdgeUUID, "fleet_failed", err.Error())
@@ -363,6 +390,25 @@ func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.
 // staged status, so the caller can retry the same segment — the retry is what
 // makes a transient fleet error survivable rather than a stranded robot.
 //
+// ── AND IT FAILS CLOSED ON BOTH SIDES OF THE APPEND (§R.98 stage A3) ──────
+//
+// wait_index is the DURABLE WITNESS every release path re-reads to decide
+// whether a tail is still owed (IsGateStaged). Two ways it can lie, and neither
+// one used to be reported:
+//
+//   - The append was never proven and the witness advanced anyway. That was the
+//     backend's fault, not this function's: a fleet that returns nil for a
+//     mission it never issued makes an unproven append indistinguishable from a
+//     proven one. Fixed at both backends; this side only has to keep believing
+//     the answer.
+//   - The append landed and the witness did NOT advance, or the order could not
+//     be put in transit afterwards. Both were logged and returned success. A
+//     release that could not move the order out of staging has not completed,
+//     and saying it did is how a vanished mission got recorded as a good final
+//     append. They now return AppendLandedError — an error, carrying the fact
+//     that the robot has the blocks so no caller rolls back a corridor the
+//     robot is already inside.
+//
 // Segments are not load-sequence expanded (nil): F4c is scoped to the simple
 // transport path's initial pickup, and an appended segment never carries one.
 func (d *Dispatcher) appendSegmentAndAdvance(order *orders.Order, segment []resolvedStep, moreWaits bool, blockOffset int, what string) error {
@@ -377,20 +423,48 @@ func (d *Dispatcher) appendSegmentAndAdvance(order *orders.Order, segment []reso
 		return err
 	}
 
+	// PAST THIS LINE THE ROBOT HAS THE SEGMENT. Nothing below can be undone.
 	newWaitIndex := order.WaitIndex + 1
 	if err := d.db.UpdateOrderWaitIndex(order.ID, newWaitIndex); err != nil {
 		log.Printf("dispatch: update order %d wait_index to %d: %v", order.ID, newWaitIndex, err)
+		return appendLanded(fmt.Errorf("%s: order %d: the fleet took the segment but wait_index did not advance to %d — the row still says a tail is owed: %w",
+			what, order.ID, newWaitIndex, err))
 	}
 
 	// Release BEFORE the in-memory wait_index bump: its audit reason renders
 	// ord.WaitIndex as "released from staging (wait N)", where N names the wait
 	// being LEFT. Bumping first would silently re-number every such audit line.
 	if err := d.lifecycle.Release(order, "dispatcher"); err != nil {
-		if IsIllegalTransition(err) {
-			log.Printf("dispatch: order %d became un-releasable mid-flight (status=%s): %v", order.ID, order.Status, err)
-		} else {
+		// ── ALREADY THERE IS NOT A FAILURE, AND IT IS NOT THE SAME AS UN-RELEASABLE ──
+		//
+		// A second append on one order — a gated ENTRY followed by the dwell's own
+		// release, the composed shape — finds the order already in transit, because
+		// the entry put it there. The state machine has no self-edge, so a perfectly
+		// healthy idempotent release surfaces as `in_transit → in_transit`.
+		//
+		// That is why this arm was tolerant, and the tolerance was right for this
+		// case and wrong for every other one: cancelled, failed and delivered came
+		// through the same branch and were reported as successful releases. The
+		// discriminator is not the error class, it is whether the order is ALREADY
+		// where the transition was going. When it is, the postcondition holds and
+		// the release completed. When it is not, the order became un-releasable
+		// mid-flight and this did not complete.
+		var it IllegalTransition
+		if !errors.As(err, &it) || it.From != it.To {
+			// The witness advanced, so keep the caller's struct matching the row it
+			// wrote even on the way out — the gate path re-reads it.
+			order.WaitIndex = newWaitIndex
+			if IsIllegalTransition(err) {
+				log.Printf("dispatch: order %d became un-releasable mid-flight (status=%s): %v", order.ID, order.Status, err)
+				return appendLanded(fmt.Errorf("%s: order %d: the fleet took the segment but the order was un-releasable (status=%s): %w",
+					what, order.ID, order.Status, err))
+			}
 			log.Printf("dispatch: release order %d from staging: %v", order.ID, err)
+			return appendLanded(fmt.Errorf("%s: order %d: the fleet took the segment but the order could not be released from staging: %w",
+				what, order.ID, err))
 		}
+		d.dbg("%s: order %d was already %s when its segment was appended — the release is idempotent, not refused",
+			what, order.ID, it.From)
 	}
 	log.Printf("dispatch: %s: order %d appended %d blocks (wait %d, complete=%v)",
 		what, order.ID, len(blocks), order.WaitIndex, complete)

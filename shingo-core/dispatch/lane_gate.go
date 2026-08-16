@@ -691,7 +691,7 @@ func (d *Dispatcher) BuriedForHeldBin(order *orders.Order) (*BuriedError, error)
 			// SHADOWED: "holds no bin" is the folder's permanent state as well as
 			// the fault this error was written for.
 			owns, oerr := d.db.OrderOwnsNoCargo(order.ID)
-			service.NoteFolderShadow(service.FolderSiteBuriedForHeldBin, order.ID, true, owns, oerr)
+			service.NoteFolderShadow(service.FolderSiteBuriedForHeldBin, order.ID, owns, oerr)
 		}
 		return nil, fmt.Errorf("buried-for-held-bin: order holds no bin")
 	}

@@ -51,6 +51,9 @@ type ReconciliationService struct {
 	// loop would be a second thing to reason about for a measurement that is
 	// meant to be deleted once it has answered.
 	burialTally func() service.BurialTally
+	// lastFolderShadow is the previous folder-recognition reading, so the sweep
+	// only speaks when the number has MOVED. See logFolderShadow.
+	lastFolderShadow string
 }
 
 func newReconciliationService(db ReconciliationStore, logFn LogFunc) *ReconciliationService {
@@ -136,6 +139,7 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 				s.logFn("engine: reaped %d orphaned reservations from terminal/gone orders", n)
 			}
 			s.logBurialShadow()
+			s.logFolderShadow()
 			s.logArrivalRefusals()
 			s.logDestNodeDrift()
 		}
@@ -189,6 +193,49 @@ func (s *ReconciliationService) logBurialShadow() {
 	s.logFn("burial-shadow tally (since boot): soft-hold burials %d (longest held at burial %s), "+
 		"dig-uncovered %d",
 		t.Soft, t.SoftLongestHeld.Round(time.Second), t.DigUncovered)
+}
+
+// logFolderShadow reports the folder-recognition window (§R.96 stage 0d), which
+// is what ARMS it: the tally is an in-process map, and until this existed
+// FolderShadowReport, FolderShadowTally and FolderShadowSampled had ZERO
+// readers anywhere in the tree. An instrument nobody can read is not running,
+// it is compiling — and the stage-1 cutover was going to be justified by a
+// number that could not be obtained.
+//
+// IT SPEAKS WHEN THE READING MOVES, not every sweep. Emitting the same three
+// numbers every reconciliation for a whole window is how a line stops being
+// read (law 9); emitting only on change means the LAST such line in the journal
+// is always the current reading, which is exactly what the cutover needs to
+// quote.
+//
+// AND IT SPEAKS AT ZERO SAMPLES, once, deliberately. Three of the seven sites
+// have unverified reachability, so "no site sampled" is a finding and not
+// silence — it distinguishes an instrument that is running and has seen nothing
+// from one that is not running at all, which is the distinction a check that
+// cannot tell whether it had input never makes.
+func (s *ReconciliationService) logFolderShadow() {
+	line := service.FolderShadowLine()
+	if line == s.lastFolderShadow {
+		return
+	}
+	s.lastFolderShadow = line
+
+	total := 0
+	for _, n := range service.FolderShadowTally() {
+		total += n
+	}
+	if total == 0 {
+		s.logFn("folder-shadow window (coordinator/ordinary/sampled per site): %s — no false positive "+
+			"yet. Zero here does NOT clear a site: read the sampled count beside it, because a site "+
+			"nothing reached and a site that never fired wrongly produce the same zero.", line)
+		return
+	}
+	head, tail, _ := strings.Cut(service.FolderShadowMarker, " ")
+	s.logFn("folder-shadow FALSE POSITIVES=%d (coordinator/ordinary/sampled per site): %s — these "+
+		"firings landed on orders that own legs, whose NULL bin_id is permanent and correct. THIS "+
+		"COUNT is the number the cutover quotes, not a grep of it; for the per-event lines search the "+
+		"journal for %q followed by %q. The ordinary column is what the cutover must KEEP.",
+		total, line, head, tail)
 }
 
 // logArrivalRefusals reports the arrival claim guard, and it belongs beside
@@ -561,7 +608,23 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout, operatorGatedTimeout
 				order.ID, order.EdgeUUID, order.Status, now.Sub(order.UpdatedAt).Round(time.Second), effective)
 			continue
 		}
-		if err := s.abandonOrder(order, reason); err != nil {
+		// A SWEPT DIG LEG ENDS ITS CHAPTER, AND HAS TO SAY SO IN THE ONE WORD
+		// THE DISPOSITION READS. Gate 1's wording is "a failed OR SWEPT dig
+		// child dissolves the chapter", and the chapter-end test reads the
+		// cancel's marker rather than its status — deliberately, because an
+		// OPERATOR cancel must not read as a chapter end or the parent comes
+		// back to the acquiring set carrying work a human stopped. A sweep is
+		// not an operator, so it says which it is.
+		//
+		// The diagnostic sentence is not lost, it moves: RecordRecoveryAction
+		// below still files the full "stuck in %s past %s" text, which is where
+		// a sweep's reasoning belongs. The leg's error_detail is read by
+		// machinery; the recovery ledger is read by people.
+		legReason := reason
+		if order.ParentOrderID != nil {
+			legReason = dispatch.ReshuffleLegFailedDetail
+		}
+		if err := s.abandonOrder(order, legReason); err != nil {
 			s.logFn("engine: abandon stuck order %d: %v", order.ID, err)
 			continue
 		}

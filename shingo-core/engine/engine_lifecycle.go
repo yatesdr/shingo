@@ -281,7 +281,41 @@ func (e *Engine) loadActiveOrders() {
 	for _, id := range ids {
 		e.tracker.Track(id)
 	}
-	if len(ids) > 0 {
-		e.logFn("engine: loaded %d active vendor orders into tracker", len(ids))
+	if len(ids) == 0 {
+		return
 	}
+
+	// ── AND ASK THE FLEET WHETHER IT AGREES THESE MISSIONS EXIST ──────────
+	//
+	// Re-registering an order into the tracker is Core saying "I am still
+	// commanding this mission". Nothing has ever checked the other half of that
+	// sentence. Against a real RDS the check is nearly always redundant: it is a
+	// separate durable process and this restart did not touch it. Against the
+	// in-process simulator it is the entire story — the restart emptied the
+	// fleet, and every mission reloaded here is one Core will drive, append to,
+	// and wait on forever, against nobody.
+	//
+	// One measured window was read as a §R.91 regression on exactly this. The
+	// line below is what would have said so in the first thirty seconds.
+	//
+	// It reports and does nothing else. Not knowing where a robot is has never
+	// been grounds for terminating an order and is not grounds now (§R.98,
+	// refused 4/4) — the fix for a mission the fleet has lost is upstream, in
+	// the backends that now refuse to append to one.
+	missing := 0
+	if reg, ok := e.fleet.(fleet.MissionRegistry); ok {
+		for _, id := range ids {
+			if !reg.HasOrder(id) {
+				missing++
+				e.logFn("engine: !! vendor order %s was reloaded into the tracker but %s does not hold it — Core is commanding a mission that does not exist",
+					id, e.fleet.Name())
+			}
+		}
+	}
+	if missing > 0 {
+		e.logFn("engine: !! loaded %d active vendor orders into tracker and %s knows about %d of them — %d mission(s) are Core's alone",
+			len(ids), e.fleet.Name(), len(ids)-missing, missing)
+		return
+	}
+	e.logFn("engine: loaded %d active vendor orders into tracker", len(ids))
 }

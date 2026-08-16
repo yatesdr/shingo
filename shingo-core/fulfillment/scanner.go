@@ -555,7 +555,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		// reshuffling ∉ IsAcquiring both guard upstream), which is exactly why
 		// the spelling is measured before it is cut.
 		owns, oerr := s.db.OrderOwnsNoCargo(order.ID)
-		service.NoteFolderShadow(service.FolderSiteHeldBinDispatch, order.ID, true, owns, oerr)
+		service.NoteFolderShadow(service.FolderSiteHeldBinDispatch, order.ID, owns, oerr)
 		// The plain path only routes here when order.BinID != nil, so a nil here
 		// is a construction bug — surface it, don't dispatch with no bin.
 		s.logFn("fulfillment: order %d reached dispatchHeldBin with no claimed bin; skipping", order.ID)

@@ -99,26 +99,38 @@ func TestPlainBuriedRetrieve_KeepsDemandAsItsOwnDigParent(t *testing.T) {
 	}
 }
 
-// serviceDigFor finds the lane-clear dig raised on a demand's behalf.
+// serviceDigFor finds the lane-clear dig raised on a demand's behalf, which is
+// USUALLY THE DEMAND ITSELF now.
 //
-// ── THE LOOKUP KEY IS ITSELF THE RULING ───────────────────────────────────
+// ── THE LOOKUP KEY WAS THE RULING, AND THE RULING CHANGED ─────────────────
 //
-// There is no requester column and there will not be one (PLAN §R.40): a dig is
-// a service to a LANE and one dig frees every demand waiting behind the same
-// wall, so a 1:1 pointer would assert something false and would go stale the
-// moment that one requester cancelled. What ties a dig to the work that caused
-// it is the EPISODE — the origin it inherits — which is also what puts the cost
-// of digging in the right place.
+// It used to say: "There is no requester column and there will not be one (PLAN
+// §R.40): a dig is a service to a LANE and one dig frees every demand waiting
+// behind the same wall, so a 1:1 pointer would assert something false and would
+// go stale the moment that one requester cancelled. What ties a dig to the work
+// that caused it is the EPISODE... So a test cannot follow a pointer, because
+// deliberately there is none. It identifies the dig by its SHAPE instead: a
+// top-level Move order that is not the demand and that owns legs."
 //
-// So a test cannot follow a pointer, because deliberately there is none. It
-// identifies the dig by its SHAPE instead: a top-level Move order that is not the
-// demand and that owns legs. Inside one test's own database that is unambiguous —
-// testdb hands every test a private clone, and a fixture raises one burial. It
-// would not be a safe query against a plant, which is the point: the production
-// relationship is the episode, and a test asserting on episode identity is
-// covered by the origin-propagation tests rather than by this helper.
+// §R.91 gives most digs an owner: the demand that caused it re-parents onto it.
+// So the first question is no longer "which other order is the dig" but "is this
+// demand its own dig", and the answer is its child rows.
+//
+// THE FOLDER SEARCH IS KEPT, not as a fallback but as the other half of a
+// two-shape world: the gate-dweller heal still mints a folder, on physics, and
+// its dig genuinely is a different order with no pointer back. Everything the
+// quoted paragraph says about episodes and 1:many is still true of THAT shape,
+// and the shape-based search below is still how a test finds it.
 func serviceDigFor(t *testing.T, db *store.DB, demand *orders.Order) *orders.Order {
 	t.Helper()
+
+	// THE DEMAND IS ITS OWN DIG (§R.91) — the ordinary case. Asked first, because
+	// under the re-parent there is frequently no other order at all to find, and
+	// falling through to the folder search would report "no dig was raised" about
+	// a demand that is at that moment excavating.
+	if kids, err := db.ListChildOrders(demand.ID); err == nil && len(kids) > 0 {
+		return demand
+	}
 	rows, err := db.DB.Query(
 		`SELECT id FROM orders WHERE id <> $1 AND parent_order_id IS NULL AND order_type = $2 ORDER BY id DESC`,
 		demand.ID, OrderTypeMove)
@@ -148,13 +160,16 @@ func serviceDigFor(t *testing.T, db *store.DB, demand *orders.Order) *orders.Ord
 		}
 		return dig
 	}
-	t.Fatalf("no service dig was raised for demand %d — the demand stays queued and something else "+
-		"digs, so a burial with no dig means the excavation was never proposed", demand.ID)
+	t.Fatalf("no dig was raised for demand %d — it owns no legs of its own and no folder dig exists "+
+		"either, so the excavation was never proposed", demand.ID)
 	return nil
 }
 
-// serviceDigChildren is the legs of the dig raised for this demand — what used to
-// be ListChildOrders(demand.ID) before the demand stopped being its own dig.
+// serviceDigChildren is the legs of the dig raised for this demand. Its own
+// header used to read "what used to be ListChildOrders(demand.ID) before the
+// demand stopped being its own dig" — under §R.91 that is what it is again for
+// every shape but the gate-dweller folder, and serviceDigFor is what tells them
+// apart.
 func serviceDigChildren(t *testing.T, db *store.DB, demand *orders.Order) []*orders.Order {
 	t.Helper()
 	dig := serviceDigFor(t, db, demand)

@@ -54,12 +54,17 @@ const (
 	// children run. It is in the table because the status partition classifies
 	// `reshuffling` to it.
 	//
-	// IT CARRIES NO CAUSE, and briefly it carried one. A parent in `reshuffling`
-	// waits because its children are not finished, which is structural rather than
-	// a refusal, and structure needs no cause. The exception was a dig holding its
-	// lane for the bin it had uncovered — finished children, still waiting — and
-	// that hold has been replaced by a handoff to the order collecting the bin, so
-	// the exception is gone and this population is structural again.
+	// IT CARRIED NO CAUSE, AND §R.91 ENDED THAT. The old text read: "A parent in
+	// `reshuffling` waits because its children are not finished, which is
+	// structural rather than a refusal, and structure needs no cause." That was
+	// true while every occupant was a synthetic folder and the DEMAND waited
+	// elsewhere, in `queued`, where the scanner could see it. §R.91 moved the
+	// demand itself here. The ordinary case is still structural and still
+	// causeless — legs are running, nothing is wrong. What is not structural is a
+	// chapter that has STOPPED with a leg still open: that is a real order, on a
+	// real board, rendering blank. It now carries CauseChapterLegInFlight when a
+	// vehicle is committed, and when one is not it is not a wait at all — the
+	// watchdog dissolves it (§R.99).
 	PopCompoundParent WaitPopulation = "compound-parent"
 	// PopStationWait is an order `staged` at a wait the STATION owns — the swap
 	// choreography's own gates, WaitKindStation. It is the fourth population, and
@@ -162,6 +167,14 @@ var waitPopulations = []populationReleaser{
 		// second instance of the shape the lane floor is the third and fourth of.
 		// Listed so the doctrine's table is the whole picture rather than the part
 		// this batch happened to build.
+		//
+		// THE FLOOR NAMED HERE ONLY EVER COVERED HALF OF IT, and the half it
+		// covered is the one where every child is already terminal — a chapter
+		// that finished and did not get returned. The half where a leg is still
+		// open had no periodic pass at all, which nobody noticed while its only
+		// occupants were synthetic folders. §R.91 put demands there.
+		// SweepStalledChapters is that missing half, and unlike every other floor
+		// in this table it may ACT on what it finds (§R.99).
 		population: PopCompoundParent,
 		owner:      OwnerCore,
 		redriver:   "Dispatcher.AdvanceCompoundOrder",
@@ -169,7 +182,8 @@ var waitPopulations = []populationReleaser{
 			"EventOrderCompleted", "EventOrderCancelled", "EventOrderFailed",
 			"EventOrderSkipped",
 		},
-		floor: "ReconciliationService.AdvanceStuckReshuffleParents (reconcile interval)",
+		floor: "ReconciliationService.AdvanceStuckReshuffleParents (all children terminal, reconcile " +
+			"interval) + Dispatcher.SweepStalledChapters (a leg still open, 60s)",
 	},
 	{
 		// THE FOURTH POPULATION, AND THE ONE THAT MUST NOT BE FLOORED.
@@ -365,6 +379,21 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseDigBlockerClaimed,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "the order holding the blocker finishes carrying it out of the lane",
+	},
+	{
+		// THE ONLY CAUSE IN THIS TABLE WHOSE WAITER IS A PARENT. Every other row
+		// describes an order refused at a door; this one describes a demand whose
+		// own excavation has gone quiet with a robot still out on it.
+		//
+		// The releaser is a MISSION ENDING, and that is why the watchdog is allowed
+		// to write this and not to act on it: a mission the fleet holds ends when
+		// the fleet says so, at whatever pace the plant runs at, and R.30 measured
+		// that pace at up to 959 seconds for a single mid-order wait. The chapter's
+		// terminal arm then returns the demand on the ordinary path.
+		cause:       CauseChapterLegInFlight,
+		populations: []WaitPopulation{PopCompoundParent},
+		what: "the open leg's mission terminates — the fleet reports it delivered, failed or " +
+			"cancelled — and the chapter's terminal arm returns the demand",
 	},
 	{
 		cause: CauseEpisodeAlreadyDigging,

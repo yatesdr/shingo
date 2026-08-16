@@ -40,7 +40,7 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 	if order.BinID == nil {
 		// SHADOWED — reachability by a coordinator was NOT established by reading.
 		owns, oerr := s.db.OrderOwnsNoCargo(order.ID)
-		service.NoteFolderShadow(service.FolderSiteRecoveryReapply, order.ID, true, owns, oerr)
+		service.NoteFolderShadow(service.FolderSiteRecoveryReapply, order.ID, owns, oerr)
 		return fmt.Errorf("order %d has no bin to complete", orderID)
 	}
 	if order.DeliveryNode == "" {

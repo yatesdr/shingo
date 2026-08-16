@@ -577,7 +577,7 @@ func TestWindow3_ClaimedBlockerRefusesTheHealBeforeMintingAParent(t *testing.T) 
 			"refusal would let it pass with the fix reverted")
 	}
 
-	res := d.proposeLaneClearDig(wall, w[1], requester)
+	res := d.proposeLaneClearDig(wall, w[1], requester, digOwnedByFolder)
 
 	// (a) NO ORDER WAS WRITTEN TO DISCOVER A REFUSAL THAT WAS KNOWABLE.
 	if n := healParentsMinted(t, db, wall.Name); n != 0 {
@@ -739,7 +739,7 @@ func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T
 			"this fixture is not reproducing LS_C5")
 	}
 
-	res := d.proposeLaneClearDig(wall, w[1], requester)
+	res := d.proposeLaneClearDig(wall, w[1], requester, digOwnedByFolder)
 
 	// (b) AND ASKED ON THE REQUESTER'S BEHALF, THE DIG STARTS.
 	if res.outcome != serviceDigStarted {
@@ -803,7 +803,7 @@ func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T
 			"order — the exemption is meant to be the requester's own holds and nobody else's")
 	}
 	// (e) ...and so does the writer, without minting an order to find out.
-	res2 := d.proposeLaneClearDig(wall2, w2[1], requester2)
+	res2 := d.proposeLaneClearDig(wall2, w2[1], requester2, digOwnedByFolder)
 	if res2.outcome != serviceDigLaneBusy {
 		t.Errorf("outcome is %v, want serviceDigLaneBusy — order %d holds %s and is not the order "+
 			"this dig serves", res2.outcome, stranger.ID, wall2.Name)
@@ -872,7 +872,7 @@ func TestWindow3_ADigIsNotStartedIntoALaneWithARobotInIt(t *testing.T) {
 			"refusal would let it pass with the fix reverted")
 	}
 
-	res := d.proposeLaneClearDig(wall, w[1], requester)
+	res := d.proposeLaneClearDig(wall, w[1], requester, digOwnedByFolder)
 
 	// (a) THE DIG IS REFUSED, AND AS CONGESTION RATHER THAN A FAULT. Law 1: the
 	// robot inside is going to place or pick, and that drops the row.
@@ -894,7 +894,7 @@ func TestWindow3_ADigIsNotStartedIntoALaneWithARobotInIt(t *testing.T) {
 	// one line above: an order's own hold must not refuse its own rescue.
 	testutil.MustNoErr(t, reservations.ReleaseOccupancy(db.DB, inside.ID, wall.ID), "the robot leaves")
 	testutil.MustNoErr(t, reservations.AcquireOccupancy(db.DB, requester.ID, wall.ID), "the requester is inside")
-	res2 := d.proposeLaneClearDig(wall, w[1], requester)
+	res2 := d.proposeLaneClearDig(wall, w[1], requester, digOwnedByFolder)
 	if res2.outcome != serviceDigStarted {
 		t.Errorf("outcome is %v, want serviceDigStarted — the only occupancy row on %s belongs to the "+
 			"order the dig is being raised for, and its own presence must not refuse its own rescue",

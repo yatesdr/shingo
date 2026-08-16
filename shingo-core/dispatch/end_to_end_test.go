@@ -1009,22 +1009,20 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 	if o.Status == StatusFailed {
 		t.Fatalf("complex order terminal-failed at intake — pre-fix behavior (expected to be waiting)")
 	}
-	// THE DEMAND DOES NOT MOVE, and that inversion is the A batch.
+	// THE DEMAND BECOMES THE DIG (§R.91), and this assertion has been written both
+	// ways round. Its previous text: "THE DEMAND DOES NOT MOVE, and that inversion
+	// is the A batch. This used to assert `reshuffling`, because the demand WAS
+	// the dig ... Under the two-shape ruling a dig is a service to the lane, so
+	// the demand never leaves the acquiring set — it stays `queued`, carrying the
+	// cause, and is re-driven by the ordinary scanner when the lane opens."
 	//
-	// This used to assert `reshuffling`, because the demand WAS the dig: it was
-	// re-parented, excursed, and brought back through ResumeCompound. Under the
-	// two-shape ruling a dig is a service to the lane, so the demand never leaves
-	// the acquiring set — it stays `queued`, carrying the cause, and is re-driven
-	// by the ordinary scanner when the lane opens. The assertion is therefore
-	// inverted rather than deleted: the old value is now the WRONG one, and it is
-	// named here so a regression back to the excursion fails loudly.
-	if o.Status == StatusReshuffling {
-		t.Errorf("parent status = %q — the demand was re-parented into its own dig again; a complex "+
-			"demand is a CUSTOMER of a lane-clear dig now and must stay in the acquiring set", o.Status)
-	}
-	if o.Status != StatusQueued {
-		t.Errorf("parent status = %q, want %q — the demand waits with a cause while the service dig runs",
-			o.Status, StatusQueued)
+	// The owner's ruling restores the excursion: "all demand that creates a dig
+	// should become the parent." It comes back through ResumeCompound — the path
+	// that was never deleted — because it carries StepsJSON and still owes its own
+	// pickup.
+	if o.Status != StatusReshuffling {
+		t.Errorf("parent status = %q, want %q — the demand owns the excavation it caused",
+			o.Status, StatusReshuffling)
 	}
 	// Field-notes Note 8 regression: the buried-intake path used to construct
 	// its own complex order struct literal, and had to persist PayloadCode the
@@ -1073,8 +1071,9 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 	}
 	demandKids, err := db.ListChildOrders(o.ID)
 	testutil.MustNoErr(t, err, "list the demand's children")
-	if len(demandKids) != 0 {
-		t.Errorf("the demand owns %d children — it was re-parented into the dig again", len(demandKids))
+	if len(demandKids) == 0 {
+		t.Error("the demand owns no children — it did not take the excavation, so nothing is digging " +
+			"for it")
 	}
 	// And the dig carries the demand's episode, which is the whole link between
 	// them now that there is no requester pointer (PLAN §R.40).

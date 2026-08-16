@@ -59,14 +59,19 @@ func TestBuriedIntake_QueueReasonReachesOrderHistory(t *testing.T) {
 
 	order, err := db.GetOrderByUUID("uuid-buried-history")
 	testutil.MustNoErr(t, err, "read back parent")
-	// The SUCCESSFUL arm is now "the demand stayed queued and a dig was raised for
-	// it" — no contention fired, and the demand was not consumed. Asserting the dig
-	// exists is what keeps this test on the successful arm rather than silently
-	// drifting onto a contention one, which is what the old status check was for.
+	// The SUCCESSFUL arm is "a dig was raised" — no contention fired. Asserting the
+	// dig exists is what keeps this test on the successful arm rather than silently
+	// drifting onto a contention one.
+	//
+	// THE STATUS ASSERTION IS INVERTED (§R.91). It read: `want StatusQueued` —
+	// "the demand waits with its cause while the service dig runs; a status
+	// excursion here means it was re-parented". The demand IS the dig now, so
+	// `reshuffling` is the successful arm and `queued` would mean no excavation
+	// was taken at all.
 	serviceDigFor(t, db, order)
-	if order.Status != StatusQueued {
-		t.Fatalf("demand status = %q, want %q — the demand waits with its cause while the service "+
-			"dig runs; a status excursion here means it was re-parented", order.Status, StatusQueued)
+	if order.Status != StatusReshuffling {
+		t.Fatalf("demand status = %q, want %q — a demand that created a dig becomes its parent and "+
+			"wears reshuffling while it runs", order.Status, StatusReshuffling)
 	}
 	if order.QueueCode != string(protocol.QueueStorageRearranging) {
 		t.Errorf("queue_code = %q, want %q", order.QueueCode, protocol.QueueStorageRearranging)

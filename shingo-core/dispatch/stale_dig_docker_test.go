@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingo/shared/clock"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -574,12 +575,32 @@ func TestStaleDig_DissolveMarkerIsWhatSeparatesItFromAFailure(t *testing.T) {
 		t.Error("an operator cancel must NOT read as a dissolve — the compound really did stop, and " +
 			"returning its parent to the acquiring set would resurrect work a human cancelled")
 	}
-	if digWasDissolved([]*orders.Order{
+	// GATE 1 (§R.91) INVERTED THIS ONE. It used to read: "a FAILED leg vetoes the
+	// dissolve reading — something else went wrong in the same moment, and the
+	// failure cascade is the honest disposition for that", asserting
+	// digWasDissolved was FALSE for this set.
+	//
+	// There is no failure cascade for a dig leg any more. A leg that died and a
+	// plan that went stale are the same fact about the demand — the dig did not
+	// get through — so both close the chapter and both re-plan. The words differ
+	// (chapterEndedInFailure picks them); the disposition does not.
+	if !digWasDissolved([]*orders.Order{
 		cancelled(reshuffleDissolveDetail),
 		{Status: protocol.StatusFailed},
 	}) {
-		t.Error("a FAILED leg vetoes the dissolve reading — something else went wrong in the same " +
-			"moment, and the failure cascade is the honest disposition for that")
+		t.Error("a chapter with a FAILED leg in it has still ENDED. Vetoing the reading here is what " +
+			"used to route it to the failure cascade, which took the demand out of the plant because " +
+			"a robot broke down")
+	}
+
+	// AND A CONFIG-FAILED LEG IS THE ONE THAT STILL VETOES (§R.45). Nothing a
+	// re-plan can do invents a node nobody configured, so there is no next
+	// chapter to open and the demand has to say so and stop.
+	if digWasDissolved([]*orders.Order{
+		{Status: protocol.StatusFailed, ErrorDetail: configFailure("source node", "NOT-A-NODE")},
+	}) {
+		t.Error("a leg that could not be BUILT must not read as a chapter that can be re-planned — " +
+			"the demand would loop forever against configuration nobody has fixed")
 	}
 	if digWasDissolved([]*orders.Order{{Status: protocol.StatusConfirmed}}) {
 		t.Error("a cleanly finished set is not a dissolve")
@@ -677,5 +698,131 @@ func TestStaleDig_DissolvedFolderIsCancelledNotRequeued(t *testing.T) {
 		t.Errorf("the folder was cancelled with %q, want the folder marker — the two endings are "+
 			"different facts and a reader counting dissolves has to tell them apart",
 			after.ErrorDetail)
+	}
+}
+
+// TestStaleDig_DeadClaimantObstruction_Dissolves is the THIRD arm, and the one
+// §R.98 stage C added: a hard claim is only a releaser while its claimant is
+// still moving.
+//
+// `claimed_by != nil` was the whole test above, and it reads identically for a
+// robot driving the bin out and for an order that stopped an hour ago. Measured
+// on the stage-1 window: 63 refusals, 0 dissolves. `queue_releasers` declares
+// this cause's releaser as "the bin in front is moved — by a dig, or by whoever
+// claimed it carrying it out", so a dead claimant is a named wait whose releaser
+// cannot exist, which §R.93.2's bar forbids in as many words.
+//
+// Two ways to be dead, one arm each, because they are different rows: a claimant
+// that reached a terminal status, and a claimant that is nominally live and has
+// not advanced inside the stall window.
+//
+// MUTATION (verified): drop the claimantIsMoving call and go back to
+// `ClaimedBy != nil`. Both sub-tests park the dig on a wait forever and the
+// "dissolved" assertion fires — the measured stage-1 wedge, restated.
+func TestStaleDig_DeadClaimantObstruction_Dissolves(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		tag  string
+		kill func(t *testing.T, db *store.DB, claimantID int64)
+	}{
+		{
+			// The status is written directly, and that is the honest fixture rather
+			// than a shortcut. TerminalizeOrder RELEASES the claim in the same
+			// transaction, so the ordinary terminal path can never produce this row
+			// — which is why the old `ClaimedBy != nil` test survived contact with
+			// every well-behaved order. The state is nonetheless real: the engine
+			// runs ReleaseOrphanedClaims on its sweep precisely because claims do
+			// outlive terminal owners, and between the two the dig is looking at a
+			// claim with nobody behind it.
+			name: "claimant is terminal and its claim outlived it",
+			tag:  "SD-DEAD1",
+			kill: func(t *testing.T, db *store.DB, claimantID int64) {
+				_, err := db.DB.Exec(`UPDATE orders SET status='failed' WHERE id=$1`, claimantID)
+				testutil.MustNoErr(t, err, "kill the claimant")
+			},
+		},
+		{
+			name: "claimant is non-terminal and has stopped advancing",
+			tag:  "SD-DEAD2",
+			kill: func(t *testing.T, db *store.DB, claimantID int64) {
+				stale := clock.Now().UTC().Add(-2 * claimantStallWindow)
+				_, err := db.DB.Exec(`UPDATE orders SET updated_at=$2 WHERE id=$1`, claimantID, stale)
+				testutil.MustNoErr(t, err, "stall the claimant")
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := testDB(t)
+			d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+			parent, lane, slots, bp := planStaleDigFixture(t, db, d, tc.tag)
+
+			// The wall lands and something claims it — so the lane looks, to the old
+			// test, exactly like the self-clearing case above.
+			wall := testdb.CreateBinAtNode(t, db, bp.Code, slots[0].ID, tc.tag+"-WALL")
+			hauler := testdb.CreateOrder(t, db, func(o *orders.Order) {
+				o.EdgeUUID = tc.tag + "-hauler"
+				o.Status = protocol.StatusDispatched
+			})
+			testdb.ClaimBinForTest(t, db, wall.ID, hauler.ID)
+
+			// PRECONDITION, or the assertion below is vacuous: while the claimant is
+			// alive this must WAIT, so the dissolve that follows is attributable to
+			// the claimant dying and not to the fixture never having had a claim.
+			testutil.MustNoErr(t, d.AdvanceCompoundOrder(parent.ID), "redrive while the claimant is alive")
+			alive, err := db.ListChildOrders(parent.ID)
+			testutil.MustNoErr(t, err, "list legs while the claimant is alive")
+			for _, l := range alive {
+				if l.Status == protocol.StatusCancelled {
+					t.Fatalf("leg %d was cancelled while a live robot was carrying the wall out", l.ID)
+				}
+			}
+
+			tc.kill(t, db, hauler.ID)
+
+			// The claim row is UNTOUCHED — this is the whole point. Nothing swept it,
+			// nothing released it; the bin still reads `claimed_by = hauler`.
+			held, err := db.GetBin(wall.ID)
+			testutil.MustNoErr(t, err, "reload the wall")
+			if held.ClaimedBy == nil || *held.ClaimedBy != hauler.ID {
+				t.Fatalf("the wall's claim went away on its own (claimed_by=%v) — then this test is "+
+					"about a released claim, not a dead one", held.ClaimedBy)
+			}
+
+			testutil.MustNoErr(t, d.AdvanceCompoundOrder(parent.ID), "redrive against the dead claimant")
+
+			legs, err := db.ListChildOrders(parent.ID)
+			testutil.MustNoErr(t, err, "list legs after")
+			dissolved := false
+			for _, l := range legs {
+				if l.Status == protocol.StatusCancelled && l.ErrorDetail == reshuffleDissolveDetail {
+					dissolved = true
+				}
+			}
+			if !dissolved {
+				t.Fatal("the dig held its wait against a claim nobody is carrying out — a named wait " +
+					"whose releaser cannot exist is the bar's own violation, and it is what 63 " +
+					"refusals and 0 dissolves looked like")
+			}
+			if d.laneLock.IsLocked(lane.ID) {
+				t.Error("the lane is still locked after the dissolve — the re-plan refuses a locked lane")
+			}
+
+			testutil.MustNoErr(t, d.AdvanceCompoundOrder(parent.ID), "the cancel wiring's re-drive")
+			after, err := db.GetOrder(parent.ID)
+			testutil.MustNoErr(t, err, "reload parent")
+			if protocol.IsTerminal(after.Status) {
+				t.Fatalf("parent is %q — nothing here terminates a demand. The dig re-plans; the "+
+					"demand keeps its need", after.Status)
+			}
+			if !protocol.IsAcquiring(after.Status) {
+				t.Fatalf("parent is %q, want an acquiring status — the oracle only adapts if the "+
+					"scanner looks at it again", after.Status)
+			}
+		})
 	}
 }

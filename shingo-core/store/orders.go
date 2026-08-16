@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"shingo/protocol"
 	"shingo/shared/clock"
@@ -239,9 +240,18 @@ func stealSoftHold(tx *sql.Tx, binID, childID, parentID int64) error {
 	//
 	// Scoped to a holder still pointing AT THIS BIN: an order that has already
 	// moved on to another bin must keep the one it moved to.
+	//
+	// updated_at IS STAMPED FROM THE INJECTED CLOCK, like every other writer of
+	// this column. It was `NOW()` — the one Postgres-clock writer among ~20
+	// Go-clock ones, so the rows a dig took a bin from carried a foreign stamp on
+	// a column whose readers all assume the other domain. Under the rig's clamp
+	// the two agree and nothing showed; the moment the sim clock genuinely runs
+	// ahead they do not, and this row's staleness reads as fresh forever. Two
+	// readers now care: ListAnomalies' runtime-stuck detector, and the stale-dig
+	// disposition's liveness test.
 	if _, err := tx.Exec(
-		`UPDATE orders SET bin_id=NULL, updated_at=NOW() WHERE id=$1 AND bin_id=$2`,
-		holder.Int64, binID); err != nil {
+		`UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2`,
+		holder.Int64, binID, clock.Now().UTC()); err != nil {
 		return fmt.Errorf("clear bin %d off holder %d: %w", binID, holder.Int64, err)
 	}
 
@@ -503,6 +513,12 @@ func (db *DB) ActiveGateCandidates() ([]*orders.Order, error) {
 // "in flight" KPI).
 func (db *DB) CountActiveOrders() (int, error) {
 	return orders.CountActive(db.DB)
+}
+
+// ListStalledChapters returns reshuffling parents with an open leg whose whole
+// family has been quiet since the cutoff — see orders.ListStalledChapters.
+func (db *DB) ListStalledChapters(since time.Time, limit int) ([]int64, error) {
+	return orders.ListStalledChapters(db.DB, since, limit)
 }
 
 // ListTrackedVendorOrderIDs returns the vendor order IDs Core must keep watching.

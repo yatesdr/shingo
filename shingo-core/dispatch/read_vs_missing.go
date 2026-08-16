@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // read_vs_missing.go — "that node does not exist" and "the database did not
@@ -49,7 +50,39 @@ func readFailed(err error) bool {
 // asks is "which lane?" and an error that cannot answer it sends them reading
 // logs instead of fixing the configuration.
 func configFailure(kind, identifier string) string {
-	return fmt.Sprintf("config failure: %s %s does not exist", kind, identifier)
+	return configFailurePrefix + fmt.Sprintf("%s %s does not exist", kind, identifier)
+}
+
+// configFailurePrefix is the opening of every message configFailure renders,
+// and the ONE thing IsConfigFailure matches on.
+const configFailurePrefix = "config failure: "
+
+// IsConfigFailure reports whether a terminal detail was written by
+// configFailure — i.e. whether the thing that stopped is a human's to fix.
+//
+// ── READING A SENTENCE FOR A MACHINE FACT, AND WHY IT IS ALLOWED HERE ─────
+//
+// This codebase has a scar from exactly this shape: PayloadDesc, a human
+// sentence mined for a machine fact, which broke the day somebody improved the
+// wording. The rule that came out of it is not "never match a string" — it is
+// that the fact must not live ONLY in prose somebody may reword.
+//
+// It does not here. The prefix is a constant, this renderer is the one writer
+// of it, and this predicate is the one reader. Rewording the human half of the
+// message cannot break the match, and deleting the prefix breaks the renderer
+// and the reader together. That is the same arrangement DigExclusionSQL uses to
+// keep one predicate from acquiring a second spelling.
+//
+// The alternative is an error_code column on orders, which is the right long
+// answer and a migration; this is the short one, named as such.
+//
+// WHAT TURNS ON IT: gate 1 (§R.91) makes a demand survive its dig's failure,
+// because a dig failing is congestion. A leg that failed because somebody
+// configured a node that is not there is NOT congestion — no amount of
+// re-planning invents the node, and §R.45 is explicit that a config error fails
+// loudly so the engineer can fix it. This is the line between those two.
+func IsConfigFailure(detail string) bool {
+	return strings.HasPrefix(detail, configFailurePrefix)
 }
 
 // configFailureID is configFailure for the sites that hold an id rather than a

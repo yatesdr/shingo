@@ -15,8 +15,10 @@ import (
 // the other, which is a class this file has now paid for twice
 // (complex_no_shuffle_slot_docker_test.go was written about it).
 //
-// After the two-shape ruling the two differ in exactly two things, and neither is
-// a decision:
+// The two differ in exactly two things, and neither is a decision. (This read
+// "After the two-shape ruling" — the collapse happened under it and survives
+// §R.91 untouched, because it is about the two ENTRY POINTS rather than about
+// what the demand becomes.)
 //
 //   - WHERE THE PAYLOAD CODE COMES FROM. Intake is handed it with the request,
 //     before the row is necessarily readable for it; the replay reads it off the
@@ -30,9 +32,14 @@ import (
 // Everything else — the read split, the cause, all seven dispositions — is one
 // body now, so a fix lands at both sites or neither.
 
-// handleComplexBurial records why a complex demand is waiting and asks for a
-// lane-clear dig on its behalf. It never re-plans, re-parents or moves the
-// demand; see the service-dig note on proposeLaneClearDig for why.
+// handleComplexBurial records why a complex demand is waiting and then hands it
+// its own excavation (§R.91).
+//
+// ITS HEADER SAID THE OPPOSITE: "It never re-plans, re-parents or moves the
+// demand; see the service-dig note on proposeLaneClearDig for why." The cause is
+// still written first and still stands on the row — an operator reading the
+// board while the dig runs needs it — but the demand is re-parented, wears
+// `reshuffling`, and comes back through `queued`.
 //
 // announce may be nil.
 func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string, buried *BuriedError, announce func()) {
@@ -69,16 +76,28 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 	d.setQueueReason(order, protocol.QueueStorageRearranging, CauseIntakeBuried,
 		QueueParams{Lane: lane.Name, Payload: payloadCode})
 
-	// ── THE DEMAND DOES NOT BECOME THE DIG ────────────────────────────────
+	// ── THE DEMAND BECOMES THE DIG (§R.91) ────────────────────────────────
 	//
-	// It used to: CreateCompoundOrder(order, plan) re-parented this complex order,
-	// moved it to `reshuffling`, and brought it back through ResumeCompound. A dig
-	// is a SERVICE TO A LANE (plan §12.40), and the one carve-out — a plain
-	// retrieve, where the dig's last leg IS the demand's whole job — is not this
-	// path. So the demand stays where it is and something else digs; when the last
-	// blocker lands, the bin events re-drive the ordinary scanner, which
-	// re-resolves this demand against an open lane and dispatches ITS OWN plan.
-	res := d.proposeLaneClearDig(lane, buried.Slot, order)
+	// THE HEADER HERE SAID THE OPPOSITE and is quoted rather than deleted: "THE
+	// DEMAND DOES NOT BECOME THE DIG. It used to: CreateCompoundOrder(order,
+	// plan) re-parented this complex order, moved it to `reshuffling`, and
+	// brought it back through ResumeCompound. A dig is a SERVICE TO A LANE (plan
+	// §12.40), and the one carve-out — a plain retrieve, where the dig's last leg
+	// IS the demand's whole job — is not this path. So the demand stays where it
+	// is and something else digs."
+	//
+	// The owner's ruling restates the rule the other way round: a dig is owned by
+	// the demand that caused it, UNLESS a vehicle is already committed to that
+	// demand. Nothing is committed here — this order is `queued`, no vendor
+	// order, no robot — so it takes its own excavation. It comes back through
+	// ResumeCompound exactly as the quoted paragraph describes, and that path was
+	// never deleted.
+	//
+	// What that buys, concretely: the excavation cannot outlive the reason for
+	// it. A folder's requester can cancel and leave it digging towards a bin
+	// nobody wants, which is the whole of the dig_target_abandoned population;
+	// a demand that IS its dig takes the dig with it when it goes.
+	res := d.proposeLaneClearDig(lane, buried.Slot, order, digOwnedByRequester)
 	switch res.outcome {
 	case serviceDigStarted:
 		d.dbg("complex: service dig %d proposed for demand %d — %d step(s) clearing %s to reach %s",

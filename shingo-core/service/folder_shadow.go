@@ -33,10 +33,30 @@ import (
 // predicate over on the strength of "I could not find a path" is how a guard
 // silently changes population.
 //
-// So: log where the two spellings DISAGREE, run one window, then delete the
-// losing spelling with the count quoted. That is this codebase's own pattern —
-// service/burial_shadow.go and the dispatch shadow cutover — and the deletion
-// is a separate commit with evidence attached, not this one.
+// So: record what the right spelling WOULD have said at each site, run one
+// window, then delete the losing spelling with the count quoted. That is this
+// codebase's own pattern — service/burial_shadow.go and the dispatch shadow
+// cutover — and the deletion is a separate commit with evidence attached.
+//
+// ── WHAT THIS COUNTED FIRST TIME ROUND, AND WHY IT WAS THE WRONG NUMBER ───
+//
+// It counted where the two spellings DISAGREED, through
+// `NoteFolderShadow(site, id, binIDIsNil, ownsNoCargo, err)` and the test
+// `binIDIsNil != ownsNoCargo`. That reads like a symmetric comparison of two
+// answers. It is not: every one of the seven call sites is INSIDE its own
+// `BinID == nil` branch, so binIDIsNil was the constant `true` at all of them
+// and the test reduced to `!ownsNoCargo`.
+//
+// OrderOwnsNoCargo returns TRUE for a coordinator. So the instrument counted —
+// and shouted about — the firings that landed on an ORDINARY order, which is
+// the site being RIGHT, and was silent on every coordinator, which is the
+// false-positive population it was built to measure. Its own log line then
+// diagnosed one of those as "this site IS reachable by a coordinator", the
+// exact inverse of what it meant.
+//
+// The window would have ended with a number that justified the opposite of the
+// cutover. The constant parameter is what hid it, so it is gone: the callers
+// now pass only the answer that varies.
 //
 // ── IT CHANGES NO BEHAVIOUR, DELIBERATELY ─────────────────────────────────
 //
@@ -49,27 +69,47 @@ import (
 // emitter and any guard test share one definition.
 const FolderShadowMarker = "folder-recognition disagreement at"
 
-// folderShadowTally counts, per site, the times OwnsNoCargo disagreed with
-// BinID == nil.
+// folderShadowTally counts, per site, how each firing of `BinID == nil` would
+// have been answered by the child-rows spelling.
 //
 // In-process and reset-on-restart, like the arrival-refusal and bin-state-drift
 // tallies: a window reading, not a fact anything recovers from.
 var folderShadowTally = struct {
-	mu     sync.Mutex
-	bySite map[string]int
-	seen   map[string]int
-}{bySite: map[string]int{}, seen: map[string]int{}}
+	mu          sync.Mutex
+	coordinator map[string]int
+	ordinary    map[string]int
+	seen        map[string]int
+}{coordinator: map[string]int{}, ordinary: map[string]int{}, seen: map[string]int{}}
 
-// FolderShadowTally returns disagreement counts so far, by site.
+// FolderShadowTally returns, by site, the firings that landed on a COORDINATOR
+// — the false positives, and the population the cutover removes.
 //
-// NOT expected to be zero. A non-zero count at a site means that site is
-// reachable by a coordinator and has been answering the wrong question — which
-// is the finding, and the reason the cutover waits for this number.
+// NOT expected to be zero, and a non-zero count is the finding: that site is
+// reachable by a coordinator and has been treating a permanently-and-correctly
+// NULL bin_id as a fault. Twelve of these read "Core degraded" for a whole rig
+// run.
 func FolderShadowTally() map[string]int {
 	folderShadowTally.mu.Lock()
 	defer folderShadowTally.mu.Unlock()
-	out := make(map[string]int, len(folderShadowTally.bySite))
-	for k, v := range folderShadowTally.bySite {
+	out := make(map[string]int, len(folderShadowTally.coordinator))
+	for k, v := range folderShadowTally.coordinator {
+		out[k] = v
+	}
+	return out
+}
+
+// FolderShadowOrdinary returns, by site, the firings that landed on an ORDINARY
+// order — where the site was RIGHT and a NULL bin_id is a real fault.
+//
+// Reported beside the other count because the cutover has to KEEP them. A
+// predicate swap that removed the false positives and these together would be
+// trading a noisy guard for no guard, and the two numbers side by side are the
+// only way to see the difference before it ships.
+func FolderShadowOrdinary() map[string]int {
+	folderShadowTally.mu.Lock()
+	defer folderShadowTally.mu.Unlock()
+	out := make(map[string]int, len(folderShadowTally.ordinary))
+	for k, v := range folderShadowTally.ordinary {
 		out[k] = v
 	}
 	return out
@@ -96,7 +136,8 @@ func FolderShadowSampled() map[string]int {
 func ResetFolderShadow() {
 	folderShadowTally.mu.Lock()
 	defer folderShadowTally.mu.Unlock()
-	folderShadowTally.bySite = map[string]int{}
+	folderShadowTally.coordinator = map[string]int{}
+	folderShadowTally.ordinary = map[string]int{}
 	folderShadowTally.seen = map[string]int{}
 }
 
@@ -112,42 +153,54 @@ const (
 	FolderSiteBlockCompleted   = "block-completed single-bin fallback"
 )
 
-// NoteFolderShadow records one site's answer under both spellings.
+// NoteFolderShadow records one firing of a site's `BinID == nil` branch under
+// the RIGHT spelling.
 //
-// binIDIsNil is what the site tested. ownsNoCargo is what the child-rows
-// spelling says. Called for its side effect and returns nothing, because
-// nothing may branch on it.
+// isCoordinator is OrderOwnsNoCargo's answer: TRUE means the order owns legs,
+// so its NULL bin_id is permanent and correct and this firing is a FALSE
+// POSITIVE. FALSE means an ordinary order, and the firing is a true one.
 //
-// A read failure is NOT a disagreement and is not counted as one — it is
-// counted as a sample that could not be taken, and logged. Folding "I could not
-// ask" into "they agree" is exactly the failure this batch's other instruments
-// were built to stop.
-func NoteFolderShadow(site string, orderID int64, binIDIsNil, ownsNoCargo bool, readErr error) {
+// THERE IS NO binIDIsNil PARAMETER, and its absence is the fix. Every caller is
+// inside its own nil branch and passed the constant `true`, which made the
+// comparison it fed look symmetric and inverted what the tally meant. A
+// parameter that can only take one value is a parameter that hides which way
+// round the answer is.
+//
+// Called for its side effect and returns nothing, because nothing may branch on
+// it.
+//
+// A read failure is NOT counted either way — it is counted as a sample that
+// could not be taken, and logged. Folding "I could not ask" into "the site was
+// right" is exactly the failure this batch's other instruments were built to
+// stop.
+func NoteFolderShadow(site string, orderID int64, isCoordinator bool, readErr error) {
 	folderShadowTally.mu.Lock()
 	folderShadowTally.seen[site]++
 	folderShadowTally.mu.Unlock()
 
 	if readErr != nil {
 		log.Printf("WARN: folder-recognition shadow could not read child rows for order %d at %s: %v "+
-			"— NOT counted as agreement; the window is one sample short at this site",
+			"— NOT counted either way; the window is one sample short at this site",
 			orderID, site, readErr)
 		return
 	}
-	if binIDIsNil == ownsNoCargo {
-		return
+	if !isCoordinator {
+		folderShadowTally.mu.Lock()
+		folderShadowTally.ordinary[site]++
+		folderShadowTally.mu.Unlock()
+		return // the site fired on an ordinary order and was right; nothing to report
 	}
 
 	folderShadowTally.mu.Lock()
-	folderShadowTally.bySite[site]++
-	n := folderShadowTally.bySite[site]
+	folderShadowTally.coordinator[site]++
+	n := folderShadowTally.coordinator[site]
 	folderShadowTally.mu.Unlock()
 
-	log.Printf("WARN: "+FolderShadowMarker+" %s — order %d: BinID==nil says %v, child rows say %v "+
-		"(%d at this site). The two spellings of 'does this order move a bin of its own' disagree, "+
-		"which means this site IS reachable by a coordinator and has been answering the wrong "+
-		"question about it. bin_id is NULL for a folder permanently and correctly; it is NULL for a "+
-		"broken single-bin order too, and the bin-id spelling cannot tell them apart.",
-		site, orderID, binIDIsNil, ownsNoCargo, n)
+	log.Printf("WARN: "+FolderShadowMarker+" %s — order %d owns legs, so its NULL bin_id is permanent "+
+		"and correct, and this site treated it as a fault (%d at this site). bin_id IS NULL is true of "+
+		"a coordinator and true of a broken single-bin order and cannot tell them apart; the child rows "+
+		"can. This firing is a FALSE POSITIVE and is what the cutover removes.",
+		site, orderID, n)
 }
 
 // FolderShadowReport renders the window for a human, sites sorted, sampled
@@ -156,23 +209,55 @@ func NoteFolderShadow(site string, orderID int64, binIDIsNil, ownsNoCargo bool, 
 // It exists so the cutover commit can quote a number rather than a claim: the
 // losing spelling is deleted WITH this output, per the round's own condition.
 func FolderShadowReport() string {
-	dis := FolderShadowTally()
+	coord := FolderShadowTally()
+	ord := FolderShadowOrdinary()
 	seen := FolderShadowSampled()
+	sites := sampledSites(seen)
+
+	out := "folder-recognition shadow window:\n"
+	if len(sites) == 0 {
+		return out + "  NO SITE WAS SAMPLED. This window says nothing — it is not evidence that the " +
+			"sites are clean, it is evidence that the run did not exercise these paths.\n"
+	}
+	for _, s := range sites {
+		out += "  " + s + ": " + itoa(coord[s]) + " coordinator (false positive), " +
+			itoa(ord[s]) + " ordinary (true positive), " + itoa(seen[s]) + " sampled\n"
+	}
+	return out
+}
+
+// FolderShadowLine is FolderShadowReport on ONE line, for the reconciliation
+// sweep. The multi-line form is what the cutover commit quotes; this is what
+// the journal carries while the window runs. Per site: coordinator/ordinary/sampled.
+func FolderShadowLine() string {
+	coord := FolderShadowTally()
+	ord := FolderShadowOrdinary()
+	seen := FolderShadowSampled()
+	sites := sampledSites(seen)
+	if len(sites) == 0 {
+		return "NO SITE SAMPLED YET"
+	}
+	out := ""
+	for i, s := range sites {
+		if i > 0 {
+			out += "; "
+		}
+		out += s + " " + itoa(coord[s]) + "/" + itoa(ord[s]) + "/" + itoa(seen[s])
+	}
+	return out
+}
+
+// sampledSites returns the sites that have been asked, sorted. Keyed on the
+// SAMPLED map rather than either count, so a site that was reached and never
+// fired still appears — "never reached" and "always fine" are opposite
+// conclusions and must not render the same.
+func sampledSites(seen map[string]int) []string {
 	sites := make([]string, 0, len(seen))
 	for s := range seen {
 		sites = append(sites, s)
 	}
 	sort.Strings(sites)
-
-	out := "folder-recognition shadow window:\n"
-	if len(sites) == 0 {
-		return out + "  NO SITE WAS SAMPLED. This window says nothing — it is not evidence of " +
-			"agreement, it is evidence that the run did not exercise these paths.\n"
-	}
-	for _, s := range sites {
-		out += "  " + s + ": " + itoa(dis[s]) + " disagreement(s) in " + itoa(seen[s]) + " sample(s)\n"
-	}
-	return out
+	return sites
 }
 
 func itoa(n int) string {

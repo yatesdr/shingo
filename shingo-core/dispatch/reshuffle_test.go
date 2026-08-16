@@ -386,22 +386,42 @@ func TestHandleChildOrderFailure(t *testing.T) {
 	if child3Got.Status != StatusCancelled {
 		t.Errorf("child3 status = %q, want %q", child3Got.Status, StatusCancelled)
 	}
+	if child3Got.ErrorDetail != reshuffleLegFailedDetail {
+		t.Errorf("child3 cancel reason = %q, want the chapter-end marker. The engine keys the parent's "+
+			"re-drive on it; a bespoke sentence leaves the disposition to the 30-second sweep",
+			child3Got.ErrorDetail)
+	}
 
-	// Verify parent order is failed
+	// THE DISPOSITION IS A SECOND STEP, and it is called explicitly here because
+	// this is a unit test with no engine wiring under it. In the plant the cancel
+	// above emits EventOrderCancelled, the chapter-end arm in engine/wiring.go
+	// sees the marker, and this call happens on another goroutine. Splitting the
+	// two is forced, not stylistic: {Reshuffling → Queued} fires the SYNCHRONOUS
+	// fulfillment scanner and the cancel path is reachable from inside it.
+	testutil.MustNoErr(t, d.AdvanceCompoundOrder(parentOrder.ID), "dispose of the closed chapter")
+
+	// ── GATE 1 (§R.91): THE DEMAND SURVIVES ITS DIG'S FAILURE ────────────────
+	//
+	// This block used to read `want StatusFailed` and `failed events = 1`, under
+	// the 2026-07-09 decision that a stopped reshuffle leg fails the compound.
+	// A dig failing is congestion; the chapter closes and the demand goes back to
+	// be re-planned against the lane as it now stands. Only the demand's own work
+	// failing fails the demand.
 	parentGot, err := db.GetOrder(parentOrder.ID)
 	if err != nil {
 		t.Fatalf("get parent: %v", err)
 	}
-	if parentGot.Status != StatusFailed {
-		t.Errorf("parent status = %q, want %q", parentGot.Status, StatusFailed)
+	if parentGot.Status != StatusQueued {
+		t.Errorf("parent status = %q, want %q — a robot breaking down mid-dig must not take the "+
+			"demand out of the plant with it", parentGot.Status, StatusQueued)
 	}
 
-	// Verify parent failure was emitted
-	if len(emitter.failed) != 1 {
-		t.Fatalf("failed events = %d, want 1", len(emitter.failed))
-	}
-	if emitter.failed[0].orderID != parentOrder.ID {
-		t.Errorf("failed event order ID = %d, want %d", emitter.failed[0].orderID, parentOrder.ID)
+	// AND NOTHING WAS FAILED AT ALL. The emit is asserted rather than assumed
+	// absent: a demand that re-plans but still announces a failure tells the
+	// station the opposite of what happened.
+	if len(emitter.failed) != 0 {
+		t.Errorf("failed events = %d, want 0 — the demand re-plans, so there is no failure to "+
+			"announce", len(emitter.failed))
 	}
 
 	// Verify bin claimed by child3 was unclaimed
@@ -413,9 +433,11 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		t.Errorf("bin claimed_by = %v, want nil (should be unclaimed after cancel)", binGot.ClaimedBy)
 	}
 
-	// Verify lane lock is released
+	// Verify lane lock is released. It is dropped by the DISPOSITION now, not by
+	// HandleChildOrderFailure: the corridor is still the parent's while a
+	// cancelled-but-still-moving leg could be inside it.
 	if d.laneLock.IsLocked(lane.ID) {
-		t.Error("lane lock is still held after child failure, want released")
+		t.Error("lane lock is still held after the chapter closed, want released")
 	}
 }
 
@@ -546,15 +568,21 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 		}
 	}
 
-	// VERIFY: parent failed
+	// VERIFY: the demand survives (gate 1, §R.91). This block used to read
+	// `want failed`; the cancelled siblings above are still the subject of this
+	// test, and what changes is only what happens to the DEMAND behind them.
+	// The disposition is called explicitly because there is no engine wiring in
+	// a unit test — see TestHandleChildOrderFailure for why the two are split.
+	testutil.MustNoErr(t, d.AdvanceCompoundOrder(parentOrder.ID), "dispose of the closed chapter")
 	parentGot, _ := db.GetOrder(parentOrder.ID)
-	if parentGot.Status != StatusFailed {
-		t.Errorf("parent status = %q, want failed", parentGot.Status)
+	if parentGot.Status != StatusQueued {
+		t.Errorf("parent status = %q, want %q — the legs stopped, the demand re-plans",
+			parentGot.Status, StatusQueued)
 	}
 
-	// VERIFY: lane lock released
+	// VERIFY: lane lock released, by the disposition rather than by the cancel
 	if d.laneLock.IsLocked(lane.ID) {
-		t.Error("lane lock is still held after compound failure — prevents retry")
+		t.Error("lane lock is still held after the chapter closed — prevents retry")
 	}
 }
 
@@ -567,9 +595,18 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 // fired, no edge notification, and the audit trail showed "completed" for a
 // failed order.
 //
-// Scenario: create a parent + one failed child + one terminal child (no
-// pending children). Call AdvanceCompoundOrder. Assert the emitter received
-// exactly one EmitOrderFailed for the parent and ZERO EmitOrderCompleted.
+// ── THE FIXTURE MOVED TO THE ONE PATH THAT STILL FAILS ───────────────────
+//
+// It used to be a plain failed child. Under gate 1 (§R.91) that is congestion:
+// the chapter closes, the demand re-queues, and there is no failure to emit —
+// so the regression this guards would have had nowhere left to happen.
+//
+// It has one place left. A leg that failed because somebody configured a node
+// that does not exist is NOT congestion (§R.45), the demand fails with the
+// instruction as its detail, and the wrong event type there would be the exact
+// bug this test was written for. So the fixture is a CONFIG-failed child, and
+// the gate-1 case is asserted underneath it as its own arm — a demand that
+// re-plans must emit neither.
 func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -593,12 +630,18 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 		StationID:     parent.StationID,
 		OrderType:     OrderTypeMove,
 		Status:        StatusFailed,
+		ErrorDetail:   configFailure("source node", "NOBODY-CONFIGURED-THIS"),
 		ParentOrderID: &parent.ID,
 		Sequence:      1,
 		SourceNode:    lineNode.Name,
 		DeliveryNode:  lineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(failedChild), "create failed child")
+	// CreateOrder does not persist error_detail (it is written by the failure
+	// paths), and the detail is the whole point of this fixture — it is what
+	// tells the disposition this is configuration rather than congestion.
+	testutil.MustNoErr(t, execAt(db, `UPDATE orders SET error_detail=$1 WHERE id=$2`,
+		failedChild.ErrorDetail, failedChild.ID), "persist the config-failure detail")
 
 	// Reset emitter to ignore receipt events from order creation
 	emitter.failed = nil
@@ -614,8 +657,8 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 	for _, f := range emitter.failed {
 		if f.orderID == parent.ID {
 			foundParentFailed = true
-			if f.errorCode != "reshuffle_failed" {
-				t.Errorf("parent failure errorCode = %q, want %q", f.errorCode, "reshuffle_failed")
+			if f.errorCode != "reshuffle_error" {
+				t.Errorf("parent failure errorCode = %q, want %q", f.errorCode, "reshuffle_error")
 			}
 			break
 		}
@@ -637,6 +680,57 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 	got, _ := db.GetOrder(parent.ID)
 	if got.Status != StatusFailed {
 		t.Errorf("parent status = %q, want %q", got.Status, StatusFailed)
+	}
+
+	// ── AND THE OTHER SIDE OF THE LINE: A PLAIN LEG FAILURE EMITS NEITHER ────
+	//
+	// Same shape, one difference — the leg died of something a re-plan can fix.
+	// Gate 1 sends the demand back to the acquiring set, so a `failed` event
+	// here would tell the station the opposite of what happened, and a
+	// `completed` one would be the original bug.
+	emitter.failed = nil
+	emitter.completed = nil
+
+	live := &orders.Order{
+		EdgeUUID:     "parent-congestion-event",
+		StationID:    "line-1",
+		OrderType:    OrderTypeRetrieve,
+		Status:       StatusReshuffling,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(live), "create the congestion parent")
+	brokeDown := &orders.Order{
+		EdgeUUID:      "child-congestion-event",
+		StationID:     live.StationID,
+		OrderType:     OrderTypeMove,
+		Status:        StatusFailed,
+		ErrorDetail:   "the robot stopped responding",
+		ParentOrderID: &live.ID,
+		Sequence:      1,
+		SourceNode:    lineNode.Name,
+		DeliveryNode:  lineNode.Name,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(brokeDown), "create the broken-down leg")
+
+	d.AdvanceCompoundOrder(live.ID)
+
+	for _, f := range emitter.failed {
+		if f.orderID == live.ID {
+			t.Errorf("parent %d emitted EmitOrderFailed for a leg that broke down. A dig failing is "+
+				"congestion — the demand re-plans, and announcing a failure it did not have sends "+
+				"the station the wrong answer", live.ID)
+		}
+	}
+	for _, c := range emitter.completed {
+		if c.orderID == live.ID {
+			t.Errorf("parent %d emitted EmitOrderCompleted with its dig unfinished", live.ID)
+		}
+	}
+	liveGot, _ := db.GetOrder(live.ID)
+	if liveGot.Status != StatusQueued {
+		t.Errorf("parent status = %q, want %q", liveGot.Status, StatusQueued)
 	}
 }
 

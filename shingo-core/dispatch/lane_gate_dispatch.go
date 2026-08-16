@@ -784,7 +784,14 @@ func (d *Dispatcher) appendGateTail(order *orders.Order, what string) error {
 		// the lane holding a bin, this call took nothing, and dropping the row would
 		// declare an occupied corridor empty to the next leg. Nothing is rolled back
 		// because nothing was acquired.
-		if !dwelling {
+		//
+		// AND THE INBOUND SENTENCE HAS ITS OWN EXCEPTION (§R.98 stage A3). An
+		// AppendLandedError says the fleet took the segment and the failure is
+		// downstream of it: the robot is driving INTO this lane right now, so the
+		// row is not a leftover to clean up, it is the true one. Rolling it back
+		// declares the same occupied corridor empty, arrived at from the other
+		// direction.
+		if !dwelling && !IsAppendLanded(err) {
 			d.ReleaseLaneOccupancy(order.ID)
 		}
 		return err

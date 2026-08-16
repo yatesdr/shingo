@@ -187,6 +187,62 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 	if parent == nil {
 		return false
 	}
+
+	// ── GATE 2: THE SELF-HANDOFF (§R.91) ──────────────────────────────────
+	//
+	// A RE-PARENTED DEMAND IS ITS OWN COLLECTOR, and the two questions below
+	// cannot ask that. They are written for a FOLDER: "is anything standing at
+	// the target" reads DigTargetNode, which only createServiceDigParent writes,
+	// and "is anybody coming" looks through the episode for a DIFFERENT order.
+	// A demand that took its own excavation records no target and is not somebody
+	// else, so both answer no and the corridor is released outright.
+	//
+	// That is the naked-target window. The excavation ends with the demand's bin
+	// standing at an open lane mouth and the demand not yet dispatched, and the
+	// slots the dig just emptied are the cheapest shuffle candidates in the group
+	// — so the next order wanting one re-buries the bin the dig was run to
+	// expose, in the gap between the resume and the demand's own dispatch.
+	//
+	// WHY THE MODE IS OUTBOUND and not "keep the dig": what has to be excluded is
+	// precisely a DROP into that lane. Outbound says that in the vocabulary that
+	// already exists — it excludes inbound and dig, and shares with other outbound
+	// holders, who can only take bins OUT and so cannot re-bury anything. It also
+	// means the demand's own dispatch needs no special case: AcquireLanes for its
+	// source lane asks for outbound, finds its own row, and is idempotent.
+	//
+	// AND IT IS WRITTEN MOUTH-AWARE, so stage 2 cannot break it (§R.96). Today the
+	// parent's only row on this lane is the dig row, which this converts. After
+	// universal mouth acquisition the parent may arrive already holding the lane —
+	// as the SAME row, because a demand digging a lane it holds upgrades rather
+	// than doubles (AcquireLanesFor) — so this still finds exactly one row to
+	// convert. HandOffLaneToPicker's own picker-already-holds arm covers the
+	// remaining shape: it returns true and keeps what is there.
+	//
+	// SCOPED TO A PARENT THAT STILL OWES ITS OWN WORK. A plain retrieve's fetch is
+	// one of its own legs — the bin leaves the lane inside the compound — so there
+	// is nothing standing at the mouth to protect and legStillNeedsLane already
+	// covered it. That is the same reason DigTargetNode is not written on one.
+	if parent.DigTargetNode == "" {
+		if !IsCoordinated(parent) {
+			return false // its fetch was one of its own legs; nothing is left standing
+		}
+		handed, hErr := reservations.HandOffLaneToPicker(
+			d.db.DB, laneID, parent.ID, parent.ID, digHandoffReservedBy)
+		if hErr != nil {
+			log.Printf("dig lock: could not convert dig %d's own claim on lane %d to its outbound "+
+				"hold (%v) — leaving the claim in place; the compound's own teardown releases it",
+				parent.ID, laneID, hErr)
+			return true // the row may or may not have moved: do not release on top of a failed write
+		}
+		if !handed {
+			return false
+		}
+		log.Printf("dig lock: demand %d finished its own excavation of lane %d and kept the corridor "+
+			"as an OUTBOUND hold. Nothing may drop into it until the demand has its bin, and the "+
+			"hold ends with the demand however it ends", parent.ID, laneID)
+		return true
+	}
+
 	standing, sErr := d.db.DigStillOwesItsTarget(parent)
 	if sErr != nil {
 		// The predicate has already chosen the disposition and returned it; this

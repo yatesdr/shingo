@@ -165,14 +165,18 @@ func assertDugAfterSlotFreed(t *testing.T, db *store.DB, parent *orders.Order) {
 			"queue_reason %q. The park has no releaser, which makes it a stall wearing a queue reason",
 			after.Status, after.QueueReason)
 	}
-	if after.Status != StatusQueued {
-		t.Errorf("demand status = %q with a dig running for it, want %q — the demand waits in the "+
-			"acquiring set and is re-driven by the scanner", after.Status, StatusQueued)
+	// INVERTED (§R.91). It read `want StatusQueued` — "the demand waits in the
+	// acquiring set and is re-driven by the scanner" — and asserted the demand
+	// owned NO legs. A demand that created a dig becomes its parent, so both
+	// halves flip: reshuffling, with the legs under it.
+	if after.Status != StatusReshuffling {
+		t.Errorf("demand status = %q, want %q — a shuffle slot freed, so the demand should now be "+
+			"digging", after.Status, StatusReshuffling)
 	}
 	demandKids, err := db.ListChildOrders(parent.ID)
 	testutil.MustNoErr(t, err, "list the demand's own children")
-	if len(demandKids) != 0 {
-		t.Errorf("the demand owns %d legs — it was re-parented into the dig", len(demandKids))
+	if len(demandKids) == 0 {
+		t.Error("the demand owns no legs — it did not take the excavation")
 	}
 }
 

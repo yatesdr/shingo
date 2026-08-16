@@ -765,7 +765,9 @@ func (d *Dispatcher) proposeDigForBuriedPickup(order *orders.Order, laneName str
 			order.ID, laneName, err)
 		return
 	}
-	res := d.proposeLaneClearDig(lane, target, order)
+	// §R.91: this demand is `queued` with no vehicle committed to it, so it takes
+	// its own excavation and resumes through `queued` when the corridor opens.
+	res := d.proposeLaneClearDig(lane, target, order, digOwnedByRequester)
 	switch res.outcome {
 	case serviceDigStarted:
 		log.Printf("dispatch: service dig %d created for %s — complex order %d's pickup at %s is "+

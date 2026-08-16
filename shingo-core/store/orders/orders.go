@@ -808,6 +808,53 @@ func CountActiveByDeliveryNode(db *sql.DB, nodeName string) (int, error) {
 	return count, err
 }
 
+// ListStalledChapters returns compound parents in `reshuffling` that still have a
+// non-terminal child and whose whole family has gone quiet — nothing in the
+// parent or any of its children written since `since`.
+//
+// ── THE POPULATION SR.91 CREATED AND LEFT UNFLOORED (law 8) ────────────────
+//
+// AdvanceStuckReshuffleParents covers the other half of this status: a parent
+// whose children are ALL terminal, which is a chapter that finished and did not
+// get returned. This is the half where a leg is still open. Before SR.91 that
+// half held only synthetic folders and the demand behind them waited in `queued`,
+// inside IsAcquiring, swept every 60s. SR.91 made the demand itself wear
+// `reshuffling` -- which no sweep, no floor and no anomaly detector covers.
+//
+// QUIET IS ASKED ACROSS THE WHOLE FAMILY, not just the parent. A parent's own
+// updated_at does not move while its legs run, so a parent-only test would call
+// every healthy excavation stalled within a minute of starting.
+func ListStalledChapters(db *sql.DB, since time.Time, limit int) ([]int64, error) {
+	rows, err := db.Query(fmt.Sprintf(`
+		SELECT p.id
+		FROM orders p
+		WHERE p.status = 'reshuffling'
+		  AND p.updated_at < $1
+		  AND EXISTS (
+			SELECT 1 FROM orders c
+			WHERE c.parent_order_id = p.id AND c.status NOT IN (%s)
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM orders c
+			WHERE c.parent_order_id = p.id AND c.updated_at >= $1
+		  )
+		ORDER BY p.id
+		LIMIT $2`, protocol.TerminalStatusSQLList()), since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // ListTrackedVendorOrderIDs returns the vendor order IDs Core must keep watching
 // — the orders the fleet still holds.
 //

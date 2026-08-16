@@ -193,7 +193,9 @@ func (d *Dispatcher) mouthHealNeeded(lane *nodes.Node, c gateCandidate) (healReq
 // (dcb2c014); replacing that with a cause about a dig that did not happen would
 // tell the operator less, not more.
 func (d *Dispatcher) healLaneMouth(lane *nodes.Node, req healRequest) {
-	res := d.proposeLaneClearDig(lane, req.entry, req.order)
+	// THE ONE CARVE-OUT (§R.91): a gate-staged dweller keeps a folder, because
+	// {staged → reshuffling} is not a legal transition and must not become one.
+	res := d.proposeLaneClearDig(lane, req.entry, req.order, digOwnedByFolder)
 	switch res.outcome {
 	case serviceDigStarted:
 		log.Printf("lane gate: HEAL DIG %d created for %s — %d blocker(s) in front of %s, none of them "+
@@ -366,26 +368,88 @@ type serviceDigResult struct {
 	blockingDig int64
 }
 
-// proposeLaneClearDig is THE ONE WRITER of a service dig: it mints a plain
-// parent, takes the lane, and hands it the excavation that makes `target`
-// reachable. It never touches the requester.
+// digOwnership says who OWNS the excavation proposeLaneClearDig is about to
+// write, and it is the whole of §R.91's unification expressed as two values.
 //
-// ── WHAT A DIG IS, AND WHY THAT MAKES THIS ONE FUNCTION ───────────────────
+// ── THE RULING ────────────────────────────────────────────────────────────
 //
-// A dig is a SERVICE TO A LANE. It is not the requester wearing a different
-// status: one dig serves every demand waiting behind the same wall, and the
-// refusal arms already encode that (a lane already dig-locked means wait — that
-// dig's completion re-drives all of them). The requester is carried for its
-// ORIGIN, so the cost of digging lands in the episode that caused it, and for
-// the log line. It is deliberately NOT carried as an identity: a requester stamp
-// would claim 1:1 about a 1:many truth, and would go stale the moment that one
-// requester cancelled while the others still needed the lane (PLAN §R.40).
+// "All demand that creates a dig should become the parent." A demand that
+// cannot move re-parents onto its own excavation, wears `reshuffling` while it
+// runs, and resumes through `queued` into its normal lifecycle. That is what
+// the plain buried retrieve has always done, and the two complex paths now do
+// it too.
 //
-// The one exception the ruling draws is the PLAIN retrieve, where the dig's last
-// leg IS the demand's whole job — there re-parenting the demand costs nothing and
-// saves a hand-off, so planBuriedReshuffle keeps its own shape and does not come
-// through here (pinned by TestPlainBuriedRetrieve_KeepsDemandAsItsOwnDigParent).
-func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *orders.Order) serviceDigResult {
+// ── AND THE ONE CARVE-OUT, WHICH IS PHYSICS ───────────────────────────────
+//
+// The gate-dweller heal keeps a folder, and not by a near miss: {staged →
+// reshuffling} is not a legal transition and should not become one. A staged
+// order is a robot at a point holding an unsealed waybill; moving it to
+// `reshuffling` would say the demand is being re-planned while a vehicle is
+// committed to it. The answer is not a new state for the dweller — it is that
+// the dweller does not move at all, and something else digs.
+//
+// The law-14 restatement the round supplied: "a dig is owned by the demand that
+// caused it, UNLESS a vehicle is already committed to that demand — in which
+// case the dig is a service to the lane." One predicate, physical, checkable in
+// one place. That place is the caller, because only the caller knows whether it
+// is holding a dweller.
+type digOwnership int
+
+const (
+	// digOwnedByRequester — the demand becomes the dig's parent (§R.91). The
+	// caller's order is re-parented onto the plan and comes back through
+	// `queued` when the corridor is open.
+	digOwnedByRequester digOwnership = iota
+	// digOwnedByFolder — a synthetic parent owns the dig and the requester is
+	// carried for its ORIGIN only. The gate-dweller carve-out, and the only
+	// shape that still mints a folder.
+	digOwnedByFolder
+)
+
+// proposeLaneClearDig is THE ONE WRITER of a lane-clear dig: it takes the lane
+// and writes the excavation that makes `target` reachable. Who ends up owning
+// it is `own` — see digOwnership.
+//
+// ── IT USED TO SAY "IT NEVER TOUCHES THE REQUESTER" ───────────────────────
+//
+// That sentence, and the paragraph under it — "A dig is a SERVICE TO A LANE. It
+// is not the requester wearing a different status: one dig serves every demand
+// waiting behind the same wall ... The requester is carried for its ORIGIN ...
+// It is deliberately NOT carried as an identity: a requester stamp would claim
+// 1:1 about a 1:many truth" — is now true of ONE of the two shapes. It is kept
+// below, scoped to the folder arm it still describes.
+//
+// The ruling does not dispute the 1:many observation; it disputes what follows
+// from it. A second demand behind the same wall does not need the first demand's
+// excavation to be ownerless — it needs a dig on that lane to exist, which the
+// one-dig-per-lane mouth claim already guarantees, and it waits on the lane
+// rather than on the dig. What ownership buys is that the excavation cannot
+// outlive the reason for it: a folder's requester can cancel and leave the
+// folder digging towards a bin nobody wants, which is the whole of the
+// dig_target_abandoned population.
+//
+// ── WHAT A FOLDER DIG IS, AND WHY THAT ARM STILL EXISTS ───────────────────
+//
+// For digOwnedByFolder, a dig is a SERVICE TO A LANE. It is not the requester
+// wearing a different status: one dig serves every demand waiting behind the
+// same wall, and the refusal arms already encode that (a lane already dig-locked
+// means wait — that dig's completion re-drives all of them). The requester is
+// carried for its ORIGIN, so the cost of digging lands in the episode that
+// caused it, and for the log line. It is deliberately NOT carried as an
+// identity: a requester stamp would claim 1:1 about a 1:many truth, and would go
+// stale the moment that one requester cancelled while the others still needed
+// the lane (PLAN §R.40).
+//
+// That reasoning is why the carve-out is drawn on PHYSICS rather than on
+// preference. Where a vehicle is not yet committed, §R.91 rules the other way
+// and the demand takes the excavation as its own.
+//
+// The PLAIN retrieve re-parents through planBuriedReshuffle rather than through
+// here, because its planner is different — it has a target BIN and calls
+// PlanReshuffle, where every caller of this function has a target SLOT and calls
+// PlanLaneMouthClear. Same ruling, two planners (pinned by
+// TestPlainBuriedRetrieve_KeepsDemandAsItsOwnDigParent).
+func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *orders.Order, own digOwnership) serviceDigResult {
 	if lane.ParentID == nil {
 		// A lane with no group has nowhere to park a blocker. Same terminal-shaped
 		// geometry planBuriedReshuffle names, and equally not worth an order.
@@ -636,6 +700,37 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// of three and is not done twice. See
 	// GitHub/DECISION-heal-window-lock-ordering-2026-08-14.md. Owner's ruling
 	// pending; nothing here is built.
+	// ── §R.91: THE DEMAND TAKES ITS OWN EXCAVATION ──────────────────────────
+	//
+	// No folder is minted at all on this path, which is why it forks BEFORE
+	// createServiceDigParent rather than fixing one up afterwards. The requester
+	// is already a live order in an acquiring status, so CreateCompoundOrder can
+	// write the legs under it and move it into `reshuffling` through the one
+	// compound-creation door every other dig uses.
+	//
+	// THE LANE IS TAKEN IN THE REQUESTER'S OWN NAME, so the childless window the
+	// folder arm below documents does not exist here: there is no moment where a
+	// parent row exists without legs, because the parent existed already.
+	//
+	// AND IT COMES BACK THROUGH `queued`. The requester carries StepsJSON, so
+	// IsCoordinated is true of it and the compound-completion arm routes it to
+	// ResumeCompound — Reshuffling → Queued — rather than confirming it. Its own
+	// work is still owed and the scanner re-resolves it against the corridor the
+	// dig just opened. No new status edge: both transitions already exist.
+	if own == digOwnedByRequester {
+		if !d.laneLock.TryLockFor(lane.ID, requester.ID, digFor) {
+			return serviceDigResult{outcome: serviceDigLaneBusy}
+		}
+		if err := d.CreateCompoundOrder(requester, plan); err != nil {
+			d.laneLock.Unlock(lane.ID, requester.ID)
+			if errors.Is(err, store.ErrBlockerClaimed) {
+				return serviceDigResult{outcome: serviceDigBlockerClaimed, err: err}
+			}
+			return serviceDigResult{outcome: serviceDigUnplannable, err: err}
+		}
+		return serviceDigResult{outcome: serviceDigStarted, parent: requester, steps: len(plan.Steps)}
+	}
+
 	parent, err := d.createServiceDigParent(lane, target, requester, plan)
 	if err != nil {
 		return serviceDigResult{outcome: serviceDigUnplannable, err: err}

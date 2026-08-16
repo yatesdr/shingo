@@ -383,12 +383,14 @@ func (db *DB) ListOutstandingDigClaims(groupID int64, asker reservations.DigAske
 // AdvanceStuckReshuffleParents, and maybeReleaseDigOnLastBlockerOut — and that
 // was true when the hold spanned the excavation AND the retrieval.
 //
-// TWO OF THEM WENT WITH THE HAND-BACK. The demand is no longer re-parented into
-// its own dig, so nothing resumes, so the lane no longer has to be held past the
-// compound's completion; handOffDugLane replaced the extended hold with a
-// handoff to whoever is actually collecting. What survives is that one caller
-// (dispatch/dig_lock_release.go, which asks it as the first of its two halves
-// and whose own header already says "one reader instead of three").
+// TWO OF THEM WENT WITH THE HAND-BACK, and they did not come back with §R.91.
+// The paragraph read: "The demand is no longer re-parented into its own dig, so
+// nothing resumes, so the lane no longer has to be held past the compound's
+// completion." The demand is re-parented and does resume — but this predicate
+// asks about a FOLDER's outstanding target, and a re-parented demand records
+// none: its collector is itself, and gate 2's self-handoff takes that branch
+// before this is reached (dig_lock_release.go). So the reader count is still
+// one, for a different reason than it was.
 //
 // The rule underneath is unchanged and still binds: nothing ELSE may ask this.
 // Everything else that walks a compound's children is asking a different
@@ -815,11 +817,13 @@ func (db *DB) OrderIsCompoundLeg(orderID int64) (bool, error) {
 // IT REPLACED A DIFFERENT FACT, and the difference is why this is a re-key rather
 // than a deletion. The dig side used to read pending_lane_extensions, the expose
 // bridge's table: a dig that had finished in expose mode left a row naming the bin
-// it had just uncovered, and that row was what protected it. The bridge is gone
-// (the demand is no longer re-parented into its own dig, so nothing is left
-// half-finished for a parent to come back to), but the FACT it protected is
-// unchanged and is carried by claims: a bin somebody is coming for must not be
-// walled in. F-19 is that scenario, and it still passes — the guard changed
+// it had just uncovered, and that row was what protected it. The bridge is gone —
+// its parenthesis used to read "the demand is no longer re-parented into its own
+// dig, so nothing is left half-finished for a parent to come back to", which
+// §R.91 has made false; what replaced the bridge is the self-handoff, which
+// keeps the corridor as the parent's own outbound hold rather than parking the
+// fact in a table. The FACT it protected is unchanged either way and is carried
+// by claims: a bin somebody is coming for must not be walled in. F-19 is that scenario, and it still passes — the guard changed
 // spelling, not meaning.
 //
 // ── THE CLAIM IS NOT THE ONLY SPELLING OF "COMING FOR IT" ─────────────────

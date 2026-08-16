@@ -14,6 +14,7 @@ import (
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/payloads"
+	"shingocore/store/reservations"
 )
 
 // stacked_wait_docker_test.go — catalog row 5.5: a buried need with NO substitute,
@@ -227,14 +228,20 @@ func TestStacked_BuriedIrreplaceableNeed_InALockedLane_InAFullGroup(t *testing.T
 
 	digging, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload once the dig is planned")
-	// THE DEMAND STAYS PUT AND THE DIG HAPPENS — the two halves of the same claim
-	// under the two-shape ruling. This asserted `reshuffling`, which was how the
-	// old shape said "the dig started": the demand became the dig. It is now a
-	// customer of one, so the excavation is proved by the dig existing (below) and
-	// the demand is proved unconsumed by it still sitting in the acquiring set.
-	if digging.Status != protocol.StatusQueued {
-		t.Fatalf("the demand is %q, want %q — every obstacle has cleared, so the dig must now happen "+
-			"WITHOUT the demand being consumed by it", digging.Status, protocol.StatusQueued)
+	// THE DEMAND TAKES THE DIG. This assertion has now been written both ways
+	// round and both texts are worth keeping. Originally `reshuffling`, which was
+	// how the old shape said "the dig started". Then, under the two-shape ruling:
+	// "It is now a customer of one, so the excavation is proved by the dig
+	// existing (below) and the demand is proved unconsumed by it still sitting in
+	// the acquiring set", asserting protocol.StatusQueued.
+	//
+	// §R.91 rules the first way: every demand that creates a dig becomes its
+	// parent. So `reshuffling` is once again how this test knows the excavation
+	// started, and it is proved to be THIS demand's excavation by the leg count
+	// below reading off the demand itself.
+	if digging.Status != protocol.StatusReshuffling {
+		t.Fatalf("the demand is %q, want %q — every obstacle has cleared, so it must now be digging",
+			digging.Status, protocol.StatusReshuffling)
 	}
 	legs := legsOf(t, db, serviceDigFor(t, db, digging).ID)
 	// Expose mode: the unbury alone. The complex parent owns its own pickup and
@@ -289,12 +296,29 @@ func TestStacked_BuriedIrreplaceableNeed_InALockedLane_InAFullGroup(t *testing.T
 		t.Errorf("the wall is at node %v, want the spare %d", moved.NodeID, spare.ID)
 	}
 
-	// THE LANE STAYS LOCKED, and that is not a leak. Expose mode transfers the lock
-	// to the complex parent until the target bin leaves (the re-burial window,
-	// catalog row 3.7), so an unlocked lane here would be the bug, not the tidy
-	// outcome.
-	if !d.laneLock.IsLocked(lane.ID) {
-		t.Error("the lane was released the moment the dig finished — the parent has not picked its bin " +
-			"yet, and anything may now store in front of it before it does")
+	// THE LANE STAYS HELD, and that is not a leak — but it is no longer held as a
+	// DIG. The assertion used to be `IsLocked(lane.ID)`, under: "Expose mode
+	// transfers the lock to the complex parent until the target bin leaves (the
+	// re-burial window, catalog row 3.7), so an unlocked lane here would be the
+	// bug, not the tidy outcome."
+	//
+	// The claim is unchanged and the MODE is not. Gate 2 (§R.91) converts the
+	// parent's own dig row to its own OUTBOUND row at resume, which is the same
+	// protection stated in the vocabulary that already exists: outbound excludes
+	// a drop into the lane, which is the only way the uncovered bin can be
+	// re-buried, and it shares with other outbound holders, who can only take
+	// bins out. Asserting IsLocked here would now demand that a finished
+	// excavation keep digging.
+	holders, hErr := reservations.ActiveMouthRows(db.DB, lane.ID)
+	testutil.MustNoErr(t, hErr, "read the lane's mouth holds after the dig")
+	demandHolds := false
+	for _, h := range holders {
+		if h.OrderID == order.ID && h.Mode == reservations.ModeOutbound {
+			demandHolds = true
+		}
+	}
+	if !demandHolds {
+		t.Errorf("lane %s holds %+v — the demand has not picked its bin yet, and without its own "+
+			"outbound hold anything may store in front of it before it does", lane.Name, holders)
 	}
 }

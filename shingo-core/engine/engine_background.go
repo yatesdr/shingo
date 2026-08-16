@@ -120,6 +120,22 @@ func (e *Engine) laneLivenessFloorLoop() {
 					"usable-capacity claim", n, "dig_standoff_detected")
 			}
 
+			// THE STALLED-CHAPTER WATCHDOG RIDES THE SAME TICK, and last, for the
+			// same reason the tripwire goes after the floor: the two passes above
+			// re-drive the machinery that clears a chapter which had only stopped
+			// looking stuck. What is still quiet after both of them has genuinely
+			// stopped.
+			//
+			// This one RESOLVES rather than reports (§R.99). It is the floor §R.91
+			// owed: a demand in `reshuffling` with an open leg is a machine-owned
+			// wait that no sweep covered.
+			if r := e.dispatcher.SweepStalledChapters(); r.Dissolved+r.Waiting+r.Residue > 0 {
+				e.logFn("engine: stalled-chapter watchdog: %d dissolved and re-queued, %d waiting on a "+
+					"committed vehicle, %d unresolvable — see recovery_actions (%s) for the last group, "+
+					"which is the only one a human owes anything",
+					r.Dissolved, r.Waiting, r.Residue, "chapter_stalled_unresolvable")
+			}
+
 			// THE OTHER WAY A DIG HELD FOREVER — its own lane, for a bin whose
 			// demand had gone — was swept from here and no longer can be. A
 			// finished dig hands its corridor to the order collecting the bin and

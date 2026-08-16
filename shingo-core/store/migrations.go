@@ -2973,12 +2973,25 @@ func v76LaneOccupancyKind(tx *sql.Tx) error {
 // released later, when that parent came back through ResumeCompound for the bin —
 // the post-compound, pre-pickup re-burial window.
 //
-// Nothing comes back any more. Under the two-shape ruling a dig is a service to a
-// LANE, so the demand is never re-parented into its own dig; the lane is released
-// at the compound's terminal like every other dig's, and the fact the table
-// protected (do not wall in a bin somebody is coming for) is carried by CLAIMS —
-// see store.SlotsBlockedByHardClaims, which asks the store selector's own burial
-// clause.
+// THE DEMAND COMES BACK AGAIN (PLAN §R.91), AND THE TABLE IS STILL RIGHTLY
+// GONE. This paragraph read: "Nothing comes back any more. Under the two-shape
+// ruling a dig is a service to a LANE, so the demand is never re-parented into
+// its own dig; the lane is released at the compound's terminal like every other
+// dig's." The first sentence is false again — every demand that creates a dig
+// becomes its parent and resumes through ResumeCompound.
+//
+// What is NOT back is the side table, and that is the part this migration is
+// about. The bridge parked a fact — which bin, leaving from which slot — in a
+// row, so that a later resume could find it and release the lane. The window is
+// now closed at the moment it opens instead: the compound's terminal arm
+// converts the dig's own mouth row into the parent's OUTBOUND hold before it
+// releases anything (gate 2, dispatch/dig_lock_release.go). One row, already
+// owned by the order that needs it, inside that order's lifetime — so there is
+// nothing to park and nothing to look up afterwards.
+//
+// The other fact the table protected (do not wall in a bin somebody is coming
+// for) is carried by CLAIMS — see store.SlotsBlockedByHardClaims, which asks the
+// store selector's own burial clause.
 //
 // DROPPED RATHER THAN LEFT EMPTY. A table nothing writes and nothing reads is a
 // thing the next reader has to work out the deadness of; the schema is a claim

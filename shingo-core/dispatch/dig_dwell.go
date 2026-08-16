@@ -369,7 +369,17 @@ func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node
 		// has entered nothing. Drop the row this call took and leave everything the
 		// dwell holds alone — releasing the order's whole presence here would free
 		// the corridor the robot is physically standing in.
-		d.releaseOccupancyForLaneOf(fresh.ID, dest)
+		//
+		// UNLESS THE APPEND LANDED (§R.98 stage A3). Then the first sentence is
+		// false: the fleet has the tail, the robot is driving to `dest`, and the row
+		// this call took is the only thing declaring it. The failure is downstream —
+		// Core could not record the release — so the error goes up loud and nothing
+		// is given back. Both holds stay, which is the conservative side: a corridor
+		// held one pass too long stalls; a corridor freed under a moving robot
+		// collides.
+		if !IsAppendLanded(err) {
+			d.releaseOccupancyForLaneOf(fresh.ID, dest)
+		}
 		return GateVerdict{}, err
 	}
 

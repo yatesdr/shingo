@@ -134,6 +134,19 @@ const (
 	// it must not be filed under lock-race — the wait is a robot's drive time, not
 	// a lost microsecond.
 	CauseDigBlockerClaimed QueueCause = "dig-blocker-claimed"
+	// CauseChapterLegInFlight — the demand is in `reshuffling` and one of its own
+	// dig legs is a mission the fleet still holds. §R.91 made the demand wear the
+	// status its folder used to, and PopCompoundParent's "structure needs no
+	// cause" reading stopped being complete the moment a real order sat there: a
+	// parent whose chapter has stopped is a wait an operator can see, and it was
+	// rendering blank.
+	//
+	// It is written by the stalled-chapter watchdog and by nothing else, which is
+	// why it means what it says: NOT "a leg is running" (the ordinary case, still
+	// structural and still causeless) but "the whole family has been quiet for
+	// three floor ticks AND a vehicle is committed to a leg". A chapter quiet that
+	// long with NO vehicle committed does not get a cause — it gets dissolved.
+	CauseChapterLegInFlight QueueCause = "chapter-leg-in-flight"
 
 	// ── The gate's own failures ───────────────────────────────────────────
 

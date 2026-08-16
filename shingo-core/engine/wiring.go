@@ -279,7 +279,13 @@ func (e *Engine) wireEventHandlers() {
 		// The other teardowns need nothing from this: they are ending the compound,
 		// not re-planning it, and the reconciliation sweep remains their backstop
 		// exactly as before.
-		if e.dispatcher != nil && ev.Reason == dispatch.ReshuffleDissolveDetail {
+		// GATE 1 WIDENED IT BY ONE MARKER, not by loosening it. A chapter now
+		// also ends when a LEG FAILS, and those cancels need the same hop for
+		// the same reason: without it the demand's disposition waits for the
+		// 30-second reconciliation sweep instead of arriving on the event.
+		// dispatch.IsChapterEndCancel is the one list both sides read, so the
+		// narrow scoping this comment block is about survives being widened.
+		if e.dispatcher != nil && dispatch.IsChapterEndCancel(ev.Reason) {
 			if order, err := e.db.GetOrder(ev.OrderID); err == nil && order.ParentOrderID != nil {
 				parentID := *order.ParentOrderID
 				go func() {
