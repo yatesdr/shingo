@@ -118,8 +118,8 @@ type causeCount struct {
 }
 
 type logStats struct {
-	source               string
-	softN, hardN, stealN int
+	source                       string
+	softN, hardN, churnN, stealN int
 }
 
 func collect(db *store.DB, logSource string) *report {
@@ -927,8 +927,18 @@ func readLog(source string) *logStats {
 			// two halves still mean opposite things: a soft hold buried is DATA
 			// (re-planning was always going to be paid for), a hard claim buried is
 			// a should-be-zero.
+			// TWO HARD-BURIAL COUNTERS SINCE THE PLAN §R.4 SPLIT, and reading only
+			// the first would silently under-report. BYPASS= is now the narrow
+			// should-be-zero (the claim already existed when the placer was
+			// committed, so the selector was never asked); CHURN= is the accepted
+			// population the old BYPASS= number was mostly made of. Both lines are
+			// re-emitted every sweep, so both take the LAST value rather than a
+			// count of occurrences — see the note above.
 			if n, ok := tallyValue(line, "BYPASS="); ok {
 				s.hardN = n
+			}
+			if n, ok := tallyValue(line, "CHURN="); ok {
+				s.churnN = n
 			}
 			if n, ok := tallyValue(line, "soft-hold burials "); ok {
 				s.softN = n
@@ -1000,11 +1010,17 @@ func (r *report) report() {
 	fmt.Printf("\n[7.5] SHADOW COUNTERS + [8.5] STEALS\n")
 	if r.logCounts == nil {
 		fmt.Println("        n/a (no -log). A zero nobody measured is worse than no number.")
-	} else if r.logCounts.softN+r.logCounts.hardN+r.logCounts.stealN == 0 && strings.Contains(r.logCounts.source, "failed") {
+	} else if r.logCounts.softN+r.logCounts.hardN+r.logCounts.churnN+r.logCounts.stealN == 0 && strings.Contains(r.logCounts.source, "failed") {
 		fmt.Printf("        n/a — %s\n", r.logCounts.source)
 	} else {
 		fmt.Printf("        soft burials (data):     %d\n", r.logCounts.softN)
-		fmt.Printf("        hard burials (TRIPWIRE): %d   <- expected value is ZERO\n", r.logCounts.hardN)
+		// The hard count is TWO numbers since the PLAN R.4 split, and printing only
+		// the tripwire would hide the population it was mostly made of. Bypass is
+		// the should-be-zero (never-asked); churn is approved-then-invalidated,
+		// which the design accepts and heals — non-zero there is the measured price
+		// of law 6, not a finding.
+		fmt.Printf("        hard burials (TRIPWIRE): %d   <- expected value is ZERO (never-asked)\n", r.logCounts.hardN)
+		fmt.Printf("        approved-then-invalid.:  %d   <- accepted churn, healed\n", r.logCounts.churnN)
 		fmt.Printf("        dig steals:              %d\n", r.logCounts.stealN)
 	}
 

@@ -918,6 +918,14 @@ func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node, e
 	if err := applyDeliveryNodeAtStep(d.db, order, best.Name, entryIndex); err != nil {
 		return nil, err
 	}
+	// AND THE PER-BIN LEDGER FOLLOWS THE PLAN. The two lines above move the two
+	// copies the robot is driven from; order_bins.dest_node is the third, and until
+	// now it was written once at allocation and never again — so a re-bound swap
+	// drove to the new slot while the junction row still named the old one, and the
+	// whole-order settle placed the bin at the row's stale value (D2).
+	//
+	// After the step patch, not before: the derivation reads the plan.
+	d.refreshOrderBinDestinations(order)
 	log.Printf("lane gate: order %d re-bound at release %s → %s (lane %s)",
 		order.ID, nodeName(current), best.Name, lane.Name)
 	return best, nil

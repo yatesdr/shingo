@@ -569,11 +569,36 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 // and seals it, binding the drop AT APPEND TIME.
 //
 // The binding is late by construction: the create carried no dropoff block at all,
-// so there is no stale target to correct — the tail's node is taken from
-// order.DeliveryNode as it stands at this instant, via the same pre-append rewrite
-// the lane-gate release path uses for a redirect (patchRedirectSegments). That is
-// what lets a later increment re-target a dwelling order simply by updating
-// delivery_node.
+// so there is no stale target to correct. The tail's nodes are read from the PLAN,
+// which the re-bind has already patched by carried index through applyPlanNode —
+// the one writer of a step's node.
+//
+// ── WHY THERE IS NO REDIRECT OVERLAY HERE ANY MORE ────────────────────────
+// This function used to call patchRedirectSegments on the segment first, and the
+// paragraph above used to claim that is "what lets a later increment re-target a
+// dwelling order simply by updating delivery_node". Both are gone, and the reason
+// is the swap clobber (PLAN §R.5) surviving on the emit path for a week after it
+// was declared fixed.
+//
+// The overlay is a BACKWARD LAST-DROPOFF SCAN keyed on order.DeliveryNode. Before
+// the re-bind those two agreed, so it rewrote a dropoff to itself and was
+// invisible. After the re-bind, order.DeliveryNode IS THE LANE SLOT — so on a swap
+// ([dropoff@lane, pickup@empties, dropoff@press]) the scan found the press, saw it
+// differ, and re-aimed the empty's return leg at the lane slot the same order had
+// just filled. Both of the order's bins went to one node on the wire while
+// steps_json stayed correct, which is why the steps_json signature query that
+// "confirmed" 768a2985 could not see it, and why 768a2985's "no backward scan
+// survives on the gate path" was false at this line.
+//
+// The re-target mechanism the old doc described has no live caller for a gated
+// complex order. Every delivery_node writer is excluded: PrepareRedirect refuses
+// order.Coordinated outright (dispatcher.go), redirectStoreOffDugLane sits behind
+// the scanner's IsCoordinated fork so it is plain-path only, the planner's NGRP
+// re-resolve runs before a plan exists, the compound arm rewrites steps_json in
+// the same block, and applyDeliveryNodeAtStep patches the step itself. A column
+// written without its step is a state this path can no longer be reached in — and
+// if one is ever added, the fix is to write the step through applyPlanNode like
+// every other re-point, not to re-derive the target here by scanning.
 //
 // ── The durable guard, and why it lives HERE ──────────────────────────────
 // Four sites funnel through this function: the valve's two (at create time, "was
@@ -612,7 +637,6 @@ func (d *Dispatcher) appendGateTail(order *orders.Order, what string) error {
 	if segment == nil {
 		return fmt.Errorf("gated order %d has no segment at wait_index %d", order.ID, order.WaitIndex)
 	}
-	d.patchRedirectSegments(segment, order, moreWaits)
 
 	// HOLD B FOR A GATED ENTRY, and the moment is HERE rather than at the create.
 	//

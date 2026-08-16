@@ -59,6 +59,35 @@ func ListOrderBins(db *sql.DB, orderID int64) ([]*OrderBin, error) {
 	return result, nil
 }
 
+// UpdateOrderBinDestNode re-points one bin's recorded destination. Returns the
+// number of rows changed, which is 0 or 1.
+//
+// KEYED BY BIN, NOT BY step_index, and that is forced by what the column means.
+// step_index names the PICKUP the allocator claimed this bin at
+// (InsertOrderBin's action argument is hard-coded ActionPickup), while every
+// caller wanting to re-point a destination knows a DROPOFF. Keying an update on
+// the dropoff's index would match no row and report success — the junction has
+// one row per claimed bin, so the bin is its natural grain and the only key that
+// cannot silently miss.
+//
+// Zero rows is NOT an error. Single-bin orders have no junction rows at all (the
+// allocator writes them only when an order claims more than one), so "nothing to
+// update" is the ordinary answer for most of the plant. The count is returned
+// rather than swallowed so a caller can tell "no rows exist" from "the row I
+// meant to hit was not there", which are different facts.
+func UpdateOrderBinDestNode(db *sql.DB, orderID, binID int64, destNode string) (int64, error) {
+	res, err := db.Exec(`UPDATE order_bins SET dest_node = $3 WHERE order_id = $1 AND bin_id = $2`,
+		orderID, binID, destNode)
+	if err != nil {
+		return 0, fmt.Errorf("update order_bin dest_node (order %d bin %d): %w", orderID, binID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("update order_bin dest_node (order %d bin %d): rows affected: %w", orderID, binID, err)
+	}
+	return n, nil
+}
+
 // DeleteOrderBins removes all junction rows for an order. Called alongside
 // UnclaimOrderBins on cancel/fail paths to keep the junction table clean.
 func DeleteOrderBins(db *sql.DB, orderID int64) {

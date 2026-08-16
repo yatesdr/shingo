@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -136,6 +137,7 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 			}
 			s.logBurialShadow()
 			s.logArrivalRefusals()
+			s.logDestNodeDrift()
 		}
 	}
 }
@@ -159,9 +161,27 @@ func (s *ReconciliationService) logBurialShadow() {
 	}
 	t := s.burialTally()
 	if t.Bypass > 0 {
-		s.logFn("burial-shadow BYPASS=%d (expected 0) — placements buried a hard-claimed bin without "+
-			"going through the store-slot selector; grep %q for the offending placements",
-			t.Bypass, "burial-shadow: GUARD BYPASS")
+		head, tail, _ := strings.Cut(service.BurialBypassMarker, " ")
+		s.logFn("burial-shadow BYPASS=%d (expected 0) — placements buried a hard claim that ALREADY "+
+			"EXISTED when the placing order was committed, so the store-slot selector was never "+
+			"asked. Find the placement path and route it through nodes.FindStoreSlotInLaneExcluding. "+
+			"THIS COUNT is the number, not a grep of it; for the per-event lines search the journal "+
+			"for %q followed by %q — split here so this line stays out of its own results.",
+			t.Bypass, head, tail)
+	}
+	// Non-zero and NOT a defect, so it is reported apart and without an
+	// expected-zero sentence. Until the PLAN §R.4 split, these were counted as
+	// bypasses and carried the "find the placement path" instruction, which was
+	// false for most of them: nothing to find, the claim did not exist yet. A
+	// should-be-zero that is never zero for reasons nobody can act on stops being
+	// read (law 9 from the other direction), and every BYPASS=3..5 reading since
+	// §R.4 was this population wearing the wrong sentence.
+	if t.Churn > 0 {
+		s.logFn("burial-shadow CHURN=%d — approved-then-invalidated: the buried claim arrived AFTER "+
+			"the placing order was committed and driving, so no check at any Core moment could have "+
+			"seen it. Accepted and healed — the cascade dissolves and re-plans. This is the measured "+
+			"price of law 6 (~2.5 min of re-work per occurrence), not a defect, and non-zero is "+
+			"expected on a busy plant.", t.Churn)
 	}
 	if t.Soft == 0 && t.DigUncovered == 0 {
 		return
@@ -195,9 +215,42 @@ func (s *ReconciliationService) logArrivalRefusals() {
 	if total == 0 {
 		return
 	}
+	head, tail, _ := strings.Cut(ArrivalRefusalMarker, " ")
 	s.logFn("arrival-guard REFUSALS=%d (expected 0) — orders arrived carrying a bin the ledger says "+
-		"they do not own; by site %v; grep %q for each one",
-		total, tally, "WARN: arrival refused at")
+		"they do not own; by site %v. THIS COUNT is the number, not a grep of it; for the per-event "+
+		"lines search the journal for %q followed by %q — split here so this line stays out of its "+
+		"own results.",
+		total, tally, head, tail)
+}
+
+// logDestNodeDrift reports the bin-state drift tripwire — the third should-be-zero
+// on this sweep, and the first one about a bin-state FACT rather than a guard.
+//
+// A drift means one bin's destination is recorded in two places that disagree: the
+// order's plan, and the order_bins row the settle is about to place from. Silent
+// at zero for the same reason as its neighbours — a plant where this never fires
+// should not spend a line every sweep saying so.
+//
+// THE READ INSTRUCTION DOES NOT CONTAIN ITS OWN SEARCH PATTERN. Splitting it is
+// not fussiness: a tally line that quotes its grep string is matched by that
+// string, so the count read back is tally-lines-plus-events and a should-be-zero
+// reads non-zero forever (PLAN §R.9, and see the two lines above this one).
+func (s *ReconciliationService) logDestNodeDrift() {
+	tally := DestNodeDriftTally()
+	total := 0
+	for _, n := range tally {
+		total += n
+	}
+	if total == 0 {
+		return
+	}
+	driftHead, driftTail, _ := strings.Cut(DestNodeDriftMarker, " ")
+	s.logFn("bin-state DRIFTS=%d (expected 0) — a bin's recorded destination disagreed with its own "+
+		"plan at settle time, so the robot and the ledger are about to disagree about where that bin "+
+		"is; by site %v. THIS COUNT is the number, not a grep of it. For the per-order detail (order, "+
+		"bin, both nodes) search the journal for the words %q and %q adjacent — written apart here so "+
+		"this line stays out of its own results.",
+		total, tally, driftHead, driftTail)
 }
 
 // AutoConfirmStuckDeliveredOrders confirms delivered orders that have been

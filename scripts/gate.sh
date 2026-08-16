@@ -537,22 +537,59 @@ step_docker() {
   return $failed
 }
 
+# ── THE GATE SENTENCE ─────────────────────────────────────────────────────
+#
+# Every run ends by printing the exact sentence to paste into the commit
+# message, naming ONLY the steps that ran and passed in that invocation.
+#
+# It exists because the sentence used to be hand-typed, and a hand-typed claim
+# about what a tool did is a second spelling of a fact the tool already holds.
+# Ten commits on this branch claimed "fmt, vet, lint, tests, docker suites" when
+# the docker suites had not run: `gate.sh` with no argument is the four, and
+# `gate.sh full` SKIPS docker whenever scope finds no diff — which is always true
+# for work already pushed. CI found the break the docker suites would have caught
+# (a test asserting a contract two commits had already changed).
+#
+# So the sentence is fact-carried, per standing law 4: accumulated by the steps
+# themselves as they pass, never assembled from what the invocation was supposed
+# to do. A "docker suites" that appears in a commit message and not in this
+# output is now a visible contradiction rather than an invisible one.
+gate_steps=""
+gate_docker=""   # "" = not attempted | "ran" | "skipped"
+note_step() { gate_steps="${gate_steps:+$gate_steps, }$1"; }
+
+gate_sentence() {
+  local s="$gate_steps"
+  case "$gate_docker" in
+    # "AND" only joins something to something. `gate.sh docker` runs the suites
+    # alone, and the first version of this printed a dangling "Gate: AND the
+    # docker suites." — caught by the mutation this rider was specified with.
+    ran)     if [ -n "$s" ]; then s="$s AND the docker suites"; else s="the docker suites"; fi ;;
+    skipped) : ;;
+  esac
+  [ -n "$s" ] || { echo "Gate sentence: (nothing ran)"; return; }
+  # Capitalised the way it lands in a commit message, ready to paste.
+  local out="Gate: $s."
+  [ "$gate_docker" = skipped ] && out="$out Docker suites SKIPPED by scope (nothing in this diff can reach one)."
+  echo "$out"
+}
+
 case "${1:-all}" in
-  fmt)   step_fmt  || rc=1 ;;
-  vet)   step_vet  || rc=1 ;;
-  lint)  step_lint || rc=1 ;;
-  test)  step_test || rc=1 ;;
+  fmt)   if step_fmt;  then note_step fmt;  else rc=1; fi ;;
+  vet)   if step_vet;  then note_step vet;  else rc=1; fi ;;
+  lint)  if step_lint; then note_step lint; else rc=1; fi ;;
+  test)  if step_test; then note_step unit; else rc=1; fi ;;
   # EXIT CODE IS THE VERDICT: 0 = docker needed, 1 = not needed. It used to
   # `exit 0` unconditionally, which made the answer readable only by a human
   # reading the text — so nothing could gate on it. `if bash scripts/gate.sh
   # scope; then ...` now works, and matches step_scope's own return
   # convention, which `full` has always branched on.
   scope) step_scope "${2:-}"; exit $? ;;
-  docker) step_docker || rc=1 ;;
+  docker) if step_docker; then gate_docker=ran; else rc=1; fi ;;
   full)
-    step_fmt  || rc=1
-    step_vet  || rc=1
-    step_lint || rc=1
+    if step_fmt;  then note_step fmt;  else rc=1; fi
+    if step_vet;  then note_step vet;  else rc=1; fi
+    if step_lint; then note_step lint; else rc=1; fi
     # Scope is decided BEFORE the tests here, because it decides what the tests
     # have to cover: when the docker step runs it already runs every untagged
     # test in the modules that carry docker tests, so only the modules it does
@@ -560,23 +597,27 @@ case "${1:-all}" in
     # out of scope nothing else covers them and every module runs, which is
     # what `all` does too.
     if step_scope "${2:-}"; then
-      step_test "$(untagged_only_modules)" || rc=1
-      step_docker || rc=1
+      if step_test "$(untagged_only_modules)"; then note_step unit; else rc=1; fi
+      if step_docker; then gate_docker=ran; else rc=1; fi
     else
-      step_test || rc=1
+      if step_test; then note_step unit; else rc=1; fi
+      gate_docker=skipped
       echo "     (docker suites skipped — nothing in this diff can reach one)"
     fi
     ;;
   all)
     # Every step runs even after one fails: a gate that stops at the first
     # problem makes you re-run the slow parts once per problem.
-    step_fmt  || rc=1
-    step_vet  || rc=1
-    step_lint || rc=1
-    step_test || rc=1
+    if step_fmt;  then note_step fmt;  else rc=1; fi
+    if step_vet;  then note_step vet;  else rc=1; fi
+    if step_lint; then note_step lint; else rc=1; fi
+    if step_test; then note_step unit; else rc=1; fi
     ;;
   *) echo "usage: bash scripts/gate.sh [fmt|vet|lint|test|scope|docker|full] [BASE]" >&2; exit 2 ;;
 esac
 
 if [ "$rc" -eq 0 ]; then echo "gate: clean"; else echo "gate: FAILED"; fi
+# Printed on PASS only: there is no sentence to paste for a gate that failed, and
+# emitting one would be the same hand-waving this replaces.
+[ "$rc" -eq 0 ] && gate_sentence
 exit "$rc"

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -70,6 +71,23 @@ import (
 // buys the exact number with no sampler, no second hook and no new table.
 const burialShadowTag = "burial-shadow"
 
+// The two hard-burial markers, exported because the reconciliation tally line and
+// its drift test both have to know what they are — and must NOT contain them.
+//
+// A should-be-zero tally that quotes its own search string is counted by that
+// search, so the number read back is tally-lines-plus-events and the counter
+// reads non-zero forever (PLAN §R.9). Naming them here means the emitter, the
+// summariser and the guard test share one definition instead of three string
+// literals that can drift apart — which is the mistake underneath B1.
+const (
+	// BurialBypassMarker prefixes the SHOULD-BE-ZERO line: the claim already
+	// existed when the placing order was committed, so the selector was not asked.
+	BurialBypassMarker = "GUARD BYPASS"
+	// BurialChurnMarker prefixes the accepted population: approved, then
+	// invalidated by a claim that arrived during the mouth-to-slot drive (§R.4).
+	BurialChurnMarker = "APPROVED-THEN-INVALIDATED"
+)
+
 // BurialHoldKind names which hold class was buried.
 type BurialHoldKind string
 
@@ -95,12 +113,26 @@ type BurialTally struct {
 	// SoftLongestHeld is the largest hold age at burial among the soft events, the
 	// cheap read on how much recalculation those burials are costing.
 	SoftLongestHeld time.Duration
-	// Bypass is the TRIPWIRE: a hard claim buried by a placement that should have
-	// gone through the guarded selector. Expected ZERO.
+	// Bypass is the TRIPWIRE: a hard claim that ALREADY EXISTED when the placing
+	// order was committed, buried by a placement that therefore should have gone
+	// through the guarded selector and seen it. Expected ZERO.
+	//
+	// IT USED TO MEAN SOMETHING WIDER. Until the §R.4 split it counted every hard
+	// burial that was not a dig leg, which lumped in the population below — so it
+	// read 3-5 every soak and its own sentence ("find the placement path") was
+	// false for most of them. A should-be-zero that is never zero for reasons
+	// nobody can act on stops being read, which is standing law 9 from the other
+	// direction.
 	Bypass int64
-	// DigUncovered is the known gap, kept apart from Bypass so it can never make
-	// the tripwire look dirty: a dig leg's placement resolves through
-	// findShuffleSlots and never consults the selector.
+	// Churn is APPROVED-THEN-INVALIDATED: the claim was created AFTER the placing
+	// order was committed and driving, so no check at any Core moment could have
+	// seen it. Ruled accepted and healed (§R.4) — the cascade dissolves and
+	// re-plans at ~2.5 min of re-work. Expected non-zero on a busy plant; it is
+	// the measured price of law 6, not a defect.
+	Churn int64
+	// DigUncovered is the known gap, kept apart from both so it can never make the
+	// tripwire look dirty: a dig leg's placement resolves through findShuffleSlots
+	// and never consults the selector.
 	DigUncovered int64
 	LastBuriedAt time.Time
 }
@@ -123,12 +155,37 @@ func (b *burialShadow) recordSoft(heldFor time.Duration, at time.Time) {
 	b.tally.LastBuriedAt = at
 }
 
-func (b *burialShadow) recordHard(bypass bool, at time.Time) {
+// hardBurialKind is which of the three things a hard-claim burial actually is.
+// Three, not two: PLAN §R.4 ruled that most of what the tripwire was calling a
+// bypass is a different population, and a counter that cannot say which is a
+// counter nobody can act on.
+type hardBurialKind int
+
+const (
+	// hardNeverAsked is the SHOULD-BE-ZERO. The buried claim already existed when
+	// this order's destination was committed, so the selector — had it been
+	// consulted — would have seen it and refused.
+	hardNeverAsked hardBurialKind = iota
+	// hardApprovedThenInvalidated is churn the design accepts. The claim was
+	// created AFTER this order was committed and driving, so no check at any Core
+	// moment could have seen it: the window is the mouth→slot drive, measured at
+	// 27ms and 32s on the two rig specimens. The cascade dissolves and re-plans;
+	// cost ~2.5 min of re-work, no wedge (§R.3, §R.4).
+	hardApprovedThenInvalidated
+	// hardDigUncovered is the known, named gap: a dig leg resolves its shuffle
+	// slots through findShuffleSlots and never consults the selector, on purpose.
+	hardDigUncovered
+)
+
+func (b *burialShadow) recordHard(kind hardBurialKind, at time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if bypass {
+	switch kind {
+	case hardNeverAsked:
 		b.tally.Bypass++
-	} else {
+	case hardApprovedThenInvalidated:
+		b.tally.Churn++
+	case hardDigUncovered:
 		b.tally.DigUncovered++
 	}
 	b.tally.LastBuriedAt = at
@@ -249,23 +306,64 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 	if b.HolderIsChild {
 		kind = BurialHoldCompoundLeg
 	}
-	if digPlacement {
-		log.Printf("%s: DIG-UNCOVERED lane=%s slot=%s placed_bin=%d placed_by=%d (a dig leg, resolved "+
-			"through findShuffleSlots) buried_bin=%d (%s) buried_slot=%s buried_depth=%d hold=%s "+
-			"holder_order=%d holder_status=%s held_for=%s",
-			burialShadowTag, at.lane, at.slot, at.placedBin, at.placedBy,
-			b.BinID, b.BinLabel, b.SlotName, b.Depth,
-			kind, b.HolderID, b.HolderStatus, heldFor.Round(time.Second))
-		s.burials.recordHard(false, now)
-		return
-	}
-	log.Printf("%s: GUARD BYPASS — a placement buried a bin a robot is en route to, without going "+
-		"through the store-slot selector. lane=%s slot=%s placed_bin=%d placed_by=%d buried_bin=%d (%s) "+
-		"buried_slot=%s buried_depth=%d hold=%s holder_order=%d holder_status=%s held_for=%s. "+
-		"Expected count is ZERO: find the placement path and route it through "+
-		"nodes.FindStoreSlotInLaneExcluding",
-		burialShadowTag, at.lane, at.slot, at.placedBin, at.placedBy,
+	where := fmt.Sprintf("lane=%s slot=%s placed_bin=%d placed_by=%d buried_bin=%d (%s) "+
+		"buried_slot=%s buried_depth=%d hold=%s holder_order=%d holder_status=%s held_for=%s",
+		at.lane, at.slot, at.placedBin, at.placedBy,
 		b.BinID, b.BinLabel, b.SlotName, b.Depth,
 		kind, b.HolderID, b.HolderStatus, heldFor.Round(time.Second))
-	s.burials.recordHard(true, now)
+
+	if digPlacement {
+		log.Printf("%s: DIG-UNCOVERED (a dig leg, resolved through findShuffleSlots) %s",
+			burialShadowTag, where)
+		s.burials.recordHard(hardDigUncovered, now)
+		return
+	}
+
+	if s.burialWasApprovedThenInvalidated(at.placedBy, b.HeldSince) {
+		log.Printf("%s: %s — order %d's destination was approved and a later claim invalidated it. "+
+			"Order %d claimed the buried bin at %s, AFTER order %d was committed and driving, so no "+
+			"check at any Core moment could have seen it — the window is the mouth-to-slot drive "+
+			"(27ms and 32s on the two rig specimens). Accepted and healed: the cascade dissolves and "+
+			"re-plans, ~2.5 min of re-work. This is the measured price of law 6, not a defect. %s",
+			burialShadowTag, BurialChurnMarker, at.placedBy,
+			b.HolderID, b.HeldSince.UTC().Format(time.RFC3339), at.placedBy, where)
+		s.burials.recordHard(hardApprovedThenInvalidated, now)
+		return
+	}
+
+	log.Printf("%s: %s — a placement buried a bin a robot is en route to, without going through the "+
+		"store-slot selector. The claim was already held when order %d was committed, so the selector "+
+		"would have seen it. Expected count is ZERO: find the placement path and route it through "+
+		"nodes.FindStoreSlotInLaneExcluding. %s",
+		burialShadowTag, BurialBypassMarker, at.placedBy, where)
+	s.burials.recordHard(hardNeverAsked, now)
+}
+
+// burialWasApprovedThenInvalidated answers PLAN §R.4's question: did this claim
+// exist when the placing order's destination was committed?
+//
+// If it did NOT, the selector could not have seen it however diligently it was
+// consulted, and the burial is churn the design accepts. If it DID, the selector
+// would have refused — so reaching a burial means it was never asked.
+//
+// FAIL-LOUD ON A DOUBT, in both arms. An unreadable placer, a missing history
+// row, or a zero claim time all return false, which sends the event to the
+// should-be-zero bucket. A tripwire that under-reports is worse than one that
+// over-reports — the same direction this file's dig-placement lookup already
+// chooses, and the direction §R.4's ruling depends on to stay honest: the whole
+// value of the split is that the remaining Bypass count means something.
+func (s *BinService) burialWasApprovedThenInvalidated(placedBy int64, heldSince time.Time) bool {
+	if placedBy == 0 || heldSince.IsZero() {
+		return false
+	}
+	committedAt, ok, err := s.db.OrderCommittedToFleetAt(placedBy)
+	if err != nil {
+		log.Printf("%s: placer %d commit time unknown: %v (counting as a never-asked bypass)",
+			burialShadowTag, placedBy, err)
+		return false
+	}
+	if !ok {
+		return false
+	}
+	return heldSince.UTC().After(committedAt)
 }

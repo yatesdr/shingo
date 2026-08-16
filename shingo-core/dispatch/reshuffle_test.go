@@ -17,21 +17,41 @@ import (
 
 // --- Helper: setup node group with direct children for shuffle ---
 
+// THE ERRORS ARE CHECKED, and that is not tidiness. These two lookups used to
+// discard their error and then dereference the result, so a transient database
+// failure — a Postgres connect timeout under the gate's parallel per-test clone
+// databases — arrived as `invalid memory address or nil pointer dereference` on
+// the next line. A panic aborts the whole package binary, so it also took down
+// every unrelated test running in parallel with it, and the report a reader got
+// was a stack trace pointing at a fixture rather than "the database was not
+// reachable". Diagnosed as the best-evidenced of three candidates for the docker
+// intermittent (PLAN §R.38); this is the amplifier, not the root, and the root
+// (the connect timeout itself) is still open.
 func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *nodes.Node, slots []*nodes.Node, shuffleSlots []*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	if err != nil || grpType == nil {
+		t.Fatalf("fixture: look up NGRP node type: %v (node type nil: %v). The node types are seeded "+
+			"by the schema, so this is the DATABASE being unreachable, not a missing fixture — check "+
+			"for `failed SASL auth: timeout` above and re-run the package serially (-p 1)",
+			err, grpType == nil)
+	}
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	if err != nil || lanType == nil {
+		t.Fatalf("fixture: look up LANE node type: %v (node type nil: %v) — see the NGRP arm above",
+			err, lanType == nil)
+	}
 
 	bp = &payloads.Payload{Code: "PTX"}
-	db.CreatePayload(bp)
+	testutil.MustNoErr(t, db.CreatePayload(bp), "fixture: create payload")
 
 	// Create NGRP
 	grp = &nodes.Node{Name: "GRP-TEST", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(grp)
+	testutil.MustNoErr(t, db.CreateNode(grp), "fixture: create NGRP")
 
 	// Create 1 lane with 5 slots
 	lane = &nodes.Node{Name: "GRP-TEST-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(lane)
+	testutil.MustNoErr(t, db.CreateNode(lane), "fixture: create lane")
 
 	slots = make([]*nodes.Node, 5)
 	for d := 1; d <= 5; d++ {
@@ -40,7 +60,7 @@ func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *nodes.Nod
 			Name:     fmt.Sprintf("GRP-TEST-L1-S%d", d),
 			ParentID: &lane.ID, Enabled: true, Depth: &depth,
 		}
-		db.CreateNode(slot)
+		testutil.MustNoErr(t, db.CreateNode(slot), "fixture: create lane slot")
 		slots[d-1] = slot
 	}
 
@@ -51,13 +71,15 @@ func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *nodes.Nod
 			Name:     fmt.Sprintf("GRP-TEST-DC-%d", i+1),
 			ParentID: &grp.ID, Enabled: true,
 		}
-		db.CreateNode(ss)
+		testutil.MustNoErr(t, db.CreateNode(ss), "fixture: create shuffle slot")
 		shuffleSlots[i] = ss
 	}
 
 	// Read back to get joined fields
-	grp, _ = db.GetNode(grp.ID)
-	lane, _ = db.GetNode(lane.ID)
+	grp, err = db.GetNode(grp.ID)
+	testutil.MustNoErr(t, err, "fixture: read back NGRP")
+	lane, err = db.GetNode(lane.ID)
+	testutil.MustNoErr(t, err, "fixture: read back lane")
 
 	return
 }

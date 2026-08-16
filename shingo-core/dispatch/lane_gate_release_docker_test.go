@@ -10,6 +10,7 @@ import (
 	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -568,22 +569,139 @@ func TestGateRelease_IgnoresNonGatedLanes(t *testing.T) {
 	}
 }
 
-// TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff pins the fix for the swap
-// clobber (PLAN §R.5): the gate re-binds the dropoff it is SPEAKING FOR — the
-// lane entry — and leaves the plan's later legs alone.
-//
-// The shape that broke it is a swap: store a full bin in the lane, pick an empty
-// out, return the empty to a press.
+// swapGateFixture builds the swap shape the two waybill tests share: store a
+// full bin in a gated lane, pick an empty out of it, return the empty to a press.
 //
 //	[wait station, pickup press, wait LANE, dropoff <lane>, pickup <empty>, dropoff <press>]
 //	                                        ^ index 3, the gate's leg          ^ index 5
 //
-// delivery_node names the FINAL destination (the press) — that is the live
-// pre-rebind state on both rig specimens, orders 24 and 30. The old re-bind
-// patched "the last dropoff" by backward scan and so overwrote index 5, sending
-// the empty into the lane and putting BOTH of the order's bins in one slot. The
-// press then starved waiting for an empty that had been driven into a lane, and
-// the ghost eviction was forced to evict an occupant Core's own plan had made.
+// delivery_node names the FINAL destination — the press — which is the live
+// pre-rebind state on both rig specimens (orders 24 and 30, PLAN §R.5).
+//
+// ONE builder for both tests deliberately. They assert two DIFFERENT facts about
+// the SAME order — what Core remembers (steps_json) and what the fleet is handed
+// (the blocks) — and this branch has already paid for letting those two drift
+// apart while a query on one of them reported the other clean. A copy-pasted
+// fixture is how they would quietly stop describing the same swap.
+// swapGateCase is the fixture's handles. A struct rather than six returns
+// because the two waybill tests and the junction test each read a different
+// subset, and positional returns that nobody reads in the same order are how a
+// fixture starts being wrong for one of its callers without anyone noticing.
+type swapGateCase struct {
+	order     *orders.Order
+	lane      *nodes.Node
+	press     *nodes.Node
+	emptySrc  *nodes.Node
+	fullBin   *bins.Bin // picked at the press, destined for the lane
+	emptyBin  *bins.Bin // picked out of the lane, destined back to the press
+	allocSlot *nodes.Node
+}
+
+func swapGateFixture(t *testing.T, db *store.DB, tag string) swapGateCase {
+	t.Helper()
+	gateWait := tag + "-WAIT"
+	laneID, _, _ := gateChoreoLane(t, db, tag, gateWait)
+	deepenLane(t, db, laneID, tag, 3)
+	slots := laneSlotsByDepth(t, db, laneID) // S0 shallow … S2 deepest
+	lane, err := db.GetNode(laneID)
+	if err != nil {
+		t.Fatalf("load lane: %v", err)
+	}
+	press := lineNode(t, db, tag+"-PRESS")
+	emptySrc := lineNode(t, db, tag+"-EMPTIES")
+
+	plan := fmt.Sprintf(`[{"action":"wait","node":%q,"wait_kind":"station"},`+
+		`{"action":"pickup","node":%q},`+
+		`{"action":"wait","node":%q,"wait_kind":"lane","wait_lane":%d},`+
+		`{"action":"dropoff","node":%q},`+
+		`{"action":"pickup","node":%q,"empty":true},`+
+		`{"action":"dropoff","node":%q}]`,
+		press.Name, press.Name, gateWait, laneID, slots[0].Name, emptySrc.Name, press.Name)
+
+	swap := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.OrderType = "complex"
+		o.SourceNode = press.Name
+		o.DeliveryNode = press.Name
+		o.Status = StatusStaged
+		o.StepsJSON = plan
+		o.WaitIndex = 1 // parked at the LANE wait, the second wait in the plan
+		// A gate-staged order always has one: the create sent the robot to the
+		// gate point unsealed. IsGateStaged reads it, so the release-driven test
+		// cannot reach the append without it. Inert for the rebind-only test.
+		o.VendorOrderID = "sg-gate-" + tag
+	})
+	// steps_json/wait_index/vendor_order_id are all set here rather than trusted to
+	// the struct: orders.Create's INSERT column list carries none of the three, so a
+	// fixture that only set them on the value would reload as a non-gate-staged
+	// order and the release would no-op silently.
+	if _, err := db.Exec(`UPDATE orders SET steps_json=$2, wait_index=1, vendor_order_id=$3 WHERE id=$1`,
+		swap.ID, plan, swap.VendorOrderID); err != nil {
+		t.Fatalf("persist plan: %v", err)
+	}
+
+	// THE JUNCTION, written the way the allocator writes it: one row per claimed
+	// bin, keyed on the PICKUP step, carrying the destination the plan implied at
+	// allocation time. This is the copy nothing updated.
+	bt := &bins.BinType{Code: tag + "-BT", Description: "tote"}
+	if err := db.CreateBinType(bt); err != nil {
+		t.Fatalf("create bin type: %v", err)
+	}
+	fullBin := &bins.Bin{BinTypeID: bt.ID, Label: tag + "-FULL", NodeID: &press.ID, Status: "available"}
+	if err := db.CreateBin(fullBin); err != nil {
+		t.Fatalf("create full bin: %v", err)
+	}
+	emptyBin := &bins.Bin{BinTypeID: bt.ID, Label: tag + "-EMPTY", NodeID: &emptySrc.ID, Status: "available"}
+	if err := db.CreateBin(emptyBin); err != nil {
+		t.Fatalf("create empty bin: %v", err)
+	}
+	// step 1 = pickup at the press (the full bin) → dropoff at the lane slot.
+	// step 4 = pickup at the empties node        → dropoff back at the press.
+	if err := db.InsertOrderBin(swap.ID, fullBin.ID, 1, protocol.ActionPickup, press.Name, slots[0].Name); err != nil {
+		t.Fatalf("junction row for the full bin: %v", err)
+	}
+	if err := db.InsertOrderBin(swap.ID, emptyBin.ID, 4, protocol.ActionPickup, emptySrc.Name, press.Name); err != nil {
+		t.Fatalf("junction row for the empty bin: %v", err)
+	}
+
+	swap, err = db.GetOrder(swap.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	return swapGateCase{
+		order: swap, lane: lane, press: press, emptySrc: emptySrc,
+		fullBin: fullBin, emptyBin: emptyBin, allocSlot: slots[0],
+	}
+}
+
+// destNodeFor reads one bin's recorded destination back out of the junction.
+func destNodeFor(t *testing.T, db *store.DB, orderID, binID int64) string {
+	t.Helper()
+	rows, err := db.ListOrderBins(orderID)
+	if err != nil {
+		t.Fatalf("list junction rows: %v", err)
+	}
+	for _, ob := range rows {
+		if ob.BinID == binID {
+			return ob.DestNode
+		}
+	}
+	t.Fatalf("no junction row for bin %d on order %d", binID, orderID)
+	return ""
+}
+
+// TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff pins the fix for the swap
+// clobber (PLAN §R.5): the gate re-binds the dropoff it is SPEAKING FOR — the
+// lane entry — and leaves the plan's later legs alone.
+//
+// This is the LEDGER half. Its wire twin is
+// TestGateRelease_SwapBlocksKeepPressAsFinalDropoff below, and the pair exists
+// because passing this one alone is exactly the state the branch shipped in.
+//
+// The old re-bind patched "the last dropoff" by backward scan and so overwrote
+// index 5, sending the empty into the lane and putting BOTH of the order's bins
+// in one slot. The press then starved waiting for an empty that had been driven
+// into a lane, and the ghost eviction was forced to evict an occupant Core's own
+// plan had made.
 //
 // Mutation: point applyDeliveryNodeAtStep back at a last-dropoff scan and the
 // index-5 assertion below fires — the empty is aimed at the lane slot again.
@@ -593,41 +711,8 @@ func TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	laneID, _, _ := gateChoreoLane(t, db, "SWAPRB", "SWAPRB-WAIT")
-	deepenLane(t, db, laneID, "SWAPRB", 3)
-	slots := laneSlotsByDepth(t, db, laneID) // S0 shallow … S2 deepest
-	lane, err := db.GetNode(laneID)
-	if err != nil {
-		t.Fatalf("load lane: %v", err)
-	}
-	press := lineNode(t, db, "SWAPRB-PRESS")
-	emptySrc := lineNode(t, db, "SWAPRB-EMPTIES")
-
-	// The swap, with delivery_node on the FINAL leg — the press — exactly as the
-	// specimens carried it before the gate touched them.
-	plan := fmt.Sprintf(`[{"action":"wait","node":%q,"wait_kind":"station"},`+
-		`{"action":"pickup","node":%q},`+
-		`{"action":"wait","node":"SWAPRB-WAIT","wait_kind":"lane","wait_lane":%d},`+
-		`{"action":"dropoff","node":%q},`+
-		`{"action":"pickup","node":%q,"empty":true},`+
-		`{"action":"dropoff","node":%q}]`,
-		press.Name, press.Name, laneID, slots[0].Name, emptySrc.Name, press.Name)
-
-	swap := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.OrderType = "complex"
-		o.SourceNode = press.Name
-		o.DeliveryNode = press.Name
-		o.Status = StatusStaged
-		o.StepsJSON = plan
-		o.WaitIndex = 1 // parked at the LANE wait, the second wait in the plan
-	})
-	if _, err := db.Exec(`UPDATE orders SET steps_json=$2, wait_index=1 WHERE id=$1`, swap.ID, plan); err != nil {
-		t.Fatalf("persist plan: %v", err)
-	}
-	swap, err = db.GetOrder(swap.ID)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
+	tc := swapGateFixture(t, db, "SWAPRB")
+	swap, lane, press, emptySrc := tc.order, tc.lane, tc.press, tc.emptySrc
 
 	// The index under test is DERIVED the way production derives it, so this
 	// asserts the plumbing too: a candidate walk that stopped carrying the index
@@ -638,7 +723,7 @@ func TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff(t *testing.T) {
 			"the candidate walk no longer names the leg the gate speaks for", entryIdx)
 	}
 
-	got, err := d.rebindGatedDropoff(swap, lane, entryIdx)
+	rebound, err := d.rebindGatedDropoff(swap, lane, entryIdx)
 	if err != nil {
 		t.Fatalf("rebind: %v", err)
 	}
@@ -656,9 +741,9 @@ func TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff(t *testing.T) {
 	}
 
 	// The gate's own leg carries the re-bound slot.
-	if steps[3].Node != got.Name {
+	if steps[3].Node != rebound.Name {
 		t.Errorf("lane-entry dropoff (step 3) = %s, want the re-bound slot %s — the gate patched a step it does not speak for",
-			steps[3].Node, got.Name)
+			steps[3].Node, rebound.Name)
 	}
 	// THE ASSERTION THE CLOBBER FAILED. The empty still goes back to the press.
 	if steps[5].Node != press.Name {
@@ -670,5 +755,105 @@ func TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff(t *testing.T) {
 	if steps[4].Node != emptySrc.Name {
 		t.Errorf("empty pickup (step 4) = %s, want %s — the patch touched a step outside its index",
 			steps[4].Node, emptySrc.Name)
+	}
+
+	// ── THE THIRD COPY (D2) ───────────────────────────────────────────────
+	// order_bins.dest_node was written once at allocation and updated by nothing,
+	// so the robot drove to the new slot while the ledger still named the old one
+	// and the whole-order settle placed the bin at the row's stale value. The row
+	// now follows the re-bind.
+	if got := destNodeFor(t, db, swap.ID, tc.fullBin.ID); got != rebound.Name {
+		t.Errorf("full bin's junction dest_node = %s, want the re-bound slot %s — the ledger still "+
+			"names the slot allocation picked, so the settle would place the bin where the robot "+
+			"did not go (PLAN §R.25, D2)", got, rebound.Name)
+	}
+	// And the OTHER row is the junction's version of the step-5 assertion above:
+	// re-deriving all the destinations must not drag the empty's leg along.
+	if got := destNodeFor(t, db, swap.ID, tc.emptyBin.ID); got != press.Name {
+		t.Errorf("empty bin's junction dest_node = %s, want the press %s — the re-derivation moved a "+
+			"leg the gate does not speak for", got, press.Name)
+	}
+}
+
+// TestGateRelease_SwapBlocksKeepPressAsFinalDropoff pins the WAYBILL — the blocks
+// the fleet is actually handed — for the swap the test above pins in steps_json.
+//
+// ── WHY A SECOND TEST, AND WHY IT READS ReleaseCalls ──────────────────────
+// What Core remembers and what the robot is told are two facts, and this branch
+// was burned asserting one while reporting the other. 768a2985 fixed the plan on
+// disk and said "no backward scan survives on the gate path"; PLAN §R.8 verified
+// that with a steps_json query and recorded "0b CONFIRMED end-to-end". Meanwhile
+// appendGateTail went on calling patchRedirectSegments — a backward last-dropoff
+// scan keyed on order.DeliveryNode, which the rebind had just set to the lane
+// slot — and rewrote the empty's return-to-press leg IN MEMORY on the way to
+// stepsToBlocks. steps_json never carried the rewrite, so no query on steps_json
+// could ever have found it. That is the blind spot this test closes.
+//
+// Falsified on the rig before the call was deleted, against the running
+// 435a1741 stack: three firings of "complex release: patching segment dropoff
+// PLN_002 -> LSD_00x (redirect)" in a four-hour window, one per gated SWAP
+// re-bind (orders 24, 26 and 67 — the first two being §R.8's own "0b CONFIRMED"
+// specimens), each re-aiming the press leg at the lane slot that same order had
+// just filled. The four other re-binds in that window were plans whose last
+// dropoff already equalled the rebound node, so the scan rewrote a dropoff to
+// itself and said nothing — the happy path the patch's safety argument rested on,
+// and the reason the defect stayed invisible for the other four sevenths of the
+// population.
+//
+// MUTATION: restore d.patchRedirectSegments(segment, order, moreWaits) in
+// appendGateTail and the final-block assertion fires carrying the specimens'
+// exact signature — two JackUnload blocks naming one node.
+func TestGateRelease_SwapBlocksKeepPressAsFinalDropoff(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	tc := swapGateFixture(t, db, "SWAPWIRE")
+	swap, lane, press, emptySrc := tc.order, tc.lane, tc.press, tc.emptySrc
+
+	if err := d.releaseGatedOrder(swap, lane, gateEntryIndexFor(t, swap)); err != nil {
+		t.Fatalf("gated release: %v", err)
+	}
+
+	calls := backend.ReleaseCalls()
+	if len(calls) != 1 {
+		t.Fatalf("fleet appends = %d, want 1 — the gated swap's tail never reached the fleet", len(calls))
+	}
+	blocks := calls[0].Blocks
+	if len(blocks) != 3 {
+		t.Fatalf("blocks = %d, want 3 ([dropoff lane, pickup empty, dropoff press]): %+v", len(blocks), blocks)
+	}
+
+	// The re-bind's OWN record of the slot it chose, read back from the row rather
+	// than recomputed here — so the test cannot agree with a re-bind that picked
+	// one slot and emitted another.
+	reloaded, err := db.GetOrder(swap.ID)
+	if err != nil {
+		t.Fatalf("reload after release: %v", err)
+	}
+
+	if blocks[0].Location != reloaded.DeliveryNode || blocks[0].BinTask != "JackUnload" {
+		t.Errorf("entry block = %s/%s, want JackUnload at the re-bound slot %s — the lane entry is the "+
+			"one leg the gate speaks for", blocks[0].Location, blocks[0].BinTask, reloaded.DeliveryNode)
+	}
+	if blocks[1].Location != emptySrc.Name || blocks[1].BinTask != "JackLoad" {
+		t.Errorf("middle block = %s/%s, want JackLoad at %s — a step outside the gate's leg moved on the wire",
+			blocks[1].Location, blocks[1].BinTask, emptySrc.Name)
+	}
+
+	// THE ASSERTION THE WAYBILL FAILED. The empty still goes back to the press.
+	if blocks[2].Location != press.Name || blocks[2].BinTask != "JackUnload" {
+		t.Errorf("final block = %s/%s, want JackUnload at the press %s — the emit path re-aimed the "+
+			"empty's return leg at the lane slot, which is what drove both of the order's bins into one "+
+			"slot on the wire while steps_json stayed clean (PLAN §R.5, D1)",
+			blocks[2].Location, blocks[2].BinTask, press.Name)
+	}
+	// Stated separately and directly, because this is the shape a reader can grep a
+	// captured fleet payload for: a swap that unloads twice at one node is the
+	// clobber, whichever writer produced it.
+	if blocks[0].Location == blocks[2].Location {
+		t.Errorf("both dropoff blocks name %s — two JackUnload blocks at one node is the clobber signature",
+			blocks[0].Location)
 	}
 }

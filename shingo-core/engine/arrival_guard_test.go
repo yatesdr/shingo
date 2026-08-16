@@ -131,6 +131,37 @@ func TestArrivalGuard_OneSpelling(t *testing.T) {
 	}
 }
 
+// TestBinAlreadyAt covers the arms the two settle sites share, including the one
+// neither site's own tests reach: an UNPLACED bin.
+//
+// A bin in flight has node_id NULL, and the delivery-time settle is called with
+// destination node ids that come from a lookup — so "nil node_id" must never
+// compare equal to anything, least of all to a zero-valued destination. Getting
+// that backwards would skip exactly the bins the settle exists to place.
+func TestBinAlreadyAt(t *testing.T) {
+	at := func(node int64) *bins.Bin { n := node; return &bins.Bin{ID: 3, NodeID: &n} }
+
+	cases := []struct {
+		name string
+		bin  *bins.Bin
+		dest int64
+		want bool
+	}{
+		{"at the destination", at(42), 42, true},
+		{"somewhere else", at(41), 42, false},
+		{"in flight — node_id NULL", &bins.Bin{ID: 3}, 42, false},
+		{"in flight against a zero destination", &bins.Bin{ID: 3}, 0, false},
+		{"nil bin", nil, 42, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := binAlreadyAt(tc.bin, tc.dest); got != tc.want {
+				t.Errorf("binAlreadyAt = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestReapplyRefused_ArrivedCheckComesFirst pins the ordering that made this
 // instrument readable, and it took two corrections to get right.
 //

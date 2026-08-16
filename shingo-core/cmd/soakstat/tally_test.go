@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"shingocore/service"
+)
 
 // TestTallyValue_ReadsTheValueNotTheRepetition pins the fix for a bug in the
 // MEASUREMENT, which is the worst place to have one: it made a green run look
@@ -13,19 +18,41 @@ import "testing"
 // whose expected value is zero, so the reading was not merely wrong, it was wrong
 // in the direction that panics the reader.
 //
-// The rows below are the real log lines from the 2026-08-10 run.
+// The rows below are the CURRENT emitter's lines. They were updated when the
+// PLAN R.4 split turned one hard-burial counter into two — a parser fixture
+// showing a format the emitter no longer produces is a test that passes while
+// describing a system that does not exist.
 func TestTallyValue_ReadsTheValueNotTheRepetition(t *testing.T) {
 	t.Parallel()
-	const bypassLine = `2026/08/10 12:24:38 burial-shadow BYPASS=1 (expected 0) — placements buried a ` +
-		`hard-claimed bin without going through the store-slot selector; grep "burial-shadow: GUARD BYPASS"`
-	const tallyLine = `2026/08/10 12:24:38 burial-shadow tally (since boot): soft-hold burials 7 ` +
+	const bypassLine = `2026/08/12 12:24:38 burial-shadow BYPASS=1 (expected 0) — placements buried a ` +
+		`hard claim that ALREADY EXISTED when the placing order was committed, so the store-slot ` +
+		`selector was never asked. Find the placement path and route it through ` +
+		`nodes.FindStoreSlotInLaneExcluding. THIS COUNT is the number, not a grep of it; for the ` +
+		`per-event lines search the journal for "GUARD" followed by "BYPASS" — split here so this ` +
+		`line stays out of its own results.`
+	const churnLine = `2026/08/12 12:24:38 burial-shadow CHURN=4 — approved-then-invalidated: the ` +
+		`buried claim arrived AFTER the placing order was committed and driving`
+	const tallyLine = `2026/08/12 12:24:38 burial-shadow tally (since boot): soft-hold burials 7 ` +
 		`(longest held at burial 5s), dig-uncovered 0`
 
 	if n, ok := tallyValue(bypassLine, "BYPASS="); !ok || n != 1 {
 		t.Errorf("BYPASS= read as (%d, %v), want (1, true)", n, ok)
 	}
+	if n, ok := tallyValue(churnLine, "CHURN="); !ok || n != 4 {
+		t.Errorf("CHURN= read as (%d, %v), want (4, true) — the accepted population needs its own "+
+			"reading, or the split hides it instead of separating it", n, ok)
+	}
 	if n, ok := tallyValue(tallyLine, "soft-hold burials "); !ok || n != 7 {
 		t.Errorf("soft-hold burials read as (%d, %v), want (7, true)", n, ok)
+	}
+
+	// THE SELF-MATCHING GUARD, on the line that carries a search instruction. A
+	// should-be-zero tally that contains its own grep pattern is counted by that
+	// grep, so the reading is tally-lines-plus-events and the counter never reads
+	// zero again (PLAN R.9, and it is why this line spells the marker in halves).
+	if strings.Contains(bypassLine, service.BurialBypassMarker) {
+		t.Errorf("the BYPASS tally line contains %q, the very string it tells the reader to search "+
+			"for — grepping it counts this line too", service.BurialBypassMarker)
 	}
 
 	// A hundred repetitions of the same tally must read as its VALUE, not as 100.

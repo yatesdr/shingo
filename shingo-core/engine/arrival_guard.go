@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sync"
 
-	"shingo/protocol"
-
 	"shingocore/store/bins"
 	"shingocore/store/orders"
 )
@@ -112,6 +110,23 @@ func refuseArrival(order *orders.Order, bin *bins.Bin, destNodeID int64, site st
 	}
 }
 
+// binAlreadyAt answers "is there anything left to place?" — one question, asked
+// by both settle sites, spelled once so they cannot drift (law 3's rider: one
+// spelling OF ONE QUESTION; these two genuinely ask the same one).
+//
+// It is NOT the whole of either site's decision, which is why it is a small
+// predicate and not a shared guard: reapplyRefused wraps it in a terminal cut it
+// alone needs, and the delivery-time loop asks it for a reason of its own (see
+// applyMultiBinArrivalForOrder). What both need is the same test, in the same
+// place — BEFORE the ownership question — because a bin that already landed is a
+// finished delivery whoever holds the claim by now, and asking about ownership
+// first is what made this instrument unreadable twice (121, then 2).
+//
+// A nil node_id — the bin is at _TRANSIT or unplaced — is NOT "already there".
+func binAlreadyAt(bin *bins.Bin, destNodeID int64) bool {
+	return bin != nil && bin.NodeID != nil && *bin.NodeID == destNodeID
+}
+
 // reapplyRefused is the COMPLETION-TIME question, and it is not the same
 // question as refuseArrival even though the two share an ownership test.
 //
@@ -173,15 +188,16 @@ func reapplyRefused(order *orders.Order, bin *bins.Bin, destNodeID int64, site s
 	// Skipping HERE and not at the call sites is deliberate: handleMultiBinCompleted
 	// deletes its junction rows on exactly this terminal firing, and an early return
 	// up there would leak them. Skip the bin's work, not the handler's.
-	// FAIL-CLOSED ON AN UNSET STATUS. protocol.IsTerminal answers "has no outgoing
-	// transitions", and the empty string has none — so a zero-value status reads
-	// as terminal and would silently switch this guard OFF. That is the one
-	// direction this cut must not fail in: skipping is the permissive answer, and
-	// an unreadable order is exactly when the teleport check should still run.
-	if order.Status != "" && protocol.IsTerminal(order.Status) {
+	//
+	// orderIsTerminal, not a bare protocol.IsTerminal: the fail-closed arm for an
+	// unset status lives inside the predicate, spelled once, and its reasoning is
+	// written out there. This site used to carry that arm inline while its twin at
+	// the junction-row delete did not — one rule, two spellings, and the fail-open
+	// one guarding the destructive act (D3).
+	if orderIsTerminal(order) {
 		return true, nil
 	}
-	if bin.NodeID != nil && *bin.NodeID == destNodeID {
+	if binAlreadyAt(bin, destNodeID) {
 		// It landed. There is nothing to re-apply and nothing to report — this is
 		// the ordinary outcome of a delivery that worked, whoever holds the claim
 		// by now.
@@ -247,6 +263,15 @@ func resetArrivalRefusalTally() {
 	arrivalRefusalTally.bySite = map[string]int{}
 }
 
+// ArrivalRefusalMarker is the per-event line's search string, named once so the
+// emitter, the periodic tally and the guard test share one definition.
+//
+// The tally line must NOT contain it. A should-be-zero that quotes its own grep
+// pattern is counted by that grep, so the number read back is
+// tally-lines-plus-events and the counter reads non-zero forever — `grep -c` on
+// this exact string returned 148 against a true count of 2 (PLAN §R.9).
+const ArrivalRefusalMarker = "arrival refused at"
+
 // recordArrivalRefusal is what every call site uses: count it, and say it at a
 // level that is always on. Returns the refusal so the caller can propagate it.
 func (e *Engine) recordArrivalRefusal(r *ArrivalRefusal) *ArrivalRefusal {
@@ -254,9 +279,9 @@ func (e *Engine) recordArrivalRefusal(r *ArrivalRefusal) *ArrivalRefusal {
 		return nil
 	}
 	noteArrivalRefusal(r)
-	e.logFn("WARN: arrival refused at %s — %s (%s). The order will not place it. Expected count is "+
-		"ZERO: the bin did not reach this order's destination AND this order does not own it, so two "+
-		"orders were pointed at one bin.",
+	e.logFn("WARN: "+ArrivalRefusalMarker+" %s — %s (%s). The order will not place it. Expected count "+
+		"is ZERO: the bin did not reach this order's destination AND this order does not own it, so "+
+		"two orders were pointed at one bin.",
 		r.Site, r.Reason(), r.Context())
 	return r
 }

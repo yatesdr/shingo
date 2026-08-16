@@ -180,15 +180,22 @@ function fieldH(label, val, cls) { return field(label, escapeHtml(val || '-'), c
 
 // elapsedLabel answers "how long did this take / has this been going" —
 // the question the timestamps made you compute by hand.
+// durationText renders a span of seconds. One spelling, because the timeline's
+// unaccounted-gap marker has to read in the same units as the elapsed label
+// beside it — two formatters would drift into two vocabularies.
+function durationText(secs) {
+  return secs < 60 ? secs + 's'
+    : secs < 3600 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's'
+    : Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
+}
+
 function elapsedLabel(o) {
   if (!o.created_at) return '';
   var start = new Date(o.created_at).getTime();
   var end = o.completed_at ? new Date(o.completed_at).getTime() : Date.now();
   var secs = Math.round((end - start) / 1000);
   if (!isFinite(secs) || secs < 0) return '';
-  var txt = secs < 60 ? secs + 's'
-    : secs < 3600 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's'
-    : Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
+  var txt = durationText(secs);
   return o.completed_at ? 'took ' + txt : txt + ' elapsed';
 }
 
@@ -347,9 +354,50 @@ function buildManifest(data, opts) {
   }
 
   // ── TIMELINE ──
+  //
+  // ── IT STARTS AT THE ORDER, NOT AT THE FIRST ROW ──────────────────────────
+  //
+  // order_history records status CHANGES, and a row is written in the same
+  // transaction as every change — so nothing is ever lost. But an order's
+  // CREATION writes no row, and a gate that parks a blocked order in its ENTRY
+  // status changes nothing, so it writes none either. The result was a panel
+  // that began at whatever happened first and silently dropped everything
+  // before it.
+  //
+  // Measured at Springfield 2026-08-11: 34 of 110 complex orders in two days had
+  // a gap between created_at and their first history row; the average was 28
+  // MINUTES and the worst 7h42m. Every other order type was a clean zero — which
+  // is why the panel looks trustworthy right up until the order where it isn't,
+  // and the orders it truncates are the interesting ones: the ones that WAITED.
+  //
+  // Both facts are already in the database, so this is a read-side fix and it
+  // works on every order already stored. What is NOT stored is what the order was
+  // DOING in that window — queue_cause is a current-value column that gets
+  // overwritten — so the gap is marked as unaccounted rather than guessed at. A
+  // panel that admits what it does not know beats one that implies nothing
+  // happened.
   if (data.history && data.history.length > 0) {
     out += '<div class="manifest-section">History</div>';
-    out += h`<ul class="timeline-list">${
+    var lead = '';
+    if (o && o.created_at) {
+      lead = h`<li>
+          <span class="tl-time">${{__html:true, value: formatTime(o.created_at)}}</span>
+          <span class="badge badge-xs">created</span>
+          <span class="tl-detail">order created</span>
+        </li>`;
+      var gapSecs = Math.round(
+        (new Date(data.history[0].created_at).getTime() - new Date(o.created_at).getTime()) / 1000);
+      // 60s, matching the threshold the Springfield measurement used. Below that
+      // is transaction timing, not a wait worth a line.
+      if (isFinite(gapSecs) && gapSecs > 60) {
+        lead += h`<li class="tl-unaccounted">
+            <span class="tl-time">—</span>
+            <span class="badge badge-xs">unaccounted</span>
+            <span class="tl-detail">${durationText(gapSecs) + ' before the first recorded change — the order existed and nothing was written for it'}</span>
+          </li>`;
+      }
+    }
+    out += h`<ul class="timeline-list">${{__html:true, value: lead}}${
       data.history.map(function(ev) {
         return h`<li>
           <span class="tl-time">${{__html:true, value: formatTime(ev.created_at)}}</span>

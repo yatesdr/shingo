@@ -83,13 +83,37 @@ func InsertID(db QueryRower, query string, args ...any) (int64, error) {
 // evicted together. A bin that keeps its claim is still returned as evicted:
 // its position changed, which is what the callers act on.
 //
-// Why the conflicting record is a stale ghost (plant-verified 2026-07-08): a
-// delivery physically CANNOT complete onto an occupied slot, so a completed
-// delivery is itself proof the slot was empty. RDS emits no fault code and does
-// not track occupancy — the proof is the physical completion, not a vendor
-// error. A different bin still recorded here is therefore a stale ghost an
-// untracked manual move left behind; evict it and keep the newcomer, never the
-// reverse.
+// Why the conflicting record is stale (plant-verified 2026-07-08): a delivery
+// physically CANNOT complete onto an occupied slot, so a completed delivery is
+// itself proof the slot was empty. RDS emits no fault code and does not track
+// occupancy — the proof is the physical completion, not a vendor error. So the
+// RECORD is wrong and the newcomer is right; evict it, never the reverse.
+//
+// ── TWO CAUSES, NOT ONE, AND THE SECOND IS OURS ───────────────────────────
+//
+// This paragraph used to end "a stale ghost an untracked manual move left
+// behind", as though an operator outside the system were the only way to get
+// here. That was false when it was written and PLAN §R.5/§R.6 proved it: the
+// clobbered swap re-bound BOTH of an order's dropoffs to one lane slot, so the
+// order delivered two bins to one node and the occupant this function evicted
+// was manufactured by CORE'S OWN CORRUPTED PLAN. The eviction was quietly
+// laundering the evidence of the defect that produced it, and the false premise
+// is what made that read as routine housekeeping.
+//
+// The two are distinguishable at the moment of eviction, and the discriminator
+// is the occupant's CLAIM:
+//
+//   - NO LIVE HOLDER → an orphan. Nobody is coming for it, which is what an
+//     untracked manual move or an abandoned record looks like. Evicted and
+//     surfaced on the anomalies page.
+//   - A LIVE HOLDER → Core put two orders on one node. The claim is PRESERVED
+//     (see the ownership note below) and the eviction logs a WARN naming the
+//     holder — that line is the tripwire, and reaching it means something
+//     upstream recorded a bin in a slot a delivery landed on. It is a defect
+//     report, not a rescue notice; the rescue does not excuse whatever caused it.
+//
+// So a reader arriving here with an eviction in hand should read the WARN before
+// concluding anything about manual moves.
 //
 // Synthetic nodes (LANE/NGRP/_TRANSIT) hold many bins by design and are exempt.
 // The _TRANSIT lookup is lazy — only on the rare collision, not every arrival.

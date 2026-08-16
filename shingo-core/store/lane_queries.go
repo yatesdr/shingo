@@ -7,6 +7,7 @@ package store
 // clause joins nodes via parent_id.
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -489,6 +490,46 @@ func (db *DB) SpokenForBinsBehind(placedNodeID int64) ([]SpokenForBin, error) {
 // destination through findShuffleSlots, which does not consult the store-slot
 // selector, so a dig burying a claimed bin is a known uncovered path rather than
 // a guard bypass.
+// OrderCommittedToFleetAt returns the last moment this order's destination was
+// committed and the robot was moving toward it, from order_history.
+//
+// ── WHAT IT IS FOR, AND WHY THESE TWO STATUSES ────────────────────────────
+//
+// The burial tripwire needs to tell two populations apart: a placement that
+// SKIPPED the store-slot selector (must be zero) from one the selector APPROVED
+// and a later claim invalidated (churn the design accepts and heals — PLAN §R.4).
+// The discriminator is time: a claim created after this order's destination was
+// committed could not have been visible to the selector, and one created before
+// it could.
+//
+// `in_transit` is the moment for a GATED order — its destination is chosen at
+// release by rebindGatedDropoff, and staged→in_transit is that release.
+// `dispatched` is the moment for the plain path, where a plan can go straight to
+// delivered without ever reporting in_transit. MAX over the two is right for
+// both: for a gated order in_transit(release) is strictly later than
+// dispatched(create), and for a plain order in_transit follows dispatch.
+//
+// IT ERRS LATE, AND THE DIRECTION IS DELIBERATE. On the plain path the selector
+// actually runs during sourcing, before dispatch, so a claim landing in the
+// window between the two is classified as never-asked — the LOUD bucket. A
+// tripwire that under-reports is worse than one that over-reports, which is the
+// same rule this file's compound-leg lookup already follows.
+//
+// ok=false means the order has no such history row and the caller cannot make
+// the comparison; it must then take the loud arm rather than guess.
+func (db *DB) OrderCommittedToFleetAt(orderID int64) (time.Time, bool, error) {
+	var at sql.NullTime
+	err := db.QueryRow(`SELECT MAX(created_at) FROM order_history
+		WHERE order_id=$1 AND status IN ('dispatched','in_transit')`, orderID).Scan(&at)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("order %d fleet-commit time: %w", orderID, err)
+	}
+	if !at.Valid {
+		return time.Time{}, false, nil
+	}
+	return at.Time.UTC(), true, nil
+}
+
 func (db *DB) OrderIsCompoundLeg(orderID int64) (bool, error) {
 	var isChild bool
 	err := db.QueryRow(`SELECT parent_order_id IS NOT NULL FROM orders WHERE id=$1`, orderID).Scan(&isChild)

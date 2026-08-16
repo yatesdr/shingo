@@ -24,6 +24,13 @@ func (db *DB) ListOrderBins(orderID int64) ([]*orders.OrderBin, error) {
 	return orders.ListOrderBins(db.DB, orderID)
 }
 
+// UpdateOrderBinDestNode re-points one bin's recorded destination, keyed by bin
+// because step_index names the pickup. Returns rows changed (0 or 1); zero is the
+// ordinary answer for a single-bin order, which has no junction rows.
+func (db *DB) UpdateOrderBinDestNode(orderID, binID int64, destNode string) (int64, error) {
+	return orders.UpdateOrderBinDestNode(db.DB, orderID, binID, destNode)
+}
+
 // DeleteOrderBins removes all junction rows for an order. Called alongside
 // UnclaimOrderBins on cancel/fail paths to keep the junction table clean.
 func (db *DB) DeleteOrderBins(orderID int64) { orders.DeleteOrderBins(db.DB, orderID) }

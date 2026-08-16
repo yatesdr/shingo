@@ -290,6 +290,13 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 // on a pickup would make this return a pickup node and the patch would re-aim the
 // robot's final drop at it. Edge pins that invariant directly —
 // TestSwapBuilders_EveryLegEndsOnADropoff (material_orders_invariant_test.go).
+//
+// AND THE GATE RE-BIND IS THE ONE WRITER THAT BREAKS IT. It sets delivery_node to
+// the LANE ENTRY, which on a swap is not the last dropoff — so for a rebound order
+// the patch would rewrite the final leg to somewhere it does not belong, and did,
+// for a week (PLAN §R.5, D1). That is why appendGateTail no longer applies the
+// patch at all; the plan is already correct there, patched by carried index. The
+// happy-path-self-rewrite argument above holds for the plain path only.
 func extractEndpoints(steps []resolvedStep) (pickup, delivery string) {
 	for _, s := range steps {
 		if s.Action == protocol.ActionPickup || s.Action == protocol.ActionDropoff {

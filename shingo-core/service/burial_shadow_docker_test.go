@@ -187,6 +187,131 @@ func TestBurialShadow_HardClaimBuriedIsATripwire(t *testing.T) {
 	}
 }
 
+// commitOrderToFleetAt writes the order_history row the burial classifier reads:
+// the moment this order's destination was committed and the robot started moving
+// toward it. Written directly because the point of the test is the COMPARISON,
+// not the lifecycle that produces the row.
+func commitOrderToFleetAt(t *testing.T, db *store.DB, orderID int64, at time.Time) {
+	t.Helper()
+	_, err := db.Exec(`INSERT INTO order_history (order_id, status, detail, created_at)
+		VALUES ($1, 'in_transit', 'test: committed to fleet', $2)`, orderID, at.UTC())
+	testutil.MustNoErr(t, err, "insert order_history")
+}
+
+// claimHeldSince backdates a bin's hold so the classifier sees a claim that
+// existed before — or arrived after — the placing order was committed.
+// SpokenForBinsBehind reads COALESCE(reservations.created_at, orders.created_at),
+// so both have to move for the answer to be unambiguous.
+func claimHeldSince(t *testing.T, db *store.DB, binID, holderID int64, at time.Time) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE reservations SET created_at=$2 WHERE bin_id=$1`, binID, at.UTC())
+	testutil.MustNoErr(t, err, "backdate reservation")
+	_, err = db.Exec(`UPDATE orders SET created_at=$2 WHERE id=$1`, holderID, at.UTC())
+	testutil.MustNoErr(t, err, "backdate holder order")
+}
+
+// TestBurialShadow_ApprovedThenInvalidatedIsNotABypass is the PLAN R.4 split,
+// built rather than ruled-and-forgotten.
+//
+// R.3 measured what the tripwire had been calling bypasses: four events, all of
+// them claims that landed AFTER the gate approved a destination, during the drive
+// from the lane mouth to the slot — 27ms and 32s wide on the two specimens. No
+// check at any Core moment can see a claim that does not yet exist, so the
+// sentence the instrument printed ("find the placement path and route it through
+// the selector") was false for them: there is no path to find. R.4 ruled the
+// population accepted and healed, and ruled the MESSAGE to be split. This is that
+// split, and the discriminator is time rather than a threshold.
+//
+// The two arms are the same fixture with the clock moved. That is deliberate:
+// nothing else about the event differs, so if the classifier ever keys on
+// anything but the ordering, one of these two fails.
+func TestBurialShadow_ApprovedThenInvalidatedIsNotABypass(t *testing.T) {
+	t.Parallel()
+
+	t.Run("claim arrived AFTER the placer was committed — churn", func(t *testing.T) {
+		db := testdb.Open(t)
+		slots := burialLane(t, db, "BSCHURN", 4)
+		svc := newBinSvc(db)
+
+		buried := binAt(t, db, "BSCHURN-HARD", slots[2])
+		holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, buried.ID, holder.ID)
+
+		arriving := binAt(t, db, "BSCHURN-ARRIVE", slots[0])
+		placer := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, arriving.ID, placer.ID)
+
+		// The placer was committed an hour ago; the buried claim landed just now,
+		// i.e. while the robot was already driving.
+		commitOrderToFleetAt(t, db, placer.ID, time.Now().Add(-time.Hour))
+		claimHeldSince(t, db, buried.ID, holder.ID, time.Now())
+
+		_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, placer.ID)
+		testutil.MustNoErr(t, err, "ApplyArrival")
+
+		got := svc.BurialShadowTally()
+		if got.Churn != 1 || got.Bypass != 0 {
+			t.Fatalf("tally = %+v, want Churn=1 Bypass=0 — the claim did not exist when the placer "+
+				"was committed, so there is no placement path to find and the should-be-zero must "+
+				"stay zero (PLAN R.3/R.4)", got)
+		}
+	})
+
+	t.Run("claim already existed when the placer was committed — bypass", func(t *testing.T) {
+		db := testdb.Open(t)
+		slots := burialLane(t, db, "BSASKED", 4)
+		svc := newBinSvc(db)
+
+		buried := binAt(t, db, "BSASKED-HARD", slots[2])
+		holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, buried.ID, holder.ID)
+
+		arriving := binAt(t, db, "BSASKED-ARRIVE", slots[0])
+		placer := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, arriving.ID, placer.ID)
+
+		// The mirror image: the claim was already an hour old when the placer was
+		// committed, so the selector would have seen it.
+		claimHeldSince(t, db, buried.ID, holder.ID, time.Now().Add(-time.Hour))
+		commitOrderToFleetAt(t, db, placer.ID, time.Now())
+
+		_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, placer.ID)
+		testutil.MustNoErr(t, err, "ApplyArrival")
+
+		got := svc.BurialShadowTally()
+		if got.Bypass != 1 || got.Churn != 0 {
+			t.Fatalf("tally = %+v, want Bypass=1 Churn=0 — the claim predates the commit, so the "+
+				"selector would have refused and reaching a burial means it was never asked", got)
+		}
+	})
+
+	t.Run("no history row at all — counted LOUD", func(t *testing.T) {
+		db := testdb.Open(t)
+		slots := burialLane(t, db, "BSNOHIST", 4)
+		svc := newBinSvc(db)
+
+		buried := binAt(t, db, "BSNOHIST-HARD", slots[2])
+		holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, buried.ID, holder.ID)
+
+		arriving := binAt(t, db, "BSNOHIST-ARRIVE", slots[0])
+		placer := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, arriving.ID, placer.ID)
+
+		_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, placer.ID)
+		testutil.MustNoErr(t, err, "ApplyArrival")
+
+		// A tripwire that under-reports is worse than one that over-reports, so a
+		// comparison that cannot be made takes the should-be-zero arm. Without this
+		// the split would be a way to make the number look good by losing rows.
+		got := svc.BurialShadowTally()
+		if got.Bypass != 1 || got.Churn != 0 {
+			t.Fatalf("tally = %+v, want Bypass=1 Churn=0 — an unanswerable comparison must fall to "+
+				"the LOUD bucket, never the accepted one", got)
+		}
+	})
+}
+
 // TestBurialShadow_DigPlacementIsCountedApart keeps the tripwire clean.
 //
 // A reshuffle picks its shuffle slots through findShuffleSlots, which has its own

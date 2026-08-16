@@ -297,6 +297,12 @@ textarea { resize: vertical; min-height: 60px; }
 .manifest .timeline-list li + li { border-top: 1px dashed var(--border); }
 .manifest .tl-time { color: var(--text-muted); font-size: 0.72rem; white-space: nowrap; min-width: 10em; }
 .manifest .tl-detail { color: var(--text-muted); font-size: 0.75rem; }
+/* The unaccounted-gap row: an order existed and nothing was written for it.
+   Muted and italic because it is an ABSENCE being reported, not an event — it
+   must read as "we do not know", never as another status the order passed
+   through. */
+.manifest .tl-unaccounted .tl-detail { font-style: italic; }
+.manifest .tl-unaccounted { opacity: 0.85; }
 @media (max-width: 640px) { .manifest-row, .manifest-row.cols-3 { grid-template-columns: 1fr; } }
 .modal {
   background: var(--surface);
