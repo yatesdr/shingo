@@ -76,6 +76,28 @@ async function forceConfirmDelivered(id, el) {
   orderControlPost('/api/recovery/repair', {action: 'force_confirm_delivered', order_id: oid, bin_id: 0}, el);
 }
 
+// Hard-release a dwelling order past its wait, whoever owns that wait (W3).
+//
+// This is the ESCAPE HATCH, not the ordinary release. The station's board is
+// where a station-owned wait gets released; Core's fence advances a lane-owned
+// one when the lane is safe. This bypasses both, for the case those mechanisms
+// are themselves wedged — which this stream met three times in one campaign.
+//
+// The confirm says what is actually at risk, because a hard release of a
+// station wait can drive a robot into a cell somebody is still working in. The
+// server records the actor and the physical lane verdict it overrode.
+async function hardReleaseOrder(id, el) {
+  var oid = parseInt(id, 10);
+  if (!await uiConfirm(
+      'HARD RELEASE order #' + oid + '?\n\n' +
+      'This advances the robot past its wait WITHOUT asking whose turn it is — ' +
+      'skipping both the station\'s release and Core\'s lane fence.\n\n' +
+      'If the cell or lane is still occupied, the robot will drive into it. ' +
+      'Use this only when the normal releaser is stuck. The action is recorded ' +
+      'against your username.')) return;
+  orderControlPost('/api/orders/hard-release', {order_id: oid}, el);
+}
+
 function setOrderPriority(id, el) {
   var oid = parseInt(id, 10);
   var scope = el && el.closest ? el.closest('.manifest') : document;
@@ -352,6 +374,15 @@ function buildManifest(data, opts) {
     // engine.TerminateOrder applies — never re-derived from a status list here.
     if (data.can_cancel) {
       out += '<button class="btn btn-danger btn-sm" data-action="terminateOrder:' + o.id + '">Terminate Order</button>';
+    }
+    // Hard release (W3), beside Terminate because it is the same class of verb:
+    // an engineer overriding the machinery. can_hard_release comes from the
+    // server — TRUE only for a wait CORE owns — for the same reason can_cancel
+    // does: never re-derive a gate in JS that the handler also applies. A
+    // STATION-owned wait is released from the station's board, by the person who
+    // can see the cell.
+    if (data.can_hard_release) {
+      out += '<button class="btn btn-warning btn-sm" data-action="hardReleaseOrder:' + o.id + '">Hard Release</button>';
     }
     if (o.status === 'delivered') {
       out += '<button class="btn btn-warning btn-sm" data-action="forceConfirmDelivered:' + o.id + '">Force Confirm</button>';
@@ -801,6 +832,7 @@ delegateActions(document.body, {
     field,
     fieldH,
     forceConfirmDelivered,
+    hardReleaseOrder,
     loadManualOrderBinDropdown,
     loadManualOrderDropdowns,
     manualOrderTransportTypeChanged,

@@ -642,6 +642,10 @@ func (s *BinService) GetManifest(binID int64) (*bins.Manifest, error) {
 // and updates its staging state inside a single transaction. Owns the
 // transaction directly; *store.DB is just the connection holder.
 //
+// This is the HANDOFF arrival: the order is done with the bin and gives it
+// up. For a set-down the order will come back for, use ApplyIntermediateStore
+// — same placement, claim retained.
+//
 // Phase 6.1 introduced this method as a thin delegate; Phase 6.4a
 // moved the orchestration body in from the (now-deleted) outer
 // store/completion.go::ApplyBinArrival.
@@ -649,7 +653,44 @@ func (s *BinService) GetManifest(binID int64) (*bins.Manifest, error) {
 // non-retired bin and that stale ghost was evicted to _TRANSIT (see below);
 // callers surface that as an operator alert. A normal arrival onto an empty
 // slot returns evicted=false and does no extra node lookup.
-func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time) (bool, error) {
+// placedByOrder is the order whose placement this is. The burial instrument uses
+// it, and only it, to tell a guarded placement from a dig leg's — see applyArrival
+// for why it cannot be inferred from the bin's claim.
+func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time, placedByOrder int64) (bool, error) {
+	return s.applyArrival(binID, toNodeID, staged, expiresAt, true, placedByOrder)
+}
+
+// ApplyIntermediateStore places a bin mid-plan and KEEPS the order's claim on
+// it. Identical to ApplyArrival in every other respect.
+//
+// A store is not a handoff. When a multi-leg plan sets its carrier down at a
+// staging slot and picks it up again later, the order stays responsible for
+// that bin the whole time — so the claim, and the bin reservation that lives
+// exactly as long as it, must survive the set-down.
+//
+// Splitting the two is what closes the fe252c57 regression. That commit made
+// intermediate stores actually record (they had been silently no-op'ing), and
+// because the only placement primitive available unclaimed unconditionally,
+// every stored bin came back unclaimed — which the delivery path's teleport
+// guard then refused, stranding the bin at _TRANSIT with a carrier inside it
+// while the cell it belonged to read empty. On the lane-stress rig that was 13
+// stranded bins against 1 before the change.
+//
+// The teleport guard is right to refuse an unclaimed bin: unclaimed means no
+// order vouches for where it is, and delivering it anyway is how the SMN_001
+// and SMN_002 teleports happened. The bug was never the guard. It was calling
+// a handoff primitive for something that is not a handoff.
+func (s *BinService) ApplyIntermediateStore(binID, toNodeID int64, staged bool, expiresAt *time.Time, placedByOrder int64) (bool, error) {
+	return s.applyArrival(binID, toNodeID, staged, expiresAt, false, placedByOrder)
+}
+
+// applyArrival is the shared placement body. releaseClaim distinguishes a
+// handoff (true) from a mid-plan set-down (false); everything else — ghost
+// eviction, the move, the destination slot's claim and reservation release,
+// staging state, the burial instrument — is identical, and deliberately so:
+// two copies of this would drift the way the arrival paths drifted before
+// EvictStaleGhostsTx pulled their ghost handling together.
+func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time, releaseClaim bool, placedByOrder int64) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, fmt.Errorf("begin tx: %w", err)
@@ -672,23 +713,38 @@ func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	if _, err := tx.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2`, toNodeID, binID); err != nil {
 		return false, fmt.Errorf("move bin: %w", err)
 	}
-	// The claiming order, read before the claim is cleared: it is the order whose
-	// placement this is, and the burial instrument needs it to tell a guarded
-	// placement from a dig leg's. Read here rather than threaded through the
-	// signature so no caller has to remember to supply it.
-	var placedBy int64
-	if err := tx.QueryRow(`SELECT COALESCE(claimed_by, 0) FROM bins WHERE id=$1`, binID).Scan(&placedBy); err != nil {
-		return false, fmt.Errorf("read placing order for bin %d: %w", binID, err)
-	}
-	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
-		return false, fmt.Errorf("unclaim bin: %w", err)
-	}
-	// A bin's reservation lives exactly as long as its claim: release it in the
-	// same tx that clears claimed_by, so the delivered bin frees for
-	// re-reservation now rather than lingering (blocked) until the owning order's
-	// terminal transition.
-	if err := reservations.ReleaseByBin(tx, binID); err != nil {
-		return false, fmt.Errorf("release reservation on arrival bin %d: %w", binID, err)
+	// The placing order now arrives as a parameter. It was read here instead,
+	// from the bin's own claim before that claim was cleared — "so no caller has
+	// to remember to supply it" — and that inference is unsound for the one case
+	// the burial instrument exists to classify.
+	//
+	// A dig leg is a compound child, and compound children deliberately overlap
+	// claims: CreateCompoundChildren writes claims for every step in one
+	// transaction and the last step's UPDATE wins for any bin appearing in
+	// several. So a child's placement routinely reads claimed_by as a SIBLING's
+	// id, or as 0 once a claim has been cleared ahead of it. The instrument then
+	// asks OrderIsCompoundLeg about the wrong order — or, at 0, skips the question
+	// entirely and defaults digPlacement to false.
+	//
+	// The visible cost is a miscount in the number the guard is judged by. Bin 58
+	// into LSD_028 is a reshuffle unbury leg: it reported as DIG-UNCOVERED (the
+	// known, accepted gap) on one run and as GUARD BYPASS (expected ZERO) on the
+	// next, from the same placement, because the claim happened to be cleared the
+	// second time. Every caller has its own order in hand, so supply it.
+	// Both of these are skipped for a mid-plan set-down: the order has not
+	// finished with the bin, so neither the claim nor the reservation that
+	// tracks it has ended. See ApplyIntermediateStore.
+	if releaseClaim {
+		if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
+			return false, fmt.Errorf("unclaim bin: %w", err)
+		}
+		// A bin's reservation lives exactly as long as its claim: release it in the
+		// same tx that clears claimed_by, so the delivered bin frees for
+		// re-reservation now rather than lingering (blocked) until the owning order's
+		// terminal transition.
+		if err := reservations.ReleaseByBin(tx, binID); err != nil {
+			return false, fmt.Errorf("release reservation on arrival bin %d: %w", binID, err)
+		}
 	}
 	// Release the destination slot's dispatch-time claim (the store dual of the
 	// bin claim): the bin has arrived, so the dropoff claim is fulfilled. Atomic
@@ -729,7 +785,7 @@ func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	// discarded — the placement is already durable, so there is nothing here
 	// that could refuse it. It observes; see burial_shadow.go for why arrival is
 	// the seam and why this returns nothing.
-	s.NoteBurialShadow(binID, toNodeID, placedBy)
+	s.NoteBurialShadow(binID, toNodeID, placedByOrder)
 	return evicted, nil
 }
 

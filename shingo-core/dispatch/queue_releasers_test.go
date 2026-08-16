@@ -121,10 +121,43 @@ func TestEveryWaitPopulationHasBothPaths(t *testing.T) {
 			t.Errorf("population %q has no event releasers — every wait in it depends entirely on a "+
 				"periodic pass, which makes the floor the mechanism rather than the backstop", p.population)
 		}
-		if p.floor == "" {
-			t.Errorf("population %q has NO FLOOR. Its waits end only when an event fires, and a "+
-				"quiesced plant emits none — the orders that could produce one are exactly the set "+
-				"waiting to be released. This is F-22", p.population)
+		// ── THE OWNER AXIS DECIDES WHETHER A FLOOR IS OWED OR FORBIDDEN ──
+		//
+		// F-22's rule — every population has a floor — is right for the waits
+		// CORE owns, and wrong for the ones it does not. A periodic pass that
+		// released a station wait would drive a robot into a cell somebody is
+		// still working in. So the assertion forks on the owner, and the
+		// station-owned side has to justify the absence rather than merely have
+		// one, which is what keeps "no floor" from drifting back into meaning
+		// "nobody built one yet".
+		switch p.owner {
+		case OwnerCore:
+			if p.floor == "" {
+				t.Errorf("population %q is CORE-owned and has NO FLOOR. Its waits end only when an "+
+					"event fires, and a quiesced plant emits none — the orders that could produce "+
+					"one are exactly the set waiting to be released. This is F-22", p.population)
+			}
+			if p.noFloorBecause != "" {
+				t.Errorf("population %q is core-owned and floored, but carries a noFloorBecause "+
+					"excuse — there is nothing to excuse, and leaving one invites a later reader to "+
+					"delete the floor and keep the sentence", p.population)
+			}
+		case OwnerStation:
+			if p.floor != "" {
+				t.Errorf("population %q is STATION-owned and names a floor (%q). Core must not "+
+					"auto-release a wait whose precondition only the station can observe: releasing "+
+					"it sends a robot into a working cell. The backstop for these is telling a "+
+					"human, not moving a robot", p.population, p.floor)
+			}
+			if p.noFloorBecause == "" {
+				t.Errorf("population %q has no floor and no stated reason. An unfloored population "+
+					"must say why the absence is a DECISION — otherwise it is indistinguishable "+
+					"from the F-22 gap, which is how this one hid for three soaks", p.population)
+			}
+		default:
+			t.Errorf("population %q declares no owner. Who may advance a wait decides whether it is "+
+				"owed a floor or forbidden one; without it the row cannot be checked either way",
+				p.population)
 		}
 		if p.redriver == "" {
 			t.Errorf("population %q names no re-driver, so nothing says the floor and the events go "+

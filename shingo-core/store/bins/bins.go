@@ -308,18 +308,38 @@ func ListByClaim(db *sql.DB, orderID int64) ([]*Bin, error) {
 	return scanBins(rows)
 }
 
-// ListAnomalousTransitBins returns bins parked at the synthetic
-// _TRANSIT node with no live order claim. This is the binary anomaly
-// signal under bin-transit-state Phase 5 — a bin physically in flight
-// (or stuck at _TRANSIT) whose owning order has terminated, so it
-// needs operator recovery to be reassigned to a real node.
+// ListAnomalousTransitBins returns bins parked on a SYNTHETIC node with no live
+// order claim. This is the binary anomaly signal under bin-transit-state Phase 5
+// — a bin that is not anywhere physical and that no order owns, so it needs
+// operator recovery to be reassigned to a real node.
 //
 // Filters claimed_by IS NULL because a healthy in-flight bin has
 // claimed_by set to its order (only the failure path clears the
-// claim). Filters by node name "_TRANSIT" rather than ID so the query
-// is robust against fresh-DB ID drift.
+// claim).
+//
+// The name is now narrower than what it returns — _TRANSIT is the commonest of
+// these, not the only one. It is left alone here rather than renamed across its
+// callers in a batch about something else; the widening is the load-bearing part
+// and the doc says what it does.
+// ── WHY IT IS EVERY SYNTHETIC NODE, NOT JUST _TRANSIT ─────────────────────
+// It filtered on the name `_TRANSIT` alone, which made a whole shape of stray
+// invisible: a bin recorded on a DIFFERENT synthetic node — a node group or a
+// lane root — unclaimed, with no anomaly stamp. Nothing lists it, no floor
+// covers it, and no selector will hand it out, because a bin belongs in a
+// concrete slot and a group is not somewhere a bin can physically be. Observed
+// on the rig as bin 37 at SYN_COMP, sitting unowned and unseen for a whole run
+// while the page beside it showed one row.
+//
+// The widening is small by measurement, not by hope: on a healthy lane-stress
+// run the non-_TRANSIT synthetic population was ONE bin, so this surfaces a real
+// stray rather than flooding the operator with legitimate rows.
+//
+// anomaly_at is NOT required. Requiring it would re-hide exactly this shape —
+// the stamp is written by the paths that KNOW they stranded something, and a bin
+// nobody stamped is the one nobody noticed. Ordering still puts stamped rows
+// first (NULLS LAST) so the diagnosed ones read at the top.
 func ListAnomalousTransitBins(db *sql.DB) ([]*Bin, error) {
-	rows, err := db.Query(fmt.Sprintf(`%s WHERE b.claimed_by IS NULL AND n.name = '_TRANSIT' AND b.status != 'retired' ORDER BY b.anomaly_at NULLS LAST, b.id`, BinJoinQuery))
+	rows, err := db.Query(fmt.Sprintf(`%s WHERE b.claimed_by IS NULL AND n.is_synthetic AND b.status != 'retired' ORDER BY b.anomaly_at NULLS LAST, b.id`, BinJoinQuery))
 	if err != nil {
 		return nil, err
 	}

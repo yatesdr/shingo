@@ -475,6 +475,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 				// Orders
 				r.Post("/orders/terminate", h.apiTerminateOrder)
+				r.Post("/orders/hard-release", h.apiHardReleaseOrder)
 				r.Post("/orders/priority", h.apiSetOrderPriority)
 				r.Post("/orders/spot", h.apiManualOrderSubmit)
 				r.Post("/dispatch/clear-anomaly", h.apiClearTransitAnomaly)

@@ -747,13 +747,19 @@ func checkInvariants(db *store.DB) []string {
 				v = append(v, fmt.Sprintf("FLOOR-RELEASE (expected, absence-class): %d under %s — "+
 					"no event exists for this; read it as fleet health, not a missing emitter", n, cause))
 			case "(none)", "(no cause on the row)":
-				// A BLANK IS A DIFFERENT DEFECT and must not be reported as a missing
-				// emitter: the order was refused by an arm that recorded nothing, so
-				// there is no cause to look up and causeReleasers is not the file to
-				// open. Same three-way split the floor's own record makes.
+				// A BLANK IS NOT A MISSING EMITTER — causeReleasers is not the file to
+				// open — and it is not ONE defect either. It is two, and they want
+				// opposite investigations: an arm that refused without recording, or
+				// nothing having evaluated the order at all. §12.49 traced a specimen
+				// of the second kind (order 56: freed 17s after staging, with zero
+				// refusals logged against it while the same line fired 77 times for
+				// others), and the old wording sent the reader hunting an arm that did
+				// not exist. Same split the floor's own record now makes.
 				v = append(v, fmt.Sprintf("FLOOR-RELEASE (blank cause): %d order(s) freed by the "+
-					"floor with NO cause on the row — find the arm that refused them without "+
-					"calling setQueueReason. Not an inventory gap", n))
+					"floor with NO cause on the row. TWO possible defects: an arm refused them "+
+					"without calling setQueueReason, OR nothing ever evaluated them and the missing "+
+					"EVENT is the defect. Check the log for a refusal naming the order — no refusal "+
+					"means the second. Not an inventory gap either way", n))
 			default:
 				v = append(v, fmt.Sprintf("FLOOR-RELEASE: %d order(s) freed by the periodic floor "+
 					"under cause %s — an event should have done this; see causeReleasers for which",

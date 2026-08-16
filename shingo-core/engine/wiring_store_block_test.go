@@ -4,6 +4,7 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
@@ -73,17 +74,41 @@ func TestHandleStoreBlockCompleted_RecordsIntermediateStore(t *testing.T) {
 		BinTask:  "JackUnload",
 	})
 
-	// The stored bin is now recorded at its slot and unclaimed — a normal
-	// stored bin, not stranded at _TRANSIT.
+	// The stored bin is now recorded at its slot, not stranded at _TRANSIT —
+	// and STILL CLAIMED. This assertion read RequireBinUnclaimed until the
+	// round-trip regression below showed what the unclaim cost at the far end:
+	// a set-down mid-plan is not a handoff, and the order is coming back.
 	testdb.RequireBinAtNode(t, db, binStore.ID, storeNode.ID)
-	testdb.RequireBinUnclaimed(t, db, binStore.ID)
+	testdb.RequireBinClaimedBy(t, db, binStore.ID, ord.ID)
 
 	// The in-flight empty is untouched — still claimed, still at its node.
 	testdb.RequireBinAtNode(t, db, binRetr.ID, lineNode.ID)
 	testdb.RequireBinClaimedBy(t, db, binRetr.ID, ord.ID)
 
-	// Idempotent: replaying the same store block is a no-op — the bin is now
-	// unclaimed, so resolveDropoffBin won't re-match it.
+	// Idempotent: replaying the same store block is a no-op, and retaining the
+	// claim does not weaken that. resolveDropoffBin resolves by "the bin at
+	// _TRANSIT under this order's claim" — a bin that has been set down is no
+	// longer at _TRANSIT, so the replay matches nothing regardless of who holds
+	// it. Idempotency is a property of WHERE the bin is, not of whether it is
+	// claimed.
+	//
+	// Worth stating because it was not obvious: keeping the claim looked like it
+	// must break this, and an explicit "already at this node, skip" guard was
+	// written here on that assumption. Disabling the guard changed no observable
+	// behaviour, which is how the assumption was found to be wrong. The guard is
+	// gone; this assertion is what stands in its place.
+	//
+	// Asserted on updated_at rather than on the end state, because the end state
+	// is identical either way: a re-applied store would move the bin to the node
+	// it is already on. The row's timestamp is the only DB-visible difference —
+	// and it stands in for the one that actually costs something, the duplicate
+	// UOP adjustment this handler sends to Edge on every non-skipped pass. That
+	// send has no observation seam in these tests (newTestEngine runs with
+	// MsgClient nil), so this is the closest available pin on the same path.
+	var beforeReplay time.Time
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT updated_at FROM bins WHERE id=$1`, binStore.ID).Scan(&beforeReplay),
+		"read updated_at before replay")
+
 	eng.handleStoreBlockCompleted(BlockCompletedEvent{
 		OrderID:  ord.ID,
 		BlockID:  "store-block-1-b3",
@@ -91,7 +116,14 @@ func TestHandleStoreBlockCompleted_RecordsIntermediateStore(t *testing.T) {
 		BinTask:  "JackUnload",
 	})
 	testdb.RequireBinAtNode(t, db, binStore.ID, storeNode.ID)
-	testdb.RequireBinUnclaimed(t, db, binStore.ID)
+	testdb.RequireBinClaimedBy(t, db, binStore.ID, ord.ID)
+
+	var afterReplay time.Time
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT updated_at FROM bins WHERE id=$1`, binStore.ID).Scan(&afterReplay),
+		"read updated_at after replay")
+	if !afterReplay.Equal(beforeReplay) {
+		t.Fatalf("replayed store block re-applied the arrival: updated_at moved %v -> %v", beforeReplay, afterReplay)
+	}
 }
 
 // TestHandleStoreBlockCompleted_StagingDropWithNoJunctionRowForIt is the
@@ -232,4 +264,71 @@ func TestHandleStoreBlockCompleted_SkipsFinalDelivery(t *testing.T) {
 	// Untouched: still claimed, still at its source node (no early arrival).
 	testdb.RequireBinAtNode(t, db, binRetr.ID, sd.StorageNode.ID)
 	testdb.RequireBinClaimedBy(t, db, binRetr.ID, ord.ID)
+}
+
+// TestBinRoundTrip_IntermediateStoreThenFinalDelivery pins the whole journey a
+// swap's carrier actually makes: picked, PUT DOWN at staging, picked up again,
+// delivered to the line. Nothing covered both halves before, and that gap is
+// exactly how fe252c57 shipped.
+//
+// That commit fixed the first half — resolveDropoffBin had not matched these
+// shapes, so the intermediate store silently no-op'd and the bin never landed
+// at staging. Recording the store correctly then broke the second half:
+// ApplyArrival unclaims, and applyBinArrivalForOrder's teleport guard refuses
+// an unclaimed bin. The bin stopped stranding at staging and started stranding
+// at _TRANSIT instead — one symptom traded for a worse one.
+//
+// Measured on the lane-stress rig, same plant and window, clean seed both ways:
+//
+//	                     5077373e (pre)   78824192 (post)
+//	teleport skips             1                10
+//	bins stranded              1                13
+//	unrecorded stores         12                 0
+//
+// The invariant this test defends is that an order does not lose its bin by
+// setting it down mid-plan. A store is not a handoff: the order is still
+// responsible for that carrier and is coming back for it.
+func TestBinRoundTrip_IntermediateStoreThenFinalDelivery(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	eng := newTestEngine(t, db, simulator.New())
+
+	staging := sd.StorageNode // the cell's inbound staging slot
+	lineNode := sd.LineNode
+
+	ord := &orders.Order{
+		EdgeUUID: "round-trip-1", StationID: "line-1",
+		OrderType: dispatch.OrderTypeComplex, Status: dispatch.StatusInTransit,
+		SourceNode: lineNode.Name, DeliveryNode: lineNode.Name, ProcessNode: lineNode.Name,
+		PayloadDesc: "swap",
+	}
+	testutil.MustNoErr(t, db.CreateOrder(ord), "create complex order")
+
+	var transitID int64
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT id FROM nodes WHERE name='_TRANSIT'`).Scan(&transitID),
+		"lookup _TRANSIT")
+	carried := testdb.CreateBinAtNode(t, db, sd.Payload.Code, transitID, "CARRIER-ROUNDTRIP")
+	testdb.ClaimBinForTest(t, db, carried.ID, ord.ID)
+	testutil.MustNoErr(t, db.InsertOrderBin(ord.ID, carried.ID, 1, "pickup", lineNode.Name, lineNode.Name),
+		"order_bin: final dest is the LINE")
+
+	// Leg 1: the robot sets the bin down at staging, mid-plan.
+	eng.handleStoreBlockCompleted(BlockCompletedEvent{
+		OrderID: ord.ID, BlockID: "round-trip-1-b3",
+		Location: staging.Name, BinTask: "JackUnload",
+	})
+	testdb.RequireBinAtNode(t, db, carried.ID, staging.ID)
+
+	// The claim survives the set-down. Without this the delivery below is
+	// refused as a teleport and the bin strands.
+	testdb.RequireBinClaimedBy(t, db, carried.ID, ord.ID)
+
+	// Leg 2: picked back up and delivered to the line.
+	ord.BinID = &carried.ID
+	testutil.MustNoErr(t, db.UpdateOrderBinID(ord.ID, carried.ID), "set order bin for delivery")
+	eng.applyBinArrivalForOrder(ord)
+
+	// The bin reaches the line. It does not sit at _TRANSIT holding a carrier
+	// out of circulation while the cell reads empty.
+	testdb.RequireBinAtNode(t, db, carried.ID, lineNode.ID)
 }

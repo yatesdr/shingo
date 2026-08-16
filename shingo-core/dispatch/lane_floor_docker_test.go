@@ -202,3 +202,47 @@ func TestFloor_IsSilentWhenItFreesNobody(t *testing.T) {
 			still.QueueCause, CauseLaneDigActive)
 	}
 }
+
+// TestFloorRefreshesCauseBeforeRedrive pins item 4b: the floor reports the cause
+// the order is carrying when its lane is re-driven, not the one snapshotted when
+// the pass opened.
+//
+// laneWaiters snapshots every lane's waiters at once, then the pass re-drives
+// lane by lane. By the time the last lane is reached its snapshot is as old as
+// all the re-drives in between, during which an evaluator may have written a more
+// specific cause — and the defect record would then name a cause that had already
+// been superseded, sending the reader to the wrong arm.
+//
+// It cannot be read AFTER the release instead: a successful release clears the
+// cause, and a blank is a different defect record entirely.
+func TestFloorRefreshesCauseBeforeRedrive(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	order := testdb.CreateOrder(t, db)
+	if _, err := db.Exec(`UPDATE orders SET queue_cause=$2 WHERE id=$1`, order.ID, string(CauseGateRebindUnavailable)); err != nil {
+		t.Fatalf("seed live cause: %v", err)
+	}
+
+	// The stale snapshot: what the pass recorded before the other lanes ran.
+	waiters := []floorWaiter{{orderID: order.ID, laneID: 7, pop: PopStationWait, cause: CauseStationWait}}
+
+	d.refreshWaiterCauses(waiters, 7)
+
+	if waiters[0].cause != CauseGateRebindUnavailable {
+		t.Errorf("cause = %q, want %q — the floor reported a snapshot the order had already moved past",
+			waiters[0].cause, CauseGateRebindUnavailable)
+	}
+
+	// A waiter on a DIFFERENT lane is untouched: this lane's re-drive says nothing
+	// about orders waiting elsewhere, and refreshing them here would read a value
+	// that is stale again by the time their own lane runs.
+	other := []floorWaiter{{orderID: order.ID, laneID: 99, pop: PopStationWait, cause: CauseStationWait}}
+	d.refreshWaiterCauses(other, 7)
+	if other[0].cause != CauseStationWait {
+		t.Errorf("cause = %q for a waiter on another lane, want it untouched (%q)",
+			other[0].cause, CauseStationWait)
+	}
+}

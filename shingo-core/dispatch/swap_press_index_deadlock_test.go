@@ -155,6 +155,41 @@ func TestSwapHold_TwoRobotEvac_StillHeldUntilSupplyClaims(t *testing.T) {
 		t.Fatal("two_robot evac must stay held while its supply holds no claim — it has a single pickup, at the line, " +
 			"so it removes the line's bin with no replacement secured (ALN_003 swap-starvation)")
 	}
+
+	// ── AND RELEASED ONCE THE SUPPLY HAS SECURED ONE, EVEN WITHOUT A CLAIM ──
+	//
+	// This is the deadlock the live rig hit on 2026-08-11 (orders 21/22, ASSY).
+	// "Secured" was tested as "holds a claim NOW", and the supply DROPS its claim
+	// the moment it stages the replacement — the store unclaims on arrival. So the
+	// evac was held forever waiting for a claim that had already done its job,
+	// while the supply waited at the line it could not place into because the evac
+	// had not cleared it. Each waited for the other.
+	//
+	// Committing to the fleet is the evidence, exactly as it is for the mirror
+	// direction (swapLegCommittedToFleet): a complex order claims its sources
+	// BEFORE the fleet create, so `dispatched` already means a replacement was
+	// secured. No live claim required, and none available.
+	supply, err := db.GetOrderByUUID("tr-supply")
+	testutil.MustNoErr(t, err, "get supply")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(supply.ID, string(StatusInTransit),
+		"staged its replacement and drove on"), "supply → in_transit")
+	if bins, bErr := db.ListBinsByClaim(supply.ID); bErr != nil || len(bins) != 0 {
+		t.Fatalf("fixture: supply holds %d claim(s) (err %v) — this half is only a test while it "+
+			"holds NONE, which is the state after it stages its replacement", len(bins), bErr)
+	}
+
+	evac, err = db.GetOrderByUUID("tr-evac")
+	testutil.MustNoErr(t, err, "re-read evac")
+	steps, ok = decodeSteps(evac.StepsJSON)
+	if !ok {
+		t.Fatal("evac has no readable steps")
+	}
+	if held, reason := d.swapLegHeld(evac, steps); held {
+		t.Fatalf("evac still held (%s) after its supply committed to the fleet holding no claim. The "+
+			"supply has already secured and staged the replacement — that is a STRONGER guarantee "+
+			"than holding one — and it is now waiting at the line for this evac to clear it. Each "+
+			"leg waits for the other, permanently, and the robot stands still", reason)
+	}
 }
 
 // TestSwapHold_PressIndexR2_HeldUntilEvacDispatched is the HOP anti-collision half

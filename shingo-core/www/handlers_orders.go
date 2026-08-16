@@ -112,6 +112,33 @@ func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {
 	h.jsonSuccess(w)
 }
 
+// apiHardReleaseOrder is W3's door: advance a dwelling order past its wait when
+// the mechanism that should have done it is wedged.
+//
+// SAME GUARDS AS ITS NEIGHBOURS, deliberately — it sits in the protected group
+// beside /orders/terminate and /robots/force-complete, which are the comparable
+// "an engineer has decided" verbs. It is not a new privilege class, and the
+// actor is recorded because a hard release of a STATION-owned wait overrides a
+// cell that may still be occupied.
+//
+// The station HMI must never offer this. The board offers Release only for waits
+// the station owns — a read now that ownership is carried, not a guess — and
+// this door exists for the other kind.
+func (h *Handlers) apiHardReleaseOrder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrderID int64 `json:"order_id"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	actor := h.getUsername(r)
+	if err := h.orchestration.HardReleaseOrder(req.OrderID, actor); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
 func (h *Handlers) apiListOrders(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	limit := 100
@@ -170,9 +197,19 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		// duplicated into JS is exactly how the old template denylists
 		// drifted from the engine.
 		CanCancel bool `json:"can_cancel"`
+		// CanHardRelease drives the Hard Release button, and is computed here for
+		// the same reason CanCancel is: the control may only appear where the
+		// handler would accept it. It is TRUE only for a wait CORE owns — a
+		// station-owned wait belongs to the station's board, and the handler
+		// refuses it too.
+		CanHardRelease bool `json:"can_hard_release"`
 	}
 
-	result := enrichedOrder{Order: order, CanCancel: canCancelStatus(order.Status)}
+	result := enrichedOrder{
+		Order:          order,
+		CanCancel:      canCancelStatus(order.Status),
+		CanHardRelease: canHardReleaseOrder(order),
+	}
 
 	result.History, _ = svc.ListOrderHistory(id)
 

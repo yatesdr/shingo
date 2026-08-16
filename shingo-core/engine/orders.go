@@ -39,6 +39,16 @@ var ErrBinTaken = errors.New("bin taken by another order")
 // exactly this — the two doors disagreed about what kind of failure a typo is.
 var ErrNodeNotFound = errors.New("node not found")
 
+// HardReleaseOrder advances a dwelling order past its wait regardless of who
+// owns that wait — the Core operator's escape hatch (W3).
+//
+// It is the engine's thin door onto Dispatcher.HardReleaseStagedOrder, which is
+// where the reasoning and the audit live. Same shape and same protected route
+// group as TerminateOrder: an engineer has decided, and the row records who.
+func (e *Engine) HardReleaseOrder(orderID int64, actor string) error {
+	return e.dispatcher.HardReleaseStagedOrder(orderID, actor)
+}
+
 // TerminateOrder cancels an order, unclaims any payloads, and emits a cancellation event.
 func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 	order, err := e.db.GetOrder(orderID)

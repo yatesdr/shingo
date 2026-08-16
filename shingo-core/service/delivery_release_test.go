@@ -47,7 +47,7 @@ func TestDeliveryReleasesReservationAndSlot(t *testing.T) {
 		testutil.MustNoErr(t, svc.ClaimForDispatch(bin.ID, order.ID, nil), "ClaimForDispatch")
 		testdb.ClaimSlotForTest(t, db, destSlot.ID, order.ID)
 
-		if _, err := binSvc.ApplyArrival(bin.ID, destSlot.ID, false, nil); err != nil {
+		if _, err := binSvc.ApplyArrival(bin.ID, destSlot.ID, false, nil, 0); err != nil {
 			t.Fatalf("ApplyArrival: %v", err)
 		}
 

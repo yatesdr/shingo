@@ -1543,3 +1543,95 @@ func TestCreateComplexOrder_AutoConfirmSplit(t *testing.T) {
 			"the fulfillment scanner re-claims the bin and the late confirm teleports it back.")
 	}
 }
+
+// TestMirrorFollowsCore_ForwardJumpLandsAndAlarms is W2, and it reproduces the
+// three-robot wedge by doing what the wire did: skipping a notification.
+//
+// Core walked reshuffling → queued → … → staged. The Edge was told only about
+// the last step. reshuffling → staged is not a legal STEP, so the validated path
+// refused it and the mirror stayed at `reshuffling` forever — rejecting every
+// later push, showing a board that could not offer Release, and holding a robot
+// for the length of the soak (§12.49).
+//
+// It is a legal DESTINATION, though: every state between exists and Core has
+// already passed through them. So the mirror catches up in one move and says so.
+func TestMirrorFollowsCore_ForwardJumpLandsAndAlarms(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, err := db.CreateOrder("uuid-jump", TypeComplex, nil, false, 1, "X", "", "", "", false, "")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// The dig: Core put the parent in `reshuffling` and told the Edge that much.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusReshuffling)), "set reshuffling")
+
+	// THE SUPPRESSED NOTIFICATION: nothing tells the Edge about `queued`. The
+	// next thing it hears is Core reporting the order staged.
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-jump", ReplyStaged, "", "", "dwelling at staging"),
+		"staged reply after a skipped notification must not error")
+
+	// (a) THE JUMP LANDS — no wedge.
+	o, err := db.GetOrder(oid)
+	testutil.MustNoErr(t, err, "reload")
+	if o.Status != StatusStaged {
+		t.Fatalf("status = %q, want %q. The mirror refused to follow the authority, which is the "+
+			"wedge: it stays behind Core forever, rejects every later push, and the board never "+
+			"offers Release", o.Status, StatusStaged)
+	}
+
+	// (b) AND THE ALARM FIRES, naming the transition well enough to find the
+	// missing notification.
+	hist, err := db.ListOrderHistory(oid)
+	testutil.MustNoErr(t, err, "history")
+	var jump string
+	for _, h := range hist {
+		if strings.Contains(h.Detail, mirrorJumpDetail) {
+			jump = h.Detail
+		}
+	}
+	if jump == "" {
+		t.Fatalf("no %q history row. A silent catch-up is worse than the refusal: the mirror is "+
+			"correct and nobody learns that a transition somewhere stopped notifying", mirrorJumpDetail)
+	}
+	if !strings.Contains(jump, string(StatusReshuffling)) || !strings.Contains(jump, string(StatusStaged)) {
+		t.Errorf("alarm detail %q does not name both ends of the jump — it has to say which "+
+			"transition to go looking for", jump)
+	}
+}
+
+// TestMirrorFollowsCore_BackwardAndImpossibleStayRefused keeps the strictness
+// where it still means something. A forward jump is "I missed a message"; these
+// are not, and accepting them would let a terminal be resurrected or a bogus
+// status be written because the sender was wrong.
+func TestMirrorFollowsCore_BackwardAndImpossibleStayRefused(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-term", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusConfirmed)), "set confirmed")
+
+	// Confirmed is terminal: nothing is reachable from it, so this is not a
+	// forward jump and must not resurrect the order. Transition's terminal arm
+	// absorbs it idempotently rather than erroring — what matters is the status.
+	_ = mgr.HandleDispatchReply("uuid-term", ReplyStaged, "", "", "late staged push")
+	o, _ := db.GetOrder(oid)
+	if o.Status != StatusConfirmed {
+		t.Errorf("status = %q, want %q — a terminal order was moved by a late push. Nothing is "+
+			"reachable from a terminal, so this can never be a missed notification", o.Status, StatusConfirmed)
+	}
+
+	// And the predicate itself, stated directly.
+	if protocol.IsForwardJump(StatusConfirmed, StatusStaged) {
+		t.Error("IsForwardJump(confirmed, staged) = true — a terminal has no outgoing edges")
+	}
+	if !protocol.IsForwardJump(StatusReshuffling, StatusStaged) {
+		t.Error("IsForwardJump(reshuffling, staged) = false — staged IS reachable from reshuffling " +
+			"via queued, which is exactly the gap the wedge fell into")
+	}
+	if protocol.IsForwardJump(StatusQueued, StatusDispatched) {
+		t.Error("IsForwardJump(queued, dispatched) = true — that is a legal single step, not a jump")
+	}
+}

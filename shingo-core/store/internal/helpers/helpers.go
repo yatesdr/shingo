@@ -13,8 +13,10 @@ package helpers
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/domain"
 )
 
@@ -72,9 +74,14 @@ func InsertID(db QueryRower, query string, args ...any) (int64, error) {
 
 // EvictStaleGhostBinsTx reconciles the one-bin-per-physical-node invariant at
 // arrival time. Any non-retired bin OTHER than keepBinID that shingo still
-// records at destNodeID is moved to _TRANSIT — unclaimed, with anomaly_at
-// stamped — inside tx, and its id is returned so the caller can surface it via
-// ListAnomalies / RecoverTransitAnomaly.
+// records at destNodeID is moved to _TRANSIT with anomaly_at stamped, inside
+// tx, and its id is returned so the caller can surface it via ListAnomalies /
+// RecoverTransitAnomaly.
+//
+// Its CLAIM is kept when the holder is still live and cleared only when it is
+// dead — see the ownership note at the UPDATE for why the two facts are not
+// evicted together. A bin that keeps its claim is still returned as evicted:
+// its position changed, which is what the callers act on.
 //
 // Why the conflicting record is a stale ghost (plant-verified 2026-07-08): a
 // delivery physically CANNOT complete onto an occupied slot, so a completed
@@ -116,8 +123,31 @@ func EvictStaleGhostBinsTx(tx *sql.Tx, destNodeID, keepBinID int64) ([]int64, er
 	if err := tx.QueryRow(`SELECT id FROM nodes WHERE name=$1`, domain.TransitNodeName).Scan(&transitID); err != nil {
 		return nil, fmt.Errorf("lookup transit node %q: %w", domain.TransitNodeName, err)
 	}
-	rows, err := tx.Query(`UPDATE bins SET node_id=$1, claimed_by=NULL, anomaly_at=NOW(), updated_at=NOW()
-		WHERE node_id=$2 AND id<>$3 AND status<>'retired' RETURNING id`, transitID, destNodeID, keepBinID)
+	// ── THE POSITION IS EVICTED; OWNERSHIP IS NOT ────────────────────────────
+	// This used to null claimed_by unconditionally, and that is a different
+	// claim than the one the eviction is entitled to make. "A completed delivery
+	// proves this slot was empty" is a statement about POSITION. It says nothing
+	// about who owns the bin whose position was wrong, and a bin claimed by a
+	// LIVE order is one a robot may be carrying right now.
+	//
+	// Wiping that claim broke the carrier: the delivering order's own arrival
+	// then read as a teleport to the arrival guard (the bin is not claimed by
+	// me), the guard refused it, the bin stranded at _TRANSIT owned by nobody,
+	// and the order confirmed anyway — reporting a delivery it did not make.
+	// Observed end to end on the rig, one bin refused twice for two different
+	// orders 76s apart (PLAN §R.5).
+	//
+	// So the claim survives when its holder is live, and is cleared only when it
+	// is genuinely dead — no holder, or a holder that already went terminal.
+	// That is the same "verify, don't assume" the position side gets.
+	rows, err := tx.Query(fmt.Sprintf(`UPDATE bins SET
+			node_id=$1, anomaly_at=NOW(), updated_at=NOW(),
+			claimed_by = CASE WHEN EXISTS (
+				SELECT 1 FROM orders o WHERE o.id = bins.claimed_by AND o.status NOT IN (%s)
+			) THEN bins.claimed_by ELSE NULL END
+		WHERE node_id=$2 AND id<>$3 AND status<>'retired'
+		RETURNING id, claimed_by`, protocol.TerminalStatusSQLList()),
+		transitID, destNodeID, keepBinID)
 	if err != nil {
 		return nil, fmt.Errorf("evict stale bin(s) from node %d: %w", destNodeID, err)
 	}
@@ -125,8 +155,20 @@ func EvictStaleGhostBinsTx(tx *sql.Tx, destNodeID, keepBinID int64) ([]int64, er
 	var evicted []int64
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var heldBy sql.NullInt64
+		if err := rows.Scan(&id, &heldBy); err != nil {
 			return nil, fmt.Errorf("scan evicted bin id at node %d: %w", destNodeID, err)
+		}
+		if heldBy.Valid {
+			// SWEEP-AS-TRIPWIRE. Reaching here means a bin a live order still owns
+			// was recorded in a slot another delivery just completed into — two
+			// orders pointed at one bin. The rescue keeps the carrier working, but
+			// the position was wrong before this function ran and something upstream
+			// put it there. A silent save is indistinguishable from no save.
+			log.Printf("WARN: ghost eviction moved bin %d off node %d but KEPT its claim — "+
+				"order %d is live and may be carrying it. The position was already wrong when "+
+				"the delivery landed: find what recorded this bin here.",
+				id, destNodeID, heldBy.Int64)
 		}
 		evicted = append(evicted, id)
 	}

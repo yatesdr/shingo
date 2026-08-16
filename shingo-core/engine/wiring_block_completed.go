@@ -342,7 +342,11 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	}
 
 	staged, expiresAt := e.resolveNodeStaging(destNode)
-	evicted, err := e.binService.ApplyArrival(binID, destNode.ID, staged, expiresAt)
+	// Intermediate, not final — the early-return above already sent every drop
+	// at the delivery node down the whole-order FINISHED path. So the order is
+	// coming back for this bin and keeps its claim; handing it off here is what
+	// stranded these bins at _TRANSIT (see ApplyIntermediateStore).
+	evicted, err := e.binService.ApplyIntermediateStore(binID, destNode.ID, staged, expiresAt, order.ID)
 	if err != nil {
 		e.logFn("transit: order %d intermediate store arrival bin %d -> %s: %v", order.ID, binID, ev.Location, err)
 		return

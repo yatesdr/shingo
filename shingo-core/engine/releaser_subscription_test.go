@@ -68,6 +68,16 @@ func TestDeclaredReleaserEventsAreSubscribed(t *testing.T) {
 	}
 
 	for _, pop := range dispatch.DeclaredWaitPopulations() {
+		// STATION-OWNED POPULATIONS HAVE NO SUBSCRIPTION TO FIND. Their releaser
+		// is a wire message the station sends (protocol.TypeOrderRelease), handled
+		// in the messaging layer — not an eventbus event Core subscribes to. This
+		// test asks "is the declared event really subscribed"; for these the
+		// honest answer is that the question does not apply, and skipping on the
+		// OWNER rather than on the population's name means a second station-owned
+		// population is covered the day it is added.
+		if pop.Owner == string(dispatch.OwnerStation) {
+			continue
+		}
 		file, ok := wiringFor[pop.Redriver]
 		if !ok {
 			t.Errorf("population %q names re-driver %q, and this test does not know which wiring "+

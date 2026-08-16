@@ -135,6 +135,7 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 				s.logFn("engine: reaped %d orphaned reservations from terminal/gone orders", n)
 			}
 			s.logBurialShadow()
+			s.logArrivalRefusals()
 		}
 	}
 }
@@ -168,6 +169,35 @@ func (s *ReconciliationService) logBurialShadow() {
 	s.logFn("burial-shadow tally (since boot): soft-hold burials %d (longest held at burial %s), "+
 		"dig-uncovered %d",
 		t.Soft, t.SoftLongestHeld.Round(time.Second), t.DigUncovered)
+}
+
+// logArrivalRefusals reports the arrival claim guard, and it belongs beside
+// logBurialShadow because it is the same kind of thing: a should-be-zero.
+//
+// A refusal means an order reached its destination carrying a bin the ledger says
+// it does not own — two orders pointed at one bin. Both known causes are fixed
+// (the swap-rebind clobber that mis-aimed a leg, and the ghost eviction that wiped
+// a live claim), so a non-zero count here is either a third cause or a regression
+// of one of those.
+//
+// Silent at zero, like the soft-burial count: a plant where this never fires
+// should not spend a line every sweep saying so, and no arrival-refusal lines in a
+// week of journal is itself the answer. THIS IS THE NUMBER the deferred
+// fail-vs-park disposition waits on (see arrival_guard.go) — if it stays zero, a
+// refusal is an impossible state and failing loud is cheap and right; if it
+// climbs, parking has to earn a releaser and a floor.
+func (s *ReconciliationService) logArrivalRefusals() {
+	tally := ArrivalRefusalTally()
+	total := 0
+	for _, n := range tally {
+		total += n
+	}
+	if total == 0 {
+		return
+	}
+	s.logFn("arrival-guard REFUSALS=%d (expected 0) — orders arrived carrying a bin the ledger says "+
+		"they do not own; by site %v; grep %q for each one",
+		total, tally, "WARN: arrival refused at")
 }
 
 // AutoConfirmStuckDeliveredOrders confirms delivered orders that have been

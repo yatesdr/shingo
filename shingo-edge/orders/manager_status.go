@@ -1,6 +1,7 @@
 package orders
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -58,15 +59,15 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 
 	switch replyType {
 	case ReplyAck:
-		return m.TransitionOrder(order.ID, StatusAcknowledged, statusDetail)
+		return m.mirrorTransition(order.ID, StatusAcknowledged, statusDetail)
 	case ReplyWaybill:
 		if err := m.db.UpdateOrderWaybill(order.ID, waybillID, eta); err != nil {
 			return err
 		}
-		return m.TransitionOrder(order.ID, StatusInTransit, fmt.Sprintf("waybill %s, ETA %s", waybillID, eta))
+		return m.mirrorTransition(order.ID, StatusInTransit, fmt.Sprintf("waybill %s, ETA %s", waybillID, eta))
 	case ReplyQueued:
 		// Order queued by Core — awaiting inventory
-		return m.TransitionOrder(order.ID, StatusQueued, statusDetail)
+		return m.mirrorTransition(order.ID, StatusQueued, statusDetail)
 	case ReplyUpdate:
 		// Status update with ETA only — don't touch waybill_id.
 		if eta != "" {
@@ -89,12 +90,62 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		// order's local status.
 		return m.TransitionOrder(order.ID, StatusSkipped, statusDetail)
 	case ReplyStaged:
-		return m.TransitionOrder(order.ID, StatusStaged, statusDetail)
+		return m.mirrorTransition(order.ID, StatusStaged, statusDetail)
 	case ReplyCancelled:
-		return m.TransitionOrder(order.ID, StatusCancelled, statusDetail)
+		return m.mirrorTransition(order.ID, StatusCancelled, statusDetail)
 	default:
 		return fmt.Errorf("unknown reply type: %s", replyType)
 	}
+}
+
+// mirrorJumpDetail prefixes the order_history detail written when the mirror had
+// to jump. It is the string a count is taken on — `SELECT count(*) FROM
+// order_history WHERE detail LIKE 'MIRROR JUMP%'` — so it is a constant rather
+// than prose assembled at each site.
+const mirrorJumpDetail = "MIRROR JUMP"
+
+// mirrorTransition applies a status CORE has already reached.
+//
+// ── THE MIRROR FOLLOWS THE AUTHORITY, AND SAYS SO WHEN IT HAD TO CATCH UP ──
+//
+// Every caller of this is a Core-authored report: an ack, a waybill, a staged, a
+// cancel. Core owns order state and the Edge reflects it — ApplyCoreStatus has
+// said exactly that for its own arms since the Springfield 2026-07-31 refusals
+// ("a mirror does not validate its source"). The dispatch-reply path never got
+// the same treatment: it validated, so a single missed notification left the
+// Edge behind the authority permanently, refusing every later push as illegal.
+//
+// Measured: Core walked reshuffling → queued → … → staged; the Edge, never told
+// about `queued`, rejected both in_transit and staged and held three robots for
+// an entire soak with a board that could not offer Release.
+//
+// SO A FORWARD JUMP IS ACCEPTED AND RECORDED, NOT SWALLOWED. Reachable-but-not-
+// adjacent means "I missed a message", and the history row names the gap so the
+// count is a ticket queue: a non-zero trend means a transition somewhere is
+// still not notifying, and the detail says which one to go find.
+//
+// BACKWARD AND IMPOSSIBLE STAY REFUSED. Nothing reachable from a terminal, so a
+// terminal is never resurrected; and a status Core could not have arrived at is
+// a bug in the sender, not a gap in the wire. Strictness is kept exactly where
+// it still means something.
+func (m *Manager) mirrorTransition(orderID int64, target protocol.Status, detail string) error {
+	err := m.TransitionOrder(orderID, target, detail)
+	if err == nil || !errors.Is(err, ErrInvalidTransition) {
+		return err
+	}
+	order, gErr := m.db.GetOrder(orderID)
+	if gErr != nil || order == nil {
+		return err
+	}
+	if !protocol.IsForwardJump(order.Status, target) {
+		return err // backward, or somewhere Core could not have got to
+	}
+	jump := fmt.Sprintf("%s %s->%s: a notification was skipped; Core is already at %s. %s",
+		mirrorJumpDetail, order.Status, target, target, detail)
+	log.Printf("orders: MIRROR JUMP order %d %s->%s — the Edge was never told about the step(s) "+
+		"between, so it is catching up to Core in one move. Find the transition that does not "+
+		"notify: %s", orderID, order.Status, target, detail)
+	return m.lifecycle.ForceTransition(orderID, target, jump)
 }
 
 // ApplyCoreStatusSnapshot reconciles a local order with Core's authoritative status.

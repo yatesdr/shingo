@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingocore/store/orders"
 )
 
@@ -76,6 +77,29 @@ func waiterState(o *orders.Order) string {
 	return fmt.Sprintf("%s|%d|%s", o.Status, o.WaitIndex, o.VendorOrderID)
 }
 
+// refreshWaiterCauses re-reads the live queue_cause for the waiters on one lane,
+// in place, immediately before that lane is re-driven.
+//
+// Best-effort by construction: an unreadable order keeps the cause it was
+// snapshotted with, which is exactly the behaviour that existed before this. A
+// bookkeeping refresh must never be able to stop the floor from freeing anybody.
+//
+// It does NOT re-derive who is waiting — laneWaiters owns that, and a second
+// opinion on the population is how a backstop becomes a second mechanism. Only
+// the label is refreshed.
+func (d *Dispatcher) refreshWaiterCauses(waiters []floorWaiter, laneID int64) {
+	for i := range waiters {
+		if waiters[i].laneID != laneID {
+			continue
+		}
+		o, err := d.db.GetOrder(waiters[i].orderID)
+		if err != nil || o == nil {
+			continue
+		}
+		waiters[i].cause = QueueCause(o.QueueCause)
+	}
+}
+
 // SweepLaneWaiters is one floor pass. Returns the number of orders it FREED,
 // which is the number of defect records it wrote.
 //
@@ -102,6 +126,20 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 		lanes[w.laneID] = true
 	}
 	for laneID := range lanes {
+		// RE-READ THE CAUSE FIRST, and read it HERE rather than after the release.
+		//
+		// The snapshot in `before` was taken for every lane at once, so by the time
+		// the last lane is re-driven its waiters' causes are as old as all the
+		// re-drives that ran in between — during which an evaluator may have written
+		// a more specific one. Reporting the opening snapshot then attributes the
+		// release to a cause that had already been superseded.
+		//
+		// After the release is too late: a successful release CLEARS the cause (it
+		// describes a wait that is over), so a post-release read returns blank and
+		// blank is a different defect record entirely. Immediately before the
+		// re-drive is the last moment the live value still means "why this order is
+		// waiting".
+		d.refreshWaiterCauses(before, laneID)
 		d.EvaluateLaneReleases(laneID)
 		d.RedriveHeldCompoundLegs(laneID)
 	}
@@ -169,6 +207,43 @@ func (d *Dispatcher) laneWaiters() ([]floorWaiter, error) {
 	return out, nil
 }
 
+// MarkStationWaitIfOwned writes CauseStationWait on an order that has just
+// staged at a wait the STATION owns, and does nothing otherwise.
+//
+// ── WHY IT IS CONDITIONAL, AND WHY IT IS HERE AT ALL ──────────────────────
+//
+// An order dwelling at a station wait used to carry a blank row — no code, no
+// cause, no sentence — which on the board and in every diagnostic query looks
+// exactly like an order nobody has evaluated yet. That is the population the
+// liveness floor cannot cover (PopStationWait: Core must not auto-release a
+// wait whose precondition only the station observes), so a blank there is not
+// a gap a floor will later fill. It is the permanent state of the row.
+//
+// A LANE wait is left alone. Its cause is written by the evaluator when it
+// refuses, and those causes are specific — lane-occupied, lane-target-buried,
+// lane-deeper-pending. Stamping a generic one here would overwrite the useful
+// answer with a vague one, on the population that already has the machinery to
+// say something better.
+//
+// Best-effort: this is advisory metadata on a status the fleet already reported,
+// and failing to write it must not disturb the staged notification that follows.
+func (d *Dispatcher) MarkStationWaitIfOwned(orderID int64) {
+	order, err := d.db.GetOrder(orderID)
+	if err != nil || order == nil {
+		return
+	}
+	var steps []resolvedStep
+	if json.Unmarshal([]byte(order.StepsJSON), &steps) != nil {
+		return
+	}
+	w, ok := waitAt(steps, order.WaitIndex)
+	if !ok || !IsStationWait(w.WaitKind) {
+		return
+	}
+	d.setQueueReason(order, protocol.QueueWaitingForPartner, CauseStationWait,
+		QueueParams{Destination: w.Node})
+}
+
 // laneOfGateWait returns the lane an order is parked at, or 0.
 //
 // Same walk IsGateStaged just did, and that duplication is deliberate: making
@@ -231,14 +306,29 @@ func (d *Dispatcher) recordFloorRelease(w floorWaiter) {
 	var should string
 	switch r, ok := releaserFor(w.cause); {
 	case w.cause == "":
-		// A BLANK is its own finding, and a different one: some arm refused this
-		// order and recorded nothing, so the row cannot say what it was waiting
-		// for. That is the gap dcb2c014 and the classifier-error arm close, and a
-		// blank here means one is still open — or the order was parked by a build
-		// that predates them.
+		// A BLANK IS TWO DIFFERENT DEFECTS AND THIS USED TO NAME ONLY ONE.
+		//
+		// It said "find the arm that refused it without calling setQueueReason",
+		// which is right when an arm did refuse. It is wrong — and actively
+		// misdirecting — when NOTHING EVER EVALUATED the order, because then
+		// there is no arm to find. §12.49 traced one: order 56 went `staged` at
+		// 04:32:58 and the floor freed it 17 seconds later, while the evaluator's
+		// refusal line fired 77 times across the run and not once for it. Nobody
+		// refused it; nobody looked at it.
+		//
+		// The two want opposite investigations — fix an arm, versus find the
+		// event that should have triggered an evaluation — so the record names
+		// both and says how to tell them apart. Distinguishing them
+		// automatically would take a "was this ever evaluated" bit the order row
+		// does not carry; until it does, the reader is given the discriminator
+		// rather than a guess.
 		cause = "(none)"
-		should = "THE ROW CARRIED NO CAUSE, so nothing recorded what it was waiting for — find the " +
-			"arm that refused it without calling setQueueReason. This is not an inventory gap"
+		should = "THE ROW CARRIED NO CAUSE, and that is TWO possible defects. Either (a) an arm " +
+			"refused this order without calling setQueueReason — look for one, and the log will " +
+			"show a refusal for it; or (b) NOTHING EVER EVALUATED IT, in which case there is no arm " +
+			"to find and the defect is the missing event that should have triggered an evaluation " +
+			"before the floor's tick. Check the log for a refusal naming this order: if there is " +
+			"none, it is (b). This is not an inventory gap either way"
 	case !ok:
 		should = "no releaser is on file for this cause — causeReleasers has no row, which is itself " +
 			"the defect"

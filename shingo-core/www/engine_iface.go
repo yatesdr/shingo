@@ -145,6 +145,10 @@ type EngineOrchestration interface {
 	// ── Orders ─────────────────────────────────────────────────────
 	CreateBinMove(req engine.BinMoveRequest) (*engine.BinMoveResult, error)
 	TerminateOrder(orderID int64, actor string) error
+	// HardReleaseOrder advances a dwelling order past its wait regardless of who
+	// owns it — the escape hatch for a wait whose ordinary releaser is wedged.
+	// Same privilege class as TerminateOrder; the audit row names the actor.
+	HardReleaseOrder(orderID int64, actor string) error
 
 	// ── Scene sync ─────────────────────────────────────────────────
 	SceneSync() (int, int, int, error)

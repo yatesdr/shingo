@@ -115,6 +115,19 @@ const (
 	CauseGateRebindUnavailable QueueCause = "gate-rebind-unavailable"
 	// CauseGateAppendFailed — the fleet refused the tail append past the retry threshold.
 	CauseGateAppendFailed QueueCause = "gate-append-failed"
+	// CauseStationWait — the robot is parked at a wait the STATION owns, and Core
+	// is not going to advance it. The line has to clear, the tooling has to
+	// finish, somebody has to press Release.
+	//
+	// IT IS A WAIT WITH NO CORE RELEASER, AND THAT IS THE POINT. Every other
+	// cause here names something Core is waiting to observe; this one names
+	// something Core is waiting to be TOLD. It exists because the population had
+	// no cause at all: an order dwelling at a station wait carried a blank row,
+	// which is indistinguishable from one nobody had evaluated — the shape that
+	// held three robots for a soak while the investigation looked for a fence
+	// that was refusing them (§12.49). Nothing was refusing them; nothing could
+	// see them.
+	CauseStationWait QueueCause = "station-wait"
 	// CauseGateReleaseFailed — the classifier ADMITTED this dweller and the release
 	// itself then failed: the re-bind found no slot, the segment could not be
 	// built, the append errored below the retry threshold. The order stays a

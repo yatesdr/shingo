@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -93,6 +94,30 @@ const WaitKindStation = "station"
 // should be: unowned, and refused by both fences.
 func IsStationWait(kind string) bool {
 	return kind == WaitKindStation || kind == ""
+}
+
+// CoreOwnsWaitAt reports whether the wait an order is parked at is CORE's to
+// advance — the read behind the hard-release affordance and anything else that
+// must distinguish the two owners from outside this package.
+//
+// It is the exact complement of IsStationWait over a real plan, so the drain
+// window's default (untagged = the station's) is honoured in one place rather
+// than re-decided by each caller. An unreadable plan, or an order parked at no
+// wait, answers FALSE: nothing should offer a Core override for a wait it cannot
+// identify.
+func CoreOwnsWaitAt(stepsJSON string, waitIndex int) bool {
+	if stepsJSON == "" {
+		return false
+	}
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
+		return false
+	}
+	w, ok := waitAt(steps, waitIndex)
+	if !ok {
+		return false
+	}
+	return !IsStationWait(w.WaitKind)
 }
 
 // claimedBin records which bin was claimed at which pickup step.

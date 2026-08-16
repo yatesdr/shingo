@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"testing"
 
 	"shingo/protocol"
@@ -262,5 +263,59 @@ func TestEveryWaitDeclaresAnOwner(t *testing.T) {
 	// tell them apart at all.
 	if WaitKindLane == WaitKindStation {
 		t.Fatal("WaitKindLane == WaitKindStation — the whole distinction collapses")
+	}
+}
+
+// TestHardReleaseIsScopedToCoreOwnedWaits pins W3's scope, which is the half
+// that keeps the escape hatch from becoming a foot-gun.
+//
+// A STATION-owned wait is released from the station's board, by the person who
+// can see whether the cell is clear. A Core-side override for one would let an
+// engineer advance a robot into an occupied cell from a screen that cannot show
+// them the cell — and would do it in the one case where the ordinary path is not
+// broken at all.
+//
+// So CoreOwnsWaitAt is the gate, and both the button (via can_hard_release) and
+// the handler read it. An UNTAGGED wait is the station's for the drain window
+// and therefore refused: the conservative direction, decided in exactly one
+// place (IsStationWait) so the two readers cannot disagree.
+func TestHardReleaseIsScopedToCoreOwnedWaits(t *testing.T) {
+	t.Parallel()
+
+	plan := func(kind string) string {
+		steps := []resolvedStep{
+			{Action: protocol.ActionWait, Node: "MARK", WaitKind: kind},
+			{Action: protocol.ActionPickup, Node: "SLOT"},
+		}
+		b, err := json.Marshal(steps)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		return string(b)
+	}
+
+	if !CoreOwnsWaitAt(plan(WaitKindLane), 0) {
+		t.Error("a lane wait is CORE's — the hatch exists for exactly this, a wait whose evaluator " +
+			"can wedge with nobody else able to clear it")
+	}
+	if CoreOwnsWaitAt(plan(WaitKindStation), 0) {
+		t.Error("a STATION wait was reported as Core-owned. The button would render and the handler " +
+			"would accept, letting an engineer advance a robot into a cell somebody is working in " +
+			"— from a screen that cannot show them the cell")
+	}
+	if CoreOwnsWaitAt(plan(""), 0) {
+		t.Error("an UNTAGGED wait was reported as Core-owned. During the drain window it reads as " +
+			"the station's, and the conservative direction is to withhold the override")
+	}
+	// Unreadable or absent plans must not offer an override either.
+	if CoreOwnsWaitAt("", 0) {
+		t.Error("an order with no plan was reported as Core-owned")
+	}
+	if CoreOwnsWaitAt("{not json", 0) {
+		t.Error("an unparseable plan was reported as Core-owned")
+	}
+	if CoreOwnsWaitAt(plan(WaitKindLane), 7) {
+		t.Error("a wait_index past the end was reported as Core-owned — there is no wait there to " +
+			"advance")
 	}
 }

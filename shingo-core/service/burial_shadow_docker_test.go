@@ -84,7 +84,7 @@ func TestBurialShadow_CountsAPendingHoldBurial(t *testing.T) {
 
 	// The placement: a bin arrives at depth 1, in front of the held one.
 	arriving := binAt(t, db, "BSPEND-ARRIVE", slots[0])
-	_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil)
+	_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, 0)
 	testutil.MustNoErr(t, err, "ApplyArrival")
 
 	got := svc.BurialShadowTally()
@@ -118,7 +118,7 @@ func TestBurialShadow_UnencumberedLaneCountsNothing(t *testing.T) {
 	_ = binAt(t, db, "BSCLEAR-FREE", slots[2])
 
 	arriving := binAt(t, db, "BSCLEAR-ARRIVE", slots[0])
-	_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil)
+	_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, 0)
 	testutil.MustNoErr(t, err, "ApplyArrival")
 
 	if got := svc.BurialShadowTally(); got.Soft != 0 || got.Bypass != 0 {
@@ -128,7 +128,7 @@ func TestBurialShadow_UnencumberedLaneCountsNothing(t *testing.T) {
 	// And the other direction: a placement DEEPER than an occupied slot buries
 	// nothing, because burial is about what is behind you, not in front.
 	deeper := binAt(t, db, "BSCLEAR-DEEPER", slots[0])
-	_, err = svc.ApplyArrival(deeper.ID, slots[2].ID, false, nil)
+	_, err = svc.ApplyArrival(deeper.ID, slots[2].ID, false, nil, 0)
 	if err == nil {
 		if got := svc.BurialShadowTally(); got.Soft != 0 || got.Bypass != 0 {
 			t.Fatalf("tally = %+v after a deep placement, want 0", got)
@@ -173,7 +173,7 @@ func TestBurialShadow_HardClaimBuriedIsATripwire(t *testing.T) {
 	arriving := binAt(t, db, "BSTRIP-ARRIVE", slots[0])
 	placer := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
 	testdb.ClaimBinForTest(t, db, arriving.ID, placer.ID)
-	_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil)
+	_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, placer.ID)
 	testutil.MustNoErr(t, err, "ApplyArrival")
 
 	got := svc.BurialShadowTally()
@@ -213,7 +213,7 @@ func TestBurialShadow_DigPlacementIsCountedApart(t *testing.T) {
 		o.ParentOrderID = &digParent.ID
 	})
 	testdb.ClaimBinForTest(t, db, arriving.ID, digLeg.ID)
-	_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil)
+	_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, digLeg.ID)
 	testutil.MustNoErr(t, err, "ApplyArrival")
 
 	got := svc.BurialShadowTally()
@@ -246,7 +246,7 @@ func TestBurialShadow_TerminalHolderIsNotAHold(t *testing.T) {
 	testutil.MustNoErr(t, err, "terminalize holder")
 
 	arriving := binAt(t, db, "BSTERM-ARRIVE", slots[0])
-	_, err = svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil)
+	_, err = svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, 0)
 	testutil.MustNoErr(t, err, "ApplyArrival")
 
 	if got := svc.BurialShadowTally(); got.Soft != 0 || got.Bypass != 0 {
@@ -281,7 +281,7 @@ func TestBurialShadow_CannotRefuseThePlacement(t *testing.T) {
 	mover := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
 	testdb.ClaimBinForTest(t, db, arriving.ID, mover.ID)
 
-	evicted, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil)
+	evicted, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, mover.ID)
 	testutil.MustNoErr(t, err, "ApplyArrival over a fully encumbered lane must still succeed")
 	if evicted {
 		t.Error("evicted = true, want false — the destination was empty")
@@ -304,5 +304,61 @@ func TestBurialShadow_CannotRefuseThePlacement(t *testing.T) {
 	if got := svc.BurialShadowTally(); got.Soft+got.Bypass != 2 {
 		t.Fatalf("tally = %+v, want 2 events — if the predicate did not fire, this test proves "+
 			"nothing about the instrument being unable to refuse", got)
+	}
+}
+
+// TestBurialShadow_DigLegClassifiedFromCallerNotBinClaim is the miscount that
+// made the tripwire's number untrustworthy.
+//
+// digPlacement used to be resolved by asking OrderIsCompoundLeg about whatever
+// bins.claimed_by held when the arrival landed. For a dig leg that read is
+// unsound in both directions. Compound children deliberately overlap claims —
+// CreateCompoundChildren writes them for every step in one transaction and the
+// last step's UPDATE wins for a bin appearing in several — so a leg's placement
+// routinely reads a SIBLING's id, and once any claim ahead of it is cleared it
+// reads 0, which skipped the question entirely and defaulted to "not a dig".
+//
+// Measured: bin 58 into LSD_028 is a reshuffle unbury leg. It reported as
+// DIG-UNCOVERED on one rig run and as GUARD BYPASS on the next, from the same
+// placement, differing only in whether the claim happened to be cleared. That
+// is a should-be-zero counter reporting a known and accepted gap, which is the
+// one thing it must never do.
+//
+// Here the arriving bin is claimed by NOBODY, exactly as the rig had it, while
+// the placement is unambiguously a dig leg. Classification must follow the
+// caller's order, which every caller has in hand.
+//
+// MUTATION (fires): resolve the placing order from bins.claimed_by again and
+// this counts Bypass=1, DigUncovered=0.
+func TestBurialShadow_DigLegClassifiedFromCallerNotBinClaim(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	slots := burialLane(t, db, "BSATTR", 4)
+
+	hardBin := binAt(t, db, "BSATTR-HARD", slots[2])
+	owner := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+	testdb.ClaimBinForTest(t, db, hardBin.ID, owner.ID)
+
+	svc := newBinSvc(db)
+	arriving := binAt(t, db, "BSATTR-ARRIVE", slots[0])
+	digParent := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "reshuffling" })
+	digLeg := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.Status = "in_transit"
+		o.ParentOrderID = &digParent.ID
+	})
+
+	// NO ClaimBinForTest on the arriving bin: this is the rig's shape, a dig
+	// leg whose claim was already cleared by the time the arrival applied.
+	_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, digLeg.ID)
+	testutil.MustNoErr(t, err, "ApplyArrival")
+
+	got := svc.BurialShadowTally()
+	if got.DigUncovered != 1 {
+		t.Fatalf("tally = %+v, want DigUncovered=1 — the placement is a dig leg whatever the "+
+			"bin's claim says, and the caller knows which order it is", got)
+	}
+	if got.Bypass != 0 {
+		t.Fatalf("tally = %+v, want Bypass=0 — counting the known gap here is what made the "+
+			"expected-zero number unreadable on the rig", got)
 	}
 }

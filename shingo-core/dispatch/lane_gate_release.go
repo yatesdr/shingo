@@ -341,9 +341,9 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bo
 		}
 		var rErr error
 		if c.retrieve {
-			rErr = d.releaseGatedRetrieve(c.order, lane)
+			rErr = d.releaseGatedRetrieve(c.order, lane, c.entryIndex)
 		} else {
-			rErr = d.releaseGatedOrder(c.order, lane)
+			rErr = d.releaseGatedOrder(c.order, lane, c.entryIndex)
 		}
 		if rErr != nil {
 			// AND THE CAUSE GOES ON THE ROW. This arm wrote nothing, and it is the
@@ -389,6 +389,12 @@ type gateCandidate struct {
 	// retrieve is the direction, read off the plan (a pickup after the wait)
 	// rather than inferred from which query found the order.
 	retrieve bool
+	// entryIndex is the steps_json index of THAT lane-entry step — the same walk
+	// that produced `node` and `retrieve` already knew it. The rebind needs it to
+	// patch the step it is actually speaking for: a swap has two dropoffs and a
+	// spliced plan two pickups, so "the last dropoff" and "the first pickup" name
+	// the wrong leg (see applyPlanNode).
+	entryIndex int
 }
 
 // gateStagedForLane returns every order dwelling at THIS lane's gate.
@@ -438,7 +444,7 @@ func (d *Dispatcher) gateStagedForLane(lane *nodes.Node) ([]gateCandidate, error
 		if !ok || w.WaitLane != lane.ID {
 			continue // parked at somebody else's wait, or at none
 		}
-		entry, _, isRetrieve, ok := laneEntryAfterWait(steps, o.WaitIndex)
+		entry, entryIdx, isRetrieve, ok := laneEntryAfterWait(steps, o.WaitIndex)
 		if !ok {
 			log.Printf("lane gate: order %d is parked at a wait for lane %s with no actionable step "+
 				"after it — its tail cannot be built", o.ID, lane.Name)
@@ -466,7 +472,7 @@ func (d *Dispatcher) gateStagedForLane(lane *nodes.Node) ([]gateCandidate, error
 		if dErr != nil {
 			return nil, dErr
 		}
-		out = append(out, gateCandidate{order: o, node: node, depth: depth, retrieve: isRetrieve})
+		out = append(out, gateCandidate{order: o, node: node, depth: depth, retrieve: isRetrieve, entryIndex: entryIdx})
 	}
 	return out, nil
 }
@@ -728,7 +734,7 @@ func namedID(named *nodes.Node) int64 {
 // lifecycle.Release inside the helper is the backstop: it validates
 // staged→in_transit against the live status and refuses an already-released order
 // (lifecycle.go transition → protocol.IsValidTransition).
-func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node) error {
+func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node, entryIndex int) error {
 	fresh, err := d.db.GetOrder(order.ID)
 	if err != nil || fresh == nil {
 		return err
@@ -739,7 +745,7 @@ func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node) er
 		return nil
 	}
 
-	dest, err := d.rebindGatedDropoff(fresh, lane)
+	dest, err := d.rebindGatedDropoff(fresh, lane, entryIndex)
 	if err != nil {
 		// The lane moved against this order and no reachable slot is available.
 		// Refusing is the safe disposition: appending into an occupied or walled
@@ -768,7 +774,7 @@ func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node) er
 // The pickup re-bind is the retrieve's reason to bind at release: a dig may have
 // moved the wanted bin while this order dwelled at the gate, so the slot the order
 // was born wanting is not necessarily the slot the bin occupies when the lane opens.
-func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node) error {
+func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node, entryIndex int) error {
 	fresh, err := d.db.GetOrder(order.ID)
 	if err != nil || fresh == nil {
 		return err
@@ -779,7 +785,7 @@ func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node)
 		return nil
 	}
 
-	src, err := d.rebindGatedPickup(fresh, lane)
+	src, err := d.rebindGatedPickup(fresh, lane, entryIndex)
 	if err != nil {
 		// The bin moved (a dig relocated it) and its current location is not the lane
 		// slot the order holds, or the slot is no longer reachable. Refusing is safe:
@@ -819,7 +825,7 @@ func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node)
 // The resolution itself is pickupSlotNow, shared with the classifier, because the
 // classifier's burial test had the same stale-slot bug and fixing one without the
 // other leaves the order parked before it ever reaches this function.
-func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node) (*nodes.Node, error) {
+func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, entryIndex int) (*nodes.Node, error) {
 	at, moved, err := d.pickupSlotNow(order, lane)
 	if err != nil {
 		return nil, err
@@ -838,11 +844,13 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node) (*
 		return at, nil
 	}
 
-	// applySourceNode, not a raw source_node write: it patches the deferred pickup
-	// step in steps_json in the same breath, and that tail is exactly what the append
-	// is about to emit. A raw write would send the robot to the slot the bin left.
+	// applySourceNodeAtStep, not a raw source_node write: it patches the deferred
+	// pickup step in steps_json in the same breath, and that tail is exactly what the
+	// append is about to emit. A raw write would send the robot to the slot the bin
+	// left. The index is THIS order's lane entry, carried from the candidate walk —
+	// a spliced plan has an earlier pickup that belongs to another leg.
 	was := order.SourceNode
-	if err := applySourceNode(d.db, order, at.Name); err != nil {
+	if err := applySourceNodeAtStep(d.db, order, at.Name, entryIndex); err != nil {
 		return nil, err
 	}
 	log.Printf("lane gate: retrieve %d re-bound at release %s → %s (lane %s, bin %d)",
@@ -869,7 +877,7 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node) (*
 // The move takes the new slot BEFORE releasing the old one, so a failure part-way
 // leaves the order holding exactly what it held before. Holding two slot rows for
 // the instant between is legal: the uniqueness index is per NODE, not per order.
-func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node) (*nodes.Node, error) {
+func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node, entryIndex int) (*nodes.Node, error) {
 	current, err := d.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
 		return nil, err
@@ -897,11 +905,17 @@ func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node) (
 				order.ID, current.Name, best.Name, rErr)
 		}
 	}
-	// applyDeliveryNode, not a raw delivery_node write: it patches the deferred
-	// tail in steps_json in the same breath, and that tail is exactly what the
-	// append is about to emit. A raw write would append a block for the slot the
+	// applyDeliveryNodeAtStep, not a raw delivery_node write: it patches the
+	// deferred tail in steps_json in the same breath, and that tail is exactly what
+	// the append is about to emit. A raw write would append a block for the slot the
 	// order no longer owns.
-	if err := applyDeliveryNode(d.db, order, best.Name); err != nil {
+	//
+	// AT THE LANE-ENTRY INDEX, not at the plan's last dropoff. A swap's plan is
+	// [… dropoff <lane>, pickup <empty>, dropoff <press>], and the leg this gate
+	// speaks for is the FIRST dropoff. Re-pointing the last one instead sent the
+	// empty into the lane and put both of the order's bins in one slot — see
+	// applyPlanNode for the full failure and PLAN §R.5 for the specimens.
+	if err := applyDeliveryNodeAtStep(d.db, order, best.Name, entryIndex); err != nil {
 		return nil, err
 	}
 	log.Printf("lane gate: order %d re-bound at release %s → %s (lane %s)",

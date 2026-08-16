@@ -564,6 +564,51 @@ func IsValidTransition(from, to Status) bool {
 	return slices.Contains(allowed, to)
 }
 
+// IsForwardJump reports whether `to` is REACHABLE from `from` by some path
+// through validTransitions, but is not a single legal step.
+//
+// ── WHAT IT IS FOR: A MIRROR THAT LOST A MESSAGE ──────────────────────────
+//
+// Core owns order state; the Edge reflects it. When Core walks
+// reshuffling → queued → sourcing → dispatched → staged and the Edge is told
+// only about the last one, the Edge is asked for reshuffling → staged, which is
+// not a legal STEP but is a legal DESTINATION — every state in between exists
+// and Core has already passed through them. Rejecting it strands the mirror at a
+// status the authority left minutes ago, which is how three robots became
+// unreleasable for a whole soak (§12.49).
+//
+// A jump that is NOT reachable is a different animal — a terminal being
+// resurrected, or a status Core could not have arrived at — and stays refused.
+// So this is precisely "I missed a notification", never "the authority is
+// impossible".
+//
+// DERIVED FROM THE TABLE, NOT A SECOND ORDERING. There is no hand-listed
+// rank of statuses to keep in step with validTransitions; reachability IS the
+// table, walked. A terminal `from` has no outgoing edges, so nothing is
+// reachable from it and every jump off a terminal is refused, which is the
+// existing rule and not a new one.
+func IsForwardJump(from, to Status) bool {
+	if from == to || IsValidTransition(from, to) {
+		return false
+	}
+	seen := map[Status]bool{from: true}
+	queue := []Status{from}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, next := range validTransitions[cur] {
+			if next == to {
+				return true
+			}
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return false
+}
+
 // AllValidTransitions returns a copy of the validTransitions map for test
 // use. Returns a copy to prevent test mutation of the canonical table.
 func AllValidTransitions() map[Status][]Status {

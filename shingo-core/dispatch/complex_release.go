@@ -203,6 +203,141 @@ func (d *Dispatcher) patchRedirectSegments(segment []resolvedStep, order *orders
 // The fleet half is appendSegmentAndAdvance (shared with the lane-gate path);
 // this wrapper only adds the operator-facing error reply, which is the one thing
 // the two callers genuinely differ on.
+// HardReleaseStagedOrder advances a dwelling order's next segment REGARDLESS of
+// who owns its wait. It is the Core operator's escape hatch (W3).
+//
+// ── IT BYPASSES THE FENCE ON PURPOSE, WHICH IS THE WHOLE AFFORDANCE ───────
+//
+// HandleOrderRelease refuses a gate-staged order because only the lane evaluator
+// can know a lane is safe, and the station HMI must not offer a button for a
+// wait it does not own. Both are right, and together they leave a hole: when the
+// mechanism that WOULD advance a wait is itself wedged, nobody can advance it.
+// This stream met that hole three times — a resume that never reached the Edge,
+// a mirror stuck behind the authority, a heal that could never take its lane —
+// and each time the only recovery was a person with database access.
+//
+// So the hatch is explicit, audited, and Core-side. It is NOT a new privilege
+// class: it sits behind the same protected route group as order termination and
+// the robot force-complete, which are the comparable "an engineer has decided"
+// verbs. The audit row names the actor and the wait's owner, because a hard
+// release of a STATION wait is a person overriding a cell that may still be
+// occupied, and that is worth being able to find afterwards.
+//
+// It does NOT skip the fleet append or the ordering discipline: it goes through
+// appendSegmentAndAdvance like both ordinary releasers, so the vehicle pin, the
+// success-before-advance rule and the retry semantics are identical. The only
+// thing it skips is the question of whose turn it is.
+func (d *Dispatcher) HardReleaseStagedOrder(orderID int64, actor string) error {
+	order, err := d.db.GetOrder(orderID)
+	if err != nil || order == nil {
+		return fmt.Errorf("hard release: order %d not found: %v", orderID, err)
+	}
+	if order.Status != StatusStaged && order.Status != StatusInTransit {
+		return fmt.Errorf("hard release: order %d is %s — only a staged or in_transit order has a "+
+			"segment left to append", orderID, order.Status)
+	}
+	var steps []resolvedStep
+	if uErr := json.Unmarshal([]byte(order.StepsJSON), &steps); uErr != nil {
+		return fmt.Errorf("hard release: order %d has an unreadable plan: %w", orderID, uErr)
+	}
+	segment, moreWaits, blockOffset := splitSegment(steps, order.WaitIndex)
+	if segment == nil {
+		return fmt.Errorf("hard release: order %d has no segment at wait_index %d — it is past its "+
+			"final wait and there is nothing left to release", orderID, order.WaitIndex)
+	}
+
+	// ── CORE-OWNED WAITS ONLY, ENFORCED HERE AND NOT JUST IN THE UI ───────
+	//
+	// A STATION-owned wait is released from the station's board, by the person
+	// who can see whether the cell is clear. A Core-side override for one would
+	// let an engineer advance a robot into an occupied cell from a screen that
+	// cannot show them the cell — and would do it in the one case where the
+	// ordinary path is not broken at all. The hatch exists for the waits CORE is
+	// responsible for advancing, whose mechanism can wedge with nobody else able
+	// to clear it.
+	//
+	// An untagged wait (pre-ruling plan, still draining) reads as the station's
+	// and is refused, which is the conservative direction.
+	w, ok := waitAt(steps, order.WaitIndex)
+	if !ok {
+		return fmt.Errorf("hard release: order %d is not parked at a wait", orderID)
+	}
+	if IsStationWait(w.WaitKind) {
+		return fmt.Errorf("hard release: order %d is parked at a STATION-owned wait at %q — release "+
+			"it from the station's board, where the operator can see whether the cell is clear. "+
+			"Core's hard release is for waits Core is responsible for advancing", orderID, w.Node)
+	}
+	owner := w.WaitKind
+
+	// ── WHAT IT IS OVERRIDING, MEASURED AND RECORDED — NOT ASSUMED SAFE ───
+	//
+	// Skipping the OWNERSHIP fence is the affordance. Skipping the PHYSICAL
+	// questions would be a different thing entirely, and doing it silently would
+	// be indefensible: a lane can be dig-locked or hold another robot, and this
+	// appends a segment that drives into it.
+	//
+	// It still proceeds — refusing on a busy lane would remove the hatch in
+	// exactly the case it is needed, which is a wedge in the lane machinery
+	// itself. So the physical verdict is READ and carried into the audit and the
+	// log instead: the operator is overriding something specific, and afterwards
+	// anyone can see what it was. Informed override, not a blind one.
+	physical := "not evaluated (no lane on this entry)"
+	if v, vErr := d.hardReleasePhysicalVerdict(order, steps); vErr != nil {
+		physical = "COULD NOT BE READ: " + vErr.Error()
+	} else if v != "" {
+		physical = "REFUSED BY: " + v
+	} else if v == "" {
+		physical = "clear"
+	}
+
+	d.db.AppendAudit("order", orderID, "hard_release", "",
+		fmt.Sprintf("HARD RELEASE by %s: advanced past a %s-owned wait at wait_index %d. Core's "+
+			"fence and the station's board were both bypassed. Physical state at the moment of "+
+			"release: %s — if this was a station wait, a cell may still have been occupied",
+			actor, owner, order.WaitIndex, physical), actor)
+	log.Printf("HARD RELEASE: order %d advanced past a %s-owned wait by %s (physical: %s) — the "+
+		"ordinary releaser for that wait did not run, which is itself worth investigating",
+		orderID, owner, actor, physical)
+
+	d.patchRedirectSegments(segment, order, moreWaits)
+	return d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "hard release")
+}
+
+// hardReleasePhysicalVerdict asks the ordinary admission question about the
+// entry this release is about to make, purely so the override can be recorded
+// against it. Returns the refusing cause (empty when the lane is clear), or an
+// error when the answer could not be read.
+//
+// It is READ-ONLY and its answer never blocks: see the note at the call site for
+// why a hatch that refuses on a busy lane is not a hatch. Deliberately reuses
+// the gate's own classifier rather than a second opinion — the point is to
+// record what the REAL fence would have said.
+func (d *Dispatcher) hardReleasePhysicalVerdict(order *orders.Order, steps []resolvedStep) (string, error) {
+	entry, _, isRetrieve, ok := laneEntryAfterWait(steps, order.WaitIndex)
+	if !ok || entry.Node == "" {
+		return "", nil // nothing lane-shaped after this wait
+	}
+	node, err := d.db.GetNodeByDotName(entry.Node)
+	if err != nil || node == nil {
+		return "", fmt.Errorf("entry node %q does not resolve", entry.Node)
+	}
+	lane, err := d.db.LaneForNode(node.ID)
+	if err != nil {
+		return "", err
+	}
+	if lane == nil {
+		return "", nil // not a lane entry; nothing physical to override
+	}
+	v, err := d.gateEntryVerdict(lane, order, node, isRetrieve)
+	if err != nil {
+		return "", err
+	}
+	if v.Admitted() {
+		return "", nil
+	}
+	return fmt.Sprintf("%s at %s", v.Cause(), lane.Name), nil
+}
+
 func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.Order, segment []resolvedStep, moreWaits bool, blockOffset int) {
 	if err := d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "complex release"); err != nil {
 		d.sendError(env, order.EdgeUUID, "fleet_failed", err.Error())

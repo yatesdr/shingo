@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -12,6 +13,23 @@ import (
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
+
+// gateEntryIndexFor derives the lane-entry step index the way the candidate walk
+// does, so a release driven from a test names the same step production would.
+// Deriving it beats hardcoding one: a fixture whose plan shape changes then moves
+// the index with it instead of silently re-pointing the wrong leg.
+func gateEntryIndexFor(t *testing.T, o *orders.Order) int {
+	t.Helper()
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(o.StepsJSON), &steps); err != nil {
+		t.Fatalf("gate entry index: steps_json: %v", err)
+	}
+	_, idx, _, ok := laneEntryAfterWait(steps, o.WaitIndex)
+	if !ok {
+		t.Fatalf("gate entry index: no actionable step after wait %d", o.WaitIndex)
+	}
+	return idx
+}
 
 // stageGatedStore dispatches a store into a gate_choreography lane and returns it
 // reloaded. Whether it ends up gate-staged or released is the valve's decision —
@@ -215,16 +233,17 @@ func TestGateRelease_StaleCopyCannotDoubleAppend(t *testing.T) {
 		t.Fatalf("fixture: order should read gate-staged (wait=%d vendor=%q)", stale.WaitIndex, stale.VendorOrderID)
 	}
 	before := len(backend.ReleaseCalls())
+	entryIdx := gateEntryIndexFor(t, stale)
 
 	// Pass A releases it.
-	if err := d.releaseGatedOrder(stale, lane); err != nil {
+	if err := d.releaseGatedOrder(stale, lane, entryIdx); err != nil {
 		t.Fatalf("first release: %v", err)
 	}
 	// Pass B, holding the SAME struct it loaded before pass A ran, must not append.
 	staleCopy := *stale
 	staleCopy.WaitIndex = 0 // what pass B still believes, having never re-read
 	staleCopy.Status = StatusStaged
-	if err := d.releaseGatedOrder(&staleCopy, lane); err != nil {
+	if err := d.releaseGatedOrder(&staleCopy, lane, entryIdx); err != nil {
 		t.Fatalf("second release should be a silent no-op, got: %v", err)
 	}
 
@@ -546,5 +565,110 @@ func TestGateRelease_IgnoresNonGatedLanes(t *testing.T) {
 	}
 	if n := len(backend.ReleaseCalls()); n != 0 {
 		t.Errorf("append calls = %d, want 0 — the evaluator must not touch a lane with no mark", n)
+	}
+}
+
+// TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff pins the fix for the swap
+// clobber (PLAN §R.5): the gate re-binds the dropoff it is SPEAKING FOR — the
+// lane entry — and leaves the plan's later legs alone.
+//
+// The shape that broke it is a swap: store a full bin in the lane, pick an empty
+// out, return the empty to a press.
+//
+//	[wait station, pickup press, wait LANE, dropoff <lane>, pickup <empty>, dropoff <press>]
+//	                                        ^ index 3, the gate's leg          ^ index 5
+//
+// delivery_node names the FINAL destination (the press) — that is the live
+// pre-rebind state on both rig specimens, orders 24 and 30. The old re-bind
+// patched "the last dropoff" by backward scan and so overwrote index 5, sending
+// the empty into the lane and putting BOTH of the order's bins in one slot. The
+// press then starved waiting for an empty that had been driven into a lane, and
+// the ghost eviction was forced to evict an occupant Core's own plan had made.
+//
+// Mutation: point applyDeliveryNodeAtStep back at a last-dropoff scan and the
+// index-5 assertion below fires — the empty is aimed at the lane slot again.
+func TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	laneID, _, _ := gateChoreoLane(t, db, "SWAPRB", "SWAPRB-WAIT")
+	deepenLane(t, db, laneID, "SWAPRB", 3)
+	slots := laneSlotsByDepth(t, db, laneID) // S0 shallow … S2 deepest
+	lane, err := db.GetNode(laneID)
+	if err != nil {
+		t.Fatalf("load lane: %v", err)
+	}
+	press := lineNode(t, db, "SWAPRB-PRESS")
+	emptySrc := lineNode(t, db, "SWAPRB-EMPTIES")
+
+	// The swap, with delivery_node on the FINAL leg — the press — exactly as the
+	// specimens carried it before the gate touched them.
+	plan := fmt.Sprintf(`[{"action":"wait","node":%q,"wait_kind":"station"},`+
+		`{"action":"pickup","node":%q},`+
+		`{"action":"wait","node":"SWAPRB-WAIT","wait_kind":"lane","wait_lane":%d},`+
+		`{"action":"dropoff","node":%q},`+
+		`{"action":"pickup","node":%q,"empty":true},`+
+		`{"action":"dropoff","node":%q}]`,
+		press.Name, press.Name, laneID, slots[0].Name, emptySrc.Name, press.Name)
+
+	swap := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.OrderType = "complex"
+		o.SourceNode = press.Name
+		o.DeliveryNode = press.Name
+		o.Status = StatusStaged
+		o.StepsJSON = plan
+		o.WaitIndex = 1 // parked at the LANE wait, the second wait in the plan
+	})
+	if _, err := db.Exec(`UPDATE orders SET steps_json=$2, wait_index=1 WHERE id=$1`, swap.ID, plan); err != nil {
+		t.Fatalf("persist plan: %v", err)
+	}
+	swap, err = db.GetOrder(swap.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	// The index under test is DERIVED the way production derives it, so this
+	// asserts the plumbing too: a candidate walk that stopped carrying the index
+	// would fail here rather than silently re-point the wrong leg.
+	entryIdx := gateEntryIndexFor(t, swap)
+	if entryIdx != 3 {
+		t.Fatalf("lane entry index = %d, want 3 (the first dropoff after the lane wait) — "+
+			"the candidate walk no longer names the leg the gate speaks for", entryIdx)
+	}
+
+	got, err := d.rebindGatedDropoff(swap, lane, entryIdx)
+	if err != nil {
+		t.Fatalf("rebind: %v", err)
+	}
+
+	reloaded, err := db.GetOrder(swap.ID)
+	if err != nil {
+		t.Fatalf("reload after rebind: %v", err)
+	}
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(reloaded.StepsJSON), &steps); err != nil {
+		t.Fatalf("steps after rebind: %v", err)
+	}
+	if len(steps) != 6 {
+		t.Fatalf("plan has %d steps after rebind, want 6 — the patch rewrote the plan's shape", len(steps))
+	}
+
+	// The gate's own leg carries the re-bound slot.
+	if steps[3].Node != got.Name {
+		t.Errorf("lane-entry dropoff (step 3) = %s, want the re-bound slot %s — the gate patched a step it does not speak for",
+			steps[3].Node, got.Name)
+	}
+	// THE ASSERTION THE CLOBBER FAILED. The empty still goes back to the press.
+	if steps[5].Node != press.Name {
+		t.Errorf("final dropoff (step 5) = %s, want the press %s — the re-bind clobbered the empty's "+
+			"return leg, which is what drove both of the order's bins into one lane slot (PLAN §R.5)",
+			steps[5].Node, press.Name)
+	}
+	// And the empty's PICKUP is untouched: only the named step may move.
+	if steps[4].Node != emptySrc.Name {
+		t.Errorf("empty pickup (step 4) = %s, want %s — the patch touched a step outside its index",
+			steps[4].Node, emptySrc.Name)
 	}
 }

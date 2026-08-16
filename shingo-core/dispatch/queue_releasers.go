@@ -56,10 +56,40 @@ const (
 	// carries no queue cause; its wait is "my children are not finished", which
 	// is structural rather than a refusal.
 	PopCompoundParent WaitPopulation = "compound-parent"
+	// PopStationWait is an order `staged` at a wait the STATION owns — the swap
+	// choreography's own gates, WaitKindStation. It is the fourth population, and
+	// it was invisible until W1 made ownership explicit.
+	//
+	// IT IS DELIBERATELY UNFLOORED, which is the whole reason it needed naming.
+	// Every other population here is machine-owned: Core knows the precondition
+	// and may re-drive it. This one's precondition is a fact only the station can
+	// observe — the line has cleared, the tooling is done, the operator is ready
+	// — so a periodic pass that "freed" one would drive a robot into a cell
+	// somebody is still working in. The floor is not missing; it is refused.
+	//
+	// What it needs instead is DWELL MONITORING: somebody should be told a
+	// station wait has been standing for a long time, because the usual cause is
+	// that nobody knows it is their turn. That surface is item 7's, and the
+	// Core-side hard release (W3) is the escape hatch until it exists.
+	PopStationWait WaitPopulation = "station-wait"
 	// PopNone is the honest answer for a declared cause nothing produces. It is
 	// not a population; it is the absence of one, named so the totality test can
 	// tell "no orders wait under this" from "nobody wrote the row".
 	PopNone WaitPopulation = "none"
+)
+
+// WaitOwner is the axis W1 added: who may advance the waits in a population.
+// It is what decides whether a population may have a floor at all.
+type WaitOwner string
+
+const (
+	// OwnerCore — the precondition is a fact Core observes, so Core may re-drive
+	// it and MUST have a floor for it. Every F-22 instance lives here.
+	OwnerCore WaitOwner = "core"
+	// OwnerStation — the precondition is a fact only the station observes. Core
+	// must NOT auto-release these; the correct backstop is telling a human, not
+	// moving a robot.
+	OwnerStation WaitOwner = "station"
 )
 
 // populationReleaser is the mechanism half: which events re-ask the question for
@@ -68,12 +98,21 @@ const (
 // engine (engine imports dispatch); engine's subscription test resolves them.
 type populationReleaser struct {
 	population WaitPopulation
+	// owner decides whether this population may be re-driven at all. OwnerCore
+	// means Core observes the precondition and therefore owes it a floor;
+	// OwnerStation means Core must not, and `floor` states the refusal instead of
+	// naming a pass.
+	owner WaitOwner
 	// redriver is the function an event handler and the floor BOTH call. One
 	// name here is the claim that the floor is a trigger for existing
 	// level-triggered machinery rather than a second decision-maker.
 	redriver string
 	events   []string
 	floor    string
+	// noFloorBecause is required when owner is OwnerStation and forbidden
+	// otherwise: an unfloored population must say why the absence is a decision
+	// rather than the F-22 gap, and a floored one has nothing to excuse.
+	noFloorBecause string
 }
 
 // waitPopulations is the mechanism table. Every population has both paths, which
@@ -82,6 +121,7 @@ type populationReleaser struct {
 var waitPopulations = []populationReleaser{
 	{
 		population: PopAcquiring,
+		owner:      OwnerCore,
 		redriver:   "fulfillment.Scanner.RunOnce",
 		events: []string{
 			"EventBinUpdated", "EventOrderCompleted", "EventOrderCancelled",
@@ -92,6 +132,7 @@ var waitPopulations = []populationReleaser{
 	},
 	{
 		population: PopGateStaged,
+		owner:      OwnerCore,
 		redriver:   "Dispatcher.EvaluateLaneReleases",
 		events: []string{
 			"EventBlockCompleted", "EventBinEnteredTransit", "EventBinUpdated",
@@ -102,6 +143,7 @@ var waitPopulations = []populationReleaser{
 	},
 	{
 		population: PopCompoundLeg,
+		owner:      OwnerCore,
 		redriver:   "Dispatcher.RedriveHeldCompoundLegs",
 		events: []string{
 			"EventBlockCompleted", "EventBinEnteredTransit", "EventBinUpdated",
@@ -116,12 +158,41 @@ var waitPopulations = []populationReleaser{
 		// Listed so the doctrine's table is the whole picture rather than the part
 		// this batch happened to build.
 		population: PopCompoundParent,
+		owner:      OwnerCore,
 		redriver:   "Dispatcher.AdvanceCompoundOrder",
 		events: []string{
 			"EventOrderCompleted", "EventOrderCancelled", "EventOrderFailed",
 			"EventOrderSkipped",
 		},
 		floor: "ReconciliationService.AdvanceStuckReshuffleParents (reconcile interval)",
+	},
+	{
+		// THE FOURTH POPULATION, AND THE ONE THAT MUST NOT BE FLOORED.
+		//
+		// It was invisible until W1: an order `staged` at a WaitKindStation wait
+		// belongs to no machine-owned set — IsGateStaged is false (not a lane
+		// wait), it is not a pending leg, and it is not acquiring — so no floor
+		// swept it and no inventory row described it. Three robots sat in exactly
+		// this gap for a whole soak while everyone looked for the fence that was
+		// refusing them (§12.49). Nothing was refusing them; nothing could see
+		// them.
+		//
+		// Naming it does NOT mean giving it a floor. The events are real — the
+		// station releases, and Core's fence lets it — but the periodic pass that
+		// backstops every other population is refused here, because "nobody has
+		// pressed Release" is not a condition Core may resolve by pressing it.
+		population: PopStationWait,
+		owner:      OwnerStation,
+		redriver:   "Dispatcher.HandleOrderRelease (station-initiated)",
+		events:     []string{"protocol.TypeOrderRelease (from the station)"},
+		floor:      "",
+		noFloorBecause: "the precondition is a fact only the station can observe — the line has " +
+			"cleared, the tooling is done, the operator is ready. A periodic pass that released one " +
+			"would drive a robot into a cell somebody is still working in, which is the exact " +
+			"collision the wait exists to prevent. The right backstop is DWELL MONITORING (item 7): " +
+			"tell a human that a station wait has been standing, because the usual cause is that " +
+			"nobody knows it is their turn. Core's hard release (W3) is the escape hatch meanwhile, " +
+			"and it is deliberately an operator action rather than a timer.",
 	},
 }
 
@@ -259,6 +330,15 @@ var causeReleasers = []causeReleaser{
 		populations: []WaitPopulation{PopGateStaged},
 		what: "the bin returns to this lane, or the release re-binds the pickup against where it " +
 			"actually sits (rebindGatedPickup) — the wait is about the PLANT, not about a failed read",
+	},
+	{
+		cause:       CauseStationWait,
+		populations: []WaitPopulation{PopStationWait},
+		what: "the STATION releases it — the line clears, the tooling finishes, an operator presses " +
+			"Release. Core does not advance this one and must not: the precondition is a fact only " +
+			"the station can observe, so a floor here would send a robot into a working cell. A row " +
+			"standing under this cause for a long time is a DWELL to surface to a human (item 7), " +
+			"not a wait to re-drive; Core's hard release is the escape hatch until that exists",
 	},
 	{
 		cause:       CauseGateReleaseFailed,
@@ -468,6 +548,11 @@ type DeclaredWaitPopulation struct {
 	Redriver   string
 	Events     []string
 	Floor      string
+	// Owner lets the subscription cross-check skip the station-owned population
+	// honestly rather than by name. Its releaser is a WIRE message the station
+	// sends, handled in the messaging layer — there is no eventbus subscription
+	// to find, and looking for one would fail forever.
+	Owner string
 }
 
 // DeclaredWaitPopulations returns the mechanism table for engine's
@@ -481,6 +566,7 @@ func DeclaredWaitPopulations() []DeclaredWaitPopulation {
 			Redriver:   p.redriver,
 			Events:     append([]string(nil), p.events...),
 			Floor:      p.floor,
+			Owner:      string(p.owner),
 		})
 	}
 	return out
