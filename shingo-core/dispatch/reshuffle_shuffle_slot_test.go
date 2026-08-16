@@ -6,33 +6,37 @@ import (
 	"fmt"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/payloads"
+	"shingocore/store/reservations"
 )
 
-// setupTwoLanesOneShuffle builds an NGRP with TWO buried lanes and exactly ONE
-// shuffle slot between them:
+// setupTwoLanesWithShuffles builds an NGRP with TWO buried lanes and `shuffles`
+// group-level shuffle slots between them:
 //
-//	GRP-2L
+//	‹prefix›
 //	├── LANE-A: A1 (depth 1, blocker) · A2 (depth 2, target)
 //	├── LANE-B: B1 (depth 1, blocker) · B2 (depth 2, target)
-//	└── SHUF-1 (the only place a blocker can go)
+//	└── SHUF-1 … SHUF-N (the only places a blocker can go)
 //
-// Every lane slot is occupied, so SHUF-1 is the only free node in the group --
-// which is the point: the two digs are forced to want the same one.
-func setupTwoLanesOneShuffle(t *testing.T, db *store.DB) (grp *nodes.Node, laneA, laneB *nodes.Node, slotsA, slotsB []*nodes.Node, shuf *nodes.Node, bp *payloads.Payload) {
+// Every lane slot is occupied, so the SHUF nodes are the only free ones in the
+// group — which is the point: the two digs are forced to want the same pool, and
+// the count is what decides whether they compete for one slot or divert onto two.
+// Both arms of the capacity gate are the same geometry with a different N.
+func setupTwoLanesWithShuffles(t *testing.T, db *store.DB, prefix string, shuffles int) (grp *nodes.Node, laneA, laneB *nodes.Node, slotsA, slotsB []*nodes.Node, shufs []*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
 	grpType, _ := db.GetNodeTypeByCode("NGRP")
 	lanType, _ := db.GetNodeTypeByCode("LANE")
 
-	bp = &payloads.Payload{Code: "P2L"}
+	bp = &payloads.Payload{Code: prefix + "-P"}
 	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
 
-	grp = &nodes.Node{Name: "GRP-2L", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
+	grp = &nodes.Node{Name: prefix + "-GRP", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
 
 	mkLane := func(name string) (*nodes.Node, []*nodes.Node) {
@@ -48,14 +52,25 @@ func setupTwoLanesOneShuffle(t *testing.T, db *store.DB) (grp *nodes.Node, laneA
 		reloaded, _ := db.GetNode(lane.ID)
 		return reloaded, slots
 	}
-	laneA, slotsA = mkLane("LANE-A")
-	laneB, slotsB = mkLane("LANE-B")
+	laneA, slotsA = mkLane(prefix + "-LANE-A")
+	laneB, slotsB = mkLane(prefix + "-LANE-B")
 
-	shuf = &nodes.Node{Name: "SHUF-1", ParentID: &grp.ID, Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(shuf), "create shuffle slot")
+	for i := 1; i <= shuffles; i++ {
+		s := &nodes.Node{Name: fmt.Sprintf("%s-SHUF-%d", prefix, i), ParentID: &grp.ID, Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(s), "create shuffle slot")
+		shufs = append(shufs, s)
+	}
 
 	grp, _ = db.GetNode(grp.ID)
-	return
+	return grp, laneA, laneB, slotsA, slotsB, shufs, bp
+}
+
+// setupTwoLanesOneShuffle is the starvation geometry: the same two lanes with a
+// pool of exactly one.
+func setupTwoLanesOneShuffle(t *testing.T, db *store.DB) (grp *nodes.Node, laneA, laneB *nodes.Node, slotsA, slotsB []*nodes.Node, shuf *nodes.Node, bp *payloads.Payload) {
+	t.Helper()
+	grp, laneA, laneB, slotsA, slotsB, shufs, bp := setupTwoLanesWithShuffles(t, db, "1SHUF", 1)
+	return grp, laneA, laneB, slotsA, slotsB, shufs[0], bp
 }
 
 // TestFindShuffleSlots_TwoDigsMustNotShareASlot pins the bug the houseserver sim
@@ -126,4 +141,141 @@ func TestFindShuffleSlots_TwoDigsMustNotShareASlot(t *testing.T) {
 	}
 	_ = grp
 	_ = laneB
+}
+
+// TestFindShuffleSlots_TwoDigsDivertOntoDifferentSlots is the gate's OTHER arm,
+// and the one the D83a fix was actually for.
+//
+// The test above proves the gate REFUSES when the pool is one deep. That is the
+// starvation shape, and on its own it is compatible with a gate that has simply
+// become too strict — a `return false` in shuffleSlotFree passes it. What the fix
+// is supposed to buy is the opposite behaviour on a group with room: the second
+// dig sees the first one's slot as spoken for and TAKES THE OTHER ONE, rather than
+// waiting for it or landing on top of it. Neither of those two facts implies the
+// other, and only one of them was pinned.
+//
+// So this asserts the diversion and then follows both digs to the end. "Both
+// complete" is the half a refusal test can never reach, and it is where a gate
+// that diverts correctly and then leaks — a slot never released, a lock held past
+// the compound — would show up.
+//
+// MUTATION (verified): revert shuffleSlotFree (reshuffle.go) to the pre-D83a body,
+// `cnt, _ := db.CountBinsByNode(n.ID); return cnt == 0`. Both digs then pick the
+// same empty slot and the "different drop-offs" assertion fires — the second
+// blocker lands on the first, which is the SMN_008/SMN_009 orphaning the sibling
+// test above describes.
+func TestFindShuffleSlots_TwoDigsDivertOntoDifferentSlots(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	_, laneA, laneB, slotsA, slotsB, shufs, bp := setupTwoLanesWithShuffles(t, db, "2SHUF", 2)
+
+	blockerA := testdb.CreateBinAtNode(t, db, bp.Code, slotsA[0].ID, "2SHUF-A-BLK")
+	targetA := testdb.CreateBinAtNode(t, db, bp.Code, slotsA[1].ID, "2SHUF-A-TGT")
+	blockerB := testdb.CreateBinAtNode(t, db, bp.Code, slotsB[0].ID, "2SHUF-B-BLK")
+	targetB := testdb.CreateBinAtNode(t, db, bp.Code, slotsB[1].ID, "2SHUF-B-TGT")
+	lineA := lineNode(t, db, "2SHUF-LINE-A")
+	lineB := lineNode(t, db, "2SHUF-LINE-B")
+
+	mkDemand := func(uuid, delivery string) *orders.Order {
+		return testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.EdgeUUID = uuid
+			o.OrderType = OrderTypeRetrieve
+			o.PayloadCode = bp.Code
+			o.DeliveryNode = delivery
+			o.Status = protocol.StatusPending
+		})
+	}
+	demandA := mkDemand("2shuf-a", lineA.Name)
+	demandB := mkDemand("2shuf-b", lineB.Name)
+
+	if _, pe := d.planner.planBuriedReshuffle(demandA, &BuriedError{Bin: targetA, Slot: slotsA[1], LaneID: laneA.ID}); pe != nil {
+		t.Fatalf("dig A must plan against an empty pool of two, got %s: %s", pe.Code, pe.Detail)
+	}
+	// Dig B plans while dig A's blocker is IN FLIGHT — nothing physically occupies
+	// A's slot yet, which is the trap the gate exists for. With room in the group
+	// the answer is not "wait", it is "take the other one".
+	if _, pe := d.planner.planBuriedReshuffle(demandB, &BuriedError{Bin: targetB, Slot: slotsB[1], LaneID: laneB.ID}); pe != nil {
+		t.Fatalf("dig B was refused (%s: %s) with a free slot standing in the group. A gate that cannot "+
+			"tell 'spoken for' from 'no room' turns every second dig into a wait", pe.Code, pe.Detail)
+	}
+
+	legsA, legsB := legsOf(t, db, demandA.ID), legsOf(t, db, demandB.ID)
+	if len(legsA) != 2 || len(legsB) != 2 {
+		t.Fatalf("legs = %d / %d, want an unbury and a retrieve each", len(legsA), len(legsB))
+	}
+	if legsA[0].DeliveryNode == legsB[0].DeliveryNode {
+		t.Fatalf("both digs are aimed at %s — the capacity gate did not divert them, so the second "+
+			"blocker lands on the first and ApplyArrival evicts the incumbent to _TRANSIT",
+			legsA[0].DeliveryNode)
+	}
+	for _, s := range shufs {
+		n, err := db.CountInFlightOrdersByDeliveryNodeExcluding(s.Name, 0)
+		testutil.MustNoErr(t, err, "inbound count for "+s.Name)
+		if n != 1 {
+			t.Errorf("%d orders inbound to %s, want exactly 1 — with two digs and two slots the pool "+
+				"should be exactly consumed", n, s.Name)
+		}
+	}
+	for _, leg := range []*orders.Order{legsA[0], legsB[0]} {
+		if leg.VendorOrderID == "" {
+			t.Fatalf("unbury leg %d never went out (queue_cause %q) — the two digs are in different "+
+				"lanes and neither is inside the other's", leg.ID, leg.QueueCause)
+		}
+	}
+
+	// ── AND BOTH RUN OUT ──────────────────────────────────────────────────────
+	for _, demand := range []*orders.Order{demandA, demandB} {
+		legs := legsOf(t, db, demand.ID)
+		landLeg(t, db, legs[0])
+		testutil.MustNoErr(t, d.AdvanceCompoundOrder(demand.ID), "re-drive onto the retrieve")
+		legs = legsOf(t, db, demand.ID)
+		if legs[1].VendorOrderID == "" {
+			t.Fatalf("demand %d's retrieve never went out (queue_cause %q) — its lane is clear and its "+
+				"blocker has gone", demand.ID, legs[1].QueueCause)
+		}
+		landLeg(t, db, legs[1])
+		testutil.MustNoErr(t, d.AdvanceCompoundOrder(demand.ID), "close the compound")
+	}
+
+	for _, demand := range []*orders.Order{demandA, demandB} {
+		done, err := db.GetOrder(demand.ID)
+		testutil.MustNoErr(t, err, "reload demand")
+		if done.Status != protocol.StatusConfirmed {
+			t.Errorf("demand %d is %q, want confirmed — slot competition costs time and must cost "+
+				"nothing else", demand.ID, done.Status)
+		}
+	}
+
+	// The blockers really are in two different places, physically. The order rows
+	// agreeing is the plan; the bins agreeing is the outcome.
+	landedA, err := db.GetBin(blockerA.ID)
+	testutil.MustNoErr(t, err, "reload blocker A")
+	landedB, err := db.GetBin(blockerB.ID)
+	testutil.MustNoErr(t, err, "reload blocker B")
+	if landedA.NodeID == nil || landedB.NodeID == nil || *landedA.NodeID == *landedB.NodeID {
+		t.Errorf("the two blockers ended at nodes %v and %v — one bin is on top of the other",
+			landedA.NodeID, landedB.NodeID)
+	}
+	for _, want := range []struct {
+		bin  int64
+		line *nodes.Node
+	}{{targetA.ID, lineA}, {targetB.ID, lineB}} {
+		delivered, gErr := db.GetBin(want.bin)
+		testutil.MustNoErr(t, gErr, "reload a retrieved bin")
+		if delivered.NodeID == nil || *delivered.NodeID != want.line.ID {
+			t.Errorf("bin %d is at node %v, want the line %d — the retrieve is what the dig was FOR",
+				want.bin, delivered.NodeID, want.line.ID)
+		}
+	}
+
+	// THE LEDGER IS CLEAN — both locks lifted, no occupancy left behind.
+	for _, lane := range []*nodes.Node{laneA, laneB} {
+		if d.laneLock.IsLocked(lane.ID) {
+			t.Errorf("lane %s is still locked after its dig completed", lane.Name)
+		}
+		if occ, _ := reservations.OccupantsOf(db.DB, lane.ID); len(occ) != 0 {
+			t.Errorf("lane %s still has occupants %v", lane.Name, occ)
+		}
+	}
 }

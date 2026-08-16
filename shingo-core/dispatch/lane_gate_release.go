@@ -228,6 +228,21 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 			// the unification: a gate-staged retrieve is now refused while a plain
 			// store holds occupancy, which is a condition that clears on an event
 			// this evaluator is already subscribed to.
+			// AND IT SAYS WHY, ON THE ROW. A dwell used to be the one wait state
+			// with nothing an operator could read: the order sits `staged` with a
+			// robot parked at the mark and a blank queue_cause, so the board shows a
+			// robot doing nothing and no sentence explaining it. Three of them ran
+			// 77 minutes that way on the lane-stress rig before anyone could say
+			// what they were waiting for, and the answer was in this verdict the
+			// whole time.
+			//
+			// Same code and cause vocabulary as the pre-dispatch park, deliberately:
+			// a lane-occupied wait reads identically whether the order is parked
+			// before dispatch or dwelling at a mark, because to the operator it is
+			// the same fact about the same lane. Only where the robot is standing
+			// differs, and that is not the operator's problem to reconcile.
+			d.setQueueReason(c.order, protocol.QueueWaitingForSlot, v.Cause(),
+				QueueParams{Lane: lane.Name})
 			d.dbg("lane gate: order %d still held at %s (%s)", c.order.ID, lane.Name, v.Cause())
 			continue
 		}
@@ -241,6 +256,10 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 			log.Printf("lane gate: release order %d into lane %s: %v", c.order.ID, lane.Name, rErr)
 			continue
 		}
+		// CLEARED ON ENTRY. The cause described a wait that is over; leaving it
+		// would put a stale "waiting for a slot" on a robot that is now driving,
+		// which is the same lie as the blank was, told the other way round.
+		d.setQueueReason(c.order, "", "", QueueParams{})
 		released++
 	}
 

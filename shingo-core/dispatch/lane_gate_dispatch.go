@@ -390,7 +390,11 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 	// Claim, commit, name it - see fleet_handover.go. It also sets
 	// order.VendorOrderID, which the valve below relies on: IsGateStaged requires
 	// it, and the tail is appended from this struct.
-	if err := d.handoverToFleet(order, req, "dispatcher"); err != nil {
+	// Through the shared seam with NO entering nodes, and that is the whole
+	// statement this arm makes: the create ends at the wait point OUTSIDE the
+	// corridor, so there is no presence to record yet. The row is taken by
+	// appendGateTail below, which is where entry actually happens.
+	if err := d.commitToFleet(order, req, "dispatcher"); err != nil {
 		return "", err
 	}
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, order.SourceNode, order.DeliveryNode)

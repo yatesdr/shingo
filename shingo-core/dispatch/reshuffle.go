@@ -254,6 +254,34 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 		excluded[name] = true
 	}
 
+	// A GATED DIG MAY NOT PARK ITS BLOCKER IN A DIFFERENT GATED LANE, because
+	// spliceLaneWait refuses a plan that touches two of them — one wait per plan,
+	// and releasing per-wait is machinery the transform deliberately does not
+	// build (lane_gate_dispatch.go rule 2).
+	//
+	// Found on the lane-stress rig 2026-08-09, within minutes of it coming up:
+	// every dig out of a marked lane whose blocker landed in the marked empty
+	// lane failed at the splice, which failed the parent, which failed the
+	// two-robot swap the parent was supplying, which cancelled the evac. One
+	// unexpressible plan, and the line was starved. Nothing self-clears either --
+	// both marks stay where they are, so the re-plan picks the same slot and
+	// fails the same way.
+	//
+	// This is the same shape as the dug-lane exclusion below, and lands here for
+	// the same reason: a slot the plan cannot legally use is not a candidate, and
+	// plan-time is where a candidate list belongs. The alternative -- letting the
+	// splice refuse and dispositioning the refusal better -- treats the symptom;
+	// the dig never wanted that slot, it wanted A slot.
+	//
+	// Running out because of this WAITS. ErrNoShuffleSlot is transient and
+	// retries, which is exactly the disposition the last tightening of this
+	// function relied on (see shuffleSlotFree). A dig that can only reach gated
+	// lanes waits for an ungated slot to free rather than dying.
+	//
+	// Only when the DUG lane is itself gated: a plan touching one gated lane is
+	// fine, and so is one touching the same gated lane twice.
+	dugLaneGated := db.GetNodeProperty(laneID, PropLaneGatePoint) != ""
+
 	var available []*nodes.Node
 
 	// A candidate whose reachability could not be READ is not a candidate — fail
@@ -312,6 +340,9 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 		// rather than with it.
 		if c.ID == laneID {
 			continue
+		}
+		if dugLaneGated && db.GetNodeProperty(c.ID, PropLaneGatePoint) != "" {
+			continue // the splice cannot express two gated lanes on one plan
 		}
 		if excluded[c.Name] {
 			continue

@@ -111,6 +111,30 @@ func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCod
 		}
 		plan, err = PlanReshuffleToTarget(d.db, buried.Bin, buried.Slot, lane, groupID, targetNode)
 	}
+	// NO FREE SHUFFLE SLOT IS CONGESTION HERE TOO. planBuriedReshuffle grew this
+	// arm when sim order 21 died of it on 2026-07-10; the two complex sites are
+	// the same call with the same error and never got it, so the identical
+	// congestion terminated a complex parent and waited for a plain one.
+	//
+	// Surfaced again on the lane-stress rig 2026-08-09, and it will keep
+	// surfacing: tightening the shuffle pool (a gated dig may not park in another
+	// gated lane) makes "no slot right now" a routine outcome rather than an
+	// exotic one. That tightening is only safe because this outcome waits.
+	//
+	// Everything else out of the planner is real lane geometry and stays terminal
+	// — the same split the simple path draws, drawn the same way.
+	//
+	// RELEASER FOR THE PARK: the parent is still `queued` — the plan failed before
+	// CreateCompoundOrder, so nothing moved it — and `queued` is in the acquiring
+	// set, so the ordinary scanner replay brings it back through this function
+	// against a group that by then has room. The same releaser the lane-locked arm
+	// above already rests on, which is why no new subscription is needed.
+	if errors.Is(err, ErrNoShuffleSlot) {
+		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseNoShuffleSlot,
+			QueueParams{Lane: lane.Name, Payload: payloadCode})
+		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+		return
+	}
 	if err != nil {
 		d.failOrderInternal(order, "reshuffle_error",
 			fmt.Sprintf("cannot plan reshuffle: %v", err))
@@ -224,6 +248,16 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 			return
 		}
 		plan, err = PlanReshuffleToTarget(d.db, buried.Bin, buried.Slot, lane, groupID, targetNode)
+	}
+	// Congestion, not geometry — see the sibling site in planBuriedReshuffleAtIntake.
+	//
+	// No emit here, matching this function's own targets-occupied arm above: this
+	// path is entered from the scanner with the parent already acquiring, so
+	// leaving it queued with a cause IS the retry.
+	if errors.Is(err, ErrNoShuffleSlot) {
+		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseNoShuffleSlot,
+			QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
+		return
 	}
 	if err != nil {
 		d.failOrderInternal(order, "reshuffle_error",

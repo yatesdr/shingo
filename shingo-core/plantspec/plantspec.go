@@ -74,6 +74,23 @@ type Zone struct {
 type Lane struct {
 	Name  string `yaml:"name"`
 	Slots []Slot `yaml:"slots"`
+	// GatePoint places the lane's waiting-point mark: the RDS map point a
+	// lane-bound robot dwells at until Core says the lane is safe to enter. It
+	// becomes the lane node's lane_gate_point property, and its EXISTENCE is the
+	// enablement — a lane with a mark ships unsealed orders and gets its tail
+	// appended at the gate, a lane without one is decided before dispatch and
+	// parks. There is no mode to set alongside it.
+	//
+	// The value is handed to the fleet as a block location verbatim and is never
+	// resolved against nodes, so on a real plant it must exist in the RDS map.
+	// Under the simulator nothing resolves it either, which is what lets a seed
+	// name points freely.
+	//
+	// Empty means an unmarked lane, and that is a POSITION rather than a default
+	// worth avoiding: a rig that marks every lane cannot show the two
+	// dispositions living side by side, which is most of what a lane-stress seed
+	// is for.
+	GatePoint string `yaml:"gate_point,omitempty"`
 }
 
 // Slot is a depth-ordered storage position (depth 1 = lane mouth).

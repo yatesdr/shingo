@@ -1,0 +1,729 @@
+// Command soakstat reads the [M] measures off a running or finished soak.
+//
+// It is RIG CODE, not production code: it lives under cmd/ with the other
+// operator tools, it only ever reads, and nothing in the engine imports it. The
+// campaign's standing machinery is deliberately small — one query pass and one
+// summary line — because the battery is driven by hand and only the soak needs a
+// machine.
+//
+// WHY A TOOL RATHER THAN A SET OF QUERIES IN A DOC. The measures are the product
+// of the soak; the run is worthless if nobody can read it. A doc full of SQL gets
+// pasted wrong at 3am, and half of these need a join the operator has to get
+// right (a lane's mark lives in node_properties, a leg's depth lives two joins
+// away from the order). Getting them wrong quietly is the failure mode that makes
+// a green soak meaningless.
+//
+// WHAT IT CANNOT SEE. Two measures live only in Core's log, because the events
+// they count are logged and never written to a table: the burial shadow's soft
+// and hard tallies, and the dig steal. Pass -log to fold them in; without it
+// those lines read `n/a (no -log)` rather than zero, because a zero nobody
+// measured is the most dangerous number in a soak report.
+package main
+
+import (
+	"database/sql"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"os/exec"
+	"strings"
+
+	"shingo/protocol"
+	"shingocore/config"
+	"shingocore/dispatch"
+	"shingocore/store"
+)
+
+func main() {
+	configPath := flag.String("config", "/etc/shingo/shingocore.dev.yaml", "path to the core config YAML")
+	logSource := flag.String("log", "", "core log: a file path, `-` for stdin (the reliable form), or docker:<container>")
+	oneline := flag.Bool("oneline", false, "print the single-line summary and nothing else")
+	flag.Parse()
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+	db, err := store.Open(&cfg.Database)
+	if err != nil {
+		log.Fatalf("open core db: %v", err)
+	}
+	defer db.Close()
+
+	r := collect(db, *logSource)
+	if *oneline {
+		fmt.Println(r.summary())
+		return
+	}
+	r.report()
+	fmt.Println()
+	fmt.Println(r.summary())
+	if len(r.violations) > 0 {
+		os.Exit(1)
+	}
+}
+
+// report is every measure the soak collects, plus the invariant violations that
+// decide its exit code.
+type report struct {
+	orders     counts
+	digs       digStats
+	lanes      []laneShape
+	gated      map[bool]flowStats // true = the lane carries a mark
+	dissolves  int
+	depthCost  []depthBucket
+	logCounts  *logStats // nil when -log was not given
+	violations []string
+	robotReuse reuseStats
+	waitCauses []causeCount
+}
+
+type counts struct{ total, completed, failed, cancelled, inFlight, queued int }
+
+type digStats struct {
+	parents      int
+	legs         int
+	byRobotCount map[int]int // distinct robots used -> number of digs
+	maxLegs      int
+}
+
+type reuseStats struct{ consecutivePairs, sameRobot, resumeSameRobot, resumes int }
+
+type laneShape struct {
+	group, lane string
+	marked      bool
+	depth       int
+	occupied    int
+	deepestFull int
+}
+
+type flowStats struct {
+	completed int
+	waits     int
+	avgCycleS float64
+}
+
+type depthBucket struct {
+	depth     int
+	n         int
+	avgCycleS float64
+}
+
+type causeCount struct {
+	cause string
+	n     int
+}
+
+type logStats struct {
+	source               string
+	softN, hardN, stealN int
+}
+
+func collect(db *store.DB, logSource string) *report {
+	r := &report{gated: map[bool]flowStats{}}
+	r.orders = orderCounts(db)
+	r.digs = digDistribution(db)
+	r.robotReuse = robotReuse(db)
+	r.lanes = laneShapes(db)
+	r.gated = gatedVsUngated(db)
+	r.dissolves = scalar(db, `SELECT COUNT(*) FROM orders WHERE error_detail = $1`, dispatch.ReshuffleDissolveDetail)
+	r.depthCost = depthCost(db)
+	r.waitCauses = waitCauses(db)
+	if logSource != "" {
+		r.logCounts = readLog(logSource)
+	}
+	r.violations = checkInvariants(db)
+	return r
+}
+
+// ── the measures ──────────────────────────────────────────────────────────────
+
+// SUCCESS IS `confirmed`, NOT `completed`. There is no `completed` status in this
+// system, and the first draft of this tool asked for one — every measure read
+// zero against a rig that was demonstrably working, which is the exact failure
+// this file's header calls the most dangerous number in a soak report. The
+// status vocabulary is protocol/status.go and the SQL forms are generated from
+// the enum there, so they are used rather than retyped.
+func orderCounts(db *store.DB) counts {
+	var c counts
+	c.total = scalar(db, `SELECT COUNT(*) FROM orders`)
+	c.completed = scalar(db, `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusConfirmed))
+	c.failed = scalar(db, `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusFailed))
+	c.cancelled = scalar(db, `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusCancelled))
+	c.queued = scalar(db, `SELECT COUNT(*) FROM orders WHERE status IN ('pending','queued','sourcing')`)
+	c.inFlight = scalar(db, fmt.Sprintf(
+		`SELECT COUNT(*) FROM orders WHERE status NOT IN (%s) AND status NOT IN ('pending','queued','sourcing')`,
+		protocol.TerminalStatusSQLList()))
+	return c
+}
+
+// digDistribution answers catalog 3.8: how many robots a dig actually costs.
+// Keyed on the PARENT, counting distinct non-empty robot ids across its legs —
+// a leg that never reached the fleet has no robot and must not count as one.
+func digDistribution(db *store.DB) digStats {
+	d := digStats{byRobotCount: map[int]int{}}
+	rows, err := db.DB.Query(`
+		SELECT parent_order_id,
+		       COUNT(*)                                              AS legs,
+		       COUNT(DISTINCT NULLIF(robot_id, ''))                  AS robots
+		FROM orders
+		WHERE parent_order_id IS NOT NULL
+		GROUP BY parent_order_id`)
+	if err != nil {
+		return d
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var parent int64
+		var legs, robots int
+		if err := rows.Scan(&parent, &legs, &robots); err != nil {
+			continue
+		}
+		d.parents++
+		d.legs += legs
+		d.byRobotCount[robots]++
+		if legs > d.maxLegs {
+			d.maxLegs = legs
+		}
+	}
+	return d
+}
+
+// robotReuse answers catalog 8.8: does the SAME robot take leg N+1 after
+// finishing leg N, and does the resumed parent's own retrieve go to the robot
+// that cleared the last blocker.
+//
+// The caveat from the catalog is worth repeating at the point of measurement:
+// SIM ASSIGNMENT IS NOT RDS ASSIGNMENT. This does not measure whether the vendor
+// prefers the nearby robot. It measures whether OUR timing leaves that robot free
+// and nearest at the moment the next create fires — the half Core controls.
+func robotReuse(db *store.DB) reuseStats {
+	var s reuseStats
+	rows, err := db.DB.Query(`
+		SELECT parent_order_id, robot_id
+		FROM orders
+		WHERE parent_order_id IS NOT NULL AND robot_id <> ''
+		ORDER BY parent_order_id, sequence`)
+	if err != nil {
+		return s
+	}
+	defer rows.Close()
+	var lastParent sql.NullInt64
+	var lastRobot string
+	for rows.Next() {
+		var parent int64
+		var robot string
+		if err := rows.Scan(&parent, &robot); err != nil {
+			continue
+		}
+		if lastParent.Valid && lastParent.Int64 == parent {
+			s.consecutivePairs++
+			if robot == lastRobot {
+				s.sameRobot++
+			}
+		}
+		lastParent = sql.NullInt64{Int64: parent, Valid: true}
+		lastRobot = robot
+	}
+	// The resume leg: the parent's own robot against its LAST child's robot.
+	rows2, err := db.DB.Query(`
+		SELECT p.robot_id, c.robot_id
+		FROM orders p
+		JOIN LATERAL (
+			SELECT robot_id FROM orders c
+			WHERE c.parent_order_id = p.id AND c.robot_id <> ''
+			ORDER BY c.sequence DESC LIMIT 1
+		) c ON TRUE
+		WHERE p.robot_id <> ''`)
+	if err != nil {
+		return s
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var parentRobot, lastChild string
+		if err := rows2.Scan(&parentRobot, &lastChild); err != nil {
+			continue
+		}
+		s.resumes++
+		if parentRobot == lastChild {
+			s.resumeSameRobot++
+		}
+	}
+	return s
+}
+
+// laneShapes answers catalog 8.1: where blockers lie after hours of digging.
+// deepestFull is the drift signal — if lanes are being emptied mouth-first and
+// refilled deepest-first as designed, occupancy should stay contiguous from the
+// back; a lane holding one bin at depth 2 with depth 1 empty is an air bubble.
+func laneShapes(db *store.DB) []laneShape {
+	rows, err := db.DB.Query(`
+		SELECT g.name                                            AS grp,
+		       l.name                                            AS lane,
+		       (p.value IS NOT NULL AND p.value <> '')            AS marked,
+		       COUNT(s.id)                                        AS depth,
+		       COUNT(b.id)                                        AS occupied,
+		       COALESCE(MAX(s.depth) FILTER (WHERE b.id IS NOT NULL), 0) AS deepest_full
+		FROM nodes l
+		JOIN nodes g            ON g.id = l.parent_id
+		LEFT JOIN nodes s       ON s.parent_id = l.id
+		LEFT JOIN bins  b       ON b.node_id = s.id
+		LEFT JOIN node_properties p ON p.node_id = l.id AND p.key = $1
+		WHERE l.node_type_id = (SELECT id FROM node_types WHERE code = 'LANE')
+		GROUP BY g.name, l.name, marked
+		ORDER BY g.name, l.name`, dispatch.PropLaneGatePoint)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []laneShape
+	for rows.Next() {
+		var s laneShape
+		if err := rows.Scan(&s.group, &s.lane, &s.marked, &s.depth, &s.occupied, &s.deepestFull); err != nil {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// gatedVsUngated answers catalog 8.2 — the pitch for marks, in numbers.
+//
+// An order is attributed to a lane by its DELIVERY node for a store and its
+// SOURCE node for a retrieve; either way the lane it contended for is the one
+// whose slot it named. Orders touching no lane are excluded rather than counted
+// as ungated, because they never asked the question.
+func gatedVsUngated(db *store.DB) map[bool]flowStats {
+	out := map[bool]flowStats{}
+	rows, err := db.DB.Query(`
+		WITH touched AS (
+			SELECT o.id,
+			       o.status,
+			       o.queue_cause,
+			       EXTRACT(EPOCH FROM (o.completed_at - o.created_at)) AS cycle_s,
+			       (p.value IS NOT NULL AND p.value <> '')             AS marked
+			FROM orders o
+			JOIN nodes s  ON s.name = COALESCE(NULLIF(o.source_node, ''), o.delivery_node)
+			JOIN nodes l  ON l.id = s.parent_id
+			LEFT JOIN node_properties p ON p.node_id = l.id AND p.key = $1
+			WHERE l.node_type_id = (SELECT id FROM node_types WHERE code = 'LANE')
+		)
+		SELECT marked,
+		       COUNT(*) FILTER (WHERE status = $2)                   AS completed,
+		       COUNT(*) FILTER (WHERE queue_cause IS NOT NULL
+		                          AND queue_cause <> '')             AS waits,
+		       COALESCE(AVG(cycle_s) FILTER (WHERE status = $2), 0)  AS avg_cycle
+		FROM touched GROUP BY marked`, dispatch.PropLaneGatePoint, string(protocol.StatusConfirmed))
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var marked bool
+		var f flowStats
+		if err := rows.Scan(&marked, &f.completed, &f.waits, &f.avgCycleS); err != nil {
+			continue
+		}
+		out[marked] = f
+	}
+	return out
+}
+
+// depthCost answers catalog 8.6: what depth costs, in seconds, before and after
+// marks. Bucketed by the SOURCE slot's depth, so a retrieve out of slot 5 lands
+// in bucket 5 whether or not it needed a dig.
+func depthCost(db *store.DB) []depthBucket {
+	rows, err := db.DB.Query(`
+		SELECT s.depth,
+		       COUNT(*),
+		       AVG(EXTRACT(EPOCH FROM (o.completed_at - o.created_at)))
+		FROM orders o
+		JOIN nodes s ON s.name = o.source_node
+		WHERE o.status = $1 AND o.completed_at IS NOT NULL AND s.depth IS NOT NULL
+		GROUP BY s.depth ORDER BY s.depth`, string(protocol.StatusConfirmed))
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []depthBucket
+	for rows.Next() {
+		var b depthBucket
+		if err := rows.Scan(&b.depth, &b.n, &b.avgCycleS); err != nil {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+func waitCauses(db *store.DB) []causeCount {
+	rows, err := db.DB.Query(`
+		SELECT queue_cause, COUNT(*) FROM orders
+		WHERE queue_cause IS NOT NULL AND queue_cause <> ''
+		GROUP BY queue_cause ORDER BY 2 DESC`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []causeCount
+	for rows.Next() {
+		var c causeCount
+		if err := rows.Scan(&c.cause, &c.n); err != nil {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// ── the invariants that decide the exit code ──────────────────────────────────
+//
+// These are the campaign doc's §4 list, expressed as queries. Each one is a
+// statement the soak claims; a non-empty result means the claim is false, and a
+// non-zero exit is how an unattended run says so without anyone reading it.
+func checkInvariants(db *store.DB) []string {
+	var v []string
+
+	// "Terminating demand is a no-no", executable. A congestion-shaped cause on
+	// a terminal order means something waited and then died anyway.
+	if n := scalar(db, `
+		SELECT COUNT(*) FROM orders
+		WHERE status = $1
+		  AND queue_cause IS NOT NULL AND queue_cause <> ''
+		  AND queue_cause NOT IN ('config-failure', 'fleet-error')`,
+		string(protocol.StatusFailed)); n > 0 {
+		v = append(v, fmt.Sprintf("%d order(s) FAILED carrying a congestion-shaped queue cause", n))
+	}
+
+	// Two occupants in one lane. Hold B admits the asker and refuses everyone
+	// else, so two distinct owners on one lane is the hold not holding.
+	if n := scalar(db, `
+		SELECT COUNT(*) FROM (
+			SELECT node_id FROM reservations
+			WHERE resource_kind = 'occupancy' AND state <> 'released'
+			GROUP BY node_id HAVING COUNT(DISTINCT order_id) > 1
+		) x`); n > 0 {
+		v = append(v, fmt.Sprintf("%d lane(s) with TWO occupancy owners", n))
+	}
+
+	// THE PHANTOM ENTRANT — the dual of the check above, and the one whose
+	// absence made this tool's "0 violations" meaningless for F-12.
+	//
+	// Every occupancy assertion in this repo hunts rows that should not exist.
+	// Not one asked whether a row that SHOULD exist does. So an order that
+	// dispatched into a lane and wrote nothing was arithmetically incapable of
+	// raising the two-occupants count above 1, and the soak reported clean over a
+	// population that had largely been deleted from the ledger. The zero was not
+	// evidence; it was a corollary of the defect.
+	//
+	// `staged` is excluded and that is not a fudge: a gate-staged order dwells
+	// OUTSIDE the corridor and correctly holds no row, which is pinned by
+	// TestCharSeam_GatedCreate_TakesNoOccupancyUntilTheTail. So are the
+	// pre-dispatch statuses, which have no robot yet.
+	//
+	// Endpoint attribution is COARSE — source_node/delivery_node describe the
+	// whole order, not the step it is on, so an order that has already placed can
+	// show up here. Reported with its lane and status like the stall checker
+	// reports with its cause, rather than as a bare count, because the judgement
+	// is the reader's and a number would hide it.
+	if rows, err := db.DB.Query(fmt.Sprintf(`
+		SELECT o.id, o.status, l.name
+		FROM orders o
+		JOIN nodes s ON s.name IN (o.source_node, o.delivery_node)
+		JOIN nodes l ON l.id = s.parent_id
+		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
+		LEFT JOIN reservations r
+		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
+		      AND r.node_id = l.id AND r.state <> 'released'
+		WHERE o.vendor_order_id <> ''
+		  AND o.status NOT IN (%s)
+		  AND o.status NOT IN ('pending','queued','sourcing','staged')
+		  AND r.id IS NULL
+		ORDER BY o.id LIMIT 12`, protocol.TerminalStatusSQLList())); err == nil {
+		for rows.Next() {
+			var id int
+			var status, lane string
+			if err := rows.Scan(&id, &status, &lane); err != nil {
+				continue
+			}
+			v = append(v, fmt.Sprintf(
+				"PHANTOM ENTRANT: order %d (%s) is executing in lane %s and holds no occupancy row "+
+					"— it is invisible to everyone else's admission", id, status, lane))
+		}
+		rows.Close()
+	}
+
+	// A hold outliving its order. Terminalization releases by order, so a live
+	// reservation owned by a terminal order is an orphan nothing will clear.
+	if n := scalar(db, fmt.Sprintf(`
+		SELECT COUNT(*) FROM reservations r
+		JOIN orders o ON o.id = r.order_id
+		WHERE r.state <> 'released'
+		  AND o.status IN (%s)`, protocol.TerminalStatusSQLList())); n > 0 {
+		v = append(v, fmt.Sprintf("%d reservation(s) held by a TERMINAL order", n))
+	}
+
+	// A wait with no cause on the row. The operator sentence is the whole point
+	// of parking rather than failing; a parked order nobody can explain is the
+	// shape this stream exists to refuse.
+	if n := scalar(db, `
+		SELECT COUNT(*) FROM orders
+		WHERE status = 'queued'
+		  AND (queue_cause IS NULL OR queue_cause = '')
+		  AND created_at < now() - interval '5 minutes'`); n > 0 {
+		v = append(v, fmt.Sprintf("%d order(s) queued 5min+ with NO cause on the row", n))
+	}
+
+	// ── THE STALL CHECKER ──────────────────────────────────────────────────
+	//
+	// "0 failures, 0 violations" was TRUE and INSUFFICIENT. Every checker above
+	// this line watches an INVARIANT — is the ledger consistent, did anything die
+	// wrongly — and an order that simply stops making progress violates none of
+	// them. The owner found four such rows on the live board by eye, after a run
+	// this tool had called clean. Nothing was watching PROGRESS.
+	//
+	// A stalled order is not a broken invariant, so it is reported with its CAUSE
+	// rather than as a bare count: the cause is the whole difference between a
+	// legitimate long wait (the loop consumed faster than it produced) and a wedge
+	// (a lane wait nothing can release). It flags both, because at soak scale the
+	// distinction is a judgement and the tool's job is to put the row in front of
+	// someone rather than to make it.
+	//
+	// T IS PER KIND, and the numbers come from what the rig actually does rather
+	// than from taste:
+	//
+	//   staged  90s — a dwell at a mark is meant to be the length of somebody
+	//                 else's lane transit. The rig's mean cycle is ~120s, so a
+	//                 robot parked longer than that is not waiting for a lane, it
+	//                 is waiting for something that is not coming.
+	//   queued  15m — a park is expected to be long. Material waits legitimately
+	//                 run to the next production tick, and the loop's slowest
+	//                 replenishment cycle is minutes. Below this it would cry
+	//                 wolf every tick.
+	//   in-flight 20m — a robot executing one leg. The sim's longest transit is
+	//                 well under this; a leg older than it is not moving.
+	//
+	// Deliberately NOT one number: 90s would flag every honest material wait and
+	// 15m would have missed all three staged rows, which are the ones that
+	// mattered. If a kind ever needs a fourth threshold, add it here rather than
+	// widening one of these.
+	for _, s := range []struct {
+		label  string
+		clause string
+		after  string
+	}{
+		{"dwelling at a mark", "status = 'staged'", "90 seconds"},
+		{"parked", "status = 'queued'", "15 minutes"},
+		{"in flight", fmt.Sprintf("status NOT IN (%s) AND status NOT IN ('queued','staged','pending','sourcing')",
+			protocol.TerminalStatusSQLList()), "20 minutes"},
+	} {
+		rows, err := db.DB.Query(fmt.Sprintf(`
+			SELECT id, status, COALESCE(NULLIF(queue_cause,''), '(no cause on the row)'),
+			       EXTRACT(EPOCH FROM (now() - updated_at))::int
+			FROM orders
+			WHERE %s AND updated_at < now() - interval '%s'
+			ORDER BY updated_at LIMIT 12`, s.clause, s.after))
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var id, age int
+			var status, cause string
+			if err := rows.Scan(&id, &status, &cause, &age); err != nil {
+				continue
+			}
+			v = append(v, fmt.Sprintf("STALLED: order %d %s (%s) for %dm — cause: %s",
+				id, s.label, status, age/60, cause))
+		}
+		rows.Close()
+	}
+
+	// The inventory invariant, the same one /api/inventory/invariant serves.
+	total := scalar(db, `SELECT COALESCE(SUM(uop_count), 0) FROM bins`)
+	if total < 0 {
+		v = append(v, "negative total UOP across bins")
+	}
+	return v
+}
+
+// ── the log-only measures ─────────────────────────────────────────────────────
+
+func readLog(source string) *logStats {
+	var body string
+	switch {
+	case source == "-":
+		// STDIN, and this is the form that actually works against a container.
+		// `-log docker:NAME` shells out to the docker CLI, which is not in the
+		// image soakstat ships in — so from inside core it fails, which is
+		// where you most want to run it. Piping in is the way:
+		//
+		//	docker logs shingo-dev-core-1 | \
+		//	  docker exec -i shingo-dev-core-1 soakstat -log -
+		b, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return &logStats{source: fmt.Sprintf("stdin read failed: %v", err)}
+		}
+		body = string(b)
+	case strings.HasPrefix(source, "docker:"):
+		out, err := exec.Command("docker", "logs", strings.TrimPrefix(source, "docker:")).CombinedOutput()
+		if err != nil {
+			return &logStats{source: fmt.Sprintf("docker logs failed: %v — try `docker logs X | soakstat -log -`", err)}
+		}
+		body = string(out)
+	default:
+		b, err := os.ReadFile(source)
+		if err != nil {
+			return &logStats{source: fmt.Sprintf("read failed: %v", err)}
+		}
+		body = string(b)
+	}
+	s := &logStats{source: source}
+	for _, line := range strings.Split(body, "\n") {
+		switch {
+		case strings.Contains(line, "burial-shadow"):
+			// The two halves mean opposite things: a soft hold buried is DATA
+			// (re-planning was always going to be paid for), a hard claim buried
+			// is a TRIPWIRE whose expected value is zero.
+			if strings.Contains(line, "hard") || strings.Contains(line, "claim") {
+				s.hardN++
+			} else {
+				s.softN++
+			}
+		case strings.Contains(line, "the dig always wins on a positional blocker"):
+			s.stealN++
+		}
+	}
+	return s
+}
+
+// ── output ────────────────────────────────────────────────────────────────────
+
+func (r *report) report() {
+	fmt.Println("SOAK MEASURES")
+	fmt.Println(strings.Repeat("=", 78))
+
+	c := r.orders
+	fmt.Printf("\nORDERS  total %d · completed %d · failed %d · cancelled %d · in-flight %d · queued %d\n",
+		c.total, c.completed, c.failed, c.cancelled, c.inFlight, c.queued)
+
+	fmt.Printf("\n[3.8] ROBOTS PER DIG  %d digs, %d legs, deepest %d legs\n", r.digs.parents, r.digs.legs, r.digs.maxLegs)
+	for n := 0; n <= 6; n++ {
+		if k, ok := r.digs.byRobotCount[n]; ok {
+			fmt.Printf("        %d robot(s): %d dig(s)%s\n", n, k, tailNote(n))
+		}
+	}
+
+	fmt.Printf("\n[8.8] ROBOT REUSE ACROSS LEGS  ")
+	if r.robotReuse.consecutivePairs == 0 {
+		fmt.Println("no consecutive leg pairs yet")
+	} else {
+		fmt.Printf("%d/%d leg handoffs kept the same robot (%.0f%%)\n",
+			r.robotReuse.sameRobot, r.robotReuse.consecutivePairs,
+			100*float64(r.robotReuse.sameRobot)/float64(r.robotReuse.consecutivePairs))
+	}
+	if r.robotReuse.resumes > 0 {
+		fmt.Printf("        %d/%d resumed parents reused the last blocker's robot\n",
+			r.robotReuse.resumeSameRobot, r.robotReuse.resumes)
+	}
+	fmt.Println("        caveat: sim assignment is not RDS assignment — this measures whether")
+	fmt.Println("        our timing INVITES chaining, not whether the vendor prefers it.")
+
+	fmt.Printf("\n[8.2] GATED vs UNGATED\n")
+	fmt.Printf("        %-9s %9s %9s %12s\n", "lane", "completed", "waits", "avg cycle s")
+	for _, marked := range []bool{true, false} {
+		f := r.gated[marked]
+		fmt.Printf("        %-9s %9d %9d %12.1f\n", markedLabel(marked), f.completed, f.waits, f.avgCycleS)
+	}
+
+	fmt.Printf("\n[8.6] TIME TO COMPLETE BY SOURCE DEPTH\n")
+	for _, b := range r.depthCost {
+		fmt.Printf("        depth %d: n=%-5d avg %.1fs\n", b.depth, b.n, b.avgCycleS)
+	}
+
+	fmt.Printf("\n[8.1] LANE SHAPE  (air bubble = occupied>0 with the mouth empty)\n")
+	fmt.Printf("        %-10s %-8s %-7s %6s %9s %10s\n", "group", "lane", "marked", "depth", "occupied", "deepest")
+	for _, l := range r.lanes {
+		fmt.Printf("        %-10s %-8s %-7s %6d %9d %10d\n",
+			l.group, l.lane, yesNo(l.marked), l.depth, l.occupied, l.deepestFull)
+	}
+
+	fmt.Printf("\n[8.4] DISSOLVES  %d\n", r.dissolves)
+	fmt.Println("        NOTE: the catalog expected ~0 'with settle-then-plan'. That mechanism")
+	fmt.Println("        does not exist (see FINDINGS F-02) — the dissolve is the built answer,")
+	fmt.Println("        so this number is the RATE OF THE RACE, not a defect count.")
+
+	fmt.Printf("\n[7.5] SHADOW COUNTERS + [8.5] STEALS\n")
+	if r.logCounts == nil {
+		fmt.Println("        n/a (no -log). A zero nobody measured is worse than no number.")
+	} else if r.logCounts.softN+r.logCounts.hardN+r.logCounts.stealN == 0 && strings.Contains(r.logCounts.source, "failed") {
+		fmt.Printf("        n/a — %s\n", r.logCounts.source)
+	} else {
+		fmt.Printf("        soft burials (data):     %d\n", r.logCounts.softN)
+		fmt.Printf("        hard burials (TRIPWIRE): %d   <- expected value is ZERO\n", r.logCounts.hardN)
+		fmt.Printf("        dig steals:              %d\n", r.logCounts.stealN)
+	}
+
+	if len(r.waitCauses) > 0 {
+		fmt.Printf("\nWAIT CAUSES SEEN\n")
+		for _, c := range r.waitCauses {
+			fmt.Printf("        %-28s %d\n", c.cause, c.n)
+		}
+	}
+
+	fmt.Printf("\nINVARIANTS\n")
+	if len(r.violations) == 0 {
+		fmt.Println("        all clear")
+	}
+	for _, v := range r.violations {
+		fmt.Printf("        VIOLATION: %s\n", v)
+	}
+}
+
+// summary is the one line the campaign asked for: a soak run readable at a
+// glance, with the tripwire and the violation count on it because those are the
+// two numbers that decide whether anyone needs to look further.
+func (r *report) summary() string {
+	hard := "?"
+	if r.logCounts != nil {
+		hard = fmt.Sprintf("%d", r.logCounts.hardN)
+	}
+	reuse := "n/a"
+	if r.robotReuse.consecutivePairs > 0 {
+		reuse = fmt.Sprintf("%.0f%%", 100*float64(r.robotReuse.sameRobot)/float64(r.robotReuse.consecutivePairs))
+	}
+	return fmt.Sprintf(
+		"SOAK: orders %d done/%d fail · digs %d (max %d legs) · reuse %s · gated %.0fs vs ungated %.0fs · dissolves %d · hard-burials %s · violations %d",
+		r.orders.completed, r.orders.failed, r.digs.parents, r.digs.maxLegs, reuse,
+		r.gated[true].avgCycleS, r.gated[false].avgCycleS, r.dissolves, hard, len(r.violations))
+}
+
+func tailNote(n int) string {
+	if n >= 3 {
+		return "   <- the tail that prices the chainer"
+	}
+	return ""
+}
+
+func markedLabel(m bool) string {
+	if m {
+		return "marked"
+	}
+	return "unmarked"
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "-"
+}
+
+func scalar(db *store.DB, q string, args ...any) int {
+	var n int
+	if err := db.DB.QueryRow(q, args...).Scan(&n); err != nil {
+		return 0
+	}
+	return n
+}

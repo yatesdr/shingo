@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/dispatch"
 	"shingocore/domain"
 	"shingocore/plantspec"
 	"shingocore/store"
@@ -82,6 +83,15 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 				return err
 			}
 			nodeIDs[ln.Name] = lnID
+			// The mark, if the spec placed one. Written unconditionally rather
+			// than only-when-absent: re-seeding an edited spec has to be able to
+			// MOVE a mark, and a lane's gate point is spec-owned state, not
+			// operator-owned state that a seed should preserve.
+			if ln.GatePoint != "" {
+				if err := db.SetNodeProperty(lnID, dispatch.PropLaneGatePoint, ln.GatePoint); err != nil {
+					return fmt.Errorf("lane %s gate point: %w", ln.Name, err)
+				}
+			}
 			for _, s := range ln.Slots {
 				depth := s.Depth
 				sID, err := ensureNode(db, s.Name, ptr(storType), ptr(lnID), z.Name, &depth, false)

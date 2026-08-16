@@ -478,28 +478,13 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// its presence unrecorded — a lane whose occupancy could not be WRITTEN would
 	// read empty to the next order, which is the same collision from the other
 	// side. The failure arms below are what make taking first safe.
-	if err := d.TakeLaneOccupancy(order.ID, sourceNode, destNode); err != nil {
-		return "", err // nothing sent; the caller parks and the next tick retries
-	}
-
-	// Claim, commit, name it — see fleet_handover.go. The pre-dispatch terminal
+	// Record the presence, then claim, commit and name it — commitToFleet
+	// (fleet_handover.go) is the seam every arm goes through, and both rules that
+	// used to be spelled out here live in it now: take before the handover, and
+	// release on every failure except a lost CAS. The pre-dispatch terminal
 	// re-read that used to sit here is absorbed by the CAS, which asks a strictly
 	// stronger question atomically.
-	if err := d.handoverToFleet(order, req, "dispatcher"); err != nil {
-		// RELEASE, EXCEPT ON A LOST CAS — compound.go worked this rule out and it
-		// is the same rule for the same reason. AcquireOccupancy de-duplicates on
-		// (order_id, node_id), so two callers racing ONE order produce ONE row and
-		// it belongs to whichever of them wins the claim. A loser that released
-		// would delete the winner's row and the winner would dispatch into a lane
-		// that reads empty to everyone else.
-		//
-		// Every other failure — illegal transition, DB error, a create the fleet
-		// refused, the terminalizer race, a failed id write — leaves no robot in
-		// this lane (handoverToFleet cancels the vendor order on the two arms where
-		// one exists), so the row must go or it wedges the lane forever.
-		if !IsConcurrentTransition(err) {
-			d.ReleaseLaneOccupancy(order.ID)
-		}
+	if err := d.commitToFleet(order, req, "dispatcher", sourceNode, destNode); err != nil {
 		return "", err
 	}
 

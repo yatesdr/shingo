@@ -445,8 +445,34 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 		Complete:   false, // staged: a multi-wait complex order dwells (Complete=false) until its final segment is released
 	}
 	d.dbg("complex: creating staged order %s with %d initial blocks (hasWait=%v)", vendorOrderID, len(blocks), hasWait)
-	// Claim, commit, name it — see fleet_handover.go.
-	if err := d.handoverToFleet(order, req, "scanner"); err != nil {
+	// RECORD THE PRESENCE, then claim, commit and name it — commitToFleet
+	// (fleet_handover.go) is the seam every arm goes through.
+	//
+	// THE ROW USED TO BE MISSING HERE, and this was the one arm it was missing
+	// from. A complex order asked admission "is anyone inside this lane" and
+	// waited when the answer was yes — it respects the gate as an ENTRANT — and
+	// then dispatched without ever appearing in anyone else's answer. It skipped
+	// the reciprocal duty: making its own presence visible so the gate can protect
+	// everyone else FROM it.
+	//
+	// The collision that allowed has no illegal step in it. A plain store or a dig
+	// leg asks the question, the ledger says the lane is empty because nobody
+	// wrote the page, and the admission that follows is LAWFUL. Two robots, one
+	// single-file lane, clean paperwork throughout — which is why no checker saw
+	// it: every runtime and soak assertion about "who is inside" reads the same
+	// rows this arm was not writing.
+	//
+	// It is the arm that mattered most. Complex is the bulk of both plants' lane
+	// traffic, and THIS branch — ungated — is the one that runs, because no lane
+	// at either plant carries a mark.
+	//
+	// THE NODES ARE THE PRE-WAIT SEGMENT'S, not the whole plan's, and the
+	// distinction is the same one the create makes: only `preWait` is being
+	// dispatched now. Steps after the wait are a segment this robot has not been
+	// sent on yet, and taking a row for a lane it may reach in ten minutes would
+	// wall that lane for the whole dwell — the mistake the gated arm exists to
+	// avoid, arrived at from the other direction.
+	if err := d.commitToFleet(order, req, "scanner", d.planNodes(preWait)...); err != nil {
 		d.failOrderInternal(order, "fleet_failed", err.Error())
 		return err
 	}

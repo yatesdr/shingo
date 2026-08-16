@@ -93,7 +93,15 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     profiles: ["tools"]
-    command: ["seeddev", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--plant", "/plants/demo.yaml", "--yes"]
+    # SHINGO_PLANT selects the spec. Default is the demo plant, so nothing changes
+    # for anyone who does not set it; the lane-stress rig sets
+    # SHINGO_PLANT=/plants/lane-stress.yaml.
+    #
+    # SWITCHING PLANTS REQUIRES A CLEAN DATABASE. seeddev is idempotent per node
+    # NAME, and --wipe is still a TODO, so seeding a second spec over a first
+    # leaves both plants' nodes in the tree — a hybrid that is neither. Use
+    # `make dev-reset` (down -v) before changing this value.
+    command: ["seeddev", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--plant", "${SHINGO_PLANT:-/plants/demo.yaml}", "--yes"]
     environment:
       SHINGO_ALLOW_SIM: "1"
     volumes:

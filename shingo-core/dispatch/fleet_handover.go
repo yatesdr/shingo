@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/fleet"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
@@ -86,6 +87,133 @@ import (
 // than dropped: it was a non-atomic look at the status one statement before the
 // create, and the CAS is an atomic one that also refuses a snapshot that went
 // stale in any other direction. It answered a strict subset of what this now asks.
+// commitToFleet is THE CREATE SEAM: record the presence this dispatch is about
+// to create, then claim-and-commit, then give the presence back if the commit
+// did not happen.
+//
+// ── WHY IT IS ONE FUNCTION ─────────────────────────────────────────────────
+//
+// The two steps were written together on the plain path and then copied — badly.
+// Each arm decided for itself whether to take an occupancy row, and one of them
+// decided not to: a complex order asked admission "is anyone inside this lane",
+// waited when the answer was yes, and then dispatched without ever appearing in
+// anyone else's answer. Reader wired, writer absent, on the arm carrying most of
+// both plants' lane traffic. The collision that allows has no illegal step in it
+// — the next order asks, the ledger says the lane is empty because nobody wrote
+// the page, and the admission that follows is lawful.
+//
+// A fourth copy of "remember to take the row" would have been a fourth place to
+// forget. The take is structural here instead: an arm that reaches the fleet
+// through this function cannot skip it, and an arm that needs no row says so by
+// passing no nodes.
+//
+// ── THE TWO RULES IT CARRIES ───────────────────────────────────────────────
+//
+// TAKE BEFORE THE HANDOVER. There must be no window in which a robot is
+// committed and its presence unrecorded, because a lane whose occupancy could
+// not be written reads EMPTY to the next order — the same collision from the
+// other side. So a failed take sends nothing at all and the caller retries.
+//
+// RELEASE ON EVERY FAILURE EXCEPT A LOST CAS. compound.go worked this rule out
+// and it is the same rule here for the same reason: AcquireOccupancy dedups on
+// (order, node), so two callers racing ONE order produce ONE row, and it belongs
+// to whichever of them wins the claim. A loser that released would delete the
+// winner's row and the winner would then be standing in a lane that reads empty
+// to everyone else. Every other failure leaves no robot in the lane —
+// handoverToFleet cancels the vendor order on the two arms where one exists — so
+// there the row must go, or it wedges the lane with nothing alive to clear it.
+//
+// ── entering ───────────────────────────────────────────────────────────────
+//
+// The nodes this dispatch puts a robot into. Variadic, and EMPTY IS A REAL
+// ANSWER rather than an oversight: a gated create ends at the wait point outside
+// the corridor, so it passes nothing and takes nothing, and its row is taken by
+// the tail append that actually enters. Nodes outside a lane resolve to no lane
+// and cost one map lookup.
+func (d *Dispatcher) commitToFleet(order *orders.Order, req fleet.CreateOrderRequest, actor string, entering ...*nodes.Node) error {
+	if err := d.TakeLaneOccupancy(order.ID, entering...); err != nil {
+		return err // nothing sent; the caller parks and the next tick retries
+	}
+	if err := d.assertDeclaredEveryLaneItEnters(order.ID, req, entering); err != nil {
+		d.ReleaseLaneOccupancy(order.ID)
+		return err // nothing sent
+	}
+	if err := d.handoverToFleet(order, req, actor); err != nil {
+		if !IsConcurrentTransition(err) {
+			d.ReleaseLaneOccupancy(order.ID)
+		}
+		return err
+	}
+	return nil
+}
+
+// assertDeclaredEveryLaneItEnters is the INVARIANT, asserted where it is created.
+//
+// The caller declares what it is entering; this checks that declaration against
+// what the robot is actually being TOLD to do — the blocks about to go to the
+// fleet. A lane named by a block the caller did not declare is a lane this
+// dispatch will drive into while holding no row on it, which is F-12's exact
+// shape: admission asks, the ledger under-reports, and the next entrant is
+// lawfully admitted into an occupied corridor.
+//
+// WHY HERE RATHER THAN IN A QUERY. soakstat carries a phantom-entrant check that
+// looks for executing orders holding no occupancy row, and it stays — but it is
+// compensating rather than expressing. It has to GUESS where the robot is, from
+// the order's source/delivery columns, which describe the whole order and not
+// the step it is on; its own comment concedes the attribution is coarse and will
+// false-positive on an order that has already placed. That is what a query has
+// instead of an invariant.
+//
+// At the seam there is nothing to guess. The blocks are the instruction, the
+// declaration is beside them, and the comparison is exact and at write time. So
+// the query becomes a backstop for a rule enforced here, which is the right
+// relationship between the two — a tripwire that never fires because the thing
+// it watches for cannot be built.
+//
+// IT FAILS CLOSED, and refuses the dispatch rather than logging. The whole point
+// is that the alternative is a robot in a lane nobody can see; a create that
+// never happens is recoverable and one that happens invisibly is not. The caller
+// releases and parks, and the next tick retries — the same disposition as a take
+// that could not be written, for the same reason.
+//
+// Blocks whose location is not a Core node — the gate point most of all, which
+// is a property and deliberately never resolved against nodes — resolve to
+// nothing and are skipped. That is what makes the gated arm's empty declaration
+// correct rather than merely tolerated: its create really does name no lane.
+func (d *Dispatcher) assertDeclaredEveryLaneItEnters(orderID int64, req fleet.CreateOrderRequest, declared []*nodes.Node) error {
+	held := make(map[int64]bool, len(declared))
+	for _, laneID := range d.lanesFor(declared...) {
+		held[laneID] = true
+	}
+	for _, b := range req.Blocks {
+		if b.Location == "" {
+			continue
+		}
+		node, err := d.db.GetNodeByDotName(b.Location)
+		if err != nil || node == nil {
+			continue // not a Core node — a gate point, or a vendor-only location
+		}
+		lane, err := d.db.LaneForNode(node.ID)
+		if err != nil {
+			// An unreadable lane is a lane we cannot prove we declared. Fail closed:
+			// the same rule TakeLaneOccupancy applies to a presence it could not
+			// write, and for the same reason.
+			return fmt.Errorf("commit: resolve lane for block location %q on order %d: %w",
+				b.Location, orderID, err)
+		}
+		if lane == nil || held[lane.ID] {
+			continue
+		}
+		return fmt.Errorf(
+			"commit: order %d is being sent to %q in lane %s but did not declare that lane, so it "+
+				"would hold no occupancy row there — admission would report the lane empty to the "+
+				"next entrant and admit it lawfully into an occupied corridor (F-12's shape). "+
+				"The dispatch arm must pass every node its blocks touch to commitToFleet",
+			orderID, b.Location, lane.Name)
+	}
+	return nil
+}
+
 func (d *Dispatcher) handoverToFleet(order *orders.Order, req fleet.CreateOrderRequest, actor string) error {
 	vendorOrderID := req.OrderID
 

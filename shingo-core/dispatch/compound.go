@@ -35,28 +35,106 @@ const ReshuffleDissolveDetail = "reshuffle dissolved: the dig's plan went stale;
 // reshuffleDissolveDetail is the in-package spelling of the same constant.
 const reshuffleDissolveDetail = ReshuffleDissolveDetail
 
-// digWasDissolved reports whether this child set was cancelled by a dissolve
-// rather than by anything failing.
+// compoundGenerations splits a compound's children into the CHAPTER STILL OPEN
+// and the closed ones behind it, and reports whether anything was superseded.
 //
-// EVERY cancelled child must carry the marker, and a single FAILED child vetoes
-// it outright. A dissolve cancels the whole remaining set itself, in one pass, so
-// a mixed set means something else happened too — an operator cancel landing in
-// the same moment, a fleet fault — and the failure cascade is the honest reading
-// of that. Unanimity is what keeps "abandoned" from swallowing a real fault.
-func digWasDissolved(children []*orders.Order) bool {
-	sawDissolve := false
+// ── WHY THIS EXISTS ────────────────────────────────────────────────────────
+//
+// A parent that dissolves and re-plans accumulates children across generations,
+// and ListChildOrders returns all of them at once. Every current-state question
+// asked of that list then answers about two digs simultaneously. Concretely: the
+// SECOND dig finishes clean, the first dig's marker-cancelled legs are still in
+// the set, "was this dissolved" says yes again, and the parent is returned to the
+// queue — where the scanner retries a retrieve for a bin that already left. The
+// work happened, the demand never closes and never fails. Found on the rig's
+// row-5.6 work; silent, permanent, and it sits on the branch's headline feature.
+//
+// ── THE RULE ───────────────────────────────────────────────────────────────
+//
+// A SUPERSEDED GENERATION IS A CLOSED CHAPTER. The parent's completion
+// arithmetic reads only the open one; the demand's ledger keeps everything. Two
+// questions, two scopes: "is the work done" reads the current chapter, "what did
+// this demand cost the cell" reads the whole book — and the second is untouched
+// here, because origin inheritance stamps every dig child with the demand's
+// origin and that is the cost-of-demand record.
+//
+// ── THE BOUNDARY IS THE MARKER, AND IT NEEDS NO COLUMN ─────────────────────
+//
+// A child belongs to a closed chapter iff it is TERMINAL and its id is at or
+// below the newest marker-cancelled child's. The re-plan opening a new
+// generation is itself the proof the old one ended — the same grain
+// CloseReasonSuperseded already uses for demand episodes.
+//
+// Both halves of that predicate are load-bearing:
+//
+//   - TERMINAL, because a dissolve cancels every leg it can and a cancel CAN be
+//     refused. A leg still executing under an old plan has no marker and must
+//     stay visible, or the parent re-plans a lane a live robot is still
+//     changing. It joins the closed chapter when it lands, not before.
+//   - AT OR BELOW THE NEWEST MARKER, rather than "carries the marker". A
+//     generation that got one leg confirmed before it went stale has that
+//     confirmed leg closed with the rest of its chapter. Its work stands — the
+//     blockers it moved stay where they landed and the re-plan simply sees fewer
+//     of them — but it is not evidence about the dig now running.
+//
+// Order ids, not wall-clock: they come from a monotonic sequence, which the
+// order map's eviction already depends on. Sequence numbers cannot serve — they
+// restart per plan, so generations interleave in a list ordered by them.
+// NO MARKER MEANS NOTHING IS CLOSED, and that is checked separately from the
+// boundary VALUE rather than folded into it. Treating "boundary == 0" as "no
+// generation closed" reads fine and is wrong twice over: it makes the predicate
+// depend on ids being positive, and it silently changes meaning for a caller
+// holding un-persisted orders. `superseded` carries the fact; `boundary` only
+// carries where.
+func compoundGenerations(children []*orders.Order) (open []*orders.Order, superseded bool) {
+	var boundary int64
 	for _, c := range children {
-		switch c.Status {
-		case StatusFailed:
-			return false
-		case StatusCancelled:
-			if c.ErrorDetail != reshuffleDissolveDetail {
-				return false
+		if c.Status == StatusCancelled && c.ErrorDetail == reshuffleDissolveDetail {
+			if !superseded || c.ID > boundary {
+				boundary = c.ID
 			}
-			sawDissolve = true
+			superseded = true
 		}
 	}
-	return sawDissolve
+	for _, c := range children {
+		if superseded && protocol.IsTerminal(c.Status) && c.ID <= boundary {
+			continue // a closed chapter
+		}
+		open = append(open, c)
+	}
+	return open, superseded
+}
+
+// digWasDissolved reports that the open chapter has closed and no new one has
+// been opened yet — so the parent belongs back in the acquiring set for the
+// scanner to re-plan.
+//
+// IT IS NO LONGER ARCHAEOLOGY OVER THE WHOLE FAMILY. It used to scan every child
+// the parent ever had for cancels-carrying-the-marker, which is what made a
+// completed second dig read as a second dissolve. It now asks one question of the
+// generation split: something was superseded, and nothing is left open.
+//
+// THE FAILURE VETO IS DELIBERATELY STILL WHOLE-SET. A single FAILED child
+// anywhere in the family vetoes the reading, exactly as before. A dissolve and a
+// real fault cannot both be the honest account of the same compound, and the
+// failure cascade is the honest one — narrowing the veto to the open chapter
+// would let a fault in a superseded generation disappear, which is a bigger
+// change than the ruling asked for and not one a scoping fix should smuggle in.
+//
+// The dissolve itself still cannot route the parent at dissolve time, and that is
+// a constraint rather than a preference: dissolveCompound is reachable from
+// inside the fulfillment scanner under a non-reentrant scanMu, so transitioning
+// there would self-deadlock on the first leg of a freshly planned dig. The
+// cancels land, their events fire asynchronously, and this arm — on a later
+// goroutine — is where the routing happens.
+func digWasDissolved(children []*orders.Order) bool {
+	for _, c := range children {
+		if c.Status == StatusFailed {
+			return false
+		}
+	}
+	open, superseded := compoundGenerations(children)
+	return superseded && len(open) == 0
 }
 
 // CreateCompoundOrder creates a parent order with child orders for a reshuffle plan.
@@ -304,9 +382,17 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// backstop) a lone cancelled last child. SKIPPED stays success — a skipped
 		// leg is a moot no-op, not an incomplete one. Revisit if a legitimately
 		// skippable-but-cancelled leg is ever introduced.
+		//
+		// SCOPED TO THE OPEN CHAPTER. All three current-state questions below —
+		// did anything go wrong, is everything finished, and which mode was
+		// planned — read the generation still in play, not every child the parent
+		// has ever had. A superseded generation's legs are cancelled ON PURPOSE;
+		// counting them here is what let a re-planned dig read as a failed one.
+		// One split, four readers, so the four cannot drift apart again.
+		openChildren, _ := compoundGenerations(children)
 		hasFailedOrCancelled := false
 		allTerminal := true
-		for _, c := range children {
+		for _, c := range openChildren {
 			if c.Status == StatusFailed || c.Status == StatusCancelled {
 				hasFailedOrCancelled = true
 			}
@@ -480,7 +566,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			}
 		}
 
-		if parent != nil && IsCoordinated(parent) && planUsedExposeMode(children) {
+		if parent != nil && IsCoordinated(parent) && planUsedExposeMode(openChildren) {
 			d.extendLaneLockForExposeMode(parentOrderID, parent, children)
 		} else {
 			d.unlockLaneForCompound(parentOrderID)

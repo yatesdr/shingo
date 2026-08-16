@@ -548,9 +548,18 @@ var skipsForGatedStoreEntry = admissionSkips{}
 //
 // dig: ASKED. A dig excludes everything, and it is mode-independent.
 //
-// occupancy: ASKED. Complex orders take occupancy rows at their create seam like
-// every other order (the unification), so this read now sees them and they
-// appear in everyone else's.
+// occupancy: ASKED, AND ANSWERED INTO. A complex order takes its occupancy rows
+// at the create seam like every other order — commitToFleet, over the pre-wait
+// segment's nodes — so this read sees everyone else and everyone else sees it.
+//
+// THIS SENTENCE WAS FALSE FOR AS LONG AS IT EXISTED, and it is worth saying so
+// rather than quietly correcting it. The unification wired the READ and this
+// paragraph described the write as done; the ungated arm of dispatchComplexToFleet
+// never took a row. So the arm carrying the bulk of both plants' lane traffic
+// asked the question and never appeared in the answer, and the collision that
+// allowed was invisible to every checker — they all read these rows. A comment
+// asserting an invariant that nothing enforces is worse than no comment: it is
+// where the next person stops looking.
 //
 // entryWhenGated: SET, same claim as both plain callers — a gated create
 // stops at the wait point, so the entry decision belongs to the tail append and
@@ -596,6 +605,34 @@ var skipsForComplexEntry = admissionSkips{reachability: true, entryWhenGated: tr
 // lane that resolves but cannot be READ still refuses, because that is
 // admitLane's own fail-closed arm and it must not be softened by being reached
 // from here.
+// planNodes resolves the lane-relevant nodes a plan's steps touch — the WRITE
+// side's twin of admitPlan's walk, and deliberately the same walk.
+//
+// admitPlan asks each step's node "may I enter"; this collects the same nodes so
+// the caller can record that it did. The two questions must be asked of the same
+// set or an order can be admitted to a lane it then fails to register itself in,
+// which is exactly the asymmetry that made a complex order invisible to everyone
+// else. Same predicate (pickup/dropoff, non-blank, resolvable), same silent skip
+// of what cannot be resolved — a node admitPlan could not classify is a node this
+// cannot take a row on either.
+func (d *Dispatcher) planNodes(steps []resolvedStep) []*nodes.Node {
+	var out []*nodes.Node
+	for _, step := range steps {
+		if step.Action != protocol.ActionPickup && step.Action != protocol.ActionDropoff {
+			continue
+		}
+		if step.Node == "" {
+			continue
+		}
+		node, err := d.db.GetNodeByDotName(step.Node)
+		if err != nil || node == nil {
+			continue
+		}
+		out = append(out, node)
+	}
+	return out
+}
+
 func (d *Dispatcher) admitPlan(order *orders.Order, steps []resolvedStep, skip admissionSkips) (GateVerdict, error) {
 	s := admissionSituation{order: order, skip: skip}
 	for _, step := range steps {
