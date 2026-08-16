@@ -115,6 +115,29 @@ const (
 	CauseGateRebindUnavailable QueueCause = "gate-rebind-unavailable"
 	// CauseGateAppendFailed — the fleet refused the tail append past the retry threshold.
 	CauseGateAppendFailed QueueCause = "gate-append-failed"
+	// CauseGateReleaseFailed — the classifier ADMITTED this dweller and the release
+	// itself then failed: the re-bind found no slot, the segment could not be
+	// built, the append errored below the retry threshold. The order stays a
+	// candidate and the next pass retries.
+	//
+	// It exists because that arm wrote nothing at all. A dweller whose release
+	// keeps failing is indistinguishable, on the row, from one nobody has
+	// evaluated — and worse than blank on a repeat pass, since the cause is
+	// CLEARED on entry and this arm runs after admission, so a previously-refused
+	// order loses its old cause and gains none. Measured on the lane-stress rig
+	// 2026-08-10: orders 6 and 40 dwelling 13-16m under "no empty slot in lane",
+	// with nothing on the row to say so.
+	CauseGateReleaseFailed QueueCause = "gate-release-failed"
+	// CauseGatePickupElsewhere — the bin this entry's PICKUP is for is not in this
+	// lane. A definite answer about the plant, not a failed read, and therefore a
+	// refusal: it clears when the bin comes back, when the plan re-binds against
+	// where it actually sits, or when the demand is re-planned.
+	//
+	// It exists because that condition used to arrive as a bare error, which the
+	// evaluator can only log and skip — no usable cause, no heal-dig proposal, and
+	// no abandon-sweep bound (a gate-staged order is exempt). Ten hours of one
+	// robot on the lane-stress rig.
+	CauseGatePickupElsewhere QueueCause = "gate-pickup-elsewhere"
 
 	// ── The fleet refused the CREATE ──────────────────────────────────────
 
@@ -181,6 +204,13 @@ const (
 	// another order between reserve and confirm. Set on both the plain and the
 	// complex path, which is why it is one constant rather than two.
 	CauseClaimFailed QueueCause = "claim-failed"
+	// CauseHeldBinMissing — the order reached the held-bin dispatch path with no
+	// bin_id. The routing into that path is `order.BinID != nil`, so this is a
+	// CONSTRUCTION BUG rather than a wait, and it is a cause only so the row is
+	// not blank while it repeats: the scanner re-enters every tick and would
+	// otherwise leave an order sitting queued forever with nothing on it. Its
+	// releaser is a person.
+	CauseHeldBinMissing QueueCause = "held-bin-missing"
 
 	// ── Complex-order preflight (complex_dispatch.go) ─────────────────────
 	// Also pre-dispatch, and also floored by the scanner: DispatchPreparedComplex
@@ -201,4 +231,60 @@ const (
 	CauseDropoffCapacity QueueCause = "dropoff-capacity"
 	// CauseSwapHold — a two-robot swap leg is waiting on its sibling.
 	CauseSwapHold QueueCause = "swap-hold"
+
+	// ── The finder's tiers (source_finder.go) ─────────────────────────────
+	//
+	// FOUND BY THE OBSERVED-VS-DECLARED CHECK, ON THE RIG, NOT BY THE GREP.
+	// These reach setQueueReason through SourceOutcome.QueueCause, which was a
+	// bare `string` — so no call site ever wrote QueueCause("…"), the type never
+	// forced a name, and the literal-conversion guard could not see them. The
+	// plant's own rows could: soakstat's cross-check reported orders parked under
+	// finder-node-empty and finder-group-empty with no row in the inventory.
+	//
+	// That is the check working exactly as intended, and it is the argument for
+	// having built it: a vocabulary audited only from the code found 12 of 18.
+	// The field is QueueCause-typed now, which is what makes these six
+	// enumerable at all.
+	//
+	// EVERY ONE IS THE SAME KIND OF WAIT — no material of the wanted shape in the
+	// scope this tier searched — differing only in the scope, which is why the
+	// tier is the whole distinction and the tags are kept separate rather than
+	// collapsed to "no material".
+
+	// CauseFinderNodeEmpty — the named source node holds nothing usable.
+	CauseFinderNodeEmpty QueueCause = "finder-node-empty"
+	// CauseFinderGroupEmpty — no child of the source node group holds one.
+	CauseFinderGroupEmpty QueueCause = "finder-group-empty"
+	// CauseFinderPoolEmpty — a dedicated loader's pool is dry.
+	CauseFinderPoolEmpty QueueCause = "finder-pool-empty"
+	// CauseFinderPlantEmpty — the widest search found nothing anywhere.
+	CauseFinderPlantEmpty QueueCause = "finder-plant-empty"
+	// CauseFinderNoFullCarrier — carriers exist but none is full.
+	CauseFinderNoFullCarrier QueueCause = "finder-no-full-carrier"
+	// CauseFinderAccessibilityUnreadable — a candidate's reachability could not be
+	// read, so the finder declined to answer rather than guessing. The finder's
+	// member of the undetermined family.
+	CauseFinderAccessibilityUnreadable QueueCause = "finder-accessibility-unreadable"
+	// CauseFinderNoEmptyOfType — the group has empties, none of the TYPE a loader
+	// declared. It waits rather than taking another: "a declared mix that is
+	// abandoned when inconvenient is not a mix".
+	CauseFinderNoEmptyOfType QueueCause = "finder-no-empty-of-type"
+
+	// ── Intake ────────────────────────────────────────────────────────────
+
+	// CauseIntakeResolve — a complex order's steps could not be resolved at
+	// intake; it queues and the scanner re-resolves.
+	CauseIntakeResolve QueueCause = "intake-resolve"
+
+	// ── Dropoff capacity (capacity.go) ────────────────────────────────────
+	// Same story as the finder tiers: CapacityDetail.Cause was a bare string.
+
+	// CauseDropoffOccupied — the destination already holds a bin.
+	CauseDropoffOccupied QueueCause = "dropoff-occupied"
+	// CauseDropoffInflight — another order is already inbound to it.
+	CauseDropoffInflight QueueCause = "dropoff-inflight"
+	// CauseNGRPFull — every child of the destination group is spoken for.
+	CauseNGRPFull QueueCause = "ngrp-full"
+	// CauseCapacityCheckFailed — the capacity read failed; undetermined, not full.
+	CauseCapacityCheckFailed QueueCause = "capacity-check-failed"
 )

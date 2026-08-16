@@ -255,6 +255,18 @@ var causeReleasers = []causeReleaser{
 		what:        "a slot in the lane frees, so the dweller's bin has somewhere to re-bind to",
 	},
 	{
+		cause:       CauseGatePickupElsewhere,
+		populations: []WaitPopulation{PopGateStaged},
+		what: "the bin returns to this lane, or the release re-binds the pickup against where it " +
+			"actually sits (rebindGatedPickup) — the wait is about the PLANT, not about a failed read",
+	},
+	{
+		cause:       CauseGateReleaseFailed,
+		populations: []WaitPopulation{PopGateStaged},
+		what: "whatever the release tripped on clears — most often a slot in the lane frees so the " +
+			"re-bind has somewhere to land; the order stayed a candidate and the next pass retries",
+	},
+	{
 		cause:       CauseGateAppendFailed,
 		populations: []WaitPopulation{PopGateStaged},
 		what:        "the fleet accepts the tail append on a later pass — a robot-system condition, not a lane one",
@@ -286,6 +298,17 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseReadFailed,
 		populations: []WaitPopulation{PopAcquiring, PopCompoundLeg},
 		what:        "the database answers again",
+	},
+	{
+		cause:       CauseHeldBinMissing,
+		populations: []WaitPopulation{PopAcquiring},
+		finding: "NO EVENT RELEASES THIS, and that is correct rather than a gap: the order reached " +
+			"the held-bin path with no bin_id, which the routing into that path makes impossible, so " +
+			"it is a construction bug and not a wait. Nothing in the plant will change it. A floor " +
+			"release under this cause means the order moved for some other reason; a row SITTING " +
+			"under it means somebody needs to look at how that order was built. It carries a cause " +
+			"at all only because the scanner re-enters this arm every tick, and a blank row that " +
+			"repeats forever is the one thing the cause vocabulary exists to prevent.",
 	},
 	{
 		cause:       CauseLoaderSourceUnreadable,
@@ -350,6 +373,85 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseSwapHold,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "the sibling swap leg claims its bin, clearing the gate",
+	},
+
+	// ── The finder's tiers ────────────────────────────────────────────────
+	//
+	// THESE TWELVE WERE FOUND BY THE SOAK, NOT BY THE CODE AUDIT, and that is
+	// worth recording where the next person will read it. They reach the row
+	// through SourceOutcome.QueueCause and CapacityDetail.Cause, both of which
+	// were bare `string` fields — so no site ever wrote QueueCause("…"), the type
+	// never demanded a name, and the literal-conversion guard was structurally
+	// unable to see them. The audit found 12 of 24. The observed-vs-declared
+	// check found the rest on its first run against a live rig, which is the
+	// argument for having an instrument that reads the PLANT rather than the
+	// source.
+	//
+	// They share a releaser and differ only in the SCOPE that came up empty,
+	// which is why they are separate tags and one sentence.
+	{
+		cause:       CauseFinderNodeEmpty,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "material of the wanted shape arrives at the named source node",
+	},
+	{
+		cause:       CauseFinderGroupEmpty,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "material arrives at any child of the source group",
+	},
+	{
+		cause:       CauseFinderPoolEmpty,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the dedicated loader's pool is replenished",
+	},
+	{
+		cause:       CauseFinderPlantEmpty,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "material of this payload appears anywhere in the plant",
+	},
+	{
+		cause:       CauseFinderNoFullCarrier,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "a carrier is filled — carriers exist, none of them is full",
+	},
+	{
+		cause:       CauseFinderNoEmptyOfType,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "an empty of the DECLARED TYPE appears; it waits rather than taking another",
+	},
+	{
+		cause:       CauseFinderAccessibilityUnreadable,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the reachability read succeeds — the finder declining to answer, not an empty plant",
+	},
+
+	// ── Dropoff capacity ──────────────────────────────────────────────────
+	{
+		cause:       CauseDropoffOccupied,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the bin at the destination leaves",
+	},
+	{
+		cause:       CauseDropoffInflight,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the order already inbound to that destination places its bin",
+	},
+	{
+		cause:       CauseNGRPFull,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "a child of the destination group frees",
+	},
+	{
+		cause:       CauseCapacityCheckFailed,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the capacity read succeeds — undetermined, not full",
+	},
+
+	// ── Intake ────────────────────────────────────────────────────────────
+	{
+		cause:       CauseIntakeResolve,
+		populations: []WaitPopulation{PopAcquiring},
+		what:        "the step's node group resolves on a later scan",
 	},
 }
 

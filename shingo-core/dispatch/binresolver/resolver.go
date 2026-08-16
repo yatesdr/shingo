@@ -119,7 +119,27 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 	}
 }
 
-// resolveRetrieve finds the child node with the oldest unclaimed bin matching the payload code.
+// resolveRetrieve returns the FIRST enabled child holding any bin that satisfies
+// payloadCode, taking children in the order given.
+//
+// It does NOT rank by age, in either dimension: it makes no comparison across
+// children, and within a child it accepts the first bin ListBinsByNode returns,
+// which is ordered by bin id DESC. The previous comment here claimed it found
+// "the child node with the oldest unclaimed bin", which was true in neither
+// respect. Cross-child age ranking exists only in GroupResolver, via binTimestamp.
+//
+// UNREACHABLE FROM PRODUCTION, and the doc is kept rather than the code deleted
+// so the next reader learns that here instead of re-deriving it. Resolve routes
+// every NGRP node to GroupResolver before this switch, and both retrieve-mode
+// entry points already gate on NGRP themselves (source_finder's tier 1 and
+// complex_steps' group branch), so no caller can reach this arm with a
+// retrieve. The only synthetic node outside NGRP is _TRANSIT, which is never a
+// source or a delivery target. Store mode is a different matter -- resolveStore
+// IS reachable, because lifecycle_service gates on IsSynthetic alone.
+//
+// Consequence worth stating: because this never runs, its ordering is not a live
+// FIFO defect. If a caller is ever generalised past the NGRP gate, that changes,
+// and the ranking question has to be answered before it does.
 func (r *DefaultResolver) resolveRetrieve(children []*nodes.Node, payloadCode string) (*nodes.Node, error) {
 	for _, child := range children {
 		if !child.Enabled {

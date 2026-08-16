@@ -244,7 +244,54 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep) ([]resolvedStep, laneG
 	if err := d.assertEachWaitGatesItsEntry(out); err != nil {
 		return nil, laneGateTarget{}, false, err
 	}
+	if err := assertEveryWaitDeclaresAnOwner(out); err != nil {
+		return nil, laneGateTarget{}, false, err
+	}
 	return out, gates[0].target, true, nil
+}
+
+// assertEveryWaitDeclaresAnOwner is W1's drift test on the CORE side, armed on
+// the dispatch path rather than left in a test file.
+//
+// Every wait in a plan Core is about to persist must say who advances it: the
+// ones this function just inserted are WaitKindLane, and the ones it copied
+// through came from the station and carry WaitKindStation. A wait with neither
+// is unowned — no fence claims it, no floor covers it, and the board cannot say
+// whether to offer Release. That is the shape that held three robots for a whole
+// soak (§12.49), and it is worth refusing a plan over.
+//
+// ── THE DRAIN WINDOW IS WHY THIS WARNS RATHER THAN REFUSES, FOR NOW ───────
+//
+// Plans authored before the stamp existed are still in flight, and they carry no
+// kind at all. Refusing them would fail live orders for a field they could not
+// have had. So an untagged wait is LOUD and allowed — IsStationWait still reads
+// it as the station's, the historical default — and this returns an error only
+// for a kind that is set to something unrecognised, which can only be a new
+// author disagreeing with the vocabulary.
+//
+// WHEN THE WINDOW CLOSES: turn the log into a returned error, and delete
+// IsStationWait's `== ""` arm. Both halves in the same commit, or an untagged
+// wait becomes unowned at the fence while still passing here.
+func assertEveryWaitDeclaresAnOwner(steps []resolvedStep) error {
+	for i, s := range steps {
+		if s.Action != protocol.ActionWait {
+			continue
+		}
+		switch s.WaitKind {
+		case WaitKindLane, WaitKindStation:
+			continue
+		case "":
+			log.Printf("WAIT OWNERSHIP: step %d (%q) carries no wait_kind — reading it as station-owned "+
+				"for the drain window. A wait nobody claims is one no fence guards and no floor sweeps; "+
+				"if this is a NEW plan rather than one authored before the field, its author is missing "+
+				"a stamp", i, s.Node)
+		default:
+			return fmt.Errorf("splice: step %d (%q) declares wait_kind %q, which is neither %q nor %q — "+
+				"an unrecognised owner is a wait no fence will claim",
+				i, s.Node, s.WaitKind, WaitKindLane, WaitKindStation)
+		}
+	}
+	return nil
 }
 
 // assertEachWaitGatesItsEntry checks that the step following every lane wait
@@ -489,7 +536,7 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 	defer unlock()
 
 	// Direction off the plan, exactly as the evaluator reads it.
-	entry, isRetrieve, ok := laneEntryAfterWait(plan, 0)
+	entry, _, isRetrieve, ok := laneEntryAfterWait(plan, 0)
 	if !ok {
 		log.Printf("lane gate: order %d has no actionable step after its wait - leaving staged", order.ID)
 		return vendorOrderID, nil

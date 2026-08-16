@@ -334,6 +334,30 @@ type ComplexOrderStep struct {
 	// preserves the prior always-full behavior, so an older Core that ignores
 	// the field behaves exactly as today.
 	Empty bool `json:"empty,omitempty"`
+	// WaitKind declares WHO MAY ADVANCE a wait step, carried across the wire so
+	// the far side does not have to guess.
+	//
+	// ── WHY IT IS ON THE WIRE AT ALL ──────────────────────────────────────
+	//
+	// Core has always known: a wait it splices for a lane is stamped, and its
+	// release fence keys on that stamp. The Edge never received it. So a station
+	// holding a plan could not tell a wait it owns — "hold at staging until the
+	// line clears", which an operator ends — from one only Core's lane evaluator
+	// can advance, and the board either offered a button that could not work or
+	// offered nothing and explained nothing. The sim operator guessed with a
+	// three-strike retry cap and guessed wrong; a human at an HMI has strictly
+	// less to go on.
+	//
+	// Values are dispatch.WaitKindLane ("lane", Core-owned) and
+	// dispatch.WaitKindStation ("station", station-owned). They are declared in
+	// Core because Core is where the fence that reads them lives.
+	//
+	// EMPTY IS NOT A THIRD KIND. It means "authored before this field", and it
+	// is read as station-owned for exactly as long as pre-ruling orders are
+	// draining — the historical default, so nothing needs migrating. After the
+	// drain window an untagged wait is a defect, and the drift tests on both
+	// sides say so.
+	WaitKind string `json:"wait_kind,omitempty"`
 }
 
 // ComplexOrderRequest is a multi-step transport order from edge.

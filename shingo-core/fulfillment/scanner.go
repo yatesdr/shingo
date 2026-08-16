@@ -537,20 +537,40 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 // KEEPS its soft hold, and retries next tick (the same bin re-confirms and
 // re-dispatches, owner-idempotent).
 func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
+	// ── THE THREE ARMS BELOW ALL USED TO RETURN WITH A BLANK ROW ─────────
+	//
+	// This is the highest-probability blank-cause producer in the system, and the
+	// reason is the retry: dispatchHeldBin is where every order that already
+	// holds its bin re-enters, so the scanner hits these arms EVERY TICK for as
+	// long as the condition lasts. An order can sit here for hours with nothing
+	// on the row explaining it, which is the "stuck in queued, no cause" residue
+	// the liveness floor kept reporting as "(none)" — a gap in the arms, never in
+	// the releaser inventory.
 	if order.BinID == nil {
 		// The plain path only routes here when order.BinID != nil, so a nil here
 		// is a construction bug — surface it, don't dispatch with no bin.
 		s.logFn("fulfillment: order %d reached dispatchHeldBin with no claimed bin; skipping", order.ID)
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseHeldBinMissing,
+			dispatch.QueueParams{Payload: order.PayloadCode})
 		return false
 	}
 	sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
 	if err != nil {
 		s.logFn("fulfillment: held-bin order %d source node %q not found: %v", order.ID, order.SourceNode, err)
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseReadFailed,
+			dispatch.QueueParams{Payload: order.PayloadCode})
 		return false
 	}
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
+		// The DESTINATION vocabulary, not the material one — the same distinction
+		// the fresh path draws at its own dest-resolve arm (CauseDestNodeUnresolved,
+		// F6 in the 2026-07-20 queue-reason study): parking a delivery-node lookup
+		// failure under waiting_for_material points the operator at inventory for a
+		// problem that has nothing to do with it.
 		s.logFn("fulfillment: held-bin order %d dest node %q not found: %v", order.ID, order.DeliveryNode, err)
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.CauseDestNodeUnresolved,
+			dispatch.QueueParams{Destination: order.DeliveryNode, DestUnresolved: true})
 		return false
 	}
 	// (Re)secure the destination slot reserve-only before dispatch (node-driven;
@@ -702,8 +722,15 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 func (s *Scanner) digForBuriedHeldBin(order *orders.Order) bool {
 	buried, err := s.dispatcher.BuriedForHeldBin(order)
 	if err != nil {
+		// EVERY ERROR HERE IS A READ — node, lane, slot, bin. The order is buried
+		// and stays buried; nothing about it changes because Core could not
+		// describe the dig, so it waits and the next tick re-asks. It used to wait
+		// with a blank row, which on the retry path means blank for as long as the
+		// database is unhappy.
 		s.logFn("fulfillment: held-bin order %d is buried but its dig could not be described: %v",
 			order.ID, err)
+		s.setQueueReason(order, protocol.QueueStorageRearranging, dispatch.CauseReadFailed,
+			dispatch.QueueParams{Payload: order.PayloadCode})
 		return false
 	}
 	if err := s.dispatcher.PlanBuriedReshuffle(order, buried); err != nil {

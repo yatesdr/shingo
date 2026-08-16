@@ -152,6 +152,13 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 
 	missing := 0
 	anyMissWithBins := false // a missing need whose node had bins (present-but-taken → sourceable)
+	// lineBinGone: the pickup AT THE LINE NODE — the bin this leg exists to remove
+	// — is missing and its node holds nothing at all. Tracked separately from
+	// `missing` because it is the one need whose absence makes the WORK void
+	// rather than merely delayed, and because an evac that has already secured its
+	// replacement cannot be recognised by counting reservations. See the moot case
+	// below.
+	lineBinGone := false
 	for _, pk := range pickups {
 		// 1. Reuse a held bin that already satisfies this pickup (same node, same
 		//    empty-status). Owner-aware — does not go through BinUnavailableReason.
@@ -190,6 +197,10 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 			missing++
 			if nodeHadBins {
 				anyMissWithBins = true // bins present but unavailable — sourceable eventually
+			} else if removal {
+				// The line position this leg came to clear is EMPTY. Not "taken by
+				// someone", not "not staged yet" — nothing is there.
+				lineBinGone = true
 			}
 			// Name the miss. The caller only sees len(assigned) and logs "holding N
 			// partial(s)", which says an order is stuck but never why — at HK on
@@ -259,6 +270,40 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 	switch {
 	case missing == 0:
 		return assigned, reserveComplete, nil
+	case lineBinGone && legTakesLineBin(plan.ResolvedSteps, order.ProcessNode):
+		// AN EVAC WHOSE LINE BIN IS GONE IS MOOT EVEN IF IT HOLDS ITS REPLACEMENT.
+		//
+		// The clause below says the same thing but tests it as `len(assigned) == 0`,
+		// and that test cannot see the case it was written for. A press-index evac
+		// fetches its own fresh carrier (legSecuresOwnReplacement), so by the time
+		// its line pickup comes up empty it is already holding that carrier's
+		// reservation and the destination slot for the bin it meant to store. It
+		// therefore always holds something, always reads as a partial set, and falls
+		// to reserveHolding — which is a wait, and this wait has nothing to wait for.
+		// The shape moot was written to catch is the one shape structurally excluded
+		// from it.
+		//
+		// WHAT THAT COSTS, MEASURED. lane-stress 2026-08-10: PRESS-1's evac (order
+		// 64) sat in `sourcing` for 33 minutes holding an empty carrier and a
+		// storage slot, against a PLN_001 that held no bin. Its index sibling (65)
+		// was correctly held by swapLegHeld until the evac committed — and the
+		// sibling's dropoff was PLN_001, the very position the evac was waiting to
+		// find a bin in. Neither leg could move and neither was wrong: the evac
+		// waited for a bin only the index could deliver, the index waited for an
+		// evac that would never commit. Two robots' worth of work parked on a swap
+		// whose premise had evaporated.
+		//
+		// The narrowing is legTakesLineBin — a PURE evac: it lifts the line's bin
+		// and puts none back. That excludes a filler (no pickup at the line, so
+		// lineBinGone cannot be set for it anyway) and excludes a self-contained
+		// single_robot swap, which also DROPS at the line and so would strand it if
+		// skipped. It is the same predicate the swap admission gate reads, so the
+		// two cannot drift apart.
+		//
+		// Skipping releases the partials: Skip terminalizes, and TerminalizeOrder
+		// releases the order's reservations, so the carrier and slot this leg was
+		// sitting on go back to the pool it was starving.
+		return assigned, reserveMoot, nil
 	case len(assigned) == 0 && !anyMissWithBins && !legPlacesLineBin(plan.ResolvedSteps, order.ProcessNode):
 		// Reserved nothing and every missing need's node is genuinely empty — the
 		// order's work is moot (source removed), not merely momentarily unsourceable.

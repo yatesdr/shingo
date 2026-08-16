@@ -390,3 +390,65 @@ func TestSwapHold_Filler_ReleasedWhenClearerConfirmed(t *testing.T) {
 			"holding here wedges the second half of every successful swap", reason)
 	}
 }
+
+// TestSwapHold_Filler_ReleasedWhenClearerSkipped is the third disposition, and
+// the one that was missing.
+//
+// A clearer is SKIPPED for the opposite reason it is cancelled: it found no bin
+// to clear. The line is empty, so there is nothing for the filler to collide
+// with — and the filler is exactly what should put a carrier back on it.
+// HandleSwapPeerTerminal has always said so ("a moot (skipped) evac is a clean
+// no-op — the supply proceeds"); this arm contradicted it, so the peer handler
+// released the filler and the hold re-caught it on the next scan, forever.
+//
+// It only became reachable when reserveMoot started skipping evacs that hold
+// their own replacement. lane-stress 2026-08-10: order 64 skipped as moot, order
+// 65 held on it, idle climbing with a reason describing a death that never
+// happened.
+func TestSwapHold_Filler_ReleasedWhenClearerSkipped(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, line, bp := setupTestData(t, db)
+
+	market := &nodes.Node{Name: "SKIP-CLEARER-MARKET", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "create market")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "sk-supply", PayloadCode: bp.Code, Quantity: 1, ProcessNode: line.Name,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionPickup, Node: market.Name},
+			{Action: protocol.ActionDropoff, Node: line.Name},
+		},
+	})
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "sk-evac", PayloadCode: bp.Code, Quantity: 1, ProcessNode: line.Name,
+		SiblingOrderUUID: "sk-supply",
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionWait, Node: line.Name},
+			{Action: protocol.ActionPickup, Node: line.Name},
+			{Action: protocol.ActionDropoff, Node: market.Name},
+		},
+	})
+
+	evac, err := db.GetOrderByUUID("sk-evac")
+	testutil.MustNoErr(t, err, "get evac")
+	// SKIPPED, not cancelled: there was no resident bin to clear.
+	if _, terr := db.TerminalizeOrder(evac.ID, StatusSkipped, "test: moot evac, line already empty"); terr != nil {
+		t.Fatalf("skip evac: %v", terr)
+	}
+
+	supply, err := db.GetOrderByUUID("sk-supply")
+	testutil.MustNoErr(t, err, "get supply")
+	supplySteps, ok := decodeSteps(supply.StepsJSON)
+	if !ok {
+		t.Fatal("supply has no readable steps")
+	}
+	held, reason := d.swapLegHeld(supply, supplySteps)
+	if held {
+		t.Errorf("filler held on a SKIPPED clearer (%q). Skipped means the clearer found nothing "+
+			"to clear, so the line is empty and this filler is the thing that refills it. Holding "+
+			"here contradicts HandleSwapPeerTerminal and leaves the leg queued forever", reason)
+	}
+}

@@ -540,7 +540,6 @@ function closeManifestExpand() {
 delegateActions(document.body, {
     addChip,
     addNodeManifestRow,
-    addReshuffleTarget,
     clearChipPicker,
     closeManifestExpand,
     closeNodeModal,

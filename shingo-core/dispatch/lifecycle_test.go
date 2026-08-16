@@ -446,6 +446,28 @@ func TestActionMap_ReshufflingToQueued_FiresRequeued(t *testing.T) {
 	if len(emitter.completed) != 0 {
 		t.Errorf("EmitOrderCompleted calls = %d, want 0 (parent has not picked up yet)", len(emitter.completed))
 	}
+
+	// ── AND IT TELLS THE EDGE, which is the half that was missing ────────
+	//
+	// EmitOrderQueued above drives Core's own scanner. It does NOT reach the
+	// Edge: EventOrderQueued's Edge-facing subscriber is the queue-REASON push
+	// and returns early without a block sentence and without an acquiring
+	// status, and a resumed parent has neither — the reason is cleared because
+	// the wait it described is over, and the in-band scanner usually dispatches
+	// it out of the acquiring set in the same millisecond.
+	//
+	// So the Edge's mirror stayed at `reshuffling` while Core walked on to
+	// `staged`, every later push was an illegal jump it rejected, and the board
+	// never offered Release. Three robots, held from the first minute of the
+	// lane-stress run to the end of the soak (§12.49).
+	if len(emitter.resumed) != 1 {
+		t.Fatalf("EmitOrderResumed calls = %d, want 1. Without it the Edge is never told the parent "+
+			"left `reshuffling`, and reshuffling→staged is not a legal transition for its mirror — "+
+			"the order becomes unreleasable and holds its robot", len(emitter.resumed))
+	}
+	if emitter.resumed[0] != ord.ID {
+		t.Errorf("EmitOrderResumed orderID = %d, want %d", emitter.resumed[0], ord.ID)
+	}
 }
 
 func TestLifecycle_EmitCancelled_PreviousStatusPopulated(t *testing.T) {

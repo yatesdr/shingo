@@ -67,7 +67,7 @@ func TestBuildSwapChangeoverSteps_SingleRobot(t *testing.T) {
 	}
 
 	wantB := []protocol.ComplexOrderStep{
-		{Action: "wait", Node: "CORE-A"},
+		stationWait("CORE-A"),
 		{Action: "pickup", Node: "CORE-A"},
 		{Action: "dropoff", Node: "OUT-STAGE"},
 		{Action: "pickup", Node: "IN-STAGE"},
@@ -177,7 +177,7 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 	wantA := []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: "MARKET"},
 		{Action: "dropoff", Node: "IN-STAGE"},
-		{Action: "wait", Node: "IN-STAGE"},
+		stationWait("IN-STAGE"),
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "CORE"},
 	}
@@ -194,7 +194,7 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 	}
 
 	wantB := []protocol.ComplexOrderStep{
-		{Action: "wait", Node: "CORE"},
+		stationWait("CORE"),
 		{Action: "pickup", Node: "CORE"},
 		{Action: "dropoff", Node: "DEST"},
 	}
@@ -281,7 +281,7 @@ func TestBuildSwapChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 	r1, r2 := disp.Roles.evac.steps, disp.Roles.supply.steps
 
 	wantR1 := []protocol.ComplexOrderStep{
-		{Action: "wait", Node: "FRONT"},
+		stationWait("FRONT"),
 		{Action: "pickup", Node: "FRONT"},
 		{Action: "dropoff", Node: "DEST"},
 		{Action: "pickup", Node: "MARKET"},
@@ -301,7 +301,7 @@ func TestBuildSwapChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 	}
 
 	wantR2 := []protocol.ComplexOrderStep{
-		{Action: "wait", Node: "BACK"},
+		stationWait("BACK"),
 		{Action: "pickup", Node: "BACK"},
 		{Action: "dropoff", Node: "FRONT"},
 	}
@@ -344,7 +344,7 @@ func TestBuildSwapChangeoverSteps_PressIndex_3Pos(t *testing.T) {
 	}
 
 	wantR2 := []protocol.ComplexOrderStep{
-		{Action: "wait", Node: "MID"},
+		stationWait("MID"),
 		{Action: "pickup", Node: "MID"},
 		{Action: "dropoff", Node: "FRONT"},
 		{Action: "pickup", Node: "BACK"},
@@ -501,7 +501,7 @@ func TestBuildSwapChangeoverSteps_Sequential(t *testing.T) {
 		{Action: "dropoff", Node: "DEST"},   // old inactive to destination
 		{Action: "pickup", Node: "MARKET"},  // fetch new inactive
 		{Action: "dropoff", Node: "CORE-A"}, // deliver new inactive
-		{Action: "wait", Node: "CORE-B"},    // cutover gate, parked at active
+		stationWait("CORE-B"),               // cutover gate, parked at active
 		{Action: "pickup", Node: "CORE-B"},  // evac old active (after cutover flip)
 		{Action: "dropoff", Node: "DEST"},   // old active to destination
 		{Action: "pickup", Node: "MARKET"},  // fetch new active
@@ -582,7 +582,7 @@ func TestBuildEvacuateChangeoverSteps_Sequential(t *testing.T) {
 		{Action: "pickup", Node: "CORE-A"},  // evac old A
 		{Action: "dropoff", Node: "DEST"},   // old A to destination
 		{Action: "pickup", Node: "MARKET"},  // fetch new A (during tooling)
-		{Action: "wait"},                    // bare — tooling-done shared gate
+		stationWait(""),                     // bare — tooling-done shared gate
 		{Action: "dropoff", Node: "CORE-A"}, // deliver new A
 	}
 	if len(disp.StepsA) != len(wantA) {
@@ -598,7 +598,7 @@ func TestBuildEvacuateChangeoverSteps_Sequential(t *testing.T) {
 		{Action: "pickup", Node: "CORE-B"},
 		{Action: "dropoff", Node: "DEST"},
 		{Action: "pickup", Node: "MARKET"},
-		{Action: "wait"},
+		stationWait(""),
 		{Action: "dropoff", Node: "CORE-B"},
 	}
 	if len(disp.StepsB) != len(wantB) {
@@ -737,7 +737,7 @@ func TestBuildKeepStagedDeliverSteps(t *testing.T) {
 	want := []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: "SOURCE"},
 		{Action: "dropoff", Node: "IN-STAGE"},
-		{Action: "wait"},
+		stationWait(""),
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "CORE-NODE"},
 	}
@@ -769,7 +769,7 @@ func TestBuildKeepStagedEvacSteps(t *testing.T) {
 	}
 
 	want := []protocol.ComplexOrderStep{
-		{Action: "wait", Node: "CORE-NODE"},
+		stationWait("CORE-NODE"),
 		{Action: "pickup", Node: "CORE-NODE"},
 		{Action: "dropoff", Node: "DEST-FINAL"},
 	}
@@ -830,7 +830,7 @@ func TestBuildKeepStagedCombinedSteps(t *testing.T) {
 		{Action: "dropoff", Node: "FROM-SOURCE"},
 		{Action: "pickup", Node: "TO-SOURCE"},
 		{Action: "dropoff", Node: "IN-STAGE"},
-		{Action: "wait"},
+		stationWait(""),
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "CORE-NODE"},
 	}

@@ -41,6 +41,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/shared/clock"
+	"shingocore/domain"
 	"shingocore/store/orders"
 	"shingocore/store/telemetry"
 )
@@ -290,8 +291,19 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	// its lane. A no-op when the gate is off or the drop is not into a lane.
 	e.dispatcher.ReleaseInboundLaneForOrder(ev.OrderID, location)
 	// Hold B: the leg has PLACED its bin, so it is out of the lane it was
-	// working. Released here and not at pickup — after a pickup the robot is
-	// still in the lane holding the bin.
+	// working.
+	//
+	// NO LONGER THE ONLY RELEASE, and the reason it used to be is now recorded as
+	// wrong: "released here and not at pickup — after a pickup the robot is still
+	// in the lane holding the bin" is true only when the dropoff is in the SAME
+	// lane as the pickup. For every other shape the robot picks, drives out, and
+	// the row outlives its presence — which jammed five robots in front of an
+	// empty lane on the rig (see HandleTransitForLaneGate).
+	//
+	// The exit release is there, on the pickup. This stays because it is still
+	// the right release for the dropoff end: an order that PLACES into a lane was
+	// never going to hit the pickup path for it, and a store's only visit ends
+	// here.
 	e.dispatcher.ReleaseLaneOccupancy(ev.OrderID)
 	// ...and the lane just became free, so re-drive the reshuffle NOW rather than
 	// waiting for this leg to reach a terminal status.
@@ -391,24 +403,78 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 // which makes the caller idempotent against duplicate/replayed block events.
 // Returns false when no junction rows exist (single-bin orders, compound
 // children) or none match.
+// ── IT ASKS WHAT THE ROBOT IS CARRYING, AND IT USED TO ASK SOMETHING ELSE ──
+//
+// A dropoff places the bin the robot has in its forks. That bin is, by
+// construction, the one this order most recently picked up and has not yet put
+// down — which is the bin sitting at _TRANSIT under this order's claim. One
+// robot carries one bin, so the question has exactly one answer and the database
+// already holds it.
+//
+// WHAT IT ASKED BEFORE: it walked the order_bins junction for a row whose
+// DEST_NODE equalled this location. That is a different question — "which bin
+// ENDS UP here" — and it is only accidentally the same one when the dropoff
+// being completed happens to be the bin's final destination.
+//
+// Two shapes therefore never matched, and both pin a robot forever:
+//
+//	INTERMEDIATE DROPS. The junction records PICKUP rows only (node_name = where
+//	it is picked, dest_node = where it finally goes); there is no dropoff row to
+//	match. A two_robot swap that drops at inbound staging on its way to the cell
+//	has no row whose dest_node is that staging node, so the store was never
+//	recorded, the bin never appeared at the staging slot, and the order's OWN
+//	next step — a pickup at that slot — had nothing to pick.
+//
+//	SINGLE-BIN ORDERS. They carry no junction rows at all (the allocator writes
+//	them only for multi-bin orders — see dispatch.binForStep), so the walk exited
+//	at len(rows)==0. Its sibling resolvePickupBin has had the order.BinID
+//	fallback all along; this half never got it.
+//
+// MEASURED, lane-stress rig 2026-08-11: orders 1, 7 and 10 staged from the first
+// minute of the run, each holding an AMR, for the entire soak. Order 1 is the
+// single-bin shape (bin 5, claimed by order 1, zero junction rows); 7 and 10 are
+// the intermediate-drop shape (rows naming ALN_003/ALN_004 as dest while the
+// block completed at SLN_003/SLN_004). Core logged "no in-flight claimed bin
+// matched; store recorded at order FINISHED instead" and moved on, and the order
+// never reached FINISHED because it was waiting on the step that store would
+// have enabled.
+//
+// ONE RULE REPLACES TWO SPECIAL CASES. The obvious patch was to add the
+// single-bin fallback and to match intermediate drops by step index. Both work,
+// and both leave two readers of "which bin is this block about" answering with
+// different machinery — which is the drift that produced this. Asking the plant
+// what the robot is holding needs no junction, no step index, and no agreement
+// with anything.
+//
+// FAILS CLOSED on an ambiguous answer. Zero bins in transit means the pickup was
+// never recorded and there is nothing to place; more than one means this order
+// has two bins in flight, which one robot cannot do — either way, guessing would
+// record a bin at a slot it is not in, and a wrong location is worse than a late
+// one (the order-FINISHED path still catches the honest case).
 func (e *Engine) resolveDropoffBin(order *orders.Order, location string) (int64, bool) {
-	rows, err := e.db.ListOrderBins(order.ID)
-	if err != nil || len(rows) == 0 {
+	transit, err := e.db.GetNodeByDotName(domain.TransitNodeName)
+	if err != nil || transit == nil {
+		e.logFn("transit: order %d dropoff @ %s — cannot resolve the %s node: %v",
+			order.ID, location, domain.TransitNodeName, err)
 		return 0, false
 	}
-	for _, ob := range rows {
-		if strings.TrimSpace(ob.DestNode) != location {
-			continue
-		}
-		bin, err := e.db.GetBin(ob.BinID)
-		if err != nil || bin == nil {
-			continue
-		}
-		if bin.ClaimedBy != nil && *bin.ClaimedBy == order.ID {
-			return ob.BinID, true
+	held, err := e.db.ListBinsByClaim(order.ID)
+	if err != nil {
+		e.logFn("transit: order %d dropoff @ %s — claimed-bin read failed: %v", order.ID, location, err)
+		return 0, false
+	}
+	var carried []int64
+	for _, b := range held {
+		if b.NodeID != nil && *b.NodeID == transit.ID {
+			carried = append(carried, b.ID)
 		}
 	}
-	return 0, false
+	if len(carried) != 1 {
+		e.dbg("transit: order %d dropoff @ %s — %d bin(s) in transit under this claim, want exactly 1",
+			order.ID, location, len(carried))
+		return 0, false
+	}
+	return carried[0], true
 }
 
 // isPickupBlock returns true when a block's BinTask designates a

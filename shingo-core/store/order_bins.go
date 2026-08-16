@@ -28,6 +28,12 @@ func (db *DB) ListOrderBins(orderID int64) ([]*orders.OrderBin, error) {
 // UnclaimOrderBins on cancel/fail paths to keep the junction table clean.
 func (db *DB) DeleteOrderBins(orderID int64) { orders.DeleteOrderBins(db.DB, orderID) }
 
+// ShiftOrderBinSteps rewrites an order's junction step_index values after a
+// transform inserted steps into its plan.
+func (db *DB) ShiftOrderBinSteps(orderID int64, shift map[int]int) error {
+	return orders.ShiftOrderBinSteps(db.DB, orderID, shift)
+}
+
 // EvictStaleGhostsTx is the *store.DB entry point to the shared stale-ghost
 // reconciliation (helpers.EvictStaleGhostBinsTx) for callers that reach the
 // store through *store.DB but cannot import store/internal — notably

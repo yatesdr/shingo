@@ -31,20 +31,42 @@ func mustTake(t *testing.T, d *Dispatcher, orderID int64, ns ...*nodes.Node) {
 	}
 }
 
-// TestLaneOccupancy_SpansPickupAndEndsAtDropoff pins Hold B's lifetime, which is
-// the entire reason it is a second hold rather than a rename of the first.
+// TestLaneOccupancy_EndsWhenTheRobotLeavesTheLane pins Hold B's lifetime, which
+// is the entire reason it is a second hold rather than a rename of the first.
 //
 // Hold A — the dig's claim, a mouth row owned by the compound parent — spans the
 // whole reshuffle. Hold B is owned by ONE leg and answers a different question:
 // is a robot physically inside the lane right now.
 //
-// The boundary that matters is the release. After a PICKUP the robot is still in
-// the lane, holding the bin it just lifted; it is out once it has PLACED at the
-// destination. Releasing at pickup would declare the lane free with a robot
-// standing in it — which is the exact failure this hold exists to prevent, and
-// the reason the release rides handleStoreBlockCompleted rather than the transit
-// event that Hold A's early handoff uses.
-func TestLaneOccupancy_SpansPickupAndEndsAtDropoff(t *testing.T) {
+// THIS TEST ASSERTED THE OPPOSITE UNTIL 2026-08-10, AND THE REVERSAL WAS
+// DELIBERATE. It used to pin the release at the DROPOFF, on this reasoning, kept
+// verbatim because it is the argument against what is here now:
+//
+//	"After a PICKUP the robot is still in the lane, holding the bin it just
+//	 lifted; it is out once it has PLACED at the destination. Releasing at pickup
+//	 would declare the lane free with a robot standing in it — which is the exact
+//	 failure this hold exists to prevent."
+//
+// That is true of ONE shape: a leg that picks and places inside the SAME lane. It
+// is false of every other, and the cost of applying it to all of them was
+// measured on the lane-stress rig: a robot picked from a lane and drove on to its
+// next gate point, its row stayed, and four more queued at that lane's mouth were
+// refused with lane-occupied by an order that had left. The holder was itself
+// queued behind its own stale row, self-exempting, so nothing in the set could
+// move it. Five robots in front of an EMPTY lane.
+//
+// Waiting for the dropoff is not a fix worth having either: the next drop can be
+// a line delivery ten or twenty minutes out, and the corridor is falsely occupied
+// for all of it.
+//
+// OWNER RULING: release on the pickup, watch for the consequence. The window is
+// real and narrow — the bin entering transit means the robot has LIFTED it and is
+// driving out, not that it is through the mouth — and the shape where it is
+// genuinely early is the in-lane round trip above. IF TWO ROBOTS ARE EVER SEEN IN
+// ONE LANE, that is where to look, and the fix is a real exit event (a marker at
+// the mouth on the way out, symmetric with the wait block the gate splices on the
+// way in), NOT moving this back to the dropoff — that reinstates the jam.
+func TestLaneOccupancy_EndsWhenTheRobotLeavesTheLane(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
@@ -71,16 +93,19 @@ func TestLaneOccupancy_SpansPickupAndEndsAtDropoff(t *testing.T) {
 		t.Fatalf("occupants after a repeated take = %v, want exactly one row", got)
 	}
 
-	// THE PICKUP. The bin leaves the slot — and the robot does NOT leave the lane.
-	// This is the event that releases Hold A's per-block mouth hold, and it must
-	// not release Hold B.
+	// THE PICKUP — the bin leaves the slot and the robot leaves with it. This is
+	// the event that already released Hold A's per-block mouth hold; Hold B now
+	// rides the same signal, so the two holds have one lifetime instead of two.
 	d.HandleTransitForLaneGate(child.ID, slots[0].ID)
-	if got := occupants(t, db, lane); len(got) != 1 {
-		t.Fatalf("occupants after PICKUP = %v, want the leg still inside — it is holding the bin it "+
-			"just lifted and has not left the lane", got)
+	if got := occupants(t, db, lane); len(got) != 0 {
+		t.Fatalf("occupants after PICKUP = %v, want empty — the robot has lifted its bin and is "+
+			"driving out, and its next drop can be a line delivery minutes away. Holding the "+
+			"corridor until then refuses every other entrant to a lane nobody is in", got)
 	}
 
-	// THE DROPOFF. Now it is out.
+	// THE DROPOFF release is still correct and still runs — it is the right
+	// release for an order whose visit ENDS in a place, and a store's only visit
+	// does. Idempotent here: the row is already gone.
 	d.ReleaseLaneOccupancy(child.ID)
 	if got := occupants(t, db, lane); len(got) != 0 {
 		t.Fatalf("occupants after DROPOFF = %v, want empty", got)

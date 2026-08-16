@@ -407,6 +407,14 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 			result, rErr := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, payloadCode, nil, digAskerFor(order))
 			if rErr != nil {
 				s.dbg("move: dest group %s unresolved (%v), queuing order %d", order.DeliveryNode, rErr, order.ID)
+				// AND THE ROW SAYS WHY. This queued the order and wrote nothing, so a
+				// move parked on a full destination group was indistinguishable on the
+				// row from one nobody had planned yet — and blank is the one wait state
+				// no operator and no query can explain. Same cause the complex path uses
+				// for the same fact (a step still names a group with no free child), so
+				// the two cannot drift.
+				s.setQueueReason(order, protocol.QueueWaitingForSlot, CauseNGRPResolve,
+					QueueParams{Destination: order.DeliveryNode})
 				return &PlanningResult{Queued: true}, nil
 			}
 			s.dbg("move: dest NGRP %s resolved -> %s for order %d", order.DeliveryNode, result.Node.Name, order.ID)

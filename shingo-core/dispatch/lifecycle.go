@@ -149,7 +149,15 @@ var actionMap = map[transitionKey][]Action{
 	// future async-scanner refactor that changes that contract would
 	// silently break the in-band resume — see compound.go's
 	// AdvanceCompoundOrder routing for the matching note.
-	{from: StatusReshuffling, to: StatusQueued}: {fireRequeued},
+	// AND fireResumed, WHICH IS THE HALF THAT TELLS THE EDGE. Ordered FIRST
+	// deliberately: fireRequeued runs the fulfillment scanner in-band and the
+	// order is frequently dispatched again inside that call, so a push queued
+	// after it would race the statuses that follow. The Edge must learn
+	// `queued` before anything later can be legal for it.
+	//
+	// Without it the Edge's mirror stayed at `reshuffling` — see fireResumed
+	// for why EventOrderQueued's own Edge push cannot cover this.
+	{from: StatusReshuffling, to: StatusQueued}: {fireResumed, fireRequeued},
 
 	// Cancel paths from any non-terminal status notify engine wiring
 	// via the EventBus cancellation event.
@@ -571,12 +579,37 @@ func (s *LifecycleService) CompleteCompound(ord *orders.Order) error {
 // parent (lane unlock + EmitOrderCompleted); ResumeCompound hands the
 // parent back into the dispatch pipeline. AdvanceCompoundOrder routes
 // by OrderType to pick the right one.
+// ── IT CLEARS THE CAUSE, AND CLEARING IS THE RIGHT WRITE HERE ─────────────
+//
+// A resumed parent carries whatever cause parked it before the dig — "storage is
+// being rearranged", lane-locked, intake-buried. Every one of those describes a
+// wait that has now ENDED: the excavation it named is finished, which is why
+// this function is being called. Leaving it puts a stale sentence on an order
+// that is ready to dispatch, which is the same lie a blank row tells, told the
+// other way round — the evaluator states the rule at its own release ("CLEARED
+// ON ENTRY. The cause described a wait that is over").
+//
+// So this does NOT get a cause of its own. A resumed parent is not waiting on
+// anything; it is queued and next in line for the scanner. If it turns out to be
+// blocked, the very next pass writes the real reason. That makes a blank row on
+// a resumed parent MEANINGFUL rather than ambient: one that persists past a
+// scanner tick is an order nothing picked up, which is a finding.
 func (s *LifecycleService) ResumeCompound(ord *orders.Order) error {
-	return s.transition(ord, StatusQueued, Event{
+	if err := s.transition(ord, StatusQueued, Event{
 		Actor:     "system",
 		Reason:    "reshuffle complete; parent requeued for re-resolution",
 		StationID: ord.StationID,
-	})
+	}); err != nil {
+		return err
+	}
+	if err := s.db.SetOrderQueueDetail(ord.ID, "", "", ""); err != nil {
+		// Best-effort, like every other queue-detail write: a stale sentence is
+		// worth a log line, never worth failing a completed reshuffle's resume.
+		log.Printf("dispatch: clear queue_reason on resume for order %d: %v", ord.ID, err)
+		return nil
+	}
+	ord.QueueReason, ord.QueueCode, ord.QueueCause = "", "", ""
+	return nil
 }
 
 // MarkPending writes the initial Pending status for a freshly-created
@@ -621,6 +654,33 @@ func fireCancelled(s *LifecycleService, ord *orders.Order, ev Event) error {
 // order row; the scanner reads it from there.
 func fireRequeued(s *LifecycleService, ord *orders.Order, ev Event) error {
 	s.emitter.EmitOrderQueued(ord.ID, ord.EdgeUUID, ev.StationID, "")
+	return nil
+}
+
+// fireResumed tells the EDGE that the parent left `reshuffling`.
+//
+// ── WHY fireRequeued COULD NOT DO IT ──────────────────────────────────────
+//
+// EventOrderQueued has an Edge-facing subscriber, and it is the QUEUE-REASON
+// push (engine/wiring.go): it returns early unless the order still IsAcquiring
+// AND carries a non-empty QueueReason, because its job is delivering a block
+// sentence to the board, not mirroring a status. A resumed parent fails both
+// halves — ResumeCompound clears the reason (the wait it named is over) and the
+// in-band scanner usually dispatches it out of the acquiring set in the same
+// millisecond. So nothing was ever sent.
+//
+// WHAT THAT COST, MEASURED. lane-stress 2026-08-11: Core walked
+// reshuffling → queued → sourcing → dispatched → in_transit → staged while the
+// Edge's mirror sat at `reshuffling`. Both later pushes were illegal jumps
+// under the shared transition table (protocol/types.go) and were rejected, so
+// the board never showed the order staged, never offered Release, and three
+// robots stood still from the first minute of the run to the end of the soak.
+// Core refused nothing; nobody ever asked it to.
+//
+// It is a plain status push, not a new mechanism: the same TypeOrderUpdate the
+// completion path already sends, on the transition that had none.
+func fireResumed(s *LifecycleService, ord *orders.Order, ev Event) error {
+	s.emitter.EmitOrderResumed(ord.ID, ord.EdgeUUID, ev.StationID)
 	return nil
 }
 

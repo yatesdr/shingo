@@ -412,6 +412,109 @@ func TestWindow3_OccupiedSlotIsNotAWallToDigOut(t *testing.T) {
 // refused by the compound transaction has no children — the whole write rolled
 // back. The parent row is the only trace such an attempt leaves, which is what
 // makes it the right thing to count when the claim is "we did not even try".
+// TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent is the
+// 16,947-order runaway, reproduced and then prevented.
+//
+// ── TWO READERS, TWO QUESTIONS, A DURABLE WRITE BETWEEN THEM ─────────────
+//
+// The heal path pre-checked with LaneLock.IsLocked — "does a DIG hold this
+// lane" — then created the dig's PARENT ORDER, then called TryLock, which is
+// AcquireLanes(ModeDig) and refuses on ANY other owner's mouth row. TryLock's
+// own doc says so: "already held — by another dig, OR BY AN ORDINARY ORDER'S
+// MOUTH HOLD."
+//
+// So on a lane an ordinary order holds, the guard said GO and the claim said NO
+// — forever, because that answer does not change while the row exists, and a
+// gate-staged order keeps its row until it places. Between the two sat an
+// INSERT, so every lane event minted an order and cancelled it.
+//
+// MEASURED, lane-stress rig 2026-08-10, on a freshly seeded plant: LS_C5 held
+// exactly one row — `mouth`/`outbound`, owned by a staged order. 16,947 heal
+// parents were created and cancelled in minutes, ZERO digs ever started, ~64
+// cancellations per second, and every other status drained to nothing. The
+// cancellation reason read "another dig took lane LS_C5 first", naming a dig
+// that did not exist — which is what sent the first look in the wrong direction.
+//
+// THE OUTCOME IS UNCHANGED AND THAT IS THE POINT. AcquireLanes was always going
+// to refuse this dig; asking one read earlier does not change what happens on
+// the floor, only whether Core writes an order to find out. That is what makes
+// this a churn fix rather than a policy change.
+//
+// MUTATION (fires): restore `if d.laneLock.IsLocked(lane.ID) { return }` →
+// assertion (a) reports a minted, cancelled heal parent.
+func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	wall, _, w, _, bp := healLaneFixture(t, db, "HL4")
+	line := lineNode(t, db, "HL4-LINE")
+
+	// The Tier-2 blocker that parks the dweller, exactly as the positive test
+	// builds it.
+	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[2].Name
+		o.Status = "in_transit"
+	})
+	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
+		t.Fatalf("the deeper store must take its mouth row: adm=%v err=%v", adm, err)
+	}
+	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, "hl4-deep", "RUNNING", ""), "deep vendor")
+
+	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	if !IsGateStaged(dweller) {
+		t.Fatalf("the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
+	}
+	markStaged(t, db, dweller.ID)
+
+	// An unclaimed wall — so a heal is genuinely WARRANTED. Without this the test
+	// would pass for the wrong reason (nothing to dig).
+	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL4-WALL")
+	if blocker.ClaimedBy != nil {
+		t.Fatalf("fixture bug: the walling bin must be UNCLAIMED")
+	}
+
+	// The ordering reason goes, leaving only the wall — the exact state the
+	// positive test digs from.
+	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
+
+	// ── AND NOW THE RIG'S ACTUAL SHAPE: an ORDINARY, non-dig mouth hold on the
+	// same lane. A retrieve leaving this lane takes an `outbound` row, which is
+	// what LS_C5 was holding.
+	leaver := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w[0].Name
+		o.DeliveryNode = line.Name
+		o.Status = "in_transit"
+	})
+	if adm, _, _, err := d.AcquireLanesForOrder(leaver, w[0], line, EntryHeldBin); err != nil || !adm {
+		t.Fatalf("the leaver must take an outbound mouth row on the wall lane: adm=%v err=%v", adm, err)
+	}
+	if d.laneLock.IsLocked(wall.ID) {
+		t.Fatal("precondition: no DIG holds the lane — that is the whole point, the holder is ordinary")
+	}
+	if d.laneLock.CanTake(wall.ID) {
+		t.Fatal("precondition: a dig must NOT be admissible while an ordinary mouth row is held; " +
+			"if it is, this fixture is not reproducing the runaway")
+	}
+
+	d.EvaluateLaneReleases(wall.ID)
+
+	// (a) NO ORDER WAS WRITTEN TO DISCOVER A REFUSAL THAT WAS KNOWABLE.
+	if n := healParentsMinted(t, db, wall.Name); n != 0 {
+		t.Errorf("%d heal parent(s) were minted for %s and cancelled. An ordinary order holds the "+
+			"lane's mouth, so AcquireLanes was always going to refuse the dig — and the pre-check "+
+			"asked about DIGS instead, so it said go. On the rig this repeated on every lane event: "+
+			"16,947 orders, no dig, the plant doing nothing else", n, wall.Name)
+	}
+
+	// (b) AND NO LOCK WAS TAKEN. The outcome is identical to before the fix; only
+	// the paper trail differs.
+	if d.laneLock.IsLocked(wall.ID) {
+		t.Error("a dig lock was taken on a lane an ordinary order holds")
+	}
+}
+
 func healParentsMinted(t *testing.T, db *store.DB, laneName string) int {
 	t.Helper()
 	var n int

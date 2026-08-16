@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 
 	"shingo/protocol"
@@ -800,7 +801,19 @@ func (d *Dispatcher) admitLane(s admissionSituation, node *nodes.Node, isSource 
 		return Admitted(), nil
 	}
 	target, _, err := d.pickupSlotNow(s.order, lane)
-	if err != nil {
+	switch {
+	case errors.Is(err, ErrPickupNotInLane):
+		// A DEFINITE NO, SO A REFUSAL — not an error. The bin this pickup is for
+		// exists and is somewhere else, which is a fact about the plant that can
+		// change, not a question Core failed to answer.
+		//
+		// It used to propagate as a bare error, and the difference is a wedge: an
+		// error arm logs and skips the candidate, so the order carried no usable
+		// cause, was never proposed for a heal dig, and — because a gate-staged
+		// order is exempt from the abandon sweep — was bounded by nothing at all.
+		// One order sat ten hours that way holding a bin, a robot and a lane.
+		return RefusedAt(CauseGatePickupElsewhere, lane.Name), nil
+	case err != nil:
 		return GateVerdict{}, fmt.Errorf("admission: pickup slot for order %d in lane %d: %w",
 			s.order.ID, lane.ID, err)
 	}

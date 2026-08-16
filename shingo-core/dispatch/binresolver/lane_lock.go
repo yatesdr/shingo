@@ -158,6 +158,30 @@ func (l *LaneLock) IsLocked(laneID int64) bool {
 	return owner != 0
 }
 
+// CanTake reports whether TryLock would currently succeed for this lane.
+//
+// IT IS THE PRE-CHECK IsLocked WAS BEING USED AS AND IS NOT. IsLocked asks "does
+// a DIG hold this lane"; TryLock refuses on ANY other owner's mouth row. A caller
+// that gates on IsLocked and then does expensive, DURABLE work before TryLock —
+// the heal-dig path creates its parent order in between — pays that cost on every
+// attempt against a lane an ordinary order is holding, forever, because the
+// answer never changes. 16,947 cancelled orders and no dig at all, measured.
+//
+// FAILS CLOSED on a read error, like IsLocked and TryLock: "I could not tell"
+// must not read as "go ahead".
+//
+// It does NOT replace TryLock and must not be treated as a claim: AcquireLanes
+// under the lane's advisory lock is still the arbiter, and the window between
+// this and that is real. What it removes is the certainty of losing.
+func (l *LaneLock) CanTake(laneID int64) bool {
+	ok, err := reservations.DigAdmissible(l.db, laneID)
+	if err != nil {
+		log.Printf("lanelock: dig-admissible read failed for lane %d: %v (treated as held)", laneID, err)
+		return false
+	}
+	return ok
+}
+
 // LockedBy returns the order ID holding the dig, or 0 if unheld.
 //
 // Unlike IsLocked this returns 0 on a read error, because its callers compare

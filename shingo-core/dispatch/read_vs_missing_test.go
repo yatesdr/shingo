@@ -106,7 +106,7 @@ func TestFinder_UnreadableBinNode_Waits(t *testing.T) {
 		t.Fatalf("outcome = %v, want OutcomeWait — the node read failed, which says nothing about "+
 			"whether the bin is usable", res.Outcome)
 	}
-	if res.QueueCause != string(CauseReadFailed) {
+	if res.QueueCause != CauseReadFailed {
 		t.Errorf("queue_cause = %q, want %q", res.QueueCause, CauseReadFailed)
 	}
 }

@@ -64,3 +64,44 @@ func ListOrderBins(db *sql.DB, orderID int64) ([]*OrderBin, error) {
 func DeleteOrderBins(db *sql.DB, orderID int64) {
 	db.Exec(`DELETE FROM order_bins WHERE order_id = $1`, orderID)
 }
+
+// ShiftOrderBinSteps rewrites step_index for an order's junction rows, applying
+// shift[oldIndex] = newIndex. Rows whose index has no entry are left alone.
+//
+// step_index is a POSITION IN THE ORDER'S PLAN, so any transform that inserts
+// steps invalidates every row after the insertion. The transform owns the
+// repair; this is the write it makes. Doing it in one transaction matters
+// because the shift moves indices UPWARD into positions other rows still
+// occupy — row-at-a-time updates would transiently collide with the
+// (order_id, step_index) uniqueness the table relies on.
+func ShiftOrderBinSteps(db *sql.DB, orderID int64, shift map[int]int) error {
+	if len(shift) == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("shift order_bins: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Park every row out of the way first (negative indices cannot collide with
+	// a real position), then land each on its final index.
+	for old := range shift {
+		if _, err := tx.Exec(
+			`UPDATE order_bins SET step_index = -1 - step_index
+			   WHERE order_id = $1 AND step_index = $2`, orderID, old); err != nil {
+			return fmt.Errorf("shift order_bins: park step %d: %w", old, err)
+		}
+	}
+	for old, new := range shift {
+		if _, err := tx.Exec(
+			`UPDATE order_bins SET step_index = $3
+			   WHERE order_id = $1 AND step_index = $2`, orderID, -1-old, new); err != nil {
+			return fmt.Errorf("shift order_bins: step %d -> %d: %w", old, new, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("shift order_bins: commit: %w", err)
+	}
+	return nil
+}

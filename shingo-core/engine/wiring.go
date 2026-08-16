@@ -517,6 +517,35 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventOrderQueued)
 
+	// ── Resume push: the parent left `reshuffling` ────────────────────────
+	//
+	// UNCONDITIONAL, WHICH IS THE POINT. The queue-reason push above returns
+	// early without a block sentence and without an acquiring status; a resumed
+	// parent has neither, so it fell through both and the Edge never learned the
+	// order had left `reshuffling`. Its mirror then rejected every later push as
+	// an illegal jump and the order became unreleasable — three robots a run.
+	//
+	// Status is written as `queued` rather than read back off the row: by the
+	// time this runs the in-band scanner may already have dispatched the order,
+	// and the Edge needs the step it MISSED, not the one Core is on now.
+	// reshuffling → queued is the only legal edge out of reshuffling toward the
+	// live path, so it is the one the mirror has to be walked through.
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderResumedEvent]) {
+		ev := evt.Payload
+		if ev.EdgeUUID == "" || ev.StationID == "" {
+			return
+		}
+		if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID, &protocol.OrderUpdate{
+			OrderUUID: ev.EdgeUUID,
+			Status:    string(protocol.StatusQueued),
+			Detail:    "reshuffle complete; parent requeued",
+		}); err != nil {
+			e.logFn("engine: resume notification to edge for order %d: %v", ev.OrderID, err)
+		} else {
+			e.dbg("resume notification sent to edge: station=%s uuid=%s", ev.StationID, ev.EdgeUUID)
+		}
+	}, EventOrderResumed)
+
 	// â"€â"€ Kanban demand â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	// look up the demand registry and send a demand signal to Edge.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {

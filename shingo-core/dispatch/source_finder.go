@@ -111,7 +111,7 @@ type SourceResult struct {
 	// tag (which tier waited); the sentence is built by the caller from
 	// QueueCode + QueueParams.
 	QueueCode   protocol.QueueCode
-	QueueCause  string
+	QueueCause  QueueCause
 	QueueParams QueueParams
 
 	// OutcomeReshuffle: the buried bin + its slot/lane for reshuffle planning.
@@ -492,7 +492,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
-					QueueCause:  "finder-group-empty",
+					QueueCause:  CauseFinderGroupEmpty,
 					QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
 				}
 			}
@@ -504,7 +504,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			return SourceResult{
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
-				QueueCause:  "finder-group-empty",
+				QueueCause:  CauseFinderGroupEmpty,
 				QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
 			}
 		}
@@ -543,7 +543,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			return SourceResult{
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
-				QueueCause:  string(CauseLoaderSourceUnreadable),
+				QueueCause:  CauseLoaderSourceUnreadable,
 				QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
 			}
 		}
@@ -557,7 +557,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
-					QueueCause:  "finder-pool-empty",
+					QueueCause:  CauseFinderPoolEmpty,
 					QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
 				}
 			}
@@ -587,12 +587,12 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			groupBin, gerr = f.db.FindEmptyCompatibleBinInGroup(payloadCode, srcNode.ID, excludeID)
 		}
 		if gerr != nil || groupBin == nil {
-			cause := "finder-group-empty"
+			cause := CauseFinderGroupEmpty
 			if wantType != "" {
 				// The loader asked for a specific type and the group has none.
 				// It WAITS rather than taking another: a declared mix that is
 				// abandoned when inconvenient is not a mix.
-				cause = "finder-no-empty-of-type"
+				cause = CauseFinderNoEmptyOfType
 				f.debug("finder: no empty %s in group %s for %s, waiting", wantType, need.SourceNode, need.DeliveryNode)
 			} else {
 				f.debug("finder: no empty in group %s for payload=%s, waiting", need.SourceNode, payloadCode)
@@ -643,7 +643,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			return SourceResult{
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
-				QueueCause:  "finder-node-empty",
+				QueueCause:  CauseFinderNodeEmpty,
 				QueueParams: params,
 			}
 		}
@@ -658,7 +658,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
-					QueueCause:  "finder-plant-empty",
+					QueueCause:  CauseFinderPlantEmpty,
 					QueueParams: QueueParams{Payload: payloadCode},
 				}
 			}
@@ -666,7 +666,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		} else {
 			var b *bins.Bin
 			var err error
-			cause := "finder-plant-empty"
+			cause := CauseFinderPlantEmpty
 			if wantType != "" {
 				b, err = f.db.FindEmptyBinOfType(wantType, preferZone, excludeID)
 				cause = "finder-no-empty-of-type"
@@ -687,7 +687,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 
 	if bin == nil {
 		params := QueueParams{Payload: payloadCode}
-		cause := "finder-plant-empty"
+		cause := CauseFinderPlantEmpty
 		if intent == IntentEmpty {
 			params = QueueParams{Kind: "empty", Payload: payloadCode}
 		}
@@ -722,7 +722,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		return SourceResult{
 			Outcome:     OutcomeWait,
 			QueueCode:   protocol.QueueWaitingForMaterial,
-			QueueCause:  "finder-no-full-carrier",
+			QueueCause:  CauseFinderNoFullCarrier,
 			QueueParams: QueueParams{Payload: payloadCode, Destination: need.DeliveryNode},
 		}
 	}
@@ -748,7 +748,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			return SourceResult{
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
-				QueueCause:  string(CauseReadFailed),
+				QueueCause:  CauseReadFailed,
 				QueueParams: QueueParams{Payload: payloadCode},
 			}
 		}
@@ -784,7 +784,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			return SourceResult{
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueStorageRearranging,
-				QueueCause:  "finder-accessibility-unreadable",
+				QueueCause:  CauseFinderAccessibilityUnreadable,
 				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode},
 			}
 		}

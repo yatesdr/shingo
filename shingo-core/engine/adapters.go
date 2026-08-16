@@ -103,6 +103,14 @@ func (e *dispatchEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, pa
 	}})
 }
 
+func (e *dispatchEmitter) EmitOrderResumed(orderID int64, edgeUUID, stationID string) {
+	e.bus.Emit(Event{Type: EventOrderResumed, Payload: OrderResumedEvent{
+		OrderID:   orderID,
+		EdgeUUID:  edgeUUID,
+		StationID: stationID,
+	}})
+}
+
 func (e *dispatchEmitter) EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string) {
 	e.bus.Emit(Event{Type: EventOrderFaulted, Payload: OrderFaultedEvent{
 		OrderID:   orderID,

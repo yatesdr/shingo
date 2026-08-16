@@ -282,11 +282,36 @@ func (d *Dispatcher) takeLaneOccupancyByID(orderID, laneID int64) error {
 
 // ReleaseLaneOccupancy records that an order is out of every lane it occupied.
 //
-// Fired on DROPOFF completion, not on pickup. After a pickup the robot is
-// holding the bin and still physically in the lane; it is out once it has placed
-// at the destination. Releasing at pickup would declare the lane free with a
-// robot still standing in it, which is the whole failure this hold exists to
-// prevent.
+// Fired on DROPOFF completion. It is NO LONGER THE ONLY RELEASE, and the reason
+// it used to be is now on file as wrong.
+//
+// ── WHAT THIS DOC USED TO ARGUE, AND WHY IT NO LONGER DOES ───────────────
+//
+// It said: "Fired on DROPOFF completion, not on pickup. After a pickup the robot
+// is holding the bin and still physically in the lane; it is out once it has
+// placed at the destination. Releasing at pickup would declare the lane free
+// with a robot still standing in it, which is the whole failure this hold exists
+// to prevent."
+//
+// That is true of ONE shape — a leg that picks and places inside the same lane —
+// and it was applied to all of them. For every other shape the robot picks,
+// drives out, and the row outlives its presence: five robots were refused at the
+// mouth of an EMPTY lane on the lane-stress rig, 2026-08-10, by an order that had
+// gone, with the holder itself queued behind its own stale row. So occupancy also
+// releases on the exit now (HandleTransitForLaneGate), on the same
+// EventBinEnteredTransit the mouth hold has used since §4.
+//
+// The argument above is kept verbatim rather than deleted because it is the case
+// AGAINST what is there now, and it survives in one shape. It is preserved the
+// same way in the test that pinned it —
+// TestLaneOccupancy_EndsWhenTheRobotLeavesTheLane — which also carries the owner
+// ruling, the window the early release opens, and the standing instruction: if
+// two robots are ever seen in one lane, build the exit marker. Do not move the
+// release back here. That reinstates the five-robot jam.
+//
+// THIS RELEASE STILL EARNS ITS PLACE. It is the right release for the drop end:
+// an order that PLACES into a lane never hits the pickup path for it, and a
+// store's only visit ends here.
 //
 // It releases ALL of the order's occupancy rather than the drop node's lane,
 // because a dig leg's two endpoints are usually different lanes: it is the
@@ -659,10 +684,50 @@ func (d *Dispatcher) laneOwnerFor(orderID int64) int64 {
 	return *o.ParentOrderID
 }
 
-// HandleTransitForLaneGate releases the owner's mouth hold on the lane a picked
-// bin just LEFT (§4 pickup / early handoff). Fired on EventBinEnteredTransit,
-// routed to the compound parent for a child. A no-op when the from-node is not a
-// lane or no mouth row is held — byte-identical when the gate is off.
+// HandleTransitForLaneGate releases BOTH of the owner's holds on the lane a
+// picked bin just LEFT (§4 pickup / early handoff). Fired on
+// EventBinEnteredTransit, routed to the compound parent for a child. A no-op when
+// the from-node is not a lane or no rows are held — byte-identical when the gate
+// is off.
+//
+// ── OCCUPANCY LEAVES HERE TOO, AND IT USED NOT TO ─────────────────────────
+//
+// The mouth hold has released on this signal since §4. Occupancy did not: its
+// only release was the DROPOFF completing (wiring_block_completed.go), on the
+// stated reasoning that "after a pickup the robot is still in the lane holding
+// the bin". True for a pickup whose dropoff is in the SAME lane — and false for
+// every other shape, where the robot picks, drives out, and the row it leaves
+// behind declares it present in a corridor it has left.
+//
+// The cost of that was measured on the lane-stress rig, 2026-08-10: a robot
+// entered a lane, picked, and drove to its next gate point. Its occupancy row
+// stayed. Four other robots queued at the mouth of that lane refused with
+// lane-occupied, by an order that had gone — and the one holding the stale row
+// was itself queued behind it, self-exempting, so nothing in the set could move.
+// Five robots, an EMPTY lane, indefinitely.
+//
+// Waiting for the dropoff is not an option worth having: the next drop can be a
+// line delivery ten or twenty minutes away, and the corridor is falsely occupied
+// for all of it.
+//
+// ── WHAT THIS TRADES, STATED PLAINLY ──────────────────────────────────────
+//
+// The bin entering transit means the robot has LIFTED it and is driving out — it
+// is not yet through the mouth. So this releases while the robot is still
+// physically inside, and a second order can be admitted into a lane the first is
+// still leaving. That window is the deliberate trade: an owner ruling took it
+// because the alternative is a corridor held for the length of a line run, and
+// because the mouth hold has been releasing on this exact signal all along.
+//
+// IF IT BITES, THE FIX IS A REAL EXIT EVENT, NOT A LONGER HOLD. The gate already
+// splices a wait block at the gate point on the way IN; the symmetric move is a
+// marker at the mouth on the way OUT, whose completion is the exit. That makes
+// the moment observable instead of inferred, and it is the first thing to reach
+// for if two robots are ever seen in one lane. Do not simply move this back to
+// the dropoff — that reinstates the five-robot jam.
+//
+// PER-LANE, NOT PER-ORDER. ReleaseAllOccupancy would drop the order's presence in
+// every corridor it is in, and leaving one says nothing about the other.
 func (d *Dispatcher) HandleTransitForLaneGate(orderID, fromNodeID int64) {
 	if fromNodeID == 0 {
 		return
@@ -676,6 +741,50 @@ func (d *Dispatcher) HandleTransitForLaneGate(orderID, fromNodeID int64) {
 		log.Printf("lanegate: release hold for order %d (owner %d) on transit from node %d: %v",
 			orderID, owner, fromNodeID, err)
 	}
+	// ── THE TWO ARGUMENTS DIFFER ON PURPOSE. DO NOT "FIX" THEM TO MATCH. ──
+	//
+	// The mouth hold above is PARENT-owned: a compound's legs share one inbound
+	// row taken by the parent, so it is released by `owner`. Occupancy is
+	// ORDER-owned: every writer keys it on the order that is physically inside —
+	// TakeLaneOccupancy(next.ID) at the compound leg's dispatch (compound.go),
+	// takeLaneOccupancyByID(order.ID) at the gated append, commitToFleet's take
+	// for a complex order — and ReleaseLaneOccupancy on the dropoff releases it
+	// the same way. So the exit release must use `orderID` too.
+	//
+	// IT DID NOT, AND THAT MADE THIS ENTIRE FIX A NO-OP FOR DIG LEGS. The delete
+	// is `WHERE order_id=$1`, so releasing a child's row under its PARENT's id
+	// matched nothing: the row survived to the dropoff exactly as it had before
+	// the exit release existed, and the five-robot jam stayed reachable on the
+	// compound-leg population — which is most of the lane traffic a dig produces.
+	// It read as correct because the routing was copied from the line above it,
+	// where it IS correct, and because every test order was parentless, so
+	// owner == orderID and the two spellings were indistinguishable.
+	d.releaseOccupancyOnExit(orderID, node)
+}
+
+// releaseOccupancyOnExit drops ONE ORDER's occupancy on the lane containing node,
+// and re-evaluates that lane because a corridor that just emptied is exactly the
+// condition a dweller at its mark is waiting on.
+//
+// orderID is the order that HOLDS the row, never its compound parent — see the
+// note at the call site for why that distinction is load-bearing and why the
+// mouth release one line above it legitimately uses the other one.
+//
+// The evaluation is the half that makes this a fix rather than a bookkeeping
+// correction: without it the row goes but nobody re-asks, and on a quiet lane the
+// next firing is the 60-second floor. Same reasoning, same shape, as the dig
+// lock's release (unlockLaneForCompound).
+func (d *Dispatcher) releaseOccupancyOnExit(orderID int64, node *nodes.Node) {
+	lane, err := d.db.LaneForNode(node.ID)
+	if err != nil || lane == nil {
+		return
+	}
+	if err := reservations.ReleaseOccupancyForLane(d.db.DB, orderID, lane.ID); err != nil {
+		log.Printf("lanegate: release occupancy for order %d on lane %d: %v", orderID, lane.ID, err)
+		return
+	}
+	d.EvaluateLaneReleases(lane.ID)
+	d.RedriveHeldCompoundLegs(lane.ID)
 }
 
 // ReleaseInboundLaneForOrder releases the owner's mouth hold on the lane an order

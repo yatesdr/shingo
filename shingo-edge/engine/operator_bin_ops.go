@@ -239,20 +239,21 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 		}
 	}
-	if claim.OutboundDestination != "" {
-		// L2 to OutboundDestination is unattended (supermarket node) — must
-		// auto-confirm or it sticks at `delivered` forever. See the same
-		// reasoning in handleLoaderEmptyInCompletion. Thread the operator-
-		// selected payloadCode through so the order tile in operator-station
-		// renders IN_TRANSIT against the correct payload card (claim's
-		// primary payload would mis-bind on multi-payload loaders).
-		order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, node.CoreNodeName, claim.OutboundDestination, payloadCode, true)
-		if err != nil {
-			log.Printf("manual_swap: move to outbound for node %s: %v", node.Name, err)
-		} else {
-			if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
-				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
-			}
+	// L2 to OutboundDestination is unattended (supermarket node) — must
+	// auto-confirm or it sticks at `delivered` forever. See the same reasoning in
+	// applyLoaderEmptyIn. Thread the operator-selected payloadCode through so the
+	// order tile in operator-station renders IN_TRANSIT against the correct
+	// payload card (claim's primary payload would mis-bind on multi-payload
+	// loaders).
+	//
+	// THROUGH THE SHARED GUARD. "No L1 in flight" is a question about a moment;
+	// whether this slot already owes an outbound move is a question about the
+	// world, and only the second one is safe to create an order on. Two callers
+	// racing this branch and applyLoaderEmptyIn is what doubled every outbound
+	// move on the lane-stress rig — see loader_outbound_guard.go.
+	if orderID, created := e.createLoaderOutbound(nodeID, node.CoreNodeName, claim.OutboundDestination, payloadCode, "load-fallback"); created {
+		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil); err != nil {
+			log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
 		}
 	}
 

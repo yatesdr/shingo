@@ -199,8 +199,20 @@ func (d *Dispatcher) healLaneMouth(lane *nodes.Node, req healRequest) {
 			"to park a blocker — the dweller cannot be healed from here", lane.Name, req.order.ID)
 		return
 	}
-	if d.laneLock.IsLocked(lane.ID) {
-		return // a dig already owns this lane; its completion re-drives the gate
+	// ASK THE QUESTION THE ACQUIRE WILL ANSWER, NOT A NARROWER ONE.
+	//
+	// This was IsLocked, which asks only "does a DIG own this lane". TryLock
+	// below is AcquireLanes(ModeDig), and a dig excludes EVERY other owner — so a
+	// lane held by an ordinary order passed this guard, got a parent order
+	// created for it, and was refused. Every time, because the answer does not
+	// change while that order holds its mouth row, and a gate-staged order holds
+	// its row until it places.
+	//
+	// Measured on the lane-stress rig 2026-08-10: LS_C5 held one `outbound` mouth
+	// row belonging to a staged order. 16,947 heal parents were created and
+	// cancelled against it, no dig ever started, and the plant did nothing else.
+	if !d.laneLock.CanTake(lane.ID) {
+		return // somebody holds this lane; whatever frees it re-drives the gate
 	}
 
 	plan, err := PlanLaneMouthClear(d.db, req.entry, lane, *lane.ParentID)
@@ -224,7 +236,12 @@ func (d *Dispatcher) healLaneMouth(lane *nodes.Node, req healRequest) {
 		return
 	}
 	if !d.laneLock.TryLock(lane.ID, parent.ID) {
-		d.abandonHealParent(parent, "another dig took lane "+lane.Name+" first")
+		// NOT NECESSARILY A DIG, and saying so cost a whole investigation. This
+		// read "another dig took lane X first" for any refusal, so 16,947 losses to
+		// an ordinary order's mouth hold all reported a dig that did not exist —
+		// and the reason a reader believes a cancellation is that it names the
+		// right thing. AcquireLanes refuses on any other owner's hold.
+		d.abandonHealParent(parent, "lane "+lane.Name+" was taken between the check and the claim")
 		return
 	}
 	if err := d.CreateCompoundOrder(parent, plan); err != nil {

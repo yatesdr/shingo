@@ -313,3 +313,56 @@ func TestQueueCauseCollisionsAreDeclared(t *testing.T) {
 		}
 	}
 }
+
+// TestBridgeDependentCausesAreExactlyThese PINS THE A-BATCH DELETION LIST.
+//
+// The expose-bridge deletion (PlanReshuffleUnburyOnly, lane_lock_extension.go,
+// pending_lane_extensions, the transferred lock outliving its compound) is safe
+// exactly insofar as no wait depends on that machinery to end. "No wait depends
+// on it" is a claim, and until now the only way to check it was to re-read the
+// code and believe the reader.
+//
+// This is that claim as a list. The A batch's argument becomes: THESE FOUR
+// causes reference the bridge, here is what re-covers each once it is gone, and
+// nothing else in the inventory changes. If A deletes the bridge and this test
+// still passes unmodified, A has not finished — the notes still describe
+// machinery that no longer exists. If A finds a fifth marked row it did not
+// expect, that is a dependency the deletion had not accounted for.
+//
+// MUTATION: add a bridgeNote to any other row, or drop one of these four — the
+// test names the difference, which is precisely the review question.
+func TestBridgeDependentCausesAreExactlyThese(t *testing.T) {
+	t.Parallel()
+	want := map[QueueCause]bool{
+		// Releaser chain runs through the bridge: an expose dig's lock is
+		// transferred to the complex parent and dropped by
+		// HandleBinTransitForLaneLock rather than by unlockLaneForCompound.
+		CauseLaneDigActive: true,
+		CauseLaneHeldDig:   true,
+		CauseLaneLocked:    true,
+		// Frequency only: findShuffleSlots' protectedDepth rule reads
+		// pending_lane_extensions, so deleting the bridge WIDENS the shuffle pool.
+		CauseNoShuffleSlot: true,
+	}
+
+	got := map[QueueCause]bool{}
+	for _, r := range causeReleasers {
+		if r.bridgeNote != "" {
+			got[r.cause] = true
+		}
+	}
+
+	for c := range want {
+		if !got[c] {
+			t.Errorf("cause %q no longer carries a bridgeNote. If the expose bridge was deleted, "+
+				"this test is the record of what the deletion had to re-cover and it must be "+
+				"updated deliberately — not by the note quietly disappearing", c)
+		}
+	}
+	for c := range got {
+		if !want[c] {
+			t.Errorf("cause %q now depends on the expose bridge and was not on the A batch's list. "+
+				"A deletion planned against a four-row subset would have missed it", c)
+		}
+	}
+}

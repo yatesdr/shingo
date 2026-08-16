@@ -76,6 +76,105 @@ func TestSwapBuilders_EveryLegEndsOnADropoff(t *testing.T) {
 	}
 }
 
+// TestEveryEdgeAuthoredWaitIsStamped is W1's drift test on the Edge side: every
+// wait this station authors declares that the station owns it.
+//
+// ── WHY DECLARING IT MATTERS ──────────────────────────────────────────────
+//
+// The old rule was "no kind means the operator's", and inside Core that was
+// enough — the splice stamps the lane waits and everything else is the
+// station's by elimination. It fails at the boundary. The Edge holds the plan it
+// authored and used to receive no stamp at all, so it could not tell "unmarked
+// because I own it" from "unmarked because nobody said", and neither could the
+// board it draws. The sim operator guessed with a three-strike retry cap and
+// guessed wrong; a human at an HMI has less to go on than that.
+//
+// So the stamp is now made, not inferred, and this walks every builder to keep
+// it that way. A twenty-third wait added as a raw literal fails here rather than
+// reaching a plant as an unowned step.
+func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
+	t.Parallel()
+
+	claim := func(secondPaired string) *processes.NodeClaim {
+		return &processes.NodeClaim{
+			CoreNodeName:         "PRESS",
+			Role:                 protocol.ClaimRoleConsume,
+			InboundSource:        "MARKET-EMPTIES",
+			InboundStaging:       "IN-STAGING",
+			OutboundStaging:      "OUT-STAGING",
+			OutboundDestination:  "MARKET",
+			PairedCoreNode:       "INDEX-B",
+			SecondPairedCoreNode: secondPaired,
+		}
+	}
+	from, to := claim(""), claim("")
+	to.CoreNodeName = "PRESS-B"
+
+	twoRobotA, twoRobotB := BuildTwoRobotSwapSteps(claim(""))
+	pi2R1, pi2R2 := BuildTwoRobotPressIndexSwapSteps(claim(""))
+	pi3R1, pi3R2 := BuildTwoRobotPressIndexSwapSteps(claim("INDEX-C"))
+	swapCO := BuildSwapChangeoverSteps(from, to, "PRESS-B", "PRESS")
+	evacCO := BuildEvacuateChangeoverSteps(from, to, "PRESS-B", "PRESS")
+
+	legs := map[string][]protocol.ComplexOrderStep{
+		"release":               BuildReleaseSteps(claim("")),
+		"staged release":        BuildStagedReleaseSteps(claim("")),
+		"stage":                 BuildStageSteps(claim("")),
+		"staged deliver":        BuildStagedDeliverSteps(claim("")),
+		"single_robot":          BuildSingleSwapSteps(claim("")),
+		"sequential removal":    BuildSequentialRemovalSteps(claim("")),
+		"sequential backfill":   BuildSequentialBackfillSteps(claim("")),
+		"two_robot A":           twoRobotA,
+		"two_robot B":           twoRobotB,
+		"press_index 2-pos R1":  pi2R1,
+		"press_index 2-pos R2":  pi2R2,
+		"press_index 3-pos R1":  pi3R1,
+		"press_index 3-pos R2":  pi3R2,
+		"keep-staged evac":      BuildKeepStagedEvacSteps(from),
+		"keep-staged deliver":   BuildKeepStagedDeliverSteps(to),
+		"keep-staged combined":  BuildKeepStagedCombinedSteps(from, to),
+		"changeover swap A":     swapCO.StepsA,
+		"changeover swap B":     swapCO.StepsB,
+		"changeover evacuate A": evacCO.StepsA,
+		"changeover evacuate B": evacCO.StepsB,
+	}
+
+	seen := 0
+	for name, steps := range legs {
+		for i, s := range steps {
+			if s.Action != protocol.ActionWait {
+				continue
+			}
+			seen++
+			if s.WaitKind != waitKindStation {
+				t.Errorf("%s step %d: wait at %q carries wait_kind %q, want %q.\n"+
+					"Every wait this file authors is a STATION fact — the line has cleared, the tooling "+
+					"is done, the operator is ready — and Core cannot observe any of them. An unstamped "+
+					"wait reaches the far side as an unowned step: the board cannot say whether to offer "+
+					"Release, which is how three robots sat for a whole soak. Build it with "+
+					"stationWait().", name, i, s.Node, s.WaitKind, waitKindStation)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no wait steps found in any builder — the fixture stopped exercising them, so this " +
+			"test is now vacuous")
+	}
+}
+
+// TestWaitKindStation_MatchesCore pins the cross-module constant. Edge cannot
+// import Core, so the value is duplicated; if Core renames its side, the stamp
+// silently stops matching the fence that reads it and every station wait becomes
+// unowned. The literal here is the contract, spelled out so a rename has to
+// touch both.
+func TestWaitKindStation_MatchesCore(t *testing.T) {
+	t.Parallel()
+	if waitKindStation != "station" {
+		t.Errorf("waitKindStation = %q, want %q — this must equal dispatch.WaitKindStation, which is "+
+			"what Core's release fence and its population partition read", waitKindStation, "station")
+	}
+}
+
 // TestPressIndexSteadyState_IndexLegPicksUpEmpty is the hop A3 regression
 // (2026-07-23): the steady-state press-index index leg (R2) fetches the on-deck
 // carrier as an EMPTY, so a wrong-part stamp on that empty — the half-cutover

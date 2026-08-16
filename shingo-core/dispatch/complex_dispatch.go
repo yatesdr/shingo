@@ -339,7 +339,15 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 	// owner-liveness reaper reclaims — not a `queued` order stranded with claimed bins.
 	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
 	if rerr != nil {
+		// A DATABASE ERROR, AND THE ROW SAYS SO. This arm parked the order in
+		// `sourcing` and wrote nothing, so an order stuck behind a database that
+		// was not answering looked exactly like one nobody had reached yet — the
+		// blank-cause residue the liveness floor kept reporting as "(none)".
+		// reserveComplexPlan's errors are all reads and reservation writes; they
+		// clear on their own, and the scanner replays.
 		log.Printf("dispatch: complex order %d reserve error: %v", order.ID, rerr)
+		d.setQueueReason(order, protocol.QueueWaitingForMaterial, CauseReadFailed,
+			QueueParams{Payload: order.PayloadCode})
 		return dispatchStep{done: true, err: rerr}
 	}
 	switch outcome {
@@ -422,6 +430,28 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 		// independently by each lane's own admission.
 		d.failOrderInternal(order, "invalid_steps", err.Error())
 		return err
+	}
+	// The splice moved the plan; order_bins still points at the old positions.
+	// Repair before anything reads the junction against the spliced plan — the
+	// lane gate is the first such reader and it is one dispatch away.
+	//
+	// A FAILURE HERE IS A DATABASE ERROR, SO IT WAITS. Every error this can
+	// return is one — a failed read of order_bins, or a failed UPDATE inside the
+	// shift transaction. It used to call failOrderInternal(order,
+	// "invalid_steps"), which is wrong twice: it TERMINATES demand for
+	// congestion, which is the one thing wait-not-fail forbids (F-04's shape, one
+	// commit old), and it terminates it under a label that sends the next reader
+	// to the planner to debug a plan that is perfectly well-formed.
+	//
+	// The order stays in its entry status and the scanner replays it — the same
+	// releaser every acquiring wait rides, and the same cause the class already
+	// uses for "the database did not answer" (compound.go's two node reads,
+	// complex_reshuffle.go's).
+	if rErr := d.reindexOrderBinsForSplice(order.ID, spliced); rErr != nil {
+		log.Printf("dispatch: complex order %d — could not re-index its junction onto the spliced "+
+			"plan: %v (holding; the scanner replays it)", order.ID, rErr)
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{})
+		return rErr
 	}
 	if gated {
 		// One valve, shared with the plain path. nil load sequence: F4c is scoped
@@ -608,7 +638,15 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// honors the rule that the slot-ordering must not be reverted without restoring
 	// a sweep for slot-wedged orders.
 	if slotOutcome, serr := d.allocator.reserveComplexSlots(order, resolvedSteps); serr != nil {
+		// The same blank-cause gap as the bin reserve below it, one phase earlier
+		// and on an order that is still `queued`. The sibling arm (an incomplete
+		// but error-free reserve) has always written CauseComplexSlotReserve; this
+		// one wrote nothing, so two branches of one if/else disagreed about whether
+		// a wait gets a sentence. A reserve error is a database error: it resolves
+		// on its own and the scanner replays.
 		log.Printf("dispatch: complex order %d slot reserve error: %v", order.ID, serr)
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed,
+			QueueParams{Destination: order.DeliveryNode})
 		return dispatchStep{done: true, err: serr}
 	} else if slotOutcome != reserveComplete {
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseComplexSlotReserve, QueueParams{Destination: order.DeliveryNode})

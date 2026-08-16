@@ -443,6 +443,25 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	if err != nil {
 		return "", err
 	}
+	// A no-op on this path today: the junction is written only for multi-bin
+	// complex orders and this builds a fresh single-bin transport plan. It is
+	// called anyway because the rule belongs to the SPLICE, not to one caller's
+	// current order shape — the wedge this repairs came from exactly that kind of
+	// "cannot happen here" reasoning going stale.
+	//
+	// THE CAUSE GOES ON THE ROW HERE, because neither caller downstream can name
+	// this one. A re-index failure is a database error; both of this function's
+	// callers treat any error from it as a FLEET refusal, which is the vocabulary
+	// they were built for — the scanner parks under fleet-unavailable (a wait, so
+	// wait-not-fail holds, but the sentence is wrong), and the redirect door
+	// fails the row because a person is waiting on the reply. Writing the real
+	// cause at the moment it happens is the only place the truth is still known.
+	if rErr := d.reindexOrderBinsForSplice(order.ID, spliced); rErr != nil {
+		log.Printf("dispatch: order %d — could not re-index its junction onto the spliced plan: %v",
+			order.ID, rErr)
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{})
+		return "", rErr
+	}
 	if gated {
 		return d.dispatchGated(order, target, spliced, payloadCode, d.loadSequenceForPayload(payloadCode))
 	}

@@ -223,18 +223,29 @@ const floorReleaseAction = "lane_floor_release"
 // time by the cause, rather than suppressed here. Suppressing would hide the
 // gap exactly when it starts to matter, which is the burial shadow's lesson.
 func (d *Dispatcher) recordFloorRelease(w floorWaiter) {
+	// THREE CASES, AND THEY ARE DIFFERENT DEFECTS. Collapsing them was wrong on
+	// the first live run: an order parked before its refusal arm wrote a cause
+	// was reported as "causeReleasers has no row", which accuses the inventory of
+	// a gap it does not have and sends the reader to the wrong file.
 	cause := w.cause
-	if cause == "" {
-		cause = "(no cause on the row)"
-	}
-	should := "no releaser is on file for this cause — causeReleasers has no row, which is itself the defect"
-	if r, ok := releaserFor(w.cause); ok {
-		switch {
-		case r.finding != "":
-			should = r.finding
-		case r.what != "":
-			should = "the event that should have ended it: " + r.what
-		}
+	var should string
+	switch r, ok := releaserFor(w.cause); {
+	case w.cause == "":
+		// A BLANK is its own finding, and a different one: some arm refused this
+		// order and recorded nothing, so the row cannot say what it was waiting
+		// for. That is the gap dcb2c014 and the classifier-error arm close, and a
+		// blank here means one is still open — or the order was parked by a build
+		// that predates them.
+		cause = "(none)"
+		should = "THE ROW CARRIED NO CAUSE, so nothing recorded what it was waiting for — find the " +
+			"arm that refused it without calling setQueueReason. This is not an inventory gap"
+	case !ok:
+		should = "no releaser is on file for this cause — causeReleasers has no row, which is itself " +
+			"the defect"
+	case r.finding != "":
+		should = r.finding
+	case r.what != "":
+		should = "the event that should have ended it: " + r.what
 	}
 
 	detail := fmt.Sprintf("freed by the lane liveness floor, not by an event (%s, lane %d, cause %q). %s",

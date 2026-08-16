@@ -468,17 +468,22 @@ func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
 	// end. Pre-fix the L2 stuck delivered on Edge while Core auto-confirmed
 	// on its side; the divergence lit up the bin-loader UI as a permanent
 	// "Confirm" button on a move that had already physically completed.
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, ctx.node.CoreNodeName, outbound, loadedPayloadCode, true)
-	if err != nil {
-		e.logFn("side-cycle: create L2 (filled-out) for loader %s: %v", ctx.node.Name, err)
-		return false
+	// Through the shared guard: LoadBin's fallback creates this same move when it
+	// cannot find a delivered L1, and two callers that both read the slot as empty
+	// before either stamps it will both get here. One bin leaves a loader once —
+	// see loader_outbound_guard.go.
+	orderID, created := e.createLoaderOutbound(nodeID, ctx.node.CoreNodeName, outbound, loadedPayloadCode, "L1-completion")
+	if !created {
+		// Handled either way: the move exists, whoever filed it. Reporting
+		// unhandled would drop the completion through to normal replenishment,
+		// which is not what an already-owed outbound means.
+		return true
 	}
-	log.Printf("side-cycle: L2 (filled-out) order %d for loader %s → %s payload=%q", order.ID, ctx.node.Name, outbound, loadedPayloadCode)
 	// Runtime cache binding is owned by the delivered handler — L1's
 	// empty bin landing at the loader already wrote active_bin_id /
 	// remaining_uop_cached. Confirm only swaps the active order pointer
 	// so the loader UI shows L2 next.
-	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, &order.ID, nil); err != nil {
+	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, &orderID, nil); err != nil {
 		log.Printf("side-cycle: update runtime orders for loader %d: %v", ctx.node.ID, err)
 	}
 	return true

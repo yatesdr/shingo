@@ -27,6 +27,7 @@ type mockEmitter struct {
 	cancelled        []emitCancelled
 	completed        []emitCompleted
 	queued           []emitQueued
+	resumed          []int64
 	faulted          []emitFaulted
 	faultedRecovered []emitFaultedRecovered
 	projected        []emitProjected
@@ -91,6 +92,9 @@ func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string) {
 }
 func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string) {
 	m.queued = append(m.queued, emitQueued{orderID})
+}
+func (m *mockEmitter) EmitOrderResumed(orderID int64, _, _ string) {
+	m.resumed = append(m.resumed, orderID)
 }
 func (m *mockEmitter) EmitOrderFaulted(orderID int64, _, _, reason string) {
 	m.faulted = append(m.faulted, emitFaulted{orderID, reason})

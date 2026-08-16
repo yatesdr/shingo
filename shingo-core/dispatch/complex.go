@@ -64,6 +64,37 @@ type resolvedStep struct {
 // no marker.
 const WaitKindLane = "lane"
 
+// WaitKindStation marks a wait the STATION advances — the swap choreography's
+// own gates ("hold at staging until the line clears", "tooling done", "ready",
+// the changeover cutover). Its precondition is something a person or a station
+// observes and Core cannot, which is the mirror image of WaitKindLane.
+//
+// ── IT EXISTS BECAUSE ABSENCE COULD NOT CROSS THE WIRE ────────────────────
+//
+// The rule used to be "zero value means operator wait", and inside Core that
+// was enough: the splice stamps the lane waits, everything else is the station's
+// by elimination. It stops being enough at the boundary. The Edge holds the plan
+// it authored and receives no stamp at all, so it cannot distinguish "no kind
+// because the station owns it" from "no kind because nobody said" — and neither
+// can the HMI it draws. Absence is not a claim; it is the lack of one.
+//
+// So ownership is now DECLARED by whoever authors the wait, on both sides, and
+// the zero value is reserved for pre-ruling plans still in flight.
+const WaitKindStation = "station"
+
+// IsStationWait reports whether a station may advance this wait.
+//
+// THE DRAIN WINDOW LIVES HERE, in one place, so there is exactly one thing to
+// change when it closes. Untagged reads as station-owned today — the historical
+// default, so no plan in flight changes meaning — and the drift tests
+// (TestEveryEdgeAuthoredWaitIsStamped, TestSplicedWaitIsAlwaysStamped) already
+// fail on any NEW untagged wait from either author. When the last pre-ruling
+// order has drained, delete the `== ""` arm and an untagged wait becomes what it
+// should be: unowned, and refused by both fences.
+func IsStationWait(kind string) bool {
+	return kind == WaitKindStation || kind == ""
+}
+
 // claimedBin records which bin was claimed at which pickup step.
 type claimedBin struct {
 	binID     int64

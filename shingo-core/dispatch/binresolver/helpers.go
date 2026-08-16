@@ -9,8 +9,36 @@ import (
 )
 
 // isBinAvailableForRetrieve checks if a bin can be claimed for retrieval.
+//
+// Locked is checked here rather than only downstream. Without it this predicate
+// selected bins the claim could never take: a LOCKED bin passed selection,
+// acquired a soft reservation (Acquire has no locked predicate), then failed the
+// hard claim, whose CAS requires locked=false. The order requeued as
+// claim-failed -- a reason implying a lost race rather than "the resolver picked
+// a locked bin". Worse, that reservation is not released on confirm failure and
+// carries no expiry, so the bin then disappeared from every reader that excludes
+// bins with a pending reservation until the order terminalised. A locked bin
+// read as a material shortage.
+//
+// HasPendingReservation is deliberately NOT checked, and must not be added.
+// The field is OWNER-BLIND: it is true when ANY order holds a pending
+// reservation, including this order's own. BinUnavailableReason can consult it
+// safely because its caller (the reserve reconcile) loads its own holds first;
+// this path has no such step. Refusing here would therefore refuse an order the
+// bin IT ALREADY RESERVED whenever the resolver re-runs -- scanner replay or a
+// reconcile tick -- and the order could never source it. Another order's
+// reservation is already refused one layer down by uq_reservations_bin_active,
+// so nothing is lost by leaving it out.
+//
+// Status composes on the shared rule instead of restating it: sourceable, and
+// additionally not 'staged', because a retrieve from a group must not take a bin
+// an operator is working at. Equivalent to the previous `!= available` for every
+// declared status.
 func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string) bool {
-	if b.ClaimedBy != nil || !b.ManifestConfirmed || b.Status != domain.BinStatusAvailable {
+	if b.ClaimedBy != nil || b.Locked || !b.ManifestConfirmed {
+		return false
+	}
+	if !b.Status.Sourceable() || b.Status == domain.BinStatusStaged {
 		return false
 	}
 	if payloadCode != "" && b.PayloadCode != payloadCode {

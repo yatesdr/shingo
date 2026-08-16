@@ -45,7 +45,7 @@ func TestLoaderSourceUnreadable_Waits(t *testing.T) {
 		t.Fatalf("outcome = %v, want OutcomeWait — a failed read of the loader pool is not a fact "+
 			"about the plant, and terminal-failing on it drops an order that needed one retry", res.Outcome)
 	}
-	if res.QueueCause != string(CauseLoaderSourceUnreadable) {
+	if res.QueueCause != CauseLoaderSourceUnreadable {
 		t.Errorf("queue_cause = %q, want %q — an unreadable pool must stay distinguishable from an "+
 			"honestly empty one (finder-pool-empty), because only one of them is something an "+
 			"operator can act on", res.QueueCause, CauseLoaderSourceUnreadable)

@@ -466,6 +466,14 @@ func checkInvariants(db *store.DB) []string {
 
 	// Two occupants in one lane. Hold B admits the asker and refuses everyone
 	// else, so two distinct owners on one lane is the hold not holding.
+	//
+	// STILL A HARD VIOLATION, AND NO LONGER THE WHOLE COLLISION CHECK. Since the
+	// exit release (9f74ad6a) an order drops its row the moment it LIFTS its bin,
+	// while the robot is still driving out of the corridor. So the two robots this
+	// check was built to catch can now be in one lane with only ONE row between
+	// them, and this count stays at zero through exactly the scenario the release
+	// was warned about. The traversal-window check below is the other half; read
+	// them together or neither means what it says.
 	if n := scalar(db, `
 		SELECT COUNT(*) FROM (
 			SELECT node_id FROM reservations
@@ -490,13 +498,105 @@ func checkInvariants(db *store.DB) []string {
 	// TestCharSeam_GatedCreate_TakesNoOccupancyUntilTheTail. So are the
 	// pre-dispatch statuses, which have no robot yet.
 	//
-	// Endpoint attribution is COARSE — source_node/delivery_node describe the
-	// whole order, not the step it is on, so an order that has already placed can
-	// show up here. Reported with its lane and status like the stall checker
-	// reports with its cause, rather than as a bare count, because the judgement
-	// is the reader's and a number would hide it.
-	if rows, err := db.DB.Query(fmt.Sprintf(`
+	// ── REDEFINED AFTER THE EXIT RELEASE, BECAUSE IT STOPPED MEANING THIS ──
+	//
+	// "Executing in a lane and holding no occupancy row" was a defect when the
+	// only release was the DROPOFF. Since 9f74ad6a it is also the INTENDED state
+	// of every order that has picked its bin and is driving out — so the raw
+	// count began mixing a real defect with the design, and grew with throughput
+	// because the design does. It was reported as five phantom entrants and read
+	// as evidence for building the exit marker; most of it was the marker's own
+	// premise being measured back.
+	//
+	// The discriminator is WHERE THE BIN IS, which is the one fact that says
+	// whether the robot has crossed the lane boundary yet — and it is asked of
+	// the SOURCE end only:
+	//
+	//	SOURCE lane — the order was sent to take a bin OUT. While that bin is
+	//	              still in the lane it has not lifted, so the robot is inbound
+	//	              or inside and MUST be declared. Once the bin has left, the
+	//	              release was correct and the order is in the traversal window.
+	//
+	// THE DEST END IS NOT JUDGEABLE FROM THESE COLUMNS, and trying cost this
+	// checker its meaning once already. A multi-segment order takes occupancy for
+	// its PRE-WAIT nodes only — commitToFleet over planNodes(preWait), and
+	// complex_dispatch.go says why in as many words: a row for a lane the robot
+	// may reach in ten minutes would wall that lane for the whole dwell. So an
+	// order in_transit toward a delivery node in a lane it has not been dispatched
+	// into yet CORRECTLY holds no row, and no column here can separate that from a
+	// real omission — it needs steps_json and wait_index. Measured, not assumed:
+	// on the dev stack seven of the eight rows a dest-end test flagged were this
+	// exact by-design case (order 47's UTN_014 sits after its wait).
+	//
+	// Reported with lane and status rather than as a bare count, because the
+	// judgement is the reader's — unchanged from the original, and the reason the
+	// original was salvageable at all.
+	phantomQ := fmt.Sprintf(`
 		SELECT o.id, o.status, l.name
+		FROM orders o
+		JOIN nodes s ON s.name = o.source_node
+		JOIN nodes l ON l.id = s.parent_id
+		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
+		LEFT JOIN reservations r
+		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
+		      AND r.node_id = l.id AND r.state <> 'released'
+		JOIN bins b   ON b.id = o.bin_id
+		LEFT JOIN nodes bn ON bn.id = b.node_id
+		WHERE o.vendor_order_id <> ''
+		  AND o.status NOT IN (%s)
+		  AND o.status NOT IN (%s)
+		  AND o.status <> '%s'
+		  AND r.id IS NULL
+		  AND bn.parent_id IS NOT DISTINCT FROM l.id
+		ORDER BY o.id LIMIT 12`,
+		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.StatusStaged)
+	if rows, err := db.DB.Query(phantomQ); err == nil {
+		for rows.Next() {
+			var id int
+			var status, lane string
+			if err := rows.Scan(&id, &status, &lane); err != nil {
+				continue
+			}
+			v = append(v, fmt.Sprintf(
+				"PHANTOM ENTRANT: order %d (%s) was sent to pick in lane %s, its bin is still in "+
+					"that lane so it has not lifted, and it holds no occupancy row — it is invisible "+
+					"to everyone else's admission", id, status, lane))
+		}
+		rows.Close()
+	}
+
+	// WHAT THE DISCRIMINATOR REFUSES TO JUDGE, COUNTED RATHER THAN DROPPED — a
+	// filter that silently removes its hard cases reads as "covered everything".
+	//
+	// Two populations: the dest-end rows above (correct-by-design or not, this
+	// tool cannot tell without parsing the plan), and executing orders carrying no
+	// bin_id at all, which have no bin to locate. The second is its own finding —
+	// it is the nil-BinID family the round left open.
+	if n := scalar(db, fmt.Sprintf(`
+		SELECT COUNT(DISTINCT o.id)
+		FROM orders o
+		JOIN nodes s ON s.name = o.delivery_node
+		JOIN nodes l ON l.id = s.parent_id
+		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
+		LEFT JOIN reservations r
+		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
+		      AND r.node_id = l.id AND r.state <> 'released'
+		WHERE o.vendor_order_id <> ''
+		  AND o.status NOT IN (%s)
+		  AND o.status NOT IN (%s)
+		  AND o.status <> '%s'
+		  AND r.id IS NULL`,
+		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.StatusStaged)); n > 0 {
+		v = append(v, fmt.Sprintf(
+			"NOT JUDGED (dest end): %d executing order(s) name a delivery node in a lane and hold no "+
+				"occupancy row. Expected whenever that dropoff is in a post-wait segment the robot "+
+				"has not been sent on — deciding needs steps_json, which this tool does not parse. "+
+				"Neither a violation nor a clean bill", n))
+	}
+	if n := scalar(db, fmt.Sprintf(`
+		SELECT COUNT(DISTINCT o.id)
 		FROM orders o
 		JOIN nodes s ON s.name IN (o.source_node, o.delivery_node)
 		JOIN nodes l ON l.id = s.parent_id
@@ -509,18 +609,67 @@ func checkInvariants(db *store.DB) []string {
 		  AND o.status NOT IN (%s)
 		  AND o.status <> '%s'
 		  AND r.id IS NULL
-		ORDER BY o.id LIMIT 12`,
+		  AND o.bin_id IS NULL`,
+		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.StatusStaged)); n > 0 {
+		v = append(v, fmt.Sprintf(
+			"NOT JUDGED (no bin): %d executing order(s) in a lane hold no occupancy row AND carry no "+
+				"bin_id, so there is no bin to locate against the mouth. An executing order with no "+
+				"bin_id is its own finding", n))
+	}
+
+	// ── THE COLLISION CHECK THE EARLY RELEASE ACTUALLY NEEDS ──────────────
+	//
+	// The two-owners count above cannot see the risk 9f74ad6a took, because that
+	// risk is precisely ONE row and one un-rowed robot: the first order lifted,
+	// dropped its row, and is driving out; the second was admitted into the lane
+	// it is still inside. Two robots, one corridor, one occupancy row, and every
+	// existing assertion silent.
+	//
+	// So this counts the overlap directly: a lane where somebody HOLDS occupancy
+	// while somebody else is in the traversal window on the same lane. That is
+	// the measurement the exit-marker decision turns on — not the phantom count,
+	// which is now (correctly) dominated by orders behaving as designed.
+	//
+	// It is a WATCH, not a violation: the window is an owner ruling taken
+	// deliberately, and a non-zero count here is the evidence that it bites, not
+	// proof that something is broken. Named so the reader can tell those apart.
+	if rows, err := db.DB.Query(fmt.Sprintf(`
+		SELECT l.name, COUNT(DISTINCT o.id)
+		FROM orders o
+		JOIN nodes s  ON s.name = o.source_node
+		JOIN nodes l  ON l.id = s.parent_id
+		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
+		LEFT JOIN reservations r
+		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
+		      AND r.node_id = l.id AND r.state <> 'released'
+		JOIN bins b   ON b.id = o.bin_id
+		LEFT JOIN nodes bn ON bn.id = b.node_id
+		WHERE o.vendor_order_id <> ''
+		  AND o.status NOT IN (%s)
+		  AND o.status NOT IN (%s)
+		  AND o.status <> '%s'
+		  AND r.id IS NULL
+		  AND bn.parent_id IS DISTINCT FROM l.id
+		  AND EXISTS (
+		    SELECT 1 FROM reservations h
+		    WHERE h.resource_kind = 'occupancy' AND h.state <> 'released'
+		      AND h.node_id = l.id AND h.order_id <> o.id
+		  )
+		GROUP BY l.name ORDER BY l.name LIMIT 12`,
 		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
 		protocol.StatusStaged)); err == nil {
 		for rows.Next() {
-			var id int
-			var status, lane string
-			if err := rows.Scan(&id, &status, &lane); err != nil {
+			var lane string
+			var n int
+			if err := rows.Scan(&lane, &n); err != nil {
 				continue
 			}
 			v = append(v, fmt.Sprintf(
-				"PHANTOM ENTRANT: order %d (%s) is executing in lane %s and holds no occupancy row "+
-					"— it is invisible to everyone else's admission", id, status, lane))
+				"TRAVERSAL OVERLAP (watch, not a violation): lane %s has an occupancy holder AND %d "+
+					"order(s) still driving out of it having already released. This is the window the "+
+					"exit release opened by owner ruling — it is what the EXIT MARKER decision waits "+
+					"on, and the phantom count is not", lane, n))
 		}
 		rows.Close()
 	}
@@ -593,13 +742,23 @@ func checkInvariants(db *store.DB) []string {
 			if err := rows.Scan(&cause, &n); err != nil {
 				continue
 			}
-			if cause == string(dispatch.CauseFleetRefusedCreate) {
+			switch cause {
+			case string(dispatch.CauseFleetRefusedCreate):
 				v = append(v, fmt.Sprintf("FLOOR-RELEASE (expected, absence-class): %d under %s — "+
 					"no event exists for this; read it as fleet health, not a missing emitter", n, cause))
-				continue
+			case "(none)", "(no cause on the row)":
+				// A BLANK IS A DIFFERENT DEFECT and must not be reported as a missing
+				// emitter: the order was refused by an arm that recorded nothing, so
+				// there is no cause to look up and causeReleasers is not the file to
+				// open. Same three-way split the floor's own record makes.
+				v = append(v, fmt.Sprintf("FLOOR-RELEASE (blank cause): %d order(s) freed by the "+
+					"floor with NO cause on the row — find the arm that refused them without "+
+					"calling setQueueReason. Not an inventory gap", n))
+			default:
+				v = append(v, fmt.Sprintf("FLOOR-RELEASE: %d order(s) freed by the periodic floor "+
+					"under cause %s — an event should have done this; see causeReleasers for which",
+					n, cause))
 			}
-			v = append(v, fmt.Sprintf("FLOOR-RELEASE: %d order(s) freed by the periodic floor under "+
-				"cause %s — an event should have done this; see causeReleasers for which", n, cause))
 		}
 		rows.Close()
 	}

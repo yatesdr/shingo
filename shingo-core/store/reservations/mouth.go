@@ -149,6 +149,44 @@ func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode) (mouthVerdict, error
 	return admitFresh, nil
 }
 
+// DigAdmissible reports whether a dig could take laneID right now — the
+// CHEAP PRE-CHECK for the same question admitMouth answers authoritatively.
+//
+// ── WHY IT EXISTS: TWO READERS ASKED DIFFERENT QUESTIONS ──────────────────
+//
+// The heal-dig path pre-checked with LaneLock.IsLocked, which asks "does a DIG
+// hold this lane" (DigOwner, mode='dig' only). It then created the dig's parent
+// order and called TryLock, which is AcquireLanes(ModeDig) and refuses on ANY
+// other owner's mouth row — as TryLock's own doc says: "already held — by
+// another dig, OR BY AN ORDINARY ORDER'S MOUTH HOLD."
+//
+// So on a lane held by an ordinary order the pre-check said GO and the acquire
+// said NO, every single time, and between them sat a durable order INSERT. The
+// loser was cancelled and the next event tried again.
+//
+// MEASURED, lane-stress rig 2026-08-10: LS_C5 held exactly one row — an
+// `outbound` mouth hold belonging to a gate-staged order that legitimately keeps
+// it until it places. 16,947 heal parents were created and cancelled, ZERO digs
+// ever started, and the plant stopped doing anything else. The cancellation
+// reason said "another dig took lane LS_C5 first", naming a dig that did not
+// exist — the misdiagnosis was the tell.
+//
+// THE RULE HERE IS admitMouth's, NOT A SECOND COPY OF IT: a dig excludes every
+// other owner, so any active mouth row from anyone else refuses it. Read off
+// activeMouthRows, the same rows admitMouth reads.
+//
+// IT IS A PRE-CHECK AND NOTHING MORE. The arbiter is still AcquireLanes, under
+// the lane's advisory lock; this only stops the caller paying for an order row
+// to be told something it could have asked first. A read error reports NOT
+// admissible — fail closed, same direction as IsLocked.
+func DigAdmissible(q Queryer, laneID int64) (bool, error) {
+	holders, err := activeMouthRows(q, laneID)
+	if err != nil {
+		return false, err
+	}
+	return len(holders) == 0, nil
+}
+
 // activeMouthRows returns the active (pending or confirmed) mouth holds on laneID.
 func activeMouthRows(q Queryer, laneID int64) ([]MouthHold, error) {
 	rows, err := q.Query(
@@ -409,6 +447,26 @@ func ReleaseAllOccupancy(db Execer, owner int64) error {
 		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind='occupancy'`, owner)
 	if err != nil {
 		return fmt.Errorf("reservations release-all-occupancy: %w", err)
+	}
+	return nil
+}
+
+// ReleaseOccupancyForLane drops owner's occupancy on ONE lane — the row dual of
+// leaving that corridor, as opposed to ReleaseAllOccupancy's "this order is
+// finished with every lane it was in".
+//
+// IT EXISTS BECAUSE PRESENCE IS PER-LANE AND THE RELEASE WAS NOT. An order can
+// legitimately be inside two corridors across its plan, and exiting one says
+// nothing about the other; releasing both because a robot drove out of one is
+// the same class of error as holding both because it drove into one. The mouth
+// hold has had a per-lane release since §4 (ReleaseLane); occupancy only had the
+// order-wide one, which is why the exit path could not use it.
+func ReleaseOccupancyForLane(db Execer, owner, laneID int64) error {
+	_, err := db.Exec(
+		`DELETE FROM reservations
+		 WHERE order_id=$1 AND resource_kind='occupancy' AND node_id=$2`, owner, laneID)
+	if err != nil {
+		return fmt.Errorf("reservations release-occupancy-for-lane: %w", err)
 	}
 	return nil
 }

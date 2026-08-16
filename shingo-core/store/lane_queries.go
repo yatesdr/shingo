@@ -319,7 +319,8 @@ func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
-		  AND b.status = 'available'
+		  AND `+bins.SourceableStatusSQL+`
+		  AND b.status <> 'staged'
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
 		  AND %s
@@ -363,7 +364,8 @@ func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
-		  AND b.status = 'available'
+		  AND `+bins.SourceableStatusSQL+`
+		  AND b.status <> 'staged'
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND %s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
@@ -388,7 +390,8 @@ func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
-		  AND b.status = 'available'
+		  AND `+bins.SourceableStatusSQL+`
+		  AND b.status <> 'staged'
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC

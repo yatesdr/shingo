@@ -64,7 +64,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	var (
 		queueReason string
 		queueCode   protocol.QueueCode
-		queueCause  string
+		queueCause  QueueCause
 		// buried non-nil selects the reshuffle tail below. The parent row
 		// itself is the same row either way, which is why this is a flag and
 		// not a second creation site.
@@ -98,7 +98,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 			// saturated dropoff (slot) and a dry empty pool (material) park
 			// under the right operator category without re-sniffing the error.
 			resolvedSteps = stepsAsResolved(p.Steps)
-			queueCause = "intake-resolve"
+			queueCause = CauseIntakeResolve
 			capDetail := capacityDetailFrom(payload)
 			queueCode = queueCodeForCapacity(capDetail.kindOf())
 			_, intakeDelivery := extractEndpoints(resolvedSteps)
@@ -182,7 +182,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		// QueueCause fields, but the writer does not persist them and is not
 		// meant to; assigning them above would look like it worked and do
 		// nothing.
-		if err := d.db.SetOrderQueueDetail(order.ID, queueReason, queueCode, queueCause); err != nil {
+		if err := d.db.SetOrderQueueDetail(order.ID, queueReason, queueCode, string(queueCause)); err != nil {
 			log.Printf("dispatch: set initial queue_reason for complex order %d: %v", order.ID, err)
 		}
 		log.Printf("dispatch: complex order %d queued at intake — %s", order.ID, queueReason)

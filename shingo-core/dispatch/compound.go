@@ -768,8 +768,18 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	// line further down would strand the leg and leave the parent in
 	// `reshuffling` forever: fail-closed on paper, wedged in fact.
 	if err := d.TakeLaneOccupancy(next.ID, sourceNode, destNode); err != nil {
+		// AND THE CAUSE GOES ON THE ROW, like every other arm in this function. This
+		// one was missed: the leg holds at `pending` with nothing written, so a leg
+		// stalled because Core could not RECORD its presence looked identical to one
+		// nobody had reached. Seen on the lane-stress rig 2026-08-10 as a `pending`
+		// order carrying no cause for 15 minutes.
+		//
+		// A failed occupancy write is a database error, so it is the read-failed
+		// class and its releaser is the database answering again.
 		log.Printf("dispatch: compound %d child %d — could not record lane occupancy: %v (holding the child)",
 			parentOrderID, next.ID, err)
+		d.setQueueReason(next, protocol.QueueWaitingForSlot, CauseReadFailed,
+			QueueParams{Destination: destNode.Name})
 		return nil
 	}
 

@@ -101,7 +101,7 @@ func TestLaneEntryAfterWait_ReadsDirectionOffThePlan(t *testing.T) {
 		{Action: protocol.ActionWait, Node: "GATE", WaitKind: WaitKindLane, WaitLane: 7},
 		{Action: protocol.ActionDropoff, Node: "SLOT-0"},
 	}
-	entry, isRetrieve, ok := laneEntryAfterWait(store, 0)
+	entry, _, isRetrieve, ok := laneEntryAfterWait(store, 0)
 	if !ok || isRetrieve || entry.Node != "SLOT-0" {
 		t.Errorf("store: entry=%+v retrieve=%v ok=%v, want the SLOT-0 dropoff and store direction",
 			entry, isRetrieve, ok)
@@ -114,7 +114,7 @@ func TestLaneEntryAfterWait_ReadsDirectionOffThePlan(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: "SLOT-1"},
 		{Action: protocol.ActionDropoff, Node: "LINE"},
 	}
-	entry, isRetrieve, ok = laneEntryAfterWait(retrieve, 0)
+	entry, _, isRetrieve, ok = laneEntryAfterWait(retrieve, 0)
 	if !ok || !isRetrieve || entry.Node != "SLOT-1" {
 		t.Errorf("retrieve: entry=%+v retrieve=%v ok=%v, want the SLOT-1 pickup and retrieve direction",
 			entry, isRetrieve, ok)
@@ -128,14 +128,14 @@ func TestLaneEntryAfterWait_ReadsDirectionOffThePlan(t *testing.T) {
 		{Action: protocol.ActionWait, Node: "GATE", WaitKind: WaitKindLane, WaitLane: 7},
 		{Action: protocol.ActionDropoff, Node: "SLOT-2"},
 	}
-	entry, isRetrieve, ok = laneEntryAfterWait(mixed, 1)
+	entry, _, isRetrieve, ok = laneEntryAfterWait(mixed, 1)
 	if !ok || isRetrieve || entry.Node != "SLOT-2" {
 		t.Errorf("mixed: entry=%+v retrieve=%v ok=%v, want the SLOT-2 dropoff after the SECOND wait",
 			entry, isRetrieve, ok)
 	}
 
 	// Nothing actionable after the wait is not a direction, it is a broken plan.
-	if _, _, ok := laneEntryAfterWait([]resolvedStep{{Action: protocol.ActionWait}}, 0); ok {
+	if _, _, _, ok := laneEntryAfterWait([]resolvedStep{{Action: protocol.ActionWait}}, 0); ok {
 		t.Error("a wait with no actionable step after it reported an entry")
 	}
 }
@@ -205,5 +205,62 @@ func TestSplicedPlan_BlockOffsetsContinue(t *testing.T) {
 		if ids[i] != w {
 			t.Errorf("block %d = %q, want %q (ids: %v)", i, ids[i], w, ids)
 		}
+	}
+}
+
+// TestEveryWaitDeclaresAnOwner is W1's drift test on the Core side, and it is
+// armed on the dispatch path rather than living only here — spliceLaneWait calls
+// it before returning a plan Core is about to persist.
+//
+// Three cases, and the middle one is the whole design:
+//
+//	lane / station  → owned, accepted
+//	""              → the DRAIN WINDOW. Plans authored before the stamp existed
+//	                  are still in flight and cannot be failed for a field they
+//	                  could not have had. Loud, allowed, and read as the
+//	                  station's — the historical default.
+//	anything else   → refused. An unrecognised owner can only be a new author
+//	                  disagreeing with the vocabulary, and a wait no fence claims
+//	                  is one no floor sweeps and no board can render.
+//
+// When the drain window closes, the "" arm becomes an error and
+// IsStationWait's `== ""` arm goes with it — in the same commit, or an untagged
+// wait passes here while being unowned at the fence.
+func TestEveryWaitDeclaresAnOwner(t *testing.T) {
+	t.Parallel()
+
+	owned := []resolvedStep{
+		{Action: protocol.ActionWait, Node: "MARK", WaitKind: WaitKindLane, WaitLane: 7},
+		{Action: protocol.ActionPickup, Node: "SLOT"},
+		{Action: protocol.ActionWait, Node: "STAGING", WaitKind: WaitKindStation},
+	}
+	if err := assertEveryWaitDeclaresAnOwner(owned); err != nil {
+		t.Errorf("a plan whose waits are all owned was refused: %v", err)
+	}
+
+	// The drain window: allowed, and IsStationWait is what reads it.
+	untagged := []resolvedStep{{Action: protocol.ActionWait, Node: "OLD-PLAN"}}
+	if err := assertEveryWaitDeclaresAnOwner(untagged); err != nil {
+		t.Errorf("an untagged wait was refused during the drain window: %v — orders authored before "+
+			"the field exists cannot be failed for not having it", err)
+	}
+	if !IsStationWait("") {
+		t.Error("IsStationWait(\"\") = false: the drain window's default must be station-owned, which " +
+			"is the meaning every pre-ruling plan already had")
+	}
+
+	// An owner nobody implements is worse than none: it reads as unowned at
+	// every fence while looking deliberate.
+	bogus := []resolvedStep{{Action: protocol.ActionWait, Node: "X", WaitKind: "supervisor"}}
+	if err := assertEveryWaitDeclaresAnOwner(bogus); err == nil {
+		t.Error("a wait declaring an unrecognised owner was accepted. No fence claims it, no floor " +
+			"sweeps it, and the board cannot say whether to offer Release — the shape that held three " +
+			"robots for a soak")
+	}
+
+	// And the two real kinds must not be the same string, or the fence cannot
+	// tell them apart at all.
+	if WaitKindLane == WaitKindStation {
+		t.Fatal("WaitKindLane == WaitKindStation — the whole distinction collapses")
 	}
 }

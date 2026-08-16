@@ -249,11 +249,36 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bo
 	// PICKUP against where its bin actually sits. Those are different facts about
 	// different ends of the order.
 	released := 0
-	// WINDOW 3's QUESTION IS ASKED OF EVERY CANDIDATE THAT DID NOT GET IN, whatever
-	// stopped it. A Tier-2 park, a lane-occupied refusal and a failed re-bind can
+	// WINDOW 3's QUESTION IS ASKED OF EVERY CANDIDATE THAT WAS REFUSED, whatever
+	// refused it. A Tier-2 park, a lane-occupied refusal and a failed re-bind can
 	// all be sitting on top of the same unclaimed bin, so keying the heal on a
 	// particular refusal cause would find it from one arm and miss it from the other
 	// two. The refusal is the PROMPT; mouthHealNeeded reads the physics and answers.
+	//
+	// ── AND NOT OF A CANDIDATE CORE COULD NOT JUDGE. THAT IS DELIBERATE. ──
+	//
+	// This used to say "every candidate that did not get in", which was false by
+	// one arm and is the kind of false a reader in these files takes as evidence.
+	// The classifier-ERROR arm below does not propose, and should not:
+	//
+	//   - A heal is an EXCAVATION. It creates a compound, takes the lane's dig
+	//     lock exclusively, and commits robots. That is the largest action this
+	//     evaluator can take, and taking it because Core could not read the lane
+	//     is deciding to dig on no evidence.
+	//   - mouthHealNeeded reads the same database that just failed to answer. It
+	//     would either fail too — a dig proposed on a coin flip of which query
+	//     recovered first — or succeed on partial state and propose an excavation
+	//     from it.
+	//   - A refusal is a fact about the PLANT, which is what a heal responds to.
+	//     An error is Core declining, which is why it carries CauseAdmissionError
+	//     rather than a lane cause. Fail-closed on an undetermined answer means
+	//     doing LESS, not more — the same rule the compound leg's admission-error
+	//     arm states as "an unreadable lane is a busy lane".
+	//
+	// Nothing is lost by waiting: the order stays a candidate, and the next pass
+	// re-asks. If the read failure persists, the wall it might be sitting on is
+	// still there to be found on the pass after that — by which time the
+	// classifier can actually see it.
 	propose := func(c gateCandidate) {
 		if healWanted {
 			return // one dig per pass — see the function doc
@@ -321,7 +346,20 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bo
 			rErr = d.releaseGatedOrder(c.order, lane)
 		}
 		if rErr != nil {
+			// AND THE CAUSE GOES ON THE ROW. This arm wrote nothing, and it is the
+			// worst of the three places to write nothing: it runs AFTER the verdict
+			// admitted, so the order has just had any previous cause cleared on the
+			// success path's assumption — it loses the old sentence and gains none.
+			// A dweller whose release keeps failing then reads exactly like one
+			// nobody has evaluated yet. Measured on the lane-stress rig 2026-08-10:
+			// orders 6 and 40 dwelling 13-16 minutes under "no empty slot in lane"
+			// with a blank row, surfaced by the floor as a blank-cause release.
+			//
+			// It stays a candidate — the set is durable order state, never a verdict
+			// — so the next pass retries, which is what the cause's releaser says.
 			log.Printf("lane gate: release order %d into lane %s: %v", c.order.ID, lane.Name, rErr)
+			d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed,
+				QueueParams{Lane: lane.Name})
 			propose(c)
 			continue
 		}
@@ -400,7 +438,7 @@ func (d *Dispatcher) gateStagedForLane(lane *nodes.Node) ([]gateCandidate, error
 		if !ok || w.WaitLane != lane.ID {
 			continue // parked at somebody else's wait, or at none
 		}
-		entry, isRetrieve, ok := laneEntryAfterWait(steps, o.WaitIndex)
+		entry, _, isRetrieve, ok := laneEntryAfterWait(steps, o.WaitIndex)
 		if !ok {
 			log.Printf("lane gate: order %d is parked at a wait for lane %s with no actionable step "+
 				"after it — its tail cannot be built", o.ID, lane.Name)
@@ -471,7 +509,12 @@ func (d *Dispatcher) gateEntryVerdict(lane *nodes.Node, order *orders.Order, ent
 //
 // It is the same enumeration waitAt and splitSegment use — every ActionWait
 // counts, bare or not — walked one step further to the work the wait is gating.
-func laneEntryAfterWait(steps []resolvedStep, waitIndex int) (resolvedStep, bool, bool) {
+// It also returns the entry step's INDEX into the full step list. That index is
+// the key to order_bins.step_index, which is how the gate finds out WHICH BIN the
+// entry is for on an order that has several — the walk already computed it and
+// used to throw it away, and a second walk to recover it would be two spellings
+// of one traversal.
+func laneEntryAfterWait(steps []resolvedStep, waitIndex int) (resolvedStep, int, bool, bool) {
 	seen, start := 0, -1
 	for i, s := range steps {
 		if s.Action != protocol.ActionWait {
@@ -484,17 +527,17 @@ func laneEntryAfterWait(steps []resolvedStep, waitIndex int) (resolvedStep, bool
 		seen++
 	}
 	if start < 0 {
-		return resolvedStep{}, false, false
+		return resolvedStep{}, -1, false, false
 	}
-	for _, s := range steps[start:] {
+	for off, s := range steps[start:] {
 		switch s.Action {
 		case protocol.ActionPickup:
-			return s, true, true
+			return s, start + off, true, true
 		case protocol.ActionDropoff:
-			return s, false, true
+			return s, start + off, false, true
 		}
 	}
-	return resolvedStep{}, false, false
+	return resolvedStep{}, -1, false, false
 }
 
 // outbound mirror of laneEntryCause. A retrieve dwelling at the gate is parked
@@ -580,19 +623,52 @@ func (d *Dispatcher) pickupSlotNow(order *orders.Order, lane *nodes.Node) (slot 
 	if err != nil {
 		return nil, false, err
 	}
-	if order.BinID == nil {
+
+	// WHICH BIN, ASKED PER STEP. It used to read order.BinID directly, which is
+	// one column with two meanings — the source bin for a plain retrieve, and
+	// "the bin claimed at the process node" for a complex order. A swap parked at
+	// a lane's mark to fetch a FRESH bin was therefore checked against the bin at
+	// the MACHINE, found elsewhere (correctly — that is where it belongs), and
+	// refused entry forever. See binForStep.
+	// AN UNREADABLE JUNCTION IS NOT AN ANSWER, so it leaves here as a plain
+	// error rather than as ErrPickupNotInLane. The distinction is the whole
+	// point of the sentinel: "the bin is somewhere else" is a fact about the
+	// plant that the gate refuses on, with a cause and a releaser; "I could not
+	// tell" is Core declining, and admitLane's error arm turns it into
+	// CauseAdmissionError — a candidate held as undetermined, re-asked next pass.
+	// Collapsing the two would report a database outage as a bin that moved.
+	want, err := d.wantedBin(order)
+	if err != nil {
+		return nil, false, err
+	}
+	switch {
+	case !want.known:
 		if named == nil {
 			return nil, false, fmt.Errorf("pickup slot: source node %q not found", order.SourceNode)
 		}
 		return named, false, nil
+	case want.atNode != "":
+		// A RELAY — this order dropped the bin at that node itself, so the node is
+		// the answer and there is nothing to locate. It still has to be IN this
+		// lane for the gate to bind it.
+		at, rErr := d.db.GetNodeByDotName(want.atNode)
+		if rErr != nil {
+			return nil, false, rErr
+		}
+		if at == nil || at.ParentID == nil || *at.ParentID != lane.ID {
+			return nil, false, fmt.Errorf("%w: relay pickup for order %d is at %s, outside lane %s",
+				ErrPickupNotInLane, order.ID, want.atNode, lane.Name)
+		}
+		return at, at.ID != namedID(named), nil
 	}
-	bin, err := d.db.GetBin(*order.BinID)
+
+	bin, err := d.db.GetBin(want.binID)
 	if err != nil {
 		return nil, false, err
 	}
 	if bin == nil || bin.NodeID == nil {
 		return nil, false, fmt.Errorf("pickup slot: bin %d for order %d is gone or has no node",
-			*order.BinID, order.ID)
+			want.binID, order.ID)
 	}
 	if named != nil && *bin.NodeID == named.ID {
 		return named, false, nil // the common case: nothing moved, nothing to write
@@ -602,10 +678,24 @@ func (d *Dispatcher) pickupSlotNow(order *orders.Order, lane *nodes.Node) (slot 
 		return nil, false, err
 	}
 	if at == nil || at.ParentID == nil || *at.ParentID != lane.ID {
-		return nil, false, fmt.Errorf("pickup slot: bin %d left lane %s (now at %s) — no slot in this lane to bind",
-			*order.BinID, lane.Name, nodeName(at))
+		// A DEFINITE ANSWER, NOT AN UNREADABLE ONE — hence the sentinel. The bin
+		// is somewhere and it is not here; that is a fact the caller can refuse
+		// on, with a cause and a releaser. Returning it as a bare error made it
+		// indistinguishable from a failed read, so the gate treated a knowable
+		// "no" as "I could not tell" and wedged instead of waiting.
+		return nil, false, fmt.Errorf("%w: bin %d for order %d is at %s, outside lane %s",
+			ErrPickupNotInLane, want.binID, order.ID, nodeName(at), lane.Name)
 	}
 	return at, true, nil
+}
+
+// namedID is nil-safe access to the order's remembered source node id, for the
+// `moved` flag. A nil named node means the order never had one to move from.
+func namedID(named *nodes.Node) int64 {
+	if named == nil {
+		return 0
+	}
+	return named.ID
 }
 
 // isOwnDigLeg WAS HERE AND IS NOW ownsDig (lane_gate.go).

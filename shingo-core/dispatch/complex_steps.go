@@ -44,14 +44,23 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 		case protocol.ActionWait:
 			// Wait may optionally include a node (drive-to-and-hold).
 			// If present, resolve it; otherwise it's a bare wait (split point only).
+			// THE AUTHOR'S KIND IS CARRIED, NOT RE-DERIVED. This is a
+			// translation from the wire type to Core's, not a new author: the
+			// station stamped who owns its wait when it built the plan, and
+			// dropping the stamp here would put the guessing back exactly where
+			// it was — the fence would see an unowned wait and read it as the
+			// station's by the drain-window default, which is right today by
+			// accident and wrong the moment that window closes.
 			if step.Node != "" {
 				nodeName, group, err := d.resolveStepNode(step, payloadCode, asker)
 				if err != nil {
 					return nil, fmt.Errorf("step %d: %w", i, err)
 				}
-				resolved = append(resolved, resolvedStep{Action: protocol.ActionWait, Node: nodeName, Group: group})
+				resolved = append(resolved, resolvedStep{
+					Action: protocol.ActionWait, Node: nodeName, Group: group, WaitKind: step.WaitKind,
+				})
 			} else {
-				resolved = append(resolved, resolvedStep{Action: protocol.ActionWait})
+				resolved = append(resolved, resolvedStep{Action: protocol.ActionWait, WaitKind: step.WaitKind})
 			}
 		default:
 			return nil, fmt.Errorf("step %d: unknown step action: %s", i, step.Action)

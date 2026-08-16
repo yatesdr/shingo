@@ -49,6 +49,25 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	LEFT JOIN nodes n ON n.id = b.node_id
 	LEFT JOIN payloads p ON p.code = b.payload_code`
 
+// SourceableStatusSQL is the SQL twin of domain.BinStatus.Sourceable: the set of
+// statuses a bin may be picked up from. One rule in two languages —
+// TestSourceableStatus_GoSQLAgree evaluates every enum constant plus an off-spec
+// value against both and fails if they part, so adding a status forces both sides
+// to be updated together.
+//
+// ALLOW-LIST for the same reason the Go side is: the status column carries no
+// CHECK constraint, so a value outside the enum is representable and must not be
+// sourceable by default.
+//
+// A reader that must be STRICTER composes on top of this rather than restating the
+// whole rule — the full-source and empty-source queries additionally exclude
+// 'staged' so a plant-wide scan cannot take a bin an operator is working at:
+//
+//	SourceableStatusSQL + ` AND b.status <> 'staged'`
+//
+// Assumes the bins table is aliased `b`, as BinJoinQuery establishes.
+const SourceableStatusSQL = `b.status IN ('available','staged')`
+
 // PayloadBinTypeAdvisoryClause enforces payload_bin_types as an advisory
 // allow-list: when the table has rules for the payload, only matching bin
 // types are eligible; when no rules exist for the payload, any bin type
@@ -550,7 +569,7 @@ func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, exclude
 			SELECT n2.id FROM nodes n2 JOIN descendants d ON n2.parent_id = d.id
 		)
 		%s
-		WHERE b.status = 'available'
+		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.node_id IS NOT NULL
@@ -573,7 +592,7 @@ func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID i
 	}
 	if preferZone != "" {
 		row := db.QueryRow(fmt.Sprintf(`%s
-			WHERE b.status = 'available'
+			WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 			  AND b.claimed_by IS NULL
 			  AND b.locked = false
 			  AND b.node_id IS NOT NULL
@@ -590,7 +609,7 @@ func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID i
 		}
 	}
 	row := db.QueryRow(fmt.Sprintf(`%s
-		WHERE b.status = 'available'
+		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.node_id IS NOT NULL
@@ -612,7 +631,7 @@ func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, exc
 			SELECT n2.id FROM nodes n2 JOIN descendants d ON n2.parent_id = d.id
 		)
 		%s
-		WHERE b.status = 'available'
+		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.node_id IS NOT NULL
@@ -629,7 +648,7 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 	// Zone-preferred query
 	if preferZone != "" {
 		row := db.QueryRow(fmt.Sprintf(`%s
-			WHERE b.status = 'available'
+			WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 			  AND b.claimed_by IS NULL
 			  AND b.locked = false
 			  AND b.node_id IS NOT NULL
@@ -650,7 +669,7 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 	}
 	// Any zone fallback
 	row := db.QueryRow(fmt.Sprintf(`%s
-		WHERE b.status = 'available'
+		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.node_id IS NOT NULL

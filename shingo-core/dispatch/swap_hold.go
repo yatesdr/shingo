@@ -139,7 +139,25 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 		// Terminal-SUCCESS is not this case: a confirmed evac did clear the line and
 		// is released by swapClearerCommitted below. swapTerminalKind is non-empty
 		// only for skipped/failed/cancelled.
-		if swapTerminalKind(sib.Status) != "" {
+		if kind := swapTerminalKind(sib.Status); kind != "" {
+			// A SKIPPED clearer is MOOT, not dead, and the difference is the whole
+			// point of this hold. The guard exists because a clearer that died never
+			// cleared the line, so its resident bin is still sitting there and this
+			// filler must not drive onto it. A clearer is skipped for the opposite
+			// reason: it found NO bin to clear. The line is empty, there is nothing
+			// to collide with, and this filler is the thing that should put a carrier
+			// back on it.
+			//
+			// HandleSwapPeerTerminal has always said exactly this — "a moot (skipped)
+			// evac is a clean no-op — the line's resident was already gone, so the
+			// supply proceeds" — and this arm contradicted it. The peer handler let
+			// the filler go and the hold caught it again on the next scan, so the
+			// filler sat queued with a reason describing a death that had not
+			// happened. Observed the moment the moot narrowing started skipping these
+			// evacs at all: order 64 skipped, order 65 held on it indefinitely.
+			if kind == SwapTerminalSkipped {
+				return false, ""
+			}
 			return true, "swap: holding filler — clearer sibling died without clearing the line"
 		}
 		sibSteps, ok := decodeSteps(sib.StepsJSON)

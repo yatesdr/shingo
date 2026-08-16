@@ -129,6 +129,25 @@ zones:
         slots: [{name: LSD_027, depth: 1}, {name: LSD_028, depth: 2}, {name: LSD_029, depth: 3}]
       - name: LS_M4
         slots: [{name: LSD_033, depth: 1}, {name: LSD_034, depth: 2}, {name: LSD_035, depth: 3}]
+      # M5 — depth 3, UNMARKED. MORE empty-carrier pool, and it is a NEW LANE rather
+      # than three of the free slots that already existed, which is the whole point.
+      #
+      # THE POOL WAS EXACTLY AT ITS FLOOR AND THAT IS NOT A PASS. simcalc's per-pool
+      # floor for SYN_STAMP is 6 — four in flight (0.40 bins/min × 10m transit) plus
+      # one per produce station — and the file seeded exactly 6. Zero margin, on the
+      # zone that also carries three of the plant's four gated lanes and both deep
+      # digs, neither of which the transit figure models. The 2026-08-10 run drained
+      # it to ZERO empties while 15 sat in SYN_COMP, and three presses queued on
+      # "waiting for an empty bin" with the plant otherwise idle.
+      #
+      # WHY NOT JUST SEED THE FREE SLOTS: every free ungated slot in SYN_STAMP is
+      # shuffle headroom (LS_D4's five and S1..S3's three, eight against a deepest
+      # dig of four). Filling four of them to fix the carriers would leave four, and
+      # trade a carrier deadlock for the shuffle deadlock this rig exists to study —
+      # the trade the S1..S3 comment already learned once. Adding a lane pays for the
+      # carriers out of new space instead of out of the headroom.
+      - name: LS_M5
+        slots: [{name: LSD_036, depth: 1}, {name: LSD_037, depth: 2}, {name: LSD_038, depth: 3}]
       # S1..S3 — depth 1, and now seeded EMPTY. Ordering-exempt by construction: there
       # is nothing in front of anything. The file already called them the cheapest
       # shuffle destinations in the group and then filled all three with empty
@@ -184,6 +203,17 @@ zones:
         slots: [{name: LSC_030, depth: 1}, {name: LSC_031, depth: 2}]
       - name: LS_C11
         slots: [{name: LSC_032, depth: 1}, {name: LSC_033, depth: 2}]
+      # C12 — depth 4, UNMARKED. The component loop's carrier pool, same reasoning as
+      # LS_M5 and a bigger number: SYN_COMP spends 1.00 bins/min against SYN_STAMP's
+      # 0.40 and feeds six produce stations, so its floor is 16 and the file seeded
+      # 12. It was SHORT BY 4 from the first run and nothing said so, because the
+      # only check was plant-wide and 24 seeded against a 22 plant-wide floor reads
+      # as comfortable.
+      #
+      # A new lane again rather than LS_C4 / LS_C11, which are SYN_COMP's shuffle
+      # headroom for the same reason LS_D4 and S1..S3 are SYN_STAMP's.
+      - name: LS_C12
+        slots: [{name: LSC_034, depth: 1}, {name: LSC_035, depth: 2}, {name: LSC_036, depth: 3}, {name: LSC_037, depth: 4}]
 
 stations:
   # ── PRESS-1: two_robot_press_index (front + paired back, no staging) ──
@@ -278,6 +308,11 @@ bins:
   - {name: BIN-MT-S4, slot: LSD_033}
   - {name: BIN-MT-S5, slot: LSD_034}
   - {name: BIN-MT-S6, slot: LSD_035}
+  # --- SYN_STAMP: the margin above the floor. See LS_M5 for why these are a new
+  # lane and not three of the free slots that were already there. ---
+  - {name: BIN-MT-S7, slot: LSD_036}
+  - {name: BIN-MT-S8, slot: LSD_037}
+  - {name: BIN-MT-S9, slot: LSD_038}
   # --- SYN_COMP: LS_C1 full BRKT (the marked three-blocker dig) ---
   - {name: BIN-BRKT-01, slot: LSC_001, payload: BRKT, uop: 40}
   - {name: BIN-BRKT-02, slot: LSC_002, payload: BRKT, uop: 40}
@@ -295,6 +330,30 @@ bins:
   # --- SYN_COMP: LS_C5 finished goods, shallow (the gated egress lane) ---
   - {name: BIN-ASSY-01, slot: LSC_017, payload: ASSY, uop: 20}
   - {name: BIN-ASSY-02, slot: LSC_018, payload: ASSY, uop: 20}
+  # --- SYN_COMP: extra empty carriers, C6 and C7 ---
+  # THE RIG DEADLOCKED ON CARRIERS AT ~75 MINUTES and this is the slack that
+  # breaks the circle. A cell that has spent its bin needs a swap; the swap needs
+  # an EMPTY bin to bring in; empties only reappear when a swap completes. With
+  # 12 carriers seeded across 7 cells and 4 loaders the run reached 6 empties
+  # against 5 spent-but-unswapped bins parked at cells, and every remaining order
+  # was waiting on one of them. Confirmed throughput was 126 and the open orders
+  # never moved again.
+  #
+  # C6 and C7 are the only lanes in either group with room that is not already
+  # spoken for: SYN_STAMP's 13 free slots are ALL deliberate shuffle headroom
+  # (LS_D2, LS_D4, and S1..S3, which this file already learned not to fill), and
+  # in SYN_COMP the same is true of LS_C4. LS_C11 is left free for the same
+  # reason — filling every ungated lane would trade a carrier deadlock for a
+  # shuffle deadlock, which is the failure this rig was built to study.
+  #
+  # This does not fix SYN_STAMP, which stays provisioned tight by design. The
+  # panel loop is still the first place to starve.
+  - {name: BIN-MT-C7,  slot: LSC_020}
+  - {name: BIN-MT-C8,  slot: LSC_021}
+  - {name: BIN-MT-C9,  slot: LSC_022}
+  - {name: BIN-MT-C10, slot: LSC_023}
+  - {name: BIN-MT-C11, slot: LSC_024}
+  - {name: BIN-MT-C12, slot: LSC_025}
   # --- SYN_COMP: empty carriers in the depth-2 lanes ---
   - {name: BIN-MT-C1, slot: LSC_026}
   - {name: BIN-MT-C2, slot: LSC_027}
@@ -302,6 +361,11 @@ bins:
   - {name: BIN-MT-C4, slot: LSC_029}
   - {name: BIN-MT-C5, slot: LSC_030}
   - {name: BIN-MT-C6, slot: LSC_031}
+  # --- SYN_COMP: the four the per-pool floor was short by, in LS_C12. ---
+  - {name: BIN-MT-C13, slot: LSC_034}
+  - {name: BIN-MT-C14, slot: LSC_035}
+  - {name: BIN-MT-C15, slot: LSC_036}
+  - {name: BIN-MT-C16, slot: LSC_037}
   # --- Active produce bins (empty → fill → swap). Verbatim from demo.yaml. ---
   - {name: BIN-ACT-P1F, slot: PLN_001}   # PRESS-1 front (filling)
   - {name: BIN-ACT-P1B, slot: PLN_002}   # PRESS-1 back (staged empty, indexes to front)
