@@ -257,7 +257,7 @@ func TestDefaultResolver_Retrieve_NGRPDelegatesToGroupResolver(t *testing.T) {
 	f.children[ngrp.ID] = []*nodes.Node{lane}
 	f.sourceInLane[lane.ID] = bin
 
-	r := &DefaultResolver{DB: f, LaneLock: NewLaneLock()}
+	r := &DefaultResolver{DB: f}
 	got, err := r.Resolve(ngrp, "retrieve", "P1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -363,7 +363,7 @@ func (d *Dispatcher) loadSequenceForPayload(payloadCode string) []string {
 // unsealed" structurally true, instead of true-for-the-callers-we-remembered. Both
 // callers (Kafka/envelope and UI/scanner) inherit it.
 func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
-	// gate_choreography: a lane-bound store ships unsealed to the lane's wait
+	// gate_choreography: a lane-bound STORE ships unsealed to the lane's wait
 	// point and has its dropoff tail appended when the lane is safe — immediately
 	// when it already is. No-op (and no extra query beyond the lane lookup) for
 	// every other destination, so an unconfigured plant never leaves this line.
@@ -371,6 +371,20 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		return "", err
 	} else if gated {
 		return d.dispatchGated(order, target, sourceNode, destNode)
+	}
+	// gate_choreography (retrieve direction): a lane-bound RETRIEVE — one whose
+	// SOURCE is a gated lane — ships unsealed to that lane's wait point and has its
+	// [pickup@slot, dropoff@line] tail appended when the lane is safe. Same valve,
+	// the other end of the order: a store's DEST is the lane; a retrieve's SOURCE
+	// is the lane. A dig-active or buried retrieve pre-positions at the gate so its
+	// drive overlaps the dig (the buried-retrieve increment). Coordinated (complex)
+	// orders are excluded — their staging is operator/compound-owned.
+	if !order.Coordinated {
+		if src, gated, err := d.resolveLaneGateSource(sourceNode); err != nil {
+			return "", err
+		} else if gated {
+			return d.dispatchGatedRetrieve(order, src, sourceNode, destNode)
+		}
 	}
 
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])

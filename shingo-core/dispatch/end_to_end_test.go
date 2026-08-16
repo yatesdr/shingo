@@ -208,7 +208,7 @@ func TestDispatcher_MoveOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 	// dest NGRP to a concrete child. That gate is `s.resolver != nil`, but
 	// newTestDispatcher wires resolver=nil — leaving the delivery node stuck at
 	// the group name. Wire a real resolver, mirroring TestDispatcher_MoveOrder_NGRPSource.
-	resolver := &DefaultResolver{DB: db, LaneLock: d.LaneLock(), DebugLog: d.dbg}
+	resolver := &DefaultResolver{DB: db, DebugLog: d.dbg}
 	d = NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 	env := testEnvelope()
 
@@ -791,7 +791,7 @@ func TestRetrieveEmpty_LaneSourceScopesToLane(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
-	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock()}
+	resolver := &DefaultResolver{DB: db}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 	env := testEnvelope()
 
@@ -878,7 +878,7 @@ func TestRetrieveEmpty_BuriedTriggersReshuffle(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
-	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock()}
+	resolver := &DefaultResolver{DB: db}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 	env := testEnvelope()
 
@@ -986,7 +986,7 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
-	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock()}
+	resolver := &DefaultResolver{DB: db}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 	env := testEnvelope()
 
@@ -1335,7 +1335,7 @@ func TestDispatcher_RetrieveOrder_NGRPSource(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
-	resolver := &DefaultResolver{DB: db, LaneLock: d.LaneLock(), DebugLog: d.dbg}
+	resolver := &DefaultResolver{DB: db, DebugLog: d.dbg}
 	d2 := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 
 	env := testEnvelope()
@@ -1392,7 +1392,7 @@ func TestDispatcher_MoveOrder_NGRPSource(t *testing.T) {
 
 	// The resolver needs to be set up for NGRP resolution to work.
 	// newTestDispatcher creates a dispatcher with resolver=nil; we need one.
-	resolver := &DefaultResolver{DB: db, LaneLock: d.LaneLock(), DebugLog: d.dbg}
+	resolver := &DefaultResolver{DB: db, DebugLog: d.dbg}
 	d2 := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 
 	env := testEnvelope()
@@ -1466,7 +1466,7 @@ func TestDispatcher_MoveOrder_NGRPSource_NoBin(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
-	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock(), DebugLog: nil}
+	resolver := &DefaultResolver{DB: db, DebugLog: nil}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 
 	env := testEnvelope()
@@ -1512,7 +1512,7 @@ func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
-	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock(), DebugLog: nil}
+	resolver := &DefaultResolver{DB: db, DebugLog: nil}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 
 	env := testEnvelope()

@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"shingocore/store/bins"
+	"shingocore/store/internal/helpers"
 	"shingocore/store/nodes"
 	"shingocore/store/reservations"
 )
@@ -31,6 +32,14 @@ func (db *DB) IsSlotAccessible(slotNodeID int64) (bool, error) {
 	return nodes.IsSlotAccessible(db.DB, slotNodeID)
 }
 
+// BlockersInFrontOf returns the occupied slots shallower than slotNodeID in its
+// lane, shallowest first — the set IsSlotAccessible reports the emptiness of.
+// See nodes.BlockersInFrontOf for the single definition of "in front of" and
+// for why an error here must be read as blocked, not as reachable.
+func (db *DB) BlockersInFrontOf(slotNodeID int64) ([]*nodes.Node, error) {
+	return nodes.BlockersInFrontOf(db.DB, slotNodeID)
+}
+
 // LaneForNode returns the LANE node that directly parents nodeID, or nil if
 // nodeID is not a direct child slot of a lane (the mouth-gate lane resolution).
 func (db *DB) LaneForNode(nodeID int64) (*nodes.Node, error) {
@@ -41,6 +50,14 @@ func (db *DB) LaneForNode(nodeID int64) (*nodes.Node, error) {
 // one-hop parent walk cannot see (§8).
 func (db *DB) AuditLaneGeometry() ([]string, error) {
 	return nodes.AuditLaneGeometry(db.DB)
+}
+
+// AuditLaneDepths returns startup warnings about lane children that hold a bin
+// but have no depth — inventory the reachability predicate ignores by design.
+// See nodes.AuditLaneDepths for why the ruling needs an audit rather than a
+// guard.
+func (db *DB) AuditLaneDepths() ([]string, error) {
+	return nodes.AuditLaneDepths(db.DB)
 }
 
 // NodeStyleOrigins returns the (process, style) pairs that claim a node in the
@@ -65,6 +82,50 @@ func (db *DB) NodeStyleOrigins(nodeName string) ([]string, error) {
 		out = append(out, p+"|"+s)
 	}
 	return out, rows.Err()
+}
+
+// ListChildNodesUnlocked is ListChildNodes with dig-held lanes filtered OUT in
+// the query — the candidate read the group resolver scans.
+//
+// It replaces five copies of
+//
+//	for _, child := range children {
+//	    if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) { continue }
+//
+// and it is not an optimisation of that check, it is its deletion. The filter
+// rides a query that was already happening, so it costs no extra round trip, and
+// because the candidate set and the lock state come out of ONE statement there
+// is no gap between fetching a lane and deciding whether it is free.
+//
+// The alternatives were considered and rejected. A per-scan snapshot of the dig
+// holds is wrong in the direction that matters — a dig starting mid-scan stays
+// invisible for the rest of it, and on a `none`-algorithm group nothing
+// downstream catches the stale answer. A memory cache is a permanent obligation
+// bought for an unmeasured gain on a path already doing database work.
+//
+// The lesson this encodes is from the bug that motivated it: the dig row dying
+// at leg one was never a problem of two COPIES of a fact, it was two WRITERS for
+// one fact. Judge any future shape here on that first — one writer, one reader,
+// one statement.
+//
+// Lives at the outer store/ level because it joins nodes to reservations, and
+// cross-aggregate composition is exactly what store/<sub> may not do.
+func (db *DB) ListChildNodesUnlocked(parentID int64) ([]*nodes.Node, error) {
+	rows, err := db.DB.Query(fmt.Sprintf(`SELECT %s %s
+		WHERE n.parent_id = $1
+		  AND NOT EXISTS (
+			SELECT 1 FROM reservations dig_hold
+			WHERE dig_hold.resource_kind = 'mouth'
+			  AND dig_hold.node_id = n.id
+			  AND dig_hold.state IN ('pending','confirmed')
+			  AND dig_hold.mode = $2
+		  )
+		ORDER BY n.name`, nodes.SelectCols, nodes.FromClause), parentID, string(reservations.ModeDig))
+	if err != nil {
+		return nil, fmt.Errorf("list unlocked children of %d: %w", parentID, err)
+	}
+	defer rows.Close()
+	return nodes.ScanNodes(rows)
 }
 
 // LaneAcceptsInbound reports whether a lane currently has no mouth hold that
@@ -109,16 +170,9 @@ func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND b.status = 'available'
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
-		  AND NOT EXISTS (
-			SELECT 1 FROM nodes sib
-			JOIN bins sb ON sb.node_id = sib.id
-			WHERE sib.parent_id = $1
-			  AND sib.depth IS NOT NULL
-			  AND n.depth IS NOT NULL
-			  AND sib.depth < n.depth
-		  )
+		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC
-		LIMIT 1`, bins.BinJoinQuery)
+		LIMIT 1`, bins.BinJoinQuery, helpers.ReachableSQL("n"))
 	row := db.QueryRow(query, laneID, payloadCode)
 	bin, err := bins.ScanBin(row)
 	if err != nil {
@@ -159,16 +213,9 @@ func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND b.manifest_confirmed = true
 		  AND b.status = 'available'
 		  AND ($2 = '' OR b.payload_code = $2)
-		  AND EXISTS (
-			SELECT 1 FROM nodes sib
-			JOIN bins sb ON sb.node_id = sib.id
-			WHERE sib.parent_id = $1
-			  AND sib.depth IS NOT NULL
-			  AND n.depth IS NOT NULL
-			  AND sib.depth < n.depth
-		  )
+		  AND %s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
-		LIMIT 1`, bins.BinJoinQuery), laneID, payloadCode)
+		LIMIT 1`, bins.BinJoinQuery, helpers.BuriedSQL("n")), laneID, payloadCode)
 	bin, err := bins.ScanBin(row)
 	if err != nil {
 		return nil, nil, fmt.Errorf("no buried bin in lane %d", laneID)
@@ -191,16 +238,9 @@ func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes
 		  AND b.manifest_confirmed = true
 		  AND b.status = 'available'
 		  AND ($2 = '' OR b.payload_code = $2)
-		  AND EXISTS (
-			SELECT 1 FROM nodes sib
-			JOIN bins sb ON sb.node_id = sib.id
-			WHERE sib.parent_id = $1
-			  AND sib.depth IS NOT NULL
-			  AND n.depth IS NOT NULL
-			  AND sib.depth < n.depth
-		  )
+		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC
-		LIMIT 1`, bins.BinJoinQuery), laneID, payloadCode)
+		LIMIT 1`, bins.BinJoinQuery, helpers.BuriedSQL("n")), laneID, payloadCode)
 	bin, err := bins.ScanBin(row)
 	if err != nil {
 		return nil, nil, fmt.Errorf("no buried bin in lane %d", laneID)

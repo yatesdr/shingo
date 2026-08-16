@@ -40,34 +40,49 @@ type ReshufflePlan struct {
 }
 
 // blocker bundles a bin sitting in a slot shallower than the target
-// with its slot reference and depth — used by both the legacy
-// PlanReshuffle and the new dual-mode variants.
+// with its slot reference — used by both the legacy PlanReshuffle and
+// the new dual-mode variants.
 type reshuffleBlocker struct {
-	bin   *bins.Bin
-	slot  *nodes.Node
-	depth int
+	bin  *bins.Bin
+	slot *nodes.Node
 }
 
-// findBuriedBlockers returns every occupied lane slot shallower than
-// targetDepth. Shared between PlanReshuffle, PlanReshuffleUnburyOnly,
-// and PlanReshuffleToTarget.
-func findBuriedBlockers(db *store.DB, lane *nodes.Node, targetDepth int) ([]reshuffleBlocker, error) {
-	slots, err := db.ListLaneSlots(lane.ID)
+// findBuriedBlockers returns the bins occupying the slots in front of
+// targetSlotID, shallowest first — the dig list. Shared between
+// PlanReshuffle, PlanReshuffleUnburyOnly, PlanReshuffleToTarget, and the
+// lane gate's retrieve classifier.
+//
+// "In front of" is store/nodes.BlockersInFrontOf and nothing else. This used
+// to walk ListLaneSlots comparing GetSlotDepth against a targetDepth the
+// callers passed in, which was a SECOND implementation of the reachability
+// predicate and it did not agree with the SQL one: GetSlotDepth reports 0 for
+// a NULL depth, so a depth-less occupied child of the lane was in front of
+// everything here and invisible everywhere else. Asking the one definition
+// removes the disagreement rather than patching this side of it.
+//
+// It also stops taking the lane as a parameter. Every caller passed the
+// target slot's own parent — the set is derived from the slot's lane now, so
+// the two can no longer be handed in inconsistently.
+//
+// A read error is returned, never swallowed. Callers must fail closed: an
+// unreadable lane is treated as blocked, because refusing to dig is
+// recoverable and digging into a lane you could not read is not.
+func findBuriedBlockers(db *store.DB, targetSlotID int64) ([]reshuffleBlocker, error) {
+	slots, err := db.BlockersInFrontOf(targetSlotID)
 	if err != nil {
-		return nil, fmt.Errorf("list lane slots: %w", err)
+		return nil, fmt.Errorf("blockers in front of slot %d: %w", targetSlotID, err)
 	}
 
-	var blockers []reshuffleBlocker
+	blockers := make([]reshuffleBlocker, 0, len(slots))
 	for _, slot := range slots {
-		depth, err := db.GetSlotDepth(slot.ID)
-		if err != nil || depth >= targetDepth {
-			continue
-		}
 		laneBins, err := db.ListBinsByNode(slot.ID)
-		if err != nil || len(laneBins) == 0 {
-			continue
+		if err != nil {
+			return nil, fmt.Errorf("list bins at blocker slot %s: %w", slot.Name, err)
 		}
-		blockers = append(blockers, reshuffleBlocker{bin: laneBins[0], slot: slot, depth: depth})
+		if len(laneBins) == 0 {
+			continue // the bin left between the scan and this read — no longer a blocker
+		}
+		blockers = append(blockers, reshuffleBlocker{bin: laneBins[0], slot: slot})
 	}
 	return blockers, nil
 }
@@ -86,12 +101,7 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 		return nil, fmt.Errorf("target slot has no parent lane")
 	}
 
-	targetDepth, err := db.GetSlotDepth(targetSlot.ID)
-	if err != nil {
-		return nil, fmt.Errorf("get target depth: %w", err)
-	}
-
-	blockers, err := findBuriedBlockers(db, lane, targetDepth)
+	blockers, err := findBuriedBlockers(db, targetSlot.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -153,12 +163,7 @@ func PlanReshuffleUnburyOnly(db *store.DB, target *bins.Bin, targetSlot *nodes.N
 		return nil, fmt.Errorf("target slot has no parent lane")
 	}
 
-	targetDepth, err := db.GetSlotDepth(targetSlot.ID)
-	if err != nil {
-		return nil, fmt.Errorf("get target depth: %w", err)
-	}
-
-	blockers, err := findBuriedBlockers(db, lane, targetDepth)
+	blockers, err := findBuriedBlockers(db, targetSlot.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,12 +209,7 @@ func PlanReshuffleToTarget(db *store.DB, target *bins.Bin, targetSlot *nodes.Nod
 		return nil, fmt.Errorf("target-node mode requires a non-nil target node")
 	}
 
-	targetDepth, err := db.GetSlotDepth(targetSlot.ID)
-	if err != nil {
-		return nil, fmt.Errorf("get target depth: %w", err)
-	}
-
-	blockers, err := findBuriedBlockers(db, lane, targetDepth)
+	blockers, err := findBuriedBlockers(db, targetSlot.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -301,6 +301,17 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 
 	var available []*nodes.Node
 
+	// A candidate whose reachability could not be READ is not a candidate (D2,
+	// fail closed) — but it is not a fault either, and the difference matters
+	// here more than anywhere else. planBuriedReshuffle maps a bare error from
+	// this function to codeReshuffle, which is TERMINAL; only ErrNoShuffleSlot
+	// is transient. So an unreadable candidate is skipped and counted, and if
+	// the pool then comes up short the shortfall is reported as congestion —
+	// which waits and retries — rather than as geometry, which kills the order.
+	// Silently skipping was safe; silently skipping and then reporting a pool
+	// size as if it were the true one is what this stops.
+	unreadable := 0
+
 	// Pass 1: direct physical children of the group (always accessible).
 	// Reverse-iterate so any depth-carrying direct children are visited
 	// deepest-first — matches the lane-FIFO invariant maintained in Pass 2.
@@ -332,10 +343,29 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 		if !c.Enabled || c.NodeTypeCode != protocol.NodeClassLANE {
 			continue
 		}
+		// NEVER park a blocker back into the lane it is being dug out of. laneID
+		// was a parameter of this function that Pass 2 never compared against
+		// anything — it was read once, at the top, for the reshuffle_target_nodes
+		// override — so the loop happily offered the dug lane's own free slots. On
+		// a lane holding [empty, blocker, target] that means moving the blocker
+		// from depth 2 to depth 1, leaving it in front of the target the dig
+		// exists to uncover.
+		//
+		// Survivable today only because the dig holds the lane exclusively, so
+		// nothing else competes for those slots. It stops being survivable the
+		// moment lane concurrency is relaxed, which is why it lands before that
+		// rather than with it.
+		if c.ID == laneID {
+			continue
+		}
 		if excluded[c.Name] {
 			continue
 		}
-		slots, _ := db.ListLaneSlots(c.ID)
+		slots, err := db.ListLaneSlots(c.ID)
+		if err != nil {
+			unreadable++
+			continue
+		}
 		for i := len(slots) - 1; i >= 0; i-- {
 			slot := slots[i]
 			if !slot.Enabled {
@@ -344,7 +374,11 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 			if excluded[slot.Name] {
 				continue
 			}
-			acc, _ := db.IsSlotAccessible(slot.ID)
+			acc, err := db.IsSlotAccessible(slot.ID)
+			if err != nil {
+				unreadable++
+				continue
+			}
 			if !acc {
 				continue
 			}
@@ -359,7 +393,11 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int) ([]*nodes.
 	}
 
 	if len(available) < count {
-		return nil, fmt.Errorf("%w: need %d shuffle slots but only %d available", ErrNoShuffleSlot, count, len(available))
+		detail := ""
+		if unreadable > 0 {
+			detail = fmt.Sprintf(" (%d candidate(s) unreadable, treated as unusable)", unreadable)
+		}
+		return nil, fmt.Errorf("%w: need %d shuffle slots but only %d available%s", ErrNoShuffleSlot, count, len(available), detail)
 	}
 	return available, nil
 }

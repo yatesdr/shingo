@@ -106,6 +106,11 @@ step_fmt() {
   echo "ok   gofmt"
 }
 
+# NOT parallelised across modules, unlike step_test, and that is a measured
+# decision rather than an oversight: 8s serial against 7s concurrent. Vet's
+# wall time is one module (shingo-core) compiling, and the other four are
+# rounding error — so the concurrency buys a second and costs five per-module
+# log files and an interleaving problem to solve. Not worth it.
 step_vet() {
   local m failed=0
   for m in $MODULES; do
@@ -163,10 +168,79 @@ step_lint() {
   return $failed
 }
 
-step_test() {
-  local m failed=0
+# ONE RUN, NOT TWO. This used to run each module to /dev/null and then, if it
+# failed, run the whole module AGAIN to have something to print — so a red gate
+# cost double a green one, on the run you are least willing to wait through.
+# The log is written the first time and the excerpt comes out of it.
+# Per-worktree under $ROOT/.gate for the same reason step_docker's logs are:
+# see the note there about /tmp being machine-global on Git Bash.
+#
+# STILL SERIAL, AND THAT IS THE SECOND THING TRIED HERE. Running the five
+# modules at once works and is faster — 45s serial against ~26s, since
+# shingo-edge alone is 26.2s and the other four total ~19s — but it also puts
+# five modules' worth of tests on the CPU at once, and shingocore/rds's
+# TestPollerStopHaltsPolling asserts on a 30ms wall-clock drain window after
+# Stop(). Starve that window and the test reports "polls continued after Stop".
+# MEASURED: 10/10 green in isolation, 4/4 green running this step alone, and a
+# failure inside `gate.sh full` where lint's teardown overlaps the start of the
+# tests. A gate that fails ~1 run in 6 for a reason outside the diff is not a
+# gate, and 11s of a ~190s run does not buy that back. The test is genuinely
+# load-fragile and would bite on a slow or busy machine without any help from
+# here — worth hardening on its own terms, and then this can be revisited.
+# Which modules still need an untagged `go test` of their own.
+#
+# NOT ALL OF THEM, WHEN THE DOCKER STEP IS ALSO RUNNING. `-tags=docker` ADDS
+# files and removes none, and nothing in this tree carries a `!docker`
+# constraint — so `go test -tags=docker ./...` runs every test the untagged run
+# would, plus the docker ones.
+#
+# VERIFIED against `go test -list` rather than reasoned about: shingo-core's
+# engine lists 37 tests untagged and 264 with the tag, rds 154 and 154,
+# store/orders 1 and 28 — and in each, zero tests present untagged and absent
+# with the tag. No docker-tagged file defines TestMain or init() either, so the
+# tag does not change how the untagged tests get set up.
+#
+# So running both duplicates 1,929 tests, and cold it duplicates a whole second
+# compile of shingo-core — 21s on this host against 43s for the docker-tagged
+# one. protocol and shared carry no docker tests and are still run here; they
+# are 185 tests and about two seconds.
+#
+# THE `!docker` SEARCH IS THE ENTIRE SAFETY OF THIS. The moment one file
+# excludes itself from the docker build, the superset property is false and
+# skipping the untagged run would silently stop testing that file. Recomputed
+# on every invocation so it cannot go stale, and it fails SAFE: anything found,
+# and every module runs.
+untagged_only_modules() {
+  if grep -rlq 'go:build.*!docker' --include='*.go' "$ROOT" 2>/dev/null; then
+    printf '%s' "$MODULES"
+    return
+  fi
+  local m d dockermods covered
+  dockermods="$(docker_modules)"
   for m in $MODULES; do
-    ( cd "$ROOT/$m" && go test -count=1 ./... >/dev/null ) || { echo "  $m:"; ( cd "$ROOT/$m" && go test -count=1 ./... 2>&1 | grep -Ev '^ok |no test files' | head -30 ); failed=1; }
+    covered=0
+    for d in $dockermods; do
+      [ "$m" = "$d" ] && covered=1
+    done
+    [ "$covered" -eq 0 ] && printf '%s ' "$m"
+  done
+}
+
+step_test() {
+  local m failed=0 logdir mods
+  mods="${1:-$MODULES}"
+  if [ -z "$mods" ]; then
+    echo "ok   tests (every module's untagged tests run inside the docker step)"
+    return 0
+  fi
+  logdir="$ROOT/.gate"
+  mkdir -p "$logdir" || { echo "FAIL tests — cannot create $logdir"; return 1; }
+  for m in $mods; do
+    ( cd "$ROOT/$m" && go test -count=1 ./... >"$logdir/test-$m.log" 2>&1 ) || {
+      echo "  $m:"
+      grep -Ev '^ok |no test files' "$logdir/test-$m.log" | head -30
+      failed=1
+    }
   done
   [ "$failed" -eq 0 ] && echo "ok   tests" || echo "FAIL tests"
   return $failed
@@ -295,20 +369,158 @@ step_scope() {
 # gates inside one worktree at the same moment would still share it, and are
 # not worth designing for: they would already be fighting over the same
 # testcontainers and the same Docker daemon, and the log is the least of it.
+# ── The shared Postgres ──────────────────────────────────────────────
+#
+# ONE SERVER FOR THE WHOLE DOCKER STEP, not one container per Go package.
+#
+# Every Go package is its own test process, and shingo-core/internal/testdb
+# used to start a Postgres container per process — so per PACKAGE, and
+# shingo-core has 31 packages carrying docker-tagged tests. MEASURED on the
+# Windows dev host, mid-run:
+#
+#   container boot (create -> "ready to accept connections")   ~3.0s
+#   migration stack replayed into the template                 ~2.4s
+#   actual query work in a small package (store/admin)         ~0.2s
+#
+# store/admin's four tests each reported 5.49s against a 5.667s package total:
+# they run concurrently and all of them were sitting on the container. Summed
+# over 31 packages that is ~167s of a ~274s suite — 61% of the docker run spent
+# booting Postgres and rebuilding the same schema — and `-p 1` makes every
+# second of it additive.
+#
+# It compounded, too. testdb's reaper only collects a container five minutes
+# past its creator's deadline (reaper.go, reapSlack), which is longer than the
+# whole suite, so containers accumulate: 19 were alive at once, and packages
+# late in the alphabet paid for the pile-up. shingocore/uop measured 36.5s
+# inside the suite against ~4.5s run on its own.
+#
+# So: start one server here, hand its address to every package through
+# $SHINGO_TEST_PG, and let the first process that needs a template build it
+# under an advisory lock while the rest wait and reuse it. Per-package setup
+# becomes one CREATE DATABASE ... TEMPLATE, which is a file copy.
+#
+# THE TEMPLATE NAME IS SCOPED TO THIS RUN ($$). testdb defaults the name to the
+# migration version, which is enough to stop a new migration reusing an old
+# template — but a baseline-DDL edit that adds no migration would not change
+# that name, and this container is thrown away at the end of the run anyway.
+# Naming it per run means the full gate is never the thing that discovers a
+# stale-template bug.
+#
+# TUNED FOR DATA NOBODY KEEPS. fsync/synchronous_commit/full_page_writes exist
+# to survive a crash; this database does not survive the script. PGDATA on
+# tmpfs for the same reason — via a SUBDIRECTORY of the mount, because the
+# entrypoint creates that subdirectory with the 0700 postgres-owned permissions
+# initdb insists on, while the mount point itself lands world-writable and
+# initdb refuses it. max_connections is raised because every package's pool
+# lands on this one server now.
+sharedPG=""
+
+start_shared_pg() {
+  local id port deadline
+  id="$(docker run -d \
+      -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=postgres \
+      -e PGDATA=/var/lib/postgresql/data/pgdata \
+      --tmpfs /var/lib/postgresql/data:rw,size=4g \
+      -p 127.0.0.1::5432 \
+      postgres:16-alpine \
+      -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+      -c max_connections=500 -c shared_buffers=256MB 2>&1)" || return 1
+  case "$id" in *[!0-9a-f]*|"") return 1 ;; esac
+  sharedPG="$id"
+  trap stop_shared_pg EXIT INT TERM
+
+  deadline=$(( $(date +%s) + 60 ))
+  until docker exec "$id" pg_isready -U test -q 2>/dev/null; do
+    [ "$(date +%s)" -gt "$deadline" ] && return 1
+    sleep 0.5
+  done
+
+  port="$(docker port "$id" 5432/tcp 2>/dev/null | head -1 | sed 's/.*://')"
+  [ -z "$port" ] && return 1
+
+  export SHINGO_TEST_PG="127.0.0.1:$port"
+  export SHINGO_TEST_PG_TEMPLATE="template_gate_$$"
+  return 0
+}
+
+stop_shared_pg() {
+  [ -z "$sharedPG" ] && return 0
+  docker rm -f "$sharedPG" >/dev/null 2>&1
+  sharedPG=""
+}
+
+# docker_p answers how many test binaries to run at once.
+#
+# It used to be a hardcoded `-p 1`, to stop packages fighting over containers.
+# One shared server removes that reason, but the obvious follow-up — turn the
+# packages loose — is WRONG, and measured wrong rather than argued wrong. On
+# this 20-core host, shingo-core's docker suite from a fresh container:
+#
+#   -p 1                183s
+#   -p 2                151s
+#   -p 4                116s   <- best
+#   -p 8                116s, and every package individually 4-6x slower
+#                              (shingocore/engine 16.3s -> 95.3s)
+#   -p 4 -parallel 5    204s
+#   -p 6 -parallel 4    277s
+#
+# The reason -p 8 buys nothing is that THE BOX IS ALREADY BUSY AT -p 1: tests
+# inside a package run up to GOMAXPROCS-parallel, so eight packages at once is
+# ~160 concurrent tests on 20 cores and they thrash. The reason capping
+# -parallel is worse still is the mirror image — the big packages (engine,
+# dispatch, www) get their speed FROM in-package parallelism, and throttling it
+# to hand cores to other packages trades a large win for a small one.
+#
+# So: oversubscribe by about 4x and no more, which is what nproc/4 is. Tests
+# here are mostly waiting on Postgres round-trips rather than burning CPU, which
+# is why some oversubscription wins at all. Derived rather than hardcoded
+# because 4 is this host's answer, not everyone's — on an 8-core laptop the same
+# rule gives 2, and on CI's 2-core runners it gives 1, which is where a
+# hardcoded 4 would thrash hardest.
+docker_p() {
+  local cores
+  cores="$(nproc 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-4}")"
+  case "$cores" in *[!0-9]*|"") cores=4 ;; esac
+  local p=$(( cores / 4 ))
+  [ "$p" -lt 1 ] && p=1
+  [ "$p" -gt 4 ] && p=4
+  echo "$p"
+}
+
 step_docker() {
-  local m failed=0 mods logdir
+  local m failed=0 mods logdir p
   mods="$(docker_modules)"
+  p="$(docker_p)"
   if [ -z "$mods" ]; then
     echo "ok   docker (no module carries a go:build docker test)"
     return 0
   fi
   logdir="$ROOT/.gate"
   mkdir -p "$logdir" || { echo "FAIL docker — cannot create $logdir"; return 1; }
+
+  # A shared server is a SPEEDUP, NOT A GATE. If it cannot be had — no image
+  # pulled yet, a daemon that just came up, a host with the port range locked
+  # down — say so once and let every package fall back to making its own
+  # container, which is what they did before this existed. The one thing not to
+  # do is fail the gate: the verdict this script returns is about the code.
+  if start_shared_pg; then
+    echo "  docker: shared postgres at $SHINGO_TEST_PG (template $SHINGO_TEST_PG_TEMPLATE, -p $p)"
+  else
+    stop_shared_pg
+    unset SHINGO_TEST_PG SHINGO_TEST_PG_TEMPLATE
+    echo "  docker: WARNING — could not start a shared postgres;" >&2
+    echo "          each package will start its own (adds roughly 5s per package)." >&2
+  fi
+
   for m in $mods; do
     echo "  docker: $m"
-    ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p 1 ./... >"$logdir/docker-$m.log" 2>&1 ) \
+    ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p "$p" ./... >"$logdir/docker-$m.log" 2>&1 ) \
       || { failed=1; echo "  --- $m ($logdir/docker-$m.log) ---"; grep -Ev '^ok |no test files' "$logdir/docker-$m.log" | head -30; }
   done
+  # Explicit teardown as well as the trap: the trap covers the interrupted run,
+  # this covers the normal one, and it takes the server down before the verdict
+  # is printed rather than after the script has already returned.
+  stop_shared_pg
   [ "$failed" -eq 0 ] && echo "ok   docker" || echo "FAIL docker"
   return $failed
 }
@@ -329,10 +541,17 @@ case "${1:-all}" in
     step_fmt  || rc=1
     step_vet  || rc=1
     step_lint || rc=1
-    step_test || rc=1
+    # Scope is decided BEFORE the tests here, because it decides what the tests
+    # have to cover: when the docker step runs it already runs every untagged
+    # test in the modules that carry docker tests, so only the modules it does
+    # not reach need their own run. See untagged_only_modules. When docker is
+    # out of scope nothing else covers them and every module runs, which is
+    # what `all` does too.
     if step_scope "${2:-}"; then
+      step_test "$(untagged_only_modules)" || rc=1
       step_docker || rc=1
     else
+      step_test || rc=1
       echo "     (docker suites skipped — nothing in this diff can reach one)"
     fi
     ;;

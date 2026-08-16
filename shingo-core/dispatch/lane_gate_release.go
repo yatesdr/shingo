@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"fmt"
 	"log"
 	"sort"
 	"sync"
@@ -113,9 +114,9 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 		log.Printf("lane gate: list staged orders for lane %s: %v", lane.Name, err)
 		return
 	}
-	if len(candidates) == 0 {
-		return
-	}
+	// NOTE: no early return on an empty store set — a lane can have staged RETRIEVES
+	// and no staged stores, and bailing here would skip the retrieve release loop
+	// below. Both loops no-op cleanly on an empty candidate slice.
 
 	// Deepest first — but be clear about what this sort does and does not buy,
 	// because it is easy to mistake it for the safety mechanism.
@@ -163,6 +164,42 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 		}
 		released++
 	}
+
+	// Retrieves dwelling at the gate (source-side staged). A retrieve's lane is its
+	// SOURCE, so it is never in the store candidate set (which matches delivery_node);
+	// it has its own candidate query and its own classifier. Same pass, same per-lane
+	// mutex, same deepest-first order — though for a retrieve "deepest" just sequences
+	// the releases and does not buy the wall-prevention the store sort does (a retrieve
+	// frees a slot rather than walling one). The release condition is the retrieve
+	// classifier's: no dig holds the lane and the wanted bin is not buried.
+	retrieveCandidates, err := d.gateStagedRetrievesInLane(lane)
+	if err != nil {
+		log.Printf("lane gate: list staged retrieves for lane %s: %v", lane.Name, err)
+		return
+	}
+	sort.SliceStable(retrieveCandidates, func(i, j int) bool {
+		if retrieveCandidates[i].depth != retrieveCandidates[j].depth {
+			return retrieveCandidates[i].depth > retrieveCandidates[j].depth
+		}
+		return retrieveCandidates[i].order.ID < retrieveCandidates[j].order.ID
+	})
+	for _, c := range retrieveCandidates {
+		park, cause, cErr := d.laneGateRetrieveCause(lane, c.order, c.dest)
+		if cErr != nil {
+			log.Printf("lane gate: retrieve classifier error for order %d on lane %s: %v", c.order.ID, lane.Name, cErr)
+			continue
+		}
+		if park {
+			d.dbg("lane gate: retrieve order %d still held at %s (%s)", c.order.ID, lane.Name, cause)
+			continue
+		}
+		if err := d.releaseGatedRetrieve(c.order, lane); err != nil {
+			log.Printf("lane gate: release retrieve %d into lane %s: %v", c.order.ID, lane.Name, err)
+			continue
+		}
+		released++
+	}
+
 	if released > 0 {
 		log.Printf("lane gate: released %d order(s) into lane %s", released, lane.Name)
 	}
@@ -227,6 +264,92 @@ func (d *Dispatcher) gateStagedInLane(lane *nodes.Node) ([]gateCandidate, error)
 	return out, nil
 }
 
+// gateStagedRetrievesInLane is the retrieve mirror of gateStagedInLane: orders
+// dwelling at this lane's gate whose SOURCE (not delivery) node is a lane slot.
+//
+// The same slot-name/depth index is built once and shared conceptually with the
+// store query, but the active-set read is ActiveLaneRetrieves (source_node match)
+// rather than ActiveLaneStores (delivery_node match) — a staged retrieve's
+// delivery_node is the line, so the store query would never see it. The candidate's
+// depth is its SOURCE slot depth (how deep it must reach into the lane), and the
+// lane-relevant node — src — is what the retrieve classifier reads.
+func (d *Dispatcher) gateStagedRetrievesInLane(lane *nodes.Node) ([]gateCandidate, error) {
+	slots, err := d.db.ListLaneSlots(lane.ID)
+	if err != nil || len(slots) < 2 {
+		return nil, err
+	}
+	lanePrefix := lane.Name + "."
+	slotNames := make([]string, 0, 2*len(slots))
+	nodeByName := make(map[string]*nodes.Node, 2*len(slots))
+	depthByName := make(map[string]int, 2*len(slots))
+	for _, s := range slots {
+		dep, dErr := d.db.GetSlotDepth(s.ID)
+		if dErr != nil {
+			return nil, dErr
+		}
+		slotNames = append(slotNames, s.Name, lanePrefix+s.Name)
+		nodeByName[s.Name], nodeByName[lanePrefix+s.Name] = s, s
+		depthByName[s.Name], depthByName[lanePrefix+s.Name] = dep, dep
+	}
+
+	active, err := d.db.ActiveLaneRetrieves(slotNames)
+	if err != nil {
+		return nil, err
+	}
+	var out []gateCandidate
+	for _, o := range active {
+		if !IsGateStaged(o) || o.Status == StatusFaulted {
+			continue
+		}
+		src := nodeByName[o.SourceNode]
+		if src == nil {
+			continue
+		}
+		// dest on a retrieve candidate is the line node, not a lane slot — carry it
+		// for the append's dropoff, but the lane-relevant node and depth are src.
+		out = append(out, gateCandidate{order: o, dest: src, depth: depthByName[o.SourceNode]})
+	}
+	return out, nil
+}
+
+// outbound mirror of laneEntryCause. A retrieve dwelling at the gate is parked
+// (held) when EITHER:
+//
+//   - a dig holds the lane (ModeDig is always-exclusive: nothing enters while a
+//     dig works, and "everything respects the dig" is the whole point of gating).
+//   - the bin the retrieve wants is BURIED — a shallower slot in the lane still
+//     holds a bin, so the target is physically unreachable until that bin leaves.
+//
+// Otherwise the lane is safe and the retrieve is released: the tail's pickup+dropoff
+// is appended and the robot enters to pull the bin.
+//
+// This is deliberately NOT a depth-ordered entry classifier like laneEntryCause
+// (the store path's Tier 1/2/3). Those tiers exist to stop stores from WALLING each
+// other — two stores into one lane must enter deepest-first or the shallow one
+// blocks the deep. Retrieves do the opposite: a retrieve REMOVES a bin, so two
+// retrieves into one lane free each other rather than wall, and the only thing that
+// can actually stop a retrieve is a dig or a real burial. The single-file mouth gate
+// (reservations/mouth.go admitMouth) already serializes same-mode sharers, so
+// retrieve-vs-retrieve ordering is handled there, not here. (See buried_retrieve_test
+// .go's claim: the gain is travel overlap ONLY, never entry at exposure.)
+//
+// sourceNode is the lane slot the bin currently sits in; its depth is the burial
+// bound. It is re-read at release (rebindGatedPickup), because a dig can move the
+// bin while this order dwells.
+func (d *Dispatcher) laneGateRetrieveCause(lane *nodes.Node, order *orders.Order, sourceNode *nodes.Node) (park bool, cause string, err error) {
+	if d.laneLock.IsLocked(lane.ID) {
+		return true, "lane-dig-active", nil // a dig holds the lane — everything respects the dig
+	}
+	blockers, err := findBuriedBlockers(d.db, sourceNode.ID)
+	if err != nil {
+		return false, "", err // unreadable lane: the caller logs and leaves the order parked
+	}
+	if len(blockers) > 0 {
+		return true, "lane-target-buried", nil // a shallower bin still sits in front of the wanted slot
+	}
+	return false, "", nil // lane safe: no dig, bin reachable — release
+}
+
 // releaseGatedOrder binds the dropoff against the lane as it stands, appends the
 // tail, and seals the order.
 //
@@ -272,6 +395,76 @@ func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node) er
 	d.setQueueReason(fresh, "", "", QueueParams{})
 	d.dbg("lane gate: order %d released into lane %s at %s", fresh.ID, lane.Name, dest.Name)
 	return nil
+}
+
+// releaseGatedRetrieve is the retrieve mirror of releaseGatedOrder: re-bind the
+// pickup against where the bin actually sits NOW, append the [pickup, dropoff]
+// tail, and seal. Same double-append guard (re-read + IsGateStaged re-check under
+// the per-lane mutex) — wait_index is the witness either way.
+//
+// The pickup re-bind is the retrieve's reason to bind at release: a dig may have
+// moved the wanted bin while this order dwelled at the gate, so the slot the order
+// was born wanting is not necessarily the slot the bin occupies when the lane opens.
+func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node) error {
+	fresh, err := d.db.GetOrder(order.ID)
+	if err != nil || fresh == nil {
+		return err
+	}
+	if !IsGateStaged(fresh) {
+		d.dbg("lane gate: retrieve %d no longer gate-staged (wait_index=%d status=%s) — another pass released it",
+			fresh.ID, fresh.WaitIndex, fresh.Status)
+		return nil
+	}
+
+	src, err := d.rebindGatedPickup(fresh, lane)
+	if err != nil {
+		// The bin moved (a dig relocated it) and its current location is not the lane
+		// slot the order holds, or the slot is no longer reachable. Refusing is safe:
+		// appending a pickup against a slot the bin left would pick the wrong bin (or
+		// none). The order stays staged; the dig/reshuffle machinery updates the bin's
+		// location and the next firing re-tries once the lane is consistent.
+		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, "gate-rebind-unavailable",
+			QueueParams{Destination: lane.Name})
+		return err
+	}
+
+	if err := d.appendGateTail(fresh, "lane gate release (retrieve)"); err != nil {
+		d.noteGateAppendFailure(fresh, lane)
+		return err
+	}
+	d.clearGateAppendFailures(fresh.ID)
+	d.setQueueReason(fresh, "", "", QueueParams{})
+	d.dbg("lane gate: retrieve %d released into lane %s from %s", fresh.ID, lane.Name, src.Name)
+	return nil
+}
+
+// rebindGatedPickup confirms the wanted bin still sits at the order's source slot —
+// the common case, since a retrieve usually dwells only while a dig clears, and the
+// dig extracts THIS bin last (it is the target). Returns the node the tail will
+// pick from.
+//
+// v1 scope: this confirms the source as-is. The full dig-relocation rebind — "a dig
+// moved my bin to a different slot, re-resolve to its new location" — is the
+// retrieve analog of rebindGatedDropoff's slot-search, but it is a BIN lookup (by
+// claimed_by / bin id), not a find-empty-slot, and the dig's own machinery is what
+// moves the bin. That rebind is a documented refinement; for now, if the bin has
+// left the source slot, refuse (the order stays staged until the lane is
+// consistent), which is always safe.
+func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node) (*nodes.Node, error) {
+	current, err := d.db.GetNodeByDotName(order.SourceNode)
+	if err != nil || current == nil {
+		return nil, fmt.Errorf("rebind pickup: source node %q not found", order.SourceNode)
+	}
+	// The bin must still be at the source slot. If a dig moved it, the slot is empty
+	// and we refuse rather than pick nothing.
+	bins, err := d.db.ListBinsByNode(current.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(bins) == 0 {
+		return nil, fmt.Errorf("rebind pickup: source slot %s is empty — the bin moved; refusing to release", current.Name)
+	}
+	return current, nil
 }
 
 // rebindGatedDropoff re-resolves the order's dropoff against the lane AS IT

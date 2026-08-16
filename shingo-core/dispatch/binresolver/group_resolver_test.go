@@ -36,7 +36,7 @@ func TestFIFO_PicksOldestAcrossLanes(t *testing.T) {
 	f.sourceInLane[laneA.ID] = binA
 	f.sourceInLane[laneB.ID] = binB
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	got, err := gr.ResolveRetrieve(group, "P1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -69,7 +69,7 @@ func TestFIFO_BuriedOlderThanAccessibleTriggersReshuffle(t *testing.T) {
 	f.sourceInLane[lane.ID] = acc
 	f.oldestBuried[lane.ID] = laneBuried{bin: buried, slot: buriedSlot}
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	_, err := gr.ResolveRetrieve(group, "P1")
 	var bErr *BuriedError
 	if !errors.As(err, &bErr) {
@@ -105,10 +105,9 @@ func TestFIFO_SkipsLockedLanes(t *testing.T) {
 	attachSlot(newerInOpen, slot)
 	f.sourceInLane[open.ID] = newerInOpen
 
-	ll := NewLaneLock()
-	ll.TryLock(locked.ID, 999)
+	f.lockLaneForDig(locked.ID)
 
-	gr := &GroupResolver{DB: f, LaneLock: ll}
+	gr := &GroupResolver{DB: f}
 	got, err := gr.ResolveRetrieve(group, "P1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -146,7 +145,7 @@ func TestCOST_PrefersAccessibleOverOlderBuried(t *testing.T) {
 	// an accessible bin is present.
 	f.buriedAny[lane.ID] = laneBuried{bin: buried, slot: buriedSlot}
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	got, err := gr.ResolveRetrieve(group, "P1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -173,7 +172,7 @@ func TestCOST_FallsBackToBuriedWhenNoAccessible(t *testing.T) {
 	// No source bin in lane -> fake returns error, resolver treats as
 	// "no accessible" and falls through to the burial scan.
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	_, err := gr.ResolveRetrieve(group, "P1")
 	var bErr *BuriedError
 	if !errors.As(err, &bErr) {
@@ -215,7 +214,7 @@ func TestFAVL_FirstAvailableNoReshuffle(t *testing.T) {
 		slot: slotInLane(999, "deep"),
 	}
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	got, err := gr.ResolveRetrieve(group, "P1")
 	// Any error here — BuriedError included — counts as failure: the
 	// whole point of FAVL is to skip the burial-detection code path.
@@ -245,7 +244,7 @@ func TestLKND_PrefersConsolidationOverEmptier(t *testing.T) {
 	// 'match' already holds a matching bin — consolidation wins.
 	f.bins[match.ID] = []*bins.Bin{availBin(100, "P1", time.Now())}
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	got, err := gr.ResolveStore(group, "P1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -272,7 +271,7 @@ func TestLKND_EmptiestWhenNoMatch(t *testing.T) {
 	f.laneBinCounts[laneB.ID] = 1
 	// No bins anywhere -> hasMatch stays false for both, emptier wins.
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	got, err := gr.ResolveStore(group, "P1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -304,7 +303,7 @@ func TestLKND_PacksDeepestLaneAheadOfEmptiest(t *testing.T) {
 	f.laneBinCounts[front.ID] = 0
 	f.laneBinCounts[back.ID] = 2
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	got, err := gr.ResolveStore(group, "P1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -330,7 +329,7 @@ func TestLKND_SkipsLaneWithPayloadMismatch(t *testing.T) {
 	// 'restricted' accepts only payload OTHER; the request is for P1.
 	f.effPayloads[restricted.ID] = []*payloads.Payload{payload("OTHER")}
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	got, err := gr.ResolveStore(group, "P1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -354,7 +353,7 @@ func TestLKND_SkipsBinTypeMismatch(t *testing.T) {
 	f.effBinTypes[restricted.ID] = []*bins.BinType{binType(99)}
 
 	want := int64(7)
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	got, err := gr.ResolveStore(group, "", &want)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -381,7 +380,7 @@ func TestDPTH_LanesBeatDirectChildren(t *testing.T) {
 	laneSlot := slotInLane(100, "lane-slot")
 	f.storeSlot[lane.ID] = laneSlot
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	got, err := gr.ResolveStore(group, "P1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -404,7 +403,7 @@ func TestDPTH_FallsBackToDirectChild(t *testing.T) {
 	// No storeSlot fixture for 'full-lane' -> FindStoreSlotInLane errors.
 	f.binCounts[direct.ID] = 0
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	got, err := gr.ResolveStore(group, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -423,7 +422,7 @@ func TestClassifyEmpty_NoEnabledChildren_Structural(t *testing.T) {
 	group := ngrpNode(1, "grp")
 	f.children[group.ID] = []*nodes.Node{disabledChild(10, "off")}
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	_, err := gr.ResolveRetrieve(group, "P1")
 	var sErr *StructuralError
 	if !errors.As(err, &sErr) {
@@ -446,7 +445,7 @@ func TestClassifyEmpty_NoChildAcceptsPayload_Structural(t *testing.T) {
 	// Child only accepts payload OTHER; requester asks for P1.
 	f.effPayloads[child.ID] = []*payloads.Payload{payload("OTHER")}
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	_, err := gr.ResolveRetrieve(group, "P1")
 	var sErr *StructuralError
 	if !errors.As(err, &sErr) {
@@ -466,7 +465,7 @@ func TestClassifyEmpty_Transient_WhenGroupStructurallyCapable(t *testing.T) {
 	// Empty effective payloads = "no restriction" -> capable.
 	// No bins at the child -> nothing to retrieve.
 
-	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: f}
 	_, err := gr.ResolveRetrieve(group, "P1")
 	if err == nil {
 		t.Fatal("expected transient error when no bin available")

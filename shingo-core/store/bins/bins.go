@@ -81,15 +81,18 @@ const PayloadBinTypeAdvisoryClause = `
 //
 // Empties are fungible — which physical empty fills an order doesn't matter, so
 // the planner should grab the one that costs the least to extract:
-//  1. accessible slots first — a slot is accessible when nothing shallower in
-//     its lane is occupied (mirrors nodes.IsSlotAccessible exactly: no parent or
-//     no depth ⇒ accessible; otherwise no occupied sibling at a smaller depth);
+//  1. accessible slots first — nodes.ReachableSQL, the one definition of "no
+//     occupied slot sits strictly shallower in the same lane". This used to be
+//     an inline copy annotated "mirrors nodes.IsSlotAccessible exactly", which
+//     is the kind of claim a comment cannot keep;
 //  2. then shallowest depth — a lane-mouth empty beats one a row deeper;
 //  3. then bin id — a stable tiebreak.
 //
 // Before 2026-06-13 these queries ordered by bin id alone (lane-blind FIFO), so
 // the planner routinely picked a buried empty and then reactively reshuffled the
-// bins on top of it (planning_service.go IsSlotAccessible → planBuriedReshuffle).
+// bins on top of it — the post-find buried check in source_finder.go's tier 6,
+// which routes to planBuriedReshuffleAtIntake. (This cited planning_service.go
+// until 2026-08-04; the check moved onto the finder and the citation did not.)
 // Ordering accessibility first means an accessible empty is always preferred and
 // a reshuffle happens only when EVERY compatible empty is buried — the lane mouth
 // is emptied before anything gets dug out. The reshuffle path stays as the
@@ -97,12 +100,17 @@ const PayloadBinTypeAdvisoryClause = `
 //
 // The accessibility subquery is uncorrelated to query params (it references the
 // candidate's own node columns), so it does not shift caller placeholder numbers.
-const AccessibleEmptyOrder = `
-	ORDER BY (n.parent_id IS NULL OR n.depth IS NULL OR NOT EXISTS (
-	             SELECT 1 FROM nodes sib JOIN bins bb ON bb.node_id = sib.id
-	             WHERE sib.parent_id = n.parent_id AND sib.id != n.id
-	               AND sib.depth IS NOT NULL AND sib.depth < n.depth
-	         )) DESC,
+//
+// The two escape hatches ahead of it are kept verbatim. ReachableSQL already
+// answers true for a slot with no parent (the correlation yields no rows) and
+// for one with no depth (its own IS NOT NULL guard), so they are redundant —
+// but this is the only spelling that carried them in SQL rather than in Go, and
+// deleting them here would make a reader hunt for where the null cases went.
+//
+// A var rather than a const now, since it is composed at init. Every caller
+// interpolates it with fmt.Sprintf, so nothing needed a constant.
+var AccessibleEmptyOrder = `
+	ORDER BY (n.parent_id IS NULL OR n.depth IS NULL OR ` + helpers.ReachableSQL("n") + `) DESC,
 	         COALESCE(n.depth, 0) ASC,
 	         b.id ASC
 	LIMIT 1`

@@ -39,6 +39,15 @@ type fakeFinderDB struct {
 	groupEmpty  *bins.Bin
 	accessible  map[int64]bool // slot -> accessible; absent = accessible
 
+	// accessibilityErr makes the reachability read FAIL rather than answer, which
+	// is the only way to exercise the fail-closed disposition (D2). Set, it wins
+	// over `accessible`.
+	accessibilityErr error
+	// nodeErr makes GetNode fail for one id — the second and third reads in the
+	// same tier-6 block, which used to fall through to OutcomeFound just as
+	// silently as the first.
+	nodeErr map[int64]error
+
 	fifoCalls        int
 	globalEmptyCalls int
 	groupEmptyCalls  int
@@ -85,6 +94,9 @@ func (f *fakeFinderDB) GetNodeByDotName(name string) (*nodes.Node, error) {
 }
 
 func (f *fakeFinderDB) GetNode(id int64) (*nodes.Node, error) {
+	if err, ok := f.nodeErr[id]; ok {
+		return nil, err
+	}
 	if n, ok := f.nodesByID[id]; ok {
 		return n, nil
 	}
@@ -150,6 +162,9 @@ func (f *fakeFinderDB) FindEmptyCompatibleBinInGroup(_ string, _, _ int64) (*bin
 }
 
 func (f *fakeFinderDB) IsSlotAccessible(id int64) (bool, error) {
+	if f.accessibilityErr != nil {
+		return false, f.accessibilityErr // fails closed: false AND the error
+	}
 	if f.accessible == nil {
 		return true, nil
 	}

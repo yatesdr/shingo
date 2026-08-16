@@ -21,8 +21,13 @@ import (
 // package call on *store.DB — no more, no less. A lint of
 // `grep 'r\.DB\.' *.go` should match one-to-one with the entries here.
 type Store interface {
-	// Node / child listing.
+	// Node / child listing. ListChildNodesUnlocked is the candidate read for
+	// every group scan: it excludes dig-held lanes in the query, so a locked
+	// lane is never a candidate rather than being a candidate this package has
+	// to remember to skip. ListChildNodes stays for resolver.go's synthetic-node
+	// walk, which is not a lane scan.
 	ListChildNodes(parentID int64) ([]*nodes.Node, error)
+	ListChildNodesUnlocked(parentID int64) ([]*nodes.Node, error)
 	GetNode(id int64) (*nodes.Node, error)
 	GetNodeProperty(nodeID int64, key string) string
 

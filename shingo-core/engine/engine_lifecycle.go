@@ -35,8 +35,6 @@ func (e *Engine) Start() {
 		e.cfg.Messaging.DispatchTopic,
 		resolver,
 	)
-	// Share the lane lock between dispatcher and resolver
-	resolver.LaneLock = e.dispatcher.LaneLock()
 
 	// Initialize tracker if backend supports it
 	if tb, ok := e.fleet.(fleet.TrackingBackend); ok {
@@ -83,14 +81,6 @@ func (e *Engine) Start() {
 		e.logFn("engine: retire reshuffle_restore orders: %v", err)
 	} else if n > 0 {
 		e.logFn("engine: retired %d leftover reshuffle_restore order(s)", n)
-	}
-
-	// Restore lane holds from the durable dig mouth rows FIRST, before any
-	// dispatch runs: the rows are the restart authority now, so a bulk rebuild
-	// re-establishes every held lane at once (no per-order re-acquire, no
-	// lost-race window). Non-fatal — a fresh DB simply has no rows.
-	if err := e.dispatcher.RestoreLaneHolds(); err != nil {
-		e.logFn("engine: restore lane holds: %v", err)
 	}
 
 	// Recover pending lane-lock-extension LISTENERS from the

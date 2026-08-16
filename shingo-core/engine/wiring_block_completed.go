@@ -289,6 +289,29 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	// or a simple store's final drop (drop == delivery) would never early-release
 	// its lane. A no-op when the gate is off or the drop is not into a lane.
 	e.dispatcher.ReleaseInboundLaneForOrder(ev.OrderID, location)
+	// Hold B: the leg has PLACED its bin, so it is out of the lane it was
+	// working. Released here and not at pickup — after a pickup the robot is
+	// still in the lane holding the bin.
+	e.dispatcher.ReleaseLaneOccupancy(ev.OrderID)
+	// ...and the lane just became free, so re-drive the reshuffle NOW rather than
+	// waiting for this leg to reach a terminal status.
+	//
+	// THIS IS WHERE THE GAIN ACTUALLY COMES FROM, and without it removing the
+	// sibling-in-flight guard changes nothing observable. A leg's occupancy ends
+	// at its dropoff, but the ORDER ends later, at whole-order FINISHED; the only
+	// caller of AdvanceCompoundOrder was child completion, so nothing ever
+	// dispatched during the window between the two. The guard was gone and the
+	// serialization remained, just enforced somewhere else.
+	//
+	// Re-driving here is what puts a second leg into the lane while the first is
+	// still driving back. It is safe to call spuriously: AdvanceCompoundOrder
+	// refuses a child whose lane is occupied, and refuses to dispatch any child
+	// that already carries a VendorOrderID.
+	if order.ParentOrderID != nil {
+		if err := e.dispatcher.AdvanceCompoundOrder(*order.ParentOrderID); err != nil {
+			e.logFn("engine: advance compound %d after a leg cleared its lane: %v", *order.ParentOrderID, err)
+		}
+	}
 	if location == "" || location == strings.TrimSpace(order.DeliveryNode) {
 		return // final delivery is recorded at whole-order FINISHED
 	}

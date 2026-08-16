@@ -44,7 +44,7 @@ func TestResolveStore_ResolveAround_PrefersCompatibleLane(t *testing.T) {
 			f.setProp(group.ID, PropResolveAround, "on")
 		}
 
-		gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
+		gr := &GroupResolver{DB: f}
 		res, err := gr.ResolveStore(group, "", nil)
 		if err != nil {
 			t.Fatalf("ResolveStore: %v", err)

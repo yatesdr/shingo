@@ -44,6 +44,13 @@ type fakeStore struct {
 	// Resolve-around: laneID -> LaneAcceptsInbound. Absent = true (an empty lane
 	// is compatible), so only tests that exercise resolve-around set it.
 	laneAccepts map[int64]bool
+
+	// digLocked: lanes a dig currently holds. In production this is a durable
+	// mouth row, and ListChildNodesUnlocked filters on it in SQL — so a locked
+	// lane is never a candidate rather than being one the resolver has to
+	// remember to skip. The fake models it the same way: as data the candidate
+	// read filters, not as an object the resolver consults.
+	digLocked map[int64]bool
 }
 
 type laneBuried struct {
@@ -68,6 +75,7 @@ func newFakeStore() *fakeStore {
 		oldestBuried:     map[int64]laneBuried{},
 		buriedAny:        map[int64]laneBuried{},
 		laneAccepts:      map[int64]bool{},
+		digLocked:        map[int64]bool{},
 	}
 }
 
@@ -84,6 +92,25 @@ func (f *fakeStore) setProp(nodeID int64, key, value string) {
 
 func (f *fakeStore) ListChildNodes(parentID int64) ([]*nodes.Node, error) {
 	return f.children[parentID], nil
+}
+
+func (f *fakeStore) ListChildNodesUnlocked(parentID int64) ([]*nodes.Node, error) {
+	var out []*nodes.Node
+	for _, c := range f.children[parentID] {
+		if f.digLocked[c.ID] {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// lockLaneForDig marks a lane dig-held, the fixture equivalent of a dig mouth
+// row existing. Replaces `ll := NewLaneLock(); ll.TryLock(lane, order)` — the
+// resolver no longer holds a lock object to ask, so the fixture sets the state
+// the candidate query reads.
+func (f *fakeStore) lockLaneForDig(laneID int64) {
+	f.digLocked[laneID] = true
 }
 
 func (f *fakeStore) GetNode(id int64) (*nodes.Node, error) {

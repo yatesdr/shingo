@@ -585,8 +585,8 @@ func TestFindEmptyCompatible(t *testing.T) {
 // grabs the one that costs the least to extract — an accessible lane-mouth empty
 // before a buried one — rather than the lowest bin id. Before the fix these
 // queries ordered by bin id alone, so a deep empty that happened to be inserted
-// first was picked and then reactively reshuffled (planning_service.go
-// IsSlotAccessible → planBuriedReshuffle). Accessibility-first ordering means the
+// first was picked and then reactively reshuffled (source_finder.go's tier-6
+// buried check → planBuriedReshuffleAtIntake). Accessibility-first ordering means the
 // dig-out only happens when every empty is buried (see the last-resort test).
 func TestFindEmptyCompatible_PrefersAccessibleEmpty(t *testing.T) {
 	t.Parallel()

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingocore/store/internal/helpers"
 )
 
 // ListLaneSlots returns all child nodes of a lane, ordered by depth (ascending).
@@ -32,30 +33,63 @@ func GetSlotDepth(db *sql.DB, nodeID int64) (int, error) {
 	return *depth, nil
 }
 
-// IsSlotAccessible returns true if no occupied slots exist at a shallower depth in the same lane.
-func IsSlotAccessible(db *sql.DB, slotNodeID int64) (bool, error) {
+// The reachability predicate itself lives in store/internal/helpers, not here
+// beside its readers where it would read most naturally. store/bins needs it too
+// (AccessibleEmptyOrder ranks by it) and the store-sub-pkg-isolation depguard
+// rule forbids one store aggregate importing a sibling — store/internal is the
+// allow-listed exception, and a definition two aggregates must agree on is what
+// that exception is for. helpers.LaneBlockerPredicate carries the argument for
+// the sibling scope, the self-exclusion, and the NULL-depth ruling.
+
+// BlockersInFrontOf returns every occupied slot strictly shallower than
+// slotNodeID in the same lane, shallowest first. It is the set whose emptiness
+// IS reachability: IsSlotAccessible is len()==0 over this, and
+// dispatch.findBuriedBlockers is this list — so the two stopped being two
+// implementations of the same sentence.
+//
+// A slot with no parent (not in a lane) or no depth (not a depth-ordered slot)
+// has nothing in front of it: (nil, nil). A slot that cannot be READ is an
+// error, never an empty list. Callers must fail closed — an unreadable lane is
+// treated as blocked, because refusing to move is recoverable and moving into a
+// lane whose state you could not read is not.
+func BlockersInFrontOf(db *sql.DB, slotNodeID int64) ([]*Node, error) {
 	slot, err := Get(db, slotNodeID)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	if slot.ParentID == nil {
-		return true, nil
-	}
-	if slot.Depth == nil {
-		return true, nil // no depth = accessible
+	if slot.ParentID == nil || slot.Depth == nil {
+		return nil, nil
 	}
 
-	var count int
-	err = db.QueryRow(`
-		SELECT COUNT(*) FROM nodes sib
-		JOIN bins b ON b.node_id = sib.id
-		WHERE sib.parent_id = $1 AND sib.id != $2
-		  AND sib.depth IS NOT NULL AND sib.depth < $3
-	`, *slot.ParentID, slotNodeID, *slot.Depth).Scan(&count)
+	rows, err := db.Query(fmt.Sprintf(`WITH lane_target AS (
+			SELECT id, parent_id, depth FROM nodes WHERE id = $1
+		)
+		SELECT %s %s
+		CROSS JOIN lane_target
+		WHERE %s
+		ORDER BY n.depth ASC`, SelectCols, FromClause, helpers.LaneBlockerPredicate("n", "lane_target")), slotNodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanNodes(rows)
+}
+
+// IsSlotAccessible returns true if no occupied slots exist at a shallower depth
+// in the same lane — the emptiness of BlockersInFrontOf, and nothing more. It
+// stays a named question because two call sites want only the boolean; it is
+// not a second implementation of one.
+//
+// It fails CLOSED: an unreadable lane returns false, and the error alongside it.
+// Callers must not read that false as "reachable, no blockers" — the point of
+// returning both is that "I could not tell" and "nothing is in the way" are
+// different answers and only one of them is safe to drive a robot on.
+func IsSlotAccessible(db *sql.DB, slotNodeID int64) (bool, error) {
+	blockers, err := BlockersInFrontOf(db, slotNodeID)
 	if err != nil {
 		return false, err
 	}
-	return count == 0, nil
+	return len(blockers) == 0, nil
 }
 
 // FindStoreSlotInLane finds the deepest empty, UNRESERVED slot in a lane for
@@ -120,21 +154,18 @@ func FindStoreSlotInLaneExcluding(db *sql.DB, laneID, excludeOrderID int64) (*No
 			  AND o.status NOT IN (%s)
 			  AND o.id <> $2
 		  )
-		  AND NOT EXISTS (
-			-- Accessibility guard (mirrors IsSlotAccessible): a slot is only a
-			-- valid pick if no OCCUPIED slot sits shallower in the same lane. The
-			-- deepest-empty slot can otherwise be stranded behind a shallow bubble
-			-- (an occupied slot with empties behind it), and a robot entering at
-			-- the mouth could never reach it.
-			SELECT 1 FROM nodes sib
-			JOIN bins bb ON bb.node_id = sib.id
-			WHERE sib.parent_id = n.parent_id
-			  AND sib.depth IS NOT NULL
-			  AND n.depth IS NOT NULL
-			  AND sib.depth < n.depth
-		  )
+		  -- Accessibility guard: a slot is only a valid pick if no OCCUPIED slot
+		  -- sits shallower in the same lane. The deepest-empty slot can otherwise
+		  -- be stranded behind a shallow bubble (an occupied slot with empties
+		  -- behind it), and a robot entering at the mouth could never reach it.
+		  --
+		  -- NOT owner-aware, unlike the three guards above it, and that asymmetry
+		  -- is correct: occupancy is occupancy regardless of whose order put the
+		  -- bin there. excludeOrderID exempts an order from its OWN holds; it can
+		  -- never exempt it from a physical bin.
+		  AND %s
 		ORDER BY COALESCE(n.depth, 0) DESC
-		LIMIT 1`, SelectCols, FromClause, protocol.TerminalStatusSQLList()), laneID, excludeOrderID)
+		LIMIT 1`, SelectCols, FromClause, protocol.TerminalStatusSQLList(), helpers.ReachableSQL("n")), laneID, excludeOrderID)
 	n, err := ScanNode(row)
 	if err != nil {
 		return nil, fmt.Errorf("no empty slot in lane %d", laneID)
@@ -231,6 +262,59 @@ func AuditLaneGeometry(db *sql.DB) ([]string, error) {
 			name, parentName))
 	}
 	return warnings, nested.Err()
+}
+
+// AuditLaneDepths returns startup warnings about lane children that HOLD A BIN
+// but have no depth. Nothing in the runtime path forbids one: plantspec rejects
+// Depth <= 0 for a spec'd slot (plantspec.validate), but ListLaneSlots filters
+// nothing and a scene can be edited outside the spec.
+//
+// This exists because of the ruling in laneBlockerPredicate. A depth-less
+// sibling is IGNORED — it is not a depth-ordered slot, so it cannot be in front
+// of anything — which was the majority reading and is now the only one. That
+// ruling is almost certainly right, and it is also unfalsifiable from inside the
+// code: if the geometry never occurs, the ruling costs nothing and this audit
+// never fires; if it does occur, a bin is sitting in a lane and NOTHING in the
+// system will ever treat it as being in the way. The two spellings used to
+// disagree about that case silently. Turning the silence into a boot warning is
+// the cheap half of the fix.
+//
+// It filters neither is_synthetic nor enabled, deliberately: the reachability
+// predicate filters neither, and this audit's whole job is to have exactly the
+// same reach as the thing it is auditing.
+//
+// A diagnostic only — it changes nothing, and an empty result means no lane is
+// holding inventory the reachability reader cannot see. Callers log each line at
+// boot.
+func AuditLaneDepths(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT n.name, ln.name, COUNT(b.id)
+		FROM nodes n
+		JOIN nodes ln ON ln.id = n.parent_id
+		JOIN node_types lnt ON lnt.id = ln.node_type_id
+		JOIN bins b ON b.node_id = n.id
+		WHERE lnt.code = $1
+		  AND n.depth IS NULL
+		GROUP BY n.name, ln.name
+		ORDER BY n.name`, protocol.NodeClassLANE)
+	if err != nil {
+		return nil, fmt.Errorf("audit lane depths: %w", err)
+	}
+	defer rows.Close()
+
+	var warnings []string
+	for rows.Next() {
+		var name, laneName string
+		var count int
+		if err := rows.Scan(&name, &laneName, &count); err != nil {
+			return nil, err
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"node %q in lane %q holds %d bin(s) but has NO depth — reachability ignores depth-less siblings, "+
+				"so nothing in that lane will ever treat those bins as being in the way",
+			name, laneName, count))
+	}
+	return warnings, rows.Err()
 }
 
 func classOrUntyped(code string) string {

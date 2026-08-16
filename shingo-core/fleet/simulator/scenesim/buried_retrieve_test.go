@@ -106,10 +106,12 @@ func retrieveTail(id, slot, dest string) []fleet.OrderBlock {
 	}
 }
 
-// digReq is a one-leg dig: lift the shallow blocker out of the lane and carry it
-// away. Submitted with dig=true so it holds the lane in dig mode, which is what
-// the mode-purity checker enforces exclusion against.
-func digReq(id, slot, dest string) fleet.CreateOrderRequest {
+// unburyReq is an unbury-only dig: lift the shallow blocker out of the lane and
+// carry it away (production's PlanReshuffleUnburyOnly shape). It does NOT retrieve
+// the buried target — a separate retriever robot does that once the lane opens.
+// Submitted with dig=true so it holds the lane mode-exclusive (ModeDig), which is
+// what the mode-purity checker + the dig hold enforce exclusion against.
+func unburyReq(id, slot, dest string) fleet.CreateOrderRequest {
 	return storeReq(id, slot, dest)
 }
 
@@ -134,11 +136,15 @@ func TestBuriedRetrieve_PrePositionsDuringDig(t *testing.T) {
 	if err := sim.AddRobot("RETRIEVER", "AISLE"); err != nil {
 		t.Fatalf("AddRobot RETRIEVER: %v", err)
 	}
-	// Parked well away, so "did the drive overlap the dig" is a question with a
-	// visible answer rather than a one-tick rounding difference.
-	sim.SetRobotApproach("RETRIEVER", 6)
+	// Parked far enough that "did the drive overlap the dig" has a visible answer,
+	// but NOT so far the retriever arrives after the dig already cleared (then there
+	// is no dwell window by construction and the pre-positioning is invisible). A
+	// one-bin dig settles in ~9 ticks; at the default HopTicks=3, approach=1 cell is
+	// ~3 ticks of travel, landing the retriever at the gate at ~tick 7 — mid-dig,
+	// with a 2-tick dwell before the lane opens.
+	sim.SetRobotApproach("RETRIEVER", 1)
 
-	if err := sim.Submit("DIGGER", digReq("dig-1", "S0", "LINE"), true); err != nil {
+	if err := sim.Submit("DIGGER", unburyReq("dig-1", "S0", "LINE"), true); err != nil {
 		t.Fatalf("Submit dig: %v", err)
 	}
 	// The increment: the retrieve goes out NOW, unsealed, rather than waiting in
@@ -205,7 +211,13 @@ func TestBuriedRetrieve_PrePositionsDuringDig(t *testing.T) {
 // geometry and that is a real finding, not a broken test.
 func TestBuriedRetrieve_PrePositioningBeatsSerialDispatch(t *testing.T) {
 	requireOutboundPhysics(t)
-	const approach = 6
+	// approach is in COARSE CELLS (each costs Options.HopTicks ticks), and it must
+	// fit inside the one-bin dig window (~9 ticks) or there is no overlap to measure.
+	// 2 cells ≈ 6 ticks of travel: enough to overlap the dig meaningfully, small
+	// enough that the retriever still reaches the gate before the lane opens.
+	const approach = 2
+	const hopTicks = 3 // matches newGatedSim's Options.HopTicks
+	approachTicks := approach * hopTicks
 
 	serial := runBuriedRetrieve(t, approach, false)
 	gated := runBuriedRetrieve(t, approach, true)
@@ -222,13 +234,13 @@ func TestBuriedRetrieve_PrePositioningBeatsSerialDispatch(t *testing.T) {
 		t.Errorf("pre-positioning bought nothing (both %d ticks) — on this geometry the "+
 			"increment does not pay for itself; re-read before building it", serial)
 	}
-	if saved > approach {
-		t.Errorf("saved %d ticks against an approach of %d — more than the overlap can "+
-			"physically account for, so the model is letting the retrieve into the lane "+
-			"early and is no longer testing v1", saved, approach)
+	if saved > approachTicks {
+		t.Errorf("saved %d ticks against a %d-cell approach (%d ticks) — more than the "+
+			"overlap can physically account for, so the model is letting the retrieve "+
+			"into the lane early and is no longer testing v1", saved, approach, approachTicks)
 	}
-	t.Logf("BURIED RETRIEVE pre-positioning: serial %d ticks, gated %d, saved %d of a %d-hop approach",
-		serial, gated, saved, approach)
+	t.Logf("BURIED RETRIEVE pre-positioning: serial %d ticks, gated %d, saved %d of a %d-tick (%d-cell) approach",
+		serial, gated, saved, approachTicks, approach)
 }
 
 // runBuriedRetrieve settles one dig + one buried retrieve and returns the tick it
@@ -247,7 +259,7 @@ func runBuriedRetrieve(t *testing.T, approach int, gated bool) int {
 	}
 	sim.SetRobotApproach("RETRIEVER", approach)
 
-	if err := sim.Submit("DIGGER", digReq("dig-1", "S0", "LINE"), true); err != nil {
+	if err := sim.Submit("DIGGER", unburyReq("dig-1", "S0", "LINE"), true); err != nil {
 		t.Fatalf("Submit dig: %v", err)
 	}
 	if gated {
