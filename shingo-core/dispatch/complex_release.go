@@ -50,6 +50,40 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
+	// ── The fence: one decider for every append ───────────────────────────
+	// Everything above this line consumed the station's contribution — the whole
+	// OrderRelease payload (RemainingUOP, Disposition, CalledBy) is read inside
+	// syncManifestForRelease and nowhere else. Everything below reads only the
+	// order row. So the cut between REPORTING a fact and DECIDING to append is
+	// already here; this states it.
+	//
+	// A GATE WAIT's precondition is internal to Core — a lane claim, a robot
+	// inside, a slot reachable — and nothing outside Core can know when it is
+	// satisfied. Only the evaluator (lane_gate_release.go) may advance one. This
+	// handler predates lane gating entirely; it was built for the case where a
+	// station reports something Core genuinely cannot see, and nobody scoped it
+	// when the gate arrived.
+	//
+	// Core is what makes this reachable, which is worth stating because it is not
+	// a story about a stray click: the robot parks on its Wait block, RDS reports
+	// WAITING, MapState turns that into staged, Core writes it and pushes
+	// TypeOrderStaged to the station — so the board is INVITED to offer a release,
+	// and the status precondition above passes because Core itself just wrote it.
+	// Removing the invitation is a separate step; this is the fence that holds
+	// whether or not a button exists.
+	//
+	// invalid_state, not a silent drop: Edge handles this code non-terminally on
+	// purpose (edge_handler.go, the ALN_003 divergence — a release rejection must
+	// never kill the Edge mirror). Any other code would terminalize the Edge row
+	// while Core's order lived on.
+	if IsGateStaged(order) {
+		d.dbg("release refused: order %d is parked on a gate wait — only the lane evaluator advances one",
+			order.ID)
+		d.sendError(env, p.OrderUUID, "invalid_state",
+			"this order is waiting on a lane, not on the station; Core releases it when the lane is safe")
+		return
+	}
+
 	var steps []resolvedStep
 	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
 		d.sendError(env, p.OrderUUID, "internal_error", "failed to parse stored steps")

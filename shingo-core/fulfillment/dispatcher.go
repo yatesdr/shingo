@@ -49,7 +49,7 @@ type Dispatcher interface {
 	// path (byte-identical when the gate is off). admitted=false means the lane is
 	// contended: the scanner parks the order in sourcing under WAITING_FOR_SLOT with
 	// the returned cause and lane name, holding its soft reservations (Rule 1).
-	AcquireLanesForOrder(orderID int64, sourceNode, destNode *nodes.Node) (admitted bool, cause, laneName string, err error)
+	AcquireLanesForOrder(orderID int64, sourceNode, destNode *nodes.Node) (admitted bool, cause dispatch.QueueCause, laneName string, err error)
 
 	// ReleaseLanesForOrder drops all of an order's lane mouth holds — used on a
 	// fleet-dispatch failure rollback so a hold from AcquireLanesForOrder does not
@@ -61,7 +61,7 @@ type Dispatcher interface {
 	// lane, so it must wait (dispatch-time only — the scanner re-evaluates on the
 	// next pass). park=false for every non-lane / non-mouth-enforced destination
 	// (byte-identical when the gate is off).
-	AdmitLaneEntry(order *orders.Order, destNode *nodes.Node) (park bool, cause string, err error)
+	AdmitLaneEntry(order *orders.Order, destNode *nodes.Node) (park bool, cause dispatch.QueueCause, err error)
 
 	// PlanBuriedReshuffle plans the reshuffle compound for a source that resolved
 	// BURIED on replay, making the order its own compound parent (→ reshuffling).

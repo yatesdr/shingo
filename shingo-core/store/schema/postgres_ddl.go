@@ -125,6 +125,24 @@ CREATE TABLE IF NOT EXISTS orders (
     -- origins buried in there. Only 'orphan' is a finding.
     origin_id       UUID,
     origin_class    TEXT NOT NULL DEFAULT '',
+    -- SEALEDNESS, on the compound parent. sealed = NOT open_for_children --
+    -- "sealed" is the concept's name everywhere else (SealDigGroup, the work
+    -- order, section 10.1, section 15.6) and this is the column that carries
+    -- it, so a grep for "sealed" lands here.
+    --
+    -- Named for the EXCEPTION so the safe state is the zero value in both
+    -- languages: false here and false for a bare orders.Order literal in Go,
+    -- and both mean sealed. A "sealed BOOLEAN DEFAULT TRUE" column would have
+    -- had the DB reading safe and the Go zero value reading OPEN, so the
+    -- dangerous value would be the one you get by forgetting.
+    --
+    -- Only a compound parent means anything by it. A reshuffle that may still
+    -- gain children is not finished when its current children are all
+    -- terminal, and "all children terminal" is what two readers use to decide
+    -- a reshuffle is DONE (AdvanceCompoundOrder's success arm and
+    -- AdvanceStuckReshuffleParents). Under the fold that state is the normal
+    -- one BETWEEN moves.
+    open_for_children BOOLEAN NOT NULL DEFAULT false,
     -- When an order was judged an orphan. A timestamp rather than a fourth
     -- origin_class, so aging records WHEN a judgement was made without
     -- overwriting WHAT the judgement was. Added by migration 61 and present at

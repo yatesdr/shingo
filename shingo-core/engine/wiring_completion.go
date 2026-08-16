@@ -222,6 +222,17 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 	// compound dispatcher serializes children sequentially, so the
 	// teleport class this guard prevents (concurrent reclaim) doesn't
 	// apply within a compound family.
+	//
+	// "The LAST step's UPDATE wins" is no longer unconditional, and the
+	// difference matters to this skip. That claim is now a sibling-scoped
+	// compare-and-set (store/orders.go CreateCompoundChildren): last-write-wins
+	// still holds for a bin held by this compound's parent or by one of its
+	// children — which is every case this skip is about — but a bin held by an
+	// order OUTSIDE the compound is refused and fails the whole transaction.
+	// So a child reaching here can no longer be carrying a bin an unrelated
+	// order claimed after the plan was built: the compound would never have been
+	// created. The skip is therefore narrower than it was in what it lets
+	// through, and unchanged in what it is FOR.
 	if order.ParentOrderID == nil {
 		bin, binErr := e.db.GetBin(*order.BinID)
 		if binErr != nil {

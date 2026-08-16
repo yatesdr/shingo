@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"errors"
+	"fmt"
 	"log"
 
 	"shingocore/store/nodes"
@@ -243,16 +244,30 @@ func (d *Dispatcher) releaseOrderLaneFor(orderID int64, node *nodes.Node) error 
 // INTO another, and the robot is inside each while it is there. A node that is
 // not a lane slot contributes nothing.
 //
-// Advisory today. It records; it does not arbitrate. While the compound
-// scheduler still dispatches one child at a time, at-most-one-inside is already
-// guaranteed by that, and this exists so the fact is durable and observable
-// before anything is permitted to rely on it.
-func (d *Dispatcher) TakeLaneOccupancy(orderID int64, nodes ...*nodes.Node) {
+// NO LONGER ADVISORY. Step 6 removed the sibling-in-flight guard, and from that
+// moment this row is the ONLY thing keeping two legs of one reshuffle out of one
+// lane: laneOccupiedForChild reads it and holds the child. The doc that used to
+// stand here — "it records; it does not arbitrate", true while the compound
+// scheduler dispatched one child at a time — described a world that ended with
+// that guard.
+//
+// So the error is returned rather than logged. The read side fails CLOSED (an
+// unreadable lane is a busy lane, compound.go); a write side that logged and
+// carried on meant a lane whose occupancy could not be RECORDED read as empty to
+// the next leg — the same collision, arrived at from the other direction.
+//
+// Returns on the FIRST failure, deliberately leaving any rows already taken in
+// place. A partial take is over-restrictive, never under: the extra row makes a
+// lane look busier than it is, which costs a wait. Rolling it back would be the
+// unsafe direction, and the caller holds the child rather than dispatching, so
+// nothing is inside the lanes this reported.
+func (d *Dispatcher) TakeLaneOccupancy(orderID int64, nodes ...*nodes.Node) error {
 	for _, laneID := range d.lanesFor(nodes...) {
 		if err := reservations.AcquireOccupancy(d.db.DB, orderID, laneID); err != nil {
-			log.Printf("lanegate: take occupancy for order %d on lane %d: %v", orderID, laneID, err)
+			return fmt.Errorf("take occupancy for order %d on lane %d: %w", orderID, laneID, err)
 		}
 	}
+	return nil
 }
 
 // ReleaseLaneOccupancy records that an order is out of every lane it occupied.
@@ -300,23 +315,73 @@ func (d *Dispatcher) lanesFor(ns ...*nodes.Node) []int64 {
 	return out
 }
 
-// causeForLaneHolds classifies a lane conflict for the operator-facing queue
-// reason (§6): lane-held-dig if any of the order's target lanes is held by a dig,
-// otherwise lane-held-traffic (a different-mode collision). Engineer-only detail;
-// the operator sees the same "Waiting for a slot at ‹lane›" either way.
-func (d *Dispatcher) causeForLaneHolds(orderID int64, holds []laneHold) string {
-	for _, h := range holds {
-		rows, err := reservations.ActiveMouthRows(d.db.DB, h.laneID)
-		if err != nil {
+// laneHoldRead is one lane's mouth rows as they came back, error included. The
+// error is carried rather than handled so the classification below can see the
+// difference between "read it, no dig" and "could not read it".
+type laneHoldRead struct {
+	rows []reservations.MouthHold
+	err  error
+}
+
+// classifyLaneHoldCause turns those reads into the engineer-facing cause.
+//
+// Pure, and split out from the gathering for one reason: the interesting arm is
+// the one where a read FAILED, and there is no way to make a SELECT fail for one
+// lane in a shared test database without breaking every other test using the
+// table. A pure classifier can be handed the failure directly. (The gathering
+// half is a loop and a call; the decision is what had the bug.)
+//
+// Precedence is deliberate and is the fix:
+//
+//	a readable dig anywhere  -> lane-held-dig        (definite, and it wins)
+//	otherwise any failed read -> lane-held-unreadable (we cannot rule a dig out)
+//	otherwise                 -> lane-held-traffic    (definite)
+//
+// It used to `continue` past a failed read and fall through to traffic, so a
+// dig-held lane whose row could not be read was filed as ordinary traffic
+// contention. Nothing was unsafe — admission had already refused, and this only
+// labels that refusal — but the label is what an engineer reads when a lane
+// stalls, and a dig stall and a traffic stall are investigated differently. It
+// is the §17.5/§17.8 family: not an alarm that fails to fire, an alarm that
+// fires with the wrong name on it, which costs the next reader more than silence
+// would.
+//
+// A definite dig still wins over an unreadable sibling lane, because a dig
+// SEEN is a stronger fact than a lane not seen; reporting unreadable there
+// would hide an answer we actually have.
+func classifyLaneHoldCause(orderID int64, reads []laneHoldRead) QueueCause {
+	unreadable := false
+	for _, r := range reads {
+		if r.err != nil {
+			unreadable = true
 			continue
 		}
-		for _, r := range rows {
-			if r.OrderID != orderID && r.Mode == reservations.ModeDig {
-				return "lane-held-dig"
+		for _, row := range r.rows {
+			if row.OrderID != orderID && row.Mode == reservations.ModeDig {
+				return CauseLaneHeldDig
 			}
 		}
 	}
-	return "lane-held-traffic"
+	if unreadable {
+		return CauseLaneHeldUnreadable
+	}
+	return CauseLaneHeldTraffic
+}
+
+// causeForLaneHolds classifies a lane conflict for the engineer-facing queue
+// cause (§6). The operator sees the same "Waiting for a slot at ‹lane›" in every
+// case; this is the tag underneath it.
+func (d *Dispatcher) causeForLaneHolds(orderID int64, holds []laneHold) QueueCause {
+	reads := make([]laneHoldRead, 0, len(holds))
+	for _, h := range holds {
+		rows, err := reservations.ActiveMouthRows(d.db.DB, h.laneID)
+		if err != nil {
+			log.Printf("lanegate: mouth rows for lane %d unreadable while labelling order %d's wait: %v",
+				h.laneID, orderID, err)
+		}
+		reads = append(reads, laneHoldRead{rows: rows, err: err})
+	}
+	return classifyLaneHoldCause(orderID, reads)
 }
 
 // AcquireLanesForOrder takes the mouth holds a plain order needs before it
@@ -329,7 +394,7 @@ func (d *Dispatcher) causeForLaneHolds(orderID int64, holds []laneHold) string {
 // admitted=true with empty cause/lane means there was nothing to gate (no
 // mouth-enforced lane on the order's path), so an unconfigured plant is a no-op
 // and behavior is byte-identical. A non-nil error is a transient DB failure.
-func (d *Dispatcher) AcquireLanesForOrder(orderID int64, sourceNode, destNode *nodes.Node) (admitted bool, cause, laneName string, err error) {
+func (d *Dispatcher) AcquireLanesForOrder(orderID int64, sourceNode, destNode *nodes.Node) (admitted bool, cause QueueCause, laneName string, err error) {
 	holds, err := d.resolveOrderLaneHolds(sourceNode, destNode)
 	if err != nil {
 		return false, "", "", err

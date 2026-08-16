@@ -299,10 +299,24 @@ func ListDigHolds(q Queryer) ([]DigHold, error) {
 // AcquireOccupancy records that orderID is inside nodeID. Idempotent: an order
 // already inside is not recorded twice.
 //
-// It does NOT arbitrate — taking occupancy always succeeds. Admission is the
-// caller's decision and, while the compound scheduler still dispatches one child
-// at a time, is already guaranteed elsewhere. This exists so the fact is
-// durable and observable BEFORE anything is allowed to depend on it.
+// THIS ROW NOW ARBITRATES — read carefully, because the mechanism did not change
+// and the sentence it replaces did not become false by itself. What changed is
+// the caller: the compound scheduler's sibling-in-flight guard is gone, and
+// dispatch.laneOccupiedForChild reads these rows to decide whether a leg may
+// enter. So a lane's at-most-one-inside now RESTS on this table, where it used
+// to rest on there being one child at a time and this being a witness to it.
+//
+// The SQL is unchanged and still permissive: the NOT EXISTS is keyed on
+// (order_id, node_id), so it de-dupes ONE order's repeat takes and says nothing
+// about a DIFFERENT order on the same node. Arbitration is the caller's read,
+// not this write — which is exactly why the write's error now has to reach the
+// caller (dispatch.TakeLaneOccupancy). A take that fails silently leaves the
+// next leg's read seeing an empty lane.
+//
+// Making this the arbiter itself would mean a partial unique index on
+// (node_id) WHERE resource_kind='occupancy' and an INSERT that reports the
+// conflict. That is a real option and not what is here today; do not read the
+// idempotent-insert shape as a decision against it.
 func AcquireOccupancy(db Execer, owner, nodeID int64) error {
 	_, err := db.Exec(
 		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by)

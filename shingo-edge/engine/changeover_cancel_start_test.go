@@ -232,13 +232,20 @@ func TestChangeoverStart_CancelReportsWhatItCancelled(t *testing.T) {
 // TestChangeoverStart_ClearsTheRuntimeSlotItCancelled — a pointer left aiming at
 // a cancelled order is the phantom-badge family: the board reads the slot, finds
 // a terminal order, and renders state for work that no longer exists.
+//
+// The invariant is "the slot never names dead work", NOT "the slot is empty".
+// This asserted emptiness until 2026-08-03, when the applier started repointing
+// the slots at the legs it creates (see changeover_applier.go) — so the expected
+// end state is now the fresh supply leg sitting where the cancelled order was.
+// Emptiness was the accidental shape of the correct answer, and pinning it would
+// have made the Springfield ALN_001 fix look like a regression.
 func TestChangeoverStart_ClearsTheRuntimeSlotItCancelled(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
 	eng := testEngine(t, db)
 
-	_ = seedOrderAt(t, db, nodeID, "CO-NODE", "uuid-slotclear", "PART-OLD", orders.StatusQueued)
+	cancelledID := seedOrderAt(t, db, nodeID, "CO-NODE", "uuid-slotclear", "PART-OLD", orders.StatusQueued)
 
 	if _, err := eng.StartProcessChangeover(processID, toStyleID, "test", ""); err != nil {
 		t.Fatalf("changeover refused: %v", err)
@@ -246,8 +253,33 @@ func TestChangeoverStart_ClearsTheRuntimeSlotItCancelled(t *testing.T) {
 
 	runtime, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "reload runtime")
-	if runtime != nil && runtime.ActiveOrderID != nil {
-		t.Errorf("active slot still points at order %d after it was cancelled", *runtime.ActiveOrderID)
+	if runtime == nil {
+		return
+	}
+	for _, slot := range []struct {
+		name string
+		id   *int64
+	}{
+		{"active", runtime.ActiveOrderID},
+		{"staged", runtime.StagedOrderID},
+	} {
+		if slot.id == nil {
+			continue
+		}
+		if *slot.id == cancelledID {
+			t.Errorf("%s slot still points at order %d after it was cancelled", slot.name, cancelledID)
+			continue
+		}
+		// Whatever replaced it must be live work, or the phantom badge is
+		// back wearing a different order ID.
+		o, gerr := db.GetOrder(*slot.id)
+		if gerr != nil || o == nil {
+			t.Errorf("%s slot points at order %d which does not load: %v", slot.name, *slot.id, gerr)
+			continue
+		}
+		if orders.IsTerminal(protocol.Status(o.Status)) {
+			t.Errorf("%s slot points at order %d in terminal status %s", slot.name, o.ID, o.Status)
+		}
 	}
 }
 

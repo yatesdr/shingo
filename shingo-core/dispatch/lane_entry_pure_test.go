@@ -21,8 +21,8 @@ func TestClassifyLaneEntry_Tier2_DeeperCrossOriginParks(t *testing.T) {
 	// A shallow store with a DEEPER cross-origin store still pending → park.
 	self := laneEntryOrder{id: 1, depth: 0, origin: "style:P|A"}
 	others := []laneEntryOrder{{id: 2, depth: 2, origin: "style:P|B"}}
-	if c := classifyLaneEntry(self, others); c != causeLaneDeeperPending {
-		t.Errorf("deeper cross-origin store must park the shallower; got %q, want %q", c, causeLaneDeeperPending)
+	if c := classifyLaneEntry(self, others); c != CauseLaneDeeperPending {
+		t.Errorf("deeper cross-origin store must park the shallower; got %q, want %q", c, CauseLaneDeeperPending)
 	}
 }
 
@@ -44,8 +44,8 @@ func TestClassifyLaneEntry_Tier3_ActiveCrossOriginGroupParks(t *testing.T) {
 	// We must wait for the group to complete — Tier 3.
 	self := laneEntryOrder{id: 1, depth: 3, origin: "style:P|A"}
 	others := []laneEntryOrder{{id: 2, depth: 0, origin: "style:P|B", grouped: true}}
-	if c := classifyLaneEntry(self, others); c != causeLaneGroupActive {
-		t.Errorf("an active cross-origin group must park a newcomer; got %q, want %q", c, causeLaneGroupActive)
+	if c := classifyLaneEntry(self, others); c != CauseLaneGroupActive {
+		t.Errorf("an active cross-origin group must park a newcomer; got %q, want %q", c, CauseLaneGroupActive)
 	}
 }
 
@@ -62,7 +62,7 @@ func TestClassifyLaneEntry_UnclassifiedTreatedAsCrossOrigin(t *testing.T) {
 	// are NOT treated as same-origin: the shallower still parks behind the deeper.
 	self := laneEntryOrder{id: 1, depth: 0, origin: ""}
 	others := []laneEntryOrder{{id: 2, depth: 2, origin: ""}}
-	if c := classifyLaneEntry(self, others); c != causeLaneDeeperPending {
+	if c := classifyLaneEntry(self, others); c != CauseLaneDeeperPending {
 		t.Errorf("unclassified orders must depth-order (not co-dispatch); got %q", c)
 	}
 }

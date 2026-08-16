@@ -39,7 +39,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop, origin_id, origin_class`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children`
 
 // Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
 // CountActive) return EVERY order type. They used to exclude reshuffle_restore —
@@ -67,7 +67,7 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass)
+		&originID, &o.OriginClass, &o.OpenForChildren)
 	if err != nil {
 		return nil, err
 	}
@@ -336,6 +336,47 @@ func UpdateVendor(db *sql.DB, id int64, vendorOrderID, vendorState, robotID stri
 	_, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5 WHERE id=$4`,
 		vendorOrderID, vendorState, robotID, id, clock.Now().UTC())
 	return err
+}
+
+// SetCompoundOpen is THE writer of orders.open_for_children — the only thing
+// in shingo-core that changes whether a compound parent may still gain
+// children. Everything else reads it.
+//
+// ONE WRITER, ONE FACT, and the value is a parameter rather than the function
+// being split in two. Seal-here / open-there would read better at the call
+// sites and would be two places deciding one fact — the shape §17.1 records,
+// which briefs 1 and 2 each spent a commit undoing.
+//
+// Creation is not a second writer. An order is born sealed by the column's
+// DEFAULT and Create deliberately does not bind it (writer_totality_test names
+// it), so there is exactly one statement in the codebase that can make a
+// compound open and exactly one that can seal it, and they are this line.
+//
+// AND THERE IS NO AUTO-SEAL. The tempting rule — "seal it when the last leg
+// completes" — is a second writer wearing a convenience, and it is wrong on its
+// own terms: the whole point of openness is that a reshuffle between moves has
+// all its children terminal and is NOT finished, so last-leg-completion is
+// precisely the moment that cannot decide this. Whatever concludes there is no
+// more digging to do calls this. Nothing infers it.
+//
+// A write that matches no row is an error rather than a silent no-op. A caller
+// that sealed a parent that has since been deleted has had its instruction
+// dropped, and finding that out later — from a reshuffle that completed half
+// dug — is the expensive way.
+func SetCompoundOpen(db *sql.DB, parentOrderID int64, open bool) error {
+	res, err := db.Exec(`UPDATE orders SET open_for_children=$1, updated_at=$3 WHERE id=$2`,
+		open, parentOrderID, clock.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("set open_for_children=%t on order %d: %w", open, parentOrderID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set open_for_children on order %d: rows affected: %w", parentOrderID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("set open_for_children=%t: order %d does not exist", open, parentOrderID)
+	}
+	return nil
 }
 
 // UpdateSourceNode rewrites the source_node field.
@@ -841,6 +882,45 @@ func CountLiveByOrigin(db *sql.DB, originID string) (int, error) {
 func CountLiveByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 	var count int
 	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()), deliveryNode).Scan(&count)
+	return count, err
+}
+
+// CountLiveCarrierRequestsByDeliveryNode is CountLiveByDeliveryNode narrowed to
+// orders that ASKED FOR A CARRIER — source_intent='empty'. Same queued-included
+// rule, same origin-blindness, same "one order per window" contract; the only
+// difference is WHICH orders count as having spoken for the window.
+//
+// WHY THE NARROWING EXISTS. The contract this guard enforces is the one its
+// commit named: "a demand that already asked for a carrier must not ask again."
+// A swap's EVAC leg never asked for a carrier — it is a return trip bringing a
+// spent bin back — yet it names the home as its delivery node, so the unnarrowed
+// count read it as an outstanding ask. Springfield 2026-08-05: evac 4186
+// (ALN_006 -> SMN_030, queued on waiting_for_partner) held SMN_030's window for
+// 8h57m. Its supply sibling 4185 could not source because SMN_030 was empty, and
+// the replenishment that would have put a carrier there was refused because 4186
+// was "already asking". Neither leg could move. The lineside bin ran to -575 UOP.
+//
+// WHAT STILL COUNTS, and why 2026-08-03 does not come back. The 241 duplicate
+// retrieve_empty orders that motivated the original guard were carrier requests
+// — source_intent='empty' — so they still count, and a demand that has asked
+// still cannot ask again. Only returns (complex evac legs, moves) stop counting.
+//
+// WHY A RETURN CAN SAFELY STOP COUNTING. A swap is sequenced: the supply leg
+// lifts the full bin OFF the home before the evac brings the spent one back, so
+// the two never contend for the slot. If the supply leg dies first,
+// HandleSwapPeerTerminal cancels the evac. And a return that is actually MOVING
+// is still caught by CheckDropoffCapacity's in-flight arm, which runs before
+// this check — that arm answers the physical question ("is there room"), this
+// one answers the logical question ("have I already asked").
+//
+// source_intent is stamped once at intake by SourceIntentForType and is 'empty'
+// for exactly OrderTypeRetrieveEmpty, which is the shape every replenishment
+// carrier pull takes (loader_replenish.go admitReplenishOrder).
+func CountLiveCarrierRequestsByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
+	var count int
+	err := db.QueryRow(fmt.Sprintf(
+		`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND source_intent = 'empty' AND status NOT IN (%s)`,
+		protocol.TerminalStatusSQLList()), deliveryNode).Scan(&count)
 	return count, err
 }
 

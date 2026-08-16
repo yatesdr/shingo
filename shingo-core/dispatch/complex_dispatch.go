@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/google/uuid"
-
 	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/store"
@@ -144,7 +142,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 		case ResolutionCapacity:
 			capDetail := capacityDetailFrom(payload)
 			code := queueCodeForCapacity(capDetail.kindOf())
-			d.setQueueReason(order, code, "ngrp-resolve",
+			d.setQueueReason(order, code, QueueCause("ngrp-resolve"),
 				queueParamsForCapacity(capDetail, order.PayloadCode, order.DeliveryNode))
 			d.dbg("complex: order %d still capacity-blocked at NGRP resolution: %s", order.ID, code)
 			return nil, dispatchStep{done: true, err: rerr}
@@ -202,7 +200,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 	if hold != nil {
 		switch MapFinderOutcome(*hold) {
 		case OutcomeWait:
-			d.setQueueReason(order, hold.QueueCode, hold.QueueCause, hold.QueueParams)
+			d.setQueueReason(order, hold.QueueCode, QueueCause(hold.QueueCause), hold.QueueParams)
 			d.dbg("complex: order %d supply pickup waiting for material (%s)", order.ID, hold.QueueCause)
 			return nil, dispatchStep{done: true, err: fmt.Errorf("supply pickup waiting for material: %s", hold.QueueCause)}
 		case OutcomeReshuffle:
@@ -311,7 +309,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 		// was the SPR ALN_006 lie: "sourcing / partial set already held" while the
 		// order held zero reservations and made no progress.
 		holdingPartials := len(assigned) > 0
-		d.setQueueReason(order, protocol.QueueWaitingForMaterial, "reserve-holding",
+		d.setQueueReason(order, protocol.QueueWaitingForMaterial, QueueCause("reserve-holding"),
 			QueueParams{Payload: order.PayloadCode, Partial: holdingPartials})
 		d.dbg("complex: order %d incomplete reserve — holding %d partial(s), retrying next tick", order.ID, len(assigned))
 		return dispatchStep{done: true, err: fmt.Errorf("complex order %d reserve incomplete", order.ID)}
@@ -324,7 +322,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 	if cerr := d.allocator.confirmComplexPlan(order, plan, assigned); cerr != nil {
 		var pe *planningError
 		if errors.As(cerr, &pe) && pe.Code == codeClaimFailed {
-			d.setQueueReason(order, protocol.QueueWaitingForMaterial, "claim-failed",
+			d.setQueueReason(order, protocol.QueueWaitingForMaterial, QueueCause("claim-failed"),
 				QueueParams{Payload: order.PayloadCode})
 			d.dbg("complex: order %d held on claim_failed: %s", order.ID, pe.Detail)
 			return dispatchStep{done: true, err: cerr}
@@ -346,7 +344,7 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 // create), each of which terminal-fails the order via failOrderInternal.
 func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps []resolvedStep) error {
 	preWait, hasWait := splitAtWait(resolvedSteps)
-	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
+	vendorOrderID := mintVendorOrderID(order.ID)
 	// Complex orders are not load-sequence expanded (nil): the F4c advanced load
 	// sequence is scoped to the simple transport path the child-cart delivery
 	// uses. Complex is "every other order kind" — byte-identical to before.
@@ -441,7 +439,7 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 	// to concrete nodes by now, and the line node is concrete either way, so the
 	// pickup/dropoff shape the gate depends on is stable across resolution.
 	if held, reason := d.swapLegHeld(order, resolvedSteps); held {
-		d.setQueueReason(order, protocol.QueueWaitingForPartner, "swap-hold", QueueParams{Sibling: order.SiblingOrderUUID})
+		d.setQueueReason(order, protocol.QueueWaitingForPartner, QueueCause("swap-hold"), QueueParams{Sibling: order.SiblingOrderUUID})
 		d.dbg("complex: order %d held — %s", order.ID, reason)
 		return dispatchStep{done: true, err: fmt.Errorf("swap hold: %s", reason)}
 	}
@@ -470,7 +468,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// slot-vacancy tick (same contract as the claim_failed branch below).
 	if isConcreteStorageDropoff(d.db, order.DeliveryNode) {
 		if blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
-			d.setQueueReason(order, protocol.QueueWaitingForSlot, "dropoff-capacity", cap.Params)
+			d.setQueueReason(order, protocol.QueueWaitingForSlot, QueueCause("dropoff-capacity"), cap.Params)
 			d.dbg("complex: order %d queued — concrete storage dropoff %s blocked: %s", order.ID, order.DeliveryNode, cap.Cause)
 			return dispatchStep{done: true, err: fmt.Errorf("dropoff capacity: %s", cap.Cause)}
 		}
@@ -495,7 +493,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 		log.Printf("dispatch: complex order %d slot reserve error: %v", order.ID, serr)
 		return dispatchStep{done: true, err: serr}
 	} else if slotOutcome != reserveComplete {
-		d.setQueueReason(order, protocol.QueueWaitingForSlot, "slot-reserve", QueueParams{Destination: order.DeliveryNode})
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, QueueCause("slot-reserve"), QueueParams{Destination: order.DeliveryNode})
 		d.dbg("complex: order %d held — incomplete slot reserve, retrying next tick", order.ID)
 		return dispatchStep{done: true, err: fmt.Errorf("complex order %d slot reserve incomplete", order.ID)}
 	}
@@ -514,7 +512,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 // from and is discarded after formatting. Best-effort: a failed write is logged
 // and swallowed (queue_reason is advisory HMI/queue metadata, never a correctness
 // gate), leaving the in-memory fields matching the persisted values.
-func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode, cause string, params QueueParams) {
+func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) {
 	reason := FormatQueueSentence(code, params)
 	// The cause is part of what this writes, so it is part of what makes a
 	// second call redundant. Comparing only reason and code meant a call that
@@ -523,16 +521,16 @@ func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode
 	// sentence: the buried path sets "storage is being rearranged" on arrival
 	// and then narrows the cause to lane-locked or lock-race. Without the cause
 	// in this comparison, the narrower tag never lands.
-	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == cause {
+	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == string(cause) {
 		return
 	}
-	if err := d.db.SetOrderQueueDetail(order.ID, reason, code, cause); err != nil {
+	if err := d.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
 		log.Printf("dispatch: set queue_reason (%s) for order %d: %v", cause, order.ID, err)
 		return
 	}
 	order.QueueReason = reason
 	order.QueueCode = string(code)
-	order.QueueCause = cause
+	order.QueueCause = string(cause)
 }
 
 // failOrderInternal is the scanner-path failure helper. Same as

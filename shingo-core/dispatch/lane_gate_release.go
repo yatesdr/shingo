@@ -184,7 +184,7 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 		return retrieveCandidates[i].order.ID < retrieveCandidates[j].order.ID
 	})
 	for _, c := range retrieveCandidates {
-		park, cause, cErr := d.laneGateRetrieveCause(lane, c.order, c.dest)
+		park, cause, cErr := d.laneGateRetrieveCause(lane, c.order)
 		if cErr != nil {
 			log.Printf("lane gate: retrieve classifier error for order %d on lane %s: %v", c.order.ID, lane.Name, cErr)
 			continue
@@ -315,8 +315,9 @@ func (d *Dispatcher) gateStagedRetrievesInLane(lane *nodes.Node) ([]gateCandidat
 // outbound mirror of laneEntryCause. A retrieve dwelling at the gate is parked
 // (held) when EITHER:
 //
-//   - a dig holds the lane (ModeDig is always-exclusive: nothing enters while a
-//     dig works, and "everything respects the dig" is the whole point of gating).
+//   - a dig belonging to SOMEONE ELSE holds the lane (ModeDig is always-
+//     exclusive: nothing enters while a dig works, and "everything respects the
+//     dig" is the whole point of gating). Its own legs are exempt — see below.
 //   - the bin the retrieve wants is BURIED — a shallower slot in the lane still
 //     holds a bin, so the target is physically unreachable until that bin leaves.
 //
@@ -333,21 +334,125 @@ func (d *Dispatcher) gateStagedRetrievesInLane(lane *nodes.Node) ([]gateCandidat
 // retrieve-vs-retrieve ordering is handled there, not here. (See buried_retrieve_test
 // .go's claim: the gain is travel overlap ONLY, never entry at exposure.)
 //
-// sourceNode is the lane slot the bin currently sits in; its depth is the burial
-// bound. It is re-read at release (rebindGatedPickup), because a dig can move the
-// bin while this order dwells.
-func (d *Dispatcher) laneGateRetrieveCause(lane *nodes.Node, order *orders.Order, sourceNode *nodes.Node) (park bool, cause string, err error) {
-	if d.laneLock.IsLocked(lane.ID) {
-		return true, "lane-dig-active", nil // a dig holds the lane — everything respects the dig
+// The burial bound is the slot the bin sits in NOW (pickupSlotNow), not the one
+// the order was born wanting. A dig can move the bin while this order dwells, and
+// asking about the abandoned slot is wrong in both directions: a bin moved
+// SHALLOWER makes the old slot read buried — by the very bin the order wants —
+// and a bin moved DEEPER behind another makes the old slot read clear, which
+// would append a pickup into a walled slot.
+func (d *Dispatcher) laneGateRetrieveCause(lane *nodes.Node, order *orders.Order) (park bool, cause QueueCause, err error) {
+	digOwner, err := d.laneLock.DigOwner(lane.ID)
+	if err != nil {
+		// Unreadable dig row: the caller logs and leaves the order parked, which is
+		// the same fail-closed disposition the burial read below takes. DigOwner
+		// rather than IsLocked precisely so this arm exists — IsLocked would have
+		// answered "held" and hidden the failure as a routine wait.
+		return false, "", err
 	}
-	blockers, err := findBuriedBlockers(d.db, sourceNode.ID)
+	if digOwner != 0 && !d.isOwnDigLeg(order, digOwner) {
+		return true, CauseLaneDigActive, nil // someone else's dig holds the lane
+	}
+	target, _, err := d.pickupSlotNow(order, lane)
+	if err != nil {
+		return false, "", err // bin unreadable or gone from the lane: caller logs, order stays parked
+	}
+	blockers, err := findBuriedBlockers(d.db, target.ID)
 	if err != nil {
 		return false, "", err // unreadable lane: the caller logs and leaves the order parked
 	}
 	if len(blockers) > 0 {
-		return true, "lane-target-buried", nil // a shallower bin still sits in front of the wanted slot
+		return true, CauseLaneTargetBuried, nil // a shallower bin still sits in front of the wanted slot
 	}
 	return false, "", nil // lane safe: no dig, bin reachable — release
+}
+
+// pickupSlotNow answers ONE question — which slot does this retrieve's wanted bin
+// sit in right now — for the two readers that used to answer it separately from
+// the order's remembered source_node: the classifier's burial bound, and the
+// release-time rebind. moved reports whether that is a different slot from the one
+// the order names.
+//
+// It reads, it does not write. rebindGatedPickup is the only writer of the answer,
+// so the classifier asking the same question a moment earlier is two reads of one
+// definition and not a second writer for one fact.
+//
+// Resolution is by BIN, not by slot, because the bin is what the order is owed.
+// bin_id is stamped by the scanner before dispatch (fulfillment/scanner.go), so a
+// gate-staged plain retrieve carries one; the nil case is the older/empty-intent
+// rows that never got a claim, and those fall back to the order's own source node
+// — exactly what every retrieve did before this existed.
+//
+// A bin that has left the LANE is an error, not a rebind: there is no slot here to
+// bind to. The order stays parked and the stuck-order sweep bounds it (it is in a
+// sweep-eligible state by construction — see the commit for why a wedged gate
+// order can never be in_transit). A second give-up path keyed on the same
+// condition would be a second writer for one fact.
+func (d *Dispatcher) pickupSlotNow(order *orders.Order, lane *nodes.Node) (slot *nodes.Node, moved bool, err error) {
+	named, err := d.db.GetNodeByDotName(order.SourceNode)
+	if err != nil {
+		return nil, false, err
+	}
+	if order.BinID == nil {
+		if named == nil {
+			return nil, false, fmt.Errorf("pickup slot: source node %q not found", order.SourceNode)
+		}
+		return named, false, nil
+	}
+	bin, err := d.db.GetBin(*order.BinID)
+	if err != nil {
+		return nil, false, err
+	}
+	if bin == nil || bin.NodeID == nil {
+		return nil, false, fmt.Errorf("pickup slot: bin %d for order %d is gone or has no node",
+			*order.BinID, order.ID)
+	}
+	if named != nil && *bin.NodeID == named.ID {
+		return named, false, nil // the common case: nothing moved, nothing to write
+	}
+	at, err := d.db.GetNode(*bin.NodeID)
+	if err != nil {
+		return nil, false, err
+	}
+	if at == nil || at.ParentID == nil || *at.ParentID != lane.ID {
+		return nil, false, fmt.Errorf("pickup slot: bin %d left lane %s (now at %s) — no slot in this lane to bind",
+			*order.BinID, lane.Name, nodeName(at))
+	}
+	return at, true, nil
+}
+
+// isOwnDigLeg reports whether `order` is a LEG of the dig holding the lane.
+//
+// A reshuffle leg's source is a lane slot, so it stages at the gate like any
+// other lane-sourced order; without this the classifier parked it behind its own
+// parent's dig, and that dig only ends when the leg it is parking runs. The lock
+// is not a reason to keep out the work it exists to perform.
+//
+// PARENT IDENTITY, and it is not an approximation of something better. Both
+// planners take the dig as the buried retrieve's own order id and then make that
+// order the compound parent (complex_reshuffle.go planBuriedReshuffleAtIntake /
+// handleComplexBuriedOnReplay, planning_service.go planBuriedReshuffle), so
+// "owner of the dig" and "parent of the leg" are the same number by construction.
+// A lane carries exactly one dig claim because reservations.admitMouth refuses a
+// second one outright, so there is no group of digs for parent identity to be a
+// coarse stand-in for.
+//
+// ── The two lines that make this wrong if they move ───────────────────────
+//
+//  1. reservations.AcquireLanes' dig rule. If it ever admits two claims on one
+//     lane, "the dig" stops being singular, the parent stops identifying it, and
+//     this exemption has to become claim-scoped. Nothing else changes the answer.
+//  2. The narrowing to CHILDREN (owner != order.ID) is load-bearing, not a
+//     shortcut past laneOwnerFor's plain-order case. The dig owner is a real
+//     order with a real source slot; if it were ever itself gate-staged — which is
+//     what "a buried retrieve pre-positions at the gate" (dispatcher.go) would
+//     mean applied to the digger rather than a bystander — laneOwnerFor would
+//     return its own id, match, and release it into the lane its own dig is still
+//     working. Today it cannot: the planners divert it to Reshuffling before it
+//     ever reaches the fleet, so it carries no vendor order and IsGateStaged is
+//     false. Give the digger a pre-position and this line is the one to revisit.
+func (d *Dispatcher) isOwnDigLeg(order *orders.Order, digOwner int64) bool {
+	owner := d.laneOwnerFor(order.ID)
+	return owner != order.ID && owner == digOwner
 }
 
 // releaseGatedOrder binds the dropoff against the lane as it stands, appends the
@@ -382,7 +487,7 @@ func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node) er
 		// Refusing is the safe disposition: appending into an occupied or walled
 		// slot is the exact failure the bind-at-release rule exists to prevent.
 		// The order stays staged and the next firing re-tries.
-		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, "gate-rebind-unavailable",
+		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, CauseGateRebindUnavailable,
 			QueueParams{Destination: lane.Name})
 		return err
 	}
@@ -423,7 +528,7 @@ func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node)
 		// appending a pickup against a slot the bin left would pick the wrong bin (or
 		// none). The order stays staged; the dig/reshuffle machinery updates the bin's
 		// location and the next firing re-tries once the lane is consistent.
-		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, "gate-rebind-unavailable",
+		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, CauseGateRebindUnavailable,
 			QueueParams{Destination: lane.Name})
 		return err
 	}
@@ -438,33 +543,53 @@ func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node)
 	return nil
 }
 
-// rebindGatedPickup confirms the wanted bin still sits at the order's source slot —
-// the common case, since a retrieve usually dwells only while a dig clears, and the
-// dig extracts THIS bin last (it is the target). Returns the node the tail will
-// pick from.
+// rebindGatedPickup re-resolves the order's pickup against where its bin ACTUALLY
+// SITS at the moment of append. Returns the node the tail will pick from.
 //
-// v1 scope: this confirms the source as-is. The full dig-relocation rebind — "a dig
-// moved my bin to a different slot, re-resolve to its new location" — is the
-// retrieve analog of rebindGatedDropoff's slot-search, but it is a BIN lookup (by
-// claimed_by / bin id), not a find-empty-slot, and the dig's own machinery is what
-// moves the bin. That rebind is a documented refinement; for now, if the bin has
-// left the source slot, refuse (the order stays staged until the lane is
-// consistent), which is always safe.
+// The pickup mirror of rebindGatedDropoff, and now with the same three outcomes:
+//
+//   - the bin is still at the order's own slot → keep it. No writes at all.
+//   - the bin moved to a different slot in this lane → re-point the order at it.
+//   - the bin is gone, or left the lane → error; the caller refuses to release.
+//
+// It used to have only the first and third, and the third swallowed the second:
+// an emptied source slot returned an error whatever the reason, so a bin a dig had
+// merely SHUFFLED — still in the lane, still reachable, still owed to this order —
+// read as unavailable. The caller logs that and continues, which leaves the order
+// staged for an identical refusal on every later pass. Nothing moves the bin back.
+//
+// The resolution itself is pickupSlotNow, shared with the classifier, because the
+// classifier's burial test had the same stale-slot bug and fixing one without the
+// other leaves the order parked before it ever reaches this function.
 func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node) (*nodes.Node, error) {
-	current, err := d.db.GetNodeByDotName(order.SourceNode)
-	if err != nil || current == nil {
-		return nil, fmt.Errorf("rebind pickup: source node %q not found", order.SourceNode)
-	}
-	// The bin must still be at the source slot. If a dig moved it, the slot is empty
-	// and we refuse rather than pick nothing.
-	bins, err := d.db.ListBinsByNode(current.ID)
+	at, moved, err := d.pickupSlotNow(order, lane)
 	if err != nil {
 		return nil, err
 	}
-	if len(bins) == 0 {
-		return nil, fmt.Errorf("rebind pickup: source slot %s is empty — the bin moved; refusing to release", current.Name)
+	if !moved {
+		// Unchanged. The emptiness check survives for the bin_id-less fallback, where
+		// pickupSlotNow can only report the slot the order names and cannot tell
+		// whether anything is still in it — refusing beats picking nothing.
+		bins, bErr := d.db.ListBinsByNode(at.ID)
+		if bErr != nil {
+			return nil, bErr
+		}
+		if len(bins) == 0 {
+			return nil, fmt.Errorf("rebind pickup: source slot %s is empty — the bin moved; refusing to release", at.Name)
+		}
+		return at, nil
 	}
-	return current, nil
+
+	// applySourceNode, not a raw source_node write: it patches the deferred pickup
+	// step in steps_json in the same breath, and that tail is exactly what the append
+	// is about to emit. A raw write would send the robot to the slot the bin left.
+	was := order.SourceNode
+	if err := applySourceNode(d.db, order, at.Name); err != nil {
+		return nil, err
+	}
+	log.Printf("lane gate: retrieve %d re-bound at release %s → %s (lane %s, bin %d)",
+		order.ID, was, at.Name, lane.Name, *order.BinID)
+	return at, nil
 }
 
 // rebindGatedDropoff re-resolves the order's dropoff against the lane AS IT
@@ -550,7 +675,7 @@ func (d *Dispatcher) noteGateAppendFailure(order *orders.Order, lane *nodes.Node
 	if n < laneGateRetryQueueThreshold {
 		return
 	}
-	d.setQueueReason(order, protocol.QueueFleetUnavailable, "gate-append-failed",
+	d.setQueueReason(order, protocol.QueueFleetUnavailable, CauseGateAppendFailed,
 		QueueParams{Destination: lane.Name})
 }
 

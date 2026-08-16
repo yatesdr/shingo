@@ -360,7 +360,7 @@ func TestLaneGate_ChoreographyKeepsCoreMachineryOn(t *testing.T) {
 		}
 		return laneNode, s0, shallow
 	}
-	policyCause := func(prefix, enforcement string) (bool, string, *nodes.Node, *orders.Order) {
+	policyCause := func(prefix, enforcement string) (bool, QueueCause, *nodes.Node, *orders.Order) {
 		t.Helper()
 		laneNode, s0, shallow := buildContended(prefix, enforcement)
 		park, cause, err := d.laneEntryCause(laneNode, shallow, s0)

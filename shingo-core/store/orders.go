@@ -45,10 +45,57 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 			return fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}
 
-		// Bin-centric claiming: if the child order has a bin, claim it
+		// Bin-centric claiming: if the child order has a bin, claim it.
+		//
+		// SIBLING-SCOPED COMPARE-AND-SET. This used to be an unconditional
+		// overwrite, which meant a compound could take a bin out from under an
+		// unrelated order that was already carrying it — silently, because the
+		// UPDATE reported success either way.
+		//
+		// The predicate is deliberately NOT the one bins.Claim uses
+		// (`claimed_by IS NULL OR claimed_by = $1`). A multi-step reshuffle plan
+		// INTENTIONALLY overlaps bin claims: a bin that appears in several steps —
+		// an unbury followed by a retrieve of the same bin — is claimed once per
+		// step, and the last step's write is the one that stands. That is relied on
+		// downstream (engine/wiring_completion.go skips the delivery-arrival
+		// teleport guard for children precisely because of it), so refusing a
+		// repeat claim would be a behaviour change, not a fence.
+		//
+		// THE PARENT IS IN THE SET, and that is the part worth getting right. Both
+		// the plain and target-node planners emit a `retrieve` step carrying the
+		// buried TARGET bin (dispatch/reshuffle.go), which is the same bin the
+		// parent retrieve exists to fetch; and the documented multi-burial loop
+		// re-plans a fresh compound after the parent has resumed and been
+		// dispatched, by which point the parent can be holding that claim. Excluding
+		// it would fail a claim that works today, which is the one direction a fence
+		// must not fail in.
+		//
+		// The child's own id needs no arm: it was inserted in this transaction a few
+		// lines above, so the sibling subquery already sees it and a re-claim by the
+		// same child is idempotent.
 		if o.BinID != nil {
-			if _, err := tx.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, o.ID, *o.BinID); err != nil {
+			parentID := int64(0)
+			if o.ParentOrderID != nil {
+				parentID = *o.ParentOrderID
+			}
+			res, err := tx.Exec(`UPDATE bins SET claimed_by=$1
+				WHERE id=$2
+				  AND (claimed_by IS NULL
+				       OR claimed_by = $3
+				       OR claimed_by IN (SELECT id FROM orders WHERE parent_order_id = $3))`,
+				o.ID, *o.BinID, parentID)
+			if err != nil {
 				return fmt.Errorf("claim bin %d for child %d: %w", *o.BinID, o.ID, err)
+			}
+			if n, rErr := res.RowsAffected(); rErr == nil && n == 0 {
+				// Refused, not failed-to-write. The bin is held by an order outside
+				// this compound, so the plan was built against a lane that has since
+				// moved. Failing the whole transaction is right: a compound missing
+				// one leg's bin is a reshuffle that strands mid-dig, and the callers
+				// already treat a CreateCompoundOrder error as "drop the lane lock
+				// and fail the parent".
+				return fmt.Errorf("claim bin %d for child %d: held by an order outside compound %d",
+					*o.BinID, o.ID, parentID)
 			}
 		}
 	}
@@ -129,6 +176,12 @@ func (db *DB) RetireReshuffleRestoreOrders() (int, error) {
 // GetNextChildOrder returns the next pending child order for a parent.
 func (db *DB) GetNextChildOrder(parentOrderID int64) (*orders.Order, error) {
 	return orders.GetNextChild(db.DB, parentOrderID)
+}
+
+// SetCompoundOpen is the one writer of a compound parent's sealedness — see
+// orders.SetCompoundOpen. Sealed is !open; nothing derives it.
+func (db *DB) SetCompoundOpen(parentOrderID int64, open bool) error {
+	return orders.SetCompoundOpen(db.DB, parentOrderID, open)
 }
 
 func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
@@ -570,6 +623,14 @@ func (db *DB) CountLiveOrdersByOrigin(originID string) (int, error) {
 // for". See orders.CountLiveByDeliveryNode.
 func (db *DB) CountLiveOrdersByDeliveryNode(deliveryNode string) (int, error) {
 	return orders.CountLiveByDeliveryNode(db.DB, deliveryNode)
+}
+
+// CountLiveCarrierRequestsByDeliveryNode counts every non-terminal order that
+// asked for a CARRIER at a node — queued included, origin-blind, returns
+// excluded. "Has a carrier already been asked for here". See
+// orders.CountLiveCarrierRequestsByDeliveryNode.
+func (db *DB) CountLiveCarrierRequestsByDeliveryNode(deliveryNode string) (int, error) {
+	return orders.CountLiveCarrierRequestsByDeliveryNode(db.DB, deliveryNode)
 }
 
 func (db *DB) UpdateOrderRobotID(id int64, robotID string) error {

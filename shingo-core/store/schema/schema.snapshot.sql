@@ -683,6 +683,7 @@ CREATE TABLE public.orders (
     remaining_uop integer,
     origin_id uuid,
     origin_class text DEFAULT ''::text NOT NULL,
+    open_for_children boolean DEFAULT false NOT NULL,
     orphan_aged_at timestamp with time zone
 );
 

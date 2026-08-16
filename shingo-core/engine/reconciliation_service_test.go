@@ -114,6 +114,69 @@ func TestAdvanceStuckReshuffleParents_ReDrivesOnlyStranded(t *testing.T) {
 	}
 }
 
+// TestAdvanceStuckReshuffleParents_SkipsOpenParent is the SECOND sealedness
+// guard, and deliberately not the load-bearing one — AdvanceCompoundOrder
+// refuses an open parent itself, and the poller and event paths reach that
+// refusal without coming through this sweep at all.
+//
+// What rests on this predicate is the forensic record. Without it the sweep
+// selects every open parent on every pass — it runs on the periodic ticker, not
+// only at boot — re-drives it into a refusal, and writes a RecordRecoveryAction
+// saying it rescued a reshuffle stranded in `reshuffling`. Nothing was
+// stranded and nothing was rescued. An alarm that fires when nothing happened
+// costs the same thing as one that cannot fire when something did: the next
+// reader stops believing it. Somebody will eventually count these rows.
+//
+// DESIGN §16 rule 7: the open parent here satisfies every other clause of the
+// predicate — status `reshuffling`, has children, all of them terminal — so
+// sealedness is the only thing that can exclude it. A fixture with a pending
+// child would be excluded by the clause that already existed and would pass
+// with this guard removed.
+//
+// The parent is opened through the production writer; nothing opens one on its
+// own until the fold lands (5c), so the fixture is ahead of the trigger.
+//
+// MUTATION (verified): drop `AND NOT p.open_for_children` from the predicate.
+// This fires with advanced = [open, sealed] — both selected — and the message
+// names the false recovery record as the cost.
+func TestAdvanceStuckReshuffleParents_SkipsOpenParent(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := newReconService(t, db)
+
+	var advanced []int64
+	svc.advanceCompound = func(parentID int64) error {
+		advanced = append(advanced, parentID)
+		return nil
+	}
+
+	mk := func(uuid string, open bool) int64 {
+		p := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeRetrieve,
+			Status: protocol.StatusReshuffling, Quantity: 1}
+		testutil.MustNoErr(t, db.CreateOrder(p), "create parent "+uuid)
+		c := &orders.Order{EdgeUUID: uuid + "-c1", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+			Status: protocol.StatusConfirmed, ParentOrderID: &p.ID, Quantity: 1}
+		testutil.MustNoErr(t, db.CreateOrder(c), "create child for "+uuid)
+		if open {
+			testutil.MustNoErr(t, db.SetCompoundOpen(p.ID, true), "open "+uuid)
+		}
+		return p.ID
+	}
+
+	// Identical in every respect the predicate looks at, except sealedness.
+	openParent := mk("resh-open", true)
+	sealedParent := mk("resh-sealed", false)
+
+	n, err := svc.AdvanceStuckReshuffleParents()
+	testutil.MustNoErr(t, err, "AdvanceStuckReshuffleParents")
+
+	if len(advanced) != 1 || advanced[0] != sealedParent {
+		t.Fatalf("advanced = %v (n=%d), want exactly [%d]. The open parent (%d) is mid-dig, not "+
+			"stranded: re-driving it logs a recovery that did not happen, every pass, forever",
+			advanced, n, sealedParent, openParent)
+	}
+}
+
 // ── Summary — fresh DB ──────────────────────────────────────────────
 
 func TestReconciliationService_Summary_FreshDB(t *testing.T) {

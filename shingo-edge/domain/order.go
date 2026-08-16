@@ -47,8 +47,15 @@ type Order struct {
 	SiblingOrderID *int64 `json:"sibling_order_id,omitempty"`
 	// QueueReason holds Core's last blocking signal for this order
 	// (mirrored from Core's orders.queue_reason via OrderUpdate push).
-	// Non-empty only while status == "queued". HMI renders it as
-	// "IN QUEUE: <reason>" so operators can see WHY a robot isn't coming.
+	// HMI renders it as "IN QUEUE: <reason>" so operators can see WHY a
+	// robot isn't coming.
+	//
+	// Non-empty only while the status is acquiring (queued|sourcing) —
+	// enforced on arrival in messaging/edge_handler.HandleOrderUpdate, which
+	// clears it on any non-acquiring push. This comment claimed that
+	// invariant from the start; nothing held it up until 2026-08-03, and the
+	// field was in practice write-once. Springfield ALN_001 displayed a
+	// 2½-hour-old reason during a later changeover.
 	QueueReason string `json:"queue_reason"`
 	// QueueCode is the structured category behind QueueReason (mirrored from
 	// Core's orders.queue_code). One of protocol.QueueCode. Edge persists it for
@@ -64,9 +71,30 @@ type Order struct {
 	// NOTHING BRANCHES ON IT, deliberately. It labels the board and it is what
 	// the projection tests assert against. Keeping it inert means turning the
 	// label off is a rendering change, not a behaviour change.
-	AuthoredBy string    `json:"authored_by"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	AuthoredBy string `json:"authored_by"`
+	// LaneHeld reports that this order is parked on a wait CORE owns — a lane
+	// gate — rather than on one the station owns. Derived, never stored: an order
+	// is lane-held exactly when it is `staged` and carries no Edge-authored step
+	// plan.
+	//
+	// That derivation is exact rather than approximate. A station wait exists only
+	// inside a plan this Edge wrote, so a plan-less order has no wait of its own;
+	// and a plan-less order's fleet waybill is [pickup, dropoff] with no Wait
+	// block, so the fleet never reports WAITING for it and it never reaches
+	// `staged` by any other route. The one thing that puts a plan-less order at
+	// `staged` is Core parking it at a lane's gate point.
+	//
+	// It exists to remove a CONTROL, not information: the tile still shows the
+	// order and its status, and only the RELEASE button goes. Core refuses such a
+	// release anyway (dispatch.HandleOrderRelease), so a button that survived here
+	// would be one whose only correct outcome is an error.
+	//
+	// Unlike AuthoredBy — which is deliberately inert — this one BRANCHES, so it
+	// is computed in the query beside the row it describes rather than being
+	// re-derived by each caller.
+	LaneHeld  bool      `json:"lane_held"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 	// Joined fields
 	ProcessName     string `json:"process_name"`
 	ProcessNodeName string `json:"process_node_name"`

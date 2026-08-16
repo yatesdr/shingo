@@ -267,6 +267,43 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			return nil
 		}
 
+		// SEALEDNESS. Everything above asked "is anything running right now" and
+		// "did anything go wrong"; from here down the question is "is this
+		// reshuffle FINISHED", and that is the only one of the three that a
+		// terminal child set cannot answer on its own.
+		//
+		// It answers it today because every compound writes all of its children in
+		// one transaction, so no-pending-children means no-more-children. Under the
+		// fold that stops being true — a reshuffle commits one move at a time, and
+		// all-terminal becomes the ordinary state BETWEEN moves. Completing here
+		// would finish a half-dug lane and release its dig lock with blockers still
+		// standing in it.
+		//
+		// PLACED HERE AND NOT AT THE TOP OF THIS BLOCK, which is the part worth
+		// reading twice. The two arms above are asking the other question and must
+		// keep running for an open compound: a failed leg still fails the whole
+		// reshuffle, and in-flight legs are still worth waiting for. A guard at the
+		// top would be wrong in both directions at once.
+		//
+		// RETURNS BEFORE THE LANE HANDLING BELOW, deliberately. An open compound is
+		// mid-dig and still needs its lane; releasing it between moves is the
+		// re-burial window Hold A exists to close.
+		//
+		// Narrow on purpose: only a parent we actually READ and that actually says
+		// open. A nil parent (load error) stays on the pre-existing path rather
+		// than acquiring a new fail-closed arm here — that path already handles an
+		// unreadable parent, badly but consistently, and widening it is a separate
+		// decision from this one.
+		//
+		// No-op today: nothing opens a compound yet, so every parent reaching this
+		// line is sealed. That is what makes it safe to land before the fold rather
+		// than during it.
+		if parent != nil && parent.OpenForChildren {
+			d.dbg("dispatch: compound %d has no children running but is still OPEN — not finishing it "+
+				"(the dig continues; its lane stays held)", parentOrderID)
+			return nil
+		}
+
 		// All children reached a terminal status with none failed -> compound
 		// order is complete. Route on whether the parent has its OWN work to
 		// resume after the reshuffle — Stage 4 keys this on the coordinated-plan
@@ -391,15 +428,60 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		return nil
 	}
 
-	if err = d.lifecycle.MoveToSourcing(next, "dispatcher", "dispatching reshuffle step"); err != nil {
-		log.Printf("dispatch: child order %d → sourcing: %v", next.ID, err)
-	}
-	log.Printf("dispatch: advancing compound order %d, step %d (seq %d)", parentOrderID, next.ID, next.Sequence)
-
 	// Hold B: this child is now inside the lane(s) it was sent into. Recorded
 	// before the fleet call, so the fact exists from the instant Core commits to
 	// it rather than from whenever the fleet answers.
-	d.TakeLaneOccupancy(next.ID, sourceNode, destNode)
+	//
+	// AND BEFORE THE STATUS MOVE, which is what makes the failure arm survivable.
+	// The read above fails closed by holding the child; this has to hold it the
+	// same way, and a child can only be held while it is still `pending` —
+	// GetNextChildOrder selects `status='pending'`, so a child parked at
+	// `sourcing` is invisible to every re-drive, and no transition out of
+	// sourcing goes back to pending (protocol.validTransitions). Holding it one
+	// line further down would strand the leg and leave the parent in
+	// `reshuffling` forever: fail-closed on paper, wedged in fact.
+	if err := d.TakeLaneOccupancy(next.ID, sourceNode, destNode); err != nil {
+		log.Printf("dispatch: compound %d child %d — could not record lane occupancy: %v (holding the child)",
+			parentOrderID, next.ID, err)
+		return nil
+	}
+
+	// THE VERDICT IS THE POINT. transition() compare-and-swaps on the status this
+	// caller loaded (lifecycle.go), so `pending → sourcing` is an ATOMIC CLAIM on
+	// this child: GetNextChildOrder selects `status='pending' … LIMIT 1`, two
+	// concurrent callers therefore resolve to the SAME child, and exactly one of
+	// their CASes matches a row. The database has been answering this correctly
+	// all along. This line logged the answer and dispatched anyway.
+	//
+	// Nothing downstream catches it. The loser's struct still reads `pending`, so
+	// Dispatch fails with IllegalTransition (pending → dispatched is not a legal
+	// edge) — while the orphan-mission guard that would cancel the vendor order is
+	// scoped to IsConcurrentTransition (dispatcher.go). Wrong error type, so it
+	// falls through to log-only, having already created a second real fleet order
+	// and overwritten vendor_order_id with it. Two robots, one row, and the first
+	// mission flying untracked: the 2026-05-27 shape, through a door the exactly-
+	// once re-read cannot cover because vendor_order_id is written AFTER the fleet
+	// call, not before.
+	//
+	// No serializer is needed here and one would be the wrong instrument — the
+	// atomic operation already ran. Read its result.
+	//
+	// RELEASING FIRST IS NOT OPTIONAL. Occupancy was taken above, keyed on this
+	// child, and laneOccupiedForChild counts ANY occupant including the child
+	// itself. Return while that row stands and the next re-drive finds the lane
+	// "busy" — busy with the very leg it is trying to send — and holds it forever.
+	// The CAS-loss arm survives regardless (the winner consumes the row) and a
+	// terminalized child releases by order in TerminalizeOrder, but a transient DB
+	// error on the status write hits neither, and that is the arm that wedges. A
+	// hold is only fail-closed if the thing held can be released — the same rule
+	// that put the take above this line, applied to the take itself.
+	if err = d.lifecycle.MoveToSourcing(next, "dispatcher", "dispatching reshuffle step"); err != nil {
+		log.Printf("dispatch: child order %d → sourcing refused: %v — NOT dispatching (another caller "+
+			"holds this child, or the status write failed); releasing its lane occupancy", next.ID, err)
+		d.ReleaseLaneOccupancy(next.ID)
+		return nil
+	}
+	log.Printf("dispatch: advancing compound order %d, step %d (seq %d)", parentOrderID, next.ID, next.Sequence)
 
 	// Build a synthetic envelope for the child dispatch
 	env := d.syntheticEnvelope(next.StationID)

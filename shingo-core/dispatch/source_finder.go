@@ -23,6 +23,7 @@ package dispatch
 
 import (
 	"fmt"
+	"strings"
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
@@ -325,6 +326,66 @@ func (f *SourceFinder) debug(format string, args ...any) {
 	if f.dbg != nil {
 		f.dbg(format, args...)
 	}
+}
+
+// explainEmptyPool records WHY a dedicated loader's pool produced no source, in
+// the two halves the failure actually has.
+//
+//   - POOL — every loader member with its kind, its pinned payload and whether
+//     InSourcePool admitted it. A member marked OUT never reaches the candidate
+//     list at all, so a bin parked on it is invisible to sourcing while looking
+//     entirely normal on every other surface. That asymmetry is unreadable from
+//     the candidate list alone, which is why this half comes first.
+//   - CANDS — every bin that DID reach the selector, with binsource.RejectReason.
+//     Shares one implementation with the selector, so the two cannot disagree.
+//
+// One line, not N: this fires once per replenish tick and a chronically
+// unavailable payload will emit it for hours (Springfield 2026-08-05 would have
+// produced ~540). Compact and greppable beats structured-and-flooding.
+//
+// Routed through f.debug, matching this file. Verified reaching journald at
+// Springfield, which is how the 08-05 trace was read at all — but that depends on
+// `dispatch` being in logging.stderr_subsystems. A plant with it off gets no
+// record, and promoting this to info (with per-tuple throttling, as
+// threshold_monitor does for NEGATIVE COUNT) is the open call for review.
+func (f *SourceFinder) explainEmptyPool(loaderID int64, anchor, payloadCode string, intent binsource.Intent,
+	members []loaders.Home, slotBins []*bins.Bin, cands []binsource.Cand) {
+	pool := make([]string, 0, len(members))
+	for _, m := range members {
+		name := fmt.Sprintf("node%d", m.PositionNodeID)
+		if n, err := f.db.GetNode(m.PositionNodeID); err == nil && n != nil {
+			name = n.Name
+		}
+		kind := m.Kind
+		if kind == "" {
+			kind = "home" // blank normalises to home — see UpsertHome
+		}
+		payload := m.PayloadCode
+		if payload == "" {
+			payload = "-"
+		}
+		admitted := "in"
+		if !m.InSourcePool() {
+			admitted = "OUT:unpinned-home"
+		}
+		pool = append(pool, fmt.Sprintf("%s[%s,%s,%s]", name, kind, payload, admitted))
+	}
+
+	want := binsource.Want{Payload: payloadCode, Intent: intent}
+	rejects := make([]string, 0, len(cands))
+	for i, c := range cands {
+		at := ""
+		if i < len(slotBins) && slotBins[i] != nil {
+			at = "@" + slotBins[i].NodeName
+		}
+		rejects = append(rejects, fmt.Sprintf("bin%d%s:%s", c.BinID, at, binsource.RejectReason(c, want)))
+	}
+	if len(rejects) == 0 {
+		rejects = append(rejects, "(no bins on any admitted slot)")
+	}
+
+	f.debug("finder: loader %d pool empty for %q anchor=%s intent=%v | POOL %s | CANDS %s",
+		loaderID, payloadCode, anchor, intent, strings.Join(pool, " "), strings.Join(rejects, " "))
 }
 
 // FindSource runs the tier cascade for one order and one intent and returns a
@@ -784,6 +845,17 @@ func (f *SourceFinder) sourceFromDedicatedLoader(sourceNodeName, payloadCode str
 
 	best, ok := binsource.Source(cands, binsource.Want{Payload: payloadCode, Intent: intent})
 	if !ok {
+		// The pool came up empty. Say WHY, in two halves, because "no eligible
+		// bin" has two different shapes and the bare message cannot tell them
+		// apart — Springfield 2026-08-05 burned a shift on exactly that ambiguity.
+		//
+		// MEMBERSHIP FIRST, and it is the half that matters. The InSourcePool
+		// filter above runs BEFORE ListBinsByNodes, so a bin parked on an excluded
+		// slot (an unpinned home: home_kind='home' with no payload) never becomes a
+		// candidate at all. It is ABSENT from the rejection list, not rejected by
+		// it. A candidate-only log would show zero rows for that case and teach
+		// nobody anything.
+		f.explainEmptyPool(home.LoaderID, sourceNodeName, payloadCode, intent, members, slotBins, cands)
 		return nil, nil, true, nil // loader position, no eligible bin of X → caller queues
 	}
 	chosen := byID[best.BinID]

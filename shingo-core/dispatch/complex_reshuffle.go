@@ -61,12 +61,12 @@ func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCod
 	// The arms below refine the cause. They keep the same sentence and code —
 	// storage is being rearranged either way, which is what the operator needs
 	// to know — and differ in the engineer-only tag for where the wait arose.
-	d.setQueueReason(order, protocol.QueueStorageRearranging, "intake-buried",
+	d.setQueueReason(order, protocol.QueueStorageRearranging, CauseIntakeBuried,
 		QueueParams{Lane: lane.Name, Payload: payloadCode})
 
 	// Lane-contention: leave the parent Queued for scanner replay.
 	if d.laneLock.IsLocked(buried.LaneID) {
-		d.setQueueReason(order, protocol.QueueStorageRearranging, "lane-locked",
+		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneLocked,
 			QueueParams{Lane: lane.Name, Payload: payloadCode})
 		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
 		return
@@ -85,7 +85,7 @@ func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCod
 			return
 		}
 		if allOccupied {
-			d.setQueueReason(order, protocol.QueueStorageRearranging, "targets-occupied",
+			d.setQueueReason(order, protocol.QueueStorageRearranging, QueueCause("targets-occupied"),
 				QueueParams{Lane: lane.Name, Payload: payloadCode})
 			d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
 			return
@@ -100,7 +100,7 @@ func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCod
 
 	// Race-safe lock acquisition.
 	if !d.laneLock.TryLock(buried.LaneID, order.ID) {
-		d.setQueueReason(order, protocol.QueueStorageRearranging, "lock-race",
+		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneLockRace,
 			QueueParams{Lane: lane.Name, Payload: payloadCode})
 		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
 		return
@@ -156,7 +156,7 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 	groupID := *lane.ParentID
 
 	if d.laneLock.IsLocked(buried.LaneID) {
-		d.setQueueReason(order, protocol.QueueStorageRearranging, "lane-locked",
+		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneLocked,
 			QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
 		return
 	}
@@ -172,7 +172,7 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 			return
 		}
 		if allOccupied {
-			d.setQueueReason(order, protocol.QueueStorageRearranging, "targets-occupied",
+			d.setQueueReason(order, protocol.QueueStorageRearranging, QueueCause("targets-occupied"),
 				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
 			return
 		}
@@ -185,7 +185,7 @@ func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *Bu
 	}
 
 	if !d.laneLock.TryLock(buried.LaneID, order.ID) {
-		d.setQueueReason(order, protocol.QueueStorageRearranging, "lock-race",
+		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneLockRace,
 			QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
 		return
 	}

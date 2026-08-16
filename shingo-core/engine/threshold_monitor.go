@@ -4,15 +4,16 @@
 //
 // The C-push architecture in one paragraph:
 //
-//   Edge owns claim config and ships per-(loader, payload) thresholds
-//   to Core via ClaimSync. On any activity for a monitored payload —
-//   a BinUOPDelta, a LinesideBucketDelta, or a non-delta bin mutation —
-//   Core re-reads the AUTHORITATIVE combined in-loop UOP for that payload
-//   (SystemUOPForPayload = SUM(bins.uop_remaining) + active lineside
-//   buckets) and evaluates it against the configured threshold. When the
-//   total is below the threshold for a (loader, payload) pair, Core emits
-//   a LoopBelowThresholdSignal on subject demand.loop_below_threshold.
-//   Edge responds by firing L1 retrieve_empty after its in-flight guard.
+//   Core owns loader config (the bin_loaders aggregate) and the per-(loader,
+//   payload) thresholds derived from it. On any activity for a monitored
+//   payload — a BinUOPDelta, a LinesideBucketDelta, or a non-delta bin
+//   mutation — Core re-reads the AUTHORITATIVE combined in-loop UOP for
+//   that payload (SystemUOPForPayload = SUM(bins.uop_remaining) + active
+//   lineside buckets) and evaluates it against the configured threshold.
+//   When the total is below the threshold for a (loader, payload) pair,
+//   Core emits a LoopBelowThresholdSignal on subject
+//   demand.loop_below_threshold. Edge responds by firing L1 retrieve_empty
+//   after its in-flight guard.
 //
 // Reads the source of truth, holds no private tally. The monitor used to
 // keep its own incremental in-memory UOP total (uopCache), moved by each
@@ -137,7 +138,7 @@ type thresholdEntry struct {
 	coreNodeName string
 	payloadCode  string
 	threshold    int
-	loaderID     int64 // the owning loader (cutover); 0 for legacy ClaimSync bindings → no LoaderKey on the signal
+	loaderID     int64 // the owning loader (cutover); 0 for legacy pre-cutover bindings → no LoaderKey on the signal
 }
 
 // ThresholdMonitor tracks in-loop UOP per payload incrementally and
@@ -825,9 +826,9 @@ func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason 
 
 // OnThresholdChanges resets per-binding debounce + warm-up state for
 // every (loader, payload) whose threshold value moved, and rebuilds
-// the in-memory threshold cache for affected payloads. Called by
-// CoreDataService.handleClaimSync after SyncDemandRegistry returns its
-// change list.
+// the in-memory threshold cache for affected payloads. Called by the
+// loader config-edit path (service/loader_service.go) after
+// SyncDemandRegistry returns its change list.
 //
 // After rebuilding the cache, this function re-evaluates the affected
 // bindings against the current cached UOP total and fires
@@ -875,12 +876,12 @@ func (m *ThresholdMonitor) OnThresholdChanges(changes []demands.RegistryChange) 
 //
 // The startup sweep reads demand_registry once, ~3s after Core boot. But the
 // registry is populated out-of-band: seeddev and migrateloaders write it directly
-// (separate processes that can't notify a running monitor), and the Edge sends
-// no ClaimSync (retired), so the usual runtime trigger
-// (handleClaimSync → OnThresholdChanges) never fires for loaders. Without a
-// re-engage on (re)connect, a binding seeded after the startup sweep stays dark
-// until Core restarts — exactly the dev-sim symptom (seed populates the registry,
-// edge restarts, but C-push never fires).
+// (separate processes that can't notify a running monitor), and the live runtime
+// trigger (loader config edit → OnThresholdChanges) only fires for edits made
+// through the loader UI, not for seed/CLI writes. Without a re-engage on
+// (re)connect, a binding seeded after the startup sweep stays dark until Core
+// restarts — exactly the dev-sim symptom (seed populates the registry, edge
+// restarts, but C-push never fires).
 //
 // Idempotent: engagePayloads only adds bindings and fires those below threshold;
 // the Edge's reservation seam dedups any redundant signal (never-2N), so

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/google/uuid"
+
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
 	"shingocore/fleet"
@@ -358,6 +360,39 @@ func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, 
 	return
 }
 
+// mintVendorOrderID is the ONE place an order-backed fleet order id is made.
+//
+// It exists next to mintBlockID because the two are one mechanism: every block id
+// this system emits is "<vendorOrderID>-b<n>", so whatever makes a vendor id
+// unique makes every block id under it unique too. THE ORDER ID IS WHAT DOES
+// THAT. Two different orders cannot produce the same vendor id, so they cannot
+// produce the same block id, whatever their block numbering does.
+//
+// That property was already true and held by CONVENTION — the same format string
+// written out at four call sites. Nothing was broken; a fifth site written from
+// memory is what this forecloses. Note what is NOT being claimed: a cross-order
+// collision was not reachable before this, and this is not a fix for one.
+//
+// Why it matters that block ids are globally distinct rather than merely distinct
+// within an order: RDS exposes /orderDetailsByBlockId/{id} and
+// /blockDetailsById/{id} (rds/orders.go), which resolve a parent order from a
+// bare block id. Those only make sense over a fleet-wide id space, so a
+// cross-order duplicate would make a global lookup return the WRONG order rather
+// than fail. Neither endpoint has a production caller today; the vendor's
+// behaviour on such a duplicate is unverified and nothing here should be read as
+// a statement about it.
+//
+// The uuid fragment is disambiguation for order REUSE (a retried order id across
+// a database reset), not the uniqueness argument. Uniqueness is order.ID.
+//
+// Two other vendor ids are deliberately NOT minted here: the fleet test command
+// (fleet/seerrds) and the send-to-node handler (www/handlers_robots.go). Neither
+// has an order row, both carry their own prefix, and forcing them through a
+// helper that requires an order id would mean inventing one.
+func mintVendorOrderID(orderID int64) string {
+	return fmt.Sprintf("%s%d-%s", VendorIDPrefix, orderID, uuid.New().String()[:8])
+}
+
 // mintBlockID hand-authors a block ID unique within a vendor order. Uniqueness
 // is SEER's only contract on it (a duplicate is rejected 50001); every consumer
 // — poller, telemetry, block-completion, the differential harness — treats it as
@@ -365,6 +400,23 @@ func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, 
 // "<vendorOrderID>-b<n>"; the advanced-load-sequence expansion suffixes "-<k>" on
 // the same base so the N same-location blocks stay distinct without renumbering
 // the rest of the order.
+//
+// ⚠ THIS FUNCTION MUST STAY DETERMINISTIC GIVEN (vendorOrderID, n). Do not add a
+// uuid, a timestamp or a counter to it. The determinism is load-bearing and it
+// looks like the opposite of what it is:
+//
+// Two paths can append the same tail to one order concurrently — the valve and
+// the lane-gate evaluator. Both are serialized and both reload before appending
+// (lane_gate_dispatch.go), but that guard is Core's own. SEER's rejection of a
+// duplicate blockId within an order is the backstop UNDER it, and it only works
+// because two racing appends of the same tail compute the SAME id. Give them
+// different ids and both are accepted: the robot gets the tail twice, which is a
+// silent double dispatch rather than one success and one logged rejection.
+//
+// So "make collisions impossible" (mintVendorOrderID, across orders) and "keep
+// collisions happening" (here, within an order) are not in tension. They are
+// about different scopes, and this one is a safety net that only catches
+// something because it is dumb.
 func mintBlockID(vendorOrderID string, n int) string {
 	return fmt.Sprintf("%s-b%d", vendorOrderID, n)
 }

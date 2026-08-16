@@ -55,8 +55,8 @@ func TestAdmitLaneEntry_ParksDeeperPending(t *testing.T) {
 		})
 
 		park, cause, err := d.AdmitLaneEntry(shallow, s0)
-		if err != nil || !park || cause != causeLaneDeeperPending {
-			t.Fatalf("[%s] deep active: park=%v cause=%q err=%v, want park %q", prefix, park, cause, err, causeLaneDeeperPending)
+		if err != nil || !park || cause != CauseLaneDeeperPending {
+			t.Fatalf("[%s] deep active: park=%v cause=%q err=%v, want park %q", prefix, park, cause, err, CauseLaneDeeperPending)
 		}
 	}
 
@@ -124,8 +124,8 @@ func TestAdmitLaneEntry_ReleasesOnPlacement(t *testing.T) {
 
 	// In flight, not yet placed → the shallow store parks (unchanged behavior).
 	park, cause, err := d.AdmitLaneEntry(shallow, s0)
-	if err != nil || !park || cause != causeLaneDeeperPending {
-		t.Fatalf("before placement: park=%v cause=%q err=%v, want park %q", park, cause, err, causeLaneDeeperPending)
+	if err != nil || !park || cause != CauseLaneDeeperPending {
+		t.Fatalf("before placement: park=%v cause=%q err=%v, want park %q", park, cause, err, CauseLaneDeeperPending)
 	}
 
 	// The deeper store's dropoff block completes — the bin is DOWN. Its order is
@@ -156,8 +156,8 @@ func TestAdmitLaneEntry_ReleasesOnPlacement(t *testing.T) {
 		o.Status = "queued"
 	})
 	park, cause, err = d.AdmitLaneEntry(shallow, s0)
-	if err != nil || !park || cause != causeLaneDeeperPending {
-		t.Fatalf("undispatched deeper store: park=%v cause=%q err=%v, want park %q", park, cause, err, causeLaneDeeperPending)
+	if err != nil || !park || cause != CauseLaneDeeperPending {
+		t.Fatalf("undispatched deeper store: park=%v cause=%q err=%v, want park %q", park, cause, err, CauseLaneDeeperPending)
 	}
 }
 

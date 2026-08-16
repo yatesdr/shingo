@@ -101,6 +101,11 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"QueueCode":     "queue_code",
 		"QueueCause":    "queue_cause",
 		"RemainingUOP":  "remaining_uop",
+		// Create does not carry it and must not: an order is born sealed by the
+		// column's DEFAULT, and SetCompoundOpen is the only thing that changes
+		// it. Round-tripping a probe value through Create would assert the
+		// opposite -- that a caller can hand openness in at creation.
+		"OpenForChildren": "open_for_children",
 	}
 
 	// Every excluded field must be excluded for a reason that is written down,

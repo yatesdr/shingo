@@ -59,7 +59,6 @@ const (
 	SubjectNodeStructureChanged = "node.structure_changed"
 
 	// Kanban demand wiring (Phase 2)
-	SubjectClaimSync    = "claim.sync"    // Edge -> Core: manual_swap claim config
 	SubjectDemandSignal = "demand.signal" // Core -> Edge: kanban demand trigger
 
 	// UOP-threshold replenishment (C-push):
@@ -326,7 +325,6 @@ func CoreInboundSubjects() []string {
 		SubjectTagVerifyRequest,
 		SubjectCatalogPayloadsRequest,
 		SubjectOrderStatusRequest,
-		SubjectClaimSync,
 		SubjectCountGroupAck,
 		SubjectBinUOPDelta,
 		SubjectLinesideBucketDelta,
@@ -414,7 +412,7 @@ const (
 // for both would be misleading.
 //
 // Cross-module: this value crosses Edge ↔ Core boundaries via
-// ClaimSyncEntry.Role and DemandSignal.Role; the typed alias keeps
+// DemandSignal.Role (and the plant-claims mirror); the typed alias keeps
 // JSON serialization byte-identical to the prior untyped string while
 // giving Go callers compile-time distinction from raw strings.
 type ClaimRole string

@@ -139,6 +139,36 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 				*supplyID, *evacID, nodeTask.ID, err)
 		}
 	}
+	// Point the node's runtime slots at THIS cycle's legs. Every
+	// operator-initiated pair-creation site does this (operator_stations.go,
+	// operator_bin_ops.go, operator_produce.go, operator_changeover_start.go);
+	// this one never has, and the omission is what takes the RELEASE button
+	// away from a changeover swap.
+	//
+	// Springfield SNF2 / ALN_001, 2026-08-03: the 21:19 changeover created
+	// 3993 (supply) + 3994 (evac) and linked them correctly, but the runtime
+	// row still named the 18:49 pair. ComputeSwapReady resolves the evac from
+	// StagedOrderID, read the previous cycle's evac — confirmed 2½ hours
+	// earlier — and returned false, so the operator watched both legs sit
+	// staged for 13 minutes with no button and recovered through the Edge
+	// admin UI. The task pointer held the right answer the whole time, but
+	// ResolveSwapPair only reaches its task fallback when BOTH runtime
+	// pointers are nil, so a stale pointer shadows it rather than losing to it.
+	//
+	// active = supply, staged = evac — the positional mapping ResolveSwapPair
+	// and the four operator sites already share. Writing nil for a leg the
+	// plan didn't create is deliberate: a one-legged changeover action must
+	// clear the other slot, not inherit last cycle's order there.
+	//
+	// Log-and-continue, matching LinkOrderSiblings above and for the same
+	// reason: the orders are already persisted and one node's failure must
+	// not abort the rest of the plan.
+	if supplyID != nil || evacID != nil {
+		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, supplyID, evacID); err != nil {
+			log.Printf("changeover: update runtime orders for node %d (supply=%v evac=%v): %v",
+				nodeID, supplyID, evacID, err)
+		}
+	}
 	if action.NextState != "" {
 		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, action.NextState); err != nil {
 			log.Printf("changeover: update node task %d state to %s: %v", nodeTask.ID, action.NextState, err)

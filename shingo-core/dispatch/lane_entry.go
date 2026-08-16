@@ -38,12 +38,6 @@ import (
 // shallower store co-occupy behind a deeper one still being placed) needs an
 // entry/XY signal that is a plant-runtime dependency — deferred; see the phase log.
 
-// laneEntryCause values (operator-facing queue causes for a parked entry).
-const (
-	causeLaneDeeperPending = "lane-deeper-pending" // Tier 2: a deeper cross-origin store hasn't placed yet
-	causeLaneGroupActive   = "lane-group-active"   // Tier 3: an active cross-origin group holds the lane
-)
-
 // laneEntryOrder is the classifier's view of one store targeting a lane: its slot
 // depth, its origin key, and whether it belongs to an active same-origin group in
 // this lane (a Tier-3 group member).
@@ -57,7 +51,7 @@ type laneEntryOrder struct {
 // classifyLaneEntry decides whether `self` may enter now or must park. Pure: every
 // liveness fact is already resolved into `others` (the active, not-completed stores
 // targeting the SAME lane). Returns a park cause, or "" to admit.
-func classifyLaneEntry(self laneEntryOrder, others []laneEntryOrder) string {
+func classifyLaneEntry(self laneEntryOrder, others []laneEntryOrder) QueueCause {
 	for _, o := range others {
 		if o.id == self.id {
 			continue
@@ -66,10 +60,10 @@ func classifyLaneEntry(self laneEntryOrder, others []laneEntryOrder) string {
 			continue // Tier 1: same-origin partner — co-dispatch, never gate
 		}
 		if o.depth > self.depth {
-			return causeLaneDeeperPending // Tier 2: a deeper cross-origin store is still pending
+			return CauseLaneDeeperPending // Tier 2: a deeper cross-origin store is still pending
 		}
 		if o.grouped {
-			return causeLaneGroupActive // Tier 3: an active cross-origin group holds the lane
+			return CauseLaneGroupActive // Tier 3: an active cross-origin group holds the lane
 		}
 	}
 	return ""
@@ -117,7 +111,7 @@ func (d *Dispatcher) laneEntryOriginFor(order *orders.Order) (string, error) {
 // store must PARK (with an operator cause) before entering its lane, so entry is
 // deepest-first. park=false for every non-lane / non-mouth-enforced destination —
 // byte-identical when the gate is off.
-func (d *Dispatcher) AdmitLaneEntry(order *orders.Order, destNode *nodes.Node) (park bool, cause string, err error) {
+func (d *Dispatcher) AdmitLaneEntry(order *orders.Order, destNode *nodes.Node) (park bool, cause QueueCause, err error) {
 	return d.admitLaneEntry(order, destNode)
 }
 
@@ -132,7 +126,7 @@ func (d *Dispatcher) AdmitLaneEntry(order *orders.Order, destNode *nodes.Node) (
 // a different disposition (ship the robot to the lane's wait point and append its
 // tail when the lane is safe), so this returns park=false for that mode and the
 // valve in dispatchToFleetCore takes over. Same policy, different instrument.
-func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (park bool, cause string, err error) {
+func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (park bool, cause QueueCause, err error) {
 	if destNode == nil {
 		return false, "", nil
 	}
@@ -159,7 +153,7 @@ func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (
 // park, the gate arm turns the same cause into "dwell at the wait point".
 //
 // Callers must have already established that Core owns this lane's mouth.
-func (d *Dispatcher) laneEntryCause(lane *nodes.Node, order *orders.Order, destNode *nodes.Node) (park bool, cause string, err error) {
+func (d *Dispatcher) laneEntryCause(lane *nodes.Node, order *orders.Order, destNode *nodes.Node) (park bool, cause QueueCause, err error) {
 	slots, err := d.db.ListLaneSlots(lane.ID)
 	if err != nil || len(slots) < 2 {
 		return false, "", err // depth-1 (or unreadable) lane — nothing to order

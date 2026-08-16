@@ -22,15 +22,21 @@ import (
 // LAST list element, so a drop left at 52 would report the head as 52 while
 // later migrations sat above it. After the catch-up merge, main's loader/index
 // migrations (v71–v75) sit above v70, and v76 (the lane-occupancy resource_kind)
-// above those, so the head is 76 rather than 70.
+// above those, so the head is 76 rather than 70. v77 (orders.open_for_children)
+// is the current head.
+//
+// THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
+// not a value to sync -- it is the second person confirming the head moved on
+// purpose, which is the only thing that distinguishes "v77 was added" from
+// "v77 was added below v76 and the head silently did not move".
 func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 76 {
-		t.Errorf("head migration = %d, want 76", got)
+	if got := store.LatestMigrationVersion(); got != 77 {
+		t.Errorf("head migration = %d, want 77", got)
 	}
 }
 

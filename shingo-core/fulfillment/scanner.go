@@ -247,7 +247,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// order.ID self-exclusion (A7): the in-flight tally counts `sourcing` orders,
 	// so a self-retrying order must not count its own row.
 	if blocked, cap := dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.QueueCause(cap.Cause), cap.Params)
 		return false
 	}
 
@@ -303,7 +303,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// unknown outcome instead of letting a default arm mis-file it.
 	switch dispatch.MapFinderOutcome(res) {
 	case dispatch.OutcomeWait:
-		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
+		s.setQueueReason(order, res.QueueCode, dispatch.QueueCause(res.QueueCause), res.QueueParams)
 		return false
 	case dispatch.OutcomeReshuffle:
 		// Plan the reshuffle HERE, not only at intake. planTransport runs once, at
@@ -337,7 +337,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 				// Congestion — the lane is busy, or no shuffle slot is free right now.
 				// Stay queued and retry next tick. NEVER fail: the lane is not broken,
 				// it is crowded.
-				s.setQueueReason(order, protocol.QueueStorageRearranging, "reshuffle-congestion",
+				s.setQueueReason(order, protocol.QueueStorageRearranging, dispatch.QueueCause("reshuffle-congestion"),
 					dispatch.QueueParams{Payload: order.PayloadCode})
 				return false
 			}
@@ -419,7 +419,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		// It used to park under waiting_for_material purely to refresh the row,
 		// which pointed the operator at inventory for a delivery-node lookup
 		// failure (F6 in the 2026-07-20 queue-reason study).
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, "dest-node-unresolved",
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.QueueCause("dest-node-unresolved"),
 			dispatch.QueueParams{Destination: order.DeliveryNode, DestUnresolved: true})
 		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dest unresolved, retrying"); err != nil {
 			s.logTransition(order.ID, "→ sourcing after dest resolve fail", err)
@@ -427,7 +427,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		return false
 	}
 	if err := s.dispatcher.ReserveStorageDropoff(order); err != nil {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, "slot-reserved",
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.QueueCause("slot-reserved"),
 			dispatch.QueueParams{Destination: order.DeliveryNode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "destination slot contended"); qerr != nil {
 			s.logTransition(order.ID, "→ sourcing after reserve conflict", qerr)
@@ -451,7 +451,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		// the order IS waiting on material again, so park it under that code (the
 		// race is the cause). The slot soft-reserve above is retained; it is
 		// owner-aware and harmless to hold across the retry.
-		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "lock-race",
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.QueueCause("lock-race"),
 			dispatch.QueueParams{Payload: order.PayloadCode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin race, retrying"); qerr != nil {
 			s.logTransition(order.ID, "→ sourcing after reserve fail", qerr)
@@ -484,7 +484,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// branch and re-confirms (owner-idempotent).
 	if err := s.dispatcher.ConfirmForDispatch(order, bin.ID, sourceNode, destNode); err != nil {
 		s.logFn("fulfillment: confirm-at-dispatch for order %d failed: %v", order.ID, err)
-		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "claim-failed",
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.QueueCause("claim-failed"),
 			dispatch.QueueParams{Payload: order.PayloadCode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "confirm failed, retrying"); qerr != nil {
 			s.logTransition(order.ID, "→ sourcing after confirm fail", qerr)
@@ -508,7 +508,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		}
 		// Fleet rejected the dispatch — a transient robot-system issue. Park under
 		// fleet_unavailable so the row carries that code.
-		s.setQueueReason(order, protocol.QueueFleetUnavailable, "fleet-error", dispatch.QueueParams{})
+		s.setQueueReason(order, protocol.QueueFleetUnavailable, dispatch.QueueCause("fleet-error"), dispatch.QueueParams{})
 		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
 			s.logTransition(order.ID, "→ sourcing after fleet fail", err)
 		}
@@ -551,7 +551,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// intake passes through; a loser (or a slot that filled) requeues holding its
 	// bin, never dropping into an occupied slot (#115/#117, generalized).
 	if err := s.dispatcher.ReserveStorageDropoff(order); err != nil {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, "slot-reserved",
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.QueueCause("slot-reserved"),
 			dispatch.QueueParams{Destination: order.DeliveryNode})
 		if s.debugLog != nil {
 			s.debugLog("fulfillment: held-bin order %d holding — destination slot not secured: %v", order.ID, err)
@@ -581,7 +581,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// keep the soft holds and park in sourcing; next tick re-confirms.
 	if err := s.dispatcher.ConfirmForDispatch(order, *order.BinID, sourceNode, destNode); err != nil {
 		s.logFn("fulfillment: held-bin order %d confirm-at-dispatch failed, re-queuing (hold kept): %v", order.ID, err)
-		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "claim-failed",
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.QueueCause("claim-failed"),
 			dispatch.QueueParams{Payload: order.PayloadCode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "confirm failed, retrying"); qerr != nil {
 			s.logTransition(order.ID, "held-bin → sourcing after confirm fail", qerr)
@@ -600,7 +600,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		// Same fleet_unavailable code as the plain-path fleet failure; both are
 		// transient robot-system issues. The hard claim is released so the order
 		// re-soft-acquires next tick.
-		s.setQueueReason(order, protocol.QueueFleetUnavailable, "fleet-error", dispatch.QueueParams{})
+		s.setQueueReason(order, protocol.QueueFleetUnavailable, dispatch.QueueCause("fleet-error"), dispatch.QueueParams{})
 		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
 			s.logTransition(order.ID, "held-bin → sourcing after fleet fail", err)
 		}
@@ -621,7 +621,7 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 	admitted, cause, lane, err := s.dispatcher.AcquireLanesForOrder(order.ID, sourceNode, destNode)
 	if err != nil {
 		s.logFn("fulfillment: lane acquire for order %d errored: %v (retrying)", order.ID, err)
-		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "lane-acquire-error",
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseLaneAcquireError,
 			dispatch.QueueParams{Payload: order.PayloadCode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane acquire error, retrying"); qerr != nil {
 			s.logFn("fulfillment: order %d → sourcing after lane acquire error: %v", order.ID, qerr)
@@ -650,7 +650,7 @@ func (s *Scanner) admitDepthOrder(order *orders.Order, destNode *nodes.Node) boo
 	park, cause, err := s.dispatcher.AdmitLaneEntry(order, destNode)
 	if err != nil {
 		s.logFn("fulfillment: lane-entry check for order %d errored: %v (retrying)", order.ID, err)
-		s.setQueueReason(order, protocol.QueueWaitingForMaterial, "lane-entry-error",
+		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseLaneEntryError,
 			dispatch.QueueParams{Payload: order.PayloadCode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane-entry check error, retrying"); qerr != nil {
 			s.logFn("fulfillment: order %d → sourcing after lane-entry error: %v", order.ID, qerr)
@@ -695,18 +695,18 @@ func (s *Scanner) logTransition(orderID int64, what string, err error) {
 	s.logFn("fulfillment: order %d %s: %v", orderID, what, err)
 }
 
-func (s *Scanner) setQueueReason(order *orders.Order, code protocol.QueueCode, cause string, params dispatch.QueueParams) {
+func (s *Scanner) setQueueReason(order *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams) {
 	reason := dispatch.FormatQueueSentence(code, params)
-	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == cause {
+	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == string(cause) {
 		return
 	}
-	if err := s.db.SetOrderQueueDetail(order.ID, reason, code, cause); err != nil {
+	if err := s.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
 		s.logFn("fulfillment: set queue_reason for order %d: %v", order.ID, err)
 		return
 	}
 	order.QueueReason = reason
 	order.QueueCode = string(code)
-	order.QueueCause = cause
+	order.QueueCause = string(cause)
 }
 
 // notifyEdgeDispatched sends the ack + waybill to Edge after a successful

@@ -28,11 +28,11 @@ func (s *stubDispatcher) ReserveStorageDropoff(*orders.Order) error { return nil
 func (s *stubDispatcher) ConfirmForDispatch(*orders.Order, int64, *nodes.Node, *nodes.Node) error {
 	panic("scanner complex-order branch should not call ConfirmForDispatch")
 }
-func (s *stubDispatcher) AcquireLanesForOrder(int64, *nodes.Node, *nodes.Node) (bool, string, string, error) {
+func (s *stubDispatcher) AcquireLanesForOrder(int64, *nodes.Node, *nodes.Node) (bool, dispatch.QueueCause, string, error) {
 	return true, "", "", nil // gate off — the complex branch does not gate lanes here
 }
 func (s *stubDispatcher) ReleaseLanesForOrder(int64) error { return nil }
-func (s *stubDispatcher) AdmitLaneEntry(*orders.Order, *nodes.Node) (bool, string, error) {
+func (s *stubDispatcher) AdmitLaneEntry(*orders.Order, *nodes.Node) (bool, dispatch.QueueCause, error) {
 	return false, "", nil // gate off — admit everything
 }
 func (s *stubDispatcher) PostFindHook() {}

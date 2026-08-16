@@ -944,6 +944,13 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool {
 				return schema.CheckConstraintAllows(q, "reservations", "reservations_resource_kind_check", "occupancy")
 			}},
+
+		// v77 adds orders.open_for_children -- sealedness on a compound parent,
+		// carried explicitly rather than derived. NO BACKFILL, and that is a
+		// ruling rather than an omission: see v77CompoundSealedness.
+		{77, "add orders.open_for_children (compound sealedness, explicit)",
+			v77CompoundSealedness,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "open_for_children") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1467,6 +1474,35 @@ func v47OrderRemainingUOP(tx *sql.Tx) error {
 	// the bin manifest at the (now scanner-side) claim. No backfill — in-flight
 	// orders claimed at intake before this deploy, so NULL is correct for them.
 	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS remaining_uop INTEGER`)
+	return err
+}
+
+// v77CompoundSealedness adds orders.open_for_children: whether a compound
+// parent may still gain children.
+//
+// NO BACKFILL, and that is the ruling rather than a shortcut. v46 backfilled
+// because its column REPLACED a heuristic (steps_json != "") that was already
+// classifying live orders, so the column had to reproduce an existing answer.
+// There is no prior answer here - nothing has ever asked this question - and
+// the default is not merely the safe choice, it is the TRUE one: every compound
+// writes all of its children in a single transaction (CreateCompoundChildren)
+// and never adds more, so every parent currently in `reshuffling` genuinely is
+// sealed. `DEFAULT false` states that fact about every existing row; a backfill
+// would state it twice.
+//
+// The polarity is the point. Named for the exception so the safe state is the
+// zero value on BOTH sides: false in Postgres, false for a bare orders.Order in
+// Go. Openness cannot be inherited by omission in either language - it has to be
+// written on purpose, which is what the fold will do. A `sealed ... DEFAULT
+// true` column would have put the dangerous reading in Go's zero value, where
+// forgetting produces it.
+//
+// Additive and non-breaking on its own: nothing reads the column in this
+// migration's commit, so a Core rolled back across it loses a column nothing
+// consulted.
+func v77CompoundSealedness(tx *sql.Tx) error {
+	_, err := tx.Exec(
+		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS open_for_children BOOLEAN NOT NULL DEFAULT false`)
 	return err
 }
 

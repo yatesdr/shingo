@@ -199,11 +199,28 @@ func (s *ReconciliationService) AutoConfirmStuckDeliveredOrders(timeout time.Dur
 // re-drives AdvanceCompoundOrder, which resumes (coordinated) / completes (plain) /
 // fails (a failed-or-cancelled child) the parent per the children's terminal states.
 // Idempotent: a parent advanced out of `reshuffling` is not re-selected next pass.
+//
+// OPEN PARENTS ARE NOT STUCK, they are mid-dig, so the predicate excludes them.
+// "All children terminal" stops meaning "finished" under the fold, where it is
+// the ordinary state between two moves of one reshuffle — and this sweep runs on
+// the PERIODIC ticker, not only at boot, so it would find each of those gaps
+// within a pass and complete a half-dug lane.
+//
+// This is the SECOND of the two guards, and not the load-bearing one.
+// AdvanceCompoundOrder refuses an open parent itself, and the poller and event
+// paths reach that refusal without ever coming through here — so correctness
+// does not rest on this line. What rests on it is the forensic record: without
+// it the sweep re-drives every open parent every pass and writes a
+// RecordRecoveryAction below claiming it rescued a stranded reshuffle. A
+// recovery log that fires when nothing was recovered destroys the same thing an
+// alarm that cannot fire destroys — the next reader's ability to believe it —
+// and it is arguably worse, because somebody will eventually count these.
 func (s *ReconciliationService) AdvanceStuckReshuffleParents() (int, error) {
 	rows, err := s.db.Query(`
 		SELECT p.id
 		FROM orders p
 		WHERE p.status = 'reshuffling'
+		  AND NOT p.open_for_children
 		  AND EXISTS (SELECT 1 FROM orders c WHERE c.parent_order_id = p.id)
 		  AND NOT EXISTS (
 			SELECT 1 FROM orders c

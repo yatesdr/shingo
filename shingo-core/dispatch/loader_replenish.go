@@ -339,18 +339,27 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 			res.HeldBy[t.NodeName] = block.Cause
 			continue
 		}
-		// An order is already pointed here and has not given the window up. The
-		// check above cannot see it while it sits `queued` — that blindness is
-		// exactly what produced the duplicates — and it is asked from ANY origin
-		// on purpose: two payloads at one shared-window loader are two separate
-		// episodes that cannot see each other, so an episode-scoped question here
-		// would let both put a carrier on the same window. "One order per window"
-		// has to mean one order, not one per asker.
-		live, lerr := d.db.CountLiveOrdersByDeliveryNode(t.NodeName)
+		// A carrier has already been ASKED FOR here and the ask has not been given
+		// up. The check above cannot see it while it sits `queued` — that
+		// blindness is exactly what produced the duplicates — and it is asked from
+		// ANY origin on purpose: two payloads at one shared-window loader are two
+		// separate episodes that cannot see each other, so an episode-scoped
+		// question here would let both put a carrier on the same window. "One
+		// order per window" has to mean one order, not one per asker.
+		//
+		// ASKS, not arrivals. A swap's evac leg names this home as its delivery
+		// node but never asked for a carrier — it is a return trip. Counting it as
+		// an outstanding ask is what deadlocked SMN_030 for 8h57m on 2026-08-05:
+		// the evac held the window, so the carrier its own supply sibling was
+		// waiting for could not be ordered. Returns are covered by
+		// CheckDropoffCapacity's in-flight arm above, which is the physical
+		// question; this is the logical one. See
+		// orders.CountLiveCarrierRequestsByDeliveryNode.
+		live, lerr := d.db.CountLiveCarrierRequestsByDeliveryNode(t.NodeName)
 		if lerr != nil {
 			// Fail closed, same as every other unreadable occupancy question.
 			res.HeldBy[t.NodeName] = "window-check-failed"
-			d.dbg("loader_replenish loader=%d payload=%s window=%s: count live orders: %v",
+			d.dbg("loader_replenish loader=%d payload=%s window=%s: count live carrier requests: %v",
 				req.LoaderID, req.PayloadCode, t.NodeName, lerr)
 			continue
 		}

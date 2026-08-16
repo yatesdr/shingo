@@ -100,8 +100,8 @@ type recordingDispatcher struct {
 	// mouth-gate park branch); releaseLaneCalls counts fleet-fail lane releases.
 	laneConflict     bool
 	releaseLaneCalls int
-	laneEntryPark    bool   // tiered-entry gate: park the store (deeper/group holds the lane)
-	laneEntryCause   string // the operator cause when laneEntryPark is set
+	laneEntryPark    bool                // tiered-entry gate: park the store (deeper/group holds the lane)
+	laneEntryCause   dispatch.QueueCause // the operator cause when laneEntryPark is set
 }
 
 // confirmCall records one Rule-1 confirm-at-dispatch: the order, the bin, and the
@@ -148,14 +148,14 @@ func (d *recordingDispatcher) ConfirmForDispatch(o *orders.Order, binID int64, s
 // AcquireLanesForOrder / ReleaseLanesForOrder: the lane mouth gate is OFF in
 // these mock-based tests (admit everything), so behavior is byte-identical to
 // pre-P4. laneConflict lets a test force the contended branch.
-func (d *recordingDispatcher) AcquireLanesForOrder(int64, *nodes.Node, *nodes.Node) (bool, string, string, error) {
+func (d *recordingDispatcher) AcquireLanesForOrder(int64, *nodes.Node, *nodes.Node) (bool, dispatch.QueueCause, string, error) {
 	if d.laneConflict {
-		return false, "lane-held-traffic", "LANE-X", nil
+		return false, dispatch.CauseLaneHeldTraffic, "LANE-X", nil
 	}
 	return true, "", "", nil
 }
 func (d *recordingDispatcher) ReleaseLanesForOrder(int64) error { d.releaseLaneCalls++; return nil }
-func (d *recordingDispatcher) AdmitLaneEntry(*orders.Order, *nodes.Node) (bool, string, error) {
+func (d *recordingDispatcher) AdmitLaneEntry(*orders.Order, *nodes.Node) (bool, dispatch.QueueCause, error) {
 	return d.laneEntryPark, d.laneEntryCause, nil
 }
 func (d *recordingDispatcher) PostFindHook() {}

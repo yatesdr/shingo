@@ -247,7 +247,7 @@ func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bi
 		s.dbg("plan: order %d structural — %s: %s", order.ID, res.TermCode, res.Err)
 		return nil, nil, nil, &planningError{Code: res.TermCode, Detail: res.Err.Error(), Err: res.Err}, false
 	default: // OutcomeWait — the only remaining member
-		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
+		s.setQueueReason(order, res.QueueCode, QueueCause(res.QueueCause), res.QueueParams)
 		return nil, nil, &PlanningResult{Queued: true}, nil, false
 	}
 }
@@ -257,18 +257,18 @@ func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bi
 // and writes sentence+code+cause together. Mirrors the Dispatcher and Scanner
 // helpers so every intake path parks through the same formatter, never free text.
 // Best-effort: a failed write is logged and swallowed.
-func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.QueueCode, cause string, params QueueParams) {
+func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) {
 	reason := FormatQueueSentence(code, params)
 	if order.QueueReason == reason && order.QueueCode == string(code) {
 		return
 	}
-	if err := s.db.SetOrderQueueDetail(order.ID, reason, code, cause); err != nil {
+	if err := s.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
 		log.Printf("dispatch: set queue_reason (%s) for order %d: %v", cause, order.ID, err)
 		return
 	}
 	order.QueueReason = reason
 	order.QueueCode = string(code)
-	order.QueueCause = cause
+	order.QueueCause = string(cause)
 }
 
 // planTransport is the single planner for the three "simple" transport families —
@@ -345,7 +345,7 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 	// compound machinery. Gate first, then resolve.
 	if blocked, cap := CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
 		s.dbg("transport: order %d queued — %s", order.ID, cap.Cause)
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, QueueCause(cap.Cause), cap.Params)
 		return &PlanningResult{Queued: true}, nil
 	}
 

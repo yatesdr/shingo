@@ -56,9 +56,9 @@ func TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold(
 	preCount := fires.count(stationID)
 
 	// Drive OnThresholdChanges directly with a synthetic change list — the
-	// same shape handleClaimSync would produce after a real SyncRegistry
-	// returned a non-empty change set. This isolates the immediate-fire
-	// behavior without depending on the full ClaimSync path.
+	// same shape the loader config-edit path would produce after a real
+	// SyncRegistry returned a non-empty change set. This isolates the
+	// immediate-fire behavior without depending on the full config-edit path.
 	eng.thresholdMonitor.OnThresholdChanges([]demands.RegistryChange{{
 		StationID:    stationID,
 		CoreNodeName: loader,
@@ -640,7 +640,7 @@ func TestThresholdMonitor_NegativeTotal_StillEmitsSignal(t *testing.T) {
 
 // TestThresholdMonitor_Resync_EngagesAndFiresSeededBinding pins the seed-ordering
 // fix. A demand_registry binding written OUT-OF-BAND (seeddev / migrateloaders
-// write it directly; ClaimSync is retired so the Edge pushes no claims) is
+// write it directly; the Edge pushes no claim config over the wire) is
 // invisible to the monitor's one-shot startup sweep. Resync — called on Edge
 // (re)connect — must engage that binding and fire it immediately when already
 // below threshold, WITHOUT relying on a SyncDemandRegistry diff (the registry was
