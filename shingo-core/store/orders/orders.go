@@ -792,9 +792,9 @@ func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, exclu
 	return count, err
 }
 
-// LiveCountsByOriginPerDeliveryNode returns one demand episode's OWN
-// non-terminal orders, counted per delivery node. The map is empty when the
-// episode has nothing outstanding.
+// CountLiveByOrigin returns a demand episode's OWN non-terminal order count — a
+// bare total, not a per-window breakdown. It returns zero when the episode has
+// nothing outstanding.
 //
 // IT DELIBERATELY COUNTS `queued`, which is the whole point and the one way it
 // differs from the two counts above. Those answer "is something on its way

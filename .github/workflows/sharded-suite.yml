@@ -1,0 +1,204 @@
+name: Sharded suite
+
+# ONE SHARDED TEST SUITE, PARAMETERISED. Called by core.yml (twice: the plain
+# docker suite and the -race one) and by edge.yml. Three copies of a
+# plan/shard/record trio is where this stops being duplication you tolerate and
+# starts being three places to fix the next bug in — the shared-postgres step
+# had already been fixed in two places once.
+#
+# A REUSABLE WORKFLOW AND NOT A COMPOSITE ACTION, because a composite action
+# can only bundle STEPS. This needs to define jobs, and one of them needs a
+# matrix computed by another, which only `workflow_call` can express.
+#
+# The split itself is never written down: the package list comes from `go list`
+# every run and the balance comes from durations recorded by the previous run.
+# See shingo-core/scripts/shardplan for why timings and not a cheaper proxy.
+
+on:
+  workflow_call:
+    inputs:
+      module:
+        description: Module directory, e.g. shingo-core
+        required: true
+        type: string
+      shards:
+        description: >
+          How many ways to split. There is no value in exceeding the number of
+          packages that carry real weight: the floor is the single longest
+          package, so core (49 packages, long tail) takes 6 while edge (three
+          packages are 80% of the work) takes 4.
+        required: true
+        type: number
+      test-flags:
+        description: Flags for `go test`, e.g. "-race -timeout=25m"
+        required: true
+        type: string
+      cache-prefix:
+        description: >
+          Timings cache key prefix. MUST differ per suite: -race timings are
+          5-20x the plain ones, so sharing a cache between them would balance
+          both against the wrong numbers.
+        required: true
+        type: string
+      needs-postgres:
+        description: Start a shared Postgres per shard (core only; edge is SQLite).
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: |
+            ${{ inputs.module }}/go.sum
+            protocol/go.sum
+
+      # Rolling key: cache entries are immutable once written, so the key
+      # carries the run id and restore-keys picks up the most recent previous
+      # one. A miss is fine — shardplan falls back to equal weights and the run
+      # is merely less balanced.
+      - uses: actions/cache/restore@v4
+        with:
+          path: .shard/timings.json
+          key: ${{ inputs.cache-prefix }}${{ github.run_id }}
+          restore-keys: |
+            ${{ inputs.cache-prefix }}
+
+      # shardplan always runs FROM shingo-core, whichever module is being
+      # planned: it lives in that module, and it takes the package list on
+      # stdin so it neither knows nor cares whose packages they are. Running it
+      # from edge's directory would mean `go run` reaching across modules,
+      # which go.work may tolerate and which there is no reason to rely on.
+      - id: plan
+        run: |
+          set -euo pipefail
+          mkdir -p .shard
+          ( cd "${{ inputs.module }}" && go list -tags=docker ./... ) > .shard/pkgs.txt
+          matrix=$( cd shingo-core && go run ./scripts/shardplan plan \
+            -shards ${{ inputs.shards }} \
+            -timings "$GITHUB_WORKSPACE/.shard/timings.json" \
+            < "$GITHUB_WORKSPACE/.shard/pkgs.txt" )
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+      # The record job runs this binary instead of `go run`-ing the source,
+      # which is what lets it skip actions/setup-go entirely — ~11s of a ~25s
+      # job that gates nothing but still extends the workflow. Built here
+      # because this job already has a toolchain warmed up.
+      - name: Build shardplan for the record job
+        run: |
+          set -euo pipefail
+          cd shingo-core && go build -o "$GITHUB_WORKSPACE/.shard/shardplan" ./scripts/shardplan
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shard-pkgs-${{ inputs.cache-prefix }}
+          path: |
+            .shard/pkgs.txt
+            .shard/shardplan
+
+  test:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      # One shard finding a failure must not cancel the others: their results
+      # are still wanted, both to see whether the failure is isolated and so
+      # record still gets timings for the rest.
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: shingo-core's TestSchemaConvergesAcrossVintages reads
+          # pinned revisions out of git, and a shallow clone fails it with
+          # "invalid object name" rather than skipping it.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: |
+            ${{ inputs.module }}/go.sum
+            protocol/go.sum
+
+      - if: ${{ inputs.needs-postgres }}
+        uses: ./.github/actions/shared-postgres
+        with:
+          # DIGITS AND UNDERSCORES ONLY. This is spliced into `CREATE
+          # DATABASE %s` unquoted, and it was previously built from
+          # cache-prefix — which contains hyphens, so Postgres answered
+          # `syntax error at or near "-"` on all twelve shards at once.
+          # testdb now sanitises what it is given as well; this is the
+          # other half. Each job has its own container, so run id plus
+          # shard index is already unique.
+          template: template_ci_${{ github.run_id }}_${{ matrix.shard.id }}
+
+      - name: Test — shard ${{ matrix.shard.id }}
+        working-directory: ${{ inputs.module }}
+        # NOT -json, deliberately: shardplan reads plain output too, and a race
+        # report is a multi-page stack dump that JSON would make unreadable on
+        # the one run where somebody has to read it.
+        #
+        # pipefail so `tee` cannot mask a failing exit code. -p 1 because the
+        # runner has 2-4 cores and in-package parallelism already uses them.
+        run: |
+          set -o pipefail
+          mkdir -p ../.shard
+          go test -tags=docker -count=1 -p 1 ${{ inputs.test-flags }} \
+            ${{ matrix.shard.pkgs }} \
+            | tee ../.shard/results-${{ matrix.shard.id }}.log
+
+      # always(): a shard that went red still produced timings for whatever ran
+      # before it, and losing those would unbalance the next run.
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-results-${{ inputs.cache-prefix }}${{ matrix.shard.id }}
+          path: .shard/results-${{ matrix.shard.id }}.log
+          if-no-files-found: ignore
+
+  record:
+    needs: [plan, test]
+    # always(): timings are worth keeping even when a shard went red. This job
+    # gates nothing — it only feeds the next run's balance, so a failure here
+    # means "the next split will be stale", not "the code is broken".
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      # NO CHECKOUT AND NO setup-go. This job needs one stdlib-only binary and
+      # three text files, all of which arrive as artifacts. Cloning the repo and
+      # installing a toolchain to run it cost ~14s of a job that nothing waits
+      # on but that the workflow's duration still includes.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*-${{ inputs.cache-prefix }}*
+          path: .shard-artifacts
+
+      - name: Merge timings
+        run: |
+          set -euo pipefail
+          mkdir -p .shard
+          logs=$(find .shard-artifacts -name 'results-*.log')
+          pkgs=$(find .shard-artifacts -name 'pkgs.txt' | head -1)
+          bin=$(find .shard-artifacts -name 'shardplan' | head -1)
+          echo "merging $(echo "$logs" | grep -c . || true) shard log(s)"
+          if [ -z "$logs" ] || [ -z "$pkgs" ] || [ -z "$bin" ]; then
+            echo "::warning::shard artifacts missing; timings left untouched"
+            exit 0
+          fi
+          # Artifacts do not preserve the executable bit.
+          chmod +x "$bin"
+          "$bin" record -timings .shard/timings.json $logs < "$pkgs"
+
+      - uses: actions/cache/save@v4
+        with:
+          path: .shard/timings.json
+          key: ${{ inputs.cache-prefix }}${{ github.run_id }}

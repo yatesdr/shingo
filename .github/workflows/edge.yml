@@ -9,11 +9,29 @@ on:
       # shingo/shared and embeds its stylesheets. Without it here, a
       # change that breaks Edge's build lands with Edge CI never running.
       - "shared/**"
+      # Trigger on this file too. core.yml carries the reasoning: "a gate
+      # whose own edits do not run it cannot report on them" — and it was
+      # exactly this gap that let a restructuring of the jobs below sit
+      # unverified, because nothing in the diff matched any other path.
+      - ".github/workflows/edge.yml"
+      # The shared workflow and actions these jobs call. Without them a
+      # change to sharded-suite.yml or shared-postgres — the code that
+      # actually runs the tests — triggers nothing, which is the same
+      # gap as a workflow not triggering on its own edits, one level out.
+      - ".github/workflows/sharded-suite.yml"
+      - ".github/actions/**"
   pull_request:
     paths:
       - "shingo-edge/**"
       - "protocol/**"
       - "shared/**"
+      - ".github/workflows/edge.yml"
+      # The shared workflow and actions these jobs call. Without them a
+      # change to sharded-suite.yml or shared-postgres — the code that
+      # actually runs the tests — triggers nothing, which is the same
+      # gap as a workflow not triggering on its own edits, one level out.
+      - ".github/workflows/sharded-suite.yml"
+      - ".github/actions/**"
   workflow_call:
 
 # See core.yml for rationale - same idempotent burst-coalescing.
@@ -45,6 +63,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.0"
+          # Without this, the cache is silently OFF. setup-go defaults
+          # cache:true, and with no cache-dependency-path it requires `go.mod`
+          # in the REPO ROOT (readdirSync, not recursive). This is a go.work
+          # repo: the root has go.work and the go.mod files sit one level down,
+          # so the lookup throws "Dependencies file is not found ... Supported
+          # file pattern: go.mod" — and main.ts catches it into a warning, so
+          # the job stays green having restored nothing. It caches both
+          # GOMODCACHE and GOCACHE, so every job was re-downloading every
+          # module and recompiling from scratch. See core.yml for the full note.
+          cache-dependency-path: |
+            shingo-edge/go.sum
+            protocol/go.sum
 
       - name: Build
         working-directory: shingo-edge
@@ -61,43 +91,63 @@ jobs:
         working-directory: shingo-edge
         run: go build -tags sim ./...
 
-      - name: Prepare build dir
+      # THE UNTAGGED SUITE IS NOT RUN HERE, BECAUSE THE DOCKER STEPS BELOW
+      # ALREADY RUN IT — all 1,161 of its tests, and again under -race.
+      # `-tags=docker` ADDS files and removes none, and nothing in this tree
+      # carries a `!docker` constraint, so `go test -tags=docker ./...` executes
+      # every test `go test ./...` would, plus the docker ones. No docker-tagged
+      # file defines TestMain or init(), and every package-level var in one is
+      # an inert literal or a `var _ T = (*impl)(nil)` assertion, so the tag
+      # adds tests without re-wiring package state. See core.yml for the
+      # `go test -list` counts this was verified against.
+      #
+      # This step remains so the untagged BUILD stays gated: a test file that
+      # only compiles when a docker-tagged helper is present would otherwise
+      # break `go test ./...` for every developer while CI stayed green.
+      # -run NONE compiles the test binaries and runs nothing, which is the
+      # part the docker steps do not cover — `go build ./...` above reaches
+      # only non-test code. Mirrors what integration.yml already did.
+      - name: Build (test binaries, untagged)
         working-directory: shingo-edge
-        run: mkdir -p build
+        run: go test -run NONE -count=1 ./...
 
-      - name: Test (unit)
-        working-directory: shingo-edge
-        run: go test -coverprofile=build/coverage ./...
+  # THE PLAIN SUITE STAYS ONE JOB; ONLY THE RACE SUITE IS SHARDED.
+  #
+  # Edge's plain docker run is ~30s — less than the per-job entry cost, so
+  # sharding it would make it slower, not faster. Its race run is ~294s, nearly
+  # 10x, and that is the one worth splitting.
+  #
+  # FOUR SHARDS, NOT SIX. Edge's weight is concentrated: engine 19.6s, store
+  # 13.0s, www 9.6s of a 52.9s serial total — three packages are 80% of it, and
+  # eleven others share the rest. The floor is the longest package, so beyond
+  # about four shards the extra jobs pay startup to run nothing much. Getting
+  # under that floor means making engine itself cheaper, not splitting further.
+  #
+  # No Postgres: edge is SQLite throughout.
 
-      - name: Test (unit, race)
-        working-directory: shingo-edge
-        # Promoted to gating in Phase 2 (2026-05-22) after the
-        # baseline -race run was confirmed clean and PR 2's lock
-        # fixes landed (sse_race_test.go, warlink_tags_race_test.go).
-        run: go test -race -count=1 ./...
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Coverage report (unit)
-        working-directory: shingo-edge
-        run: go tool cover -func=build/coverage
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: |
+            shingo-edge/go.sum
+            protocol/go.sum
 
       - name: Test (Docker integration)
         working-directory: shingo-edge
-        # testcontainers manages its own Postgres container; the
-        # ubuntu-latest runner provides Docker. -count=1 prevents
-        # stale-cache false positives on integration tests;
-        # -timeout=10m accommodates cold-runner container startup.
-        # TODO(stage-2a.2): tighten -timeout to ~2x the observed
-        # runtime once the workflow has run a few times. Standard
-        # warm-runner integration tests should land well under 5m;
-        # 10m exists today only because we lack measured data.
-        run: go test -tags=docker -timeout=10m -count=1 -coverprofile=build/coverage-docker ./...
+        run: go test -tags=docker -timeout=10m -count=1 ./...
 
-      - name: Coverage report (Docker)
-        working-directory: shingo-edge
-        run: go tool cover -func=build/coverage-docker
-
-      - name: Test (Docker integration, race)
-        working-directory: shingo-edge
-        # Promoted to gating in Phase 2 (2026-05-22) — see unit race
-        # step above.
-        run: go test -tags=docker -race -timeout=25m -count=1 ./...
+  docker-race:
+    uses: ./.github/workflows/sharded-suite.yml
+    with:
+      module: shingo-edge
+      shards: 4
+      test-flags: "-race -timeout=25m"
+      cache-prefix: shard-timings-edge-race-
+      needs-postgres: false

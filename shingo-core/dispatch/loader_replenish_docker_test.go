@@ -621,3 +621,88 @@ func TestReplenishLoader_WindowSpokenForByAnotherDemand(t *testing.T) {
 		t.Errorf("HeldBy = %v, want an entry naming %s", second.HeldBy, windows[0])
 	}
 }
+
+// TestReplenishLoader_FailsClosedWhenTheEpisodeReadErrors pins the sizing
+// guard's fail-CLOSED posture. The whole point of the bound is that creating
+// MORE carriers when you cannot read how many are already outstanding is the
+// failure the read exists to prevent — flip this to fail-open and Springfield
+// 2026-08-03 comes straight back, only now under a broken read instead of a
+// dry market.
+//
+// Forced with a malformed origin_id: origin_id is a UUID column, so a non-UUID
+// string makes CountLiveByOrigin ERROR rather than match nothing. That is the
+// exact failure the blank-guard in episodeOutstanding is built around, and
+// reaching it with malformed-but-nonblank input is the same error class without
+// relying on the guard. No store seam or connection teardown needed.
+func TestReplenishLoader_FailsClosedWhenTheEpisodeReadErrors(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, nil)
+	req, cfg, _ := replenishFixture(t, db, "RFC", 3)
+	req.Threshold = 10 // one carrier covers it
+	req.CurrentUOP = 0
+	req.OriginID = "not-a-uuid" // errors against the origin_id UUID column
+	req.OriginClass = string(protocol.OriginClassAttached)
+
+	res, err := d.ReplenishLoader(req, cfg)
+	if err != nil {
+		t.Fatalf("ReplenishLoader returned an error; fail-closed returns a result with Skipped set, not an error: %v", err)
+	}
+	if len(res.Created) != 0 {
+		t.Fatalf("created %d carrier(s) with an unreadable episode count; fail-closed must order nothing", len(res.Created))
+	}
+	if res.Skipped == "" {
+		t.Error("Skipped is empty — a failed episode read must set Skipped with the reason, not pass silently")
+	}
+}
+
+// TestReplenishLoader_FailsClosedWhenAnyReadDies pins the whole function's
+// fail-CLOSED posture against a dead store: whatever guard's read fails first,
+// no order is created and a reason is surfaced. That is the union of the two
+// fail-closed sites in ReplenishLoader (the episode read → Skipped; the
+// per-window count → HeldBy "window-check-failed") plus CheckDropoffCapacity's
+// own fail-closed. Each is individually untestable without a fault-injection
+// seam, because on a closed connection an earlier read always fails first;
+// this test asserts the property that actually matters for the order-spam
+// regression — a broken read can never produce a carrier.
+//
+// The per-window "window-check-failed" branch is the one that cannot be
+// isolated here: it only fires on a read that errors AFTER CheckDropoffCapacity
+// on the same node succeeded, i.e. a transient inter-read failure, which a
+// real database cannot be coerced into. Pinning it in isolation would require
+// a store fault-injection seam (a fake *store.DB or an error-injecting
+// decorator), deliberately not added in this pass.
+func TestReplenishLoader_FailsClosedWhenAnyReadDies(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, nil)
+	req, cfg, windows := replenishFixture(t, db, "RWC", 3)
+	req.Threshold = 10
+	req.CurrentUOP = 0
+	// A well-formed episode so the failure under test is the dead connection,
+	// not the malformed-origin guard pinned in the test above.
+	req.OriginID = "11111111-1111-1111-1111-111111111111"
+	req.OriginClass = string(protocol.OriginClassAttached)
+
+	// Kill the connection. The episode read errors first and fail-closes the
+	// whole call; on a live connection with the episode read patched, the
+	// window-loop reads would fail instead. Either way: no carrier is created.
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	res, err := d.ReplenishLoader(req, cfg)
+	if err != nil {
+		t.Fatalf("ReplenishLoader returned an error; fail-closed returns a result with a reason, not an error: %v", err)
+	}
+	if len(res.Created) != 0 {
+		t.Fatalf("created %d carrier(s) against a dead connection; fail-closed was bypassed — the order-spam regression path is open", len(res.Created))
+	}
+	// Something must say why nothing was created. On a dead connection the
+	// episode guard trips first (Skipped); with that patched, the windows would
+	// be held. The contract is the union: at least one reason is surfaced.
+	if res.Skipped == "" && len(res.HeldBy) == 0 {
+		t.Errorf("neither Skipped nor HeldBy is set on a dead read (%+v); a fail-closed run must say why it ordered nothing", res)
+	}
+	_ = windows
+}

@@ -17,10 +17,16 @@ on:
     paths:
       - "shared/**"
       - "protocol/**"
+      # Trigger on this file too. core.yml carries the reasoning: "a gate
+      # whose own edits do not run it cannot report on them" — and it was
+      # exactly this gap that let a restructuring of the jobs below sit
+      # unverified, because nothing in the diff matched any other path.
+      - ".github/workflows/shared.yml"
   pull_request:
     paths:
       - "shared/**"
       - "protocol/**"
+      - ".github/workflows/shared.yml"
   workflow_call:
 
 # See core.yml for rationale - same idempotent burst-coalescing.
@@ -37,6 +43,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.0"
+          # Without this, the cache is silently OFF. setup-go defaults
+          # cache:true, and with no cache-dependency-path it requires `go.mod`
+          # in the REPO ROOT (readdirSync, not recursive). This is a go.work
+          # repo: the root has go.work and the go.mod files sit one level down,
+          # so the lookup throws "Dependencies file is not found ... Supported
+          # file pattern: go.mod" — and main.ts catches it into a warning, so
+          # the job stays green having restored nothing. It caches both
+          # GOMODCACHE and GOCACHE, so every job was re-downloading every
+          # module and recompiling from scratch. See core.yml for the full note.
+          cache-dependency-path: "**/go.sum"
 
       - name: Build
         working-directory: shared
@@ -46,18 +62,11 @@ jobs:
         working-directory: shared
         run: go vet ./...
 
-      - name: Prepare build dir
-        working-directory: shared
-        run: mkdir -p build
-
       - name: Test
         working-directory: shared
-        run: go test -v -coverprofile=build/coverage ./...
+        run: go test -v ./...
 
       - name: Test (race)
         working-directory: shared
         run: go test -race -count=1 ./...
 
-      - name: Coverage report
-        working-directory: shared
-        run: go tool cover -func=build/coverage

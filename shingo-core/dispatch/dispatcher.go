@@ -31,9 +31,8 @@ type Dispatcher struct {
 	allocator     *Allocator
 	// finder is the shared source-finding seam (see source_finder.go). Owned
 	// here so every sourcing consumer resolves through the SAME instance.
-	finder    *SourceFinder
-	laneHolds *laneHoldRegistry
-	DebugLog  func(string, ...any)
+	finder   *SourceFinder
+	DebugLog func(string, ...any)
 
 	// laneGates serializes lane-gate release passes per lane; gateAppendFails
 	// debounces the operator-facing queue code for repeated append failures. Both
@@ -62,7 +61,6 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 		stationID:     stationID,
 		dispatchTopic: dispatchTopic,
 		binManifest:   binManifest,
-		laneHolds:     newLaneHoldRegistry(),
 
 		laneGates:       newLaneGateSerializer(),
 		gateAppendFails: make(map[int64]int),

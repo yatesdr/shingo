@@ -15,12 +15,24 @@ on:
       # breaks Core's build lands with Core CI never running.
       - "shared/**"
       - ".github/workflows/core.yml"
+      # The shared workflow and actions these jobs call. Without them a
+      # change to sharded-suite.yml or shared-postgres — the code that
+      # actually runs the tests — triggers nothing, which is the same
+      # gap as a workflow not triggering on its own edits, one level out.
+      - ".github/workflows/sharded-suite.yml"
+      - ".github/actions/**"
   pull_request:
     paths:
       - "shingo-core/**"
       - "protocol/**"
       - "shared/**"
       - ".github/workflows/core.yml"
+      # The shared workflow and actions these jobs call. Without them a
+      # change to sharded-suite.yml or shared-postgres — the code that
+      # actually runs the tests — triggers nothing, which is the same
+      # gap as a workflow not triggering on its own edits, one level out.
+      - ".github/workflows/sharded-suite.yml"
+      - ".github/actions/**"
   workflow_call:
 
 # Coalesce overlapping runs on the same branch / PR so a quick burst
@@ -56,6 +68,53 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.0"
+          # WITHOUT THIS LINE THE CACHE IS SILENTLY OFF, and it has been.
+          #
+          # setup-go defaults cache:true, and with no cache-dependency-path it
+          # calls findDependencyFile(), which does readdirSync(GITHUB_WORKSPACE)
+          # and requires `go.mod` IN THE ROOT — not recursively. This is a
+          # go.work repo: the root holds go.work and the five go.mod files live
+          # one directory down. So the lookup throws
+          #
+          #   Dependencies file is not found in /home/runner/work/shingo/shingo.
+          #   Supported file pattern: go.mod
+          #
+          # and main.ts catches it: `catch (error) { core.warning(...) }`. The
+          # job stays GREEN and restores nothing. Verified by running setup-go's
+          # own findDependencyFile against this repo root.
+          #
+          # What was being thrown away is both of the paths it caches --
+          # `go env GOMODCACHE` AND `go env GOCACHE` -- so every job on every
+          # push re-downloaded every module and recompiled every package from
+          # scratch, on a 2-core runner. For scale: shingo-core's docker-tagged
+          # compile alone is 43s on a 20-core dev host.
+          #
+          # CONFIRMED ON A RUNNER: before this line existed the repo had never
+          # held a single setup-go-* cache entry — every entry in the registry
+          # was golangci-lint's own, which is why nothing ever looked wrong.
+          #
+          # THE PATH IS THIS MODULE'S, NOT "**/go.sum", and that is the second
+          # half of the fix. The key is a hash of the files named here, so a
+          # repo-wide glob gives every workflow an IDENTICAL key: the first job
+          # to finish saves, every other job skips with "already exists", and
+          # the stored GOCACHE belongs to whichever small job won the race.
+          # MEASURED: with the shared key, Core's Build step went 42s cold to
+          # 36s "warm" — it restored the module downloads and then recompiled
+          # everything, because the cached build artifacts were somebody else's.
+          #
+          # Naming shingo-core + protocol makes this key distinct from edge's
+          # and integration's, so each module saves and restores its own build
+          # cache. Listing protocol too keeps the key honest: go.work builds
+          # core against it, so its dependencies are part of what got compiled.
+          #
+          # A wrong key is a MISS, never a bad build — Go's cache is
+          # content-addressed and re-verifies everything it reuses. shared/ is
+          # deliberately not named: it has a go.mod but no go.sum, so hashing
+          # it would resolve nothing and throw exactly the way the unset
+          # default did.
+          cache-dependency-path: |
+            shingo-core/go.sum
+            protocol/go.sum
 
       - name: Build
         working-directory: shingo-core
@@ -68,61 +127,97 @@ jobs:
         working-directory: shingo-core
         run: go build -tags sim ./...
 
-      - name: Prepare build dir
+      # THE UNTAGGED SUITE IS NOT RUN HERE, BECAUSE THE DOCKER JOBS BELOW
+      # ALREADY RUN IT. `-tags=docker` ADDS files and removes none, and nothing
+      # in this tree carries a `!docker` constraint, so `go test -tags=docker
+      # ./...` executes every test `go test ./...` would, plus the docker ones.
+      #
+      # VERIFIED against `go test -list` rather than assumed: shingo-core's
+      # engine lists 37 tests untagged and 264 with the tag, rds 154 and 154,
+      # store/orders 1 and 28 -- and in each package, zero tests present
+      # untagged and absent with the tag. No docker-tagged file defines
+      # TestMain or init(), and every package-level var in one is either an
+      # inert literal or a `var _ T = (*impl)(nil)` assertion, so the tag adds
+      # tests without re-wiring package state.
+      #
+      # This step remains so the untagged build itself stays gated: a test file
+      # that only compiles when a docker-tagged helper is present would
+      # otherwise break `go test ./...` for every developer while CI stayed
+      # green. -run NONE compiles the test binaries and runs nothing, which is
+      # the part the docker steps genuinely do not cover. `go build ./...`
+      # above covers only non-test code.
+      - name: Build (test binaries, untagged)
         working-directory: shingo-core
-        run: mkdir -p build
+        run: go test -run NONE -count=1 ./...
 
-      - name: Test (unit)
-        working-directory: shingo-core
-        run: go test -coverprofile=build/coverage ./...
+  # BOTH DOCKER SUITES ARE SHARDED, VIA THE SAME REUSABLE WORKFLOW.
+  #
+  # They were two steps in the build job, running back to back for no reason —
+  # nothing in the race run depends on the plain one, it is the same suite with
+  # a different flag. MEASURED as steps: 137s then 334s inside a 568s job. As
+  # separate sharded workflows they overlap, and each is bounded by its slowest
+  # shard rather than by its own total.
+  #
+  # The plain suite is shardable at all only because the coverage profile is
+  # gone: six shards would each have produced a partial profile, and a merge
+  # step that silently under-reports coverage is worse than no number.
+  #
+  # Six shards for core: 49 packages with a long tail, and the floor is the
+  # single longest package (shingocore/engine, ~20s).
 
-      - name: Test (unit, race)
-        working-directory: shingo-core
-        # Promoted to gating in Phase 2 (2026-05-22) after baseline
-        # was confirmed clean.
-        run: go test -race -count=1 ./...
+  # THE PLAIN SUITE IS ONE JOB, AND IT WAS SHARDED FOR EXACTLY ONE RUN.
+  #
+  # Sharding it looked free — its own chain went 174s to 103s. It was not.
+  # MEASURED across two runs, the workflow got SLOWER, 212s to 250s, because
+  # six extra shards plus their plan and record push the run to 17 concurrent
+  # jobs against a 20-slot limit, and the race shards they compete with went
+  # from 123-156s to 124-175s. The wall clock is set by the race chain, so
+  # speeding up the plain chain at its expense is a straight loss.
+  #
+  # The general rule this leaves: shard a suite when it is long enough that a
+  # shard still dominates its own job entry cost, and when the slots it takes
+  # are not wanted by a longer chain. Race qualifies at ~322s. This does not
+  # at ~174s, and neither does edge's ~30s plain run.
 
-      - name: Coverage report (unit)
-        working-directory: shingo-core
-        run: go tool cover -func=build/coverage
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: TestSchemaConvergesAcrossVintages reads pinned
+          # revisions out of git. See the note in the build job.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: |
+            shingo-core/go.sum
+            protocol/go.sum
+
+      - name: Start shared Postgres
+        uses: ./.github/actions/shared-postgres
+        with:
+          template: template_ci_${{ github.run_id }}_docker
 
       - name: Test (Docker integration)
         working-directory: shingo-core
-        # testcontainers manages its own Postgres container; the
-        # ubuntu-latest runner provides Docker. -count=1 prevents
-        # stale-cache false positives on integration tests;
-        # -timeout=10m accommodates cold-runner container startup.
-        #
-        # -p 1 matches shingo-core/Makefile's `cover` target, which is
-        # this repo's declared invocation for the docker-tagged suite:
-        # "runs sequentially (-p 1) to avoid container contention".
-        # docs/coverage-map.md states the same. 31 of this module's 59
-        # packages carry //go:build docker tests --
-        #   grep -rln 'go:build docker' shingo-core/ --include='*.go' \
-        #     | xargs -n1 dirname | sort -u | wc -l
-        # -- and every one of them shares the single postgres:16-alpine
-        # container and clones the same template_test database; running
-        # those test binaries concurrently is what the Makefile is
-        # declaring unsafe. CI ran without the flag, which is the
-        # divergence, not a tuning choice. The count is a scale
-        # indicator, not a threshold: nothing below re-reads it, so it
-        # may drift without consequence, but the command above is how
-        # to re-derive it rather than trust it.
-        #
-        # TODO(stage-2a.2): tighten -timeout to ~2x the observed
-        # runtime once the workflow has run a few times. Standard
-        # warm-runner integration tests should land well under 5m;
-        # 10m exists today only because we lack measured data.
-        run: go test -tags=docker -timeout=10m -count=1 -p 1 -coverprofile=build/coverage-docker ./...
+        # -p 1: the runner has 2-4 cores and in-package parallelism already
+        # uses them. On a 20-core dev host the best setting measured nproc/4.
+        run: go test -tags=docker -timeout=10m -count=1 -p 1 ./...
 
-      - name: Coverage report (Docker)
-        working-directory: shingo-core
-        run: go tool cover -func=build/coverage-docker
-
-      - name: Test (Docker integration, race)
-        working-directory: shingo-core
-        # Promoted to gating in Phase 2 (2026-05-22).
-        # -p 1 for the same reason as the step above — it is the same
-        # suite against the same shared container, and the race
-        # detector's slowdown makes the contention worse, not better.
-        run: go test -tags=docker -race -timeout=25m -count=1 -p 1 ./...
+  docker-race:
+    uses: ./.github/workflows/sharded-suite.yml
+    with:
+      module: shingo-core
+      shards: 6
+      # Promoted to gating in Phase 2 (2026-05-22). The race detector's usual
+      # 5-20x is the price of a data race being unable to reach main, in
+      # software that drives AMRs around a plant. Made cheaper by running the
+      # packages side by side, not by running it less often.
+      test-flags: "-race -timeout=25m"
+      # A SEPARATE TIMINGS CACHE from the plain suite: race durations are
+      # multiples of the plain ones, and one cache would balance both against
+      # the wrong numbers.
+      cache-prefix: shard-timings-core-race-
+      needs-postgres: true

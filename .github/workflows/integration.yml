@@ -13,12 +13,18 @@ on:
       - "shingo-core/**"
       - "shingo-edge/**"
       - "protocol/**"
+      # Trigger on this file too. core.yml carries the reasoning: "a gate
+      # whose own edits do not run it cannot report on them" — and it was
+      # exactly this gap that let a restructuring of the jobs below sit
+      # unverified, because nothing in the diff matched any other path.
+      - ".github/workflows/integration.yml"
   pull_request:
     paths:
       - "integration/**"
       - "shingo-core/**"
       - "shingo-edge/**"
       - "protocol/**"
+      - ".github/workflows/integration.yml"
   workflow_call:
 
 # See core.yml for rationale — same idempotent burst-coalescing.
@@ -35,6 +41,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.0"
+          # Without this, the cache is silently OFF. setup-go defaults
+          # cache:true, and with no cache-dependency-path it requires `go.mod`
+          # in the REPO ROOT (readdirSync, not recursive). This is a go.work
+          # repo: the root has go.work and the go.mod files sit one level down,
+          # so the lookup throws "Dependencies file is not found ... Supported
+          # file pattern: go.mod" — and main.ts catches it into a warning, so
+          # the job stays green having restored nothing. It caches both
+          # GOMODCACHE and GOCACHE, so every job was re-downloading every
+          # module and recompiling from scratch. See core.yml for the full note.
+          cache-dependency-path: |
+            integration/go.sum
+            protocol/go.sum
 
       - name: Build (default tags)
         working-directory: integration
@@ -51,10 +69,6 @@ jobs:
         working-directory: integration
         run: go vet -tags=docker ./...
 
-      - name: Prepare build dir
-        working-directory: integration
-        run: mkdir -p build
-
       - name: Test (default tags)
         working-directory: integration
         # Currently a thin slice — most integration logic is docker-
@@ -68,11 +82,7 @@ jobs:
         # ubuntu-latest runner provides Docker. -count=1 prevents
         # stale-cache false positives; -timeout=10m accommodates
         # cold-runner container startup. Tighten once observed.
-        run: go test -tags=docker -timeout=10m -count=1 -coverprofile=build/coverage-docker ./...
-
-      - name: Coverage report (Docker)
-        working-directory: integration
-        run: go tool cover -func=build/coverage-docker
+        run: go test -tags=docker -timeout=10m -count=1 ./...
 
       - name: Test (Docker integration, race)
         working-directory: integration
