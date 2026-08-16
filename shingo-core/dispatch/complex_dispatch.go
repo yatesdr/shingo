@@ -13,7 +13,7 @@ import (
 )
 
 // isConcreteStorageDropoff reports whether a delivery node is a concrete
-// (non-synthetic) STORAGE/STAGING slot — a direct child of a LANE or NGRP.
+// (non-synthetic) STORAGE slot — a direct child of a LANE or NGRP.
 // This is the role gate for the complex dropoff-capacity check (#1): such a
 // slot must queue-on-full, whereas a LINE/production dropoff must NOT be
 // gated (a two-robot supply leg delivers to a line a sibling evac clears, and
@@ -22,6 +22,26 @@ import (
 // re-resolution / ResolutionCapacity before this point.
 // (Free function — shared by the Dispatcher's dropoff-capacity gate and the
 // Allocator's slotNeeds; it needs only the store handle.)
+//
+// ── IT DOES NOT COVER STAGING, AND IT USED TO SAY IT DID ──────────────────
+//
+// This read "STORAGE/STAGING slot" and slotNeeds' docstring said "staging/relay
+// included". Neither was true. A staging node is a station with NO PARENT, so
+// the `ParentID == nil` guard below rejects it before the LANE/NGRP test is ever
+// reached — it was never a question of which parent type, it never got that far.
+//
+// The cost of the wrong sentence was that nobody re-read the code: the
+// predicate's NAME, this comment, and its other caller's comment all promised
+// staging coverage, so a reviewer checking "are staging dropoffs gated?" got
+// three confirmations and no gate. SPR AMR-04 held a bin 48 minutes at a full
+// SLN_003 (2026-08-12).
+//
+// Staging is now covered by DECLARATION instead —
+// protocol.ComplexOrderStep.ExclusiveSlot, set by the author of the plan —
+// because Core cannot recognise a staging node at all: every station carries the
+// one STATION node type, the plantspec Kind is advisory and never persisted, and
+// the designation lives in the Edge cell config. This predicate keeps doing the
+// job it actually does, under a name that now matches it.
 func isConcreteStorageDropoff(db *store.DB, deliveryNode string) bool {
 	if deliveryNode == "" {
 		return false
@@ -35,6 +55,30 @@ func isConcreteStorageDropoff(db *store.DB, deliveryNode string) bool {
 		return false
 	}
 	return parent.NodeTypeCode == protocol.NodeClassLANE || parent.NodeTypeCode == protocol.NodeClassNGRP
+}
+
+// clearedEarlierInPlan reports whether `prior` — the steps BEFORE the dropoff
+// being judged — already picks a bin up from `node`.
+//
+// It answers one question for the capacity gate: is this node occupied by
+// something THIS ORDER is about to carry away? A plan that empties a node and
+// then refills it is a choreography, not a conflict, and the occupancy the gate
+// would see at dispatch is one the plan has already accounted for.
+//
+// Callers must pass only the preceding steps. Handing it the whole plan would
+// let a LATER pickup excuse an EARLIER dropoff, which is backwards: the bin has
+// to go down before anything can pick it up, so a node emptied afterwards was
+// still full on arrival.
+func clearedEarlierInPlan(prior []resolvedStep, node string) bool {
+	if node == "" {
+		return false
+	}
+	for _, p := range prior {
+		if p.Action == protocol.ActionPickup && p.Node == node {
+			return true
+		}
+	}
+	return false
 }
 
 // dispatchStep carries a phase helper's decision back to the DispatchPreparedComplex
@@ -652,28 +696,109 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 }
 
 // reserveComplexDestination runs the destination-side gates (Phase C): the
-// dropoff-capacity gate for concrete STORAGE/STAGING slots (regression 2b05dce)
-// followed by the reservation-native slot reserve (the split-brain fix). done=true
-// means the order parked waiting_for_slot (capacity-blocked or incomplete reserve)
-// or hit a reserve error; the orchestrator returns st.err verbatim. Runs before the
-// bin reserve (slots-before-bins). Reads the resolved steps read-only.
+// dropoff-capacity gate for concrete STORAGE slots and DECLARED-exclusive
+// dropoffs (regression 2b05dce) followed by the reservation-native slot reserve
+// (the split-brain fix). done=true means the order parked waiting_for_slot
+// (capacity-blocked or incomplete reserve) or hit a reserve error; the
+// orchestrator returns st.err verbatim. Runs before the bin reserve
+// (slots-before-bins). Reads the resolved steps read-only.
 func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
 	// #1 (regression 2b05dce): restore the dropoff-capacity gate for complex
-	// orders, but ONLY for concrete STORAGE/STAGING dropoffs. The scanner
-	// dropped the gate for every complex order to unstick two-robot SUPPLY
-	// legs — which deliver to a LINE node a sibling EVAC clears, and Core has
-	// no SiblingOrderID to model that — but that also let a changeover
-	// drop/evac to a FULL concrete storage slot dispatch into the occupied
-	// slot. Gate by node role (storage slot = child of LANE/NGRP), NOT by
-	// same-order pickup: gating the line case would re-create the deadlock
+	// orders, but ONLY for concrete STORAGE dropoffs. The scanner dropped the
+	// gate for every complex order to unstick two-robot SUPPLY legs — which
+	// deliver to a LINE node a sibling EVAC clears — but that also let a
+	// changeover drop/evac to a FULL concrete storage slot dispatch into the
+	// occupied slot. Gate by node role (storage slot = child of LANE/NGRP), NOT
+	// by same-order pickup: gating the line case would re-create the deadlock
 	// 2b05dce fixed. NGRP dropoffs are already covered above by
 	// reResolveComplexSteps / ResolutionCapacity. Stay queued by returning an
 	// error — the scanner keeps the order queued and replays it on the next
 	// slot-vacancy tick (same contract as the claim_failed branch below).
-	if isConcreteStorageDropoff(d.db, order.DeliveryNode) {
+	//
+	// THIS USED TO SAY "STORAGE/STAGING", AND IT NEVER COVERED STAGING — see
+	// isConcreteStorageDropoff's own note. Staging is handled by the declared
+	// loop further down instead.
+	//
+	// AND THE SIBLING PREMISE HAS EXPIRED. The justification above used to end
+	// "and Core has no SiblingOrderID to model that". It does now:
+	// orders.sibling_order_id is stamped at intake (complex_intake.go), linked
+	// durably by LinkOrderSiblingsByEdgeUUID, and already read by the swap-hold
+	// gate a few lines above. So the reason for making this a blunt role test
+	// rather than a modelled dependency no longer holds on its own terms.
+	//
+	// It is left AS IS deliberately. Re-deriving the line-node rule from the
+	// sibling link is a design change with a deadlock on the other side of it,
+	// and it is not what the staging fix needed. Recorded here so the next
+	// person weighing it starts from what is true rather than re-discovering
+	// that the stated obstacle was removed some time ago.
+	// finalChecked records whether the DeliveryNode arm below actually ran, so the
+	// declared-dropoff loop knows whether that node still needs asking about.
+	//
+	// IT IS NOT `s.Node == order.DeliveryNode`, and the difference is a hole. An
+	// order whose FINAL dropoff is itself a staging node — BuildStageSteps is
+	// exactly that shape, pickup source then dropoff staging, nothing after —
+	// fails isConcreteStorageDropoff, so this arm skips it; and a loop that then
+	// skipped it again for equalling DeliveryNode would leave it checked by
+	// nobody. The two arms have to compose on what was ASKED, not on which node
+	// it was.
+	finalChecked := isConcreteStorageDropoff(d.db, order.DeliveryNode)
+	if finalChecked {
 		if blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
 			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseDropoffCapacity, cap.Params)
 			d.dbg("complex: order %d queued — concrete storage dropoff %s blocked: %s", order.ID, order.DeliveryNode, cap.Cause)
+			return dispatchStep{done: true, err: fmt.Errorf("dropoff capacity: %s", cap.Cause)}
+		}
+	}
+
+	// ── AND THE DECLARED-EXCLUSIVE DROPOFFS, WHICH THE ARM ABOVE CANNOT SEE ───
+	//
+	// That arm asks about the FINAL destination only. A stage-and-accept plan puts
+	// a bin down twice — `dropoff SLN_003 / wait / pickup SLN_003 / dropoff
+	// ALN_004` — and the staging stop is not order.DeliveryNode, so no capacity
+	// question was ever asked about it. That is how a robot reached a full
+	// SLN_003 and stood there for 48 minutes (Springfield, 2026-08-12).
+	//
+	// WHY BOTH THIS AND THE SLOT RESERVE. The reservation arbitrates between
+	// ORDERS — it stops two plans claiming one staging node. It says nothing
+	// about a bin physically present with no order behind it: an operator's
+	// manual move, a dig parking a blocker. This check is the only one that reads
+	// the floor. Neither substitutes for the other, and dropping either leaves a
+	// way to arrive at an occupied node.
+	//
+	// Queue rather than fail, matching the arm above and the house contract: the
+	// scanner replays on the next slot-vacancy tick.
+	for i, s := range resolvedSteps {
+		if s.Action != protocol.ActionDropoff || s.Node == "" || !s.ExclusiveSlot {
+			continue
+		}
+		if finalChecked && s.Node == order.DeliveryNode {
+			continue // already asked, immediately above
+		}
+		// THE ORDER CLEARS THIS NODE ITSELF, EARLIER IN ITS OWN PLAN.
+		//
+		// A choreography can legitimately place onto a node that is occupied RIGHT
+		// NOW, because an earlier leg of the same order carries that bin away
+		// first. Keep-staged combined is exactly this: step 1 picks the
+		// keep-staged bin off the staging node, step 4 puts the new one back. At
+		// dispatch — before any robot has moved — the node is occupied by a bin
+		// this very order is about to remove.
+		//
+		// Gating on that is not caution, it is a self-wedge: the order parks
+		// waiting for a node that only the parked order would have cleared, and
+		// nothing else ever will. It is the same shape as the 2b05dce deadlock one
+		// rung in, with the clearing leg belonging to this order instead of a
+		// sibling — and unlike the sibling case, Core CAN see it, because the plan
+		// is right here.
+		//
+		// STRICTLY EARLIER. A later pickup does not help: the bin still has to go
+		// down before it can be picked up again, so the node must genuinely be
+		// free when we arrive.
+		if clearedEarlierInPlan(resolvedSteps[:i], s.Node) {
+			continue
+		}
+		if blocked, cap := CheckDropoffCapacity(d.db, s.Node, order.ID); blocked {
+			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseDropoffCapacity, cap.Params)
+			d.dbg("complex: order %d queued — declared-exclusive dropoff %s blocked: %s", order.ID, s.Node, cap.Cause)
 			return dispatchStep{done: true, err: fmt.Errorf("dropoff capacity: %s", cap.Cause)}
 		}
 	}

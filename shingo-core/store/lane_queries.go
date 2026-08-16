@@ -668,6 +668,25 @@ type SpokenForBin struct {
 	// the same transaction that inserts it (store/orders.go CreateCompoundChildren)
 	// and so shares its timestamp exactly.
 	HeldSince time.Time
+	// HeldFor is that hold's AGE, computed IN THE DATABASE (§R.98 stage D).
+	//
+	// It is not derivable in Go from HeldSince, and the burial shadow spent a
+	// soak proving it: HeldSince comes from a DB-default `created_at` (wall) and
+	// the caller subtracted it from `clock.Now()` (sim). Under the honest running
+	// clock, sim runs a year ahead of wall, so an eight-second hold rendered as
+	// `held_for=7355h32m48s` in the one line an engineer reads to judge whether a
+	// burial mattered.
+	//
+	// The house rule is compare a column against the clock that WROTE it. Both
+	// ends of this subtraction are now the database's, so the domains cannot be
+	// crossed by a caller who does not know which clock stamped what — which is
+	// the only durable form of the fix, since HeldSince's two sources are both
+	// DB-stamped and every Go caller's `now` is not.
+	//
+	// The old code clamped a negative result and blamed "clock skew". That
+	// clamp was the same defect wearing a guard: it caught the sign and not the
+	// magnitude, so the direction that actually occurred sailed through.
+	HeldFor time.Duration
 }
 
 // SpokenForBinsBehind returns every live-held bin sitting DEEPER in its lane than
@@ -689,7 +708,8 @@ func (db *DB) SpokenForBinsBehind(placedNodeID int64) ([]SpokenForBin, error) {
 		SELECT b.id, b.label, held.name, held.depth,
 		       (b.claimed_by IS NOT NULL) AS hard_claim,
 		       o.id, o.status, (o.parent_order_id IS NOT NULL) AS is_child,
-		       COALESCE(r.created_at, o.created_at) AS held_since
+		       COALESCE(r.created_at, o.created_at) AS held_since,
+		       EXTRACT(EPOCH FROM now() - COALESCE(r.created_at, o.created_at)) AS held_secs
 		FROM nodes held
 		CROSS JOIN placed
 		JOIN bins b ON b.node_id = held.id AND b.status <> 'retired'
@@ -710,10 +730,15 @@ func (db *DB) SpokenForBinsBehind(placedNodeID int64) ([]SpokenForBin, error) {
 	var out []SpokenForBin
 	for rows.Next() {
 		var s SpokenForBin
+		var heldSecs float64
 		if err := rows.Scan(&s.BinID, &s.BinLabel, &s.SlotName, &s.Depth,
-			&s.HardClaim, &s.HolderID, &s.HolderStatus, &s.HolderIsChild, &s.HeldSince); err != nil {
+			&s.HardClaim, &s.HolderID, &s.HolderStatus, &s.HolderIsChild, &s.HeldSince, &heldSecs); err != nil {
 			return nil, fmt.Errorf("spoken-for bins scan: %w", err)
 		}
+		if heldSecs < 0 {
+			heldSecs = 0 // a hold stamped in the future is not a negative age
+		}
+		s.HeldFor = time.Duration(heldSecs * float64(time.Second))
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -743,11 +768,31 @@ func (db *DB) SpokenForBinsBehind(placedNodeID int64) ([]SpokenForBin, error) {
 // both: for a gated order in_transit(release) is strictly later than
 // dispatched(create), and for a plain order in_transit follows dispatch.
 //
-// IT ERRS LATE, AND THE DIRECTION IS DELIBERATE. On the plain path the selector
-// actually runs during sourcing, before dispatch, so a claim landing in the
-// window between the two is classified as never-asked — the LOUD bucket. A
-// tripwire that under-reports is worse than one that over-reports, which is the
-// same rule this file's compound-leg lookup already follows.
+// IT ERRS LATE. On the plain path the selector actually runs during sourcing,
+// before dispatch, so a claim landing in the window between the two is
+// classified as never-asked — the LOUD bucket. A tripwire that under-reports is
+// worse than one that over-reports, which is the same rule this file's
+// compound-leg lookup already follows.
+//
+// ── THAT TRADE-OFF WAS PRICED WRONG, AND THE BILL CAME IN ─────────────────
+//
+// The paragraph above used to end "AND THE DIRECTION IS DELIBERATE", on the
+// reasoning that a false accusation is the safe way to be wrong. It is not, for
+// THIS counter: Bypass is the instrument's only should-be-zero, and a
+// should-be-zero that fires on a race nobody can fix is the cry-wolf failure the
+// burial shadow's own header forbids in the paragraph about the §R.4 split.
+//
+// Measured on the lane-stress rig 2026-08-15. Order 53 resolved onto LSC_032 at
+// 03:46:54.344 and reached here with a commit time of 03:46:54.385. The claim it
+// was accused of ignoring belonged to order 54 — which did not exist until
+// 03:46:54.475. The window is not always 41ms either: an order whose group is
+// full at intake queues behind capacity and commits MINUTES after its
+// destination was chosen (see resolveSyntheticDestination's capacity arm).
+//
+// So the caller now prefers OrderDestinationResolvedAt and falls back to this.
+// This function is unchanged and still correct for what it measures — it was
+// never the wrong answer, it was the wrong QUESTION for orders that have a
+// better one available.
 //
 // ok=false means the order has no such history row and the caller cannot make
 // the comparison; it must then take the loud arm rather than guess.
@@ -757,6 +802,55 @@ func (db *DB) OrderCommittedToFleetAt(orderID int64) (time.Time, bool, error) {
 		WHERE order_id=$1 AND status IN ('dispatched','in_transit')`, orderID).Scan(&at)
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("order %d fleet-commit time: %w", orderID, err)
+	}
+	if !at.Valid {
+		return time.Time{}, false, nil
+	}
+	return at.Time.UTC(), true, nil
+}
+
+// StampDestinationResolved records the instant the store-slot selector chose
+// `orderID`'s destination at intake.
+//
+// WRITTEN ONCE, BY ONE CALLER (dispatch.admitOrder), and only when
+// resolveSyntheticDestination actually rewrote a group into a concrete slot. The
+// value is the selector's OWN clock reading, taken at the resolve and carried
+// forward — not a second reading taken here, which would fold the CreateOrder
+// round-trip into the number the tripwire compares against.
+//
+// COALESCE, NOT A BARE SET. A re-admitted order keeps its FIRST stamp: the
+// question this answers is "when did a selector last look and approve", and on
+// the intake path there is exactly one such moment per order. An overwrite could
+// only come from a retry re-running admitOrder, which would move the timestamp
+// forward past claims the original resolve genuinely did see — turning a real
+// bypass quiet. Keeping the earliest keeps the loud direction.
+func (db *DB) StampDestinationResolved(orderID int64, at time.Time) error {
+	_, err := db.Exec(
+		`UPDATE orders SET destination_resolved_at = COALESCE(destination_resolved_at, $2) WHERE id = $1`,
+		orderID, at.UTC())
+	if err != nil {
+		return fmt.Errorf("order %d stamp destination-resolved: %w", orderID, err)
+	}
+	return nil
+}
+
+// OrderDestinationResolvedAt reports when intake's selector chose this order's
+// destination, and whether it did at all.
+//
+// ok=false is NOT a failure and NOT a doubt — it is the ordinary answer for
+// every order whose destination was not chosen at intake: a sender that named a
+// concrete node, and a group that was full so planMove resolves at dispatch. For
+// those the fleet-commit time is the right comparison and the caller falls back
+// to it, which is the behaviour that predates this column.
+//
+// The distinction the caller must preserve: ok=false means "ask the other
+// question", while an ERROR means "could not ask" and takes the loud arm.
+func (db *DB) OrderDestinationResolvedAt(orderID int64) (time.Time, bool, error) {
+	var at sql.NullTime
+	err := db.QueryRow(
+		`SELECT destination_resolved_at FROM orders WHERE id = $1`, orderID).Scan(&at)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("order %d destination-resolved time: %w", orderID, err)
 	}
 	if !at.Valid {
 		return time.Time{}, false, nil
@@ -885,10 +979,26 @@ func (db *DB) OrderIsCompoundLeg(orderID int64) (bool, error) {
 // LiveServiceDigInEpisode returns the id of a service dig already running for
 // this episode, or 0 when there is none.
 //
-// A service dig is an order that names a dig target; "running" is any
-// non-terminal status. Both halves matter: a terminal dig is finished work and a
-// plain buried retrieve carries no target, because it IS the demand and cannot
-// compete with itself.
+// ── RE-POINTED AT THE RECOGNITION PREDICATE (§R.104) ──────────────────────
+//
+// It read `dig_target_node <> ”` — a column only the FOLDER minting ever wrote.
+// With the folder deleted the column has no writer at all, so this question went
+// permanently blind: every episode would report no excavation running and arm
+// 3's one-dig-per-episode gate would admit a second one every time. A dying
+// instrument, and the kind that answers cheerfully.
+//
+// It now asks the live question instead of a proxy for it: is there a
+// non-terminal order in this episode with a non-terminal CHILD. That is the
+// recognition predicate ("a parent is anything with children") scoped to an
+// episode, it needs no column, and it is true of every dig shape there is —
+// including the staged dweller digging from its mark, which no column-based
+// spelling could have described.
+//
+// The old sentence, kept because its second half is the reason the predicate has
+// to be about children rather than about the parent: "a terminal dig is finished
+// work and a plain buried retrieve carries no target, because it IS the demand
+// and cannot compete with itself." Under §R.91 every dig is that shape, so a
+// target-based spelling would now exclude all of them.
 //
 // It answers "has this demand already got an excavation going", and the answer
 // gates raising a second one. See serviceDigEpisodeAlreadyDigging for the
@@ -919,9 +1029,11 @@ func (db *DB) LiveServiceDigInEpisode(originID string) (digID int64, asked bool,
 	}
 	var id int64
 	qErr := db.QueryRow(fmt.Sprintf(
-		`SELECT id FROM orders
-		  WHERE origin_id = $1 AND dig_target_node <> '' AND status NOT IN (%s)
-		  ORDER BY id LIMIT 1`, protocol.TerminalStatusSQLList()), originID).Scan(&id)
+		`SELECT p.id FROM orders p
+		  WHERE p.origin_id = $1 AND p.status NOT IN (%[1]s)
+		    AND EXISTS (SELECT 1 FROM orders c
+		                 WHERE c.parent_order_id = p.id AND c.status NOT IN (%[1]s))
+		  ORDER BY p.id LIMIT 1`, protocol.TerminalStatusSQLList()), originID).Scan(&id)
 	if qErr == sql.ErrNoRows {
 		return 0, true, nil
 	}

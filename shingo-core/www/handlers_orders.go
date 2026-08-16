@@ -426,9 +426,23 @@ func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
 		OriginClass: protocol.OriginClassNoDemand,
 		Steps: []protocol.ComplexOrderStep{
 			{Action: "pickup", Node: sourceNode},
-			{Action: "dropoff", Node: stagingNode},
+			// DECLARED, because this form is the one place Core knows. The role
+			// test cannot recognise a staging node — it is a station with no
+			// parent, so isConcreteStorageDropoff rejects it and both destination
+			// gates stand down, leaving the node reserved by nothing and checked
+			// by nothing (SPR AMR-04: 48 minutes holding a bin at a full SLN_003).
+			//
+			// Everywhere else the Edge has to declare it, because the staging
+			// designation lives in the cell config Core does not have. HERE the
+			// operator has just typed it into a field named staging_node and the
+			// handler has already refused the request without one. There is no
+			// inference in this: the request says which node is the staging node.
+			{Action: "dropoff", Node: stagingNode, ExclusiveSlot: true},
 			{Action: "wait"},
 			{Action: "pickup", Node: stagingNode},
+			// NOT declared. deliveryNode is where the material is going, and on
+			// this form that is routinely a LINE node. Gating a line dropoff
+			// re-creates the deadlock 2b05dce fixed.
 			{Action: "dropoff", Node: deliveryNode},
 		},
 	}

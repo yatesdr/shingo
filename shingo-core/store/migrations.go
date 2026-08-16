@@ -3104,6 +3104,37 @@ func noLegSpelledEpisodesLeft(q schema.Querier) bool {
 	return n == 0
 }
 
+// v82DestinationResolvedAt records WHEN the store-slot selector chose an order's
+// destination, so the burial tripwire can stop guessing.
+//
+// ── WHAT IT FIXES, IN ONE SENTENCE ────────────────────────────────────────
+//
+// The tripwire asked "did this claim exist when the placing order was COMMITTED
+// TO THE FLEET" and reported everything else as a GUARD BYPASS. But the selector
+// does not run at commit — at intake it runs before the order row is even
+// inserted — so every claim landing between the choice and the dispatch was an
+// accusation against code that had done exactly the right thing.
+//
+// Measured on the lane-stress rig 2026-08-15: order 53 resolved onto LSC_032 at
+// 03:46:54.344 and committed at 03:46:54.385. The claim it was accused of
+// ignoring belonged to order 54, which DID NOT EXIST until 03:46:54.475. The
+// only should-be-zero counter in this instrument read 1, for a race no guard
+// could have won.
+//
+// ── NULLABLE, AND THAT IS THE COMPATIBILITY STORY ─────────────────────────
+//
+// No backfill, and none is possible: the moment was never recorded, so there is
+// nothing to recover for orders that already exist. NULL means "not chosen at
+// intake", which is also the honest answer for the two populations that legitimately
+// have no stamp — a sender that named a concrete node, and a group that was full
+// at intake so planMove resolves it at dispatch. The tripwire falls back to
+// fleet-commit for all of them, which is precisely what it does today.
+func v82DestinationResolvedAt(tx *sql.Tx) error {
+	_, err := tx.Exec(
+		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS destination_resolved_at TIMESTAMPTZ`)
+	return err
+}
+
 // migrationList is the numbered migration chain, as DATA.
 //
 // EXTRACTED SO IT HAS A SECOND READER. It lived inside
@@ -3901,6 +3932,12 @@ func migrationList() []migration {
 		{81, "demand_origins: episodes are produce or consume, not supply or evacuate",
 			v81EpisodeRoleVocabulary,
 			func(q schema.Querier) bool { return noLegSpelledEpisodesLeft(q) }},
+
+		{82, "orders: record when intake chose the destination, for the burial tripwire",
+			v82DestinationResolvedAt,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "orders", "destination_resolved_at")
+			}},
 	}
 }
 

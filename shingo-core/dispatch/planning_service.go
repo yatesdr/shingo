@@ -521,6 +521,28 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 					DigOrderID: holdID, DigTarget: holdTarget})
 			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
 		}
+		// THE MOUTH'S TWO REFUSALS, BOTH TRANSIENT (§R.96 stage 2). Neither is a
+		// full group, and neither is geometry: one is a lane whose entry another
+		// order owns, the other is a lane nobody could read. Both wait.
+		//
+		// codeNoShuffleSlot carries the transience; the CAUSE on the row is what
+		// keeps them apart for whoever reads the board, which is the same split
+		// right of way takes three lines up.
+		var mouthHeld *LaneMouthHeldParkingError
+		if errors.As(err, &mouthHeld) {
+			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneHeldTraffic,
+				QueueParams{Lane: mouthHeld.Lane, Payload: order.PayloadCode})
+			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
+		}
+		var unseen *MouthUnreadableError
+		if errors.As(err, &unseen) {
+			// CauseLaneHeldUnreadable is already the tree's word for "this is an
+			// absence of an answer, not a busy lane" — the exact distinction this
+			// error exists to preserve.
+			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneHeldUnreadable,
+				QueueParams{Payload: order.PayloadCode})
+			return nil, &planningError{Code: codeReadFailed, Detail: fmt.Sprintf("cannot count the parking pool: %v", err), Err: err}
+		}
 		if errors.Is(err, ErrNoShuffleSlot) {
 			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
 		}

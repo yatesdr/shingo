@@ -95,26 +95,61 @@ type heldReservation struct {
 	used      bool
 }
 
-// slotNeed is one concrete storage-dropoff step that needs a destination slot
-// reservation — the same node set the old hard-claim slot loop iterated. group is
+// slotNeed is one dropoff step that needs a destination slot reservation: a
+// concrete storage slot, or a dropoff its author declared exclusive (a staging
+// node, which Core cannot recognise structurally — see slotNeeds). group is
 // the NGRP origin ("" for a fixed-concrete dropoff), used to revert-and-re-resolve
-// a fungible slot on conflict.
+// a fungible slot on conflict; a declared staging dropoff carries none, because
+// there is no group of interchangeable staging nodes to re-resolve within, so it
+// takes the hold-and-retry arm rather than the revert arm.
 type slotNeed struct {
 	stepIndex int
 	nodeName  string
 	group     string
 }
 
-// slotNeeds returns the concrete storage-dropoff slots an order must reserve —
-// exactly the set the retired ClaimSlot loop iterated (isConcreteStorageDropoff
-// dropoffs, staging/relay included). Ordering is step order; the reconcile does not
-// need the canonical node-ID sort the hard loop used — the ABBA class dissolves at
-// the soft-acquire layer, where a loser backs off holding revocable reservations.
+// slotNeeds returns the dropoff nodes an order must reserve: concrete storage
+// slots, plus any dropoff whose author DECLARED it exclusive. Ordering is step
+// order; the reconcile does not need the canonical node-ID sort the hard loop
+// used — the ABBA class dissolves at the soft-acquire layer, where a loser backs
+// off holding revocable reservations.
+//
+// ── THIS COMMENT USED TO SAY "STAGING/RELAY INCLUDED". IT WAS NOT ─────────
+//
+// The claim was that this set is "exactly the set the retired ClaimSlot loop
+// iterated (isConcreteStorageDropoff dropoffs, staging/relay included)". The
+// first half was true and the parenthesis was false, which is the worst
+// available combination: the predicate's NAME and its DOCSTRING both promised
+// staging coverage, so nobody re-read the predicate.
+//
+// isConcreteStorageDropoff bails at `node.ParentID == nil`, and staging nodes
+// are seeded parentless (cmd/seeddev/seed_core.go — stations pass nil where the
+// slot loop one block above passes its lane id). Staging never reached the
+// LANE/NGRP test at all. So a staging dropoff was reserved by nothing and
+// capacity-checked by nothing, and the first anyone knew of it was a robot
+// standing at a full staging node: Springfield AMR-04, 48 minutes, 2026-08-12.
+//
+// ── WHY THE FIX IS A DECLARATION AND NOT A WIDER PREDICATE ────────────────
+//
+// Widening the role test to accept parentless stations would also readmit LINE
+// nodes, and gating those re-creates the deadlock 2b05dce fixed (see
+// isConcreteStorageDropoff's caller). Core cannot tell the two apart: every
+// station carries the one STATION node type, the plantspec Kind is advisory and
+// unpersisted, and the staging designation lives in the Edge cell config. So the
+// author declares it — protocol.ComplexOrderStep.ExclusiveSlot — and Core stops
+// guessing at a fact it does not hold.
+//
+// The two arms are an OR, not a replacement. Storage slots keep being recognised
+// structurally, so nothing depends on a sender remembering to tag what Core can
+// already see for itself.
 func (a *Allocator) slotNeeds(steps []resolvedStep) []slotNeed {
 	var out []slotNeed
 	for i := range steps {
 		s := steps[i]
-		if s.Action != protocol.ActionDropoff || s.Node == "" || !isConcreteStorageDropoff(a.db, s.Node) {
+		if s.Action != protocol.ActionDropoff || s.Node == "" {
+			continue
+		}
+		if !s.ExclusiveSlot && !isConcreteStorageDropoff(a.db, s.Node) {
 			continue
 		}
 		out = append(out, slotNeed{stepIndex: i, nodeName: s.Node, group: s.Group})
@@ -344,7 +379,17 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 // — a slot another order can't reserve can't take a stray resident, which is
 // what makes "empty at reserve" a stable relay signal.
 //
-// Per concrete storage-dropoff need it keeps a held slot reservation (owner-aware,
+// ── THAT PROPERTY WAS ASPIRATIONAL FOR STAGING UNTIL 2026-08-15 ───────────
+//
+// The paragraph above named "relay/staging" and had done since the split-brain
+// fix, but slotNeeds' predicate never returned a staging node — a station with
+// no parent fails isConcreteStorageDropoff at the nil guard. So the stable-relay
+// argument held for STORAGE slots and quietly did not hold for staging relays,
+// which are precisely the ones a stage-and-accept plan depends on. It is true
+// now, for staging dropoffs the plan's author DECLARES exclusive; see slotNeeds.
+//
+// Per slot need — a concrete storage dropoff, or a declared-exclusive one — it
+// keeps a held slot reservation (owner-aware,
 // matched by node) or acquires a fresh one. On conflict (another order holds it): a
 // FUNGIBLE NGRP dropoff reverts to its group so the next tick re-resolves to a free
 // child (the escape valve, preserved from the hard loop); a FIXED-concrete dropoff

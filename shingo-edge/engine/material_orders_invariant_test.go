@@ -162,6 +162,121 @@ func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
 	}
 }
 
+// TestEveryStagingDropoffIsDeclared is the mirror of the wait stamp, one field
+// over: every dropoff this station authors at a STAGING node declares that the
+// node holds one bin and must be reserved.
+//
+// ── WHY DECLARING IT MATTERS ──────────────────────────────────────────────
+//
+// Core gates its destination checks on node ROLE, and a staging node fails that
+// test — it is seeded as a station with no parent, so Core reads "not a storage
+// slot" and both the capacity check and the slot reservation stand down. Nothing
+// reserves the node and nothing asks whether it is free.
+//
+// Core cannot repair that by looking harder: every station carries the one
+// STATION node type, the plantspec Kind is advisory and unpersisted, and the
+// inbound/outbound staging designation lives in the cell config on THIS side.
+// The station is the only party that knows, which makes this the exact shape of
+// the wait stamp above — a fact the far side cannot infer, carried on the wire
+// rather than guessed at.
+//
+// Springfield, 2026-08-12: AMR-04 held a bin for 48 minutes at a full SLN_003,
+// the fleet reporting the robot RUNNING with no error, until an admin cancelled
+// the order two hours in.
+//
+// LINE DROPOFFS MUST NOT BE DECLARED, and that half is asserted too. Gating a
+// supply leg on a line node its sibling evac is on the way to clear re-creates
+// the deadlock Core's 2b05dce fixed, so this test fails in both directions: a
+// staging dropoff that is not declared, and a line dropoff that is.
+//
+// MUTATION (verified): return a plain literal from stagingDropoff. Eight legs
+// report an undeclared staging dropoff.
+func TestEveryStagingDropoffIsDeclared(t *testing.T) {
+	t.Parallel()
+
+	claim := func(secondPaired string) *processes.NodeClaim {
+		return &processes.NodeClaim{
+			CoreNodeName:         "PRESS",
+			Role:                 protocol.ClaimRoleConsume,
+			InboundSource:        "MARKET-EMPTIES",
+			InboundStaging:       "IN-STAGING",
+			OutboundStaging:      "OUT-STAGING",
+			OutboundDestination:  "MARKET",
+			PairedCoreNode:       "INDEX-B",
+			SecondPairedCoreNode: secondPaired,
+		}
+	}
+	from, to := claim(""), claim("")
+	to.CoreNodeName = "PRESS-B"
+
+	// The staging nodes, by name — the same two every fixture claim carries. A
+	// dropoff at one of these is staging; a dropoff anywhere else is not.
+	staging := map[string]bool{"IN-STAGING": true, "OUT-STAGING": true}
+	// The nodes that must NEVER be declared: a line dropoff gated this way is the
+	// 2b05dce deadlock coming back.
+	line := map[string]bool{"PRESS": true, "PRESS-B": true, "INDEX-B": true, "INDEX-C": true}
+
+	twoRobotA, twoRobotB := BuildTwoRobotSwapSteps(claim(""))
+	pi2R1, pi2R2 := BuildTwoRobotPressIndexSwapSteps(claim(""))
+	pi3R1, pi3R2 := BuildTwoRobotPressIndexSwapSteps(claim("INDEX-C"))
+	swapCO := BuildSwapChangeoverSteps(from, to, "PRESS-B", "PRESS")
+	evacCO := BuildEvacuateChangeoverSteps(from, to, "PRESS-B", "PRESS")
+
+	legs := map[string][]protocol.ComplexOrderStep{
+		"release":               BuildReleaseSteps(claim("")),
+		"staged release":        BuildStagedReleaseSteps(claim("")),
+		"stage":                 BuildStageSteps(claim("")),
+		"staged deliver":        BuildStagedDeliverSteps(claim("")),
+		"single_robot":          BuildSingleSwapSteps(claim("")),
+		"sequential removal":    BuildSequentialRemovalSteps(claim("")),
+		"sequential backfill":   BuildSequentialBackfillSteps(claim("")),
+		"two_robot A":           twoRobotA,
+		"two_robot B":           twoRobotB,
+		"press_index 2-pos R1":  pi2R1,
+		"press_index 2-pos R2":  pi2R2,
+		"press_index 3-pos R1":  pi3R1,
+		"press_index 3-pos R2":  pi3R2,
+		"keep-staged evac":      BuildKeepStagedEvacSteps(from),
+		"keep-staged deliver":   BuildKeepStagedDeliverSteps(to),
+		"keep-staged combined":  BuildKeepStagedCombinedSteps(from, to),
+		"changeover swap A":     swapCO.StepsA,
+		"changeover swap B":     swapCO.StepsB,
+		"changeover evacuate A": evacCO.StepsA,
+		"changeover evacuate B": evacCO.StepsB,
+	}
+
+	seen := 0
+	for name, steps := range legs {
+		for i, s := range steps {
+			if s.Action != protocol.ActionDropoff {
+				continue
+			}
+			if staging[s.Node] {
+				seen++
+				if !s.ExclusiveSlot {
+					t.Errorf("%s step %d: dropoff at staging node %q is not declared exclusive.\n"+
+						"Core cannot tell a staging node from a line node — one STATION node type, an "+
+						"advisory Kind that is never persisted, and the staging designation living in "+
+						"OUR cell config. Undeclared, both of Core's destination gates stand down and "+
+						"a second order is free to take the node: SPR AMR-04 held a bin 48 minutes at "+
+						"a full SLN_003. Build it with stagingDropoff().", name, i, s.Node)
+				}
+			}
+			if line[s.Node] && s.ExclusiveSlot {
+				t.Errorf("%s step %d: dropoff at LINE node %q is declared exclusive.\n"+
+					"A supply leg delivers to a line node that a sibling evac is on its way to clear. "+
+					"Gating it re-creates the deadlock Core's 2b05dce fixed — which is the whole "+
+					"reason Core's role test excludes line nodes rather than checking everything.",
+					name, i, s.Node)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no staging dropoffs found in any builder — the fixture stopped exercising them, so " +
+			"this test is now vacuous")
+	}
+}
+
 // TestWaitKindStation_MatchesCore pins the cross-module constant. Edge cannot
 // import Core, so the value is duplicated; if Core renames its side, the stamp
 // silently stops matching the fence that reads it and every station wait becomes

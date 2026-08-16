@@ -24,6 +24,13 @@ type resolvedStep struct {
 	// payload-matching full. Threaded through resolution + claim so the
 	// distinction survives steps_json persistence and scanner replay.
 	Empty bool `json:"empty,omitempty"`
+	// ExclusiveSlot mirrors protocol.ComplexOrderStep.ExclusiveSlot: this dropoff
+	// lands on a node holding one bin at a time (a staging node), which Core's
+	// role test cannot recognise on its own. Threaded through resolution for the
+	// same reason as Empty — slotNeeds reads it off the PERSISTED steps on every
+	// scanner replay, not just on the intake pass, so losing it at any hop would
+	// silently un-reserve the node on the first retry.
+	ExclusiveSlot bool `json:"exclusive_slot,omitempty"`
 
 	// ── WHO RELEASES THIS WAIT ────────────────────────────────────────────
 	//

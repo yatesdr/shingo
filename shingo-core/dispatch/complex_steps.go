@@ -33,14 +33,16 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 			// Blank dropoff = deferred destination (placeForDedicatedLoader resolves it
 			// after intake). Pass it through unchanged, same as reResolveComplexSteps.
 			if step.Action == protocol.ActionDropoff && step.Node == "" {
-				resolved = append(resolved, resolvedStep{Action: protocol.ActionDropoff, Empty: step.Empty})
+				resolved = append(resolved, resolvedStep{Action: protocol.ActionDropoff, Empty: step.Empty,
+					ExclusiveSlot: step.ExclusiveSlot})
 				continue
 			}
 			nodeName, group, err := d.resolveStepNode(step, payloadCode, asker)
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
-			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName, Group: group, Empty: step.Empty})
+			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName, Group: group, Empty: step.Empty,
+				ExclusiveSlot: step.ExclusiveSlot})
 		case protocol.ActionWait:
 			// Wait may optionally include a node (drive-to-and-hold).
 			// If present, resolve it; otherwise it's a bare wait (split point only).
@@ -125,7 +127,8 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 		}
 		// Step still references an NGRP; re-attempt resolution. Carry Empty so
 		// the produce empty-leg distinction survives replay re-resolution.
-		ps := protocol.ComplexOrderStep{Action: step.Action, Node: step.Node, Empty: step.Empty}
+		ps := protocol.ComplexOrderStep{Action: step.Action, Node: step.Node, Empty: step.Empty,
+			ExclusiveSlot: step.ExclusiveSlot}
 		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode, asker)
 		if resolveErr != nil {
 			return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
@@ -133,7 +136,8 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 		if newName != step.Node {
 			changed = true
 		}
-		newSteps = append(newSteps, resolvedStep{Action: step.Action, Node: newName, Group: group, Empty: step.Empty})
+		newSteps = append(newSteps, resolvedStep{Action: step.Action, Node: newName, Group: group, Empty: step.Empty,
+			ExclusiveSlot: step.ExclusiveSlot})
 	}
 	return newSteps, changed, nil
 }
@@ -147,7 +151,7 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 	out := make([]resolvedStep, 0, len(steps))
 	for _, s := range steps {
-		out = append(out, resolvedStep{Action: s.Action, Node: s.Node, Empty: s.Empty})
+		out = append(out, resolvedStep{Action: s.Action, Node: s.Node, Empty: s.Empty, ExclusiveSlot: s.ExclusiveSlot})
 	}
 	return out
 }

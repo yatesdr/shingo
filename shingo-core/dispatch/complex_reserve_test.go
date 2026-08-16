@@ -650,6 +650,301 @@ func TestComplexHoldingSlotsAsReservationsAcrossTicks(t *testing.T) {
 	}
 }
 
+// TestDeclaredStagingDropoffIsReserved is the SPR AMR-04 fix, both directions.
+//
+// ── THE DEFECT ────────────────────────────────────────────────────────────
+//
+// slotNeeds gated on isConcreteStorageDropoff, which bails at `ParentID == nil`.
+// A staging node is seeded as a station with NO PARENT, so it never reached the
+// LANE/NGRP test and was reserved by nothing and capacity-checked by nothing.
+// slotNeeds' own docstring claimed "staging/relay included" — the predicate's
+// name and its comment both promised coverage that was not there, which is why
+// nobody re-read it.
+//
+// Springfield, 2026-08-12: AMR-04 held a bin 48 minutes at a full SLN_003, the
+// fleet reporting RUNNING with no error, until an admin cancelled the order two
+// hours in.
+//
+// ── WHY A DECLARATION AND NOT A WIDER PREDICATE ───────────────────────────
+//
+// Accepting every parentless station would readmit LINE nodes, and gating those
+// re-creates the deadlock 2b05dce fixed. Core cannot tell the two apart: one
+// STATION node type, an advisory plantspec Kind that is never persisted, and the
+// staging designation living in the EDGE cell config. So the author declares it.
+//
+// BOTH ARMS ARE THE POINT. The fixture is identical apart from the flag, so a
+// change that reserved every station dropoff would pass the first arm and fail
+// the second — which is the deadlock coming back.
+//
+// MUTATION (verified): drop the `!s.ExclusiveSlot &&` clause from slotNeeds. The
+// declared arm stops reserving and fails.
+func TestDeclaredStagingDropoffIsReserved(t *testing.T) {
+	t.Parallel()
+
+	// run builds the fixture once and reports whether the dropoff node ended up
+	// reserved. `declared` is the ONLY thing that differs between the two arms.
+	run := func(t *testing.T, tag string, declared bool) bool {
+		t.Helper()
+		db := testDB(t)
+		_, _, bp := setupTestData(t, db)
+		d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+		// A STAGING node, built the way the seeder builds one: a station with NO
+		// PARENT. That nil parent is the whole defect — isConcreteStorageDropoff
+		// bails on it before it ever asks about LANE/NGRP.
+		staging := &nodes.Node{Name: tag + "-STAGING", Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(staging), "create staging node")
+		if staging.ParentID != nil {
+			t.Fatal("the staging fixture has a parent — then isConcreteStorageDropoff might cover " +
+				"it structurally and this test proves nothing about the declaration")
+		}
+		src := &nodes.Node{Name: tag + "-SRC", Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(src), "create src")
+
+		// A bin already taken at the source, so the order HOLDS in sourcing rather
+		// than completing — the slot reserve runs first and its result stays
+		// observable. Same device as TestComplexHoldingSlotsAsReservationsAcrossTicks.
+		takenBin := testdb.CreateBinAtNode(t, db, bp.Code, src.ID, tag+"-TAKEN")
+		other := testdb.CreateOrder(t, db)
+		testdb.ClaimBinForTest(t, db, takenBin.ID, other.ID)
+
+		steps := []resolvedStep{
+			{Action: protocol.ActionPickup, Node: src.Name},
+			{Action: protocol.ActionDropoff, Node: staging.Name, ExclusiveSlot: declared},
+		}
+		order := mkComplexOrder(t, db, tag+"-order", src.Name, src.Name, staging.Name, bp.Code, steps)
+		_ = d.DispatchPreparedComplex(order) // holds; the reserve is what we read
+
+		held, lerr := db.ListReservationsByOrder(order.ID)
+		testutil.MustNoErr(t, lerr, "list reservations")
+		for _, r := range held {
+			if r.Kind == reservations.KindSlot && r.NodeID == staging.ID {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("declared — the node is reserved", func(t *testing.T) {
+		if !run(t, "DECL", true) {
+			t.Fatal("a DECLARED staging dropoff reserved nothing. Nothing then stops a second order " +
+				"taking the node, and the first robot arrives to find it occupied — SPR AMR-04, " +
+				"48 minutes")
+		}
+	})
+
+	t.Run("undeclared — unchanged, and deliberately so", func(t *testing.T) {
+		if run(t, "PLAIN", false) {
+			t.Fatal("an UNDECLARED station dropoff was reserved. That is the LINE node case: a " +
+				"supply leg delivers to a node its sibling evac is on the way to clear, and " +
+				"reserving it re-creates the deadlock 2b05dce fixed. Absent must stay exactly " +
+				"today's behaviour")
+		}
+	})
+}
+
+// TestDeclaredStagingSlotConflictHolds is the protection itself: the reservation
+// is worth having only if the SECOND order cannot have the node.
+//
+// A staging dropoff is fixed-concrete — it carries no NGRP group, because there
+// is no group of interchangeable staging nodes to re-resolve within. So the loser
+// takes the HOLD arm rather than the revert arm (the contrast
+// TestSlotConflictRevertsToNGRP draws), and stays queued until the node frees.
+// That is the whole behaviour change: the order waits in a list instead of a
+// robot waiting in an aisle.
+func TestDeclaredStagingSlotConflictHolds(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	staging := &nodes.Node{Name: "CONF-STAGING", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(staging), "create staging node")
+	src := &nodes.Node{Name: "CONF-SRC", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(src), "create src")
+
+	takenBin := testdb.CreateBinAtNode(t, db, bp.Code, src.ID, "CONF-TAKEN")
+	blocker := testdb.CreateOrder(t, db)
+	testdb.ClaimBinForTest(t, db, takenBin.ID, blocker.ID)
+
+	steps := func() []resolvedStep {
+		return []resolvedStep{
+			{Action: protocol.ActionPickup, Node: src.Name},
+			{Action: protocol.ActionDropoff, Node: staging.Name, ExclusiveSlot: true},
+		}
+	}
+	first := mkComplexOrder(t, db, "conf-first", src.Name, src.Name, staging.Name, bp.Code, steps())
+	_ = d.DispatchPreparedComplex(first)
+
+	second := mkComplexOrder(t, db, "conf-second", src.Name, src.Name, staging.Name, bp.Code, steps())
+	_ = d.DispatchPreparedComplex(second)
+
+	// THE PIN: exactly one holder. Two orders both believing they own the staging
+	// node is the pre-fix world with extra bookkeeping.
+	owners := 0
+	for _, id := range []int64{first.ID, second.ID} {
+		held, lerr := db.ListReservationsByOrder(id)
+		testutil.MustNoErr(t, lerr, "list reservations")
+		for _, r := range held {
+			if r.Kind == reservations.KindSlot && r.NodeID == staging.ID {
+				owners++
+			}
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("%d orders hold a slot reservation on the staging node, want exactly 1 — the "+
+			"per-node unique index is what makes the declaration mean anything, and without it "+
+			"this is bookkeeping rather than arbitration", owners)
+	}
+}
+
+// TestDeclaredStagingOccupiedByABinQueues is the OTHER gate — the one that reads
+// the floor rather than the reservation table.
+//
+// The slot reservation arbitrates between ORDERS. It cannot see a bin that is
+// physically standing on the node with no order behind it: an operator's manual
+// move, a dig parking a blocker, anything that placed a bin outside the order
+// path. Only CheckDropoffCapacity looks at the bins. Dropping either gate leaves
+// a way to arrive at an occupied node, so both run.
+//
+// ── AND THIS FIXTURE IS THE COMPOSITION HOLE ──────────────────────────────
+//
+// The staging node here IS order.DeliveryNode — the BuildStageSteps shape,
+// pickup source then dropoff staging with nothing after it. That combination
+// slips through both arms if they are composed carelessly: the DeliveryNode arm
+// skips it (a staging node fails isConcreteStorageDropoff), and a declared-loop
+// that skipped nodes merely for EQUALLING DeliveryNode would skip it too. The
+// arms have to compose on what was ASKED, not on which node it was, which is why
+// the caller carries finalChecked rather than comparing names.
+//
+// MUTATION (verified): change the loop's guard to `s.Node == order.DeliveryNode`
+// without the finalChecked term. This test fails — the order dispatches onto an
+// occupied staging node.
+func TestDeclaredStagingOccupiedByABinQueues(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	staging := &nodes.Node{Name: "OCC-STAGING", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(staging), "create staging node")
+	src := &nodes.Node{Name: "OCC-SRC", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(src), "create src")
+
+	// A bin the order path knows nothing about, standing on the staging node —
+	// the manual-move / dig-blocker case. No reservation exists for it, so the
+	// slot reserve would happily hand the node out.
+	testdb.CreateBinAtNode(t, db, bp.Code, staging.ID, "OCC-SQUATTER")
+	// And a free source bin, so nothing ELSE holds this order back and a dispatch
+	// would genuinely happen if the gate let it.
+	testdb.CreateBinAtNode(t, db, bp.Code, src.ID, "OCC-SOURCE")
+
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: src.Name},
+		{Action: protocol.ActionDropoff, Node: staging.Name, ExclusiveSlot: true},
+	}
+	order := mkComplexOrder(t, db, "occ-order", src.Name, src.Name, staging.Name, bp.Code, steps)
+
+	err := d.DispatchPreparedComplex(order)
+	if err == nil {
+		t.Fatal("the order dispatched onto a staging node with a bin already standing on it. " +
+			"The reservation table is empty for that bin — nothing but the capacity check reads " +
+			"the floor, and this is the 48-minute stall with the robot already committed")
+	}
+	if !strings.Contains(err.Error(), "dropoff capacity") {
+		t.Fatalf("order was held by %q, want the dropoff-capacity gate — a different reason "+
+			"means this fixture stopped exercising the arm it is named after", err)
+	}
+	got, gerr := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, gerr, "reload order")
+	if got.Status == StatusDispatched || got.Status == StatusInTransit {
+		t.Errorf("order status=%q — it must park, not proceed", got.Status)
+	}
+}
+
+// TestChoreographyRefillsANodeItEmptiesItself is the keep-staged shape, and the
+// self-wedge the capacity gate would otherwise have introduced.
+//
+// ── THE SHAPE ─────────────────────────────────────────────────────────────
+//
+// BuildKeepStagedCombinedSteps (Edge):
+//
+//  1. pickup  InboundStaging   ← carries the keep-staged bin away
+//  2. dropoff InboundSource        (returns it to the market)
+//  3. pickup  InboundSource        (grabs the changeover material)
+//  4. dropoff InboundStaging   ← puts the NEW bin where the old one was
+//
+// At dispatch, before a robot has moved, the staging node IS occupied — by the
+// bin step 1 exists to remove. A capacity gate that reads the floor and stops
+// there parks the order waiting for a node that only the parked order would have
+// cleared. Nothing else ever will, so it waits forever: strictly worse than the
+// 48-minute stall this whole change is about, because a stall ends.
+//
+// This is the 2b05dce deadlock one rung in — the clearing leg belongs to THIS
+// order rather than a sibling. The difference is that Core can see it: the plan
+// is in hand, so no declaration and no SiblingOrderID is needed to know the node
+// will be free on arrival.
+//
+// ── AND THE RESERVATION STILL HAPPENS ─────────────────────────────────────
+//
+// Asserted below, because it is the half that must NOT be relaxed. The exemption
+// is about the FLOOR (a bin standing there now), not about other ORDERS. This
+// order still takes the staging node so a second order cannot have it while the
+// choreography is mid-flight.
+//
+// MUTATION (verified): drop the clearedEarlierInPlan guard. The order parks on
+// dropoff-occupied and never dispatches.
+func TestChoreographyRefillsANodeItEmptiesItself(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	staging := &nodes.Node{Name: "CHOREO-STAGING", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(staging), "create staging node")
+	market := &nodes.Node{Name: "CHOREO-MARKET", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "create market")
+
+	// THE KEEP-STAGED BIN, standing on the staging node at dispatch time. This is
+	// the occupancy the naive gate trips over.
+	testdb.CreateBinAtNode(t, db, bp.Code, staging.ID, "CHOREO-KEPT")
+	// And the changeover material the order picks up at step 3.
+	testdb.CreateBinAtNode(t, db, bp.Code, market.ID, "CHOREO-NEW")
+
+	steps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: staging.Name},
+		{Action: protocol.ActionDropoff, Node: market.Name},
+		{Action: protocol.ActionPickup, Node: market.Name},
+		{Action: protocol.ActionDropoff, Node: staging.Name, ExclusiveSlot: true},
+	}
+	order := mkComplexOrder(t, db, "choreo", staging.Name, staging.Name, staging.Name, bp.Code, steps)
+
+	if err := d.DispatchPreparedComplex(order); err != nil &&
+		strings.Contains(err.Error(), "dropoff capacity") {
+		t.Fatalf("the order was parked on dropoff capacity: %v\n"+
+			"Its step 4 places onto a node its OWN step 1 empties. Gating that is a self-wedge — "+
+			"the order waits for a node only the parked order would have cleared, so it waits "+
+			"forever. A choreography that refills what it empties is not a conflict", err)
+	}
+
+	// THE OTHER HALF: the exemption is about the floor, not about other orders.
+	// The staging node must still be reserved, or a second order can walk into
+	// the middle of the choreography.
+	held, lerr := db.ListReservationsByOrder(order.ID)
+	testutil.MustNoErr(t, lerr, "list reservations")
+	reserved := false
+	for _, r := range held {
+		if r.Kind == reservations.KindSlot && r.NodeID == staging.ID {
+			reserved = true
+		}
+	}
+	if !reserved {
+		t.Errorf("the order holds no reservation on %s. Exempting the node from the CAPACITY check "+
+			"must not exempt it from arbitration between orders — the choreography still owns that "+
+			"node for its duration", staging.Name)
+	}
+}
+
 // TestSlotConflictRevertsToNGRP pins the escape valve: a FUNGIBLE dropoff (a concrete
 // slot carrying its NGRP group) whose slot is already reserved by another order
 // reverts its step Node back to the group, so the next tick re-resolves to a free

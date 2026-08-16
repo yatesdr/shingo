@@ -312,6 +312,145 @@ func TestBurialShadow_ApprovedThenInvalidatedIsNotABypass(t *testing.T) {
 	})
 }
 
+// resolveDestinationAt records when intake's store-slot selector chose this
+// order's destination — the moment admitOrder stamps for real.
+func resolveDestinationAt(t *testing.T, db *store.DB, orderID int64, at time.Time) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE orders SET destination_resolved_at=$2 WHERE id=$1`, orderID, at.UTC())
+	testutil.MustNoErr(t, err, "stamp destination_resolved_at")
+}
+
+// TestBurialShadow_TheRaceBetweenResolveAndCommitIsNotABypass is the specimen
+// this whole column exists for.
+//
+// ── WHAT WENT WRONG, AND HOW IT WAS CAUGHT ────────────────────────────────
+//
+// The classifier compared the buried claim against the placer's FLEET-COMMIT
+// time, on the stated reasoning that erring late is the safe way to be wrong.
+// It is not, because choosing a destination and dispatching to it are separate
+// events: intake resolves BEFORE the order row exists, and an order whose group
+// is full queues behind capacity and commits minutes afterwards. Every claim
+// landing in that window was reported as a GUARD BYPASS.
+//
+// Lane-stress rig, 2026-08-15. Order 53 resolved onto LSC_032 at 03:46:54.344
+// and committed at 03:46:54.385. The claim it stood accused of ignoring belonged
+// to order 54 — which DID NOT EXIST until 03:46:54.475. The instrument's only
+// should-be-zero read 1, for a race no guard anywhere could have won, and the
+// investigation that followed took the accusation at face value before the log
+// timestamps gave it up.
+//
+// ── THE THREE SUBTESTS ABOVE ARE THE FALLBACK, FOR FREE ───────────────────
+//
+// None of them stamps a resolve, so all three exercise the commit-time path
+// unchanged. That is deliberate rather than lucky: the fix must not move a
+// verdict for any order whose destination was NOT chosen at intake, and those
+// three are what says so.
+//
+// MUTATION (verified): make selectorLookedAt consult OrderCommittedToFleetAt
+// only. The raced arm reports Bypass=1 and fails.
+func TestBurialShadow_TheRaceBetweenResolveAndCommitIsNotABypass(t *testing.T) {
+	t.Parallel()
+
+	// One anchor for both arms so the only thing that moves is where the claim
+	// falls relative to the resolve. Absolute offsets, not time.Now() per line,
+	// because the whole assertion is an ordering.
+	resolvedAt := time.Now().Add(-2 * time.Hour)
+	committedAt := resolvedAt.Add(30 * time.Minute)
+
+	t.Run("claim landed after the resolve but BEFORE the commit — churn", func(t *testing.T) {
+		db := testdb.Open(t)
+		slots := burialLane(t, db, "BSRACE", 4)
+		svc := newBinSvc(db)
+
+		buried := binAt(t, db, "BSRACE-HARD", slots[2])
+		holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, buried.ID, holder.ID)
+
+		arriving := binAt(t, db, "BSRACE-ARRIVE", slots[0])
+		placer := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, arriving.ID, placer.ID)
+
+		// THE WINDOW. The selector looked, approved, and only then did the holder
+		// come into existence and claim — with the commit still ahead of both.
+		resolveDestinationAt(t, db, placer.ID, resolvedAt)
+		claimHeldSince(t, db, buried.ID, holder.ID, resolvedAt.Add(10*time.Minute))
+		commitOrderToFleetAt(t, db, placer.ID, committedAt)
+
+		_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, placer.ID)
+		testutil.MustNoErr(t, err, "ApplyArrival")
+
+		got := svc.BurialShadowTally()
+		if got.Churn != 1 || got.Bypass != 0 {
+			t.Fatalf("tally = %+v, want Churn=1 Bypass=0 — the claim did not exist when the selector "+
+				"looked, so no guard could have seen it. Keying on the COMMIT instead calls this a "+
+				"bypass and sends an engineer hunting a placement path that does not exist", got)
+		}
+	})
+
+	t.Run("claim already existed when the selector looked — still a bypass", func(t *testing.T) {
+		db := testdb.Open(t)
+		slots := burialLane(t, db, "BSRACEPRE", 4)
+		svc := newBinSvc(db)
+
+		buried := binAt(t, db, "BSRACEPRE-HARD", slots[2])
+		holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, buried.ID, holder.ID)
+
+		arriving := binAt(t, db, "BSRACEPRE-ARRIVE", slots[0])
+		placer := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, arriving.ID, placer.ID)
+
+		// THE OTHER SIDE OF THE SAME LINE, and the reason this arm is here: a fix
+		// that made everything churn would pass the arm above and be worthless.
+		// The claim predates the resolve, so the selector had it in view.
+		resolveDestinationAt(t, db, placer.ID, resolvedAt)
+		claimHeldSince(t, db, buried.ID, holder.ID, resolvedAt.Add(-10*time.Minute))
+		commitOrderToFleetAt(t, db, placer.ID, committedAt)
+
+		_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, placer.ID)
+		testutil.MustNoErr(t, err, "ApplyArrival")
+
+		got := svc.BurialShadowTally()
+		if got.Bypass != 1 || got.Churn != 0 {
+			t.Fatalf("tally = %+v, want Bypass=1 Churn=0 — the claim was already held when the "+
+				"selector was consulted, so it would have refused. A real bypass must survive the "+
+				"fix that silenced the false one", got)
+		}
+	})
+
+	t.Run("the stamp wins over the commit, not the other way round", func(t *testing.T) {
+		db := testdb.Open(t)
+		slots := burialLane(t, db, "BSRACEPREC", 4)
+		svc := newBinSvc(db)
+
+		buried := binAt(t, db, "BSRACEPREC-HARD", slots[2])
+		holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, buried.ID, holder.ID)
+
+		arriving := binAt(t, db, "BSRACEPREC-ARRIVE", slots[0])
+		placer := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+		testdb.ClaimBinForTest(t, db, arriving.ID, placer.ID)
+
+		// PRECEDENCE, ASSERTED DIRECTLY. Both facts are present and they disagree:
+		// against the commit this is a bypass, against the resolve it is churn.
+		// Which one the classifier reaches for is the entire change, and without
+		// this arm the two above could both pass on an implementation that merely
+		// took whichever timestamp was earlier.
+		resolveDestinationAt(t, db, placer.ID, resolvedAt)
+		claimHeldSince(t, db, buried.ID, holder.ID, resolvedAt.Add(1*time.Minute))
+		commitOrderToFleetAt(t, db, placer.ID, committedAt)
+
+		_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, placer.ID)
+		testutil.MustNoErr(t, err, "ApplyArrival")
+
+		got := svc.BurialShadowTally()
+		if got.Churn != 1 {
+			t.Fatalf("tally = %+v, want Churn=1 — with both timestamps present and disagreeing, the "+
+				"recorded resolve is the one that answers 'could the selector have seen it'", got)
+		}
+	})
+}
+
 // TestBurialShadow_DigPlacementIsCountedApart keeps the tripwire clean.
 //
 // A reshuffle picks its shuffle slots through findShuffleSlots, which has its own

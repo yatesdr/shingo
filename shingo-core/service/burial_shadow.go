@@ -81,10 +81,12 @@ const burialShadowTag = "burial-shadow"
 // literals that can drift apart — which is the mistake underneath B1.
 const (
 	// BurialBypassMarker prefixes the SHOULD-BE-ZERO line: the claim already
-	// existed when the placing order was committed, so the selector was not asked.
+	// existed when the selector was consulted for the placing order, so it was
+	// never asked.
 	BurialBypassMarker = "GUARD BYPASS"
 	// BurialChurnMarker prefixes the accepted population: approved, then
-	// invalidated by a claim that arrived during the mouth-to-slot drive (§R.4).
+	// invalidated by a claim that arrived between the resolve and the placement
+	// (§R.4).
 	BurialChurnMarker = "APPROVED-THEN-INVALIDATED"
 )
 
@@ -113,9 +115,15 @@ type BurialTally struct {
 	// SoftLongestHeld is the largest hold age at burial among the soft events, the
 	// cheap read on how much recalculation those burials are costing.
 	SoftLongestHeld time.Duration
-	// Bypass is the TRIPWIRE: a hard claim that ALREADY EXISTED when the placing
-	// order was committed, buried by a placement that therefore should have gone
-	// through the guarded selector and seen it. Expected ZERO.
+	// Bypass is the TRIPWIRE: a hard claim that ALREADY EXISTED when the selector
+	// was consulted for the placing order, buried by a placement that therefore
+	// should have gone through the guarded selector and seen it. Expected ZERO.
+	//
+	// IT USED TO KEY ON THE FLEET-COMMIT, which is a later event than the
+	// consultation and sometimes a much later one — so a claim that landed in
+	// between was accused of a bypass no guard could have prevented. Fixed by
+	// recording the resolve (orders.destination_resolved_at); see
+	// burialWasApprovedThenInvalidated for the rig specimen that priced it.
 	//
 	// IT USED TO MEAN SOMETHING WIDER. Until the §R.4 split it counted every hard
 	// burial that was not a dig leg, which lumped in the population below — so it
@@ -124,9 +132,9 @@ type BurialTally struct {
 	// nobody can act on stops being read, which is standing law 9 from the other
 	// direction.
 	Bypass int64
-	// Churn is APPROVED-THEN-INVALIDATED: the claim was created AFTER the placing
-	// order was committed and driving, so no check at any Core moment could have
-	// seen it. Ruled accepted and healed (§R.4) — the cascade dissolves and
+	// Churn is APPROVED-THEN-INVALIDATED: the claim was created AFTER the selector
+	// was consulted for the placing order, so no check at any Core moment could
+	// have seen it. Ruled accepted and healed (§R.4) — the cascade dissolves and
 	// re-plans at ~2.5 min of re-work. Expected non-zero on a busy plant; it is
 	// the measured price of law 6, not a defect.
 	Churn int64
@@ -163,13 +171,13 @@ type hardBurialKind int
 
 const (
 	// hardNeverAsked is the SHOULD-BE-ZERO. The buried claim already existed when
-	// this order's destination was committed, so the selector — had it been
-	// consulted — would have seen it and refused.
+	// the selector was consulted for this order, so it — had it been asked — would
+	// have seen the claim and refused.
 	hardNeverAsked hardBurialKind = iota
 	// hardApprovedThenInvalidated is churn the design accepts. The claim was
-	// created AFTER this order was committed and driving, so no check at any Core
-	// moment could have seen it: the window is the mouth→slot drive, measured at
-	// 27ms and 32s on the two rig specimens. The cascade dissolves and re-plans;
+	// created AFTER the selector was consulted for this order, so no check at any
+	// Core moment could have seen it: the window runs resolve→placement, measured
+	// at 27ms and 32s on the two rig specimens. The cascade dissolves and re-plans;
 	// cost ~2.5 min of re-work, no wedge (§R.3, §R.4).
 	hardApprovedThenInvalidated
 	// hardDigUncovered is the known, named gap: a dig leg resolves its shuffle
@@ -249,10 +257,15 @@ func (s *BinService) NoteBurialShadow(binID, toNodeID, placedBy int64) {
 	now := clock.Now().UTC()
 	at := burialSite{lane: lane.Name, slot: slotName, placedBin: binID, placedBy: placedBy}
 	for _, b := range buried {
-		heldFor := now.Sub(b.HeldSince.UTC())
-		if heldFor < 0 {
-			heldFor = 0 // clock skew between the DB default and the injectable clock
-		}
+		// THE AGE COMES FROM THE DATABASE, NOT FROM A SUBTRACTION HERE.
+		//
+		// This read `now.Sub(b.HeldSince.UTC())` with `now = clock.Now()`, and
+		// HeldSince is a DB-default `created_at`. Two clocks, one subtraction: under
+		// the honest running clock sim runs a year ahead of wall and an eight-second
+		// hold printed as `held_for=7355h32m48s` — in the single line an engineer
+		// reads to judge whether a burial mattered. The old negative-clamp was the
+		// same defect wearing a guard; it caught the sign and not the magnitude.
+		heldFor := b.HeldFor
 		if b.HardClaim {
 			s.noteHardBurial(at, b, heldFor, digPlacement, now)
 			continue
@@ -321,10 +334,11 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 
 	if s.burialWasApprovedThenInvalidated(at.placedBy, b.HeldSince) {
 		log.Printf("%s: %s — order %d's destination was approved and a later claim invalidated it. "+
-			"Order %d claimed the buried bin at %s, AFTER order %d was committed and driving, so no "+
-			"check at any Core moment could have seen it — the window is the mouth-to-slot drive "+
-			"(27ms and 32s on the two rig specimens). Accepted and healed: the cascade dissolves and "+
-			"re-plans, ~2.5 min of re-work. This is the measured price of law 6, not a defect. %s",
+			"Order %d claimed the buried bin at %s, AFTER the selector was consulted for order %d, so "+
+			"no check at any Core moment could have seen it — the window runs from the resolve to the "+
+			"placement (27ms and 32s on the two rig specimens; longer for an order that queued behind "+
+			"capacity before dispatching). Accepted and healed: the cascade dissolves and re-plans, "+
+			"~2.5 min of re-work. This is the measured price of law 6, not a defect. %s",
 			burialShadowTag, BurialChurnMarker, at.placedBy,
 			b.HolderID, b.HeldSince.UTC().Format(time.RFC3339), at.placedBy, where)
 		s.burials.recordHard(hardApprovedThenInvalidated, now)
@@ -332,38 +346,80 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 	}
 
 	log.Printf("%s: %s — a placement buried a bin a robot is en route to, without going through the "+
-		"store-slot selector. The claim was already held when order %d was committed, so the selector "+
-		"would have seen it. Expected count is ZERO: find the placement path and route it through "+
-		"nodes.FindStoreSlotInLaneExcluding. %s",
+		"store-slot selector. The claim was ALREADY HELD when the selector was consulted for order %d, "+
+		"so it would have seen it and refused. Expected count is ZERO: find the placement path and "+
+		"route it through nodes.FindStoreSlotInLaneExcluding. %s",
 		burialShadowTag, BurialBypassMarker, at.placedBy, where)
 	s.burials.recordHard(hardNeverAsked, now)
 }
 
 // burialWasApprovedThenInvalidated answers PLAN §R.4's question: did this claim
-// exist when the placing order's destination was committed?
+// exist AT THE MOMENT THE SELECTOR LOOKED?
 //
 // If it did NOT, the selector could not have seen it however diligently it was
 // consulted, and the burial is churn the design accepts. If it DID, the selector
 // would have refused — so reaching a burial means it was never asked.
 //
-// FAIL-LOUD ON A DOUBT, in both arms. An unreadable placer, a missing history
-// row, or a zero claim time all return false, which sends the event to the
-// should-be-zero bucket. A tripwire that under-reports is worse than one that
-// over-reports — the same direction this file's dig-placement lookup already
-// chooses, and the direction §R.4's ruling depends on to stay honest: the whole
-// value of the split is that the remaining Bypass count means something.
+// ── THE MOMENT THE SELECTOR LOOKED IS NOT THE MOMENT IT DISPATCHED ────────
+//
+// This compared against the fleet-commit time alone, and that is the defect the
+// column below was added to close. Choosing a destination and committing to the
+// fleet are different events: at intake the selector runs BEFORE the order row
+// exists, and an order whose group is full queues behind capacity and commits
+// minutes later. Every claim landing in that gap was reported as a GUARD BYPASS.
+//
+// It was not theoretical. Lane-stress rig, 2026-08-15: order 53 resolved onto
+// LSC_032 at 03:46:54.344, committed at 03:46:54.385, and was accused of
+// ignoring a claim held by order 54 — an order that did not exist until
+// 03:46:54.475. The instrument's only should-be-zero read 1, for a race that no
+// guard anywhere could have won. An engineer (and then a reviewer) spent real
+// time chasing it before the log timestamps gave it up.
+//
+// So the question is asked of the RESOLVE, and only falls back to the commit for
+// orders that have no resolve stamp — those whose destination was named
+// concretely by the sender, or chosen at dispatch by planMove, where commit is
+// the right moment anyway.
+//
+// FAIL-LOUD ON A DOUBT, UNCHANGED. An unreadable placer, an unreadable stamp, a
+// missing history row, or a zero claim time all return false, which sends the
+// event to the should-be-zero bucket. A tripwire that under-reports is worse
+// than one that over-reports. What changed is only that a KNOWN-ANSWERABLE case
+// stopped being counted as a doubt.
 func (s *BinService) burialWasApprovedThenInvalidated(placedBy int64, heldSince time.Time) bool {
 	if placedBy == 0 || heldSince.IsZero() {
 		return false
 	}
+	askedAt, ok, err := s.selectorLookedAt(placedBy)
+	if err != nil || !ok {
+		return false
+	}
+	return heldSince.UTC().After(askedAt)
+}
+
+// selectorLookedAt reports when the store-slot guard was consulted for this
+// order, preferring the recorded resolve and falling back to the fleet-commit.
+//
+// TWO SOURCES, ONE QUESTION (law 3): callers get a single instant and never have
+// to know which of the two answered. ok=false means no moment could be
+// established and the caller must take the loud arm; an error is returned
+// alongside it purely so the log line can say which read failed.
+func (s *BinService) selectorLookedAt(placedBy int64) (time.Time, bool, error) {
+	resolvedAt, ok, err := s.db.OrderDestinationResolvedAt(placedBy)
+	if err != nil {
+		log.Printf("%s: placer %d destination-resolve time unreadable: %v "+
+			"(counting as a never-asked bypass)", burialShadowTag, placedBy, err)
+		return time.Time{}, false, err
+	}
+	if ok {
+		return resolvedAt, true, nil
+	}
+	// No intake stamp. The destination was named by the sender or chosen at
+	// dispatch, and for both the commit is the moment the selector last had a say.
 	committedAt, ok, err := s.db.OrderCommittedToFleetAt(placedBy)
 	if err != nil {
 		log.Printf("%s: placer %d commit time unknown: %v (counting as a never-asked bypass)",
 			burialShadowTag, placedBy, err)
-		return false
+		return time.Time{}, false, err
 	}
-	if !ok {
-		return false
-	}
-	return heldSince.UTC().After(committedAt)
+	return committedAt, ok, nil
 }

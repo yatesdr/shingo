@@ -149,6 +149,10 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 			continue
 		}
 		needs, why := d.legStillNeedsLane(leg, laneID)
+		if !needs && holder != nil && leg.ID == holder.ID {
+			// The holder gets the second question too — see holderStillOwesTheLane.
+			needs, why = d.holderStillOwesTheLane(leg, laneID)
+		}
 		if needs {
 			d.dbg("dig lock: order %d keeps lane %d — %d %s", digOwner, laneID, leg.ID, why)
 			return
@@ -318,6 +322,47 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 		"its bin, and the hold ends with that order however it ends",
 		parent.ID, laneName, picker.ID, parent.DigTargetNode, laneName)
 	return true
+}
+
+// holderStillOwesTheLane is the holder's half of the question, and it exists
+// because legStillNeedsLane asks the RETRIEVE half of it.
+//
+// "Is my bin still sitting in the lane" is the whole question for a dig leg and
+// for an order coming to COLLECT. It is blind to the other direction: an order
+// that dug a lane open in order to DROP into it is carrying its bin in the
+// gripper, so no bin of its is anywhere in the lane — and it needs the corridor
+// more than anyone, because it is about to drive down it.
+//
+// §R.104's acceptance arm made that shape ordinary: a staged store digs its own
+// destination lane open and is appended INTO it the moment the chapter closes.
+// Releasing there would open the corridor in the gap between the last blocker
+// leaving and the robot arriving, which is the re-burial window the lock exists
+// to shut, entered from the inbound side.
+//
+// ASKED ONLY OF THE HOLDER, not of legs. A dig leg's business in a lane is its
+// bin, and legStillNeedsLane is right about it and mutation-pinned; widening that
+// predicate would answer a question the legs are not being asked.
+//
+// FAIL CLOSED, like every read in this file.
+func (d *Dispatcher) holderStillOwesTheLane(holder *orders.Order, laneID int64) (bool, string) {
+	if holder.DeliveryNode == "" {
+		return false, ""
+	}
+	dest, err := d.db.GetNodeByDotName(holder.DeliveryNode)
+	if err != nil {
+		return true, "has a destination that could not be resolved"
+	}
+	if dest == nil {
+		return false, ""
+	}
+	lane, err := d.db.LaneForNode(dest.ID)
+	if err != nil {
+		return true, "has a destination whose lane could not be resolved"
+	}
+	if lane != nil && lane.ID == laneID {
+		return true, "still owes this lane a drop — its bin is in the gripper, not in the corridor"
+	}
+	return false, ""
 }
 
 // legStillNeedsLane reports whether one open leg of a dig still has business

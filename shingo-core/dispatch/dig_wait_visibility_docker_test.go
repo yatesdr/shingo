@@ -62,7 +62,7 @@ func TestDigWait_SentenceNamesTheExcavation(t *testing.T) {
 		o.Status = protocol.StatusQueued
 	})
 
-	res := d.proposeLaneClearDig(lane, laneSlots[1], demand, digOwnedByFolder)
+	res := d.proposeLaneClearDig(lane, laneSlots[1], demand, digOwnedByRequester)
 	if res.outcome != serviceDigLaneBusy {
 		t.Fatalf("outcome = %v, want serviceDigLaneBusy — this test is about the wait a demand "+
 			"gets when somebody else's dig already holds its lane", res.outcome)

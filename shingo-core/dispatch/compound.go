@@ -970,35 +970,29 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// dropped from the WAKE set, which is the same decision read the other way:
 		// that corridor is not free, and telling the dwellers behind it that it is
 		// would send them at a lane whose new holder excludes them.
-		toRelease := heldLanes
-		if parent != nil && IsGateStaged(parent) {
-			// ── THE LOCK OUTLIVES THE CHAPTER (§R.104a) ───────────────────
-			//
-			// Neither released nor handed over. The law is lock → dig → append with
-			// ONE lock throughout: this parent took the lane before it summoned a
-			// single dig, and the append that follows is about to drive its robot
-			// into that same corridor. Releasing here re-admits traffic into the
-			// gap between the last blocker leaving and the tail landing, which is
-			// the re-burial window the lock exists to close, arrived at from a new
-			// direction.
-			//
-			// The handoff is skipped for the same fact stated differently: it gives
-			// the corridor to the order collecting the bin, and here that order is
-			// the holder. It would walk this parent's own `dig` row down to
-			// `outbound` one line before the append — sharing the lane it is still
-			// using.
-			toRelease = toRelease[:0:0]
-			d.dbg("dispatch: order %d keeps lane(s) %v across its own chapter's close — the append is "+
-				"still to come", parentOrderID, heldLanes)
-		} else if parent != nil {
-			toRelease = toRelease[:0:0]
-			for _, laneID := range heldLanes {
-				if d.handOffDugLane(parent, laneID) {
-					continue
-				}
-				toRelease = append(toRelease, laneID)
-			}
-		}
+		// ── THE CHAPTER'S CLOSE DOES NOT DECIDE THE LANE (§R.101a/§R.104) ─
+		//
+		// One lock lifecycle, one owner, ONE DECIDER. The demand owns the corridor
+		// from resolve to collection, and the chapter closing is not the end of
+		// that: it still has to collect the bin its excavation uncovered, and if it
+		// is dwelling it still has a tail to be appended into this very corridor.
+		//
+		// So this path releases nothing itself. maybeReleaseDigOnLastBlockerOut is
+		// the one predicate that knows when a lane is finished with — it walks the
+		// holder and its legs and asks whether any of them still has business
+		// inside — and it is called here, AFTER the disposition above, as the
+		// second of the two events that can arrive first. The handoff is already
+		// inside it; so is the wake.
+		//
+		// Releasing on chapter close instead is the re-burial window the lock
+		// exists to shut: a dig used to hand its uncovered bin straight back to the
+		// traffic it had just dug through.
+		//
+		// AFTER the append, necessarily. For a staged parent the disposition above
+		// is the tail append, and asking whether the lane is finished with before
+		// the robot has been sent into it answers about a plan that has not
+		// happened yet.
+
 		//
 		// All children reached a terminal status with none failed -> compound
 		// order is complete. Route on whether the parent has its OWN work to
@@ -1101,7 +1095,20 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// is not new (it is the same window the two complex paths had while they
 		// were not re-parenting at all), and closing it is the self-handoff at
 		// resume rather than anything here.
-		d.unlockLaneForCompound(parentOrderID, toRelease)
+		// ── AND NOW THE ONE DECIDER, after the disposition ────────────────
+		//
+		// maybeReleaseDigOnLastBlockerOut walks the holder and its legs and asks
+		// whether any of them still has business inside the lane. It is called here
+		// as the second of the two events that can arrive first (the other is a bin
+		// entering transit), and it owns the handoff and the wake as well.
+		//
+		// AFTER the disposition, necessarily: for a staged parent the disposition
+		// IS the tail append, and asking whether the lane is finished with before
+		// the robot has been sent into it answers about a plan that has not
+		// happened yet.
+		for _, laneID := range heldLanes {
+			d.maybeReleaseDigOnLastBlockerOut(laneID)
+		}
 		return nil
 	}
 

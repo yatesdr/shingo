@@ -358,6 +358,43 @@ type ComplexOrderStep struct {
 	// drain window an untagged wait is a defect, and the drift tests on both
 	// sides say so.
 	WaitKind string `json:"wait_kind,omitempty"`
+	// ExclusiveSlot declares that this DROPOFF lands on a node that holds ONE
+	// bin at a time and must therefore be reserved before the robot is sent.
+	//
+	// ── WHY THE SENDER HAS TO SAY IT ──────────────────────────────────────
+	//
+	// Core gates its destination checks on node ROLE: a dropoff is reserved and
+	// capacity-checked when the node is a storage slot (a child of a LANE or
+	// NGRP), and skipped otherwise. The skip is deliberate and load-bearing — a
+	// two-robot SUPPLY leg delivers to a LINE node that a sibling EVAC clears,
+	// and gating that re-creates the deadlock 2b05dce fixed.
+	//
+	// A STAGING node is neither. It holds one bin like a slot, but it is seeded
+	// as a station with no parent, so Core's role test rejects it at the
+	// parent-nil guard and BOTH destination gates decline to act. Nothing
+	// reserves it and nothing checks it is free.
+	//
+	// Core cannot repair that by looking harder. Every station — line, press,
+	// weld, loader, unloader, staging, dest — carries the one STATION node type;
+	// the plantspec's Kind field is advisory and never persisted; and the
+	// staging designation lives in the EDGE cell config, which Core does not
+	// have. The sender is the only party that knows.
+	//
+	// Springfield, 2026-08-12: AMR-04 held a bin for 48 minutes unable to place
+	// at SLN_003, with the fleet reporting the robot RUNNING and no error.
+	// Order 4580 was cancelled by an admin after 2h05m. Nothing was broken —
+	// nothing had ever asked whether SLN_003 was free.
+	//
+	// This is WaitKind's mirror, and the same rule: carried across the wire so
+	// the far side does not have to guess. There it was Core knowing something
+	// the Edge could not infer; here it is the Edge knowing something Core
+	// cannot.
+	//
+	// DROPOFF-ONLY; ignored on pickup/wait. Backward-compatible: absent/false is
+	// exactly today's behaviour, so an older sender — and an older Core that
+	// ignores the field — behave as they do now. Setting it on a LINE node would
+	// re-create the 2b05dce deadlock, so senders must not.
+	ExclusiveSlot bool `json:"exclusive_slot,omitempty"`
 }
 
 // ComplexOrderRequest is a multi-step transport order from edge.

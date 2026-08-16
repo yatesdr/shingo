@@ -3,6 +3,7 @@ package dispatch
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"shingo/protocol"
 	"shingocore/store"
@@ -399,7 +400,7 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int, asker rese
 	if err != nil {
 		return nil, err
 	}
-	return shuffleSlotsFrom(db, laneID, groupID, children, count, exclude)
+	return shuffleSlotsFrom(db, laneID, groupID, children, count, asker, consultTheMouth, exclude)
 }
 
 // shuffleSlotsFrom is findShuffleSlots' body over a candidate list it is HANDED.
@@ -410,7 +411,21 @@ func findShuffleSlots(db *store.DB, laneID, groupID int64, count int, asker rese
 // counting empty slots in the excluded lanes, say — would be a second, simpler,
 // and disagreeing spelling of what a shuffle slot is (law 3). This is the walk
 // itself, run twice, on the refusal path only.
-func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Node, count int, exclude map[int64]bool) ([]*nodes.Node, error) {
+// consultTheMouth / skipTheMouth name shuffleSlotsFrom's last filter, because a
+// bare bool at a call site is exactly the kind of parameter that gets passed
+// wrong once and is never noticed.
+//
+// The ONE caller that skips it is digHeldParking, and it must: that walk exists
+// to ask "would the pool have been wide enough WITHOUT the exclusions", so
+// re-applying an exclusion inside it answers the opposite question and reports
+// every right-of-way refusal as an honestly full group. Caught by three fixtures
+// the first time it was written the other way.
+const (
+	consultTheMouth = true
+	skipTheMouth    = false
+)
+
+func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Node, count int, asker reservations.DigAsker, askTheMouth bool, exclude map[int64]bool) ([]*nodes.Node, error) {
 
 	// A GATED DIG DOES NOT PARK ITS BLOCKER IN A DIFFERENT GATED LANE.
 	//
@@ -541,6 +556,10 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 	// once, for the same reason the burial set is — it is asked per candidate and
 	// the answer cannot change mid-pass without the pass being wrong anyway.
 	var occupiedSkipped []*nodes.Node
+	// Lanes dropped by the mouth consultation, kept apart because they are two
+	// different findings: one is a lane somebody owns, the other is a lane nobody
+	// could read. See the consultation in Pass 2.
+	var mouthHeld, unseen []*nodes.Node
 	occupied, oErr := db.LanesOccupiedInGroup(groupID)
 	if oErr != nil {
 		// Same disposition as the burial read below: cannot tell who is inside, so
@@ -641,6 +660,48 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 			occupiedSkipped = append(occupiedSkipped, c)
 			continue
 		}
+		// ── AND THE MOUTH IS ASKED, WHICH IT WAS NOT (§R.96 stage 2) ──────
+		//
+		// The pool already dropped lanes held by a foreign DIG — in SQL, inside
+		// ListChildNodesUnlocked, whose exclusion clause reads `mode = 'dig'` and
+		// nothing else. That was the whole consultation, and it is half a question:
+		// admitMouth's rule is that a dig excludes everyone and IS EXCLUDED BY
+		// EVERYONE, either side. A lane carrying an ordinary inbound hold — a store
+		// on its way in — refuses this dig at admission and was still being offered
+		// here as parking.
+		//
+		// What that costs is not a refusal; it is a WORSE SLOT. The resolver takes
+		// the refusal, drops that slot, and walks on to the next candidate, which is
+		// the next slot shallower in the same lane — the LS_C4 shape, arrived at
+		// through the mouth instead of through occupancy. So the lane leaves the
+		// pool at the source, exactly as Hold B does one line above.
+		//
+		// DigAdmissible is the cheap pre-check with admitMouth's own rule, read off
+		// the same rows, asked on this dig's behalf — so a lane the requester itself
+		// holds does not refuse its own rescue (the 16,947 exemption).
+		//
+		// SKIPPED on the shortfall re-walk, and only there — see consultTheMouth.
+		if askTheMouth {
+			admissible, mErr := reservations.DigAdmissible(db.DB, c.ID, asker)
+			switch {
+			case mErr != nil:
+				// ── FAIL CLOSED, AND "CANNOT SEE" IS NOT "FULL" ───────────
+				//
+				// A lane whose mouth could not be read is not a candidate. Offering
+				// it would be sending a robot into a corridor whose ownership is
+				// unknown, which is the one direction this file never takes.
+				//
+				// But it is not a full group either, and that is the whole point of
+				// counting it separately: "the group is full" sends somebody to make
+				// room, and there may be a whole empty lane behind the read that
+				// failed. The shortfall below reports the two apart.
+				unseen = append(unseen, c)
+				continue
+			case !admissible:
+				mouthHeld = append(mouthHeld, c)
+				continue
+			}
+		}
 		if dugLaneGated && db.GetNodeProperty(c.ID, PropLaneGatePoint) != "" {
 			continue // a dig leg dwelling at a second mark holds two lanes at once
 		}
@@ -696,7 +757,7 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		// re-run this same walk against the unfiltered group and see whether the
 		// lanes right of way removed would have made the count. Refusal path only —
 		// the happy path still runs one query.
-		if held := digHeldParking(db, laneID, groupID, children, count, len(available), exclude); held != nil {
+		if held := digHeldParking(db, laneID, groupID, children, count, len(available), asker, exclude); held != nil {
 			return nil, held
 		}
 		// AND THE SAME QUESTION FOR HOLD B. Dropping occupied lanes at the source is
@@ -707,6 +768,25 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		// leave. Different releaser, so a different cause (law 8).
 		if len(occupiedSkipped) > 0 {
 			return nil, &LaneOccupiedParkingError{Lane: occupiedSkipped[0].Name, Short: count - len(available)}
+		}
+		// AND THE MOUTH'S TWO, IN THAT ORDER. A lane somebody OWNS is a wait with a
+		// named releaser; a lane nobody could READ is a wait with no releaser at
+		// all, which is the worse finding and the one an engineer has to go and
+		// look at. Reporting either as "the group is full" sends an operator to
+		// make room that already exists (law 8: different releaser, different
+		// cause).
+		if len(mouthHeld) > 0 {
+			return nil, &LaneMouthHeldParkingError{
+				Lane:  mouthHeld[0].Name,
+				Short: count - len(available),
+			}
+		}
+		if len(unseen) > 0 {
+			names := make([]string, 0, len(unseen))
+			for _, c := range unseen {
+				names = append(names, c.Name)
+			}
+			return nil, &MouthUnreadableError{Lanes: names, Short: count - len(available)}
 		}
 		detail := ""
 		if unreadable > 0 {
@@ -739,6 +819,57 @@ func (e *LaneOccupiedParkingError) Error() string {
 }
 
 func (e *LaneOccupiedParkingError) Unwrap() error { return ErrLaneOccupiedParking }
+
+// ErrLaneMouthHeld is the mouth refusing: the parking this dig needs is in a lane
+// whose entry another order owns.
+//
+// TRANSIENT, with a releaser as real as Hold B's — that order finishes with the
+// lane and the row goes. It is kept apart from ErrLaneOccupiedParking because
+// they are different facts about different moments: occupancy is a robot INSIDE
+// the corridor, a mouth hold is an order that owns the right to enter it and may
+// not have set off yet. Same shape of wait, different thing to go and look at.
+var ErrLaneMouthHeld = errors.New("the parking this dig needs is in a lane whose mouth another order holds")
+
+// LaneMouthHeldParkingError names the lane whose mouth has to free.
+type LaneMouthHeldParkingError struct {
+	Lane  string
+	Short int
+}
+
+func (e *LaneMouthHeldParkingError) Error() string {
+	return fmt.Sprintf("%s: %s is held at the mouth and this dig is %d slot(s) short without it",
+		ErrLaneMouthHeld, e.Lane, e.Short)
+}
+
+func (e *LaneMouthHeldParkingError) Unwrap() error { return ErrLaneMouthHeld }
+
+// ErrMouthUnreadable is "I CANNOT SEE", and it is deliberately not "the group is
+// full" (§R.96 stage 2: fail-closed, and "cannot see" ≠ "full").
+//
+// The two get confused because they produce the same shortfall, and confusing
+// them is expensive in one specific direction: "full" is an instruction to an
+// operator to go and make room, and there may be a whole empty lane sitting
+// behind a read that failed. This says the pool could not be counted, names the
+// lanes it could not count, and waits.
+//
+// TRANSIENT, like every other shortfall here — a read that failed once is
+// retried on the next firing. What it must never be is TERMINAL: a database
+// hiccup is not a fact about the plant's geometry, and geometry is the only
+// thing in this file that kills an order.
+var ErrMouthUnreadable = errors.New("the parking pool could not be counted: a lane's mouth could not be read")
+
+// MouthUnreadableError names the lanes that went unseen.
+type MouthUnreadableError struct {
+	Lanes []string
+	Short int
+}
+
+func (e *MouthUnreadableError) Error() string {
+	return fmt.Sprintf("%s: %d slot(s) short with %d lane(s) unread (%s) — this is NOT a full group",
+		ErrMouthUnreadable, e.Short, len(e.Lanes), strings.Join(e.Lanes, ", "))
+}
+
+func (e *MouthUnreadableError) Unwrap() error { return ErrMouthUnreadable }
 
 // ErrDigHoldsTheParking is right of way refusing: this dig could park its
 // blockers if it were allowed into a lane another dig holds, and it is not.
@@ -803,7 +934,7 @@ func parkingLaneOf(err error, fallback string) string {
 // A read failure loses the better cause and nothing else, so it is silent: the
 // caller falls through to ErrNoShuffleSlot, which waits on a superset of the
 // events this one waits on.
-func digHeldParking(db *store.DB, laneID, groupID int64, unlocked []*nodes.Node, count, have int, exclude map[int64]bool) error {
+func digHeldParking(db *store.DB, laneID, groupID int64, unlocked []*nodes.Node, count, have int, asker reservations.DigAsker, exclude map[int64]bool) error {
 	all, err := db.ListChildNodes(groupID)
 	if err != nil {
 		return nil
@@ -826,7 +957,7 @@ func digHeldParking(db *store.DB, laneID, groupID int64, unlocked []*nodes.Node,
 	// lucky: it is handed `all`, so if it comes up short it re-enters here with
 	// unlocked == all, the diff is empty, and this returns at the len(removed)==0
 	// line above without walking again.
-	if _, wErr := shuffleSlotsFrom(db, laneID, groupID, all, count, exclude); wErr != nil {
+	if _, wErr := shuffleSlotsFrom(db, laneID, groupID, all, count, asker, skipTheMouth, exclude); wErr != nil {
 		return nil // the wider pool comes up short too — right of way is not the reason
 	}
 

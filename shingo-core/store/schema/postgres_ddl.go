@@ -172,7 +172,31 @@ CREATE TABLE IF NOT EXISTS orders (
     -- overwriting WHAT the judgement was. Added by migration 61 and present at
     -- both plants; it was missing from this constant, so a fresh install
     -- carried the column only after migrations ran.
-    orphan_aged_at  TIMESTAMPTZ
+    orphan_aged_at  TIMESTAMPTZ,
+    -- WHEN THE STORE-SLOT SELECTOR CHOSE THIS ORDER'S DESTINATION, at intake.
+    --
+    -- Written only by admitOrder, only when resolveSyntheticDestination actually
+    -- rewrote a group into a concrete slot. NULL means the destination was not
+    -- chosen at intake -- either it was named concretely by the sender, or the
+    -- group was full and planMove resolves it at dispatch instead.
+    --
+    -- IT EXISTS FOR ONE READER: the burial shadow's tripwire
+    -- (service/burial_shadow.go). That instrument has to tell "a placement
+    -- skipped the guard" from "the guard was consulted and the world moved
+    -- afterwards", and the only honest way to do it is to know WHEN the guard
+    -- looked. It had been comparing against the fleet-commit time instead, on
+    -- the assumption that choosing a destination and dispatching to it are the
+    -- same moment. They are not: intake resolves BEFORE the order row exists,
+    -- and the commit can follow minutes later when the order queues behind
+    -- capacity. Every claim landing in that gap was reported as a GUARD BYPASS
+    -- -- a should-be-zero tripwire accusing correct code, which is how an alarm
+    -- earns the right to be ignored.
+    --
+    -- NULLABLE, AND THE FALLBACK IS THE OLD BEHAVIOUR. An order without a stamp
+    -- is judged against fleet-commit exactly as before, so the column can be
+    -- absent, unwritten, or new without the tripwire changing its mind about
+    -- anything it can already decide.
+    destination_resolved_at TIMESTAMPTZ
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
 -- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every

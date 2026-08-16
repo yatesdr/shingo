@@ -991,25 +991,40 @@ func TestFlip2_TheDigKeepsItsLaneWhileALegDwellsInIt(t *testing.T) {
 	// buried retrieve would keep the lane for its own tail's target and hide the
 	// arm this test is about.
 	//
-	// IT CARRIES AN ORIGIN, and that is what makes it the collector rather than
-	// fixture decoration: createServiceDigParent inherits the requester's origin,
-	// and the episode is the only tie a dig has to the demand it was raised for.
-	// A buried demand records nothing else — no claim on the bin, no reservation,
-	// no source_node naming the slot — because it cannot claim what it cannot
-	// reach.
+	// IT CARRIES AN ORIGIN, and that used to be the ONLY tie it had: the old
+	// comment here read "A buried demand records nothing else — no claim on the
+	// bin, no reservation, no source_node naming the slot — because it cannot
+	// claim what it cannot reach."
+	//
+	// RE-POINTED by §R.101/§R.104. That was true of a demand a FOLDER dug for. A
+	// demand now resolves onto its bin and LOCKS that bin's lane before it summons
+	// anything, so by the time an excavation exists the tie is a claim and a source
+	// slot, not an episode id. A retrieve owning a dig for a bin it has never
+	// claimed is a state the resolve path cannot produce, so the fixture stops
+	// building one — otherwise the assertions below are about a shape the plant
+	// has no way to reach.
+	target, err := db.GetBinByLabel("DWFLIP-TGT")
+	testutil.MustNoErr(t, err, "reload the target bin")
 	requester := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "dwflip-req"
 		o.OrderType = OrderTypeRetrieve
 		o.PayloadCode = bp.Code
+		o.SourceNode = dugSlots[1].Name
 		o.DeliveryNode = lineNode(t, db, "DWFLIP-LINE").Name
 		o.OriginID = "44444444-4444-4444-4444-444444444444"
 		o.OriginClass = "demand"
 		o.Status = protocol.StatusPending
 	})
-	plan, err := PlanLaneMouthClear(db, dugSlots[1], dug, grp.ID, reservations.Anyone)
+	testutil.MustNoErr(t, db.UpdateOrderBinID(requester.ID, target.ID), "bind the demand to its target")
+	requester, err = db.GetOrder(requester.ID)
+	testutil.MustNoErr(t, err, "reload the requester")
+	plan, err2 := PlanLaneMouthClear(db, dugSlots[1], dug, grp.ID, reservations.Anyone)
+	err = err2
 	testutil.MustNoErr(t, err, "plan the lane clear")
-	parent, err := d.createServiceDigParent(dug, dugSlots[1], requester, plan)
-	testutil.MustNoErr(t, err, "create the service dig parent")
+	// RE-POINTED by §R.104: there is no synthetic parent to mint. The requester
+	// owns its own excavation, so it IS the parent — which is the only change the
+	// dwell cares about; everything this test asserts below is about the leg.
+	parent := requester
 	if !d.laneLock.TryLock(dug.ID, parent.ID) {
 		t.Fatal("the dig could not take the lane it is about to excavate")
 	}
@@ -1053,78 +1068,58 @@ func TestFlip2_TheDigKeepsItsLaneWhileALegDwellsInIt(t *testing.T) {
 	// re-burial window; holding it under the dig is a finished order that never
 	// terminates. So the lane is HANDED to the order collecting the bin, and it is
 	// that order's hold from this moment on.
-	if owner := digHoldOwner(t, db, dug.ID); owner != 0 {
-		t.Fatalf("lane %s is still held as a DIG (by order %d) after the excavation finished. The "+
-			"excavation is over — what remains is somebody else's pickup — so the corridor belongs to "+
-			"the collector now, not to a dig with nothing left to do in it", dug.Name, owner)
-	}
+	// RE-POINTED by §R.104. This asserted the HANDOFF: no dig row left, and one
+	// OUTBOUND row for the collector, "because the corridor belongs to the
+	// collector now, not to a dig with nothing left to do in it".
+	//
+	// There is nobody to hand it to. The collector IS the excavator — the demand
+	// owns its own dig — so the corridor never changes hands, and the protection
+	// the handoff existed to give is given once instead of twice: the parent's own
+	// lane lock, taken at resolve and held until its bin leaves by its mover.
+	//
+	// The property under test is unchanged and is the one that matters: after the
+	// excavation, exactly one order holds this lane, it is the order coming for
+	// the uncovered bin, and nothing may drop into the lane in the meantime. Only
+	// the mode differs, and it differs in the stricter direction — a lock excludes
+	// the drop that an outbound hold merely shared against.
 	holders, err := reservations.ActiveMouthRows(db.DB, dug.ID)
-	testutil.MustNoErr(t, err, "read the lane's mouth holds after the handoff")
-	if len(holders) != 1 || holders[0].OrderID != requester.ID || holders[0].Mode != reservations.ModeOutbound {
-		t.Fatalf("lane %s holds %+v after its dig finished, want exactly one OUTBOUND hold for the "+
-			"collector %d. Outbound is the whole mechanism: it excludes a drop into the lane — which "+
-			"is the only way the uncovered bin can be re-buried — while admitting the collector's own "+
-			"dispatch idempotently", dug.Name, holders, requester.ID)
-	}
-
-	// ── LAND: AND THE DIG TERMINATES ON THE ORDINARY PATH ───────────────
-	//
-	// It owes nothing and holds nothing, so there is no arm to refuse it and no
-	// re-drive to un-stick it later. A dig that held past this point was a third
-	// non-terminal state — invisible to every stall checker, holding a corridor on
-	// behalf of a demand it could not ask about — and that is what the handoff
-	// above exists to make unnecessary.
-	//
-	// AdvanceCompoundOrder IS CALLED EXPLICITLY, and that is not fixture noise.
-	// landLeg terminalizes the leg through the store, which is not the path that
-	// re-drives the parent — in production the leg's terminal event is what calls
-	// this.
-	landLeg(t, d, db, legs[0])
-	testutil.MustNoErr(t, d.AdvanceCompoundOrder(parent.ID), "re-drive the parent after its last leg landed")
-
-	done, err := db.GetOrder(parent.ID)
-	testutil.MustNoErr(t, err, "reload the dig parent")
-	if !protocol.IsTerminal(done.Status) {
-		t.Fatalf("the dig parent is %q with every child terminal and its corridor already handed to "+
-			"order %d. A finished dig that will not finish is a permanent row every census and every "+
-			"stall checker has to learn to ignore", done.Status, requester.ID)
-	}
-	// AND THE PARENT'S OWN TEARDOWN MUST NOT TAKE THE HANDED-OVER ROW WITH IT.
-	// unlockLaneForCompound releases by OWNER and the row's owner changed, so this
-	// is structural rather than lucky — asserted because if it ever stops being
-	// true the corridor opens at the exact moment the dig ends.
-	holders, err = reservations.ActiveMouthRows(db.DB, dug.ID)
-	testutil.MustNoErr(t, err, "read the lane's mouth holds after the dig terminated")
+	testutil.MustNoErr(t, err, "read the lane's mouth holds after the excavation")
 	if len(holders) != 1 || holders[0].OrderID != requester.ID {
-		t.Fatalf("lane %s holds %+v after the dig terminated, want the collector %d's hold to survive "+
-			"the dig's teardown", dug.Name, holders, requester.ID)
+		t.Fatalf("lane %s holds %+v after its dig finished, want exactly one hold for the collector "+
+			"%d — the excavator and the collector are one order now, and the corridor it locked at "+
+			"resolve is the corridor it is still coming for", dug.Name, holders, requester.ID)
+	}
+	if holders[0].Mode != reservations.ModeDig {
+		t.Errorf("the collector's hold is %s, want the lane LOCK — a shared mode admits the drop that "+
+			"re-buries the bin the excavation just uncovered", holders[0].Mode)
 	}
 
-	// ── COLLECTED: the collector's hold is the last thing, and it ends with it ─
+	// ── THE REST OF THIS TEST WAS THE FOLDER'S TWO-ORDER DANCE (§R.104) ──
 	//
-	// The corridor is now inside an ordinary order's lifetime, which is the point:
-	// however that order ends — collected, cancelled, failed — its rows go with it,
-	// so no hold can outlive the work it was taken for. That is the property the
-	// dig-held version could not have, because a dig holding for a bin has no
-	// lifetime left of its own.
-	testutil.MustNoErr(t, db.FailOrderAtomic(requester.ID, "collector went away"),
-		"terminalize the collector")
-	holders, err = reservations.ActiveMouthRows(db.DB, dug.ID)
-	testutil.MustNoErr(t, err, "read the lane's mouth holds after the collector terminated")
-	if len(holders) != 0 {
-		t.Errorf("lane %s still holds %+v after its collector %d reached a terminal status. A hold "+
-			"that survives its owner is the stranded corridor the handoff exists to make impossible",
-			dug.Name, holders, requester.ID)
-	}
+	// It went on to land the leg, assert the DIG PARENT reached a terminal status
+	// ("A finished dig that will not finish is a permanent row every census and
+	// every stall checker has to learn to ignore"), assert the handed-over row
+	// survived that teardown because "unlockLaneForCompound releases by OWNER and
+	// the row's owner changed", and finally terminalize the collector to show the
+	// corridor closing with it.
+	//
+	// Every one of those sentences is about TWO orders. There is one: the
+	// excavator is the collector, so nothing is handed anywhere, no owner changes,
+	// and the parent does not terminate at the chapter's close because it still
+	// owes the retrieve the whole excavation was for. The property those
+	// assertions protected — a corridor lives inside an ordinary order's lifetime
+	// and no hold outlives the work it was taken for — is now structural rather
+	// than choreographed, and it is asserted where it lives: above, and in
+	// resolve_lane_lock_docker_test.go.
+	//
+	// Truncated rather than rewritten, because a rewrite would be a new test
+	// wearing this one's name.
 }
 
-// digHoldOwner reads the dig-mode mouth hold on a lane, 0 when there is none.
-func digHoldOwner(t *testing.T, db *store.DB, laneID int64) int64 {
-	t.Helper()
-	owner, err := reservations.DigHoldOwner(db.DB, laneID)
-	testutil.MustNoErr(t, err, "read the dig hold owner")
-	return owner
-}
+// digHoldOwner WAS HERE. It read the dig-mode mouth hold on a lane so the
+// handoff test could assert the row had CHANGED OWNER. Nothing changes owner any
+// more — the excavator is the collector — so its only caller went with the
+// folder's half of that test.
 
 // TestDwell_TheChosenSlotCannotBeBuriedBeforeTheRobotArrives is the regression
 // test for the specimen the shape was written against.

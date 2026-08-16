@@ -3,8 +3,7 @@ package dispatch
 import (
 	"errors"
 	"fmt"
-
-	"github.com/google/uuid"
+	"log"
 
 	"shingo/protocol"
 	"shingocore/store"
@@ -186,6 +185,18 @@ func classifyPlanError(err error) serviceDigOutcome {
 		// refactor makes it wrap, this arm must still be asked first or every right-
 		// of-way refusal reports as a full group and loses the order it was naming.
 		return serviceDigParkingHeldByDig
+	case errors.Is(err, ErrLaneMouthHeld):
+		// The mouth's own refusal, and ABOVE ErrNoShuffleSlot for the reason right
+		// of way is: it names a lane, and reporting it as a full group loses the
+		// name. Without this arm it falls to serviceDigUnplannable — the terminal
+		// verdict — for what is an ordinary wait with a live releaser.
+		//
+		// ErrMouthUnreadable, its sibling, gets NO arm here on purpose: readFailed
+		// below already answers for it and answers the same way. It was given one
+		// first, and the mutation that deleted the arm broke nothing — which is
+		// law 3's rider catching two spellings of one question before they had a
+		// chance to disagree.
+		return serviceDigLaneBusy
 	case errors.Is(err, ErrNoShuffleSlot):
 		return serviceDigNoShuffleSlot
 	case errors.Is(err, ErrNothingInTheWay):
@@ -251,10 +262,15 @@ const (
 	// caller's order is re-parented onto the plan and comes back through
 	// `queued` when the corridor is open.
 	digOwnedByRequester digOwnership = iota
-	// digOwnedByFolder — a synthetic parent owns the dig and the requester is
-	// carried for its ORIGIN only. The gate-dweller carve-out, and the only
-	// shape that still mints a folder.
-	digOwnedByFolder
+	// digOwnedByFolder IS DELETED (§R.104). It named the gate-dweller carve-out:
+	// a synthetic parent owning the dig because a staged order supposedly could
+	// not. A staged order owns its dig without moving at all, so the value has no
+	// producer, no consumer, and nothing it could describe.
+	//
+	// The TYPE survives with one value on purpose. It is the statement that dig
+	// ownership is a settled question with one answer — and the place a future
+	// second answer would have to argue for itself, rather than appearing as an
+	// untyped bool somebody added to a signature.
 )
 
 // proposeLaneClearDig is THE ONE WRITER of a lane-clear dig: it takes the lane
@@ -492,65 +508,19 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 		}
 	}
 
-	// ── THE CHILDLESS WINDOW IS STILL OPEN, AND IT IS NOT CLOSED HERE ────────
+	// ── THE CREATION WINDOW IS MOOT (§R.104) ──────────────────────────────
 	//
-	// Between this INSERT and the compound write two steps down, the parent row
-	// exists with no legs — so "does this order own legs?"
-	// (helpers.OwnsNoCargoSQL) answers FALSE about an order it is permanently
-	// TRUE of. A SYNTHETIC parent is a folder from birth: it never carries a bin.
-	// A crash in that gap leaves a childless dig parent at `pending`, which is
-	// invisible to the fulfillment scanner by design (`pending` ∉ IsAcquiring)
-	// and therefore invisible to everything that would clean it up.
+	// Forty lines stood here describing a race that only a FOLDER could have: the
+	// gap between inserting a synthetic parent and writing its legs, in which the
+	// parent is childless and the recognition predicate answers wrong about it.
+	// Three options were costed, a fourth recommended, and an owner ruling was
+	// pending on which to build.
 	//
-	// ── HOW BIG IT ACTUALLY IS, MEASURED RATHER THAN ASSUMED ────────────────
-	//
-	// Smaller than this comment first claimed. Two harms, very different sizes:
-	//
-	//   THE PREDICATE IS WRONG for microseconds — and NOTHING READS IT. The seven
-	//   BinID==nil sites are shadowed, not cut (service/folder_shadow.go changes
-	//   no behaviour); OrderOwnsNoCargo has no other production caller; and
-	//   reconciliation's completed_order_missing_bin needs completed_at, which a
-	//   `pending` parent has not got.
-	//
-	//   A CRASH HERE leaves a childless `pending` dig parent — permanent, but NOT
-	//   silent. StatusPending is in protocol.IsRuntimeStuckCandidate, so
-	//   ListAnomalies flags the row after 30 minutes with a cancel action. A
-	//   pending order is normally transient, so it is a low-noise signal.
-	//
-	// So the cost of the window is a 30-minute blind spot on a crash, ending in
-	// an operator-actionable board entry.
-	//
-	// ── AND THE OPTIONS, ONE OF WHICH IS IMPOSSIBLE ─────────────────────────
-	//
-	// The obvious cure — insert the parent inside the same transaction as its
-	// legs — cannot work AS WRITTEN, because the lane lock two lines down is
-	// keyed on parent.ID and the parent has no id until it is inserted.
-	//
-	//   1. LOCK AFTER the compound write: does not close the window (the parent
-	//      is still childless while the legs are written) and makes losing the
-	//      lane race abandon a fully-written compound, claims and all, on a path
-	//      whose measured refusal populations are 16,947 and 38,203.
-	//   2. LOCK UNDER A PLACEHOLDER, then re-key: IMPOSSIBLE. reservations.order_id
-	//      is NOT NULL REFERENCES orders(id), so a sentinel cannot be inserted;
-	//      and the one real order in scope early — the requester — is gate-staged
-	//      at this very mouth holding an outbound row, which admitMouth refuses to
-	//      pair with a dig row for the same owner.
-	//   3. SWEEP childless dig parents: a healer, which this house refuses by
-	//      default, for a condition the anomalies board already reports.
-	//   4. ONE TRANSACTION — insert the parent, acquire the lane ON THAT TX, write
-	//      the legs, commit. Closes it completely: a conflict rolls back to no
-	//      parent at all. Needs AcquireLanes and CreateCompoundChildren split into
-	//      tx-taking bodies (mechanical; the second was built and reverted once),
-	//      and it holds pg_advisory_xact_lock(lane) across the claim CAS instead
-	//      of just the acquire — a latency change in the machinery with the
-	//      documented deadlock history, and the part that wants a soak.
-	//
-	// Option 4 is the recommendation, sequenced into the §R.91 unification batch:
-	// that batch re-parents P2/P3 and leaves the gate-dweller heal as this
-	// function's ONLY caller, so closing the window there is one caller instead
-	// of three and is not done twice. See
-	// GitHub/DECISION-heal-window-lock-ordering-2026-08-14.md. Owner's ruling
-	// pending; nothing here is built.
+	// None is built and none will be. There is no folder to insert, so there is no
+	// gap: a dig's parent is a live order that existed before the dig was thought
+	// of. The question closes UNRULED because it stopped being a question, which is
+	// the cheapest way any of them has ever closed.
+
 	// ── §R.91: THE DEMAND TAKES ITS OWN EXCAVATION ──────────────────────────
 	//
 	// No folder is minted at all on this path, which is why it forks BEFORE
@@ -582,147 +552,20 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 		return serviceDigResult{outcome: serviceDigStarted, parent: requester, steps: len(plan.Steps)}
 	}
 
-	parent, err := d.createServiceDigParent(lane, target, requester, plan)
-	if err != nil {
-		return serviceDigResult{outcome: serviceDigUnplannable, err: err}
-	}
-	if !d.laneLock.TryLockFor(lane.ID, parent.ID, digFor) {
-		// NOT NECESSARILY A DIG, and saying so cost a whole investigation. This
-		// read "another dig took lane X first" for any refusal, so 16,947 losses to
-		// an ordinary order's mouth hold all reported a dig that did not exist —
-		// and the reason a reader believes a cancellation is that it names the
-		// right thing. AcquireLanes refuses on any other owner's hold.
-		d.abandonServiceDigParent(parent, "lane "+lane.Name+" was taken between the check and the claim")
-		return serviceDigResult{outcome: serviceDigLaneBusy}
-	}
-	if err := d.CreateCompoundOrder(parent, plan); err != nil {
-		d.laneLock.Unlock(lane.ID, parent.ID)
-		if errors.Is(err, store.ErrBlockerClaimed) {
-			// Someone claimed a blocker between the pre-check and the transaction.
-			// The transaction is the authority and this is its answer: wait. The
-			// claim holder is carrying the bin out, which is a lane-clearing event
-			// every waiter is already subscribed to.
-			d.abandonServiceDigParent(parent, "a blocker was claimed while the dig was being written")
-			return serviceDigResult{outcome: serviceDigBlockerClaimed, err: err}
-		}
-		d.abandonServiceDigParent(parent, "the dig could not be written")
-		return serviceDigResult{outcome: serviceDigUnplannable, err: err}
-	}
-	return serviceDigResult{outcome: serviceDigStarted, parent: parent, steps: len(plan.Steps)}
-}
-
-// createServiceDigParent mints the order that OWNS the dig.
-//
-// ── WHY THE DWELLER CANNOT BE ITS OWN DIG'S PARENT ────────────────────────
-//
-// Every other dig re-parents the demand that discovered the burial: the buried
-// retrieve becomes the compound's parent, goes to `reshuffling`, and comes back
-// when the lane is open. That is unavailable here and not by a near miss —
-// {staged → reshuffling} is not a legal transition, and it should not become one.
-// A staged order is a robot at a point holding an unsealed waybill; moving it to
-// `reshuffling` would say the demand is being re-planned while a vehicle is
-// committed to it. The ruling that there is no new status cuts the same way: the
-// answer is not a new state for the dweller, it is that the dweller does not move
-// at all. It keeps dwelling, which is what a gate wait is for, and something else
-// does the digging.
-//
-// ── SO IT IS A PLAIN PARENT, AND THAT IS WHY IT NEEDS NO RESUMPTION ───────
-//
-// Coordinated:false and no step plan, so the compound-completion arm routes it to
-// CompleteCompound — reshuffling → confirmed — rather than ResumeCompound. It has
-// no work of its own to come back for; clearing the corridor WAS the work. That is
-// the same shape the retired restore-blockers parent had, and it is the reason
-// this needs no new arm anywhere in compound.go.
-//
-// Created at `pending` rather than `queued`, deliberately: `queued` is in the
-// acquiring set, so a fulfillment scan landing between the insert and
-// BeginReshuffle would pick this row up and try to source a bin for it. `pending`
-// is invisible to the scanner, and {pending → reshuffling} is legal.
-//
-// ENDPOINTS ARE SET, and they earn their keep rather than being decoration:
-// LaneIDsForOrder reads them on the terminal event, so the parent's own completion
-// re-evaluates the lane it just cleared. One more releaser, for free, from a
-// column that had to be filled anyway.
-//
-// THE ORIGIN IS INHERITED FROM THE DWELLER, by the same rule compound children
-// follow: an order created in service of another order inherits its origin AND its
-// class. This dig exists because that demand could not move, so its cost belongs
-// in that demand's episode. Stamping it no_demand would be cheaper and would be a
-// lie — it would quietly move the cost of digging out of the episode that caused
-// it, which is the one thing the origin grain exists to prevent.
-func (d *Dispatcher) createServiceDigParent(lane, target *nodes.Node, requester *orders.Order, plan *ReshufflePlan) (*orders.Order, error) {
-	first, last := plan.Steps[0], plan.Steps[len(plan.Steps)-1]
-	parent := &orders.Order{
-		EdgeUUID:  uuid.New().String(),
-		StationID: requester.StationID,
-		OrderType: OrderTypeMove,
-		Status:    StatusPending,
-		// Names the SLOT rather than "the mark": this parent now serves a gate
-		// dweller and a buried complex demand alike, and the one thing true of both
-		// is which slot the excavation is for.
-		PayloadDesc: fmt.Sprintf("clear %s: %d blocker(s) in front of %s, for order %d",
-			lane.Name, len(plan.Steps), target.Name, requester.ID),
-		// THE SAME SLOT, WRITTEN WHERE MACHINERY MAY READ IT. PayloadDesc above
-		// names it for a human and must never be parsed for it — that is the
-		// planUsedExposeMode scar. This column is what the lane's release asks:
-		// the claim holds until the bin standing here is collected, so a
-		// cancelled claim no longer leaves it exposed.
-		//
-		// THIS IS THE ONE PLACE IT IS EVER WRITTEN. A service dig is the only
-		// shape that owns no retrieve of its own and therefore the only one that
-		// needs the debt recorded; a plain buried retrieve re-parents the demand,
-		// so its fetch is one of its own legs and legStillNeedsLane already sees
-		// it. Stamping this on any other order would make a lock outlive the work
-		// it was taken for.
-		DigTargetNode: target.Name,
-		SourceIntent:  SourceIntentForType(OrderTypeMove),
-		OriginID:      requester.OriginID,
-		OriginClass:   requester.OriginClass,
-	}
-	if first.FromNode != nil {
-		parent.SourceNode = first.FromNode.Name
-	}
-	if last.ToNode != nil {
-		parent.DeliveryNode = last.ToNode.Name
-	}
-	if err := d.db.CreateOrder(parent); err != nil {
-		return nil, err
-	}
-	return parent, nil
-}
-
-// abandonServiceDigParent retires a service-dig parent that never became a dig.
-//
-// It exists because the parent is minted BEFORE the lane lock and the compound
-// transaction, and either can refuse. Leaving the row at `pending` would leave an
-// order nothing scans, nothing advances and nothing ever ends — a permanent
-// no-op row in the orders table that every census and every stall checker would
-// have to learn to ignore. Cancelling it says what happened.
-//
-// {pending → cancelled} is legal, and CancelOrder releases whatever the row might
-// have picked up on the way. Nothing else in the system knows this order existed:
-// it was never dispatched, never claimed a bin, and never had children.
-//
-// ── "HEAL DIG" WAS THE WRONG WORD, ON 38,203 ROWS ─────────────────────────
-//
-// The reason it read "heal dig not started" is that window 3 — the gate-dweller
-// heal — is the caller this was written for. But proposeLaneClearDig is the ONE
-// writer of a service dig and it serves ALL THREE service-dig callers: the
-// gate-dweller heal, the buried complex demand, and the admission path. Every
-// one of them lands here on a refusal, and every one of their cancellations said
-// "heal dig".
-//
-// The rig population is 38,203 rows. Anybody filtering that record for the heal
-// path's behaviour was reading two other callers' refusals as if they were window
-// 3's, and anybody looking for the OTHER two callers' refusals found nothing under
-// any name they would have searched. A label that names one caller of three is
-// worse than no label: it does not merely fail to inform, it misinforms with
-// confidence.
-//
-// The function is renamed with the message, because a function named for one
-// caller is how the message came to be named for one caller.
-func (d *Dispatcher) abandonServiceDigParent(parent *orders.Order, why string) {
-	d.lifecycle.CancelOrder(parent, parent.StationID, "service dig not started: "+why)
+	// ── THERE IS NO OTHER ARM (§R.104) ────────────────────────────────────
+	//
+	// A folder arm stood here: mint a synthetic parent, lock the lane in ITS name,
+	// write the legs under it, and abandon it on any of three failures. It served
+	// exactly one caller — the gate-dweller heal — on the reasoning that a staged
+	// order could not own a dig because {staged → reshuffling} is illegal.
+	//
+	// It is deleted. A staged order owns its dig without moving at all, so every
+	// dig in the system now has a live order for a parent and `own` has one value.
+	// The parameter survives as the statement that it does.
+	log.Printf("dispatch: BUG: proposeLaneClearDig reached with ownership %v for order %d — every dig "+
+		"is owned by the demand that caused it; there is no other kind", own, requester.ID)
+	return serviceDigResult{outcome: serviceDigUnplannable,
+		err: fmt.Errorf("no dig ownership other than the requester's exists")}
 }
 
 // binIsUnclaimed is the pre-check half of fact 3, kept as a named predicate so the

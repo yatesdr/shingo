@@ -69,7 +69,7 @@ func TestBuildSwapChangeoverSteps_SingleRobot(t *testing.T) {
 	wantB := []protocol.ComplexOrderStep{
 		stationWait("CORE-A"),
 		{Action: "pickup", Node: "CORE-A"},
-		{Action: "dropoff", Node: "OUT-STAGE"},
+		{Action: "dropoff", Node: "OUT-STAGE", ExclusiveSlot: true},
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "CORE-B"},
 		{Action: "pickup", Node: "OUT-STAGE"},
@@ -83,7 +83,7 @@ func TestBuildSwapChangeoverSteps_SingleRobot(t *testing.T) {
 
 	wantA := []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: "MARKET"},
-		{Action: "dropoff", Node: "IN-STAGE"},
+		{Action: "dropoff", Node: "IN-STAGE", ExclusiveSlot: true},
 	}
 	if len(disp.StepsA) != len(wantA) {
 		t.Fatalf("Order A: expected %d steps, got %d", len(wantA), len(disp.StepsA))
@@ -176,7 +176,7 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 
 	wantA := []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: "MARKET"},
-		{Action: "dropoff", Node: "IN-STAGE"},
+		{Action: "dropoff", Node: "IN-STAGE", ExclusiveSlot: true},
 		stationWait("IN-STAGE"),
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "CORE"},
@@ -736,7 +736,7 @@ func TestBuildKeepStagedDeliverSteps(t *testing.T) {
 
 	want := []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: "SOURCE"},
-		{Action: "dropoff", Node: "IN-STAGE"},
+		{Action: "dropoff", Node: "IN-STAGE", ExclusiveSlot: true},
 		stationWait(""),
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "CORE-NODE"},
@@ -829,7 +829,7 @@ func TestBuildKeepStagedCombinedSteps(t *testing.T) {
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "FROM-SOURCE"},
 		{Action: "pickup", Node: "TO-SOURCE"},
-		{Action: "dropoff", Node: "IN-STAGE"},
+		{Action: "dropoff", Node: "IN-STAGE", ExclusiveSlot: true},
 		stationWait(""),
 		{Action: "pickup", Node: "IN-STAGE"},
 		{Action: "dropoff", Node: "CORE-NODE"},
@@ -862,7 +862,7 @@ func TestBuildStageSteps(t *testing.T) {
 	if steps[0] != (protocol.ComplexOrderStep{Action: "pickup", Node: "MARKET"}) {
 		t.Errorf("step 0: got %+v", steps[0])
 	}
-	if steps[1] != (protocol.ComplexOrderStep{Action: "dropoff", Node: "STAGING-AREA"}) {
+	if steps[1] != (protocol.ComplexOrderStep{Action: "dropoff", Node: "STAGING-AREA", ExclusiveSlot: true}) {
 		t.Errorf("step 1: got %+v", steps[1])
 	}
 }

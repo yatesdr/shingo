@@ -496,6 +496,18 @@ func (d *Dispatcher) dwellDestination(leg *orders.Order, lane *nodes.Node) (*nod
 			if errors.As(err, &busy) {
 				return nil, RefusedAt(CauseLaneOccupied, busy.Lane), nil
 			}
+			// The mouth's two, same courtesy, kept apart (§R.96 stage 2). A lane
+			// somebody OWNS names its releaser; a lane nobody could READ names the
+			// absence of an answer, and the tree already has a word for that which
+			// is deliberately not a busy-lane word.
+			var mouthHeld *LaneMouthHeldParkingError
+			if errors.As(err, &mouthHeld) {
+				return nil, RefusedAt(CauseLaneHeldTraffic, mouthHeld.Lane), nil
+			}
+			var unseen *MouthUnreadableError
+			if errors.As(err, &unseen) {
+				return nil, RefusedAt(CauseLaneHeldUnreadable, lane.Name), nil
+			}
 			if !errors.Is(err, ErrNoShuffleSlot) {
 				return nil, GateVerdict{}, err
 			}

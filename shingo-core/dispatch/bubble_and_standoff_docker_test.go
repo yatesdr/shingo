@@ -164,10 +164,10 @@ func TestServiceDig_UngatedProposalIsCounted(t *testing.T) {
 	})
 
 	ResetUngatedDigTally()
-	if res := d.proposeLaneClearDig(first, firstSlots[1], demand, digOwnedByFolder); res.outcome != serviceDigStarted {
+	if res := d.proposeLaneClearDig(first, firstSlots[1], demand, digOwnedByRequester); res.outcome != serviceDigStarted {
 		t.Fatalf("the first dig did not start (outcome %v, err %v)", res.outcome, res.err)
 	}
-	res := d.proposeLaneClearDig(second, secondSlots[1], demand, digOwnedByFolder)
+	res := d.proposeLaneClearDig(second, secondSlots[1], demand, digOwnedByRequester)
 
 	// THE GATE IS OFF. Whatever else the second proposal runs into — parking,
 	// geometry — it must not be the episode limit, because there is no episode.
@@ -230,14 +230,14 @@ func TestServiceDig_OneEpisodeGetsOneExcavationAtATime(t *testing.T) {
 		o.OriginClass = "demand"
 	})
 
-	if res := d.proposeLaneClearDig(first, firstSlots[1], demand, digOwnedByFolder); res.outcome != serviceDigStarted {
+	if res := d.proposeLaneClearDig(first, firstSlots[1], demand, digOwnedByRequester); res.outcome != serviceDigStarted {
 		t.Fatalf("the FIRST dig did not start (outcome %v, err %v) — this test is about the second one",
 			res.outcome, res.err)
 	}
 
 	// THE SECOND ASK, for a different lane and a different bin, on behalf of the
 	// same demand. It is refused, and the refusal names itself.
-	res := d.proposeLaneClearDig(second, secondSlots[1], demand, digOwnedByFolder)
+	res := d.proposeLaneClearDig(second, secondSlots[1], demand, digOwnedByRequester)
 	if res.outcome != serviceDigEpisodeAlreadyDigging {
 		t.Fatalf("the second dig's outcome is %v, want serviceDigEpisodeAlreadyDigging. This demand "+
 			"needs ONE bin and already has an excavation running for it; a second one competes with "+
