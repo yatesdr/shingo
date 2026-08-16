@@ -269,6 +269,9 @@ func (e *Engine) wireEventHandlers() {
 	// that needed to drop something there. Subscribing here makes the
 	// scanner re-evaluate without waiting for the order to fully complete.
 	e.Events.SubscribeTypes(triggerFulfillment, EventBinEnteredTransit)
+	// NOTE: a sixth trigger — EventBlockCompleted — is deliberately registered
+	// further down, immediately after the handleBlockCompleted subscription,
+	// because it must observe the mouth row that handler releases. See there.
 
 	// Sync trigger for fresh-intake (Phase 4b): EventOrderQueued.
 	// HandleComplexOrderRequest creates new complex orders as queued and
@@ -295,6 +298,25 @@ func (e *Engine) wireEventHandlers() {
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BlockCompletedEvent]) {
 		e.handleBlockCompleted(evt.Payload)
 	}, EventBlockCompleted)
+
+	// Fulfillment trigger on per-block completion (A′ — placement release).
+	// A store parked by the tiered-entry gate is waiting on a DEEPER store to
+	// get its bin into the lane; that moment is the deeper store's dropoff
+	// block reaching FINISHED, where handleStoreBlockCompleted deletes its
+	// inbound mouth row (wiring_block_completed.go → ReleaseInboundLaneForOrder)
+	// and the gate's active set stops counting it (dispatch/lane_entry.go
+	// stillWorkingLaneMouth). Nothing re-scanned on that signal before, so a
+	// parked order sat until the blocker's whole ORDER completed — the gate was
+	// completion-coarse purely for want of this subscription.
+	//
+	// REGISTRATION ORDER IS LOAD-BEARING. The bus dispatches synchronously in
+	// registration order (protocol/eventbus: "Subscribers are called in
+	// registration order on the emitting goroutine"), so this MUST stay AFTER
+	// the handleBlockCompleted subscription above — that handler is what drops
+	// the mouth row. Registered before it, the scan would read the pre-release
+	// state, still see the placer as a blocker, and the admit would slip to the
+	// next trigger or the periodic sweep. Do not reorder these two.
+	e.Events.SubscribeTypes(triggerFulfillment, EventBlockCompleted)
 
 	// ── Restore-blockers + lane-lock-extension listeners ──────────────
 	// Both listeners trigger on the same bin-transit and parent-
@@ -325,34 +347,33 @@ func (e *Engine) wireEventHandlers() {
 		if e.dispatcher == nil {
 			return
 		}
-		e.dispatcher.HandleBinEnteredTransit(evt.Payload.BinID, evt.Payload.FromNodeID)
 		e.dispatcher.HandleBinTransitForLaneLock(evt.Payload.BinID, evt.Payload.FromNodeID)
+		// Lane mouth gate (§4): release the order's hold on the lane its bin just
+		// left, as soon as the bin physically clears (a no-op when the gate is off).
+		e.dispatcher.HandleTransitForLaneGate(evt.Payload.OrderID, evt.Payload.FromNodeID)
 	}, EventBinEnteredTransit)
 
-	// Parent terminal: drop both listeners so the lock isn't stuck
-	// and the synthetic-restock parent is cancelled. All four terminal
-	// statuses are wired:
+	// Parent terminal: drop the lane-lock release listener so the lane
+	// isn't stuck held if the parent terminates before its pickup. All
+	// four terminal statuses are wired:
 	//
 	//   - Cancelled / Failed: explicit cleanup paths.
 	//   - Skipped: a complex parent that gets skipped at Queued (e.g.,
 	//     ApplyComplexPlan returns no_source_bin because the unburied
 	//     target was moved or anomalied between unbury completion and
 	//     scanner pickup) needs the same cleanup — no pickup happens,
-	//     so the bin-transit listener will never fire.
-	//   - Completed: defensive idempotent sweep. In the normal happy
-	//     path the bin-transit listener already consumed the in-memory
-	//     entry and deleted the DB row before the parent reached
-	//     Confirmed, so this is a no-op. Covers the rare path where
-	//     an admin / recovery action force-confirms a parent past the
-	//     pickup leg.
+	//     so the bin-transit release will never fire.
+	//   - Completed: defensive idempotent sweep. On the normal happy
+	//     path the bin-transit release already fired before the parent
+	//     reached Confirmed, so this is a no-op. Covers the rare path
+	//     where an admin / recovery action force-confirms a parent past
+	//     the pickup leg.
 	//
-	// Both handlers are safe to call on a parent with no entry —
-	// they no-op when nothing matches.
+	// Safe to call on a parent with no hold — it no-ops when nothing matches.
 	terminal := func(orderID int64) {
 		if e.dispatcher == nil {
 			return
 		}
-		e.dispatcher.HandleComplexParentTerminal(orderID)
 		e.dispatcher.HandleComplexParentTerminalForLaneLock(orderID)
 	}
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
@@ -468,4 +489,12 @@ func (e *Engine) wireEventHandlers() {
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, GraceExpiredEvent]) {
 		e.handleGraceExpired(evt.Payload)
 	}, EventGraceExpired)
+
+	// ── Lane-gate release evaluator ─────────────────────────────────────
+	// Registered LAST on purpose. The bus dispatches synchronously in
+	// registration order, and the evaluator has to observe the mouth rows that
+	// handlers above it release — handleBlockCompleted on a dropoff, and the
+	// bin-transit handler on a pickup. Registering it last is the cheapest way
+	// to be after all of them; see wiring_lane_gate.go.
+	e.wireLaneGateHandlers()
 }

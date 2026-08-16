@@ -107,3 +107,67 @@ func TestBestStorageCandidate_Single(t *testing.T) {
 		t.Errorf("got %v, want SLOT-1", got)
 	}
 }
+
+// Resolve-around ranker semantics (owner rulings: depth always respected;
+// compatibility is an equal-depth tiebreak only).
+
+func TestBestStorageCandidate_ResolveAround_EqualDepthPrefersCompatible(t *testing.T) {
+	t.Parallel()
+	blocked := &nodes.Node{Name: "LANE-BLOCKED"}
+	free := &nodes.Node{Name: "LANE-FREE"}
+	// Same depth, same fill — only mouth compatibility differs. The compatible
+	// lane must win so the order does not stall at a mode-held mouth.
+	candidates := []storageCandidate{
+		{node: blocked, hasMatch: true, depth: 3, count: 1, laneCompatible: false},
+		{node: free, hasMatch: true, depth: 3, count: 1, laneCompatible: true},
+	}
+	if got := bestStorageCandidate(candidates); got.Name != "LANE-FREE" {
+		t.Errorf("got %q, want LANE-FREE (compatible mouth wins the equal-depth tie)", got.Name)
+	}
+}
+
+func TestBestStorageCandidate_ResolveAround_DepthBeatsCompatible(t *testing.T) {
+	t.Parallel()
+	deepBlocked := &nodes.Node{Name: "LANE-DEEP-BLOCKED"}
+	shallowFree := &nodes.Node{Name: "LANE-SHALLOW-FREE"}
+	// The deeper lane is mouth-blocked, the shallower lane is compatible. Depth is
+	// ALWAYS respected: the deeper lane must still win — resolve-around never
+	// demotes a deeper slot (the order waits at the mouth instead).
+	candidates := []storageCandidate{
+		{node: shallowFree, hasMatch: true, depth: 1, count: 0, laneCompatible: true},
+		{node: deepBlocked, hasMatch: true, depth: 3, count: 5, laneCompatible: false},
+	}
+	if got := bestStorageCandidate(candidates); got.Name != "LANE-DEEP-BLOCKED" {
+		t.Errorf("got %q, want LANE-DEEP-BLOCKED (depth outranks compatibility)", got.Name)
+	}
+}
+
+func TestBestStorageCandidate_ResolveAround_CompatBeatsEmptiest(t *testing.T) {
+	t.Parallel()
+	fullCompat := &nodes.Node{Name: "LANE-COMPAT"}
+	emptyBlocked := &nodes.Node{Name: "LANE-BLOCKED"}
+	// Equal depth: compatibility sits ABOVE the emptiest-lane tiebreak, so the
+	// compatible-but-fuller lane beats the emptier-but-blocked one.
+	candidates := []storageCandidate{
+		{node: emptyBlocked, hasMatch: true, depth: 2, count: 0, laneCompatible: false},
+		{node: fullCompat, hasMatch: true, depth: 2, count: 4, laneCompatible: true},
+	}
+	if got := bestStorageCandidate(candidates); got.Name != "LANE-COMPAT" {
+		t.Errorf("got %q, want LANE-COMPAT (compatibility outranks emptiest)", got.Name)
+	}
+}
+
+func TestBestStorageCandidate_ResolveAround_OffIsByteIdentical(t *testing.T) {
+	t.Parallel()
+	// With the arm off, every candidate's laneCompatible is false, so ranking must
+	// fall through to the historical depth→count order exactly as before.
+	deep := &nodes.Node{Name: "LANE-DEEP"}
+	shallowEmpty := &nodes.Node{Name: "LANE-SHALLOW-EMPTY"}
+	candidates := []storageCandidate{
+		{node: shallowEmpty, hasMatch: true, depth: 1, count: 0, laneCompatible: false},
+		{node: deep, hasMatch: true, depth: 3, count: 9, laneCompatible: false},
+	}
+	if got := bestStorageCandidate(candidates); got.Name != "LANE-DEEP" {
+		t.Errorf("got %q, want LANE-DEEP (arm off → depth packing unchanged)", got.Name)
+	}
+}

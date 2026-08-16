@@ -443,22 +443,15 @@ type OrderType string
 const (
 	OrderTypeRetrieve      OrderType = "retrieve"       // pull a loaded bin matching a payload to a destination
 	OrderTypeRetrieveEmpty OrderType = "retrieve_empty" // pull an empty bin compatible with a payload to a destination
+	OrderTypeStore         OrderType = "store"          // push a payload from a node to storage
 	OrderTypeMove          OrderType = "move"           // generic move; no manifest semantics
 	OrderTypeComplex       OrderType = "complex"        // multi-step order composed of sub-steps
-	// OrderTypeReshuffleRestore is a Core-internal housekeeping order
-	// that wraps the post-pickup restock compound for the complex-order
-	// buried-bin reshuffle "restore blockers" toggle. Never created by
-	// edge; not dispatched to edge.
-	//
-	// It IS shown in the admin orders list. This comment used to say it was
-	// filtered out, and that stopped being true when the exclusion was removed:
-	// these synthetics can strand at reshuffling, and the sweeps that resolve
-	// them are much easier to trust when their subjects are visible. See the
-	// note above SelectCols in store/orders.
-	//
-	// The synthetic-parent type exists so the restock compound has a parent row
-	// to satisfy AdvanceCompoundOrder, since the compound machinery keys off
-	// ParentOrderID != nil.
+	OrderTypeIngest        OrderType = "ingest"         // edge-legacy: no longer minted (manifest-only ingest write); kept for historical order rows
+	// OrderTypeReshuffleRestore is the RETIRED restore-blockers housekeeping type.
+	// The subsystem that minted it is deleted (blockers lie now) and no order is
+	// ever created with it again — the constant is kept ONLY so historical rows
+	// (and the one-shot retirement sweep) display and match a name rather than a
+	// raw string.
 	OrderTypeReshuffleRestore OrderType = "reshuffle_restore"
 )
 

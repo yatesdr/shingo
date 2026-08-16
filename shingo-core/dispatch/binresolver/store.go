@@ -41,6 +41,11 @@ type Store interface {
 	FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error)
 	FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error)
 
+	// LaneAcceptsInbound reports whether a lane's mouth currently has no hold
+	// that conflicts with an inbound store (empty or inbound-only). The read
+	// behind resolve-around; called only when a group enables the arm.
+	LaneAcceptsInbound(laneID int64) (bool, error)
+
 	// Effective constraint sets (payloads + bin types allowed at a node,
 	// resolved through whatever inheritance rules the node graph uses).
 	GetEffectivePayloads(nodeID int64) ([]*payloads.Payload, error)

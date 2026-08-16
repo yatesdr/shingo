@@ -146,7 +146,9 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		{"Edge wire intake", "dispatch/lifecycle_service.go", "an Edge station sends an order request"},
 		{"complex intake", "dispatch/complex_intake.go", "an Edge station sends a multi-leg order; the buried branch is this same door"},
 		{"compound children", "dispatch/compound.go", "a reshuffle plan, written as child rows in one transaction"},
-		{"restore synthetic", "dispatch/restore_listeners.go", "Core itself, to parent the put-back compound"},
+		// The "restore synthetic" door that stood here is gone: the restore-blockers
+		// subsystem that minted those parents is retired (no code creates them; the
+		// one-shot boot sweep only cancels leftovers). No order-creation site, no door.
 		// One door, two screens. It was two doors — the operator's orders page
 		// and the engineers' /test-orders page — which had drifted twelve ways
 		// between them, and each difference was a bug waiting its turn. They

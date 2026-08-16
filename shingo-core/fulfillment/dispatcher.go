@@ -44,6 +44,25 @@ type Dispatcher interface {
 	// sourcing and retries. Owner-idempotent across legs.
 	ConfirmForDispatch(order *orders.Order, binID int64, sourceNode, destNode *nodes.Node) error
 
+	// AcquireLanesForOrder takes the order's lane mouth holds (P4) before dispatch,
+	// gated per lane group — a no-op when no mouth-enforced lane is on the order's
+	// path (byte-identical when the gate is off). admitted=false means the lane is
+	// contended: the scanner parks the order in sourcing under WAITING_FOR_SLOT with
+	// the returned cause and lane name, holding its soft reservations (Rule 1).
+	AcquireLanesForOrder(orderID int64, sourceNode, destNode *nodes.Node) (admitted bool, cause, laneName string, err error)
+
+	// ReleaseLanesForOrder drops all of an order's lane mouth holds — used on a
+	// fleet-dispatch failure rollback so a hold from AcquireLanesForOrder does not
+	// linger after the robot failed to commit.
+	ReleaseLanesForOrder(orderID int64) error
+
+	// AdmitLaneEntry is the tiered depth-ordered entry gate: park=true means a
+	// deeper cross-origin store (or an active cross-origin group) holds the order's
+	// lane, so it must wait (dispatch-time only — the scanner re-evaluates on the
+	// next pass). park=false for every non-lane / non-mouth-enforced destination
+	// (byte-identical when the gate is off).
+	AdmitLaneEntry(order *orders.Order, destNode *nodes.Node) (park bool, cause string, err error)
+
 	// PlanBuriedReshuffle plans the reshuffle compound for a source that resolved
 	// BURIED on replay, making the order its own compound parent (→ reshuffling).
 	//

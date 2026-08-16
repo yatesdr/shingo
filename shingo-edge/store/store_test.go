@@ -1775,9 +1775,9 @@ func TestReconciliationAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 		return id
 	}
 
-	youngQueued := mk("q-young", "queued", 1*time.Hour)  // under 2h — must stay quiet
-	oldQueued := mk("q-old", "queued", 3*time.Hour)      // over 2h  — must be flagged
-	submitted := mk("s-old", "submitted", 1*time.Hour)   // 30m bound still applies
+	youngQueued := mk("q-young", "queued", 1*time.Hour) // under 2h — must stay quiet
+	oldQueued := mk("q-old", "queued", 3*time.Hour)     // over 2h  — must be flagged
+	submitted := mk("s-old", "submitted", 1*time.Hour)  // 30m bound still applies
 
 	anomalies, err := db.ListReconciliationAnomalies()
 	if err != nil {

@@ -40,6 +40,10 @@ type fakeStore struct {
 	storeSlot    map[int64]*nodes.Node
 	oldestBuried map[int64]laneBuried
 	buriedAny    map[int64]laneBuried
+
+	// Resolve-around: laneID -> LaneAcceptsInbound. Absent = true (an empty lane
+	// is compatible), so only tests that exercise resolve-around set it.
+	laneAccepts map[int64]bool
 }
 
 type laneBuried struct {
@@ -63,6 +67,7 @@ func newFakeStore() *fakeStore {
 		storeSlot:        map[int64]*nodes.Node{},
 		oldestBuried:     map[int64]laneBuried{},
 		buriedAny:        map[int64]laneBuried{},
+		laneAccepts:      map[int64]bool{},
 	}
 }
 
@@ -164,6 +169,13 @@ func (f *fakeStore) GetEffectivePayloads(nodeID int64) ([]*payloads.Payload, err
 
 func (f *fakeStore) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) {
 	return f.effBinTypes[nodeID], nil
+}
+
+func (f *fakeStore) LaneAcceptsInbound(laneID int64) (bool, error) {
+	if v, ok := f.laneAccepts[laneID]; ok {
+		return v, nil
+	}
+	return true, nil // default: empty lane is compatible
 }
 
 // Compile-time check: *fakeStore satisfies Store.

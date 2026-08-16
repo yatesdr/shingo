@@ -28,7 +28,8 @@ import (
 // planBuriedReshuffle -> compound order with child steps:
 //  1. unbury: move blocker (depth 1) -> shuffle slot
 //  2. retrieve: move target (depth 2) -> line node
-//  3. restock: move blocker from shuffle -> back to depth 1
+//
+// No restock — the blocker lies in the shuffle slot where the unbury parked it.
 //
 // Drives each child through the fleet simulator lifecycle, verifying that the
 // compound order advances correctly and the target bin arrives at the line.
@@ -74,8 +75,8 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list children: %v", err)
 	}
-	if len(children) < 3 {
-		t.Fatalf("expected >= 3 children (unbury, retrieve, restock), got %d", len(children))
+	if len(children) < 2 {
+		t.Fatalf("expected >= 2 children (unbury, retrieve), got %d", len(children))
 	}
 
 	t.Logf("compound: %d children", len(children))
@@ -126,7 +127,7 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 		t.Errorf("target bin at node %v (wanted line %d)", targetBin.NodeID, lineNode.ID)
 	}
 
-	// Verify blocker restocked back to lane
+	// Verify the blocker moved out of the lane (no restock — it lies where it landed)
 	blockerBin, err = db.GetBin(blockerBin.ID)
 	if err != nil {
 		t.Fatalf("get blocker bin: %v", err)
@@ -187,8 +188,8 @@ func TestReshuffle_ChildAutoConfirmsWithoutReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list children: %v", err)
 	}
-	if len(children) < 3 {
-		t.Fatalf("expected >= 3 children, got %d", len(children))
+	if len(children) < 2 {
+		t.Fatalf("expected >= 2 children (unbury + retrieve), got %d", len(children))
 	}
 
 	// Drive each child to FINISHED only — NO HandleOrderReceipt. The fix must
@@ -228,8 +229,8 @@ func TestReshuffle_ChildAutoConfirmsWithoutReceipt(t *testing.T) {
 
 // --- Test: Compound children dispatch sequentially, one robot at a time ---
 //
-// Replays the 2026-05-27 compound #51 production scenario: 5 children
-// (2 unbury + 1 retrieve + 2 restock). fireCompleted fires on BOTH
+// Replays the 2026-05-27 compound #51 production scenario, now 3 children
+// (2 unbury + 1 retrieve; no restock). fireCompleted fires on BOTH
 // (*, Delivered) and (Delivered, Confirmed), so before the
 // sibling-in-flight guard each child caused two AdvanceCompoundOrder
 // calls — one when the fleet reported FINISHED, another when the edge
@@ -240,14 +241,14 @@ func TestReshuffle_ChildAutoConfirmsWithoutReceipt(t *testing.T) {
 // Pinning behavior (post-#3): robot-internal children auto-confirm on
 // Delivered, so FINISHED advances the compound by exactly one child. The
 // immediate next child dispatches; the one AFTER it must stay Pending until
-// its own predecessor finishes. Walked across all 5 children; if the
+// its own predecessor finishes. Walked across all 3 children; if the
 // double-advance regresses, two robots launch into the corridor at once.
 func TestCompound_SequentialChildDispatch_NoDeliveredCascade(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
 	// 3 lane slots with target at the deepest → 2 blockers → 2 unbury +
-	// 1 retrieve + 2 restock = 5 children, matching production compound #51.
+	// 1 retrieve = 3 children (no restock — blockers lie in the shuffle slots).
 	// NumShuffles=2 so the planner can park both blockers concurrently.
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
 		Prefix:      "CASCADE",
@@ -280,8 +281,8 @@ func TestCompound_SequentialChildDispatch_NoDeliveredCascade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list children: %v", err)
 	}
-	if len(children) != 5 {
-		t.Fatalf("expected 5 children (2 unbury + 1 retrieve + 2 restock), got %d", len(children))
+	if len(children) != 3 {
+		t.Fatalf("expected 3 children (2 unbury + 1 retrieve; no restock), got %d", len(children))
 	}
 
 	// Only the first child should be dispatched at compound creation;
@@ -368,8 +369,8 @@ func TestCompound_SequentialChildDispatch_NoDeliveredCascade(t *testing.T) {
 
 // --- Test: Compound child failure mid-reshuffle — blocker stranding ---
 //
-// Scenario: A 3-step reshuffle is in progress (unbury blocker → retrieve target
-// → restock blocker). Step 1 completes: blocker moved to shuffle slot. Step 2
+// Scenario: A 2-step reshuffle is in progress (unbury blocker → retrieve
+// target; no restock). Step 1 completes: blocker moved to shuffle slot. Step 2
 // (retrieve target) fails — robot breaks down. HandleChildOrderFailure cancels
 // remaining children and fails the parent.
 //
@@ -409,8 +410,8 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 	order := testdb.RequireOrderStatus(t, db, "strand-reshuffle-1", dispatch.StatusReshuffling)
 
 	children, _ := db.ListChildOrders(order.ID)
-	if len(children) < 3 {
-		t.Fatalf("expected >= 3 children, got %d", len(children))
+	if len(children) < 2 {
+		t.Fatalf("expected >= 2 children (unbury + retrieve), got %d", len(children))
 	}
 
 	for i, c := range children {
@@ -503,21 +504,19 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 	}
 }
 
-// --- Test: Two-robot swap full lifecycle (5-step compound) ---
+// --- Test: Two-robot swap full lifecycle (3-step compound) ---
 //
 // Scenario: An NGRP lane has 3 bins. The target is at depth 3 (deepest),
 // with 2 blockers at depth 1 and 2. FIFO detects the buried target and
-// triggers a reshuffle with 5 steps:
+// triggers a reshuffle with 3 steps:
 //  1. Unbury blocker-1 (depth 1) → shuffle-1
 //  2. Unbury blocker-2 (depth 2) → shuffle-2
 //  3. Retrieve target (depth 3) → line node
-//  4. Restock blocker-2 → depth 3 (the target's vacated slot)
-//  5. Restock blocker-1 → depth 2 (blocker-2's vacated slot)
 //
-// Restock is a slot ROTATION, not a return-to-origin: restockDestinations packs
-// blockers one slot deeper than they started, so the lane ends with depths 2..N
-// filled and depth 1 (the mouth) empty — no air bubbles. FIFO is unaffected
-// because FindSourceFIFO keys on loaded_at age, not slot depth.
+// No restock — the blockers lie in the shuffle slots the unbury parked them in.
+// Deepest-first shuffle-slot selection (findShuffleSlots) keeps the lane packed
+// without a restock pass. FIFO is unaffected because FindSourceFIFO keys on
+// loaded_at age, not slot depth, so a bin in a different slot keeps its order.
 //
 // This is the full two-robot swap pattern. The test verifies:
 // - All 5 children created and dispatched sequentially
@@ -563,8 +562,8 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 			c.Sequence, c.PayloadDesc, c.SourceNode, c.DeliveryNode, c.BinID)
 	}
 
-	if len(children) < 5 {
-		t.Fatalf("expected >= 5 children (2 unbury + 1 retrieve + 2 restock), got %d", len(children))
+	if len(children) < 3 {
+		t.Fatalf("expected >= 3 children (2 unbury + 1 retrieve; no restock), got %d", len(children))
 	}
 
 	// Drive each child through full lifecycle sequentially
@@ -599,15 +598,16 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 		t.Logf("target bin at line — correct")
 	}
 
-	// Verify blockers packed deepest-first: each restocks one slot deeper than it
-	// started, leaving the mouth (slots[0]) empty. Not a return-to-origin.
+	// No restock: the blockers lie where the unbury parked them (in shuffle slots),
+	// not back in the lane. Verify they moved OUT of their original lane slots
+	// (slots[0], slots[1]) and stayed findable — available and unclaimed.
 	blocker1, _ = db.GetBin(blocker1.ID)
 	blocker2, _ = db.GetBin(blocker2.ID)
-	if blocker1.NodeID == nil || *blocker1.NodeID != slots[1].ID {
-		t.Errorf("blocker1 at node %v, want slots[1] (%d)", blocker1.NodeID, slots[1].ID)
+	if blocker1.NodeID != nil && *blocker1.NodeID == slots[0].ID {
+		t.Errorf("blocker1 still at its original slot %d — should have been unburied", slots[0].ID)
 	}
-	if blocker2.NodeID == nil || *blocker2.NodeID != slots[2].ID {
-		t.Errorf("blocker2 at node %v, want slots[2] (%d)", blocker2.NodeID, slots[2].ID)
+	if blocker2.NodeID != nil && *blocker2.NodeID == slots[1].ID {
+		t.Errorf("blocker2 still at its original slot %d — should have been unburied", slots[1].ID)
 	}
 	if blocker1.Status != "available" || blocker2.Status != "available" {
 		t.Errorf("blocker statuses: blocker1=%s blocker2=%s, want both available", blocker1.Status, blocker2.Status)
@@ -622,7 +622,7 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 
 	// Lane lock freed
 	if eng.Dispatcher().LaneLock().IsLocked(lane.ID) {
-		t.Errorf("lane %d still locked after 5-step compound completion", lane.ID)
+		t.Errorf("lane %d still locked after compound completion", lane.ID)
 	}
 }
 
@@ -665,8 +665,8 @@ func TestCompound_CancelParentWhileChildInFlight(t *testing.T) {
 	order := testdb.RequireOrderStatus(t, db, "pcancel-reshuffle-1", dispatch.StatusReshuffling)
 
 	children, _ := db.ListChildOrders(order.ID)
-	if len(children) < 3 {
-		t.Fatalf("expected >= 3 children, got %d", len(children))
+	if len(children) < 2 {
+		t.Fatalf("expected >= 2 children (unbury + retrieve), got %d", len(children))
 	}
 
 	// Child 1 is dispatched and robot is RUNNING
@@ -765,8 +765,8 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 	order := testdb.RequireOrderStatus(t, db, "skip-reshuffle-1", dispatch.StatusReshuffling)
 
 	children, _ := db.ListChildOrders(order.ID)
-	if len(children) < 3 {
-		t.Fatalf("expected >= 3 children, got %d", len(children))
+	if len(children) < 2 {
+		t.Fatalf("expected >= 2 children (unbury + retrieve), got %d", len(children))
 	}
 
 	// Complete child 1 (unbury blocker)
@@ -879,91 +879,6 @@ func TestLaneLock_Contention_SecondReshuffleBlocked(t *testing.T) {
 	}
 }
 
-// --- Test: ApplyBinArrival status mapping for compound restock children (TC-53) ---
-//
-// Scenario: A compound restock child delivers a blocker bin back to its
-// storage slot (a child of a LANE node). When the fleet reports FINISHED
-// and the receipt is confirmed, handleOrderCompleted calls ApplyBinArrival.
-//
-// ApplyBinArrival checks if the destination is a storage slot (parent type
-// LANE). If so, it sets status='available' (not staged). This is critical:
-// if the restocked blocker is marked 'staged' instead of 'available', it
-// won't show up in FindSourceBinFIFO queries.
-//
-// Expected: After compound restock, the bin at the storage slot should have
-// status='available', claimed_by=NULL, and be visible to FIFO queries.
-func TestCompound_RestockChild_BinStatusAvailable(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-
-	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "RESTOCK"})
-	grp := sc.Grp
-	lineNode, bp := sc.LineNode, sc.Payload
-	blockerBin := sc.Blockers[0]
-
-	sim := simulator.New()
-	eng := newTestEngine(t, db, sim)
-	d := eng.Dispatcher()
-	env := testEnvelope()
-
-	// Trigger reshuffle
-	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:    "restock-status-1",
-		OrderType:    dispatch.OrderTypeRetrieve,
-		PayloadCode:  bp.Code,
-		SourceNode:   grp.Name,
-		DeliveryNode: lineNode.Name,
-		Quantity:     1,
-	})
-
-	order := testdb.RequireOrderStatus(t, db, "restock-status-1", dispatch.StatusReshuffling)
-
-	children, _ := db.ListChildOrders(order.ID)
-	t.Logf("compound: %d children", len(children))
-	for i, c := range children {
-		t.Logf("  child %d: seq=%d desc=%s src=%s dest=%s", i, c.Sequence, c.PayloadDesc, c.SourceNode, c.DeliveryNode)
-	}
-
-	// Drive all children to completion
-	for i, child := range children {
-		child, _ = db.GetOrder(child.ID)
-		if child.VendorOrderID == "" || child.Status == dispatch.StatusFailed {
-			t.Logf("child %d: skipping (vendor=%s status=%s)", i, child.VendorOrderID, child.Status)
-			continue
-		}
-		sim.DriveState(child.VendorOrderID, "RUNNING")
-		sim.DriveState(child.VendorOrderID, "FINISHED")
-		d.HandleOrderReceipt(env, &protocol.OrderReceipt{
-			OrderUUID: child.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1,
-		})
-		child, _ = db.GetOrder(child.ID)
-		t.Logf("child %d completed: status=%s", i, child.Status)
-	}
-
-	// KEY CHECK: blocker bin restocked to storage slot
-	blockerBin, _ = db.GetBin(blockerBin.ID)
-	t.Logf("blocker after restock: node=%v status=%s claimed=%v", blockerBin.NodeID, blockerBin.Status, blockerBin.ClaimedBy)
-
-	// The blocker should be at a LANE child (storage slot) with status=available
-	if blockerBin.Status != "available" {
-		t.Errorf("BUG: blocker bin status=%q after restock to storage slot — expected 'available'. If 'staged', bin is invisible to FIFO queries", blockerBin.Status)
-	} else {
-		t.Logf("blocker bin status=available at storage slot — correct, visible to FIFO")
-	}
-
-	if blockerBin.ClaimedBy != nil {
-		t.Errorf("blocker bin still claimed by %d after compound completion", *blockerBin.ClaimedBy)
-	}
-
-	// Verify it's findable by FIFO — this is the critical correctness check
-	fifoBin, err := db.FindSourceBinFIFO(bp.Code, 0)
-	if err != nil {
-		t.Errorf("FIFO lookup failed after restock: %v — restocked blocker bin is invisible to retrievals", err)
-	} else if fifoBin.ID != blockerBin.ID {
-		t.Errorf("FIFO returns bin %d, want restocked blocker %d — blocker not highest FIFO priority", fifoBin.ID, blockerBin.ID)
-	}
-}
-
 // --- Test: Staging TTL expiry during compound order execution (TC-54) ---
 //
 // Scenario: During a compound reshuffle, child 1 (unbury) completes and
@@ -1002,8 +917,8 @@ func TestCompound_StagingTTLExpiryDuringReshuffle(t *testing.T) {
 	order := testdb.RequireOrder(t, db, "ttl-reshuffle-1")
 
 	children, _ := db.ListChildOrders(order.ID)
-	if len(children) < 3 {
-		t.Fatalf("expected >= 3 children, got %d", len(children))
+	if len(children) < 2 {
+		t.Fatalf("expected >= 2 children (unbury + retrieve), got %d", len(children))
 	}
 
 	// Complete child 1 (unbury blocker → shuffle slot)
@@ -1054,27 +969,17 @@ func TestCompound_StagingTTLExpiryDuringReshuffle(t *testing.T) {
 		})
 	}
 
-	// Complete child 3 (restock blocker) — the bin's status was flipped by sweep
-	child3, _ := db.GetOrder(children[2].ID)
-	if child3.VendorOrderID != "" {
-		sim.DriveState(child3.VendorOrderID, "RUNNING")
-		sim.DriveState(child3.VendorOrderID, "FINISHED")
-		d.HandleOrderReceipt(env, &protocol.OrderReceipt{
-			OrderUUID: child3.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1,
-		})
-	}
-
 	// Verify compound completed despite TTL expiry mid-reshuffle
 	order, _ = db.GetOrderByUUID("ttl-reshuffle-1")
 	t.Logf("parent final: status=%s", order.Status)
 
 	if order.Status == dispatch.StatusConfirmed {
-		t.Logf("compound completed despite staging TTL expiry mid-reshuffle — sweep did not break the restock")
+		t.Logf("compound completed despite staging TTL expiry mid-reshuffle — sweep did not break the unbury")
 	} else if order.Status == dispatch.StatusFailed {
-		t.Errorf("POTENTIAL BUG: compound failed — staging TTL expiry may have interfered with restock child")
+		t.Errorf("POTENTIAL BUG: compound failed — staging TTL expiry may have interfered with the reshuffle")
 	}
 
-	// Verify blocker restocked correctly
+	// Verify the blocker ended up findable and unclaimed
 	blockerBin, _ = db.GetBin(blockerBin.ID)
 	t.Logf("blocker final: node=%v status=%s claimed=%v", blockerBin.NodeID, blockerBin.Status, blockerBin.ClaimedBy)
 

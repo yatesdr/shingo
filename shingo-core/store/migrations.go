@@ -320,19 +320,20 @@ func (db *DB) runVersionedMigrations() error {
 					schema.ColumnExists(q, "inventory_delta_dedup", "epoch")
 			}},
 
-		// v23 (complex-order buried-reshuffle scope, v7) adds the
-		// pending_restocks table. Closes the crash-recovery gap left
-		// by the v6 in-memory restoreRegistry: when the restore-
-		// blockers toggle is on, the planned restock state is
-		// persisted at listener-registration time so a Core restart
-		// can re-register the listener instead of dropping it on the
-		// floor (and leaving blockers in shuffle slots forever).
+		// v23 (complex-order buried-reshuffle scope, v7) added the
+		// pending_restocks table for the restore-blockers subsystem. That
+		// subsystem is RETIRED — blockers lie now — and v70 drops the table.
 		//
-		// One row per registered listener; deleted on listener fire,
-		// parent cancel, parent fail, and stale-row sweep at boot.
-		{23, "add pending_restocks table for crash-safe restore listeners",
+		// v23's body still creates the table so the migration history stays
+		// intact, but its verify is now ALWAYS-TRUE on purpose: keying it on
+		// TableExists would make the self-heal RESURRECT the retired table on
+		// every boot after v70 drops it (verify fails → re-run v23 → re-create).
+		// A retired table's ABSENCE is the correct state, so v23's application is
+		// tracked by schema_migrations alone. The framework must never resurrect a
+		// retired table.
+		{23, "add pending_restocks table for crash-safe restore listeners (retired at v70)",
 			v23PendingRestocks,
-			func(q schema.Querier) bool { return schema.TableExists(q, "pending_restocks") }},
+			func(schema.Querier) bool { return true }},
 
 		// v24 (post-v7 cleanup) adds the pending_lane_extensions table.
 		// Same shape as pending_restocks but for the lane-lock
@@ -604,17 +605,23 @@ func (db *DB) runVersionedMigrations() error {
 				return schema.ColumnExists(q, "payloads", "advanced_load_sequence") &&
 					schema.TableExists(q, "load_sequences")
 			}},
-		// ⚠ NUMBERING COLLISION AHEAD — READ BEFORE REBASING THE LANE CAMPAIGN.
+		// NUMBERING COLLISION — RESOLVED 2026-07-30. Kept as a record, not a warning.
 		//
-		// v51 is taken HERE, on main. The unpushed lane campaign (refactor-phase1,
-		// held back per the Springfield merge brief §5) also carries a v51 and a
-		// v52 — the durable lane rows and the pending_restocks drop. Those two
-		// MUST be renumbered to v52 and v53 when that branch rebases onto main.
-		// The migration list is keyed by integer, so two v51s do not conflict at
-		// compile time: the second one silently never runs against a database
-		// that already recorded 51, and the schema diverges per-plant depending
-		// on which build reached it first. Renumber at rebase; do not merge the
-		// campaign without checking this line.
+		// v51 is taken HERE, on main. The lane campaign (refactor-phase1) also
+		// carried a v51 and a v52 — the reservations mode column and the
+		// pending_restocks drop. When that branch was transplanted onto main those
+		// two were renumbered to v69 and v70 (NOT to v52/v53 as the original note
+		// predicted: main had run on to v68 by then). Both now sit at the tail of
+		// this list.
+		//
+		// Why it mattered: the list is keyed by integer, so two v51s would not
+		// conflict at compile time. The second would silently never run against a
+		// database that had already recorded 51, and the schema would diverge
+		// per-plant depending on which build reached it first.
+		//
+		// The standing rule this leaves behind: a migration number is claimed the
+		// moment it lands on main. A long-lived branch must renumber to the tail
+		// at transplant time, and no-resurrect tests pin the retired numbers.
 		{51, "add process_styles.is_active (running style from the plant-claims feed)",
 			v51ProcessStyleActive,
 			func(q schema.Querier) bool {
@@ -625,12 +632,12 @@ func (db *DB) runVersionedMigrations() error {
 		// lineside term both ways (ledger vs Edge reports) and log
 		// firing-decision disagreements — SHADOW, deciding off the ledger.
 		//
-		// ⚠ NUMBERING: v52 is taken HERE on branch monitor-collapse-r1. Sibling
-		// lanes E and G (this round) may also add migrations, and the unpushed
-		// lane campaign already carries a v51/v52 to renumber (see the v51
-		// collision note above). This migration is a pure additive CREATE TABLE
-		// with no dependency on any constraint, so it renumbers trivially on
-		// merge — order it after any dedup/data migration if one is added.
+		// NUMBERING: v52 was claimed HERE on branch monitor-collapse-r1, and the
+		// lane campaign's competing v52 (the pending_restocks drop) was renumbered
+		// to v70 at transplant, 2026-07-30 — see the resolved collision note above
+		// v51. This migration is a pure additive CREATE TABLE with no dependency on
+		// any constraint, so it would have renumbered trivially had it been the one
+		// to move; it did not have to.
 		{52, "add edge_lineside_reports (R1 shadow read-model for the lineside term)",
 			v52EdgeLinesideReports,
 			func(q schema.Querier) bool { return schema.TableExists(q, "edge_lineside_reports") }},
@@ -842,6 +849,34 @@ func (db *DB) runVersionedMigrations() error {
 			func(q schema.Querier) bool {
 				return schema.TableExists(q, "supply_refusals")
 			}},
+		// v69 adds the lane-mouth substrate to reservations: a nullable mode tag
+		// (inbound|outbound|dig, carried only by mouth rows) + a plain read index
+		// on (resource_kind, node_id). Additive and dormant — v44 already made
+		// 'mouth' a legal kind with a node_id target and no unique mouth index, so
+		// this only supplies the mode column the admission rule reads and the index
+		// it reads through. The mode column is the self-heal marker.
+		//
+		// Carried the number 51 on refactor-phase1 and was renumbered to 69 when
+		// that branch was transplanted onto main (2026-07-30) — see the renumber
+		// note above v51.
+		{69, "add reservations.mode + (resource_kind,node_id) read index (lane-mouth substrate)",
+			v69ReservationsMouthMode,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "reservations", "mode") }},
+
+		// v70 retires the restore-blockers subsystem's table. pending_restocks is
+		// no code's concern anymore (the subsystem is deleted; blockers lie). DROP
+		// IF EXISTS so a fresh DB (which created it at v23) and a deployed DB (which
+		// may hold rows) both end without it. Paired with v23's now-always-true
+		// verify so the self-heal never resurrects it. The self-heal marker is the
+		// table's ABSENCE.
+		//
+		// Carried the number 52 on refactor-phase1 and was renumbered to 70 when
+		// that branch was transplanted onto main (2026-07-30) — see the renumber
+		// note above v51.
+		{70, "drop pending_restocks (retire the restore-blockers subsystem)",
+			v70DropPendingRestocks,
+			func(q schema.Querier) bool { return !schema.TableExists(q, "pending_restocks") }},
+
 		// THE INDEX SPRINGFIELD ALREADY HAS, WRITTEN DOWN.
 		//
 		// A `\d orders` at Springfield (2026-08-02) returns a UNIQUE index on
@@ -868,9 +903,21 @@ func (db *DB) runVersionedMigrations() error {
 		{72, "core-spot becomes core-operator, in every table that stores it",
 			v72StationCoreOperator,
 			func(q schema.Querier) bool { return noCoreSpotLeft(q) }},
-		{73, "orders.edge_uuid unique — exempt the restore parent's derived name",
-			v73OrdersUUIDUniqueExemptRestore,
-			func(q schema.Querier) bool { return uuidIndexExemptsRestore(q) }},
+		// v73 drops the temporary exemption the restore-blockers subsystem needed.
+		// That subsystem (and its derived "restore-<parentID>-<binID>" edge_uuid
+		// that was parsed back to recover a link) is RETIRED by v70 and the
+		// subsystem deletion in this merge. UUID now means UUID for every order:
+		// compound children mint a real UUID (dispatch/compound.go), and no live
+		// code creates restore names anymore. So the index goes back to the plain
+		// not-blank predicate v71 always intended — which is what the schema
+		// snapshot and postgres_ddl.go declare. Springfield and Hopkinsville have
+		// zero restore history, and a fresh seed cannot regenerate restore rows,
+		// so nothing the plants carry collides with a plain unique index. The
+		// only databases that ever held duplicate restore names were house-server
+		// dev volumes, which dev-reset clears.
+		{73, "orders.edge_uuid unique — restore exemption retired (back to plain predicate)",
+			v73OrdersUUIDPlain,
+			func(q schema.Querier) bool { return uuidIndexIsUnique(q) && !uuidIndexExemptsRestore(q) }},
 		// v74: whether a shared-window loader spreads its inbound empties across
 		// its windows, or funnels them to the first one, becomes a property of the
 		// loader instead of a plant-wide Edge config key. DEFAULT FALSE = spread,
@@ -2191,6 +2238,39 @@ func v51ProcessStyleActive(tx *sql.Tx) error {
 	return nil
 }
 
+// v69ReservationsMouthMode adds the lane-mouth substrate to reservations: a
+// nullable mode discriminator (carried only by mouth rows) and a plain read
+// index. Additive and DORMANT — no production code writes mouth rows yet.
+//
+// The v44 substrate already did most of the work: 'mouth' is a legal
+// resource_kind, node_id is a nullable target, and there is deliberately NO
+// unique index on mouth rows — so several active mouth rows per lane (mode
+// sharing) is already schema-legal. This migration only supplies the two things
+// that were still missing:
+//
+//   - mode: inbound | outbound | dig, nullable. A bin or slot row never sets it
+//     (leaves it NULL); a mouth row always carries one. The CHECK pins the domain
+//     without coupling to resource_kind, so a NULL-mode bin/slot row passes and a
+//     mouth row with an out-of-domain mode fails.
+//   - idx_reservations_kind_node: a PLAIN (non-unique) index on
+//     (resource_kind, node_id) for the per-lane "active mouth rows" read the
+//     admission rule runs. Non-unique by design — mode sharing needs multiple
+//     active mouth rows on one lane node.
+func v69ReservationsMouthMode(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS mode TEXT`,
+		`ALTER TABLE reservations DROP CONSTRAINT IF EXISTS reservations_mode_check`,
+		`ALTER TABLE reservations ADD CONSTRAINT reservations_mode_check CHECK (mode IS NULL OR mode IN ('inbound','outbound','dig'))`,
+		`CREATE INDEX IF NOT EXISTS idx_reservations_kind_node ON reservations (resource_kind, node_id)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v69 reservations mouth mode: %w", err)
+		}
+	}
+	return nil
+}
+
 // v52EdgeLinesideReports creates the R1 shadow read-model table: Edge's
 // periodic per-consuming-node lineside on-hand. One row per
 // (station, core_node_name, payload_code), upserted on each 60s report. Core
@@ -2213,6 +2293,19 @@ func v52EdgeLinesideReports(tx *sql.Tx) error {
 		return fmt.Errorf("v52 edge_lineside_reports: %w", err)
 	}
 	return nil
+}
+
+// v70DropPendingRestocks retires the restore-blockers subsystem's table. The
+// subsystem is deleted (blockers lie), so the table is dead storage on every
+// environment. DROP IF EXISTS is a no-op on a DB that never had it. See v23's
+// verify note: it is deliberately always-true so this drop is never undone by
+// the self-heal.
+//
+// Carried the number 52 on refactor-phase1; renumbered to 70 at transplant
+// (2026-07-30) — main had taken 52 for edge_lineside_reports and run on to 68.
+func v70DropPendingRestocks(tx *sql.Tx) error {
+	_, err := tx.Exec(`DROP TABLE IF EXISTS pending_restocks`)
+	return err
 }
 
 // v23PendingRestocks creates the crash-safe restore-listener registry.
@@ -3291,45 +3384,37 @@ func noCoreSpotLeft(q schema.Querier) bool {
 	return clean
 }
 
-// v73OrdersUUIDUniqueExemptRestore narrows the unique index to skip the one
-// remaining derived edge_uuid.
+// v73OrdersUUIDPlain restores the plain not-blank predicate v71 always intended.
 //
-// v71 made the column unique on the sound grounds that two orders sharing an
-// edge_uuid is a shape with no story: GetByUUID resolves the ambiguity with
-// ORDER BY id DESC, so the ownership check behind cancel and release acts on an
-// order nobody named. What v71 could not see is that two edge_uuid values in
-// this system are not identities at all — they are structural names built from
-// other rows, and neither is unique. Compound children were one; they now mint a
-// real UUID (dispatch/compound.go) and need no exemption.
+// v71 made edge_uuid unique on the sound grounds that two orders sharing one is
+// a shape with no story: GetByUUID resolves the ambiguity with ORDER BY id DESC,
+// so the ownership check behind cancel and release acts on an order nobody
+// named. v71 discovered too late that two edge_uuid values in this system were
+// not identities at all but structural names built from other rows, and neither
+// was unique: compound children ("<parent>-step-n>") and the synthetic restore
+// parent ("restore-<parentID>-<binID>"). v71 was therefore shipped with a narrow
+// exemption for the restore prefix while compound children were made to mint a
+// real UUID (dispatch/compound.go).
 //
-// The other is the synthetic restore parent: "restore-<complexParentID>-<binID>"
-// (dispatch/restore_listeners.go). It cannot be minted, because it is not
-// decoration there — it is the ONLY durable link back to the complex parent.
-// That parent sets no parent_order_id, and the in-memory map holding the link
-// does not survive a restart, so the string is parsed back (fmt.Sscanf,
-// "restore-%d-") to rebuild it. Minting a UUID would delete the link.
-//
-// EXPIRY CONDITION, and it is a real one rather than a hope: the `refactor-phase1`
-// branch deletes the entire put-back subsystem — restore_listeners.go, the
-// pending_restocks table, and this format with them — replacing the crash
-// recovery with durable lane-hold reservation rows. When that lands, drop this
-// exemption and restore the plain not-blank predicate:
+// That was always temporary. This merge retires the restore-blockers subsystem
+// wholesale — restore_listeners.go, the pending_restocks table, and the derived
+// "restore-%d-%d" format with them — replacing the crash recovery with durable
+// lane-hold reservation rows. With no live code creating restore names and no
+// restore history at either plant, the exemption has nothing to protect, so the
+// index goes back to the plain predicate and UUID means UUID for every order:
 //
 //	WHERE edge_uuid <> ''
 //
-// Until then a re-restore of the same parent and bin legitimately repeats the
-// name, so the index must not refuse it.
-//
-// Deliberately a LIKE on one literal prefix rather than a general escape hatch:
-// the narrower it is, the louder it is about being temporary.
-func v73OrdersUUIDUniqueExemptRestore(tx *sql.Tx) error {
+// The verify confirms the index is both unique AND free of the restore
+// exemption, so a self-heal re-run can never silently leave the carve-out in.
+func v73OrdersUUIDPlain(tx *sql.Tx) error {
 	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_orders_uuid`); err != nil {
 		return fmt.Errorf("drop idx_orders_uuid: %w", err)
 	}
 	if _, err := tx.Exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid)
-		     WHERE edge_uuid <> '' AND edge_uuid NOT LIKE 'restore-%'`); err != nil {
-		return fmt.Errorf("create restore-exempt idx_orders_uuid: %w", err)
+		     WHERE edge_uuid <> ''`); err != nil {
+		return fmt.Errorf("create idx_orders_uuid: %w", err)
 	}
 	return nil
 }
