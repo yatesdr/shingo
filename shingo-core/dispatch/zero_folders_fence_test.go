@@ -1,9 +1,24 @@
 package dispatch
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 )
+
+// bannedFolderSymbolsDigest pins the ban list below.
+//
+// Two of the banned symbols contain the substring "ServiceDig", so a tree-wide
+// substring rename of serviceDig rewrites the list to ban names that never
+// existed. The fence then passes on every run while the machinery it guards is
+// free to come back — it fails green, which is the one way a guard must not
+// fail. That has nearly happened twice.
+//
+// The digest covers the symbols only, so reformatting and comment edits are
+// free. Changing what is banned is legitimate: update this constant in the same
+// commit. What this stops is the list changing as a side effect.
+const bannedFolderSymbolsDigest = "88ccd92518fd3467e9a4ed3472880d8c541c3a76aad1765340fb8b2379ee1575"
 
 // THE FENCE — zero folders, no exceptions clause (§R.104).
 //
@@ -59,6 +74,31 @@ func TestFence_NoFolderCanEverBeMinted(t *testing.T) {
 		{"mouthHealNeeded",
 			"was the folder path's own physics read. The physics survive as acceptanceDigNeeded, " +
 				"asked by the order that will do the digging."},
+	}
+
+	// Checked before the scan: a scan against a rewritten ban list reports
+	// success, which is worse than not scanning. See bannedFolderSymbolsDigest.
+	h := sha256.New()
+	for _, b := range banned {
+		h.Write([]byte(b.symbol))
+		h.Write([]byte{0}) // separator, so {"ab","c"} and {"a","bc"} differ
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != bannedFolderSymbolsDigest {
+		var names []string
+		for _, b := range banned {
+			names = append(names, b.symbol)
+		}
+		// Spelled in pieces so a substring sweep cannot rewrite the advice that
+		// explains the sweep, and send the reader looking for the wrong name.
+		stem := "service" + "Dig"
+		t.Fatalf("the ban list changed, so the fence below is not the one that was ruled.\n"+
+			"  symbols:  %s\n  digest:   %s\n  expected: %s\n\n"+
+			"Renaming? Two of these contain the substring %q, so a substring replace rewrites "+
+			"the list to ban names that never existed and the fence passes forever after. "+
+			"Anchor the rename (\\b%s(?=[A-Z])) and leave the list alone.\n"+
+			"Changing what is banned? Update bannedFolderSymbolsDigest in the same commit.",
+			strings.Join(names, ", "), got, bannedFolderSymbolsDigest,
+			strings.ToUpper(stem[:1])+stem[1:], stem)
 	}
 
 	// CODE, NOT PROSE. Every one of these names survives in a TOMBSTONE — the
