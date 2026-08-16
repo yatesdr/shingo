@@ -381,6 +381,24 @@ var causeReleasers = []causeReleaser{
 		what:        "the order holding the blocker finishes carrying it out of the lane",
 	},
 	{
+		// THE ROBOT IS AT THE MARK AND THE DIGGING IS ITS OWN (§R.104).
+		//
+		// PopGateStaged, and only that: the waiter is a dweller, and it stays one
+		// for the whole excavation — no status moves, so no other population can
+		// hold this cause.
+		//
+		// The releaser is its OWN chapter closing, which makes this the second row
+		// in the table whose releaser belongs to the waiting order itself
+		// (CauseEpisodeAlreadyDigging is the first). That is not a circularity: the
+		// dig children are separate orders with robots of their own, and what ends
+		// the wait is their work finishing, not the waiter doing anything.
+		cause:       CauseStagedOwnDig,
+		populations: []WaitPopulation{PopGateStaged},
+		what: "the order's OWN dig children finish — the chapter closes and Core appends the tail to " +
+			"the robot standing at the mark (the splice-append; no queue round-trip, because the " +
+			"plan was never re-planned, only preceded)",
+	},
+	{
 		// THE ONLY CAUSE IN THIS TABLE WHOSE WAITER IS A PARENT. Every other row
 		// describes an order refused at a door; this one describes a demand whose
 		// own excavation has gone quiet with a robot still out on it.

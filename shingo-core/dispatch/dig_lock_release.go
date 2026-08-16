@@ -112,13 +112,45 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 		return
 	}
 	open, _ := compoundGenerations(children)
-	for _, leg := range open {
+
+	// ── THE HOLDER ITSELF IS IN THE POPULATION (§R.101) ───────────────────
+	//
+	// This walked the owner's LEGS, which was the whole population while only a
+	// dig could hold a lane. §R.101 made every demand a lane holder: a demand that
+	// resolves onto an open or shallow bin locks that lane and has no legs at all,
+	// so a legs-only walk finds nothing outstanding and drops the lock on the first
+	// unrelated exit event — before the demand has been anywhere near its bin.
+	//
+	// One lock lifecycle, one owner, and the owner is the demand from resolve to
+	// collection. Its own row answers the same two questions a leg's does, through
+	// the same predicate: its bin is still sitting in the lane (it has not picked
+	// yet) or it is dwelling in the lane holding it.
+	//
+	// The two shapes §R.101a names fall straight out. An OPEN OR SHALLOW resolve
+	// has no legs, so the owner's own row is the only thing holding the lane and it
+	// clears on the pickup. A BURIED resolve re-parents (§R.91), so the legs hold it
+	// through the excavation and the parent's own row holds it afterwards until the
+	// target is collected — which is "clears after it achieves the target", with no
+	// handoff anywhere, because the collector was the holder all along.
+	//
+	// FAIL CLOSED, like every read in this file: an unreadable holder keeps the lane.
+	holder, hErr := d.db.GetOrder(digOwner)
+	if hErr != nil {
+		log.Printf("dig lock: could not read lane %d's holder %d while deciding whether it is finished "+
+			"with (%v) — keeping the claim", laneID, digOwner, hErr)
+		return
+	}
+	population := open
+	if holder != nil && !protocol.IsTerminal(holder.Status) {
+		population = append([]*orders.Order{holder}, open...)
+	}
+	for _, leg := range population {
 		if protocol.IsTerminal(leg.Status) {
 			continue
 		}
 		needs, why := d.legStillNeedsLane(leg, laneID)
 		if needs {
-			d.dbg("dig lock: compound %d keeps lane %d — leg %d %s", digOwner, laneID, leg.ID, why)
+			d.dbg("dig lock: order %d keeps lane %d — %d %s", digOwner, laneID, leg.ID, why)
 			return
 		}
 	}
@@ -130,12 +162,13 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 	// FAIL CLOSED ON AN UNREADABLE PARENT, like every other read in this file. The
 	// compound's own teardown (unlockLaneForCompound) is the backstop, so a lane
 	// kept here is kept for a while, not forever.
-	parent, pErr := d.db.GetOrder(digOwner)
-	if pErr != nil {
-		log.Printf("dig lock: could not read compound %d while deciding whether lane %d may be "+
-			"released (%v) — keeping the claim", digOwner, laneID, pErr)
+	if holder == nil {
+		log.Printf("dig lock: lane %d is held by order %d, which does not exist — releasing", laneID, digOwner)
+		d.laneLock.Unlock(laneID, digOwner)
+		d.EvaluateLaneReleases(laneID)
 		return
 	}
+	parent := holder
 	if d.handOffDugLane(parent, laneID) {
 		return // the corridor now belongs to the order collecting the bin
 	}
@@ -305,26 +338,48 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 //
 // A leg whose bin cannot be read counts as still needing the lane, which is the
 // fail-closed direction: an unreadable bin must not shorten a claim.
+// ── AND IT ASKS ABOUT EVERY BIN THE ORDER HOLDS, NOT ONLY bin_id (§R.101) ─
+//
+// `leg.BinID` is the whole answer for a dig leg, which moves one bin. It is not
+// the whole answer for a DEMAND, and §R.101 made a demand a lane holder: a
+// coordinated order claims its bins through the order_bins junction and may hold
+// several, so a bin_id-only read would say "nothing of mine is in this lane"
+// while one of its other claimed bins sits there — and drop the lock under it.
+//
+// So the claim is the key. It is the same key findFallbackBinAtSource calls
+// canonical for "this order's bin(s)", it is owner-scoped, and it degrades to
+// exactly the old behaviour for a leg: one claimed bin, the one in bin_id.
 func (d *Dispatcher) legStillNeedsLane(leg *orders.Order, laneID int64) (bool, string) {
 	if d.holdsOccupancyThroughDwell(leg.ID, laneID) {
 		return true, "is dwelling in it, holding a blocker that has not left"
 	}
-	if leg.BinID == nil {
-		return false, ""
-	}
-	bin, err := d.db.GetBin(*leg.BinID)
+	claimed, err := d.db.ListBinsByClaim(leg.ID)
 	if err != nil {
-		return true, "carries a bin whose position could not be read"
+		return true, "holds bins whose positions could not be read"
 	}
-	if bin == nil || bin.NodeID == nil {
-		return false, "" // in transit and not dwelling: the robot is driving out
+	if leg.BinID != nil {
+		// bin_id may name a bin the junction does not (a plain order's claim is
+		// written before the junction row, and a re-entry reuses it), so both are
+		// consulted. Fail closed on a read that does not answer.
+		bin, bErr := d.db.GetBin(*leg.BinID)
+		if bErr != nil {
+			return true, "carries a bin whose position could not be read"
+		}
+		if bin != nil {
+			claimed = append(claimed, bin)
+		}
 	}
-	lane, err := d.db.LaneForNode(*bin.NodeID)
-	if err != nil {
-		return true, "carries a bin whose lane could not be resolved"
-	}
-	if lane != nil && lane.ID == laneID {
-		return true, "has a bin still sitting in it"
+	for _, bin := range claimed {
+		if bin == nil || bin.NodeID == nil {
+			continue // in transit and not dwelling: the robot is driving out
+		}
+		lane, lErr := d.db.LaneForNode(*bin.NodeID)
+		if lErr != nil {
+			return true, "carries a bin whose lane could not be resolved"
+		}
+		if lane != nil && lane.ID == laneID {
+			return true, "has a bin still sitting in it"
+		}
 	}
 	return false, ""
 }

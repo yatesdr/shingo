@@ -134,6 +134,20 @@ const (
 	// it must not be filed under lock-race — the wait is a robot's drive time, not
 	// a lost microsecond.
 	CauseDigBlockerClaimed QueueCause = "dig-blocker-claimed"
+	// CauseStagedOwnDig — a robot is standing at a lane's mark while the order it
+	// belongs to digs that lane open with its OWN children (§R.104).
+	//
+	// It is the acceptance arm's wait, and it is the first cause ever written onto
+	// an order that is `staged` and child-bearing at the same time — a shape this
+	// tree had never seen. The robot is not stuck and nobody is refusing it: its
+	// own excavation is running, and when the chapter closes Core appends its tail
+	// where it stands.
+	//
+	// NOT CauseLaneTargetBuried, which is what the classifier said one moment
+	// earlier. That cause means "a bin is in front of me and somebody should move
+	// it"; this one means "and that somebody is me, and I have started". The
+	// releasers differ in exactly the way that matters to whoever reads the board.
+	CauseStagedOwnDig QueueCause = "staged-own-dig"
 	// CauseChapterLegInFlight — the demand is in `reshuffling` and one of its own
 	// dig legs is a mission the fleet still holds. §R.91 made the demand wear the
 	// status its folder used to, and PopCompoundParent's "structure needs no

@@ -387,10 +387,69 @@ func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *Reshuf
 	if err := d.writeCompoundChildren(parentOrder, plan); err != nil {
 		return err
 	}
-	if err := d.lifecycle.BeginReshuffle(parentOrder, reshuffleBeginDetail(plan)); err != nil {
+	// ── A GATE-STAGED PARENT KEEPS ITS STATUS (§R.104) ────────────────────
+	//
+	// `staged` is TRUE of it: there is a robot standing at a lane's mark holding a
+	// bin. Moving it to `reshuffling` would be a lie about the floor, and
+	// {staged → reshuffling} is not a legal transition anyway — which is the fact
+	// two review rounds read as "therefore this shape needs a folder forever".
+	//
+	// The reversal is §R.104's, argued in writing: those rounds conflated
+	// RE-PLANNING with RESUMING. A committed robot cannot be re-planned, and does
+	// not need to be — its plan is intact, only PRECEDED by a dig chapter, and its
+	// resume is the splice-append rather than the queue round-trip. No transition
+	// is needed at either end, so none is taken, and the order is recognised as a
+	// parent by the only thing that ever mattered: it has children.
+	//
+	// ONE CREATION DOOR STILL. CreateCompoundChildrenOnly was deleted for being a
+	// second one, and its tombstone is right above this — "a second door is a
+	// second place for the two halves to get out of order". So the question is
+	// asked HERE, inside the one door, rather than by giving the new shape a door
+	// of its own.
+	if IsGateStaged(parentOrder) {
+		d.setQueueReason(parentOrder, protocol.QueueStorageRearranging, CauseStagedOwnDig,
+			QueueParams{DigOrderID: parentOrder.ID})
+		log.Printf("dispatch: order %d is standing at its mark and digging its own lane open "+
+			"(%d steps) — it keeps `staged` and its lane lock; its tail is appended where it stands "+
+			"when the chapter closes", parentOrder.ID, len(plan.Steps))
+	} else if err := d.lifecycle.BeginReshuffle(parentOrder, reshuffleBeginDetail(plan)); err != nil {
 		log.Printf("dispatch: begin reshuffle order %d: %v", parentOrder.ID, err)
 	}
 	return d.AdvanceCompoundOrder(parentOrder.ID)
+}
+
+// firstLaneName resolves a readable name for the first of a compound's held
+// lanes, for a queue sentence. Empty when there are none or the read fails — a
+// sentence with no lane is less specific, and inventing one is worse.
+func (d *Dispatcher) firstLaneName(laneIDs []int64) string {
+	for _, id := range laneIDs {
+		if lane, err := d.db.GetNode(id); err == nil && lane != nil {
+			return lane.Name
+		}
+	}
+	return ""
+}
+
+// hasOpenDigChapter reports whether an order has a dig chapter still running —
+// any non-terminal child. It is the recognition predicate §R.104 leans on ("a
+// parent is anything with children"), asked about the LIVE half.
+//
+// FAIL CLOSED: an unreadable child set answers YES. Every caller uses it to
+// decide whether to hold off doing something to a parent mid-excavation, and
+// doing that thing on a read that did not answer is the direction that breaks.
+func (d *Dispatcher) hasOpenDigChapter(orderID int64) bool {
+	children, err := d.db.ListChildOrders(orderID)
+	if err != nil {
+		log.Printf("dispatch: could not read order %d's children while asking whether its chapter is "+
+			"open: %v (assuming it is)", orderID, err)
+		return true
+	}
+	for _, c := range children {
+		if !protocol.IsTerminal(c.Status) {
+			return true
+		}
+	}
+	return false
 }
 
 // reshuffleBeginDetail is the history line a compound parent carries into
@@ -658,7 +717,27 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// tried to Fail a cancelled order — rejected by the state machine, logged as
 		// an error, harmless but wrong — and the second would FAIL A LIVE
 		// RE-PLANNING ORDER, which is the demand the dissolve just saved.
-		if parent != nil && parent.Status != StatusReshuffling {
+		//
+		// ── A GATE-STAGED PARENT HAS NOT LEFT: IT NEVER ENTERED (§R.104) ──
+		//
+		// This guard reads "not `reshuffling`" as "moved on", which was true while
+		// every compound parent passed through that status. A parent that dug its
+		// own lane open from the mark never took the transition at all — `staged`
+		// is the truth about it, and the transition it skipped is the illegal one.
+		// Falling through here would return before its disposition and leave the
+		// robot at the mark forever, which is the same wedge the completion fork
+		// below was taught to avoid, one guard earlier in the same function.
+		//
+		// It is not covered by the three dispositions this guard protects, either:
+		// Fail, CompleteCompound and ResumeCompound all write a transition OUT of
+		// `reshuffling`, and the staged arm writes no transition at all.
+		//
+		// THE AUDIT MISSED THIS ONE AND THE SUITE FOUND IT. §R.104's consumer audit
+		// enumerated readers of staged orders and of child-bearing orders and
+		// caught the completion fork; this is the same class — a status guard
+		// assuming every compound parent is `reshuffling` — twenty lines earlier,
+		// and it took the two window-3 fixtures to surface it.
+		if parent != nil && parent.Status != StatusReshuffling && !IsGateStaged(parent) {
 			d.dbg("dispatch: compound %d is finished with, its parent is %s — nothing to dispose of",
 				parentOrderID, parent.Status)
 			return nil
@@ -892,7 +971,26 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// that corridor is not free, and telling the dwellers behind it that it is
 		// would send them at a lane whose new holder excludes them.
 		toRelease := heldLanes
-		if parent != nil {
+		if parent != nil && IsGateStaged(parent) {
+			// ── THE LOCK OUTLIVES THE CHAPTER (§R.104a) ───────────────────
+			//
+			// Neither released nor handed over. The law is lock → dig → append with
+			// ONE lock throughout: this parent took the lane before it summoned a
+			// single dig, and the append that follows is about to drive its robot
+			// into that same corridor. Releasing here re-admits traffic into the
+			// gap between the last blocker leaving and the tail landing, which is
+			// the re-burial window the lock exists to close, arrived at from a new
+			// direction.
+			//
+			// The handoff is skipped for the same fact stated differently: it gives
+			// the corridor to the order collecting the bin, and here that order is
+			// the holder. It would walk this parent's own `dig` row down to
+			// `outbound` one line before the append — sharing the lane it is still
+			// using.
+			toRelease = toRelease[:0:0]
+			d.dbg("dispatch: order %d keeps lane(s) %v across its own chapter's close — the append is "+
+				"still to come", parentOrderID, heldLanes)
+		} else if parent != nil {
 			toRelease = toRelease[:0:0]
 			for _, laneID := range heldLanes {
 				if d.handOffDugLane(parent, laneID) {
@@ -934,7 +1032,35 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// mode is gone, so expose is the only shape a complex dig takes and the
 		// question the sniff answered no longer has two answers.
 		if parent != nil {
-			if IsCoordinated(parent) {
+			if IsGateStaged(parent) {
+				// ── THE SECOND RESUME DOOR (§R.104) ───────────────────────────
+				//
+				// THIS IS THE AUDIT'S CATCH, and it is worth reading as the near-miss
+				// it was. A gate-staged parent IS coordinated, so without this arm it
+				// took ResumeCompound — {staged → queued}, an ILLEGAL transition,
+				// logged and dropped by design. The first staged robot ever to finish
+				// its digs would have stood at its mark forever, under a wait whose
+				// releaser had already fired. The ghost this whole campaign has been
+				// exorcising, reborn through a new door on day one.
+				//
+				// The resume is the SPLICE-APPEND: the plan was never re-planned, only
+				// PRECEDED, so there is nothing to re-resolve and no round trip to
+				// take. The lane lock is already held — it was the chapter's first act
+				// and it outlives the chapter — so this is the last step of
+				// lock → dig → append, and the append happens where the robot stands.
+				//
+				// The cause is cleared FIRST: it describes a wait that is over, and the
+				// append below can fail, in which case the release arm writes its own.
+				d.setQueueReason(parent, "", "", QueueParams{})
+				log.Printf("dispatch: order %d's own dig chapter is closed — appending its tail to the "+
+					"robot standing at its mark", parentOrderID)
+				if err := d.appendGateTail(parent, "own-dig resume"); err != nil {
+					log.Printf("dispatch: order %d could not be appended after its own dig: %v "+
+						"(it stays at the mark; the evaluator re-asks)", parentOrderID, err)
+					d.setQueueReason(parent, protocol.QueueWaitingForSlot, CauseGateAppendFailed,
+						QueueParams{Lane: d.firstLaneName(heldLanes)})
+				}
+			} else if IsCoordinated(parent) {
 				if err := d.lifecycle.ResumeCompound(parent); err != nil {
 					log.Printf("dispatch: resume compound order %d: %v", parentOrderID, err)
 				}

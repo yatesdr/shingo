@@ -46,11 +46,19 @@ func TestAcquireLanesForOrder_GatedByConfig(t *testing.T) {
 		t.Error("expected a contended-lane name for the queue sentence")
 	}
 
-	// A non-mouth group is a no-op — admitted with no hold (byte-identical).
-	_, _, noneSlot := gatedLane(t, db, "AFO-NONE", "")
+	// AN UNMARKED LANE IS ACQUIRED, NOT SKIPPED — the block here read "A non-mouth
+	// group is a no-op — admitted with no hold (byte-identical)". After a1 there is
+	// no such thing as a lane the mouth does not sequence, so the assertion is
+	// restated as what it can still prove: a free unmarked lane admits, and the
+	// hold it takes is real enough for a second order to be refused on it.
+	_, noneLaneID, noneSlot := gatedLane(t, db, "AFO-NONE", "")
 	admitted, _, _, err = d.AcquireLanesForOrder(a, line, noneSlot, EntryFreshBin)
 	if err != nil || !admitted {
-		t.Fatalf("non-mouth group: admitted=%v err=%v, want admitted no-op", admitted, err)
+		t.Fatalf("free unmarked lane: admitted=%v err=%v, want admitted", admitted, err)
+	}
+	if n := gateMouthRows(t, db, noneLaneID); n != 1 {
+		t.Fatalf("unmarked lane holds %d mouth row(s), want 1 — a lane with no mark is still a "+
+			"single-file corridor", n)
 	}
 }
 
@@ -252,13 +260,19 @@ func TestLaneGate_ResolveHolds(t *testing.T) {
 	_, _, noneSlot := gatedLane(t, db, "RES-NONE", "")
 	line := lineNode(t, db, "RES-LINE")
 
-	// Retrieve: pick from a mouth lane, drop at a line → one OUTBOUND hold.
+	// Retrieve: pick from a lane, drop at a line → one hold on the SOURCE, and it
+	// is the full lane LOCK.
+	//
+	// RE-POINTED by §R.101: this asserted `ModeOutbound` with the message "want one
+	// outbound on lane %d". A source hold shares no longer — a demand that resolves
+	// onto a bin owns that lane until the bin leaves by its mover, which is arm 2's
+	// dig rule generalized to every order.
 	holds, err := d.resolveOrderLaneHolds(mouthSlot, line)
 	if err != nil {
 		t.Fatalf("resolve (retrieve): %v", err)
 	}
-	if len(holds) != 1 || holds[0].laneID != mouthLaneID || holds[0].mode != reservations.ModeOutbound {
-		t.Fatalf("retrieve holds = %+v, want one outbound on lane %d", holds, mouthLaneID)
+	if len(holds) != 1 || holds[0].laneID != mouthLaneID || holds[0].mode != reservations.ModeDig {
+		t.Fatalf("retrieve holds = %+v, want one LOCK on lane %d", holds, mouthLaneID)
 	}
 
 	// Store: pick from a line, drop into a mouth lane → one INBOUND hold.
@@ -270,13 +284,21 @@ func TestLaneGate_ResolveHolds(t *testing.T) {
 		t.Fatalf("store holds = %+v, want one inbound", holds)
 	}
 
-	// A non-mouth group contributes nothing.
+	// AN UNMARKED LANE STILL CONTRIBUTES — RE-POINTED by §R.95/§R.96 stage 2, a1.
+	//
+	// This read "A non-mouth group contributes nothing" and asserted
+	// `len(holds) != 0` was a failure with the message "want none (gate off)".
+	// That was the whole defect stated as a requirement: §R.95's census found zero
+	// holds on unmarked lanes at both plants, so the mouth machinery had never run
+	// where it mattered. The mark says where a robot WAITS, which is configuration;
+	// it never said whether a single-file lane needs sequencing, which is physics.
 	holds, err = d.resolveOrderLaneHolds(noneSlot, line)
 	if err != nil {
-		t.Fatalf("resolve (none group): %v", err)
+		t.Fatalf("resolve (unmarked lane): %v", err)
 	}
-	if len(holds) != 0 {
-		t.Fatalf("none-group holds = %+v, want none (gate off)", holds)
+	if len(holds) != 1 || holds[0].mode != reservations.ModeDig {
+		t.Fatalf("unmarked-lane holds = %+v, want one lock — every lane yields holds; the mark "+
+			"chooses where the waiting happens, not whether the mouth is sequenced", holds)
 	}
 
 	// Two mouth lanes (a move) → two holds, one per direction.
@@ -418,5 +440,67 @@ func TestLaneGate_CauseDig(t *testing.T) {
 	holds, _ := d.resolveOrderLaneHolds(line, slot) // waiter wants inbound
 	if c := d.causeForLaneHolds(waiter.ID, holds); c != "lane-held-dig" {
 		t.Errorf("cause = %q, want lane-held-dig", c)
+	}
+}
+
+// TestLaneGate_UnmarkedLaneSerializesOpposingModes is a1's whole point, at the
+// acquire rather than at the derivation (§R.95/§R.96 stage 2).
+//
+// §R.95's census: zero mouth holds on unmarked lanes at Springfield and
+// Hopkinsville, and complex never acquiring at all. The machinery was correct and
+// had never run where the plant is. An unmarked lane is not a lane with no
+// constraint — it is a single-file corridor whose constraint nobody was asking
+// about, and one robot in it going out while another comes in is the collision
+// the mouth exists to prevent.
+//
+// MUTATION (verified): restore the `if !d.laneIsGated(lane.ID) { return nil }`
+// skip in resolveOrderLaneHolds. B is admitted into the lane A is picking out of
+// and the "want refused" assertion fires.
+func TestLaneGate_UnmarkedLaneSerializesOpposingModes(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	_, laneID, slot := gatedLane(t, db, "UNMARKED-SER", "") // no mark: the plant's shape
+	line := lineNode(t, db, "UNMARKED-SER-LINE")
+	a := testdb.CreateOrder(t, db)
+	b := testdb.CreateOrder(t, db)
+
+	if d.laneIsGated(laneID) {
+		t.Fatal("fixture is wrong: this lane carries a mark, so it proves nothing about the plant")
+	}
+
+	// A picks OUT of the lane.
+	holdsA, err := d.resolveOrderLaneHolds(slot, line)
+	if err != nil {
+		t.Fatalf("resolve A: %v", err)
+	}
+	admitted, err := d.acquireOrderLanes(a.ID, holdsA)
+	if err != nil || !admitted {
+		t.Fatalf("A acquire: admitted=%v err=%v, want admitted on a free lane", admitted, err)
+	}
+
+	// B wants to drop INTO it while A is picking out. Opposing modes in one
+	// single-file corridor.
+	holdsB, err := d.resolveOrderLaneHolds(line, slot)
+	if err != nil {
+		t.Fatalf("resolve B: %v", err)
+	}
+	admitted, err = d.acquireOrderLanes(b.ID, holdsB)
+	if err != nil {
+		t.Fatalf("B acquire: %v", err)
+	}
+	if admitted {
+		t.Fatal("B was admitted into the lane A is picking out of — an unmarked lane is still " +
+			"single-file, and this is the collision the mouth exists to prevent")
+	}
+
+	// AND IT IS A WAIT, NOT A WALL: when A gives the lane back, B goes in.
+	if _, err := reservations.ReleaseLanesByOwner(db.DB, a.ID); err != nil {
+		t.Fatalf("release A: %v", err)
+	}
+	admitted, err = d.acquireOrderLanes(b.ID, holdsB)
+	if err != nil || !admitted {
+		t.Fatalf("B after A released: admitted=%v err=%v — a refusal with no releaser is not a wait", admitted, err)
 	}
 }

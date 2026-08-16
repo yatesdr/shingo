@@ -175,13 +175,25 @@ func TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking(t *testing.T) {
 			"planned. Nothing else in the plant will ever move it — this is F-11, and the dweller "+
 			"waits forever.", wall.Name, w[1].Name, w[0].Name, blocker.ID)
 	}
-	if parent.Status != StatusReshuffling {
-		t.Errorf("dig parent %d is %s, want %s — it must go through the ordinary compound door",
-			parent.ID, parent.Status, StatusReshuffling)
+	// RE-POINTED by §R.104. This asserted the FOLDER: a separate parent in
+	// `reshuffling`, and PLAIN so it would confirm rather than resume ("the heal
+	// parent must be PLAIN: a coordinated parent routes to ResumeCompound and
+	// would come back wanting work of its own, and clearing the corridor was the
+	// whole job").
+	//
+	// There is no folder now. The dweller digs its own lane, so the parent IS the
+	// dweller: still `staged` (true — its robot is standing at the mark), still
+	// coordinated (it has a plan it still owes), and its resume is the
+	// splice-append rather than either of the two doors that sentence was choosing
+	// between. The scenario and the outcome are unchanged; the owner is not.
+	if parent.ID != dweller.ID {
+		t.Fatalf("the dig parent is order %d, want the dweller %d — a staged order digs its OWN lane; "+
+			"a separate parent means a folder was minted", parent.ID, dweller.ID)
 	}
-	if parent.Coordinated {
-		t.Error("the heal parent must be PLAIN: a coordinated parent routes to ResumeCompound and " +
-			"would come back wanting work of its own, and clearing the corridor was the whole job")
+	if !IsGateStaged(parent) {
+		t.Errorf("the digging dweller is %s, want it still gate-staged — no status moves at either "+
+			"end, which is what makes the illegal {staged -> reshuffling} transition unreachable",
+			parent.Status)
 	}
 
 	// 2. THE DIG CLAIMED THE BLOCKER AT CREATION — the owner's requirement.
@@ -255,16 +267,25 @@ func TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking(t *testing.T) {
 			t.Error("the dweller's tail must SEAL it")
 		}
 	}
-	if d.laneLock.IsLocked(wall.ID) {
-		t.Error("the heal dig must not leave its lane lock behind")
+	// THE LOCK IS STILL HELD, AND THAT IS THE RULE — re-pointed by §R.104a.
+	// This asserted "the heal dig must not leave its lane lock behind", which was
+	// right when the digger was a folder that finished and went away. The digger is
+	// the dweller, and it has just been appended INTO this corridor: lock -> dig ->
+	// append, one lock throughout, released when its bin leaves by its mover.
+	if !d.laneLock.IsLocked(wall.ID) {
+		t.Error("the dweller was appended into a lane it no longer holds — the lock outlives the " +
+			"chapter precisely because the append comes after it")
 	}
-	// The parent has no demand of its own to resume — clearing the corridor WAS the
-	// work — so it confirms rather than requeueing into a scanner that has nothing
-	// to plan for it.
+	// It used to read: "The parent has no demand of its own to resume — clearing
+	// the corridor WAS the work — so it confirms rather than requeueing into a
+	// scanner that has nothing to plan for it." That was the folder's disposition.
+	// The dweller's own work is the whole point of the excavation, and having been
+	// appended it is now DRIVING.
 	done, err := db.GetOrder(parent.ID)
-	testutil.MustNoErr(t, err, "reload dig parent")
-	if done.Status != StatusConfirmed {
-		t.Errorf("heal parent finished as %s, want %s", done.Status, StatusConfirmed)
+	testutil.MustNoErr(t, err, "reload the digging dweller")
+	if done.Status != StatusInTransit {
+		t.Errorf("the dweller finished its dig as %s, want %s — the chapter closed and its tail was "+
+			"appended where it stood", done.Status, StatusInTransit)
 	}
 }
 
@@ -488,15 +509,23 @@ func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.
 	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
 
 	// ── AND NOW THE RIG'S ACTUAL SHAPE: an ORDINARY, non-dig mouth hold on the
-	// same lane. A retrieve leaving this lane takes an `outbound` row, which is
-	// what LS_C5 was holding.
-	leaver := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.SourceNode = w[0].Name
-		o.DeliveryNode = line.Name
+	// same lane.
+	//
+	// RE-POINTED by §R.101. This used to be a retrieve LEAVING the lane, whose
+	// `outbound` row is what LS_C5 was holding. A source hold is now the full lane
+	// lock, so that order no longer produces a non-dig row and the fixture would
+	// prove the opposite of what it says. An order DROPPING INTO the lane still
+	// takes `inbound` — destination-side holds are unchanged — so the ordinary
+	// non-dig holder the runaway needs still exists, and the property under test is
+	// untouched: a pre-check that asks about DIGS while the acquire refuses on ANY
+	// row is the 16,947 family.
+	dropper := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = line.Name
+		o.DeliveryNode = w[0].Name
 		o.Status = "in_transit"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(leaver, w[0], line, EntryHeldBin); err != nil || !adm {
-		t.Fatalf("the leaver must take an outbound mouth row on the wall lane: adm=%v err=%v", adm, err)
+	if adm, _, _, err := d.AcquireLanesForOrder(dropper, line, w[0], EntryHeldBin); err != nil || !adm {
+		t.Fatalf("the dropper must take an inbound mouth row on the wall lane: adm=%v err=%v", adm, err)
 	}
 	if d.laneLock.IsLocked(wall.ID) {
 		t.Fatal("precondition: no DIG holds the lane — that is the whole point, the holder is ordinary")
@@ -760,9 +789,13 @@ func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T
 	// row would let a third party drop into the lane while the dig runs.
 	rows, err := reservations.ActiveMouthRows(db.DB, wall.ID)
 	testutil.MustNoErr(t, err, "read mouth rows")
+	//
+	// RE-POINTED by §R.101: the requester's row was `outbound` and is now the full
+	// lane lock its resolve took. The property is unchanged — its row survives the
+	// rescue rather than being evicted by it.
 	var sawRequester, sawDig bool
 	for _, h := range rows {
-		if h.OrderID == requester.ID && h.Mode == reservations.ModeOutbound {
+		if h.OrderID == requester.ID && h.Mode == reservations.ModeDig {
 			sawRequester = true
 		}
 		if h.OrderID == res.parent.ID && h.Mode == reservations.ModeDig {
@@ -770,7 +803,7 @@ func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T
 		}
 	}
 	if !sawRequester {
-		t.Errorf("the requester's outbound row is gone from %s: %+v", wall.Name, rows)
+		t.Errorf("the requester's own lane row is gone from %s: %+v", wall.Name, rows)
 	}
 	if !sawDig {
 		t.Errorf("the dig's own row is missing from %s: %+v", wall.Name, rows)

@@ -176,7 +176,7 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 	//
 	// Outside it, the nested pass is harmless and bounded: it finds the dig lock
 	// held, refuses everyone with lane-dig-active, and returns.
-	heal, wanted, freed := d.evaluateLaneReleasesPass(lane)
+	acceptance, wanted, freed := d.evaluateLaneReleasesPass(lane)
 	// AND THE SAME SPLIT COVERS THE DWELL'S EXIT. A released dweller drives out of
 	// this lane and drops its occupancy row inside the pass, where the fact becomes
 	// true — but the re-drive that fact enables cannot run there: it dispatches,
@@ -197,7 +197,7 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 		d.RedriveHeldCompoundLegs(lane.ID)
 	}
 	if wanted {
-		d.healLaneMouth(lane, heal)
+		d.summonOwnDigs(lane, acceptance)
 	}
 }
 
@@ -210,14 +210,14 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 // excavation frees them all; a second request would find the lane locked by the
 // first and do nothing. Returning one keeps that obvious instead of relying on the
 // lock to absorb the duplicates.
-func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bool, bool) {
+func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceRequest, bool, bool) {
 	laneID := lane.ID
 	unlock := d.laneGates.lock(laneID)
 	defer unlock()
 
 	var (
-		heal       healRequest
-		healWanted bool
+		acceptance acceptanceRequest
+		digWanted  bool
 		// freedLane records that a dweller drove out of this lane during the pass,
 		// so the caller can wake whatever was queued behind it once the mutex is
 		// gone. See EvaluateLaneReleases for why it cannot be woken from in here.
@@ -227,7 +227,7 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bo
 	candidates, err := d.gateStagedForLane(lane)
 	if err != nil {
 		log.Printf("lane gate: list staged orders for lane %s: %v", lane.Name, err)
-		return heal, false, false
+		return acceptance, false, false
 	}
 
 	// Deepest first — but be clear about what this sort does and does not buy,
@@ -302,15 +302,63 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bo
 	// re-asks. If the read failure persists, the wall it might be sitting on is
 	// still there to be found on the pass after that — by which time the
 	// classifier can actually see it.
-	propose := func(c gateCandidate) {
-		if healWanted {
+	// ── THE ACCEPTANCE ARM (§R.104) ───────────────────────────────────────
+	//
+	// The oracle has just asked fresh and answered BURIED. Under the folder era
+	// that answer raised a synthetic parent to dig on this order's behalf; now the
+	// order digs its own lane, as its own children, without moving off `staged`.
+	//
+	// KEYED ON THE CAUSE, which is narrower than the heal's "any refusal at all"
+	// and is the point rather than a regression. The heal read the physics itself
+	// because it was a side channel that had to re-derive what the classifier
+	// already knew. This is the classifier's own verdict, so it inherits its
+	// discrimination: a lane-occupied refusal clears when the occupant leaves, a
+	// Tier-2 park clears when the deeper store places, and neither is a wall an
+	// excavation would help. One spelling, and it is the same one admitComplexLanes
+	// uses for the same fact on the complex path.
+	propose := func(c gateCandidate, cause QueueCause) {
+		if digWanted {
 			return // one dig per pass — see the function doc
 		}
-		if req, ok := d.mouthHealNeeded(lane, c); ok {
-			heal, healWanted = req, true
+		// ── THE PHYSICS, NOT THE CAUSE ────────────────────────────────
+		//
+		// The first build of this keyed on CauseLaneTargetBuried, reasoning that
+		// the classifier is the oracle and its verdict should be inherited rather
+		// than re-derived. The suite refused it in two places, and the deleted
+		// heal's own header had said why: "a Tier-2 park, a lane-occupied refusal
+		// and a failed re-bind can all be sitting on top of the same wall, and any
+		// of them noticing it is enough."
+		//
+		// Measured on the two window-3 fixtures: the dweller that must be dug out
+		// is refused with `lane-deeper-pending` at the gate and then fails its
+		// release with "no empty slot in lane" — the burial is real and the word
+		// "buried" is never said. The REFUSAL IS THE PROMPT; the physics is the
+		// question. `cause` is carried only so a caller that admitted cleanly
+		// cannot reach here at all.
+		if cause == "" {
+			return
+		}
+		if req, ok := d.acceptanceDigNeeded(lane, c); ok {
+			acceptance, digWanted = req, true
 		}
 	}
 	for _, c := range candidates {
+		// ── NOTHING IS APPENDED MID-EXCAVATION (§R.104a's ordering) ───────
+		//
+		// A candidate with an open dig chapter is one of these robots standing at
+		// its mark while its OWN children work the lane. The pass must not release
+		// it: the law is lock → dig chapter → append, and appending here would send
+		// the robot in behind its own diggers. Its releaser is the chapter closing,
+		// which appends the tail on the completion path.
+		//
+		// It also keeps such a candidate out of every downstream proposal on this
+		// pass, which is the audit's item 10 — a digging dweller must never read as
+		// a candidate for another excavation of the lane it is already excavating.
+		if d.hasOpenDigChapter(c.order.ID) {
+			d.dbg("lane gate: order %d is digging %s open with its own children — not released, and "+
+				"not a candidate for anything else, until its chapter closes", c.order.ID, lane.Name)
+			continue
+		}
 		if c.dwell {
 			// A DWELLER ASKS A DIFFERENT QUESTION, SO IT DOES NOT GO THROUGH THE
 			// ENTRY CLASSIFIER.
@@ -406,7 +454,7 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bo
 			d.setQueueReason(c.order, protocol.QueueWaitingForSlot, v.Cause(),
 				QueueParams{Lane: lane.Name})
 			d.dbg("lane gate: order %d still held at %s (%s)", c.order.ID, lane.Name, v.Cause())
-			propose(c)
+			propose(c, v.Cause())
 			continue
 		}
 		var rErr error
@@ -430,7 +478,11 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bo
 			log.Printf("lane gate: release order %d into lane %s: %v", c.order.ID, lane.Name, rErr)
 			d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed,
 				QueueParams{Lane: lane.Name})
-			propose(c)
+			// A FAILED RELEASE IS NOT A WALL. This used to propose, because the heal
+			// read the physics for itself and might find one. The classifier ADMITTED
+			// this candidate, so there is no burial here — the append failed, and the
+			// releaser for that is a retry, not an excavation.
+			propose(c, CauseGateReleaseFailed)
 			continue
 		}
 		// CLEARED ON ENTRY. The cause described a wait that is over; leaving it
@@ -443,7 +495,7 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bo
 	if released > 0 {
 		log.Printf("lane gate: released %d order(s) into lane %s", released, lane.Name)
 	}
-	return heal, healWanted, freedLane
+	return acceptance, digWanted, freedLane
 }
 
 // gateCandidate is one gate-staged order with the destination and depth the

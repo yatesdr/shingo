@@ -165,6 +165,43 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 		return dispatchStep{done: true, err: fmt.Errorf("complex order %d held at lane %s: %s",
 			order.ID, v.Lane(), v.Cause())}
 	}
+
+	// ── AND NOW THE MOUTH, WHICH THIS PATH HAD NEVER TAKEN (§R.101) ───────
+	//
+	// Everything above is admission: ordinary reads, no rows written. The holds are
+	// the acquisition, and a coordinated order took none — so §R.95's census found
+	// complex acquiring nothing, on the traffic class that carries both plants.
+	//
+	// Same split, same order, same reasons as AcquireLanesForOrder states for the
+	// plain path: the physical questions first because a dig excludes everything,
+	// then the mouth, which cannot be lifted out because it runs under the lane's
+	// advisory lock inside its own transaction.
+	//
+	// A conflict is a WAIT, not a fault. The order parks with the contended lane
+	// named and the ordinary triggers re-ask; nothing it holds is given up, which
+	// is Rule 1 exactly as the plain path applies it.
+	holds, hErr := d.resolvePlanLaneHolds(resolvedSteps)
+	if hErr != nil {
+		log.Printf("dispatch: resolving lane holds for complex order %d: %v (holding)", order.ID, hErr)
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLaneAcquireError,
+			QueueParams{Destination: order.DeliveryNode})
+		return dispatchStep{done: true, err: hErr}
+	}
+	admitted, aErr := d.acquireOrderLanes(order.ID, holds)
+	if aErr != nil {
+		log.Printf("dispatch: acquiring lanes for complex order %d: %v (holding)", order.ID, aErr)
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLaneAcquireError,
+			QueueParams{Destination: order.DeliveryNode})
+		return dispatchStep{done: true, err: aErr}
+	}
+	if !admitted {
+		cause := d.causeForLaneHolds(order.ID, holds)
+		laneName := d.laneDisplayName(holds)
+		d.dbg("complex: order %d could not take the mouth on lane %s (%s)", order.ID, laneName, cause)
+		d.setQueueReason(order, protocol.QueueWaitingForSlot, cause, QueueParams{Destination: laneName})
+		return dispatchStep{done: true, err: fmt.Errorf("complex order %d could not take lane %s: %s",
+			order.ID, laneName, cause)}
+	}
 	return dispatchStep{}
 }
 
