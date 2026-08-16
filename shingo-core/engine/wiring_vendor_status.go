@@ -174,6 +174,15 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// specific refusal ("lane-occupied", "lane-target-buried") with a
 		// generic one.
 		e.dispatcher.MarkStationWaitIfOwned(order.ID)
+		// AND A LANE WAIT GETS RE-ASKED THE MOMENT THE ROBOT IS THERE.
+		//
+		// For an inbound dweller this is a cheap extra firing of a question the
+		// lane's own events already drive. For an OUTBOUND one it is the primary
+		// trigger: a dig leg standing in the lane it just lifted from is waiting for
+		// Core to choose where the blocker goes, and that choice is deferred to
+		// exactly this moment on purpose — it is what keeps the destination
+		// uncommitted while the robot works the other lane.
+		e.dispatcher.EvaluateWaitLaneForStagedOrder(order.ID)
 		if err := e.sendToEdge(protocol.TypeOrderStaged, order.StationID, &protocol.OrderStaged{
 			OrderUUID: order.EdgeUUID,
 			Detail:    "robot dwelling at staging node",

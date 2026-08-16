@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -202,6 +203,12 @@ func TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking(t *testing.T) {
 	if leg.SourceNode != w[0].Name {
 		t.Errorf("the dig leg picks from %q, want the walling slot %q", leg.SourceNode, w[0].Name)
 	}
+	// WHERE IT PARKS THE BLOCKER, read after the release rather than after the
+	// plan: the leg dwells in the walled lane holding the blocker until Core
+	// chooses a slot (the outbound dwell), so a plan-time read finds nothing bound.
+	// The property is the same one — the blocker goes to the ungated parking — and
+	// so is the exclusion enforcing it.
+	leg = releaseDwell(t, d, db, leg)
 	destNode, err := db.GetNodeByDotName(leg.DeliveryNode)
 	testutil.MustNoErr(t, err, "resolve the leg's dropoff")
 	if destNode == nil || destNode.ParentID == nil || *destNode.ParentID != park.ID {
@@ -512,6 +519,84 @@ func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.
 	// the paper trail differs.
 	if d.laneLock.IsLocked(wall.ID) {
 		t.Error("a dig lock was taken on a lane an ordinary order holds")
+	}
+}
+
+// TestWindow3_ClaimedBlockerRefusesTheHealBeforeMintingAParent is the test above
+// one layer down, and it is the 2026-08-13 rig's other runaway.
+//
+// THE MEASUREMENT: 38,203 heal parents created and cancelled over 2h15m on the
+// lane-stress rig, a steady 200-290 a minute, every one of them ending "heal dig
+// not started: a blocker was claimed while the dig was being written". The blocker
+// was claimed by a complex order that was itself frozen for the whole window, so
+// the answer never changed — and each cancellation was a terminal event that
+// re-drove the proposer that had just been refused, so the loop fed itself.
+//
+// WHY THE EXISTING FACT-3 CHECK DID NOT CATCH IT: mouthHealNeeded asks about
+// claimed blockers, but mouthHealNeeded is the LANE GATE's route into the
+// proposer. The rig's loop came through a complex demand's walled pickup
+// (proposeDigForBuriedPickup), which asked nothing. That is why the check now
+// lives in proposeLaneClearDig — the one writer of a service dig — instead of in
+// a third caller.
+//
+// SO THIS TEST GOES THROUGH THE WRITER, not through the gate: a gate-routed
+// fixture would be answered by fact 3 and pass with the fix reverted.
+//
+// MUTATION (verified): delete the blocker-claim loop in proposeLaneClearDig.
+// Assertion (a) fires with one minted-and-cancelled parent — one per firing, which
+// on the rig was two hours of them.
+func TestWindow3_ClaimedBlockerRefusesTheHealBeforeMintingAParent(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	wall, _, w, _, bp := healLaneFixture(t, db, "HL5")
+	line := lineNode(t, db, "HL5-LINE")
+
+	// The wall, and a live order carrying it out — the commonest holder by a wide
+	// margin, per BlockerClaimedError's own header.
+	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL5-WALL")
+	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w[0].Name
+		o.DeliveryNode = line.Name
+		o.Status = "in_transit"
+	})
+	testutil.MustNoErr(t, execAt(db, `UPDATE bins SET claimed_by=$1 WHERE id=$2`, holder.ID, blocker.ID),
+		"claim the blocker")
+
+	// A requester walled behind it. It is carried for its origin only — the dig
+	// serves the lane, not this order.
+	requester := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[1].Name
+		o.Status = protocol.StatusPending
+	})
+
+	if !d.laneLock.CanTake(wall.ID) {
+		t.Fatal("precondition: the LANE is takeable — this test is about the BIN, and a lane-level " +
+			"refusal would let it pass with the fix reverted")
+	}
+
+	res := d.proposeLaneClearDig(wall, w[1], requester)
+
+	// (a) NO ORDER WAS WRITTEN TO DISCOVER A REFUSAL THAT WAS KNOWABLE.
+	if n := healParentsMinted(t, db, wall.Name); n != 0 {
+		t.Errorf("%d heal parent(s) were minted for %s and cancelled. The blocker was already claimed "+
+			"when the plan was built, so the claim CAS was always going to refuse — and on the rig this "+
+			"repeated on every event for 2h15m: 38,203 orders, no dig, and each cancellation re-driving "+
+			"the next attempt", n, wall.Name)
+	}
+
+	// (b) AND IT IS STILL A WAIT, NOT A FAULT. Law 1: a claimed blocker is
+	// congestion. The outcome has to be the one whose releaser is the holder
+	// carrying the bin out, or the requester parks under something that never clears.
+	if res.outcome != serviceDigBlockerClaimed {
+		t.Errorf("outcome is %v, want serviceDigBlockerClaimed — the holder is a live order driving "+
+			"that bin out of the lane, which is the releaser the requester's wait names", res.outcome)
+	}
+
+	// (c) AND NO LOCK WAS TAKEN.
+	if d.laneLock.IsLocked(wall.ID) {
+		t.Error("a dig lock was taken for a dig that was never going to be written")
 	}
 }
 

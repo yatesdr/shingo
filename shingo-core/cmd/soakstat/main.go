@@ -79,6 +79,7 @@ type report struct {
 	violations []string
 	robotReuse reuseStats
 	waitCauses []causeCount
+	dwell      dwellStats
 }
 
 type counts struct{ total, completed, failed, cancelled, inFlight, queued int }
@@ -117,6 +118,34 @@ type causeCount struct {
 	n     int
 }
 
+// dwellStats is the OUTBOUND DWELL's watched measure: how long dig legs stand in
+// the lanes they are digging, holding a blocker, while Core chooses where it goes.
+//
+// ── WHY IT IS WATCHED RATHER THAN CAPPED ──────────────────────────────────
+//
+// Owner ruling (§R.71): no per-node dweller counting is built. Capacity can be
+// inferred from LOCKING — a dwelling dig's lane is visibly locked, the oracle's
+// group view is honest at the granularity that governs choreography, and Core is
+// the single chooser at release time deciding against fresh state. Building a
+// counter for a problem that is waiting is a mechanism that absorbs.
+//
+// What replaces it is this number and a trend. A dwell is SUPPOSED to be short:
+// in the ordinary case the destination is open and the robot barely pauses. A
+// dwell time that balloons means legs are standing loaded while the group has
+// nowhere to put anything, and that is the signal for the oracle to stop starting
+// digs into a lock-saturated group — a day-2 decision this measure exists to
+// inform rather than to pre-empt.
+//
+// `open` is the half that cannot be read from a completed window: legs dwelling
+// RIGHT NOW, counted with their age against the sample time. A soak that ends
+// with open dwellers and a large max is a different report from one whose dwells
+// all closed.
+type dwellStats struct {
+	n          int     // dig legs that have dwelled at all in this window
+	open       int     // of those, how many are still standing
+	avgS, maxS float64 // seconds, open dwells measured against now
+}
+
 type logStats struct {
 	source                       string
 	softN, hardN, churnN, stealN int
@@ -132,6 +161,7 @@ func collect(db *store.DB, logSource string) *report {
 	r.dissolves = scalar(db, `SELECT COUNT(*) FROM orders WHERE error_detail = $1`, dispatch.ReshuffleDissolveDetail)
 	r.depthCost = depthCost(db)
 	r.waitCauses = waitCauses(db)
+	r.dwell = dwellDuration(db)
 	if logSource != "" {
 		r.logCounts = readLog(logSource)
 	}
@@ -396,6 +426,67 @@ func gatedVsUngated(db *store.DB) map[bool]flowStats {
 		out[marked] = f
 	}
 	return out
+}
+
+// dwellDuration measures how long dig legs stand loaded in the lane they are
+// digging — §R.71's rider 2, and the number that decides whether the outbound
+// dwell is a pause or a stall.
+//
+// ── THE MOMENTS IT READS, AND WHY THEY ARE THE RIGHT TWO ──────────────────
+//
+// A dwell starts when the robot reaches its wait — which is the order going
+// `staged`, an order_history row — and ends at the next status change, which is
+// the release driving it out. Both are written by the lifecycle rather than by
+// anything this measure asked for, so the number costs no new writer and cannot
+// drift from the thing it describes (law 4: the fact is stamped where it is made).
+//
+// THE LAST `staged` ROW, not the first. A leg digging a MARKED lane stages twice:
+// once outside at the lane's mark waiting to be let IN, and once inside at the
+// dwell waiting for a destination. They are different waits with different
+// releasers, and the second is the one this measure is about — so DISTINCT ON
+// takes the latest, which is the outbound one by construction (the dwell cannot
+// precede the entry it follows).
+//
+// AN OPEN DWELL IS MEASURED AGAINST NOW, deliberately. A leg still standing when
+// the sample is taken is exactly the population a ballooning trend is made of,
+// and excluding it would make the average look best at the worst moment — the
+// same premature-read error §R.12 cost this stream once already.
+func dwellDuration(db *store.DB) dwellStats {
+	var s dwellStats
+	// The terminal set is RENDERED from the transition table rather than passed as
+	// an array parameter: that is how every other status predicate in this tree is
+	// written (protocol.TerminalStatusSQLList), and a second spelling of "which
+	// statuses are terminal" is exactly what a status added later would break.
+	err := db.DB.QueryRow(fmt.Sprintf(`
+		WITH last_stage AS (
+			SELECT DISTINCT ON (h.order_id) h.order_id, h.created_at AS started
+			FROM order_history h
+			JOIN orders o ON o.id = h.order_id
+			WHERE h.status = $1 AND o.parent_order_id IS NOT NULL
+			ORDER BY h.order_id, h.created_at DESC
+		),
+		dwell AS (
+			SELECT ls.order_id,
+			       ls.started,
+			       (SELECT MIN(h2.created_at) FROM order_history h2
+			         WHERE h2.order_id = ls.order_id
+			           AND h2.created_at > ls.started
+			           AND h2.status <> $1)                       AS ended,
+			       (o.delivery_node = '' AND o.status NOT IN (%s)) AS still_open
+			FROM last_stage ls
+			JOIN orders o ON o.id = ls.order_id
+		)
+		SELECT COUNT(*),
+		       COUNT(*) FILTER (WHERE still_open),
+		       COALESCE(AVG(EXTRACT(EPOCH FROM (COALESCE(ended, NOW()) - started))), 0),
+		       COALESCE(MAX(EXTRACT(EPOCH FROM (COALESCE(ended, NOW()) - started))), 0)
+		FROM dwell`, protocol.TerminalStatusSQLList()),
+		string(protocol.StatusStaged)).
+		Scan(&s.n, &s.open, &s.avgS, &s.maxS)
+	if err != nil {
+		return dwellStats{}
+	}
+	return s
 }
 
 // depthCost answers catalog 8.6: what depth costs, in seconds, before and after
@@ -1002,6 +1093,16 @@ func (r *report) report() {
 			l.group, l.lane, yesNo(l.marked), l.depth, l.occupied, l.deepestFull)
 	}
 
+	fmt.Printf("\n[R.71] OUTBOUND DWELL  %d leg(s) dwelled · avg %.1fs · max %.1fs · %d still standing\n",
+		r.dwell.n, r.dwell.avgS, r.dwell.maxS, r.dwell.open)
+	fmt.Println("        A dwell is a dig leg standing in the lane it is digging, holding a blocker,")
+	fmt.Println("        while Core chooses where it goes. EXPECTED FLAT and short: the ordinary case")
+	fmt.Println("        is an open destination and a robot that barely pauses. A rising average or a")
+	fmt.Println("        max that keeps growing means legs are standing loaded in a group with nowhere")
+	fmt.Println("        to put anything — the signal for the oracle to stop starting digs into a")
+	fmt.Println("        lock-saturated group (§R.71 rider 2). It is a WATCHED measure, not a gate:")
+	fmt.Println("        no per-node dweller counting is built, by owner ruling.")
+
 	fmt.Printf("\n[8.4] DISSOLVES  %d\n", r.dissolves)
 	fmt.Println("        NOTE: the catalog expected ~0 'with settle-then-plan'. That mechanism")
 	fmt.Println("        does not exist (see FINDINGS F-02) — the dissolve is the built answer,")
@@ -1053,9 +1154,12 @@ func (r *report) summary() string {
 		reuse = fmt.Sprintf("%.0f%%", 100*float64(r.robotReuse.sameRobot)/float64(r.robotReuse.consecutivePairs))
 	}
 	return fmt.Sprintf(
-		"SOAK: orders %d done/%d fail · digs %d (max %d legs) · reuse %s · gated %.0fs vs ungated %.0fs · dissolves %d · hard-burials %s · violations %d",
+		"SOAK: orders %d done/%d fail · digs %d (max %d legs) · reuse %s · gated %.0fs vs ungated %.0fs · "+
+			"dwell %d avg %.0fs max %.0fs (%d open) · dissolves %d · hard-burials %s · violations %d",
 		r.orders.completed, r.orders.failed, r.digs.parents, r.digs.maxLegs, reuse,
-		r.gated[true].avgCycleS, r.gated[false].avgCycleS, r.dissolves, hard, len(r.violations))
+		r.gated[true].avgCycleS, r.gated[false].avgCycleS,
+		r.dwell.n, r.dwell.avgS, r.dwell.maxS, r.dwell.open,
+		r.dissolves, hard, len(r.violations))
 }
 
 func tailNote(n int) string {

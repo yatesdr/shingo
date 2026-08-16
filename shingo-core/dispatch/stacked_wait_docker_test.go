@@ -227,11 +227,16 @@ func TestStacked_BuriedIrreplaceableNeed_InALockedLane_InAFullGroup(t *testing.T
 
 	digging, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload once the dig is planned")
-	if digging.Status != protocol.StatusReshuffling {
-		t.Fatalf("the demand is %q, want %q — every obstacle has cleared and the dig it has been "+
-			"waiting three stages for must now actually happen", digging.Status, protocol.StatusReshuffling)
+	// THE DEMAND STAYS PUT AND THE DIG HAPPENS — the two halves of the same claim
+	// under the two-shape ruling. This asserted `reshuffling`, which was how the
+	// old shape said "the dig started": the demand became the dig. It is now a
+	// customer of one, so the excavation is proved by the dig existing (below) and
+	// the demand is proved unconsumed by it still sitting in the acquiring set.
+	if digging.Status != protocol.StatusQueued {
+		t.Fatalf("the demand is %q, want %q — every obstacle has cleared, so the dig must now happen "+
+			"WITHOUT the demand being consumed by it", digging.Status, protocol.StatusQueued)
 	}
-	legs := legsOf(t, db, order.ID)
+	legs := legsOf(t, db, serviceDigFor(t, db, digging).ID)
 	// Expose mode: the unbury alone. The complex parent owns its own pickup and
 	// runs it against the now-accessible slot after the compound.
 	if len(legs) != 1 {
@@ -241,11 +246,17 @@ func TestStacked_BuriedIrreplaceableNeed_InALockedLane_InAFullGroup(t *testing.T
 	if legs[0].VendorOrderID == "" {
 		t.Fatalf("the dig's leg never went out (queue_cause %q)", legs[0].QueueCause)
 	}
-	if legs[0].DeliveryNode != spare.Name {
-		t.Errorf("the wall is aimed at %s, want the freed spare %s", legs[0].DeliveryNode, spare.Name)
+	// WHERE THE WALL GOES, read when Core chooses it. The leg is dispatched with no
+	// destination and dwells in the locked lane holding the wall bin; releasing it
+	// is the moment the freed spare is picked, and it is the same fact one step
+	// later. That the spare had to be FREED first — by the earlier eviction in this
+	// scenario — is what the assertion is really about, and it is unchanged.
+	digLeg := releaseDwell(t, d, db, legs[0])
+	if digLeg.DeliveryNode != spare.Name {
+		t.Errorf("the wall was released onto %s, want the freed spare %s", digLeg.DeliveryNode, spare.Name)
 	}
 
-	landLeg(t, db, legs[0])
+	landLeg(t, d, db, digLeg)
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(order.ID), "close the dig")
 
 	resumed, err := db.GetOrder(order.ID)

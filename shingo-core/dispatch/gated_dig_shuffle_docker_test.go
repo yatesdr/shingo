@@ -114,12 +114,20 @@ func TestGatedDig_BlockerNeverGoesToAnotherGatedLane(t *testing.T) {
 		t.Fatalf("the dig had an ungated lane to park its blocker in and must have planned: %s: %s", pe.Code, pe.Detail)
 	}
 
-	// WHERE THE BLOCKER WENT. Read it off the leg rather than off the planner's
-	// return, because the leg is what dispatch will splice.
-	var dest string
-	testutil.MustNoErr(t, db.DB.QueryRow(
-		`SELECT delivery_node FROM orders WHERE parent_order_id = $1 ORDER BY sequence LIMIT 1`, order.ID,
-	).Scan(&dest), "read the leg's delivery node")
+	// WHERE THE BLOCKER WENT, READ AT THE MOMENT IT IS DECIDED.
+	//
+	// This used to read delivery_node straight off the leg after planning, because
+	// planning is where the slot was picked. Under the outbound dwell the leg is
+	// dispatched with no destination and stands in GD-DUG holding the blocker until
+	// Core chooses — so the read moves to after the release, which is the same fact
+	// one moment later. The exclusion being pinned (never park into a second gated
+	// lane) is unchanged and still lives in findShuffleSlots; only the caller moved.
+	legs := legsOf(t, db, order.ID)
+	if len(legs) == 0 {
+		t.Fatal("the dig wrote no legs")
+	}
+	released := releaseDwell(t, d, db, legs[0])
+	dest := released.DeliveryNode
 
 	destNode, err := db.GetNodeByDotName(dest)
 	if err != nil || destNode == nil {
@@ -221,7 +229,7 @@ func TestGatedDig_NoUngatedSlotWaitsRatherThanPickingOne(t *testing.T) {
 // findShuffleSlots hands that dig the slots LS_D1 just freed. Pass 2 fills
 // DEEPEST-FIRST, so it packs from the back forward and entombs the exposed bin
 // behind a full lane. The parent then digs the third lane, buries the second
-// lane's prize, and so on: three generations, twelve legs, eight minutes, bins
+// lane's target bin, and so on: three generations, twelve legs, eight minutes, bins
 // 2/3/4 dug out twice, nothing ever picked up, and a lane lock accumulated per
 // generation until eight of twenty-two lanes were held and the plant stopped
 // creating orders.
@@ -232,7 +240,7 @@ func TestGatedDig_NoUngatedSlotWaitsRatherThanPickingOne(t *testing.T) {
 // THE EXCLUSION IS OWNER-BLIND ON PURPOSE, which is what this test pins. Every
 // other ownership test in the system exempts the owner — ownsDig, the claim CAS,
 // admission — and exempting it here is precisely what let a parent bury its own
-// prize. So the dig below is owned by the SAME order that holds the other lane's
+// target bin. So the dig below is owned by the SAME order that holds the other lane's
 // lock, and it still must not park there.
 //
 // MUTATION (run 2026-08-10): delete the `digLocked[c.ID]` skip in Pass 2. The
@@ -252,23 +260,27 @@ func TestDig_NeverParksIntoALaneAnotherDigIsHolding(t *testing.T) {
 		Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: "LINE-F19"}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	// THE OPEN LANE HOLDS AN EXPOSED BIN UNDER AN EXPOSE-MODE EXTENSION — the state
-	// a completed expose dig leaves behind while its parent walks back to collect
-	// it. The bin sits at the BACK; the slots in front of it are the ones the last
-	// excavation emptied, and are exactly what must not be refilled.
+	// THE OPEN LANE HOLDS A BIN SOMEBODY IS COMING FOR. It sits at the BACK; the
+	// slots in front of it are the ones the last excavation emptied, and are
+	// exactly what must not be refilled.
 	//
-	// Same owning order as the dig about to be planned, deliberately: exempting the
-	// owner is what let a parent bury its own prize.
+	// ── THE SPELLING CHANGED HERE; THE MEANING DID NOT ───────────────────
+	//
+	// This used to register a pending_lane_extensions row — the expose bridge's
+	// record that a completed dig had uncovered this bin and its parent was walking
+	// back to collect it. The bridge is deleted (the parent no longer walks back at
+	// all), and the fact it recorded is now carried by the CLAIM: a hard claim IS
+	// "a robot is on its way to this bin". So the fixture claims it, and
+	// findShuffleSlots refuses the slots in front of it through the same clause the
+	// store selector uses.
+	//
+	// Same owning order as the dig about to be planned, deliberately and still:
+	// exempting the owner is what let a parent bury its own target bin, and the
+	// claims-keyed exclusion is owner-blind for exactly that reason.
 	openSlots, err := db.ListLaneSlots(open.ID)
 	testutil.MustNoErr(t, err, "list open-lane slots")
 	exposed := createTestBinAtNode(t, db, bp.Code, openSlots[len(openSlots)-1].ID, "BIN-F19-EXPOSED")
-	_, err = db.InsertPendingLaneExtension(&store.PendingLaneExtension{
-		ComplexParentID:    order.ID,
-		LaneID:             open.ID,
-		TargetBinID:        exposed.ID,
-		ExpectedFromNodeID: openSlots[len(openSlots)-1].ID,
-	})
-	testutil.MustNoErr(t, err, "register the expose hold")
+	testdb.ClaimBinForTest(t, db, exposed.ID, order.ID)
 
 	_, pe := d.planner.planBuriedReshuffle(order, &BuriedError{Bin: target, Slot: dugSlots[1], LaneID: dug.ID})
 	if pe == nil {

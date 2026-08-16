@@ -1007,11 +1007,24 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 
 	// Order must NOT have been terminal-failed at intake.
 	if o.Status == StatusFailed {
-		t.Fatalf("complex order terminal-failed at intake — pre-fix behavior (expected Reshuffling)")
+		t.Fatalf("complex order terminal-failed at intake — pre-fix behavior (expected to be waiting)")
 	}
-	// Parent should now be Reshuffling.
-	if o.Status != StatusReshuffling {
-		t.Errorf("parent status = %q, want %q (compound reshuffle should have started)", o.Status, StatusReshuffling)
+	// THE DEMAND DOES NOT MOVE, and that inversion is the A batch.
+	//
+	// This used to assert `reshuffling`, because the demand WAS the dig: it was
+	// re-parented, excursed, and brought back through ResumeCompound. Under the
+	// two-shape ruling a dig is a service to the lane, so the demand never leaves
+	// the acquiring set — it stays `queued`, carrying the cause, and is re-driven
+	// by the ordinary scanner when the lane opens. The assertion is therefore
+	// inverted rather than deleted: the old value is now the WRONG one, and it is
+	// named here so a regression back to the excursion fails loudly.
+	if o.Status == StatusReshuffling {
+		t.Errorf("parent status = %q — the demand was re-parented into its own dig again; a complex "+
+			"demand is a CUSTOMER of a lane-clear dig now and must stay in the acquiring set", o.Status)
+	}
+	if o.Status != StatusQueued {
+		t.Errorf("parent status = %q, want %q — the demand waits with a cause while the service dig runs",
+			o.Status, StatusQueued)
 	}
 	// Field-notes Note 8 regression: the buried-intake path used to construct
 	// its own complex order struct literal, and had to persist PayloadCode the
@@ -1041,20 +1054,33 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 		t.Error("queue_reason is blank — this is the sentence the operator reads on the board")
 	}
 
-	// Compound children should exist.
-	children, _ := db.ListChildOrders(o.ID)
-	if len(children) == 0 {
-		t.Fatal("no compound children created for buried complex order")
-	}
+	// The legs exist, on the DIG rather than on the demand. Same excavation, same
+	// count; only the parent changed.
+	children := serviceDigChildren(t, db, o)
 	// Expose mode: unbury only.
 	// Two blockers → two unbury children.
 	if len(children) != 2 {
 		t.Errorf("compound children = %d, want 2 (two blockers, expose mode)", len(children))
 	}
+	// EVERY LEG HANGS OFF THE DIG, AND NONE OFF THE DEMAND. The second half is the
+	// one worth asserting: it is what "the demand was not consumed" looks like in
+	// the orders table, and it is the shape a regression would break first.
+	dig := serviceDigFor(t, db, o)
 	for _, c := range children {
-		if c.ParentOrderID == nil || *c.ParentOrderID != o.ID {
-			t.Errorf("child %d ParentOrderID = %v, want %d", c.ID, c.ParentOrderID, o.ID)
+		if c.ParentOrderID == nil || *c.ParentOrderID != dig.ID {
+			t.Errorf("leg %d ParentOrderID = %v, want the service dig %d", c.ID, c.ParentOrderID, dig.ID)
 		}
+	}
+	demandKids, err := db.ListChildOrders(o.ID)
+	testutil.MustNoErr(t, err, "list the demand's children")
+	if len(demandKids) != 0 {
+		t.Errorf("the demand owns %d children — it was re-parented into the dig again", len(demandKids))
+	}
+	// And the dig carries the demand's episode, which is the whole link between
+	// them now that there is no requester pointer (PLAN §R.40).
+	if dig.OriginID != o.OriginID || dig.OriginClass != o.OriginClass {
+		t.Errorf("dig origin = (%q, %q), want the demand's (%q, %q) — the cost of digging belongs to "+
+			"the episode that caused it", dig.OriginID, dig.OriginClass, o.OriginID, o.OriginClass)
 	}
 
 }

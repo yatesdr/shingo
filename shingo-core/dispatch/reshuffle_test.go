@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"testing"
 
-	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/payloads"
+	"shingocore/store/reservations"
 )
 
 // --- Helper: setup node group with direct children for shuffle ---
@@ -97,7 +97,7 @@ func TestPlanReshuffle_SingleBlocker(t *testing.T) {
 	// Place target B at depth 2
 	targetB := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-B")
 
-	plan, err := PlanReshuffle(db, targetB, slots[1], lane, grp.ID)
+	plan, err := PlanReshuffle(db, targetB, slots[1], lane, grp.ID, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestPlanReshuffle_MultipleBlockers(t *testing.T) {
 	// Place target at depth 3
 	target := createTestBinAtNode(t, db, bp.Code, slots[2].ID, "BIN-TGT")
 
-	plan, err := PlanReshuffle(db, target, slots[2], lane, grp.ID)
+	plan, err := PlanReshuffle(db, target, slots[2], lane, grp.ID, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestPlanReshuffle_NoShuffleSlots(t *testing.T) {
 	// Place target at depth 2
 	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-TGT")
 
-	_, err := PlanReshuffle(db, target, slots[1], lane, grp.ID)
+	_, err := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone)
 	if err == nil {
 		t.Fatal("expected error about insufficient shuffle slots, got nil")
 	}
@@ -235,7 +235,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(parentOrder), "create parent order")
 
 	// Plan the reshuffle
-	plan, err := PlanReshuffle(db, target, slots[1], lane, grp.ID)
+	plan, err := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
@@ -285,12 +285,24 @@ func TestCompoundOrderCreation(t *testing.T) {
 	// Verify source/delivery nodes on child orders
 	for _, child := range children {
 		if child.Sequence == 1 {
-			// Unbury: pickup from lane slot, delivery to shuffle slot
+			// Unbury: pickup from the lane slot, and NO delivery node.
+			//
+			// RE-POINTED, NOT RELAXED. This used to require a delivery node here,
+			// which was the plan-time shuffle slot. Under the outbound dwell the
+			// blocker's destination is chosen when the robot is standing ready to
+			// drive, so an unbury child is WRITTEN with none — and asserting the
+			// absence is a stronger statement than asserting a presence was: a
+			// non-empty value here means something bound a destination at plan time
+			// again, which is the commitment the dwell exists to remove.
+			//
+			// Where the blocker actually goes is pinned at the moment it is chosen,
+			// by TestDwell_ChoosesItsDestinationAtRelease and the two D83a tests.
 			if child.SourceNode == "" {
 				t.Error("child seq 1 (unbury) has empty source node")
 			}
-			if child.DeliveryNode == "" {
-				t.Error("child seq 1 (unbury) has empty delivery node")
+			if child.DeliveryNode != "" {
+				t.Errorf("child seq 1 (unbury) was born aimed at %q — an unbury leg's destination is "+
+					"chosen at release, not at planning", child.DeliveryNode)
 			}
 		}
 		if child.Sequence == 2 {
@@ -636,11 +648,11 @@ func TestPlanReshuffleUnburyOnly_NoRetrieveNoRestock(t *testing.T) {
 	// Two blockers + target.
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-UO-B1")
 	createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-UO-B2")
-	target := createTestBinAtNode(t, db, bp.Code, slots[2].ID, "BIN-UO-TGT")
+	_ = createTestBinAtNode(t, db, bp.Code, slots[2].ID, "BIN-UO-TGT")
 
-	plan, err := PlanReshuffleUnburyOnly(db, target, slots[2], lane, grp.ID)
+	plan, err := PlanLaneMouthClear(db, slots[2], lane, grp.ID, reservations.Anyone)
 	if err != nil {
-		t.Fatalf("PlanReshuffleUnburyOnly: %v", err)
+		t.Fatalf("PlanLaneMouthClear: %v", err)
 	}
 	if len(plan.Steps) != 2 {
 		t.Fatalf("steps = %d, want 2 (unbury only, no retrieve, no restock)", len(plan.Steps))
@@ -674,7 +686,7 @@ func TestCreateCompoundOrder_StillCallsBeginReshuffle(t *testing.T) {
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-CO-S-BLK")
 	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-CO-S-TGT")
-	plan, _ := PlanReshuffle(db, target, slots[1], lane, grp.ID)
+	plan, _ := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	testutil.MustNoErr(t, d.CreateCompoundOrder(parent, plan), "CreateCompoundOrder")
@@ -714,7 +726,7 @@ func TestCreateCompoundOrder_RetrieveInheritsParentDeliveryNode(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parentOrder), "create parent")
 
-	plan, err := PlanReshuffle(db, target, slots[1], lane, grp.ID)
+	plan, err := PlanReshuffle(db, target, slots[1], lane, grp.ID, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
@@ -735,467 +747,5 @@ func TestCreateCompoundOrder_RetrieveInheritsParentDeliveryNode(t *testing.T) {
 	if retrieveChild.DeliveryNode != "LINE1-DEST-INH" {
 		t.Errorf("retrieve DeliveryNode = %q, want %q (inherited from parent)",
 			retrieveChild.DeliveryNode, "LINE1-DEST-INH")
-	}
-}
-
-// ────────────────────────────────────────────────────────────────────────
-// §12.2 Surface 11: Lane-lock extension for expose mode (v7 Step 4.5).
-// ────────────────────────────────────────────────────────────────────────
-
-// seedPendingLaneExtension writes the row that the intake handler
-// would have written, so tests that bypass the intake path and call
-// CreateCompoundOrder directly still exercise the at-terminal lookup
-// in extendLaneLockForExposeMode.
-func seedPendingLaneExtension(t *testing.T, d *Dispatcher, complexParentID, laneID, targetBinID, expectedFromNode int64) {
-	t.Helper()
-	if _, err := d.db.InsertPendingLaneExtension(&store.PendingLaneExtension{
-		ComplexParentID:    complexParentID,
-		LaneID:             laneID,
-		TargetBinID:        targetBinID,
-		ExpectedFromNodeID: expectedFromNode,
-	}); err != nil {
-		t.Fatalf("seed pending_lane_extension: %v", err)
-	}
-}
-
-// driveCompoundChildrenToConfirmed walks a compound's children and
-// drives each one through Sourcing → Dispatched → InTransit →
-// Delivered → Confirmed using lifecycle helpers + direct DB writes.
-// The harness mirrors what the fleet poller would do in production
-// for a successful run; tests that only care about the compound's
-// terminal effect (lane lock state, restore listeners firing) can
-// use this to short-circuit the full pipeline.
-func driveCompoundChildrenToConfirmed(t *testing.T, d *Dispatcher, parentID int64) {
-	t.Helper()
-	children, err := d.db.ListChildOrders(parentID)
-	if err != nil {
-		t.Fatalf("ListChildOrders: %v", err)
-	}
-	for _, child := range children {
-		// Direct DB writes: bypass the lifecycle's transition table
-		// (the harness needs to fast-forward through several legal
-		// states). Status defaults to Pending; jump to Confirmed.
-		testdb.SeedOrderStatus(t, d.db, child.ID, string(StatusConfirmed), "test harness")
-	}
-	if err := d.AdvanceCompoundOrder(parentID); err != nil {
-		t.Fatalf("AdvanceCompoundOrder: %v", err)
-	}
-}
-
-// TestLaneLock_HeldThroughComplexParentPickup_ExposeMode locks in the
-// core v7 contract: when an expose-mode compound completes, the lane
-// lock is NOT released — it stays held by the complex parent through
-// to the bin-transit event for the target bin.
-func TestLaneLock_HeldThroughComplexParentPickup_ExposeMode(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-
-	complexParent := &orders.Order{
-		EdgeUUID:  "uuid-ll-expose",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-		// A production complex reshuffle parent is stamped coordinated at intake; the
-		// compound terminal routing (IsCoordinated) reads the Coordinated column.
-		Coordinated: true,
-		StepsJSON:   `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"DST"}]`,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-LL-EX-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-LL-EX-TGT")
-
-	plan, err := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-	if err != nil {
-		t.Fatalf("PlanReshuffleUnburyOnly: %v", err)
-	}
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	// Mirror planBuriedReshuffleAtIntake's lock acquisition + persist.
-	if !d.laneLock.TryLock(lane.ID, complexParent.ID) {
-		t.Fatal("seed TryLock failed")
-	}
-	testutil.MustNoErr(t, d.CreateCompoundOrder(complexParent, plan), "CreateCompoundOrder")
-	seedPendingLaneExtension(t, d, complexParent.ID, lane.ID, target.ID, slots[1].ID)
-
-	// Drive children to terminal. After AdvanceCompoundOrder finishes,
-	// the parent should be Reshuffling → Queued (ResumeCompound) and
-	// the lane lock should STILL be held — that's the v7 invariant.
-	driveCompoundChildrenToConfirmed(t, d, complexParent.ID)
-
-	if !d.laneLock.IsLocked(lane.ID) {
-		t.Fatal("lane lock released after compound terminal — expose-mode extension failed")
-	}
-	if held := d.laneLock.LockedBy(lane.ID); held != complexParent.ID {
-		t.Errorf("lane locked by %d, want %d (complex parent)", held, complexParent.ID)
-	}
-
-	// Fire EventBinEnteredTransit for the target bin leaving slots[1].
-	d.HandleBinTransitForLaneLock(target.ID, slots[1].ID)
-
-	if d.laneLock.IsLocked(lane.ID) {
-		t.Error("lane lock still held after bin-transit event — listener didn't fire")
-	}
-}
-
-func TestLaneLock_ExposeMode_ReleasedOnParentCancel(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-
-	complexParent := &orders.Order{
-		EdgeUUID:  "uuid-ll-cancel",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-		// A production complex reshuffle parent is stamped coordinated at intake; the
-		// compound terminal routing (IsCoordinated) reads the Coordinated column.
-		Coordinated: true,
-		StepsJSON:   `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"DST"}]`,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-LL-C-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-LL-C-TGT")
-	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	if !d.laneLock.TryLock(lane.ID, complexParent.ID) {
-		t.Fatal("seed TryLock failed")
-	}
-	testutil.MustNoErr(t, d.CreateCompoundOrder(complexParent, plan), "CreateCompoundOrder")
-	seedPendingLaneExtension(t, d, complexParent.ID, lane.ID, target.ID, slots[1].ID)
-	driveCompoundChildrenToConfirmed(t, d, complexParent.ID)
-
-	if !d.laneLock.IsLocked(lane.ID) {
-		t.Fatal("lane lock released before parent cancel — extension didn't engage")
-	}
-	d.HandleComplexParentTerminalForLaneLock(complexParent.ID)
-	if d.laneLock.IsLocked(lane.ID) {
-		t.Error("lane lock still held after parent cancel — release listener failed")
-	}
-}
-
-// TestLaneLock_ExposeMode_ReleasedOnParentFail mirrors the cancel
-// case via the fail path.
-func TestLaneLock_ExposeMode_ReleasedOnParentFail(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-
-	complexParent := &orders.Order{
-		EdgeUUID:  "uuid-ll-fail",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-		// A production complex reshuffle parent is stamped coordinated at intake; the
-		// compound terminal routing (IsCoordinated) reads the Coordinated column.
-		Coordinated: true,
-		StepsJSON:   `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"DST"}]`,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-LL-F-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-LL-F-TGT")
-	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	if !d.laneLock.TryLock(lane.ID, complexParent.ID) {
-		t.Fatal("seed TryLock failed")
-	}
-	testutil.MustNoErr(t, d.CreateCompoundOrder(complexParent, plan), "CreateCompoundOrder")
-	seedPendingLaneExtension(t, d, complexParent.ID, lane.ID, target.ID, slots[1].ID)
-	driveCompoundChildrenToConfirmed(t, d, complexParent.ID)
-
-	if !d.laneLock.IsLocked(lane.ID) {
-		t.Fatal("lane lock released before parent fail — extension didn't engage")
-	}
-	// HandleComplexParentTerminalForLaneLock handles BOTH cancel and
-	// fail (engine wiring subscribes both events to the same handler).
-	d.HandleComplexParentTerminalForLaneLock(complexParent.ID)
-	if d.laneLock.IsLocked(lane.ID) {
-		t.Error("lane lock still held after parent fail — release listener failed")
-	}
-}
-
-// ────────────────────────────────────────────────────────────────────────
-// Lane-lock extension persistence (cleanup round, post-v7).
-// Mirrors the pending_restocks shape. Without persistence the target
-// bin gets re-derived at fire time by walking the lane and excluding
-// blockers — works today because the lane lock guarantees no
-// unrelated bins land during the window, but the contextual invariant
-// is fragile. Persistence locks the target bin at scheduling time so
-// a future lane-lock refactor can't silently break the derivation.
-// ────────────────────────────────────────────────────────────────────────
-
-// TestLaneLockExtension_TargetBinPersistedAtScheduling exercises the
-// production write path: planBuriedReshuffleAtIntake should persist
-// the lane-extension row with the buried bin's ID and slot, so the
-// at-terminal lookup doesn't have to re-derive from lane state.
-//
-// The parent is seeded directly rather than driven through the front door.
-// Everything asserted here happens after the parent exists, and complex intake
-// is now the one place that creates it — so building it here is the same row
-// the handler would have written, and the test stays about the lane-extension
-// row rather than about intake.
-func TestLaneLockExtension_TargetBinPersistedAtScheduling(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-LLP-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-LLP-TGT")
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	buried := &BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID}
-
-	order := &orders.Order{
-		EdgeUUID:    "uuid-llp-schedule",
-		StationID:   "test-station",
-		OrderType:   OrderTypeComplex,
-		Status:      StatusQueued,
-		Quantity:    1,
-		PayloadCode: bp.Code,
-		Coordinated: true,
-	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("seed complex parent: %v", err)
-	}
-	d.planBuriedReshuffleAtIntake(order, bp.Code, "test-station", buried)
-
-	order, err := db.GetOrderByUUID("uuid-llp-schedule")
-	if err != nil {
-		t.Fatalf("GetOrderByUUID: %v", err)
-	}
-	row, err := db.GetPendingLaneExtensionByComplexParent(order.ID)
-	if err != nil {
-		t.Fatalf("GetPendingLaneExtensionByComplexParent: %v (row should exist after intake)", err)
-	}
-	if row.LaneID != lane.ID {
-		t.Errorf("LaneID = %d, want %d", row.LaneID, lane.ID)
-	}
-	if row.TargetBinID != target.ID {
-		t.Errorf("TargetBinID = %d, want %d", row.TargetBinID, target.ID)
-	}
-	if row.ExpectedFromNodeID != slots[1].ID {
-		t.Errorf("ExpectedFromNodeID = %d, want %d", row.ExpectedFromNodeID, slots[1].ID)
-	}
-	// Sanity: a plan that carries the bin away shouldn't write a row, but we can't
-	// easily exercise the negative case without a configured group —
-	// covered by the existing TestLaneLock_ReleasedOnCompoundComplete_TargetNodeMode.
-	_ = grp
-}
-
-// TestLaneLockExtension_TargetBinRecoveredOnCoreBoot: a listener whose complex
-// parent is still live SURVIVES boot, with the persisted target bin and
-// from-node intact.
-//
-// The assertion moved with the design. It used to read the re-registered
-// in-memory entry; there is no in-memory entry now, because the row is the
-// listener and surviving a restart is what a row does. So it reads the row —
-// which is also what the handler reads, so the test and production are looking
-// at the same thing rather than at a mirror of it.
-//
-// What it still pins is the original point: recovery must not RE-DERIVE the
-// target bin. The row's bin need not exist in the lane, and that is deliberate.
-func TestLaneLockExtension_TargetBinRecoveredOnCoreBoot(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-
-	complexParent := &orders.Order{
-		EdgeUUID:  "uuid-llp-recover",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusReshuffling, // non-terminal
-	}
-	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(complexParent.ID, string(StatusReshuffling), "fixture"), "set Reshuffling")
-
-	const (
-		laneID           int64 = 9001
-		targetBinID      int64 = 9002
-		expectedFromNode int64 = 9003
-	)
-	_, err := db.InsertPendingLaneExtension(&store.PendingLaneExtension{
-		ComplexParentID:    complexParent.ID,
-		LaneID:             laneID,
-		TargetBinID:        targetBinID,
-		ExpectedFromNodeID: expectedFromNode,
-	})
-	if err != nil {
-		t.Fatalf("InsertPendingLaneExtension: %v", err)
-	}
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	if err := d.RecoverPendingLaneExtensions(); err != nil {
-		t.Fatalf("RecoverPendingLaneExtensions: %v", err)
-	}
-
-	got, err := db.GetPendingLaneExtensionByComplexParent(complexParent.ID)
-	if err != nil {
-		t.Fatalf("listener row for a LIVE parent did not survive boot: %v", err)
-	}
-	if got.TargetBinID != targetBinID {
-		t.Errorf("recovered targetBinID = %d, want %d (recovery must not re-derive the target bin)",
-			got.TargetBinID, targetBinID)
-	}
-	if got.LaneID != laneID {
-		t.Errorf("recovered laneID = %d, want %d", got.LaneID, laneID)
-	}
-	if got.ExpectedFromNodeID != expectedFromNode {
-		t.Errorf("recovered expectedFromNode = %d, want %d", got.ExpectedFromNodeID, expectedFromNode)
-	}
-}
-
-// TestLaneLockExtension_RowDeletedOnTerminal: parent cancel/fail
-// deletes the persisted row. Exercised via the same handler the engine
-// wiring calls on EventOrderCancelled / EventOrderFailed.
-func TestLaneLockExtension_RowDeletedOnTerminal(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-
-	complexParent := &orders.Order{
-		EdgeUUID:  "uuid-llp-terminal",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-		// A production complex reshuffle parent is stamped coordinated at intake; the
-		// compound terminal routing (IsCoordinated) reads the Coordinated column.
-		Coordinated: true,
-		StepsJSON:   `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"DST"}]`,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-LLT-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-LLT-TGT")
-	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	if !d.laneLock.TryLock(lane.ID, complexParent.ID) {
-		t.Fatal("seed TryLock failed")
-	}
-	testutil.MustNoErr(t, d.CreateCompoundOrder(complexParent, plan), "CreateCompoundOrder")
-	seedPendingLaneExtension(t, d, complexParent.ID, lane.ID, target.ID, slots[1].ID)
-	driveCompoundChildrenToConfirmed(t, d, complexParent.ID)
-
-	if _, err := db.GetPendingLaneExtensionByComplexParent(complexParent.ID); err != nil {
-		t.Fatalf("row missing before terminal: %v", err)
-	}
-
-	d.HandleComplexParentTerminalForLaneLock(complexParent.ID)
-
-	if _, err := db.GetPendingLaneExtensionByComplexParent(complexParent.ID); err == nil {
-		t.Error("pending_lane_extensions row still present after parent terminal")
-	}
-}
-
-// TestLaneLockExtension_RowDeletedOnAnyTerminalPath verifies the
-// cleanup contract across all four terminal statuses a complex
-// parent can reach after the row is written. Cancelled and Failed
-// are the explicit cleanup paths; Skipped is the gap where a
-// complex parent reaches a no-pickup terminal (ApplyComplexPlan
-// finds no bins) and the bin-transit listener never fires;
-// Completed is the defensive path for force-confirm /
-// admin-recovery scenarios.
-//
-// HandleComplexParentTerminalForLaneLock is the single handler all
-// four event subscribers route to — testing it directly exercises
-// the cleanup behavior independent of the event-dispatch shape.
-func TestLaneLockExtension_RowDeletedOnAnyTerminalPath(t *testing.T) {
-	t.Parallel()
-	terminals := []struct {
-		name      string
-		uuidSuf   string
-		setStatus protocol.Status
-	}{
-		{"cancelled", "C", StatusCancelled},
-		{"failed", "F", StatusFailed},
-		{"skipped", "S", StatusSkipped},
-		{"completed", "K", StatusConfirmed},
-	}
-	for _, tc := range terminals {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			db := testDB(t)
-			grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-
-			complexParent := &orders.Order{
-				EdgeUUID:  "uuid-llp-any-" + tc.uuidSuf,
-				StationID: "line-1",
-				OrderType: OrderTypeComplex,
-				Status:    StatusQueued,
-			}
-			testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
-
-			createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-LLPA-BLK-"+tc.uuidSuf)
-			target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-LLPA-TGT-"+tc.uuidSuf)
-			plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-
-			d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-			if !d.laneLock.TryLock(lane.ID, complexParent.ID) {
-				t.Fatal("seed TryLock failed")
-			}
-			testutil.MustNoErr(t, d.CreateCompoundOrder(complexParent, plan), "CreateCompoundOrder")
-			seedPendingLaneExtension(t, d, complexParent.ID, lane.ID, target.ID, slots[1].ID)
-			driveCompoundChildrenToConfirmed(t, d, complexParent.ID)
-
-			if _, err := db.GetPendingLaneExtensionByComplexParent(complexParent.ID); err != nil {
-				t.Fatalf("row missing before %s: %v", tc.name, err)
-			}
-
-			// Engine wiring fans cancelled/failed/skipped/completed
-			// events to the same handler; exercise it directly.
-			d.HandleComplexParentTerminalForLaneLock(complexParent.ID)
-
-			if _, err := db.GetPendingLaneExtensionByComplexParent(complexParent.ID); err == nil {
-				t.Errorf("pending_lane_extensions row still present after %s terminal", tc.name)
-			}
-			_ = grp
-		})
-	}
-}
-
-// TestLaneLockExtension_RowDeletedOnBinTransit: the row is also
-// deleted on the happy-path release (parent picks up target bin).
-func TestLaneLockExtension_RowDeletedOnBinTransit(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-
-	complexParent := &orders.Order{
-		EdgeUUID:  "uuid-llp-transit",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusQueued,
-		// A production complex reshuffle parent is stamped coordinated at intake; the
-		// compound terminal routing (IsCoordinated) reads the Coordinated column.
-		Coordinated: true,
-		StepsJSON:   `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"DST"}]`,
-	}
-	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
-
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-LLPT-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-LLPT-TGT")
-	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
-
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	if !d.laneLock.TryLock(lane.ID, complexParent.ID) {
-		t.Fatal("seed TryLock failed")
-	}
-	testutil.MustNoErr(t, d.CreateCompoundOrder(complexParent, plan), "CreateCompoundOrder")
-	seedPendingLaneExtension(t, d, complexParent.ID, lane.ID, target.ID, slots[1].ID)
-	driveCompoundChildrenToConfirmed(t, d, complexParent.ID)
-
-	if _, err := db.GetPendingLaneExtensionByComplexParent(complexParent.ID); err != nil {
-		t.Fatalf("row missing before bin transit: %v", err)
-	}
-
-	d.HandleBinTransitForLaneLock(target.ID, slots[1].ID)
-
-	if _, err := db.GetPendingLaneExtensionByComplexParent(complexParent.ID); err == nil {
-		t.Error("pending_lane_extensions row still present after bin transit release")
 	}
 }

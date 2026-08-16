@@ -759,24 +759,6 @@ CREATE SEQUENCE public.payloads_id_seq
 
 ALTER SEQUENCE public.payloads_id_seq OWNED BY public.payloads.id;
 
-CREATE TABLE public.pending_lane_extensions (
-    id bigint NOT NULL,
-    complex_parent_id bigint NOT NULL,
-    lane_id bigint NOT NULL,
-    target_bin_id bigint NOT NULL,
-    expected_from_node_id bigint NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE SEQUENCE public.pending_lane_extensions_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.pending_lane_extensions_id_seq OWNED BY public.pending_lane_extensions.id;
-
 CREATE TABLE public.process_styles (
     process_id text NOT NULL,
     style_id text NOT NULL,
@@ -1046,8 +1028,6 @@ ALTER TABLE ONLY public.payload_manifest ALTER COLUMN id SET DEFAULT nextval('pu
 
 ALTER TABLE ONLY public.payloads ALTER COLUMN id SET DEFAULT nextval('public.payloads_id_seq'::regclass);
 
-ALTER TABLE ONLY public.pending_lane_extensions ALTER COLUMN id SET DEFAULT nextval('public.pending_lane_extensions_id_seq'::regclass);
-
 ALTER TABLE ONLY public.production_log ALTER COLUMN id SET DEFAULT nextval('public.production_log_id_seq'::regclass);
 
 ALTER TABLE ONLY public.recovery_actions ALTER COLUMN id SET DEFAULT nextval('public.recovery_actions_id_seq'::regclass);
@@ -1220,12 +1200,6 @@ ALTER TABLE ONLY public.payloads
 ALTER TABLE ONLY public.payloads
     ADD CONSTRAINT payloads_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.pending_lane_extensions
-    ADD CONSTRAINT pending_lane_extensions_complex_parent_id_key UNIQUE (complex_parent_id);
-
-ALTER TABLE ONLY public.pending_lane_extensions
-    ADD CONSTRAINT pending_lane_extensions_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.process_styles
     ADD CONSTRAINT process_styles_pkey PRIMARY KEY (process_id, style_id);
 
@@ -1380,8 +1354,6 @@ CREATE UNIQUE INDEX idx_supply_refusals_open ON public.supply_refusals USING btr
 CREATE INDEX idx_supply_refusals_payload ON public.supply_refusals USING btree (payload_code, refused_at DESC);
 
 CREATE INDEX ix_process_styles_active ON public.process_styles USING btree (process_id) WHERE is_active;
-
-CREATE INDEX pending_lane_extensions_target_bin_idx ON public.pending_lane_extensions USING btree (target_bin_id);
 
 CREATE UNIQUE INDEX uq_reservations_bin_active ON public.reservations USING btree (bin_id) WHERE ((resource_kind = 'bin'::text) AND (state = ANY (ARRAY['pending'::text, 'confirmed'::text])));
 

@@ -90,6 +90,31 @@ jobs:
           # GOMODCACHE + analysis cache are enabled by default in v7.
           # The opt-out switches are skip-cache / skip-save-cache; we
           # leave both at default (caching on).
+          #
+          # CONFIG VERIFY IS OFF BECAUSE IT REACHES THE INTERNET.
+          #
+          # The action runs `golangci-lint config verify` before linting, and
+          # that command validates .golangci.yml against a JSON schema it
+          # DOWNLOADS from golangci-lint.run. So every run of this workflow made
+          # five HTTP requests to a third-party website — one per matrix module —
+          # and a slow response failed the job before a single line of Go was
+          # read. Observed 2026-08-13 on `protocol`: "failing loading
+          # https://golangci-lint.run/jsonschema/golangci.v2.11.jsonschema.json:
+          # context deadline exceeded", job red in 17 seconds, on a commit that
+          # touched no file in that module.
+          #
+          # A GATE THAT CAN FAIL FOR A REASON OUTSIDE THE DIFF IS NOT A GATE.
+          # That is the same rule scripts/gate.sh states for --allow-serial-
+          # runners, and it applies harder here: this failure is indistinguishable
+          # in the run list from a real finding, so the cost is paid by whoever
+          # next has to decide whether a red lint job means their code is wrong.
+          #
+          # NOTHING IS GIVEN UP. `config verify` checks the config's SHAPE; the
+          # very next step runs the same pinned binary against the same file and
+          # fails loudly on a config it cannot use, which is a strictly stronger
+          # check of the thing that matters. The local gate runs it too, on every
+          # invocation, before anything reaches CI.
+          verify: false
 
   swap-mode-literals:
     # Guards against raw swap-mode strings outside protocol/swap_mode.go

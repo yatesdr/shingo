@@ -430,7 +430,7 @@ func TestStaleDig_Window2Dig_DissolvesReplansAndCompletes(t *testing.T) {
 		t.Fatalf("the dig's unbury never went out (queue_cause %q) — the lane was clear at plan time",
 			legs[0].QueueCause)
 	}
-	landLeg(t, db, legs[0])
+	landLeg(t, d, db, legs[0])
 
 	// ── AND THEN IT GOES STALE ────────────────────────────────────────────────
 	// Another flow packs the mouth. Nothing in this compound will ever move it: the
@@ -505,7 +505,7 @@ func TestStaleDig_Window2Dig_DissolvesReplansAndCompletes(t *testing.T) {
 			t.Fatalf("re-planned leg %d (index %d) never went out (queue_cause %q) — the lane is the "+
 				"dig's own and nothing else is in it", leg.ID, i, leg.QueueCause)
 		}
-		landLeg(t, db, leg)
+		landLeg(t, d, db, leg)
 	}
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(replanning.ID), "close the re-planned compound")
 

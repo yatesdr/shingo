@@ -31,11 +31,11 @@ func TestCompoundChild_CarriesTheLocalSourceIntent(t *testing.T) {
 	d.planBuriedReshuffleAtIntake(parent, bp.Code, "line-1",
 		&BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID})
 
-	children, err := db.ListChildOrders(parent.ID)
-	testutil.MustNoErr(t, err, "list reshuffle children")
-	if len(children) == 0 {
-		t.Fatal("no reshuffle children created — this test asserted nothing")
-	}
+	// THE LEGS MOVED HOUSE, THE ASSERTION DID NOT. They used to hang off the
+	// demand, which was its own dig's parent; a complex demand is now a customer
+	// of a lane-clear dig and the legs hang off THAT. What this test is about —
+	// what a reshuffle leg carries — is unchanged, so it follows the legs.
+	children := serviceDigChildren(t, db, parent)
 
 	for _, c := range children {
 		if c.SourceIntent != SourceIntentLocal {
@@ -75,11 +75,11 @@ func TestCompoundChild_StaysOutOfTheSourceFinder(t *testing.T) {
 	d.planBuriedReshuffleAtIntake(parent, bp.Code, "line-1",
 		&BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID})
 
-	children, err := db.ListChildOrders(parent.ID)
-	testutil.MustNoErr(t, err, "list reshuffle children")
-	if len(children) == 0 {
-		t.Fatal("no reshuffle children created — this test asserted nothing")
-	}
+	// THE LEGS MOVED HOUSE, THE ASSERTION DID NOT. They used to hang off the
+	// demand, which was its own dig's parent; a complex demand is now a customer
+	// of a lane-clear dig and the legs hang off THAT. What this test is about —
+	// what a reshuffle leg carries — is unchanged, so it follows the legs.
+	children := serviceDigChildren(t, db, parent)
 
 	acquiring, err := db.ListAcquiringOrders()
 	testutil.MustNoErr(t, err, "list the orders the finder would consider")

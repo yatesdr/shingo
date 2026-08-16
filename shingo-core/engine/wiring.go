@@ -436,7 +436,6 @@ func (e *Engine) wireEventHandlers() {
 		if e.dispatcher == nil {
 			return
 		}
-		e.dispatcher.HandleBinTransitForLaneLock(evt.Payload.BinID, evt.Payload.FromNodeID)
 		// Lane mouth gate (§4): release the order's hold on the lane its bin just
 		// left, as soon as the bin physically clears (a no-op when the gate is off).
 		e.dispatcher.HandleTransitForLaneGate(evt.Payload.OrderID, evt.Payload.FromNodeID)
@@ -459,11 +458,17 @@ func (e *Engine) wireEventHandlers() {
 	//     the pickup leg.
 	//
 	// Safe to call on a parent with no hold — it no-ops when nothing matches.
+	// THE EXPOSE BRIDGE'S RELEASE ARMS USED TO HANG HERE. A complex parent going
+	// terminal, and a bin entering transit, each consumed a pending_lane_extensions
+	// row to drop a lane lock that had been TRANSFERRED to the parent past its
+	// compound's completion. Nothing transfers a lock any more — the demand is not
+	// re-parented into its own dig, so it never comes back and the lane is released
+	// at the compound's terminal like every other dig's (compound.go). The
+	// subscriptions are kept, empty of that call, because their OTHER arms are live.
 	terminal := func(orderID int64) {
 		if e.dispatcher == nil {
 			return
 		}
-		e.dispatcher.HandleComplexParentTerminalForLaneLock(orderID)
 	}
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
 		terminal(evt.Payload.OrderID)

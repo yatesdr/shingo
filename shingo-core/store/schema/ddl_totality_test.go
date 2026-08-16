@@ -40,7 +40,6 @@ var migrationOnlyTables = map[string]string{
 	"edge_cells":                "added by a numbered migration after the baseline was frozen",
 	"edge_lineside_reports":     "added by a numbered migration after the baseline was frozen",
 	"order_bins":                "added by a numbered migration after the baseline was frozen",
-	"pending_lane_extensions":   "added by a numbered migration after the baseline was frozen",
 	"pending_restocks":          "added by a numbered migration after the baseline was frozen",
 	"process_styles":            "added by a numbered migration after the baseline was frozen",
 	"reservations":              "added by a numbered migration after the baseline was frozen",

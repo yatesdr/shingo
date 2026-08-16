@@ -8,6 +8,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // TestCompoundChild_IdentityIsMintedNotDerived is the v71 fix.
@@ -52,8 +53,8 @@ func TestCompoundChild_IdentityIsMintedNotDerived(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-CID-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-CID-TGT")
-	plan, _ := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
+	_ = createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-CID-TGT")
+	plan, _ := PlanLaneMouthClear(db, slots[1], lane, grp.ID, reservations.Anyone)
 
 	// BOTH PLANS GO THROUGH THE ONE CREATION DOOR, from a live status each time —
 	// which is the real re-plan shape: a dissolve returns the parent to the

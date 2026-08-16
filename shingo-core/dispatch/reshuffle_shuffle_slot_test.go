@@ -88,6 +88,24 @@ func setupTwoLanesOneShuffle(t *testing.T, db *store.DB) (grp *nodes.Node, laneA
 // The dig legs carry delivery_node, so CheckDropoffCapacity -- the gate every
 // other dropoff in the system passes -- already counted them. findShuffleSlots
 // just never asked.
+//
+// ── RE-POINTED TO THE MOMENT THE CHOICE IS NOW MADE ───────────────────────
+//
+// Under the outbound dwell a dig leg is dispatched with NO destination and picks
+// one at release, so the collision this test is about cannot happen at plan time
+// any more — there is nothing to collide. The defect is unchanged and so is the
+// mechanism that prevents it (findShuffleSlots + CheckDropoffCapacity); only the
+// moment moved. So the fixture drives both digs to their release and asserts the
+// same invariant there: exactly one leg inbound to the one slot, and the other
+// WAITS holding its blocker rather than landing on top.
+//
+// ONE BEHAVIOUR GENUINELY CHANGED, and it is recorded rather than absorbed. Dig B
+// now PLANS where it used to be refused: the plan-time count check asks whether
+// the group has room right now, and dig A's plan no longer books anything, so on
+// a pool of one both digs start. The wait moves from a `pending` row to a robot
+// holding a bin — the residual SHAPE §7.8 names and accepts, bounded by the same
+// congestion that would have blocked the leg anyway. What must NOT change is that
+// two blockers never share a slot, which is what this now pins.
 func TestFindShuffleSlots_TwoDigsMustNotShareASlot(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -109,14 +127,65 @@ func TestFindShuffleSlots_TwoDigsMustNotShareASlot(t *testing.T) {
 		t.Fatalf("dig A should have planned (the shuffle slot was free): %s: %s", peA.Code, peA.Detail)
 	}
 
-	// Dig 2 (lane B) plans while dig A's blocker is in flight to SHUF-1. It must
-	// NOT take that slot. Nothing physically occupies SHUF-1 yet -- that is exactly
-	// the trap.
+	// A's first leg is dispatched and dwelling in lane A, holding its blocker with
+	// no destination. Releasing it is where the slot is chosen and claimed.
+	legsA := legsOf(t, db, orderA.ID)
+	if len(legsA) != 2 {
+		t.Fatalf("dig A planned %d leg(s), want an unbury and a retrieve", len(legsA))
+	}
+	if legsA[0].DeliveryNode != "" {
+		t.Fatalf("dig A's unbury was born aimed at %q — the destination is chosen at release now, so a "+
+			"plan-time binding means the dwell was bypassed", legsA[0].DeliveryNode)
+	}
+	releasedA := releaseDwell(t, d, db, legsA[0])
+	if releasedA.DeliveryNode != shuf.Name {
+		t.Fatalf("dig A's blocker went to %q, want the group's only free slot %s",
+			releasedA.DeliveryNode, shuf.Name)
+	}
+
+	// Dig 2 (lane B) plans while dig A's blocker is in flight to SHUF-1. Its leg
+	// must NOT take that slot. Nothing physically occupies SHUF-1 yet -- that is
+	// exactly the trap.
 	orderB := &orders.Order{EdgeUUID: "dig-b", StationID: "line-1", OrderType: OrderTypeRetrieve, Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: "LINE-2L"}
 	testutil.MustNoErr(t, db.CreateOrder(orderB), "create order B")
 	_, peB := d.planner.planBuriedReshuffle(orderB, &BuriedError{Bin: targetB, Slot: slotsB[1], LaneID: laneB.ID})
+	if peB != nil {
+		// The count check is asked against the group as it stands, and A's leg has
+		// booked the only slot by now, so this arm is the pre-dwell disposition
+		// still holding — a refusal here must still be the transient one.
+		if peB.Code != codeNoShuffleSlot {
+			t.Fatalf("dig B refused with code %q (%s), want %q — a crowded group is not a broken lane; "+
+				"it must WAIT for a slot (D18-Q4 wait-not-fail)", peB.Code, peB.Detail, codeNoShuffleSlot)
+		}
+		if !peB.Transient() {
+			t.Errorf("dig B's refusal is not Transient() — it will terminally fail the order instead of retrying")
+		}
+	} else {
+		// It planned. Then its leg must DWELL rather than take the booked slot.
+		legsB := legsOf(t, db, orderB.ID)
+		if len(legsB) == 0 {
+			t.Fatal("dig B planned but wrote no legs")
+		}
+		d.EvaluateWaitLaneForStagedOrder(legsB[0].ID)
+		heldB, err := db.GetOrder(legsB[0].ID)
+		testutil.MustNoErr(t, err, "reload dig B's leg")
+		if heldB.DeliveryNode != "" {
+			t.Fatalf("dig B's leg was released to %q while dig A's blocker is already inbound to %s — "+
+				"the second blocker lands on the first and ApplyArrival evicts the incumbent to _TRANSIT "+
+				"(the sim's SMN_008/SMN_009 orphaning, D83a)", heldB.DeliveryNode, shuf.Name)
+		}
+		if QueueCause(heldB.QueueCause) != CauseNoShuffleSlot {
+			t.Errorf("dig B's dwelling leg carries cause %q, want %q — a robot standing in a lane holding "+
+				"a bin with nowhere to put it is the one wait that must say so on the row",
+				heldB.QueueCause, CauseNoShuffleSlot)
+		}
+		if protocol.IsTerminal(heldB.Status) {
+			t.Errorf("dig B's leg is %s — no free shuffle slot is congestion and WAITS, it does not "+
+				"terminate the demand", heldB.Status)
+		}
+	}
 
-	// THE INVARIANT: exactly one dig may be inbound to SHUF-1.
+	// THE INVARIANT, WHICHEVER WAY DIG B WENT: exactly one leg is inbound to SHUF-1.
 	var inbound int
 	testutil.MustNoErr(t, db.DB.QueryRow(
 		`SELECT count(*) FROM orders WHERE delivery_node = $1 AND parent_order_id IS NOT NULL`, shuf.Name,
@@ -127,20 +196,7 @@ func TestFindShuffleSlots_TwoDigsMustNotShareASlot(t *testing.T) {
 			"the first, and ApplyArrival evicts the incumbent to _TRANSIT. This is the sim's SMN_008/"+
 			"SMN_009 orphaning (D83a).", inbound, shuf.Name)
 	}
-
-	// And dig B must WAIT, not die: "no free shuffle slot" is congestion.
-	if peB == nil {
-		t.Fatalf("dig B planned a compound with no shuffle slot available — it must be refused")
-	}
-	if peB.Code != codeNoShuffleSlot {
-		t.Fatalf("dig B refused with code %q (%s), want %q — a crowded group is not a broken lane; "+
-			"it must WAIT for a slot (D18-Q4 wait-not-fail)", peB.Code, peB.Detail, codeNoShuffleSlot)
-	}
-	if !peB.Transient() {
-		t.Errorf("dig B's refusal is not Transient() — it will terminally fail the order instead of retrying")
-	}
 	_ = grp
-	_ = laneB
 }
 
 // TestFindShuffleSlots_TwoDigsDivertOntoDifferentSlots is the gate's OTHER arm,
@@ -204,11 +260,27 @@ func TestFindShuffleSlots_TwoDigsDivertOntoDifferentSlots(t *testing.T) {
 	if len(legsA) != 2 || len(legsB) != 2 {
 		t.Fatalf("legs = %d / %d, want an unbury and a retrieve each", len(legsA), len(legsB))
 	}
-	if legsA[0].DeliveryNode == legsB[0].DeliveryNode {
-		t.Fatalf("both digs are aimed at %s — the capacity gate did not divert them, so the second "+
+
+	// ── TWO DWELLERS RELEASED IN THE SAME BREATH ──────────────────────────────
+	//
+	// This is the diversion, moved to the moment it now happens. Both legs are
+	// standing in their own lanes holding blockers with no destination; releasing
+	// them back to back is the concurrency this test always described (dig B
+	// choosing while dig A's blocker is in flight and nothing physically occupies
+	// A's slot) and it is now literal rather than simulated by planning order.
+	//
+	// They must come out on DIFFERENT slots. What makes that true is that the
+	// resolver claims the slot at the moment it selects, so the second chooser
+	// cannot see the first's as free — the two are not serialized by anything
+	// else, being in different lanes and therefore under different mutexes.
+	releasedA := releaseDwell(t, d, db, legsA[0])
+	releasedB := releaseDwell(t, d, db, legsB[0])
+	if releasedA.DeliveryNode == releasedB.DeliveryNode {
+		t.Fatalf("both digs were released onto %s — the capacity gate did not divert them, so the second "+
 			"blocker lands on the first and ApplyArrival evicts the incumbent to _TRANSIT",
-			legsA[0].DeliveryNode)
+			releasedA.DeliveryNode)
 	}
+	legsA, legsB = legsOf(t, db, demandA.ID), legsOf(t, db, demandB.ID)
 	for _, s := range shufs {
 		n, err := db.CountInFlightOrdersByDeliveryNodeExcluding(s.Name, 0)
 		testutil.MustNoErr(t, err, "inbound count for "+s.Name)
@@ -227,14 +299,14 @@ func TestFindShuffleSlots_TwoDigsDivertOntoDifferentSlots(t *testing.T) {
 	// ── AND BOTH RUN OUT ──────────────────────────────────────────────────────
 	for _, demand := range []*orders.Order{demandA, demandB} {
 		legs := legsOf(t, db, demand.ID)
-		landLeg(t, db, legs[0])
+		landLeg(t, d, db, legs[0])
 		testutil.MustNoErr(t, d.AdvanceCompoundOrder(demand.ID), "re-drive onto the retrieve")
 		legs = legsOf(t, db, demand.ID)
 		if legs[1].VendorOrderID == "" {
 			t.Fatalf("demand %d's retrieve never went out (queue_cause %q) — its lane is clear and its "+
 				"blocker has gone", demand.ID, legs[1].QueueCause)
 		}
-		landLeg(t, db, legs[1])
+		landLeg(t, d, db, legs[1])
 		testutil.MustNoErr(t, d.AdvanceCompoundOrder(demand.ID), "close the compound")
 	}
 

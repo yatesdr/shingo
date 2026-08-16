@@ -438,10 +438,36 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// No-op for every ungated path, which is every lane at both plants: the walk
 	// resolves each step's lane and finds no gated group, so the plan comes back
 	// unchanged and the sealed path below runs byte-identically.
-	plan := buildTransportPlan(sourceNode.Name, destNode.Name, order.SourceIntent == SourceIntentEmpty)
+	// THE DESTINATION-DEFERRED LEG BUILDS A DIFFERENT PLAN, AND THE SAME VALVE
+	// SHIPS IT.
+	//
+	// A dig leg whose destination is chosen at release has no dropoff step to
+	// build, so its plan is [pickup, wait@shallowest-slot] and it must go out
+	// UNSEALED — a sealed order ending in a Wait block is a robot nothing can ever
+	// append to. That is true whether or not the lane carries a gate mark, which
+	// is why the dwell supplies its own lane target: the mark decides where an
+	// INBOUND robot waits and has nothing to say about an outbound one.
+	//
+	// When the lane IS marked, the splice below inserts the inbound wait ahead of
+	// the pickup and returns that mark as the first gate — the create stops
+	// outside, the robot is admitted, enters, lifts, and dwells at the second
+	// wait. Two waits, one plan, released independently: the multi-gate shape rule
+	// 2 already builds.
+	plan, dwellTarget, dwelling, err := d.digDwellPlan(order, sourceNode)
+	if err != nil {
+		return "", err
+	}
+	if !dwelling {
+		plan = buildTransportPlan(sourceNode.Name, destNode.Name, order.SourceIntent == SourceIntentEmpty)
+	}
 	spliced, target, gated, err := d.spliceLaneWait(plan)
 	if err != nil {
 		return "", err
+	}
+	if dwelling && !gated {
+		// An unmarked dug lane: the splice found nothing to gate, and the dwell is
+		// the reason this order is unsealed.
+		target, gated = dwellTarget, true
 	}
 	// A no-op on this path today: the junction is written only for multi-bin
 	// complex orders and this builds a fresh single-bin transport plan. It is

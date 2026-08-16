@@ -52,9 +52,20 @@ const (
 	PopCompoundLeg WaitPopulation = "compound-leg"
 	// PopCompoundParent is a compound parent sitting in `reshuffling` while its
 	// children run. It is in the table because the status partition classifies
-	// `reshuffling` to it — no CAUSE names it, because a parent in reshuffling
-	// carries no queue cause; its wait is "my children are not finished", which
-	// is structural rather than a refusal.
+	// `reshuffling` to it.
+	//
+	// IT USED TO CARRY NO CAUSE AT ALL, and that sentence stood here until arm 2
+	// falsified it. The reasoning was sound for what existed then: a parent in
+	// `reshuffling` is waiting because its children are not finished, which is
+	// structural rather than a refusal, and structure needs no cause.
+	// CauseReshuffleHoldsTarget is the exception that had to be built — a parent
+	// whose children ARE all finished and which is still, correctly, waiting,
+	// because it holds its lane until the bin it uncovered is collected. That is
+	// a refusal with a releaser, so it is named like one.
+	//
+	// The floor below still covers the structural wait. It does NOT cover the new
+	// cause, deliberately; see that cause's row for why an alarm is the honest
+	// backstop there and a timed release would be a defect.
 	PopCompoundParent WaitPopulation = "compound-parent"
 	// PopStationWait is an order `staged` at a wait the STATION owns — the swap
 	// choreography's own gates, WaitKindStation. It is the fourth population, and
@@ -238,11 +249,35 @@ var causeReleasers = []causeReleaser{
 	{
 		cause:       CauseLaneDigActive,
 		populations: []WaitPopulation{PopAcquiring, PopGateStaged, PopCompoundLeg},
-		what:        "the dig holding this lane releases it (unlockLaneForCompound, which evaluates the lane it frees)",
-		bridgeNote: "EXPOSE DIGS RELEASE ELSEWHERE. A plain dig's lock drops at unlockLaneForCompound; " +
-			"an expose dig's is TRANSFERRED to the complex parent and dropped by " +
-			"HandleBinTransitForLaneLock on the parent's pickup (or the parent-terminal handler, or " +
-			"the boot prune). Deleting the bridge must leave the first path covering every case.",
+		// TWO RELEASE MOMENTS, ONE RELEASER. An expose dig's lock used to be
+		// TRANSFERRED to the complex parent and dropped later, on the parent's
+		// pickup — so this cause had two release CHAINS and the second one lived in
+		// machinery outside the compound. That transfer is gone with the hand-back it
+		// existed for. What replaced it is not a second chain but an earlier moment
+		// on the same one: flip 2 drops the claim when the dig's last blocker leaves
+		// the lane (maybeReleaseDigOnLastBlockerOut), and the compound's teardown
+		// still covers every case it does not (unlockLaneForCompound). Both wake the
+		// lane they free, which is what makes this cause's releaser real rather than
+		// eventual.
+		//
+		// AMENDED BY ARM 2, and the amendment lengthens this wait for one shape.
+		// A SERVICE dig — one raised to clear a lane for somebody else — now holds
+		// past its last blocker until the bin it uncovered is collected, because
+		// dropping the claim there left that bin exposed to the next order's
+		// shuffle slot with only its claim protecting it. So a waiter under this
+		// cause behind a service dig waits for a retrieval as well as an
+		// excavation. The releaser is the same call; what it asks is one question
+		// longer.
+		//
+		// IT MATTERS MORE SINCE THE OUTBOUND DWELL, because the population carrying
+		// this cause now includes a robot standing in a lane holding a bin: its
+		// release-time resolver was refused by a foreign dig's claim, and it walks
+		// its remaining candidates before it settles here. A dweller under this cause
+		// has been told there is nowhere it may legally put the blocker down — not
+		// that the group is full, which is CauseNoShuffleSlot and clears differently.
+		what: "the dig holding this lane releases it — at its last blocker's exit (flip 2, or for a " +
+			"service dig when the bin it uncovered is collected) or at " +
+			"its teardown (unlockLaneForCompound); both evaluate the lane they free",
 	},
 	{
 		cause:       CauseLaneTargetBuried,
@@ -253,7 +288,6 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseLaneHeldDig,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "the dig holding the mouth releases it",
-		bridgeNote:  "Same transferred-lock chain as CauseLaneDigActive; see that row.",
 	},
 	{
 		cause:       CauseLaneHeldTraffic,
@@ -274,7 +308,6 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseLaneLocked,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "the other reshuffle finishes and drops its lane lock",
-		bridgeNote:  "Same transferred-lock chain as CauseLaneDigActive; see that row.",
 	},
 	{
 		// ONE ROW FOR TWO CONSTANTS, and that is not a modelling choice — it is
@@ -305,18 +338,146 @@ var causeReleasers = []causeReleaser{
 		what:        "whatever the more specific arms would have named — this is the unmapped fallback",
 	},
 	{
-		cause:       CauseNoShuffleSlot,
-		populations: []WaitPopulation{PopAcquiring},
-		what:        "any order anywhere in the group releases a slot",
-		bridgeNote: "FREQUENCY, NOT RELEASER. findShuffleSlots narrows the pool by the protectedDepth " +
-			"rule, which reads pending_lane_extensions (F-19). Deleting the bridge WIDENS the pool and " +
-			"should make this cause rarer; it does not change what ends the wait. A batch should expect " +
-			"this row's count to fall, and be suspicious if it rises.",
+		cause: CauseNoShuffleSlot,
+		// TWO POPULATIONS SINCE THE OUTBOUND DWELL, and the second one is a ROBOT.
+		//
+		// PopAcquiring is the old one: a dig that cannot be PLANNED because the
+		// group has no room, parked as a row with nothing committed. PopGateStaged
+		// is new and is the expensive one — a dig leg that has already lifted a
+		// blocker and is standing in the lane it is digging while Core looks for
+		// somewhere to put it. Same physical fact, same releaser, and that is
+		// exactly why it is one cause and not two: the table's own rule is that a
+		// refusal reads the same whether the order is parked pre-dispatch or
+		// dwelling at a mark.
+		//
+		// BOTH OF LAW 8'S PATHS ALREADY HOLD FOR THE NEW POPULATION, which is what
+		// made the dwell safe to build on the existing identity rather than a new
+		// one: the dweller's WaitLane is the DUG lane — a real lane — so
+		// gateStagedForLane sees it, SweepLaneWaiters (60s) sweeps it, and the
+		// floor's loud arm reports it as a committed robot standing still. The
+		// EVENTS are the half that had to be widened: a dweller is woken by a slot
+		// freeing anywhere in its GROUP, not by its own lane clearing (which it is
+		// itself blocking) — DwellerLanesSharingGroupWith, wired onto the same
+		// pickout, bin-moved and terminal events this population already listens to.
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged},
+		// FREQUENCY NOTE, kept because a soak reads this row's count. The shuffle
+		// pool is narrowed by the burial exclusion, which used to read the expose
+		// bridge's table and now reads CLAIMS (SlotsBlockedByHardClaims). The
+		// releaser is unchanged either way; what changed is which bins are
+		// protected, so a shifted count here is expected rather than alarming.
+		what: "any order anywhere in the group releases a slot",
 	},
 	{
 		cause:       CauseDigBlockerClaimed,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "the order holding the blocker finishes carrying it out of the lane",
+	},
+	{
+		cause: CauseDigHoldsParking,
+		// TWO POPULATIONS, AND THEY SIT ON OPPOSITE SIDES OF THE COMMIT.
+		//
+		// PopAcquiring is right of way doing its job: a dig that could not count a
+		// dig-free pool and therefore DID NOT START — no lane taken, no leg
+		// dispatched, no bin claimed, a row parked with nothing committed. That is
+		// the population the construction exists to create, and it is the cheap one.
+		//
+		// PopGateStaged is the residual the outbound dwell leaves: a leg already
+		// holding a blocker, re-asking for a destination against a pool that has
+		// narrowed since its dig planned. Expensive — a robot is standing still —
+		// and deliberately not hidden under the cheap one, because the two answer
+		// different questions in a soak. A rising PopAcquiring count is right of way
+		// working; a rising PopGateStaged count is the residual firing, which is the
+		// measurement that takes C3 out of the drawer.
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged},
+		// FLOOR COVERAGE, both arms, checked rather than assumed (law 8). The parked
+		// proposer is re-asked by the planning scan that raised it, on the same clock
+		// as every other CauseNoShuffleSlot waiter. The dweller's WaitLane is the DUG
+		// lane — a real lane — so gateStagedForLane sees it and SweepLaneWaiters (60s)
+		// floors it, exactly as it does for that cause's dwelling population.
+		what: "the dig holding the parking lane releases it — at its last blocker's exit (flip 2, or " +
+			"for a service dig when the bin it uncovered is collected) or at " +
+			"its teardown (unlockLaneForCompound); both evaluate the lane they free, and the group " +
+			"evaluate wakes dwellers whose pool that lane is in",
+	},
+
+	{
+		cause: CauseGroupRoomClaimed,
+		// ONE POPULATION, AND THAT IS THE POINT OF THE WHOLE ARM. This refusal
+		// happens inside the planner, before a parent is minted, before a lane is
+		// locked and before a leg is dispatched — so the waiter is always a parked
+		// ROW, never a robot. If PopGateStaged ever appears under this cause, a dig
+		// was admitted that the group could not afford and the claim is being
+		// enforced too late; that is a defect, not a population.
+		populations: []WaitPopulation{PopAcquiring},
+		// FLOOR COVERAGE (law 8): the parked proposer is re-asked by the planning
+		// scan that raised it, on the same clock as every other CauseNoShuffleSlot
+		// waiter, and by SweepLaneWaiters underneath that.
+		//
+		// THE EVENT ARM IS THE INTERESTING ONE. A claim is released by a running
+		// dig BINDING a destination for its blocker, which is not a bin moving and
+		// not an order terminating — the two events this file's fan-out is built
+		// on. It is covered because the bind is immediately followed by the tail
+		// append and the drive-out, whose pickout fires EventBinEnteredTransit into
+		// the group fan-out; and because a dig dying releases its claim through the
+		// terminal arm. The residual — a bind whose robot then sits still — is
+		// floored at 60s rather than left to a trigger that does not exist.
+		what: "a dig running in this group binds its blocker's destination (releasing its counted " +
+			"claim) or terminates, or usable room appears in the group — the pickout that follows " +
+			"the bind and the terminal events both reach the group's waiters",
+	},
+
+	{
+		cause: CauseGroupOwesCollection,
+		// PARKED ROWS ONLY, same as its affordability sibling and for the same
+		// reason: the refusal happens inside the planner, before a parent is
+		// minted or a lane taken, so the waiter is never a robot. A PopGateStaged
+		// appearance would mean a dig was admitted that this rule should have
+		// stopped.
+		populations: []WaitPopulation{PopAcquiring},
+		// FLOOR COVERAGE (law 8): the parked proposer is re-asked by the planning
+		// scan that raised it, on the same clock as every other shortage cause,
+		// and by SweepLaneWaiters underneath that.
+		//
+		// The event arm is the same pickout that ends CauseReshuffleHoldsTarget —
+		// this cause and that one clear on one event, because they are two views
+		// of one fact. Note the asymmetry with the holding side: THAT wait has no
+		// timed floor by ruling, because releasing it early re-exposes a bin.
+		// THIS one is floored normally, because re-asking a refused dig costs a
+		// query and risks nothing.
+		what: "the bin the other reshuffle dug out is collected — its pickout releases that lane and " +
+			"returns the room it was holding, and the planning scan re-asks this dig",
+	},
+
+	{
+		cause: CauseReshuffleHoldsTarget,
+		// THE POPULATION THAT HAD NO CAUSE UNTIL NOW. A reshuffle parent sitting in
+		// `reshuffling` was, by the table's own account, waiting structurally — its
+		// children were not finished — and structural waits need no cause. This one
+		// has finished children and is still waiting, so it is the first genuine
+		// refusal ever recorded against a compound parent, and PopCompoundParent's
+		// comment is amended to say so.
+		populations: []WaitPopulation{PopCompoundParent},
+		// THE FLOOR DELIBERATELY DECLINES THIS ONE, and that is the entry worth
+		// reading. The population's floor is AdvanceStuckReshuffleParents, which
+		// arm 2 teaches to SKIP a parent still owing its target — so for this cause
+		// the periodic pass is not a releaser and must not be described as one.
+		//
+		// That is a ruling, not a gap. A floor that "rescued" this parent would
+		// complete it, drop its lane, and leave the uncovered bin in an open lane
+		// with nothing but its claim — precisely the exposure the longer hold was
+		// built to close, reintroduced by the machinery meant to be a safety net.
+		// Fail-open is the wrong direction here even though it is the right one
+		// almost everywhere else in this file.
+		//
+		// So the honest floor is an ALARM: SweepReshufflesHoldingTargets records a
+		// tripwire row when nothing in the plant is coming for the bin, and a human
+		// rules the incident. The escape hatch is the Core-side hard release, the
+		// same one PopStationWait names.
+		what: "the target bin leaves the lane — by ANY mover, which is what makes a cancelled claim " +
+			"harmless; the pickout fires EventBinEnteredTransit into maybeReleaseDigOnLastBlockerOut, " +
+			"which finds nothing outstanding, releases the lane and finishes the parent. NO TIMED " +
+			"FLOOR, ruled: releasing on a timer would re-expose the bin. A target nobody collects is " +
+			"a tripwire row for a human, not a timeout",
 	},
 
 	// ── The gate's own failures ───────────────────────────────────────────

@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -88,6 +89,64 @@ func (d *Dispatcher) laneWaitPoint(laneID int64) string {
 // existence of the mark IS the answer.
 func (d *Dispatcher) laneIsGated(laneID int64) bool {
 	return d.laneWaitPoint(laneID) != ""
+}
+
+// enteredAtDispatch narrows a dispatch's endpoints to the ones its robot is
+// actually being sent INTO, which is what Hold B records.
+//
+// ── WHY AN ENDPOINT IS NOT AN ENTRY ───────────────────────────────────────
+//
+// A create bound for a gated lane stops at that lane's MARK. The robot is next to
+// the corridor, not in it, and the row is taken later by the append that lets it
+// in (appendGateTail → takeLaneOccupancyByID). Recording it at dispatch would
+// declare a robot present in a lane it is deliberately parked outside of and wall
+// that lane for the length of the dwell — which is the opposite of what staging
+// is for, and is the defect PLAN §R.54 measured: a dig leg dwelling at LS_D2's
+// mark held LS_D2, refusing the only order that could break the cycle it had
+// joined. 997 seconds; one row.
+//
+// ── WHY IT IS HERE AND NOT INSIDE TakeLaneOccupancy ───────────────────────
+//
+// Enforcing it at the door was tried and is WRONG, and the suite said so in six
+// places at once. TakeLaneOccupancy is also the general "this order IS in this
+// lane" primitive — fixtures state a robot's presence with it, and a robot that
+// has been let THROUGH a gate is inside a gated lane like any other. A gated lane
+// holding occupancy rows is not the bug; it is the entire mechanism, since one
+// robot inside at a time is what the gate is for.
+//
+// What is conditional is not the LANE's ability to hold a row, it is whether THIS
+// DISPATCH is the moment the robot goes in — and only the seam issuing the
+// dispatch knows that. So the seams answer it, each in its own vocabulary: the
+// gated create walks its spliced plan (d.planNodes(preWait), lane_gate_dispatch.go)
+// because it has one, and the compound leg — which takes occupancy BEFORE its plan
+// is spliced, so that a failed take can still hold the child at `pending` — asks
+// the lane instead, through this.
+//
+// laneIsGated is the shared spelling, the same predicate admission asks in
+// entryDeferredToGate. An unresolvable or unreadable lane yields no skip and the
+// row is taken: over-restrictive, never under, which is the direction
+// TakeLaneOccupancy already argues for by name.
+func (d *Dispatcher) enteredAtDispatch(ns ...*nodes.Node) []*nodes.Node {
+	entered := make([]*nodes.Node, 0, len(ns))
+	for _, n := range ns {
+		if n == nil {
+			continue
+		}
+		lane, err := d.db.LaneForNode(n.ID)
+		if err != nil {
+			log.Printf("lanegate: resolve lane for node %d while deciding entry: %v (recording it as "+
+				"entered — an unreadable lane must not silently lose a presence)", n.ID, err)
+			entered = append(entered, n)
+			continue
+		}
+		if lane != nil && d.laneIsGated(lane.ID) {
+			d.dbg("lane occupancy: this dispatch stops at %s's mark, so no row is taken here; the "+
+				"tail append takes it when the robot actually enters", lane.Name)
+			continue
+		}
+		entered = append(entered, n)
+	}
+	return entered
 }
 
 // TWO QUESTIONS, ONE ANSWER — and the collapse is the ruling landing.
@@ -779,12 +838,91 @@ func (d *Dispatcher) releaseOccupancyOnExit(orderID int64, node *nodes.Node) {
 	if err != nil || lane == nil {
 		return
 	}
+	// ── THE LIFT IS NOT AN EXIT FOR A DWELLER ─────────────────────────────
+	//
+	// This whole path rests on one inference: a bin entering transit means the
+	// robot has it up and is driving OUT. That is true of every leg that knows
+	// where it is going, and false of a dig leg under the outbound dwell — it
+	// lifts and then STAYS, standing in the shallowest slot of the lane it is
+	// digging while Core chooses a destination.
+	//
+	// Releasing here would drop the row while the robot is still in the corridor,
+	// and the next sibling leg would be admitted in behind it. `ModeDig` does not
+	// contain that, which is the correction this fix exists for: a sibling leg is
+	// exempt from its own parent's dig lock BY DESIGN (ownsDig routes the leg's
+	// question to its parent), so the lock excludes everyone EXCEPT the exact
+	// population that queues behind a dwelling robot. Two robots nose to tail in
+	// one single-file lane, the deeper one's exit behind the shallower one's — and
+	// in-lane stacking is an unproven property of the fleet, not a thing to
+	// discover in production.
+	//
+	// WHAT IS GIVEN UP IS ONLY THE DWELL'S OWN OVERLAP. The row still drops when
+	// the robot actually drives out, which is the moment its tail is appended
+	// (releaseDwellingDigLeg → releaseOccupancyForExitFromLane), so the next leg
+	// still enters during the drive-out — where the pipelining gain of retiring
+	// the sibling-in-flight guard actually lives. The part surrendered is the part
+	// that did not exist before the dwell.
+	if d.holdsOccupancyThroughDwell(orderID, lane.ID) {
+		d.dbg("lane occupancy: order %d lifted in lane %s and is DWELLING there — the row is held until "+
+			"its tail is appended and it drives out", orderID, lane.Name)
+		// FLIP 2 IS STILL ASKED, AND ITS ANSWER HERE IS "NO" — which is the whole
+		// reason its predicate had to be restated.
+		//
+		// The two facts are independent: occupancy says whether THIS ROBOT is in the
+		// corridor, the dig claim says whether THE EXCAVATION still has work in it.
+		// A lift is the natural moment to ask the second, and asking it only on the
+		// paths where the first says "gone" would make the dweller invisible to it —
+		// so the arm that keeps the claim for a dwelling leg would be a guard nothing
+		// could ever exercise, which is a guard nobody can trust.
+		d.maybeReleaseDigOnLastBlockerOut(lane.ID)
+		return
+	}
+	d.releaseOccupancyForExitFromLane(orderID, lane)
+}
+
+// releaseOccupancyForExitFromLane is the release proper: drop the row and wake
+// the lane, because a corridor that just emptied is exactly the condition a
+// dweller at its mark is waiting on.
+//
+// Split from the caller above so the DWELL's own exit — which happens at the
+// append rather than at the lift — goes through the same two steps rather than a
+// second spelling of them.
+func (d *Dispatcher) releaseOccupancyForExitFromLane(orderID int64, lane *nodes.Node) {
 	if err := reservations.ReleaseOccupancyForLane(d.db.DB, orderID, lane.ID); err != nil {
 		log.Printf("lanegate: release occupancy for order %d on lane %d: %v", orderID, lane.ID, err)
 		return
 	}
+	// AND THE DIG'S CLAIM GOES WITH THE LAST BLOCKER — flip 2. A robot leaving is
+	// the moment to ask whether the excavation still has anything IN this lane, as
+	// opposed to a transport leg still driving somewhere else. It is asked before
+	// the wake below rather than after, so a lane that just became enterable is
+	// evaluated once, in a state that includes both facts.
+	d.maybeReleaseDigOnLastBlockerOut(lane.ID)
 	d.EvaluateLaneReleases(lane.ID)
 	d.RedriveHeldCompoundLegs(lane.ID)
+}
+
+// holdsOccupancyThroughDwell reports whether this order is currently DWELLING in
+// laneID — parked at an outbound wait that names it.
+//
+// It reads the order's own durable plan, which is the same source every other
+// dwell decision reads (IsGateStaged, the candidate walk, the floor). A leg that
+// has already been released has indexed past its wait, so this goes false at the
+// moment the append lands, which is exactly when the release becomes correct.
+func (d *Dispatcher) holdsOccupancyThroughDwell(orderID, laneID int64) bool {
+	order, err := d.db.GetOrder(orderID)
+	if err != nil || order == nil || !IsGateStaged(order) {
+		return false
+	}
+	var steps []resolvedStep
+	if json.Unmarshal([]byte(order.StepsJSON), &steps) != nil {
+		return false
+	}
+	if !waitGatesAnAppend(steps, order.WaitIndex) {
+		return false
+	}
+	w, ok := waitAt(steps, order.WaitIndex)
+	return ok && w.WaitLane == laneID
 }
 
 // ReleaseInboundLaneForOrder releases the owner's mouth hold on the lane an order

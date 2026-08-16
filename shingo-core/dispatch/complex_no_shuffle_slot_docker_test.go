@@ -150,16 +150,29 @@ func assertDugAfterSlotFreed(t *testing.T, db *store.DB, parent *orders.Order) {
 	t.Helper()
 	after, err := db.GetOrder(parent.ID)
 	testutil.MustNoErr(t, err, "read the parent back after the retry")
-	kids, err := db.ListChildOrders(parent.ID)
-	testutil.MustNoErr(t, err, "list children after the retry")
 
+	// THE LIVENESS CLAIM IS UNCHANGED; WHERE THE LEGS LIVE IS NOT. This asserted
+	// that the demand itself had become a reshuffle with legs under it. Under the
+	// two-shape ruling the demand never moves — the excavation is a separate
+	// service dig — so the same claim ("the park had a real releaser, and pulling
+	// it produced an actual excavation") is now read off the DIG.
+	//
+	// The demand-side half is kept and inverted, because it is the half that would
+	// catch the regression: a demand that acquired legs again has been re-parented.
+	kids := serviceDigChildren(t, db, after)
 	if len(kids) == 0 {
 		t.Fatalf("a shuffle slot freed and the retry still planned nothing — status %q, "+
 			"queue_reason %q. The park has no releaser, which makes it a stall wearing a queue reason",
 			after.Status, after.QueueReason)
 	}
-	if after.Status != StatusReshuffling {
-		t.Errorf("parent status = %q with %d legs under it, want %q", after.Status, len(kids), StatusReshuffling)
+	if after.Status != StatusQueued {
+		t.Errorf("demand status = %q with a dig running for it, want %q — the demand waits in the "+
+			"acquiring set and is re-driven by the scanner", after.Status, StatusQueued)
+	}
+	demandKids, err := db.ListChildOrders(parent.ID)
+	testutil.MustNoErr(t, err, "list the demand's own children")
+	if len(demandKids) != 0 {
+		t.Errorf("the demand owns %d legs — it was re-parented into the dig", len(demandKids))
 	}
 }
 

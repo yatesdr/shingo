@@ -40,6 +40,17 @@ type ReconciliationStore interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 	GetOrder(id int64) (*orders.Order, error)
 
+	// DigStillOwesItsTarget says whether a reshuffle parent that LOOKS finished
+	// — sealed, in `reshuffling`, every child terminal — is in fact holding its
+	// lane until the bin it dug out is collected. AdvanceStuckReshuffleParents
+	// asks it so the sweep does not "rescue" a dig that is working correctly and
+	// file a recovery record for it.
+	//
+	// It is the store's method rather than a callback because dispatch asks the
+	// same question at two more sites, and the three must not be able to
+	// disagree about what the hold means.
+	DigStillOwesItsTarget(parent *orders.Order) (bool, error)
+
 	// ReapOrphanedReservations reaps reservation rows (pending AND confirmed) whose
 	// owning order is terminal or gone — the owner-liveness backstop behind
 	// TerminalizeOrder. Never age-based: a hold under a live order is sacred. Returns

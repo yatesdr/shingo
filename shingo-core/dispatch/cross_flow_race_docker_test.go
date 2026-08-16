@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -16,13 +17,16 @@ import (
 	"shingocore/store/reservations"
 )
 
-// cross_flow_race_docker_test.go — scenario 13a, the race B WINS.
+// cross_flow_race_docker_test.go — scenario 13a, which right of way turned from
+// a race B WINS into a race A NEVER ENTERS.
 //
 // Two flows converge on one lane. Dig A's excavation needs somewhere to park a
 // blocker and the only place left is a slot in lane B; lane B is meanwhile being
 // dug for its own demand. 13b (stale_dig_docker_test.go) is what happens when A's
-// part lands FIRST and B's plan goes stale. This is the other branch: B's leg gets
-// in first, does its work, and A's part lands afterwards.
+// part lands FIRST and B's plan goes stale. This branch was B's leg getting in
+// first and A's part landing afterwards — and right of way (§R.61) removed the
+// convergence itself: A is refused at plan assembly and never enters. The
+// geometry below is unchanged and now serves the opposite assertion.
 //
 // The two guards that make that branch safe are each pinned already, SEPARATELY:
 // the D83a shuffle-slot guard by TestFindShuffleSlots_TwoDigsMustNotShareASlot
@@ -54,8 +58,11 @@ import (
 //
 // The shape is what forces the convergence. PARK is a single node, so the second
 // dig to plan cannot have it; lane B's B1 is empty and at the mouth, so it is the
-// one slot findShuffleSlots' second pass can offer instead — which puts dig A's
-// blocker on a collision course with the lane dig B owns.
+// one slot findShuffleSlots' second pass could offer instead — which is exactly
+// the offer right of way withdraws, because B1 is inside a lane another dig owns.
+// The fixture is therefore the minimum shape in which the rule can bite at all:
+// remove PARK's scarcity or lane B's free mouth slot and dig A is refused (or
+// admitted) for some other reason entirely.
 func twoDigsOneGroup(t *testing.T, db *store.DB, prefix string) (grp, laneA, laneB, park *nodes.Node, slotsA, slotsB []*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
 	grpType, _ := db.GetNodeTypeByCode("NGRP")
@@ -131,14 +138,48 @@ func (inv crossFlowInvariant) holds(when string) {
 	}
 }
 
+// releaseDwell drives a dwelling dig leg through the RELEASE the robot's arrival
+// drives in production: Core chooses where the blocker goes, binds it, and
+// appends the tail. Returns the leg reloaded, with its destination on it.
+//
+// It calls the production trigger rather than the resolver directly, so a
+// fixture cannot release a leg by a route the plant does not have.
+//
+// A leg that is not dwelling comes back untouched, which is what lets landLeg
+// call this unconditionally: an unbury leg dwells, a retrieve tail does not, and
+// the two live side by side in every compound.
+func releaseDwell(t *testing.T, d *Dispatcher, db *store.DB, leg *orders.Order) *orders.Order {
+	t.Helper()
+	if leg.DeliveryNode != "" {
+		return leg
+	}
+	d.EvaluateWaitLaneForStagedOrder(leg.ID)
+	fresh, err := db.GetOrder(leg.ID)
+	testutil.MustNoErr(t, err, "reload the dwelling leg")
+	if fresh.DeliveryNode == "" {
+		t.Fatalf("dwelling leg %d was not released: it is still holding its blocker with no destination "+
+			"(queue_cause %q). Either the group genuinely had no free shuffle slot, or the resolver "+
+			"declined — read the cause before changing the fixture", leg.ID, fresh.QueueCause)
+	}
+	return fresh
+}
+
 // landLeg runs a dig leg the way the floor does: the bin arrives at the leg's
 // delivery node and the leg terminalizes, which is what releases its occupancy
 // (TerminalizeOrder → reservations.ReleaseByOrder, kind-agnostic).
-func landLeg(t *testing.T, db *store.DB, leg *orders.Order) {
+//
+// IT RELEASES A DWELLER FIRST, because a dig leg no longer knows where it is
+// going when it is dispatched — it stands in the lane it is digging until Core
+// picks a slot (the outbound dwell). "Land this leg" therefore has to include
+// the choice, or the fixture would be asserting against a destination that does
+// not exist yet. A test that wants to observe the leg BETWEEN dispatch and
+// release calls releaseDwell itself.
+func landLeg(t *testing.T, d *Dispatcher, db *store.DB, leg *orders.Order) {
 	t.Helper()
 	if leg.BinID == nil {
 		t.Fatalf("leg %d carries no bin — the fixture is wrong, not the code", leg.ID)
 	}
+	leg = releaseDwell(t, d, db, leg)
 	dest, err := db.GetNodeByDotName(leg.DeliveryNode)
 	testutil.MustNoErr(t, err, "resolve leg destination "+leg.DeliveryNode)
 	testutil.MustNoErr(t, db.MoveBinClearingStaging(*leg.BinID, dest.ID, false), "land the leg's bin")
@@ -154,21 +195,39 @@ func legsOf(t *testing.T, db *store.DB, parentID int64) []*orders.Order {
 	return legs
 }
 
-// TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace is catalog row 4.2, and its
-// checker is the invariant above rather than the end state.
+// TestCrossFlow_TwoDigsOneLane_ANeverStarts is catalog row 4.2, INVERTED IN PLACE
+// by right of way (§R.61, ruled 2026-08-13), and the premise it used to assert is
+// quoted below rather than deleted.
 //
-// The story, and every step is a production call:
+// ── WHAT THIS TEST USED TO SAY, AND WHY IT WAS RIGHT TO CHANGE IT ─────────
+//
+// It was TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace, and step 2 read: *"dig A
+// plans lane A. Parking is spoken for, so A's blocker is aimed at lane B's mouth
+// slot. THAT IS 'dig A packs lane B'."* Its own fatal message argued the premise:
+// *"lane B's mouth slot is free and reachable, so there IS somewhere to park and
+// this dig must plan."* Both statements are still TRUE of the lane and are now
+// REFUSED anyway — the argument is in reshuffle.go's right-of-way header, and the
+// short form is that "the mouth slot is free" is a fact about lane B and the
+// question is about the SYSTEM: A parking there is A borrowing the only place B's
+// own next blocker can go.
+//
+// The old test was run against this tree before it was replaced, and it failed at
+// exactly the line that carried the premise, naming it:
+//
+//	dig A was refused (no_shuffle_slot: ... the parking this dig needs is inside
+//	a lane another dig holds: 1 slot(s) short, and lane XF-LANE-B is held by dig 2)
+//
+// ── THE STORY NOW, and every step is a production call ────────────────────
 //
 //  1. dig B plans lane B. It takes the group's only parking and its first leg goes
 //     out — B is now INSIDE lane B.
-//  2. dig A plans lane A. Parking is spoken for (D83a: the gate counts dig B's leg
-//     as inbound, so the node is not free even though it is empty), so A's blocker
-//     is aimed at lane B's mouth slot. THAT IS "dig A packs lane B".
-//  3. A's leg is refused at the lane, because a foreign dig excludes everything. B
-//     WON THE RACE: B's leg is inside and A's part has not landed.
+//  2. dig A tries to plan lane A. Parking is spoken for, and the only other space
+//     in the group is inside lane B, which dig B holds. RIGHT OF WAY REFUSES IT.
+//  3. AND DIG A HOLDS NOTHING — no lane, no leg, no claim, no robot. That is the
+//     construction, and it is what the old shape could not give: there, A had a
+//     robot standing in lane A with a blocker it could not put down.
 //  4. B's legs run out. The lane clears, the lock lifts.
-//  5. A's leg is re-driven into the lane it was aimed at all along, and both
-//     demands finish.
+//  5. A plans NOW, against a group with room in it, and both demands finish.
 //
 // MUTATION 1 (verified): revert shuffleSlotFree (reshuffle.go) to the pre-D83a
 // body — `cnt, _ := db.CountBinsByNode(n.ID); return cnt == 0`. Dig A then takes
@@ -196,7 +255,14 @@ func legsOf(t *testing.T, db *store.DB, parentID int64) []*orders.Order {
 // Three mutations breaking three different assertions is the point of composing
 // them: each existing test sees only its own half, and passes while the other is
 // gone.
-func TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace(t *testing.T) {
+//
+// MUTATION 4 (verified) is right of way's own, and it is the pin R.61 asked for:
+// in findShuffleSlots, put back `db.ListChildNodes(groupID)` in place of
+// `db.ListChildNodesUnlocked(groupID, asker)`. Dig A then plans, step 2's refusal
+// assertion fires, and the scenario reverts to the one this test used to be. Both
+// lanes are UNGATED in twoDigsOneGroup, deliberately: nothing here can pass by
+// testing the lane gate instead of the rule.
+func TestCrossFlow_TwoDigsOneLane_ANeverStarts(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
@@ -240,62 +306,97 @@ func TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace(t *testing.T) {
 	if len(legsB) != 2 {
 		t.Fatalf("dig B planned %d leg(s), want an unbury and a retrieve", len(legsB))
 	}
-	if legsB[0].DeliveryNode != park.Name {
-		t.Fatalf("dig B's unbury is aimed at %s, want the group's parking %s — the fixture's premise is "+
-			"that B takes the only direct-child spot, leaving A nothing but lane B",
-			legsB[0].DeliveryNode, park.Name)
-	}
 	if legsB[0].VendorOrderID == "" {
 		t.Fatalf("dig B's first leg was never dispatched (queue_cause %q) — the group was quiet", legsB[0].QueueCause)
 	}
+	// IT IS INSIDE LANE B, HOLDING ITS BLOCKER AND ITS ROW. Under the outbound
+	// dwell the leg lifts and STAYS, so this is a stronger statement than it used
+	// to be: before, the row was dropped at the lift and the corridor read empty
+	// while the robot was still standing in it.
 	if occ, _ := reservations.OccupantsOf(db.DB, laneB.ID); len(occ) != 1 || occ[0] != legsB[0].ID {
-		t.Fatalf("lane B occupants = %v, want exactly dig B's first leg (%d)", occ, legsB[0].ID)
+		t.Fatalf("lane B occupants = %v, want exactly dig B's first leg (%d), which is dwelling in it",
+			occ, legsB[0].ID)
 	}
+	// And it takes the only parking when it is RELEASED. The aim is read here
+	// rather than off the plan because that is when the destination is chosen now;
+	// the premise it establishes — B has the group's one direct-child spot, leaving
+	// A nothing but lane B — is unchanged, and so is what it costs A.
+	releasedB0 := releaseDwell(t, d, db, legsB[0])
+	if releasedB0.DeliveryNode != park.Name {
+		t.Fatalf("dig B's unbury was released onto %s, want the group's parking %s — the fixture's "+
+			"premise is that B takes the only direct-child spot, leaving A nothing but lane B",
+			releasedB0.DeliveryNode, park.Name)
+	}
+	legsB = legsOf(t, db, demandB.ID)
 
-	// ── 2. DIG A PLANS, AND PACKS LANE B ──────────────────────────────────────
-	if _, pe := d.planner.planBuriedReshuffle(demandA, &BuriedError{Bin: targetA, Slot: slotsA[1], LaneID: laneA.ID}); pe != nil {
-		t.Fatalf("dig A was refused (%s: %s) — lane B's mouth slot is free and reachable, so there IS "+
-			"somewhere to park and this dig must plan", pe.Code, pe.Detail)
-	}
-	inv.holds("after dig A planned into lane B")
-
-	legsA := legsOf(t, db, demandA.ID)
-	if len(legsA) != 2 {
-		t.Fatalf("dig A planned %d leg(s), want an unbury and a retrieve", len(legsA))
-	}
-	if legsA[0].DeliveryNode != slotsB[0].Name {
-		t.Fatalf("dig A's unbury is aimed at %s, want lane B's mouth slot %s. Without that this test is "+
-			"not 13a at all — the two flows never converge and every assertion below is vacuous",
-			legsA[0].DeliveryNode, slotsB[0].Name)
-	}
-
-	// ── 3. B WON THE RACE ─────────────────────────────────────────────────────
-	// A's leg is aimed into a lane another dig owns, so it holds. Re-driven the way
-	// every lane-clearing event re-drives it: a gate that only holds once is not a
-	// gate.
+	// ── 2. DIG A IS REFUSED, AND THE REFUSAL NAMES WHOSE LANE IT IS ───────────
+	//
+	// The re-ask loop is kept from the old shape and matters as much: a rule that
+	// refuses once and lets the second attempt through is not a rule. Every pass
+	// must reach the same answer while lane B is B's.
+	var pe *planningError
 	for range 3 {
-		testutil.MustNoErr(t, d.AdvanceCompoundOrder(demandA.ID), "re-drive dig A while lane B is B's")
-		inv.holds("while dig A is re-driven against dig B's lane")
+		_, pe = d.planner.planBuriedReshuffle(demandA, &BuriedError{Bin: targetA, Slot: slotsA[1], LaneID: laneA.ID})
+		if pe == nil {
+			t.Fatalf("dig A PLANNED while dig B holds lane %s — the only parking left in the group is "+
+				"inside that lane, and a dig that plans into a lane another dig holds is the wedge this "+
+				"rule exists to make unconstructable", laneB.Name)
+		}
+		inv.holds("while dig A is refused against dig B's lane")
 	}
-	heldLeg, err := db.GetOrder(legsA[0].ID)
-	testutil.MustNoErr(t, err, "reload dig A's first leg")
-	if heldLeg.VendorOrderID != "" {
-		t.Fatalf("dig A's leg was dispatched into lane %s while dig B owns it (vendor %q) — a foreign "+
-			"dig excludes everything, and B's remaining leg would find a bin in front of it that its "+
-			"plan does not contain", laneB.Name, heldLeg.VendorOrderID)
+	var held *DigParkingHeldError
+	if !errors.As(pe.Err, &held) {
+		t.Fatalf("dig A was refused as %q (%s) — right of way must refuse with the typed error, because "+
+			"a wait that cannot name the order it is waiting on has no releaser a reader can check "+
+			"(law 8)", pe.Code, pe.Detail)
 	}
-	if heldLeg.QueueCause != string(CauseLaneDigActive) {
-		t.Errorf("dig A's leg is holding under cause %q, want %q — a leg parked behind an excavation "+
-			"must be distinguishable from one nobody has reached yet",
-			heldLeg.QueueCause, CauseLaneDigActive)
+	if held.Lane != laneB.Name {
+		t.Errorf("the refusal names lane %q, want %q — the lane an operator has to look at is the one "+
+			"that must free, not the one being dug", held.Lane, laneB.Name)
 	}
-	if protocol.IsTerminal(heldLeg.Status) {
-		t.Fatalf("dig A's leg is %q — a crowded lane is congestion, and congestion never terminates "+
-			"anything", heldLeg.Status)
+	if held.HolderID != demandB.ID {
+		t.Errorf("the refusal names dig %d, want demand B (%d) — planBuriedReshuffle re-parents the "+
+			"demand, so the demand IS the dig that holds lane B", held.HolderID, demandB.ID)
+	}
+
+	// ── 3. AND DIG A HOLDS NOTHING ────────────────────────────────────────────
+	//
+	// THIS IS THE CONSTRUCTION, and it is the assertion the old shape could not
+	// make. There, A had a robot standing in lane A with a blocker in the air and
+	// an occupancy row under it, waiting for B — hold-and-wait, both halves. Here
+	// the refusal happens before the lock, before any child, before any claim, so
+	// A is not a party to a wait-for graph at all.
+	if legs := legsOf(t, db, demandA.ID); len(legs) != 0 {
+		t.Fatalf("dig A wrote %d leg(s) after being refused — a refused dig must hold nothing, and a "+
+			"child order is a claim on a bin", len(legs))
+	}
+	if d.laneLock.IsLocked(laneA.ID) {
+		t.Fatal("dig A took lane A after being refused — the plan precedes the lock precisely so this " +
+			"refusal is free")
+	}
+	blkA, err := db.GetBin(blockerA.ID)
+	testutil.MustNoErr(t, err, "reload dig A's blocker")
+	if blkA.ClaimedBy != nil {
+		t.Errorf("dig A's blocker is claimed by order %d after the dig was refused — an unclaimed bin "+
+			"is what lets some other flow use it while A waits", *blkA.ClaimedBy)
+	}
+	if occ, _ := reservations.OccupantsOf(db.DB, laneA.ID); len(occ) != 0 {
+		t.Errorf("lane A has occupants %v after dig A was refused — nothing was ever dispatched", occ)
+	}
+	waitingA, err := db.GetOrder(demandA.ID)
+	testutil.MustNoErr(t, err, "reload demand A")
+	if protocol.IsTerminal(waitingA.Status) {
+		t.Fatalf("demand A is %q — right of way is congestion and congestion never terminates anything",
+			waitingA.Status)
+	}
+	if waitingA.QueueCause != string(CauseDigHoldsParking) {
+		t.Errorf("demand A is parked under cause %q, want %q — %q would send a reader to look at a full "+
+			"group, and the group is not full",
+			waitingA.QueueCause, CauseDigHoldsParking, CauseNoShuffleSlot)
 	}
 
 	// ── 4. DIG B RUNS OUT ─────────────────────────────────────────────────────
-	landLeg(t, db, legsB[0]) // the blocker reaches parking
+	landLeg(t, d, db, legsB[0]) // the blocker reaches parking
 	inv.holds("after dig B's unbury landed")
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(demandB.ID), "re-drive dig B onto its retrieve")
 	inv.holds("after dig B's retrieve was admitted")
@@ -305,7 +406,7 @@ func TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace(t *testing.T) {
 		t.Fatalf("dig B's retrieve never went out (queue_cause %q) — its own lane is clear and the bin "+
 			"in front of it has gone", legsB[1].QueueCause)
 	}
-	landLeg(t, db, legsB[1])
+	landLeg(t, d, db, legsB[1])
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(demandB.ID), "close dig B")
 	inv.holds("after dig B finished")
 
@@ -316,8 +417,8 @@ func TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace(t *testing.T) {
 			"is the least this scenario owes", doneB.Status)
 	}
 	if d.laneLock.IsLocked(laneB.ID) {
-		t.Fatal("lane B is still locked after its dig finished — dig A is aimed into that lane and " +
-			"nothing alive would ever release it")
+		t.Fatal("lane B is still locked after its dig finished — dig A is waiting on exactly that " +
+			"release, and nothing else would ever give it one")
 	}
 	atLine, err := db.GetBin(targetB.ID)
 	testutil.MustNoErr(t, err, "reload demand B's bin")
@@ -326,16 +427,27 @@ func TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace(t *testing.T) {
 			atLine.NodeID, lineB.ID)
 	}
 
-	// ── 5. AND A'S PART LANDS ─────────────────────────────────────────────────
-	testutil.MustNoErr(t, d.AdvanceCompoundOrder(demandA.ID), "re-drive dig A now lane B is free")
-	inv.holds("after dig A was admitted into the freed lane")
+	// ── 5. AND NOW DIG A PLANS ────────────────────────────────────────────────
+	//
+	// THE RELEASER IS REAL, which is the other half of law 8 and the half a refusal
+	// can quietly fail. A rule that refuses correctly and never lets the refused
+	// party through is a wedge with better manners.
+	if _, pe := d.planner.planBuriedReshuffle(demandA, &BuriedError{Bin: targetA, Slot: slotsA[1], LaneID: laneA.ID}); pe != nil {
+		t.Fatalf("dig A is STILL refused (%s: %s) after dig B released lane %s — the wait named that "+
+			"release as its releaser", pe.Code, pe.Detail, laneB.Name)
+	}
+	inv.holds("after dig A planned into the freed group")
 
-	legsA = legsOf(t, db, demandA.ID)
+	legsA := legsOf(t, db, demandA.ID)
+	if len(legsA) != 2 {
+		t.Fatalf("dig A planned %d leg(s), want an unbury and a retrieve", len(legsA))
+	}
+	releaseDwell(t, d, db, legsA[0])
 	if legsA[0].VendorOrderID == "" {
 		t.Fatalf("dig A's leg is STILL holding (queue_cause %q) after lane %s cleared — the wait had no "+
 			"releaser, which makes it a stall wearing a queue reason", legsA[0].QueueCause, laneB.Name)
 	}
-	landLeg(t, db, legsA[0])
+	landLeg(t, d, db, legsA[0])
 	inv.holds("after dig A's blocker landed in lane B")
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(demandA.ID), "re-drive dig A onto its retrieve")
 	inv.holds("after dig A's retrieve was admitted")
@@ -344,7 +456,7 @@ func TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace(t *testing.T) {
 	if legsA[1].VendorOrderID == "" {
 		t.Fatalf("dig A's retrieve never went out (queue_cause %q)", legsA[1].QueueCause)
 	}
-	landLeg(t, db, legsA[1])
+	landLeg(t, d, db, legsA[1])
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(demandA.ID), "close dig A")
 	inv.holds("after both flows finished")
 
@@ -355,13 +467,36 @@ func TestCrossFlow_TwoDigsOneLane_BsLegWinsTheRace(t *testing.T) {
 			"it nothing else", doneA.Status)
 	}
 
-	// THE BLOCKER IS WHERE THE PLAN SAID. Blockers lie where they fall, and this
-	// one fell into the lane the other flow had just finished with — which is the
-	// whole reason the two guards had to hold while both were live.
+	// THE BLOCKER IS WHERE CORE SENT IT, AND IT IS IN LANE B. Blockers lie where
+	// they fall, and this one fell into the lane the other flow had just finished
+	// with — which is the whole reason the two guards had to hold while both were
+	// live.
+	//
+	// WHICH slot in lane B is deliberately not pinned any more. It used to be the
+	// MOUTH slot, because that was the only free one at the moment dig A planned;
+	// the choice is made after dig B finished now, when the lane it emptied is
+	// wholly free, and findShuffleSlots packs DEEPEST-FIRST to keep the lane's FIFO
+	// invariant. Pinning the mouth would be pinning the old moment's information,
+	// not a property. What is asserted instead is the pair that matters: the lane
+	// is the one the flows converged on, and the bin is at the node the leg's own
+	// row named — the plan and the outcome agreeing is what a stale binding breaks.
 	landed, err := db.GetBin(blockerA.ID)
 	testutil.MustNoErr(t, err, "reload dig A's blocker")
-	if landed.NodeID == nil || *landed.NodeID != slotsB[0].ID {
-		t.Errorf("dig A's blocker ended at node %v, want lane B's mouth slot %d", landed.NodeID, slotsB[0].ID)
+	if landed.NodeID == nil {
+		t.Fatalf("dig A's blocker is at no node at all after its leg landed")
+	}
+	landedLane, err := db.LaneForNode(*landed.NodeID)
+	testutil.MustNoErr(t, err, "resolve the lane dig A's blocker landed in")
+	if landedLane == nil || landedLane.ID != laneB.ID {
+		t.Errorf("dig A's blocker ended in %s, want lane B — the convergence is the whole scenario",
+			nodeName(landedLane))
+	}
+	aimed, err := db.GetNodeByDotName(legsA[0].DeliveryNode)
+	testutil.MustNoErr(t, err, "resolve the slot dig A's leg was released onto")
+	if aimed == nil || *landed.NodeID != aimed.ID {
+		t.Errorf("dig A's blocker is at node %d but its leg was released onto %q — the row and the bin "+
+			"disagree, which is the stale-binding failure the late choice exists to remove",
+			*landed.NodeID, legsA[0].DeliveryNode)
 	}
 
 	// THE LEDGER IS CLEAN. Every hold released on every exit — an orphaned

@@ -9,6 +9,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // demand_origin_stamp_docker_test.go — the demand grain's Core half, against a
@@ -189,11 +190,11 @@ func TestOriginPropagation_ReshuffleChildrenInheritFromTheBuriedParent(t *testin
 	// And the reshuffle compound it scheduled IS derivative — the unbury moves
 	// exist only because this demand needed a buried bin, so they are part of
 	// what the demand cost and belong in its child count.
-	children, err := db.ListChildOrders(parent.ID)
-	testutil.MustNoErr(t, err, "list reshuffle children")
-	if len(children) == 0 {
-		t.Fatal("no reshuffle children created — the derivative half of this test asserted nothing")
-	}
+	// THE LEGS MOVED HOUSE, THE ASSERTION DID NOT. They used to hang off the
+	// demand, which was its own dig's parent; a complex demand is now a customer
+	// of a lane-clear dig and the legs hang off THAT. What this test is about —
+	// what a reshuffle leg carries — is unchanged, so it follows the legs.
+	children := serviceDigChildren(t, db, parent)
 	for _, c := range children {
 		wantOrigin(t, c, "reshuffle child of the buried parent", testOriginID, protocol.OriginClassAttached)
 	}
@@ -229,8 +230,8 @@ func TestOriginPropagation_CompoundChildrenCarryTHEPARENTSOriginID(t *testing.T)
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-ORIGIN-CMP-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-CMP-TGT")
-	plan, err := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
+	_ = createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-CMP-TGT")
+	plan, err := PlanLaneMouthClear(db, slots[1], lane, grp.ID, reservations.Anyone)
 	testutil.MustNoErr(t, err, "plan unbury")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
@@ -271,8 +272,8 @@ func TestOriginPropagation_CompoundChildrenInheritNoDemandToo(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create no_demand parent")
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-ORIGIN-ND-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-ND-TGT")
-	plan, err := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
+	_ = createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-ND-TGT")
+	plan, err := PlanLaneMouthClear(db, slots[1], lane, grp.ID, reservations.Anyone)
 	testutil.MustNoErr(t, err, "plan unbury")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
@@ -341,8 +342,8 @@ func TestOriginPropagation_DigChildrenStampAtTheSeamNotTheCaller(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create already-reshuffling parent")
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-ORIGIN-DIG-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-DIG-TGT")
-	plan, err := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
+	_ = createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-DIG-TGT")
+	plan, err := PlanLaneMouthClear(db, slots[1], lane, grp.ID, reservations.Anyone)
 	testutil.MustNoErr(t, err, "plan unbury")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())

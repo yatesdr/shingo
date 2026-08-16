@@ -494,14 +494,68 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 			Detail: fmt.Sprintf("config failure: lane %s is not in a node group, so it has nowhere to park a blocker", lane.Name),
 		}
 	}
-	plan, err := PlanReshuffle(s.db, buried.Bin, buried.Slot, lane, *lane.ParentID)
+	// THE ASKER IS THE ORDER THAT WILL OWN THIS DIG. planBuriedReshuffle re-parents
+	// the demand itself — the TryLock two calls down is taken in order.ID's name —
+	// so right of way exempts a lane this same order is already digging (an earlier
+	// generation of the same episode) and refuses every other dig's lane.
+	plan, err := PlanReshuffle(s.db, buried.Bin, buried.Slot, lane, *lane.ParentID, digAskerFor(order))
 	if err != nil {
 		// "No free shuffle slot" is CONGESTION, not a fault — a slot frees as soon
 		// as any other order clears one. It must wait and retry, never fail: demand
 		// does not terminate for congestion (surfaced by sim order 21). Every other
 		// planning failure here is real lane geometry and stays terminal.
+		// RIGHT OF WAY, asked before the general shortage for the same reason
+		// classifyPlanError asks it first: it names an order, and the general arm
+		// would file it as a full group. The demand parks with the lane that has to
+		// free, and the dig is NOT started — no lock has been taken at this point,
+		// which is what makes the refusal free.
+		// THE AFFORDABILITY REFUSAL, asked beside right of way and ahead of the
+		// general shortage for the same reason: it is the specific finding, and the
+		// general arm would file "the group is committed" as "the group is full".
+		// Nothing is held here either — the lock is taken below this block.
+		var afford *GroupCannotAffordError
+		if errors.As(err, &afford) {
+			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseGroupRoomClaimed,
+				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
+			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
+		}
+		// THE ORDERING REFUSAL, asked beside the other two and ahead of the general
+		// shortage. It is the least shortage-like of the three — the group may have
+		// plenty of room — so filing it as a full group would send an operator to
+		// make space when what is wanted is for somebody to collect a bin already
+		// standing in the open. Nothing is held here either.
+		var owes *GroupOwesCollectionError
+		if errors.As(err, &owes) {
+			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseGroupOwesCollection,
+				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
+			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
+		}
+		var held *DigParkingHeldError
+		if errors.As(err, &held) {
+			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseDigHoldsParking,
+				QueueParams{Lane: held.Lane, Payload: order.PayloadCode})
+			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
+		}
 		if errors.Is(err, ErrNoShuffleSlot) {
 			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
+		}
+		// ONE SPELLING OF THE READ-FAILURE DISPOSITION, ACROSS BOTH LAYERS. The
+		// lane read at the top of this function has parked on a failed read since
+		// read_vs_missing.go landed; the PLANNER's own reads — the blockers in front
+		// of the slot, the bins in them, the group's children — fell through to
+		// codeReshuffle, which is terminal. Same event, same demand, opposite
+		// disposition, decided by which SELECT happened to fail (PLAN §R.45).
+		//
+		// ErrSlotNotInLane is asked first and deliberately: readFailed() is true for
+		// any non-nil error that is not sql.ErrNoRows, so the genuine configuration
+		// fault would otherwise park forever under a cause nothing can clear.
+		if !errors.Is(err, ErrSlotNotInLane) && readFailed(err) {
+			s.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{})
+			return nil, &planningError{
+				Code:   codeReadFailed,
+				Detail: fmt.Sprintf("could not read the lane while planning the dig, retrying: %v", err),
+				Err:    err,
+			}
 		}
 		return nil, &planningError{Code: codeReshuffle, Detail: fmt.Sprintf("cannot plan reshuffle: %v", err), Err: err}
 	}

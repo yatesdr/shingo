@@ -951,6 +951,17 @@ func (db *DB) runVersionedMigrations() error {
 		{77, "add orders.open_for_children (compound sealedness, explicit)",
 			v77CompoundSealedness,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "open_for_children") }},
+		{78, "drop pending_lane_extensions (the expose bridge, deleted with the two-shape ruling)",
+			v78DropPendingLaneExtensions,
+			func(q schema.Querier) bool { return !schema.TableExists(q, "pending_lane_extensions") }},
+
+		// v79 adds orders.dig_target_node -- the slot a service dig exists to
+		// uncover. The dig lock now spans the excavation AND the retrieval it was
+		// raised for, and this column says whose departure ends the hold. See
+		// v79DigTargetNode.
+		{79, "add orders.dig_target_node (the bin a service dig uncovers, and what releases its lane)",
+			v79DigTargetNode,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "dig_target_node") }},
 	}
 
 	// Record the head version for LatestMigrationVersion, derived from the list
@@ -1503,6 +1514,34 @@ func v47OrderRemainingUOP(tx *sql.Tx) error {
 func v77CompoundSealedness(tx *sql.Tx) error {
 	_, err := tx.Exec(
 		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS open_for_children BOOLEAN NOT NULL DEFAULT false`)
+	return err
+}
+
+// v79DigTargetNode adds orders.dig_target_node: the slot a service dig exists
+// to uncover, and the fact its lane's release now keys on.
+//
+// NO BACKFILL, and for a harder reason than v77's. v77 could argue its default
+// was TRUE of every existing row; here the honest statement is that the question
+// did not exist. A dig that ran before this migration released its lane when its
+// last blocker placed, its target bin was covered by the CLAIM rather than by the
+// lock, and it is long finished. Writing a target onto those rows would invent a
+// hold that never existed -- and worse, the new release path would read it as a
+// debt still outstanding and keep a completed dig's lane shut against a bin that
+// left hours ago. The default states the true thing about every historical row:
+// this order has no target bin outstanding.
+//
+// TEXT AND NOT A NODE ID, matching source_node / delivery_node / process_node --
+// the three columns on this table that already name a node. An id would join
+// more cheaply, but it would make this the only one of the four spelled
+// differently, and the release path resolves the name through GetNodeByDotName,
+// which is the same call compound dispatch already makes for every leg it ships.
+//
+// Additive and non-breaking on its own: nothing reads the column in this
+// migration's commit, so a Core rolled back across it loses a column nothing
+// consulted.
+func v79DigTargetNode(tx *sql.Tx) error {
+	_, err := tx.Exec(
+		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS dig_target_node TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 
@@ -3630,4 +3669,31 @@ func v76LaneOccupancyKind(tx *sql.Tx) error {
 		return fmt.Errorf("add kind_target check: %w", err)
 	}
 	return nil
+}
+
+// v78DropPendingLaneExtensions removes the expose bridge's table.
+//
+// The table held ONE row per complex dig that had finished in expose mode: the
+// bin it had just uncovered, and the slot that bin was expected to leave from. It
+// existed so a dig's lane lock could be TRANSFERRED to the complex parent and
+// released later, when that parent came back through ResumeCompound for the bin —
+// the post-compound, pre-pickup re-burial window.
+//
+// Nothing comes back any more. Under the two-shape ruling a dig is a service to a
+// LANE, so the demand is never re-parented into its own dig; the lane is released
+// at the compound's terminal like every other dig's, and the fact the table
+// protected (do not wall in a bin somebody is coming for) is carried by CLAIMS —
+// see store.SlotsBlockedByHardClaims, which asks the store selector's own burial
+// clause.
+//
+// DROPPED RATHER THAN LEFT EMPTY. A table nothing writes and nothing reads is a
+// thing the next reader has to work out the deadness of; the schema is a claim
+// about what the system is, and this is no longer part of it. The v24 migration
+// that CREATED it is left exactly where it is — migrations are history, and
+// rewriting history is not how a database gets to a known state.
+//
+// IF EXISTS because a database seeded after this migration landed never had it.
+func v78DropPendingLaneExtensions(tx *sql.Tx) error {
+	_, err := tx.Exec(`DROP TABLE IF EXISTS pending_lane_extensions`)
+	return err
 }

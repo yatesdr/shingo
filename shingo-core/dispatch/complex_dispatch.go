@@ -143,6 +143,25 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 		d.dbg("complex: order %d held at lane %s (%s)", order.ID, v.Lane(), v.Cause())
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, v.Cause(),
 			QueueParams{Destination: v.Lane()})
+		// THE REFUSAL ASKS FOR THE CORRIDOR TO BE OPENED, which is what made it
+		// safe to ask the reachability question here at all.
+		//
+		// skipsForComplexEntry used to skip it, and the justification was never
+		// "this caller does not need the answer" — it was that a lane-target-buried
+		// refusal raised HERE would park the order with nothing to unbury it, for
+		// ever, because the complex dig was wired to a finder outcome rather than to
+		// an admission verdict. A dig is a service to a LANE now and is proposed
+		// WITHOUT consuming the demand, so the refusal can do both: hold the order
+		// where it is, and ask for the wall to be taken down.
+		//
+		// The cause is written ABOVE and is not re-written here (the session-4
+		// lesson: the write and the outcome are different moments, and the station
+		// is told once per outcome). CauseLaneTargetBuried already names the right
+		// releaser — "the bin in front is moved, by a dig or by whoever claimed it
+		// carrying it out" — and that sentence is now true by construction.
+		if v.Cause() == CauseLaneTargetBuried {
+			d.proposeDigForBuriedPickup(order, v.Lane())
+		}
 		return dispatchStep{done: true, err: fmt.Errorf("complex order %d held at lane %s: %s",
 			order.ID, v.Lane(), v.Cause())}
 	}
@@ -720,5 +739,54 @@ func (d *Dispatcher) skipOrderInternal(order *orders.Order, code, detail string)
 		// authoritative emit — emitting again here would double it (the defect
 		// this dedup removed, mirroring the failOrderInternal fix above).
 		d.emitter.EmitOrderSkipped(order.ID, order.EdgeUUID, order.StationID, code, detail)
+	}
+}
+
+// proposeDigForBuriedPickup asks for a lane-clear dig on behalf of a complex
+// demand whose PICKUP is walled in. Best-effort throughout: every doubt leaves
+// the demand exactly as admission left it — parked with a cause and a releaser —
+// because the dig is an improvement on the wait, not a precondition for it.
+//
+// The slot is re-derived through pickupSlotNow rather than carried on the
+// verdict. That is the same function admission itself used to reach this refusal,
+// so it is one spelling asked twice, not a second opinion; and a verdict that
+// carried a slot would be a verdict about a bin rather than about a lane, which
+// is not what admission answers.
+func (d *Dispatcher) proposeDigForBuriedPickup(order *orders.Order, laneName string) {
+	lane, err := d.db.GetNodeByDotName(laneName)
+	if err != nil || lane == nil {
+		d.dbg("complex: order %d is walled at %s but the lane could not be read (%v) — waiting",
+			order.ID, laneName, err)
+		return
+	}
+	target, _, err := d.pickupSlotNow(order, lane)
+	if err != nil || target == nil {
+		d.dbg("complex: order %d is walled in %s but its pickup slot could not be located (%v) — waiting",
+			order.ID, laneName, err)
+		return
+	}
+	res := d.proposeLaneClearDig(lane, target, order)
+	switch res.outcome {
+	case serviceDigStarted:
+		log.Printf("dispatch: service dig %d created for %s — complex order %d's pickup at %s is "+
+			"walled in and admission refused it; the demand keeps waiting with its cause",
+			res.parent.ID, lane.Name, order.ID, target.Name)
+	case serviceDigLaneBusy, serviceDigNoShuffleSlot, serviceDigBlockerClaimed,
+		serviceDigNothingInTheWay, serviceDigReadFailed, serviceDigParkingHeldByDig,
+		serviceDigGroupCannotAfford, serviceDigGroupOwesCollection:
+		// All of them self-clear and all of them already have a releaser the demand is
+		// sitting on. Nothing to arrange and nothing new to tell anyone. Right of
+		// way joins the list rather than getting its own arm because this caller
+		// reports nothing either way — the demand it is digging on behalf of is
+		// already parked with its own cause, which is what this site's header means
+		// by "one proposer, two reporting policies".
+		d.dbg("complex: no dig for %s yet on behalf of order %d (%v)", lane.Name, order.ID, res.err)
+	case serviceDigNoGroup, serviceDigSlotNotInLane, serviceDigUnplannable:
+		// Geometry. The demand is NOT failed here: admission's refusal is about one
+		// lane on one tick, and the demand may still be re-planned onto another
+		// source. Loud, because nothing will clear it on its own.
+		log.Printf("dispatch: complex order %d is walled in %s and no dig can be planned there (%v) — "+
+			"the demand is waiting on a corridor nothing is going to open",
+			order.ID, lane.Name, res.err)
 	}
 }

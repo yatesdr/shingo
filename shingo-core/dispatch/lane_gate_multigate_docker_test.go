@@ -267,15 +267,18 @@ func TestMultiGate_SecondGateGetsWindow3sRescue(t *testing.T) {
 	if len(children) != 1 {
 		t.Fatalf("dig has %d legs, want 1", len(children))
 	}
-	destNode, err := db.GetNodeByDotName(children[0].DeliveryNode)
+	// The heal dig's leg dwells in the walled lane until Core picks it a slot, so
+	// the destination is read after the release rather than off the plan.
+	digLeg := releaseDwell(t, d, db, children[0])
+	destNode, err := db.GetNodeByDotName(digLeg.DeliveryNode)
 	testutil.MustNoErr(t, err, "resolve the leg's dropoff")
 	if destNode == nil || destNode.ParentID == nil || *destNode.ParentID != park.ID {
 		t.Errorf("the blocker was parked at %q, want a slot in the ungated %s",
-			children[0].DeliveryNode, park.Name)
+			digLeg.DeliveryNode, park.Name)
 	}
 
 	// And it completes the way it does for a single-gate dweller.
-	robotRunsDigLeg(t, db, children[0], destNode.ID)
+	robotRunsDigLeg(t, db, digLeg, destNode.ID)
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(parent.ID), "advance the finished dig")
 
 	freed, err := db.GetOrder(order.ID)

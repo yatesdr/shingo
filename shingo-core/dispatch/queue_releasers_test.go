@@ -347,55 +347,44 @@ func TestQueueCauseCollisionsAreDeclared(t *testing.T) {
 	}
 }
 
-// TestBridgeDependentCausesAreExactlyThese PINS THE A-BATCH DELETION LIST.
+// TestNoCauseDependsOnTheExposeBridge is the AFTER of a test that was written to
+// be deleted, and it is kept as an empty-set assertion rather than removed.
 //
-// The expose-bridge deletion (PlanReshuffleUnburyOnly, lane_lock_extension.go,
-// pending_lane_extensions, the transferred lock outliving its compound) is safe
-// exactly insofar as no wait depends on that machinery to end. "No wait depends
-// on it" is a claim, and until now the only way to check it was to re-read the
-// code and believe the reader.
+// ── WHAT IT USED TO SAY, AND WHY THAT MATTERED ───────────────────────────
 //
-// This is that claim as a list. The A batch's argument becomes: THESE FOUR
-// causes reference the bridge, here is what re-covers each once it is gone, and
-// nothing else in the inventory changes. If A deletes the bridge and this test
-// still passes unmodified, A has not finished — the notes still describe
-// machinery that no longer exists. If A finds a fifth marked row it did not
-// expect, that is a dependency the deletion had not accounted for.
+// The expose bridge — PlanReshuffleUnburyOnly, lane_lock_extension.go,
+// pending_lane_extensions, and a dig's lane lock outliving its compound — could
+// only be deleted safely if no WAIT depended on it to end. That was a claim, and
+// the only way to check it was to re-read the code and believe the reader. So it
+// was written down as a list: exactly four causes referenced the bridge, and the
+// A batch's argument had to be "here is what re-covers each".
 //
-// MUTATION: add a bridgeNote to any other row, or drop one of these four — the
-// test names the difference, which is precisely the review question.
-func TestBridgeDependentCausesAreExactlyThese(t *testing.T) {
+// It failed, as designed, when the notes came off — naming all four rows — and
+// this is what replaces it. The four are re-covered as follows, and each is now
+// stated on its own row rather than here:
+//
+//	lane-dig-active   ONE release path again. The transfer to the complex parent
+//	lane-held-dig     is gone with the hand-back it existed for, so
+//	lane-locked       unlockLaneForCompound covers every case.
+//	no-shuffle-slot   Frequency only, and still: the shuffle pool's burial
+//	                  exclusion reads CLAIMS now (SlotsBlockedByHardClaims)
+//	                  instead of the bridge's table. Same releaser.
+//
+// THE ASSERTION INVERTS BUT THE JOB DOES NOT. It used to catch a note going
+// missing quietly; it now catches one APPEARING. A future wait that needs a lock
+// to outlive its compound would be re-inventing the bridge, and this is where
+// that gets noticed — which is the reader test the tombstones elsewhere are
+// written against.
+func TestNoCauseDependsOnTheExposeBridge(t *testing.T) {
 	t.Parallel()
-	want := map[QueueCause]bool{
-		// Releaser chain runs through the bridge: an expose dig's lock is
-		// transferred to the complex parent and dropped by
-		// HandleBinTransitForLaneLock rather than by unlockLaneForCompound.
-		CauseLaneDigActive: true,
-		CauseLaneHeldDig:   true,
-		CauseLaneLocked:    true,
-		// Frequency only: findShuffleSlots' protectedDepth rule reads
-		// pending_lane_extensions, so deleting the bridge WIDENS the shuffle pool.
-		CauseNoShuffleSlot: true,
-	}
-
-	got := map[QueueCause]bool{}
 	for _, r := range causeReleasers {
 		if r.bridgeNote != "" {
-			got[r.cause] = true
-		}
-	}
-
-	for c := range want {
-		if !got[c] {
-			t.Errorf("cause %q no longer carries a bridgeNote. If the expose bridge was deleted, "+
-				"this test is the record of what the deletion had to re-cover and it must be "+
-				"updated deliberately — not by the note quietly disappearing", c)
-		}
-	}
-	for c := range got {
-		if !want[c] {
-			t.Errorf("cause %q now depends on the expose bridge and was not on the A batch's list. "+
-				"A deletion planned against a four-row subset would have missed it", c)
+			t.Errorf("cause %q carries a bridgeNote: %q. "+
+				"The expose bridge was deleted by the A batch — pending_lane_extensions is dropped "+
+				"(migration 78), no lane lock outlives its compound, and no dig hands back to a "+
+				"parent. A releaser chain that needs any of that is re-inventing it. Say what the "+
+				"real releaser is on the row's `what`, or if the machinery is genuinely coming back, "+
+				"this test is the place to argue for it.", r.cause, r.bridgeNote)
 		}
 	}
 }

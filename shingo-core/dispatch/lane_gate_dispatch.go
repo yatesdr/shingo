@@ -219,6 +219,22 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep) ([]resolvedStep, laneG
 	// of a gated entry makes the plan's lane ORDER undecidable, and the order is
 	// what the waits encode. Same conservatism as before, applied to the whole
 	// sequence instead of to a single entry.
+	//
+	// ── THE OUTBOUND DWELL WAS CHECKED AGAINST THIS AND IT IS UNAFFECTED ──
+	//
+	// Recorded rather than left to be re-derived, because "a plan whose tail is not
+	// chosen yet" and "a plan with a blank step" sound like the same thing and are
+	// not. blankAt tracks PICKUP AND DROPOFF steps carrying no node — a deferred
+	// destination that some later resolver will fill IN PLACE, which is what makes
+	// the lane sequence undecidable: the blank might turn out to be a lane entry
+	// sitting between two others. A dwelling dig leg has no such step. Its tail is
+	// not blank, it is ABSENT, and it is appended after the wait rather than
+	// resolved into a gap before it — so the lane order the waits encode is
+	// complete as it stands, and every step this walk sees is concrete.
+	//
+	// The one thing that would break the equivalence is a dwell plan that ALSO
+	// carried a deferred dropoff. digDwellPlan authors exactly two concrete steps,
+	// so there is none to have.
 	if last := gates[len(gates)-1].idx; blankAt >= 0 && blankAt < last {
 		return nil, laneGateTarget{}, false, fmt.Errorf(
 			"splice: step %d has no node yet and precedes the gated entry at step %d - "+
@@ -303,13 +319,40 @@ func assertEveryWaitDeclaresAnOwner(steps []resolvedStep) error {
 // carry several waits and a fault in the second would be invisible to a check
 // aimed at the first. Only WaitKindLane waits are examined: an operator wait is
 // somebody else's and gates nothing by design.
+//
+// ── THE OUTBOUND ARM: A WAIT CAN GATE THE APPEND INSTEAD OF AN ENTRY ──────
+//
+// This was written when every lane wait was an INBOUND wait, and it encodes that
+// assumption twice: it requires a step after the wait, and requires that step to
+// enter the wait's lane. Both are properties of asking permission to go IN.
+//
+// A dig leg's outbound dwell asks the opposite question. The robot is already in
+// the lane, standing in the slot the dig just emptied with the blocker on its
+// deck, and what it is waiting for is Core to choose a destination and APPEND
+// the tail. There is no step after the wait because the step after the wait is
+// exactly what has not been decided — so the inbound form would refuse every dig
+// in the plant, which is how this arm was found: the moment a MARKED lane was
+// dug, the splice returned "lane wait at 2 with no step after it" and the leg was
+// parked.
+//
+// SO THE ARM IS POSITIVE, NOT AN EXEMPTION (law 10's dual). "There is nothing
+// after it" on its own would also accept a truncated inbound plan, which is the
+// mis-splice this function exists to catch. What is asserted instead is the
+// dweller's identity: it STANDS IN THE LANE IT NAMES, and it got there by picking
+// out of that same lane. An inbound wait cannot satisfy that — its node is the
+// lane's mark, a map-point property that is deliberately not a Core node, and the
+// splice never puts a lane wait immediately after a pickup from its own lane (a
+// second touch of the same lane in a row is one wait, not two).
 func (d *Dispatcher) assertEachWaitGatesItsEntry(steps []resolvedStep) error {
 	for i, s := range steps {
 		if s.Action != protocol.ActionWait || s.WaitKind != WaitKindLane {
 			continue
 		}
 		if i+1 >= len(steps) {
-			return fmt.Errorf("splice: lane wait at %d with no step after it", i)
+			if err := d.assertWaitGatesAnAppend(steps, i); err != nil {
+				return err
+			}
+			continue
 		}
 		next := steps[i+1]
 		node, err := d.db.GetNodeByDotName(next.Node)
@@ -324,6 +367,64 @@ func (d *Dispatcher) assertEachWaitGatesItsEntry(steps []resolvedStep) error {
 			return fmt.Errorf("splice: the wait at step %d names lane %d but the step after it (%q) "+
 				"is in %s - the wait would gate nothing", i, s.WaitLane, next.Node, nodeName(lane))
 		}
+	}
+	return nil
+}
+
+// assertWaitGatesAnAppend is the outbound arm's body: the wait at index i ends
+// the plan, so it must be a dweller standing in the lane it names, having lifted
+// out of that same lane.
+//
+// Two facts, and each of them is what makes the dweller releasable rather than
+// the silent trap an unidentified outbound wait would be:
+//
+//	the wait's NODE is a slot in WaitLane  — so the lane it names is the lane it
+//	                                         is in: an evaluator, a floor, a cause
+//	                                         vocabulary and a tripwire all key on it
+//	the step BEFORE it is a pickup there   — so it is holding a blocker out of that
+//	                                         lane, which is what makes an append,
+//	                                         rather than an entry, the thing it waits for
+func (d *Dispatcher) assertWaitGatesAnAppend(steps []resolvedStep, i int) error {
+	s := steps[i]
+	at, err := d.db.GetNodeByDotName(s.Node)
+	if err != nil || at == nil {
+		return fmt.Errorf("splice: the lane wait at step %d ends the plan, so it must be an outbound "+
+			"dwell — but its own node %q does not resolve (%v), and a wait naming no real place is one "+
+			"no evaluator and no floor can find", i, s.Node, err)
+	}
+	lane, err := d.db.LaneForNode(at.ID)
+	if err != nil {
+		return fmt.Errorf("splice: resolve lane for the dwell position %q: %w", s.Node, err)
+	}
+	if lane == nil || lane.ID != s.WaitLane {
+		return fmt.Errorf("splice: the lane wait at step %d ends the plan and names lane %d, but it "+
+			"stands at %q in %s - an outbound wait must be INSIDE the lane it names",
+			i, s.WaitLane, s.Node, nodeName(lane))
+	}
+	if i == 0 {
+		return fmt.Errorf("splice: the lane wait at step %d ends the plan with nothing before it - "+
+			"an outbound wait gates the append of a tail for a bin the robot is already holding, so "+
+			"something must have picked it up", i)
+	}
+	prev := steps[i-1]
+	if prev.Action != protocol.ActionPickup {
+		return fmt.Errorf("splice: the lane wait at step %d ends the plan but the step before it is a "+
+			"%s, not a pickup - an outbound wait is where a robot holds a bin it has just lifted",
+			i, prev.Action)
+	}
+	from, err := d.db.GetNodeByDotName(prev.Node)
+	if err != nil || from == nil {
+		return fmt.Errorf("splice: the pickup before the outbound wait at step %d (%q) does not resolve: %v",
+			i, prev.Node, err)
+	}
+	fromLane, err := d.db.LaneForNode(from.ID)
+	if err != nil {
+		return fmt.Errorf("splice: resolve lane for %q: %w", prev.Node, err)
+	}
+	if fromLane == nil || fromLane.ID != s.WaitLane {
+		return fmt.Errorf("splice: the outbound wait at step %d names lane %d but the pickup before it "+
+			"(%q) is in %s - a dweller waits in the lane it dug out of",
+			i, s.WaitLane, prev.Node, nodeName(fromLane))
 	}
 	return nil
 }
@@ -656,16 +757,36 @@ func (d *Dispatcher) appendGateTail(order *orders.Order, what string) error {
 	// Taken BEFORE the append and released if the append fails — same ordering
 	// discipline as the plain path, and here it is strictly available because the
 	// append is the only irreversible step left.
+	//
+	// ── FOR AN OUTBOUND DWELL, WaitLane IS THE LANE BEING LEFT ────────────
+	//
+	// The take below is then a genuine no-op rather than a mistake: the robot
+	// entered that lane at its leg's dispatch and Core has held the row across the
+	// dwell, so AcquireOccupancy's NOT EXISTS guard on (order, node) finds the row
+	// already there and inserts nothing. Verified rather than assumed, because it
+	// is what lets the one append door serve both directions. The dweller's own
+	// resolver drops that row after this returns — the robot is driving out, which
+	// is the moment the lane frees.
 	w, ok := waitAt(steps, order.WaitIndex)
 	if !ok {
 		return fmt.Errorf("gated order %d has no wait at wait_index %d", order.ID, order.WaitIndex)
 	}
+	dwelling := waitGatesAnAppend(steps, order.WaitIndex)
 	if err := d.takeLaneOccupancyByID(order.ID, w.WaitLane); err != nil {
 		return err
 	}
 	if err := d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, what); err != nil {
-		// The robot never got the tail, so it is still at the gate, still outside.
-		d.ReleaseLaneOccupancy(order.ID)
+		// The robot never got the tail. For an INBOUND wait that means it is still
+		// at the gate, still outside, and the row this call took must go.
+		//
+		// FOR A DWELLER IT MEANS THE OPPOSITE, and releasing here would be the
+		// phantom-absence twin of §R.54's phantom row: the robot is standing INSIDE
+		// the lane holding a bin, this call took nothing, and dropping the row would
+		// declare an occupied corridor empty to the next leg. Nothing is rolled back
+		// because nothing was acquired.
+		if !dwelling {
+			d.ReleaseLaneOccupancy(order.ID)
+		}
 		return err
 	}
 	return nil

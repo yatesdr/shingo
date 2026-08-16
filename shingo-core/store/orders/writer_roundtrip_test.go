@@ -83,6 +83,11 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"Coordinated":      true,
 		"OriginID":         "6f1c8b2e-4a9d-4c3f-8e5b-7d2a1f0c9b34",
 		"OriginClass":      "demand",
+		// A birth fact, so unlike OpenForChildren it round-trips through Create.
+		// That is the property worth pinning: if this ever stops surviving the
+		// INSERT, a service dig's lane releases on the last blocker and the bin
+		// it uncovered sits in an open lane with nothing but its claim.
+		"DigTargetNode": "ROUNDTRIP-DIG-TARGET",
 	}
 
 	// Fields the writer does not take from the struct. Keyed by struct field,

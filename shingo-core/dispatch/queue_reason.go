@@ -24,7 +24,7 @@ import (
 //   - QueueWaitingForMaterial: Payload + Kind + Partial + Group (+ Step)
 //   - QueueWaitingForSlot:     Destination + BlockingBins/InboundOrders +
 //     DestUnresolved (+ Step)
-//   - QueueStorageRearranging: Lane + Payload (+ Step)
+//   - QueueStorageRearranging: Lane + Payload, or Lane + HoldingTarget (+ Step)
 //   - QueueWaitingForPartner:  Sibling
 //   - QueueFleetUnavailable:   none
 type QueueParams struct {
@@ -70,6 +70,15 @@ type QueueParams struct {
 	// lookup failure), rather than resolvable-but-full. Different problem,
 	// different fix, so it gets its own sentence.
 	DestUnresolved bool
+	// HoldingTarget is the slot a FINISHED reshuffle is holding its lane for:
+	// the bin it dug out, still standing there, not yet collected.
+	//
+	// It inverts the rest of this struct, which is why it is named rather than
+	// folded into Lane. Every other field describes something the order is
+	// waiting to GET; this one describes what the order has already DONE and is
+	// refusing to walk away from. Rendered by rearrangingSentence's first arm,
+	// which is the only sentence in the file whose subject is not blocked.
+	HoldingTarget string
 }
 
 // FormatQueueSentence renders the operator-visible sentence for a queue code +
@@ -160,6 +169,16 @@ func slotSentence(p QueueParams) string {
 // naming the lane or the part is not actionable.
 func rearrangingSentence(p QueueParams) string {
 	switch {
+	// THE FINISHED REARRANGEMENT, and it goes first because it is the one shape
+	// here that is not a complaint. The lane is clear, the dig worked, and the
+	// order is holding the corridor shut on purpose so the bin it uncovered is
+	// still uncovered when somebody comes for it. An operator reading the board
+	// needs to see that this is not a stall.
+	case p.HoldingTarget != "" && p.Lane != "":
+		return fmt.Sprintf("Lane %s is clear — holding it until the bin at %s is collected",
+			p.Lane, p.HoldingTarget)
+	case p.HoldingTarget != "":
+		return fmt.Sprintf("Holding this lane until the bin at %s is collected", p.HoldingTarget)
 	case p.Lane != "" && p.Payload != "":
 		return fmt.Sprintf("Rearranging lane %s to reach %s", p.Lane, p.Payload)
 	case p.Lane != "":

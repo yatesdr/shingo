@@ -49,6 +49,29 @@ import (
 // drop when the bin leaves the lane, an inbound hold when the bin lands. It is
 // wrong only for a dig, whose claim must span every leg. So the fix is a mode
 // exemption, not a change to the handoff.
+//
+// ── THE FIXTURE NOW MATCHES THE PARAGRAPH ABOVE IT (2026-08-13) ───────────
+//
+// "The dig is not over — the blocker is still in the robot's arms, THE TARGET IS
+// STILL BURIED, and EVERY REMAINING LEG still needs the lane" is what this test
+// has always said it was about, and the fixture modelled none of the second half:
+// one child, no bin, nothing left in the lane. So it passed for a reason weaker
+// than its own prose — the row survived because NOTHING released it, rather than
+// because something still needed it.
+//
+// FLIP 2 IS WHY THAT DISTINCTION STOPPED BEING FREE. The dug lane's claim now
+// drops when the last blocker LEAVES THE LANE rather than at compound terminal
+// (§R.64's C2, fused into the dwell by §R.69), so a dig with nothing left in the
+// lane is one whose claim is correctly released at exactly this moment. Against
+// the old fixture the two rules collide and the test reads as a regression; with
+// a remaining leg — which is what the prose describes and what every real
+// multi-leg reshuffle has — they are answering different questions and both hold.
+//
+// WHAT IS STILL PINNED, unchanged and load-bearing: the per-visit HANDOFF must not
+// eat a dig row. That is a mode exemption in ReleaseLaneHandoff's SQL, and it has
+// nothing to do with flip 2, which is a deliberate decision made by reading what
+// the dig has left to do. The mutation is the same as it always was — drop the
+// mode predicate from ReleaseLaneHandoff's DELETE and this fires.
 func TestDigRow_SurvivesChildPickup(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -64,6 +87,15 @@ func TestDigRow_SurvivesChildPickup(t *testing.T) {
 	parent := testdb.CreateOrder(t, db)
 	child := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.ParentOrderID = &parent.ID
+	})
+	// THE REMAINING LEG, and the bin it has not fetched yet. It sits behind the
+	// slot the first leg just emptied, which is what "the target is still buried"
+	// means and why the lane is still the dig's.
+	target := testdb.CreateBinAtNode(t, db, "PAYLOAD-A", slots[len(slots)-1].ID, "BIN-DIGLIFE-TGT")
+	testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.ParentOrderID = &parent.ID
+		o.BinID = &target.ID
+		o.SourceNode = slots[len(slots)-1].Name
 	})
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())

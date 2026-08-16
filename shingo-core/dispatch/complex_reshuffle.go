@@ -1,267 +1,163 @@
 package dispatch
 
 import (
-	"errors"
 	"fmt"
-	"log"
 
 	"shingo/protocol"
-	"shingocore/store"
 	"shingocore/store/orders"
 )
 
-// planBuriedReshuffleAtIntake plans and dispatches a buried-bin reshuffle
-// compound for a complex parent that HandleComplexOrderRequest has already
-// created, acked and announced. The plan is expose mode
-// (PlanReshuffleUnburyOnly): blockers move out of the way, the target bin stays
-// where it is, and the parent resumes and re-runs its original first pickup
-// against the now-accessible original slot.
+// ── ONE BURIAL HANDLER, TWO ENTRY POINTS ──────────────────────────────────
 //
-// THERE IS NO MODE SELECTION HERE ANY MORE. This used to branch on the group's
-// reshuffle_target_nodes property into a second planner that relocated the
-// target bin to a configured node. That property was never set at either plant
-// — Hopkinsville carries no reshuffle_* property at all, Springfield carries
-// exactly one and its value is the empty array, which selected THIS path — and
-// the dig path had never fired in production at all (0 compound children
-// against 2,199 coordinated orders across four months). It was a second planner
-// with a second set of downstream discriminations, paid for continuously and
-// never once used.
+// A complex order's bin can be found buried at two moments: at intake, and again
+// on the scanner's re-resolve. They were two near-identical functions for a long
+// time, and F-04 was born in the gap — a contention arm fixed at one site and not
+// the other, which is a class this file has now paid for twice
+// (complex_no_shuffle_slot_docker_test.go was written about it).
 //
-// Lane contention: if the buried lane is already locked or TryLock
-// races, leave the parent Queued with queue_reason — same disposition
-// as planning_service.planBuriedReshuffle.
+// After the two-shape ruling the two differ in exactly two things, and neither is
+// a decision:
 //
-// This used to create the parent itself, building the same 18-field struct as
-// complex intake from the same envelope. That made a complex order arriving on
-// a buried bin the one complex order whose row was written somewhere else, and
-// the two structs had to be kept in step by hand. They are now one struct in
-// one place: burial changes what happens after the parent exists, not what the
-// parent is. The near-twin handleComplexBuriedOnReplay below stays as it is —
-// it is entered from the scanner with an order that already exists, so it never
-// had a creation half to fold.
-func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCode, stationID string, buried *BuriedError) {
-	// Resolve the lane's parent group so the planner has the group ID
-	// for the shuffle-slot search.
+//   - WHERE THE PAYLOAD CODE COMES FROM. Intake is handed it with the request,
+//     before the row is necessarily readable for it; the replay reads it off the
+//     order. A parameter.
+//   - WHETHER A PARK IS ANNOUNCED. Intake announces, because the station is
+//     waiting on an answer to a request it just made. The replay does not: it is
+//     entered from the scanner with the demand already acquiring, so leaving it
+//     queued with a cause IS the retry and there is nothing new to tell anyone.
+//     A callback, nil for silence.
+//
+// Everything else — the read split, the cause, all seven dispositions — is one
+// body now, so a fix lands at both sites or neither.
+
+// handleComplexBurial records why a complex demand is waiting and asks for a
+// lane-clear dig on its behalf. It never re-plans, re-parents or moves the
+// demand; see the service-dig note on proposeLaneClearDig for why.
+//
+// announce may be nil.
+func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string, buried *BuriedError, announce func()) {
+	park := func(code protocol.QueueCode, cause QueueCause, params QueueParams) {
+		d.setQueueReason(order, code, cause, params)
+		if announce != nil {
+			announce()
+		}
+	}
+
 	// A READ THAT FAILED IS NOT A LANE THAT IS MISSING — see read_vs_missing.go.
-	// Releaser for the park: this parent stays `queued`, which is in the acquiring
-	// set, so the fulfillment scanner's ordinary retry brings it back through
-	// handleComplexBuriedOnReplay.
+	// Releaser for the park: the demand stays `queued`, which is in the acquiring
+	// set, so the fulfillment scanner's ordinary retry brings it back here.
 	lane, err := d.db.GetNode(buried.LaneID)
 	if readFailed(err) {
-		d.dbg("complex: could not read buried lane %d for parent %d (%v) — holding", buried.LaneID, order.ID, err)
-		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed,
-			QueueParams{Payload: payloadCode})
-		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+		d.dbg("complex: could not read buried lane %d for demand %d (%v) — holding", buried.LaneID, order.ID, err)
+		park(protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{Payload: payloadCode})
 		return
 	}
 	if err != nil || lane == nil {
 		d.failOrderInternal(order, codeInvalidNode, configFailureID("lane node", buried.LaneID))
 		return
 	}
-	if lane.ParentID == nil {
-		d.failOrderInternal(order, codeInvalidNode, fmt.Sprintf(
-			"config failure: lane %s is not in a node group, so it has nowhere to park a blocker", lane.Name))
-		return
-	}
-	groupID := *lane.ParentID
 
-	// The parent is queued because its bin is buried, so say so now, before any
-	// of the dispositions below. It used to be recorded only when one of the
-	// three contention arms fired — so the ORDINARY burial, the one where the
-	// lane is free and the reshuffle dispatches, was the case that recorded
-	// nothing. That blank does not stay on the row: historyReason copies
-	// QueueCode into the history entry for any transition into queued, and the
-	// parent's first such transition is the reshuffle completing and resuming
-	// it. By then the row can be corrected and the history cannot.
-	//
-	// The arms below refine the cause. They keep the same sentence and code —
-	// storage is being rearranged either way, which is what the operator needs
-	// to know — and differ in the engineer-only tag for where the wait arose.
+	// The demand is queued because its bin is buried, so say so BEFORE any of the
+	// dispositions below. It used to be recorded only when a contention arm fired,
+	// so the ORDINARY burial — lane free, dig dispatches — was the one case that
+	// recorded nothing.
+	// NOT ANNOUNCED, and the distinction is the one the collapse nearly lost: this
+	// WRITES the cause, the arms below decide the OUTCOME, and the station is told
+	// once per outcome rather than once per write. Announcing here as well made
+	// intake emit twice for one refusal, which the intake site's own event-count
+	// assertion caught.
 	d.setQueueReason(order, protocol.QueueStorageRearranging, CauseIntakeBuried,
 		QueueParams{Lane: lane.Name, Payload: payloadCode})
 
-	// Lane-contention: leave the parent Queued for scanner replay.
-	// Asks "may I CLAIM this lane for a dig", not "may this move happen now" —
-	// see planning_service.go planBuriedReshuffle for why delegating to admission
-	// would refuse every reshuffle plan by construction.
-	if d.laneLock.IsLocked(buried.LaneID) {
-		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneLocked,
-			QueueParams{Lane: lane.Name, Payload: payloadCode})
-		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
-		return
-	}
-
-	plan, err := PlanReshuffleUnburyOnly(d.db, buried.Bin, buried.Slot, lane, groupID)
-	// NO FREE SHUFFLE SLOT IS CONGESTION HERE TOO. planBuriedReshuffle grew this
-	// arm when sim order 21 died of it on 2026-07-10; the two complex sites are
-	// the same call with the same error and never got it, so the identical
-	// congestion terminated a complex parent and waited for a plain one.
+	// ── THE DEMAND DOES NOT BECOME THE DIG ────────────────────────────────
 	//
-	// Surfaced again on the lane-stress rig 2026-08-09, and it will keep
-	// surfacing: tightening the shuffle pool (a gated dig may not park in another
-	// gated lane) makes "no slot right now" a routine outcome rather than an
-	// exotic one. That tightening is only safe because this outcome waits.
-	//
-	// Everything else out of the planner is real lane geometry and stays terminal
-	// — the same split the simple path draws, drawn the same way.
-	//
-	// RELEASER FOR THE PARK: the parent is still `queued` — the plan failed before
-	// CreateCompoundOrder, so nothing moved it — and `queued` is in the acquiring
-	// set, so the ordinary scanner replay brings it back through this function
-	// against a group that by then has room. The same releaser the lane-locked arm
-	// above already rests on, which is why no new subscription is needed.
-	if errors.Is(err, ErrNoShuffleSlot) {
-		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseNoShuffleSlot,
+	// It used to: CreateCompoundOrder(order, plan) re-parented this complex order,
+	// moved it to `reshuffling`, and brought it back through ResumeCompound. A dig
+	// is a SERVICE TO A LANE (plan §12.40), and the one carve-out — a plain
+	// retrieve, where the dig's last leg IS the demand's whole job — is not this
+	// path. So the demand stays where it is and something else digs; when the last
+	// blocker lands, the bin events re-drive the ordinary scanner, which
+	// re-resolves this demand against an open lane and dispatches ITS OWN plan.
+	res := d.proposeLaneClearDig(lane, buried.Slot, order)
+	switch res.outcome {
+	case serviceDigStarted:
+		d.dbg("complex: service dig %d proposed for demand %d — %d step(s) clearing %s to reach %s",
+			res.parent.ID, order.ID, res.steps, lane.Name, buried.Slot.Name)
+
+	case serviceDigLaneBusy:
+		// Very often a dig serving the same wall for somebody else, which is the
+		// 1:many shape a service dig is FOR. Its completion re-drives every waiter.
+		park(protocol.QueueStorageRearranging, CauseLaneLocked,
 			QueueParams{Lane: lane.Name, Payload: payloadCode})
-		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
-		return
-	}
-	if err != nil {
-		d.failOrderInternal(order, "reshuffle_error",
-			fmt.Sprintf("cannot plan reshuffle: %v", err))
-		return
-	}
 
-	// Race-safe lock acquisition.
-	if !d.laneLock.TryLock(buried.LaneID, order.ID) {
-		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneLockRace,
+	case serviceDigNoShuffleSlot:
+		// Congestion. A freed slot anywhere in the group releases it. The complex
+		// sites lacked this arm while the plain path had it, so identical congestion
+		// terminated a complex demand and waited for a plain one.
+		park(protocol.QueueStorageRearranging, CauseNoShuffleSlot,
 			QueueParams{Lane: lane.Name, Payload: payloadCode})
-		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
-		return
-	}
 
-	if err := d.CreateCompoundOrder(order, plan); err != nil {
-		d.laneLock.Unlock(buried.LaneID, order.ID)
-		// Congestion, not a fault: see planning_service.go planBuriedReshuffle for
-		// why a blocker held outside the compound waits. The parent is still
-		// `queued` (CreateCompoundOrder writes the children before it moves the
-		// parent), so the scanner's replay picks it up and this is a park, not a
-		// stall.
-		if errors.Is(err, store.ErrBlockerClaimed) {
-			d.setQueueReason(order, protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
-				QueueParams{Lane: lane.Name, Payload: payloadCode})
-			d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
-			return
-		}
-		d.failOrderInternal(order, "reshuffle_error",
-			fmt.Sprintf("cannot create compound order: %v", err))
-		return
-	}
-	// Persist the lane-extension entry NOW so the listener at
-	// AdvanceCompoundOrder terminal can look up the target bin ID directly
-	// instead of re-deriving from lane state. Unconditional since target-node
-	// mode went: every complex dig is an expose, and every expose holds its lane
-	// past completion.
-	{
-		if _, err := d.db.InsertPendingLaneExtension(&store.PendingLaneExtension{
-			ComplexParentID:    order.ID,
-			LaneID:             buried.LaneID,
-			TargetBinID:        buried.Bin.ID,
-			ExpectedFromNodeID: buried.Slot.ID,
-		}); err != nil {
-			log.Printf("dispatch: persist pending_lane_extension at intake for complex %d: %v", order.ID, err)
-			// Non-fatal: the at-terminal arming path will still
-			// run; if the row is missing then, it falls back to
-			// the unconditional unlock. Loss is crash resilience
-			// only.
-		}
-	}
-	d.dbg("complex: compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
+	case serviceDigParkingHeldByDig:
+		// Right of way. The lane NAMED here is the one the rule refused, not the one
+		// being dug — an operator asking "why is nothing happening" needs the lane
+		// that has to free, and it is somebody else's.
+		park(protocol.QueueStorageRearranging, CauseDigHoldsParking,
+			QueueParams{Lane: parkingLaneOf(res.err, lane.Name), Payload: payloadCode})
 
-}
+	case serviceDigGroupCannotAfford:
+		// The usable-capacity claim. The lane named is the one being dug, because
+		// there is no other lane to point at — the shortage is the GROUP's, and the
+		// arithmetic that produced it is in the error the log carries.
+		park(protocol.QueueStorageRearranging, CauseGroupRoomClaimed,
+			QueueParams{Lane: lane.Name, Payload: payloadCode})
 
-// handleComplexBuriedOnReplay handles a burial discovered by the
-// scanner-path re-resolve (after the parent has resumed from a prior
-// reshuffle). Pivots the parent Queued → Reshuffling and dispatches a
-// fresh compound. Same dual-mode logic as the intake path but without
-// the parent-creation step — the order already exists.
-//
-// Multi-burial loop: each successful resume → re-resolve cycle that
-// discovers a new burial gets its own compound. v6's livelock cap was
-// removed in v7 — the lane-lock extension closes the only realistic
-// re-burial vector for expose mode, and sequential legitimate burials
-// in a multi-pickup complex order shouldn't be punished with a
-// terminal fail.
-func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *BuriedError) {
-	// Same three-way split as the intake twin. This path is entered from the
-	// scanner with the parent already acquiring, so leaving it queued with a cause
-	// IS the retry — the releaser is the scan that brought us here.
-	lane, err := d.db.GetNode(buried.LaneID)
-	if readFailed(err) {
-		d.dbg("complex: could not read buried lane %d for parent %d (%v) — holding", buried.LaneID, order.ID, err)
-		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseReadFailed,
-			QueueParams{Payload: order.PayloadCode})
-		return
-	}
-	if err != nil || lane == nil {
-		d.failOrderInternal(order, codeInvalidNode, configFailureID("lane node", buried.LaneID))
-		return
-	}
-	if lane.ParentID == nil {
+	case serviceDigGroupOwesCollection:
+		// The lane named is the one being dug, for the same reason as the arm
+		// above: the rule is the GROUP's. The error carries which reshuffle and
+		// which slot, and the log line has it.
+		park(protocol.QueueStorageRearranging, CauseGroupOwesCollection,
+			QueueParams{Lane: lane.Name, Payload: payloadCode})
+
+	case serviceDigBlockerClaimed:
+		// The commonest holder is a robot already carrying that bin out of the lane.
+		park(protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
+			QueueParams{Lane: lane.Name, Payload: payloadCode})
+
+	case serviceDigNothingInTheWay:
+		// The lane moved between the resolve and the plan, which is the outcome we
+		// wanted. Keep CauseIntakeBuried; the next scan finds the bin reachable.
+		d.dbg("complex: nothing left in the way of %s for demand %d — re-asking on the next scan",
+			buried.Slot.Name, order.ID)
+
+	case serviceDigReadFailed:
+		// A STUTTER IS NOT A FACT ABOUT THE LANE (PLAN §R.45).
+		d.dbg("complex: could not read %s while planning a dig for demand %d (%v) — holding",
+			lane.Name, order.ID, res.err)
+		park(protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{Payload: payloadCode})
+
+	case serviceDigNoGroup:
 		d.failOrderInternal(order, codeInvalidNode, fmt.Sprintf(
 			"config failure: lane %s is not in a node group, so it has nowhere to park a blocker", lane.Name))
-		return
-	}
-	groupID := *lane.ParentID
 
-	// Asks "may I CLAIM this lane for a dig", not "may this move happen now" —
-	// see planning_service.go planBuriedReshuffle for why delegating to admission
-	// would refuse every reshuffle plan by construction.
-	if d.laneLock.IsLocked(buried.LaneID) {
-		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneLocked,
-			QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
-		return
-	}
-
-	plan, err := PlanReshuffleUnburyOnly(d.db, buried.Bin, buried.Slot, lane, groupID)
-	// Congestion, not geometry — see the sibling site in planBuriedReshuffleAtIntake.
-	//
-	// No emit here, matching the lane-locked arm above: this path is entered from
-	// the scanner with the parent already acquiring, so leaving it queued with a
-	// cause IS the retry.
-	if errors.Is(err, ErrNoShuffleSlot) {
-		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseNoShuffleSlot,
-			QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
-		return
-	}
-	if err != nil {
+	case serviceDigSlotNotInLane, serviceDigUnplannable:
+		// Only a person editing configuration can fix this, so no amount of waiting
+		// changes it (§R.45: "config error? yeah fail loudly so the engineer can fix").
 		d.failOrderInternal(order, "reshuffle_error",
-			fmt.Sprintf("cannot plan reshuffle: %v", err))
-		return
+			fmt.Sprintf("cannot plan reshuffle: %v", res.err))
 	}
+}
 
-	if !d.laneLock.TryLock(buried.LaneID, order.ID) {
-		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneLockRace,
-			QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
-		return
-	}
-	if err := d.CreateCompoundOrder(order, plan); err != nil {
-		d.laneLock.Unlock(buried.LaneID, order.ID)
-		// Same congestion arm as the intake twin above. This path is entered from
-		// the scanner with the parent already `queued`, so leaving it queued with a
-		// cause IS the retry — the next scan re-plans against a lane the holder has
-		// by then left.
-		if errors.Is(err, store.ErrBlockerClaimed) {
-			d.setQueueReason(order, protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
-				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
-			return
-		}
-		d.failOrderInternal(order, "reshuffle_error",
-			fmt.Sprintf("cannot create compound order on replay: %v", err))
-		return
-	}
-	// Same persistence as the intake path. See the comment in
-	// planBuriedReshuffleAtIntake.
-	{
-		if _, err := d.db.InsertPendingLaneExtension(&store.PendingLaneExtension{
-			ComplexParentID:    order.ID,
-			LaneID:             buried.LaneID,
-			TargetBinID:        buried.Bin.ID,
-			ExpectedFromNodeID: buried.Slot.ID,
-		}); err != nil {
-			log.Printf("dispatch: persist pending_lane_extension at replay for complex %d: %v", order.ID, err)
-		}
-	}
-	d.dbg("complex: replay compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
+// planBuriedReshuffleAtIntake is the intake entry: the station is waiting on an
+// answer to the request it just made, so every park is announced.
+func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCode, stationID string, buried *BuriedError) {
+	d.handleComplexBurial(order, payloadCode, buried, func() {
+		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+	})
+}
 
+// handleComplexBuriedOnReplay is the scanner entry: the demand is already
+// acquiring, so leaving it queued with a cause IS the retry and there is nothing
+// new to announce.
+func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *BuriedError) {
+	d.handleComplexBurial(order, order.PayloadCode, buried, nil)
 }

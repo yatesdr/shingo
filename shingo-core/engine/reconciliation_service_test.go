@@ -11,6 +11,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
@@ -174,6 +175,74 @@ func TestAdvanceStuckReshuffleParents_SkipsOpenParent(t *testing.T) {
 		t.Fatalf("advanced = %v (n=%d), want exactly [%d]. The open parent (%d) is mid-dig, not "+
 			"stranded: re-driving it logs a recovery that did not happen, every pass, forever",
 			advanced, n, sealedParent, openParent)
+	}
+}
+
+// TestAdvanceStuckReshuffleParents_SkipsAParentStillHoldingItsTarget is the
+// THIRD reason a parent in this set is not stuck (§R.76), and it is the same
+// kind of guard as sealedness above for the same kind of reason.
+//
+// A service dig holds its lane past its last blocker until the bin it uncovered
+// is collected. That leaves it sealed, in `reshuffling`, with every child
+// terminal — every clause of the sweep's SELECT, and none of its meaning. The
+// sweep runs on the periodic ticker, so without this guard it would re-drive the
+// dig into AdvanceCompoundOrder's refusal and then write an
+// advance_stuck_reshuffle recovery row EVERY PASS, for a dig doing exactly what
+// it is supposed to be doing.
+//
+// Correctness never rested on this line — AdvanceCompoundOrder refuses these
+// itself. The forensic record does, which is the same argument
+// SkipsOpenParent's header makes at greater length.
+//
+// THE TWO PARENTS ARE IDENTICAL IN EVERY CLAUSE THE SELECT LOOKS AT, and differ
+// only in a physical fact about the world: whether a bin is still standing at
+// the slot each one names. Both name a target; one target is still there. That
+// is what makes this a test of the predicate rather than of the fixture — a
+// control whose dig_target_node was simply blank would be excluded by the empty
+// -string arm and would pass with the real check removed.
+//
+// MUTATION (verified): delete the `if owes { continue }` arm from
+// AdvanceStuckReshuffleParents. This fires with advanced = [holding, collected]
+// — both selected — which is the false recovery record, once per tick.
+func TestAdvanceStuckReshuffleParents_SkipsAParentStillHoldingItsTarget(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := newReconService(t, db)
+	_, _, bp := setupTestData(t, db)
+
+	var advanced []int64
+	svc.advanceCompound = func(parentID int64) error {
+		advanced = append(advanced, parentID)
+		return nil
+	}
+
+	// Each dig gets its own target slot. The slot exists in both cases; only the
+	// bin differs, because the predicate is about the bin and not the geometry.
+	mk := func(uuid string, binStillThere bool) (parentID int64, slotName string) {
+		slot := &nodes.Node{Name: uuid + "-TGT", Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(slot), "create target slot for "+uuid)
+		if binStillThere {
+			createTestBinAtNode(t, db, bp.Code, slot.ID, uuid+"-BIN")
+		}
+		p := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeMove,
+			Status: protocol.StatusReshuffling, Quantity: 1, DigTargetNode: slot.Name}
+		testutil.MustNoErr(t, db.CreateOrder(p), "create dig parent "+uuid)
+		c := &orders.Order{EdgeUUID: uuid + "-c1", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+			Status: protocol.StatusConfirmed, ParentOrderID: &p.ID, Quantity: 1}
+		testutil.MustNoErr(t, db.CreateOrder(c), "create child for "+uuid)
+		return p.ID, slot.Name
+	}
+
+	holding, holdingSlot := mk("dig-holding", true)
+	collected, _ := mk("dig-collected", false)
+
+	n, err := svc.AdvanceStuckReshuffleParents()
+	testutil.MustNoErr(t, err, "AdvanceStuckReshuffleParents")
+
+	if len(advanced) != 1 || advanced[0] != collected {
+		t.Fatalf("advanced = %v (n=%d), want exactly [%d]. Parent %d is holding its lane because a bin "+
+			"is still standing at %s — re-driving it writes a recovery record for a rescue that did "+
+			"not happen, on every tick, forever", advanced, n, collected, holding, holdingSlot)
 	}
 }
 

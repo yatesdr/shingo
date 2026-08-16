@@ -119,9 +119,16 @@ import (
 //
 // The assertion that the other questions are answered elsewhere is AUDITED
 // rather than assumed — an empty cell below is a finding, and not one that
-// delegating the mouth would have fixed. The cells the plain path still leaves
-// empty are DECLARED as skipsForPlainEntry rather than left to be inferred from
-// missing code.
+// delegating the mouth would have fixed. Cells a caller genuinely leaves empty
+// are DECLARED as a skip set rather than left to be inferred from missing code.
+//
+// THE TABLE HAS NO EMPTY CELLS LEFT. Both were closed the same way, two batches
+// apart, and the shape was the same both times: the skip was never justified by
+// "this caller does not need the answer", it was justified by "a refusal here
+// would have nothing to release it". Window 2 built the releaser for the held-bin
+// caller and then stopped skipping; the A batch did the same for the complex one,
+// where the releaser is a service dig that does not consume the demand. A skip
+// resting on a missing releaser is a note with an expiry, and both expired.
 //
 //	QUESTION      | FRESH-BIN plain order        | HELD-BIN plain order
 //	--------------|-----------------------------|---------------------------
@@ -137,11 +144,11 @@ import (
 //	              | unification). The mouth row  |
 //	              | is still taken where the     |
 //	              | group configures one.        |
-//	reachability  | finder Tier 6 (EMPTY intent  | NOTHING — the surviving
-//	              | only, source_finder.go:730)  | empty cell, and the reason
-//	              | / NGRP resolver raising      | skipsForPlainEntry still
-//	              | BuriedError                  | skips reachability
-//	              | (group_resolver.go:241)      |
+//	reachability  | finder Tier 6 (EMPTY intent  | ADMISSION asks it — window 2
+//	              | only, source_finder.go:730)  | (3326c1bb) gave the refusal a
+//	              | / NGRP resolver raising      | releaser first
+//	              | BuriedError                  | (digForBuriedHeldBin), then
+//	              | (group_resolver.go:241)      | skipsForEntry stopped skipping
 //
 // TWO THINGS THAT CELL TABLE SAYS OUT LOUD, both reached here from a different
 // direction than they were first found, which is mild evidence they are real:
@@ -569,27 +576,30 @@ var skipsForGatedStoreEntry = admissionSkips{}
 // stops at the wait point, so the entry decision belongs to the tail append and
 // gateEntryVerdict asks it there with a skip set that skips nothing.
 //
-// reachability: SKIPPED, and the justification is the same PARTIAL one
-// skipsForPlainEntry carries — the releaser condition, not the line condition.
+// reachability: ASKED, since the A batch. It used to be skipped, and the skip's
+// justification was the RELEASER condition rather than the line condition —
+// which is exactly the shape that becomes wrong when the releaser changes.
 //
-// PARTIALLY ANSWERED: an NGRP-sourced pickup gets it from the resolver, which
-// raises BuriedError (binresolver/group_resolver.go:241) and is routed to
-// handleComplexBuriedOnReplay (complex_reshuffle.go) by BOTH the NGRP re-resolve
-// and the supply widen (complex_dispatch.go prepareComplexSteps). That is a real
-// answer with a real dig behind it.
+// PARTIALLY ANSWERED ELSEWHERE, and still is: an NGRP-sourced pickup gets it
+// from the resolver, which raises BuriedError (binresolver/group_resolver.go:241)
+// and is routed to the burial handler by both the NGRP re-resolve and the supply
+// widen. That is a real answer with a real dig behind it.
 //
 // NOT ANSWERED for a pickup already resolved to a concrete lane slot: those come
 // from the allocator's findAvailableForNeed (allocator.go), which reads a single
-// node and never asks what is in front of it.
+// node and never asks what is in front of it. That was the hole, and it was left
+// open deliberately: the complex dig used to be wired to a FINDER/resolver
+// outcome rather than to an admission verdict, so a lane-target-buried refusal
+// raised HERE would have parked the order with nothing to unbury it — for ever.
+// Trading "drives to a slot it cannot reach" for "never moves again" is not an
+// improvement, so the note said: close it by giving the refusal a dig, or accept
+// it. Not by deleting the line alone.
 //
-// It survives anyway on the releaser condition. The complex dig is wired to a
-// FINDER/resolver outcome, not to an admission verdict, so a lane-target-buried
-// refusal raised HERE would park the order with nothing to unbury it —
-// permanently. Trading "drives to a slot it cannot reach" for "never moves
-// again" is not an improvement. Same open item as the held-bin cell in the audit
-// table above; close both by giving the refusal a dig, or accept both. Not by
-// deleting this line alone.
-var skipsForComplexEntry = admissionSkips{reachability: true, entryWhenGated: true}
+// The refusal now HAS a dig. A dig is a service to a lane and is proposed without
+// consuming the demand (proposeLaneClearDig), so admitComplexLanes can refuse on
+// an unreachable pickup AND ask for the corridor to be opened, which is what
+// makes asking safe. Both halves landed together; neither works alone.
+var skipsForComplexEntry = admissionSkips{entryWhenGated: true}
 
 // admitPlan asks admission of every lane-touching step in a resolved plan.
 //
@@ -667,6 +677,13 @@ func (d *Dispatcher) admitPlan(order *orders.Order, steps []resolvedStep, skip a
 // the field asks the question, which is the same forgetting-is-safe discipline as
 // the rest of this file. False for a lane with no group: an ungated lane cannot
 // defer anything to a gate that is not there.
+//
+// laneIsGated is the shared half. The OTHER decision that turns on "does the gate
+// own this lane's entry" is Hold B's node door (TakeLaneOccupancy, lane_gate.go),
+// which skips a gated lane for the same reason this skips its questions: the
+// robot is at the mark, and the append owns both the entry and the row. One
+// spelling, two decisions — what differs is only this caller's declaration, which
+// is a statement about the CALLER's moment rather than about the lane.
 func (d *Dispatcher) entryDeferredToGate(skip admissionSkips, lane *nodes.Node) bool {
 	if !skip.entryWhenGated || lane.ParentID == nil {
 		return false

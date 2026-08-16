@@ -143,6 +143,30 @@ CREATE TABLE IF NOT EXISTS orders (
     -- AdvanceStuckReshuffleParents). Under the fold that state is the normal
     -- one BETWEEN moves.
     open_for_children BOOLEAN NOT NULL DEFAULT false,
+    -- THE TARGET BIN'S SLOT: what a service dig exists to uncover, named on
+    -- the dig's own parent and empty on every other order.
+    --
+    -- A dig is a service to a LANE, and its lock now spans the excavation AND
+    -- the retrieval it was raised for: the lane is released when the target
+    -- bin LEAVES, not when the last blocker places. That closes the window
+    -- where a cancelled claim leaves an uncovered bin sitting in an open lane
+    -- with nothing but the claim standing between it and the next order's
+    -- shuffle slot. The release keys on a physical fact -- is a bin still
+    -- standing at this slot -- and this column is the only thing that says
+    -- WHICH slot to look at.
+    --
+    -- A COLUMN AND NOT A RE-READ OF payload_desc, and that is a scar rather
+    -- than a preference: planUsedExposeMode recovered a plan's mode by
+    -- string-matching payload_desc, so a lock decision rode a human-readable
+    -- sentence until it was deleted. The sentence still names the slot for a
+    -- human; nothing parses it.
+    --
+    -- EMPTY IS THE SAFE READING, in Postgres and in a bare Go literal alike.
+    -- An order with no dig target owes no retrieval and releases as it did
+    -- before this column existed, so forgetting to write it yields the OLD
+    -- behaviour rather than a corrupt one. The longer hold is opt-in, written
+    -- on purpose by the one place that mints a service dig.
+    dig_target_node TEXT NOT NULL DEFAULT '',
     -- When an order was judged an orphan. A timestamp rather than a fourth
     -- origin_class, so aging records WHEN a judgement was made without
     -- overwriting WHAT the judgement was. Added by migration 61 and present at

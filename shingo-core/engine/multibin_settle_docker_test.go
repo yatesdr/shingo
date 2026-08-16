@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"shingo/protocol"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -109,7 +110,32 @@ func TestMultiBinSettle_RefusalWritesNothing(t *testing.T) {
 	// somebody else and sitting nowhere near the destination.
 	foreign := &bins.Bin{BinTypeID: bt.ID, Label: "PARTIAL-FOREIGN", NodeID: &src.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(foreign), "create foreign bin")
-	thief := testdb.CreateOrder(t, db)
+	// THE RIGHTFUL OWNER MUST BE LIVE *AND* INVISIBLE TO THE SCANNER, and the
+	// second half is what this fixture was missing.
+	//
+	// testdb.CreateOrder defaults to `queued` with no payload code. `queued` is in
+	// the acquiring set, so the running engine's fulfillment scanner picks the
+	// order up, finds it has no payload to source against, and STRUCTURALLY FAILS
+	// it — and failing an order releases its bin claims. The assertion at the end
+	// of this test then reads a nil claim and reports that the carrier stole it,
+	// which is not what happened at all.
+	//
+	// It is a race, not a certainty: it only bites when the scanner wins before the
+	// assertion. Locally it never did; CI under -race is slower and it did (job
+	// 94088537674 at 35445099, "order 1 failed: structural - order has empty
+	// payload_code"). Latent since this fixture was written.
+	//
+	// `in_transit` fixes it by being MORE faithful rather than less: a bin claimed
+	// by a live order that is not acquiring is exactly the real situation this test
+	// describes — a robot already en route to it — and it is outside
+	// IsAcquiring{queued, sourcing}, so nothing sweeps it.
+	thief := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+	if protocol.IsAcquiring(thief.Status) {
+		t.Fatalf("fixture: the rightful owner is %q, which is in the acquiring set — the fulfillment "+
+			"scanner will structurally fail it and release the very claim this test asserts on. That "+
+			"is a RACE, so it will pass locally and flake in CI; keep this order out of {queued, "+
+			"sourcing}", thief.Status)
+	}
 	testdb.ClaimBinForTest(t, db, foreign.ID, thief.ID)
 
 	testutil.MustNoErr(t, db.InsertOrderBin(order.ID, good.ID, 0, "pickup", src.Name, destA.Name), "row: good")

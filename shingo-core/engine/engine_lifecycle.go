@@ -83,16 +83,6 @@ func (e *Engine) Start() {
 		e.logFn("engine: retired %d leftover reshuffle_restore order(s)", n)
 	}
 
-	// Recover pending lane-lock-extension LISTENERS from the
-	// pending_lane_extensions table (post-v7 cleanup): the release-on-pickup
-	// arm, whose parameters (target bin, expected from-node) are not in the
-	// dig row. Without it a Core restart during the post-compound / pre-pickup
-	// window would lose the listener and the lane stays held until the parent
-	// terminates.
-	if err := e.dispatcher.RecoverPendingLaneExtensions(); err != nil {
-		e.logFn("engine: recover pending_lane_extensions: %v", err)
-	}
-
 	// Boot-time reshuffle liveness backstop: re-drive any compound (reshuffle) parent
 	// left in `reshuffling` with all children terminal. A crash between the last
 	// child's terminal transition and AdvanceCompoundOrder — or a cancelled child (no

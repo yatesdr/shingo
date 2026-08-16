@@ -125,4 +125,31 @@ type Order struct {
 	// `Sealed bool` field would have zero-valued to "open" and disagreed with
 	// its own column. Openness is never inherited; it is written.
 	OpenForChildren bool `json:"open_for_children,omitempty"`
+	// DigTargetNode names the slot holding the bin a service dig exists to
+	// uncover, and is empty on every order that is not a service dig's parent.
+	//
+	// It is what lets a dig's lane lock span the excavation AND the retrieval
+	// it was raised for. The lane is released when the TARGET BIN leaves rather
+	// than when the last blocker places, which closes the window where a
+	// cancelled claim leaves an uncovered bin sitting in an open lane.
+	// DigStillOwesItsTarget asks whether a bin is still standing at this slot
+	// -- a PHYSICAL fact (law 4), not an inference from any order's status --
+	// and that is the deliberate part: the bin leaving by ANY mover ends the
+	// hold, including a mover with no connection to the demand that asked for
+	// the dig, because what the lock protects is the bin's exposure and nothing
+	// else.
+	//
+	// THE THIRD LEGITIMATE NON-TERMINAL STATE. A dig still owing its target
+	// sits in `reshuffling` with every child terminal, which is the exact shape
+	// the two readers named above call FINISHED -- so both of them consult
+	// this, and so does maybeReleaseDigOnLastBlockerOut, which is the third and
+	// last. Everything else that walks the child list is still asking a
+	// different question and still must not consult it.
+	//
+	// Empty is the safe reading in both languages, for the same reason
+	// OpenForChildren is named for its exception: a bare orders.Order has no
+	// target outstanding and releases the way it did before this field existed,
+	// so the longer hold cannot be inherited by omission. It is written on
+	// purpose.
+	DigTargetNode string `json:"dig_target_node,omitempty"`
 }

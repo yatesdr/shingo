@@ -10,6 +10,7 @@ import (
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/reservations"
 )
@@ -17,6 +18,32 @@ import (
 // Compound reshuffle order tests (TC-40a, TC-44, TC-45, TC-46, TC-51, TC-52, TC-53, TC-54).
 // Each test exercises the NGRP lane reshuffle pipeline: buried bin detection,
 // PlanReshuffle, AdvanceCompoundOrder, lane locks, and child lifecycle management.
+
+// driveLegRunToFinish drives one leg the way the FLEET drives it, including the
+// state a dwelling robot actually reports.
+//
+// ── WHY "WAITING" IS NOT AN EMBELLISHMENT ─────────────────────────────────
+//
+// A dig leg ships UNSEALED under the outbound dwell: [pickup, wait] and no
+// destination. The robot picks, comes to the shallowest slot of the lane it is
+// digging, and parks on the Wait block — which RDS reports as WAITING, which
+// MapState turns into `staged`, which is what makes Core choose a destination and
+// append the tail. A fixture that jumps RUNNING → FINISHED skips the only moment
+// at which the leg acquires somewhere to go, so the bin lands nowhere and the
+// compound stalls with a leg that "finished" without moving anything.
+//
+// It is asked of the ORDER rather than assumed of the leg: a retrieve tail is
+// sealed and never parks, and driving a wait state for it would be a fixture
+// telling a lie about the fleet. IsGateStaged is the same predicate the evaluator
+// and the floor use, so the fixture and production agree on who dwells.
+func driveLegRunToFinish(t *testing.T, db *store.DB, sim *simulator.SimulatorBackend, childID int64, vendorID string) {
+	t.Helper()
+	sim.DriveState(vendorID, "RUNNING")
+	if fresh, err := db.GetOrder(childID); err == nil && fresh != nil && dispatch.IsGateStaged(fresh) {
+		sim.DriveState(vendorID, "WAITING")
+	}
+	sim.DriveState(vendorID, "FINISHED")
+}
 
 // =============================================================================
 // Buried bin reshuffle through engine pipeline
@@ -96,8 +123,7 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 			t.Fatalf("child %d (seq %d) not dispatched — status=%s", child.ID, child.Sequence, child.Status)
 		}
 
-		sim.DriveState(child.VendorOrderID, "RUNNING")
-		sim.DriveState(child.VendorOrderID, "FINISHED")
+		driveLegRunToFinish(t, db, sim, child.ID, child.VendorOrderID)
 
 		// Edge receipt triggers completion -> HandleChildOrderComplete -> AdvanceCompoundOrder
 		d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -204,8 +230,7 @@ func TestReshuffle_ChildAutoConfirmsWithoutReceipt(t *testing.T) {
 			t.Fatalf("child %d (seq %d) never dispatched — prior sibling did not auto-confirm (status=%s)",
 				child.ID, child.Sequence, child.Status)
 		}
-		sim.DriveState(child.VendorOrderID, "RUNNING")
-		sim.DriveState(child.VendorOrderID, "FINISHED")
+		driveLegRunToFinish(t, db, sim, child.ID, child.VendorOrderID)
 
 		child, err = db.GetOrder(child.ID)
 		if err != nil {
@@ -321,8 +346,7 @@ func TestCompound_SequentialChildDispatch_NoDeliveredCascade(t *testing.T) {
 			t.Fatalf("child %d (seq %d) not dispatched at start of iteration — status=%s", child.ID, child.Sequence, child.Status)
 		}
 
-		sim.DriveState(child.VendorOrderID, "RUNNING")
-		sim.DriveState(child.VendorOrderID, "FINISHED")
+		driveLegRunToFinish(t, db, sim, child.ID, child.VendorOrderID)
 
 		// Auto-confirm: the child must be terminal with no receipt filed.
 		child, err = db.GetOrder(child.ID)
@@ -433,8 +457,7 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 	if child1.VendorOrderID == "" {
 		t.Fatalf("child 1 not dispatched")
 	}
-	sim.DriveState(child1.VendorOrderID, "RUNNING")
-	sim.DriveState(child1.VendorOrderID, "FINISHED")
+	driveLegRunToFinish(t, db, sim, child1.ID, child1.VendorOrderID)
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 		OrderUUID: child1.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1,
 	})
@@ -583,8 +606,7 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 			t.Fatalf("child %d (seq %d) not dispatched — status=%s", i, child.Sequence, child.Status)
 		}
 
-		sim.DriveState(child.VendorOrderID, "RUNNING")
-		sim.DriveState(child.VendorOrderID, "FINISHED")
+		driveLegRunToFinish(t, db, sim, child.ID, child.VendorOrderID)
 
 		d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 			OrderUUID: child.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1,
@@ -784,8 +806,7 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 	if child1.VendorOrderID == "" {
 		t.Fatalf("child 1 not dispatched")
 	}
-	sim.DriveState(child1.VendorOrderID, "RUNNING")
-	sim.DriveState(child1.VendorOrderID, "FINISHED")
+	driveLegRunToFinish(t, db, sim, child1.ID, child1.VendorOrderID)
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 		OrderUUID: child1.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1,
 	})
@@ -936,8 +957,7 @@ func TestCompound_StagingTTLExpiryDuringReshuffle(t *testing.T) {
 	if child1.VendorOrderID == "" {
 		t.Fatalf("child 1 not dispatched")
 	}
-	sim.DriveState(child1.VendorOrderID, "RUNNING")
-	sim.DriveState(child1.VendorOrderID, "FINISHED")
+	driveLegRunToFinish(t, db, sim, child1.ID, child1.VendorOrderID)
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 		OrderUUID: child1.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1,
 	})
@@ -972,8 +992,7 @@ func TestCompound_StagingTTLExpiryDuringReshuffle(t *testing.T) {
 	// Complete child 2 (retrieve target)
 	child2, _ := db.GetOrder(children[1].ID)
 	if child2.VendorOrderID != "" {
-		sim.DriveState(child2.VendorOrderID, "RUNNING")
-		sim.DriveState(child2.VendorOrderID, "FINISHED")
+		driveLegRunToFinish(t, db, sim, child2.ID, child2.VendorOrderID)
 		d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 			OrderUUID: child2.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1,
 		})

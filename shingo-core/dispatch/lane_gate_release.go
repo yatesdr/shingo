@@ -176,7 +176,26 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 	//
 	// Outside it, the nested pass is harmless and bounded: it finds the dig lock
 	// held, refuses everyone with lane-dig-active, and returns.
-	heal, wanted := d.evaluateLaneReleasesPass(lane)
+	heal, wanted, freed := d.evaluateLaneReleasesPass(lane)
+	// AND THE SAME SPLIT COVERS THE DWELL'S EXIT. A released dweller drives out of
+	// this lane and drops its occupancy row inside the pass, where the fact becomes
+	// true — but the re-drive that fact enables cannot run there: it dispatches,
+	// which emits, which re-enters this function on the same goroutine for the same
+	// lane. So the wake happens here, outside the mutex, exactly like the heal.
+	//
+	// RedriveHeldCompoundLegs and not another evaluator pass: the population that
+	// queues behind a dwelling dig leg is its own siblings, which are `pending` legs
+	// the evaluator cannot see. Gate-staged waiters on this lane were re-asked by
+	// the pass itself — it re-reads per candidate, so the ones after the release
+	// already saw the freed corridor.
+	if freed {
+		// FLIP 2 RIDES THE SAME DEFERRAL. A released dweller driving out of the dug
+		// lane can be the last thing that dig had in it, and the claim should go with
+		// it — but releasing a lane wakes it, and waking it from inside the pass is
+		// the self-deadlock above. Same split, same reason.
+		d.maybeReleaseDigOnLastBlockerOut(lane.ID)
+		d.RedriveHeldCompoundLegs(lane.ID)
+	}
 	if wanted {
 		d.healLaneMouth(lane, heal)
 	}
@@ -191,7 +210,7 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 // excavation frees them all; a second request would find the lane locked by the
 // first and do nothing. Returning one keeps that obvious instead of relying on the
 // lock to absorb the duplicates.
-func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bool) {
+func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bool, bool) {
 	laneID := lane.ID
 	unlock := d.laneGates.lock(laneID)
 	defer unlock()
@@ -199,12 +218,16 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bo
 	var (
 		heal       healRequest
 		healWanted bool
+		// freedLane records that a dweller drove out of this lane during the pass,
+		// so the caller can wake whatever was queued behind it once the mutex is
+		// gone. See EvaluateLaneReleases for why it cannot be woken from in here.
+		freedLane bool
 	)
 
 	candidates, err := d.gateStagedForLane(lane)
 	if err != nil {
 		log.Printf("lane gate: list staged orders for lane %s: %v", lane.Name, err)
-		return heal, false
+		return heal, false, false
 	}
 
 	// Deepest first — but be clear about what this sort does and does not buy,
@@ -288,6 +311,53 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bo
 		}
 	}
 	for _, c := range candidates {
+		if c.dwell {
+			// A DWELLER ASKS A DIFFERENT QUESTION, SO IT DOES NOT GO THROUGH THE
+			// ENTRY CLASSIFIER.
+			//
+			// gateEntryVerdict answers "may this robot come INTO this lane". The
+			// dweller is already in it — Core sent it there and it is standing in a
+			// slot the dig itself emptied — so every arm of that verdict is either
+			// vacuously true or actively wrong for it (its own parent's dig holds the
+			// lane; its own occupancy row is the one inside it). The question it is
+			// actually waiting on is "where does this blocker go", and the resolver
+			// both answers it and acts on the answer.
+			//
+			// AND IT PROPOSES NO HEAL. mouthHealNeeded proposes an excavation of THIS
+			// lane's mouth, which is the wall a refused ENTRANT is sitting behind. A
+			// dweller is behind no wall here: its lane is already being dug, by the
+			// very parent this leg belongs to. What it lacks is somewhere in the
+			// GROUP to put a bin, and no dig on this lane produces one.
+			v, rErr := d.releaseDwellingDigLeg(c.order, lane)
+			switch {
+			case rErr != nil:
+				log.Printf("lane gate: release dwelling leg %d in lane %s: %v", c.order.ID, lane.Name, rErr)
+				d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed,
+					QueueParams{Lane: lane.Name})
+			case !v.Admitted():
+				// THE LANE THAT HAS TO FREE, NOT THE ONE THE ROBOT IS IN. This passed
+				// QueueParams{Lane: lane.Name}, which is wrong twice: QueueWaitingForSlot
+				// does not render Lane at all (QueueParams' own header calls that the F1
+				// defect — populated and ignored), and the dug lane is not the answer
+				// anyway. A dweller is refused ABOUT SOMEWHERE ELSE: the slot it wanted
+				// is in a lane another dig holds, or one a robot is standing in. The
+				// verdict carries that lane, so the operator gets "Waiting for a slot at
+				// <the lane that must free>" instead of a bare "Waiting for a slot".
+				where := v.Lane()
+				if where == "" {
+					where = lane.Name
+				}
+				d.setQueueReason(c.order, protocol.QueueWaitingForSlot, v.Cause(),
+					QueueParams{Destination: where})
+				d.dbg("lane gate: dwelling leg %d still holding its blocker in %s (%s at %s)",
+					c.order.ID, lane.Name, v.Cause(), where)
+			default:
+				d.setQueueReason(c.order, "", "", QueueParams{})
+				released++
+				freedLane = true
+			}
+			continue
+		}
 		// Re-read per candidate rather than reusing one snapshot: a re-bind by an
 		// earlier candidate in this pass moves its depth and its bound node, and
 		// the classifier's view has to see that.
@@ -373,7 +443,7 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (healRequest, bo
 	if released > 0 {
 		log.Printf("lane gate: released %d order(s) into lane %s", released, lane.Name)
 	}
-	return heal, healWanted
+	return heal, healWanted, freedLane
 }
 
 // gateCandidate is one gate-staged order with the destination and depth the
@@ -389,11 +459,24 @@ type gateCandidate struct {
 	// retrieve is the direction, read off the plan (a pickup after the wait)
 	// rather than inferred from which query found the order.
 	retrieve bool
+	// dwell marks the OUTBOUND candidate: a dig leg standing INSIDE this lane
+	// holding a blocker, waiting for Core to choose where it goes. It gates an
+	// APPEND rather than an entry, so it takes neither of the two release paths
+	// below and asks none of the entry questions — the robot is already in.
+	//
+	// Mutually exclusive with `retrieve` by construction: the direction walk only
+	// runs when there IS a step after the wait, and a dweller is defined by there
+	// not being one (waitGatesAnAppend).
+	dwell bool
 	// entryIndex is the steps_json index of THAT lane-entry step — the same walk
 	// that produced `node` and `retrieve` already knew it. The rebind needs it to
 	// patch the step it is actually speaking for: a swap has two dropoffs and a
 	// spliced plan two pickups, so "the last dropoff" and "the first pickup" name
 	// the wrong leg (see applyPlanNode).
+	//
+	// -1 for a dweller, and nothing reads it: there is no entry step to patch,
+	// which is the whole of what makes it a dweller. The release-time resolver
+	// APPENDS its step rather than re-binding one.
 	entryIndex int
 }
 
@@ -446,8 +529,46 @@ func (d *Dispatcher) gateStagedForLane(lane *nodes.Node) ([]gateCandidate, error
 		}
 		entry, entryIdx, isRetrieve, ok := laneEntryAfterWait(steps, o.WaitIndex)
 		if !ok {
-			log.Printf("lane gate: order %d is parked at a wait for lane %s with no actionable step "+
-				"after it — its tail cannot be built", o.ID, lane.Name)
+			// THE OUTBOUND ARM. A lane wait with nothing actionable after it is not
+			// a broken plan — it is a dig leg dwelling in the lane it is digging,
+			// whose next step is exactly what Core has not chosen yet. Its tail
+			// cannot be BUILT from the plan; it is APPENDED to it by the release-time
+			// resolver, which is what this candidate is for.
+			//
+			// The old sentence stays for the case it was written about, and it is a
+			// different one: a plan whose wait is neither a dweller's nor followed by
+			// its entry is a mis-splice, and it is still loud rather than skipped
+			// quietly, because the order would otherwise dwell with no diagnosis.
+			if !waitGatesAnAppend(steps, o.WaitIndex) {
+				log.Printf("lane gate: order %d is parked at a wait for lane %s with no actionable step "+
+					"after it and no destination to choose — its tail cannot be built", o.ID, lane.Name)
+				continue
+			}
+			// The node the dweller STANDS IN, which is the lane-relevant one for it:
+			// the wait's own node. Resolving it is also the assertion that §3's
+			// identity holds on the live row — a dweller must be inside the lane it
+			// names, or the wait is not what it says it is.
+			at, aErr := d.db.GetNodeByDotName(w.Node)
+			if aErr != nil || at == nil {
+				log.Printf("lane gate: dwelling leg %d waits at %q, which does not resolve: %v",
+					o.ID, w.Node, aErr)
+				continue
+			}
+			atLane, alErr := d.db.LaneForNode(at.ID)
+			if alErr != nil {
+				return nil, alErr
+			}
+			if atLane == nil || atLane.ID != lane.ID {
+				log.Printf("lane gate: dwelling leg %d names lane %s but stands at %q in %s — "+
+					"mis-spliced plan, refusing to release it here",
+					o.ID, lane.Name, w.Node, nodeName(atLane))
+				continue
+			}
+			depth, dErr := d.db.GetSlotDepth(at.ID)
+			if dErr != nil {
+				return nil, dErr
+			}
+			out = append(out, gateCandidate{order: o, node: at, depth: depth, dwell: true, entryIndex: -1})
 			continue
 		}
 		node, nErr := d.db.GetNodeByDotName(entry.Node)
@@ -1035,6 +1156,70 @@ func (d *Dispatcher) LaneIDsForOrder(orderID int64) []int64 {
 		}
 	}
 	return out
+}
+
+// NodeIDsForOrder returns the nodes an order was working — its source and its
+// destination — for the triggers that care about a NODE freeing rather than a
+// lane clearing.
+//
+// The distinction is the shuffle pool. A lane trigger asks "may somebody enter
+// this corridor now"; a node trigger asks "is there somewhere to put a bin", and
+// the answer to the second changes when an order that was inbound to a node dies
+// without ever getting there — no bin moves, no lane clears, and a slot the
+// capacity gate was counting as spoken for becomes free.
+//
+// Names, not ids, are what the row carries, so this resolves them; an
+// unresolvable name contributes nothing rather than a zero.
+func (d *Dispatcher) NodeIDsForOrder(orderID int64) []int64 {
+	order, err := d.db.GetOrder(orderID)
+	if err != nil || order == nil {
+		return nil
+	}
+	seen := map[int64]bool{}
+	var out []int64
+	for _, name := range []string{order.DeliveryNode, order.SourceNode} {
+		if name == "" {
+			continue
+		}
+		node, nErr := d.db.GetNodeByDotName(name)
+		if nErr != nil || node == nil || seen[node.ID] {
+			continue
+		}
+		seen[node.ID] = true
+		out = append(out, node.ID)
+	}
+	return out
+}
+
+// EvaluateWaitLaneForStagedOrder re-asks the gate question for the lane an order
+// has just PARKED at — the arrival trigger.
+//
+// ── WHY ARRIVAL IS AN EVENT AND NOT A NON-EVENT ───────────────────────────
+//
+// Every other trigger in the set is something changing in a LANE. This one is
+// the robot itself becoming ready, and it is the trigger the outbound dwell
+// needs: the whole value of the dwell is that the destination is chosen when the
+// robot is standing ready to drive rather than when its leg was planned, so the
+// moment it reports staged is the moment there is a question to answer. Without
+// it a dweller waits for unrelated traffic or for the 60-second floor, and the
+// open-destination case — which should be a pause the robot barely notices —
+// costs an interval.
+//
+// It is not dwell-only, and deliberately so: an INBOUND order that arrives at a
+// mark while its lane is contended is re-asked here too. That firing usually
+// answers "still no", which is what a level-triggered idempotent evaluator is
+// for, and it costs one query on a path that has just done a fleet round trip.
+func (d *Dispatcher) EvaluateWaitLaneForStagedOrder(orderID int64) {
+	order, err := d.db.GetOrder(orderID)
+	if err != nil || order == nil {
+		return
+	}
+	if !IsGateStaged(order) {
+		return // a station wait, or an order already past its lane wait
+	}
+	if lane := laneOfGateWait(order); lane != 0 {
+		d.EvaluateLaneReleases(lane)
+	}
 }
 
 // GateStagedCount reports how many orders are currently dwelling at a lane's wait
