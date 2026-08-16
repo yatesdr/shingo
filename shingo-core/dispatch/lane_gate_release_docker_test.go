@@ -532,12 +532,8 @@ func TestGateRelease_IgnoresNonGatedLanes(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	for _, mode := range []string{"", "mouth", "delegated"} {
-		name := "GRSKIP-" + mode
-		if mode == "" {
-			name = "GRSKIP-none"
-		}
-		_, laneID, s0 := gatedLane(t, db, name, mode)
+	for _, name := range []string{"GROFF-A", "GROFF-B"} {
+		_, laneID, s0 := gatedLane(t, db, name, "") // no mark: the evaluator must not touch it
 		line := lineNode(t, db, name+"-LINE")
 		o := testdb.CreateOrder(t, db, func(ord *orders.Order) {
 			ord.DeliveryNode = s0.Name
@@ -549,6 +545,6 @@ func TestGateRelease_IgnoresNonGatedLanes(t *testing.T) {
 		d.EvaluateLaneReleases(laneID)
 	}
 	if n := len(backend.ReleaseCalls()); n != 0 {
-		t.Errorf("append calls = %d, want 0 — the evaluator must not touch non-gate_choreography lanes", n)
+		t.Errorf("append calls = %d, want 0 — the evaluator must not touch a lane with no mark", n)
 	}
 }

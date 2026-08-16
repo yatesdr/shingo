@@ -556,9 +556,9 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	//   - a bin that has become unreachable now holds the leg instead of sending
 	//     a robot to a slot behind another bin.
 	//
-	// The dig on the leg's OWN parent still admits — isOwnDigLeg, brief 3's
-	// defect 1. Without that exemption a leg parks behind the lock that only its
-	// own completion clears.
+	// The dig on the leg's OWN parent still admits -- ownsDig (lane_gate.go)
+	// routes the leg's question to its parent, brief 3's defect 1. Without that
+	// exemption a leg parks behind the lock that only its own completion clears.
 	//
 	// Staying pending is not a failure and not a retry: the sibling's dropoff
 	// completion releases its occupancy and re-enters this function, so the wait
@@ -687,10 +687,11 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	// atomic operation already ran. Read its result.
 	//
 	// RELEASING IS SCOPED TO THE ARM THAT CAN WEDGE. Occupancy was taken above,
-	// keyed on this child, and laneOccupiedForChild counts ANY occupant including
-	// the child itself. Return while that row stands and the next re-drive finds
-	// the lane "busy" — busy with the very leg it is trying to send — and holds it
-	// forever. So a FAILED STATUS WRITE must release: nothing else clears it.
+	// keyed on this child, and admission's occupancy arm (admitLane,
+	// admission.go) refuses a lane held by any occupant other than the asker.
+	// Return while that row stands and every OTHER leg reads the lane as "busy" --
+	// busy with a leg that was never sent. So a FAILED STATUS WRITE must release:
+	// nothing else clears it.
 	//
 	// A LOST CAS MUST NOT, and this used to get it backwards. The reasoning was
 	// "the CAS-loss arm survives regardless (the winner consumes the row)". That

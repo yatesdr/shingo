@@ -40,7 +40,7 @@ import (
 // adds the one arm those tests did not already cover, because the move created
 // the risk.
 
-// TestAdmitLaneEntry_DepthOneLaneStillAdmits guards the arm this signature
+// TestLaneEntryTiers_DepthOneLaneStillAdmits guards the arm this signature
 // change could most easily have broken by accident.
 //
 // The old code collapsed two unrelated situations into one line:
@@ -57,18 +57,18 @@ import (
 // is why it is the arm worth a test.
 //
 // DESIGN §16 rule 7: the slot count is the first thing this call can answer on.
-// The destination resolves, its lane has a group, and that group enforces the
-// mouth — everything upstream is satisfied, so the depth-1 arm is what replies.
+// The destination resolves and its lane is marked, so everything upstream is
+// satisfied and the depth-1 arm is what replies.
 //
 // MUTATION (verified): return GateVerdict{} for the `len(slots) < 2` arm as
 // well, collapsing it back with the error case. This fires — a one-slot lane
 // refuses every entry, forever, with an empty cause.
-func TestAdmitLaneEntry_DepthOneLaneStillAdmits(t *testing.T) {
+func TestLaneEntryTiers_DepthOneLaneStillAdmits(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	_, laneID, s0 := gatedLane(t, db, "TEDEPTH1", string(LaneEnforceMouth))
+	_, laneID, s0 := gatedLane(t, db, "TEDEPTH1", "TEDEPTH1-WAIT")
 	slots := laneSlots(t, db, laneID)
 	// Reduce the lane to a single slot: depth-1 lanes are ordering-exempt.
 	if _, err := db.DB.Exec(`DELETE FROM nodes WHERE id = $1`, slots[1].ID); err != nil {
@@ -81,7 +81,11 @@ func TestAdmitLaneEntry_DepthOneLaneStillAdmits(t *testing.T) {
 		o.Status = "queued"
 	})
 
-	v, err := d.AdmitLaneEntry(order, s0)
+	laneNode, err := db.GetNode(laneID)
+	if err != nil {
+		t.Fatalf("get lane: %v", err)
+	}
+	v, err := d.laneEntryCause(laneNode, order, s0)
 	if err != nil {
 		t.Fatalf("depth-1 lane: %v", err)
 	}

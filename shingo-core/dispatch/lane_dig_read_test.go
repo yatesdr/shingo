@@ -52,7 +52,7 @@ func digHolder(t *testing.T, db *store.DB, uuid string) *orders.Order {
 // The dig row is written UNCONDITIONALLY — LaneLock.TryLock takes a ModeDig lane
 // reservation with no enforcement-mode check (binresolver/lane_lock.go:60-69) —
 // and on `none` it was read by nobody on this path. resolveOrderLaneHolds drops
-// every lane whose group is not laneGateActive (lane_gate.go:156), so a `none`
+// every lane with no gate mark (laneIsGated, lane_gate.go:139), so a `none`
 // group yields zero holds, and AcquireLanesForOrder then returns admitted on
 // len(holds)==0 (lane_gate.go:420-422) before anything consults the dig.
 //
@@ -96,9 +96,10 @@ func TestAcquireLanesForOrder_ForeignDigRefuses(t *testing.T) {
 // exist BEFORE the refusal, and it is the one a leg-shaped exemption misses.
 //
 // laneOwnerFor returns the order itself when it has no parent (lane_gate.go:457-
-// 463), so isOwnDigLeg — which requires owner != order.ID — is FALSE for the dig
-// owner. An exemption written only for legs therefore refuses the dig's OWNER at
-// its own dig row.
+// 463), so a leg-shaped exemption — one that requires owner != order.ID — is
+// FALSE for the dig owner. ownsDig answers this on its own first arm instead
+// (digOwner == orderID); an exemption written only for legs refuses the dig's
+// OWNER at its own dig row.
 //
 // That is not hypothetical on this path. In expose mode the lane lock is
 // TRANSFERRED from the compound parent to the complex parent (compound.go:327-
@@ -108,8 +109,8 @@ func TestAcquireLanesForOrder_ForeignDigRefuses(t *testing.T) {
 // and the lock is released by that very pickup — refuse it and nothing ever
 // clears it.
 //
-// MUTATION: narrow ownsDig to isOwnDigLeg alone and this test wedges exactly
-// there.
+// MUTATION: drop ownsDig's owner arm — the `digOwner == orderID` return —
+// leaving only the laneOwnerFor comparison, and this test wedges exactly there.
 func TestAcquireLanesForOrder_OwnDigAdmitsTheDigOwner(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

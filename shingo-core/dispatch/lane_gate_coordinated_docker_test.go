@@ -13,11 +13,11 @@ import (
 // lane_gate_coordinated_docker_test.go — the other side of the same valve.
 //
 // The retrieve branch of dispatchToFleetCore is guarded by !order.Coordinated. The
-// store branch two lines above it is not, and resolveLaneGateTarget keys only on
-// the destination node's lane group — nothing about the order. So a coordinated
-// order that reaches the plain dispatch path with a lane-slot destination takes
-// dispatchGated, which OVERWRITES steps_json with a three-step gated plan and
-// destroys the Edge-authored choreography.
+// store branch two lines above it is not, and the valve keys only on the lane a
+// step touches (spliceLaneWait → gateTargetForLane) — nothing about the order. So
+// a coordinated order that reaches the plain dispatch path with a lane-slot
+// destination takes dispatchGated, which OVERWRITES steps_json with a three-step
+// gated plan and destroys the Edge-authored choreography.
 //
 // It is safe today only because coordinated orders do not normally take that path,
 // and the thing asserting that is AssertSimpleNotCoordinated — which only logs. A

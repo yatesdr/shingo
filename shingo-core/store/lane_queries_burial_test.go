@@ -174,8 +174,12 @@ func TestBurialGuard_AFullLaneIsNotReportedAsClosed(t *testing.T) {
 // so the instant the claim goes the lane is open again. No retry counter, no
 // backoff, no state to unwind.
 //
-// The event that carries this to a parked order is asserted separately; here the
-// point is that there is nothing to reset.
+// The event that carries this to a parked order is asserted separately, in
+// engine/lane_burial_claim_clear_redrive_docker_test.go
+// (TestBurialGuard_ClaimClearEventRedrivesAParkedStore): a store parked on a
+// group whose every lane is claim-closed is re-driven by the claim-clear event
+// rather than by the 60-second sweep. Here the point is only that there is
+// nothing to reset.
 func TestBurialGuard_ClearedClaimReopensTheLane(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

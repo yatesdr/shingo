@@ -56,10 +56,11 @@ func admitOrder(t *testing.T, db *store.DB, uuid string, slot *nodes.Node) *orde
 // serialising compound legs on every lane in production while every gated-lane
 // test stayed green.
 //
-// MUTATION (verified): restore `if !laneGateActive(...) { return Admitted() }`.
-// This fires on both arms; every other admission test stays green, because they
-// all build mouth-enforced lanes — which is exactly how the original slipped
-// through.
+// MUTATION (verified): put the mode back in front of the physical arms — add
+// `if !d.laneIsGated(lane.ID) { return Admitted() }` ahead of admitLane's dig
+// arm. This fires on both arms; every other admission test stays green, because
+// they all build mouth-enforced lanes — which is exactly how the original
+// slipped through.
 func TestAdmit_PhysicalChecksIgnoreTheEnforcementMode(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -113,13 +114,13 @@ func TestAdmit_PhysicalChecksIgnoreTheEnforcementMode(t *testing.T) {
 // deadlocks: that dig only clears when the leg it is parking runs. That was
 // brief 3 defect 1, and this arm is what keeps it fixed through the move.
 //
-// MUTATION (verified): delete the !d.isOwnDigLeg term. The own-leg arm fires
-// with lane-dig-active — the deadlock, reproduced.
+// MUTATION (verified): delete the !d.ownsDig term from admitLane's dig arm. The
+// own-leg arm fires with lane-dig-active — the deadlock, reproduced.
 func TestAdmit_ForeignDigRefusesAndOwnDigDoesNot(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
-	_, laneID, s0 := gatedLane(t, db, "ADM-DIG", string(LaneEnforceMouth))
+	_, laneID, s0 := gatedLane(t, db, "ADM-DIG", "")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	digger := testdb.CreateOrder(t, db, func(o *orders.Order) {
@@ -173,7 +174,7 @@ func TestAdmit_OccupantRefusesAndSelfDoesNot(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
-	_, laneID, s0 := gatedLane(t, db, "ADM-OCC", string(LaneEnforceMouth))
+	_, laneID, s0 := gatedLane(t, db, "ADM-OCC", "")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "adm-occ-inside" })
@@ -227,7 +228,7 @@ func TestAdmit_BuriedRefusesAtThePickupEndOnly(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
-	_, laneID, _ := gatedLane(t, db, "ADM-BURIED", string(LaneEnforceMouth))
+	_, laneID, _ := gatedLane(t, db, "ADM-BURIED", "")
 	slots := laneSlots(t, db, laneID)
 	shallow, deep := slots[0], slots[1]
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
@@ -308,7 +309,7 @@ func TestAdmit_UndeterminedIsNeverAdmitted(t *testing.T) {
 
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
-	_, _, s0 := gatedLane(t, db, "ADM-UNDET", string(LaneEnforceMouth))
+	_, _, s0 := gatedLane(t, db, "ADM-UNDET", "")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// No bin, and a source name that resolves to nothing: pickupSlotNow cannot

@@ -148,9 +148,10 @@ func TestCompound_TwoChildrenInFlightAtOnce(t *testing.T) {
 // only when the lane is clear. It is the assertion that replaces the retired
 // cascade guard, stated as a property of the LANE rather than of the sibling set.
 //
-// MUTATION (verified): delete the laneOccupiedForChild check in
-// AdvanceCompoundOrder. Leg two then dispatches straight into the occupied lane
-// and this test's own "entered a lane leg one is still inside" assertion fires.
+// MUTATION (verified): delete admission's occupancy arm -- the OccupantsOf
+// refusal in admitLane (admission.go), which is the check AdvanceCompoundOrder
+// now asks for. Leg two then dispatches straight into the occupied lane and
+// this test's own "entered a lane leg one is still inside" assertion fires.
 func TestCompound_LaneGateHoldsWhileOccupied(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

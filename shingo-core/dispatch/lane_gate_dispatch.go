@@ -90,14 +90,13 @@ func (d *Dispatcher) gateTargetForLane(lane *nodes.Node) (laneGateTarget, bool, 
 	if lane == nil || lane.ParentID == nil {
 		return laneGateTarget{}, false, nil
 	}
-	if d.laneEnforcementMode(*lane.ParentID) != LaneEnforceGateChoreography {
-		return laneGateTarget{}, false, nil
-	}
-	gatePoint := d.db.GetNodeProperty(lane.ID, PropLaneGatePoint)
+	// THE MARK IS THE WHOLE ANSWER. This used to ask two things — is the group
+	// configured gate_choreography, and does the lane have a wait point — and had
+	// to treat "configured but no point" as a misconfiguration error, because the
+	// two could disagree. They cannot disagree now: there is one fact.
+	gatePoint := d.laneWaitPoint(lane.ID)
 	if gatePoint == "" {
-		return laneGateTarget{}, false, fmt.Errorf(
-			"lane %q is configured %s but has no %s property - a gated lane needs a wait point for its robots",
-			lane.Name, LaneEnforceGateChoreography, PropLaneGatePoint)
+		return laneGateTarget{}, false, nil
 	}
 	return laneGateTarget{lane: lane, gatePoint: gatePoint}, true, nil
 }

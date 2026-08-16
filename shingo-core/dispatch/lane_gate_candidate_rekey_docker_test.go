@@ -42,7 +42,7 @@ func TestRekey_MidPlanLaneIsFound(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
-	_, laneID, _ := gatedLane(t, db, "REKEY-MID", string(LaneEnforceGateChoreography))
+	_, laneID, _ := gatedLane(t, db, "REKEY-MID", "REKEY-MID"+"-WAIT")
 	slots := laneSlots(t, db, laneID)
 	lane := mustNode(t, db, laneID)
 	from := lineNode(t, db, "REKEY-MID-FROM")

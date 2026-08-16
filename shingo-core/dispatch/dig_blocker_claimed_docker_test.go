@@ -178,6 +178,13 @@ func TestDig_BlockerLeavesTheLane_ThenDigs(t *testing.T) {
 	if len(kids) == 0 {
 		t.Fatal("the dig reported success and created no legs")
 	}
+
+	// END-OF-SCENARIO LEDGER SWEEP. Order A went terminal holding a hard bin
+	// claim and the confirmed reservation under it, and the dig it unblocked is
+	// now live with legs and a lane lock of its own. The sweep separates the two:
+	// everything the dead order held is gone, everything the live one holds is
+	// untouched. See testdb.AssertNoOrphanedHolds.
+	testdb.AssertNoOrphanedHolds(t, db)
 }
 
 // TestDig_BlockerSoftHeld_StillSteals pins TODAY'S behaviour, which is not

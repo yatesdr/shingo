@@ -13,7 +13,7 @@ import (
 )
 
 // TestMigrate_PendingRestocksRetired: after the full migration chain the retired
-// restore-blockers table is gone (v70) and the head version is current (75, after
+// restore-blockers table is gone (v70) and the head version is current (77, after
 // the refactor-phase1 merge brought v69/v70 in under main's v71–v75).
 //
 // The drop was v52 on refactor-phase1 and became v70 at transplant — main had

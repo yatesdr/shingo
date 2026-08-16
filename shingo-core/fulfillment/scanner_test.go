@@ -100,11 +100,9 @@ type recordingDispatcher struct {
 	// mouth-gate park branch); releaseLaneCalls counts fleet-fail lane releases.
 	laneConflict     bool
 	releaseLaneCalls int
-	laneEntryPark    bool  // tiered-entry gate: park the store (deeper/group holds the lane)
 	buriedErr        error // makes BuriedForHeldBin fail (cannot describe the dig)
 	laneBuried       bool  // admission reports the order's source bin walled
 	entryKinds       []dispatch.EntryKind
-	laneEntryCause   dispatch.QueueCause // the operator cause when laneEntryPark is set
 }
 
 // confirmCall records one Rule-1 confirm-at-dispatch: the order, the bin, and the
@@ -162,13 +160,7 @@ func (d *recordingDispatcher) AcquireLanesForOrder(_ *orders.Order, _, _ *nodes.
 	return true, "", "", nil
 }
 func (d *recordingDispatcher) ReleaseLanesForOrder(int64) error { d.releaseLaneCalls++; return nil }
-func (d *recordingDispatcher) AdmitLaneEntry(*orders.Order, *nodes.Node) (dispatch.GateVerdict, error) {
-	if d.laneEntryPark {
-		return dispatch.Refused(d.laneEntryCause), nil
-	}
-	return dispatch.Admitted(), nil
-}
-func (d *recordingDispatcher) PostFindHook() {}
+func (d *recordingDispatcher) PostFindHook()                    {}
 
 // BuriedForHeldBin: the held-bin burial route. buriedErr drives the "cannot
 // describe the dig" arm; otherwise a minimal BuriedError is enough, since

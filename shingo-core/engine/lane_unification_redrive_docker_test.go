@@ -153,4 +153,12 @@ func TestUnification_LaneClearingEventRedrivesAParkedPlainOrder(t *testing.T) {
 
 	// Seconds, against a 60s sweep: this is the event's doing.
 	waitForStatus(t, db, "redrive-1", dispatch.StatusDispatched, 10*time.Second)
+
+	// END-OF-SCENARIO LEDGER SWEEP. The occupancy assertion above is scoped to
+	// this lane and this occupant, which is the fact this test is about; the
+	// sweep asks the broader one — the cancelled occupant left NO hold of any
+	// kind anywhere, and neither did anything else that went terminal on the way
+	// here. Cheap, and it turns every scenario into a check on the release paths
+	// it happens to run through. See testdb.AssertNoOrphanedHolds.
+	testdb.AssertNoOrphanedHolds(t, db)
 }

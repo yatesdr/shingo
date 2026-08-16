@@ -3,12 +3,15 @@
 package dispatch
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
 	"shingocore/fleet/seerrds"
 	"shingocore/internal/testdb"
 	"shingocore/rds"
+	"shingocore/store"
 	"shingocore/store/orders"
 )
 
@@ -282,5 +285,157 @@ func TestGateTail_StaleStructDoesNotDoubleAppend(t *testing.T) {
 	}
 	if final.WaitIndex != 1 {
 		t.Errorf("wait_index = %d, want 1 — a declined append must not advance the row", final.WaitIndex)
+	}
+}
+
+// onlyOrderError pulls the single order.error reply out of the outbox and
+// returns its payload. Fatal on none or more than one, because both are answers
+// this file cares about: the refusal must SPEAK (a silent drop leaves the Edge
+// row staged forever with no chip and no retry affordance), and it must speak
+// once.
+func onlyOrderError(t *testing.T, db *store.DB) protocol.OrderError {
+	t.Helper()
+	msgs, err := db.ListPendingOutbox(50)
+	if err != nil {
+		t.Fatalf("list outbox: %v", err)
+	}
+	var found []protocol.OrderError
+	for _, m := range msgs {
+		if m.MsgType != "order.error" {
+			continue
+		}
+		var env protocol.Envelope
+		if uErr := json.Unmarshal(m.Payload, &env); uErr != nil {
+			t.Fatalf("unmarshal outbox envelope: %v", uErr)
+		}
+		var p protocol.OrderError
+		if uErr := json.Unmarshal(env.Payload, &p); uErr != nil {
+			t.Fatalf("unmarshal order.error payload: %v", uErr)
+		}
+		found = append(found, p)
+	}
+	if len(found) != 1 {
+		t.Fatalf("order.error replies = %d, want exactly 1 — a refused release must come back to "+
+			"the station that clicked it, exactly once", len(found))
+	}
+	return found[0]
+}
+
+// TestGateWait_StationReleaseIsRefusedAsInvalidState pins the WIRE half of the
+// fence, which is a different property from the append half above and fails
+// independently of it.
+//
+// TestGateWait_StationReleaseIsRefused proves Core does not append. It says
+// nothing about what Core says back, and the reply is load-bearing: Edge routes
+// an order.error BY CODE (shingo-edge/messaging/edge_handler.go HandleOrderError)
+// and there are exactly two non-terminal arms — `manifest_sync_failed` and
+// `invalid_state`. Everything else falls through to HandleDispatchReply with
+// ReplyError, which terminalizes the Edge row.
+//
+// So the two halves of a correct refusal are independent, and the second one is
+// the one with a floor incident behind it:
+//
+//   - Core must not append          — the lane stays safe
+//   - Edge must not terminalize     — the operator's row survives, gets a
+//     "release error" chip, and the evaluator's later release still lands on a
+//     live mirror
+//
+// Swap the code here for anything terminal and the append assertions above stay
+// green while the Edge row dies: Core's order sails on holding a robot at a
+// gate, Edge shows it failed, and the two disagree until the next Edge restart.
+// That is the ALN_003 divergence (Springfield 2026-06-12) arriving through a
+// different door — which is why complex_release.go's fence carries a paragraph
+// about the code and why this test exists to hold it there.
+//
+// THE CODE IS MATCHED AS A LITERAL ON BOTH SIDES. There is no shared constant
+// for it — Core writes "invalid_state" and Edge compares against
+// "invalid_state" — so a rename cannot be caught by the compiler, and a test
+// that asserts the literal is the only thing standing where a type would be.
+// Stated rather than fixed: minting the constant is a protocol change and a
+// wider blast radius than this row.
+//
+// The wording is asserted too, loosely (a substring), because the detail is what
+// Edge prefixes with "Core rejected the release: " and shows the operator. A
+// refusal that says only "invalid state" tells them nothing about why their
+// button did nothing; "waiting on a lane" tells them to stop pressing it.
+//
+// MUTATION (verified): change the fence's sendError code in complex_release.go
+// from "invalid_state" to any other string ("gate_refused"). This test's code
+// assertion fires. TestGateWait_StationReleaseIsRefused stays GREEN — it counts
+// appends, and the mutation does not add one — which is exactly the gap this
+// test fills.
+func TestGateWait_StationReleaseIsRefusedAsInvalidState(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	laneID, _, s1 := gateRetrieveLane(t, db, "GCWIRE", "GCWIRE-WAIT")
+	line := lineNode(t, db, "GCWIRE-LINE")
+
+	// A dig holds the lane, so the retrieve pre-positions and dwells on its wait.
+	digger := testdb.CreateOrder(t, db)
+	if !d.laneLock.TryLock(laneID, digger.ID) {
+		t.Fatal("TryLock on a free lane must succeed")
+	}
+	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.OrderType = OrderTypeRetrieve
+		o.SourceNode = s1.Name
+		o.DeliveryNode = line.Name
+		o.Status = "sourcing"
+	})
+	if _, err := d.DispatchDirect(order, s1, line); err != nil {
+		t.Fatalf("DispatchDirect: %v", err)
+	}
+
+	// The same invitation the sibling test drives: the robot reaches the wait
+	// point, RDS says WAITING, Core writes `staged` and advertises a release.
+	// Both transitions, because `staged` is not reachable from `dispatched`.
+	parked, err := db.GetOrder(order.ID)
+	if err != nil {
+		t.Fatalf("reload before staging: %v", err)
+	}
+	if err := d.lifecycle.MarkInTransit(parked, "ROBOT-1", "fleet"); err != nil {
+		t.Fatalf("mark in_transit: %v", err)
+	}
+	if err := d.lifecycle.MarkStaged(parked, "fleet"); err != nil {
+		t.Fatalf("mark staged: %v", err)
+	}
+	advertised, err := db.GetOrder(order.ID)
+	if err != nil {
+		t.Fatalf("reload after staging: %v", err)
+	}
+
+	// PRECONDITION. Without a genuinely staged, genuinely gate-staged order the
+	// release bounces on the STATUS precondition further up HandleOrderRelease —
+	// which also replies invalid_state, so this test would pass on the wrong
+	// refusal and prove nothing about the fence.
+	if advertised.Status != protocol.StatusStaged {
+		t.Fatalf("order status = %s, want staged", advertised.Status)
+	}
+	if !IsGateStaged(advertised) {
+		t.Fatalf("order must read as gate-staged (steps=%q wait=%d vendor=%q)",
+			advertised.StepsJSON, advertised.WaitIndex, advertised.VendorOrderID)
+	}
+
+	d.HandleOrderRelease(d.syntheticEnvelope(advertised.StationID),
+		&protocol.OrderRelease{OrderUUID: advertised.EdgeUUID})
+
+	reply := onlyOrderError(t, db)
+	if reply.OrderUUID != advertised.EdgeUUID {
+		t.Errorf("reply order_uuid = %q, want the released order %q", reply.OrderUUID, advertised.EdgeUUID)
+	}
+	if reply.ErrorCode != "invalid_state" {
+		t.Errorf("error_code = %q, want \"invalid_state\" — it is the only code besides "+
+			"manifest_sync_failed that Edge handles NON-terminally (edge_handler.go "+
+			"HandleOrderError). Any other value routes to HandleDispatchReply/ReplyError and "+
+			"kills the Edge mirror while Core's order lives on holding a robot at the gate — the "+
+			"ALN_003 divergence", reply.ErrorCode)
+	}
+	if !strings.Contains(reply.Detail, "waiting on a lane") {
+		t.Errorf("detail = %q, want it to say the order is waiting on a lane — Edge shows this "+
+			"string to the operator verbatim (prefixed \"Core rejected the release: \"), and it is "+
+			"the only thing that tells them their button did nothing for a reason they cannot see "+
+			"from the station", reply.Detail)
 	}
 }

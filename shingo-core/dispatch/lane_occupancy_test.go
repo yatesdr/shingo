@@ -189,11 +189,13 @@ func blockOccupancyFor(t *testing.T, db *store.DB, orderID int64) {
 // TestCompound_UnrecordableOccupancyHoldsTheChild is F4: brief 4 step 6 promoted
 // Hold B from advisory to enforcing, and the WRITE did not move with the read.
 //
-// The read fails closed — laneOccupiedForChild treats an unreadable lane as a
-// busy one. The write logged and carried on, so a lane whose occupancy could not
-// be RECORDED read as empty to the next leg: the same two-robots-in-one-corridor
-// collision, reached from the other side. Both dispositions have to agree, and
-// "hold the child" is the one that agrees with the read.
+// The read fails closed — admission's occupancy arm (admitLane) propagates an
+// unreadable lane as an undetermined verdict, which refuses, so the caller holds
+// the child. The write logged and carried on, so a lane whose occupancy could
+// not be RECORDED read as empty to the next leg: the same
+// two-robots-in-one-corridor collision, reached from the other side. Both
+// dispositions have to agree, and "hold the child" is the one that agrees with
+// the read.
 //
 // TWO ASSERTIONS, and the second is the one that makes the guard's POSITION
 // load-bearing rather than stylistic:
@@ -241,7 +243,7 @@ func TestCompound_UnrecordableOccupancyHoldsTheChild(t *testing.T) {
 	// 1. Nothing was sent.
 	if inFlight(t, db, children[0].ID) {
 		t.Error("leg one was dispatched into a lane its occupancy could not be recorded for — the next " +
-			"leg's laneOccupiedForChild read sees an empty lane and follows it in")
+			"leg's admission read sees an empty lane and follows it in")
 	}
 	if got := occupants(t, db, lane); len(got) != 0 {
 		t.Errorf("lane occupants = %v, want none", got)
@@ -307,13 +309,14 @@ func blockSourcingFor(t *testing.T, db *store.DB, orderID int64) func() {
 // the state that interleaving PRODUCES, and it is the state the guard is written
 // against. What it does not claim is reachability — see §17.9.
 //
-// THREE ASSERTIONS. The third is the one bare `return nil` fails:
+// THREE ASSERTIONS. A bare `return nil` — the refusal handled without the
+// release — fails the SECOND:
 //
 //  1. the child is not dispatched;
 //  2. its occupancy row is GONE. Occupancy was taken before the status move
-//     and laneOccupiedForChild counts any occupant INCLUDING the child itself,
-//     so returning while that row stands leaves the next re-drive reading the
-//     lane as busy — busy with the leg it is trying to send;
+//     and admission's occupancy arm refuses on any occupant other than the
+//     asker, so returning while that row stands leaves every OTHER leg reading
+//     the lane as busy — busy with a leg that was never sent;
 //  3. the leg still goes once the refusal lifts. A hold that no re-drive can
 //     clear is a wedge with better logging.
 //
@@ -323,15 +326,27 @@ func blockSourcingFor(t *testing.T, db *store.DB, orderID int64) func() {
 // succeeds — that last one matters, because if it refused instead the test would
 // pass against F4's guard and say nothing about this one.
 //
-// MUTATION 1 (verified): restore the log-and-continue body — drop the
-// `return nil` and the release. Assertion 1 fires: the child dispatches with a
-// vendor order id despite the database having refused the claim.
+// MUTATION 1 (re-verified 2026-08-09): restore the log-and-continue body — drop
+// the `return nil` and the release. ASSERTION 3 fires: leg one is `failed` when
+// the re-drive comes for it.
 //
-// MUTATION 2 (verified): keep the `return nil`, delete
-// `d.ReleaseLaneOccupancy(next.ID)`. Assertions 2 and 3 both fire — the row
-// survives and the re-drive then holds the leg against its own occupancy,
-// forever. That is the arm that makes the release a separate claim rather than
-// tidying up after the return.
+// Not assertion 1, and the difference is worth the sentence. Falling through
+// reaches dispatchToFleet, which takes its own pending→dispatched claim and
+// refuses it as an illegal transition — so nothing is sent to the fleet and
+// assertion 1 passes, defended by a guard that lives outside this function. What
+// the fall-through actually costs is the child: the compound advances past it,
+// it terminalizes, and the leg the lane was waiting on is dead. So the
+// `return nil` is not what keeps two robots off one leg — dispatchToFleet is —
+// it is what keeps the leg ALIVE to be re-driven.
+//
+// MUTATION 2 (re-verified 2026-08-09): keep the `return nil`, delete
+// `d.ReleaseLaneOccupancy(next.ID)`. ASSERTION 2 fires, alone: the row survives.
+// Assertion 3 passes, because admission's occupancy arm exempts the asker — the
+// surviving row belongs to leg one, so leg one is the one order in the plant it
+// does not hold. The damage is entirely to OTHER traffic, which reads a busy
+// lane and waits on a leg that was never sent. That is what makes the release a
+// separate claim rather than tidying up after the return: nothing this leg does
+// later will ever notice it, so no re-drive will ever clear it.
 func TestCompound_RefusedSourcingClaimDoesNotDispatch(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -354,8 +369,8 @@ func TestCompound_RefusedSourcingClaimDoesNotDispatch(t *testing.T) {
 
 	// 2. And leaves no occupancy behind. Without this the hold is self-inflicted.
 	if got := occupants(t, db, lane); len(got) != 0 {
-		t.Errorf("lane occupants after the refused claim = %v, want none — laneOccupiedForChild counts "+
-			"the child's OWN row, so leaving it means the next re-drive holds leg one against itself", got)
+		t.Errorf("lane occupants after the refused claim = %v, want none — admission refuses on another "+
+			"order's row, so leaving leg one's behind holds every other leg out of an empty lane", got)
 	}
 
 	// 3. Liveness: lift the refusal and the same call sends the leg.

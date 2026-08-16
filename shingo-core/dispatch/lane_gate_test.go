@@ -117,11 +117,19 @@ func TestLaneGateRelease_ChildRoutesToParent(t *testing.T) {
 	}
 }
 
-// gatedLane builds a group (NGRP) with the given lane_enforcement value, a LANE
-// under it, and two depth-ordered slots (so the lane is not depth-1 exempt). It
-// returns the group id, lane id, and the shallow slot node. enforcement "" leaves
-// the property unset (defaults to none).
-func gatedLane(t *testing.T, db *store.DB, name, enforcement string) (groupID, laneID int64, slot *nodes.Node) {
+// gatedLane builds a group (NGRP), a LANE under it, and two depth-ordered slots
+// (so the lane is not depth-1 exempt). It returns the group id, lane id, and the
+// shallow slot node.
+//
+// waitPoint is the lane's mark — the whole of the gate's configuration since the
+// enforcement mode was deleted. Non-empty means the lane is gated: robots dwell
+// there and Core appends their tail when the lane is safe. Empty leaves the lane
+// ungated, which is every lane at every plant until a human places a mark.
+//
+// It used to take an enforcement value and write it on the GROUP. The property
+// had no writer outside tests and is gone; the parameter reads the same at every
+// call site and now configures the thing that actually decides.
+func gatedLane(t *testing.T, db *store.DB, name, waitPoint string) (groupID, laneID int64, slot *nodes.Node) {
 	t.Helper()
 	ngrpType, err := db.GetNodeTypeByCode(protocol.NodeClassNGRP)
 	if err != nil {
@@ -135,14 +143,14 @@ func gatedLane(t *testing.T, db *store.DB, name, enforcement string) (groupID, l
 	if err := db.CreateNode(grp); err != nil {
 		t.Fatalf("create group: %v", err)
 	}
-	if enforcement != "" {
-		if err := db.SetNodeProperty(grp.ID, PropLaneEnforcement, enforcement); err != nil {
-			t.Fatalf("set enforcement: %v", err)
-		}
-	}
 	lane := &nodes.Node{Name: name + "-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: &grp.ID}
 	if err := db.CreateNode(lane); err != nil {
 		t.Fatalf("create lane: %v", err)
+	}
+	if waitPoint != "" {
+		if err := db.SetNodeProperty(lane.ID, PropLaneGatePoint, waitPoint); err != nil {
+			t.Fatalf("set wait point: %v", err)
+		}
 	}
 	d0, d1 := 0, 1
 	s0 := &nodes.Node{Name: name + "-S0", Enabled: true, ParentID: &lane.ID, Depth: &d0}
@@ -174,165 +182,64 @@ func gateMouthRows(t *testing.T, db *store.DB, laneID int64) int {
 	return len(rows)
 }
 
-func TestLaneGate_EnforcementMode(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-
-	gNone, _, _ := gatedLane(t, db, "MODE-NONE", "")
-	gMouth, _, _ := gatedLane(t, db, "MODE-MOUTH", "mouth")
-	gDeleg, _, _ := gatedLane(t, db, "MODE-DELEG", "delegated")
-	gJunk, _, _ := gatedLane(t, db, "MODE-JUNK", "banana")
-
-	if got := d.laneEnforcementMode(gNone); got != LaneEnforceNone {
-		t.Errorf("unset = %q, want none", got)
-	}
-	if got := d.laneEnforcementMode(gMouth); got != LaneEnforceMouth {
-		t.Errorf("mouth = %q, want mouth", got)
-	}
-	// `delegated` was DELETED, so it is now just another unrecognized string and
-	// must read as none — same as gJunk below. This is not a migration assertion:
-	// the property is set on no node at either plant (verified live 2026-08-08),
-	// so there is nothing in the field to degrade gracefully. It pins that
-	// deleting a mode cannot accidentally promote a stale value to an ACTIVE one.
-	if got := d.laneEnforcementMode(gDeleg); got != LaneEnforceNone {
-		t.Errorf("retired 'delegated' = %q, want none — a deleted mode must fall to the "+
-			"inactive default, never to an active mode", got)
-	}
-	if got := d.laneEnforcementMode(gJunk); got != LaneEnforceNone {
-		t.Errorf("unrecognized = %q, want none", got)
-	}
-
-	gChoreo, _, _ := gatedLane(t, db, "MODE-CHOREO", "gate_choreography")
-	if got := d.laneEnforcementMode(gChoreo); got != LaneEnforceGateChoreography {
-		t.Errorf("gate_choreography = %q, want gate_choreography", got)
-	}
-}
-
-// TestLaneGate_ChoreographyKeepsCoreMachineryOn is the hazard test for the arm
-// enum. Three predicates used to read `!= LaneEnforceMouth`, which means "anything
-// that is not literally mouth gets NO Core gate" — so adding an arm would silently
-// ship a configured plant with no mouth holds, no depth priority and no depth
-// classifier, with nothing logged and nothing failing. laneGateActive() is what
-// closes that, and this pins all three from the outside: a gate_choreography group
-// must behave exactly like a mouth group, while delegated and none stay OFF.
+// TestLaneGate_MarkIsTheEnablement replaces the two enforcement-mode tests that
+// stood here.
 //
-// It asserts equivalence against a live `mouth` fixture rather than hard-coded
-// expectations, so the two arms cannot drift apart silently either.
-func TestLaneGate_ChoreographyKeepsCoreMachineryOn(t *testing.T) {
+// They pinned a three-valued property on the GROUP: that `mouth` and
+// `gate_choreography` both switched Core's machinery on, that the retired
+// `delegated` and any junk string fell to `none`, and that the two active arms
+// behaved identically. All of it described a switch that no plant ever set and
+// that is now deleted.
+//
+// What replaces it is one fact on the LANE: the waiting point. There is nothing
+// to fall back from and no pair of arms to keep in step — a lane has a mark or it
+// does not, and the mark is both the enablement and the place the robot waits.
+// The hazard the old tests guarded against (a new arm silently inheriting the
+// off branch) cannot exist in a two-state derivation with no arms.
+func TestLaneGate_MarkIsTheEnablement(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	deepestOf := func(laneID int64) *nodes.Node {
-		t.Helper()
-		slots, err := db.ListLaneSlots(laneID)
-		if err != nil {
-			t.Fatalf("list slots: %v", err)
-		}
-		for _, s := range slots {
-			if dpt, _ := db.GetSlotDepth(s.ID); dpt == 1 {
-				return s
-			}
-		}
-		t.Fatal("fixture should have a depth-1 slot")
-		return nil
+	_, unmarked, _ := gatedLane(t, db, "MARK-OFF", "")
+	_, marked, _ := gatedLane(t, db, "MARK-ON", "MARK-ON-WAIT")
+
+	if d.laneIsGated(unmarked) {
+		t.Error("an unmarked lane reports gated. Every lane at both plants is unmarked, so this " +
+			"would turn staging on plant-wide the moment the branch deployed — the exact global " +
+			"flip the mark ruling exists to avoid")
+	}
+	if !d.laneIsGated(marked) {
+		t.Error("a marked lane reports ungated — placing the mark is the only act that enables a lane")
 	}
 
-	_, choreoLane, choreoS0 := gatedLane(t, db, "HAZ-CHOREO", "gate_choreography")
-	_, delegLane, delegS0 := gatedLane(t, db, "HAZ-DELEG", "delegated")
-
-	// (1) Depth priority WAS the third axis here. Deleted with the boost — Core no
-	// longer stamps a priority for lane-bound moves, so there is nothing for a new
-	// arm to silently lose. The hazard this test guards is now two axes wide; the
-	// HAZ-MOUTH fixture went with it, since it existed only to feed this check.
-
-	// (2) Mouth holds — the resolveOrderLaneHolds site, via the exported wrapper.
-	line := lineNode(t, db, "HAZ-LINE")
-	a := testdb.CreateOrder(t, db)
-	if adm, _, _, err := d.AcquireLanesForOrder(a, line, choreoS0, EntryFreshBin); err != nil || !adm {
-		t.Fatalf("choreography store must be admitted on a free lane: adm=%v err=%v", adm, err)
-	}
-	// Errorf, not Fatalf: the three axes fail independently under the hazard, and
-	// reporting all of them at once is what makes the diagnosis obvious.
-	if n := gateMouthRows(t, db, choreoLane); n != 1 {
-		t.Errorf("choreography inbound mouth row = %d, want 1 — the arm lost its mouth hold", n)
-	}
-	// The hold is real, not decorative: a different-mode order must now conflict.
-	b := testdb.CreateOrder(t, db)
-	if adm, _, _, err := d.AcquireLanesForOrder(b, choreoS0, line, EntryFreshBin); err != nil || adm {
-		t.Errorf("outbound into an inbound-held choreography lane: adm=%v err=%v, want conflict", adm, err)
-	}
-	// Delegated takes no hold at all.
-	c := testdb.CreateOrder(t, db)
-	if adm, _, _, err := d.AcquireLanesForOrder(c, line, delegS0, EntryFreshBin); err != nil || !adm {
-		t.Fatalf("delegated must admit as a no-op: adm=%v err=%v", adm, err)
-	}
-	if n := gateMouthRows(t, db, delegLane); n != 0 {
-		t.Errorf("delegated mouth rows = %d, want 0 — RDS owns that mouth", n)
+	// The value reaches the fleet verbatim as a block location, so it must come
+	// back exactly as written rather than normalised.
+	if got := d.laneWaitPoint(marked); got != "MARK-ON-WAIT" {
+		t.Errorf("wait point = %q, want %q verbatim", got, "MARK-ON-WAIT")
 	}
 
-	// (3) The depth classifier. POLICY is shared by both active arms; DISPOSITION
-	// is not, and that distinction is the design rather than a gap:
-	//
-	//   mouth              — a park cause parks the order before it is dispatched.
-	//   gate_choreography  — the same cause means "dwell at the wait point", so
-	//                        AdmitLaneEntry returns park=false and the valve in
-	//                        dispatchToFleetCore stages the robot instead.
-	//
-	// So this asserts the shared policy function (laneEntryCause) gives BOTH arms
-	// the identical verdict — that is the thing the hazard would silently kill —
-	// and separately that each arm's disposition is the intended one.
-	buildContended := func(prefix, enforcement string) (*nodes.Node, *nodes.Node, *orders.Order) {
-		t.Helper()
-		_, laneID, s0 := gatedLane(t, db, prefix, enforcement)
-		s1 := deepestOf(laneID)
-		shallow := testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.DeliveryNode = s0.Name
-			o.Status = "queued"
-		})
-		_ = testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.DeliveryNode = s1.Name
-			o.Status = "in_transit"
-		})
-		laneNode, err := db.GetNode(laneID)
-		if err != nil {
-			t.Fatalf("[%s] get lane: %v", prefix, err)
-		}
-		return laneNode, s0, shallow
+	// And the valve agrees with the derivation — one fact, one answer, no second
+	// switch that could disagree with it.
+	laneNode, err := db.GetNode(marked)
+	if err != nil {
+		t.Fatalf("get lane: %v", err)
 	}
-	policyCause := func(prefix, enforcement string) (GateVerdict, *nodes.Node, *orders.Order) {
-		t.Helper()
-		laneNode, s0, shallow := buildContended(prefix, enforcement)
-		v, err := d.laneEntryCause(laneNode, shallow, s0)
-		if err != nil {
-			t.Fatalf("[%s] laneEntryCause: %v", prefix, err)
-		}
-		return v, s0, shallow
+	target, gated, err := d.gateTargetForLane(laneNode)
+	if err != nil || !gated {
+		t.Fatalf("gateTargetForLane on a marked lane: gated=%v err=%v", gated, err)
+	}
+	if target.gatePoint != "MARK-ON-WAIT" {
+		t.Errorf("valve target = %q, want the lane's mark", target.gatePoint)
 	}
 
-	want, mouthS0, mouthOrder := policyCause("HAZ-CLS-MOUTH", "mouth")
-	if want.Admitted() || want.Cause() == "" {
-		t.Fatal("mouth arm's policy must park behind a deeper store (fixture broken)")
+	offNode, err := db.GetNode(unmarked)
+	if err != nil {
+		t.Fatalf("get unmarked lane: %v", err)
 	}
-	got, choreoS0, choreoOrder := policyCause("HAZ-CLS-CHOREO", "gate_choreography")
-	if got.Admitted() != want.Admitted() || got.Cause() != want.Cause() {
-		t.Errorf("choreography POLICY = (admitted=%v, %q), want (admitted=%v, %q) — the arm lost depth ordering",
-			got.Admitted(), got.Cause(), want.Admitted(), want.Cause())
-	}
-
-	// Dispositions, each asserted for what it is.
-	if v, err := d.AdmitLaneEntry(mouthOrder, mouthS0); err != nil || v.Admitted() {
-		t.Errorf("mouth disposition: admitted=%v err=%v, want a pre-dispatch park", v.Admitted(), err)
-	}
-	if v, err := d.AdmitLaneEntry(choreoOrder, choreoS0); err != nil || !v.Admitted() {
-		t.Errorf("choreography disposition: admitted=%v err=%v, want admit — the valve stages the robot instead", v.Admitted(), err)
-	}
-
-	// delegated runs no Core classifier at all.
-	_, delS0, delOrder := buildContended("HAZ-CLS-DELEG", "delegated")
-	if v, err := d.AdmitLaneEntry(delOrder, delS0); err != nil || !v.Admitted() {
-		t.Errorf("delegated must not run the Core depth classifier: admitted=%v err=%v", v.Admitted(), err)
+	if _, gated, err := d.gateTargetForLane(offNode); err != nil || gated {
+		t.Errorf("gateTargetForLane on an unmarked lane: gated=%v err=%v — an unmarked lane must be "+
+			"invisible to the valve, not an error", gated, err)
 	}
 }
 

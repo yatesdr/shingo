@@ -89,7 +89,7 @@ import (
 //     ×2) ask "may I CLAIM this lane for a dig". Delegating would refuse every
 //     plan: a buried retrieve is buried by construction, so the reachability arm
 //     rejects the very thing the reshuffle exists to fix.
-//   - admitLaneEntry / classifyLaneEntry ask ORDERING — whose turn, not whether.
+//   - laneEntryCause / classifyLaneEntry ask ORDERING — whose turn, not whether.
 //   - the finder's post-find buried check asks find-time reachability, with the
 //     finder's own retry semantics and finder-* causes.
 //   - ListChildNodesUnlocked filters dig-held lanes out of a PLAN-TIME candidate
@@ -126,7 +126,9 @@ import (
 //	--------------|-----------------------------|---------------------------
 //	dig exclusion | admission, via admitLanes,   | SAME — dispatchHeldBin calls
 //	              | plus admitMouth in the tx    | admitLanes too
-//	ordering      | admitDepthOrder              | SAME — calls it as well
+//	ordering      | laneEntryCause, asked by the | SAME — one gate answers it
+//	              | gate (gateEntryVerdict). An  | for both callers
+//	              | unmarked lane orders nothing |
 //	presence      | HOLD B, both halves — the    | same
 //	              | order takes an occupancy row |
 //	              | at the create seam and reads |
@@ -173,18 +175,19 @@ import (
 // answer returns that zero value alongside its error, so a caller that ignores
 // the error — or forgets to assign the verdict at all — still refuses.
 //
-// This is the one thing the existing sites get wrong, and it is why the shape
-// is a struct rather than a bare bool. admitLaneEntry returns
-// `park=false, err` on an unreadable lane, which reads as ADMIT at a glance and
-// is correct today only because both scanner call sites happen to check err
-// first. The safety lives in every caller's discipline and a new caller
-// inherits none of it. Here the dangerous reading is unreachable instead of
-// merely discouraged — the same move as orders.open_for_children, where the
-// safe state is the one you get by forgetting.
+// This is the one thing the sites this replaced got wrong, and it is why the
+// shape is a struct rather than a bare bool. The pre-dispatch tiered gate
+// (deleted, lane_entry.go) returned `park=false, err` on an unreadable lane,
+// which reads as ADMIT at a glance and was correct only because both scanner
+// call sites happened to check err first. The safety lived in every caller's
+// discipline and a new caller inherits none of it. Here the dangerous reading
+// is unreachable instead of merely discouraged — the same move as
+// orders.open_for_children, where the safe state is the one you get by
+// forgetting.
 // ── THE SHAPE IS SHARED; THE QUESTIONS ARE NOT ───────────────────────────
 //
 // GateVerdict is named for the lane gate rather than for admission because the
-// ORDERING decision (admitLaneEntry, lane_entry.go) returns it too. Both are
+// ORDERING decision (laneEntryCause, lane_entry.go) returns it too. Both are
 // "a lane-gate verdict with a cause, whose zero value refuses", and both have an
 // undetermined arm that must not read as a yes.
 //
@@ -627,7 +630,7 @@ func (d *Dispatcher) entryDeferredToGate(skip admissionSkips, lane *nodes.Node) 
 	if !skip.entryWhenGated || lane.ParentID == nil {
 		return false
 	}
-	return d.laneEnforcementMode(*lane.ParentID) == LaneEnforceGateChoreography
+	return d.laneIsGated(lane.ID)
 }
 
 // admit answers whether this move may happen now.

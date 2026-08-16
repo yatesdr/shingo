@@ -129,3 +129,105 @@ func AssertBinClaimedBy(t *testing.T, db *store.DB, binID, wantOrderID int64) {
 		t.Errorf("bin %d: claimed by %d, want %d", binID, *bin.ClaimedBy, wantOrderID)
 	}
 }
+
+// --- Ledger sweep ---
+
+// AssertNoOrphanedHolds sweeps the WHOLE hold ledger for a hold whose owner is
+// dead: every reservation kind (bin, slot, mouth, occupancy — the last two
+// carrying the lane seam, and a mouth row with mode='dig' IS the lane lock),
+// plus the two hard-claim columns, bins.claimed_by and nodes.claimed_by.
+//
+// ── WHY A SWEEP AND NOT A COUNT ───────────────────────────────────────────
+//
+// The per-resource assertions above answer "is THIS bin free". They are the
+// right shape when a test knows which resource it is about, and the wrong shape
+// for the question the ledger's promise actually makes, which is over the whole
+// table: NOTHING is held by an order that is finished. A test that counts rows
+// for one bin id passes while a mouth row, an occupancy row and a dig lock from
+// the same order sit behind it — and those are exactly the kinds the lane work
+// added, on the paths where an order holds several resources at once.
+//
+// ── THE PREDICATE IS THE REAPER'S ─────────────────────────────────────────
+//
+// Orphaned means the OWNER is terminal or gone, which is the same test
+// reservations.ReapOrphaned applies (store/reservations). Deliberately not "the
+// table is empty": a hold under a live order is sacred no matter how long it has
+// been held — an order in sourcing legitimately waits hours for its source — so
+// a sweep that demanded an empty ledger would fail every scenario that ends with
+// work still in flight, and would therefore be wired into none of them.
+//
+// Sharing the reaper's predicate also makes the assertion say something
+// operationally exact: the reaper would find nothing to do. On the normal path
+// TerminalizeOrder has already released everything in the same transaction as
+// the status write, so the backstop should always be looking at an empty set. A
+// failure here is either a release the chokepoint missed or a hold written
+// outside it.
+//
+// Safe to call from any package's docker tests: testdb.Open gives every test its
+// own database, so the sweep sees this test's rows and nothing else.
+func AssertNoOrphanedHolds(t *testing.T, db *store.DB) {
+	t.Helper()
+	dead := "(o.id IS NULL OR o.status IN (" + protocol.TerminalStatusSQLList() + "))"
+
+	rows, err := db.DB.Query(`
+		SELECT r.resource_kind, COALESCE(r.mode, ''), r.order_id,
+		       COALESCE(r.bin_id, r.node_id, 0), COALESCE(o.status, '(gone)')
+		  FROM reservations r
+		  LEFT JOIN orders o ON o.id = r.order_id
+		 WHERE ` + dead + `
+		 ORDER BY r.id`)
+	if err != nil {
+		t.Fatalf("AssertNoOrphanedHolds: scan reservations: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, mode, status string
+		var orderID, resourceID int64
+		if err := rows.Scan(&kind, &mode, &orderID, &resourceID, &status); err != nil {
+			t.Fatalf("AssertNoOrphanedHolds: scan reservation row: %v", err)
+		}
+		what := kind
+		if mode != "" {
+			what += "/" + mode
+		}
+		t.Errorf("orphaned %s reservation on resource %d, held by order %d (%s) — a hold under a "+
+			"dead owner is invisible to every live order and is only ever reclaimed by the "+
+			"owner-liveness reaper, which is the backstop and not the mechanism",
+			what, resourceID, orderID, status)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("AssertNoOrphanedHolds: reservations: %v", err)
+	}
+
+	assertNoOrphanedClaims(t, db, "bins", dead)
+	assertNoOrphanedClaims(t, db, "nodes", dead)
+}
+
+// assertNoOrphanedClaims is the hard-claim half, over one of the two tables that
+// carry a claimed_by column. Both are swept because they leak differently: a
+// stranded bins.claimed_by hides a bin from every finder, and a stranded
+// nodes.claimed_by makes a slot look taken to every placer.
+func assertNoOrphanedClaims(t *testing.T, db *store.DB, table, dead string) {
+	t.Helper()
+	rows, err := db.DB.Query(`
+		SELECT x.id, x.claimed_by, COALESCE(o.status, '(gone)')
+		  FROM ` + table + ` x
+		  LEFT JOIN orders o ON o.id = x.claimed_by
+		 WHERE x.claimed_by IS NOT NULL AND ` + dead + `
+		 ORDER BY x.id`)
+	if err != nil {
+		t.Fatalf("AssertNoOrphanedHolds: scan %s claims: %v", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, owner int64
+		var status string
+		if err := rows.Scan(&id, &owner, &status); err != nil {
+			t.Fatalf("AssertNoOrphanedHolds: scan %s row: %v", table, err)
+		}
+		t.Errorf("orphaned hard claim: %s %d is still claimed_by order %d (%s)", table, id, owner, status)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("AssertNoOrphanedHolds: %s: %v", table, err)
+	}
+}

@@ -131,14 +131,32 @@ func (d *Dispatcher) RedriveHeldCompoundLegs(laneID int64) {
 // no-op, a dropped event costs only latency (the next firing recovers), and a
 // duplicate event is harmless. That is what lets the trigger set be generous.
 //
-// A no-op for any lane whose group is not gate_choreography, so an unconfigured
-// plant does one lane lookup and returns.
+// ── IT DOES NOT CONSULT THE LANE'S MARK, AND THAT IS THE ROLLBACK RULE ────
+//
+// There was a `if !d.laneIsGated(lane.ID) { return }` here, sold as "an
+// unconfigured plant does one lane lookup and returns". It also stranded every
+// robot already dwelling when a mark was cleared, which is the one thing the
+// enablement ruling promises it will not do: "rollback is clearing it (robots
+// already dwelling complete under the old rules)" (lane_gate.go). Clearing a
+// mark is an admin click with a confirmation that COUNTS the dwellers first
+// (GateStagedCount → www apiLaneWaiting), so the stranded population was
+// displayed to the person about to strand it.
+//
+// A dwelling robot is not a fact about configuration. It is unsealed at the
+// fleet, parked on a Wait block, and only Core can append its tail — so whether
+// it may be released is a question about the ORDER, which is exactly what the
+// candidate derivation below already asks (gate-staged, wait kind lane,
+// wait_lane = this lane). Deriving the set from durable order state and then
+// gating the whole pass on live config was the one place those two disagreed.
+//
+// WHAT IT COSTS on an ungated plant: one ActiveGateCandidates query per
+// lane-touching event, which returns nothing when no order carries a lane wait.
+// Its sibling on the same events — RedriveHeldCompoundLegs — already runs a
+// per-lane query with no mode gate at all, and for the same reason: the state
+// it recovers is mode-independent.
 func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 	lane, err := d.db.GetNode(laneID)
 	if err != nil || lane == nil || lane.ParentID == nil {
-		return
-	}
-	if d.laneEnforcementMode(*lane.ParentID) != LaneEnforceGateChoreography {
 		return
 	}
 
@@ -816,4 +834,31 @@ func (d *Dispatcher) LaneIDsForOrder(orderID int64) []int64 {
 		}
 	}
 	return out
+}
+
+// GateStagedCount reports how many orders are currently dwelling at a lane's wait
+// point, for the admin surface's clear-the-mark confirmation.
+//
+// It answers from gateStagedForLane — the SAME derivation the evaluator releases
+// from — rather than a count of its own. That matters more than the duplication
+// it saves: a confirmation that says "3 robots are waiting" while the evaluator
+// believes something else is worse than no confirmation, and the only way to be
+// sure they agree is for there to be one answer. No new bookkeeping, by
+// construction.
+//
+// A lane that is not gated has nobody dwelling at it, which is the honest zero
+// rather than a special case.
+func (d *Dispatcher) GateStagedCount(laneID int64) (int, error) {
+	lane, err := d.db.GetNode(laneID)
+	if err != nil {
+		return 0, err
+	}
+	if lane == nil {
+		return 0, nil
+	}
+	staged, err := d.gateStagedForLane(lane)
+	if err != nil {
+		return 0, err
+	}
+	return len(staged), nil
 }

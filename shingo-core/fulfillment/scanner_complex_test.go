@@ -32,10 +32,7 @@ func (s *stubDispatcher) AcquireLanesForOrder(*orders.Order, *nodes.Node, *nodes
 	return true, "", "", nil // gate off — the complex branch does not gate lanes here
 }
 func (s *stubDispatcher) ReleaseLanesForOrder(int64) error { return nil }
-func (s *stubDispatcher) AdmitLaneEntry(*orders.Order, *nodes.Node) (dispatch.GateVerdict, error) {
-	return dispatch.Admitted(), nil // gate off — admit everything
-}
-func (s *stubDispatcher) PostFindHook() {}
+func (s *stubDispatcher) PostFindHook()                    {}
 func (s *stubDispatcher) BuriedForHeldBin(*orders.Order) (*dispatch.BuriedError, error) {
 	panic("scanner complex-order branch should not describe a held-bin burial")
 }

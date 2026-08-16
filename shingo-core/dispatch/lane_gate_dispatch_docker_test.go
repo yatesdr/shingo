@@ -13,17 +13,16 @@ import (
 	"shingocore/store/orders"
 )
 
-// gateChoreoLane builds a gate_choreography group + lane with a configured wait
-// point, and returns the lane id plus its shallow (depth-0) and deep (depth-1)
-// slots.
+// gateChoreoLane builds a gated lane — a group, a LANE with the given wait point,
+// and two depth-ordered slots — and returns the lane id plus its shallow (depth-0)
+// and deep (depth-1) slots.
+//
+// A blank gatePoint leaves the lane UNMARKED, which is now the whole of "not
+// gated". It used to set the group's enforcement mode separately and then
+// optionally add a point, so the two could disagree; there is one fact now.
 func gateChoreoLane(t *testing.T, db *store.DB, name, gatePoint string) (laneID int64, s0, s1 *nodes.Node) {
 	t.Helper()
-	_, laneID, s0 = gatedLane(t, db, name, string(LaneEnforceGateChoreography))
-	if gatePoint != "" {
-		if err := db.SetNodeProperty(laneID, PropLaneGatePoint, gatePoint); err != nil {
-			t.Fatalf("set gate point: %v", err)
-		}
-	}
+	_, laneID, s0 = gatedLane(t, db, name, gatePoint)
 	slots, err := db.ListLaneSlots(laneID)
 	if err != nil {
 		t.Fatalf("list slots: %v", err)
@@ -189,45 +188,36 @@ func TestGateChoreo_ContendedCreatesUnsealedAndHolds(t *testing.T) {
 	}
 }
 
-// TestGateChoreo_MissingGatePointIsAnError: a group configured for the arm whose
-// lane has no wait point is a MISCONFIGURATION and must fail loudly. Falling back
-// to the sealed shape would silently recreate the bypass class the uniform ruling
-// exists to forbid — on the one lane an operator explicitly asked to be gated.
-func TestGateChoreo_MissingGatePointIsAnError(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	backend := testdb.NewSuccessBackend()
-	d, _ := newTestDispatcher(t, db, backend)
+// TestGateChoreo_MissingGatePointIsAnError WAS HERE AND IS DELETED, because the
+// state it tested cannot be reached any more.
+//
+// It pinned a MISCONFIGURATION: a group set to gate_choreography whose lane had
+// no wait point. That was a real hazard when the two were separate facts — the
+// switch said "gate this lane" and the point said "there is nowhere to wait" —
+// and the right answer was to fail the dispatch loudly rather than silently ship
+// the sealed shape onto a lane an operator had asked to be gated.
+//
+// The mark ruling collapses the two facts into one. A lane with no wait point is
+// simply not gated, which is the ordinary configuration of every lane at both
+// plants; there is no second setting left to contradict it. The behaviour that
+// replaced the error — an unmarked lane is invisible to the valve — is pinned by
+// TestGateChoreo_NonGatedLaneIsUnchanged below and by
+// TestLaneGate_MarkIsTheEnablement.
 
-	_, s0, _ := gateChoreoLane(t, db, "GCNOPT", "") // no gate point configured
-	line := lineNode(t, db, "GCNOPT-LINE")
-	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.DeliveryNode = s0.Name
-		o.Status = "sourcing"
-	})
-
-	if _, err := d.DispatchDirect(order, line, s0); err == nil {
-		t.Fatal("a gate_choreography lane with no wait point must fail dispatch, not silently ship the sealed shape")
-	}
-	if n := len(backend.CreateRequests()); n != 0 {
-		t.Errorf("create calls = %d, want 0 — nothing should reach the fleet on a misconfigured lane", n)
-	}
-}
-
-// TestGateChoreo_NonGatedLaneIsUnchanged: the arm is opt-in per group. A mouth
-// (or unset) group still takes the sealed single-shot create with no wait block.
+// TestGateChoreo_NonGatedLaneIsUnchanged: gating is opt-in per LANE, and an
+// unmarked lane takes the sealed single-shot create with no wait block.
+//
+// This is the deploy-day assertion. No mark exists anywhere at either plant, so
+// this is what EVERY lane does the moment the branch ships — the property that
+// makes the ruling safe to land without a flag day.
 func TestGateChoreo_NonGatedLaneIsUnchanged(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	for _, mode := range []string{"", "mouth", "delegated"} {
-		name := "GCOFF-" + mode
-		if mode == "" {
-			name = "GCOFF-none"
-		}
-		_, _, s0 := gatedLane(t, db, name, mode)
+	for _, name := range []string{"GCOFF-A", "GCOFF-B"} {
+		_, _, s0 := gatedLane(t, db, name, "") // no mark: not gated
 		line := lineNode(t, db, name+"-LINE")
 		order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 			o.DeliveryNode = s0.Name

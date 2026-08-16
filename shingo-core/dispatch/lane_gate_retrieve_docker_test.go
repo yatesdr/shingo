@@ -222,26 +222,27 @@ func TestGateChoreo_RetrieveContendedHoldsThenEvaluatorReleases(t *testing.T) {
 //   - the dig lock's owner is the buried retrieve itself — complex_reshuffle.go
 //     and planning_service.go both call TryLock(laneID, order.ID) and then make
 //     that same order the compound parent. So the parent IS the dig owner.
-//   - a leg's SOURCE is a lane slot, and legs are not Coordinated, so
-//     dispatchToFleetCore routes them through resolveLaneGateSource →
-//     dispatchGatedRetrieve like any other lane-sourced order. Legs never meet
-//     the scanner's AcquireLanesForOrder, so the gate is the only gate they meet.
+//   - a leg's SOURCE is a lane slot, so dispatchToFleetCore routes it through
+//     spliceLaneWait → dispatchGated like any other lane-sourced order. Legs
+//     never meet the scanner's AcquireLanesForOrder, so the gate is the only
+//     gate they meet.
 //   - laneGateRetrieveCause then parked on "a dig holds this lane" without asking
 //     WHOSE. The parent's lock releases when the reshuffle completes, and the
 //     reshuffle completes by running this leg. Deadlock.
 //
-// ONE LEG, DELIBERATELY. Hold B (compound.go's laneOccupiedForChild) refuses to
-// dispatch a leg while a sibling is inside the lane, so a two-leg fixture that
-// asserted "the second leg never runs" would pass identically whether the gate is
-// wrong or not — it would be proving Hold B works. With a single leg there is no
-// sibling, Hold B is satisfied, the leg reaches the fleet, and the only thing that
-// can hold it at the gate is its own parent's dig.
+// ONE LEG, DELIBERATELY. Hold B (admission's occupancy arm, asked from
+// AdvanceCompoundOrder) refuses to dispatch a leg while a sibling is inside the
+// lane, so a two-leg fixture that asserted "the second leg never runs" would pass
+// identically whether the gate is wrong or not — it would be proving Hold B works.
+// With a single leg there is no sibling, Hold B is satisfied, the leg reaches the
+// fleet, and the only thing that can hold it at the gate is its own parent's dig.
 //
 // The leg delivers to a LINE, which is target-node reshuffle mode
 // (PlanReshuffleToTarget): the blocker leaves the lane. That keeps the case about
 // the SOURCE gate — an expose-mode leg dropping into a shuffle slot in the same
-// lane would take resolveLaneGateTarget's store branch instead, and laneEntryCause
-// never consults the dig lock at all.
+// lane would be spliced ahead of its DROPOFF and take gateEntryVerdict's store
+// branch instead, which answers the dig through admission and then asks the
+// ordering tiers. A different arm from the retrieve one under test.
 //
 // MUTATION (verified): make laneOwnerFor return the order's own id instead of its
 // parent's (drop the ParentOrderID hop). The exemption then fails to match, the leg

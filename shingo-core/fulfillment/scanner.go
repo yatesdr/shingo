@@ -474,9 +474,6 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Lane mouth gate (P4): take the order's lane holds before committing to the
 	// fleet, holding the soft slot+bin reservations on a conflict (Rule 1). No-op
 	// unless a mouth-enforced lane group is on the order's path.
-	if !s.admitDepthOrder(order, destNode) {
-		return false
-	}
 	if ok, _ := s.admitLanes(order, sourceNode, destNode, dispatch.EntryFreshBin); !ok {
 		return false
 	}
@@ -579,9 +576,6 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	}
 	// Lane mouth gate (P4): same as the fresh path — take the order's lane holds
 	// before the fleet commit, parking on a conflict and keeping the held bin.
-	if !s.admitDepthOrder(order, destNode) {
-		return false
-	}
 	// EntryHeldBin: this caller skips nothing, because it never called the finder
 	// and so has no answer to the reachability question. A buried verdict is
 	// turned into a dig rather than a permanent park.
@@ -726,35 +720,6 @@ func (s *Scanner) digForBuriedHeldBin(order *orders.Order) bool {
 	}
 	s.logFn("fulfillment: held-bin order %d was buried after it took its hold — dig planned", order.ID)
 	return false
-}
-
-// admitDepthOrder holds a store at dispatch until it is safe to enter its lane
-// deepest-first (the tiered-entry arm). Returns true to proceed; false when the
-// order was parked in sourcing (a deeper cross-origin store, or an active
-// cross-origin group, holds the lane) so the caller returns false too. Runs BEFORE
-// the mouth acquire so a deferred order never parks holding a lane. A no-op that
-// returns true when no mouth-enforced lane group is on the path — byte-identical
-// when the gate is off.
-func (s *Scanner) admitDepthOrder(order *orders.Order, destNode *nodes.Node) bool {
-	v, err := s.dispatcher.AdmitLaneEntry(order, destNode)
-	if err != nil {
-		s.logFn("fulfillment: lane-entry check for order %d errored: %v (retrying)", order.ID, err)
-		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseLaneEntryError,
-			dispatch.QueueParams{Payload: order.PayloadCode})
-		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane-entry check error, retrying"); qerr != nil {
-			s.logFn("fulfillment: order %d → sourcing after lane-entry error: %v", order.ID, qerr)
-		}
-		return false
-	}
-	if !v.Admitted() {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, v.Cause(),
-			dispatch.QueueParams{Destination: destNode.Name})
-		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane entry deferred (depth order)"); qerr != nil {
-			s.logFn("fulfillment: order %d → sourcing after lane-entry defer: %v", order.ID, qerr)
-		}
-		return false
-	}
-	return true
 }
 
 // setQueueReason is the scanner's one door onto the queue-reason columns. It

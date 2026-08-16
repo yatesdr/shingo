@@ -10,53 +10,37 @@ import (
 	"shingocore/store/reservations"
 )
 
-// LaneEnforcementMode is the per-lane-group enforcement choice — the §15 methods
-// menu, picked per plant topology and stored as a node property on the group
-// (NGRP). Default is none: the Core mouth gate is off and behavior is identical
-// to today.
-type LaneEnforcementMode string
-
-const (
-	// LaneEnforceNone — no Core lane gate for this group (the default). Byte-
-	// identical to pre-seam behavior.
-	LaneEnforceNone LaneEnforcementMode = "none"
-	// LaneEnforceMouth — the mode-aware mouth gate (§2): shared storage lanes that
-	// need same-kind concurrency; a conflicting order waits, visibly, in sourcing.
-	LaneEnforceMouth LaneEnforcementMode = "mouth"
-	// `delegated` WAS A MODE HERE AND WAS DELETED. It meant "an RDS mutex zone owns
-	// the physical mouth (B4), so Core takes no mouth hold" — and it had zero
-	// production references beyond the switch arm that returned it.
-	//
-	// It is not being deleted for contradicting the authority ruling. The
-	// contradiction dissolved underneath it: the physical questions (foreign dig,
-	// occupancy, reachability) are now asked on BOTH entry paths regardless of
-	// mode, and occupancy rows are written with no mode check at all — so "Core
-	// still tracks" is unconditionally true and the re-scope it wanted had nothing
-	// left to say. What remained was only "Core takes no mouth hold", which no
-	// plant asked for and nothing could express.
-	//
-	// NOTHING TO MIGRATE. `lane_enforcement` is not set on any node at either
-	// plant — verified live 2026-08-08, both cores: zero rows for this key, and
-	// this branch has never been deployed to a plant anyway. So there is no
-	// group, anywhere, carrying this value. The deletion is safe because the
-	// configuration does not exist, not because a fallback rescues it.
-	//
-	// RE-INTRODUCE IT against a real RDS mutex zone AND a real config surface, not
-	// before. It was argued about for five review rounds while being unreachable
-	// by any deliberate means.
-	// LaneEnforceGateChoreography — Core is the traffic cop: a lane-bound order
-	// ships UNSEALED ending at the lane's wait point, and Core appends its tail
-	// when the lane is safe. Same substrate as mouth (mouth rows, §4 release,
-	// depth priority) and the SAME classifier; only the disposition of a park
-	// verdict differs — mouth parks the order pre-dispatch, choreography stages
-	// the robot at the gate. Introduced inert: until the staging path lands, a
-	// group set to this value behaves exactly like `mouth`.
-	LaneEnforceGateChoreography LaneEnforcementMode = "gate_choreography"
-)
-
-// PropLaneEnforcement is the node-property key (read on the lane's group) that
-// selects the enforcement mode.
-const PropLaneEnforcement = "lane_enforcement"
+// THE ENFORCEMENT MODE IS GONE, AND THE MARK REPLACED IT.
+//
+// There used to be a LaneEnforcementMode property on the lane's GROUP —
+// none / mouth / gate_choreography — selecting whether Core gated the lane and
+// how. It is deleted, along with its type, its constants, its reader, and the
+// `lane_enforcement` key itself. Nothing migrates: the property was never set on
+// any node at either plant (verified live 2026-08-08, zero rows both cores) and
+// this branch has never been deployed to one. It exits without ever having had a
+// writer.
+//
+// WHAT REPLACES IT IS THE WAITING POINT. A lane is gated if, and only if, it has
+// a mark for its robots to dwell at (PropLaneGatePoint on the LANE). One fact,
+// set by the person who knows the aisle, and the thing they set IS the thing that
+// makes it true — rather than a switch that has to agree with a separate mark for
+// anything to work.
+//
+// THE RULING IS SAFE BY CONSTRUCTION, and that is worth stating because "we
+// deleted the enforcement switch" reads alarming. Collision safety never lived on
+// the mode. Since the unification the physical questions — is a foreign dig
+// holding this lane, is a robot inside it, is the target reachable — are asked on
+// every lane-entry path with no mode consulted anywhere, and occupancy rows are
+// written unconditionally. The mode only ever chose the WAITING ROOM: park before
+// dispatch, or drive out and dwell at a point. So removing it cannot open a
+// collision; it removes the ability to configure the two waiting rooms
+// inconsistently.
+//
+// AND ENABLEMENT BECOMES PER-LANE AND INCREMENTAL. Nothing changes at deploy —
+// no marks exist anywhere, so every lane keeps parking orders pre-dispatch. Each
+// lane goes gated the day a human places its mark, and rollback is clearing it
+// (robots already dwelling complete under the old rules). The global flip this
+// was once sequenced around does not exist.
 
 // laneGateReservedBy tags the mouth rows the gate writes, for forensics.
 const laneGateReservedBy = "lanegate"
@@ -88,70 +72,42 @@ const laneGateReservedBy = "lanegate"
 // silently outranked the RDS team's conventional 10. That collision is why it was
 // raised. It is now gone, and the field is clean for whoever needs it next.
 
-// laneEnforcementMode reads the enforcement mode configured on a lane group
-// (NGRP). Any unset or unrecognized value is none — off, byte-identical to today.
-func (d *Dispatcher) laneEnforcementMode(groupID int64) LaneEnforcementMode {
-	switch LaneEnforcementMode(d.db.GetNodeProperty(groupID, PropLaneEnforcement)) {
-	case LaneEnforceMouth:
-		return LaneEnforceMouth
-	case LaneEnforceGateChoreography:
-		return LaneEnforceGateChoreography
-	default:
-		// Unset, unrecognized, and the retired `delegated` all land here — the
-		// same ordinary unrecognized-value handling this switch has always done
-		// for any junk string. `delegated` simply joins that set; it is not a
-		// migration arm, because no node anywhere has the property set.
-		return LaneEnforceNone
-	}
+// laneWaitPoint returns the map point a lane's robots dwell at while Core decides
+// whether they may enter, or "" when the lane has none.
+//
+// It is the whole of the gate's configuration. A non-empty value means: ship
+// lane-bound orders unsealed to this point and append their tail when the lane is
+// safe. Empty means: decide before dispatch and park the order if the answer is
+// no. Both are safe; the mark chooses which one the waiting happens in.
+func (d *Dispatcher) laneWaitPoint(laneID int64) string {
+	return d.db.GetNodeProperty(laneID, PropLaneGatePoint)
 }
 
-// ── TWO QUESTIONS, TWO PREDICATES ──────────────────────────────────────────
-//
-// These replace `laneGateActive`, which was ONE boolean answering THREE
-// questions at three call sites. That was the right fix for the bug it was
-// created for — the sites used to spell the test `!= LaneEnforceMouth`, so a new
-// arm silently inherited `none` behaviour on a plant that had configured a gate,
-// invisibly: nothing errors, orders just stop being sequenced. Routing them
-// through one predicate stopped that.
-//
-// But it bought correctness by making the questions UNASKABLE separately, and
-// they were not the same question:
-//
-//   - mouth holds       — a REFUSAL. Its effect is a wait, and waiting is how
-//                         this system already declines work.
-//   - entry sequencing  — an ORDERING among work that is already admitted.
-//   - depth priority    — a WRITE TO THE FLEET. This one is now DELETED (see the
-//                         boost note above), which is the cleanest possible
-//                         resolution of it: the odd one out was the one that did
-//                         not belong.
-//
-// The remaining two are both decisions INSIDE Core, and nothing here reaches the
-// fleet. They are kept separate rather than re-fused because the geometry
-// derivation may still want to answer them independently, and re-merging them
-// would rebuild the exact trap the original predicate existed to close.
-//
-// Splitting changed NOTHING behaviourally — both return the same value for every
-// mode — and that remains deliberate.
-//
-// What an ACTIVE mode still chooses for itself is the DISPOSITION of a classifier
-// park verdict (mouth: park pre-dispatch; gate_choreography: stage at the wait
-// point). That branch belongs in admitLaneEntry, never here.
-
-// takesMouthHold reports whether Core takes mouth holds for this group — the
-// inbound/outbound mode-sharing rows that make a conflicting order wait.
-func takesMouthHold(m LaneEnforcementMode) bool {
-	return m == LaneEnforceMouth || m == LaneEnforceGateChoreography
+// laneIsGated reports whether Core stages robots at this lane rather than parking
+// their orders before dispatch. Derived, never configured separately: the
+// existence of the mark IS the answer.
+func (d *Dispatcher) laneIsGated(laneID int64) bool {
+	return d.laneWaitPoint(laneID) != ""
 }
 
-// sequencesLaneEntry reports whether the tiered lane-entry classifier applies to
-// this group — ordering among already-admitted work, not admission itself.
-func sequencesLaneEntry(m LaneEnforcementMode) bool {
-	return m == LaneEnforceMouth || m == LaneEnforceGateChoreography
-}
-
-// setsDepthPriority and laneDispatchPriority were DELETED with the boost above.
-// setsDepthPriority existed only to gate it, so the three-way split of
-// laneGateActive is now a two-way one — see the block above takesMouthHold.
+// TWO QUESTIONS, ONE ANSWER — and the collapse is the ruling landing.
+//
+// takesMouthHold and sequencesLaneEntry lived here as separate predicates over
+// the enforcement mode. They returned the same value for every mode, and were
+// deliberately kept apart for one reason: the derivation that was coming might
+// want to answer them independently.
+//
+// It does not. A lane with a mark gets the whole gate — mouth holds, entry
+// sequencing, staging at the point — and a lane without one gets none of it and
+// keeps parking orders pre-dispatch. There is no third shape left to express, so
+// the two predicates are one derivation (laneIsGated) and the split retires
+// having done its job: it survived exactly until the moment that decided it.
+//
+// The trap the original single predicate created is not rebuilt by this. That bug
+// was a boolean standing in for a MODE, so a new arm silently inherited the wrong
+// branch of a three-way choice. There is no three-way choice now — the mark is
+// there or it is not — and the question a caller asks is the same question in
+// every case.
 
 // laneHold is a (lane, mode) an order must hold to work that lane: outbound when
 // it picks from the lane, inbound when it drops into it.
@@ -180,8 +136,8 @@ func (d *Dispatcher) resolveOrderLaneHolds(sourceNode, destNode *nodes.Node) ([]
 		if lane == nil || lane.ParentID == nil {
 			return nil // not a lane slot, or a lane with no group — no hold
 		}
-		if !takesMouthHold(d.laneEnforcementMode(*lane.ParentID)) {
-			return nil // Core does not own this group's mouth
+		if !d.laneIsGated(lane.ID) {
+			return nil // no mark, no gate: Core does not own this lane's mouth
 		}
 		holds = append(holds, laneHold{laneID: lane.ID, mode: mode})
 		return nil
@@ -505,24 +461,31 @@ func (d *Dispatcher) ownsDig(orderID, digOwner int64) bool {
 // admitted=true with empty cause/lane means there was nothing to gate (no
 // mouth-enforced lane on the order's path), so an unconfigured plant is a no-op
 // and behavior is byte-identical. A non-nil error is a transient DB failure.
-// DOES NOT DELEGATE TO admission, and the reason is structural rather than a
-// preference: this is where admitMouth runs, which puts it on admission's
-// INSIDE (see the boundary map in admission.go). A site cannot be both the thing admission
-// calls and a caller of admission — that either closes a cycle or asks the
-// physical questions twice for every lane-bound plain order.
 //
-// Putting admit in FRONT of the acquire is the same objection from the other
-// side: it opens a read-to-write window the advisory lock exists not to have,
-// and the acquire re-answers the part that matters anyway.
+// IT DELEGATES THE PHYSICAL QUESTIONS AND KEEPS THE MOUTH. That split is the
+// whole of its relationship with admission, and each half has its own reason.
 //
-// It would also add no refusal that was missing — reachability for a plain
-// order is covered by the finder and the gate classifier — only a second
-// refusal point with a different cause, silently re-labelling what every
-// lane-bound plain order parks under. That is the mislabel this branch fixed
-// two commits ago, reintroduced at volume on the highest-traffic path.
+// The physical questions — dig exclusion, presence, reachability — are ordinary
+// reads with no transaction to hold, so they go through admit() like every other
+// entry path. Answering them here in a second spelling is exactly what the
+// convergence ended; digRefusalFor above is the tombstone of the last one, and
+// the drift it had accumulated is why one function now owns the answer.
 //
-// The audit of where a plain order DOES get each admission question answered is
-// beside the boundary map in admission.go. It has one empty cell.
+// The MOUTH stays, because admitMouth is not a decision this site could lift
+// out. It runs under pg_advisory_xact_lock inside the acquire's own transaction
+// (mouth.go), so moving it would either drop the lock or hold the transaction
+// open across a decision made outside it. It is the acquisition, not a judgement
+// about one — which is why admission.go's boundary map files it under IS NOT A
+// DECISION AT ALL rather than under a missing delegate.
+//
+// So this site is both a caller of admission and the place the acquire happens,
+// in that order, and that is not a cycle: admit() runs before the acquire and
+// admission never calls back into here.
+//
+// The audit of where a plain order gets each admission question answered is
+// beside that boundary map. It has one empty cell — reachability for a held-bin
+// order — declared as skipsForPlainEntry rather than left to be inferred from
+// missing code, and the caller says which of the two it is via EntryKind.
 func (d *Dispatcher) AcquireLanesForOrder(order *orders.Order, sourceNode, destNode *nodes.Node, kind EntryKind) (admitted bool, cause QueueCause, laneName string, err error) {
 	if order == nil {
 		// A caller bug, not a refusal with a cause: there is no order to park and

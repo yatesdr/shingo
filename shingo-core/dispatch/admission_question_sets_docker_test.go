@@ -138,27 +138,28 @@ func TestQuestionSet_PlainEntryStillAsksTheDig(t *testing.T) {
 	}
 }
 
-// TestQuestionSet_PlainEntryStillAsksOccupancyOnAMouthLane is the NARROWNESS
+// TestQuestionSet_PlainEntryStillAsksOccupancyOnAnUnmarkedLane is the NARROWNESS
 // assertion for entryWhenGated, and it is the mistake worth pinning.
 //
-// The flag defers ONE question to the gate on ONE mode, because only
-// gate_choreography moves the TAKE: its create ends at the wait point and
-// appendGateTail records presence there instead. A `mouth` lane has no gate and
-// no wait point — its dispatch drives the robot straight in — so deferring there
-// would mean nobody asks at all.
+// The flag defers the in-lane questions to the gate for a lane that HAS a mark,
+// because only there does the create end outside the corridor and the tail append
+// record presence instead. A lane with no mark has no gate and no wait point — its
+// dispatch drives the robot straight in — so deferring there would mean nobody
+// asks at all, on every lane at both plants.
 //
-// The plausible wrong implementation is `sequencesLaneEntry(mode)`, which is true
-// for BOTH mouth and gate_choreography and reads like the right predicate. It
-// would silently delete the unification's refusal on every mouth lane while every
-// gate test stayed green.
+// The plausible wrong implementation is deferring for any lane in a group that
+// has SOME gated lane in it, or for any lane at all. Either would silently delete
+// the unification's refusal on the unmarked majority while every gate test stayed
+// green.
 //
-// MUTATION (verified): widen entryDeferredToGate to sequencesLaneEntry(mode).
-// This fires — the occupied mouth lane admits.
-func TestQuestionSet_PlainEntryStillAsksOccupancyOnAMouthLane(t *testing.T) {
+// MUTATION (verified): make entryDeferredToGate return true whenever the caller
+// declares the flag, without consulting the lane. This fires — the occupied
+// unmarked lane admits.
+func TestQuestionSet_PlainEntryStillAsksOccupancyOnAnUnmarkedLane(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
-	_, laneID, shallow := gatedLane(t, db, "QS-MOUTH-OCC", "mouth")
+	_, laneID, shallow := gatedLane(t, db, "QS-UNMARKED-OCC", "") // no mark: not gated
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	line, err := db.GetNodeByDotName(sd.LineNode.Name)
@@ -176,9 +177,9 @@ func TestQuestionSet_PlainEntryStillAsksOccupancyOnAMouthLane(t *testing.T) {
 		t.Fatalf("AcquireLanesForOrder: %v", err)
 	}
 	if admitted || cause != CauseLaneOccupied {
-		t.Fatalf("a plain store was admitted into an occupied MOUTH lane (admitted=%v cause=%q). "+
-			"There is no gate on this mode: the robot goes straight in at dispatch, so this is the "+
-			"only moment the question can be asked", admitted, cause)
+		t.Fatalf("a plain store was admitted into an occupied UNMARKED lane (admitted=%v cause=%q). "+
+			"There is no gate on a lane with no mark: the robot goes straight in at dispatch, so "+
+			"this is the only moment the question can be asked", admitted, cause)
 	}
 }
 

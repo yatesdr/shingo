@@ -60,8 +60,8 @@ func TestCompound_ChildWaitsForADigOnItsDestinationLane(t *testing.T) {
 	testdb.SetupStandardData(t, db)
 
 	// The lane this compound digs OUT of, and the lane it places blockers INTO.
-	_, srcLaneID, srcSlot := gatedLane(t, db, "CADM-SRC", string(LaneEnforceMouth))
-	_, _, dstSlot := gatedLane(t, db, "CADM-DST", string(LaneEnforceMouth))
+	_, srcLaneID, srcSlot := gatedLane(t, db, "CADM-SRC", "")
+	_, _, dstSlot := gatedLane(t, db, "CADM-DST", "")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
@@ -102,8 +102,8 @@ func TestCompound_ChildWaitsForADigOnItsDestinationLane(t *testing.T) {
 	// the dig check existing. Reusing the source lane had the same defect from the
 	// other side — parent2 does not own that dig, so the SOURCE dig would have
 	// refused it. Two scenarios, two sets of lanes, one variable.
-	_, srcLane2, srcSlot2 := gatedLane(t, db, "CADM-SRC2", string(LaneEnforceMouth))
-	_, dstLane2, dstSlot2 := gatedLane(t, db, "CADM-DST2", string(LaneEnforceMouth))
+	_, srcLane2, srcSlot2 := gatedLane(t, db, "CADM-SRC2", "")
+	_, dstLane2, dstSlot2 := gatedLane(t, db, "CADM-DST2", "")
 
 	parent2 := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "cadm-parent2"
@@ -164,14 +164,14 @@ func TestCompound_ChildWaitsForADigOnItsDestinationLane(t *testing.T) {
 // this states it as its own claim so a future narrowing of the exemption fails
 // something that names it.
 //
-// MUTATION (verified): delete the !d.isOwnDigLeg term in admitLane. This fires,
-// and so does the baseline arm above — the deadlock, at the site that would
-// suffer it.
+// MUTATION (verified): delete the !d.ownsDig term from admitLane's dig arm.
+// This fires, and so does the baseline arm above — the deadlock, at the site
+// that would suffer it.
 func TestCompound_ChildStillPassesItsOwnParentsDig(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
-	_, laneID, slot := gatedLane(t, db, "CADM-OWN", string(LaneEnforceMouth))
+	_, laneID, slot := gatedLane(t, db, "CADM-OWN", "")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {

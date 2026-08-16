@@ -186,6 +186,7 @@
           <label>Retrieval Algorithm</label>
           <select id="nf-retrieve-algo">
             <option value="FIFO">FIFO — Oldest First</option>
+            <option value="COST">COST — Oldest Reachable (dig only if nothing is reachable)</option>
             <option value="FAVL">FAVL — First Available</option>
           </select>
         </div>
@@ -209,18 +210,29 @@
             Empty = expose mode (target stays in lane). Configured = target-node mode (target moves to first empty configured node). Reduces shuffle-slot pool.
           </div>
         </div>
-        <div class="form-group">
-          <label>Restore Blockers After Pickup</label>
-          <select id="nf-reshuffle-restore">
-            <option value="off">Off — blockers stay in shuffle slots</option>
-            <option value="on">On — restock blockers to original positions</option>
-          </select>
-          <div class="text-muted" style="font-size:0.75rem">
-            On: lane geometry restored after parent picks up. Off (default): lane stays shallow; direct-child storage retains the blockers.
-          </div>
-        </div>
+        <!-- "Restore Blockers After Pickup" WAS HERE AND IS DELETED. The
+             restore-blockers subsystem went in July: its table was dropped, a
+             boot one-shot cancels any leftover orders, and no Go code has read
+             reshuffle_restore_blockers since. The control was still offering the
+             choice, and still rendering "On — restock blockers to original
+             positions", which described behaviour the system no longer has.
+             Blockers now lie where the dig parks them, always. -->
       </div>
       </div>
+    </div>
+
+    <!-- Waiting points — on the GROUP, one row per lane (and on a LANE, its own row) -->
+    <div id="lane-gate" class="hide mb-2">
+      <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Waiting points</label>
+      <div class="text-muted" style="font-size:0.75rem;margin-bottom:10px">
+        Where robots wait their turn for each lane. Set a point and a robot drives out, does
+        everything it can, and holds there until the lane is clear. Leave it empty and the order waits
+        before a robot is sent. Either way the lane is protected from collisions — this chooses where
+        the waiting happens.
+      </div>
+      <!-- Rows are rendered per lane. One row today; when multi-point staging is
+           built, a lane grows more rows and nothing about this shape changes. -->
+      <div id="lane-gate-list" style="max-height:280px;overflow-y:auto;padding-right:4px"></div>
     </div>
 
     <!-- Occupant section -->

@@ -11,19 +11,18 @@ import (
 	"shingocore/store/orders"
 )
 
-// TestAdmitLaneEntry_ParksDeeperPending is the end-to-end ON test: with the gate
-// enabled (lane_enforcement=mouth), a shallow store parks behind a deeper active
+// TestLaneEntryTiers_ParksDeeperPending is the end-to-end ON test: a shallow store parks behind a deeper active
 // cross-origin store in the same lane — against REAL DB rows, not a fake. It runs
 // twice: once with a BARE delivery_node and once with a DOT-qualified one
 // ("LANE.SLOT"), because a dotted row invisible to the active-set query would make
 // the gate silently admit (the F1 fail-open). Both must park.
-func TestAdmitLaneEntry_ParksDeeperPending(t *testing.T) {
+func TestLaneEntryTiers_ParksDeeperPending(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	check := func(prefix string, deliveryFor func(lane, slot string) string) {
-		_, laneID, s0 := gatedLane(t, db, prefix, "mouth") // S0 depth0, S1 depth1, mouth-enforced
+		_, laneID, s0 := gatedLane(t, db, prefix, prefix+"-WAIT") // S0 depth0, S1 depth1, gated by its mark
 		laneNode, err := db.GetNode(laneID)
 		if err != nil {
 			t.Fatalf("[%s] get lane: %v", prefix, err)
@@ -54,7 +53,7 @@ func TestAdmitLaneEntry_ParksDeeperPending(t *testing.T) {
 			o.Status = "in_transit"
 		})
 
-		v, err := d.AdmitLaneEntry(shallow, s0)
+		v, err := d.laneEntryCause(laneNode, shallow, s0)
 		if err != nil || v.Admitted() || v.Cause() != CauseLaneDeeperPending {
 			t.Fatalf("[%s] deep active: admitted=%v cause=%q err=%v, want refused with %q", prefix, v.Admitted(), v.Cause(), err, CauseLaneDeeperPending)
 		}
@@ -64,7 +63,7 @@ func TestAdmitLaneEntry_ParksDeeperPending(t *testing.T) {
 	check("TEDOT", func(lane, slot string) string { return lane + "." + slot }) // dot-qualified
 }
 
-// TestAdmitLaneEntry_ReleasesOnPlacement is the A′ scenario: a shallow store parks
+// TestLaneEntryTiers_ReleasesOnPlacement is the A′ scenario: a shallow store parks
 // behind a deeper one only until the deeper store PLACES its bin — not until the
 // deeper ORDER completes.
 //
@@ -80,12 +79,16 @@ func TestAdmitLaneEntry_ParksDeeperPending(t *testing.T) {
 // has not been dispatched yet (no vendor_order_id, hence no mouth row it could have
 // released) still blocks. Dropping those would not be placement-release; it would
 // silently stop a queued deeper store from holding its place.
-func TestAdmitLaneEntry_ReleasesOnPlacement(t *testing.T) {
+func TestLaneEntryTiers_ReleasesOnPlacement(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	_, laneID, s0 := gatedLane(t, db, "TEPLACE", "mouth")
+	_, laneID, s0 := gatedLane(t, db, "TEPLACE", "TEPLACE-WAIT")
+	laneNode, err := db.GetNode(laneID)
+	if err != nil {
+		t.Fatalf("get lane: %v", err)
+	}
 	line := lineNode(t, db, "TEPLACE-LINE")
 	slots, err := db.ListLaneSlots(laneID)
 	if err != nil {
@@ -123,7 +126,7 @@ func TestAdmitLaneEntry_ReleasesOnPlacement(t *testing.T) {
 	}
 
 	// In flight, not yet placed → the shallow store parks (unchanged behavior).
-	v, err := d.AdmitLaneEntry(shallow, s0)
+	v, err := d.laneEntryCause(laneNode, shallow, s0)
 	if err != nil || v.Admitted() || v.Cause() != CauseLaneDeeperPending {
 		t.Fatalf("before placement: admitted=%v cause=%q err=%v, want refused with %q", v.Admitted(), v.Cause(), err, CauseLaneDeeperPending)
 	}
@@ -144,7 +147,7 @@ func TestAdmitLaneEntry_ReleasesOnPlacement(t *testing.T) {
 
 	// A′: the shallow store admits NOW, on placement, without waiting for the
 	// deeper order to complete.
-	v, err = d.AdmitLaneEntry(shallow, s0)
+	v, err = d.laneEntryCause(laneNode, shallow, s0)
 	if err != nil || !v.Admitted() {
 		t.Fatalf("after placement: admitted=%v cause=%q err=%v, want admit", v.Admitted(), v.Cause(), err)
 	}
@@ -155,31 +158,41 @@ func TestAdmitLaneEntry_ReleasesOnPlacement(t *testing.T) {
 		o.DeliveryNode = s1.Name
 		o.Status = "queued"
 	})
-	v, err = d.AdmitLaneEntry(shallow, s0)
+	v, err = d.laneEntryCause(laneNode, shallow, s0)
 	if err != nil || v.Admitted() || v.Cause() != CauseLaneDeeperPending {
 		t.Fatalf("undispatched deeper store: admitted=%v cause=%q err=%v, want refused with %q", v.Admitted(), v.Cause(), err, CauseLaneDeeperPending)
 	}
 }
 
-// TestAdmitLaneEntry_OffIsAdmit confirms a non-mouth lane group is byte-identical:
-// the gate admits regardless of a deeper active store.
-func TestAdmitLaneEntry_OffIsAdmit(t *testing.T) {
+// TestLaneEntryTiers_OffIsAdmit confirms an UNMARKED lane is not sequenced at all.
+//
+// The assertion moved with the ruling. It used to say "a non-mouth group admits
+// regardless of a deeper active store", checked through a wrapper that consulted
+// the enforcement mode. There is no mode: a lane without a mark is not gated, the
+// evaluator never runs for it, and the classifier is therefore never consulted —
+// so what is worth pinning is the DERIVATION, that an unmarked lane reports
+// ungated and a marked one does not.
+func TestLaneEntryTiers_OffIsAdmit(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	_, laneID, s0 := gatedLane(t, db, "TEOFF", "") // NOT mouth-enforced
-	slots, _ := db.ListLaneSlots(laneID)
-	var s1 *nodes.Node
-	for _, s := range slots {
-		if dpt, _ := db.GetSlotDepth(s.ID); dpt == 1 {
-			s1 = s
-		}
-	}
-	shallow := testdb.CreateOrder(t, db, func(o *orders.Order) { o.DeliveryNode = s0.Name; o.Status = "queued" })
-	_ = testdb.CreateOrder(t, db, func(o *orders.Order) { o.DeliveryNode = s1.Name; o.Status = "in_transit" })
+	_, unmarked, _ := gatedLane(t, db, "TEOFF", "")       // no mark
+	_, marked, _ := gatedLane(t, db, "TEON", "TEON-WAIT") // a mark
 
-	if v, err := d.AdmitLaneEntry(shallow, s0); err != nil || !v.Admitted() {
-		t.Fatalf("non-mouth group must admit (byte-identical); admitted=%v err=%v", v.Admitted(), err)
+	if d.laneIsGated(unmarked) {
+		t.Error("a lane with no mark reports gated — every lane at every plant is unmarked today, " +
+			"so this would turn the gate on everywhere at deploy")
+	}
+	if !d.laneIsGated(marked) {
+		t.Error("a lane with a mark reports ungated — placing the mark IS the enablement, and " +
+			"nothing else turns it on")
+	}
+	if got := d.laneWaitPoint(marked); got != "TEON-WAIT" {
+		t.Errorf("wait point = %q, want the mark that was set — the value goes to the fleet verbatim "+
+			"as the block location a robot dwells at", got)
+	}
+	if got := d.laneWaitPoint(unmarked); got != "" {
+		t.Errorf("unmarked lane reports wait point %q", got)
 	}
 }

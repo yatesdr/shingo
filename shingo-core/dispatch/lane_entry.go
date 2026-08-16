@@ -107,52 +107,26 @@ func (d *Dispatcher) laneEntryOriginFor(order *orders.Order) (string, error) {
 	return originKeyForStyles(pairs), nil
 }
 
-// AdmitLaneEntry is the fulfillment-facing tiered-entry gate: it reports whether a
-// store must PARK (with an operator cause) before entering its lane, so entry is
-// deepest-first. Admitted for every non-lane / non-mouth-enforced destination —
-// byte-identical when the gate is off.
-func (d *Dispatcher) AdmitLaneEntry(order *orders.Order, destNode *nodes.Node) (GateVerdict, error) {
-	return d.admitLaneEntry(order, destNode)
-}
-
-// admitLaneEntry is the tiered-entry gate for a store whose DROPOFF (destNode) is a
-// slot in a mouth-enforced lane group. It REFUSES (with an operator cause) when
-// the order must wait, and admits otherwise — including for every
-// non-lane / non-mouth-enforced destination, so the gate is byte-identical when no
-// group enforces the mouth. Depth-1 lanes are exempt (single slot, no ordering).
+// THE PRE-DISPATCH TIERED GATE IS GONE — AdmitLaneEntry and admitLaneEntry with
+// it — and the classifier below is untouched.
 //
-// It is the DISPOSITION half of the tiered arm — "park the order before it is
-// dispatched". The gate_choreography arm answers the same classifier question with
-// a different disposition (ship the robot to the lane's wait point and append its
-// tail when the lane is safe), so this ADMITS for that mode and the
-// valve in dispatchToFleetCore takes over. Same policy, different instrument.
-func (d *Dispatcher) admitLaneEntry(order *orders.Order, destNode *nodes.Node) (GateVerdict, error) {
-	if destNode == nil {
-		return Admitted(), nil
-	}
-	lane, err := d.db.LaneForNode(destNode.ID)
-	if err != nil {
-		// UNDETERMINED, and splitting it out of the line below is the change.
-		// This arm used to return park=false ALONGSIDE the error, so a caller
-		// reading the verdict before the error was told to enter a lane nothing
-		// had checked. The zero verdict refuses, so that reading is now safe.
-		return GateVerdict{}, err
-	}
-	if lane == nil || lane.ParentID == nil {
-		return Admitted(), nil // not a lane slot, or a lane with no group
-	}
-	mode := d.laneEnforcementMode(*lane.ParentID)
-	if !sequencesLaneEntry(mode) {
-		return Admitted(), nil // Core does not sequence this group's entries → byte-identical
-	}
-	if mode == LaneEnforceGateChoreography {
-		// The valve never parks: the order dispatches now as an unsealed waybill
-		// ending at the lane's wait point, and the classifier decides at APPEND
-		// time whether the tail goes out immediately or the robot dwells.
-		return Admitted(), nil
-	}
-	return d.laneEntryCause(lane, order, destNode)
-}
+// The two were the DISPOSITION half of the tiered arm: park a store before it is
+// dispatched, so entries happen deepest-first. That disposition belonged to the
+// `mouth` enforcement mode, which was the "gate on, no waiting room" setting, and
+// the mark ruling deletes it: a lane either has a waiting point (the robot drives
+// out and the tiers are applied at the append, by the evaluator) or it has none
+// (Core does not order that lane's entries at all, exactly as `none` never did).
+// There is no state left in which a pre-dispatch tier park can fire.
+//
+// So what went is a gate that could only ever admit. Leaving it would have been
+// worse than deleting it: a check that always passes reads, to the next person,
+// like a check.
+//
+// THE POLICY SURVIVED WHOLE. laneEntryCause is the tiers, and the gate's
+// evaluator calls it (lane_gate_release.go) at the moment the robot is actually
+// asking to enter. The coverage moved with it — the tier tests drive the
+// classifier directly now rather than through a wrapper that no longer decides
+// anything.
 
 // laneEntryCause runs the tiered classifier for `order` entering `lane` at
 // destNode and returns its park cause ("" = admit). It is the POLICY half,

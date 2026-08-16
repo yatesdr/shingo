@@ -40,7 +40,7 @@ func TestWaitKind_FenceHoldsBothWaysOnOneCoordinatedPlan(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	_, laneID, _ := gatedLane(t, db, "WK-BOTH", string(LaneEnforceGateChoreography))
+	_, laneID, _ := gatedLane(t, db, "WK-BOTH", "WK-BOTH"+"-WAIT")
 	slots := laneSlots(t, db, laneID)
 	target := slots[1] // the deeper slot; any slot of this lane will do
 	line := lineNode(t, db, "WK-BOTH-LINE")

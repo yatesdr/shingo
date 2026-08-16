@@ -226,6 +226,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/bin-types", h.apiListBinTypes)
 			r.Get("/fleet/robot-groups", h.apiRobotGroups)
 			r.Get("/map/points", h.apiScenePoints)
+			// The waiting-point picker's view of the same data: slim and searchable.
+			r.Get("/map/marks", h.apiSceneMarks)
+			r.Get("/nodes/lane-waiting", h.apiLaneWaiting)
+			r.Get("/nodes/lane-gate-points", h.apiLaneGatePoints)
 			r.Get("/map/edges", h.apiSceneEdges)
 			r.Get("/stations", h.apiStations)
 			r.Get("/plant/timezone", h.apiPlantTimezone)
