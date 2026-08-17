@@ -38,16 +38,23 @@ package dispatch
 // change", it is "a value changes only when the ambiguity costs more than the
 // discontinuity", and it is decided one value at a time.)
 //
-// ── TWO COLLISIONS, BOTH KEPT AND BOTH NOW VISIBLE ────────────────────────
+// ── TWO COLLISIONS, BOTH NOW RESOLVED ─────────────────────────────────────
 //
-// CauseLaneLockRace and CauseBinLockRace are BOTH "lock-race" — a lane dig-lock
-// race and a bin reservation race, two facts one string. That pair is KEPT: only
-// one of the two has a writer at all (censused at the tree — see the row in
-// causeReleasers, whose own text was wrong about this), so nothing today is
-// actually ambiguous, and re-spelling either value rewrites what rows already in
-// a plant's orders table mean.
+// CauseLaneLockRace and CauseBinLockRace were BOTH "lock-race" — a lane dig-lock
+// race and a bin reservation race, two facts one string. The pair was kept for a
+// while on the grounds that re-spelling either value rewrites what rows already
+// in a plant's orders table mean, which is true and still is.
 //
-// THE ONE-CHARACTER PAIR IS NOT KEPT, and that is the difference. It read:
+// It is resolved by DELETION rather than by re-spelling, and only because the
+// census made that available: CauseLaneLockRace never had a production writer,
+// so no row in any plant carries it and nothing historical is reinterpreted by
+// its removal. "lock-race" now means exactly one thing — the bin reservation
+// race — which is what it has always meant in the data. If the lane dig-lock
+// race ever needs to be observable, it gets its OWN value ("lane-lock-race");
+// that is safe for the same reason the deletion was, and re-declaring the
+// colliding string would not be.
+//
+// THE ONE-CHARACTER PAIR IS NOT KEPT EITHER, by a different argument. It read:
 // "CauseComplexSlotReserve ("slot-reserve") and CauseStoreSlotContended
 // ("slot-reserved") are two facts one CHARACTER apart... neither is re-spelled".
 // Both have live writers, both land in durable rows, and one character is not a
@@ -115,9 +122,6 @@ const (
 	CauseLaneOccupied QueueCause = "lane-occupied"
 	// CauseLaneLocked — the reshuffle planner found the lane already dug by another.
 	CauseLaneLocked QueueCause = "lane-locked"
-	// CauseLaneLockRace — TryLock lost the race for the lane's dig lock. See the
-	// type doc: fulfillment sets this same string for an unrelated BIN race.
-	CauseLaneLockRace QueueCause = "lock-race"
 	// CauseIntakeBuried — the target was buried at intake; the arms after it
 	// narrow to a more specific cause when they can.
 	CauseIntakeBuried QueueCause = "intake-buried"
@@ -313,8 +317,6 @@ const (
 
 	// CauseLaneAcquireError — the mouth acquire could not be read (fulfillment).
 	CauseLaneAcquireError QueueCause = "lane-acquire-error"
-	// CauseLaneEntryError — the tiered-entry check could not be read (fulfillment).
-	CauseLaneEntryError QueueCause = "lane-entry-error"
 	// CauseAdmissionError — a physical question could not be read, so admission
 	// declined to answer and the caller held the move. The arm that had no cause
 	// at all: a compound leg held on an unreadable lane wrote nothing to its row,
@@ -433,6 +435,12 @@ const (
 
 	// ── Dropoff capacity (capacity.go) ────────────────────────────────────
 	// Same story as the finder tiers: CapacityDetail.Cause was a bare string.
+	//
+	// These four were declared and then not adopted — capacity.go kept writing
+	// the literals. It compiled because the field is typed QueueCause and an
+	// untyped string constant converts implicitly, so nothing flagged it and the
+	// constants read as dead for a while. They are wired now; a typo is a
+	// compile error rather than a histogram bucket that silently matches nothing.
 
 	// CauseDropoffOccupied — the destination already holds a bin.
 	CauseDropoffOccupied QueueCause = "dropoff-occupied"

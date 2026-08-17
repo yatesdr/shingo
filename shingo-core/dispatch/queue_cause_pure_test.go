@@ -45,12 +45,10 @@ func TestQueueCause_ValuesAreUnchanged(t *testing.T) {
 		{CauseLaneHeldUnreadable, "lane-held-unreadable"},
 		{CauseLaneOccupied, "lane-occupied"},
 		{CauseLaneLocked, "lane-locked"},
-		{CauseLaneLockRace, "lock-race"},
 		{CauseIntakeBuried, "intake-buried"},
 		{CauseGateRebindUnavailable, "gate-rebind-unavailable"},
 		{CauseGateAppendFailed, "gate-append-failed"},
 		{CauseLaneAcquireError, "lane-acquire-error"},
-		{CauseLaneEntryError, "lane-entry-error"},
 	} {
 		if string(tc.got) != tc.want {
 			t.Errorf("queue cause = %q, want %q — this value is already written on rows in the "+

@@ -338,38 +338,21 @@ var causeReleasers = []causeReleaser{
 		what:        "the other reshuffle finishes and drops its lane lock",
 	},
 	{
-		// ONE ROW FOR TWO CONSTANTS, and that is not a modelling choice — it is
-		// forced. CauseLaneLockRace and CauseBinLockRace are both "lock-race", the
-		// table is keyed by the VALUE an order actually carries, and TOTALITY
-		// refuses a second row for the same key. The collision cannot be papered
-		// over here even if somebody wanted to.
-		cause:       CauseLaneLockRace,
+		// ONE ROW, ONE CONSTANT — and it took a deletion to get here. This row used
+		// to be declared against CauseLaneLockRace, which shared the value
+		// "lock-race" with CauseBinLockRace. The table is keyed by the VALUE an
+		// order actually carries and TOTALITY refuses a second row for the same
+		// key, so one row had to cover both constants and the row's own text was
+		// wrong about which of them produced the data.
+		//
+		// The census settled it: CauseLaneLockRace had NO production writer, so
+		// every "lock-race" row in every plant came from the bin race and always
+		// had. Deleting the writerless constant reinterprets nothing and leaves
+		// the value meaning exactly one fact. See the queue_cause.go type doc for
+		// why deletion was available where re-spelling was not.
+		cause:       CauseBinLockRace,
 		populations: []WaitPopulation{PopAcquiring},
-		what:        "immediate — whichever race was lost, the winner proceeds and this order re-plans on the next scan",
-		// THE FIRST HALF OF THIS ROW WAS FACTUALLY WRONG, and it read: "This value
-		// is written by CauseLaneLockRace (a lane DIG-LOCK race, dispatch) and by
-		// CauseBinLockRace (a BIN reservation race in the Find→Reserve window,
-		// fulfillment)."
-		//
-		// Censused at the tree: CauseLaneLockRace has NO production writer. Its
-		// only references are its own declaration, this row, and the test that
-		// pins its string — the same shape as CauseLaneEntryError below, and it
-		// went unnoticed because the collision made the value look busy. So a
-		// "lock-race" row in a plant's orders table today can only have come from
-		// the bin race.
-		//
-		// The collision is still real and still worth the warning: the two values
-		// are identical, so if the lane race ever gains a writer a histogram
-		// cannot separate them, and nothing about the string would change to say
-		// so.
-		finding: "ONE STRING, TWO CAUSES DECLARED AGAINST IT. Only one has a writer: a row under " +
-			"this value comes from a BIN reservation race — two orders wanted the same bin between " +
-			"it being found and it being reserved. The lane dig-lock race declares the same string " +
-			"and produces nothing, so nothing today is ambiguous, but a histogram could not " +
-			"separate them if it did. Kept rather than re-spelled: changing either value rewrites " +
-			"what rows already in the plant's orders table mean. Both would clear the same way — as " +
-			"soon as the winner moves on — which is why the collision costs forensics rather than " +
-			"liveness.",
+		what:        "immediate — the winner of the bin race proceeds and this order re-plans on the next scan",
 	},
 	{
 		cause:       CauseIntakeBuried,
@@ -635,17 +618,6 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseLaneAcquireError,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "the mouth read succeeds — Core declining to answer, not a busy lane",
-	},
-	{
-		cause:       CauseLaneEntryError,
-		populations: []WaitPopulation{PopNone},
-		what:        "",
-		finding: "DECLARED, NEVER SET. No production site writes this cause — verified by grep across " +
-			"every dispatch and fulfillment path; the only references are its own declaration and the " +
-			"test that pins its string. Nothing can wait under it, so it is not a liveness hole; it " +
-			"is dead vocabulary that makes the cause surface look wider than it is. Left in place " +
-			"because deleting a declared value is a decision for the owner, not for the batch that " +
-			"noticed.",
 	},
 	{
 		cause:       CauseAdmissionError,

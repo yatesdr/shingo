@@ -113,7 +113,7 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 		// No such node — let dispatch produce the real error.
 		return false, CapacityBlock{}
 	case err != nil:
-		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
+		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
 	}
 	if node.IsSynthetic {
 		if node.NodeTypeCode == protocol.NodeClassNGRP {
@@ -129,7 +129,7 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 	if err != nil {
 		// Fail closed: if occupancy can't be read, don't risk dropping onto a
 		// possibly-full node — gate the order so it queues until the check works.
-		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
+		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
 	}
 	if count > 0 {
 		// Carry the count into the sentence. "A bin is sitting there" and "an
@@ -139,17 +139,17 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 		// queue_cause, which no surface renders and which never leaves Core.
 		p := params
 		p.BlockingBins = count
-		return true, CapacityBlock{Cause: "dropoff-occupied", Params: p}
+		return true, CapacityBlock{Cause: CauseDropoffOccupied, Params: p}
 	}
 	inFlight, err := db.CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode, excludeOrderID)
 	if err != nil {
 		// Fail closed on the in-flight read as well.
-		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
+		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
 	}
 	if inFlight > 0 {
 		p := params
 		p.InboundOrders = inFlight
-		return true, CapacityBlock{Cause: "dropoff-inflight", Params: p}
+		return true, CapacityBlock{Cause: CauseDropoffInflight, Params: p}
 	}
 	return false, CapacityBlock{}
 }
@@ -185,7 +185,7 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 	children, err := db.ListChildNodes(ngrp.ID)
 	if err != nil {
 		// The child list itself is unreadable, so nothing below can be judged.
-		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
+		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
 	}
 	if len(children) == 0 {
 		// A genuinely empty group — pass through so the resolver's own failure
@@ -230,7 +230,7 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 	if unreadable > 0 {
 		// No free child was FOUND, but at least one could not be looked at, so
 		// "full" is not something this run is entitled to say.
-		return true, CapacityBlock{Cause: "capacity-check-failed", Params: params}
+		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
 	}
-	return true, CapacityBlock{Cause: "ngrp-full", Params: params}
+	return true, CapacityBlock{Cause: CauseNGRPFull, Params: params}
 }
