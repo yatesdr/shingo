@@ -74,6 +74,7 @@ See [shingo-core/README.md](shingo-core/README.md) and [shingo-edge/README.md](s
 |----------|-------------|
 | [Data Model](docs/data-model.md) | Core entities, relationships, and status definitions |
 | [Material Flow](docs/material-flow.md) | Bins, payloads, supermarket storage, material handling cycles |
+| [Lanes](docs/lanes.md) | Mouth reservations, digs, admission vs ordering, the gate, chapters, liveness |
 | [Terminology](docs/terminology.md) | Domain terms and vendor terminology mapping |
 | [Wire Protocol](docs/wire-protocol.md) | Kafka messaging protocol specification |
 
