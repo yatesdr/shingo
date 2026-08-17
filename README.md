@@ -14,7 +14,7 @@ Material tracking and automated transport system for manufacturing plants. Shing
 
 ### Bin-Centric Tracking
 
-Shingo tracks material at the bin level. A **bin** is a physical container (tote, pallet, shelf unit) identified by a QR code label. Bins move between **nodes** — fixed floor locations such as storage slots, staging areas, and line-side positions. The bin record carries its manifest, remaining production capacity, and confirmation state. All dispatch and inventory logic operates on bins.
+Shingo tracks material at the bin level. A **bin** is a physical container (tote, pallet, shelf unit) identified by a unique label (e.g. `SHG:0042`). Bins move between **nodes** — fixed floor locations such as storage slots, staging areas, and line-side positions. The bin record carries its manifest, remaining production capacity, and confirmation state. All dispatch and inventory logic operates on bins.
 
 ### Payload Templates
 
@@ -41,7 +41,7 @@ Core and edge communicate asynchronously over Kafka. Each edge station operates 
 - **System-directed retrieval.** Operators request material by type; the system handles sourcing, routing, and delivery.
 - **Engineered depletion.** Bins are loaded so all parts deplete together after a known number of production cycles. A single counter — UOP remaining — describes consumption state.
 - **FIFO enforcement.** The oldest material is always retrieved first, enforced automatically by the storage and retrieval logic.
-- **Physical verification.** Each bin carries a QR code scanned at pickup to confirm identity and maintain chain of custody.
+- **Operator-confirmed manifests.** A bin becomes eligible for automated retrieval when an operator confirms what was loaded into it. Confirmation is the verification step; there is no scan-at-pickup gate.
 - **Vendor-agnostic fleet integration.** The fleet backend is abstracted behind an interface. The current implementation targets Seer RDS; other vendors can be added without changes to the dispatch layer.
 
 ## Structure

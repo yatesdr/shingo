@@ -24,7 +24,7 @@ If the same physical bin frame carries different parts for different processes, 
 A bin is a specific physical container. It carries its payload assignment, manifest, and consumption state directly.
 
 Fields:
-- **Label**: unique QR code identifier (e.g., `SHG:0042`)
+- **Label**: unique identifier (e.g., `SHG:0042`)
 - **Bin Type**: physical container class (determines size and compatibility)
 - **Node**: current floor location
 - **Status**: `available`, `staged`, `flagged`, `maintenance`, `retired`
@@ -204,19 +204,35 @@ Each cycle mode requires a set of node assignments. Nodes can be configured as a
 
 ### Label Format
 
-Labels follow the format `SHG:NNNN` (e.g., `SHG:0042`). The `SHG:` prefix distinguishes Shingo labels from other QR codes. The number is unique across all bins regardless of type.
+Labels follow the format `SHG:NNNN` (e.g., `SHG:0042`). The `SHG:` prefix distinguishes a Shingo label from other identifiers a plant may already put on a container. The number is unique across all bins regardless of type.
 
-### QR Code Functions
+The label is an **identifier**, not a verification gate. Nothing in the running
+system reads it off the physical bin — see below.
 
-1. **Verification**: robot scans at pickup to confirm identity; mismatches halt the operation
-2. **Damage tracking**: repeated errors against a specific label enable proactive flagging for repair
-3. **Audit trail**: every move, scan, error, and inspection is logged against the label
+### Tag verification is not wired end to end
+
+A tag-verification exchange exists in the protocol (`tag.verify_request` /
+`tag.verify_response`), and Core implements its half: the subject is routed to
+`HandleTagVerifyRequest` and answered by `service.TagVerifyService`, which looks
+up the order, compares the bin's label, and writes an audit entry.
+
+**Nothing sends the request.** The Edge registers a handler for the *response*
+that writes a log line, and no code path anywhere emits a `tag.verify_request`.
+There is no scanner integration. This is the same shape `ClaimSync` had before it
+was deleted — a live handler with no caller.
+
+Even if a sender existed, verification would not gate anything. `TagVerifyService`
+is explicitly best-effort: it returns `match=true` on every couldn't-determine
+branch and mismatches never block an order, so dispatch keeps running while
+operators reconcile out of band.
+
+Treat any plan that depends on scan-at-pickup as unbuilt work, not as a feature to
+re-enable.
 
 ### Physical Labels
 
 - Use durable metal or heavy-duty polymer asset tags
-- Print both the QR code and human-readable label on the same tag
-- Mount in a consistent position for robot camera alignment
+- Print the human-readable label so an operator can read it without a device
 - Consider a backup label in a second location
 
 ---
@@ -262,7 +278,7 @@ On the **Payloads** page:
 
 On the **Bins** page:
 1. Click "Create Bin" or use bulk registration
-2. Enter the label (QR code identifier)
+2. Enter the label (e.g. `SHG:0042`)
 3. Select the bin type
 4. Optionally assign an initial node location
 
@@ -324,10 +340,11 @@ Compound orders (reshuffles) display a progress indicator for child moves. Expan
 
 ### Discrepancy Handling
 
-On QR scan mismatch:
-1. The order is halted
-2. The mismatch is logged
-3. The operator is notified to investigate and resolve (correct system data or relocate the bin)
+There is no scan-mismatch path, because nothing scans (see *Bin Identification*).
+A bin found in the wrong place is caught downstream instead — by the arrival
+reconciliation that evicts a stale ghost record when a delivery lands on a node
+Shingo still believed occupied (`storage-protections.md`, tier 6) — or by an
+operator noticing and correcting it out of band.
 
 ---
 
@@ -336,9 +353,9 @@ On QR scan mismatch:
 | Term | Definition |
 |------|-----------|
 | **Payload** | A template defining expected bin contents and UOP capacity |
-| **Bin** | A specific physical container, identified by QR label |
+| **Bin** | A specific physical container, identified by its label |
 | **Bin Type** | Physical container classification (size, form factor) |
-| **Label** | Unique QR code identifier on a bin (e.g., `SHG:0042`) |
+| **Label** | Unique identifier on a bin (e.g., `SHG:0042`) |
 | **UOP** | Unit of Production — one manufacturing cycle supported by the bin's parts |
 | **Manifest Confirmed** | Whether an operator has verified the bin's contents match the payload template |
 | **Supermarket** | Automated storage zone containing lanes and a shuffle row |
