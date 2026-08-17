@@ -51,9 +51,11 @@ A single storage position within a lane, holding exactly one bin. Each slot has 
 
 ### Shuffle Row
 
-Temporary holding slots used during retrieval reshuffles. When a target bin is blocked, the system moves blocking bins to the shuffle row, retrieves the target, then restocks the blocking bins.
+Holding slots used during retrieval reshuffles. When a target bin is blocked, the system parks the blocking bins elsewhere and retrieves the target. **The blockers are not moved back** — see *Retrieve — Reshuffle* below.
 
 The shuffle row must have at least as many slots as the deepest lane minus one. Shuffle slots are fully accessible (no blocking between them). The shuffle row is a synthetic node of type `SHF`.
+
+A blocker is not restricted to the shuffle row. Parking searches the children of the whole node group (`findShuffleSlots`), so a blocker may be parked in another lane in the same supermarket if that is the better slot.
 
 ### UOP (Unit of Production)
 
@@ -98,40 +100,68 @@ When a station requests a bin of a specific payload:
 
 If the oldest bin is blocked:
 
-1. **Unbury**: move blocking bins from the lane to the shuffle row, front to back
+1. **Unbury**: park each blocking bin in another slot in the group, shallowest first
 2. **Retrieve**: pick up the target bin and deliver it
-3. **Restock**: return blocking bins from the shuffle row to the lane, deepest-first
 
-After restocking, remaining bins maintain FIFO order and the lane is packed with no gaps.
+There is no third step. **Blockers are never restocked** — they lie where the
+unbury parked them, and a parked blocker is ordinary findable inventory where it
+sits. Parking is deepest-first, which is what keeps the lane packed without a
+restock.
 
 ```
 Before:   [C][B][A]    Target: A (oldest)
 
-Unbury:   Move C -> Shuffle, Move B -> Shuffle
+Unbury:   Park C, then B, into the group's free slots
 Pick:     Retrieve A -> deliver to station
-Restock:  Move B -> depth 3, Move C -> depth 2
 
-After:    [ ][C][B]    B is now oldest, at the back
+After:    [ ][ ][ ]    B and C stay where they were parked
 ```
+
+The old restore-blockers subsystem did move them back. It was retired (migration
+`v70` dropped `pending_restocks`) because it left permanent air bubbles whenever
+it was off — empty slots buried behind bins, reachable by nothing.
 
 ### Lane Locking
 
-During a reshuffle, the lane is locked — no other store or retrieve operations may use it. The lock is released upon completion.
+A dig holds its lane through a **mouth reservation** row (`resource_kind='mouth'`,
+`mode='dig'`), which is exclusive: a dig admits no other holder and no other
+holder admits a dig. The rows own the hold — it is durable state in Postgres, not
+a lock in process memory, so it survives a Core restart.
+
+The claim does **not** drop when the compound terminates. It drops when the last
+blocker physically **leaves the lane**, and the corridor is then handed to the
+order collecting the uncovered bin (tagged `ByDigHandoff`) rather than released
+into open contention.
+
+Both of the obvious alternatives were tried and rejected:
+
+- **Releasing at completion** re-buried the target — the slots the dig had just
+  emptied were the cheapest parking candidates in the group, so the traffic the
+  excavation was run to get ahead of filled them straight back in.
+- **Holding until the target is collected** produced a finished order that never
+  terminates: a third non-terminal state, invisible to every stall checker,
+  holding a corridor for a demand it cannot ask about.
+
+See `[[lanes]]` for the mouth model, its modes, the admission rules, and the
+measurements behind both rejections.
 
 ### Reshuffle Failure
 
-If a robot fails mid-reshuffle:
-
-1. The sequence halts; no further moves are attempted
-2. The reshuffle is marked as failed
-3. The lane remains locked (bins are split between lane and shuffle row)
-4. An operator alert is raised
-
-The operator may then **retry** the failed move, **abort** and manually return bins, or **skip** the move if the blockage was manually cleared. The lane remains locked until the operator restores a consistent state.
+If a leg fails mid-reshuffle the compound stalls with a leg still open. The
+stalled-chapter watchdog (`Dispatcher.SweepStalledChapters`, 60s) is what notices
+and acts — it classifies the stall and either re-plans the chapter or records the
+residue. Recovery is not a manual lane-unlock: the hold is a reservation row keyed
+to the dig, and it clears on the same rule as any other dig.
 
 ### Flagged Bins in Lanes
 
-Flagged bins are treated as occupied slots. Stores can occur in front of them. During a reshuffle that passes through a flagged bin, the system moves it to the shuffle row normally but places it at depth 1 on restock for easy maintenance access.
+Flagged bins occupy slots and block like any other bin, and stores can occur in
+front of them. They are excluded from sourcing and from inventory counts by
+status (`status NOT IN ('flagged','maintenance','quality_hold','retired')`).
+
+A dig that has to move one parks it like any other blocker. There is no special
+depth-1 placement for maintenance access — that behaviour belonged to the restock
+step and went with it.
 
 ---
 
@@ -296,6 +326,20 @@ On the **Nodes** page:
 2. Add lanes: specify slot count and vendor location IDs per slot (first = depth 1)
 3. Define the shuffle row: slot count and vendor locations (minimum: deepest lane minus one)
 4. Review and create — the system generates all nodes, sets depth properties, and links the hierarchy
+
+**Size it for headroom, not just for capacity.** A group needs at least one full
+lane's worth of slots free, because that is where a dig puts its blockers. A group
+filled to the brim cannot conduct an excavation at all — the blockers have nowhere
+to stand — and every dig admitted against it is a dig that will park.
+
+The shuffle-row minimum above sizes the *deepest single dig*. It does not give the
+group headroom, and the two are different numbers. A group sized only to the
+shuffle-row minimum can still be packed tight enough that digs contend with each
+other for somewhere to put blockers.
+
+The related rule for the bins themselves: a partially filled lane should be packed
+from the back, empties contiguous at the mouth. A hole behind a bin is a slot no
+robot can reach and no dig can create room in.
 
 ### Step 6: Assign Payload Eligibility
 
