@@ -110,25 +110,92 @@ before the other is what prevents a slot↔bin cross-type deadlock cycle — two
 orders each holding the slot the other needs while waiting on the bin the other
 holds. The same ordering applies in every family.
 
-## The two resource kinds — bins and slots
+## The four resource kinds
 
-A reservation covers one of two resource kinds (`resource_kind` column,
-migration v44):
+A reservation covers one of four resource kinds (`resource_kind` column):
 
-| Kind | Identity | What it holds |
-|------|----------|---------------|
-| `bin`  | `bins.id`  | a source bin the order will pick up |
-| `slot` | `nodes.id` | a destination storage/staging slot the order will deliver to |
+| Kind | Identity | What it holds | Since |
+|------|----------|---------------|-------|
+| `bin`  | `bins.id`  | a source bin the order will pick up | v42 |
+| `slot` | `nodes.id` | a destination storage/staging slot the order will deliver to | v44 |
+| `mouth` | `nodes.id` (the lane) | the right to work a lane, in a declared direction | v69 |
+| `occupancy` | `nodes.id` (the lane) | a robot is physically inside the lane right now | v76 |
 
-Slots are the near-mirror of bins: a slot reservation is a soft, revocable hold
-on a destination node, and `ConfirmSlotClaim` makes the slot claim
+**Bins and slots** are the soft-until-complete substrate this document is
+otherwise about. Slots are the near-mirror of bins: a slot reservation is a soft,
+revocable hold on a destination node, and `ConfirmSlotClaim` makes the slot claim
 reservation-guarded — closing the split-brain where an incomplete order held its
 **bins** as reservations but its **slots** as hard claims across ticks. The
-package keys everything on a kind-agnostic `Ref` (`BinRef` / `SlotRef`) so the
+package keys both on a kind-agnostic `Ref` (`BinRef` / `SlotRef`) so the
 Acquire/Confirm/Release primitives are shared, not forked per kind.
 
-> `mouth` is a third kind the schema accepts but has no code path yet; it's a
-> forward-looking placeholder, not an active mechanism.
+**Mouth and occupancy are a different mechanism that happens to share the table.**
+They are not a third and fourth flavour of the reserve→confirm→release lifecycle
+above: they have their own admission rule, their own concurrency control, and no
+confirm step. What they share with bins and slots is the row, the `state` domain,
+and the reaper. See *The lane mouth* below and `[[lanes]]` for the full model.
+
+## The lane mouth
+
+A mouth row is one hold per (lane, order), `node_id` = the lane. It carries a
+`mode` — the work direction, and the only kinds that use the `mode` column
+(`bin` and `slot` rows leave it NULL):
+
+| Mode | Meaning |
+|------|---------|
+| `inbound` | the owner drops into the lane (its in-lane blocks are dropoffs) |
+| `outbound` | the owner picks from the lane (its in-lane blocks are pickups) |
+| `dig` | exclusive — the owner does both directions at once |
+
+### The admission rule
+
+`admitMouth` reads the lane's active rows and applies one rule: **a `dig`
+excludes every other owner and is excluded by every other owner, whichever kind
+it is. Any other pair is admitted only on an exact same-mode share.** So two
+inbound orders can work a lane together; an inbound and an outbound cannot; and a
+dig shares with nobody.
+
+An order holds **one mode per lane**. If it already holds the lane in a different
+mode that is a refusal — but a foreign conflict is the stronger refusal and wins
+regardless of which row is read first, which is why the verdict is decided after
+the scan rather than inside it.
+
+### `mode='dig'` is not the same question as "an excavation is running"
+
+It was, until every demand's source hold was generalized from `outbound` to
+`dig` — a demand owns the lane it resolved onto until the bin leaves by its
+mover. Exclusivity did not change; what changed is that a `dig` row no longer
+implies an excavation.
+
+This matters to anything that *reports* a lane hold. A wait that says an
+excavation is running when a plain retrieve is sourcing sends the next engineer
+looking for a dig that was never planned. The readers that name an excavation —
+the lane-hold cause classifier and admission's refusal — read the kind off
+`reserved_by`, which every writer already stamps.
+
+### Concurrency: an advisory lock, not the unique index
+
+Bins and slots get exactly-one-winner from a partial unique index. **The mouth
+does not.** Its correctness comes from a transaction-scoped advisory lock on the
+lane id (`pg_advisory_xact_lock`), taken before the lane's rows are read and held
+for the acquire transaction. The durable state is the rows; the advisory lock is
+only the serializer and never outlives the transaction.
+
+A multi-lane acquire takes its lanes in **ascending lane-id order**
+(`sortedUniqueLanes`) — that ordering is the deadlock-free lock order, and it is
+the mouth's equivalent of the slots-before-bins rule, not a variant of it.
+
+### Occupancy
+
+An occupancy row says a robot is physically inside the lane right now, which is a
+different fact from the claim on the work. It is an **idempotent insert** keyed
+on `(order_id, node_id)`: it de-dupes one order's repeat takes and says nothing
+about a different order on the same node. Arbitration is the caller's read, not
+this write.
+
+That is deliberate but not settled — making the write itself the arbiter would
+mean a partial unique index on `(node_id) WHERE resource_kind='occupancy'`. Do
+not read the idempotent-insert shape as a decision against it.
 
 ## Where it happens in the code
 
@@ -302,13 +369,15 @@ model has one home rather than being inlined into the complex-dispatch path.
 
 ## Schema
 
-Migrations `v42`–`v44` in `shingo-core/store/migrations.go`:
+In `shingo-core/store/migrations.go`:
 
 | Version | Change |
 |---------|--------|
 | v42 | `reservations` table (originally dormant) |
 | v43 | partial unique index `uq_reservations_bin_active` on `(bin_id)` — the exactly-one-winner gate |
-| v44 | `resource_kind` (bin\|slot\|mouth) + `node_id` target; rescoped bin index; per-kind slot index; `CHECK` on `state` and on exactly-one-of (`bin_id` xor `node_id`) |
+| v44 | `resource_kind` + `node_id` target; rescoped bin index; per-kind slot index; `CHECK` on `state` and on exactly-one-of (`bin_id` xor `node_id`) |
+| v69 | `mode` column + the `(resource_kind, node_id)` read index — the lane-mouth substrate |
+| v76 | `resource_kind='occupancy'` admitted — the in-lane hold, separate from the claim |
 
 v44 is what makes the slot substrate possible and pins the state column so a
 typo can't silently escape the partial index.
@@ -316,16 +385,31 @@ typo can't silently escape the partial index.
 Two partial unique indexes (`uq_reservations_bin_active`,
 `uq_reservations_slot_active`) make Acquire exactly-one-winner per resource:
 only one order at a time can hold a pending or confirmed reservation on a given
-bin or slot.
+bin or slot. **There is no equivalent index for `mouth` or `occupancy`** — the
+mouth is serialized by an advisory lock instead (see above), and occupancy's
+insert is idempotent per owner rather than exclusive.
+
+The current constraints admit four kinds and three modes:
+
+```sql
+CHECK (resource_kind IN ('bin','slot','mouth','occupancy'))
+CHECK (mode IS NULL OR mode IN ('inbound','outbound','dig'))
+CHECK ((resource_kind = 'bin'   AND bin_id IS NOT NULL AND node_id IS NULL)
+    OR (resource_kind IN ('slot','mouth','occupancy')
+                                AND node_id IS NOT NULL AND bin_id IS NULL))
+```
 
 ## What is explicitly out of scope
 
 - **No time-based abandon / horizon / timer.** Give-up is operator-driven
   (demand never evaporates; a cancelled order is re-issued by Edge's in-flight
   guard).
-- **No parent-walk seatbelt, no mouth behavior/index, no reshuffle building.**
-  These are gated on separate decisions and are not part of the reservation
-  substrate.
+- **No parent-walk seatbelt.** Gated on a separate decision.
+
+This section used to also disclaim "no mouth behavior/index, no reshuffle
+building." Both shipped in the lane campaign — the mouth has an admission rule,
+a `mode` column and a read index, and reshuffle building is the campaign's whole
+subject. The mouth is summarized above and documented in full in `[[lanes]]`.
 
 ---
 

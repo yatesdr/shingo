@@ -188,23 +188,31 @@ full mechanism.
 | Field | Description |
 |-------|-------------|
 | `order_id` | The order that holds the reservation |
-| `resource_kind` | `bin` (a source bin) or `slot` (a destination node); `mouth` is schema-accepted but unused |
+| `resource_kind` | `bin` (a source bin), `slot` (a destination node), `mouth` (the right to work a lane), or `occupancy` (a robot is inside the lane now) |
 | `bin_id` | `bins.id` when `resource_kind = 'bin'` (NULL otherwise) |
-| `node_id` | `nodes.id` when `resource_kind = 'slot'` (NULL otherwise) |
+| `node_id` | the target node for `slot`, `mouth` and `occupancy` (NULL for `bin`) |
+| `mode` | `inbound` \| `outbound` \| `dig` — the work direction. **`mouth` rows only**; NULL on every other kind |
 | `state` | `pending` (held, not yet shipped) or `confirmed` (shipped — the claim moved with it) |
-| `reserved_by` | Actor tag for forensics |
+| `reserved_by` | Actor tag for forensics — also what identifies a `dig` row raised by an excavation from one raised by ordinary sourcing |
+
+`bin` and `slot` are the soft-until-complete substrate the paragraph above
+describes. `mouth` and `occupancy` share the table but are a different mechanism:
+no confirm step, an advisory lock rather than a unique index, and their own
+admission rule. See [reservations.md](reservations.md) §The lane mouth.
 
 Lifecycle: **Acquire** (write `pending`) → **Confirm** (`pending → confirmed`,
 paired with the hard-column write in one transaction) → **Release** (a hard
 `DELETE`; a reservation never reaches a terminal state). The partial unique
 indexes — `uq_reservations_bin_active` on `bin_id`, `uq_reservations_slot_active`
-on `node_id` — make Acquire exactly-one-winner, so two orders can't both hold
-the same resource. Rows are reaped when their owning order is terminal or gone
-(owner-liveness, never age). Migrations v42–v44.
+on `node_id` — make Acquire exactly-one-winner **for `bin` and `slot` rows only**,
+so two orders can't both hold the same resource. `mouth` and `occupancy` have no
+such index. Rows are reaped when their owning order is terminal or gone
+(owner-liveness, never age). Migrations v42–v44, v69 (`mode` + read index), v76
+(`occupancy`).
 
 **Relationships:**
 - Belongs to one **Order**
-- Targets exactly one resource: one **Bin** (`resource_kind = 'bin'`) **or** one **Node** (`resource_kind = 'slot'`), enforced by a `CHECK`
+- Targets exactly one resource: one **Bin** (`resource_kind = 'bin'`) **or** one **Node** (every other kind), enforced by a `CHECK`
 
 ---
 
