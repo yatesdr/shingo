@@ -208,11 +208,61 @@ An automated storage area consisting of lanes and a shuffle row, represented as 
 
 ### Lane
 
-A linear sequence of storage slots within a supermarket. The front slot (depth 1) is robot-accessible; deeper slots are blocked by those in front.
+A linear sequence of storage slots within a supermarket. The front slot (depth 1) is robot-accessible; deeper slots are blocked by those in front. Because only the mouth is reachable, a lane needs arbitration between orders that want it at the same time — see [lanes.md](lanes.md).
 
 ### Shuffle Row
 
-Temporary holding slots used during retrieval reshuffles. When a target bin is blocked by other bins, the blocking bins are moved to the shuffle row, the target is retrieved, and the blocking bins are restocked.
+Holding slots used during retrieval reshuffles. When a target bin is blocked, the blocking bins are parked elsewhere and the target is retrieved. The blockers are **not** moved back — see [material-flow.md](material-flow.md). A blocker may be parked in another lane in the same group, not only in the shuffle row.
+
+### Reachable / Buried
+
+A slot is **reachable** iff no occupied slot sits strictly shallower in the same lane; otherwise the bin in it is **buried**. One definition, `LaneBlockerPredicate` — do not write an eighth spelling.
+
+### Mouth
+
+The right to work a lane, held as a reservation row (`resource_kind='mouth'`) keyed on the lane. Carries a **mode**.
+
+### Mode (of a mouth hold)
+
+The work direction: `inbound` (the owner drops into the lane), `outbound` (the owner picks from it), or `dig` (exclusive — both directions at once). A dig excludes every other owner; anything else shares only on an exact same-mode match. An order holds one mode per lane.
+
+### Dig
+
+An excavation: moving blockers out of a lane so a buried bin can be reached. The `mode='dig'` row **is** the lock — there is no separate lock table. A dig dwells in the lane it is digging and yields to the dig already there.
+
+Note that `mode='dig'` no longer implies an excavation is running — every demand's source hold is a dig. Read `reserved_by` to tell an excavation from ordinary sourcing.
+
+### Occupancy
+
+A robot is physically inside a lane right now (`resource_kind='occupancy'`). A different fact from holding the claim on the work.
+
+### Admission
+
+The decision "may this move happen at all", asked in one place (`dispatch/admission.go`). Distinct from **ordering** — admission says the lane cannot take the move; ordering says it could, but somebody else should go first. `lane-target-buried` is admission; `lane-deeper-pending` is ordering.
+
+### Gate / Mark
+
+A lane is **gated** iff it carries a dwell point (`PropLaneGatePoint`) — the **mark**. The mark chooses only where an order waits: parked pre-dispatch, or dwelling at a point. It is not a safety setting, and no marks are set at either plant today.
+
+### Chapter
+
+One generation of a compound. A superseded generation is a **closed chapter**; `orders.open_for_children` records sealedness explicitly.
+
+### Headroom
+
+Free slots a group keeps in reserve so a dig has somewhere to put blockers. A group filled to the brim cannot excavate at all. Distinct from the shuffle-row minimum, which sizes the deepest single dig.
+
+### Queue Cause
+
+The named reason an order is waiting, recorded on its row. Core vocabulary that never crosses the wire. Every cause declares what releases it (the releaser inventory) and is backed by a periodic floor.
+
+### Floor
+
+A periodic pass that re-evaluates a wait an event should have released. A floor is a **backstop**, not a poll — the interval is a maximum wait. See [sweeps-and-monitors.md](sweeps-and-monitors.md).
+
+### Staging (declared)
+
+A node whose destination gates deliberately stand down — reserved by nothing, capacity-checked by nothing. A staging node is a station with **no parent**, declared in the Edge's cell config; Core cannot infer it.
 
 ### Changeover
 

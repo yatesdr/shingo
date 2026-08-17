@@ -20,6 +20,36 @@ forbidigo-enforced seatbelts — is documented in [reservations.md](reservations
 | 5 | Swap peer-death handler | a two-robot swap leg dying mid-flight (collide two bins on the line, or strand it) | `shingo-core/dispatch/swap_peer.go` — `HandleSwapPeerTerminal` (~:43) |
 | 6 | Arrival reconciliation (stale-ghost eviction) | a delivery landing on a node shingo still records as occupied — the record is a stale ghost, evicted to `_TRANSIT` + `anomaly_at` | `shingo-core/service/bin_service.go` — `ApplyArrival` (~:584); shared helper `shingo-core/store/internal/helpers/helpers.go` — `EvictStaleGhostBinsTx` |
 
+## The lane family (dispatch-time)
+
+Lanes need their own protections because only the mouth is reachable, so two
+orders can physically collide inside one lane. These compose with the tiers above
+rather than replacing them; the full model is in [lanes.md](lanes.md).
+
+> **Naming collision, read carefully.** Tier 2 above is the **swap** admission
+> hold — a two-robot swap leg committing on a shared LINE node. It is unrelated
+> to `dispatch/admission.go` in the table below, which answers lane safety. Two
+> different mechanisms, one word.
+
+| Mechanism | Catches | Anchor (symbol) |
+|---|---|---|
+| Mouth admission | two orders working one lane in incompatible directions; any other holder against a dig | `shingo-core/store/reservations/mouth.go` — `admitMouth` |
+| Lane admission | a move into a lane that cannot take it — foreign dig holding, robot inside, target unreachable | `shingo-core/dispatch/admission.go` |
+| Tiered lane entry | a safe move that would wall a deeper pending target (ordering, **not** safety) | `shingo-core/dispatch/lane_entry.go` — `classifyLaneEntry` |
+| Reachability predicate | the one definition of "is this slot reachable", replacing seven disagreeing spellings | `shingo-core/store/internal/helpers/lane_reachability.go` — `LaneBlockerPredicate` |
+| Lane occupancy | a second robot entering a lane one is already inside | `resource_kind='occupancy'` rows — see [reservations.md](reservations.md) |
+| Dig standoff tripwire | digs waiting on each other in a closed loop — **reports only**, a human rules it | `shingo-core/dispatch/dig_standoff_tripwire.go` — `SweepMutualDigHolds` |
+| Arrival guard | an arrival that cannot be applied, with a reason and context rather than a silent drop | `shingo-core/engine/arrival_guard.go` — `refuseArrival` |
+
+Mouth admission is the load-bearing one: a `dig` excludes every other owner and
+is excluded by every other owner, and any other pair is admitted only on an exact
+same-mode share.
+
+Note what the **gate** is not. `PropLaneGatePoint` chooses only where an order
+waits — parked pre-dispatch, or dwelling at a point. The physical questions above
+are asked on every lane-entry path unconditionally, gated or not, and no marks
+are set at either plant today.
+
 Tier 6 is the ONE reconciliation shared by every arrival-writer so they cannot
 drift: `ApplyArrival` (single-bin), `ApplyMultiBinArrival`
 (`store/order_bins.go`), and `RepairConfirmedOrderCompletion`
