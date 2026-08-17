@@ -182,7 +182,7 @@ Type strings use dotted notation: `{category}.{action}`. Two categories exist fo
 | `order.receipt` | `shingo.orders` | Edge -> Core | [OrderReceipt](#orderreceipt) | Delivery confirmation from operator |
 | `order.redirect` | `shingo.orders` | Edge -> Core | [OrderRedirect](#orderredirect) | Change delivery destination mid-flight |
 | `order.release` | `shingo.orders` | Edge -> Core | [OrderRelease](#orderrelease) | Resume a staged (dwelling) order |
-| `order.storage_waybill` | `shingo.orders` | Edge -> Core | [OrderStorageWaybill](#orderstoragewaybill) | Store order submission (return to warehouse) |
+| ~~`order.storage_waybill`~~ | `shingo.orders` | Edge -> Core | [OrderStorageWaybill](#orderstoragewaybill--retired-2026-07-09) | **RETIRED 2026-07-09** — deleted with the plain store family; use `move` |
 | `order.ingest` | `shingo.orders` | Edge -> Core | [OrderIngestRequest](#orderingestrequest) | Record a filled bin's manifest (inventory write; dispatches no order) |
 | `order.ack` | `shingo.dispatch` | Core -> Edge | [OrderAck](#orderack) | Order accepted, source material located |
 | `order.waybill` | `shingo.dispatch` | Core -> Edge | [OrderWaybill](#orderwaybill) | Robot assigned and dispatched |
@@ -248,12 +248,43 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `production.report_ack` | Core -> Edge | [ProductionReportAck](#productionreportack) | Core acknowledges production report |
 | `node.list_request` | Edge -> Core | [NodeListRequest](#nodelistrequest) | Edge requests core's node list |
 | `node.list_response` | Core -> Edge | [NodeListResponse](#nodelistresponse) | Core returns authoritative node list |
-| `tag.verify_request` | Edge -> Core | [TagVerifyRequest](#tagverifyrequest) | Edge verifies scanned QR tag against order |
-| `tag.verify_response` | Core -> Edge | [TagVerifyResponse](#tagverifyresponse) | Core returns tag verification result |
+| `tag.verify_request` | Edge -> Core | [TagVerifyRequest](#tagverifyrequest) | **No sender exists** — Core routes and answers it, nothing emits it. See material-flow.md |
+| `tag.verify_response` | Core -> Edge | [TagVerifyResponse](#tagverifyresponse) | Core's answer; the Edge handler only writes a log line. Never blocks an order |
 | `catalog.payloads_request` | Edge -> Core | [CatalogPayloadsRequest](#catalogpayloadsrequest) | Edge requests payload catalog |
 | `catalog.payloads_response` | Core -> Edge | [CatalogPayloadsResponse](#catalogpayloadsresponse) | Core returns payload catalog |
 | `plant.claims` | Edge -> Core | [PlantClaimsReport](#plantclaimsreport) | Edge publishes its plant-spec claim set so Core can mirror what every process can source |
 | `sourcing.state` | Core -> Edge | [SourcingStateReport](#sourcingstatereport) | Core publishes each (process, style)'s sourceability verdict so HMI screens know what can be changed over to |
+| `supply.refusal` | Edge -> Core | `SupplyRefusalState` | A loader operator says they cannot fill a call, or takes that back |
+| `supply.refusal_state` | Core -> Edge | `SupplyRefusalState` | Core broadcasts the refusal's state so the cell can answer; station-broadcast, filtered per-process on arrival |
+| `transit.bin_picked_up` | Core -> Edge | `BinPickedUp` | The robot has the bin — the pickup half of a transit, distinct from delivery |
+| `node.structure_changed` | Core -> Edge | `NodeStructureChanged` | A node was reparented or deleted, so the Edge's topology view is stale |
+| `inventory.uop_adjustment` | Core -> Edge | `UOPAdjustment` | An operator's UoP correction on Core, pushed so the Edge's Bins view agrees |
+| `inventory.bin_epoch_refresh` | Core -> Edge | `BinEpochRefresh` | Re-anchor a bin's counting epoch without a full resync |
+| `order.status_request` | Edge -> Core | `OrderStatusRequest` | Startup reconciliation — Edge names the orders it wants authoritative status for |
+| `order.status_response` | Core -> Edge | `OrderStatusResponse` | The answer, plus `Unlisted`: orders for that station the Edge did **not** name |
+| `order.skipped` | Core -> Edge | `OrderSkipped` | Core declined to act on an order, with an error code |
+| `order.projected` | Core -> Edge | `OrderProjected` | A projected order, ahead of it being real |
+| `demand.signal` | Core -> Edge | `DemandSignal` | Kanban demand trigger |
+| `demand.origin` | Edge -> Core | `DemandOrigin` | The demand episodes the Edge owns |
+| `inventory.bin_uop_delta` | Edge -> Core | `BinUOPDelta` | A bin's UoP moved |
+| `inventory.lineside_bucket_delta` | Edge -> Core | `LinesideBucketDelta` | A lineside bucket's count moved |
+| `production.downtime` | Edge -> Core | `DowntimeEvent` | A persisted downtime start or end |
+| `countgroup.command` | Core -> Edge | `CountGroupCommand` | Requested light state for an advanced zone |
+| `countgroup.ack` | Edge -> Core | `CountGroupAck` | PLC ack outcome for a prior command |
+
+The seventeen rows above `edge.register` carry full schemas below. The seventeen
+added here do not — the Go structs in `protocol/payloads.go` are the reference
+for their fields.
+
+All of them were absent from this document until 2026-08-17, having accumulated
+across the supply-refusal, count-group, demand-origin and inventory work.
+`supply.refusal` / `supply.refusal_state` are the whole supply-refusal channel
+that shipped 2026-07-30.
+
+**Note the name.** The downtime subject is `production.downtime`. An earlier
+version of this document called it `downtime.event` in prose, which matches no
+constant in `protocol/types.go` — the Go identifier is `SubjectDowntimeEvent`,
+and only the identifier resembles the old text.
 
 New subjects can be added by defining a constant and a data schema -- no protocol interface changes required.
 
@@ -295,7 +326,7 @@ These are the TTLs applied by the sender when creating a message. The `exp` fiel
 | Data channel | `data` (default) | 5 minutes | Safe general default for data exchange |
 | Data: heartbeat | `data` with subject `edge.heartbeat` / `edge.heartbeat_ack` | 90 seconds | Stale after 1.5 heartbeat intervals |
 | Data: registration | `data` with subject `edge.register` / `edge.registered` | 5 minutes | Should complete quickly after connect |
-| Order commands | `order.request`, `order.complex_request`, `order.cancel`, `order.redirect`, `order.release`, `order.storage_waybill`, `order.ingest` | 10 minutes | Operator can resubmit if expired |
+| Order commands | `order.request`, `order.complex_request`, `order.cancel`, `order.redirect`, `order.release`, `order.ingest` | 10 minutes | Operator can resubmit if expired |
 | Order status | `order.ack`, `order.update` | 10 minutes | Status updates age fast |
 | Important replies | `order.receipt`, `order.waybill`, `order.error`, `order.cancelled` | 30 minutes | Important, longer window needed |
 | Delivery notification | `order.delivered` | 60 minutes | Critical notification, longest window |
@@ -347,7 +378,7 @@ override, so it was always `["line-1"]`, and its only consumer composed
 column is dropped from `edge_registry` too.
 
 **Payload copies of the station are gone** from `production.tick`
-(`CounterSnapshot`), `downtime.event` (`DowntimeEvent`),
+(`CounterSnapshot`), `production.downtime` (`DowntimeEvent`),
 `lineside_bucket_delta` (`LinesideBucketDelta` — which carried it twice in one
 envelope) and `bin_uop_delta` (`BinUOPDelta`). Every handler now reads
 `Envelope.Src.Station`. The old `if station == "" { station = env.Src.Station }`
@@ -852,16 +883,22 @@ Changes the delivery destination of an in-flight order. Triggers re-dispatch in 
 | Order UUID | `order_uuid` | string | Yes | UUID of the order to redirect. |
 | New Delivery Node | `new_delivery_node` | string | Yes | New destination node name. |
 
-#### OrderStorageWaybill
+#### OrderStorageWaybill — RETIRED 2026-07-09
 
-**Documented but not real.** This section described a `store`-typed submission
-with a source node and a final count. There is no `store` order type — see the
-order-type list above — and nothing in either module mints or reads this shape.
+**Real until it wasn't.** An earlier version of this stub said "documented but
+not real", which was wrong in a way worth correcting: `protocol.OrderStorageWaybill`,
+`TypeOrderStorageWaybill` and a registered `HandleOrderStorageWaybill` existed
+from the initial monorepo commit and carried real traffic. They were deleted in
+`1e27a763`, "consolidate coordinated dispatch and retire the plain store family."
 
-Left as a marked stub rather than deleted, because the wire subject may still
-appear in an old capture or a plant's notes, and "this was never implemented" is
-more useful to the next reader than the section vanishing. Returning empty bins
-to storage is an ordinary `move`.
+So an old capture or a plant's notes may legitimately contain this subject, and
+it meant what it said at the time. Nothing mints or reads the shape today, and
+there is no `store` order type — returning empty bins to storage is an ordinary
+`move`.
+
+Kept as a marked stub rather than deleted, because "this was retired, here is
+when and why" is more useful to whoever finds the subject in an archive than the
+section vanishing.
 
 ### Order Payloads: Core -> Edge
 
