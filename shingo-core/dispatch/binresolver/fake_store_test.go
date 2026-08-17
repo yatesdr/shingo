@@ -6,6 +6,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
+	"shingocore/store/reservations"
 )
 
 // fakeStore is an in-memory Store used by the algorithm unit tests.
@@ -40,6 +41,17 @@ type fakeStore struct {
 	storeSlot    map[int64]*nodes.Node
 	oldestBuried map[int64]laneBuried
 	buriedAny    map[int64]laneBuried
+
+	// Resolve-around: laneID -> LaneAcceptsInbound. Absent = true (an empty lane
+	// is compatible), so only tests that exercise resolve-around set it.
+	laneAccepts map[int64]bool
+
+	// digLocked: lanes a dig currently holds. In production this is a durable
+	// mouth row, and ListChildNodesUnlocked filters on it in SQL — so a locked
+	// lane is never a candidate rather than being one the resolver has to
+	// remember to skip. The fake models it the same way: as data the candidate
+	// read filters, not as an object the resolver consults.
+	digLocked map[int64]int64
 }
 
 type laneBuried struct {
@@ -63,6 +75,8 @@ func newFakeStore() *fakeStore {
 		storeSlot:        map[int64]*nodes.Node{},
 		oldestBuried:     map[int64]laneBuried{},
 		buriedAny:        map[int64]laneBuried{},
+		laneAccepts:      map[int64]bool{},
+		digLocked:        map[int64]int64{},
 	}
 }
 
@@ -79,6 +93,40 @@ func (f *fakeStore) setProp(nodeID int64, key, value string) {
 
 func (f *fakeStore) ListChildNodes(parentID int64) ([]*nodes.Node, error) {
 	return f.children[parentID], nil
+}
+
+func (f *fakeStore) ListChildNodesUnlocked(parentID int64, asker reservations.DigAsker) ([]*nodes.Node, error) {
+	var out []*nodes.Node
+	for _, c := range f.children[parentID] {
+		// The one predicate, same as production. A fake that hard-coded
+		// "dig-held means excluded" would model the DEFECT rather than the
+		// query, and every owner-exemption test would pass against it wrongly.
+		if asker.ExcludedBy(f.digLocked[c.ID]) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// lockLaneForDig marks a lane dig-held, the fixture equivalent of a dig mouth
+// row existing. Replaces `ll := NewLaneLock(); ll.TryLock(lane, order)` — the
+// resolver no longer holds a lock object to ask, so the fixture sets the state
+// the candidate query reads.
+func (f *fakeStore) lockLaneForDig(laneID int64) {
+	f.lockLaneForDigBy(laneID, fixtureForeignDigOwner)
+}
+
+// fixtureForeignDigOwner is the owner lockLaneForDig attributes a hold to when
+// the test does not care whose it is. It must be non-zero (zero means "no dig")
+// and must not collide with an order id a test asks WITH, or the fixture would
+// silently grant an exemption nobody asked for.
+const fixtureForeignDigOwner = int64(999_000)
+
+// lockLaneForDigBy marks a lane dig-held BY a named order, for the tests that
+// turn on whether the asker owns it.
+func (f *fakeStore) lockLaneForDigBy(laneID, owner int64) {
+	f.digLocked[laneID] = owner
 }
 
 func (f *fakeStore) GetNode(id int64) (*nodes.Node, error) {
@@ -164,6 +212,13 @@ func (f *fakeStore) GetEffectivePayloads(nodeID int64) ([]*payloads.Payload, err
 
 func (f *fakeStore) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) {
 	return f.effBinTypes[nodeID], nil
+}
+
+func (f *fakeStore) LaneAcceptsInbound(laneID int64) (bool, error) {
+	if v, ok := f.laneAccepts[laneID]; ok {
+		return v, nil
+	}
+	return true, nil // default: empty lane is compatible
 }
 
 // Compile-time check: *fakeStore satisfies Store.

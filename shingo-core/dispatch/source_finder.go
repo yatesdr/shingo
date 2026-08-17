@@ -33,6 +33,7 @@ import (
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // Intent distinguishes what kind of bin the caller needs. It is keyed on the
@@ -68,6 +69,15 @@ type SourceNeed struct {
 	DeliveryNode string
 	Intent       Intent
 	NodeLocal    bool
+
+	// Asker is the order this need belongs to, for the dig-lock question on the
+	// NGRP tier. The zero value is reservations.Anyone, which every dig
+	// excludes — the same answer this path gave before the field existed, so a
+	// construction site that does not set it is unchanged rather than wrong.
+	// FindSource fills it; callers building a need by hand should too when they
+	// have an order, or a resuming complex parent cannot see the bin its own
+	// dig uncovered.
+	Asker reservations.DigAsker
 }
 
 // Outcome is the closed disposition set FindSource returns.
@@ -101,7 +111,7 @@ type SourceResult struct {
 	// tag (which tier waited); the sentence is built by the caller from
 	// QueueCode + QueueParams.
 	QueueCode   protocol.QueueCode
-	QueueCause  string
+	QueueCause  QueueCause
 	QueueParams QueueParams
 
 	// OutcomeReshuffle: the buried bin + its slot/lane for reshuffle planning.
@@ -193,7 +203,7 @@ func isFullCarrier(b *bins.Bin) bool {
 // why this is derived here rather than carried on the order: the Edge would have
 // to be told, and a rule a caller has to remember is one that gets forgotten.
 //
-// A declared mix is HONOURED, NOT APPROXIMATED (owner ruling, 2026-08-02). If the
+// A declared mix is HONOURED, NOT APPROXIMATED. If the
 // type the loader is short of is not available anywhere, the pull WAITS. It does
 // not substitute another type — declaring a mix and then ignoring it when it is
 // inconvenient makes declaring it pointless. A loader that wants any-type
@@ -468,7 +478,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// fell through to plant-wide FIFO on a capacity/buried error).
 	if intent == IntentFull && srcNode != nil && srcNode.IsSynthetic &&
 		srcNode.NodeTypeCode == protocol.NodeClassNGRP && f.resolver != nil {
-		result, err := f.resolver.Resolve(srcNode, binresolver.ResolveModeRetrieve, payloadCode, nil)
+		result, err := f.resolver.Resolve(srcNode, binresolver.ResolveModeRetrieve, payloadCode, nil, need.Asker)
 		if err != nil {
 			switch class, payload := classifyResolutionError(err); class {
 			case ResolutionBuried:
@@ -482,7 +492,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
-					QueueCause:  "finder-group-empty",
+					QueueCause:  CauseFinderGroupEmpty,
 					QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
 				}
 			}
@@ -494,7 +504,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			return SourceResult{
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
-				QueueCause:  "finder-group-empty",
+				QueueCause:  CauseFinderGroupEmpty,
 				QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
 			}
 		}
@@ -514,7 +524,28 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		}
 		chosen, node, isLoaderPos, lerr := f.sourceFromDedicatedLoader(need.SourceNode, payloadCode, loaderIntent)
 		if lerr != nil {
-			return SourceResult{Outcome: OutcomeStructural, TermCode: codeLoaderSource, Err: lerr}
+			// WAIT, NOT FAIL, and this arm is the callee's own stated disposition
+			// finally being honoured. Every error sourceFromDedicatedLoader returns
+			// wraps a database read — the source node, the loader home, the loader,
+			// its members, the bins across them — and each of those returns says so
+			// in a comment: "Propagate so the order queues instead", "propagates →
+			// the order queues". This site did the opposite, mapping all five to a
+			// structural terminal, so a momentary read failure while sourcing from a
+			// dedicated loader KILLED the order.
+			//
+			// A read that failed is not a fact about the plant. The releaser is the
+			// ordinary one — the scanner re-runs on its event set and on the sweep,
+			// and a read that failed once usually succeeds next time. The cause is in
+			// the undetermined family (queue_cause.go) so a histogram keeps it apart
+			// from an honest empty pool: this is Core declining to answer, not the
+			// loader being out of material.
+			f.debug("finder: loader source for %s unreadable (%v) — holding", need.SourceNode, lerr)
+			return SourceResult{
+				Outcome:     OutcomeWait,
+				QueueCode:   protocol.QueueWaitingForMaterial,
+				QueueCause:  CauseLoaderSourceUnreadable,
+				QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
+			}
 		}
 		if isLoaderPos {
 			if chosen == nil {
@@ -526,7 +557,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
-					QueueCause:  "finder-pool-empty",
+					QueueCause:  CauseFinderPoolEmpty,
 					QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
 				}
 			}
@@ -556,12 +587,12 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			groupBin, gerr = f.db.FindEmptyCompatibleBinInGroup(payloadCode, srcNode.ID, excludeID)
 		}
 		if gerr != nil || groupBin == nil {
-			cause := "finder-group-empty"
+			cause := CauseFinderGroupEmpty
 			if wantType != "" {
 				// The loader asked for a specific type and the group has none.
 				// It WAITS rather than taking another: a declared mix that is
 				// abandoned when inconvenient is not a mix.
-				cause = "finder-no-empty-of-type"
+				cause = CauseFinderNoEmptyOfType
 				f.debug("finder: no empty %s in group %s for %s, waiting", wantType, need.SourceNode, need.DeliveryNode)
 			} else {
 				f.debug("finder: no empty in group %s for payload=%s, waiting", need.SourceNode, payloadCode)
@@ -612,7 +643,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			return SourceResult{
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
-				QueueCause:  "finder-node-empty",
+				QueueCause:  CauseFinderNodeEmpty,
 				QueueParams: params,
 			}
 		}
@@ -627,7 +658,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
-					QueueCause:  "finder-plant-empty",
+					QueueCause:  CauseFinderPlantEmpty,
 					QueueParams: QueueParams{Payload: payloadCode},
 				}
 			}
@@ -635,7 +666,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		} else {
 			var b *bins.Bin
 			var err error
-			cause := "finder-plant-empty"
+			cause := CauseFinderPlantEmpty
 			if wantType != "" {
 				b, err = f.db.FindEmptyBinOfType(wantType, preferZone, excludeID)
 				cause = "finder-no-empty-of-type"
@@ -656,7 +687,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 
 	if bin == nil {
 		params := QueueParams{Payload: payloadCode}
-		cause := "finder-plant-empty"
+		cause := CauseFinderPlantEmpty
 		if intent == IntentEmpty {
 			params = QueueParams{Kind: "empty", Payload: payloadCode}
 		}
@@ -691,20 +722,40 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		return SourceResult{
 			Outcome:     OutcomeWait,
 			QueueCode:   protocol.QueueWaitingForMaterial,
-			QueueCause:  "finder-no-full-carrier",
+			QueueCause:  CauseFinderNoFullCarrier,
 			QueueParams: QueueParams{Payload: payloadCode, Destination: need.DeliveryNode},
 		}
 	}
 
 	// Resolve the bin's node if a tier set `bin` without one (tiers 1 and 5).
-	// A missing/unreadable node is the terminal codeNode intake raises.
+	//
+	// A bin with no node at all is a broken row and stays terminal. The LOOKUP
+	// splits three ways for the reason in read_vs_missing.go: a node that is not
+	// there is configuration a human fixes, and a read that did not answer is a
+	// hiccup that must not kill the order. This site mapped both to a terminal.
+	//
+	// Releaser for the park: the finder's two callers are intake planning and the
+	// scanner's replay, and the scanner re-runs on its whole event set plus the
+	// sweep — so the retry is the loop that was going to run anyway.
 	if binNode == nil {
 		if bin.NodeID == nil {
-			return SourceResult{Outcome: OutcomeStructural, TermCode: codeNode, Err: fmt.Errorf("source bin %d has no node", bin.ID)}
+			return SourceResult{Outcome: OutcomeStructural, TermCode: codeNode,
+				Err: fmt.Errorf("source bin %d has no node", bin.ID)}
 		}
 		n, err := f.db.GetNode(*bin.NodeID)
-		if err != nil {
-			return SourceResult{Outcome: OutcomeStructural, TermCode: codeNode, Err: fmt.Errorf("resolve node for bin %d: %w", bin.ID, err)}
+		if readFailed(err) {
+			f.debug("finder: could not read node %d for bin %d (%v) — holding", *bin.NodeID, bin.ID, err)
+			return SourceResult{
+				Outcome:     OutcomeWait,
+				QueueCode:   protocol.QueueWaitingForMaterial,
+				QueueCause:  CauseReadFailed,
+				QueueParams: QueueParams{Payload: payloadCode},
+			}
+		}
+		if err != nil || n == nil {
+			return SourceResult{Outcome: OutcomeStructural, TermCode: codeInvalidNode,
+				Err: fmt.Errorf("%s (source bin %d points at it)",
+					configFailureID("node", *bin.NodeID), bin.ID)}
 		}
 		binNode = n
 	}
@@ -716,14 +767,49 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// robot to an unreachable slot. The full-retrieve path has no post-find
 	// buried check (the NGRP resolver detects buried internally; a FIFO result
 	// is not lane-buried).
+	//
+	// FAIL CLOSED, and note which way this used to lean. The three reads below
+	// were guarded `err == nil`, `serr == nil`, `lerr == nil` — so every one of
+	// them, on failure, fell through to OutcomeFound and dispatched a robot to a
+	// slot nothing had successfully checked. An unreadable lane is a BLOCKED
+	// lane: refusing to move is recoverable, and driving into a lane whose state
+	// you could not read is not. The order waits for the next scan instead.
+	//
+	// storage_rearranging is the honest code for it — "waiting on storage to
+	// become reachable" is exactly what an unanswered reachability question
+	// leaves the order doing.
 	if intent == IntentEmpty && bin.NodeID != nil {
-		if accessible, err := f.db.IsSlotAccessible(*bin.NodeID); err == nil && !accessible {
-			if slot, serr := f.db.GetNode(*bin.NodeID); serr == nil && slot.ParentID != nil {
-				if lane, lerr := f.db.GetNode(*slot.ParentID); lerr == nil && lane.NodeTypeCode == protocol.NodeClassLANE {
+		unreadable := func(what string, err error) SourceResult {
+			f.debug("finder: %s for empty bin %d unreadable (%v) — treating the lane as blocked, not as clear", what, bin.ID, err)
+			return SourceResult{
+				Outcome:     OutcomeWait,
+				QueueCode:   protocol.QueueStorageRearranging,
+				QueueCause:  CauseFinderAccessibilityUnreadable,
+				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode},
+			}
+		}
+		accessible, err := f.db.IsSlotAccessible(*bin.NodeID)
+		if err != nil {
+			return unreadable("accessibility", err)
+		}
+		if !accessible {
+			slot, serr := f.db.GetNode(*bin.NodeID)
+			if serr != nil {
+				return unreadable("buried slot", serr)
+			}
+			if slot.ParentID != nil {
+				lane, lerr := f.db.GetNode(*slot.ParentID)
+				if lerr != nil {
+					return unreadable("buried slot's lane", lerr)
+				}
+				if lane.NodeTypeCode == protocol.NodeClassLANE {
 					f.debug("finder: empty bin %d buried at slot %s in lane %s, reshuffle", bin.ID, slot.Name, lane.Name)
 					return SourceResult{Outcome: OutcomeReshuffle, Buried: &BuriedError{Bin: bin, Slot: slot, LaneID: lane.ID}}
 				}
 			}
+			// Buried, but not in a LANE — there is no dig to plan. Unchanged and
+			// deliberately so: this is the NGRP-direct single-file geometry
+			// AuditLaneGeometry warns about at boot, not an error disposition.
 		}
 	}
 

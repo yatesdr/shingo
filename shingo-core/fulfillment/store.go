@@ -32,6 +32,10 @@ type Store interface {
 	// {queued, sourcing} (the acquiring set, widened from queued-only).
 	ListAcquiringOrders() ([]*orders.Order, error)
 	GetOrder(id int64) (*orders.Order, error)
+	// OwnsNoCargo distinguishes a COORDINATOR (owns legs, NULL bin_id
+	// permanently and correctly) from a defective single-bin order. Shadowed
+	// at dispatchHeldBin for one window before the spelling is cut over.
+	OrderOwnsNoCargo(orderID int64) (bool, error)
 	// CapacityDB: the capacity gate self-excludes the caller's own order.
 	CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode string, excludeID int64) (int, error)
 
@@ -70,7 +74,7 @@ type Store interface {
 //     ReleaseReservation (soft), transitions via Lifecycle, fails via failFn.
 //   - 3-cleanup: FindSourceBinFIFO + FindEmptyCompatibleBin (the finder owns
 //     source lookup now), GetNode (the finder returns the bin's node), and the
-//     non-excluding CountInFlightOrdersByDeliveryNode (only the self-excluding
+//     non-excluding in-flight count (only the self-excluding
 //     variant is used, by the capacity gate).
 
 // Compile-time check that *store.DB satisfies Store. If the store

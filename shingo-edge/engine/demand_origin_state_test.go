@@ -57,17 +57,17 @@ func TestOriginState_RevisionsIncreaseAndTheLastMessageIsSufficient(t *testing.T
 	eng, db, procID, procName, claim := episodeFixture(t, "STATE-PROC", "ALN_010", 50)
 
 	if _, _, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	// An operator pushes twice while it is open — joins, not new demands.
 	for range 2 {
 		if _, _, err := eng.openCellEpisode(procID, claim,
-			protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerOperator, 2, 38, false); err != nil {
+			protocol.EpisodeTriggerOperator, 2, 38, false); err != nil {
 			t.Fatalf("join: %v", err)
 		}
 	}
-	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
+	eng.closeCellEpisode(procID, "PANEL-B", protocol.ClaimRoleConsume, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
 	states := decodeOriginStates(t, db)
 	if len(states) != 4 {
@@ -98,7 +98,7 @@ func TestOriginState_RevisionsIncreaseAndTheLastMessageIsSufficient(t *testing.T
 		t.Error("the final message must carry the close — its presence IS the close")
 	}
 	if last.EpisodeKey == "" || last.Kind != protocol.EpisodeKindCell ||
-		last.Direction != protocol.EpisodeDirectionSupply {
+		last.Direction != protocol.ClaimRoleConsume {
 		t.Errorf("the final message lost its identity: %+v", last)
 	}
 	// THE NAME, not the row id. The grain assertion is the same assertion it
@@ -184,12 +184,12 @@ func TestOriginState_CloseIsEnqueuedBeforeTheRowGoes(t *testing.T) {
 	eng, db, procID, procName, claim := episodeFixture(t, "ORDER-PROC", "ALN_011", 50)
 
 	if _, _, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	eng.closeCellEpisode(procID, "PANEL-B", protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
+	eng.closeCellEpisode(procID, "PANEL-B", protocol.ClaimRoleConsume, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 
-	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.ClaimRoleConsume)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("the row must be gone after a close, got err=%v", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
+	"shingocore/store/reservations"
 )
 
 // Store is the narrow DB surface that the bin resolvers depend on.
@@ -21,8 +22,18 @@ import (
 // package call on *store.DB — no more, no less. A lint of
 // `grep 'r\.DB\.' *.go` should match one-to-one with the entries here.
 type Store interface {
-	// Node / child listing.
+	// Node / child listing. ListChildNodesUnlocked is the candidate read for
+	// every group scan: it excludes dig-held lanes in the query, so a locked
+	// lane is never a candidate rather than being a candidate this package has
+	// to remember to skip. ListChildNodes stays for resolver.go's synthetic-node
+	// walk, which is not a lane scan.
+	//
+	// "Dig-held" is asked ON BEHALF OF the asker — a dig does not exclude the
+	// order it is being run for. The parameter is not a convenience; without it
+	// an expose dig hides its own uncovered bin from its own parent. See
+	// store/reservations/dig_exclusion.go.
 	ListChildNodes(parentID int64) ([]*nodes.Node, error)
+	ListChildNodesUnlocked(parentID int64, asker reservations.DigAsker) ([]*nodes.Node, error)
 	GetNode(id int64) (*nodes.Node, error)
 	GetNodeProperty(nodeID int64, key string) string
 
@@ -40,6 +51,11 @@ type Store interface {
 	FindStoreSlotInLane(laneID int64) (*nodes.Node, error)
 	FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error)
 	FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error)
+
+	// LaneAcceptsInbound reports whether a lane's mouth currently has no hold
+	// that conflicts with an inbound store (empty or inbound-only). The read
+	// behind resolve-around; called only when a group enables the arm.
+	LaneAcceptsInbound(laneID int64) (bool, error)
 
 	// Effective constraint sets (payloads + bin types allowed at a node,
 	// resolved through whatever inheritance rules the node graph uses).

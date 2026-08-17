@@ -116,6 +116,47 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want: "Rearranging storage to reach this material",
 		},
 		{
+			// THE OWNER'S REDUNDANCY COMPLAINT. "Rearranging lane L12 to reach
+			// X" is true and it is one word plus a lookup: which excavation, and
+			// is it the one that frees me. Both are answerable from the dig id,
+			// so the wait names it.
+			//
+			// THE CASE THAT WENT, quoted because it is what the floor used to be
+			// told and this row is the record of the change:
+			//
+			//	name:   "storage rearranging names the dig and what it is uncovering"
+			//	params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06",
+			//	            DigOrderID: 4471, DigTarget: "LSD_011"},
+			//	want:   "Rearranging lane L12 to reach 74368-6SA0A.06 — dig 4471 is uncovering LSD_011"
+			//
+			// It had already stopped being reachable in the field: DigTarget came
+			// from digTargetOf, reading a column whose only writer was deleted with
+			// the folder, so every plant has rendered the sentence below since. The
+			// test was the last place the long sentence still appeared to work.
+			name: "storage rearranging names the dig",
+			code: protocol.QueueStorageRearranging,
+			params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06",
+				DigOrderID: 4471},
+			want: "Rearranging lane L12 to reach 74368-6SA0A.06 — dig 4471 is working this lane",
+		},
+		{
+			// The id is the join key, and it is the whole clause now.
+			name:   "storage rearranging with a dig and no payload",
+			code:   protocol.QueueStorageRearranging,
+			params: QueueParams{Lane: "L12", DigOrderID: 4471},
+			want:   "Rearranging lane L12 to reach this material — dig 4471 is working this lane",
+		},
+		{
+			// AND AN UNRESOLVED DIG CHANGES NOTHING. A lane held by an ordinary
+			// order, or a lock read that failed, renders exactly as it did before
+			// the clause existed — a dig id that could not be resolved must not be
+			// invented, and zero means "not known", never "none".
+			name:   "storage rearranging with no dig resolved is unchanged",
+			code:   protocol.QueueStorageRearranging,
+			params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06"},
+			want:   "Rearranging lane L12 to reach 74368-6SA0A.06",
+		},
+		{
 			// (F3) Sibling was passed at the swap-hold call site and never read.
 			// The pre-code free text explained which leg this is and what it
 			// waits for; this restores that.

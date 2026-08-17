@@ -47,7 +47,11 @@ func TestDeliveryReleasesReservationAndSlot(t *testing.T) {
 		testutil.MustNoErr(t, svc.ClaimForDispatch(bin.ID, order.ID, nil), "ClaimForDispatch")
 		testdb.ClaimSlotForTest(t, db, destSlot.ID, order.ID)
 
-		if _, err := binSvc.ApplyArrival(bin.ID, destSlot.ID, false, nil); err != nil {
+		// placedByOrder is the order delivering its OWN bin, which is what a
+		// handoff is and what every production caller passes. It was 0, and the
+		// unclaim is owner-scoped now: an unscoped one erased other orders'
+		// claims on the rig.
+		if _, err := binSvc.ApplyArrival(bin.ID, destSlot.ID, false, nil, order.ID); err != nil {
 			t.Fatalf("ApplyArrival: %v", err)
 		}
 
@@ -73,7 +77,7 @@ func TestDeliveryReleasesReservationAndSlot(t *testing.T) {
 		testdb.ClaimSlotForTest(t, db, slotA.ID, order.ID)
 		testdb.ClaimSlotForTest(t, db, slotB.ID, order.ID)
 
-		_, err := db.ApplyMultiBinArrival([]orders.BinArrivalInstruction{
+		_, err := db.ApplyMultiBinArrival(order.ID, []orders.BinArrivalInstruction{
 			{BinID: binA.ID, ToNodeID: slotA.ID},
 			{BinID: binB.ID, ToNodeID: slotB.ID},
 		})

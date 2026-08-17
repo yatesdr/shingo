@@ -173,13 +173,15 @@ func (e *Engine) openEpisodeForConsume(
 	discretionary := trigger == protocol.EpisodeTriggerOperator &&
 		claim.ReorderPoint > 0 && remaining > claim.ReorderPoint
 
+	// No direction argument: the claim carries the role, and this path's claim is
+	// a consume one. Passing the word here was how the backfill site came to pass
+	// the wrong word at its own.
 	originID, _, err := e.openCellEpisode(
-		node.ProcessID, claim,
-		protocol.EpisodeDirectionSupply, trigger,
+		node.ProcessID, claim, trigger,
 		plan.OrderCount(), remaining, discretionary,
 	)
 	if err != nil {
-		e.logFn("demand_episode: open supply episode node=%s: %v", node.Name, err)
+		e.logFn("demand_episode: open %s episode node=%s: %v", claim.Role, node.Name, err)
 	}
 	if originID == "" {
 		// No episode, so nothing to attach to. Say NOTHING rather than
@@ -198,7 +200,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 	nodeID := node.ID
 
 	if plan.SimpleMove {
-		order, err := e.orderMgr.CreateMoveOrderWithOrigin(&nodeID, plan.Quantity, plan.SimpleSource, plan.SimpleDest, plan.AutoConfirm, origin)
+		order, err := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, plan.SimpleSource, plan.SimpleDest, plan.AutoConfirm, origin)
 		if err != nil {
 			return nil, err
 		}
@@ -217,7 +219,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 		// error so the operator sees that priming was incomplete.
 		var primes []*storeorders.Order
 		for _, p := range plan.PrimePairedPositions {
-			po, perr := e.orderMgr.CreateMoveOrderWithOrigin(&nodeID, plan.Quantity, p.Source, p.Dest, plan.AutoConfirm, origin)
+			po, perr := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, p.Source, p.Dest, plan.AutoConfirm, origin)
 			if perr != nil {
 				return nil, fmt.Errorf("prime %s: %w", p.Dest, perr)
 			}
@@ -371,7 +373,20 @@ func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingU
 		v := runtime.RemainingUOPCached
 		remainingUOP = &v
 	}
-	order, err := e.orderMgr.CreateMoveOrderWithUOP(&nodeID, qty, claim.CoreNodeName, claim.OutboundDestination, remainingUOP, claim.AutoConfirm || e.cfg.Web.AutoConfirm)
+	// ── THE RELEASE IS PART OF THE CIRCLE, NOT A SEPARATE ERRAND ─────────────
+	//
+	// §R.87: an episode represents its process's FULL circular material handling.
+	// Sending the spent bin to its outbound destination is the return leg of the
+	// very circle the inbound delivery opened — so it belongs to that cell's
+	// episode, and it had been reaching Core carrying nothing.
+	//
+	// JOIN-ONLY, never mint, for the reason the sequential backfill states: a
+	// release is the plant finishing something that was already asked for, not a
+	// new ask. If no episode is open the origin is left unstated and Core
+	// classifies, which is exactly what happened here before — so this is strictly
+	// more attribution and never a guess.
+	order, err := e.orderMgr.CreateMoveOrderWithUOP(&nodeID, qty, claim.CoreNodeName, claim.OutboundDestination, remainingUOP, claim.AutoConfirm || e.cfg.Web.AutoConfirm,
+		e.cellEpisodeOrigin(node, claim))
 	if err != nil {
 		return nil, err
 	}

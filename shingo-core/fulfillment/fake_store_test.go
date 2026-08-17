@@ -97,6 +97,11 @@ func (f *fakeStore) ListAcquiringOrders() ([]*orders.Order, error) {
 	return f.queued, nil
 }
 
+// OrderOwnsNoCargo: the fake has no child rows, so every order in it is an
+// ordinary one. False is the honest answer for this fixture and it is also the
+// value that preserves every existing guard's behaviour.
+func (f *fakeStore) OrderOwnsNoCargo(int64) (bool, error) { return false, nil }
+
 func (f *fakeStore) GetOrder(id int64) (*orders.Order, error) {
 	if f.errGetOrder != nil {
 		return nil, f.errGetOrder

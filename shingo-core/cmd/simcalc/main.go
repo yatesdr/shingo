@@ -109,6 +109,7 @@ func main() {
 	edgePath := flag.String("edge", "shingo-edge/shingoedge.dev.yaml", "path to the edge sim config YAML")
 	solve := flag.Bool("solve", false, "derive balanced tick rates instead of checking the configured ones")
 	fleet := flag.Bool("fleet", false, "estimate the AMR fleet the plant's swap cadence needs (robot estimator)")
+	carriers := flag.Bool("carriers", false, "check the empty-bin pool and shuffle headroom (deadlock check)")
 	lineRate := flag.Float64("line-rate", 6.0, "solve: anchor rate (parts/min) for line/cell processes")
 	transit := flag.String("transit", "", "solve/fleet: robot transit per move (e.g. 15m). fleet defaults to 10m")
 	util := flag.Float64("util", 0.75, "fleet: target robot utilization (0..1); headroom for queueing + empty travel")
@@ -132,6 +133,12 @@ func main() {
 
 	if *fleet {
 		runFleet(plant, rate, *transit, *util, *plantPath)
+		return
+	}
+	if *carriers {
+		runCarriers(plant, rate, *transit, *plantPath,
+			capacityPerMin(edge.Sim.Operators.LoaderAutoLoad),
+			capacityPerMin(edge.Sim.Operators.UnloaderAutoClear))
 		return
 	}
 	flows := walkClaims(plant, rate, avail)

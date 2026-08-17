@@ -39,6 +39,16 @@ var ErrBinTaken = errors.New("bin taken by another order")
 // exactly this — the two doors disagreed about what kind of failure a typo is.
 var ErrNodeNotFound = errors.New("node not found")
 
+// HardReleaseOrder advances a dwelling order past its wait regardless of who
+// owns that wait — the Core operator's escape hatch (W3).
+//
+// It is the engine's thin door onto Dispatcher.HardReleaseStagedOrder, which is
+// where the reasoning and the audit live. Same shape and same protected route
+// group as TerminateOrder: an engineer has decided, and the row records who.
+func (e *Engine) HardReleaseOrder(orderID int64, actor string) error {
+	return e.dispatcher.HardReleaseStagedOrder(orderID, actor)
+}
+
 // TerminateOrder cancels an order, unclaims any payloads, and emits a cancellation event.
 func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 	order, err := e.db.GetOrder(orderID)
@@ -52,10 +62,24 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 		return fmt.Errorf("cannot terminate order in status %q", order.Status)
 	}
 
-	// Route through lifecycle.CancelOrder for atomic transition + emit.
-	// CancelOrder also cancels the vendor leg if active (no need to call
-	// e.fleet.CancelOrder separately).
-	e.dispatcher.Lifecycle().CancelOrder(order, order.StationID, "cancelled by "+actor)
+	// ── THE UI DOOR CASCADES NOW, LIKE THE WIRE DOOR ─────────────────────────
+	//
+	// This was a bare Lifecycle().CancelOrder. It transitions the order and emits,
+	// and that is ALL it does — so cancelling a compound parent from the
+	// operations page left its children RUNNING: live vendor orders driving
+	// robots, bins still claimed, and a lane still held by a parent that no
+	// longer exists. The wire door (HandleOrderCancel) has cascaded
+	// unconditionally since a Queued parent was found orphaning its legs; the UI
+	// door was never given the same treatment, and the two are indistinguishable
+	// from the operator's side — the same button, in their mind, on a different
+	// page.
+	//
+	// CancelOrderWithCascade is the shared door: lane snapshot first, parent
+	// cancel, then the children, then the lane release and the wake. It is
+	// idempotent for a plain order — ListChildOrders returns nothing and the loop
+	// no-ops — so routing every cancel through it costs one SELECT and removes a
+	// whole class of "why is this robot still moving".
+	e.dispatcher.CancelOrderWithCascade(order, order.StationID, "cancelled by "+actor)
 	return nil
 }
 

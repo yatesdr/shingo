@@ -10,17 +10,37 @@ import (
 // Use NewFailingBackend() for tests that expect fleet errors, or
 // NewSuccessBackend() for tests that need successful fleet operations.
 type MockBackend struct {
-	fail       bool
-	orders     map[string]fleet.TransportOrderResult
-	createReqs []fleet.CreateOrderRequest
-	cancelled  []string
-	onCreate   func()
+	fail        bool
+	orders      map[string]fleet.TransportOrderResult
+	createReqs  []fleet.CreateOrderRequest
+	cancelled   []string
+	onCreate    func()
+	releaseReqs []ReleaseCall
+}
+
+// ReleaseCall is one captured append against a live (unsealed) order — the
+// /addBlocks half of the staged lifecycle. Complete records whether the append
+// SEALED the order.
+type ReleaseCall struct {
+	VendorOrderID string
+	Blocks        []fleet.OrderBlock
+	Complete      bool
 }
 
 // CancelRequests returns the vendor order ids passed to CancelOrder, in call
 // order. Needed to assert the orphan-mission guard actually cancels the fleet
 // order it just created when the status write is refused (dispatcher.go).
 func (m *MockBackend) CancelRequests() []string { return m.cancelled }
+
+// SetFail flips the backend between refusing and accepting, mid-test.
+//
+// NewFailingBackend / NewSuccessBackend fix the answer at construction, which is
+// enough for a test that asserts a refusal. It is not enough for one that
+// asserts RECOVERY from a refusal — "the fleet was busy and then it was not" is
+// a sequence, and a backend that can only hold one answer can only prove half of
+// it. A refusal test that stops at the refusal is green while the demand is dead
+// forever, which is the failure being fixed.
+func (m *MockBackend) SetFail(fail bool) { m.fail = fail }
 
 // SetOnCreate installs a hook that runs INSIDE CreateOrder, after the request
 // is recorded and before it returns. The fleet call is where real time passes
@@ -37,9 +57,20 @@ func (m *MockBackend) SetOnCreate(fn func()) { m.onCreate = fn }
 // distinguishes the no-wait (Complete=true) and staged (Complete=false) lifecycles.
 func (m *MockBackend) CreateRequests() []fleet.CreateOrderRequest { return m.createReqs }
 
+// ReleaseCalls returns the appends seen by ReleaseOrder, in call order. The
+// create/append PAIR is what a staged lifecycle has to be asserted on: a lane-gate
+// order that created unsealed but never appended is a robot dwelling forever, and
+// only this capture can tell that apart from one whose tail went out.
+func (m *MockBackend) ReleaseCalls() []ReleaseCall { return m.releaseReqs }
+
 // NewFailingBackend returns a MockBackend where all operations return errors.
+//
+// It allocates the same recording map the success constructor does, so SetFail
+// can turn it into a working backend mid-test. Without that, a failing backend
+// was permanently failing by accident rather than by choice: CreateOrder's
+// success arm writes to `orders`, and a nil map panics on write.
 func NewFailingBackend() *MockBackend {
-	return &MockBackend{fail: true}
+	return &MockBackend{fail: true, orders: make(map[string]fleet.TransportOrderResult)}
 }
 
 // NewSuccessBackend returns a MockBackend where all operations succeed
@@ -102,6 +133,11 @@ func (m *MockBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlo
 	if m.fail {
 		return fmt.Errorf("mock: not connected")
 	}
+	m.releaseReqs = append(m.releaseReqs, ReleaseCall{
+		VendorOrderID: vendorOrderID,
+		Blocks:        append([]fleet.OrderBlock(nil), blocks...),
+		Complete:      complete,
+	})
 	return nil
 }
 

@@ -15,6 +15,29 @@ func (p *Plant) Validate() error {
 	var errs []string
 	add := func(format string, args ...any) { errs = append(errs, fmt.Sprintf(format, args...)) }
 
+	// ── THE CENSUS AT BIRTH (§R.78) ───────────────────────────────────────
+	//
+	// A seed that ships pre-fragmented, or with no room to dig in, is a defect
+	// in the spec and not a condition of the plant — see census.go for what the
+	// rig cost before anything asked.
+	//
+	// A FROZEN BASELINE REPORTS INSTEAD OF REFUSING, and the findings are still
+	// printed in full. A spec that a published measurement was taken on cannot be
+	// corrected without invalidating the measurement, so the honest handling is to
+	// say exactly what is wrong with it and let it run — not to fall silent, which
+	// would let the defects be forgotten, and not to refuse, which would delete
+	// the comparison the number exists for.
+	if census := p.CensusAtBirth(); !census.Clean() {
+		if p.BaselineFrozenAt != "" {
+			for _, f := range census.Findings() {
+				fmt.Printf("plantspec: KNOWN SEED DEFECT (frozen as a baseline by %s, not corrected on "+
+					"purpose): %s\n", p.BaselineFrozenAt, f)
+			}
+		} else {
+			errs = append(errs, census.Findings()...)
+		}
+	}
+
 	if strings.TrimSpace(p.Namespace) == "" {
 		add("namespace is required")
 	}

@@ -312,7 +312,7 @@ func TestCheckDropoffCapacity(t *testing.T) {
 			if blocked != tc.wantBlocked {
 				t.Errorf("CheckDropoffCapacity blocked = %v, want %v (cause=%q)", blocked, tc.wantBlocked, block.Cause)
 			}
-			if tc.wantCause != "" && block.Cause != tc.wantCause {
+			if tc.wantCause != "" && string(block.Cause) != tc.wantCause {
 				t.Errorf("cause = %q, want %q", block.Cause, tc.wantCause)
 			}
 			// A blocked result always carries a cause and pins the destination; a

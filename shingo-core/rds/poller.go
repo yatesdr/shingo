@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -51,7 +52,19 @@ type Poller struct {
 	graceDuration   time.Duration
 	stopChan        chan struct{}
 	stopOnce        sync.Once
+	// doneChan closes when run() returns, which is what makes Stop
+	// synchronous. started gates the wait: Stop is documented as safe
+	// before Start, and waiting on a loop that was never launched would
+	// block forever.
+	doneChan chan struct{}
+	started  atomic.Bool
 }
+
+// stopDrainLimit bounds how long Stop waits for an in-flight poll to finish.
+// It is a safety net, not a timeout anyone should hit: a poll is bounded by
+// the HTTP client's own timeout per order, and the interval is seconds. If it
+// IS hit, a poll is wedged and Stop returning is better than hanging forever.
+const stopDrainLimit = 30 * time.Second
 
 func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, interval time.Duration, graceDuration ...time.Duration) *Poller {
 	// Fallback only — production passes cfg.RDS.FaultGrace. Kept in step
@@ -71,6 +84,7 @@ func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, 
 		faultedDeadline: make(map[string]time.Time),
 		graceDuration:   gd,
 		stopChan:        make(chan struct{}),
+		doneChan:        make(chan struct{}),
 	}
 }
 
@@ -120,14 +134,37 @@ func (p *Poller) SetGraceDuration(d time.Duration) {
 }
 
 func (p *Poller) Start() {
+	p.started.Store(true)
 	go p.run()
 }
 
+// Stop halts polling and WAITS FOR THE LOOP TO EXIT before returning. After it
+// returns, no further poll can begin and none is in flight.
+//
+// SYNCHRONOUS BECAUSE "STOPPED" SHOULD MEAN STOPPED. Asynchronously, Stop only
+// asked: the loop returned at its own pace and a poll already running carried
+// on to completion, so a caller had no way to know when the polling actually
+// ceased. TestPollerStopHaltsPolling asserted exactly that property against a
+// 30ms wall-clock window, and failed about one run in eight on a loaded box —
+// the test was right and the contract was wrong.
+//
+// Safe to call before Start, and safe to call twice: stopOnce guards the close,
+// and started gates the wait so a loop that never launched is never waited on.
 func (p *Poller) Stop() {
 	p.stopOnce.Do(func() { close(p.stopChan) })
+	if !p.started.Load() {
+		return
+	}
+	select {
+	case <-p.doneChan:
+	case <-time.After(stopDrainLimit):
+	}
 }
 
 func (p *Poller) run() {
+	// Closing this is what lets Stop know the loop is finished. Deferred, so
+	// it happens on every return path including a panic.
+	defer close(p.doneChan)
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 
@@ -136,6 +173,23 @@ func (p *Poller) run() {
 		case <-p.stopChan:
 			return
 		case <-ticker.C:
+			// STOP WINS OVER A TICK THAT ARRIVED AT THE SAME MOMENT. A select
+			// with two ready cases picks uniformly at random, so the outer
+			// select alone gives a stopped poller a coin-flip chance of
+			// polling once more on every tick — and it keeps flipping for as
+			// long as ticks keep arriving, so "one last poll" is the expected
+			// case rather than the bound. TestPollerStopHaltsPolling caught
+			// this at roughly one run in six, reporting two and three polls
+			// after Stop, not one.
+			//
+			// Re-checking here stops a NEW poll from starting once Stop has been
+			// asked for. Stop then waits for this loop to return, so between the
+			// two, nothing is polling by the time Stop returns.
+			select {
+			case <-p.stopChan:
+				return
+			default:
+			}
 			p.poll()
 		}
 	}

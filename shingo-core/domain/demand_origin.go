@@ -6,7 +6,11 @@
 
 package domain
 
-import "time"
+import (
+	"time"
+
+	"shingo/protocol"
+)
 
 // DemandOrigin is one demand episode: a continuous period during which a
 // specific place needed material.
@@ -61,7 +65,13 @@ type DemandOrigin struct {
 	Revision   int64
 	EpisodeKey string
 	Kind       string
-	Direction  string
+	// Direction holds the cell's ROLE — produce or consume, the claim's own two
+	// values. It held "supply"/"evacuate", a second vocabulary for the same fact,
+	// and migration 87 rewrote the stored rows. Typed so a reader cannot compare
+	// it against a word that no longer exists. Empty for the kinds with no cell
+	// behind them. The COLUMN keeps the name `direction`; renaming it on both
+	// services is a cosmetic follow-on, deliberately not bundled here.
+	Direction  protocol.ClaimRole
 	Trigger    string
 	TriggerRef string
 	StationID  string

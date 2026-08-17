@@ -125,12 +125,54 @@ CREATE TABLE IF NOT EXISTS orders (
     -- origins buried in there. Only 'orphan' is a finding.
     origin_id       UUID,
     origin_class    TEXT NOT NULL DEFAULT '',
+    -- SEALEDNESS, on the compound parent. sealed = NOT open_for_children --
+    -- "sealed" is the concept's name everywhere else (SealDigGroup, the work
+    -- order, section 10.1, section 15.6) and this is the column that carries
+    -- it, so a grep for "sealed" lands here.
+    --
+    -- Named for the EXCEPTION so the safe state is the zero value in both
+    -- languages: false here and false for a bare orders.Order literal in Go,
+    -- and both mean sealed. A "sealed BOOLEAN DEFAULT TRUE" column would have
+    -- had the DB reading safe and the Go zero value reading OPEN, so the
+    -- dangerous value would be the one you get by forgetting.
+    --
+    -- Only a compound parent means anything by it. A reshuffle that may still
+    -- gain children is not finished when its current children are all
+    -- terminal, and "all children terminal" is what two readers use to decide
+    -- a reshuffle is DONE (AdvanceCompoundOrder's success arm and
+    -- AdvanceStuckReshuffleParents). Under the fold that state is the normal
+    -- one BETWEEN moves.
+    open_for_children BOOLEAN NOT NULL DEFAULT false,
     -- When an order was judged an orphan. A timestamp rather than a fourth
     -- origin_class, so aging records WHEN a judgement was made without
     -- overwriting WHAT the judgement was. Added by migration 61 and present at
     -- both plants; it was missing from this constant, so a fresh install
     -- carried the column only after migrations ran.
-    orphan_aged_at  TIMESTAMPTZ
+    orphan_aged_at  TIMESTAMPTZ,
+    -- WHEN THE STORE-SLOT SELECTOR CHOSE THIS ORDER'S DESTINATION, at intake.
+    --
+    -- Written only by admitOrder, only when resolveSyntheticDestination actually
+    -- rewrote a group into a concrete slot. NULL means the destination was not
+    -- chosen at intake -- either it was named concretely by the sender, or the
+    -- group was full and planMove resolves it at dispatch instead.
+    --
+    -- IT EXISTS FOR ONE READER: the burial shadow's tripwire
+    -- (service/burial_shadow.go). That instrument has to tell "a placement
+    -- skipped the guard" from "the guard was consulted and the world moved
+    -- afterwards", and the only honest way to do it is to know WHEN the guard
+    -- looked. It had been comparing against the fleet-commit time instead, on
+    -- the assumption that choosing a destination and dispatching to it are the
+    -- same moment. They are not: intake resolves BEFORE the order row exists,
+    -- and the commit can follow minutes later when the order queues behind
+    -- capacity. Every claim landing in that gap was reported as a GUARD BYPASS
+    -- -- a should-be-zero tripwire accusing correct code, which is how an alarm
+    -- earns the right to be ignored.
+    --
+    -- NULLABLE, AND THE FALLBACK IS THE OLD BEHAVIOUR. An order without a stamp
+    -- is judged against fleet-commit exactly as before, so the column can be
+    -- absent, unwritten, or new without the tripwire changing its mind about
+    -- anything it can already decide.
+    destination_resolved_at TIMESTAMPTZ
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
 -- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every
@@ -142,17 +184,26 @@ CREATE TABLE IF NOT EXISTS orders (
 -- from a hand-applied index; this constant declared the plain one, so a fresh
 -- install built a database the plants did not match.
 --
--- The restore- exemption (migration 73) is TEMPORARY and has a stated expiry.
--- "restore-<parentID>-<binID>" is the synthetic restore parent's edge_uuid, and
--- it is not decoration: that parent sets no parent_order_id, so the string is
--- parsed back to rebuild the link to its complex parent. It cannot be minted
--- without deleting the link, and a re-restore of the same parent and bin
--- legitimately repeats it. When refactor-phase1 deletes the put-back subsystem
--- the format goes with it -- drop the exemption then and restore the plain
--- predicate. (Compound children USED to need an exemption too; they now mint a
--- real UUID instead, which is why only one prefix is listed here.)
+-- The restore- exemption is RETIRED. It read
+--     AND edge_uuid NOT LIKE 'restore-%'
+-- and it outlived the thing it existed for: "restore-<parentID>-<binID>" was the
+-- synthetic restore parent's edge_uuid, parsed back to rebuild the link to its
+-- complex parent, and both the format and the put-back subsystem that minted it
+-- are gone (v70 dropped pending_restocks; migration 89 dropped the exemption).
+-- UUID means UUID for every order now — compound children mint a real one.
+--
+-- IT WAS LEFT HERE, WHICH MADE THIS CONSTANT THE ONE COPY OUT OF THREE THAT
+-- STILL CLAIMED THE EXEMPTION. Migration 89's own comment says the plain
+-- predicate "is what the schema snapshot and postgres_ddl.go declare" — true of
+-- schema.snapshot.sql:1321, false here until this edit. The baseline runs ahead
+-- of the versioned migrations on every startup, so a fresh install built the
+-- exempting index from this constant and then had v89 DROP and rebuild it; the
+-- end state converged, which is exactly why nothing caught the disagreement.
+-- What it cost was the constant's standing as the answer to "what shape is this
+-- index" -- two live declarations of one index, and the next reader believing
+-- whichever they opened first.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid)
-    WHERE edge_uuid <> '' AND edge_uuid NOT LIKE 'restore-%';
+    WHERE edge_uuid <> '';
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_vendor ON orders(vendor_order_id);
 CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node);

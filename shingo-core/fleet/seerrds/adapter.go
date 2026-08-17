@@ -123,21 +123,52 @@ func (a *Adapter) IsTerminalState(vendorState string) bool {
 	return IsTerminalState(vendorState)
 }
 
+// ReleaseOrder appends blocks to a staged RDS order, pinned to the robot that
+// is already on it.
+//
+// ── THE VEHICLE READ IS A REFUSAL POINT, NOT A HINT ───────────────────────
+//
+// This used to read `GetOrderDetails` and, when the read errored OR reported no
+// robot, append anyway with an empty pin. That is the production twin of the
+// simulator's never-issued shrug (§R.98 stage A1): a read that did not answer
+// was degraded into an answer, and the append went out blind. GetOrderDetails
+// is also how RDS says "I have no such order" — it returns an error for an
+// empty response body — so the mission-does-not-exist case arrived here too and
+// was swallowed with everything else.
+//
+// Appending BLOCKS is handing work to a specific robot. Two facts have to hold
+// and each gets its own refusal: the read has to answer, and the answer has to
+// name a robot. Neither one is inferred from the other's silence.
+//
+// A pure MARK-COMPLETE (no blocks, complete=true — the no-wait complex path
+// signalling "nothing further is coming") is a different call wearing the same
+// method. It hands nobody any work, so there is nothing to pin and no robot to
+// insist on; it fires microseconds after /setOrder, before RDS can plausibly
+// have assigned one. It does not read, and it does not refuse.
 func (a *Adapter) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock, complete bool) error {
 	rdsBlocks := make([]rds.Block, len(blocks))
 	for i, b := range blocks {
 		rdsBlocks[i] = rds.Block{BlockID: b.BlockID, Location: b.Location, BinTask: b.BinTask}
 	}
 
-	// Pin the vehicle that's already assigned to the staged order so RDS
-	// doesn't re-dispatch to a different robot when adding post-wait blocks.
-	var vehicle string
-	if detail, err := a.client.GetOrderDetails(vendorOrderID); err == nil && detail.Vehicle != "" {
-		vehicle = detail.Vehicle
-		log.Printf("adapter: release pinning vehicle %s for order %s", vehicle, vendorOrderID)
+	if len(rdsBlocks) == 0 {
+		return a.client.AddBlocks(vendorOrderID, rdsBlocks, complete, "")
 	}
 
-	return a.client.AddBlocks(vendorOrderID, rdsBlocks, complete, vehicle)
+	detail, err := a.client.GetOrderDetails(vendorOrderID)
+	if err != nil {
+		return fmt.Errorf("release %s: the vehicle read did not answer, refusing to append %d blocks blind: %w",
+			vendorOrderID, len(rdsBlocks), err)
+	}
+	if detail.Vehicle == "" {
+		return fmt.Errorf("release %s: RDS holds the order but names no assigned vehicle; refusing to append %d blocks with no robot to pin them to",
+			vendorOrderID, len(rdsBlocks))
+	}
+
+	// Pin the vehicle that's already assigned to the staged order so RDS
+	// doesn't re-dispatch to a different robot when adding post-wait blocks.
+	log.Printf("adapter: release pinning vehicle %s for order %s", detail.Vehicle, vendorOrderID)
+	return a.client.AddBlocks(vendorOrderID, rdsBlocks, complete, detail.Vehicle)
 }
 
 func (a *Adapter) Reconfigure(cfg fleet.ReconfigureParams) {

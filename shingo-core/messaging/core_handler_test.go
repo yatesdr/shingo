@@ -19,9 +19,11 @@ import (
 
 type countingBackend struct {
 	cancels int
+	creates int
 }
 
 func (m *countingBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.TransportOrderResult, error) {
+	m.creates++
 	return fleet.TransportOrderResult{}, fmt.Errorf("mock: not connected")
 }
 func (m *countingBackend) CancelOrder(vendorOrderID string) error {
@@ -51,6 +53,7 @@ func (noopEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason
 }
 func (noopEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID string)           {}
 func (noopEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string) {}
+func (noopEmitter) EmitOrderResumed(orderID int64, edgeUUID, stationID string)             {}
 func (noopEmitter) ProjectOrder(stationID string, projection protocol.OrderProjection)     {}
 
 func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
@@ -61,18 +64,20 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(line), "create line node")
 	testutil.MustNoErr(t, db.CreateNode(dest), "create destination node")
 
+	// PRE-DISPATCH, and that is now the only redirectable state — mid-transit
+	// redirect is circuit-broken at the handler (dispatch/dispatcher.go), so a
+	// dispatched order would be refused and this test would be measuring the
+	// refusal rather than the dedup it is named for.
 	order := &orders.Order{
-		EdgeUUID:      "uuid-redir",
-		StationID:     "edge.1",
-		OrderType:     dispatch.OrderTypeMove,
-		Status:        dispatch.StatusDispatched,
-		Quantity:      1,
-		SourceNode:    line.Name,
-		DeliveryNode:  line.Name,
-		VendorOrderID: "vendor-1",
+		EdgeUUID:     "uuid-redir",
+		StationID:    "edge.1",
+		OrderType:    dispatch.OrderTypeMove,
+		Status:       dispatch.StatusQueued,
+		Quantity:     1,
+		SourceNode:   line.Name,
+		DeliveryNode: line.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderVendor(order.ID, "vendor-1", "CREATED", ""), "persist vendor order")
 	backend := &countingBackend{}
 	dispatcher := dispatch.NewDispatcher(db, backend, noopEmitter{}, "core", "dispatch", nil)
 	handler := NewCoreHandler(db, nil, "core", "dispatch", dispatcher)
@@ -92,8 +97,13 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 	dispatchOnce()
 	dispatchOnce()
 
-	if backend.cancels != 1 {
-		t.Fatalf("expected redirect cancel to run once, got %d", backend.cancels)
+	// The observable is the fleet CREATE, not a cancel: a pre-dispatch redirect has
+	// no live vendor order to terminate. Two identical envelopes, one create.
+	if backend.creates != 1 {
+		t.Fatalf("expected the redirect to reach the fleet once, got %d creates", backend.creates)
+	}
+	if backend.cancels != 0 {
+		t.Fatalf("a pre-dispatch redirect must terminate nothing, got %d cancels", backend.cancels)
 	}
 	got, err := db.GetOrder(order.ID)
 	if err != nil {

@@ -49,6 +49,25 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	LEFT JOIN nodes n ON n.id = b.node_id
 	LEFT JOIN payloads p ON p.code = b.payload_code`
 
+// SourceableStatusSQL is the SQL twin of domain.BinStatus.Sourceable: the set of
+// statuses a bin may be picked up from. One rule in two languages —
+// TestSourceableStatus_GoSQLAgree evaluates every enum constant plus an off-spec
+// value against both and fails if they part, so adding a status forces both sides
+// to be updated together.
+//
+// ALLOW-LIST for the same reason the Go side is: the status column carries no
+// CHECK constraint, so a value outside the enum is representable and must not be
+// sourceable by default.
+//
+// A reader that must be STRICTER composes on top of this rather than restating the
+// whole rule — the full-source and empty-source queries additionally exclude
+// 'staged' so a plant-wide scan cannot take a bin an operator is working at:
+//
+//	SourceableStatusSQL + ` AND b.status <> 'staged'`
+//
+// Assumes the bins table is aliased `b`, as BinJoinQuery establishes.
+const SourceableStatusSQL = `b.status IN ('available','staged')`
+
 // PayloadBinTypeAdvisoryClause enforces payload_bin_types as an advisory
 // allow-list: when the table has rules for the payload, only matching bin
 // types are eligible; when no rules exist for the payload, any bin type
@@ -81,15 +100,18 @@ const PayloadBinTypeAdvisoryClause = `
 //
 // Empties are fungible — which physical empty fills an order doesn't matter, so
 // the planner should grab the one that costs the least to extract:
-//  1. accessible slots first — a slot is accessible when nothing shallower in
-//     its lane is occupied (mirrors nodes.IsSlotAccessible exactly: no parent or
-//     no depth ⇒ accessible; otherwise no occupied sibling at a smaller depth);
+//  1. accessible slots first — nodes.ReachableSQL, the one definition of "no
+//     occupied slot sits strictly shallower in the same lane". This used to be
+//     an inline copy annotated "mirrors nodes.IsSlotAccessible exactly", which
+//     is the kind of claim a comment cannot keep;
 //  2. then shallowest depth — a lane-mouth empty beats one a row deeper;
 //  3. then bin id — a stable tiebreak.
 //
 // Before 2026-06-13 these queries ordered by bin id alone (lane-blind FIFO), so
 // the planner routinely picked a buried empty and then reactively reshuffled the
-// bins on top of it (planning_service.go IsSlotAccessible → planBuriedReshuffle).
+// bins on top of it — the post-find buried check in source_finder.go's tier 6,
+// which routes to planBuriedReshuffleAtIntake. (This cited planning_service.go
+// until 2026-08-04; the check moved onto the finder and the citation did not.)
 // Ordering accessibility first means an accessible empty is always preferred and
 // a reshuffle happens only when EVERY compatible empty is buried — the lane mouth
 // is emptied before anything gets dug out. The reshuffle path stays as the
@@ -97,12 +119,17 @@ const PayloadBinTypeAdvisoryClause = `
 //
 // The accessibility subquery is uncorrelated to query params (it references the
 // candidate's own node columns), so it does not shift caller placeholder numbers.
-const AccessibleEmptyOrder = `
-	ORDER BY (n.parent_id IS NULL OR n.depth IS NULL OR NOT EXISTS (
-	             SELECT 1 FROM nodes sib JOIN bins bb ON bb.node_id = sib.id
-	             WHERE sib.parent_id = n.parent_id AND sib.id != n.id
-	               AND sib.depth IS NOT NULL AND sib.depth < n.depth
-	         )) DESC,
+//
+// The two escape hatches ahead of it are kept verbatim. ReachableSQL already
+// answers true for a slot with no parent (the correlation yields no rows) and
+// for one with no depth (its own IS NOT NULL guard), so they are redundant —
+// but this is the only spelling that carried them in SQL rather than in Go, and
+// deleting them here would make a reader hunt for where the null cases went.
+//
+// A var rather than a const now, since it is composed at init. Every caller
+// interpolates it with fmt.Sprintf, so nothing needed a constant.
+var AccessibleEmptyOrder = `
+	ORDER BY (n.parent_id IS NULL OR n.depth IS NULL OR ` + helpers.ReachableSQL("n") + `) DESC,
 	         COALESCE(n.depth, 0) ASC,
 	         b.id ASC
 	LIMIT 1`
@@ -281,18 +308,38 @@ func ListByClaim(db *sql.DB, orderID int64) ([]*Bin, error) {
 	return scanBins(rows)
 }
 
-// ListAnomalousTransitBins returns bins parked at the synthetic
-// _TRANSIT node with no live order claim. This is the binary anomaly
-// signal under bin-transit-state Phase 5 — a bin physically in flight
-// (or stuck at _TRANSIT) whose owning order has terminated, so it
-// needs operator recovery to be reassigned to a real node.
+// ListAnomalousTransitBins returns bins parked on a SYNTHETIC node with no live
+// order claim. This is the binary anomaly signal under bin-transit-state Phase 5
+// — a bin that is not anywhere physical and that no order owns, so it needs
+// operator recovery to be reassigned to a real node.
 //
 // Filters claimed_by IS NULL because a healthy in-flight bin has
 // claimed_by set to its order (only the failure path clears the
-// claim). Filters by node name "_TRANSIT" rather than ID so the query
-// is robust against fresh-DB ID drift.
+// claim).
+//
+// The name is now narrower than what it returns — _TRANSIT is the commonest of
+// these, not the only one. It is left alone here rather than renamed across its
+// callers in a batch about something else; the widening is the load-bearing part
+// and the doc says what it does.
+// ── WHY IT IS EVERY SYNTHETIC NODE, NOT JUST _TRANSIT ─────────────────────
+// It filtered on the name `_TRANSIT` alone, which made a whole shape of stray
+// invisible: a bin recorded on a DIFFERENT synthetic node — a node group or a
+// lane root — unclaimed, with no anomaly stamp. Nothing lists it, no floor
+// covers it, and no selector will hand it out, because a bin belongs in a
+// concrete slot and a group is not somewhere a bin can physically be. Observed
+// on the rig as bin 37 at SYN_COMP, sitting unowned and unseen for a whole run
+// while the page beside it showed one row.
+//
+// The widening is small by measurement, not by hope: on a healthy lane-stress
+// run the non-_TRANSIT synthetic population was ONE bin, so this surfaces a real
+// stray rather than flooding the operator with legitimate rows.
+//
+// anomaly_at is NOT required. Requiring it would re-hide exactly this shape —
+// the stamp is written by the paths that KNOW they stranded something, and a bin
+// nobody stamped is the one nobody noticed. Ordering still puts stamped rows
+// first (NULLS LAST) so the diagnosed ones read at the top.
 func ListAnomalousTransitBins(db *sql.DB) ([]*Bin, error) {
-	rows, err := db.Query(fmt.Sprintf(`%s WHERE b.claimed_by IS NULL AND n.name = '_TRANSIT' AND b.status != 'retired' ORDER BY b.anomaly_at NULLS LAST, b.id`, BinJoinQuery))
+	rows, err := db.Query(fmt.Sprintf(`%s WHERE b.claimed_by IS NULL AND n.is_synthetic AND b.status != 'retired' ORDER BY b.anomaly_at NULLS LAST, b.id`, BinJoinQuery))
 	if err != nil {
 		return nil, err
 	}
@@ -542,7 +589,7 @@ func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, exclude
 			SELECT n2.id FROM nodes n2 JOIN descendants d ON n2.parent_id = d.id
 		)
 		%s
-		WHERE b.status = 'available'
+		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.node_id IS NOT NULL
@@ -565,7 +612,7 @@ func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID i
 	}
 	if preferZone != "" {
 		row := db.QueryRow(fmt.Sprintf(`%s
-			WHERE b.status = 'available'
+			WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 			  AND b.claimed_by IS NULL
 			  AND b.locked = false
 			  AND b.node_id IS NOT NULL
@@ -582,7 +629,7 @@ func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID i
 		}
 	}
 	row := db.QueryRow(fmt.Sprintf(`%s
-		WHERE b.status = 'available'
+		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.node_id IS NOT NULL
@@ -604,7 +651,7 @@ func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, exc
 			SELECT n2.id FROM nodes n2 JOIN descendants d ON n2.parent_id = d.id
 		)
 		%s
-		WHERE b.status = 'available'
+		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.node_id IS NOT NULL
@@ -621,7 +668,7 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 	// Zone-preferred query
 	if preferZone != "" {
 		row := db.QueryRow(fmt.Sprintf(`%s
-			WHERE b.status = 'available'
+			WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 			  AND b.claimed_by IS NULL
 			  AND b.locked = false
 			  AND b.node_id IS NOT NULL
@@ -642,7 +689,7 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 	}
 	// Any zone fallback
 	row := db.QueryRow(fmt.Sprintf(`%s
-		WHERE b.status = 'available'
+		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.node_id IS NOT NULL

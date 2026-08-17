@@ -35,8 +35,6 @@ func (e *Engine) Start() {
 		e.cfg.Messaging.DispatchTopic,
 		resolver,
 	)
-	// Share the lane lock between dispatcher and resolver
-	resolver.LaneLock = e.dispatcher.LaneLock()
 
 	// Initialize tracker if backend supports it
 	if tb, ok := e.fleet.(fleet.TrackingBackend); ok {
@@ -76,24 +74,13 @@ func (e *Engine) Start() {
 	// Load active vendor orders into tracker
 	e.loadActiveOrders()
 
-	// Recover pending restore-blockers listeners from the
-	// pending_restocks table (v7). The in-memory restoreRegistry is
-	// volatile; without this a Core restart between unbury completion
-	// and bin pickup would strand blockers in shuffle slots forever.
-	// Errors are logged but non-fatal — fresh-install DBs don't yet
-	// have the table and that's fine on the no-restore-needed path.
-	if err := e.dispatcher.RecoverPendingRestocks(); err != nil {
-		e.logFn("engine: recover pending_restocks: %v", err)
-	}
-
-	// Recover pending lane-lock-extension listeners from the
-	// pending_lane_extensions table (post-v7 cleanup). Same shape as
-	// the restore-blockers recovery above — without it a Core restart
-	// during the post-compound / pre-pickup window would lose the
-	// listener and the lane stays held forever (or worse, becomes
-	// orphaned with no listener to release it).
-	if err := e.dispatcher.RecoverPendingLaneExtensions(); err != nil {
-		e.logFn("engine: recover pending_lane_extensions: %v", err)
+	// One-shot: cancel any leftover reshuffle_restore housekeeping orders from
+	// the retired restore-blockers subsystem (blockers lie now). No-op on a clean
+	// DB and idempotent across restarts. Non-fatal.
+	if n, err := e.db.RetireReshuffleRestoreOrders(); err != nil {
+		e.logFn("engine: retire reshuffle_restore orders: %v", err)
+	} else if n > 0 {
+		e.logFn("engine: retired %d leftover reshuffle_restore order(s)", n)
 	}
 
 	// Boot-time reshuffle liveness backstop: re-drive any compound (reshuffle) parent
@@ -122,6 +109,12 @@ func (e *Engine) Start() {
 
 	// Start periodic fulfillment sweep (60s safety net)
 	e.fulfillment.StartPeriodicSweep(60 * time.Second)
+
+	// The lane liveness floor — the same safety net for the two populations the
+	// fulfillment sweep does not cover: robots dwelling at a lane's mark, and
+	// compound legs not yet handed to the fleet. Started beside it because it is
+	// the same shape at the same cadence over a different set (F-22).
+	go e.laneLivenessFloorLoop()
 
 	// Start tracker
 	if e.tracker != nil {
@@ -295,7 +288,41 @@ func (e *Engine) loadActiveOrders() {
 	for _, id := range ids {
 		e.tracker.Track(id)
 	}
-	if len(ids) > 0 {
-		e.logFn("engine: loaded %d active vendor orders into tracker", len(ids))
+	if len(ids) == 0 {
+		return
 	}
+
+	// ── AND ASK THE FLEET WHETHER IT AGREES THESE MISSIONS EXIST ──────────
+	//
+	// Re-registering an order into the tracker is Core saying "I am still
+	// commanding this mission". Nothing has ever checked the other half of that
+	// sentence. Against a real RDS the check is nearly always redundant: it is a
+	// separate durable process and this restart did not touch it. Against the
+	// in-process simulator it is the entire story — the restart emptied the
+	// fleet, and every mission reloaded here is one Core will drive, append to,
+	// and wait on forever, against nobody.
+	//
+	// One measured window was read as a §R.91 regression on exactly this. The
+	// line below is what would have said so in the first thirty seconds.
+	//
+	// It reports and does nothing else. Not knowing where a robot is has never
+	// been grounds for terminating an order and is not grounds now (§R.98,
+	// refused 4/4) — the fix for a mission the fleet has lost is upstream, in
+	// the backends that now refuse to append to one.
+	missing := 0
+	if reg, ok := e.fleet.(fleet.MissionRegistry); ok {
+		for _, id := range ids {
+			if !reg.HasOrder(id) {
+				missing++
+				e.logFn("engine: !! vendor order %s was reloaded into the tracker but %s does not hold it — Core is commanding a mission that does not exist",
+					id, e.fleet.Name())
+			}
+		}
+	}
+	if missing > 0 {
+		e.logFn("engine: !! loaded %d active vendor orders into tracker and %s knows about %d of them — %d mission(s) are Core's alone",
+			len(ids), e.fleet.Name(), len(ids)-missing, missing)
+		return
+	}
+	e.logFn("engine: loaded %d active vendor orders into tracker", len(ids))
 }

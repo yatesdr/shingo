@@ -3,11 +3,14 @@ package binresolver
 import (
 	"errors"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
 
 // ErrBuried indicates the target bin exists but is blocked by shallower bins.
@@ -59,7 +62,6 @@ const (
 // fake and avoid database fixtures.
 type GroupResolver struct {
 	DB       Store
-	LaneLock *LaneLock
 	DebugLog func(string, ...any)
 }
 
@@ -87,10 +89,15 @@ func (r *GroupResolver) getGroupAlgorithm(groupID int64, key, defaultVal string)
 }
 
 // ResolveRetrieve finds the best accessible bin across all lanes and direct children.
-func (r *GroupResolver) ResolveRetrieve(group *nodes.Node, payloadCode string) (*ResolveResult, error) {
+//
+// asker is the order this resolution is for. It is what keeps a dig from
+// hiding a lane from the order the dig was RUN for — pass reservations.Anyone
+// only when there is genuinely no order behind the call, which reproduces the
+// owner-blind behaviour this parameter was added to end.
+func (r *GroupResolver) ResolveRetrieve(group *nodes.Node, payloadCode string, asker reservations.DigAsker) (*ResolveResult, error) {
 	algo := r.getGroupAlgorithm(group.ID, "retrieve_algorithm", RetrieveFIFO)
 	strategy := retrieveStrategies[algo]
-	return r.scanForBestBin(group, payloadCode, strategy)
+	return r.scanForBestBin(group, payloadCode, strategy, asker)
 }
 
 // retrieveStrategy controls how a retrieve algorithm scores accessible bins,
@@ -142,9 +149,6 @@ func checkOldestBuried(r *GroupResolver, children []*nodes.Node, payloadCode str
 		if !child.Enabled || child.NodeTypeCode != protocol.NodeClassLANE {
 			continue
 		}
-		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
-			continue
-		}
 		buried, slot, err := r.DB.FindOldestBuriedBin(child.ID, payloadCode)
 		if err != nil || buried == nil {
 			continue
@@ -166,9 +170,6 @@ func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode
 		if !child.Enabled || child.NodeTypeCode != protocol.NodeClassLANE {
 			continue
 		}
-		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
-			continue
-		}
 		buried, slot, err := r.DB.FindBuriedBin(child.ID, payloadCode)
 		if err == nil && buried != nil {
 			return buried, slot, child.ID
@@ -180,8 +181,8 @@ func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode
 // scanForBestBin is the shared scanner for all retrieve algorithms. It iterates
 // child nodes, finds accessible bins, optionally probes for buried bins, and
 // delegates the algorithm-specific decisions to the strategy.
-func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s retrieveStrategy) (*ResolveResult, error) {
-	children, err := r.DB.ListChildNodes(group.ID)
+func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s retrieveStrategy, asker reservations.DigAsker) (*ResolveResult, error) {
+	children, err := r.DB.ListChildNodesUnlocked(group.ID, asker)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
@@ -196,10 +197,6 @@ func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s 
 		}
 
 		if child.NodeTypeCode == protocol.NodeClassLANE {
-			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
-				continue
-			}
-
 			b, err := r.DB.FindSourceBinInLane(child.ID, payloadCode)
 			if err != nil {
 				r.dbg("%s: FindSourceBinInLane lane=%s: %v", s.label, child.Name, err)
@@ -257,7 +254,7 @@ func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s 
 		return &ResolveResult{Node: bestNode, Bin: bestBin}, nil
 	}
 
-	return nil, r.classifyEmptyGroup(group, children, payloadCode)
+	return nil, r.classifyEmptyGroup(group, payloadCode)
 }
 
 // binTimestamp returns the effective timestamp for a bin (LoadedAt if set, else CreatedAt).
@@ -278,8 +275,25 @@ func binTimestamp(b *bins.Bin) time.Time {
 //
 // On any DB error during classification, returns transient.
 func (r *GroupResolver) classifyEmptyGroup(
-	group *nodes.Node, children []*nodes.Node, payloadCode string,
+	group *nodes.Node, payloadCode string,
 ) error {
+	// Reads the UNFILTERED children on purpose. The scan above walks
+	// ListChildNodesUnlocked, which drops dig-held lanes in the query — but a
+	// dig-held lane is still a CONFIGURED lane, and this helper answers a
+	// configuration question. Classifying off the filtered set would make a
+	// group whose only lane is mid-dig report "no enabled child nodes", i.e.
+	// StructuralError, i.e. TERMINAL: a dig would kill every order aimed at that
+	// group instead of making them wait. The golden suite caught exactly that.
+	//
+	// The extra read costs nothing where it sits. This runs only after
+	// resolution has already failed to find anything, and the payload-capability
+	// loop below already issues a query per child.
+	children, err := r.DB.ListChildNodes(group.ID)
+	if err != nil {
+		r.dbg("classifyEmptyGroup: ListChildNodes(%d) error: %v, defaulting to transient", group.ID, err)
+		return fmt.Errorf("no bin of requested payload in node group %s", group.Name)
+	}
+
 	hasEnabled := false
 	for _, child := range children {
 		if child.Enabled {
@@ -333,22 +347,33 @@ func (r *GroupResolver) classifyEmptyGroup(
 }
 
 // ResolveStore finds the best slot for storing a bin in a node group.
-func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
 	algo := r.getGroupAlgorithm(group.ID, "store_algorithm", StoreLKND)
 	switch algo {
 	case StoreDPTH:
-		return r.resolveStoreDPTH(group, payloadCode, binTypeID)
+		return r.resolveStoreDPTH(group, payloadCode, binTypeID, asker)
 	default:
-		return r.resolveStoreLKND(group, payloadCode, binTypeID)
+		return r.resolveStoreLKND(group, payloadCode, binTypeID, asker)
 	}
 }
 
 // resolveStoreLKND consolidates matching payload codes first, then picks the emptiest slot.
-func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
-	children, err := r.DB.ListChildNodes(group.ID)
+func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
+	// Lanes that had a usable slot and were refused by the burial guard. Kept so
+	// a group that comes up empty can say whether it is FULL or merely CLOSED —
+	// two conditions with the same disposition (walk on) and completely different
+	// diagnoses. See noteClosedLanes.
+	var closedByClaim []string
+	children, err := r.DB.ListChildNodesUnlocked(group.ID, asker)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
+
+	// Resolve-around (§13.3), off by default: only when the group enables it does
+	// the ranker consult each lane's mouth. Read once — a no-op group read when
+	// unset, and no per-lane mouth query happens at all when off, so the off path
+	// is byte-identical.
+	resolveAround := r.DB.GetNodeProperty(group.ID, PropResolveAround) == "on"
 
 	var candidates []storageCandidate
 
@@ -358,10 +383,6 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 		}
 
 		if child.NodeTypeCode == protocol.NodeClassLANE {
-			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
-				continue
-			}
-
 			// Skip lanes with payload restrictions that don't match
 			if payloadCode != "" {
 				lanePayloads, _ := r.DB.GetEffectivePayloads(child.ID)
@@ -388,8 +409,11 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 
 			slot, err := r.DB.FindStoreSlotInLane(child.ID)
 			if err != nil {
+				if errors.Is(err, nodes.ErrLaneClosedByClaim) {
+					closedByClaim = append(closedByClaim, child.Name)
+				}
 				r.dbg("LKND: FindStoreSlotInLane lane=%s: %v", child.Name, err)
-				continue // lane is full
+				continue // lane is full, or closed to stores by a claim
 			}
 
 			count, _ := r.DB.CountBinsInLane(child.ID)
@@ -411,7 +435,19 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 				}
 			}
 
-			candidates = append(candidates, storageCandidate{node: slot, hasMatch: hasMatch, count: count, depth: nodeDepth(child)})
+			// Resolve-around consults the lane's mouth only when the arm is on.
+			// A read error is non-fatal — treat the lane as compatible (the arm is
+			// opportunistic, never load-bearing; the mouth gate still arbitrates).
+			laneCompatible := false
+			if resolveAround {
+				ok, cErr := r.DB.LaneAcceptsInbound(child.ID)
+				if cErr != nil {
+					r.dbg("LKND: LaneAcceptsInbound lane=%s: %v", child.Name, cErr)
+				}
+				laneCompatible = cErr != nil || ok
+			}
+
+			candidates = append(candidates, storageCandidate{node: slot, hasMatch: hasMatch, count: count, depth: nodeDepth(child), laneCompatible: laneCompatible})
 		} else if !child.IsSynthetic {
 			if child.ClaimedBy != nil {
 				continue // slot already claimed by another order's dispatch
@@ -449,6 +485,7 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 	}
 
 	if len(candidates) == 0 {
+		r.noteClosedLanes(group, closedByClaim)
 		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
 	}
 
@@ -456,8 +493,11 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 }
 
 // resolveStoreDPTH packs back-to-front regardless of payload. Prefers lanes over direct children.
-func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
-	children, err := r.DB.ListChildNodes(group.ID)
+func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
+	// See resolveStoreLKND: lanes the burial guard refused, for the diagnosis on
+	// the empty-group path.
+	var closedByClaim []string
+	children, err := r.DB.ListChildNodesUnlocked(group.ID, asker)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
@@ -465,9 +505,6 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 	// First pass: try lanes (deepest empty slot)
 	for _, child := range children {
 		if !child.Enabled || child.NodeTypeCode != protocol.NodeClassLANE {
-			continue
-		}
-		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
 			continue
 		}
 
@@ -497,8 +534,11 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 
 		slot, err := r.DB.FindStoreSlotInLane(child.ID)
 		if err != nil {
+			if errors.Is(err, nodes.ErrLaneClosedByClaim) {
+				closedByClaim = append(closedByClaim, child.Name)
+			}
 			r.dbg("DPTH: FindStoreSlotInLane lane=%s: %v", child.Name, err)
-			continue // lane is full
+			continue // lane is full, or closed to stores by a claim
 		}
 		return &ResolveResult{Node: slot}, nil
 	}
@@ -530,7 +570,35 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 		}
 	}
 
+	r.noteClosedLanes(group, closedByClaim)
 	return nil, fmt.Errorf("no available slot in node group %s", group.Name)
+}
+
+// noteClosedLanes reports a group that came up empty with at least one lane
+// refused by the burial guard rather than genuinely full.
+//
+// LOUD, and only on the whole-group failure. A single closed lane is a non-event
+// — the scan walks to a sibling and the store lands — so per-lane logging would
+// be noise at dispatch volume. A group where every lane is either full or closed
+// is the condition that actually costs something: the store parks, and it parks
+// for as long as the claims last.
+//
+// The message stays out of the returned error deliberately. The queue-reason
+// classifier reads that message by substring and takes the group name as
+// everything after "node group " to end of string (dispatch/complex.go), so any
+// suffix here would surface inside the operator sentence as part of the group's
+// name. The park keeps its existing shape; this line is the engineer-facing half.
+//
+// Repeats per resolution attempt, which for a parked store means per scanner
+// tick. That is intended: a single line is a lane doing its job, and a stream of
+// them is the signal — sustained closure means the claims are not clearing, which
+// is a stalled robot or a stalled dig, and that is the incident to chase.
+func (r *GroupResolver) noteClosedLanes(group *nodes.Node, closed []string) {
+	if len(closed) == 0 {
+		return
+	}
+	log.Printf("store slot: node group %s has no free slot; %d lane(s) closed to stores by a claimed bin deeper in them: %s",
+		group.Name, len(closed), strings.Join(closed, ", "))
 }
 
 // binTypeAllowed checks whether a bin type is permitted at a node via effective bin types.

@@ -13,6 +13,8 @@ package processes
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"log"
 	"strings"
 
 	"shingoedge/domain"
@@ -236,12 +238,79 @@ func GetNode(db *sql.DB, id int64) (*Node, error) {
 // GetNodeByCoreNodeName returns one process_node row by its
 // core_node_name. Used by the UOP adjustment handler to resolve the
 // target Edge node from a Core-originated adjustment envelope.
+//
+// ── CORE_NODE_NAME IS NOT UNIQUE HERE, AND THIS USED TO PRETEND IT WAS ────
+//
+// A core node name is plant-unique on CORE (nodes.name is TEXT NOT NULL
+// UNIQUE). It is NOT unique in process_nodes: one physical slot can be named by
+// several processes — a shared loader window is the ordinary case, and the
+// manual_swap scoping note in operator_bin_ops calls it out in as many words
+// ("a shared node has many process_node rows for one slot").
+//
+// This was a bare QueryRow, which takes whatever row the engine hands back
+// first. With no ORDER BY that is not merely unscoped, it is UNSTABLE: the same
+// question can answer differently across restarts, index changes or a VACUUM,
+// and every caller believed it had THE node. Six callers, all of them resolving
+// a Core-originated name to an Edge row — a UOP adjustment, a bin-epoch
+// refresh, two loader demand paths, the order projection, and the delivered
+// fallback. An adjustment applied to the wrong process's row is a count written
+// to the wrong slot.
+//
+// ── WHY IT IS NOT SCOPED BY PROCESS INSTEAD ───────────────────────────────
+//
+// Because none of the six callers HAS a process to scope by. They are handed a
+// Core node name and the process is the thing they are trying to learn; a
+// process parameter would have to be invented at each site, which is guessing
+// wearing a signature. The honest fix for a lookup whose key is not unique is
+// to be deterministic about the answer and LOUD about the ambiguity.
+//
+// So: lowest id wins, stably, and a match count above one is reported with the
+// processes named. The disposition is unchanged — every caller still gets a
+// node — because turning this into an error would stop UOP tracking on a shared
+// loader, which is a working configuration. What changes is that the ambiguity
+// stops being invisible.
 func GetNodeByCoreNodeName(db *sql.DB, coreNodeName string) (*Node, error) {
-	n, err := scanNode(db.QueryRow(`SELECT `+nodeSelect+` `+nodeJoin+` WHERE n.core_node_name=?`, coreNodeName))
+	rows, err := db.Query(`SELECT `+nodeSelect+` `+nodeJoin+
+		` WHERE n.core_node_name=? ORDER BY n.id`, coreNodeName)
 	if err != nil {
 		return nil, err
 	}
-	return &n, nil
+	defer rows.Close()
+
+	var (
+		first     *Node
+		processes []string
+	)
+	for rows.Next() {
+		n, serr := scanNode(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		if first == nil {
+			node := n
+			first = &node
+		}
+		processes = append(processes, fmt.Sprintf("process=%d node=%s", n.ProcessID, n.Name))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if first == nil {
+		// sql.ErrNoRows, preserved: resolveProjectionNode and the delivered
+		// fallback both branch on it, and both treat it as the ordinary "we do
+		// not own this destination" answer rather than a fault.
+		return nil, sql.ErrNoRows
+	}
+	if len(processes) > 1 {
+		log.Printf("WARN: core node %q maps to %d process_node rows (%s) — resolving to the lowest "+
+			"id, which is STABLE but arbitrary. This lookup has no process to scope by; every "+
+			"caller is turning a Core-originated name into an Edge row. If the rows belong to "+
+			"different processes, whichever answer this gives, some caller is getting a node it "+
+			"did not mean — a UOP adjustment applied here is a count written to one process's slot "+
+			"on behalf of another's.",
+			coreNodeName, len(processes), strings.Join(processes, "; "))
+	}
+	return first, nil
 }
 
 // CreateNode inserts a process_node row, generating the code and

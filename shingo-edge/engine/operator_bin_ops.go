@@ -34,21 +34,35 @@ import (
 // is today — the same posture operator_stations and operator_produce take, for
 // the reason stated there: a wrong class here is indistinguishable from a real
 // answer, so say nothing and let Core classify.
-func (e *Engine) operatorRequestOrigin(node *processes.Node, claim *processes.NodeClaim, direction string, remaining int) ordermgr.Origin {
+// ── AND IT NO LONGER TAKES A DIRECTION ────────────────────────────────────
+//
+// It used to, and both callers passed the SUPPLY spelling. That was right for
+// RequestFullBin, whose claim is guarded to consume. It was WRONG for
+// RequestEmptyBin, whose claim is guarded to produce (`only produce nodes
+// request empty bins`) — so a produce cell asking for an empty opened a second
+// episode in the consume vocabulary, alongside the one FinalizeProduceNode opens
+// for the very same cell and payload. One cell, one circle, two open episodes,
+// and neither could see the other's orders.
+//
+// Under §R.87 that is the defect, not the labelling: the episode IS the circle,
+// and a produce cell's circle is empty in, fill, full out. Taking the role off
+// the claim collapses those two rows into the one episode that was always meant
+// to be there, and removes the parameter a caller could get wrong.
+func (e *Engine) operatorRequestOrigin(node *processes.Node, claim *processes.NodeClaim, remaining int) ordermgr.Origin {
 	// Discretionary means the operator asked while still above the reorder
 	// point — a pull they chose rather than one the level forced. Same
 	// predicate as the produce and station paths so the flag means one thing.
 	discretionary := claim != nil && claim.ReorderPoint > 0 && remaining > claim.ReorderPoint
 
 	originID, _, err := e.openCellEpisode(
-		node.ProcessID, claim, direction,
+		node.ProcessID, claim,
 		protocol.EpisodeTriggerOperator,
 		1, // one press, one order
 		remaining,
 		discretionary,
 	)
 	if err != nil {
-		e.logFn("demand_episode: open %s episode for operator request node=%s: %v", direction, node.Name, err)
+		e.logFn("demand_episode: open episode for operator request node=%s: %v", node.Name, err)
 	}
 	if originID == "" {
 		return ordermgr.Origin{}
@@ -239,20 +253,21 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 		}
 	}
-	if claim.OutboundDestination != "" {
-		// L2 to OutboundDestination is unattended (supermarket node) — must
-		// auto-confirm or it sticks at `delivered` forever. See the same
-		// reasoning in handleLoaderEmptyInCompletion. Thread the operator-
-		// selected payloadCode through so the order tile in operator-station
-		// renders IN_TRANSIT against the correct payload card (claim's
-		// primary payload would mis-bind on multi-payload loaders).
-		order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, node.CoreNodeName, claim.OutboundDestination, payloadCode, true)
-		if err != nil {
-			log.Printf("manual_swap: move to outbound for node %s: %v", node.Name, err)
-		} else {
-			if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
-				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
-			}
+	// L2 to OutboundDestination is unattended (supermarket node) — must
+	// auto-confirm or it sticks at `delivered` forever. See the same reasoning in
+	// applyLoaderEmptyIn. Thread the operator-selected payloadCode through so the
+	// order tile in operator-station renders IN_TRANSIT against the correct
+	// payload card (claim's primary payload would mis-bind on multi-payload
+	// loaders).
+	//
+	// THROUGH THE SHARED GUARD. "No L1 in flight" is a question about a moment;
+	// whether this slot already owes an outbound move is a question about the
+	// world, and only the second one is safe to create an order on. Two callers
+	// racing this branch and applyLoaderEmptyIn is what doubled every outbound
+	// move on the lane-stress rig — see loader_outbound_guard.go.
+	if orderID, created := e.createLoaderOutbound(nodeID, node.CoreNodeName, claim.OutboundDestination, payloadCode, "load-fallback"); created {
+		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil); err != nil {
+			log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
 		}
 	}
 
@@ -498,7 +513,10 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 		return
 	}
 	nodeID := node.ID
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, node.CoreNodeName, outbound, payloadCode, true)
+	// NoDemand: the side-cycle's empty-out is the system's own consequence of a
+	// clear, not a demand anybody expressed.
+	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, node.CoreNodeName, outbound, payloadCode, true,
+		ordermgr.NoDemand())
 	if err != nil {
 		e.logFn("side-cycle: create U2 (empty-out) for unloader %s: %v", node.Name, err)
 		return
@@ -534,7 +552,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 
 	// The operator asking for an empty IS the demand. Open (or join) the cell
 	// episode before creating anything so the order can name what caused it.
-	reqOrigin := e.operatorRequestOrigin(node, claim, protocol.EpisodeDirectionSupply, runtime.RemainingUOPCached)
+	reqOrigin := e.operatorRequestOrigin(node, claim, runtime.RemainingUOPCached)
 
 	// Payload handling splits by mode:
 	//
@@ -595,7 +613,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		n, rerr := e.withLoaderBudget(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), true, func(deliveryNodes []string) (int, error) {
 			made := 0
 			for _, deliveryNode := range deliveryNodes {
-				order, cerr := e.orderMgr.CreateRetrieveOrderWithOrigin(
+				order, cerr := e.orderMgr.CreateRetrieveOrder(
 					&nodeID, true, 1, deliveryNode, dl.InboundSource(), "",
 					"standard", payloadCode, false, true, reqOrigin,
 				)
@@ -666,13 +684,20 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 					return nil, err
 				}
 			}
-			orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", ordermgr.Origin{})
+			// reqOrigin, not Origin{}. The episode was opened at the top of this
+			// method precisely so the orders it creates could name what caused
+			// them, and then the multi-step arm dropped it on the floor while the
+			// manual_swap arm four screens up carried it. Both legs of one swap
+			// belong to the operator's one request: an R2 that names no demand is
+			// an orphan by construction, and a service dig raised for it cannot
+			// look up who is collecting its target.
+			orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", reqOrigin)
 			if err != nil {
 				return nil, err
 			}
 			var orderB *orders.Order
 			if dispatch.StepsB != nil {
-				orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, ordermgr.Origin{})
+				orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, reqOrigin)
 				if err != nil {
 					return nil, err
 				}
@@ -705,7 +730,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// payload-matching empty bin from anywhere — including the empty-tote
 	// return area (Hopkinsville, 2026-05-14, Mission #51 pulled SMN_07
 	// instead of from Supermarket Area).
-	order, err := e.orderMgr.CreateRetrieveOrderWithOrigin(
+	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, true, 1, node.CoreNodeName, claim.InboundSource, "",
 		"standard", payloadCode, autoConfirm, skipAutoConfirm, reqOrigin,
 	)
@@ -742,7 +767,7 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 
 	// Same for a full-carrier request on the consume side: the press asking to
 	// be fed is cell demand, and it had no episode either.
-	reqOrigin := e.operatorRequestOrigin(node, claim, protocol.EpisodeDirectionSupply, runtime.RemainingUOPCached)
+	reqOrigin := e.operatorRequestOrigin(node, claim, runtime.RemainingUOPCached)
 
 	// Validate payload code against the loader's Core-owned payload set — same
 	// aggregate-first resolution as the produce side (see loadablePayloads), so a
@@ -787,7 +812,7 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	n, rerr := e.withLoaderBudget(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), false, func(deliveryNodes []string) (int, error) {
 		made := 0
 		for _, deliveryNode := range deliveryNodes {
-			order, cerr := e.orderMgr.CreateRetrieveOrderWithOrigin(
+			order, cerr := e.orderMgr.CreateRetrieveOrder(
 				&nodeID, false, 1, deliveryNode, claim.InboundSource, "",
 				"standard", payloadCode, autoConfirm, true, reqOrigin,
 			)

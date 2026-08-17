@@ -105,9 +105,43 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 			return false, ""
 		}
 		if len(claimed) > 0 {
-			return false, "" // supply secured a replacement — release the hold
+			return false, "" // supply is holding a replacement right now — release
 		}
-		return true, "swap: holding removal leg until supply sibling claims a bin"
+		// ── AND A SUPPLY THAT HAS ALREADY DELIVERED ITS REPLACEMENT COUNTS ──
+		//
+		// "Secured" was tested as "holds a claim NOW", and those agree only until
+		// the supply STAGES its replacement: the store unclaims the bin, the claim
+		// disappears, and this arm held the evac forever waiting for a claim that
+		// had already done its job. Delivered is a STRONGER form of secured than
+		// in-hand, and it read as weaker.
+		//
+		// The deadlock, live on the rig 2026-08-11: ASSY two_robot, orders 21 and
+		// 22. The supply picked an empty at LSC_020, dropped it at staging SLN_002,
+		// released its claim, and drove on toward the line — where it could not
+		// place, because the line still held the old bin. The evac that would have
+		// removed that bin was held here, on "supply sibling claims a bin", against
+		// a supply holding zero claims. Each waited for the other; AMR-05 stood
+		// still; WELD-1 stopped producing ASSY; the panel loop stopped consuming
+		// and drained SYN_STAMP's carriers to zero. One predicate, eight wedged
+		// orders.
+		//
+		// swapLegCommittedToFleet solved exactly this for the MIRROR direction and
+		// says so in its own doc — "read from dispatch state, NOT a live claim, so
+		// the hold releases correctly even after the clearer completes and drops
+		// its claim". This arm never got the same treatment. It does now, through
+		// the same predicate, so the two directions cannot drift.
+		//
+		// Committing to the fleet is a safe threshold rather than an optimistic
+		// one: a complex order claims its source bins BEFORE the fleet create
+		// (acquireComplexSources → confirmComplexPlan → dispatchComplexToFleet), so
+		// `dispatched` already implies a replacement was claimed. The acquiring
+		// states it is held FROM read as not-committed, which is the case the guard
+		// was written for (ALN_003, 2026-06-03: never pull the line bin while the
+		// supermarket might be empty).
+		if swapLegCommittedToFleet(sib) {
+			return false, "" // supply already secured and staged/delivered it — release
+		}
+		return true, "swap: holding removal leg until supply sibling secures a bin"
 	}
 
 	// INDEX anti-collision: a leg that drops a bin onto the line waits until its
@@ -137,9 +171,27 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 		// (one-way RDS handoff), so dispatch-time admission is the only lever.
 		//
 		// Terminal-SUCCESS is not this case: a confirmed evac did clear the line and
-		// is released by swapClearerCommitted below. swapTerminalKind is non-empty
+		// is released by swapLegCommittedToFleet below. swapTerminalKind is non-empty
 		// only for skipped/failed/cancelled.
-		if swapTerminalKind(sib.Status) != "" {
+		if kind := swapTerminalKind(sib.Status); kind != "" {
+			// A SKIPPED clearer is MOOT, not dead, and the difference is the whole
+			// point of this hold. The guard exists because a clearer that died never
+			// cleared the line, so its resident bin is still sitting there and this
+			// filler must not drive onto it. A clearer is skipped for the opposite
+			// reason: it found NO bin to clear. The line is empty, there is nothing
+			// to collide with, and this filler is the thing that should put a carrier
+			// back on it.
+			//
+			// HandleSwapPeerTerminal has always said exactly this — "a moot (skipped)
+			// evac is a clean no-op — the line's resident was already gone, so the
+			// supply proceeds" — and this arm contradicted it. The peer handler let
+			// the filler go and the hold caught it again on the next scan, so the
+			// filler sat queued with a reason describing a death that had not
+			// happened. Observed the moment the moot narrowing started skipping these
+			// evacs at all: order 64 skipped, order 65 held on it indefinitely.
+			if kind == SwapTerminalSkipped {
+				return false, ""
+			}
 			return true, "swap: holding filler — clearer sibling died without clearing the line"
 		}
 		sibSteps, ok := decodeSteps(sib.StepsJSON)
@@ -148,7 +200,7 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 			// an unreadable peer) — its evac sibling is held on us; do not mutual-hold.
 			return false, ""
 		}
-		if swapClearerCommitted(sib) {
+		if swapLegCommittedToFleet(sib) {
 			return false, "" // evac is committed to clearing the line — release
 		}
 		return true, "swap: holding index leg until evac sibling clears the line"
@@ -157,19 +209,63 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 	return false, ""
 }
 
-// swapClearerCommitted reports whether the evac/clearer sibling has committed to
-// the fleet and will clear the shared line position — it holds a vendor order and
-// is en route or done, so the fleet manager can sequence the filler's dropoff
-// after the clearer's pickup (and peer-death handling covers a post-dispatch
-// fault). Read from dispatch state, NOT a live claim, so the hold releases
-// correctly even after the clearer completes and drops its claim. The acquiring
-// states (queued/sourcing) it is held FROM and the failure states where it will
-// not clear the line both read as not-committed; a faulted clearer may recover,
-// so the filler stays held.
-func swapClearerCommitted(sib *orders.Order) bool {
+// swapLegCommittedToFleet reports whether a swap sibling has committed to the
+// fleet — it holds a vendor order and is en route or done.
+//
+// ── ONE PREDICATE, BOTH DIRECTIONS, AND THAT IS THE POINT ─────────────────
+//
+// Read from dispatch state, NOT a live claim, so a hold releases correctly even
+// after the sibling completes its part and drops its claim. Both swap holds need
+// exactly that:
+//
+//	CLEARER  the filler waits until the evac is committed to clearing the shared
+//	         line position, so the fleet can sequence the drop after the pickup.
+//	SUPPLY   the evac waits until the supply is committed to fetching a
+//	         replacement, so the line cannot strand (ALN_003, 2026-06-03).
+//
+// The supply side used to test a LIVE CLAIM instead, and deadlocked the moment
+// the supply staged its replacement and the store unclaimed the bin — see the
+// call site. Sharing the predicate is what stops the two directions drifting
+// again.
+//
+// The acquiring states (queued/sourcing) a leg is held FROM read as
+// not-committed, and so do the failure states where it will not do its part; a
+// faulted sibling may recover, so the held leg stays held.
+//
+// ── RESHUFFLING IS AN EXPLICIT ARM, AND IT WAS CORRECT BY ACCIDENT ────────
+//
+// A leg waiting on a dig wears `reshuffling`. It landed in `default` and read as
+// NOT COMMITTED, which is the right answer — it fails both halves of what this
+// predicate means: it holds no vendor order, and it is not en route. But the
+// paragraph above enumerates the not-committed cases as "acquiring" and
+// "failure", and `reshuffling` is neither. Nothing recorded the decision because
+// nobody had made one.
+//
+// That is a live hazard rather than a tidiness point. The plausible mistake is
+// specific and someone will make it: a leg in `reshuffling` is visibly DOING
+// something — robots are moving, blockers are being carried out — so adding it
+// to the committed list reads as a correction. It is not. Committed means
+// committed TO THIS SWAP'S OWN WORK, and a leg mid-dig has not started that
+// work; releasing its partner early is the line clearing with no replacement
+// coming, which is ALN_003 (2026-06-03), the incident the supply-side hold
+// exists for.
+//
+// IT IS ABOUT TO MATTER MUCH MORE. Under §R.91 the demand that raises a dig
+// BECOMES the dig's parent and wears `reshuffling` while it runs — so a swap leg
+// in `reshuffling` goes from a state this predicate never really saw to an
+// ordinary one. Round 2 flagged it for exactly that reason: settle it before the
+// unification arrives and finds it undecided.
+//
+// Written as its own arm rather than folded into `default` so that a future
+// editor has to delete a paragraph to get the answer wrong, instead of adding a
+// constant to a list.
+func swapLegCommittedToFleet(sib *orders.Order) bool {
 	switch sib.Status {
 	case StatusDispatched, StatusInTransit, StatusStaged, StatusDelivered, StatusConfirmed:
 		return true
+	case StatusReshuffling:
+		// Mid-dig. No vendor order, not en route: the partner keeps waiting.
+		return false
 	default:
 		return false
 	}

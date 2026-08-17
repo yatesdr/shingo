@@ -12,10 +12,6 @@ func (db *DB) AppendAudit(entityType string, entityID int64, action, oldValue, n
 	return audit.Append(db.DB, entityType, entityID, action, oldValue, newValue, actor)
 }
 
-func (db *DB) ListAuditLog(limit int) ([]*audit.Entry, error) {
-	return audit.List(db.DB, limit)
-}
-
 func (db *DB) ListEntityAudit(entityType string, entityID int64) ([]*audit.Entry, error) {
 	return audit.ListForEntity(db.DB, entityType, entityID)
 }

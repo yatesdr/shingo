@@ -36,9 +36,20 @@ func TestEpisodeKeyFormats_ArePinned(t *testing.T) {
 			want: "thr|SLN_002|74577-6SA0A.06",
 		},
 		{
-			name: "cell is keyed on the PROCESS, with direction in the identity — NO station",
-			got:  protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.EpisodeDirectionSupply),
-			want: "cell|SNF2|PANEL-B|supply",
+			// CHANGED DELIBERATELY, and this test is what required it to be
+			// acknowledged: the fourth component was "supply"/"evacuate", a second
+			// vocabulary for the claim's own role, and it is now the role itself.
+			// The migration this failure demanded is v81; the coordinated-deploy
+			// half is that nothing re-parses a stored cell key (Core parses inbound
+			// wire only, Edge parses stored keys only for the changeover kind).
+			name: "cell is keyed on the PROCESS, with the claim's ROLE in the identity — NO station",
+			got:  protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.ClaimRoleConsume),
+			want: "cell|SNF2|PANEL-B|consume",
+		},
+		{
+			name: "and the produce half of the same process is a different key",
+			got:  protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.ClaimRoleProduce),
+			want: "cell|SNF2|PANEL-B|produce",
 		},
 		{
 			name: "changeover is keyed on the changeover row, SCOPED by the station that counted it",
@@ -81,18 +92,18 @@ func TestEpisodeKeys_EveryKindIsParseable(t *testing.T) {
 		},
 		{
 			name: "cell supply",
-			key:  protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.EpisodeDirectionSupply),
+			key:  protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.ClaimRoleConsume),
 			want: protocol.ParsedEpisodeKey{
 				Kind: protocol.EpisodeKindCell, ProcessID: "SNF2",
-				Payload: "PANEL-B", Direction: protocol.EpisodeDirectionSupply,
+				Payload: "PANEL-B", Role: protocol.ClaimRoleConsume,
 			},
 		},
 		{
 			name: "cell evacuate",
-			key:  protocol.CellEpisodeKey("SNF2", "ASSY", protocol.EpisodeDirectionEvacuate),
+			key:  protocol.CellEpisodeKey("SNF2", "ASSY", protocol.ClaimRoleProduce),
 			want: protocol.ParsedEpisodeKey{
 				Kind: protocol.EpisodeKindCell, ProcessID: "SNF2",
-				Payload: "ASSY", Direction: protocol.EpisodeDirectionEvacuate,
+				Payload: "ASSY", Role: protocol.ClaimRoleProduce,
 			},
 		},
 		{
@@ -124,8 +135,8 @@ func TestEpisodeKeys_EveryKindIsParseable(t *testing.T) {
 //     That is the grain rule, and it is what makes an A/B pair's two claims
 //     join one episode instead of minting two for the same need (O8).
 func TestCellEpisodeKey_ProcessGrainAndDirection(t *testing.T) {
-	supply := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.EpisodeDirectionSupply)
-	evac := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.EpisodeDirectionEvacuate)
+	supply := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.ClaimRoleConsume)
+	evac := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.ClaimRoleProduce)
 	if supply == evac {
 		t.Fatal("direction must be part of the identity — in and out are two demands")
 	}
@@ -133,14 +144,14 @@ func TestCellEpisodeKey_ProcessGrainAndDirection(t *testing.T) {
 	// The A/B case: PLN_003 and PLN_004 are two claims on one process for one
 	// payload. Nothing about the node enters the key, so both resolve to the
 	// same episode.
-	a := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.EpisodeDirectionSupply)
-	b := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.EpisodeDirectionSupply)
+	a := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.ClaimRoleConsume)
+	b := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.ClaimRoleConsume)
 	if a != b {
 		t.Fatal("two claims on one process must resolve to ONE episode key")
 	}
 
 	// Different processes are different places.
-	if protocol.CellEpisodeKey("SNF3", "PANEL-B", protocol.EpisodeDirectionSupply) == supply {
+	if protocol.CellEpisodeKey("SNF3", "PANEL-B", protocol.ClaimRoleConsume) == supply {
 		t.Error("two processes must not share an episode")
 	}
 	// TWO STATIONS ARE NOT TWO PLACES — the assertion that used to sit here
@@ -185,8 +196,8 @@ func TestEpisodeKeys_StationScopeByKind(t *testing.T) {
 	})
 
 	t.Run("cell ignores the station — the process name is the grain", func(t *testing.T) {
-		a := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.EpisodeDirectionSupply)
-		b := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.EpisodeDirectionSupply)
+		a := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.ClaimRoleConsume)
+		b := protocol.CellEpisodeKey("SNF2", "PANEL-B", protocol.ClaimRoleConsume)
 		if a != b {
 			t.Fatalf("one process+payload+direction must be one episode: %q vs %q", a, b)
 		}
@@ -221,7 +232,7 @@ func TestEpisodeKeys_KindsDoNotCollide(t *testing.T) {
 	// of the three formats.
 	keys := map[string]string{
 		"threshold":  protocol.ThresholdEpisodeKey("N1", "P"),
-		"cell":       protocol.CellEpisodeKey("P1", "P", protocol.EpisodeDirectionSupply),
+		"cell":       protocol.CellEpisodeKey("P1", "P", protocol.ClaimRoleConsume),
 		"changeover": protocol.ChangeoverEpisodeKey("line-1", 1),
 	}
 	seen := map[string]string{}

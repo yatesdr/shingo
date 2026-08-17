@@ -122,6 +122,10 @@ zones:
       - {name: Lane_22, slots: [{name: UTN_041, depth: 1}, {name: UTN_042, depth: 2}, {name: UTN_043, depth: 3}, {name: UTN_044, depth: 4}]}
       - {name: Lane_23, slots: [{name: UTN_045, depth: 1}, {name: UTN_046, depth: 2}, {name: UTN_047, depth: 3}, {name: UTN_048, depth: 4}]}
       # Extra return-bank capacity for the two new lines (more empties cycling).
+      # THE LAST LANE OF THIS GROUP SEEDS EMPTY, and it is the headroom rule made
+      # literal (§R.78): a group with no free lane cannot conduct an excavation at
+      # all, because a dig has nowhere to stand the blockers it lifts out. This
+      # bank used to seed 56 bins into 56 slots.
       - {name: Lane_42, slots: [{name: UTN_049, depth: 1}, {name: UTN_050, depth: 2}, {name: UTN_051, depth: 3}, {name: UTN_052, depth: 4}]}
       - {name: Lane_43, slots: [{name: UTN_053, depth: 1}, {name: UTN_054, depth: 2}, {name: UTN_055, depth: 3}, {name: UTN_056, depth: 4}]}
   # Dedicated-loader BUFFER (step 7). A FIFO node group that stages empties to rotate into a
@@ -264,14 +268,14 @@ bins:
   - {name: BIN-RH-06, slot: SMN_009, payload: PANEL-RH, uop: 30}
   # --- SYN_SM_Comp source: Lane_06 seeded light (1 BRKT) so the PLK_001 loader's
   # C-push trips within a few minutes instead of after draining a deep buffer ---
-  - {name: BIN-BRKT-01, slot: SMN_016, payload: BRKT, uop: 20}
+  - {name: BIN-BRKT-01, slot: SMN_018, payload: BRKT, uop: 20}
   # De-confounded component supermarkets seeded light (1 bin each) so the loaders' C-push
   # trips quickly: PLK_X1→CLIP→SYN_SM_Clip→WELD-1, PLK_DECK→STUD→SYN_SM_Stud→WELD-3.
-  - {name: BIN-CLIP-01, slot: SMN_041, payload: CLIP, uop: 20}
-  - {name: BIN-STUD-01, slot: SMN_045, payload: STUD, uop: 20}
+  - {name: BIN-CLIP-01, slot: SMN_043, payload: CLIP, uop: 20}
+  - {name: BIN-STUD-01, slot: SMN_047, payload: STUD, uop: 20}
   # New-line panel supermarkets seeded light (1 bin each) so WELD-4/5 have initial runway.
-  - {name: BIN-PC-01,   slot: SMN_049, payload: PANEL-C, uop: 30}
-  - {name: BIN-PD-01,   slot: SMN_052, payload: PANEL-D, uop: 30}
+  - {name: BIN-PC-01,   slot: SMN_051, payload: PANEL-C, uop: 30}
+  - {name: BIN-PD-01,   slot: SMN_054, payload: PANEL-D, uop: 30}
   # --- Active produce bins (empty → fill → swap) ---
   - {name: BIN-ACT-P1F, slot: PLN_001}   # PRESS-1 front (filling)
   - {name: BIN-ACT-P1B, slot: PLN_002}   # PRESS-1 back (staged empty, indexes to front)
@@ -336,10 +340,10 @@ bins:
   - {name: BIN-MT-35, slot: UTN_035}
   - {name: BIN-MT-36, slot: UTN_036}
   # --- Dedicated-loader buffer pre-stage: empties parked in SYN_BUF_Deck (step 7) ---
-  - {name: BIN-MT-37, slot: BUF_001}
-  - {name: BIN-MT-38, slot: BUF_002}
-  - {name: BIN-MT-59, slot: BUF_003}   # +2 prime the buffer loop (PLK_DECK pulls out; UNLOADER-D refills in)
-  - {name: BIN-MT-60, slot: BUF_004}
+  - {name: BIN-MT-37, slot: BUF_006}
+  - {name: BIN-MT-38, slot: BUF_003}
+  - {name: BIN-MT-59, slot: BUF_004}   # +2 prime the buffer loop (PLK_DECK pulls out; UNLOADER-D refills in)
+  - {name: BIN-MT-60, slot: BUF_005}
   # --- Extra empties: headroom for the CLIP + STUD loader loops cycling through the
   # return bank (loader fills an empty → SM → unloader returns the empty here). ---
   - {name: BIN-MT-39, slot: UTN_037}
@@ -358,10 +362,6 @@ bins:
   - {name: BIN-MT-52, slot: UTN_050}
   - {name: BIN-MT-53, slot: UTN_051}
   - {name: BIN-MT-54, slot: UTN_052}
-  - {name: BIN-MT-55, slot: UTN_053}
-  - {name: BIN-MT-56, slot: UTN_054}
-  - {name: BIN-MT-57, slot: UTN_055}
-  - {name: BIN-MT-58, slot: UTN_056}
 
 processes:
   - {name: PRESS-1, active_style: PRESS-1-RUN}        # two_robot_press_index

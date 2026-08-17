@@ -626,6 +626,28 @@ func TestCountByDeliveryNode(t *testing.T) {
 		t.Errorf("CountInFlightByDeliveryNode(LINE1-IN) = %d, want 2", inFlight)
 	}
 
+	// Live is the same status lens as Active (non-terminal), so it agrees at 3
+	// — but the load-bearing distinction is that Live SEES the queued row
+	// InFlight is blind to. That blindness is the whole of Springfield
+	// 2026-08-03: the only guard against re-asking for a carrier was InFlight,
+	// which could not see the orders it had just created because they were still
+	// `queued`, so each evaluation looked like the first and 241 duplicates
+	// piled up. Live includes that queued row. If this ever drifts back to
+	// excluding queued, the dedup in ReplenishLoader stops deduping.
+	live, err := orders.CountLiveByDeliveryNode(db, "LINE1-IN")
+	if err != nil {
+		t.Fatalf("CountLiveByDeliveryNode: %v", err)
+	}
+	if live != 3 {
+		t.Errorf("CountLiveByDeliveryNode(LINE1-IN) = %d, want 3 (includes the queued row InFlight cannot see)", live)
+	}
+	if live != active {
+		t.Errorf("CountLiveByDeliveryNode = %d but CountActiveByDeliveryNode = %d; they share a status lens and must agree", live, active)
+	}
+	if live == inFlight {
+		t.Errorf("Live = InFlight = %d; Live must include queued where InFlight excludes it — this is the dedup contract", live)
+	}
+
 	// Unknown node returns 0, no error.
 	zero, err := orders.CountActiveByDeliveryNode(db, "DOES-NOT-EXIST")
 	if err != nil {
@@ -633,6 +655,73 @@ func TestCountByDeliveryNode(t *testing.T) {
 	}
 	if zero != 0 {
 		t.Errorf("unknown node count = %d, want 0", zero)
+	}
+}
+
+// TestCountLiveByOrigin pins the sizing half of the replenishment bound: a
+// demand episode's OWN live orders, counted by origin. It shares the
+// queued-inclusion contract with CountLiveByDeliveryNode and adds the origin
+// scoping — and the fact that a blank origin matches nothing, which is what
+// keeps an unattributed request from being bounded by someone else's episode.
+func TestCountLiveByOrigin(t *testing.T) {
+	t.Parallel()
+	d := testdb.Open(t)
+	db := d.DB
+
+	const episode = "6f1d3a9c-0b52-4c8e-9a71-2d5f8e0c4b31"
+
+	mk := func(uuid, status, origin string) int64 {
+		o := newPendingOrder(uuid)
+		o.Status = protocol.Status(status)
+		o.DeliveryNode = "LINE1-IN"
+		o.OriginID = origin
+		if err := orders.Create(db, o); err != nil {
+			t.Fatalf("Create %s: %v", uuid, err)
+		}
+		return o.ID
+	}
+	mk("ep-q", "queued", episode)     // this episode, queued — counts
+	mk("ep-d", "dispatched", episode) // this episode, in flight — counts
+	mk("ep-x", "cancelled", episode)  // this episode, terminal — excluded
+	// A different episode and an unattributed order must not count for this one.
+	mk("other", "dispatched", "deadbeef-0000-0000-0000-000000000000") // different episode
+	mk("none", "dispatched", "")                                      // unattributed
+
+	got, err := orders.CountLiveByOrigin(db, episode)
+	if err != nil {
+		t.Fatalf("CountLiveByOrigin: %v", err)
+	}
+	if got != 2 {
+		t.Errorf("CountLiveByOrigin(%s) = %d, want 2 (queued + dispatched, terminal and other-episode excluded)", episode, got)
+	}
+
+	// The queued row MUST count — same contract as the per-node live count, and
+	// the reason the sizing bound can see an outstanding order that has not yet
+	// sourced. Pin it directly so a future "cleanup" cannot reintroduce the
+	// queued exclusion that broke the bound.
+	o := newPendingOrder("ep-q2")
+	o.Status = protocol.StatusQueued
+	o.DeliveryNode = "LINE1-IN"
+	o.OriginID = episode
+	if err := orders.Create(db, o); err != nil {
+		t.Fatalf("Create ep-q2: %v", err)
+	}
+	if got, err := orders.CountLiveByOrigin(db, episode); err != nil {
+		t.Fatalf("CountLiveByOrigin after queued insert: %v", err)
+	} else if got != 3 {
+		t.Errorf("after adding a queued order, CountLiveByOrigin = %d, want 3 — queued must count or the dedup bound is blind to its own orders", got)
+	}
+
+	// An unknown (but well-formed) origin matches nothing: 0, no error. The
+	// empty-string case is deliberately NOT tested here — origin_id is a UUID
+	// column and rejects "" with an ERROR, which is exactly why the caller
+	// (episodeOutstanding) guards the blank case before calling. Pinning the
+	// error at this layer would duplicate that guard; pinning the clean-empty
+	// result on a valid-but-unknown UUID is the contract this function owns.
+	if got, err := orders.CountLiveByOrigin(db, "00000000-0000-0000-0000-000000000000"); err != nil {
+		t.Fatalf("CountLiveByOrigin(unknown): %v", err)
+	} else if got != 0 {
+		t.Errorf("CountLiveByOrigin(unknown UUID) = %d, want 0", got)
 	}
 }
 
@@ -825,6 +914,68 @@ func TestUpdateBinIDAndListByBinID(t *testing.T) {
 }
 
 // -------- Order <-> Bin junction: InsertOrderBin, ListOrderBins, DeleteOrderBins
+
+// TestOrderBinsJunction_ReRecordingAClaimUpdatesInPlace pins the grain the
+// junction always claimed to have and did not enforce.
+//
+// "One row per claimed bin" is what UpdateOrderBinDestNode is written against —
+// it keys on the bin and says so — and what binForStep assumes when it reads the
+// first row matching a step index as if it were the only one. InsertOrderBin was
+// a bare INSERT, so every re-run of an allocation added the same row again.
+//
+// Measured on the lane-stress rig 2026-08-13, during a window in which five
+// demands were stuck in a re-drive loop: 2,472 junction rows for a handful of
+// orders, 450 of them identical for one (order, step, bin). Nothing read a wrong
+// answer — the duplicates were identical and the first match wins — so the cost
+// was writes, unbounded growth for as long as an order stayed stuck, and a table
+// nobody could read during the incident that produced it.
+//
+// THE SECOND HALF IS WHY IT IS AN UPDATE AND NOT DO NOTHING. An allocation that
+// retries after the plan moved carries a NEW step index for the same bin, and
+// DO NOTHING would keep the stale one while reporting success — a junction that
+// disagrees with the plan, which is the one thing binForStep cannot survive.
+func TestOrderBinsJunction_ReRecordingAClaimUpdatesInPlace(t *testing.T) {
+	t.Parallel()
+	d := testdb.Open(t)
+	fx := testdb.SetupStandardData(t, d)
+	db := d.DB
+
+	bin := testdb.CreateBinAtNode(t, d, "PART-A", fx.StorageNode.ID, "BIN-DUP")
+	o := newPendingOrder("junction-dup")
+	o.OrderType = "compound"
+	testutil.MustNoErr(t, orders.Create(db, o), "Create order")
+
+	for i := 0; i < 3; i++ {
+		testutil.MustNoErr(t, orders.InsertOrderBin(db, o.ID, bin.ID, 1, "pick", "STORAGE-A1", ""),
+			"re-record the same claim")
+	}
+	list, err := orders.ListOrderBins(db, o.ID)
+	if err != nil {
+		t.Fatalf("ListOrderBins: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("len = %d after recording one claim three times, want 1. A retried allocation must "+
+			"not grow the junction: on the rig this reached 450 identical rows for a single bin while "+
+			"its order sat stuck", len(list))
+	}
+
+	// AND A MOVED PLAN REWRITES THE ROW rather than being silently dropped.
+	testutil.MustNoErr(t, orders.InsertOrderBin(db, o.ID, bin.ID, 4, "pick", "STORAGE-A2", "LINE1-IN"),
+		"re-record the claim at a new step")
+	list, err = orders.ListOrderBins(db, o.ID)
+	if err != nil {
+		t.Fatalf("ListOrderBins after the re-plan: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("len = %d, want 1", len(list))
+	}
+	if list[0].StepIndex != 4 || list[0].NodeName != "STORAGE-A2" || list[0].DestNode != "LINE1-IN" {
+		t.Errorf("the junction row is (step %d, %s -> %s), want (4, STORAGE-A2 -> LINE1-IN). A "+
+			"conflict that keeps the OLD row leaves the junction disagreeing with the plan, and "+
+			"binForStep would hand the gate a bin for a step that no longer exists",
+			list[0].StepIndex, list[0].NodeName, list[0].DestNode)
+	}
+}
 
 func TestOrderBinsJunction(t *testing.T) {
 	t.Parallel()

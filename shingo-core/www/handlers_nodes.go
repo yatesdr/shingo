@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"shingo/protocol"
+
+	"shingocore/dispatch"
 	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/fleet"
@@ -83,6 +86,126 @@ func (h *Handlers) apiScenePoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.jsonOK(w, points)
+}
+
+// apiSceneMarks is the picker's view of the scene: the labelled points a robot
+// can be told to drive to, slimmed and searchable.
+//
+// WHY NOT /map/points, which already lists them. That endpoint answers the MAP's
+// question — it returns every column including properties_json, the raw vendor
+// property blob, because the map draws from it. A plant's scene carries a lot of
+// location marks, and a picker that has to download every one of them with its
+// property blob attached to show a dropdown is paying for a payload it discards.
+// This returns the four fields a human picks by and nothing else.
+//
+// SEARCH IS SERVER-SIDE and matches the name, the label and the class, because a
+// human looking for a waiting point knows it by whichever of those they were told.
+// The cap is a guard, not paging: a picker showing 200 candidates has already
+// failed at helping, and the honest response to "too many" is to say so and let
+// them type more, not to silently truncate.
+//
+// AN EMPTY SCENE IS NOT AN ERROR. A sim backend with no scene sync, or a plant
+// before its first sync, returns an empty list — and the picker falls back to
+// typed entry, which is also the emergency path when the marks are stale.
+func (h *Handlers) apiSceneMarks(w http.ResponseWriter, r *http.Request) {
+	points, err := h.engine.NodeService().ListScenePoints()
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	type mark struct {
+		Name  string `json:"name"`  // what the fleet is told; the value written to the property
+		Label string `json:"label"` // the human name from the vendor scene, often blank
+		Class string `json:"class"` // LocationMark, ParkPoint, … — the vendor's own class
+		Area  string `json:"area"`
+	}
+
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	const cap = 200
+	out := make([]mark, 0, 32)
+	matched := 0
+	for _, p := range points {
+		if p == nil || p.InstanceName == "" {
+			continue // a point with no name cannot be sent to the fleet
+		}
+		if q != "" && !strings.Contains(strings.ToLower(p.InstanceName), q) &&
+			!strings.Contains(strings.ToLower(p.Label), q) &&
+			!strings.Contains(strings.ToLower(p.ClassName), q) {
+			continue
+		}
+		matched++
+		if len(out) < cap {
+			out = append(out, mark{
+				Name:  p.InstanceName,
+				Label: p.Label,
+				Class: p.ClassName,
+				Area:  p.AreaName,
+			})
+		}
+	}
+
+	h.jsonOK(w, map[string]any{
+		"marks":     out,
+		"matched":   matched,
+		"truncated": matched > len(out),
+	})
+}
+
+// apiLaneWaiting reports how many robots are dwelling at a lane's waiting point.
+//
+// It exists for one sentence in the UI: clearing a lane's mark while robots are
+// waiting at it has to say how many, because that is the difference between an
+// edit and an interruption. The count comes from the evaluator's own derivation
+// (Dispatcher.GateStagedCount), so the number the human is shown is the number
+// the machine is acting on.
+func (h *Handlers) apiLaneWaiting(w http.ResponseWriter, r *http.Request) {
+	laneID, err := strconv.ParseInt(r.URL.Query().Get("lane_id"), 10, 64)
+	if err != nil || laneID == 0 {
+		h.jsonError(w, "lane_id is required", http.StatusBadRequest)
+		return
+	}
+	n, err := h.engine.Dispatcher().GateStagedCount(laneID)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, map[string]any{"waiting": n})
+}
+
+// apiLaneGatePoints lists a group's lanes with the waiting point each one has.
+//
+// One call for the whole section. The alternative — the picker fetching each
+// lane's detail to read one property — is fifteen requests on modal open at the
+// seeded plant and more at a real one, for a value that is one column.
+func (h *Handlers) apiLaneGatePoints(w http.ResponseWriter, r *http.Request) {
+	groupID, err := strconv.ParseInt(r.URL.Query().Get("group_id"), 10, 64)
+	if err != nil || groupID == 0 {
+		h.jsonError(w, "group_id is required", http.StatusBadRequest)
+		return
+	}
+	children, err := h.engine.NodeService().ListChildNodes(groupID)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	type laneGate struct {
+		LaneID int64  `json:"lane_id"`
+		Name   string `json:"name"`
+		Point  string `json:"point"`
+	}
+	out := make([]laneGate, 0, len(children))
+	for _, c := range children {
+		if c == nil || c.NodeTypeCode != protocol.NodeClassLANE {
+			continue
+		}
+		out = append(out, laneGate{
+			LaneID: c.ID,
+			Name:   c.Name,
+			Point:  h.engine.NodeService().GetNodeProperty(c.ID, dispatch.PropLaneGatePoint),
+		})
+	}
+	h.jsonOK(w, map[string]any{"lanes": out})
 }
 
 // apiSceneEdges returns the drivable path segments (advanced curves)
@@ -477,9 +600,27 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node_id and key are required", http.StatusBadRequest)
 		return
 	}
+	// THE OLD VALUE FIRST, because an audit row that cannot say what changed
+	// records that somebody touched something. Best-effort: a read that fails must
+	// not stop the write, it only makes the trail poorer.
+	before := h.engine.NodeService().GetNodeProperty(req.NodeID, req.Key)
+
 	if err := h.engine.NodeService().SetNodeProperty(req.NodeID, req.Key, req.Value); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// AUDITED, and this is where the waiting point earns it. Node properties are
+	// configuration — lane_gate_point decides whether a lane stages robots at all
+	// — and configuration that changes without a trail is the thing nobody can
+	// reconstruct afterwards. Same shape as every other admin write (bin_actions).
+	// Unconditional rather than keyed to the interesting keys: a list of which
+	// properties deserve an audit row is a list that goes stale.
+	if before != req.Value {
+		if err := h.engine.AuditService().Append("node", req.NodeID, "property:"+req.Key,
+			before, req.Value, protocol.AuditActorUI); err != nil {
+			log.Printf("node property set: audit %s on node %d: %v", req.Key, req.NodeID, err)
+		}
 	}
 	h.jsonSuccess(w)
 }

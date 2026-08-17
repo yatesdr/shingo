@@ -146,7 +146,9 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		{"Edge wire intake", "dispatch/lifecycle_service.go", "an Edge station sends an order request"},
 		{"complex intake", "dispatch/complex_intake.go", "an Edge station sends a multi-leg order; the buried branch is this same door"},
 		{"compound children", "dispatch/compound.go", "a reshuffle plan, written as child rows in one transaction"},
-		{"restore synthetic", "dispatch/restore_listeners.go", "Core itself, to parent the put-back compound"},
+		// The "restore synthetic" door that stood here is gone: the restore-blockers
+		// subsystem that minted those parents is retired (no code creates them; the
+		// one-shot boot sweep only cancels leftovers). No order-creation site, no door.
 		// One door, two screens. It was two doors — the operator's orders page
 		// and the engineers' /test-orders page — which had drifted twelve ways
 		// between them, and each difference was a bug waiting its turn. They
@@ -164,6 +166,21 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		//     there is no episode; blank would land it in the bucket that means
 		//     "we lost a demand link".
 		{"bin move", "engine/bin_move.go", "a person moving one bin from where it is to somewhere else — the operator names the bin, the engineer names the node"},
+		// THE LANE SELF-HEAL DOOR IS DELETED (§R.104), and it is not merely moved:
+		// nothing takes its place, because the order it used to create does not
+		// exist. Its entry read "nobody — the lane gate finds a robot dwelling
+		// behind a bin no one is coming for, and digs it out", and its comment
+		// explained that it "mints the parent that OWNS the excavation, because the
+		// dweller cannot: {staged → reshuffling} is not a legal transition and
+		// should not become one, so the demand keeps dwelling and something else
+		// does the digging."
+		//
+		// The dweller can. It owns its excavation without moving at all — no
+		// transition is needed because its resume is the splice-append, not the
+		// queue round-trip. So the excavation's children are written by the
+		// compound door like every other dig's, and this list is one door shorter
+		// rather than one door renamed. The three questions it answered are now
+		// the compound door's, unchanged.
 	}
 
 	// Each named door has to still be there. A door whose site stops writing

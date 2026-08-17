@@ -1,6 +1,10 @@
 package orders
 
-import "shingo/protocol"
+import (
+	"encoding/json"
+
+	"shingo/protocol"
+)
 
 // Order types — aliased to the canonical typed constants in protocol so
 // edge and core agree on the wire shape and Go callers get compile-time
@@ -102,3 +106,56 @@ func IsTerminal(status protocol.Status) bool {
 func ReleasableAtCore(status protocol.Status) bool {
 	return status == StatusStaged || status == StatusInTransit
 }
+
+// StationOwnsWait reports whether the station may advance the wait this order is
+// parked at — read off the plan, not guessed.
+//
+// ── IT USED TO BE UNANSWERABLE FROM HERE ──────────────────────────────────
+//
+// Core's fence refuses a release for a wait only its lane evaluator can advance,
+// and it was right to. But the Edge held no way to tell which kind it had, so
+// the board either offered a button that could not work or offered nothing and
+// explained nothing. The sim operator papered over it with a three-strike retry
+// cap — "most likely a LANE wait, the Edge cannot see that from here" — which
+// converted "pushes Release forever" into "abandons forever", and abandoned
+// three station-owned waits it could have released (§12.49).
+//
+// W1 put the owner on the step, so this is now a read. An untagged wait is the
+// station's for the duration of the drain window — the meaning every pre-ruling
+// plan already had — which keeps old orders releasable while the field spreads.
+//
+// A plan that cannot be parsed, or an order parked at no wait at all, answers
+// FALSE: the board should not offer an action whose effect it cannot predict,
+// and Core's hard release is the escape hatch for anything this refuses.
+func StationOwnsWait(stepsJSON string, waitIndex int) bool {
+	if stepsJSON == "" {
+		return false
+	}
+	var steps []struct {
+		Action   string `json:"action"`
+		WaitKind string `json:"wait_kind"`
+	}
+	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
+		return false
+	}
+	seen := 0
+	for _, s := range steps {
+		if s.Action != protocol.ActionWait {
+			continue
+		}
+		if seen == waitIndex {
+			// "" is the drain window's default: pre-ruling plans carry no kind and
+			// have always been the station's to release.
+			return s.WaitKind == waitKindStation || s.WaitKind == ""
+		}
+		seen++
+	}
+	return false
+}
+
+// waitKindStation mirrors dispatch.WaitKindStation — see the note on the Edge's
+// other copy in engine/material_orders.go. Duplicated because Edge cannot import
+// Core. NOT PINNED: the engine copy is (TestWaitKindStation_MatchesCore), this
+// one is not, and the note that claimed it was named a test that has never
+// existed.
+const waitKindStation = "station"

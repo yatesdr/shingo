@@ -41,6 +41,50 @@ type Plant struct {
 	ReportingPoints  []ReportingPoint `yaml:"reporting_points"`
 	CellConfigs      []CellConfig     `yaml:"cell_configs"`
 	LinesideBuckets  []LinesideBucket `yaml:"lineside_buckets"`
+	// Headroom is the storage-slack rule the census at birth asserts (§R.78).
+	Headroom Headroom `yaml:"headroom,omitempty"`
+	// BaselineFrozenAt names the ruling that froze this spec as a MEASUREMENT
+	// BASELINE, and it is provenance rather than a setting.
+	//
+	// A/B comparisons are only meaningful against an unchanged seed, so a spec
+	// that a published number was measured on cannot be corrected without
+	// invalidating the number. Setting this records that the spec is knowingly
+	// preserved with whatever defects it has, and downgrades the census at birth
+	// from a refusal to a loud report — the findings are still printed in full,
+	// because the point is that they are KNOWN, not that they are acceptable.
+	//
+	// NOT A SETTING TO REACH FOR. A new spec that will not pass the census is a
+	// spec to fix. This exists for seeds that already have numbers attached, and
+	// the value must name the ruling so a reader can go and find out which.
+	BaselineFrozenAt string `yaml:"baseline_frozen_at,omitempty"`
+}
+
+// Headroom is the rule that a storage group must always keep somewhere to dig
+// INTO: a group filled to the brim cannot conduct an excavation at all, because
+// there is nowhere to stand a blocker while the lane is opened.
+//
+// Owner's number (§R.78): one full lane's worth, always free. Eleven lanes of
+// five is fifty-five slots and fifty bins, not fifty-five.
+//
+// It is config rather than a constant because the right slack is a property of a
+// plant's traffic, not of the software, and because a number in a spec is a
+// number somebody can argue with. The DEFAULT is one lane's worth — a spec that
+// says nothing gets the rule, which is the polarity that matters: headroom has
+// to be opted OUT of explicitly, never forgotten into.
+type Headroom struct {
+	// FreeLanes is how many of the group's deepest lane's worth of slots must be
+	// left empty at birth. Nil means the default of one. Zero is legal and means
+	// "no headroom guaranteed", which is a statement a spec author has to make on
+	// purpose.
+	FreeLanes *int `yaml:"free_lanes,omitempty"`
+}
+
+// LanesFree returns the configured headroom, defaulting to one lane's worth.
+func (h Headroom) LanesFree() int {
+	if h.FreeLanes == nil {
+		return 1
+	}
+	return *h.FreeLanes
 }
 
 // Payload is a part type with its bin capacity.
@@ -67,15 +111,6 @@ type Zone struct {
 	RetrieveAlgorithm string `yaml:"retrieve_algorithm"`
 	StoreAlgorithm    string `yaml:"store_algorithm"`
 	Lanes             []Lane `yaml:"lanes"`
-	// ReshuffleRestoreBlockers, when "on", enables the restore-blockers
-	// behaviour for complex-order reshuffles in this zone: after the parent
-	// picks up the unburied target bin, blockers are moved back to their
-	// original lane slots via a synthetic-parent restock compound. When
-	// empty or "off" (default), blockers stay in shuffle slots and lane
-	// geometry shifts, creating permanent air bubbles in a running loop.
-	// Stored as a node property on the NGRP; runtime read by
-	// dispatch.ReshuffleRestoreBlockersEnabled.
-	ReshuffleRestoreBlockers string `yaml:"reshuffle_restore_blockers,omitempty"`
 }
 
 // Lane is a LANE node under a zone; its slots carry an explicit depth so buried
@@ -83,6 +118,23 @@ type Zone struct {
 type Lane struct {
 	Name  string `yaml:"name"`
 	Slots []Slot `yaml:"slots"`
+	// GatePoint places the lane's waiting-point mark: the RDS map point a
+	// lane-bound robot dwells at until Core says the lane is safe to enter. It
+	// becomes the lane node's lane_gate_point property, and its EXISTENCE is the
+	// enablement — a lane with a mark ships unsealed orders and gets its tail
+	// appended at the gate, a lane without one is decided before dispatch and
+	// parks. There is no mode to set alongside it.
+	//
+	// The value is handed to the fleet as a block location verbatim and is never
+	// resolved against nodes, so on a real plant it must exist in the RDS map.
+	// Under the simulator nothing resolves it either, which is what lets a seed
+	// name points freely.
+	//
+	// Empty means an unmarked lane, and that is a POSITION rather than a default
+	// worth avoiding: a rig that marks every lane cannot show the two
+	// dispositions living side by side, which is most of what a lane-stress seed
+	// is for.
+	GatePoint string `yaml:"gate_point,omitempty"`
 }
 
 // Slot is a depth-ordered storage position (depth 1 = lane mouth).

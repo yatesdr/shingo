@@ -336,7 +336,7 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 		// there is no order of ours yet to exclude, which is the whole difference
 		// between deciding and retrying.
 		if blocked, block := CheckDropoffCapacity(d.db, t.NodeName, 0); blocked {
-			res.HeldBy[t.NodeName] = block.Cause
+			res.HeldBy[t.NodeName] = string(block.Cause)
 			continue
 		}
 		// A carrier has already been ASKED FOR here and the ask has not been given

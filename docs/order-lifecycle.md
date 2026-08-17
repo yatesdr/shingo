@@ -72,7 +72,7 @@ derived, not hand-maintained): **confirmed, failed, cancelled, skipped**.
 | `faulted` | shared | no | `MarkFaulted` (RDS FAILED, grace period) | **`ApplyCoreStatus`** (live push + snapshot) | yes (`order.update` + snapshot) | amber left-edge border on the orders list |
 | `failed` | shared | **yes** | `Fail` | `ReplyError` (`order.error`) | yes (`order.error`) | stays visible (retry/ack) |
 | `cancelled` | shared | **yes** | `CancelOrder` | operator abort + `ReplyCancelled` | yes (both directions) | disappears |
-| `reshuffling` | shared | no | `BeginReshuffle`, `MarkReshuffling` | snapshot arm only | snapshot at reconnect | Core filter chip; HMI mostly n/a |
+| `reshuffling` | shared | no | `BeginReshuffle` | snapshot arm only | snapshot at reconnect | Core filter chip; HMI mostly n/a |
 | `skipped` | shared | **yes** | `Skip` (no source bins) | `HandleSkipped` (`order.skipped`) | yes (`order.skipped`) | "Auto-skipped" chip, not an alarm |
 
 **Scope key:** *shared* = the string is shared vocabulary; both sides validate

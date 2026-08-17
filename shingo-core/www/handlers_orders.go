@@ -112,6 +112,33 @@ func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {
 	h.jsonSuccess(w)
 }
 
+// apiHardReleaseOrder is W3's door: advance a dwelling order past its wait when
+// the mechanism that should have done it is wedged.
+//
+// SAME GUARDS AS ITS NEIGHBOURS, deliberately — it sits in the protected group
+// beside /orders/terminate and /robots/force-complete, which are the comparable
+// "an engineer has decided" verbs. It is not a new privilege class, and the
+// actor is recorded because a hard release of a STATION-owned wait overrides a
+// cell that may still be occupied.
+//
+// The station HMI must never offer this. The board offers Release only for waits
+// the station owns — a read now that ownership is carried, not a guess — and
+// this door exists for the other kind.
+func (h *Handlers) apiHardReleaseOrder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrderID int64 `json:"order_id"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	actor := h.getUsername(r)
+	if err := h.orchestration.HardReleaseOrder(req.OrderID, actor); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
 func (h *Handlers) apiListOrders(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	limit := 100
@@ -170,9 +197,19 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		// duplicated into JS is exactly how the old template denylists
 		// drifted from the engine.
 		CanCancel bool `json:"can_cancel"`
+		// CanHardRelease drives the Hard Release button, and is computed here for
+		// the same reason CanCancel is: the control may only appear where the
+		// handler would accept it. It is TRUE only for a wait CORE owns — a
+		// station-owned wait belongs to the station's board, and the handler
+		// refuses it too.
+		CanHardRelease bool `json:"can_hard_release"`
 	}
 
-	result := enrichedOrder{Order: order, CanCancel: canCancelStatus(order.Status)}
+	result := enrichedOrder{
+		Order:          order,
+		CanCancel:      canCancelStatus(order.Status),
+		CanHardRelease: canHardReleaseOrder(order),
+	}
 
 	result.History, _ = svc.ListOrderHistory(id)
 
@@ -389,9 +426,24 @@ func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
 		OriginClass: protocol.OriginClassNoDemand,
 		Steps: []protocol.ComplexOrderStep{
 			{Action: "pickup", Node: sourceNode},
-			{Action: "dropoff", Node: stagingNode},
+			// DECLARED, because this form is the one place Core knows. The role
+			// test cannot recognise a staging node — it is a station with no
+			// parent, so isConcreteStorageDropoff rejects it and both destination
+			// gates stand down, leaving the node reserved by nothing and checked
+			// by nothing — so a second order takes it while the first robot is on
+			// its way.
+			//
+			// Everywhere else the Edge has to declare it, because the staging
+			// designation lives in the cell config Core does not have. HERE the
+			// operator has just typed it into a field named staging_node and the
+			// handler has already refused the request without one. There is no
+			// inference in this: the request says which node is the staging node.
+			{Action: "dropoff", Node: stagingNode, ExclusiveSlot: true},
 			{Action: "wait"},
 			{Action: "pickup", Node: stagingNode},
+			// NOT declared. deliveryNode is where the material is going, and on
+			// this form that is routinely a LINE node. Gating a line dropoff
+			// re-creates the deadlock 2b05dce fixed.
 			{Action: "dropoff", Node: deliveryNode},
 		},
 	}
@@ -503,6 +555,18 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 	})
 	if err != nil {
 		h.jsonError(w, err.Error(), binMoveStatus(err))
+		return
+	}
+	// A lane that would not take the move yet is not a refusal — the order is
+	// real and the scanner drives it in when the lane clears. Reporting it as
+	// `dispatched` would tell the operator a robot is coming that is not; the
+	// status and the reason together are what the screen renders.
+	if result.Queued {
+		h.jsonOK(w, map[string]any{
+			"order_id":     result.OrderID,
+			"status":       protocol.StatusQueued,
+			"queue_reason": result.QueueReason,
+		})
 		return
 	}
 	h.jsonOK(w, map[string]any{

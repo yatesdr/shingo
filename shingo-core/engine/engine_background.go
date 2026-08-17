@@ -74,6 +74,84 @@ func (e *Engine) robotRefreshLoop() {
 	}
 }
 
+// laneLivenessFloorInterval is the MAXIMUM WAIT the floor imposes, not a poll
+// rate: the longest an order that could be released can sit after the event that
+// should have freed it went missing. Events do the work continuously; on a
+// healthy plant this pass finds nothing.
+//
+// 60s, matching the fulfillment scanner's sweep, because they are the same kind
+// of thing over different populations and two different numbers would invite the
+// question of why.
+const laneLivenessFloorInterval = 60 * time.Second
+
+// laneLivenessFloorLoop is F-22's floor: the periodic pass over the two wait
+// populations that had only event releasers — gate-staged dwellers and compound
+// legs Core has not yet handed to the fleet.
+//
+// It is the third and fourth instances of a shape this system already had twice
+// (the fulfillment sweep, AdvanceStuckReshuffleParents), which is why it is
+// eleven lines: everything it needs is level-triggered and idempotent already,
+// so the loop is a trigger and nothing else. See dispatch.SweepLaneWaiters.
+func (e *Engine) laneLivenessFloorLoop() {
+	if e.dispatcher == nil {
+		return
+	}
+	ticker := time.NewTicker(laneLivenessFloorInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-e.stopChan:
+			return
+		case <-ticker.C:
+			// The count is deliberately not logged when zero. Every release it
+			// makes writes its own recovery_actions record naming the order and
+			// the cause; a periodic "floor released 0" line would be the cry-wolf
+			// AdvanceStuckReshuffleParents warns about, one level up.
+			if n := e.dispatcher.SweepLaneWaiters(); n > 0 {
+				e.logFn("engine: lane liveness floor released %d order(s) an event should have — "+
+					"see recovery_actions (%s) for the causes", n, "lane_floor_release")
+			}
+			// THE STANDOFF TRIPWIRE RIDES THE SAME TICK, and after the floor
+			// rather than before it: the floor's re-drive is what clears a wait
+			// that only looked circular, so asking first would report standoffs
+			// that the very next line dissolves. What survives a floor pass is
+			// the real thing.
+			//
+			// Alarm only — it records and a human rules the incident. Silent at
+			// zero, which is its normal state, so this line means a set of loaded
+			// robots is holding itself still.
+			if n := e.dispatcher.SweepMutualDigHolds(); n > 0 {
+				e.logFn("engine: %d MUTUAL DIG HOLD(S) detected — digs waiting on each other in a "+
+					"closed loop that cannot self-clear. See recovery_actions (%s). Dig admission "+
+					"is supposed to make this unreachable, so each one is a defect in the "+
+					"usable-capacity claim", n, "dig_standoff_detected")
+			}
+
+			// THE STALLED-CHAPTER WATCHDOG RIDES THE SAME TICK, and last, for the
+			// same reason the tripwire goes after the floor: the two passes above
+			// re-drive the machinery that clears a chapter which had only stopped
+			// looking stuck. What is still quiet after both of them has genuinely
+			// stopped.
+			//
+			// This one RESOLVES rather than reports (§R.99). It is the floor §R.91
+			// owed: a demand in `reshuffling` with an open leg is a machine-owned
+			// wait that no sweep covered.
+			if r := e.dispatcher.SweepStalledChapters(); r.Dissolved+r.Waiting+r.Residue > 0 {
+				e.logFn("engine: stalled-chapter watchdog: %d dissolved and re-queued, %d waiting on a "+
+					"committed vehicle, %d unresolvable — see recovery_actions (%s) for the last group, "+
+					"which is the only one a human owes anything",
+					r.Dissolved, r.Waiting, r.Residue, "chapter_stalled_unresolvable")
+			}
+
+			// THE OTHER WAY A DIG HELD FOREVER — its own lane, for a bin whose
+			// demand had gone — was swept from here and no longer can be. A
+			// finished dig keeps its corridor as its own outbound hold and that
+			// hold ends with the demand, so the population this asked about does
+			// not exist.
+		}
+	}
+}
+
 // stagedBinSweepLoop periodically releases staged bins whose expiry has passed.
 func (e *Engine) stagedBinSweepLoop() {
 	interval := e.cfg.Staging.SweepInterval

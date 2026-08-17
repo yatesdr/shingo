@@ -44,6 +44,23 @@ type Dispatcher interface {
 	// sourcing and retries. Owner-idempotent across legs.
 	ConfirmForDispatch(order *orders.Order, binID int64, sourceNode, destNode *nodes.Node) error
 
+	// AcquireLanesForOrder takes the order's lane mouth holds (P4) before dispatch,
+	// gated per lane group — a no-op when no mouth-enforced lane is on the order's
+	// path (byte-identical when the gate is off). admitted=false means the lane is
+	// contended: the scanner parks the order in sourcing under WAITING_FOR_SLOT with
+	// the returned cause and lane name, holding its soft reservations (Rule 1).
+	//
+	// Takes the ORDER, not its id: it delegates the physical questions to
+	// admission, whose decision turns on order identity (the dig exemption
+	// resolves through laneOwnerFor) rather than on an id it would otherwise
+	// have to re-read on the hottest path in the system.
+	AcquireLanesForOrder(order *orders.Order, sourceNode, destNode *nodes.Node, kind dispatch.EntryKind) (admitted bool, cause dispatch.QueueCause, laneName string, err error)
+
+	// ReleaseLanesForOrder drops all of an order's lane mouth holds — used on a
+	// fleet-dispatch failure rollback so a hold from AcquireLanesForOrder does not
+	// linger after the robot failed to commit.
+	ReleaseLanesForOrder(orderID int64) error
+
 	// PlanBuriedReshuffle plans the reshuffle compound for a source that resolved
 	// BURIED on replay, making the order its own compound parent (→ reshuffling).
 	//
@@ -56,6 +73,13 @@ type Dispatcher interface {
 	// A transient error (lane locked by another reshuffle) means requeue and retry;
 	// anything else is structural and fails the order.
 	PlanBuriedReshuffle(order *orders.Order, buried *dispatch.BuriedError) error
+
+	// BuriedForHeldBin reconstructs the BuriedError for an order whose HELD bin
+	// has become unreachable, so a refusal on the held-bin path can be turned
+	// into the dig that clears it. The fresh path gets this from the finder;
+	// dispatchHeldBin never calls the finder, which is why it needs its own way
+	// to ask.
+	BuriedForHeldBin(order *orders.Order) (*dispatch.BuriedError, error)
 
 	// PostFindHook fires between the scanner's Find and Claim. A no-op in
 	// production (nil hook); concurrency tests install one via

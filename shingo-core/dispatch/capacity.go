@@ -56,7 +56,7 @@ type CapacityDB interface {
 // is generated from. Replaces the pre-formatted reason string so a caller parks
 // the order through the shared formatter door, never with free text.
 type CapacityBlock struct {
-	Cause  string
+	Cause  QueueCause
 	Params QueueParams
 }
 

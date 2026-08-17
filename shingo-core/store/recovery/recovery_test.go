@@ -5,6 +5,7 @@ package recovery_test
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -59,6 +60,127 @@ func TestCoverage_RepairConfirmedOrderCompletion(t *testing.T) {
 	}
 	if gotBin.Status != "staged" {
 		t.Fatalf("expected staged status, got %q", gotBin.Status)
+	}
+}
+
+// TestRepair_ScopesItsUnclaimAndCouplesTheReservation covers the two things the
+// repair path was missing: the owner-scoped unclaim that 445f79eb added to
+// applyArrival and never carried here, and the reservation release that this
+// path never had at all.
+//
+// WHY THE REPAIR PATH IS THE WORSE PLACE FOR IT. A repair runs precisely when
+// the ordinary arrival already failed — the bin has been sitting at a
+// destination long enough for an operator to open the recovery page and press
+// the button. That is ample time for another order to have claimed it, so the
+// foreign-claim case is not a corner here; it is the expected shape.
+//
+// TWO ARMS. The own-claim arm is the coupling assertion (claim cleared ⇒
+// reservation released); the foreign arm is the scoping one (claim spared ⇒
+// reservation spared, because a reservation whose claim we just correctly left
+// standing must not be stripped — the same defect one layer down).
+//
+// MUTATION (verified): drop the claimed_by predicate and the foreign arm fires
+// on the claim; drop the RowsAffected guard around ReleaseByBin and it fires on
+// the reservation instead.
+func TestRepair_ScopesItsUnclaimAndCouplesTheReservation(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	mkNode := func(name string) *nodes.Node {
+		n := &nodes.Node{Name: name, Enabled: true}
+		if err := nodes.Create(db.DB, n); err != nil {
+			t.Fatalf("create node %s: %v", name, err)
+		}
+		return n
+	}
+	origin := mkNode("SCOPE-ORIGIN")
+	destOwn := mkNode("SCOPE-DEST-OWN")
+	destForeign := mkNode("SCOPE-DEST-FOREIGN")
+
+	bt := &bins.BinType{Code: "SCOPE-TOTE"}
+	if err := bins.CreateType(db.DB, bt); err != nil {
+		t.Fatalf("create bin type: %v", err)
+	}
+	mkBin := func(label string) *bins.Bin {
+		b := &bins.Bin{BinTypeID: bt.ID, Label: label, NodeID: &origin.ID, Status: "available"}
+		if err := bins.Create(db.DB, b); err != nil {
+			t.Fatalf("create bin %s: %v", label, err)
+		}
+		return b
+	}
+	mkOrder := func(uuid string, status protocol.Status, binID *int64, dest string) *orders.Order {
+		o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "retrieve",
+			Status: status, SourceNode: origin.Name, DeliveryNode: dest, BinID: binID}
+		if err := orders.Create(db.DB, o); err != nil {
+			t.Fatalf("create order %s: %v", uuid, err)
+		}
+		return o
+	}
+	countRes := func(binID int64) int {
+		var n int
+		if err := db.DB.QueryRow(`SELECT count(*) FROM reservations WHERE bin_id=$1`, binID).Scan(&n); err != nil {
+			t.Fatalf("count reservations for bin %d: %v", binID, err)
+		}
+		return n
+	}
+
+	// ── ARM 1: the repairing order owns the claim. Cleared, reservation with it.
+	ownBin := mkBin("SCOPE-BIN-OWN")
+	owner := mkOrder("scope-repair-own", "confirmed", &ownBin.ID, destOwn.Name)
+	testdb.SeedOrderStatus(t, db, owner.ID, "confirmed", "simulated")
+	testdb.ClaimBinForTest(t, db, ownBin.ID, owner.ID)
+	if countRes(ownBin.ID) == 0 {
+		t.Fatalf("fixture: expected a reservation on the own-claim bin before repair")
+	}
+	if err := recovery.RepairConfirmedOrderCompletion(db.DB, owner.ID, ownBin.ID, destOwn.ID, false, nil); err != nil {
+		t.Fatalf("repair (own claim): %v", err)
+	}
+	gotOwn, err := bins.Get(db.DB, ownBin.ID)
+	if err != nil {
+		t.Fatalf("get own bin: %v", err)
+	}
+	if gotOwn.ClaimedBy != nil {
+		t.Errorf("own-claim bin still claimed by %d — a repair is a handoff and gives up its own claim",
+			*gotOwn.ClaimedBy)
+	}
+	if n := countRes(ownBin.ID); n != 0 {
+		t.Errorf("reservations on own-claim bin = %d, want 0 — a bin's reservation lives exactly as "+
+			"long as its claim, and this path had no ReleaseByBin at all", n)
+	}
+
+	// ── ARM 2: somebody else holds the claim. Placed anyway, claim spared.
+	foreignBin := mkBin("SCOPE-BIN-FOREIGN")
+	repairer := mkOrder("scope-repair-foreign", "confirmed", &foreignBin.ID, destForeign.Name)
+	testdb.SeedOrderStatus(t, db, repairer.ID, "confirmed", "simulated")
+	// The rightful owner stays out of the acquiring set so the fulfillment
+	// scanner cannot structurally fail it and release the claim under test.
+	holder := mkOrder("scope-repair-holder", "in_transit", nil, destForeign.Name)
+	testdb.ClaimBinForTest(t, db, foreignBin.ID, holder.ID)
+
+	if err := recovery.RepairConfirmedOrderCompletion(db.DB, repairer.ID, foreignBin.ID, destForeign.ID, false, nil); err != nil {
+		t.Fatalf("repair (foreign claim): %v", err)
+	}
+	gotForeign, err := bins.Get(db.DB, foreignBin.ID)
+	if err != nil {
+		t.Fatalf("get foreign bin: %v", err)
+	}
+	// The placement is never refused — attribution and ownership do not block
+	// the physical record catching up.
+	if gotForeign.NodeID == nil || *gotForeign.NodeID != destForeign.ID {
+		t.Errorf("foreign-claimed bin is at %v, want dest %d — the repair still places the bin",
+			gotForeign.NodeID, destForeign.ID)
+	}
+	if gotForeign.ClaimedBy == nil {
+		t.Errorf("foreign-claimed bin: the repair cleared a claim it does not own. This is the " +
+			"445f79eb defect on the repair path — the holder then picks up its OWN bin with no " +
+			"claim on it and final delivery refuses a robot carrying a bin nobody owns.")
+	} else if *gotForeign.ClaimedBy != holder.ID {
+		t.Errorf("foreign-claimed bin claim = %d, want holder %d", *gotForeign.ClaimedBy, holder.ID)
+	}
+	if n := countRes(foreignBin.ID); n == 0 {
+		t.Errorf("reservations on foreign-claimed bin = 0 — releasing unconditionally strips the " +
+			"reservation off a bin whose claim was correctly left standing, which is the same " +
+			"defect one layer down")
 	}
 }
 

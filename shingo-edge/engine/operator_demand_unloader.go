@@ -158,7 +158,7 @@ func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode 
 			// pulled it in, the same shape as the loader's opportunistic push.
 			// If it were ever to become real demand that would be a column
 			// value here, not a redesign.
-			if _, cerr := e.orderMgr.CreateRetrieveOrderWithOrigin(
+			if _, cerr := e.orderMgr.CreateRetrieveOrder(
 				&nodeID, false, 1, deliveryNode, loader.InboundSource(), "",
 				"standard", payloadCode, false, true, orders.NoDemand(),
 			); cerr != nil {

@@ -226,6 +226,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/bin-types", h.apiListBinTypes)
 			r.Get("/fleet/robot-groups", h.apiRobotGroups)
 			r.Get("/map/points", h.apiScenePoints)
+			// The waiting-point picker's view of the same data: slim and searchable.
+			r.Get("/map/marks", h.apiSceneMarks)
+			r.Get("/nodes/lane-waiting", h.apiLaneWaiting)
+			r.Get("/nodes/lane-gate-points", h.apiLaneGatePoints)
 			r.Get("/map/edges", h.apiSceneEdges)
 			// Structure lives beside structure. Areas and reflectors are not
 			// owned by the page that first needed them.
@@ -482,6 +486,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 				// Orders
 				r.Post("/orders/terminate", h.apiTerminateOrder)
+				r.Post("/orders/hard-release", h.apiHardReleaseOrder)
 				r.Post("/orders/priority", h.apiSetOrderPriority)
 				r.Post("/orders/spot", h.apiManualOrderSubmit)
 				r.Post("/dispatch/clear-anomaly", h.apiClearTransitAnomaly)

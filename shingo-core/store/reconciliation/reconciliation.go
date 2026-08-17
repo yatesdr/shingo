@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
+	"shingocore/store/internal/helpers"
 	"shingocore/store/messaging"
 )
 
@@ -125,6 +127,34 @@ func ListOrderCompletionAnomalies(db *sql.DB) ([]*CompletionAnomaly, error) {
 		SELECT o.id AS order_id, NULL::bigint AS bin_id, o.status AS order_status, '' AS bin_status, 'completed_order_missing_bin' AS issue, COALESCE(o.completed_at, o.updated_at) AS observed_at
 		FROM orders o
 		WHERE o.completed_at IS NOT NULL AND o.bin_id IS NULL
+		  -- A COMPOUND PARENT CARRIES NO BIN, so asking it for one is asking the
+		  -- wrong row. Its legs hold the bins: a service dig's parent is a
+		  -- container with no cargo and no robot, and a plain buried retrieve
+		  -- re-parents the demand so its own fetch becomes a leg.
+		  --
+		  -- The anomaly was written for a different shape — a SINGLE-BIN order
+		  -- whose UpdateOrderBinID never persisted, which reaches FINISHED with
+		  -- its bin still sitting at source (see wiring_completion.go's diagnostic
+		  -- for the same failure caught one layer up). Every compound parent
+		  -- matched it too, and matched it forever, because the condition is
+		  -- permanent for that shape.
+		  --
+		  -- Measured on the lane-stress rig 2026-08-13: TWELVE anomalies, ten
+		  -- service digs and two buried retrieves, every one of them a compound
+		  -- parent whose legs had delivered correctly. Zero completed orders with
+		  -- no bin AND no legs — the predicate had no true positives at all, and
+		  -- the strip read "Core degraded" for the whole run because of it.
+		  --
+		  -- THE EXEMPTION IS THE CHILD ROWS, not the order type or a flag. Whether
+		  -- an order owns legs is the fact that decides whose bin it is, it is
+		  -- true of both compound shapes, and it cannot drift from a label.
+		  --
+		  -- THE PREDICATE IS NOW SHARED. This clause was spelled inline here and
+		  -- nowhere else, while seven other sites asked the same question as
+		  -- order.BinID == nil -- which is true of a coordinator AND true of a
+		  -- defect. This site was right and alone. helpers.OwnsNoCargoSQL is that
+		  -- spelling, lifted so the other seven can reach it.
+		  AND NOT `+helpers.OwnsNoCargoSQL("o")+`
 		UNION ALL
 		SELECT o.id AS order_id, o.bin_id AS bin_id, o.status AS order_status, COALESCE(b.status, '') AS bin_status, 'confirmed_without_completed_at' AS issue, COALESCE(o.completed_at, o.updated_at) AS observed_at
 		FROM orders o
@@ -217,14 +247,32 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	// because declaring the types is exactly what the driver does not do.
 	// TestListAnomalies_QueuedGetsTheLongerBound exercises this through the
 	// driver, which is the only check that would have caught it.
+	//
+	// ── AND `NOW()` WAS THE WRONG CLOCK (§R.98 stage D) ───────────────────
+	//
+	// `orders.updated_at` is stamped with `clock.Now()` by every one of its ~20
+	// writers (orders/orders.go says so in as many words). Comparing it against
+	// the DATABASE's wall NOW() is the exact mistake AutoConfirmStuckDeliveredOrders
+	// documents and avoids, on the same column, in the same subsystem, two files
+	// away: "a wall-NOW() comparison never fires once the sim clock outruns wall
+	// time (10× → immediately)".
+	//
+	// It matters more here than anywhere else in the census, because this query
+	// IS `ListAnomalies`' runtime-stuck detector — the ONE instrument in the system
+	// that flags a wedged `in_transit` order. Under the rig's clamp the two clocks
+	// agreed and it fired. Remove the clamp, which is the next repair in this same
+	// stage, and every `updated_at` sits in the future and this goes permanently
+	// silent. The one thing that would have said "order 2 has not advanced in
+	// sixteen minutes" was one config flag from saying nothing at all.
+	now := clock.Now().UTC()
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT id, status, updated_at
 		FROM orders
 		WHERE status IN (%s)
-		  AND updated_at < NOW() - (
+		  AND updated_at < $4::timestamptz - (
 		        CASE WHEN status = $3 THEN $2::int ELSE $1::int END * INTERVAL '1 second')
 		ORDER BY updated_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()),
-		int(stuckOrderAge.Seconds()), int(queuedOrderAge.Seconds()), string(protocol.StatusQueued))
+		int(stuckOrderAge.Seconds()), int(queuedOrderAge.Seconds()), string(protocol.StatusQueued), now)
 	if err != nil {
 		return nil, err
 	}
@@ -236,28 +284,55 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 		if err := rows.Scan(&orderID, &status, &updatedAt); err != nil {
 			return nil, err
 		}
+		// ── IT RECOMMENDED THE ONE ACT THIS HOUSE RULED IS NEVER RIGHT ────
+		//
+		// The value here was `cancel_stuck_order`, and the board turned that into
+		// its only affordance for this row: a single button reading "Cancel Stuck
+		// Order", beside an Issue cell reading `active_order_stuck` and nothing
+		// else. Cancelling a stuck order is ruled 4/4 never the answer — the
+		// order is stuck because something in the plant is stuck, and cancelling
+		// it destroys the evidence while leaving the robot exactly where it was.
+		//
+		// So the recommendation names the act that IS right: go and look. The
+		// operator can still cancel — the repair endpoint still accepts
+		// `cancel_stuck_order` and RecordRecoveryAction still writes it, because
+		// that verb records something a human genuinely did — but the board no
+		// longer proposes it.
+		//
+		// AND THE ROW NOW SAYS WHAT IS WRONG. Detail was populated here and
+		// rendered by neither the template nor the JS, so the operator got an
+		// enum and a button. A row that names no robot, node or bin and offers
+		// one destructive act is not a diagnosis.
 		anomalies = append(anomalies, &Anomaly{
 			Category:          "order_runtime",
 			Severity:          "degraded",
 			Issue:             "active_order_stuck",
-			RecommendedAction: "cancel_stuck_order",
+			RecommendedAction: "investigate_stuck_order",
 			OrderID:           &orderID,
 			OrderStatus:       status,
 			ObservedAt:        &updatedAt,
-			Detail:            "order has not advanced within the allowed age threshold",
+			Detail: "the order has not advanced within the allowed age threshold. Find what its " +
+				"robot is doing before anything else — cancelling clears the row and leaves the " +
+				"plant as it was",
 		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
+	// Same column, same rule: `staged_expires_at` is written from a Go value on
+	// the injected clock (bins.Stage, and the placement primitive since §R.98
+	// stage D), and the sweep that ACTS on it — bins.ReleaseExpiredStaged —
+	// compares it against clock.Now(). One column, two readers, and they used to
+	// be on two clocks: the sweep and this page could give opposite answers about
+	// the same bin.
 	rows, err = db.Query(`
 		SELECT id, status, staged_expires_at
 		FROM bins
 		WHERE status='staged'
 		  AND staged_expires_at IS NOT NULL
-		  AND staged_expires_at < NOW()
-		ORDER BY staged_expires_at ASC`)
+		  AND staged_expires_at < $1::timestamptz
+		ORDER BY staged_expires_at ASC`, now)
 	if err != nil {
 		return nil, err
 	}

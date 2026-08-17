@@ -47,13 +47,27 @@ func newSimBackend(ctx context.Context, cfg *config.Config) (fleet.TrackingBacke
 	clk, mode := clock.BuildSimClock(cfg.Sim.Epoch, cfg.Sim.AnchorWall, cfg.Sim.Speed, cfg.Sim.MaxSpeed)
 	switch mode {
 	case clock.SimRunning:
-		log.Printf("[sim] live clock: running %.1f× wall (set sim.epoch for fast-forward; change live via POST /api/sim/speed)", clk.Speed())
+		log.Printf("[sim] live clock: running %.1f× wall, per-process anchor (set sim.anchor_wall in BOTH "+
+			"core+edge to stop clock drift; change speed live via POST /api/sim/speed)", clk.Speed())
+	case clock.SimSyncedRunning:
+		// THE ONE THAT GENUINELY SUSTAINS THE MULTIPLIER. No clamp, so Now() and
+		// the tickers agree, and a shared anchor, so Core and Edge do too.
+		log.Printf("[sim] synced running clock: %.0f× wall, sustained (epoch=%s anchor=%s; no wall clamp, "+
+			"so Now() and every ticker run at the same speed) — Core/Edge in lockstep",
+			clk.Speed(), cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339))
 	case clock.SimSyncedFastForward:
-		log.Printf("[sim] fast-forward clock (synced): epoch=%s anchor=%s speed=%.0f× (Core/Edge in lockstep)",
-			cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339), clk.Speed())
+		// THE BANNER NAMES THE CATCH-UP, because that is the only window in which
+		// this clock is faster than wall. Once simulated time passes the wall it
+		// clamps and Now() tracks real time at 1× — while tickers keep dividing by
+		// speed. Saying "speed=N×" alone is what made a two-speed run look like a
+		// tuned one.
+		log.Printf("[sim] fast-forward clock (synced): epoch=%s anchor=%s speed=%.0f× while catching up "+
+			"to wall, then Now() clamps to 1× (tickers stay at %.0f×) — Core/Edge in lockstep",
+			cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339), clk.Speed(), clk.Speed())
 	case clock.SimUnsyncedFastForward:
-		log.Printf("[sim] fast-forward clock (UNSYNCED — set sim.anchor_wall in BOTH core+edge to stop clock drift): epoch=%s speed=%.0f×",
-			cfg.Sim.Epoch.Format(time.RFC3339), clk.Speed())
+		log.Printf("[sim] fast-forward clock (UNSYNCED — set sim.anchor_wall in BOTH core+edge to stop clock drift): "+
+			"epoch=%s speed=%.0f× while catching up to wall, then Now() clamps to 1× (tickers stay at %.0f×)",
+			cfg.Sim.Epoch.Format(time.RFC3339), clk.Speed(), clk.Speed())
 	}
 	if clk.RequestedSpeed() > clk.Speed() {
 		log.Printf("[sim] requested %.0f× capped to max_speed %.0f× (raise sim.max_speed only if the box keeps up)", clk.RequestedSpeed(), clk.Speed())

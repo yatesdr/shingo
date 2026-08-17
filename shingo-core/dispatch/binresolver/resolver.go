@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
 
 // ResolveResult carries the resolved node and optionally a specific bin.
@@ -37,8 +38,14 @@ const (
 )
 
 // NodeResolver resolves a synthetic node to a physical child node.
+//
+// asker names the order the resolution is FOR. Only the NGRP path consults it,
+// and only to answer the dig-lock question about candidate lanes, but it sits
+// on the interface rather than on the group resolver because the caller with
+// the order in hand is out here — every production call site has one. Pass
+// reservations.Anyone where none exists.
 type NodeResolver interface {
-	Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64) (*ResolveResult, error)
+	Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error)
 }
 
 // DefaultResolver resolves synthetic nodes using the database.
@@ -49,7 +56,6 @@ type NodeResolver interface {
 // method set.
 type DefaultResolver struct {
 	DB       Store
-	LaneLock *LaneLock
 	DebugLog func(string, ...any)
 }
 
@@ -64,7 +70,7 @@ func (r *DefaultResolver) dbg(format string, args ...any) {
 
 // Resolve selects the best physical child of a synthetic node for the given
 // direction of travel.
-func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(syntheticNode.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", syntheticNode.Name, err)
@@ -75,12 +81,12 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 
 	// Delegate to group resolver for NGRP nodes
 	if syntheticNode.NodeTypeCode == protocol.NodeClassNGRP {
-		gr := &GroupResolver{DB: r.DB, LaneLock: r.LaneLock, DebugLog: r.DebugLog}
+		gr := &GroupResolver{DB: r.DB, DebugLog: r.DebugLog}
 		switch mode {
 		case ResolveModeRetrieve:
-			return gr.ResolveRetrieve(syntheticNode, payloadCode)
+			return gr.ResolveRetrieve(syntheticNode, payloadCode, asker)
 		case ResolveModeStore:
-			return gr.ResolveStore(syntheticNode, payloadCode, binTypeID)
+			return gr.ResolveStore(syntheticNode, payloadCode, binTypeID, asker)
 		}
 	}
 
@@ -113,7 +119,27 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 	}
 }
 
-// resolveRetrieve finds the child node with the oldest unclaimed bin matching the payload code.
+// resolveRetrieve returns the FIRST enabled child holding any bin that satisfies
+// payloadCode, taking children in the order given.
+//
+// It does NOT rank by age, in either dimension: it makes no comparison across
+// children, and within a child it accepts the first bin ListBinsByNode returns,
+// which is ordered by bin id DESC. The previous comment here claimed it found
+// "the child node with the oldest unclaimed bin", which was true in neither
+// respect. Cross-child age ranking exists only in GroupResolver, via binTimestamp.
+//
+// UNREACHABLE FROM PRODUCTION, and the doc is kept rather than the code deleted
+// so the next reader learns that here instead of re-deriving it. Resolve routes
+// every NGRP node to GroupResolver before this switch, and both retrieve-mode
+// entry points already gate on NGRP themselves (source_finder's tier 1 and
+// complex_steps' group branch), so no caller can reach this arm with a
+// retrieve. The only synthetic node outside NGRP is _TRANSIT, which is never a
+// source or a delivery target. Store mode is a different matter -- resolveStore
+// IS reachable, because lifecycle_service gates on IsSynthetic alone.
+//
+// Consequence worth stating: because this never runs, its ordering is not a live
+// FIFO defect. If a caller is ever generalised past the NGRP gate, that changes,
+// and the ranking question has to be answered before it does.
 func (r *DefaultResolver) resolveRetrieve(children []*nodes.Node, payloadCode string) (*nodes.Node, error) {
 	for _, child := range children {
 		if !child.Enabled {

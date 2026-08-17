@@ -1,6 +1,7 @@
 package orders
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -10,6 +11,12 @@ import (
 	"shingoedge/store"
 	"shingoedge/store/orders"
 )
+
+// ErrInvalidTransition is the sentinel behind Transition's refusal, so a caller
+// mirroring CORE's state can tell "this order cannot go there" from any other
+// failure and decide whether the gap is a missed notification. Without it the
+// mirror path would have to match on error text.
+var ErrInvalidTransition = errors.New("invalid transition")
 
 type LifecycleService struct {
 	db      *store.DB
@@ -52,7 +59,7 @@ func (s *LifecycleService) Transition(orderID int64, newStatus protocol.Status, 
 		if order.Status == newStatus || IsTerminal(order.Status) {
 			return nil // idempotent: already in target state or terminal
 		}
-		return fmt.Errorf("invalid transition from %s to %s", order.Status, newStatus)
+		return fmt.Errorf("%w from %s to %s", ErrInvalidTransition, order.Status, newStatus)
 	}
 	return s.applyTransition(order, newStatus, detail, false)
 }

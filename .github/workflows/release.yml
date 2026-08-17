@@ -43,6 +43,16 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.25.0'
+          # Without this, the cache is silently OFF. setup-go defaults
+          # cache:true, and with no cache-dependency-path it requires `go.mod`
+          # in the REPO ROOT (readdirSync, not recursive). This is a go.work
+          # repo: the root has go.work and the go.mod files sit one level down,
+          # so the lookup throws "Dependencies file is not found ... Supported
+          # file pattern: go.mod" — and main.ts catches it into a warning, so
+          # the job stays green having restored nothing. It caches both
+          # GOMODCACHE and GOCACHE, so every job was re-downloading every
+          # module and recompiling from scratch. See core.yml for the full note.
+          cache-dependency-path: "**/go.sum"
 
       - name: Build shingocore
         working-directory: shingo-core

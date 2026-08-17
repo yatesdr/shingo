@@ -113,7 +113,7 @@ func TestScanner_RequeuePaths_SetQueueCode(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatalf("slot-reserve conflict did not record waiting_for_slot/slot-reserved; got %v", f.queueReasons)
+			t.Fatalf("the store's destination-slot conflict did not record waiting_for_slot/slot-reserved; got %v", f.queueReasons)
 		}
 	})
 }

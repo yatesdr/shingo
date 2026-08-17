@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"shingo/protocol"
+	"shingo/shared/clock"
 	"shingocore/dispatch/binresolver"
 	"shingocore/fleet"
 	"shingocore/service"
@@ -196,11 +198,27 @@ func (s *LifecycleService) admitOrder(order *orders.Order) *lifecycleError {
 	if lerr != nil {
 		return lerr
 	}
-	if lerr := s.resolveSyntheticDestination(order, destNode); lerr != nil {
+	resolvedAt, lerr := s.resolveSyntheticDestination(order, destNode)
+	if lerr != nil {
 		return lerr
 	}
 	if err := s.db.CreateOrder(order); err != nil {
 		return lifecycleErr("internal_error", err.Error(), err)
+	}
+	// THE SELECTOR'S OWN CLOCK READING, WRITTEN AFTER THE ROW EXISTS. There is no
+	// earlier seam: resolution rewrites a field on a struct that has no id yet, so
+	// the stamp cannot ride the INSERT without threading a diagnostic column
+	// through Order, SelectCols and ScanOrders — the hot read path — for one
+	// reader that consults it once per burial. orphan_aged_at set the precedent.
+	//
+	// Logged and swallowed. This is the burial tripwire's input, not the order's
+	// business, and an order that has already been created must not fail because a
+	// diagnostic write did.
+	if !resolvedAt.IsZero() {
+		if err := s.db.StampDestinationResolved(order.ID, resolvedAt); err != nil {
+			log.Printf("dispatch: stamp destination-resolved for order %d: %v "+
+				"(the burial tripwire falls back to fleet-commit for this order)", order.ID, err)
+		}
 	}
 	if err := s.db.UpdateOrderStatus(order.ID, string(StatusPending), "order received"); err != nil {
 		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
@@ -248,12 +266,22 @@ func (s *LifecycleService) checkOrderRefs(order *orders.Order) (*nodes.Node, *li
 // That is the whole reason this is not part of checkOrderRefs. The two look
 // like one job at intake and are not: one asks whether a thing exists, the
 // other changes where an order is going.
-func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, destNode *nodes.Node) *lifecycleError {
+//
+// ── IT RETURNS WHEN IT LOOKED ─────────────────────────────────────────────
+//
+// A zero time means no choice was made here — not synthetic, no resolver, or a
+// full group left to queue. A non-zero time is the instant the store-slot
+// selector approved this destination, and it is the only moment in the system at
+// which that guard was consulted for this order. admitOrder writes it down
+// because the burial tripwire has to be able to ask "could the selector have
+// seen this claim", and until this column existed it was reduced to comparing
+// against the fleet-commit — an event that can trail the choice by minutes.
+func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, destNode *nodes.Node) (time.Time, *lifecycleError) {
 	if destNode == nil || !destNode.IsSynthetic || s.resolver == nil {
-		return nil
+		return time.Time{}, nil
 	}
 	requested := order.DeliveryNode
-	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, nil)
+	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, nil, digAskerFor(order))
 	if err != nil {
 		// A full group (ResolutionCapacity — "no available slot in node group
 		// X") must NOT fail the operator's action. Leave the synthetic
@@ -264,14 +292,18 @@ func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, dest
 		// enabled children, DB error) still hard-fail so a real misconfiguration
 		// surfaces to the operator instead of queueing forever.
 		if class, _ := classifyResolutionError(err); class != ResolutionCapacity {
-			return lifecycleErr("resolution_failed", fmt.Sprintf("cannot resolve synthetic node %s: %v", requested, err), err)
+			return time.Time{}, lifecycleErr("resolution_failed", fmt.Sprintf("cannot resolve synthetic node %s: %v", requested, err), err)
 		}
 		s.dbg("intake: synthetic %s full — creating order against group so it queues: %v", requested, err)
-		return nil
+		// NO STAMP, and it is the honest answer rather than an omission: nothing was
+		// chosen. planMove resolves this order's destination at dispatch, where the
+		// selector runs close enough to the commit that the fallback comparison is
+		// the right one.
+		return time.Time{}, nil
 	}
 	s.dbg("resolved synthetic %s -> %s", requested, result.Node.Name)
 	order.DeliveryNode = result.Node.Name
-	return nil
+	return clock.Now().UTC(), nil
 }
 
 // resolveIngestBin finds the bin an ingest should manifest.

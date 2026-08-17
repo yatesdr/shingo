@@ -10,16 +10,10 @@ import (
 
 // ── Outbound messaging ──────────────────────────────────────────────
 //
-// SendToEdge / SendDataToEdge build envelopes and push them through
+// SendDataToEdge builds envelopes and pushes them through
 // the outbox. RunFulfillmentScan is the test hook that triggers a
 // single scanner pass; it lives alongside the messaging shims because
 // both are thin wrappers used from outside the engine package.
-
-// SendToEdge is an exported wrapper around sendToEdge, allowing HTTP handlers
-// and other external callers to enqueue messages for edge stations via outbox.
-func (e *Engine) SendToEdge(msgType string, stationID string, payload any) error {
-	return e.sendToEdge(msgType, stationID, payload)
-}
 
 // SendDataToEdge builds a data-channel envelope and enqueues it via outbox.
 // Used by HTTP handlers to push data notifications (e.g., node structure changes).

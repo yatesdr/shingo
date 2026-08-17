@@ -45,6 +45,10 @@ type simOperator struct {
 	releasing  map[int64]bool // orders with a swap-ready release scheduled/in-flight
 	flipping   map[int64]bool // A/B active nodes with a cutover scheduled/in-flight
 	confirming map[int64]bool // delivered swap legs with a confirm scheduled/in-flight
+	// releaseTries counts consecutive Release pushes per order that did not stick.
+	// See maxReleaseTries: the Edge cannot see a Core-owned lane wait, so the only
+	// signal that a button is not ours to push is the order coming back `staged`.
+	releaseTries map[int64]int
 
 	// marketSlots caches the combined market's storage-slot node names for the
 	// negative-bin sweep (clearNegativeBins). Populated lazily; read only by the
@@ -58,14 +62,15 @@ type simOperator struct {
 // shared clock for a manual-clock integration harness is deferred (J16).
 func (e *Engine) StartSimOperator(ctx context.Context, simCfg config.SimConfig, clk clock.Clock) {
 	op := &simOperator{
-		e:          e,
-		ops:        simCfg.Operators,
-		clk:        clk,
-		ctx:        ctx,
-		pending:    make(map[int64]bool),
-		releasing:  make(map[int64]bool),
-		flipping:   make(map[int64]bool),
-		confirming: make(map[int64]bool),
+		e:            e,
+		ops:          simCfg.Operators,
+		clk:          clk,
+		ctx:          ctx,
+		pending:      make(map[int64]bool),
+		releasing:    make(map[int64]bool),
+		flipping:     make(map[int64]bool),
+		confirming:   make(map[int64]bool),
+		releaseTries: make(map[int64]int),
 	}
 	op.classify = op.classifyFromClaim
 	// The bus is synchronous (D4): handlers must not block — they dedupe and
@@ -338,12 +343,57 @@ func (op *simOperator) onStatusChanged(ev Event) {
 // Called from both the live staged-transition event and the reconciliation
 // sweep, so it must be idempotent — the releasing map guarantees at most one
 // runRelease per order.
+// maxReleaseTries is how many times the sim operator will push Release on one
+// order before concluding the button is not its to push.
+//
+// ── WHY A CAP, AND WHY IT CANNOT BE AN ERROR CHECK ────────────────────────
+//
+// A LANE-waiting order is CORE's to release, not the station's, and Core enforces
+// that: "release refused: order N is parked on a gate wait — only the lane
+// evaluator advances one". But the Edge cannot tell the two kinds of wait apart.
+// Core INSERTS the lane wait into its own plan (spliceLaneWait) and never sends
+// it back, so the Edge's steps_json is the Edge-authored choreography with no
+// lane wait in it. From here, a gate-staged order and a swap-ready one look
+// identical.
+//
+// Worse, the refusal is INVISIBLE at the call site. ReleaseOrderWithLineside
+// returns nil — the Edge transitions the order staged→in_transit locally and logs
+// a successful release. Core's rejection arrives much later, asynchronously, as an
+// inbound order.error that puts the row back to `staged`, which re-fires
+// onStatusChanged, which releases again. There is no error to back off from,
+// which is why this is a cap and not a retry policy.
+//
+// MEASURED on the lane-stress rig, 2026-08-10: 240 refusals in five minutes
+// across four orders — one every 1.25 seconds, indefinitely, each round trip
+// costing an outbox row and a Kafka publish. 1796 outbox messages on a plant that
+// had completed 46 orders.
+//
+// THE COUNTER CLEARS WHEN THE ORDER ACTUALLY LEAVES `staged` (see reconcile), and
+// that is what makes the cap self-correcting rather than a permanent give-up: a
+// lane-waiting order stays `staged` and stays capped until Core lets it in, at
+// which point it leaves and the count is dropped. Three is a human's patience,
+// not a tuned number.
+const maxReleaseTries = 3
+
 func (op *simOperator) scheduleRelease(orderID int64) {
 	op.mu.Lock()
 	if op.releasing[orderID] {
 		op.mu.Unlock()
 		return
 	}
+	if op.releaseTries[orderID] >= maxReleaseTries {
+		if op.releaseTries[orderID] == maxReleaseTries {
+			op.releaseTries[orderID]++ // once past the cap, say so once and go quiet
+			op.mu.Unlock()
+			op.e.logFn("[sim] operator: order %d has refused release %d times — leaving it alone. "+
+				"It is most likely parked on a LANE wait, which only Core's lane evaluator can "+
+				"advance; the Edge cannot see that from here.", orderID, maxReleaseTries)
+			return
+		}
+		op.mu.Unlock()
+		return
+	}
+	op.releaseTries[orderID]++
 	op.releasing[orderID] = true
 	op.mu.Unlock()
 	go op.runRelease(orderID)
@@ -382,6 +432,36 @@ func (op *simOperator) reconcile() {
 		op.e.debugFn("[sim] reconcile: list active orders: %v", err)
 		return
 	}
+	// THE RELEASE CAP CLEARS HERE, and the condition is "the order actually got
+	// somewhere" — NOT "the order is not staged right now".
+	//
+	// THE OBVIOUS VERSION OF THIS WAS WRONG AND THE RIG SAID SO. Clearing whenever
+	// an order was not currently `staged` looked right and did nothing: a refused
+	// order flaps staged → in_transit → order.error → staged about once a second,
+	// so this ten-second sweep lands in the in_transit half often enough to reset
+	// the count before it can ever reach three. Deployed, measured, still 48
+	// refusals a minute and not one cap announcement.
+	//
+	// The flap is exactly the thing being capped, so the release from the cap
+	// cannot be a state the flap passes through. `delivered` and terminal are not:
+	// a release that STUCK carries the leg onward, and one that was refused never
+	// gets there. An order that has gone quiet under the cap simply keeps its count
+	// until it either lands or dies.
+	progressed := func(o storeorders.Order) bool { return o.Status == protocol.StatusDelivered }
+	live := make(map[int64]bool, len(active))
+	for i := range active {
+		if !progressed(active[i]) {
+			live[active[i].ID] = true
+		}
+	}
+	op.mu.Lock()
+	for id := range op.releaseTries {
+		if !live[id] { // delivered, or gone from the active set entirely (terminal)
+			delete(op.releaseTries, id)
+		}
+	}
+	op.mu.Unlock()
+
 	pending := 0
 	for i := range active {
 		o := active[i]
@@ -403,13 +483,165 @@ func (op *simOperator) reconcile() {
 	// Negative-bin sweep: partials are fine in the combined market, but negative-UOP
 	// bins must not circulate — reset them to clean empties. See clearNegativeBins.
 	op.clearNegativeBins()
+	// And the NODE sweep, which is the other half of restart-safety. See below.
+	op.sweepManualSwapNodes()
 }
 
-// negBinMarket is the plant's combined storage market group the negative-bin sweep
-// scans. DEVIATION/ASSUMPTION (SB 2026-07-12): hardcoded to the demo's combined market
-// name. If the plant renames/splits its market group, update this (or make it
-// sim-config-driven). Untested — no sim run this session.
-const negBinMarket = "SYN_MARKET"
+// sweepManualSwapNodes drives any manual_swap node that is holding a bin it
+// should have acted on, whether or not an order says so.
+//
+// ── WHY THE ORDER SWEEP ABOVE IS NOT ENOUGH ───────────────────────────────
+//
+// reconcile's loop is over ORDERS, so every path into it needs a live order in
+// `staged` or `delivered` pointing at the node. That is one assumption, and the
+// lane-stress rig broke it in a way nothing recovered from.
+//
+// The unloader FGN_001 took delivery of a full ASSY bin through Core's
+// "delivered fallback: bound bin N to node FGN_001 via delivery-node resolution"
+// path, which binds the bin WITHOUT emitting EventOrderDelivered. So onDelivered
+// never scheduled the clear, and by the time reconcile next ran the order was
+// terminal — invisible to a loop that only looks at active ones. FGN_001 sat
+// holding a full bin for the rest of the run.
+//
+// That one node is 41% of the plant's empty-carrier generation. With it dead the
+// carrier pool drained, and every producer in the plant — presses, welds, and the
+// loaders themselves — eventually had nothing to produce into. 65 orders in, the
+// rig stopped completely and stayed stopped for two and a half hours.
+//
+// ── SO THE SWEEP ASKS THE NODE, NOT THE ORDER ─────────────────────────────
+//
+// A manual_swap node's actionability is a fact about what is SITTING ON IT:
+//
+//	produce (loader)   holding an empty carrier  -> LOAD it
+//	consume (unloader) holding a full bin        -> CLEAR it
+//
+// Neither reading needs an order to exist, ever existed, or still exist. That is
+// what makes this self-healing rather than one more path that can be missed: any
+// way a bin arrives at one of these nodes — an order, a fallback binding, an
+// operator's hand, a restart mid-swap — converges here within a reconcile tick.
+// It also makes the 8-attempt give-up in run() harmless, because giving up is no
+// longer permanent.
+//
+// IT READS BINS BEFORE IT SCHEDULES, rather than scheduling everything and
+// letting classify sort it out. Scheduling a node with nothing to do costs eight
+// retries at four seconds apiece, per node, per tick — noise that would bury the
+// signal this exists to produce. One FetchNodeBins call answers it for the whole
+// plant.
+func (op *simOperator) sweepManualSwapNodes() {
+	if !op.e.coreClient.Available() {
+		return
+	}
+	nodes, err := op.e.db.ListProcessNodes()
+	if err != nil {
+		op.e.debugFn("[sim] node sweep: list process nodes: %v", err)
+		return
+	}
+	// wantsEmpty distinguishes the two readings: a loader is waiting for an empty
+	// carrier to fill, an unloader for a full bin to drain.
+	type target struct {
+		id         int64
+		wantsEmpty bool
+	}
+	byName := make(map[string]target, len(nodes))
+	names := make([]string, 0, len(nodes))
+	for i := range nodes {
+		n := nodes[i]
+		if n.CoreNodeName == "" {
+			continue
+		}
+		// THE ENGINE METHOD, not the package function — see classifyFromClaim for
+		// why that distinction is load-bearing for Core-owned loaders.
+		_, runtime, claim, lErr := op.e.loadActiveNode(n.ID)
+		if lErr != nil || claim == nil || claim.SwapMode != protocol.SwapModeManualSwap {
+			continue
+		}
+		// Same A/B rule the classifier applies: a bin parked at the inactive side
+		// is not the operator's to act on.
+		if claim.PairedCoreNode != "" && runtime != nil && !runtime.ActivePull {
+			continue
+		}
+		switch claim.Role {
+		case protocol.ClaimRoleProduce:
+			byName[n.CoreNodeName] = target{id: n.ID, wantsEmpty: true}
+		case protocol.ClaimRoleConsume:
+			byName[n.CoreNodeName] = target{id: n.ID, wantsEmpty: false}
+		default:
+			continue
+		}
+		names = append(names, n.CoreNodeName)
+	}
+	if len(names) == 0 {
+		return
+	}
+	bins, _, err := op.e.coreClient.FetchNodeBins(names)
+	if err != nil {
+		return
+	}
+	swept := 0
+	for i := range bins {
+		t, ok := byName[bins[i].NodeName]
+		if !ok {
+			continue
+		}
+		if !operatorHasWorkAt(t.wantsEmpty, bins[i].BinID, bins[i].UOPRemaining) {
+			continue // nothing for the operator to do at this node right now
+		}
+		op.schedule(t.id) // deduped against anything already pending
+		swept++
+	}
+	if swept > 0 {
+		op.e.debugFn("[sim] node sweep: %d manual_swap node(s) holding an actionable bin", swept)
+	}
+}
+
+// operatorHasWorkAt is the sweep's whole decision: does the bin sitting at this
+// node need the operator, given what the node is waiting for.
+//
+// AN EMPTY SLOT IS NOT AN EMPTY CARRIER, and that distinction is the first thing
+// the first live run caught. FetchNodeBins returns a row for every node it was
+// ASKED about, not only the ones holding something, so a loader window standing
+// empty comes back with BinID 0 and UOPRemaining 0 — which, on UOP alone, reads
+// as "an empty carrier waiting to be filled". Every idle loader in the plant got
+// scheduled, failed eight times with "no bin at node PLK_X1 — request an empty
+// bin first", and did it again on the next tick. The bin id is what separates
+// "there is a carrier here and it is empty" from "there is nothing here".
+//
+// A LOADER wants an empty carrier to fill; an UNLOADER wants a full bin to drain.
+// The two are exact opposites, which is what makes one predicate right for both
+// and makes getting it backwards produce a plant that looks busy and moves
+// nothing — the operator loading full bins and clearing empty ones.
+//
+// UOP <= 0 IS EMPTY, not UOP == 0, and that boundary matters too: an
+// over-consumed carrier is negative, and a negative bin at a loader window is
+// still a carrier waiting to be filled. Treating it as "not empty" would leave
+// exactly the bins the negative sweep exists to rescue sitting where they are.
+func operatorHasWorkAt(wantsEmpty bool, binID int64, uopRemaining int) bool {
+	if binID == 0 {
+		return false // the node is standing empty; there is nothing to act on
+	}
+	return (uopRemaining <= 0) == wantsEmpty
+}
+
+// negBinMarket IS DELETED. It was `const negBinMarket = "SYN_MARKET"`, carrying
+// its own warning: "hardcoded to the demo's combined market name. If the plant
+// renames/splits its market group, update this... Untested — no sim run this
+// session."
+//
+// The lane-stress plant does not have a SYN_MARKET. It has SYN_STAMP and
+// SYN_COMP, so FetchNodeChildren("SYN_MARKET") returned nothing, marketSlots was
+// empty, and the sweep returned at its length check on every single tick. Over a
+// two-and-a-half-hour soak it cleared ZERO bins and logged nothing, because it
+// only logs when it clears something — a sweep that cannot find its own subject
+// looks exactly like a sweep with nothing to do.
+//
+// Six carriers were stranded negative by the end of that run: half the plant's
+// twelve-bin pool, permanently out of circulation, on a rig where the empty
+// carrier is the binding resource.
+//
+// The replacement is not a better constant or a config key. It is a DERIVATION —
+// see collectMarketSlots — because a name written down in a second place is a
+// name that can disagree with the plant, and this one did, silently, for as long
+// as it existed.
 
 // clearNegativeBins resets any negative-UOP bin sitting in the combined market to a
 // clean empty (payload cleared, uop 0). Rationale (SB, 2026-07-12): the combined market
@@ -446,7 +678,7 @@ func (op *simOperator) clearNegativeBins() {
 		}
 	}
 	if cleared > 0 {
-		op.e.logFn("[sim] operator cleared %d negative bin(s) in %s (reset to clean empties)", cleared, negBinMarket)
+		op.e.logFn("[sim] operator cleared %d negative bin(s) across %d market slot(s) (reset to clean empties)", cleared, len(op.marketSlots))
 	}
 }
 
@@ -454,17 +686,60 @@ func (op *simOperator) clearNegativeBins() {
 // market group. FetchNodeChildren(market) returns the lanes (and any direct slots);
 // each lane's children are its slots. A child with no children of its own is treated
 // as a direct slot, so this is robust without depending on the node-type string.
+// It DERIVES the markets from the plant rather than being told their names.
+//
+// Every manual_swap and swap claim names where its material comes from and where
+// it goes — InboundSource and OutboundDestination — and those names ARE the
+// plant's markets, by construction: they are what the cells actually draw from
+// and push into. A plant with one combined market yields one name; lane-stress
+// yields SYN_STAMP and SYN_COMP; a plant nobody has written yet yields whatever
+// it uses. Nothing has to be kept in step with anything.
+//
+// A name that turns out not to be a group (a staging node, a line node named
+// directly) has no children and is treated as a single slot, which is the same
+// fallback the second level already used for a group's direct slot children.
 func (op *simOperator) collectMarketSlots() []string {
-	var slots []string
-	lanes, _ := op.e.coreClient.FetchNodeChildren(negBinMarket, true)
-	for _, lane := range lanes {
-		laneSlots, _ := op.e.coreClient.FetchNodeChildren(lane.Name, false)
-		if len(laneSlots) == 0 {
-			slots = append(slots, lane.Name) // direct slot child of the group
+	nodes, err := op.e.db.ListProcessNodes()
+	if err != nil {
+		op.e.debugFn("[sim] market slots: list process nodes: %v", err)
+		return nil
+	}
+	markets := map[string]bool{}
+	for i := range nodes {
+		_, _, claim, lErr := op.e.loadActiveNode(nodes[i].ID)
+		if lErr != nil || claim == nil {
 			continue
 		}
-		for _, s := range laneSlots {
-			slots = append(slots, s.Name)
+		for _, name := range []string{claim.InboundSource, claim.OutboundDestination} {
+			if name != "" {
+				markets[name] = true
+			}
+		}
+	}
+
+	seen := map[string]bool{}
+	var slots []string
+	add := func(name string) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			slots = append(slots, name)
+		}
+	}
+	for market := range markets {
+		lanes, _ := op.e.coreClient.FetchNodeChildren(market, true)
+		if len(lanes) == 0 {
+			add(market) // not a group — a node named directly
+			continue
+		}
+		for _, lane := range lanes {
+			laneSlots, _ := op.e.coreClient.FetchNodeChildren(lane.Name, false)
+			if len(laneSlots) == 0 {
+				add(lane.Name) // direct slot child of the group
+				continue
+			}
+			for _, s := range laneSlots {
+				add(s.Name)
+			}
 		}
 	}
 	return slots
@@ -567,7 +842,25 @@ func (op *simOperator) pairedNode(processID int64, coreName string) *processes.N
 // loader/unloader action + delay, or ok=false when the node isn't an
 // active-pull manual_swap loader/unloader the sim operator should drive.
 func (op *simOperator) classifyFromClaim(nodeID int64) (time.Duration, string, func() error, bool) {
-	node, runtime, claim, err := loadActiveNode(op.e.db, nodeID)
+	// THE ENGINE METHOD, NOT THE PACKAGE FUNCTION, and the difference is a whole
+	// class of loader.
+	//
+	// This called the package-level loadActiveNode, which returns claim == nil for
+	// any node without a per-style style_node_claim — and a CORE-OWNED loader
+	// window has none by design. That is the entire point of the Core-owned loader
+	// refactor: Core owns the loader, and the edge operates its windows without a
+	// per-style claim. The Engine method exists precisely to synthesize a
+	// manual_swap claim for those nodes (operator_helpers.go synthLoaderClaim).
+	//
+	// So every Core-owned loader window was invisible to the sim operator: a bin
+	// delivered to one was never LOADed, and nothing else was going to do it. On
+	// lane-stress that is PLK_W1 and PLK_W2, the two windows of the shared BRKT
+	// loader — a whole payload's supply, with no operator behind it.
+	//
+	// A human at the HMI was never affected, because the HMI's load path already
+	// goes through the Engine method. Only the headless operator, which is the
+	// only operator a soak has.
+	node, runtime, claim, err := op.e.loadActiveNode(nodeID)
 	if err != nil || node == nil || claim == nil {
 		return 0, "", nil, false
 	}

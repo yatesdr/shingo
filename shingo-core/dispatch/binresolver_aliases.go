@@ -26,9 +26,9 @@ type (
 // direct re-declare) so errors.Is still unwraps correctly.
 var ErrBuried = binresolver.ErrBuried
 
-// NewLaneLock constructs a *LaneLock — re-exported so callers using
-// dispatch.NewLaneLock continue to compile.
-var NewLaneLock = binresolver.NewLaneLock
+// NewLaneLockWithDB constructs the *LaneLock. There is no memory-only variant:
+// the durable dig rows ARE the lock, so there is nothing for one to be.
+var NewLaneLockWithDB = binresolver.NewLaneLockWithDB
 
 // Retrieval and storage algorithm codes. Exported as untyped string
 // constants so they behave identically to the originals at call sites.

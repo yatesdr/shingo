@@ -21,15 +21,13 @@ func (db *DB) GetNodeByName(name string) (*nodes.Node, error) {
 func (db *DB) GetNodeByDotName(name string) (*nodes.Node, error) {
 	return nodes.GetByDotName(db.DB, name)
 }
-func (db *DB) GetRootNode(nodeID int64) (*nodes.Node, error) { return nodes.GetRoot(db.DB, nodeID) }
-func (db *DB) ListNodes() ([]*nodes.Node, error)             { return nodes.List(db.DB) }
+func (db *DB) ListNodes() ([]*nodes.Node, error) { return nodes.List(db.DB) }
 func (db *DB) ListChildNodes(parentID int64) ([]*nodes.Node, error) {
 	return nodes.ListChildren(db.DB, parentID)
 }
 func (db *DB) SetNodeParent(nodeID, parentID int64) error {
 	return nodes.SetParent(db.DB, nodeID, parentID)
 }
-func (db *DB) ClearNodeParent(nodeID int64) error { return nodes.ClearParent(db.DB, nodeID) }
 
 // db.ClaimSlot deleted with nodes.ClaimSlot — the live slot-claim path is
 // ConfirmSlotClaim below (reserve → guarded claim → confirm, one tx).

@@ -208,7 +208,7 @@ func TestDispatcher_MoveOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 	// dest NGRP to a concrete child. That gate is `s.resolver != nil`, but
 	// newTestDispatcher wires resolver=nil — leaving the delivery node stuck at
 	// the group name. Wire a real resolver, mirroring TestDispatcher_MoveOrder_NGRPSource.
-	resolver := &DefaultResolver{DB: db, LaneLock: d.LaneLock(), DebugLog: d.dbg}
+	resolver := &DefaultResolver{DB: db, DebugLog: d.dbg}
 	d = NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 	env := testEnvelope()
 
@@ -791,7 +791,7 @@ func TestRetrieveEmpty_LaneSourceScopesToLane(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
-	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock()}
+	resolver := &DefaultResolver{DB: db}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 	env := testEnvelope()
 
@@ -878,7 +878,7 @@ func TestRetrieveEmpty_BuriedTriggersReshuffle(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
-	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock()}
+	resolver := &DefaultResolver{DB: db}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 	env := testEnvelope()
 
@@ -986,7 +986,7 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
-	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock()}
+	resolver := &DefaultResolver{DB: db}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 	env := testEnvelope()
 
@@ -1007,11 +1007,22 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 
 	// Order must NOT have been terminal-failed at intake.
 	if o.Status == StatusFailed {
-		t.Fatalf("complex order terminal-failed at intake — pre-fix behavior (expected Reshuffling)")
+		t.Fatalf("complex order terminal-failed at intake — pre-fix behavior (expected to be waiting)")
 	}
-	// Parent should now be Reshuffling.
+	// THE DEMAND BECOMES THE DIG (§R.91), and this assertion has been written both
+	// ways round. Its previous text: "THE DEMAND DOES NOT MOVE, and that inversion
+	// is the A batch. This used to assert `reshuffling`, because the demand WAS
+	// the dig ... Under the two-shape ruling a dig is a service to the lane, so
+	// the demand never leaves the acquiring set — it stays `queued`, carrying the
+	// cause, and is re-driven by the ordinary scanner when the lane opens."
+	//
+	// The owner's ruling restores the excursion: "all demand that creates a dig
+	// should become the parent." It comes back through ResumeCompound — the path
+	// that was never deleted — because it carries StepsJSON and still owes its own
+	// pickup.
 	if o.Status != StatusReshuffling {
-		t.Errorf("parent status = %q, want %q (compound reshuffle should have started)", o.Status, StatusReshuffling)
+		t.Errorf("parent status = %q, want %q — the demand owns the excavation it caused",
+			o.Status, StatusReshuffling)
 	}
 	// Field-notes Note 8 regression: the buried-intake path used to construct
 	// its own complex order struct literal, and had to persist PayloadCode the
@@ -1041,20 +1052,34 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 		t.Error("queue_reason is blank — this is the sentence the operator reads on the board")
 	}
 
-	// Compound children should exist.
-	children, _ := db.ListChildOrders(o.ID)
-	if len(children) == 0 {
-		t.Fatal("no compound children created for buried complex order")
-	}
-	// Expose mode (default — no target_nodes configured): unbury only.
+	// The legs exist, on the DIG rather than on the demand. Same excavation, same
+	// count; only the parent changed.
+	children := laneClearChildren(t, db, o)
+	// Expose mode: unbury only.
 	// Two blockers → two unbury children.
 	if len(children) != 2 {
 		t.Errorf("compound children = %d, want 2 (two blockers, expose mode)", len(children))
 	}
+	// EVERY LEG HANGS OFF THE DIG, AND NONE OFF THE DEMAND. The second half is the
+	// one worth asserting: it is what "the demand was not consumed" looks like in
+	// the orders table, and it is the shape a regression would break first.
+	dig := laneClearFor(t, db, o)
 	for _, c := range children {
-		if c.ParentOrderID == nil || *c.ParentOrderID != o.ID {
-			t.Errorf("child %d ParentOrderID = %v, want %d", c.ID, c.ParentOrderID, o.ID)
+		if c.ParentOrderID == nil || *c.ParentOrderID != dig.ID {
+			t.Errorf("leg %d ParentOrderID = %v, want the service dig %d", c.ID, c.ParentOrderID, dig.ID)
 		}
+	}
+	demandKids, err := db.ListChildOrders(o.ID)
+	testutil.MustNoErr(t, err, "list the demand's children")
+	if len(demandKids) == 0 {
+		t.Error("the demand owns no children — it did not take the excavation, so nothing is digging " +
+			"for it")
+	}
+	// And the dig carries the demand's episode, which is the whole link between
+	// them now that there is no requester pointer (PLAN §R.40).
+	if dig.OriginID != o.OriginID || dig.OriginClass != o.OriginClass {
+		t.Errorf("dig origin = (%q, %q), want the demand's (%q, %q) — the cost of digging belongs to "+
+			"the episode that caused it", dig.OriginID, dig.OriginClass, o.OriginID, o.OriginClass)
 	}
 
 }
@@ -1138,21 +1163,25 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 	})
 	dispatchSimpleViaScanner(t, d, db, "fleet-fail-1")
 
-	// Order should be received then failed
+	// Received, then PARKED — not failed.
+	//
+	// This asserted a fleet_failed terminal for as long as DispatchDirect
+	// terminalized on a refused create. It cannot: the fleet being unavailable is
+	// congestion, the scanner's rollback exists to wait it out, and that rollback
+	// was unreachable while the order was already terminal. What the plant sees
+	// now is an order holding its place until the robot system answers.
 	if len(emitter.received) != 1 {
 		t.Fatalf("received events = %d, want 1", len(emitter.received))
 	}
-	if len(emitter.failed) != 1 {
-		t.Fatalf("failed events = %d, want 1", len(emitter.failed))
-	}
-	if emitter.failed[0].errorCode != "fleet_failed" {
-		t.Errorf("error code = %q, want %q", emitter.failed[0].errorCode, "fleet_failed")
+	if len(emitter.failed) != 0 {
+		t.Fatalf("failed events = %d, want 0 — a fleet refusal must not terminate demand", len(emitter.failed))
 	}
 
-	// Verify order status is failed
-	testdb.AssertOrderStatus(t, db, "fleet-fail-1", StatusFailed)
+	testdb.AssertOrderStatus(t, db, "fleet-fail-1", StatusSourcing)
 
-	// Verify bin was unclaimed after fleet failure
+	// The bin is released either way, and that half is unchanged: the robot never
+	// committed, so nothing may keep holding the bin while the order waits — it
+	// re-soft-acquires on the retry.
 	b, _ := db.GetBin(bin.ID)
 	if b.ClaimedBy != nil {
 		t.Errorf("bin should be unclaimed after fleet failure, ClaimedBy = %v", b.ClaimedBy)
@@ -1335,7 +1364,7 @@ func TestDispatcher_RetrieveOrder_NGRPSource(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
-	resolver := &DefaultResolver{DB: db, LaneLock: d.LaneLock(), DebugLog: d.dbg}
+	resolver := &DefaultResolver{DB: db, DebugLog: d.dbg}
 	d2 := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 
 	env := testEnvelope()
@@ -1392,7 +1421,7 @@ func TestDispatcher_MoveOrder_NGRPSource(t *testing.T) {
 
 	// The resolver needs to be set up for NGRP resolution to work.
 	// newTestDispatcher creates a dispatcher with resolver=nil; we need one.
-	resolver := &DefaultResolver{DB: db, LaneLock: d.LaneLock(), DebugLog: d.dbg}
+	resolver := &DefaultResolver{DB: db, DebugLog: d.dbg}
 	d2 := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 
 	env := testEnvelope()
@@ -1466,7 +1495,7 @@ func TestDispatcher_MoveOrder_NGRPSource_NoBin(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
-	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock(), DebugLog: nil}
+	resolver := &DefaultResolver{DB: db, DebugLog: nil}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 
 	env := testEnvelope()
@@ -1512,7 +1541,7 @@ func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 
 	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
-	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock(), DebugLog: nil}
+	resolver := &DefaultResolver{DB: db, DebugLog: nil}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
 
 	env := testEnvelope()

@@ -85,6 +85,44 @@ func NewSimClockAnchored(epoch, anchorWall time.Time, speed, maxSpeed float64) *
 	return s
 }
 
+// NewRunningClockAnchored is NewRunningClock's synchronized twin: the same
+// no-clamp, genuinely-speed× behaviour, computed from a SHARED (epoch, anchor)
+// pair so two processes given the same config agree exactly.
+//
+// ── IT IS THE CLOCK THE RIG'S CONFIG HAS ALWAYS BEEN ASKING FOR ───────────
+//
+// The dev config sets `epoch == anchor_wall` and says, in its own comment, that
+// this makes the sim "fast-forward briefly then run 10× live". Both halves of
+// that sentence cannot be true of a CLAMPING clock: after the catch-up a
+// fast-forward clock tracks wall time at 1×, forever. What the config wanted was
+// lockstep AND speed, and until §R.98 the only construction offering lockstep
+// also silently withdrew the speed — Now() at 1× while every ticker ran at 10×.
+//
+// So the two intents get two constructors instead of one that quietly does the
+// wrong half. An epoch BEFORE its anchor means "replay history and then join the
+// present" and still clamps, which is correct for what it is for. An epoch at or
+// after its anchor means "start here and run fast", and that is this.
+//
+// speed <= 0 defaults to 1.0; maxSpeed <= 0 means uncapped. The cap is baked in
+// here rather than applied via SetMaxSpeed for the same reason
+// NewSimClockAnchored does it: SetMaxSpeed re-anchors to a per-process wall-now
+// and reintroduces exactly the drift a shared anchor exists to prevent.
+func NewRunningClockAnchored(epoch, anchorWall time.Time, speed, maxSpeed float64) *SimClock {
+	if speed <= 0 {
+		speed = 1.0
+	}
+	s := &SimClock{
+		epoch:       epoch,
+		requested:   speed,
+		maxSpeed:    maxSpeed,
+		start:       anchorWall,
+		wallFn:      time.Now,
+		clampToWall: false,
+	}
+	s.speed = s.clampLocked(speed)
+	return s
+}
+
 // NewRunningClock creates a live clock that starts now and advances at `speed` ×
 // real time with NO clamp — so a cranked sim keeps running N× faster than the
 // wall clock instead of pinning to the present. speed <= 0 defaults to 1.0
@@ -117,9 +155,13 @@ const DefaultSimMaxSpeed = 15.0
 type SimMode int
 
 const (
-	SimRunning             SimMode = iota // live: no epoch → runs speed× wall, never clamps
-	SimSyncedFastForward                  // epoch + shared anchor → Core/Edge in lockstep
-	SimUnsyncedFastForward                // epoch, no shared anchor → drifts vs the other binary
+	SimRunning             SimMode = iota // live: no epoch → runs speed× wall, never clamps, per-process anchor (drifts)
+	SimSyncedFastForward                  // epoch BEFORE a shared anchor → replays history at speed×, then clamps to wall at 1×
+	SimUnsyncedFastForward                // same, no shared anchor → drifts vs the other binary
+	// SimSyncedRunning is epoch AT OR AFTER a shared anchor: no clamp, so it
+	// genuinely sustains speed×, and shared-anchor so two binaries agree. It is
+	// what the dev config has always been describing and never got (§R.98).
+	SimSyncedRunning
 )
 
 // BuildSimClock constructs the sim clock from the (epoch, anchorWall, speed,
@@ -134,22 +176,110 @@ const (
 // re-anchors to the per-process wall-now and reintroduces the very drift the shared
 // anchor avoids); the other two modes have no shared anchor to preserve, so they
 // SetMaxSpeed after construction.
+// ── THE CLAMP IS NO LONGER SILENT, AND IT NO LONGER EATS `speed` (§R.98 D) ──
+//
+// A clamping clock runs at speed× only while it is CATCHING UP: `nowLocked` pins
+// to wall the moment simulated time passes it. That is correct for what it was
+// built for — replaying a month of history and then joining the present.
+//
+// It was a trap for every configuration that was not that, and the rig's was not
+// that: it set `epoch == anchor_wall`, so simulated time overtook wall on the
+// first tick and the clamp was permanent from t=0. `Now()` returned wall time
+// forever, at 1×, while `After` and `NewTicker` went on dividing by speed and
+// running at 10×. One clock, two speeds, structurally, since the day the epoch
+// was written. Production simulated at 10×; transit, Core's floors and every
+// sweep ran at 1×; the banner said 10×; and the rig never once measured the
+// economy its config was tuned for.
+//
+// Nothing detected it because each half is individually correct. So the SHAPE
+// picks the construction, rather than one construction quietly doing the wrong
+// half of what was asked:
+//
+//	epoch BEFORE anchor → "replay history, then join the present". Clamps, and
+//	                      the banner now says when it stops being fast.
+//	epoch AT/AFTER anchor → "start here and run fast, in lockstep". No clamp;
+//	                      genuinely speed×, which is what the config's own
+//	                      comment claims and never got.
+//	no epoch            → running, per-process anchor. Unchanged.
+//
+// AND NO CONFIG IS REFUSED, because after this stage none of them is
+// contradictory. §R.98 asked for "Now() and After() agree, or the config is
+// refused"; the first branch is the stronger one and it is what is built. A
+// clamped clock now slows its waits along with its Now() (effectiveNowRate), so
+// the two halves cannot disagree for ANY config — where a refusal would only
+// have removed the configs where they happened to, and left the disagreement in
+// the code for the ones that passed. The refusal was drafted and dropped: its
+// predicate has to read time.Now(), which makes the builder answer differently
+// on different days and would reject a replay config purely for having aged.
 func BuildSimClock(epoch, anchorWall time.Time, speed, maxSpeed float64) (*SimClock, SimMode) {
 	if maxSpeed <= 0 {
 		maxSpeed = DefaultSimMaxSpeed
 	}
-	switch {
-	case epoch.IsZero():
+	if epoch.IsZero() {
 		clk := NewRunningClock(speed)
 		clk.SetMaxSpeed(maxSpeed)
 		return clk, SimRunning
-	case !anchorWall.IsZero():
-		return NewSimClockAnchored(epoch, anchorWall, speed, maxSpeed), SimSyncedFastForward
-	default:
-		clk := NewSimClock(epoch, speed)
-		clk.SetMaxSpeed(maxSpeed)
-		return clk, SimUnsyncedFastForward
 	}
+
+	// No shared anchor means the clock anchors on this process's own wall-now,
+	// so that is the anchor every question below is asked about.
+	anchor, synced := anchorWall, true
+	if anchorWall.IsZero() {
+		anchor, synced = time.Now(), false
+	}
+
+	if !epoch.Before(anchor) {
+		// "Start here and run fast." Only the synced form is reachable — without a
+		// shared anchor this is NewRunningClock, which the epoch.IsZero() arm
+		// already built.
+		if !synced {
+			clk := NewRunningClock(speed)
+			clk.SetMaxSpeed(maxSpeed)
+			return clk, SimRunning
+		}
+		return NewRunningClockAnchored(epoch, anchor, speed, maxSpeed), SimSyncedRunning
+	}
+
+	if synced {
+		return NewSimClockAnchored(epoch, anchor, speed, maxSpeed), SimSyncedFastForward
+	}
+	clk := NewSimClock(epoch, speed)
+	clk.SetMaxSpeed(maxSpeed)
+	return clk, SimUnsyncedFastForward
+}
+
+// effectiveNowRate is the rate at which `Now()` is ACTUALLY advancing right now,
+// and it is what every waiting primitive on this clock divides by.
+//
+// ── THE ONE ANSWER TO "HOW FAST IS THE WORLD GOING" (§R.98 stage D) ───────
+//
+// `After` and `NewTicker` used to divide by `s.speed` unconditionally, while
+// `Now()` returned wall time whenever the clamp was in force. That is not a
+// clock, it is two clocks: on the rig it made production tick at 10× while
+// transit, every Core floor and every sweep ran at 1×, and the rig has never
+// measured the economy its config was tuned for.
+//
+// A clamped clock is advancing at exactly wall rate — that is what the clamp
+// MEANS — so anything waiting on it must wait in wall time too. Asking the same
+// function on both paths is what makes them incapable of disagreeing, which is
+// stronger than refusing the configs where they happened to. The alternative
+// considered and rejected was refusing a spent replay at construction: that
+// predicate has to read `time.Now()`, so it makes the builder answer differently
+// on different days and leaves the disagreement in the code for every config
+// that passes.
+//
+// Caller must NOT hold s.mu.
+func (s *SimClock) effectiveNowRate() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.clampToWall {
+		wallNow := s.wallFn()
+		simNow := s.epoch.Add(time.Duration(float64(wallNow.Sub(s.start)) * s.speed))
+		if simNow.After(wallNow) {
+			return 1 // caught up: this clock is tracking wall, and so do its waits
+		}
+	}
+	return s.speed
 }
 
 // Now returns the current simulated time.
@@ -177,11 +307,10 @@ func (s *SimClock) nowLocked() time.Time {
 // After returns a channel that fires after simulated duration d.
 // The real wait is d/speed.
 func (s *SimClock) After(d time.Duration) <-chan time.Time {
-	s.mu.Lock()
-	speed := s.speed
-	s.mu.Unlock()
-
-	realDur := time.Duration(float64(d) / speed)
+	// The rate Now() is actually advancing at, not the configured multiplier —
+	// see effectiveNowRate. A clamped clock waits in wall time because it is
+	// PASSING wall time.
+	realDur := time.Duration(float64(d) / s.effectiveNowRate())
 	return time.After(realDur)
 }
 
@@ -322,10 +451,11 @@ func (s *SimClock) MaxSpeed() float64 {
 // currentSpeed returns the live speed, treated as 1.0 if unset, under lock —
 // used by the re-pacing ticker.
 func (s *SimClock) currentSpeed() float64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.speed <= 0 {
-		return 1.0
+	// effectiveNowRate, not s.speed: a clamped clock is advancing at wall rate, so
+	// its tickers must tick at wall rate too — see effectiveNowRate for why this is
+	// one function and not two (§R.98 stage D).
+	if r := s.effectiveNowRate(); r > 0 {
+		return r
 	}
-	return s.speed
+	return 1.0
 }

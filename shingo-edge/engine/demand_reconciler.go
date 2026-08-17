@@ -113,10 +113,18 @@ func (e *Engine) episodePreconditionGone(ep *store.OpenOrigin) (reason string, g
 // cellPreconditionGone: is any claim on this process still below its level for
 // this payload and direction?
 func (e *Engine) cellPreconditionGone(ep *store.OpenOrigin) (string, bool, error) {
-	role := string(protocol.ClaimRoleConsume)
-	if ep.Direction == protocol.EpisodeDirectionEvacuate {
-		role = string(protocol.ClaimRoleProduce)
-	}
+	// THE TRANSLATION TABLE IS GONE. This read
+	//
+	//	role := string(protocol.ClaimRoleConsume)
+	//	if ep.Direction == protocol.EpisodeDirectionEvacuate { role = ... }
+	//
+	// — a hand-written 1:1 dictionary from the episode's vocabulary back into
+	// the claim's, which is where the value came from in the first place. The
+	// episode now stores the role itself, so there is nothing to translate and
+	// nothing to get backwards. Defaulting to consume on an unrecognised word,
+	// which is what the old shape did silently, was the hazard: a key written by
+	// a site that picked the wrong spelling swept the wrong role's claims.
+	role := string(ep.Direction)
 	breached, err := e.db.CellLevelStillBreached(ep.ProcessID, ep.PayloadCode, role)
 	if err != nil {
 		return "", false, err

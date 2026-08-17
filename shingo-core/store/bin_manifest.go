@@ -19,9 +19,6 @@ func (db *DB) ConfirmBinManifest(binID int64, producedAt string) error {
 	return bins.ConfirmManifest(db.DB, binID, producedAt)
 }
 
-// ClearBinManifest empties a bin's manifest.
-func (db *DB) ClearBinManifest(binID int64) error { return bins.ClearManifest(db.DB, binID) }
-
 // GetBinManifest fetches a bin and parses its manifest.
 func (db *DB) GetBinManifest(binID int64) (*bins.Manifest, error) {
 	return bins.GetManifest(db.DB, binID)

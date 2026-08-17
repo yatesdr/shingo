@@ -272,6 +272,44 @@ func (e *Engine) wireEventHandlers() {
 			}
 			e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, kind)
 		}
+
+		// A DISSOLVED DIG'S CANCELS RE-DRIVE THEIR COMPOUND, so the terminal arm can
+		// return the parent to the acquiring set. The dissolve deliberately does not
+		// transition the parent itself: {Reshuffling → Queued} fires the SYNCHRONOUS
+		// fulfillment scanner, and the dissolve is reachable from inside that scanner
+		// (tryFulfill → PlanBuriedReshuffle → CreateCompoundOrder →
+		// AdvanceCompoundOrder) under a non-reentrant scanMu. This is the hop that
+		// breaks the loop — the same reason triggerFulfillment above spawns rather
+		// than calls.
+		//
+		// SCOPED TO DISSOLVE CANCELS, and narrowly, because the first version was
+		// not. Re-driving on EVERY child cancel put an advance in the middle of every
+		// other teardown, and the operator-cancel path is the one that bit: it
+		// cancels the children BEFORE the parent, so the re-drive arrived while the
+		// parent still read `reshuffling`, dissolved the next leg, and raced the
+		// parent's own cancel to a `failed` finish. An operator asked for cancelled
+		// and got failed.
+		//
+		// The other teardowns need nothing from this: they are ending the compound,
+		// not re-planning it, and the reconciliation sweep remains their backstop
+		// exactly as before.
+		// GATE 1 WIDENED IT BY ONE MARKER, not by loosening it. A chapter now
+		// also ends when a LEG FAILS, and those cancels need the same hop for
+		// the same reason: without it the demand's disposition waits for the
+		// 30-second reconciliation sweep instead of arriving on the event.
+		// dispatch.IsChapterEndCancel is the one list both sides read, so the
+		// narrow scoping this comment block is about survives being widened.
+		if e.dispatcher != nil && dispatch.IsChapterEndCancel(ev.Reason) {
+			if order, err := e.db.GetOrder(ev.OrderID); err == nil && order.ParentOrderID != nil {
+				parentID := *order.ParentOrderID
+				go func() {
+					if err := e.dispatcher.AdvanceCompoundOrder(parentID); err != nil {
+						e.logFn("engine: advance dissolved compound %d after leg %d cancelled: %v",
+							parentID, ev.OrderID, err)
+					}
+				}()
+			}
+		}
 	}, EventOrderCancelled)
 
 	// â"€â"€ Audit-only subscriptions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -324,12 +362,25 @@ func (e *Engine) wireEventHandlers() {
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCompleted)
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCancelled)
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderFailed)
+	// EventOrderSkipped — the one terminal this set was missing, and the
+	// unification is what made the gap matter. TerminalizeOrder releases an
+	// order's reservations in the same transaction as the status write for EVERY
+	// terminal including skip (store/orders.go → reservations.ReleaseByOrder), so
+	// a skipped order frees its lane occupancy exactly as a cancelled one does —
+	// but only the other three re-drove the scanner, so a plain order parked on
+	// that occupancy waited for the ticker instead of for the event. The lane-gate
+	// evaluator already subscribed to all four (engine/wiring_lane_gate.go); this
+	// makes the two trigger sets agree.
+	e.Events.SubscribeTypes(triggerFulfillment, EventOrderSkipped)
 	// EventBinEnteredTransit is the slot-vacancy signal added in Phase 1
 	// of the bin-transit-state project â€" every pickup that moves a bin
 	// to _TRANSIT frees its source slot, which can unblock queued orders
 	// that needed to drop something there. Subscribing here makes the
 	// scanner re-evaluate without waiting for the order to fully complete.
 	e.Events.SubscribeTypes(triggerFulfillment, EventBinEnteredTransit)
+	// NOTE: a sixth trigger — EventBlockCompleted — is deliberately registered
+	// further down, immediately after the handleBlockCompleted subscription,
+	// because it must observe the mouth row that handler releases. See there.
 
 	// Sync trigger for fresh-intake (Phase 4b): EventOrderQueued.
 	// HandleComplexOrderRequest creates new complex orders as queued and
@@ -356,6 +407,25 @@ func (e *Engine) wireEventHandlers() {
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BlockCompletedEvent]) {
 		e.handleBlockCompleted(evt.Payload)
 	}, EventBlockCompleted)
+
+	// Fulfillment trigger on per-block completion (A′ — placement release).
+	// A store parked by the tiered-entry gate is waiting on a DEEPER store to
+	// get its bin into the lane; that moment is the deeper store's dropoff
+	// block reaching FINISHED, where handleStoreBlockCompleted deletes its
+	// inbound mouth row (wiring_block_completed.go → ReleaseInboundLaneForOrder)
+	// and the gate's active set stops counting it (dispatch/lane_entry.go
+	// stillWorkingLaneMouth). Nothing re-scanned on that signal before, so a
+	// parked order sat until the blocker's whole ORDER completed — the gate was
+	// completion-coarse purely for want of this subscription.
+	//
+	// REGISTRATION ORDER IS LOAD-BEARING. The bus dispatches synchronously in
+	// registration order (protocol/eventbus: "Subscribers are called in
+	// registration order on the emitting goroutine"), so this MUST stay AFTER
+	// the handleBlockCompleted subscription above — that handler is what drops
+	// the mouth row. Registered before it, the scan would read the pre-release
+	// state, still see the placer as a blocker, and the admit would slip to the
+	// next trigger or the periodic sweep. Do not reorder these two.
+	e.Events.SubscribeTypes(triggerFulfillment, EventBlockCompleted)
 
 	// ── Restore-blockers + lane-lock-extension listeners ──────────────
 	// Both listeners trigger on the same bin-transit and parent-
@@ -386,35 +456,39 @@ func (e *Engine) wireEventHandlers() {
 		if e.dispatcher == nil {
 			return
 		}
-		e.dispatcher.HandleBinEnteredTransit(evt.Payload.BinID, evt.Payload.FromNodeID)
-		e.dispatcher.HandleBinTransitForLaneLock(evt.Payload.BinID, evt.Payload.FromNodeID)
+		// Lane mouth gate (§4): release the order's hold on the lane its bin just
+		// left, as soon as the bin physically clears (a no-op when the gate is off).
+		e.dispatcher.HandleTransitForLaneGate(evt.Payload.OrderID, evt.Payload.FromNodeID)
 	}, EventBinEnteredTransit)
 
-	// Parent terminal: drop both listeners so the lock isn't stuck
-	// and the synthetic-restock parent is cancelled. All four terminal
-	// statuses are wired:
+	// Parent terminal: drop the lane-lock release listener so the lane
+	// isn't stuck held if the parent terminates before its pickup. All
+	// four terminal statuses are wired:
 	//
 	//   - Cancelled / Failed: explicit cleanup paths.
 	//   - Skipped: a complex parent that gets skipped at Queued (e.g.,
 	//     ApplyComplexPlan returns no_source_bin because the unburied
 	//     target was moved or anomalied between unbury completion and
 	//     scanner pickup) needs the same cleanup — no pickup happens,
-	//     so the bin-transit listener will never fire.
-	//   - Completed: defensive idempotent sweep. In the normal happy
-	//     path the bin-transit listener already consumed the in-memory
-	//     entry and deleted the DB row before the parent reached
-	//     Confirmed, so this is a no-op. Covers the rare path where
-	//     an admin / recovery action force-confirms a parent past the
-	//     pickup leg.
+	//     so the bin-transit release will never fire.
+	//   - Completed: defensive idempotent sweep. On the normal happy
+	//     path the bin-transit release already fired before the parent
+	//     reached Confirmed, so this is a no-op. Covers the rare path
+	//     where an admin / recovery action force-confirms a parent past
+	//     the pickup leg.
 	//
-	// Both handlers are safe to call on a parent with no entry —
-	// they no-op when nothing matches.
+	// Safe to call on a parent with no hold — it no-ops when nothing matches.
+	// THE EXPOSE BRIDGE'S RELEASE ARMS USED TO HANG HERE. A complex parent going
+	// terminal, and a bin entering transit, each consumed a pending_lane_extensions
+	// row to drop a lane lock that had been TRANSFERRED to the parent past its
+	// compound's completion. Nothing transfers a lock any more — the demand is not
+	// re-parented into its own dig, so it never comes back and the lane is released
+	// at the compound's terminal like every other dig's (compound.go). The
+	// subscriptions are kept, empty of that call, because their OTHER arms are live.
 	terminal := func(orderID int64) {
 		if e.dispatcher == nil {
 			return
 		}
-		e.dispatcher.HandleComplexParentTerminal(orderID)
-		e.dispatcher.HandleComplexParentTerminalForLaneLock(orderID)
 	}
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
 		terminal(evt.Payload.OrderID)
@@ -467,6 +541,35 @@ func (e *Engine) wireEventHandlers() {
 			e.logFn("engine: queue_reason update to edge: %v", err)
 		}
 	}, EventOrderQueued)
+
+	// ── Resume push: the parent left `reshuffling` ────────────────────────
+	//
+	// UNCONDITIONAL, WHICH IS THE POINT. The queue-reason push above returns
+	// early without a block sentence and without an acquiring status; a resumed
+	// parent has neither, so it fell through both and the Edge never learned the
+	// order had left `reshuffling`. Its mirror then rejected every later push as
+	// an illegal jump and the order became unreleasable — three robots a run.
+	//
+	// Status is written as `queued` rather than read back off the row: by the
+	// time this runs the in-band scanner may already have dispatched the order,
+	// and the Edge needs the step it MISSED, not the one Core is on now.
+	// reshuffling → queued is the only legal edge out of reshuffling toward the
+	// live path, so it is the one the mirror has to be walked through.
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderResumedEvent]) {
+		ev := evt.Payload
+		if ev.EdgeUUID == "" || ev.StationID == "" {
+			return
+		}
+		if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID, &protocol.OrderUpdate{
+			OrderUUID: ev.EdgeUUID,
+			Status:    string(protocol.StatusQueued),
+			Detail:    "reshuffle complete; parent requeued",
+		}); err != nil {
+			e.logFn("engine: resume notification to edge for order %d: %v", ev.OrderID, err)
+		} else {
+			e.dbg("resume notification sent to edge: station=%s uuid=%s", ev.StationID, ev.EdgeUUID)
+		}
+	}, EventOrderResumed)
 
 	// â"€â"€ Kanban demand â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	// look up the demand registry and send a demand signal to Edge.
@@ -544,11 +647,11 @@ func (e *Engine) wireEventHandlers() {
 	// clients group them as a conversation.
 
 	type faultSentInfo struct {
-		messageID   string
-		sentAt      time.Time
-		robotID     string
-		edgeUUID    string
-		stationID   string
+		messageID string
+		sentAt    time.Time
+		robotID   string
+		edgeUUID  string
+		stationID string
 	}
 
 	var faultTimersMu sync.Mutex
@@ -664,4 +767,12 @@ func (e *Engine) wireEventHandlers() {
 			notify.GraceExpiredAlert(ev.OrderID, ev.VendorOrderID, robotID),
 		)
 	}, EventGraceExpired)
+
+	// ── Lane-gate release evaluator ─────────────────────────────────────
+	// Registered LAST on purpose. The bus dispatches synchronously in
+	// registration order, and the evaluator has to observe the mouth rows that
+	// handlers above it release — handleBlockCompleted on a dropoff, and the
+	// bin-transit handler on a pickup. Registering it last is the cheapest way
+	// to be after all of them; see wiring_lane_gate.go.
+	e.wireLaneGateHandlers()
 }

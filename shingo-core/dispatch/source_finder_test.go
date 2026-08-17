@@ -10,6 +10,7 @@ import (
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // These tests pin the SourceFinder tier cascade — the one seam BOTH intake
@@ -38,6 +39,19 @@ type fakeFinderDB struct {
 	globalEmpty *bins.Bin
 	groupEmpty  *bins.Bin
 	accessible  map[int64]bool // slot -> accessible; absent = accessible
+
+	// accessibilityErr makes the reachability read FAIL rather than answer, which
+	// is the only way to exercise the fail-closed disposition (D2). Set, it wins
+	// over `accessible`.
+	accessibilityErr error
+	// nodeErr makes GetNode fail for one id — the second and third reads in the
+	// same tier-6 block, which used to fall through to OutcomeFound just as
+	// silently as the first.
+	nodeErr map[int64]error
+	// loaderHomesErr makes the loader-pool membership read FAIL. It stands for all
+	// five reads sourceFromDedicatedLoader can fail on; they share one disposition
+	// and one arm at the caller, so one of them exercises it.
+	loaderHomesErr error
 
 	fifoCalls        int
 	globalEmptyCalls int
@@ -85,6 +99,9 @@ func (f *fakeFinderDB) GetNodeByDotName(name string) (*nodes.Node, error) {
 }
 
 func (f *fakeFinderDB) GetNode(id int64) (*nodes.Node, error) {
+	if err, ok := f.nodeErr[id]; ok {
+		return nil, err
+	}
 	if n, ok := f.nodesByID[id]; ok {
 		return n, nil
 	}
@@ -150,6 +167,9 @@ func (f *fakeFinderDB) FindEmptyCompatibleBinInGroup(_ string, _, _ int64) (*bin
 }
 
 func (f *fakeFinderDB) IsSlotAccessible(id int64) (bool, error) {
+	if f.accessibilityErr != nil {
+		return false, f.accessibilityErr // fails closed: false AND the error
+	}
 	if f.accessible == nil {
 		return true, nil
 	}
@@ -169,6 +189,9 @@ func (f *fakeFinderDB) GetLoader(id int64) (*loaders.Loader, error) {
 }
 
 func (f *fakeFinderDB) ListLoaderHomes(loaderID int64) ([]loaders.Home, error) {
+	if f.loaderHomesErr != nil {
+		return nil, f.loaderHomesErr
+	}
 	var out []loaders.Home
 	for _, h := range f.homes {
 		if h.LoaderID == loaderID {
@@ -184,7 +207,7 @@ type fakeResolver struct {
 	err    error
 }
 
-func (r *fakeResolver) Resolve(_ *nodes.Node, _ binresolver.ResolveMode, _ string, _ *int64) (*ResolveResult, error) {
+func (r *fakeResolver) Resolve(_ *nodes.Node, _ binresolver.ResolveMode, _ string, _ *int64, _ reservations.DigAsker) (*ResolveResult, error) {
 	return r.result, r.err
 }
 

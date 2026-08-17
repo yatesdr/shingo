@@ -24,7 +24,7 @@ import (
 // carries it to the fleet. Divergence-free.
 //
 // NEVER-2N — the park's placement MUST consult the Core in-flight authority (the
-// SAME order-truth restock gates on, CountInFlightOrdersByDeliveryNode /
+// SAME order-truth restock gates on, the in-flight delivery-node counts /
 // planning_service.go's CheckDropoffCapacity) — NEVER a bespoke count. Committing
 // DeliveryNode=home makes this order in-flight to the home, so a later restock's
 // own gate sees it and yields; and if a restock got there first, this read sees it
@@ -211,37 +211,130 @@ func hasWaitStep(steps []resolvedStep) bool {
 	return false
 }
 
-// applyDeliveryNode is the canonical way to override an order's final
-// destination. It updates delivery_node (the in-flight gate used by the
-// never-2N handshake and capacity checks) and, for complex orders, patches
-// the last dropoff step in steps_json so the HMI route display stays
-// consistent with what the fleet will actually receive.
+// applyPlanNode is the ONE writer of a step's node in steps_json. Every
+// re-point below goes through it, so they cannot drift in HOW they patch —
+// only in WHICH step they name, and that is the caller's fact to carry.
 //
-// Call this instead of db.UpdateOrderDeliveryNode directly whenever the
-// resolved destination may differ from what the Edge originally planned.
-func applyDeliveryNode(db *store.DB, order *orders.Order, node string) error {
+// ── WHY THE INDEX IS A PARAMETER ──────────────────────────────────────────
+// It used to be derived here, by scanning: the delivery side took the LAST
+// dropoff walking backward, the pickup side the FIRST pickup walking forward,
+// both on the stated assumption that a gated plan is [wait, pickup, dropoff]
+// and so has exactly one of each. A SWAP has two dropoffs — store the full bin
+// in the lane, then return the empty to a press — and the lane gate re-binds
+// the FIRST of them, the lane entry. The backward scan therefore rewrote the
+// empty's return leg with the lane slot, and the order delivered BOTH its bins
+// to one slot. Downstream: the press starved waiting for the empty that was
+// driven into a lane, and the ghost eviction was forced to evict an occupant
+// Core's own plan had manufactured — wiping a live claim on the way, which the
+// arrival guard then read as a teleport. Two specimens per rig run, deterministic
+// (see PLAN §R.5).
+//
+// The index is bounds-checked and the action VERIFIED, because an index that
+// does not name the step the caller believes it does means the plan and the
+// caller disagree — a mis-spliced plan, or an index computed against a
+// different revision. Rewriting whatever sits at that offset is the defect
+// this function exists to end, so a disagreement patches nothing and says so.
+func applyPlanNode(db *store.DB, order *orders.Order, node string, stepIndex int, want string) {
+	if order.StepsJSON == "" {
+		return
+	}
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
+		log.Printf("dispatch: applyPlanNode order %d → %s: steps_json unparseable: %v", order.ID, node, err)
+		return
+	}
+	if stepIndex < 0 || stepIndex >= len(steps) {
+		log.Printf("dispatch: applyPlanNode order %d → %s: step %d out of range (%d steps) — plan not patched",
+			order.ID, node, stepIndex, len(steps))
+		return
+	}
+	if steps[stepIndex].Action != want {
+		log.Printf("dispatch: applyPlanNode order %d → %s: step %d is %q, want %q — plan not patched",
+			order.ID, node, stepIndex, steps[stepIndex].Action, want)
+		return
+	}
+	steps[stepIndex].Node = node
+	patched, err := json.Marshal(steps)
+	if err != nil {
+		log.Printf("dispatch: applyPlanNode order %d → %s: re-marshal: %v", order.ID, node, err)
+		return
+	}
+	if uErr := db.UpdateOrderStepsJSON(order.ID, string(patched)); uErr != nil {
+		log.Printf("dispatch: applyPlanNode steps_json order %d → %s: %v", order.ID, node, uErr)
+		return
+	}
+	order.StepsJSON = string(patched)
+}
+
+// applyDeliveryNodeAtStep re-points an order's destination AND the one dropoff
+// step that destination belongs to, named by index.
+//
+// The lane gate uses this: it knows which dropoff it is speaking for, because
+// laneEntryAfterWait computed that index to find the order's lane entry in the
+// first place. Carrying it here is the same move binForStep made — ask the plan
+// what it already knows instead of re-deriving it from shape.
+//
+// Steps-patch failures are logged, not returned: delivery_node is the durable
+// fact and the row is already correct; a stale steps_json is a display and
+// replay concern the next resolve corrects.
+func applyDeliveryNodeAtStep(db *store.DB, order *orders.Order, node string, stepIndex int) error {
 	if err := db.UpdateOrderDeliveryNode(order.ID, node); err != nil {
 		return err
 	}
 	order.DeliveryNode = node
+	applyPlanNode(db, order, node, stepIndex, protocol.ActionDropoff)
+	return nil
+}
+
+// applyFinalDeliveryNode re-points an order's FINAL destination — the last
+// dropoff in its plan.
+//
+// This is the loader park leg's question and it is a different one from the
+// gate's: a returning partial has no lane entry to speak for, and the leg it
+// owns genuinely is the plan's last. The scan lives here, named, rather than
+// inside the shared writer where a caller asking a different question inherited
+// it by accident.
+func applyFinalDeliveryNode(db *store.DB, order *orders.Order, node string) error {
+	last := -1
 	if order.StepsJSON != "" {
 		var steps []resolvedStep
 		if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err == nil {
 			for i := len(steps) - 1; i >= 0; i-- {
 				if steps[i].Action == protocol.ActionDropoff {
-					steps[i].Node = node
+					last = i
 					break
-				}
-			}
-			if patched, err := json.Marshal(steps); err == nil {
-				if uErr := db.UpdateOrderStepsJSON(order.ID, string(patched)); uErr != nil {
-					log.Printf("dispatch: applyDeliveryNode steps_json order %d → %s: %v", order.ID, node, uErr)
-				} else {
-					order.StepsJSON = string(patched)
 				}
 			}
 		}
 	}
+	return applyDeliveryNodeAtStep(db, order, node, last)
+}
+
+// applySourceNodeAtStep is applyDeliveryNodeAtStep's pickup-side twin: it
+// updates source_node and patches the one pickup step that source belongs to,
+// named by index, so a re-pointed order and the blocks it is about to emit
+// cannot disagree. Used by the lane gate when a dig relocates a dwelling
+// retrieve's bin (rebindGatedPickup).
+//
+// IT USED TO TAKE THE FIRST PICKUP, walking forward, on the same wrong
+// assumption its delivery-side twin made — that a gated plan is
+// [wait, pickup, dropoff] and so holds exactly one. A plan whose lane entry is
+// INTERIOR (pick at a line, cross a lane, deliver to a line — the shape the
+// splice produces routinely) has an earlier pickup belonging to a leg this
+// rebind is not speaking for, and the forward scan rewrote that one instead.
+// The delivery side's version of this bug is the one that bit, and it is
+// written up at applyPlanNode; this side is the same defect unexercised, fixed
+// with it rather than left as the next one to find.
+//
+// Steps-patch failures are logged, not returned: source_node is the durable
+// fact and the row is already correct; a stale steps_json is a display and
+// replay concern that the next resolve corrects.
+func applySourceNodeAtStep(db *store.DB, order *orders.Order, node string, stepIndex int) error {
+	if err := db.UpdateOrderSourceNode(order.ID, node); err != nil {
+		return err
+	}
+	order.SourceNode = node
+	applyPlanNode(db, order, node, stepIndex, protocol.ActionPickup)
 	return nil
 }
 
@@ -253,7 +346,7 @@ func (d *Dispatcher) setParkDestination(order *orders.Order, node, kind string) 
 	if order.DeliveryNode == node {
 		return // already there — idempotent across scanner replays
 	}
-	if err := applyDeliveryNode(d.db, order, node); err != nil {
+	if err := applyFinalDeliveryNode(d.db, order, node); err != nil {
 		log.Printf("dispatch: place park dest order %d → %s: %v", order.ID, node, err)
 		return
 	}

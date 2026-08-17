@@ -568,7 +568,7 @@ func TestHandleBinPickedUp_NoOpForNonChangeoverOrder(t *testing.T) {
 	eng.wireEventHandlers()
 
 	// Create a generic order with no changeover linkage at all.
-	o, err := eng.orderMgr.CreateRetrieveOrder(nil, true, 1, "ANY", "", "ANY", "fork", "", false, false)
+	o, err := eng.orderMgr.CreateRetrieveOrder(nil, true, 1, "ANY", "", "ANY", "fork", "", false, false, orders.NoDemand())
 	if err != nil {
 		t.Fatalf("create generic order: %v", err)
 	}

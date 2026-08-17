@@ -189,8 +189,7 @@ func (s *stubEngine) CreateRetrieveForAPI(req engine.APIRetrieveRequest) ([]*sto
 		o, err := s.orderMgr.CreateRetrieveOrder(
 			req.ProcessNodeID, req.RetrieveEmpty, req.Quantity,
 			req.DeliveryNode, req.SourceNode, req.StagingNode, req.LoadType,
-			req.PayloadCode, req.AutoConfirm, false,
-		)
+			req.PayloadCode, req.AutoConfirm, false, orders.NoDemand())
 		if err != nil {
 			return made, err
 		}

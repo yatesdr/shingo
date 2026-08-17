@@ -6,7 +6,7 @@
 //
 //   engine_lifecycle.go   Start, Stop, loadActiveOrders
 //   engine_accessors.go   one-liner subsystem getters + SetCountGroupRunner
-//   engine_messaging.go   SendToEdge, SendDataToEdge, RunFulfillmentScan
+//   engine_messaging.go   SendDataToEdge, RunFulfillmentScan
 //   engine_connection.go  checkConnectionStatus, connectionHealthLoop
 //   engine_reconfigure.go ReconfigureDatabase/Fleet/CountGroups/Messaging
 //   engine_scene_sync.go  SyncScenePoints, SyncFleetNodes, UpdateNodeZones, SceneSync
@@ -212,12 +212,6 @@ func New(c Config) *Engine {
 	e.reconciliation.advanceCompound = func(parentID int64) error {
 		return e.dispatcher.AdvanceCompoundOrder(parentID)
 	}
-	// resolveRestoreSynthetic resolves stranded reshuffle_restore synthetics
-	// with zero children — complementary to advanceCompound (all-children
-	// terminal). Late-bound (e.dispatcher is created in Start()).
-	e.reconciliation.resolveRestoreSynthetic = func(syntheticParentID int64, edgeUUID string) error {
-		return e.dispatcher.ResolveOrphanedRestoreSynthetic(syntheticParentID, edgeUUID)
-	}
 	e.recovery = newRecoveryService(e)
 	epochAnnounce := service.EpochAnnounce{
 		Topic:       e.cfg.Messaging.DispatchTopic,
@@ -225,6 +219,11 @@ func New(c Config) *Engine {
 	}
 	e.binManifest = service.NewBinManifestService(e.db, epochAnnounce)
 	e.binService = service.NewBinService(e.db, e.binManifest)
+	// The burial shadow instrument's tally, read once per reconciliation sweep.
+	// Bound here rather than at construction because BinService does not exist
+	// when newReconciliationService runs — the same ordering every other
+	// late-bound callback on that service works around.
+	e.reconciliation.burialTally = e.binService.BurialShadowTally
 	e.orderService = service.NewOrderService(e.db, e.fleet)
 	e.nodeService = service.NewNodeService(e.db)
 

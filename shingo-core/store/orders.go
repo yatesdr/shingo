@@ -6,8 +6,12 @@ package store
 // bins tables in a single transaction.
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
+	"time"
 
 	"shingo/protocol"
 	"shingo/shared/clock"
@@ -24,6 +28,45 @@ type CompoundChild struct {
 	Order *orders.Order
 	BinID int64 // bin to claim for this child
 }
+
+// ErrBlockerClaimed is the sentinel behind BlockerClaimedError, for callers that
+// only need to know WHICH refusal this was.
+var ErrBlockerClaimed = errors.New("bin held by an order outside the compound")
+
+// BlockerClaimedError is the claim CAS refusing a leg because the bin it needs
+// is held by an order OUTSIDE this compound.
+//
+// It is typed because its disposition differs from every other error
+// CreateCompoundChildren can return. The others are faults — a failed write, a
+// broken row. This one is CONGESTION: the holder is an ordinary live order that
+// will finish and drop the claim, and the commonest holder by a wide margin is a
+// dispatched retrieve whose robot is at that moment driving the blocker out of
+// the lane. The blocker is in the process of ceasing to be a blocker.
+//
+// Terminally failing the digger for it violates wait-not-fail on traffic as
+// ordinary as two demands on one lane minutes apart, so the dispatch callers map
+// this to a transient planning error and park — see
+// dispatch/planning_service.go planBuriedReshuffle.
+//
+// HolderID is 0 when the holding order could not be read back; the refusal
+// stands either way, only the operator-facing detail is poorer.
+type BlockerClaimedError struct {
+	BinID    int64 // the bin the leg wanted
+	ChildID  int64 // the leg that wanted it
+	ParentID int64 // the compound the leg belongs to
+	HolderID int64 // the order actually holding the claim, or 0 if unreadable
+}
+
+func (e *BlockerClaimedError) Error() string {
+	if e.HolderID != 0 {
+		return fmt.Sprintf("claim bin %d for child %d: held by order %d, outside compound %d",
+			e.BinID, e.ChildID, e.HolderID, e.ParentID)
+	}
+	return fmt.Sprintf("claim bin %d for child %d: held by an order outside compound %d",
+		e.BinID, e.ChildID, e.ParentID)
+}
+
+func (e *BlockerClaimedError) Unwrap() error { return ErrBlockerClaimed }
 
 // CreateCompoundChildren creates all child orders and claims their payloads
 // in a single transaction. Cross-aggregate (orders ↔ bins).
@@ -45,10 +88,115 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 			return fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}
 
-		// Bin-centric claiming: if the child order has a bin, claim it
+		// Bin-centric claiming: if the child order has a bin, claim it.
+		//
+		// SIBLING-SCOPED COMPARE-AND-SET. This used to be an unconditional
+		// overwrite, which meant a compound could take a bin out from under an
+		// unrelated order that was already carrying it — silently, because the
+		// UPDATE reported success either way.
+		//
+		// The predicate is deliberately NOT the one bins.Claim uses
+		// (`claimed_by IS NULL OR claimed_by = $1`). A multi-step reshuffle plan
+		// INTENTIONALLY overlaps bin claims: a bin that appears in several steps —
+		// an unbury followed by a retrieve of the same bin — is claimed once per
+		// step, and the last step's write is the one that stands. That is relied on
+		// downstream (engine/wiring_completion.go skips the delivery-arrival
+		// teleport guard for children precisely because of it), so refusing a
+		// repeat claim would be a behaviour change, not a fence.
+		//
+		// THE PARENT IS IN THE SET, and that is the part worth getting right. Both
+		// the plain and target-node planners emit a `retrieve` step carrying the
+		// buried TARGET bin (dispatch/reshuffle.go), which is the same bin the
+		// parent retrieve exists to fetch; and the documented multi-burial loop
+		// re-plans a fresh compound after the parent has resumed and been
+		// dispatched, by which point the parent can be holding that claim. Excluding
+		// it would fail a claim that works today, which is the one direction a fence
+		// must not fail in.
+		//
+		// The child's own id needs no arm: it was inserted in this transaction a few
+		// lines above, so the sibling subquery already sees it and a re-claim by the
+		// same child is idempotent.
 		if o.BinID != nil {
-			if _, err := tx.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, o.ID, *o.BinID); err != nil {
+			parentID := int64(0)
+			if o.ParentOrderID != nil {
+				parentID = *o.ParentOrderID
+			}
+			// THE STEAL, MADE EXPLICIT. A blocker is positional: the dig has no
+			// choice about which bins are in its way, so it always wins, and a soft
+			// reservation never stops it — the claim CAS below admits any bin whose
+			// claimed_by is NULL, including one another order has softly promised
+			// itself. That has always happened. What has not happened is the
+			// bookkeeping.
+			//
+			// The holder's row used to survive the steal and get deleted much later,
+			// at the dig leg's ARRIVAL (ReleaseByBin in ApplyArrival), which left a
+			// live reservation pointing at a bin somebody else was carrying away for
+			// the whole excavation. It worked by accident. Releasing it HERE — in
+			// the same transaction that makes the steal a fact — is what makes the
+			// books honest, and it is what lets the dig take a ledger row of its own
+			// (below) without fighting uq_reservations_bin_active.
+			//
+			// THE HOLDER'S bin_id GOES WITH IT, and that is not incidental. bin_id is
+			// stamped at SOFT-reserve time (fulfillment/scanner.go), so an order that
+			// merely reserved a bin re-enters through dispatchHeldBin, which confirms
+			// by id and never re-acquires — ConfirmClaim's seatbelt requires a pending
+			// reservation. Releasing the row and leaving bin_id would wedge the holder
+			// on claim_failed forever, which is the opposite of recalculating. Cleared
+			// together, the holder re-enters through the finder and re-resolves: it
+			// finds its bin at the shuffle slot the dig parked it in, or a better one.
+			if err := stealSoftHold(tx, *o.BinID, o.ID, parentID); err != nil {
+				return err
+			}
+			res, err := tx.Exec(`UPDATE bins SET claimed_by=$1
+				WHERE id=$2
+				  AND (claimed_by IS NULL
+				       OR claimed_by = $3
+				       OR claimed_by IN (SELECT id FROM orders WHERE parent_order_id = $3))`,
+				o.ID, *o.BinID, parentID)
+			if err != nil {
 				return fmt.Errorf("claim bin %d for child %d: %w", *o.BinID, o.ID, err)
+			}
+			if n, rErr := res.RowsAffected(); rErr == nil && n == 0 {
+				// Refused, not failed-to-write. The bin is held by an order outside
+				// this compound, so the plan was built against a lane that has since
+				// moved. Failing the whole transaction is right: a compound missing
+				// one leg's bin is a reshuffle that strands mid-dig, and the callers
+				// drop the lane lock on any error out of here.
+				//
+				// TYPED, because what the caller does next is not what it does with
+				// the other errors: the holder is a live order, not a broken row, so
+				// the digger waits for it rather than dying. Read the holder back so
+				// the wait can say whose bin it is waiting on — the SELECT is safe
+				// inside this transaction because nothing has errored, the UPDATE
+				// simply matched no row.
+				var holder sql.NullInt64
+				if qErr := tx.QueryRow(`SELECT claimed_by FROM bins WHERE id=$1`, *o.BinID).Scan(&holder); qErr != nil {
+					holder = sql.NullInt64{}
+				}
+				return &BlockerClaimedError{
+					BinID:    *o.BinID,
+					ChildID:  o.ID,
+					ParentID: parentID,
+					HolderID: holder.Int64,
+				}
+			}
+
+			// THE LEDGER ROW — hold class 3 closed. A dig's claim was STAMPED with
+			// no reservation behind it: a claimed_by pointing at nothing in the
+			// books, the one-fact-two-mechanisms shape this codebase keeps finding.
+			// It stayed open because writing an honest row needs an answer to "whose
+			// entry wins when a dig and a holder both have books on one bin", and
+			// the answer is the steal above: the dig's entry supersedes, at the
+			// moment the claim lands.
+			//
+			// DEDUPE BY BIN, because a plan legitimately touches one bin twice — an
+			// unbury followed by a retrieve of the same bin — and the index allows
+			// one active row per bin. The delete-then-insert makes the row follow
+			// the claim: last write wins for both, together, which is exactly the
+			// property wiring_completion.go's teleport-guard skip already relies on
+			// for claimed_by.
+			if err := supersedeBinLedger(tx, *o.BinID, o.ID); err != nil {
+				return err
 			}
 		}
 	}
@@ -56,9 +204,153 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 	return tx.Commit()
 }
 
+// stealSoftHold releases a FOREIGN soft hold on a bin a dig is about to claim,
+// and clears the holder's pointer to it, so the holder recalculates instead of
+// following a plan that is no longer true.
+//
+// Foreign means: not this compound's. A row belonging to the parent or to a
+// sibling is the same demand holding its own bin across steps, and
+// supersedeBinLedger moves it rather than reporting a theft.
+//
+// THE LOG LINE IS THE POINT of the third return. A steal that leaves no trace is
+// how this behaviour survived unexamined for so long: the holder limped after its
+// bin by id, it usually worked, and nothing anywhere said a dig had taken
+// somebody's bin. Now it says so, by name, once, at the moment it happens.
+func stealSoftHold(tx *sql.Tx, binID, childID, parentID int64) error {
+	var holder sql.NullInt64
+	err := tx.QueryRow(`SELECT order_id FROM reservations
+		WHERE bin_id=$1 AND resource_kind='bin' AND state IN ('pending','confirmed')
+		  AND order_id <> $2
+		  AND order_id <> $3
+		  AND order_id NOT IN (SELECT id FROM orders WHERE parent_order_id = $3)`,
+		binID, childID, parentID).Scan(&holder)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // nobody else's book on this bin — nothing to supersede
+	}
+	if err != nil {
+		return fmt.Errorf("read soft hold on bin %d: %w", binID, err)
+	}
+
+	// THE ROW ITSELF IS NOT DELETED HERE. supersedeBinLedger, three statements
+	// later in this same transaction, is the one writer that clears this bin's
+	// reservations — deleting it here too would be two writers for one fact, which
+	// is the shape this codebase keeps having to unpick. Either both land or the
+	// transaction rolls back, so there is no window where the holder's pointer is
+	// cleared and its row is not.
+	//
+	// Scoped to a holder still pointing AT THIS BIN: an order that has already
+	// moved on to another bin must keep the one it moved to.
+	//
+	// updated_at IS STAMPED FROM THE INJECTED CLOCK, like every other writer of
+	// this column. It was `NOW()` — the one Postgres-clock writer among ~20
+	// Go-clock ones, so the rows a dig took a bin from carried a foreign stamp on
+	// a column whose readers all assume the other domain. Under the rig's clamp
+	// the two agree and nothing showed; the moment the sim clock genuinely runs
+	// ahead they do not, and this row's staleness reads as fresh forever. Two
+	// readers now care: ListAnomalies' runtime-stuck detector, and the stale-dig
+	// disposition's liveness test.
+	if _, err := tx.Exec(
+		`UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2`,
+		holder.Int64, binID, clock.Now().UTC()); err != nil {
+		return fmt.Errorf("clear bin %d off holder %d: %w", binID, holder.Int64, err)
+	}
+
+	log.Printf("dispatch: dig %d took bin %d from order %d — the dig always wins on a positional "+
+		"blocker; order %d keeps its demand and re-resolves (the bin is findable at its new home)",
+		parentID, binID, holder.Int64, holder.Int64)
+	return nil
+}
+
+// supersedeBinLedger makes the reservation books say what the claim says: one
+// active row on this bin, owned by the child that now holds it.
+//
+// Delete-then-insert rather than an upsert because the row may currently belong
+// to a sibling or to the parent, and the target of uq_reservations_bin_active is
+// the BIN — there is no (order, bin) row to update into place. Written CONFIRMED
+// because the claim it records is already a hard claim, not a plan: a pending row
+// would say the dig is still deciding.
+func supersedeBinLedger(tx *sql.Tx, binID, childID int64) error {
+	if _, err := tx.Exec(
+		`DELETE FROM reservations WHERE bin_id=$1 AND resource_kind='bin'`, binID); err != nil {
+		return fmt.Errorf("clear bin ledger for bin %d: %w", binID, err)
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO reservations (order_id, resource_kind, bin_id, state, reserved_by)
+		 VALUES ($1, 'bin', $2, 'confirmed', 'compound-child')`,
+		childID, binID); err != nil {
+		return fmt.Errorf("write bin ledger for bin %d child %d: %w", binID, childID, err)
+	}
+	return nil
+}
+
 // ListChildOrders returns all child orders for a parent order.
 func (db *DB) ListChildOrders(parentOrderID int64) ([]*orders.Order, error) {
 	return orders.ListChildren(db.DB, parentOrderID)
+}
+
+// RetireReshuffleRestoreOrders cancels any non-terminal reshuffle_restore
+// housekeeping orders (and their non-terminal children) left over from the
+// retired restore-blockers subsystem. One-shot and idempotent: a clean DB — or a
+// second run — finds none and returns 0. Cancellation goes through the terminal
+// chokepoint (TerminalizeOrder) so any holds are released the same way a normal
+// cancel releases them; a raw status write would trip the state-machine guard.
+// Returns the number of orders cancelled. Called once at boot.
+func (db *DB) RetireReshuffleRestoreOrders() (int, error) {
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT id FROM orders WHERE order_type=$1 AND status IN (%s) ORDER BY id`,
+		protocol.NonTerminalStatusSQLList()), string(protocol.OrderTypeReshuffleRestore))
+	if err != nil {
+		return 0, fmt.Errorf("retire reshuffle_restore: list: %w", err)
+	}
+	var parents []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("retire reshuffle_restore: scan: %w", err)
+		}
+		parents = append(parents, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	const detail = "retired: restore-blockers subsystem removed"
+	cancelled := 0
+	for _, pid := range parents {
+		children, cErr := db.ListChildOrders(pid)
+		if cErr != nil {
+			return cancelled, fmt.Errorf("retire reshuffle_restore: children of %d: %w", pid, cErr)
+		}
+		for _, c := range children {
+			if protocol.IsTerminal(c.Status) {
+				continue
+			}
+			// TerminalizeOrder is a compare-and-swap on "still live" and reports
+			// whether THIS call is the one that landed it. The IsTerminal check
+			// above reads a snapshot, so an order can go terminal underneath us —
+			// a concurrent operator cancel is the everyday case. A declined swap
+			// is not an error and is not our cancellation, so it is not counted:
+			// the returned tally means "orders this sweep terminated", which is
+			// what makes the second run report 0.
+			swapped, tErr := db.TerminalizeOrder(c.ID, protocol.StatusCancelled, detail)
+			if tErr != nil {
+				return cancelled, fmt.Errorf("retire reshuffle_restore: cancel child %d: %w", c.ID, tErr)
+			}
+			if swapped {
+				cancelled++
+			}
+		}
+		swapped, tErr := db.TerminalizeOrder(pid, protocol.StatusCancelled, detail)
+		if tErr != nil {
+			return cancelled, fmt.Errorf("retire reshuffle_restore: cancel parent %d: %w", pid, tErr)
+		}
+		if swapped {
+			cancelled++
+		}
+	}
+	return cancelled, nil
 }
 
 // GetNextChildOrder returns the next pending child order for a parent.
@@ -66,14 +358,14 @@ func (db *DB) GetNextChildOrder(parentOrderID int64) (*orders.Order, error) {
 	return orders.GetNextChild(db.DB, parentOrderID)
 }
 
-func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
-	return orders.UpdateStatus(db.DB, id, status, detail)
+// SetCompoundOpen is the one writer of a compound parent's sealedness — see
+// orders.SetCompoundOpen. Sealed is !open; nothing derives it.
+func (db *DB) SetCompoundOpen(parentOrderID int64, open bool) error {
+	return orders.SetCompoundOpen(db.DB, parentOrderID, open)
 }
 
-// UpdateOrderStatusFrom is the compare-and-swap status write — see
-// orders.UpdateStatusFrom. Returns false when the order already moved on.
-func (db *DB) UpdateOrderStatusFrom(id int64, from, to, detail string) (bool, error) {
-	return orders.UpdateStatusFrom(db.DB, id, from, to, detail)
+func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
+	return orders.UpdateStatus(db.DB, id, status, detail)
 }
 
 // UpdateOrderStatusFromWithReason is the CAS status write plus the typed
@@ -143,14 +435,7 @@ func (db *DB) ListOrders(status string, limit int) ([]*orders.Order, error) {
 	return orders.List(db.DB, status, limit)
 }
 
-// ListOrdersFiltered returns orders matching the given filter with pagination.
-func (db *DB) ListOrdersFiltered(f orders.Filter) ([]*orders.Order, error) {
-	return orders.ListFiltered(db.DB, f)
-}
-
 func (db *DB) ListActiveOrders() ([]*orders.Order, error) { return orders.ListActive(db.DB) }
-
-func (db *DB) ListActiveBoardOrders() ([]*orders.Order, error) { return orders.ListActiveBoard(db.DB) }
 
 // ListActiveBoardOrdersFiltered scopes the board to a set of station IDs.
 // Empty stations = plant-wide (same as ListActiveBoardOrders).
@@ -193,10 +478,34 @@ func (db *DB) CountActiveOrdersByDeliveryNode(nodeName string) (int, error) {
 	return orders.CountActiveByDeliveryNode(db.DB, nodeName)
 }
 
+// ActiveLaneStores returns non-terminal orders whose delivery_node is one of the
+// given slot names — the active stores targeting a lane (tiered-entry gate input).
+func (db *DB) ActiveLaneStores(slotNames []string) ([]*orders.Order, error) {
+	return orders.ActiveByDeliveryNodes(db.DB, slotNames)
+}
+
+// ActiveGateCandidates returns non-terminal orders carrying a plan and a vendor
+// order — the set the lane-gate evaluator filters down to its candidates by
+// reading the wait step. See orders.ActiveGateCandidates for why the lane is not
+// part of the query.
+//
+// It replaced ActiveLaneRetrieves (and the evaluator's use of ActiveLaneStores),
+// which found candidates by matching an ENDPOINT column against lane slot names
+// and therefore could not see an order whose lane entry is interior to its plan.
+func (db *DB) ActiveGateCandidates() ([]*orders.Order, error) {
+	return orders.ActiveGateCandidates(db.DB)
+}
+
 // CountActiveOrders returns the number of non-terminal orders (dashboard
 // "in flight" KPI).
 func (db *DB) CountActiveOrders() (int, error) {
 	return orders.CountActive(db.DB)
+}
+
+// ListStalledChapters returns reshuffling parents with an open leg whose whole
+// family has been quiet since the cutoff — see orders.ListStalledChapters.
+func (db *DB) ListStalledChapters(since time.Time, limit int) ([]int64, error) {
+	return orders.ListStalledChapters(db.DB, since, limit)
 }
 
 // ListTrackedVendorOrderIDs returns the vendor order IDs Core must keep watching.
@@ -465,12 +774,6 @@ func (db *DB) ReleaseClaimByOrder(orderID int64) error {
 	return tx.Commit()
 }
 
-// CountInFlightOrdersByDeliveryNode counts non-queued, non-terminal active
-// orders targeting a delivery node.
-func (db *DB) CountInFlightOrdersByDeliveryNode(deliveryNode string) (int, error) {
-	return orders.CountInFlightByDeliveryNode(db.DB, deliveryNode)
-}
-
 // CountInFlightOrdersByDeliveryNodeExcluding counts in-flight orders for a
 // delivery node, excluding a specific order ID (the caller's own row).
 // Phase 4c of bin-transit-state: planning-time capacity gates need to
@@ -485,13 +788,6 @@ func (db *DB) CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode string, ex
 // replenishment bound. See orders.CountLiveByOrigin.
 func (db *DB) CountLiveOrdersByOrigin(originID string) (int, error) {
 	return orders.CountLiveByOrigin(db.DB, originID)
-}
-
-// CountLiveOrdersByDeliveryNode counts every non-terminal order pointed at a
-// node, `queued` included and regardless of origin — "is this window spoken
-// for". See orders.CountLiveByDeliveryNode.
-func (db *DB) CountLiveOrdersByDeliveryNode(deliveryNode string) (int, error) {
-	return orders.CountLiveByDeliveryNode(db.DB, deliveryNode)
 }
 
 // CountLiveCarrierRequestsByDeliveryNode counts every non-terminal order that

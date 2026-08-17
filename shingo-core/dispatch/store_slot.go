@@ -2,8 +2,10 @@ package dispatch
 
 import (
 	"fmt"
+	"log"
 
 	"shingo/protocol"
+	"shingocore/dispatch/binresolver"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -78,7 +80,7 @@ func orderHoldsSlotReservation(db *store.DB, orderID, nodeID int64) bool {
 }
 
 // isStorageDropoff reports whether a delivery node is a concrete storage slot a
-// plain order exclusively occupies — the node fact that drives the ★ Stage-3
+// plain order exclusively occupies — the node fact that drives the
 // reservation. Broader than isConcreteStorageDropoff on purpose: a store's
 // destination is a standalone STOR-typed node (snt.code='STOR'), which is
 // frequently top-level (ParentID == nil) and so
@@ -127,7 +129,88 @@ func reserveStorageDropoff(db *store.DB, order *orders.Order) error {
 // store/move that already reserved its slot at intake passes straight through on
 // replay; a no-op for non-storage dropoffs.
 func (d *Dispatcher) ReserveStorageDropoff(order *orders.Order) error {
+	d.redirectStoreOffDugLane(order)
 	return reserveStorageDropoff(d.db, order)
+}
+
+// redirectStoreOffDugLane re-aims a store whose destination lane has been taken
+// over by a dig since the destination was chosen.
+//
+// SELECTION ALREADY DIVERTS off dig-locked lanes (ListChildNodesUnlocked filters
+// them out of the store resolver's candidate pool), so this case cannot arise for
+// an order that is choosing its destination NOW. It arises for one that chose
+// EARLIER: intake resolved a group to a concrete slot, the order queued behind
+// inventory or capacity, and a dig took that lane while it waited. Nothing
+// re-selected, so admission refused it at dispatch and it sat out the whole
+// excavation with a sibling lane standing empty.
+//
+// The destination is a plan like any other, and a plan that has stopped being
+// reachable gets redone. Re-selecting costs one resolver call on a path already
+// doing database work; waiting costs the length of a dig.
+//
+// ONLY THE SLOT RESERVATION IS RELEASED. The bin hold is never touched, and the
+// asymmetry is deliberate rather than incidental: the keep-your-holds discipline
+// exists because the finders exclude pending-reserved bins owner-blind, so an
+// order that dropped its bin hold to re-shop would double-source. Slots were
+// never that hazard — the slot resolver is owner-aware — so releasing one to pick
+// a better lane costs nothing and strands nothing.
+//
+// IT LEAVES AN OPERATOR'S CHOICE ALONE. An order stamped no-demand had its
+// destination named by a human at a door (the bin move, the spot order), and
+// re-aiming that is not a recalculation, it is Core overruling somebody. Those
+// park and wait, which is the honest outcome for a destination Core did not pick.
+//
+// Best-effort throughout: every doubt leaves the order exactly as it was, and the
+// worst case is the behaviour that existed before this function.
+func (d *Dispatcher) redirectStoreOffDugLane(order *orders.Order) {
+	if d.resolver == nil || order == nil || order.OriginClass == protocol.OriginClassNoDemand {
+		return
+	}
+	if !isStorageDropoff(d.db, order.DeliveryNode) {
+		return
+	}
+	node, err := d.db.GetNodeByDotName(order.DeliveryNode)
+	if err != nil || node == nil {
+		return
+	}
+	lane, err := d.db.LaneForNode(node.ID)
+	if err != nil || lane == nil || lane.ParentID == nil {
+		return // not a lane slot, or a lane with no group to re-select within
+	}
+	if !d.laneLock.IsLocked(lane.ID) {
+		return // the ordinary case: the destination is still fine
+	}
+	group, err := d.db.GetNode(*lane.ParentID)
+	if err != nil || group == nil {
+		return
+	}
+
+	// The resolver's candidate read drops dig-locked lanes, so this either comes
+	// back with somewhere else or comes back empty — and empty means every lane in
+	// the group is locked or full, which is the existing park.
+	result, err := d.resolver.Resolve(group, binresolver.ResolveModeStore, order.PayloadCode, nil, digAskerFor(order))
+	if err != nil || result == nil || result.Node == nil || result.Node.ID == node.ID {
+		d.dbg("store: order %d is aimed at %s in dug lane %s and the group has nowhere else — waiting",
+			order.ID, node.Name, lane.Name)
+		return
+	}
+
+	// Drop the hold on the slot we are no longer going to, so it is available to
+	// whoever can use it. PENDING only — a confirmed slot means this order is
+	// already dispatching and is not re-aimable.
+	if rErr := d.db.ReleaseSlotReservation(node.ID, order.ID); rErr != nil {
+		d.dbg("store: order %d could not release its hold on %s (%v) — leaving it aimed there",
+			order.ID, node.Name, rErr)
+		return
+	}
+	if uErr := d.db.UpdateOrderDeliveryNode(order.ID, result.Node.Name); uErr != nil {
+		log.Printf("dispatch: order %d re-aimed off dug lane %s but delivery_node could not be "+
+			"written (%v) — it keeps the old destination and waits", order.ID, lane.Name, uErr)
+		return
+	}
+	order.DeliveryNode = result.Node.Name
+	log.Printf("dispatch: order %d re-aimed from %s to %s — a dig took lane %s after the destination "+
+		"was chosen, and the group had somewhere else", order.ID, node.Name, result.Node.Name, lane.Name)
 }
 
 // ConfirmForDispatch is the Rule-1 confirm-at-dispatch step for the plain

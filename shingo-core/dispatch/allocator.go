@@ -95,26 +95,64 @@ type heldReservation struct {
 	used      bool
 }
 
-// slotNeed is one concrete storage-dropoff step that needs a destination slot
-// reservation — the same node set the old hard-claim slot loop iterated. group is
+// slotNeed is one dropoff step that needs a destination slot reservation: a
+// concrete storage slot, or a dropoff its author declared exclusive (a staging
+// node, which Core cannot recognise structurally — see slotNeeds). group is
 // the NGRP origin ("" for a fixed-concrete dropoff), used to revert-and-re-resolve
-// a fungible slot on conflict.
+// a fungible slot on conflict; a declared staging dropoff carries none, because
+// there is no group of interchangeable staging nodes to re-resolve within, so it
+// takes the hold-and-retry arm rather than the revert arm.
 type slotNeed struct {
 	stepIndex int
 	nodeName  string
 	group     string
 }
 
-// slotNeeds returns the concrete storage-dropoff slots an order must reserve —
-// exactly the set the retired ClaimSlot loop iterated (isConcreteStorageDropoff
-// dropoffs, staging/relay included). Ordering is step order; the reconcile does not
-// need the canonical node-ID sort the hard loop used — the ABBA class dissolves at
-// the soft-acquire layer, where a loser backs off holding revocable reservations.
+// slotNeeds returns the dropoff nodes an order must reserve: concrete storage
+// slots, plus any dropoff whose author DECLARED it exclusive. Ordering is step
+// order; the reconcile does not need the canonical node-ID sort the hard loop
+// used — the ABBA class dissolves at the soft-acquire layer, where a loser backs
+// off holding revocable reservations.
+//
+// ── THIS COMMENT USED TO SAY "STAGING/RELAY INCLUDED". IT WAS NOT ─────────
+//
+// The claim was that this set is "exactly the set the retired ClaimSlot loop
+// iterated (isConcreteStorageDropoff dropoffs, staging/relay included)". The
+// first half was true and the parenthesis was false, which is the worst
+// available combination: the predicate's NAME and its DOCSTRING both promised
+// staging coverage, so nobody re-read the predicate.
+//
+// isConcreteStorageDropoff bails at `node.ParentID == nil`, and staging nodes
+// are seeded parentless (cmd/seeddev/seed_core.go — stations pass nil where the
+// slot loop one block above passes its lane id). Staging never reached the
+// LANE/NGRP test at all. So a staging dropoff was reserved by nothing and
+// capacity-checked by nothing, so two orders can take one node and the second
+// robot arrives to find it full. (This named the Springfield 2026-08-12 hold as
+// the first anyone knew of it. §R.112's plant queries falsified that attribution
+// — see protocol.ComplexOrderStep.ExclusiveSlot for the one full record. The gap
+// is reachable on its own terms and the fix keeps its standing.)
+//
+// ── WHY THE FIX IS A DECLARATION AND NOT A WIDER PREDICATE ────────────────
+//
+// Widening the role test to accept parentless stations would also readmit LINE
+// nodes, and gating those re-creates the deadlock 2b05dce fixed (see
+// isConcreteStorageDropoff's caller). Core cannot tell the two apart: every
+// station carries the one STATION node type, the plantspec Kind is advisory and
+// unpersisted, and the staging designation lives in the Edge cell config. So the
+// author declares it — protocol.ComplexOrderStep.ExclusiveSlot — and Core stops
+// guessing at a fact it does not hold.
+//
+// The two arms are an OR, not a replacement. Storage slots keep being recognised
+// structurally, so nothing depends on a sender remembering to tag what Core can
+// already see for itself.
 func (a *Allocator) slotNeeds(steps []resolvedStep) []slotNeed {
 	var out []slotNeed
 	for i := range steps {
 		s := steps[i]
-		if s.Action != protocol.ActionDropoff || s.Node == "" || !isConcreteStorageDropoff(a.db, s.Node) {
+		if s.Action != protocol.ActionDropoff || s.Node == "" {
+			continue
+		}
+		if !s.ExclusiveSlot && !isConcreteStorageDropoff(a.db, s.Node) {
 			continue
 		}
 		out = append(out, slotNeed{stepIndex: i, nodeName: s.Node, group: s.Group})
@@ -152,6 +190,13 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 
 	missing := 0
 	anyMissWithBins := false // a missing need whose node had bins (present-but-taken → sourceable)
+	// lineBinGone: the pickup AT THE LINE NODE — the bin this leg exists to remove
+	// — is missing and its node holds nothing at all. Tracked separately from
+	// `missing` because it is the one need whose absence makes the WORK void
+	// rather than merely delayed, and because an evac that has already secured its
+	// replacement cannot be recognised by counting reservations. See the moot case
+	// below.
+	lineBinGone := false
 	for _, pk := range pickups {
 		// 1. Reuse a held bin that already satisfies this pickup (same node, same
 		//    empty-status). Owner-aware — does not go through BinUnavailableReason.
@@ -190,6 +235,10 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 			missing++
 			if nodeHadBins {
 				anyMissWithBins = true // bins present but unavailable — sourceable eventually
+			} else if removal {
+				// The line position this leg came to clear is EMPTY. Not "taken by
+				// someone", not "not staged yet" — nothing is there.
+				lineBinGone = true
 			}
 			// Name the miss. The caller only sees len(assigned) and logs "holding N
 			// partial(s)", which says an order is stuck but never why — at HK on
@@ -259,6 +308,40 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 	switch {
 	case missing == 0:
 		return assigned, reserveComplete, nil
+	case lineBinGone && legTakesLineBin(plan.ResolvedSteps, order.ProcessNode):
+		// AN EVAC WHOSE LINE BIN IS GONE IS MOOT EVEN IF IT HOLDS ITS REPLACEMENT.
+		//
+		// The clause below says the same thing but tests it as `len(assigned) == 0`,
+		// and that test cannot see the case it was written for. A press-index evac
+		// fetches its own fresh carrier (legSecuresOwnReplacement), so by the time
+		// its line pickup comes up empty it is already holding that carrier's
+		// reservation and the destination slot for the bin it meant to store. It
+		// therefore always holds something, always reads as a partial set, and falls
+		// to reserveHolding — which is a wait, and this wait has nothing to wait for.
+		// The shape moot was written to catch is the one shape structurally excluded
+		// from it.
+		//
+		// WHAT THAT COSTS, MEASURED. lane-stress 2026-08-10: PRESS-1's evac (order
+		// 64) sat in `sourcing` for 33 minutes holding an empty carrier and a
+		// storage slot, against a PLN_001 that held no bin. Its index sibling (65)
+		// was correctly held by swapLegHeld until the evac committed — and the
+		// sibling's dropoff was PLN_001, the very position the evac was waiting to
+		// find a bin in. Neither leg could move and neither was wrong: the evac
+		// waited for a bin only the index could deliver, the index waited for an
+		// evac that would never commit. Two robots' worth of work parked on a swap
+		// whose premise had evaporated.
+		//
+		// The narrowing is legTakesLineBin — a PURE evac: it lifts the line's bin
+		// and puts none back. That excludes a filler (no pickup at the line, so
+		// lineBinGone cannot be set for it anyway) and excludes a self-contained
+		// single_robot swap, which also DROPS at the line and so would strand it if
+		// skipped. It is the same predicate the swap admission gate reads, so the
+		// two cannot drift apart.
+		//
+		// Skipping releases the partials: Skip terminalizes, and TerminalizeOrder
+		// releases the order's reservations, so the carrier and slot this leg was
+		// sitting on go back to the pool it was starving.
+		return assigned, reserveMoot, nil
 	case len(assigned) == 0 && !anyMissWithBins && !legPlacesLineBin(plan.ResolvedSteps, order.ProcessNode):
 		// Reserved nothing and every missing need's node is genuinely empty — the
 		// order's work is moot (source removed), not merely momentarily unsourceable.
@@ -299,7 +382,17 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 // — a slot another order can't reserve can't take a stray resident, which is
 // what makes "empty at reserve" a stable relay signal.
 //
-// Per concrete storage-dropoff need it keeps a held slot reservation (owner-aware,
+// ── THAT PROPERTY WAS ASPIRATIONAL FOR STAGING UNTIL 2026-08-15 ───────────
+//
+// The paragraph above named "relay/staging" and had done since the split-brain
+// fix, but slotNeeds' predicate never returned a staging node — a station with
+// no parent fails isConcreteStorageDropoff at the nil guard. So the stable-relay
+// argument held for STORAGE slots and quietly did not hold for staging relays,
+// which are precisely the ones a stage-and-accept plan depends on. It is true
+// now, for staging dropoffs the plan's author DECLARES exclusive; see slotNeeds.
+//
+// Per slot need — a concrete storage dropoff, or a declared-exclusive one — it
+// keeps a held slot reservation (owner-aware,
 // matched by node) or acquires a fresh one. On conflict (another order holds it): a
 // FUNGIBLE NGRP dropoff reverts to its group so the next tick re-resolves to a free
 // child (the escape valve, preserved from the hard loop); a FIXED-concrete dropoff
@@ -411,6 +504,10 @@ func (a *Allocator) resolveHeldReservations(rows []reservations.Reservation) []*
 			} else if b != nil {
 				hb.empty = b.PayloadCode == ""
 				if b.NodeID != nil {
+					// nodeID is carried for bin rows too, not just slot rows: the
+					// window-4 reachability re-check asks whether the held bin is
+					// still gettable, and that is a question about its NODE.
+					hb.nodeID = *b.NodeID
 					node, nerr := a.db.GetNode(*b.NodeID)
 					if nerr != nil {
 						log.Printf("dispatch: resolveHeld bin=%d node=%d lookup failed: %v", r.BinID, *b.NodeID, nerr)

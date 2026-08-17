@@ -162,6 +162,27 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 
 	// Send dedicated staged notification when robot is dwelling
 	if newStatus == dispatch.StatusStaged {
+		// AND PUT THE REASON ON THE ROW. A robot parked at a STATION-owned wait
+		// used to carry nothing at all: no code, no cause, no sentence. On the
+		// board and in every diagnostic query that is indistinguishable from an
+		// order nobody has evaluated, which is exactly how three of them stood
+		// for a whole soak while the investigation hunted a fence that was
+		// refusing them (§12.49). Nothing was refusing them.
+		//
+		// Only for STATION waits. A lane wait is Core's and the evaluator writes
+		// its own cause when it refuses; overwriting that here would replace a
+		// specific refusal ("lane-occupied", "lane-target-buried") with a
+		// generic one.
+		e.dispatcher.MarkStationWaitIfOwned(order.ID)
+		// AND A LANE WAIT GETS RE-ASKED THE MOMENT THE ROBOT IS THERE.
+		//
+		// For an inbound dweller this is a cheap extra firing of a question the
+		// lane's own events already drive. For an OUTBOUND one it is the primary
+		// trigger: a dig leg standing in the lane it just lifted from is waiting for
+		// Core to choose where the blocker goes, and that choice is deferred to
+		// exactly this moment on purpose — it is what keeps the destination
+		// uncommitted while the robot works the other lane.
+		e.dispatcher.EvaluateWaitLaneForStagedOrder(order.ID)
 		if err := e.sendToEdge(protocol.TypeOrderStaged, order.StationID, &protocol.OrderStaged{
 			OrderUUID: order.EdgeUUID,
 			Detail:    "robot dwelling at staging node",

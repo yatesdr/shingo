@@ -74,13 +74,13 @@ func TestReconciler_LeavesBreachedEpisodeOpen(t *testing.T) {
 		t.Fatal("fixture should start below its reorder point")
 	}
 	if _, _, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.ClaimRoleConsume)
 	if _, err := db.GetOpenDemandOrigin(key); err != nil {
 		t.Fatalf("a still-breached episode must stay open, got err=%v", err)
 	}
@@ -94,7 +94,7 @@ func TestReconciler_ClosesRecoveredEpisode(t *testing.T) {
 
 	eng.evaluateCellLevel(claim, 40)
 	if _, _, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	// The level came back and cleared the edge — without the close landing.
@@ -104,7 +104,7 @@ func TestReconciler_ClosesRecoveredEpisode(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.ClaimRoleConsume)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("recovered episode must be closed by the sweep, got err=%v", err)
 	}
@@ -128,7 +128,7 @@ func TestReconciler_ClosesEpisodeWhenClaimGone(t *testing.T) {
 
 	eng.evaluateCellLevel(claim, 40)
 	if _, _, err := eng.openCellEpisode(procID, claim,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestReconciler_ClosesEpisodeWhenClaimGone(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.ClaimRoleConsume)
 	if _, err := db.GetOpenDemandOrigin(key); err != store.ErrOriginNotOpen {
 		t.Errorf("episode must close when its claim is no longer active, got err=%v", err)
 	}
@@ -186,7 +186,7 @@ func TestReconciler_KeepsEpisodeOpenWhileAnyClaimBelow(t *testing.T) {
 	eng.evaluateCellLevel(claimA, 40)
 	eng.evaluateCellLevel(claimB, 40)
 	if _, _, err := eng.openCellEpisode(procID, claimA,
-		protocol.EpisodeDirectionSupply, protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
+		protocol.EpisodeTriggerAutoreorder, 2, 40, false); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
@@ -197,7 +197,7 @@ func TestReconciler_KeepsEpisodeOpenWhileAnyClaimBelow(t *testing.T) {
 
 	eng.reconcileDemandEpisodes()
 
-	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.EpisodeDirectionSupply)
+	key := protocol.CellEpisodeKey(procName, "PANEL-B", protocol.ClaimRoleConsume)
 	if _, err := db.GetOpenDemandOrigin(key); err != nil {
 		t.Fatalf("the process still needs the payload while B is below, got err=%v", err)
 	}

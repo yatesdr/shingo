@@ -131,7 +131,7 @@ func TestWithLoaderBudget_PropNeverExceedsBudget(t *testing.T) {
 		_, err := eng.withLoaderBudget(loader, payload, want, "", true, func(deliveryNodes []string) (int, error) {
 			made := 0
 			for _, deliveryNode := range deliveryNodes {
-				if _, cerr := eng.orderMgr.CreateRetrieveOrder(&nodeID, true, 1, deliveryNode, "EMPTY-SUPER", "", "standard", string(payload), false, true); cerr != nil {
+				if _, cerr := eng.orderMgr.CreateRetrieveOrder(&nodeID, true, 1, deliveryNode, "EMPTY-SUPER", "", "standard", string(payload), false, true, orders.NoDemand()); cerr != nil {
 					return made, cerr
 				}
 				made++
@@ -610,7 +610,7 @@ func fireOneEmptyPerWindow(eng *Engine, nodeID int64) func([]string) (int, error
 	return func(deliveryNodes []string) (int, error) {
 		made := 0
 		for _, dn := range deliveryNodes {
-			if _, cerr := eng.orderMgr.CreateRetrieveOrder(&nodeID, true, 1, dn, "EMPTY-SUPER", "", "standard", "P1", false, true); cerr != nil {
+			if _, cerr := eng.orderMgr.CreateRetrieveOrder(&nodeID, true, 1, dn, "EMPTY-SUPER", "", "standard", "P1", false, true, orders.NoDemand()); cerr != nil {
 				return made, cerr
 			}
 			made++

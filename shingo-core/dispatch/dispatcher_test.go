@@ -27,6 +27,7 @@ type mockEmitter struct {
 	cancelled        []emitCancelled
 	completed        []emitCompleted
 	queued           []emitQueued
+	resumed          []int64
 	faulted          []emitFaulted
 	faultedRecovered []emitFaultedRecovered
 	projected        []emitProjected
@@ -91,6 +92,9 @@ func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string) {
 }
 func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string) {
 	m.queued = append(m.queued, emitQueued{orderID})
+}
+func (m *mockEmitter) EmitOrderResumed(orderID int64, _, _ string) {
+	m.resumed = append(m.resumed, orderID)
 }
 func (m *mockEmitter) EmitOrderFaulted(orderID int64, _, _, reason string) {
 	m.faulted = append(m.faulted, emitFaulted{orderID, reason})
@@ -257,9 +261,23 @@ func dispatchSimpleViaScanner(t *testing.T, d *Dispatcher, db *store.DB, orderUU
 		t.Fatalf("scanner-mirror reserve dropoff %s: %v", orderUUID, err)
 	}
 	if _, err := d.DispatchDirect(o, sourceNode, destNode); err != nil {
-		// Mirror the scanner: a fleet failure is a real disposition, not a test
-		// abort. DispatchDirect already transitioned the order (failed); return the
-		// current state so the caller can assert the fleet-failure outcome.
+		// Mirror the scanner's fleet-failure rollback (fulfillment/scanner.go), not
+		// a shortcut: a fleet refusal is a real disposition, and the scanner's is to
+		// release the claim and the lane holds, park under fleet_unavailable, and
+		// retry from sourcing. This helper used to lean on DispatchDirect
+		// terminalizing and just re-read the row; when that stopped being the
+		// contract, the mirror stopped mirroring and three tests were asserting a
+		// disposition production no longer produces.
+		if rerr := db.ReleaseClaimByOrder(o.ID); rerr != nil {
+			t.Fatalf("scanner-mirror release claim after fleet fail %s: %v", orderUUID, rerr)
+		}
+		if lerr := d.ReleaseLanesForOrder(o.ID); lerr != nil {
+			t.Fatalf("scanner-mirror release lanes after fleet fail %s: %v", orderUUID, lerr)
+		}
+		d.setQueueReason(o, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
+		if qerr := d.lifecycle.MoveToSourcing(o, "test-scanner", "fleet unavailable, retrying"); qerr != nil {
+			t.Fatalf("scanner-mirror park after fleet fail %s: %v", orderUUID, qerr)
+		}
 		o, _ = db.GetOrderByUUID(orderUUID)
 		return o
 	}
@@ -1156,18 +1174,39 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 		t.Errorf("vendor ID = %q, want empty on failure", vendorID)
 	}
 
-	// Order should be moved to Failed
+	// THE ORDER IS LEFT ALIVE, and that is the contract now.
+	//
+	// This used to assert `failed` plus a fleet_failed event, because
+	// DispatchDirect terminalized here. It cannot: a fleet that will not take an
+	// order right now is congestion, and `failed` has no outgoing edges — so the
+	// scanner's documented rollback ("override back to sourcing since this is a
+	// transient fleet issue") was an illegal transition, logged and dropped, and
+	// every fleet rejection killed the order. On a compound leg it took the dig
+	// and its parent with it through the sibling cascade.
+	//
+	// What DispatchDirect owes its caller is an error and an order in a state the
+	// caller can act on. It undoes its own move (handoverToFleet's CAS claimed the
+	// order into `dispatched` before the create) and stops there. The scanner then
+	// parks under fleet_unavailable and retries; the bin-move door, which has a
+	// person waiting, fails the row itself — see engine.CreateBinMove, and
+	// TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim, which still
+	// pins `failed` for that door.
 	persisted, _ := db.GetOrder(order.ID)
-	if persisted.Status != StatusFailed {
-		t.Errorf("status = %q, want %q", persisted.Status, StatusFailed)
+	if protocol.IsTerminal(persisted.Status) {
+		t.Errorf("status = %q — DispatchDirect terminalized, so no caller can dispose of the order "+
+			"and a transient fleet refusal is permanent", persisted.Status)
 	}
-
-	// Verify failure event emitted
-	if len(emitter.failed) != 1 {
-		t.Fatalf("failed events = %d, want 1", len(emitter.failed))
+	if persisted.Status != StatusSourcing {
+		t.Errorf("status = %q, want %q — the order must come back out of `dispatched`, which it was "+
+			"CAS'd into before the create; left there it has no vendor id and nothing tracks it",
+			persisted.Status, StatusSourcing)
 	}
-	if emitter.failed[0].errorCode != "fleet_failed" {
-		t.Errorf("error code = %q, want %q", emitter.failed[0].errorCode, "fleet_failed")
+	if persisted.VendorOrderID != "" {
+		t.Errorf("vendor order ID = %q, want empty — the fleet never accepted it", persisted.VendorOrderID)
+	}
+	if len(emitter.failed) != 0 {
+		t.Errorf("failed events = %d, want 0 — failing is the caller's decision, not this function's",
+			len(emitter.failed))
 	}
 }
 

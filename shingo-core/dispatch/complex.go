@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -23,6 +24,107 @@ type resolvedStep struct {
 	// payload-matching full. Threaded through resolution + claim so the
 	// distinction survives steps_json persistence and scanner replay.
 	Empty bool `json:"empty,omitempty"`
+	// ExclusiveSlot mirrors protocol.ComplexOrderStep.ExclusiveSlot: this dropoff
+	// lands on a node holding one bin at a time (a staging node), which Core's
+	// role test cannot recognise on its own. Threaded through resolution for the
+	// same reason as Empty — slotNeeds reads it off the PERSISTED steps on every
+	// scanner replay, not just on the intake pass, so losing it at any hop would
+	// silently un-reserve the node on the first retry.
+	ExclusiveSlot bool `json:"exclusive_slot,omitempty"`
+
+	// ── WHO RELEASES THIS WAIT ────────────────────────────────────────────
+	//
+	// Meaningful only on an ActionWait step. One plan can hold an operator wait
+	// and a lane wait at the same time, and no column on the order row can say
+	// which one the order is parked at — wait_index names a POSITION, and the
+	// kind is a property of the step in that position. So it lives here.
+	//
+	// This is the final form of core_staged/edge_staged: the distinction is
+	// real, and it is on the STEP rather than on the status.
+	//
+	// ZERO VALUE IS THE OPERATOR WAIT, which is what every plan ever written
+	// carries, so nothing needs migrating and an unstamped step keeps exactly
+	// the meaning it had. WaitKindLane is stamped by the one thing that creates
+	// a lane wait.
+	WaitKind string `json:"wait_kind,omitempty"`
+	// WaitLane is the lane whose evaluator owns this wait — 0 unless WaitKind
+	// is WaitKindLane.
+	//
+	// A NODE ID, not a name, and it is the one field here that is not a name.
+	// Node and Group are names because they are RESOLVED against the node graph
+	// and re-resolved as the plant changes (an NGRP becomes a concrete child).
+	// This is not resolved against anything: it is an identity pin, written once
+	// when the wait is created and read only by Core's own routing, whose entire
+	// API is already keyed on lane id (EvaluateLaneReleases, laneGates.lock,
+	// LaneIDsForGateEvent, ListHeldLegParentsInLane). A name would need a lookup
+	// per candidate on the release path and would not survive a lane rename —
+	// and unlike Node, nothing downstream re-derives it from the plant.
+	WaitLane int64 `json:"wait_lane,omitempty"`
+}
+
+// WaitKindLane marks a wait ONLY the lane evaluator may advance: its
+// precondition is a lane fact (a dig, a robot inside, a slot reachable) that
+// nothing outside Core can observe.
+//
+// The absence of this value means an OPERATOR wait — a station reports
+// something Core genuinely cannot see, and HandleOrderRelease advances it. That
+// asymmetry is deliberate: the older, larger population is the one that needs
+// no marker.
+const WaitKindLane = "lane"
+
+// WaitKindStation marks a wait the STATION advances — the swap choreography's
+// own gates ("hold at staging until the line clears", "tooling done", "ready",
+// the changeover cutover). Its precondition is something a person or a station
+// observes and Core cannot, which is the mirror image of WaitKindLane.
+//
+// ── IT EXISTS BECAUSE ABSENCE COULD NOT CROSS THE WIRE ────────────────────
+//
+// The rule used to be "zero value means operator wait", and inside Core that
+// was enough: the splice stamps the lane waits, everything else is the station's
+// by elimination. It stops being enough at the boundary. The Edge holds the plan
+// it authored and receives no stamp at all, so it cannot distinguish "no kind
+// because the station owns it" from "no kind because nobody said" — and neither
+// can the HMI it draws. Absence is not a claim; it is the lack of one.
+//
+// So ownership is now DECLARED by whoever authors the wait, on both sides, and
+// the zero value is reserved for pre-ruling plans still in flight.
+const WaitKindStation = "station"
+
+// IsStationWait reports whether a station may advance this wait.
+//
+// THE DRAIN WINDOW LIVES HERE, in one place, so there is exactly one thing to
+// change when it closes. Untagged reads as station-owned today — the historical
+// default, so no plan in flight changes meaning — and the drift tests
+// (TestEveryEdgeAuthoredWaitIsStamped, TestSplice_FenceHoldsOnASplicedPlan) already
+// fail on any NEW untagged wait from either author. When the last pre-ruling
+// order has drained, delete the `== ""` arm and an untagged wait becomes what it
+// should be: unowned, and refused by both fences.
+func IsStationWait(kind string) bool {
+	return kind == WaitKindStation || kind == ""
+}
+
+// CoreOwnsWaitAt reports whether the wait an order is parked at is CORE's to
+// advance — the read behind the hard-release affordance and anything else that
+// must distinguish the two owners from outside this package.
+//
+// It is the exact complement of IsStationWait over a real plan, so the drain
+// window's default (untagged = the station's) is honoured in one place rather
+// than re-decided by each caller. An unreadable plan, or an order parked at no
+// wait, answers FALSE: nothing should offer a Core override for a wait it cannot
+// identify.
+func CoreOwnsWaitAt(stepsJSON string, waitIndex int) bool {
+	if stepsJSON == "" {
+		return false
+	}
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
+		return false
+	}
+	w, ok := waitAt(steps, waitIndex)
+	if !ok {
+		return false
+	}
+	return !IsStationWait(w.WaitKind)
 }
 
 // claimedBin records which bin was claimed at which pickup step.

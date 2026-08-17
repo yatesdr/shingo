@@ -48,6 +48,21 @@ const (
 	// cycle regardless of change; this event deliberately does NOT follow that,
 	// or an idle plant would pulse the page on a timer.
 	EventSourcingUpdated
+	// EventOrderResumed — a compound finished and its complex parent went back
+	// to Queued (Reshuffling → Queued, lifecycle.go's actionMap).
+	//
+	// IT EXISTS TO TELL THE EDGE, and EventOrderQueued could not. That event's
+	// Edge-facing subscriber is the QUEUE-REASON push: it returns early unless
+	// the order still IsAcquiring AND carries a non-empty QueueReason, because
+	// its job is delivering a block sentence, not mirroring a status. A resumed
+	// parent has no block reason (ResumeCompound clears it — the wait is over)
+	// and is usually dispatched again by the in-band scanner within the same
+	// millisecond, so both halves of that gate are false and nothing was sent.
+	//
+	// The Edge therefore never learned the order left `reshuffling`, and every
+	// later push was an illegal jump it rejected — three robots per run, held
+	// from the first minute of the soak to the end. See §12.49.
+	EventOrderResumed
 )
 
 // --- Event payloads ---
@@ -87,6 +102,16 @@ type OrderStatusChangedEvent struct {
 }
 
 type OrderCompletedEvent struct {
+	eventbus.PayloadBase
+	OrderID   int64
+	EdgeUUID  string
+	StationID string
+}
+
+// OrderResumedEvent carries a compound's parent going back to Queued. Same
+// three fields as OrderCompletedEvent because it drives the same thing — one
+// TypeOrderUpdate to the station that owns the order.
+type OrderResumedEvent struct {
 	eventbus.PayloadBase
 	OrderID   int64
 	EdgeUUID  string

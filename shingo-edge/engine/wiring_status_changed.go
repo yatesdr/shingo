@@ -64,7 +64,12 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 
 	steps := BuildSequentialBackfillSteps(claim)
 	nodeID := node.ID
-	orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, claim.CoreNodeName, claim.CoreNodeName, steps) // delivery_node = CoreNodeName → resets UOP
+	// ATTRIBUTED, and it was not. This order is the plant continuing to serve the
+	// demand that produced Order A, so it belongs to that demand's episode — see
+	// cellEpisodeOrigin for what an unattributed one costs downstream. It JOINS
+	// and never mints: a backfill is never itself the origin of a demand.
+	orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, claim.CoreNodeName, claim.CoreNodeName, steps,
+		e.cellEpisodeOrigin(node, claim)) // delivery_node = CoreNodeName → resets UOP
 	if err != nil {
 		log.Printf("sequential backfill for node %s: %v", node.Name, err)
 		return

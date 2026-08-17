@@ -334,6 +334,90 @@ type ComplexOrderStep struct {
 	// preserves the prior always-full behavior, so an older Core that ignores
 	// the field behaves exactly as today.
 	Empty bool `json:"empty,omitempty"`
+	// WaitKind declares WHO MAY ADVANCE a wait step, carried across the wire so
+	// the far side does not have to guess.
+	//
+	// ── WHY IT IS ON THE WIRE AT ALL ──────────────────────────────────────
+	//
+	// Core has always known: a wait it splices for a lane is stamped, and its
+	// release fence keys on that stamp. The Edge never received it. So a station
+	// holding a plan could not tell a wait it owns — "hold at staging until the
+	// line clears", which an operator ends — from one only Core's lane evaluator
+	// can advance, and the board either offered a button that could not work or
+	// offered nothing and explained nothing. The sim operator guessed with a
+	// three-strike retry cap and guessed wrong; a human at an HMI has strictly
+	// less to go on.
+	//
+	// Values are dispatch.WaitKindLane ("lane", Core-owned) and
+	// dispatch.WaitKindStation ("station", station-owned). They are declared in
+	// Core because Core is where the fence that reads them lives.
+	//
+	// EMPTY IS NOT A THIRD KIND. It means "authored before this field", and it
+	// is read as station-owned for exactly as long as pre-ruling orders are
+	// draining — the historical default, so nothing needs migrating. After the
+	// drain window an untagged wait is a defect, and the drift tests on both
+	// sides say so.
+	WaitKind string `json:"wait_kind,omitempty"`
+	// ExclusiveSlot declares that this DROPOFF lands on a node that holds ONE
+	// bin at a time and must therefore be reserved before the robot is sent.
+	//
+	// ── WHY THE SENDER HAS TO SAY IT ──────────────────────────────────────
+	//
+	// Core gates its destination checks on node ROLE: a dropoff is reserved and
+	// capacity-checked when the node is a storage slot (a child of a LANE or
+	// NGRP), and skipped otherwise. The skip is deliberate and load-bearing — a
+	// two-robot SUPPLY leg delivers to a LINE node that a sibling EVAC clears,
+	// and gating that re-creates the deadlock 2b05dce fixed.
+	//
+	// A STAGING node is neither. It holds one bin like a slot, but it is seeded
+	// as a station with no parent, so Core's role test rejects it at the
+	// parent-nil guard and BOTH destination gates decline to act. Nothing
+	// reserves it and nothing checks it is free.
+	//
+	// Core cannot repair that by looking harder. Every station — line, press,
+	// weld, loader, unloader, staging, dest — carries the one STATION node type;
+	// the plantspec's Kind field is advisory and never persisted; and the
+	// staging designation lives in the EDGE cell config, which Core does not
+	// have. The sender is the only party that knows.
+	//
+	// ── THE INCIDENT THIS WAS ATTRIBUTED TO WAS NOT THIS BUG (§R.112) ─────
+	//
+	// This field and its fix are UNCHANGED and keep their standing. What is
+	// struck is the causal claim, which stood here and at fourteen other sites:
+	//
+	//	"Springfield, 2026-08-12: AMR-04 held a bin for 48 minutes unable to
+	//	place at SLN_003, with the fleet reporting the robot RUNNING and no
+	//	error. Order 4580 was cancelled by an admin after 2h05m. Nothing was
+	//	broken — nothing had ever asked whether SLN_003 was free."
+	//
+	// The plant queries say otherwise. Order 4580's DESTINATION was ALN_004;
+	// SLN_003 was a mid-route waypoint, not the node it could not place at. The
+	// sibling order ran the identical route on the same robot and completed
+	// twelve minutes earlier. The fleet wedged. Whatever held AMR-04 for 48
+	// minutes, an unreserved staging node was not it.
+	//
+	// It is quoted once, here, rather than at each of the fifteen sites that
+	// carried it: a false sentence reproduced fifteen times to mark its own
+	// deletion is the disease this round is treating.
+	//
+	// THE GAP IS STILL REAL AND STILL REACHABLE, which is why nothing else
+	// moves. A declared staging dropoff is reserved by nothing and checked by
+	// nothing; two orders can take the same node and the second robot arrives to
+	// find it full. That argument stands on the code above without an incident
+	// under it, and it is the argument the fix should always have carried —
+	// TestDeclaredStagingDropoffIsReserved and the two invariant walks are what
+	// hold it, not a story.
+	//
+	// This is WaitKind's mirror, and the same rule: carried across the wire so
+	// the far side does not have to guess. There it was Core knowing something
+	// the Edge could not infer; here it is the Edge knowing something Core
+	// cannot.
+	//
+	// DROPOFF-ONLY; ignored on pickup/wait. Backward-compatible: absent/false is
+	// exactly today's behaviour, so an older sender — and an older Core that
+	// ignores the field — behave as they do now. Setting it on a LINE node would
+	// re-create the 2b05dce deadlock, so senders must not.
+	ExclusiveSlot bool `json:"exclusive_slot,omitempty"`
 }
 
 // ComplexOrderRequest is a multi-step transport order from edge.
@@ -1299,8 +1383,13 @@ type DemandOriginState struct {
 	// rather than formatting their own.
 	EpisodeKey string `json:"episode_key"`
 	Kind       string `json:"kind"`
-	Direction  string `json:"direction,omitempty"`
-	Trigger    string `json:"trigger,omitempty"`
+	// Direction carries the cell's ROLE — produce or consume. Typed, and the two
+	// values are the claim's own; "supply"/"evacuate" were a second vocabulary
+	// for the same fact and are retired (see protocol/episode_key.go). The JSON
+	// key stays `direction` so the wire shape is unchanged; only the value
+	// domain moved, which migration 87 carries for stored rows.
+	Direction ClaimRole `json:"direction,omitempty"`
+	Trigger   string    `json:"trigger,omitempty"`
 	// TriggerRef is the claim key or ProcessChangeoverID behind the mint —
 	// forensic, not identity.
 	TriggerRef string `json:"trigger_ref,omitempty"`

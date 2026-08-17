@@ -187,6 +187,18 @@ const (
 	TermClaimFailed TermCode = "claim_failed"
 	// TermLaneLocked: the lane was held by another order and stayed held.
 	TermLaneLocked TermCode = "lane_locked"
+	// TermReadFailed: a read Core needed did not answer. Transient — the planner
+	// parks and retries — so it is not expected on a terminal row; declared here
+	// because every planning code is bound to this vocabulary. A node that is
+	// genuinely absent is TermInvalidNode, and the two must not be confused: one
+	// is a database hiccup, the other is a human's job to fix.
+	TermReadFailed TermCode = "read_failed"
+	// TermBlockerClaimed: a bin a dig had to move was claimed by an order outside
+	// the compound. Congestion — the planner treats it as transient and parks —
+	// so it is not expected on a terminal row; declared here because every
+	// planning code except the loader one is bound to this vocabulary, and a
+	// future terminal path for it must not have to invent a string.
+	TermBlockerClaimed TermCode = "blocker_claimed"
 	// TermReshuffleError: reshuffle planning failed structurally.
 	TermReshuffleError TermCode = "reshuffle_error"
 	// TermStructural: the request is malformed in a way retrying cannot fix.
@@ -222,6 +234,8 @@ func AllTermCodes() []TermCode {
 		TermNodeError,
 		TermClaimFailed,
 		TermLaneLocked,
+		TermReadFailed,
+		TermBlockerClaimed,
 		TermReshuffleError,
 		TermStructural,
 		TermUnknownType,
@@ -648,6 +662,25 @@ var (
 	stuckSweepStatusSQLList            = buildStatusSQLList(IsStuckSweepCandidate)
 	operatorVisibleStatusSQLList       = buildStatusSQLList(IsOperatorVisible)
 )
+
+// StatusSQLList is buildStatusSQLList for callers OUTSIDE this package that
+// need a population the named projectors above do not already spell.
+//
+// The named projectors stay the way to ask for a predicate this package owns —
+// they are precomputed, and predicateProjectorPairs makes adding one a
+// deliberate act. This is for a consumer whose population is its own: soakstat's
+// stall checker partitions the non-terminal statuses into three progress kinds
+// with different thresholds, and that split belongs to the checker, not here.
+//
+// Exported so such a consumer derives its set from the ENUM rather than typing
+// the values out. Hand-listed populations are how `pending` and `sourcing` came
+// to fall through all three of the stall checker's kinds — watched by nothing,
+// in the exact statuses where a held leg waits.
+//
+// Returns "" when nothing matches. A caller splicing this into `status IN (%s)`
+// must handle that: `IN ()` is a syntax error, and an empty population is a
+// question about nothing rather than a query returning nothing.
+func StatusSQLList(pred func(Status) bool) string { return buildStatusSQLList(pred) }
 
 // buildStatusSQLList walks every known status, filters by the predicate,
 // quotes each value, and joins with commas. Sorted lex for deterministic

@@ -62,12 +62,6 @@ export function openNodeModal(el) {
     if (isGroupType) {
       document.getElementById('nf-retrieve-algo').value = 'FIFO';
       document.getElementById('nf-store-algo').value = 'LKND';
-      // Reset reshuffle controls to defaults; loadNodeDetail
-      // overrides from persisted properties below.
-      _reshuffleTargets = [];
-      renderReshuffleTargetChips();
-      var restoreSel = document.getElementById('nf-reshuffle-restore');
-      if (restoreSel) restoreSel.value = 'off';
       // "Enable ASRS" defaults ON (controls shown); loadNodeDetail flips it
       // off below if the group has asrs_enabled=off persisted.
       var asrsBox = document.getElementById('nf-asrs-enabled');
@@ -133,6 +127,11 @@ function loadNodeDetail(nodeID, isSynthetic) {
         onModeChange('stations');
       }
 
+      // The waiting-points section is built from the group's LANE children.
+      renderLaneGate(
+        data.node && ['NGRP', 'SMKT', 'SUP'].indexOf(data.node.node_type_code) >= 0,
+        data.node ? data.node.id : 0);
+
       var props = data.properties || [];
       props.forEach(function(p) {
         if (p.key === 'retrieve_algorithm') {
@@ -141,80 +140,18 @@ function loadNodeDetail(nodeID, isSynthetic) {
         } else if (p.key === 'store_algorithm') {
           var sel = document.getElementById('nf-store-algo');
           if (sel) sel.value = p.value;
-        } else if (p.key === 'reshuffle_target_nodes') {
-          try {
-            var arr = JSON.parse(p.value);
-            if (Array.isArray(arr)) {
-              _reshuffleTargets = arr.slice();
-            }
-          } catch (e) { console.warn('reshuffle_target_nodes parse', e); }
-        } else if (p.key === 'reshuffle_restore_blockers') {
-          var rsel = document.getElementById('nf-reshuffle-restore');
-          if (rsel) rsel.value = (p.value === 'on') ? 'on' : 'off';
         } else if (p.key === 'asrs_enabled') {
           var abox = document.getElementById('nf-asrs-enabled');
           if (abox) abox.checked = (p.value !== 'off');
           var actrls = document.getElementById('nf-asrs-controls');
           if (actrls) actrls.classList.toggle('hide', p.value === 'off');
+        } else if (p.key === 'resolve_around') {
+          var rabox = document.getElementById('nf-resolve-around');
+          if (rabox) rabox.checked = (p.value === 'on');
         }
       });
-
-      // Populate the +Add dropdown with direct children of this NGRP
-      // (excluding lanes and synthetic children, plus any already
-      // selected). Children come from data.children.
-      var children = (data.children || []).filter(function(c) {
-        return !c.is_synthetic && (c.node_type_code !== 'LANE');
-      });
-      _reshuffleTargetCandidates = children.map(function(c) { return c.name; });
-      renderReshuffleTargetChips();
     })
     .catch(function(err) { console.error('loadNodeDetail', err); });
-}
-
-// ── Reshuffle-target chip picker (NGRP only) ────────────────────────────
-var _reshuffleTargets = [];          // selected names, in order
-var _reshuffleTargetCandidates = []; // all direct-child names
-
-function renderReshuffleTargetChips() {
-  var container = document.getElementById('nf-reshuffle-targets-chips');
-  if (!container) return;
-  container.innerHTML = '';
-  _reshuffleTargets.forEach(function(name) {
-    var chip = document.createElement('span');
-    chip.className = 'tag';
-    chip.textContent = name;
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'tag-remove';
-    btn.innerHTML = '&times;';
-    btn.onclick = function() {
-      _reshuffleTargets = _reshuffleTargets.filter(function(n) { return n !== name; });
-      renderReshuffleTargetChips();
-    };
-    chip.appendChild(btn);
-    container.appendChild(chip);
-  });
-  // Re-populate the add-dropdown with names not already selected.
-  var dd = document.getElementById('nf-reshuffle-targets-add');
-  if (!dd) return;
-  dd.innerHTML = '<option value="">+ Add target node…</option>';
-  _reshuffleTargetCandidates.forEach(function(name) {
-    if (_reshuffleTargets.indexOf(name) !== -1) return;
-    var opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    dd.appendChild(opt);
-  });
-}
-
-function addReshuffleTarget() {
-  var dd = document.getElementById('nf-reshuffle-targets-add');
-  if (!dd || !dd.value) return;
-  if (_reshuffleTargets.indexOf(dd.value) === -1) {
-    _reshuffleTargets.push(dd.value);
-    renderReshuffleTargetChips();
-  }
-  dd.value = '';
 }
 
 /* --- Chip Picker --- */
@@ -357,19 +294,16 @@ function saveAlgorithmProperties() {
   var asrsBox = document.getElementById('nf-asrs-enabled');
   apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'asrs_enabled', value: (asrsBox && asrsBox.checked) ? 'on' : 'off'})
     .catch(function(err) { console.error('saveAlgorithmProperties asrs_enabled', err); });
+  // Resolve-around: per-group lane-preference arm (default off).
+  var raBox = document.getElementById('nf-resolve-around');
+  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'resolve_around', value: (raBox && raBox.checked) ? 'on' : 'off'})
+    .catch(function(err) { console.error('saveAlgorithmProperties resolve_around', err); });
   var retrieveAlgo = document.getElementById('nf-retrieve-algo').value;
   var storeAlgo = document.getElementById('nf-store-algo').value;
   apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'retrieve_algorithm', value: retrieveAlgo})
     .catch(function(err) { console.error('saveAlgorithmProperties retrieve', err); });
   apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'store_algorithm', value: storeAlgo})
     .catch(function(err) { console.error('saveAlgorithmProperties store', err); });
-  // Complex-order buried-reshuffle properties.
-  var targets = JSON.stringify(_reshuffleTargets || []);
-  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'reshuffle_target_nodes', value: targets})
-    .catch(function(err) { console.error('saveAlgorithmProperties reshuffle_target_nodes', err); });
-  var restoreVal = (document.getElementById('nf-reshuffle-restore') || {}).value || 'off';
-  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'reshuffle_restore_blockers', value: restoreVal})
-    .catch(function(err) { console.error('saveAlgorithmProperties reshuffle_restore_blockers', err); });
 }
 
 async function deleteNode() {
@@ -567,6 +501,9 @@ function collectManifestItems() {
 async function handleNodeSave(el, evt) {
   serializeChipPickers();
   saveAlgorithmProperties();
+  // Awaited, unlike the algorithm writes: this one can ask the human a question
+  // (a mark the map does not know), and the form must not submit underneath it.
+  await saveLaneGatePoints();
   if (!expandedPayloadID || !isManifestDirty()) return true;
   if (evt) evt.preventDefault();
   var items = collectManifestItems();
@@ -603,7 +540,6 @@ function closeManifestExpand() {
 delegateActions(document.body, {
     addChip,
     addNodeManifestRow,
-    addReshuffleTarget,
     clearChipPicker,
     closeManifestExpand,
     closeNodeModal,
@@ -627,6 +563,9 @@ delegateActions(document.body, {
     removeChip,
     renderChipDropdown,
     renderChips,
+    clearGatePoint,
+    onGatePointSearch,
+    pickGatePoint,
     saveAlgorithmProperties,
     serializeChipPickers,
     showChipDropdown,
@@ -636,3 +575,206 @@ delegateActions(document.body, {
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') { closeNodeModal(); }
 });
+
+// ── Waiting points ─────────────────────────────────────────────────────────
+//
+// ON THE GROUP, one row per lane. The property lives on the LANE — each lane has
+// its own point — but the place a human goes to configure a supermarket is the
+// group: you want the aisles side by side, so which are gated is one glance
+// rather than five modals.
+//
+// One row per lane today. When multi-point staging is built a lane grows more
+// rows and nothing here changes shape.
+//
+// There is no enable switch. A lane with a point stages robots there; a lane
+// without one holds its orders before dispatch. A switch and a point could
+// disagree, and only one of them can be right.
+
+var _gateMarks = [];           // last search result, for round-trip validation
+var _gateMarksLoaded = false;  // false until a search has answered at least once
+var _gateSearchTimer = null;
+var _gateRowSeq = 0;
+
+// renderLaneGate builds the section for a GROUP from its child lanes. Hidden for
+// anything that is not a group, and for a group with no lanes — there is nothing
+// to say about waiting points on a node with no aisles.
+function renderLaneGate(isGroup, groupID) {
+  var box = document.getElementById('lane-gate');
+  var list = document.getElementById('lane-gate-list');
+  if (!box || !list) return;
+
+  list.innerHTML = '';
+  _gateMarks = [];
+  _gateMarksLoaded = false;
+  if (!isGroup) { box.classList.add('hide'); return; }
+
+  // ONE call for the whole section — lanes and their current points together.
+  apiGet('/api/nodes/lane-gate-points?group_id=' + groupID)
+    .then(function(data) {
+      var lanes = (data && data.lanes) || [];
+      box.classList.toggle('hide', lanes.length === 0);
+      lanes.forEach(function(lane) { list.appendChild(gateRow(lane)); });
+    })
+    .catch(function(err) {
+      console.warn('lane gate: list lanes', err);
+      box.classList.add('hide');
+    });
+}
+
+function gateRow(lane) {
+  var id = 'gp-' + (++_gateRowSeq);
+  var row = document.createElement('div');
+  row.className = 'form-group';
+  row.style.marginBottom = '10px';
+  row.dataset.laneId = lane.lane_id;
+  row.dataset.laneName = lane.name;
+  row.dataset.saved = lane.point || '';
+  row.innerHTML =
+    '<label class="text-sm" style="font-weight:600">' + escapeHtml(lane.name) + '</label>' +
+    '<div class="tag-field" style="position:relative">' +
+      '<input type="text" class="text-sm gate-point-input" id="' + id + '" style="width:100%"' +
+      ' value="' + escapeHtml(lane.point || '') + '"' +
+      ' placeholder="Search location marks, or type a name…" autocomplete="off"' +
+      ' data-action-input="onGatePointSearch" data-action-focus="onGatePointSearch">' +
+      '<div class="tag-dropdown hide gate-point-dropdown"></div>' +
+    '</div>' +
+    '<div class="flex flex-between" style="margin-top:4px;align-items:center">' +
+      '<span class="text-muted gate-point-state" style="font-size:0.75rem"></span>' +
+      '<button type="button" class="btn btn-sm" data-action="clearGatePoint">Clear</button>' +
+    '</div>';
+  renderGateState(row, lane.point || '');
+  return row;
+}
+
+// renderGateState says what the value MEANS, not what it is. The field already
+// shows the name; what a human needs is which of the two behaviours they have
+// just chosen for that aisle.
+function renderGateState(row, value) {
+  var s = row.querySelector('.gate-point-state');
+  if (!s) return;
+  s.textContent = value
+    ? 'Gated — robots wait at ' + value + '.'
+    : 'Not gated — orders wait before a robot is sent.';
+}
+
+function gateRowOf(el) { return el && el.closest ? el.closest('[data-lane-id]') : null; }
+
+export function onGatePointSearch(el) {
+  var row = gateRowOf(el);
+  if (!row) return;
+  var input = row.querySelector('.gate-point-input');
+  renderGateState(row, input.value.trim());
+  clearTimeout(_gateSearchTimer);
+  // Debounced: a plant scene carries a lot of marks and every keystroke would
+  // otherwise be a query.
+  _gateSearchTimer = setTimeout(function() { fetchGateMarks(row, input.value.trim()); }, 150);
+}
+
+function fetchGateMarks(row, q) {
+  apiGet('/api/map/marks?q=' + encodeURIComponent(q))
+    .then(function(data) {
+      _gateMarks = (data && data.marks) || [];
+      _gateMarksLoaded = true;
+      renderGateDropdown(row, data && data.truncated, (data && data.matched) || 0);
+    })
+    .catch(function(err) {
+      // A scene that cannot be read must not block configuration: the field still
+      // accepts a typed name, which is the sim and emergency path.
+      console.warn('lane gate: mark search', err);
+      _gateMarks = [];
+      _gateMarksLoaded = false;
+      renderGateDropdown(row, false, 0);
+    });
+}
+
+function renderGateDropdown(row, truncated, matched) {
+  var dd = row.querySelector('.gate-point-dropdown');
+  if (!dd) return;
+  if (!_gateMarks.length) {
+    dd.innerHTML = '<div class="text-muted" style="padding:6px 8px;font-size:0.75rem">' +
+      (_gateMarksLoaded
+        ? 'No matching marks in the current map — type a name to use it anyway.'
+        : 'Map not available — type a mark name.') +
+      '</div>';
+    dd.classList.remove('hide');
+    return;
+  }
+  var html = _gateMarks.map(function(m) {
+    var sub = [m.label, m.class, m.area].filter(Boolean).join(' · ');
+    return '<div class="tag-option" data-action="pickGatePoint" data-mark="' + escapeHtml(m.name) + '">' +
+      '<strong>' + escapeHtml(m.name) + '</strong>' +
+      (sub ? '<span class="text-muted" style="margin-left:8px;font-size:0.75rem">' + escapeHtml(sub) + '</span>' : '') +
+      '</div>';
+  }).join('');
+  if (truncated) {
+    html += '<div class="text-muted" style="padding:6px 8px;font-size:0.75rem">' +
+      matched + ' marks match — keep typing to narrow.</div>';
+  }
+  dd.innerHTML = html;
+  dd.classList.remove('hide');
+}
+
+export function pickGatePoint(el) {
+  var row = gateRowOf(el);
+  if (!row || !el.dataset.mark) return;
+  row.querySelector('.gate-point-input').value = el.dataset.mark;
+  row.querySelector('.gate-point-dropdown').classList.add('hide');
+  renderGateState(row, el.dataset.mark);
+}
+
+// clearGatePoint takes a lane out of staging, and asks first when robots are
+// standing at the point it is about to remove.
+export async function clearGatePoint(el) {
+  var row = gateRowOf(el);
+  if (!row) return;
+  var input = row.querySelector('.gate-point-input');
+  if (!input.value.trim()) { renderGateState(row, ''); return; }
+
+  var waiting = 0;
+  try {
+    var data = await apiGet('/api/nodes/lane-waiting?lane_id=' + row.dataset.laneId);
+    waiting = (data && data.waiting) || 0;
+  } catch (e) {
+    console.warn('lane gate: waiting count', e);
+  }
+  if (waiting > 0) {
+    var ok = await uiConfirm(waiting + ' robot' + (waiting === 1 ? ' is' : 's are') +
+      ' waiting at ' + row.dataset.laneName + '. ' + (waiting === 1 ? 'It' : 'They') +
+      ' will complete under the old rules; new orders will wait before dispatch instead. Clear it?');
+    if (!ok) return;
+  }
+  input.value = '';
+  renderGateState(row, '');
+}
+
+// saveLaneGatePoints writes every row whose value CHANGED, and is the last place a
+// typo is cheap to catch. The value goes to the fleet verbatim as a block
+// location: a point that is not on the map kills the waybill at issue time, on the
+// floor, with a robot already committed. A confirm here costs a click.
+async function saveLaneGatePoints() {
+  var box = document.getElementById('lane-gate');
+  if (!box || box.classList.contains('hide')) return;
+
+  var rows = box.querySelectorAll('[data-lane-id]');
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    var value = row.querySelector('.gate-point-input').value.trim();
+    if (value === (row.dataset.saved || '')) continue; // untouched: no write, no audit row
+
+    if (value && _gateMarksLoaded && _gateMarks.length) {
+      var known = _gateMarks.some(function(m) { return m.name === value; });
+      if (!known) {
+        var ok = await uiConfirm('"' + value + '" is not in the current map. Robots sent to a point ' +
+          'the fleet does not know will fail at dispatch. Save it for ' + row.dataset.laneName + ' anyway?');
+        if (!ok) continue;
+      }
+    }
+    try {
+      await apiPost('/api/nodes/properties/set',
+        {node_id: parseInt(row.dataset.laneId, 10), key: 'lane_gate_point', value: value});
+      row.dataset.saved = value;
+    } catch (err) {
+      toast('Could not save the waiting point for ' + row.dataset.laneName + ': ' + err, 'error');
+    }
+  }
+}

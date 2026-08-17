@@ -28,7 +28,15 @@ func (s *stubDispatcher) ReserveStorageDropoff(*orders.Order) error { return nil
 func (s *stubDispatcher) ConfirmForDispatch(*orders.Order, int64, *nodes.Node, *nodes.Node) error {
 	panic("scanner complex-order branch should not call ConfirmForDispatch")
 }
-func (s *stubDispatcher) PostFindHook() {}
+func (s *stubDispatcher) AcquireLanesForOrder(*orders.Order, *nodes.Node, *nodes.Node, dispatch.EntryKind) (bool, dispatch.QueueCause, string, error) {
+	return true, "", "", nil // gate off — the complex branch does not gate lanes here
+}
+func (s *stubDispatcher) ReleaseLanesForOrder(int64) error { return nil }
+func (s *stubDispatcher) PostFindHook()                    {}
+func (s *stubDispatcher) BuriedForHeldBin(*orders.Order) (*dispatch.BuriedError, error) {
+	panic("scanner complex-order branch should not describe a held-bin burial")
+}
+
 func (s *stubDispatcher) PlanBuriedReshuffle(*orders.Order, *dispatch.BuriedError) error {
 	panic("scanner complex-order branch should not plan a reshuffle")
 }
