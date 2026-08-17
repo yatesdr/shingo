@@ -3,7 +3,7 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
-## 2026-08-17 — Lane campaign
+## 2026-08-17 — Lane campaign (work dated 2026-08-16, merged 08-17)
 
 - The lane mouth is a durable reservation (`resource_kind='mouth'`) with a work direction — `inbound`, `outbound`, or `dig`; the rows own the hold, not an in-process lock.
 - A dig's lane claim drops when the last blocker leaves the lane, handing the corridor to the order collecting the uncovered bin rather than releasing it into open contention.
@@ -27,27 +27,59 @@ belongs in the commit message or in `docs/` — this file is the index.
 
 - GitHub Actions updated to Node 24 compatible versions.
 - Fault notification throttle removed and the buffer reduced to one minute.
-- Threaded fault/cleared emails, time-faulted display, and a test-chain button.
 
-## 2026-08-05 — Robot localization confidence
+## 2026-08-10 — Per-AMR confidence grain
 
-- Confidence is sampled off the robot poll Core already makes, rather than a new feed.
-- Migration 77 adds the confidence tables, with daily roll-ups kept forever and raw samples aged out.
-- Roll-ups key on the geometry a reading was actually taken on, and store the distribution because percentiles do not re-aggregate.
-- `confidence <= 0` is a ReflectorArea sentinel, not a robot position — excluded everywhere.
-- A four-band scheme (good/fair/watch/poor, plus blind) drives the map; the HMI chip stays on the vendor's 0.8/0.3.
-- Per-lane-per-robot grain (v83) lets the map filter to one AMR's world.
-- An unnameable lane is quarantined rather than renamed, and an unpolled scene is not an empty one.
-- The roll-up cannot hang off a 24-hour ticker on an 11-hour process.
+- The localization map filters to one robot's world, on a per-lane-per-robot grain (v83).
+- A watch band added between fair and poor.
+- Fixed the robot-filter dropdown, which fetched the wrong endpoint and read the wrong field.
+- `lane_robot_rows` is appended rather than inserted in the schema snapshot.
 
-## 2026-08-06 — Scene map and localization board
+## 2026-08-07 — Localization board, install-script fixes
+
+- The robots page stops being a stub and becomes the localization board, drawing the overlay `www` now serves.
+- A lane was a 1.3-pixel click target; clicking one now does something.
+- The map's corner brackets framed the viewport rather than the floor.
+- The board drew with a colour token that does not exist, and carried a NUL byte.
+- The missions timeline held a second copy of the state mapping, and the two disagreed.
+- Confidence stores the distribution, because percentiles do not re-aggregate.
+- `install-*.sh` re-execs after the self-pull, so a fix lands on the run that fetches it.
+- `install-*.sh` reads the config path off the systemd unit rather than a filesystem scan.
+- Threaded fault/cleared notification emails, time-faulted display, and a test-chain button.
+
+## 2026-08-06 — Scene map
 
 - Core fetches and versions the scene map RDS refuses to expose, via `POST /generalRobokitAPI`.
 - Scene areas and reflectors that RDS throws away are parsed and stored.
 - A lane is fingerprinted as one piece of floor drawn twice, so the two halves reconcile.
 - Scene sync diffs before overwriting and refuses a lane it cannot name.
-- The robots page becomes the localization board, drawing on an extracted scene-drawing substrate a second map can reuse.
+- The scene-drawing substrate is extracted so a second map need not copy it.
 - A map edit now has a magnitude and an owner.
+
+## 2026-08-05 — Robot localization confidence
+
+- Confidence is sampled off the robot poll Core already makes, rather than a new feed.
+- Migration 77 adds the confidence tables, with daily roll-ups kept forever and raw samples aged out.
+- Roll-ups key on the geometry a reading was actually taken on.
+- `confidence <= 0` is a ReflectorArea sentinel, not a robot position — excluded everywhere.
+- A four-band scheme drives the map; the HMI chip stays on the vendor's 0.8/0.3.
+- An unnameable lane is quarantined rather than renamed, and an unpolled scene is not an empty one.
+- The roll-up cannot hang off a 24-hour ticker on an 11-hour process.
+
+## 2026-08-04 — Email notifications
+
+- SMTP notifier, config UI and query module added; STARTTLS certificate verification skipped for corporate SMTP.
+
+## 2026-08-03 — ClaimSync deleted, operator-station and changeover fixes
+
+- `ClaimSync` is deleted — the Core half had no sender left, and had been unreachable the whole time.
+- The operator station asks the partner leg rather than the oldest order in the room.
+- A hold reason must not outlive its hold.
+- Core announces the completions it decides on its own.
+- A changeover points the runtime slots at the legs the applier just created.
+- A wedged queued order now says so.
+- A demand that already asked for a carrier must not ask again.
+- Fixed a health endpoint 500 from an uncast staleness bound.
 
 ## 2026-08-02 — Core owns loader replenishment
 
@@ -58,7 +90,14 @@ belongs in the commit message or in `docs/` — this file is the index.
 - The loader form is rebuilt around the kind of loader it is.
 - The order API moves behind the admin gate, with queueing split from replying.
 - A child order gets its own payload, source and reason.
-- `ClaimSync` is deleted on both sides — the Core handler had been unreachable the whole time.
+- An Edge database refuses to migrate over a live one.
+
+## 2026-07-31 — Operator station and release path
+
+- The operator station says WHY the other robot has not come, and stops rebuilding the modal under a finger.
+- One swap-pair resolver, which verifies the pair.
+- The Edge mirrors Core's order status instead of validating it.
+- A swap leg waiting on an operator is not a forgotten robot, so the abandon sweep leaves it alone.
 
 ## 2026-07-30 — Changeover cancellation and supply refusals
 
@@ -67,8 +106,19 @@ belongs in the commit message or in `docs/` — this file is the index.
 - The cutover gate asks where the bin lands, not which slot points at it.
 - A loader can refuse a supply call and take it back; the refusal reaches Core, and Core tells everyone.
 - Refusals are notice-only — they never load and never gate demand.
-- The loader board reds a queued call with nothing coming, and marks ACTIVE styles.
 - A starving cell reads red on a dedicated home, against the configured threshold.
+
+## 2026-07-29 — Node report, sourcing, loader board
+
+- A bin already standing in the process counts, so sourcing stops calling it missing.
+- The changeover picker colours its style buttons with Core's sourcing verdict.
+- The loader board marks ACTIVE styles and reds a queued call with nothing coming.
+- Node report: overflow, dynamic row sizing, unified scroll, STOR-only filtering, and a transit bar.
+- The two inventory ledger panels are read as a pair, so they sit side by side.
+- The delta panel stops asserting a cause it cannot support; a large negative is an indicator, not a diagnosis.
+- The health strip's anomaly count is windowed, and the verdict names what it found.
+- An edge may introduce itself, but only a human says which station it is.
+- Install scripts: the build stamp fell through to dev/unknown under sudo.
 
 ## 2026-07-28 — Edge identity, foreign-key repair, demand forensics
 
@@ -80,6 +130,29 @@ belongs in the commit message or in `docs/` — this file is the index.
 - Cycle time from the counter trail: one distribution per station, part and direction.
 - Station display names resolve at render time and are never stored.
 - The retention ladder gets its permanent rung, bounding the tables that grow forever.
+- Wall displays are named after what a passer-by reads off them.
+
+## 2026-07-27 — PLC cutover removal
+
+- PLC-driven cutover removed: its tag was never wired, and its flag hid the operator's CUTOVER button.
+- Edge re-derives PLC status periodically in SSE mode, so a missed transition heals itself.
+- `install-edge.sh` takes its backup after the stop, not before it.
+
+## 2026-07-24 — Loader HMI performance, one order view
+
+- The 44s bin-loader view fixed: the per-node claim walk is gone and `loadView`'s timeout is widened.
+- The manual-swap claim walk collapses from ~53 queries to 2.
+- Per-tile claim and lineside-bucket queries hoisted out of the loop, and the last two unconditional ones batched.
+- The plant-wide lineside scan is gated and batched.
+- `loadView` is single-flight and station-view builds coalesce, so the refresh loop stops stacking.
+- The poll chain stopped extinguishing itself, and the load-bin manifest fetch no longer hangs forever.
+- One order view — the detail page is retired, the empty modal fixed, and controls move into the shared manifest.
+- The order manifest is reworked for hierarchy and flow, keeping `queue_reason` and quantity visible.
+- The faulted grace period is raised to 45m and exposed on `/config`; faulted moves off amber to orange so it separates from sourcing.
+- The Edge store DSN is fixed so WAL and `busy_timeout` are actually applied.
+- Every `ManagedPLC` gets a safe default status via one constructor, and PLCs that disappear from WarLink are evicted rather than only restatused.
+- The Edge throttles its station liveness write and caps the raw-message log preview.
+- The "N rejected deltas" count drills into which carriers.
 
 ## 2026-07-22 — Nodes page cleanup, map token promotion, template-var check
 
