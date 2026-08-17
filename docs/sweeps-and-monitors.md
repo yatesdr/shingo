@@ -39,6 +39,47 @@ were enumerated during the audit and none couples to this machinery.
 | `SourceabilityMonitor` | `engine/sourceability_monitor.go` | boot + bus | 2m full, 300ms debounce |
 | `staleEdgeLoop` | `messaging/core_handler.go` | boot | 60s |
 | RDS grace poller | `rds/poller.go` | boot | configured interval |
+| `laneLivenessFloorLoop` — 3 passes, see below | `engine/engine_background.go` | boot | 60s (`laneLivenessFloorInterval`) |
+
+### The lane liveness floor — three passes, one tick
+
+`laneLivenessFloorLoop` (started at `engine_lifecycle.go:117`) runs three passes
+on every tick, and **the order is load-bearing** — each one re-drives machinery
+the next would otherwise misread:
+
+| # | Pass | Where | Acts or reports |
+|---|------|-------|-----------------|
+| 1 | `Dispatcher.SweepLaneWaiters` | `dispatch/lane_floor.go` | **acts** — re-drives waits an event should have released, writing a `lane_floor_release` recovery action naming the order and its cause |
+| 2 | `Dispatcher.SweepMutualDigHolds` | `dispatch/dig_standoff_tripwire.go` | **reports** — digs waiting on each other in a closed loop that cannot self-clear (`dig_standoff_detected`) |
+| 3 | `Dispatcher.SweepStalledChapters` | `dispatch/chapter_floor.go` | **acts** — a demand in `reshuffling` with an open leg; dissolves and re-queues, or records residue (`chapter_stalled_unresolvable`) |
+
+The tripwire runs *after* the floor because the floor's re-drive clears waits
+that only looked circular; asking first would report standoffs the next line
+dissolves. The chapter watchdog runs last for the same reason. Dig admission is
+supposed to make a mutual hold unreachable, so every one the tripwire reports is
+a defect in the usable-capacity claim, not a routine event.
+
+All three are silent at zero. Per-release logging is deliberately omitted — each
+release writes its own `recovery_actions` row, and a periodic "released 0" line
+would be exactly the cry-wolf the reconciliation sweeps warn about.
+
+The floor interval is a **maximum wait**, not a poll interval: the events are the
+primary release path and the floor is the backstop for when one does not fire.
+The histogram of floor releases grouped by cause is therefore a ranked worklist
+of missing emitters — see `[[queued-order-fulfillment]]` for the releaser
+doctrine that makes it readable.
+
+## Core — per-event instruments (not sweeps)
+
+These fire at a call site rather than on a ticker. They are listed here so this
+page reads as the complete watchdog inventory, but nothing schedules them and
+none of them will notice a problem on their own if the path is never taken.
+
+| Instrument | Where | Fires on |
+|---|---|---|
+| `noteUngatedDigProposal` / `UngatedDigTally` | `dispatch/ungated_dig_tripwire.go` | a dig proposed without passing the gate |
+| `noteDestNodeDrift` / `DestNodeDriftTally` | `engine/bin_state_drift.go` | an order's destination node disagreeing with its bins' |
+| `refuseArrival` / `ArrivalRefusal` | `engine/arrival_guard.go` | an arrival that cannot be applied, carrying a reason and context |
 
 ## Edge
 
