@@ -29,9 +29,19 @@ package dispatch
 // ── HONEST ENTRIES ONLY ───────────────────────────────────────────────────
 //
 // A cause whose row cannot be written truthfully carries a `finding` instead of
-// a plausible sentence. Two exist today and both are reported rather than
-// papered over: the fleet-refusal cause has NO event (nothing emits "the fleet
-// became willing"), and one declared cause has no producer at all.
+// a plausible sentence. Two exist today, and BOTH ARE REASONED ABSENCES rather
+// than defects: the fleet-refusal cause has no event (nothing emits "the fleet
+// became willing", so the floor is the answer), and CauseHeldBinMissing has none
+// for a stated reason of its own.
+//
+// This paragraph said "two" while four rows carried a finding, and the
+// miscount mattered: the two it did not name were the real defects. Both are now
+// resolved — CauseLaneEntryError was declared and never set, and
+// CauseLaneLockRace shared "lock-race" with CauseBinLockRace and had no writer.
+// Both constants are deleted, so what is left is the honest two.
+//
+// Keep the count right. It is the number a reader uses to decide whether the
+// findings are worth reading.
 
 // WaitPopulation names a set of orders that wait together because one mechanism
 // re-drives all of them. It is the unit the wiring and the floors are built on —

@@ -185,6 +185,76 @@ scanner retries it next tick.
 
 **No bins ever available:** Order stays queued indefinitely. Operator sees "Awaiting Stock", can cancel.
 
+## Why an order is waiting, and what will end it
+
+The sections above describe the original queued-order mechanism. The lane
+campaign generalized it: a queued order is one instance of a **machine-owned
+wait**, and every such wait now has to declare how it ends.
+
+### The doctrine
+
+Every machine-owned wait has:
+
+1. a named **event releaser** — the thing that, when it happens, ends this wait;
+2. a periodic **floor** that re-evaluates it, for when that event does not fire;
+3. a **record** when the floor is what freed it, rather than the event.
+
+It is a table rather than prose because prose cannot be asserted. The defect that
+motivated it was not a missing idea — the evaluator's own documentation said "a
+dropped event costs only latency until the next firing." It was that nothing
+checked whether a next firing could exist. Every individual comment was
+defensible; nothing connected them.
+
+### Where it lives
+
+`shingo-core/dispatch/queue_cause.go` holds the `QueueCause` constants — the
+named reason an order is waiting, written on its row. This is **Core vocabulary
+and never crosses the wire**, which is what makes the values safe to rename in
+bulk but not safe to re-spell casually: they are already written on rows in a
+plant's orders table and are grouped by in forensic queries.
+
+`shingo-core/dispatch/queue_releasers.go` holds two tables:
+
+- `causeReleasers` — for each cause, the populations an order carrying it can be
+  sitting in, and `what` should end the wait.
+- `waitPopulations` — for each population, its owner, its re-driver, the events
+  it is released by, and its floor.
+
+Three totality tests keep them honest:
+
+| Test | Asserts |
+|---|---|
+| `TestEveryQueueCauseHasAReleaser` | `causeReleasers` is total over the `QueueCause` constants |
+| `TestEveryWaitPopulationHasBothPaths` | every population carries both an event set and a floor |
+| `TestDeclaredReleaserEventsAreSubscribed` | the declared events are really subscribed to that population's re-driver |
+
+### The floor-release histogram is a worklist
+
+The floor records the cause an order was carrying when the **floor** — rather
+than an event — freed it. `what` is the sentence that record prints: it says what
+*should* have ended the wait, so the record reads as "this event did not fire"
+rather than "something was slow."
+
+So the histogram of floor releases grouped by cause is a **ranked worklist of
+missing emitters**. That is the artifact an emitter hunt runs on, and it is the
+main reason to look at this data at all.
+
+### Honest entries only — the current findings
+
+A cause whose row cannot be written truthfully carries a `finding` instead of a
+plausible sentence. Four exist today, and they are not all defects:
+
+| Cause | Finding | Is it a defect? |
+|---|---|---|
+| `CauseFleetRefusedCreate` | No event exists — nothing emits "the fleet became willing", so the floor is the only thing that re-asks | **No.** Absence-class, and the floor is the intended answer |
+| `CauseHeldBinMissing` | No event releases it, and that is correct rather than a gap | **No.** Reasoned absence |
+| `CauseLaneEntryError` | *(resolved 2026-08-17)* declared and never set — dead vocabulary; deleted | Was a defect, now gone |
+| `CauseLaneLockRace` | *(resolved 2026-08-17)* shared the string `"lock-race"` with `CauseBinLockRace` and had no writer; deleted, leaving the value meaning exactly one fact | Was a defect, now gone |
+
+Read the findings before trusting a histogram. Two of them say "this wait has no
+event and that is fine"; a reader who assumes every cause has an event releaser
+would draw the wrong conclusion from either.
+
 ## Implementation Sequence
 
 1. Protocol -- add `StatusQueued`
