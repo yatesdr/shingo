@@ -210,6 +210,11 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		// source node and never scans plant-wide. Keyed on the sourcing intent
 		// data (SourceIntentLocal), stamped at intake, never on OrderType.
 		NodeLocal: order.SourceIntent == SourceIntentLocal,
+		// Both read straight off the order, never re-derived: the values are in
+		// hand here, and a per-step lookup would put a database round trip inside
+		// the tier cascade for something the caller was already holding.
+		OriginID:    order.OriginID,
+		ProcessNode: order.ProcessNode,
 	})
 }
 

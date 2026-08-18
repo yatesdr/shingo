@@ -39,6 +39,13 @@ func (db *DB) FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, exclude
 	return bins.FindEmptyOfTypeInGroup(db.DB, binTypeCode, groupNodeID, excludeNodeID)
 }
 
+// CountEmptyBinsOfTypeInGroup counts exactly what FindEmptyBinOfTypeInGroup can
+// see — the same WHERE, interpolated by both. The level keeper's "resident"
+// tally. See bins.CountEmptyOfTypeInGroup.
+func (db *DB) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error) {
+	return bins.CountEmptyOfTypeInGroup(db.DB, binTypeCode, groupNodeID)
+}
+
 func (db *DB) FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error) {
 	return bins.FindSourceFIFO(db.DB, payloadCode, excludeNodeID)
 }

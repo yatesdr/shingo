@@ -34,7 +34,45 @@ package dispatch
 // inconvenient makes declaring it pointless. A loader that wants any-type
 // behaviour says so by declaring no mix.
 func (f *SourceFinder) wantedBinType(need SourceNeed) string {
-	if need.Intent != IntentEmpty || need.DeliveryNode == "" {
+	if need.Intent != IntentEmpty {
+		return ""
+	}
+
+	// ── FIRST ARM: THE TYPE IS PINNED, NOT DERIVED ──────────────────────────
+	//
+	// An ask carrying an origin that names an OPEN maintained-group episode
+	// sources the type that episode is short of, full stop. It does not fall
+	// through to the loader derivation below and it never re-derives.
+	//
+	// PINNING AT MINT IS SOURCING CORRECTNESS, NOT BOOKKEEPING, and this is the
+	// argument for it (SYNTH round 2 §1d): the keeper decided it was short of
+	// 45x58x32 and is counting that type. If a replayed ask re-derived its own
+	// shortfall — on a tick where the level had moved, or where a push had just
+	// landed — it could source 45x48x24 instead. The carrier arrives, the count
+	// the keeper is watching does not move, and it asks again. The level never
+	// converges, and nothing anywhere reports an error.
+	//
+	// BEFORE THE DeliveryNode GUARD, deliberately. The old first line folded
+	// Intent and DeliveryNode together, but a keeper ask's DeliveryNode is a
+	// concrete child slot chosen by pre-resolve — it is not a loader window, so
+	// the derivation below would find no home and return "" for an ask whose
+	// type is already known. The DeliveryNode requirement belongs to the LOADER
+	// derivation, which is why it moved down to it.
+	//
+	// A read failure returns "" rather than guessing, and that is the safe
+	// direction here: an untyped ask sources any compatible empty, which the
+	// keeper will then not count — one wasted carrier and a retry next tick,
+	// versus a wrong-typed carrier delivered as though it were right.
+	if need.OriginID != "" {
+		if code, err := f.db.MaintainedTypeForOrigin(need.OriginID); err == nil && code != "" {
+			return code
+		} else if err != nil {
+			f.debug("wantedBinType: maintained type for origin %s: %v", need.OriginID, err)
+		}
+	}
+
+	// ── The loader derivation. Needs a destination WINDOW to derive from. ────
+	if need.DeliveryNode == "" {
 		return ""
 	}
 	dest, err := f.db.GetNodeByDotName(need.DeliveryNode)

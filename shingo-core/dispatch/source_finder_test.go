@@ -35,6 +35,14 @@ type fakeFinderDB struct {
 	homeBinTypes map[int64]map[int64][]string
 	typedEmpty   map[string]*bins.Bin
 
+	// maintainedType stands for the open maintained-group episodes: origin id →
+	// the carrier type that episode is short of. An origin absent from the map is
+	// not a maintain episode, which is every other order in the plant.
+	maintainedType map[string]string
+	// maintainedTypeErr makes the episode read FAIL rather than answer, so the
+	// "a read failure returns no type rather than guessing" arm is exercisable.
+	maintainedTypeErr error
+
 	fifoBin     *bins.Bin
 	globalEmpty *bins.Bin
 	groupEmpty  *bins.Bin
@@ -56,6 +64,7 @@ type fakeFinderDB struct {
 	fifoCalls        int
 	globalEmptyCalls int
 	groupEmptyCalls  int
+	typedGroupCalls  int
 }
 
 func newFakeFinderDB() *fakeFinderDB {
@@ -135,7 +144,20 @@ func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64) (*bins
 	return nil, errors.New("no empty of type " + binTypeCode)
 }
 
+func (f *fakeFinderDB) MaintainedTypeForOrigin(originID string) (string, error) {
+	if f.maintainedTypeErr != nil {
+		return "", f.maintainedTypeErr
+	}
+	if originID == "" {
+		// The real one returns without querying: origin_id is a UUID column and
+		// "" is a cast error, not an empty result.
+		return "", nil
+	}
+	return f.maintainedType[originID], nil
+}
+
 func (f *fakeFinderDB) FindEmptyBinOfTypeInGroup(binTypeCode string, _, _ int64) (*bins.Bin, error) {
+	f.typedGroupCalls++
 	if b, ok := f.typedEmpty[binTypeCode]; ok {
 		return b, nil
 	}
@@ -537,5 +559,151 @@ func TestIntakeAndReplayAgree(t *testing.T) {
 				t.Errorf("expected no plant-wide FIFO scan, got %d calls", db.fifoCalls)
 			}
 		})
+	}
+}
+
+// ── MG2-4: the typed ask, pinned at mint ──────────────────────────────────
+//
+// An ask carrying an origin that names an open maintained-group episode sources
+// THAT type and never re-derives one. These pin the routing consequence: the
+// need must reach the TYPED group finder, not the compatible one, and a group
+// that has no carrier of the wanted type must WAIT rather than substitute.
+
+func TestFindSource_MaintainOriginPinsTheType(t *testing.T) {
+	db := newFakeFinderDB()
+	groupID := int64(100)
+	db.addNode(&nodes.Node{ID: groupID, Name: "PRESS-EMPTIES", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
+	// The keeper pre-resolves, so its DeliveryNode is a concrete child slot —
+	// NOT a loader window. The loader derivation below the new arm would find no
+	// home here and return "", which is exactly why the arm goes first.
+	slot := int64(101)
+	db.addNode(&nodes.Node{ID: slot, Name: "PEB_001"})
+
+	const origin = "11111111-2222-3333-4444-555555555555"
+	db.maintainedType = map[string]string{origin: "45x58x32"}
+
+	// Both types are physically present in the group. Only the pinned one may
+	// be taken.
+	wanted := int64(102)
+	db.addNode(&nodes.Node{ID: wanted, Name: "PEB_002"})
+	db.typedEmpty = map[string]*bins.Bin{
+		"45x58x32": {ID: 501, PayloadCode: "", NodeID: &wanted},
+	}
+	db.groupEmpty = &bins.Bin{ID: 999, PayloadCode: "", NodeID: &wanted} // the wrong-type trap
+
+	finder := NewSourceFinder(db, nil, nil)
+	order := &orders.Order{
+		ID: 7, OrderType: OrderTypeRetrieveEmpty,
+		SourceNode: "PRESS-EMPTIES", DeliveryNode: "PEB_001",
+		OriginID: origin,
+	}
+
+	res := finder.FindSource(order, IntentEmpty)
+	if res.Outcome != OutcomeFound {
+		t.Fatalf("outcome = %v, want OutcomeFound", res.Outcome)
+	}
+	if res.Bin == nil || res.Bin.ID != 501 {
+		t.Fatalf("bin = %v, want the 45x58x32 carrier (501)", res.Bin)
+	}
+	if db.typedGroupCalls == 0 {
+		t.Error("the typed group finder was never called — the pinned type did not reach the tier")
+	}
+	if db.groupEmptyCalls != 0 {
+		t.Errorf("the COMPATIBLE group finder was consulted %d time(s); a pinned ask must never "+
+			"fall through to any-compatible, which is how the mix drifts", db.groupEmptyCalls)
+	}
+	if db.globalEmptyCalls != 0 {
+		t.Errorf("plant-wide finder consulted %d time(s) while group-scoped", db.globalEmptyCalls)
+	}
+}
+
+// HONOURED, NOT APPROXIMATED. The group holds carriers — just not of the pinned
+// type. The ask WAITS under the type-specific cause rather than taking what is
+// there: substituting would deliver a carrier the keeper is not counting, so the
+// level never converges and nothing reports an error.
+func TestFindSource_MaintainOriginWaitsRatherThanSubstitute(t *testing.T) {
+	db := newFakeFinderDB()
+	groupID := int64(100)
+	db.addNode(&nodes.Node{ID: groupID, Name: "PRESS-EMPTIES", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
+	db.addNode(&nodes.Node{ID: 101, Name: "PEB_001"})
+
+	const origin = "11111111-2222-3333-4444-555555555555"
+	db.maintainedType = map[string]string{origin: "45x58x32"}
+
+	// No 45x58x32 anywhere — but a compatible empty IS in the group, and one is
+	// also available plant-wide. Neither may be taken.
+	other := int64(102)
+	db.addNode(&nodes.Node{ID: other, Name: "PEB_002"})
+	db.groupEmpty = &bins.Bin{ID: 601, PayloadCode: "", NodeID: &other}
+	db.globalEmpty = &bins.Bin{ID: 602, PayloadCode: "", NodeID: &other}
+
+	finder := NewSourceFinder(db, nil, nil)
+	order := &orders.Order{
+		ID: 8, OrderType: OrderTypeRetrieveEmpty,
+		SourceNode: "PRESS-EMPTIES", DeliveryNode: "PEB_001",
+		OriginID: origin,
+	}
+
+	res := finder.FindSource(order, IntentEmpty)
+	if res.Outcome != OutcomeWait {
+		t.Fatalf("outcome = %v, want OutcomeWait — a pinned type is honoured, not approximated", res.Outcome)
+	}
+	if res.QueueCause != CauseFinderNoEmptyOfType {
+		t.Errorf("cause = %q, want %q", res.QueueCause, CauseFinderNoEmptyOfType)
+	}
+	if db.groupEmptyCalls != 0 || db.globalEmptyCalls != 0 {
+		t.Errorf("substitution attempted: compatible-in-group=%d plant-wide=%d — both must be zero",
+			db.groupEmptyCalls, db.globalEmptyCalls)
+	}
+}
+
+// A blank origin is every other order in the plant, and must behave exactly as
+// it did before the arm existed: fall through to the loader derivation.
+func TestFindSource_BlankOriginUnchanged(t *testing.T) {
+	db := newFakeFinderDB()
+	db.addNode(&nodes.Node{ID: 100, Name: "GROUP-A", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
+	db.addNode(&nodes.Node{ID: 99, Name: "DEST"})
+	at := int64(101)
+	db.addNode(&nodes.Node{ID: at, Name: "GROUP-A-LANE-1"})
+	db.groupEmpty = &bins.Bin{ID: 701, PayloadCode: "", NodeID: &at}
+
+	finder := NewSourceFinder(db, nil, nil)
+	order := &orders.Order{ID: 9, OrderType: OrderTypeRetrieveEmpty, SourceNode: "GROUP-A", DeliveryNode: "DEST"}
+
+	res := finder.FindSource(order, IntentEmpty)
+	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 701 {
+		t.Fatalf("blank-origin empty pull changed shape: outcome=%v bin=%v", res.Outcome, res.Bin)
+	}
+	if db.typedGroupCalls != 0 {
+		t.Errorf("the typed finder was consulted for an untyped ask: %d calls", db.typedGroupCalls)
+	}
+}
+
+// A FAILED episode read returns no type rather than a guess. The ask falls
+// through untyped — one carrier the keeper will not count, retried next tick —
+// which is strictly better than confidently sourcing the wrong type.
+func TestFindSource_MaintainedTypeReadFailureDoesNotGuess(t *testing.T) {
+	db := newFakeFinderDB()
+	db.addNode(&nodes.Node{ID: 100, Name: "GROUP-A", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
+	db.addNode(&nodes.Node{ID: 99, Name: "DEST"})
+	at := int64(101)
+	db.addNode(&nodes.Node{ID: at, Name: "GROUP-A-LANE-1"})
+	db.groupEmpty = &bins.Bin{ID: 801, PayloadCode: "", NodeID: &at}
+	db.maintainedTypeErr = errors.New("episode read failed")
+
+	finder := NewSourceFinder(db, nil, nil)
+	order := &orders.Order{
+		ID: 10, OrderType: OrderTypeRetrieveEmpty,
+		SourceNode: "GROUP-A", DeliveryNode: "DEST",
+		OriginID: "11111111-2222-3333-4444-555555555555",
+	}
+
+	res := finder.FindSource(order, IntentEmpty)
+	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 801 {
+		t.Fatalf("a failed episode read must fall through untyped, not fail the ask: outcome=%v bin=%v",
+			res.Outcome, res.Bin)
+	}
+	if db.typedGroupCalls != 0 {
+		t.Errorf("typed finder called despite an unreadable episode: %d calls", db.typedGroupCalls)
 	}
 }

@@ -45,10 +45,67 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	b.loaded_at, b.anomaly_at, b.created_at, b.updated_at,
 	bt.code, COALESCE(n.name, ''), COALESCE(p.uop_capacity, 0),
 	EXISTS(SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending') AS has_pending_reservation
-	FROM bins b
+	` + BinFromClause
+
+// BinFromClause is the FROM/JOIN half of every bin-reading query, split out of
+// BinJoinQuery so a COUNT over the same population can reach it.
+//
+// A count that repeated these joins by hand would be a second definition of
+// "which bins exist and what is a bin's type and node" — and the aliases b, bt,
+// n, p are what every shared WHERE fragment in this file is written against, so
+// a divergence would not be a compile error, it would be a different answer.
+const BinFromClause = `FROM bins b
 	JOIN bin_types bt ON bt.id = b.bin_type_id
 	LEFT JOIN nodes n ON n.id = b.node_id
 	LEFT JOIN payloads p ON p.code = b.payload_code`
+
+// EmptyOfTypeInGroupWhere is the predicate for "an unclaimed empty carrier of
+// ONE type, standing at an enabled physical node inside a group".
+//
+// ONE SPELLING, TWO READERS, BY CONSTRUCTION — FindEmptyOfTypeInGroup and
+// CountEmptyOfTypeInGroup both interpolate this exact string, so the level
+// keeper cannot count six carriers the press finder cannot see. That failure is
+// not hypothetical: it is the "buffer slots not sourced" shape at a new grain,
+// and it arrives silently because both halves look correct in isolation. Round 1
+// asked for the count to be built from the finder's own WHERE for exactly this
+// reason; sharing the text is the only version of that promise a reader can
+// check.
+//
+// WHAT IT DELIBERATELY EXCLUDES, each because the finder excludes it and the
+// count must agree:
+//   - staged bins and pending-reservation bins — spoken for, invisible to
+//     sourcing, and therefore not part of a level that exists to be sourced FROM;
+//   - claimed and locked bins, for the same reason;
+//   - synthetic and disabled nodes — a carrier parked on a disabled position is
+//     not on hand in any sense the keeper can act on;
+//   - anything carrying a payload. A maintained level counts EMPTIES. A carrier
+//     that gained a payload while resident has left the level, which is stated
+//     policy (design §2.3: strict hides empties only) rather than an oversight.
+//
+// Placeholders: $1 = bin type CODE, $2 = group node id, $3 = node id to exclude
+// (0 = exclude nothing). It assumes a `descendants(id)` CTE is in scope —
+// compose nodetree.DescendantsOf($2), which is SELF-EXCLUDED: a group node is
+// synthetic and holds no carriers, and its own id in the set would change
+// nothing today and mean something different the day one does.
+//
+// THE TYPE IS MATCHED ON CODE, not on bin_type_id, and that is what keeps the
+// two readers honest. The keeper holds a code (it comes out of the episode key,
+// which carries the code so a log line and a restore are both readable); the
+// finder has always matched on code. An id-keyed count would be equivalent and
+// would be a SECOND SPELLING of "of this type" — precisely the thing this
+// fragment exists to prevent.
+const EmptyOfTypeInGroupWhere = `
+	WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
+	  AND b.claimed_by IS NULL
+	  AND b.locked = false
+	  AND b.node_id IS NOT NULL
+	  AND n.enabled = true
+	  AND n.is_synthetic = false
+	  AND COALESCE(b.payload_code, '') = ''
+	  AND bt.code = $1
+	  AND b.node_id IN (SELECT id FROM descendants)
+	  AND ($3 = 0 OR b.node_id != $3)
+	  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')`
 
 // SourceableStatusSQL is the SQL twin of domain.BinStatus.Sourceable: the set of
 // statuses a bin may be picked up from. One rule in two languages —
@@ -601,22 +658,40 @@ func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, exclude
 	if binTypeCode == "" {
 		return nil, sql.ErrNoRows
 	}
-	row := db.QueryRow(fmt.Sprintf(`
-		%s
-		%s
-		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
-		  AND b.node_id IS NOT NULL
-		  AND n.enabled = true
-		  AND n.is_synthetic = false
-		  AND COALESCE(b.payload_code, '') = ''
-		  AND bt.code = $1
-		  AND b.node_id IN (SELECT id FROM descendants)
-		  AND ($3 = 0 OR b.node_id != $3)
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s`,
-		nodetree.DescendantsOf(2), BinJoinQuery, AccessibleEmptyOrder), binTypeCode, groupNodeID, excludeNodeID)
+	row := db.QueryRow(
+		nodetree.DescendantsOf(2)+" "+BinJoinQuery+EmptyOfTypeInGroupWhere+AccessibleEmptyOrder,
+		binTypeCode, groupNodeID, excludeNodeID)
 	return ScanBin(row)
+}
+
+// CountEmptyOfTypeInGroup counts what FindEmptyOfTypeInGroup can see.
+//
+// THE SAME WHERE, LITERALLY — EmptyOfTypeInGroupWhere, interpolated by both. The
+// level keeper subtracts this count from the group's declared level, and if the
+// count could see a carrier the finder cannot, the keeper would decide the group
+// was stocked while every press pull queued for want of one. "The keeper counts
+// six, the press finds none" is the failure this construction makes unspellable,
+// and TestEmptyOfTypeInGroup_CountAndFindAgree asserts the equivalence directly
+// (find != nil ⟺ count > 0) rather than trusting the shared text.
+//
+// No exclude-node argument: the finder takes one so a caller can avoid sourcing
+// from the node it is delivering to, which is a question about one ASK. A level
+// is a property of the whole group, so the count passes 0 — exclude nothing.
+func CountEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID int64) (int, error) {
+	if binTypeCode == "" {
+		// The finder returns ErrNoRows for a blank code rather than matching
+		// everything; the count agrees by returning zero rather than the whole
+		// group.
+		return 0, nil
+	}
+	var n int
+	err := db.QueryRow(
+		nodetree.DescendantsOf(2)+" SELECT COUNT(*) "+BinFromClause+EmptyOfTypeInGroupWhere,
+		binTypeCode, groupNodeID, 0).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count empty %s in group %d: %w", binTypeCode, groupNodeID, err)
+	}
+	return n, nil
 }
 
 // FindEmptyOfType returns an empty carrier of ONE bin type from anywhere,

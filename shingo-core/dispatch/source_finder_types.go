@@ -61,6 +61,35 @@ type SourceNeed struct {
 	// have an order, or a resuming complex parent cannot see the bin its own
 	// dig uncovered.
 	Asker reservations.DigAsker
+
+	// OriginID is the demand episode this need serves, when it has one.
+	//
+	// IT IS HOW A TYPE TRAVELS FROM A DECISION TO A SOURCE. The maintained-group
+	// level keeper decides it is short of one carrier TYPE, records that in the
+	// episode key, and stamps the episode on the ask; wantedBinType's first arm
+	// reads it back. Nothing else in the plant needs it — every other need
+	// derives its type, or has none.
+	//
+	// FILLED FROM THE ORDER IN FindSource, never looked up per step. The field is
+	// already in the caller's hand, and a per-step read would put a database
+	// round trip inside the tier cascade for a value the caller was holding.
+	// Blank for every non-keeper order, which is nearly all of them.
+	OriginID string
+
+	// ProcessNode is the equipment position this need is being sourced FOR.
+	//
+	// Unused by the cascade today and carried now because strict sourcing is
+	// what consumes it: "may this asker take an empty out of that maintained
+	// group" is a question about the PROCESS, and by the time the plant-wide
+	// scan runs there is nothing left to derive it from. Filled from the order
+	// alongside OriginID, for the same reason and in the same place — one
+	// change, both fields, no per-step reads.
+	//
+	// BLANK MEANS OUTSIDER once the fence exists, which is the correct default
+	// for everyone except the keeper — and the keeper is exempted on its ORIGIN
+	// rather than on this field, precisely because its own needs carry no
+	// process (SYNTH round 2 §2).
+	ProcessNode string
 }
 
 // Outcome is the closed disposition set FindSource returns.
@@ -122,6 +151,10 @@ type FinderDB interface {
 	FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error)
 	FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID int64) (*bins.Bin, error)
 	FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error)
+	// MaintainedTypeForOrigin resolves an ask's origin to the carrier type its
+	// maintained-group episode is short of, or "" when the origin is not one.
+	// The finder's whole view of the typed ask; see wantedBinType's first arm.
+	MaintainedTypeForOrigin(originID string) (string, error)
 	IsSlotAccessible(slotNodeID int64) (bool, error)
 	GetLoaderHomeByPositionNode(positionNodeID int64) (*loaders.Home, error)
 	GetLoader(id int64) (*loaders.Loader, error)

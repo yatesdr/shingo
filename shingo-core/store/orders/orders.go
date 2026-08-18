@@ -21,6 +21,7 @@ import (
 	"shingo/shared/clock"
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
+	"shingocore/store/internal/nodetree"
 )
 
 // Order is the order domain entity. The struct lives in shingocore/domain
@@ -1020,6 +1021,127 @@ func CountLiveByOrigin(db *sql.DB, originID string) (int, error) {
 	var count int
 	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE origin_id = $1 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()), originID).Scan(&count)
 	return count, err
+}
+
+// CountLiveRootsByOrigin is CountLiveByOrigin restricted to ROOT orders: the
+// asks a demand episode made, not the legs those asks grew.
+//
+// WHY THE PLAIN COUNT IS WRONG FOR THE LEVEL KEEPER. Compound reshuffle children
+// INHERIT their parent's origin (dispatch/compound.go:553), deliberately — a dig
+// is part of the cost of the demand that caused it, and the demand grain wants
+// that recorded. But it means one physical ask that happens to trip a reshuffle
+// reports as N against the origin, and a keeper subtracting "what I have already
+// asked for" from its gap would conclude it had asked four times when it asked
+// once, and stop refilling a group that is still short.
+//
+// So the narrowing is `parent_order_id IS NULL`: the legs of one physical ask are
+// not additional demand. It is the same distinction CountLiveByOrigin's own
+// comment draws between "what has this demand asked for" and "what is on its way
+// here" — one level further in.
+//
+// `queued` COUNTS, exactly as it does in CountLiveByOrigin, and for the same
+// incident. Springfield 2026-08-03 accumulated 241 identical queued
+// retrieve_empty orders because the only guard against re-asking was a count
+// that could not see the orders it had already created. A keeper that filtered
+// queued out would rebuild that bug at a new grain within one tick.
+func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
+	if originID == "" {
+		// origin_id is a UUID column; comparing it to "" is a type error rather
+		// than an empty result. Same guard MaintainedTypeForOrigin carries.
+		return 0, nil
+	}
+	var count int
+	err := db.QueryRow(fmt.Sprintf(
+		`SELECT COUNT(*) FROM orders
+		  WHERE origin_id = $1 AND parent_order_id IS NULL AND status NOT IN (%s)`,
+		protocol.TerminalStatusSQLList()), originID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count live roots by origin %s: %w", originID, err)
+	}
+	return count, nil
+}
+
+// CountTypedInboundToGroup counts the carriers of one type ALREADY ON THEIR WAY
+// into a group that the keeper did not ask for.
+//
+// THE THIRD POPULATION, and the one that is neither "standing there" nor "I
+// asked for it". An unloader pushing a drained empty back, a changeover
+// evacuating one, an operator move — none carries a maintain origin, all land in
+// the group, and a keeper blind to them over-asks by exactly their number and
+// then overfills. This is the 241-duplicates shape arriving from the other
+// direction.
+//
+// TYPED BY THE CARRIER ALREADY CHOSEN, not by a requested type, because these
+// orders have no requested type — nothing in the plant carries one. An order
+// that has not yet sourced a bin is therefore INVISIBLE here, deliberately and
+// statedly: crediting an unsourced inbound would let the keeper subtract a
+// carrier that may never arrive. Over-asking is the safe direction — it is
+// bounded by want, and the loser of a race re-queues, which is a normal outcome.
+//
+// TWO ARMS, because a complex order records its carriers in two places. The
+// direct arm reads orders.bin_id against the order's own delivery_node; the
+// junction arm reads order_bins.bin_id against that row's dest_node, which is
+// where a multi-pickup complex order records "this carrier goes to that node".
+// A single-pickup complex order writes no junction row at all
+// (allocator.go:743's len(claimed) > 1 guard), so the direct arm is what covers
+// it. COUNT(DISTINCT b.id) because the two arms can name the same carrier.
+//
+// THE GROUP-NAME ARM IS NOT REDUNDANT. resolveSyntheticDestination rewrites
+// delivery_node from the group to a concrete child at admit, so a settled order
+// names a child — but an order admitted while the group was momentarily full
+// keeps the GROUP name and is never re-resolved (planTransport gates
+// re-resolution on isMove). Those orders are real, they are coming, and matching
+// only on descendants would miss every one of them.
+//
+// EVERY MAINTAIN ORIGIN IS EXCLUDED, not just the asking one. An order minted by
+// the keeper is already counted as "asked" by CountLiveRootsByOrigin, so
+// counting it here too would double-subtract; and a SECOND group's keeper order
+// inbound to THIS group cannot happen (a keeper only ever delivers into its own
+// group), so excluding all of them costs nothing and removes a case a reader
+// would otherwise have to reason about.
+//
+// Blank payload on the carrier, matching the resident count: a carrier arriving
+// with parts in it is not joining an empty level.
+func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTypeCode string) (int, error) {
+	if binTypeCode == "" || groupNodeName == "" {
+		return 0, nil
+	}
+	var count int
+	err := db.QueryRow(nodetree.DescendantsOf(1)+fmt.Sprintf(`
+		SELECT COUNT(DISTINCT bin_id) FROM (
+		    SELECT o.bin_id AS bin_id
+		      FROM orders o
+		      JOIN bins b  ON b.id = o.bin_id
+		      JOIN bin_types bt ON bt.id = b.bin_type_id
+		      LEFT JOIN nodes dn ON dn.name = o.delivery_node
+		     WHERE o.status NOT IN (%[1]s)
+		       AND o.bin_id IS NOT NULL
+		       AND bt.code = $2
+		       AND COALESCE(b.payload_code, '') = ''
+		       AND (o.delivery_node = $3 OR dn.id IN (SELECT id FROM descendants))
+		       AND NOT EXISTS (
+		           SELECT 1 FROM demand_origins d
+		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND d.closed_at IS NULL)
+		    UNION ALL
+		    SELECT ob.bin_id AS bin_id
+		      FROM order_bins ob
+		      JOIN orders o ON o.id = ob.order_id
+		      JOIN bins b  ON b.id = ob.bin_id
+		      JOIN bin_types bt ON bt.id = b.bin_type_id
+		      LEFT JOIN nodes dn ON dn.name = ob.dest_node
+		     WHERE o.status NOT IN (%[1]s)
+		       AND bt.code = $2
+		       AND COALESCE(b.payload_code, '') = ''
+		       AND (ob.dest_node = $3 OR dn.id IN (SELECT id FROM descendants))
+		       AND NOT EXISTS (
+		           SELECT 1 FROM demand_origins d
+		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND d.closed_at IS NULL)
+		) AS inbound`, protocol.TerminalStatusSQLList()),
+		groupNodeID, binTypeCode, groupNodeName, protocol.EpisodeKindMaintain).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count typed inbound to group %s (%s): %w", groupNodeName, binTypeCode, err)
+	}
+	return count, nil
 }
 
 // CountLiveByDeliveryNode counts ALL non-terminal orders pointed at a delivery
