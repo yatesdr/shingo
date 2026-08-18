@@ -38,3 +38,23 @@ func (db *DB) SetMaintainSupports(groupNodeID int64, processNodeIDs []int64) err
 func (db *DB) ListMaintainSupports(groupNodeID int64) ([]MaintainSupport, error) {
 	return nodes.ListMaintainSupports(db.DB, groupNodeID)
 }
+
+// GroupFencesAsker reports whether a strict maintained group turns this asker
+// away. See nodes.GroupFencesAsker — this is the disposition side of the fence,
+// asked by a need that NAMED the group rather than by a plant-wide scan.
+func (db *DB) GroupFencesAsker(groupNodeID int64, processNode string) (bool, error) {
+	return nodes.GroupFencesAsker(db.DB, groupNodeID, processNode)
+}
+
+// MaintainedGroupsSupporting returns the maintained groups that serve a process
+// node, by name. Empty for a process no group serves, which is most of them.
+func (db *DB) MaintainedGroupsSupporting(processNode string) ([]int64, error) {
+	return nodes.MaintainedGroupsSupporting(db.DB, processNode)
+}
+
+// NodeIsUnderAny reports whether a node sits inside any of the given subtrees.
+// The MG3-5 audit's second read: did this carrier come from within a group that
+// serves the press that took it.
+func (db *DB) NodeIsUnderAny(nodeID int64, roots []int64) (bool, error) {
+	return nodes.NodeIsUnderAny(db.DB, nodeID, roots)
+}

@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -20,6 +21,14 @@ import (
 // consulted when a scoped tier applies — the exact drift the collapse fixes.
 
 // ── fake FinderDB ────────────────────────────────────────────────────────────
+//
+// EVERY FINDER HERE RETURNS sql.ErrNoRows FOR NONE-FOUND, because that is what
+// the real store returns — ScanBin propagates it straight off row.Scan, and a
+// wrapped error means the query failed. Until MG3-1a these returned
+// errors.New("no empty"), which was a lie the call sites could not catch
+// because they read any error as "none found" anyway. Now that the cascade
+// separates the two, a fake that kept lying would send every none-found path
+// down the unreadable arm and no test could tell.
 
 type fakeFinderDB struct {
 	nodesByID   map[int64]*nodes.Node
@@ -43,13 +52,39 @@ type fakeFinderDB struct {
 	// group node name. It is what the finder turns into a subtree exclusion so a
 	// top-off ask cannot source out of the group it is filling.
 	maintainedGroup map[string]string
-	// lastExcludedSubtree records what the typed plant-wide finder was actually
-	// asked to exclude. Recorded rather than ignored because the exclusion IS
-	// the behaviour under test.
-	lastExcludedSubtree int64
+	// lastFence records the maintained-group fence the plant-wide finders were
+	// actually handed. Recorded rather than ignored because the fence IS the
+	// behaviour under test; it replaced lastExcludedSubtree when MG3-1 absorbed
+	// MG2-11's subtree exclusion into the fence's second rule.
+	lastFence bins.EmptyFence
+	// lastAsker records the dig asker the finders were handed. MG3-0 pinned that
+	// this was the ZERO value on the simple path; MG3-1b makes it real, so the
+	// record is what the inverted pin asserts against.
+	lastAsker reservations.DigAsker
+	// fencedGroups are the group node ids that turn every asker away, and
+	// fencedGroupErr makes the fence read FAIL. Both stand for a strict
+	// maintained group the need is not supported at.
+	fencedGroups   map[int64]bool
+	fencedGroupErr error
+
+	// supportingGroups: process node name -> the maintained groups serving it.
+	// nodeUnder: bin node id -> the group it sits under, if any.
+	supportingGroups    map[string][]int64
+	supportingGroupsErr error
+	nodeUnder           map[int64]int64
 	// maintainedTypeErr makes the episode read FAIL rather than answer, so the
 	// "a read failure returns no type rather than guessing" arm is exercisable.
 	maintainedTypeErr error
+	// searchErr makes EVERY empty/full finder fail with a real error rather than
+	// sql.ErrNoRows — the "the query did not run" case MG3-1a separates from
+	// "nothing matched". One field for all of them because they share one
+	// disposition at the caller, and one of them exercising it is enough.
+	searchErr error
+	// nodeBinsErr makes the node-local candidate read FAIL. Until MG3-1a that
+	// error was discarded outright — `candidates, _ :=` — so a failed read
+	// parked the order under "the node holds nothing usable", which is a claim
+	// about the plant nobody had checked.
+	nodeBinsErr error
 
 	fifoBin     *bins.Bin
 	globalEmpty *bins.Bin
@@ -73,6 +108,11 @@ type fakeFinderDB struct {
 	globalEmptyCalls int
 	groupEmptyCalls  int
 	typedGroupCalls  int
+	// typedGlobalCalls counts the TYPED plant-wide empty search — the tier-5
+	// twin of globalEmptyCalls. Absent until MG3-0, which is why the golden
+	// matrix could not assert "and no neighbouring finder was consulted" on the
+	// one tier where the typed and untyped arms sit side by side.
+	typedGlobalCalls int
 }
 
 func newFakeFinderDB() *fakeFinderDB {
@@ -85,6 +125,15 @@ func newFakeFinderDB() *fakeFinderDB {
 		quotas:       map[int64][]loaders.Quota{},
 		homeBinTypes: map[int64]map[int64][]string{},
 		typedEmpty:   map[string]*bins.Bin{},
+		// Both episode maps are made here rather than lazily by each test. They
+		// were nil until MG3-0, so a test that stated a maintain origin panicked
+		// on assignment instead of exercising the arm — which is a fixture that
+		// can only be used by someone who already knows it is broken.
+		maintainedType:   map[string]string{},
+		maintainedGroup:  map[string]string{},
+		fencedGroups:     map[int64]bool{},
+		supportingGroups: map[string][]int64{},
+		nodeUnder:        map[int64]int64{},
 	}
 }
 
@@ -126,6 +175,9 @@ func (f *fakeFinderDB) GetNode(id int64) (*nodes.Node, error) {
 }
 
 func (f *fakeFinderDB) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) {
+	if f.nodeBinsErr != nil {
+		return nil, f.nodeBinsErr
+	}
 	return f.binsByNode[nodeID], nil
 }
 
@@ -145,11 +197,48 @@ func (f *fakeFinderDB) ListLoaderHomeBinTypes(loaderID int64) (map[int64][]strin
 	return f.homeBinTypes[loaderID], nil
 }
 
-func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64) (*bins.Bin, error) {
+// FindEmptyBinOfType RECORDS THE FENCE IT WAS HANDED. The fence is the whole
+// behaviour under test on this path, so a fake that dropped the argument would
+// let it be removed with every test still green — the same reason its
+// predecessor recorded the subtree it was told to exclude.
+func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64, fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
+	f.typedGlobalCalls++
+	f.lastFence = fence
+	f.lastAsker = asker
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
 	if b, ok := f.typedEmpty[binTypeCode]; ok {
 		return b, nil
 	}
-	return nil, errors.New("no empty of type " + binTypeCode)
+	return nil, sql.ErrNoRows
+}
+
+// supportingGroups / nodeUnder stand for the MG3-5 audit's two reads. Recorded
+// rather than stubbed to nothing so the audit's SILENCE is testable: the line
+// must not fire for a press no group serves, and must not fire when the carrier
+// came from inside one that does.
+func (f *fakeFinderDB) MaintainedGroupsSupporting(processNode string) ([]int64, error) {
+	if f.supportingGroupsErr != nil {
+		return nil, f.supportingGroupsErr
+	}
+	return f.supportingGroups[processNode], nil
+}
+
+func (f *fakeFinderDB) NodeIsUnderAny(nodeID int64, roots []int64) (bool, error) {
+	for _, r := range roots {
+		if f.nodeUnder[nodeID] == r {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeFinderDB) GroupFencesAsker(groupNodeID int64, _ string) (bool, error) {
+	if f.fencedGroupErr != nil {
+		return false, f.fencedGroupErr
+	}
+	return f.fencedGroups[groupNodeID], nil
 }
 
 func (f *fakeFinderDB) MaintainedEpisodeForOrigin(originID string) (string, string, error) {
@@ -164,45 +253,50 @@ func (f *fakeFinderDB) MaintainedEpisodeForOrigin(originID string) (string, stri
 	return f.maintainedGroup[originID], f.maintainedType[originID], nil
 }
 
-// FindEmptyBinOfTypeOutsideGroup RECORDS THE EXCLUSION IT WAS GIVEN. The whole
-// point of the call is the argument, so a fake that dropped it would let the
-// exclusion be removed with every test still green.
-func (f *fakeFinderDB) FindEmptyBinOfTypeOutsideGroup(binTypeCode, _ string, excludeSubtreeRootID, _ int64) (*bins.Bin, error) {
-	f.lastExcludedSubtree = excludeSubtreeRootID
-	if b, ok := f.typedEmpty[binTypeCode]; ok {
-		return b, nil
-	}
-	return nil, errors.New("no empty of type " + binTypeCode)
-}
-
-func (f *fakeFinderDB) FindEmptyBinOfTypeInGroup(binTypeCode string, _, _ int64) (*bins.Bin, error) {
+func (f *fakeFinderDB) FindEmptyBinOfTypeInGroup(binTypeCode string, _, _ int64, asker reservations.DigAsker) (*bins.Bin, error) {
 	f.typedGroupCalls++
+	f.lastAsker = asker
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
 	if b, ok := f.typedEmpty[binTypeCode]; ok {
 		return b, nil
 	}
-	return nil, errors.New("no empty of type " + binTypeCode + " in group")
+	return nil, sql.ErrNoRows
 }
 
 func (f *fakeFinderDB) FindSourceBinFIFO(_ string, _ int64) (*bins.Bin, error) {
 	f.fifoCalls++
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
 	if f.fifoBin == nil {
-		return nil, errors.New("no source bin")
+		return nil, sql.ErrNoRows
 	}
 	return f.fifoBin, nil
 }
 
-func (f *fakeFinderDB) FindEmptyCompatibleBin(_, _ string, _ int64) (*bins.Bin, error) {
+func (f *fakeFinderDB) FindEmptyCompatibleBin(_, _ string, _ int64, fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
 	f.globalEmptyCalls++
+	f.lastFence = fence
+	f.lastAsker = asker
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
 	if f.globalEmpty == nil {
-		return nil, errors.New("no empty")
+		return nil, sql.ErrNoRows
 	}
 	return f.globalEmpty, nil
 }
 
-func (f *fakeFinderDB) FindEmptyCompatibleBinInGroup(_ string, _, _ int64) (*bins.Bin, error) {
+func (f *fakeFinderDB) FindEmptyCompatibleBinInGroup(_ string, _, _ int64, asker reservations.DigAsker) (*bins.Bin, error) {
 	f.groupEmptyCalls++
+	f.lastAsker = asker
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
 	if f.groupEmpty == nil {
-		return nil, errors.New("no empty in group")
+		return nil, sql.ErrNoRows
 	}
 	return f.groupEmpty, nil
 }

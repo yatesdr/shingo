@@ -422,6 +422,40 @@ const (
 	// read, so the finder declined to answer rather than guessing. The finder's
 	// member of the undetermined family.
 	CauseFinderAccessibilityUnreadable QueueCause = "finder-accessibility-unreadable"
+	// CauseFinderGroupFenced — the need named a STRICT maintained group it is not
+	// supported at. The group holds carriers; they are not this asker's.
+	//
+	// A DISPOSITION, NOT A FILTER, and that is the whole reason it is a separate
+	// cause from finder-group-empty. A plant-wide scan that cannot see a fenced
+	// group's carriers should say nothing about them — it looked everywhere it
+	// was allowed to and found nothing. A need that NAMED the group is different:
+	// somebody configured a claim to source from there, and the honest answer is
+	// "that group is not yours", not "that group is empty". The second sends an
+	// operator to look for material that is standing right there.
+	//
+	// NEVER SILENTLY WIDENED EITHER. The need does not fall through to the
+	// plant-wide scan; a scoped need that widens is the Hopkinsville
+	// wrong-supermarket pull, and being fenced is not a reason to start doing it.
+	CauseFinderGroupFenced QueueCause = "finder-group-fenced"
+	// CauseFinderSourceUnreadable — an empty or full search did not RUN. The
+	// query errored; Core has no idea whether material is there.
+	//
+	// IT IS A DIFFERENT FACT FROM AN EMPTY PLANT, and separating the two is the
+	// whole of MG3-1a. Every finder call site used to read `err != nil || bin ==
+	// nil` as one condition, which made "the query threw" indistinguishable from
+	// "nothing matched" — and the MG2 campaign proved that is not a theoretical
+	// concern: a query naming a CTE that did not exist threw on every call, every
+	// caller read it as "no empty found", and the whole gate came back clean
+	// (SIM-CAMPAIGN-mg2 §2).
+	//
+	// The store side already drew the line — sql.ErrNoRows for none-found, a
+	// wrapped error otherwise. The call sites were the ones collapsing it.
+	//
+	// It sits in the undetermined family beside CauseLoaderSourceUnreadable and
+	// CauseFinderAccessibilityUnreadable, for the same reason all three exist: a
+	// histogram must be able to say "Core declined to answer" apart from "the
+	// plant is out of material", or an outage reads as a shortage.
+	CauseFinderSourceUnreadable QueueCause = "finder-source-unreadable"
 	// CauseFinderNoEmptyOfType — the group has empties, none of the TYPE a loader
 	// declared. It waits rather than taking another: "a declared mix that is
 	// abandoned when inconvenient is not a mix".

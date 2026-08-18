@@ -22,6 +22,8 @@ package dispatch
 // error handling, so the classifier must live in the seam.
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -215,7 +217,62 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		// the tier cascade for something the caller was already holding.
 		OriginID:    order.OriginID,
 		ProcessNode: order.ProcessNode,
+		// THE ASKER, ACTUALLY FILLED. SourceNeed.Asker's doc has claimed
+		// "FindSource fills it" since the field existed and this line is the
+		// first time it was true. Until the empty tiers read it the omission
+		// cost nothing; MG3-1b makes all four read it, so an unfilled asker
+		// would mean a compound parent excluded from its OWN dig — unable to see
+		// the carrier that dig uncovered for it.
+		Asker: digAskerFor(order),
 	})
+}
+
+// sourceSearchFailed reports whether a finder error means THE SEARCH DID NOT RUN,
+// as opposed to the search having run and matched nothing.
+//
+// THE DISTINCTION IS THE WHOLE OF MG3-1a. Every call site below used to read
+// `err != nil || bin == nil` as a single condition, which collapses two facts
+// that have opposite remedies: "the plant is out of material" is something an
+// operator acts on, and "Core could not ask" is something Core retries.
+//
+// It is not a theoretical collapse. The MG2 campaign shipped an exclusion query
+// naming a CTE that did not exist; it threw on every call, every caller read the
+// throw as "no empty found", the observable behaviour was indistinguishable from
+// a correct exclusion, and fmt/vet/lint/unit/race and all three docker suites
+// came back clean (SIM-CAMPAIGN-mg2 §2). The audit exists so phase 3's new
+// query bodies cannot hide the same way.
+//
+// The store side already draws this line: every finder returns sql.ErrNoRows for
+// none-found (ScanBin propagates it straight off row.Scan) and a wrapped error
+// for anything else. Only the call sites were losing it.
+//
+// nil is not a failure and not a match — a caller with a nil error checks the
+// bin, exactly as before.
+func sourceSearchFailed(err error) bool {
+	return err != nil && !errors.Is(err, sql.ErrNoRows)
+}
+
+// unreadableSource is the park every failed search produces. WAIT, NEVER FAIL:
+// a read that did not answer is not a fact about the plant, and the ordinary
+// scanner retry is the releaser.
+func unreadableSource(kind, payloadCode, where string) SourceResult {
+	return SourceResult{
+		Outcome:     OutcomeWait,
+		QueueCode:   protocol.QueueWaitingForMaterial,
+		QueueCause:  CauseFinderSourceUnreadable,
+		QueueParams: QueueParams{Kind: kind, Payload: payloadCode, Destination: where},
+	}
+}
+
+// nodeLocalKind is the QueueParams.Kind a node-local need renders with: "empty"
+// for an empty pull, blank otherwise — matching the tier's own none-found park
+// two lines below, so an unreadable and an empty node read the same way in every
+// respect except the one that differs.
+func nodeLocalKind(intent Intent) string {
+	if intent == IntentEmpty {
+		return "empty"
+	}
+	return ""
 }
 
 // FindSourceForNeed runs the tier cascade for one NEED. Same cascade, same
@@ -368,14 +425,52 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// the plant-wide empty scan.
 	if bin == nil && intent == IntentEmpty && srcNode != nil && srcNode.IsSynthetic &&
 		(srcNode.NodeTypeCode == protocol.NodeClassNGRP || srcNode.NodeTypeCode == protocol.NodeClassLANE) {
+
+		// ── MG3-2: THE EXPLICIT-GROUP BOUNDARY ──────────────────────────────
+		//
+		// A need that NAMED a strict maintained group it is not supported at is
+		// turned away with a cause, before the group is searched at all.
+		//
+		// The plant-wide fence hides those carriers inside the query, which is
+		// right for a scan that never asked for them. It is wrong here: this need
+		// asked for that group by name, because somebody configured a claim to
+		// source from it. "The group is empty" would send an operator to look for
+		// material standing right in front of them; "the group is not yours" is
+		// the fact, and it is a CONFIGURATION wait rather than a material one.
+		//
+		// AND IT DOES NOT WIDEN. A scoped need that falls through to the
+		// plant-wide scan is the Hopkinsville wrong-supermarket pull, and being
+		// fenced out is not a reason to start doing it.
+		if fenced, ferr := f.db.GroupFencesAsker(srcNode.ID, need.ProcessNode); ferr != nil {
+			// The fence could not be read, so whether this need may be served is
+			// unknown. Unknown parks — it does not serve.
+			f.debug("finder: fence check for group %s unreadable: %v", need.SourceNode, ferr)
+			return unreadableSource("empty", payloadCode, need.SourceNode)
+		} else if fenced {
+			f.debug("finder: group %s is fenced against %q — parking", need.SourceNode, need.ProcessNode)
+			return SourceResult{
+				Outcome:     OutcomeWait,
+				QueueCode:   protocol.QueueWaitingForMaterial,
+				QueueCause:  CauseFinderGroupFenced,
+				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode, Destination: need.SourceNode},
+			}
+		}
+
 		var groupBin *bins.Bin
 		var gerr error
 		if wantType != "" {
-			groupBin, gerr = f.db.FindEmptyBinOfTypeInGroup(wantType, srcNode.ID, excludeID)
+			groupBin, gerr = f.db.FindEmptyBinOfTypeInGroup(wantType, srcNode.ID, excludeID, need.Asker)
 		} else {
-			groupBin, gerr = f.db.FindEmptyCompatibleBinInGroup(payloadCode, srcNode.ID, excludeID)
+			groupBin, gerr = f.db.FindEmptyCompatibleBinInGroup(payloadCode, srcNode.ID, excludeID, need.Asker)
 		}
-		if gerr != nil || groupBin == nil {
+		if sourceSearchFailed(gerr) {
+			// THE SEARCH DID NOT RUN. Nothing below this line is known about the
+			// group's contents, so none of the "the group has none of X" causes
+			// would be true.
+			f.debug("finder: group empty search for %s unreadable: %v", need.SourceNode, gerr)
+			return unreadableSource("empty", payloadCode, need.SourceNode)
+		}
+		if groupBin == nil {
 			cause := CauseFinderGroupEmpty
 			if wantType != "" {
 				// The loader asked for a specific type and the group has none.
@@ -411,7 +506,20 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// would fall past every tier into a permanent Wait and strand every
 	// produce-side press-index empty refill.
 	if bin == nil && moveShaped && srcNode != nil && (intent == IntentFull || intent == IntentEmpty) {
-		candidates, _ := f.db.ListBinsByNode(srcNode.ID)
+		// THE ERROR WAS DISCARDED HERE UNTIL MG3-1a, and it is the same collapse
+		// as the finder call sites below wearing a different shape: a failed read
+		// yields zero candidates, and zero candidates parks under
+		// CauseFinderNodeEmpty — "the named source node holds nothing usable",
+		// which is a claim about the plant that nobody checked.
+		//
+		// It is not the same as the finders' `err != nil || bin == nil`; it is
+		// worse, because `_` cannot even be misread. It states that the outcome
+		// does not depend on whether the read worked.
+		candidates, lberr := f.db.ListBinsByNode(srcNode.ID)
+		if lberr != nil {
+			f.debug("finder: node-local candidates at %s unreadable: %v", need.SourceNode, lberr)
+			return unreadableSource(nodeLocalKind(intent), payloadCode, need.SourceNode)
+		}
 		claimPayload := payloadCode
 		if intent == IntentEmpty {
 			candidates = emptyBinsOnly(candidates)
@@ -443,7 +551,11 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	if bin == nil && !moveShaped {
 		if intent == IntentFull {
 			b, err := f.db.FindSourceBinFIFO(payloadCode, excludeID)
-			if err != nil || b == nil {
+			if sourceSearchFailed(err) {
+				f.debug("finder: plant-wide full search for %s unreadable: %v", payloadCode, err)
+				return unreadableSource("", payloadCode, "")
+			}
+			if b == nil {
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
@@ -456,17 +568,22 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			var b *bins.Bin
 			var err error
 			cause := CauseFinderPlantEmpty
+			// THE FENCE, on both arms. Zero for every need that names no process
+			// and carries no maintain origin, and then these render byte-for-byte
+			// the queries they were before MG3-1: sharing is the plant default and
+			// the only fenced zones are maintained groups.
+			fence := f.emptyFenceFor(need)
 			if wantType != "" {
-				// EXCLUDING THE GROUP THIS ASK IS FILLING, when there is one.
-				// Zero for every other need, and then this is FindEmptyBinOfType
-				// by delegation. See maintainedGroupExclusion.
-				b, err = f.db.FindEmptyBinOfTypeOutsideGroup(
-					wantType, preferZone, f.maintainedGroupExclusion(need), excludeID)
+				b, err = f.db.FindEmptyBinOfType(wantType, preferZone, excludeID, fence, need.Asker)
 				cause = CauseFinderNoEmptyOfType
 			} else {
-				b, err = f.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeID)
+				b, err = f.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeID, fence, need.Asker)
 			}
-			if err != nil || b == nil {
+			if sourceSearchFailed(err) {
+				f.debug("finder: plant-wide empty search unreadable: %v", err)
+				return unreadableSource("empty", payloadCode, "")
+			}
+			if b == nil {
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
@@ -606,6 +723,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		}
 	}
 
+	f.auditSourcedOutsideItsGroup(need, binNode)
 	return SourceResult{Outcome: OutcomeFound, Bin: bin, Node: binNode}
 }
 
@@ -713,4 +831,62 @@ func (f *SourceFinder) sourceFromDedicatedLoader(sourceNodeName, payloadCode str
 		return nil, nil, true, fmt.Errorf("resolve node for bin %d: %w", chosen.ID, err)
 	}
 	return chosen, node, true, nil
+}
+
+// auditSourcedOutsideItsGroup logs when a press the level keeper serves takes
+// its empty from SOMEWHERE ELSE. MG3-5.
+//
+// ── THE SIGNAL IS "THE MAINTAINER IS LOSING" ────────────────────────────────
+//
+// A maintained group exists so the presses it supports never wait for a
+// carrier. When a supported press sources from outside that group, the group
+// was empty of what it needed AT THE MOMENT IT ASKED — the keeper had not
+// caught up, or the level is set too low, or the mix is wrong. Nothing failed:
+// the press got its carrier and the line kept running, which is exactly why
+// this is invisible without a line in the log.
+//
+// It is the counterpart to the level itself. `resident` says what the group
+// holds; this says when holding it did not help.
+//
+// A LOG LINE AND NOT A CAUSE, deliberately. The order is not waiting and there
+// is nothing for an operator to do about this one occurrence — it is a rate,
+// read over a shift, and a queue cause on a successful order would be a lie
+// about the order's state. If it turns out to want a surface, the log line is
+// what a query would be built from.
+//
+// IT RIDES THE DEBUG CHANNEL, AND THAT IS A STATED LIMITATION rather than a
+// choice. SourceFinder is constructed with one logger — the dispatcher's dbg —
+// so this is as loud as the seam can currently be. Promoting it means giving
+// the finder a second logger and threading it through every construction site,
+// which is a wider change than an observation warrants until somebody wants to
+// read the rate. Whoever does: that is the change.
+//
+// SILENT WHEN THERE IS NOTHING TO SAY: no process node, no carrier, or a
+// carrier that came from within a group this process is supported at.
+func (f *SourceFinder) auditSourcedOutsideItsGroup(need SourceNeed, binNode *nodes.Node) {
+	if need.ProcessNode == "" || binNode == nil {
+		return
+	}
+	groups, err := f.db.MaintainedGroupsSupporting(need.ProcessNode)
+	if err != nil {
+		// Best-effort by construction: this is an observation about an order that
+		// already succeeded, and a failed read must not change what it got.
+		f.debug("audit: maintained groups supporting %s unreadable: %v", need.ProcessNode, err)
+		return
+	}
+	if len(groups) == 0 {
+		return
+	}
+	inside, err := f.db.NodeIsUnderAny(binNode.ID, groups)
+	if err != nil {
+		f.debug("audit: group membership for node %d unreadable: %v", binNode.ID, err)
+		return
+	}
+	if inside {
+		return
+	}
+	f.debug("MAINTAINED GROUP MISSED: process %s sourced an empty from %s, which is outside "+
+		"the %d maintained group(s) that serve it. The group was short of what this press "+
+		"needed when it asked — level too low, mix wrong, or the keeper had not caught up. "+
+		"Nothing failed; the press is running.", need.ProcessNode, binNode.Name, len(groups))
 }

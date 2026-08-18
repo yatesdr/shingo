@@ -8,6 +8,7 @@ package store
 // service.BinManifestService.SetFromTemplate for the audit-bearing path.
 
 import (
+	"shingocore/store/reservations"
 	"time"
 
 	"shingocore/domain"
@@ -65,15 +66,17 @@ func (db *DB) ClaimBin(binID, orderID int64) error { return bins.Claim(db.DB, bi
 // FindEmptyCompatibleBin finds an unclaimed, available bin compatible with
 // the given payload code, preferring the given zone. excludeNodeID > 0
 // skips bins at that node (pass destination to avoid same-node retrieve).
-func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64) (*bins.Bin, error) {
-	return bins.FindEmptyCompatible(db.DB, payloadCode, preferZone, excludeNodeID)
+func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64,
+	fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
+	return bins.FindEmptyCompatible(db.DB, payloadCode, preferZone, excludeNodeID, fence, asker)
 }
 
 // FindEmptyCompatibleBinInGroup is FindEmptyCompatibleBin scoped to descendants
 // of a synthetic group node. See bins.FindEmptyCompatibleInGroup for the full
 // rationale. Used by planRetrieveEmpty's source-group branch.
-func (db *DB) FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error) {
-	return bins.FindEmptyCompatibleInGroup(db.DB, payloadCode, groupNodeID, excludeNodeID)
+func (db *DB) FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64,
+	asker reservations.DigAsker) (*bins.Bin, error) {
+	return bins.FindEmptyCompatibleInGroup(db.DB, payloadCode, groupNodeID, excludeNodeID, asker)
 }
 
 // UpdateBinStatus sets the status on a bin.

@@ -53,13 +53,24 @@ type SourceNeed struct {
 	Intent       Intent
 	NodeLocal    bool
 
-	// Asker is the order this need belongs to, for the dig-lock question on the
-	// NGRP tier. The zero value is reservations.Anyone, which every dig
-	// excludes — the same answer this path gave before the field existed, so a
-	// construction site that does not set it is unchanged rather than wrong.
-	// FindSource fills it; callers building a need by hand should too when they
-	// have an order, or a resuming complex parent cannot see the bin its own
-	// dig uncovered.
+	// Asker is the order this need belongs to, for the dig-lock question — on
+	// the NGRP tier AND, as of MG3-1b, on all four empty finders.
+	//
+	// The zero value is reservations.Anyone, which every dig excludes. That is
+	// the owner-blind reading, and it is the SAFE direction for a need with no
+	// order behind it: a caller with nothing to exempt should not walk into a
+	// lane somebody is digging.
+	//
+	// FINDSOURCE ACTUALLY FILLS IT NOW, via digAskerFor. It did not until
+	// MG3-1b — this comment promised it and FindSource omitted the field, so
+	// every need built there carried Anyone. The consequence was nil while no
+	// empty tier read Asker; it became a live trap the moment they did, which is
+	// why MG3-0 pinned the omission as a red test and this commit deletes that
+	// pin rather than quietly satisfying it.
+	//
+	// Callers building a need by hand should fill it too when they have an
+	// order, or a resuming complex parent cannot see the bin its own dig
+	// uncovered.
 	Asker reservations.DigAsker
 
 	// OriginID is the demand episode this need serves, when it has one.
@@ -147,18 +158,24 @@ type FinderDB interface {
 	ListBinsByNode(nodeID int64) ([]*bins.Bin, error)
 	ListBinsByNodes(nodeIDs []int64) ([]*bins.Bin, error)
 	FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error)
-	FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64) (*bins.Bin, error)
-	FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error)
-	FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID int64) (*bins.Bin, error)
-	FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error)
+	FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error)
+	FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64, asker reservations.DigAsker) (*bins.Bin, error)
+	FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error)
+	FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64, asker reservations.DigAsker) (*bins.Bin, error)
 	// MaintainedEpisodeForOrigin is the same read with BOTH halves of the pair:
 	// the group the episode belongs to as well as its carrier type. The group is
 	// what keeps a top-off ask from sourcing out of the group it is filling.
 	MaintainedEpisodeForOrigin(originID string) (groupNode, binType string, err error)
-	// FindEmptyBinOfTypeOutsideGroup is the typed plant-wide empty search with a
-	// whole subtree excluded. Only the maintained-group path passes a non-zero
-	// subtree; everything else gets FindEmptyBinOfType's behaviour by delegation.
-	FindEmptyBinOfTypeOutsideGroup(binTypeCode, preferZone string, excludeSubtreeRootID, excludeNodeID int64) (*bins.Bin, error)
+	// GroupFencesAsker answers the fence as a DISPOSITION, for a need that named
+	// a group explicitly. The plant-wide fence is a filter inside the query; this
+	// one has to produce a cause.
+	GroupFencesAsker(groupNodeID int64, processNode string) (bool, error)
+	// MaintainedGroupsSupporting and NodeIsUnderAny are the MG3-5 audit's two
+	// reads: which groups serve this process, and did the carrier come from
+	// inside one of them.
+	MaintainedGroupsSupporting(processNode string) ([]int64, error)
+	NodeIsUnderAny(nodeID int64, roots []int64) (bool, error)
+
 	IsSlotAccessible(slotNodeID int64) (bool, error)
 	GetLoaderHomeByPositionNode(positionNodeID int64) (*loaders.Home, error)
 	GetLoader(id int64) (*loaders.Loader, error)

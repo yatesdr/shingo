@@ -1,5 +1,7 @@
 package dispatch
 
+import "shingocore/store/bins"
+
 // source_finder_want.go — which carrier TYPE an empty should be.
 //
 // MOVED OUT OF source_finder.go UNCHANGED. One function, in its own file, because
@@ -149,47 +151,33 @@ func (f *SourceFinder) wantedBinType(need SourceNeed) string {
 	return best
 }
 
-// maintainedGroupExclusion answers "which subtree must this need NOT source
-// from", and it is non-zero for exactly one caller: a level keeper's top-off ask.
+// emptyFenceFor builds the maintained-group fence for one need.
 //
-// THE DEFECT IT CLOSES, measured rather than reasoned. A keeper ask delivering
-// into a maintained group is free to source an empty ALREADY STANDING IN THAT
-// GROUP and carry it to another position in the same group. On a six-position
-// group standing at 2 of a level of 4, both remaining carriers were claimed by
-// the group's own top-off asks inside one tick — P03 to P01 and P04 to P02.
+// TWO INPUTS, TWO RULES. ProcessNode decides rule (i) — whether this asker is
+// supported at a strict group — and OriginGroup decides rule (ii), whether the
+// ask is filling a group it may therefore not source from. Both come straight
+// off the order; neither is re-derived.
 //
-// It is not just two wasted trips. A claimed carrier stops counting as
-// `resident`, so the gap re-opens, so the keeper asks again: the group shuffles
-// itself and never reaches its level. The design named the rule before the
-// keeper was built — "never from the group itself" — and this is that rule.
+// SHARING IS THE DEFAULT, so a need with neither returns the zero fence and the
+// query renders without a CTE or an arm — byte-for-byte what it was before
+// MG3-1. Only an ask that names a process or carries a maintain origin can be
+// fenced at all.
 //
-// ZERO FOR EVERY OTHER NEED, which keeps the change scoped to the path that
-// demonstrated the problem. A plain retrieve_empty into an ordinary market lane
-// sourcing from the same market may well be pointless too, but that is a
-// different claim with no evidence behind it here, and widening a fix into a
-// behaviour change is how a fix stops being reviewable.
-//
-// A READ FAILURE RETURNS ZERO — no exclusion — rather than refusing to source.
-// The failure mode it restores is a wasted trip the next tick corrects; the
-// alternative (treat an unreadable episode as "exclude everything") would park
-// the keeper's asks on a database blip.
-func (f *SourceFinder) maintainedGroupExclusion(need SourceNeed) int64 {
+// A READ FAILURE RETURNS THE ZERO FENCE rather than refusing to source, and the
+// direction is chosen: the failure it restores is a carrier taken from a fenced
+// group, which the next tick corrects, against parking every empty pull in the
+// plant on a database blip. The alternative — treat an unreadable episode as
+// "fence everything" — would turn one bad read into a plant-wide stall.
+func (f *SourceFinder) emptyFenceFor(need SourceNeed) bins.EmptyFence {
+	fence := bins.EmptyFence{ProcessNode: need.ProcessNode}
 	if need.OriginID == "" {
-		return 0
+		return fence
 	}
 	group, _, err := f.db.MaintainedEpisodeForOrigin(need.OriginID)
 	if err != nil {
-		f.debug("maintainedGroupExclusion: origin %s: %v", need.OriginID, err)
-		return 0
+		f.debug("emptyFenceFor: maintained episode for origin %s: %v", need.OriginID, err)
+		return fence
 	}
-	if group == "" {
-		return 0
-	}
-	node, err := f.db.GetNodeByDotName(group)
-	if err != nil || node == nil {
-		f.debug("maintainedGroupExclusion: group %q for origin %s not found: %v",
-			group, need.OriginID, err)
-		return 0
-	}
-	return node.ID
+	fence.OriginGroup = group
+	return fence
 }

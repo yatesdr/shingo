@@ -3,6 +3,9 @@
 package bins_test
 
 import (
+	"database/sql"
+	"errors"
+	"shingocore/store/reservations"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -21,6 +24,26 @@ import (
 // equivalence is checked directly, across the states that actually diverge.
 //
 // find != nil ⟺ count > 0, over the same fixture, after each mutation.
+//
+// ── ONE DELIBERATE EXCEPTION, AS OF MG3-1b ──────────────────────────────────
+//
+// THEY AGREE EXCEPT UNDER A LIVE FOREIGN DIG. The find side gained a dig
+// exclusion; the count side did not, and will not. So a carrier standing in a
+// lane somebody else is digging is COUNTED and not FOUND, and that divergence
+// is the design rather than a gap in it.
+//
+// The asymmetry is about how long each mistake lasts. A find/count divergence
+// under a dig is transient and self-heals the moment the dig ends. A COUNT that
+// hid a dug-lane resident would tell the keeper the group is short of a carrier
+// it is standing on, and the keeper would order another — a real extra order
+// that nothing ever cancels. Permanent overfill, arriving through the count,
+// which is the 241-duplicates shape at a new grain. And a per-asker count would
+// make the level flap with every dig, manufacturing phantom shortfalls that
+// fight the dig that caused them.
+//
+// STATED LOUDLY RATHER THAN DISCOVERED RED. Splitting two readers silently is
+// not a design; the split is asserted below, in its own subtest, so a future
+// reader meets it as a decision and not as a failing test they have to explain.
 func TestEmptyOfTypeInGroup_CountAndFindAgree(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -37,7 +60,7 @@ func TestEmptyOfTypeInGroup_CountAndFindAgree(t *testing.T) {
 
 	agree := func(t *testing.T, stage string) int {
 		t.Helper()
-		found, ferr := bins.FindEmptyOfTypeInGroup(sdb, "AGREE-45x58", grpID, 0)
+		found, ferr := bins.FindEmptyOfTypeInGroup(sdb, "AGREE-45x58", grpID, 0, reservations.Anyone)
 		n, cerr := bins.CountEmptyOfTypeInGroup(sdb, "AGREE-45x58", grpID)
 		testutil.MustNoErr(t, cerr, stage+": count")
 		hasFound := ferr == nil && found != nil
@@ -126,5 +149,71 @@ func TestEmptyOfTypeInGroup_CountAndFindAgree(t *testing.T) {
 	testutil.MustNoErr(t, err, "count blank code")
 	if n != 0 {
 		t.Errorf("blank type code count = %d, want 0", n)
+	}
+}
+
+// THE ONE PLACE THE TWO READERS PART, asserted so it reads as a decision.
+//
+// A carrier in a lane a FOREIGN dig holds is counted and not found. Both halves
+// are checked, because either one alone is satisfiable by the wrong thing: a
+// find that returns nothing could be a broken query, and a count that returns
+// one could be a query that ignored the fixture.
+func TestEmptyOfTypeInGroup_TheyPartOnlyUnderAForeignDig(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sdb := db.DB
+
+	grpID, err := nodes.CreateGroup(sdb, "PART-GRP")
+	testutil.MustNoErr(t, err, "CreateGroup")
+	laneType, err := nodes.GetTypeByCode(sdb, "LANE")
+	testutil.MustNoErr(t, err, "LANE type")
+	lane := &nodes.Node{Name: "PART-LANE", Enabled: true, IsSynthetic: true,
+		NodeTypeID: &laneType.ID, ParentID: &grpID}
+	testutil.MustNoErr(t, nodes.Create(sdb, lane), "create lane")
+	depth := 1
+	slot := &nodes.Node{Name: "PART-SLOT", Enabled: true, ParentID: &lane.ID, Depth: &depth}
+	testutil.MustNoErr(t, nodes.Create(sdb, slot), "create slot")
+
+	var btID int64
+	testutil.MustNoErr(t, sdb.QueryRow(
+		`INSERT INTO bin_types (code) VALUES ('PART-45x58') RETURNING id`).Scan(&btID), "bin type")
+	_, err = sdb.Exec(
+		`INSERT INTO bins (bin_type_id, label, node_id, status) VALUES ($1,'PART-BIN',$2,'available')`,
+		btID, slot.ID)
+	testutil.MustNoErr(t, err, "carrier")
+
+	// Before any dig: they agree, which is the ordinary state and the thing the
+	// exception is an exception TO.
+	found, ferr := bins.FindEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, 0, reservations.Anyone)
+	testutil.MustNoErr(t, ferr, "find before")
+	n, cerr := bins.CountEmptyOfTypeInGroup(sdb, "PART-45x58", grpID)
+	testutil.MustNoErr(t, cerr, "count before")
+	if found == nil || n != 1 {
+		t.Fatalf("before the dig: found=%v count=%d, want both to see the carrier", found, n)
+	}
+
+	// A FOREIGN dig takes the lane. No claim on the carrier — this is the
+	// source-lock shape, where nothing else would hide it.
+	var digOrder int64
+	testutil.MustNoErr(t, sdb.QueryRow(
+		`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity)
+		 VALUES ('part-dig','line-1','retrieve','reshuffling',1) RETURNING id`).Scan(&digOrder), "dig order")
+	_, err = sdb.Exec(
+		`INSERT INTO reservations (resource_kind, node_id, order_id, state, mode)
+		 VALUES ('mouth', $1, $2, 'confirmed', 'dig')`, lane.ID, digOrder)
+	testutil.MustNoErr(t, err, "dig hold")
+
+	found, ferr = bins.FindEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, 0, reservations.Anyone)
+	n, cerr = bins.CountEmptyOfTypeInGroup(sdb, "PART-45x58", grpID)
+	testutil.MustNoErr(t, cerr, "count after")
+
+	if found != nil || !errors.Is(ferr, sql.ErrNoRows) {
+		t.Errorf("find returned %v (err %v) under a foreign dig, want none-found. The dig "+
+			"exclusion is FIND-side and this is the side it is on", found, ferr)
+	}
+	if n != 1 {
+		t.Errorf("count = %d under a foreign dig, want 1. The level is PHYSICAL: a carrier "+
+			"in a dug lane is still standing there, and a count that hid it would tell the "+
+			"keeper to order another — permanent overfill that nothing cancels", n)
 	}
 }

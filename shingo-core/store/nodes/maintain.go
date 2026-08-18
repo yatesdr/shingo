@@ -3,6 +3,7 @@ package nodes
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // Maintained-group config: the level a node group holds in EMPTY CARRIERS, and
@@ -206,4 +207,115 @@ func ListMaintainSupports(db *sql.DB, groupNodeID int64) ([]MaintainSupport, err
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// GroupFencesAsker reports whether a STRICT maintained group excludes an asker
+// that has named it explicitly.
+//
+// THE GO TWIN OF bins.FencedNodesCTE's FIRST RULE, and it exists because the
+// two questions are asked at different moments. The CTE answers "which carriers
+// can this plant-wide scan see", inside the query, silently. This answers "may
+// this need, which NAMED this group, be served from it" — and that one needs a
+// DISPOSITION, not a filter: a need turned away here parks with a cause an
+// operator can read, rather than quietly finding nothing.
+//
+// Same predicate, two forms, and they must not drift: strict_sourcing on, and
+// the process node absent from the supports list. A group that supports nobody
+// fences everybody, which is the same reading the CTE takes.
+//
+// A blank processNode is an outsider — an ask that names no process cannot be
+// supported anywhere, and the safe reading of that is "not for you".
+func GroupFencesAsker(db *sql.DB, groupNodeID int64, processNode string) (bool, error) {
+	var fenced bool
+	err := db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM node_properties np
+			 WHERE np.node_id = $1
+			   AND np.key = $2 AND np.value = 'on'
+			   AND NOT EXISTS (
+				 SELECT 1 FROM node_maintain_supports s
+				 JOIN nodes pn ON pn.id = s.process_node_id
+				 WHERE s.group_node_id = np.node_id AND pn.name = $3
+			   )
+		)`, groupNodeID, PropStrictSourcing, processNode).Scan(&fenced)
+	if err != nil {
+		return false, fmt.Errorf("group %d fences %q: %w", groupNodeID, processNode, err)
+	}
+	return fenced, nil
+}
+
+// MaintainedGroupsSupporting returns the maintained groups that serve a process
+// node.
+//
+// UNFILTERED BY strict_sourcing, unlike the fence. The MG3-5 audit asks "did
+// the press that this group exists to serve have to go elsewhere", and that
+// question is about the LEVEL, not about the fence — a group holding a level
+// for a press it does not fence is still a group that came up short when the
+// press sourced from across the plant.
+func MaintainedGroupsSupporting(db *sql.DB, processNode string) ([]int64, error) {
+	if processNode == "" {
+		return nil, nil
+	}
+	rows, err := db.Query(`
+		SELECT s.group_node_id
+		  FROM node_maintain_supports s
+		  JOIN nodes pn ON pn.id = s.process_node_id
+		 WHERE pn.name = $1`, processNode)
+	if err != nil {
+		return nil, fmt.Errorf("maintained groups supporting %q: %w", processNode, err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan maintained group: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// NodeIsUnderAny reports whether nodeID sits inside any of the given subtrees,
+// each root INCLUSIVE.
+//
+// Inclusive because a carrier standing on a group node itself — synthetic and
+// therefore holding none today — would otherwise read as outside the group it
+// is literally on, the day that stops being true.
+func NodeIsUnderAny(db *sql.DB, nodeID int64, roots []int64) (bool, error) {
+	if nodeID == 0 || len(roots) == 0 {
+		return false, nil
+	}
+	var under bool
+	err := db.QueryRow(`
+		WITH RECURSIVE up(id, parent_id) AS (
+			SELECT id, parent_id FROM nodes WHERE id = $1
+			UNION ALL
+			SELECT n.id, n.parent_id FROM nodes n JOIN up ON n.id = up.parent_id
+		)
+		SELECT EXISTS (SELECT 1 FROM up WHERE up.id IN (`+placeholders(2, len(roots))+`))`,
+		append([]any{nodeID}, int64sToAny(roots)...)...).Scan(&under)
+	if err != nil {
+		return false, fmt.Errorf("node %d under any of %v: %w", nodeID, roots, err)
+	}
+	return under, nil
+}
+
+// placeholders renders $start..$start+n-1, so an IN list does not need a driver
+// array type. Two helpers rather than one lib/pq dependency in a package that
+// has none.
+func placeholders(start, n int) string {
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = fmt.Sprintf("$%d", start+i)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func int64sToAny(xs []int64) []any {
+	out := make([]any, len(xs))
+	for i, x := range xs {
+		out[i] = x
+	}
+	return out
 }

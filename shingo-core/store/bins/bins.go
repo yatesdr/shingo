@@ -12,6 +12,7 @@ package bins
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"shingo/shared/clock"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/internal/nodetree"
+	"shingocore/store/reservations"
 )
 
 // Bin is the bin domain entity. The struct lives in shingocore/domain
@@ -59,6 +61,304 @@ const BinFromClause = `FROM bins b
 	LEFT JOIN nodes n ON n.id = b.node_id
 	LEFT JOIN payloads p ON p.code = b.payload_code`
 
+// ── THE DIG EXCLUSION ───────────────────────────────────────────────────────
+
+// NotForeignDugArm hides candidates standing in a lane a FOREIGN dig holds.
+//
+// ── WHY EMPTY SELECTION NEEDED THIS ─────────────────────────────────────────
+//
+// Empty selection was dig-blind: no asker, no dig predicate, in any of the four
+// finders. AccessibleEmptyOrder ranks reachable candidates first, so a buried
+// empty only wins when EVERY compatible empty is buried — and at that point
+// tier 6 turns the pick into a dig rather than sending a robot to a slot it
+// cannot reach. If the chosen lane is already dig-held, planBuriedReshuffle
+// refuses it at IsLocked and the order parks under CauseLaneLocked.
+//
+// What happens next depends on THE KIND OF HOLD, which is the distinction round
+// 1 spent four reviews finding:
+//
+//   - EXCAVATION (compound-backed): the dig claims its own target inside the
+//     compound transaction, and every empty finder already excludes claimed
+//     bins. The next tick cannot see that carrier and diverts by itself — the
+//     park self-heals in one tick, and this arm changes nothing.
+//   - §R.101 SOURCE LOCK: a mouth row held by a demand. No compound, no bin
+//     claims, nothing hidden. The parked order re-picks the SAME buried empty
+//     every tick and re-parks, indefinitely, while a diggable free lane sits
+//     unconsidered. It is not bounded by any dig's duration because the hold is
+//     not a dig that finishes.
+//
+// THE SOURCE LOCK IS WHAT THIS BUYS. Anyone evaluating the arm against the
+// excavation case will conclude it was pointless, because there it is.
+//
+// ── SEVERITY, STATED ────────────────────────────────────────────────────────
+//
+// No plant runs lane locks yet, so the collision cannot occur in production
+// today (owner, 2026-08-17). This is sim-proven future-proofing that lands with
+// MG3 because the queries are open here, not because anything on a floor is
+// waiting on it.
+//
+// ── NARROW, AND FIND-SIDE ONLY ──────────────────────────────────────────────
+//
+// It hides candidates in the DUG LANE and nothing else — never the whole group.
+// A sibling lane in the same group stays eligible, which is the entire point:
+// diverting to it is what the order should have done in the first place.
+//
+// The predicate is RENDERED by DigExclusionSQL, never hand-spelled, so the
+// empty finders join the three existing readers of the dig-lock question rather
+// than becoming a fourth answer to it. That file's account of what happens when
+// the readers disagree is why this is an import and not a copy.
+//
+// AND IT NEVER ENTERS A COUNT. See EmptyOfTypeInGroupWhere: a count that hid a
+// dug-lane resident produces a real extra order that nothing cancels, and a
+// per-asker count would make the level flap with every dig, manufacturing
+// phantom shortfalls that fight the dig that caused them.
+//
+// The hold sits on the LANE, and a candidate's lane is its node's parent — the
+// same join ListChildNodesUnlocked makes from the other direction.
+func NotForeignDugArm(modeParam, askerParam, laneOwnerParam int) string {
+	return fmt.Sprintf(`
+	  AND NOT EXISTS (
+		SELECT 1 FROM reservations dig_hold
+		 WHERE dig_hold.resource_kind = 'mouth'
+		   AND dig_hold.node_id = n.parent_id
+		   AND dig_hold.state IN ('pending','confirmed')
+		   AND dig_hold.mode = $%d
+		   AND %s
+	  )`, modeParam, reservations.DigExclusionSQL("dig_hold.order_id", askerParam, laneOwnerParam))
+}
+
+// emptyQueryArgs accumulates bind values and hands out their positions.
+//
+// The empty finders compose optional arms — a zone preference, a maintained-
+// group fence, a dig exclusion — and each one that is absent shifts every
+// placeholder after it. Hand-numbering that across two query variants per
+// finder is arithmetic nobody can review, and getting it wrong binds the right
+// value to the wrong clause: a query that runs, returns rows, and answers a
+// different question.
+//
+// add returns the 1-based position of the value it just appended, which is what
+// every arm renderer takes.
+type emptyQueryArgs struct{ vals []any }
+
+func (a *emptyQueryArgs) add(v any) int {
+	a.vals = append(a.vals, v)
+	return len(a.vals)
+}
+
+// ── THE FENCE ───────────────────────────────────────────────────────────────
+
+// EmptyFence is what a plant-wide empty search needs to know about maintained
+// groups: who is asking, and on whose behalf.
+//
+// SHARING IS THE PLANT DEFAULT. Derek's plant-wide empty sharing stays exactly
+// as it is for everyone; the ONLY fenced zones are maintained groups with
+// strict_sourcing on. A blank EmptyFence fences nothing, which is what every
+// caller that has no order in hand keeps getting.
+type EmptyFence struct {
+	// ProcessNode is the asker's process node NAME — the identity the supports
+	// table is keyed on. Blank means "supported nowhere", which is the correct
+	// reading for an ask that names no process: it is an outsider at every
+	// strict group, which is the safe direction.
+	ProcessNode string
+	// OriginGroup is the maintained group this ask exists to FILL, by name.
+	// Blank for everything that is not a level keeper's top-off.
+	OriginGroup string
+}
+
+// Empty reports whether this fence excludes nothing, so a caller can skip
+// rendering the CTE entirely rather than run a walk over an empty root set.
+func (f EmptyFence) Empty() bool { return f.ProcessNode == "" && f.OriginGroup == "" }
+
+// Args returns the two bind values FencedNodesCTE's placeholders take, in the
+// order the placeholders were named. Beside the renderer, on DigAsker.Args's
+// precedent, so a caller cannot pass them in the wrong order or forget one.
+func (f EmptyFence) Args() []any { return []any{f.ProcessNode, f.OriginGroup} }
+
+// FencedNodesCTE renders the set of nodes this asker may not source an empty
+// from, as a recursive walk over the two rules that hide a carrier.
+//
+// ── RULE (i): THE FENCE ─────────────────────────────────────────────────────
+//
+// A strict maintained group's empties are RESERVED for the processes it
+// supports. An outsider's plant-wide scan cannot see them. That is the whole
+// point of the feature: nothing may steal from the press empty zones, and
+// everyone else keeps sharing.
+//
+// Supported-ness is read from node_maintain_supports by process node NAME,
+// which is what the ask carries. A group that supports nobody fences everybody,
+// and that is right rather than a degenerate case — it is a group in the middle
+// of being configured, and the safe reading of "I have not said who this is
+// for" is "not for you".
+//
+// RECIPROCITY FALLS OUT, unasked for: a keeper topping up group A is not in
+// group B's supports list either, so it is an outsider at B by the same rule
+// that makes a press an outsider at A. Two maintained groups cannot drain each
+// other, and nothing had to be written to arrange it.
+//
+// ── RULE (ii): NOT FROM THE GROUP YOU ARE FILLING ───────────────────────────
+//
+// A top-off ask may not source a carrier already standing in the group it is
+// filling. That is MG2-11, absorbed here so there is ONE spelling of "not from
+// a maintained group" rather than two that can drift.
+//
+// It is a SEPARATE RULE and not a special case of the fence, and the difference
+// matters: the fence asks "are you an outsider here?" — a keeper is not, at its
+// own group — while this asks "are you filling this group?". The keeper is
+// exempt from rule (i) at its own group and caught by rule (ii) there anyway.
+// Net effect: the keeper sources from the market and the cells, never from any
+// maintained group, and a supported press reaches its own group through the
+// supports list.
+//
+// The measured consequence of not having rule (ii): a six-position group
+// standing at 2 of a level of 4 dispatched both its top-off asks against its
+// OWN remaining carriers, moving them from one of its positions to another. The
+// claims then dropped `resident`, which re-opened the gap, which asked again —
+// the group shuffled itself and never reached its level.
+//
+// APPLIED WITHOUT REGARD TO strict_sourcing, unlike rule (i). Filling a group
+// from itself is a null trip whether or not anybody has fenced it.
+//
+// ── WHY A NODE SET AND NOT A PER-ROW TEST ───────────────────────────────────
+//
+// The question is "does this carrier sit under a fenced group", which is an
+// ancestor walk from each candidate — a correlated recursion per row. Inverting
+// it into one descendant walk from the fenced ROOTS computes the same set once,
+// and closes NESTING by construction: a group inside a fenced group is in the
+// subtree, so membership-in-any-maintained-ancestor is what the walk already
+// answers.
+//
+// processParam and originParam are the 1-based positional parameters that will
+// carry EmptyFence.Args().
+func FencedNodesCTE(processParam, originParam int) string {
+	return fmt.Sprintf(`WITH RECURSIVE fenced_roots(id) AS (
+		SELECT np.node_id FROM node_properties np
+		 WHERE np.key = 'strict_sourcing' AND np.value = 'on'
+		   AND NOT EXISTS (
+			 SELECT 1 FROM node_maintain_supports s
+			 JOIN nodes pn ON pn.id = s.process_node_id
+			 WHERE s.group_node_id = np.node_id AND pn.name = $%d
+		   )
+		UNION
+		SELECT g.id FROM nodes g WHERE $%d <> '' AND g.name = $%d
+	),
+	fenced(id) AS (
+		SELECT id FROM fenced_roots
+		UNION ALL
+		SELECT n2.id FROM nodes n2 JOIN fenced f ON n2.parent_id = f.id
+	) `, processParam, originParam, originParam)
+}
+
+// NotFencedArm keeps a candidate out of the fenced set. Assumes a `fenced(id)`
+// CTE is in scope — compose FencedNodesCTE for it.
+//
+// FIND-SIDE ONLY, and that is a standing ruling rather than an oversight. See
+// EmptyOfTypeInGroupWhere for why no fence, no dig arm and no asker may ever
+// enter a count.
+func NotFencedArm() string {
+	return `
+	  AND b.node_id NOT IN (SELECT id FROM fenced)`
+}
+
+// ── THE EMPTY-CARRIER FRAGMENT FAMILY ───────────────────────────────────────
+//
+// Four empty finders carried four hand-written copies of the same predicate,
+// differing only in which arms they added. Round 1's census kept every TIER —
+// they differ in kind, and a single parameterized finder could express at most
+// two of six — but named the one consolidation that IS earned as sitting a
+// level down: the WHERE bodies, not the tiers.
+//
+// WHAT MAKES A CARRIER AN EMPTY, in one place. Every clause below is in every
+// one of the four queries today, character for character; the copies were
+// identical, which is exactly why nobody noticed they were copies.
+//
+// THE ARMS ARE FUNCTIONS OF A PARAMETER INDEX, not strings a caller splices.
+// Each finder numbers its placeholders differently, so an arm has to be told
+// which position it occupies — and taking an int rather than a string means a
+// caller cannot put anything into the SQL but a positional placeholder. That is
+// nodetree's rule, for nodetree's reason.
+//
+// WHAT IS NOT HERE, DELIBERATELY: the ordering. AccessibleEmptyOrder stays a
+// separate trailing fragment each finder appends for itself, because it is a
+// different kind of thing — the WHERE says which carriers are eligible, the
+// ORDER BY says which eligible one costs least to grab. Consolidating them
+// together would let a future arm silently change the ranking.
+
+// EmptyCarrierWhere is the core: an unclaimed, unlocked, unstaged, payload-less
+// carrier standing at an enabled physical node, with nothing pending against it.
+//
+// Each exclusion is here because sourcing excludes it, and any count over the
+// same population must agree:
+//   - staged and pending-reservation carriers are spoken for;
+//   - claimed and locked ones likewise;
+//   - synthetic and disabled nodes hold nothing anybody can act on;
+//   - anything carrying a payload has left the empty population entirely.
+//
+// It opens the WHERE. Arms append to it; nothing composes in front of it.
+const EmptyCarrierWhere = `
+	WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
+	  AND b.claimed_by IS NULL
+	  AND b.locked = false
+	  AND b.node_id IS NOT NULL
+	  AND n.enabled = true
+	  AND n.is_synthetic = false
+	  AND COALESCE(b.payload_code, '') = ''
+	  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')`
+
+// OfTypeArm narrows to ONE carrier type, matched on CODE.
+//
+// On code and not on bin_type_id, because that is what keeps the readers
+// honest: the level keeper holds a code (it comes out of the episode key, which
+// carries the code so a log line and a restore are both readable) and the
+// finders have always matched on code. An id-keyed arm would be equivalent and
+// would be a SECOND SPELLING of "of this type".
+func OfTypeArm(typeParam int) string {
+	return fmt.Sprintf(`
+	  AND bt.code = $%d`, typeParam)
+}
+
+// InGroupArm narrows to carriers standing inside a group's subtree.
+//
+// Assumes a `descendants(id)` CTE is in scope — compose nodetree.DescendantsOf
+// for it, which is SELF-EXCLUDED: a group node is synthetic and holds no
+// carriers, so its own id in the set changes nothing today and would mean
+// something different the day one does.
+func InGroupArm() string {
+	return `
+	  AND b.node_id IN (SELECT id FROM descendants)`
+}
+
+// OutsideGroupArm is InGroupArm's inverse: everywhere EXCEPT a subtree.
+//
+// It takes the SUBTREE walk (nodetree.SubtreeOf), not the descendants one, and
+// the difference is load-bearing in the direction of exclusion. Excluding only
+// the descendants would leave the root itself eligible; the root is synthetic
+// and holds no carriers today, so the two are equivalent now and stop being
+// equivalent the moment a group node can hold one. An exclusion that is
+// accidentally correct is the kind that stops being correct silently.
+//
+// Both walks name their CTE `descendants` — deliberately, so they are drop-in
+// for one another and the FUNCTION names carry the difference. That naming is
+// also how MG2-11 first shipped broken: the query said `FROM subtree`, threw on
+// every call, and every caller read the throw as "no empty found".
+func OutsideGroupArm() string {
+	return `
+	  AND b.node_id NOT IN (SELECT id FROM descendants)`
+}
+
+// InZoneArm narrows to one zone. See the note on FindEmptyOfType for why a zone
+// PREFERENCE exists at all.
+func InZoneArm(zoneParam int) string {
+	return fmt.Sprintf(`
+	  AND n.zone = $%d`, zoneParam)
+}
+
+// ExcludeNodeArm drops one node — the destination, so a retrieve cannot source
+// from the place it is delivering to. Zero excludes nothing.
+func ExcludeNodeArm(nodeParam int) string {
+	return fmt.Sprintf(`
+	  AND ($%d = 0 OR b.node_id != $%d)`, nodeParam, nodeParam)
+}
+
 // EmptyOfTypeInGroupWhere is the predicate for "an unclaimed empty carrier of
 // ONE type, standing at an enabled physical node inside a group".
 //
@@ -88,24 +388,32 @@ const BinFromClause = `FROM bins b
 // synthetic and holds no carriers, and its own id in the set would change
 // nothing today and mean something different the day one does.
 //
+// COMPOSED FROM THE FAMILY AS OF MG3-1, and the identity is unchanged: same
+// name, same clauses, same semantics, still interpolated verbatim by BOTH
+// readers. Only the definition moved — from a hand-written body to
+// EmptyCarrierWhere plus three arms — so the finder and the count still share
+// one string by construction rather than by agreement.
+//
+// NO STRICT ARM AND NO DIG ARM EVER ENTER IT. That is a standing ruling, and
+// the reasons are asymmetric in duration. A find/count divergence under a live
+// dig is transient and self-heals; a COUNT that hides a dug-lane resident
+// produces a real extra order that nothing ever cancels — permanent overfill,
+// the 241 shape arriving through the count. And a per-asker count would make
+// the level bounce with every dig, manufacturing phantom shortfalls that fight
+// the dig that caused them. The level is PHYSICAL: how many carriers are
+// standing there, not how many this particular asker may take.
+//
+// A var rather than a const now, since it is composed at init.
+// AccessibleEmptyOrder set that precedent for the same reason.
+//
 // THE TYPE IS MATCHED ON CODE, not on bin_type_id, and that is what keeps the
 // two readers honest. The keeper holds a code (it comes out of the episode key,
 // which carries the code so a log line and a restore are both readable); the
 // finder has always matched on code. An id-keyed count would be equivalent and
 // would be a SECOND SPELLING of "of this type" — precisely the thing this
 // fragment exists to prevent.
-const EmptyOfTypeInGroupWhere = `
-	WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
-	  AND b.claimed_by IS NULL
-	  AND b.locked = false
-	  AND b.node_id IS NOT NULL
-	  AND n.enabled = true
-	  AND n.is_synthetic = false
-	  AND COALESCE(b.payload_code, '') = ''
-	  AND bt.code = $1
-	  AND b.node_id IN (SELECT id FROM descendants)
-	  AND ($3 = 0 OR b.node_id != $3)
-	  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')`
+var EmptyOfTypeInGroupWhere = EmptyCarrierWhere +
+	OfTypeArm(1) + InGroupArm() + ExcludeNodeArm(3)
 
 // SourceableStatusSQL is the SQL twin of domain.BinStatus.Sourceable: the set of
 // statuses a bin may be picked up from. One rule in two languages —
@@ -654,14 +962,22 @@ func claimBin(db binExecer, binID, orderID int64) error {
 // needs it decided should get the ruling rather than quietly change one side.
 //
 // FindEmptyCompatibleInGroup below carries the same property for the same reason.
-func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, excludeNodeID int64) (*Bin, error) {
+func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, excludeNodeID int64,
+	asker reservations.DigAsker) (*Bin, error) {
+
 	if binTypeCode == "" {
 		return nil, sql.ErrNoRows
 	}
-	row := db.QueryRow(
-		nodetree.DescendantsOf(2)+" "+BinJoinQuery+EmptyOfTypeInGroupWhere+AccessibleEmptyOrder,
-		binTypeCode, groupNodeID, excludeNodeID)
-	return ScanBin(row)
+	// NO FENCE HERE. A group-scoped need names its group explicitly, so the
+	// question "may this asker source from that group" is a disposition the
+	// finder answers with a cause (MG3-2), not something the query hides. The
+	// dig exclusion is different — it is about which LANE inside the group is
+	// contended, which only the query can see.
+	a := &emptyQueryArgs{vals: []any{binTypeCode, groupNodeID, excludeNodeID}}
+	q := nodetree.DescendantsOf(2) + " " + BinJoinQuery + EmptyOfTypeInGroupWhere +
+		NotForeignDugArm(a.add(string(reservations.ModeDig)),
+			a.add(asker.OrderID), a.add(asker.LaneOwner)) + AccessibleEmptyOrder
+	return ScanBin(db.QueryRow(q, a.vals...))
 }
 
 // CountEmptyOfTypeInGroup counts what FindEmptyOfTypeInGroup can see.
@@ -696,167 +1012,132 @@ func CountEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID int64) 
 
 // FindEmptyOfType returns an empty carrier of ONE bin type from anywhere,
 // preferring the destination's zone. The typed twin of FindEmptyCompatible.
-func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID int64) (*Bin, error) {
+//
+// ── THE ZONE PREFERENCE IS DELIBERATE, AND IT IS DEREK'S ────────────────────
+//
+// Round 1's census found this arm carrying no written justification anywhere
+// and flagged it "ask, do not remove". Asked and answered (owner, 2026-08-17):
+// Derek added plant-wide empty sharing on purpose — prefer the destination's
+// zone, then take from ANYWHERE — to keep lines running and share empties
+// rather than run pure-strict. A line that has run out of carriers is a line
+// that has stopped, and a nearby empty in the wrong zone is worth more than a
+// correctly-zoned one nobody can reach.
+//
+// So: PREFERENCE, never restriction. The zone query is tried first and the
+// any-zone query answers when it finds nothing, which is what makes this
+// sharing rather than fencing. That ordering is the whole semantic.
+//
+// AND IT IS WHY THE FENCE HAD TO BE ADDITIVE. Phase 3 does not narrow this arm;
+// it adds one exception to it — maintained groups with strict_sourcing on —
+// and everything else keeps sharing exactly as before. A blank EmptyFence
+// renders neither the CTE nor the arm, so an unfenced plant runs Derek's query
+// unchanged, byte for byte.
+//
+// The level keeper is this preference's first deliberate user: its top-off asks
+// pass the destination group's zone, so a carrier near the group it is filling
+// is preferred over one across the plant. That is also what made the
+// self-sourcing defect easy to hit — the group's own positions share its zone,
+// so preferZone ranked its own carriers FIRST — which is now rule (ii)'s job to
+// prevent rather than a reason to distrust the preference.
+func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID int64,
+	fence EmptyFence, asker reservations.DigAsker) (*Bin, error) {
+
 	if binTypeCode == "" {
 		return nil, sql.ErrNoRows
 	}
-	if preferZone != "" {
-		row := db.QueryRow(fmt.Sprintf(`%s
-			WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
-			  AND b.claimed_by IS NULL
-			  AND b.locked = false
-			  AND b.node_id IS NOT NULL
-			  AND n.enabled = true
-			  AND n.is_synthetic = false
-			  AND n.zone = $2
-			  AND COALESCE(b.payload_code, '') = ''
-			  AND bt.code = $1
-			  AND ($3 = 0 OR b.node_id != $3)
-			  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s`,
-			BinJoinQuery, AccessibleEmptyOrder), binTypeCode, preferZone, excludeNodeID)
-		if b, err := ScanBin(row); err == nil && b != nil {
-			return b, nil
+	// TWO PARAMETERS, NOT ONE STRUCT. The fence is POLICY — config-born, changes
+	// at save time, keyed on supports and origin. The dig exclusion is PHYSICAL
+	// CONTENTION — reservation-born, changes per dig, keyed on order identity. A
+	// DigAsker field on EmptyFence would teach every later reader that fences are
+	// dig-aware policy, which is the two-questions-one-spelling drift this whole
+	// family exists to prevent. One extra parameter is cheaper than one lie in a
+	// type name.
+	build := func(withZone bool) (string, []any) {
+		a := &emptyQueryArgs{}
+		where := EmptyCarrierWhere + OfTypeArm(a.add(binTypeCode))
+		if withZone {
+			where += InZoneArm(a.add(preferZone))
 		}
-	}
-	row := db.QueryRow(fmt.Sprintf(`%s
-		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
-		  AND b.node_id IS NOT NULL
-		  AND n.enabled = true
-		  AND n.is_synthetic = false
-		  AND COALESCE(b.payload_code, '') = ''
-		  AND bt.code = $1
-		  AND ($2 = 0 OR b.node_id != $2)
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s`,
-		BinJoinQuery, AccessibleEmptyOrder), binTypeCode, excludeNodeID)
-	return ScanBin(row)
-}
-
-// FindEmptyOfTypeOutsideGroup is FindEmptyOfType with a whole SUBTREE excluded:
-// an empty of the type from anywhere EXCEPT below the given node.
-//
-// IT EXISTS FOR THE LEVEL KEEPER, and for a defect the design named before the
-// keeper was built: "sourcing tiers for top-offs ... never from the group
-// itself" (DESIGN-buffer-node-group-maintenance, §3.4). Without it the keeper's
-// ask is free to source a carrier ALREADY STANDING IN THE GROUP it is filling
-// and deliver it to another position in the same group.
-//
-// That is not merely a wasted robot trip, though it is one. The carrier gets
-// claimed, so it stops counting as `resident`, so the gap re-opens, so the
-// keeper asks again — a group with N carriers and a level of N+2 shuffles
-// itself forever and never reaches its level. Measured on a six-position group
-// standing at 2 of 4: both remaining carriers were claimed by the group's own
-// top-off asks within one tick, moving P03→P01 and P04→P02.
-//
-// SUBTREE, NOT CHILDREN, even though maintained groups are flat and refused at
-// save time if they are not. The flatness rule is a save-time check on
-// configuration, and a query that silently depends on it would answer wrongly
-// on the one row that predates the rule. The recursive walk costs nothing here
-// and does not need the invariant to hold.
-//
-// excludeNodeID is the ordinary same-node exclusion and is kept alongside: the
-// subtree answers "not from this group", the node answers "not from the
-// destination", and they are different questions that happen to coincide for a
-// keeper ask.
-// THE CTE IS CALLED `descendants` EVEN THOUGH THE WALK IS SubtreeOf. That is
-// nodetree's deliberate choice — the two walks are drop-in for one another at
-// the point of use, so the NAMES of the functions carry the difference and the
-// query body does not. Writing `FROM subtree` here compiled, ran, and failed at
-// runtime with "relation subtree does not exist" — which the source finder
-// swallows as "no empty found", so it looked like correct behaviour.
-func FindEmptyOfTypeOutsideGroup(db *sql.DB, binTypeCode, preferZone string, excludeSubtreeRootID, excludeNodeID int64) (*Bin, error) {
-	if binTypeCode == "" {
-		return nil, sql.ErrNoRows
-	}
-	if excludeSubtreeRootID <= 0 {
-		// No subtree named: this is FindEmptyOfType, and delegating rather than
-		// running a degenerate NOT IN keeps ONE spelling of the unexcluded query.
-		return FindEmptyOfType(db, binTypeCode, preferZone, excludeNodeID)
-	}
-	const where = `
-		WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
-		  AND b.node_id IS NOT NULL
-		  AND n.enabled = true
-		  AND n.is_synthetic = false
-		  AND COALESCE(b.payload_code, '') = ''
-		  AND bt.code = $1
-		  AND b.node_id NOT IN (SELECT id FROM descendants)
-		  AND ($3 = 0 OR b.node_id != $3)
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')`
-
-	// Zone-preferred first, exactly as FindEmptyOfType does. The preference is
-	// what made the defect easy to hit: a maintained group's own positions share
-	// its zone, so preferZone ranked the group's own carriers FIRST.
-	if preferZone != "" {
-		row := db.QueryRow(fmt.Sprintf(`%s%s%s AND n.zone = $4%s`,
-			nodetree.SubtreeOf(2), BinJoinQuery, where, AccessibleEmptyOrder),
-			binTypeCode, excludeSubtreeRootID, excludeNodeID, preferZone)
-		if b, err := ScanBin(row); err == nil && b != nil {
-			return b, nil
+		where += ExcludeNodeArm(a.add(excludeNodeID))
+		cte := ""
+		if !fence.Empty() {
+			cte = FencedNodesCTE(a.add(fence.ProcessNode), a.add(fence.OriginGroup))
+			where += NotFencedArm()
 		}
+		where += NotForeignDugArm(a.add(string(reservations.ModeDig)),
+			a.add(asker.OrderID), a.add(asker.LaneOwner))
+		return cte + BinJoinQuery + where + AccessibleEmptyOrder, a.vals
 	}
-	row := db.QueryRow(fmt.Sprintf(`%s%s%s%s`,
-		nodetree.SubtreeOf(2), BinJoinQuery, where, AccessibleEmptyOrder),
-		binTypeCode, excludeSubtreeRootID, excludeNodeID)
-	return ScanBin(row)
-}
 
-func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, excludeNodeID int64) (*Bin, error) {
-	row := db.QueryRow(fmt.Sprintf(`
-		%s
-		%s
-		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
-		  AND b.node_id IS NOT NULL
-		  AND n.enabled = true
-		  AND n.is_synthetic = false
-		  AND COALESCE(b.payload_code, '') = ''
-		  AND b.node_id IN (SELECT id FROM descendants)
-		  AND ($3 = 0 OR b.node_id != $3)
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s%s`,
-		nodetree.DescendantsOf(2), BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, groupNodeID, excludeNodeID)
-	return ScanBin(row)
-}
-
-func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNodeID int64) (*Bin, error) {
-	// Zone-preferred query
 	if preferZone != "" {
-		row := db.QueryRow(fmt.Sprintf(`%s
-			WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
-			  AND b.claimed_by IS NULL
-			  AND b.locked = false
-			  AND b.node_id IS NOT NULL
-			  AND n.enabled = true
-			  AND n.is_synthetic = false
-			  AND n.zone = $2
-			  AND COALESCE(b.payload_code, '') = ''
-			  AND ($3 = 0 OR b.node_id != $3)
-			  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, preferZone, excludeNodeID)
-		bin, err := ScanBin(row)
+		q, args := build(true)
+		b, err := ScanBin(db.QueryRow(q, args...))
 		if err == nil {
-			return bin, nil
+			return b, nil
 		}
-		if err != sql.ErrNoRows {
+		// A REAL ERROR PROPAGATES; only none-found falls through to any-zone.
+		//
+		// This arm read `if err == nil && b != nil` until MG3-1 — it swallowed
+		// EVERY error, so a zone query that could not run was indistinguishable
+		// from a zone with no carriers, and the fallback quietly answered for it.
+		// Its untyped twin has always propagated; two copies of one query with
+		// different error handling is exactly the drift the family ends.
+		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
-		// sql.ErrNoRows: fall through to any-zone query
 	}
-	// Any zone fallback
-	row := db.QueryRow(fmt.Sprintf(`%s
-		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
-		  AND b.claimed_by IS NULL
-		  AND b.locked = false
-		  AND b.node_id IS NOT NULL
-		  AND n.enabled = true
-		  AND n.is_synthetic = false
-		  AND COALESCE(b.payload_code, '') = ''
-		  AND ($2 = 0 OR b.node_id != $2)
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, excludeNodeID)
-	return ScanBin(row)
+	q, args := build(false)
+	return ScanBin(db.QueryRow(q, args...))
+}
+
+func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, excludeNodeID int64,
+	asker reservations.DigAsker) (*Bin, error) {
+
+	a := &emptyQueryArgs{vals: []any{payloadCode, groupNodeID, excludeNodeID}}
+	q := nodetree.DescendantsOf(2) + BinJoinQuery +
+		EmptyCarrierWhere + InGroupArm() + ExcludeNodeArm(3) +
+		NotForeignDugArm(a.add(string(reservations.ModeDig)),
+			a.add(asker.OrderID), a.add(asker.LaneOwner)) +
+		PayloadBinTypeAdvisoryClause + AccessibleEmptyOrder
+	return ScanBin(db.QueryRow(q, a.vals...))
+}
+
+func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNodeID int64,
+	fence EmptyFence, asker reservations.DigAsker) (*Bin, error) {
+
+	build := func(withZone bool) (string, []any) {
+		a := &emptyQueryArgs{}
+		// $1 is the payload for PayloadBinTypeAdvisoryClause, which names it
+		// explicitly — so it is added first whether or not the zone arm follows.
+		payloadP := a.add(payloadCode)
+		where := EmptyCarrierWhere
+		if withZone {
+			where += InZoneArm(a.add(preferZone))
+		}
+		where += ExcludeNodeArm(a.add(excludeNodeID))
+		cte := ""
+		if !fence.Empty() {
+			cte = FencedNodesCTE(a.add(fence.ProcessNode), a.add(fence.OriginGroup))
+			where += NotFencedArm()
+		}
+		where += NotForeignDugArm(a.add(string(reservations.ModeDig)),
+			a.add(asker.OrderID), a.add(asker.LaneOwner))
+		_ = payloadP
+		return cte + BinJoinQuery + where + PayloadBinTypeAdvisoryClause + AccessibleEmptyOrder, a.vals
+	}
+
+	if preferZone != "" {
+		q, args := build(true)
+		b, err := ScanBin(db.QueryRow(q, args...))
+		if err == nil {
+			return b, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
+	q, args := build(false)
+	return ScanBin(db.QueryRow(q, args...))
 }
 
 // UpdateStatus sets the status on a bin.
