@@ -35,6 +35,9 @@ function load() {
     const ctx = { console: console, Math: Math, Number: Number, Map: Map, Set: Set, Date: Date };
     vm.createContext(ctx);
     vm.runInContext(src + '\n__out = { histPath: histPath, serverLaneKey: serverLaneKey, ' +
+        'deltaVerdict: deltaVerdict, DELTA_SIGNIFICANT: DELTA_SIGNIFICANT, ' +
+        'VERDICT_TOKEN: VERDICT_TOKEN, VERDICT_STROKE: VERDICT_STROKE, ' +
+        'VERDICT_DASH: VERDICT_DASH, ' +
         'BAND_STROKE: BAND_STROKE, BAND_TOKEN: BAND_TOKEN };', ctx);
     return ctx.__out;
 }
@@ -144,6 +147,101 @@ console.log('bands');
     check('no-data does not share a hue with any measured band',
         order.every(function (b) { return m.BAND_TOKEN[b] !== m.BAND_TOKEN.nodata; }),
         m.BAND_TOKEN.nodata);
+})();
+
+// --- the compare verdict --------------------------------------------------
+console.log('deltaVerdict');
+(function () {
+    const MIN = 20;
+    const lane = function (p50, n, sentinel) {
+        return { p50_estimate: p50, samples: n, sentinel_samples: sentinel || 0 };
+    };
+
+    // A lane that rose exactly with the plant has NOT improved. This is the
+    // guard that stops "better" from meaning "the whole plant had a good
+    // week" — the attribution failure the annotation's plant baseline exists
+    // to prevent, carried into the map.
+    check('a lane that follows the plant reads neutral',
+        m.deltaVerdict(lane(0.60, 100), lane(0.70, 100), 0.75, 0.85, MIN) === 'neutral',
+        'lane +0.10, plant +0.10 — attributable is zero');
+
+    check('a lane that beats the plant reads better',
+        m.deltaVerdict(lane(0.60, 100), lane(0.70, 100), 0.75, 0.76, MIN) === 'better',
+        'lane +0.10, plant +0.01 — attributable +0.09');
+
+    check('a lane that falls behind a rising plant reads worse',
+        m.deltaVerdict(lane(0.60, 100), lane(0.62, 100), 0.75, 0.85, MIN) === 'worse',
+        'lane +0.02, plant +0.10 — attributable -0.08');
+
+    // The threshold itself, tested at ±0.001 around it. The boundary is the
+    // annotation's own, and both sides of it are pinned so retuning one
+    // caller cannot silently hollow out the other.
+    check('the significance threshold is applied to the attributable delta',
+        m.deltaVerdict(lane(0.60, 100), lane(0.60 + m.DELTA_SIGNIFICANT + 0.001, 100), 0.5, 0.5, MIN) === 'better' &&
+        m.deltaVerdict(lane(0.60, 100), lane(0.60 + m.DELTA_SIGNIFICANT - 0.001, 100), 0.5, 0.5, MIN) === 'neutral',
+        'just over and just under DELTA_SIGNIFICANT, plant flat');
+
+    // The miss-rate guard, mirrored from the server: routing into a bad
+    // reflector zone makes the conditioned average go UP while things get
+    // WORSE, so a miss rate that moved > 10 points suppresses the verdict
+    // entirely rather than reporting a delta over different populations.
+    check('a miss rate that moved materially suppresses the verdict',
+        m.deltaVerdict(lane(0.60, 100, 0), lane(0.90, 100, 20), 0.5, 0.5, MIN) === 'suppressed',
+        'miss rate 0% → 20%');
+
+    check('a miss rate that moved two points does not suppress',
+        m.deltaVerdict(lane(0.60, 100, 0), lane(0.70, 100, 2), 0.5, 0.5, MIN) === 'better',
+        'miss rate 0% → 2%');
+
+    // Guards that grey rather than hide — absence reads as fine.
+    check('below the minimum n on either side greys',
+        m.deltaVerdict(lane(0.60, MIN - 1), lane(0.90, 100), 0.5, 0.5, MIN) === 'thin' &&
+        m.deltaVerdict(lane(0.60, 100), lane(0.90, MIN - 1), 0.5, 0.5, MIN) === 'thin',
+        'either side below min_samples');
+
+    check('no estimate on either side is nodata',
+        m.deltaVerdict(lane(null, 100), lane(0.90, 100), 0.5, 0.5, MIN) === 'nodata' &&
+        m.deltaVerdict(lane(0.60, 100), lane(null, 100), 0.5, 0.5, MIN) === 'nodata',
+        'a missing side is a missing answer, not a zero');
+
+    check('a lane present on one board only is nodata',
+        m.deltaVerdict(null, lane(0.90, 100), 0.5, 0.5, MIN) === 'nodata',
+        'nobody drove it in one window');
+
+    // A missing PLANT baseline on ONE side: the adjustment that side would
+    // contribute is zero, so the OTHER side's plant level enters the
+    // attributable delta raw. A plant at 0.5 against a null reads as the plant
+    // "rising" 0.5, and a +0.10 lane reads worse. That is the honest failure
+    // of a half-missing baseline — it does not invent symmetry, and the
+    // verdict says the data cannot support the comparison rather than
+    // crediting the lane. Pinned as-is so a future "friendlier" null
+    // handling cannot silently start inventing baselines.
+    check('a half-missing plant baseline biases, does not invent',
+        m.deltaVerdict(lane(0.60, 100), lane(0.70, 100), null, 0.5, MIN) === 'worse',
+        'plant null vs 0.5: the 0.5 enters the attributable delta unpaired');
+
+    // Both plant baselines missing: no adjustment, and the raw lane delta
+    // stands alone.
+    check('no plant baselines at all leaves the raw delta',
+        m.deltaVerdict(lane(0.60, 100), lane(0.70, 100), null, null, MIN) === 'better',
+        'null on both sides — no adjustment, no invention');
+})();
+
+// The greyscale channel: hue does not carry direction, so worse and
+// suppressed must be distinguishable from better and neutral by something
+// other than colour.
+console.log('verdict marks');
+(function () {
+    check('worse is dashed and better is not',
+        !!m.VERDICT_DASH.worse && !m.VERDICT_DASH.better,
+        'the dash is the direction channel that survives desaturation');
+    check('suppressed is dashed too',
+        !!m.VERDICT_DASH.suppressed,
+        'not-comparable must not read as a confident solid mark');
+    check('every verdict has a token and a weight',
+        ['better', 'worse', 'neutral', 'suppressed', 'thin', 'nodata'].every(function (v) {
+            return m.VERDICT_TOKEN[v] && m.VERDICT_STROKE[v];
+        }), JSON.stringify(m.VERDICT_TOKEN));
 })();
 
 if (failures) {

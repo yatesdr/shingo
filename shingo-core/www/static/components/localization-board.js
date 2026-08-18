@@ -81,6 +81,83 @@ export function serverLaneKey(from, to) {
     return from < to ? from + '-' + to : to + '-' + from;
 }
 
+// ── The compare verdict ─────────────────────────────────────────────────────
+//
+// Compare mode answers the engineer's actual question — "I changed things
+// between these dates; what got better?" — by asking it over two explicit
+// windows instead of one trailing one. The verdict is computed CLIENT-SIDE
+// from two board payloads: every guard it needs is already on the wire, and a
+// second server surface would re-derive the annotation's arithmetic in a
+// place the annotation itself cannot see.
+
+// DELTA_SIGNIFICANT is the smallest attributable movement worth calling a
+// change — the annotation's own ±0.02 (see guard 5 in the panel), named here
+// so the two callers cannot drift apart.
+export const DELTA_SIGNIFICANT = 0.02;
+// MISS_RATE_MOVED_MATERIALLY mirrors the server's noEstimateMovedMaterially
+// (localization_board.go): above ten points the two sides' conditioned
+// figures measure different populations and the p50 delta is an artifact of
+// what survived. Both constants want changing together.
+export const MISS_RATE_MOVED_MATERIALLY = 0.10;
+
+// deltaVerdict grades one lane between two windows.
+//
+// a and b are the lane's BoardLane rows from the two boards; plantA/plantB
+// are the two boards' plant p50 estimates (numbers or null). Returns one of:
+//
+//   better | worse | neutral — the attributable delta cleared ±0.02, didn't,
+//                          or sat on the fence
+//   suppressed          — the no-estimate rate moved > 10 pts between the
+//                          windows; the averages are not comparable
+//   thin                — either side is below min_samples; too few to say
+//   nodata              — either side has no estimate at all (nobody drove
+//                          it, or no histogram survived)
+//
+// The delta is PLANT-ADJUSTED before the threshold is applied: a lane that
+// rose with the whole plant has not improved, and crediting it is the
+// attribution failure the annotation's guard 2 exists to prevent.
+export function deltaVerdict(a, b, plantA, plantB, minSamples) {
+    if (!a || !b) return 'nodata';
+    if (a.p50_estimate == null || b.p50_estimate == null) return 'nodata';
+    if ((a.samples || 0) < minSamples || (b.samples || 0) < minSamples) return 'thin';
+    const missA = a.samples ? a.sentinel_samples / a.samples : 0;
+    const missB = b.samples ? b.sentinel_samples / b.samples : 0;
+    if (Math.abs(missB - missA) > MISS_RATE_MOVED_MATERIALLY) return 'suppressed';
+    const pa = plantA == null ? 0 : plantA;
+    const pb = plantB == null ? 0 : plantB;
+    const attributable = (b.p50_estimate - a.p50_estimate) - (pb - pa);
+    if (attributable > DELTA_SIGNIFICANT) return 'better';
+    if (attributable < -DELTA_SIGNIFICANT) return 'worse';
+    return 'neutral';
+}
+
+// VERDICT_STROKE / VERDICT_TOKEN / VERDICT_DASH are the compare-mode marks.
+//
+// HUE ALONE DOES NOT CARRY DIRECTION. Green and coral collapse under
+// deuteranomaly at dE 6.0 — the measured reason the band ramp carries weight
+// as its second channel — so direction gets its own non-hue channel: dashed
+// means worse, solid means better. The map stays legible desaturated to
+// greyscale, and the dash is also the reason worse is not merely "red, but
+// thicker" — a reader comparing two boards side by side sees stroke pattern,
+// not weight differences.
+export const VERDICT_STROKE = {
+    better: 3.4, worse: 3.4, neutral: 1.6, suppressed: 2.6,
+    thin: 1.3, nodata: 1.3
+};
+export const VERDICT_TOKEN = {
+    better: 'var(--viz-green)', worse: 'var(--viz-coral)',
+    neutral: 'var(--text-muted)', suppressed: 'var(--viz-amber)',
+    thin: 'var(--text-muted)', nodata: 'var(--text-muted)'
+};
+export const VERDICT_DASH = {
+    worse: '7 5', suppressed: '2 3'
+};
+const VERDICT_LABEL = {
+    better: 'better', worse: 'worse', neutral: 'no change',
+    suppressed: 'not comparable', thin: 'too few readings',
+    nodata: 'no data one side'
+};
+
 // histPath renders a distribution as an SVG polyline over a unit box.
 //
 // THE SHAPE IS THE FINDING, and it is the only mark on this page that can
@@ -108,6 +185,10 @@ export function createBoard(root, opts) {
     const state = {
         edges: [], board: null,
         window: '7d',
+        compare: false,      // compare mode: two explicit date ranges, verdict colours
+        boardA: null,        // the "before" board in compare mode
+        fromB: '', toB: '',  // compare range B (later); ISO dates or ''
+        fromA: '', toA: '',  // compare range A (earlier)
         showChanges: true, showReflectors: true,
         selected: null,      // lane key: area + lane, as serverLaneKey builds it
         focusDiff: null,     // diff id — dims lanes that edit did not touch
@@ -125,6 +206,13 @@ export function createBoard(root, opts) {
     root.innerHTML =
         '<div class="lb-controls">' +
         '  <div class="lb-seg" id="lb-window"></div>' +
+        '  <label class="lb-toggle"><input type="checkbox" id="lb-compare"> Compare</label>' +
+        '  <span id="lb-cmp" class="lb-cmp" hidden>' +
+        '    <label class="lb-dt">A <input type="date" id="lb-from-a"></label>' +
+        '    <label class="lb-dt">→ <input type="date" id="lb-to-a"></label>' +
+        '    <label class="lb-dt">B <input type="date" id="lb-from-b"></label>' +
+        '    <label class="lb-dt">→ <input type="date" id="lb-to-b"></label>' +
+        '  </span>' +
         '  <label class="lb-toggle lb-robot-pick"><select id="lb-robot">' +
         '    <option value="">Fleet</option>' +
         '  </select></label>' +
@@ -155,9 +243,12 @@ export function createBoard(root, opts) {
     // Only windows the record can answer. Before the daily histograms landed,
     // 30d could not be served at all against fourteen days of raw — a control
     // whose label promises more than the data holds is the failure this whole
-    // design removes.
+    // design removes. 24h is absent for a different reason: the roll-up only
+    // closes complete days, so a one-day window ending now asks for a day
+    // that never exists yet, and short spans are asked for with explicit
+    // dates (compare mode or the API's from/to).
     const winWrap = root.querySelector('#lb-window');
-    ['24h', '7d', '30d'].forEach(function (w) {
+    ['7d', '30d'].forEach(function (w) {
         const b = document.createElement('button');
         b.type = 'button';
         b.textContent = w;
@@ -172,6 +263,62 @@ export function createBoard(root, opts) {
             load();
         });
         winWrap.appendChild(b);
+    });
+
+    // ── compare mode ─────────────────────────────────────────────────────
+    //
+    // Two explicit date ranges, A (earlier) against B (later), and the map
+    // recolours by VERDICT rather than by band. Entering compare mode seeds
+    // B with the current window's own days and A with the equal-length window
+    // immediately before it — the natural first question is "did the recent
+    // window differ from the one before it", and the engineer edits from
+    // there. The ranges ride the SAME board endpoint via its from/to params;
+    // no second server surface exists to drift out of sync with the
+    // annotation's guards.
+    const cmpWrap = root.querySelector('#lb-cmp');
+    const cmpToggle = root.querySelector('#lb-compare');
+    const dtA = { from: root.querySelector('#lb-from-a'), to: root.querySelector('#lb-to-a') };
+    const dtB = { from: root.querySelector('#lb-from-b'), to: root.querySelector('#lb-to-b') };
+    const iso = function (d) { return d.toISOString().slice(0, 10); };
+
+    function seedCompareDates() {
+        // B = the days the current preset actually covers, ending yesterday
+        // (the last complete day); A = the equal-length stretch before it.
+        const end = new Date();
+        end.setUTCDate(end.getUTCDate() - 1);          // yesterday, inclusive end
+        const days = boardWindows[state.window] || 7;
+        const bFrom = new Date(end); bFrom.setUTCDate(bFrom.getUTCDate() - days + 1);
+        const aTo = new Date(bFrom); aTo.setUTCDate(aTo.getUTCDate() - 1);
+        const aFrom = new Date(aTo); aFrom.setUTCDate(aFrom.getUTCDate() - days + 1);
+        dtB.from.value = iso(bFrom); dtB.to.value = iso(end);
+        dtA.from.value = iso(aFrom); dtA.to.value = iso(aTo);
+        state.fromA = dtA.from.value; state.toA = dtA.to.value;
+        state.fromB = dtB.from.value; state.toB = dtB.to.value;
+    }
+
+    function wireRange(inputs, which) {
+        inputs.from.addEventListener('change', function () { rangeChanged(which); });
+        inputs.to.addEventListener('change', function () { rangeChanged(which); });
+    }
+    function rangeChanged(which) {
+        if (which === 'A') {
+            state.fromA = dtA.from.value; state.toA = dtA.to.value;
+        } else {
+            state.fromB = dtB.from.value; state.toB = dtB.to.value;
+        }
+        if (state.fromA && state.toA && state.fromB && state.toB) load();
+    }
+    wireRange(dtA, 'A');
+    wireRange(dtB, 'B');
+
+    cmpToggle.addEventListener('change', function () {
+        state.compare = cmpToggle.checked;
+        cmpWrap.hidden = !state.compare;
+        if (state.compare) {
+            seedCompareDates();
+            document.querySelector('.lb-legend'); // legend redraws with draw()
+        }
+        load();
     });
 
     // ── robot selector ───────────────────────────────────────────────────
@@ -295,18 +442,44 @@ export function createBoard(root, opts) {
         applyTransform();
     }
 
+    // boardWindows mirrors the server's allowlist (handlers_robots.go) — the
+    // preset→days mapping seedCompareDates needs to split a preset into
+    // explicit dates. Kept here rather than fetched because it is two
+    // entries the server has already committed to in its 400 text.
+    const boardWindows = { '7d': 7, '30d': 30 };
+
     // ── data ─────────────────────────────────────────────────────────────
     async function load() {
         // The robot param rides on the board URL only; the edges never change
         // with the filter, so they are not refetched. An empty robot is fleet.
         const robotParam = state.robot ? '&robot=' + encodeURIComponent(state.robot) : '';
-        const [edges, board] = await Promise.all([
+        const boardURL = function (from, to) {
+            return '/api/robots/localization?from=' + from + '&to=' + to + robotParam;
+        };
+        let boardP;
+        if (state.compare && state.fromA && state.toA && state.fromB && state.toB) {
+            boardP = o.fetchBoard
+                ? Promise.all([o.fetchBoard(state.fromA, state.robot), o.fetchBoard(state.fromB, state.robot)])
+                : Promise.all([boardURL(state.fromA, state.toA), boardURL(state.fromB, state.toB)]
+                    .map(function (u) { return fetch(u).then(function (r) { return r.json(); }); }));
+        } else {
+            boardP = o.fetchBoard
+                ? o.fetchBoard(state.window, state.robot)
+                : fetch('/api/robots/localization?window=' + state.window + robotParam)
+                    .then(function (r) { return r.json(); });
+        }
+        const [edges, boards] = await Promise.all([
             o.fetchEdges ? o.fetchEdges() : fetch('/api/map/edges').then(function (r) { return r.json(); }),
-            o.fetchBoard ? o.fetchBoard(state.window, state.robot)
-                : fetch('/api/robots/localization?window=' + state.window + robotParam).then(function (r) { return r.json(); })
+            boardP
         ]);
         state.edges = edges || [];
-        state.board = board || null;
+        if (state.compare && Array.isArray(boards)) {
+            state.boardA = boards[0] || null;
+            state.board = boards[1] || null;
+        } else {
+            state.boardA = null;
+            state.board = Array.isArray(boards) ? null : (boards || null);
+        }
         computeView();
         draw();
         drawRail();
@@ -371,6 +544,28 @@ export function createBoard(root, opts) {
         return out;
     }
 
+    // verdictByLane builds the compare-mode colour key: one verdict per
+    // physical lane, from that lane's rows on both boards. The plant values
+    // are each board's own p50, so the adjustment is over the SAME two
+    // windows the lane is compared across.
+    function verdictByLane() {
+        if (!state.compare || !state.boardA || !state.board) return null;
+        const byLane = new Map();
+        state.boardA.lanes.forEach(function (l) { byLane.set(l.lane, { a: l }); });
+        state.board.lanes.forEach(function (l) {
+            const e = byLane.get(l.lane);
+            if (e) e.b = l; else byLane.set(l.lane, { b: l });
+        });
+        const plantA = state.boardA.plant ? state.boardA.plant.p50_estimate : null;
+        const plantB = state.board.plant ? state.board.plant.p50_estimate : null;
+        const minN = state.board.min_samples || 20;
+        const out = new Map();
+        byLane.forEach(function (pair, lane) {
+            out.set(lane, deltaVerdict(pair.a || null, pair.b || null, plantA, plantB, minN));
+        });
+        return out;
+    }
+
     function draw() {
         while (map.firstChild) map.removeChild(map.firstChild);
         const world = svg('g', { id: 'lb-world' });
@@ -378,6 +573,7 @@ export function createBoard(root, opts) {
         if (!state.edges.length) return;
 
         const P = state.proj;
+        const verdicts = verdictByLane();
         const focus = state.focusDiff && state.board
             ? new Set((state.board.diffs.find(function (d) { return String(d.id) === String(state.focusDiff); }) || {}).lanes || [])
             : null;
@@ -422,6 +618,20 @@ export function createBoard(root, opts) {
                 ? cubicPathD(a, P(e.ctrl1_x, e.ctrl1_y), P(e.ctrl2_x, e.ctrl2_y), b)
                 : 'M' + a[0] + ' ' + a[1] + 'L' + b[0] + ' ' + b[1];
             const band = row.st ? bandOf(row.st) : 'nodata';
+            // COMPARE MODE replaces the band with the verdict: the question
+            // the reader brought is "what changed between A and B", and a
+            // band answers "how good is B". The two colourings never share a
+            // legend — drawLegend swaps wholesale with the mode.
+            const verdict = verdicts ? (verdicts.get(row.st ? row.st.lane : '') || 'nodata') : null;
+            const mark = verdict
+                ? {
+                    token: VERDICT_TOKEN[verdict], stroke: VERDICT_STROKE[verdict],
+                    dash: VERDICT_DASH[verdict] || null
+                }
+                : {
+                    token: BAND_TOKEN[band], stroke: BAND_STROKE[band],
+                    dash: band === 'blind' ? '5 4' : null
+                };
             const dim = focus && !focus.has(row.st ? row.st.lane : '');
 
             if (state.showChanges && row.st && row.st.changed && !dim) {
@@ -452,9 +662,9 @@ export function createBoard(root, opts) {
             }));
             const p = svg('path', {
                 d: d, fill: 'none',
-                stroke: BAND_TOKEN[band], opacity: dim ? 0.12 : 1,
-                'stroke-width': BAND_STROKE[band], 'data-w': BAND_STROKE[band],
-                'data-dash': band === 'blind' ? '5 4' : null,
+                stroke: mark.token, opacity: dim ? 0.12 : 1,
+                'stroke-width': mark.stroke, 'data-w': mark.stroke,
+                'data-dash': mark.dash,
                 'stroke-linecap': 'round', 'data-lane': row.key,
                 'class': 'lb-lane'
             });
@@ -464,12 +674,13 @@ export function createBoard(root, opts) {
                 // Near-white rim — INTERFACE CHROME, not data.
                 lg.appendChild(svg('path', {
                     d: d, fill: 'none', stroke: 'var(--viz-primary)', opacity: 0.9,
-                    'stroke-width': BAND_STROKE[band] + 2.4, 'data-w': BAND_STROKE[band] + 2.4,
+                    'stroke-width': mark.stroke + 2.4, 'data-w': mark.stroke + 2.4,
                     'stroke-linecap': 'round', 'pointer-events': 'none'
                 }));
                 lg.appendChild(svg('path', {
-                    d: d, fill: 'none', stroke: BAND_TOKEN[band],
-                    'stroke-width': BAND_STROKE[band], 'data-w': BAND_STROKE[band],
+                    d: d, fill: 'none', stroke: mark.token,
+                    'stroke-width': mark.stroke, 'data-w': mark.stroke,
+                    'data-dash': mark.dash,
                     'stroke-linecap': 'round', 'pointer-events': 'none'
                 }));
             }
@@ -639,6 +850,12 @@ export function createBoard(root, opts) {
     function drawPanel() {
         if (!state.board) { panel.innerHTML = ''; return; }
         const w = state.board.window;
+        if (state.compare && state.boardA) {
+            note.textContent = 'A ' + state.fromA + ' → ' + state.toA +
+                '  ·  B ' + state.fromB + ' → ' + state.toB;
+            drawComparePanel();
+            return;
+        }
         note.textContent = w.data_days < w.requested_days
             ? w.data_days + ' of ' + w.requested_days + ' days hold data'
             : w.requested_days + ' days';
@@ -698,6 +915,87 @@ export function createBoard(root, opts) {
     // plant between the collection starting and the first map fetch — which is
     // the exact defect this project keeps finding, so the list is keyed on the
     // zone id and says plainly which ones cannot be drawn yet.
+    // drawComparePanel is the compare mode's panel: the plant-level A→B
+    // summary when nothing is selected, both windows side by side for the
+    // selected lane. The verdict leads in both — it is the answer to the
+    // question compare mode exists for.
+    function drawComparePanel() {
+        const plantA = state.boardA.plant || {};
+        const plantB = state.board.plant || {};
+        const verdicts = verdictByLane() || new Map();
+        const tally = {};
+        verdicts.forEach(function (v) { tally[v] = (tally[v] || 0) + 1; });
+
+        if (!state.selected) {
+            const scope = state.robot ? state.robot : 'Plant';
+            const dP = (plantA.p50_estimate != null && plantB.p50_estimate != null)
+                ? plantB.p50_estimate - plantA.p50_estimate : null;
+            panel.innerHTML = '<div class="lb-hd">' + scope + ' · compare</div>' +
+                '<div class="lb-stat"><span>p50 A → B</span><b>' + fmtP(plantA.p50_estimate) +
+                ' → ' + fmtP(plantB.p50_estimate) +
+                (dP === null ? '' : ' (' + (dP >= 0 ? '+' : '') + dP.toFixed(3) + ')') +
+                '</b></div>' +
+                '<div class="lb-stat"><span>readings A → B</span><b>' +
+                (plantA.samples || 0) + ' → ' + (plantB.samples || 0) + '</b></div>' +
+                verdictCountsBlock(tally) +
+                '<p class="lb-note">The plant delta is the baseline every lane verdict is ' +
+                'measured against — a lane that moved with the plant reads neutral, not ' +
+                'better. Dashed marks are not comparable or worse; solid green is the only ' +
+                'improvement.</p>';
+            return;
+        }
+
+        const row = laneRows().find(function (r) { return r.key === state.selected; });
+        if (!row || !row.st) {
+            panel.innerHTML = '<div class="lb-hd">' + (state.selected || '') + '</div>' +
+                '<p class="lb-note">No readings in window B. Not the same as zero — ' +
+                'nothing drove here, or nothing was recorded.</p>';
+            return;
+        }
+        const laneA = (state.boardA.lanes || []).find(function (l) { return l.lane === row.st.lane; });
+        const v = verdicts.get(row.st.lane) || 'nodata';
+        // The attributable number, shown where the verdict is not suppressed —
+        // the same arithmetic deltaVerdict applied.
+        let attrLine = '';
+        if (v === 'better' || v === 'worse' || v === 'neutral') {
+            const pa = plantA.p50_estimate == null ? 0 : plantA.p50_estimate;
+            const pb = plantB.p50_estimate == null ? 0 : plantB.p50_estimate;
+            const attr = (row.st.p50_estimate - (laneA ? laneA.p50_estimate : 0)) - (pb - pa);
+            attrLine = '<div class="lb-stat"><span>attributable Δ</span><b>' +
+                (attr >= 0 ? '+' : '') + attr.toFixed(3) + '</b></div>';
+        }
+        panel.innerHTML = '<div class="lb-hd">' + row.st.lane + '</div>' +
+            '<div class="lb-verdict lb-verdict-' + v + '">' + VERDICT_LABEL[v] + '</div>' +
+            attrLine +
+            '<div class="lb-stat"><span>p50 A → B</span><b>' +
+            fmtP(laneA ? laneA.p50_estimate : null) + ' → ' + fmtP(row.st.p50_estimate) +
+            '</b></div>' +
+            '<div class="lb-stat"><span>no estimate A → B</span><b>' +
+            pctOf(laneA) + ' → ' + pctOf(row.st) + '</b></div>' +
+            '<div class="lb-stat"><span>readings A → B</span><b>' +
+            (laneA ? laneA.samples : 0) + ' → ' + row.st.samples + '</b></div>' +
+            (v === 'suppressed'
+                ? '<p class="lb-warn">The no-estimate rate moved too far between the ' +
+                  'windows for the two averages to describe the same population — the ' +
+                  'verdict is withheld rather than guessed.</p>' : '') +
+            (v === 'thin'
+                ? '<p class="lb-warn">Too few readings on one side of the comparison ' +
+                  'to say anything. Greyed rather than hidden — an absent number reads ' +
+                  'as fine.</p>' : '');
+    }
+
+    function verdictCountsBlock(tally) {
+        return ['better', 'worse', 'neutral', 'suppressed', 'thin', 'nodata']
+            .map(function (v) {
+                return '<div class="lb-stat"><span class="lb-verdict-dot lb-verdict-' + v +
+                    '">' + VERDICT_LABEL[v] + '</span><b>' + (tally[v] || 0) + '</b></div>';
+            }).join('');
+    }
+
+    function pctOf(l) {
+        return l && l.samples ? ((l.sentinel_samples / l.samples) * 100).toFixed(1) + '%' : '—';
+    }
+
     function zoneBlock() {
         var areas = (state.board && state.board.areas) || [];
         var withStats = areas.filter(function (a) { return a.has_stats; });
