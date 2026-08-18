@@ -2617,3 +2617,30 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .lb-neutral { color:var(--text-strong); }
 .lb-warn-inline { color:var(--viz-amber); }
 .lb-suppressed { color:var(--viz-amber); font-size:.72rem; line-height:1.4; }
+
+/* compare mode — two explicit ranges, verdict colours */
+.lb-cmp { display:inline-flex; align-items:center; gap:8px; }
+.lb-dt { display:inline-flex; align-items:center; gap:4px; font-size:.8rem; color:var(--text-muted); }
+.lb-dt input[type="date"] { background:var(--elev-raised); border:1px solid var(--border);
+  border-radius:4px; color:var(--text-strong); font:inherit; font-size:.8rem; padding:2px 6px; }
+.lb-verdict { display:block; font-size:1rem; font-weight:700; padding:6px 10px;
+  border-radius:6px; margin:8px 0; }
+.lb-verdict-better { color:var(--viz-green); background:color-mix(in srgb, var(--viz-green) 12%, transparent); }
+.lb-verdict-worse { color:var(--viz-coral); background:color-mix(in srgb, var(--viz-coral) 12%, transparent); }
+.lb-verdict-neutral { color:var(--text-strong); background:var(--elev-raised); }
+.lb-verdict-suppressed, .lb-verdict-thin, .lb-verdict-nodata { color:var(--viz-amber); background:var(--elev-raised); }
+.lb-verdict-thin, .lb-verdict-nodata { color:var(--text-muted); }
+.lb-verdict-dot { font-size:.82rem; }
+.lb-verdict-dot.lb-verdict-better { color:var(--viz-green); }
+.lb-verdict-dot.lb-verdict-worse { color:var(--viz-coral); }
+.lb-verdict-dot.lb-verdict-suppressed { color:var(--viz-amber); }
+
+/* the change annotation's verdict banner — the number that answers
+   "did it help" leads, instead of hiding inside a table cell */
+.lb-verdict-banner { display:block; font-size:1rem; font-weight:700; padding:8px 10px;
+  border-radius:6px; margin:8px 0 4px; }
+.lb-verdict-banner.lb-better { color:var(--viz-green); background:color-mix(in srgb, var(--viz-green) 12%, transparent); }
+.lb-verdict-banner.lb-worse { color:var(--viz-coral); background:color-mix(in srgb, var(--viz-coral) 12%, transparent); }
+.lb-verdict-banner.lb-neutral { color:var(--text-strong); background:var(--elev-raised); }
+.lb-verdict-banner .lb-plant-inline { display:block; font-size:.75rem; font-weight:400;
+  color:var(--text-muted); margin-top:2px; }
