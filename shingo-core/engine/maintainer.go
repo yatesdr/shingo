@@ -454,3 +454,13 @@ func (e *Engine) maintainerResolver() *binresolver.GroupResolver {
 	}
 	return &binresolver.GroupResolver{DB: e.db, DebugLog: e.dbg}
 }
+
+// MaintainedGroupStates is the accessor the www layer reads. It exists so www
+// never has to reach through Maintainer() into engine internals, and so a Core
+// running without a keeper answers "nothing maintained" rather than panicking.
+func (e *Engine) MaintainedGroupStates() []MaintainerGroupState {
+	if e == nil || e.maintainer == nil {
+		return nil
+	}
+	return e.maintainer.Snapshot()
+}

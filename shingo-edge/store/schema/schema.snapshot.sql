@@ -310,7 +310,7 @@ CREATE TABLE orders (
     authored_by     TEXT NOT NULL DEFAULT 'edge',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
-);
+, payload_desc TEXT NOT NULL DEFAULT '', origin_id TEXT NOT NULL DEFAULT '', origin_class TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE outbox (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1885,6 +1885,9 @@ body[data-dashboard-kind="node-report"] #dash-main {
 .rh-row { cursor: pointer; }
 .rh-row:hover { background: var(--elev-raised); }
 .rh-num { text-align: right; font-variant-numeric: tabular-nums; }
+/* The only coloured number on a Maintained Groups row. A covered level is not
+   a green tick, it is nothing happening — so only the short case is marked. */
+.mg-short { color: var(--warning); font-weight: 600; }
 .rh-neg { color: var(--viz-coral); }
 .rh-split { font-size: var(--font-xs); color: var(--text-muted); }
 .chev { display: inline-block; transition: transform var(--dur-fast, 0.15s) var(--ease, ease); color: var(--text-muted); }

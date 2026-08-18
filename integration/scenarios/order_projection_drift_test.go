@@ -48,18 +48,14 @@ import (
 // existing: dropping a field becomes something someone typed a reason for,
 // rather than something that happened because two files were edited on different
 // days.
+// PayloadDesc, OriginID and OriginClass were all exempted here and all three
+// entries were DELETED in MG2-8, which is the map working exactly as intended:
+// each was a dropped field somebody had typed a reason for, and each reason
+// named the fix. The Edge now has a column for all three, so an exemption would
+// fail TestOrderProjection_KnownDroppedAreStillDropped rather than sit here
+// describing a state of the world that ended.
 var knownDropped = map[string]string{
 	"StationID": "the Edge IS the station — it knows its own id, and storing Core's copy would create a second answer that can disagree",
-
-	"PayloadDesc": "known-dropped; Edge column lands in MG2-8. Core has always sent it and the Edge has never had a column for it, which is why the maintainer's board card currently reads as nothing",
-
-	// These two are the find this test made on its first run, and they are worse
-	// than payload_desc because the wire type's own doc says what they are for:
-	// "passed through so a projected row answers 'why does this exist' the same
-	// way a locally created one does". It does not. A Core-authored order on an
-	// Edge board carries no attribution at all.
-	"OriginID":    "DROPPED, AND THE PROTOCOL DOC SAYS IT SHOULD NOT BE — see the note above this entry. Not fixed here (MG1C is comment-and-test only); needs an Edge column, same shape as MG2-8's",
-	"OriginClass": "DROPPED, same finding as OriginID — the demand-episode attribution never reaches the Edge",
 }
 
 // TestOrderProjection_NoFieldDropsSilently is the gate.
@@ -149,9 +145,10 @@ stored row was: %v`, lost, stored)
 // is what stops knownDropped from rotting into a list of things that used to be
 // true.
 //
-// When MG2-8 gives the Edge its payload_desc column, this test fails on that
-// entry and the fix is to DELETE the entry — which is exactly the moment someone
-// should be told the exemption is no longer needed.
+// It has already done its job once. MG2-8 gave the Edge columns for
+// payload_desc, origin_id and origin_class; this test failed on all three
+// entries, and the fix was to DELETE them — which is exactly the moment somebody
+// should be told an exemption is no longer needed.
 func TestOrderProjection_KnownDroppedAreStillDropped(t *testing.T) {
 	order := &coreorders.Order{
 		EdgeUUID:     "mg1c-drift-known-uuid",

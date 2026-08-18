@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/config"
 	"shingocore/domain"
 )
@@ -466,9 +467,39 @@ func BuildEpisodeRow(e domain.DemandEpisode, now time.Time, c config.DisplayConf
 		OrdersText:   FormatCount(children),
 	}
 
+	// ── The maintain kind's two borrowed columns ─────────────────────────────
+	//
+	// A maintain episode has no payload and no formula, so two columns that are
+	// load-bearing for every other kind arrive empty. Both are filled from what
+	// the row ALREADY STORES rather than from a new column or a second query.
+	//
+	// PLACE: the carrier type is the identity here — one episode per (group,
+	// type) — and it lives in the episode key, which is where the maintainer put
+	// it. Parsing it back is not a workaround: the key is the canonical spelling
+	// of that pair, and a duplicate copy in payload_code would be a second
+	// spelling free to disagree with it.
+	//
+	// EXPECTED: want − resident at the moment the episode opened, which is
+	// exactly Threshold − OpenedTotal, both already stored. That is the shortfall
+	// the episode was opened over, so the ratio reads as "carriers this shortfall
+	// eventually cost". It is deliberately NOT the keeper's first gap: the gap
+	// also subtracts what was already coming, and a denominator that shrinks
+	// because the keeper was smart would flatter the ratio for the wrong reason.
+	expected := o.ExpectedOrders
+	if o.Kind == protocol.EpisodeKindMaintain {
+		if parsed, perr := protocol.ParseEpisodeKey(o.EpisodeKey); perr == nil && parsed.BinType != "" {
+			row.Payload = parsed.BinType
+		}
+		if expected == nil {
+			if shortfall := o.Threshold - o.OpenedTotal; shortfall > 0 {
+				expected = &shortfall
+			}
+		}
+	}
+
 	// ── Expected, ratio, and the small-denominator rule (5.4) ────────────────
 	switch {
-	case o.ExpectedOrders == nil:
+	case expected == nil:
 		why := "expected orders could not be computed for this episode"
 		if o.ExpectedUnknownReason != "" {
 			why = o.ExpectedUnknownReason
@@ -477,18 +508,18 @@ func BuildEpisodeRow(e domain.DemandEpisode, now time.Time, c config.DisplayConf
 		row.Ratio = NoData("no ratio without a denominator — " + why)
 		row.SortGroup = sortGroupNoRatio
 
-	case *o.ExpectedOrders <= 0:
+	case *expected <= 0:
 		// Zero or negative expected is not a denominator. Guarded separately from
 		// NULL because it arrives by a different route — a stored value that is
 		// arithmetically unusable rather than an absent one — and dividing by it
 		// would produce +Inf, which renders as a number.
 		row.Expected = NoData(fmt.Sprintf(
-			"expected orders recorded as %d, which cannot be a denominator", *o.ExpectedOrders))
+			"expected orders recorded as %d, which cannot be a denominator", *expected))
 		row.Ratio = NoData("no ratio: the recorded expectation is not a usable denominator")
 		row.SortGroup = sortGroupNoRatio
 
 	default:
-		exp := *o.ExpectedOrders
+		exp := *expected
 		row.Expected = Value(FormatCount(exp))
 		ratio := float64(children) / float64(exp)
 		row.RatioSort = ratio
@@ -550,6 +581,12 @@ func kindLabel(kind string) string {
 		return "Cell"
 	case "changeover":
 		return "Changeover"
+	case protocol.EpisodeKindMaintain:
+		// "Maintained level", not "Maintain" — the noun says what the row is a
+		// record of. Every other kind on this page names a thing that happened to
+		// the plant; this one names a standing declaration that went unmet, and
+		// the verb form reads like an instruction to the operator.
+		return "Maintained level"
 	default:
 		// Rule 3 again. origin kinds can grow the same way close reasons did.
 		return humanizeUnknown(kind)

@@ -637,6 +637,39 @@ func (db *DB) migrate() error {
 	// created here.
 	db.Exec("ALTER TABLE orders ADD COLUMN authored_by TEXT NOT NULL DEFAULT 'edge'")
 
+	// v35 (2026-08-17, MG2-8): the three projection fields Core has always sent
+	// and the Edge has never had anywhere to put.
+	//
+	// THIS IS A DROP BEING FIXED, NOT A FEATURE. All three are on
+	// protocol.OrderProjection, all three are copied by dispatch.ProjectionFor,
+	// and all three fell on the floor at UpsertProjection because the INSERT's
+	// column list did not name them. Both sides compiled, every test passed, and
+	// the value simply was not there — which is the failure
+	// order_projection_drift_test.go was written to make impossible to repeat.
+	//
+	// payload_desc is what an operator READS. Every Core-authored order shows the
+	// payload code on the board and nothing else, so a maintained-group ask
+	// currently renders as a robot arriving for no stated reason. It has been on
+	// the wire for its whole life.
+	//
+	// origin_id and origin_class are worse than payload_desc, because the wire
+	// type's own doc says what they are for: "passed through so a projected row
+	// answers 'why does this exist' the same way a locally created one does". It
+	// did not. A Core-authored order on an Edge board carried no attribution at
+	// all, and the demand-episode grain — the thing built specifically to answer
+	// that question — stopped at the module boundary.
+	//
+	// DEFAULT '' IS CORRECT FOR EVERY EXISTING ROW, and not merely convenient. An
+	// Edge-authored order has no Core origin by construction, and a projected row
+	// written before this column existed genuinely does not carry one: the value
+	// was dropped, and no backfill can invent it. Blank means "not recorded", the
+	// board renders it as nothing, and the next projection of a live order fills
+	// it in — Core re-sends freely, so the reconcile heals the recent rows on its
+	// own without a migration pretending to know history.
+	db.Exec("ALTER TABLE orders ADD COLUMN payload_desc TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE orders ADD COLUMN origin_id TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE orders ADD COLUMN origin_class TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }
 

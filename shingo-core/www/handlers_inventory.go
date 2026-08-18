@@ -397,3 +397,21 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 func cell(col string, row int) string {
 	return fmt.Sprintf("%s%d", col, row)
 }
+
+// apiInventoryMaintainedGroups returns the keeper's last tick, one row per
+// (group, bin type): the declared level and the three populations it subtracted.
+//
+// THE SUBTRACTION IS THE PAYLOAD, not a status word. An operator looking at a
+// group that is short and quiet needs to see WHICH term closed the gap — asks
+// already out, or carriers already coming — because those have opposite
+// remedies, and a single "ok / low" pill hides exactly that. Every term is a
+// separate question with a separate way of being wrong, so every term is a
+// column.
+//
+// EMPTY ON A PLANT WITH NO MAINTAINED GROUP, and empty before the first tick.
+// Both render as the section not appearing, which is correct: there is nothing
+// to say, and a card reading "0 groups" is a card that has to be scrolled past
+// forever.
+func (h *Handlers) apiInventoryMaintainedGroups(w http.ResponseWriter, r *http.Request) {
+	h.jsonOK(w, h.engine.MaintainedGroupStates())
+}
