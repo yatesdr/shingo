@@ -164,6 +164,7 @@ func insert(t *testing.T, db *store.DB, samples ...robotconfidence.Sample) {
 // Skipping it would render the worst segment in the plant as ABSENT, which
 // every reader parses as fine.
 func TestRollUp_FailureOnlySegmentStillGetsARow(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "GOOD", 0, 0, 10, 0)
 	addSegment(t, db, "area-a", "CURSED", 0, 50, 10, 50)
@@ -221,6 +222,7 @@ func TestRollUp_FailureOnlySegmentStillGetsARow(t *testing.T) {
 // The healthy neighbour in the same run must come out with real measures, so
 // the test above cannot be satisfied by nulling everything.
 func TestRollUp_ValidSegmentKeepsItsMeasures(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "GOOD", 0, 0, 10, 0)
 
@@ -280,6 +282,7 @@ func TestRollUp_ValidSegmentKeepsItsMeasures(t *testing.T) {
 // about the lane). Both, in the same row, is the only way the map can be
 // honest and the panel can still explain it.
 func TestRollUp_NoEstimateCountsAsZeroInTheBandedStatistic(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "HALFBLIND", 0, 0, 10, 0)
 
@@ -346,6 +349,7 @@ func TestRollUp_NoEstimateCountsAsZeroInTheBandedStatistic(t *testing.T) {
 // readings were real readings of real places — snapped against a scene built
 // from a different map.
 func TestRollUp_SamplesFromAnotherMapAreQuarantined(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "SHARED", 0, 0, 10, 0)
 
@@ -413,6 +417,7 @@ func TestRollUp_SamplesFromAnotherMapAreQuarantined(t *testing.T) {
 // every historical row the first time the job ran after the migration —
 // silently, and in the direction that looks like the plant went quiet.
 func TestRollUp_MissingMapHashIsNotAMismatch(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LEGACY", 0, 0, 10, 0)
 
@@ -447,6 +452,7 @@ func TestRollUp_MissingMapHashIsNotAMismatch(t *testing.T) {
 // LM73-LM14 showed 48 readings and LM14-LM73 showed 116 — one piece of floor,
 // reported as two, each with half the evidence.
 func TestRollUp_ReciprocalTwinsAggregateAsOneLane(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addNamedSegment(t, db, "area-a", "LM73-LM14", "LM73", "LM14", 0, 0, 10, 0)
 	addNamedSegment(t, db, "area-a", "LM14-LM73", "LM14", "LM73", 10, 0, 0, 0)
@@ -485,6 +491,7 @@ func TestRollUp_ReciprocalTwinsAggregateAsOneLane(t *testing.T) {
 // A segment nobody drove must not get a row, or the job writes one row per
 // scene segment per day forever.
 func TestRollUp_UntouchedSegmentGetsNoRow(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "DRIVEN", 0, 0, 10, 0)
 	addSegment(t, db, "area-a", "UNTOUCHED", 0, 900, 10, 900)
@@ -511,6 +518,7 @@ func TestRollUp_UntouchedSegmentGetsNoRow(t *testing.T) {
 // down for every healthy robot that passes through — that is the confound the
 // whole design exists to remove, reintroduced at the aggregate.
 func TestRollUp_FailedSamplesDoNotEnterTheMean(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "MIXED", 0, 0, 10, 0)
 
@@ -553,6 +561,7 @@ func TestRollUp_FailedSamplesDoNotEnterTheMean(t *testing.T) {
 // recomputing, and a job that could only append would make that a manual
 // repair.
 func TestRollUp_IsIdempotent(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "SEG", 0, 0, 10, 0)
 
@@ -587,6 +596,7 @@ func TestRollUp_IsIdempotent(t *testing.T) {
 // A robot with too little overlap must store NULL, not 0.0. The two are
 // opposite findings and the difference has to survive the round trip.
 func TestRollUp_ThinCoverageStoresNullResidual(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "SEG", 0, 0, 10, 0)
 
@@ -624,6 +634,7 @@ func partitionExists(t *testing.T, db *store.DB, name string) bool {
 }
 
 func TestPartitions_CreateInsertAndDrop(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	// EnsurePartitions creates today and tomorrow on BOTH sample tables.
@@ -663,6 +674,7 @@ func TestPartitions_CreateInsertAndDrop(t *testing.T) {
 // in this design that can be turned later, and a drop that overshot by a day
 // would quietly destroy data the operator meant to keep.
 func TestPartitions_DropTakesOnlyAgedDays(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	if err := robotconfidence.EnsurePartitionsRange(db.DB,
 		testDay.AddDate(0, 0, -5), testDay); err != nil {
@@ -699,6 +711,7 @@ func TestPartitions_DropTakesOnlyAgedDays(t *testing.T) {
 // enum, and a row written without it must fail rather than silently claim a
 // healthy pose.
 func TestSamples_RelocStatusHasNoDefault(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	if err := robotconfidence.EnsurePartitions(db.DB, testDay); err != nil {
 		t.Fatalf("ensure: %v", err)
@@ -724,6 +737,7 @@ func TestSamples_RelocStatusHasNoDefault(t *testing.T) {
 // against a real server. If this fails, the column type is the thing to
 // change, not the assertion.
 func TestSamples_AreaIDsRoundTrip(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	if err := robotconfidence.EnsurePartitions(db.DB, testDay); err != nil {
 		t.Fatalf("ensure: %v", err)
@@ -780,6 +794,7 @@ func TestSamples_AreaIDsRoundTrip(t *testing.T) {
 // Letting a nil Go slice through as NULL would blur those two together and
 // destroy the only marker of the pre-v78 window.
 func TestSamples_NilAreaIDsStoresEmptyNotNull(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	if err := robotconfidence.EnsurePartitions(db.DB, testDay); err != nil {
 		t.Fatalf("ensure: %v", err)
@@ -819,6 +834,7 @@ func TestSamples_NilAreaIDsStoresEmptyNotNull(t *testing.T) {
 // no-estimate reading AND the alarm explaining it is the join that did not
 // exist, and it is the whole reason for the column.
 func TestSamples_MapMD5AndAlarmCodesRoundTrip(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	if err := robotconfidence.EnsurePartitions(db.DB, testDay); err != nil {
 		t.Fatalf("ensure: %v", err)
@@ -879,6 +895,7 @@ func TestSamples_MapMD5AndAlarmCodesRoundTrip(t *testing.T) {
 // rows would claim the alarms were never collected and the pre-v79 marker
 // would be worthless.
 func TestSamples_NilAlarmCodesStoresEmptyNotNull(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	if err := robotconfidence.EnsurePartitions(db.DB, testDay); err != nil {
 		t.Fatalf("ensure: %v", err)
@@ -910,6 +927,7 @@ func TestSamples_NilAlarmCodesStoresEmptyNotNull(t *testing.T) {
 // every statistic, and both counts reach the job's log line — the same
 // treatment a foreign-map sample gets, for the same reason.
 func TestRollUp_UnkeyableEdgeIsQuarantinedNotGuessed(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	// One properly named lane, and one the old sync left unnamed, far apart
 	// so neither can steal the other's samples.

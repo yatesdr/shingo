@@ -66,6 +66,7 @@ func openLaneVersion(t *testing.T, db *store.DB, area, lane string,
 // and presents the blend as a measurement. No reader can detect that from the
 // row, and it happens on the day the reader most wants to look.
 func TestRollUp_MidDayEditSplitsTheDay(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addNamedSegmentNoVersion(t, db, "area-a", "LM1-LM2", "LM1", "LM2", 0, 0, 10, 0)
 
@@ -152,6 +153,7 @@ func TestRollUp_MidDayEditSplitsTheDay(t *testing.T) {
 // An open lower bound says the true thing: this is the earliest geometry we
 // know of, and we cannot say when it began.
 func TestRollUp_FirstVersionCoversReadingsTakenBeforeItWasSeen(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addNamedSegmentNoVersion(t, db, "area-a", "LM1-LM2", "LM1", "LM2", 0, 0, 10, 0)
 
@@ -199,6 +201,7 @@ func TestRollUp_FirstVersionCoversReadingsTakenBeforeItWasSeen(t *testing.T) {
 // in a key — and inventing a version would be the same mistake as keying an
 // unnameable edge on its directed name.
 func TestRollUp_LaneWithNoVersionIsQuarantined(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addNamedSegmentNoVersion(t, db, "area-a", "LM1-LM2", "LM1", "LM2", 0, 0, 10, 0)
 	// No version row written at all.
@@ -231,6 +234,7 @@ func TestRollUp_LaneWithNoVersionIsQuarantined(t *testing.T) {
 // The upsert is idempotent. Re-running a day is the first thing anyone does
 // when the snap logic changes.
 func TestRollUp_IsIdempotentAcrossReruns(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addNamedSegmentNoVersion(t, db, "area-a", "VERSIONED", "VA", "VB", 0, 0, 10, 0)
 	addNamedSegmentNoVersion(t, db, "area-a", "UNVERSIONED", "UA", "UB", 0, 60, 10, 60)

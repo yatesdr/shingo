@@ -24,6 +24,7 @@ import (
 // must match the percentile over all three days' raw readings — which is the
 // entire justification for storing a histogram instead of re-running the snap.
 func TestLaneWindows_SumsDaysAndAgreesWithTheReadings(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 
@@ -96,6 +97,7 @@ func TestLaneWindows_SumsDaysAndAgreesWithTheReadings(t *testing.T) {
 // legitimate thing to ask for and a dangerous thing to present silently, so the
 // count of distinct versions travels with the answer.
 func TestLaneWindows_ReportsWhenTheWindowSpansAnEdit(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addNamedSegmentNoVersion(t, db, "area-a", "LM1-LM2", "LM1", "LM2", 0, 0, 10, 0)
 
@@ -141,6 +143,7 @@ func TestLaneWindows_ReportsWhenTheWindowSpansAnEdit(t *testing.T) {
 // A lane whose every reading was a no-estimate must come back out of the
 // database banding exactly zero, not interpolated into the vendor's "> 0" band.
 func TestLaneWindows_SentinelSurvivesTheRoundTrip(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 
@@ -183,6 +186,7 @@ func TestLaneWindows_SentinelSurvivesTheRoundTrip(t *testing.T) {
 // list to the polygons, so those numbers were written and never read — the
 // exact defect this project keeps finding, rebuilt one table over.
 func TestAreaWindows_ReadableWithoutAnyGeometry(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 	// Deliberately NO scene_areas row: attribution comes from the robot's own
