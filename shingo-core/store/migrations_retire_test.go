@@ -50,6 +50,14 @@ import (
 // bin_types.length_in, mtimes on node_properties/node_bin_types). Appended below
 // v89, which is where the head has to stay.
 //
+// v91 drops bin_loaders.buffer_dest, the loader staging group retired in the
+// same release. The column was blank at every plant — a live census confirmed it
+// before the retirement landed — so this removes a column, not data. It is the
+// one migration here that an OLDER binary cannot survive: pre-retirement Core
+// names buffer_dest in loaderCols, so every loader read fails against a database
+// this has run on. Rolling back needs the column re-added first, which is exact
+// and is one statement because every value was blank.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -61,8 +69,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 90 {
-		t.Errorf("head migration = %d, want 90", got)
+	if got := store.LatestMigrationVersion(); got != 91 {
+		t.Errorf("head migration = %d, want 91", got)
 	}
 }
 

@@ -98,6 +98,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			positions = append(positions, domain.Position{
 				Node:         domain.NodeID(p.PositionNode),
 				Payload:      domain.PayloadCode(p.PayloadCode),
+				HomeKind:     p.HomeKind,
 				UOPThreshold: p.UOPThreshold,
 			})
 		}

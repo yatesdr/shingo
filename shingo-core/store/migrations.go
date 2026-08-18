@@ -3377,10 +3377,10 @@ func migrationList() []migration {
 		// magic-2 default was removed). No UNIQUE on (loader_id, payload_code) for
 		// homes: same payload on two home positions is legitimate (D1, allow+warn).
 		//
-		// buffer_dest was meant to model the overflow area (SME Q4). It is RETIRED:
-		// nothing reads or writes it, and the column is left in place so a
-		// rolled-back binary finds the shape it expects. The DROP is its own
-		// migration, a release later.
+		// buffer_dest was meant to model the overflow area (SME Q4). It is RETIRED
+		// and DROPPED by v91 in the same release the readers went; this CREATE is
+		// history and still names it, because a database migrating up from v34
+		// creates the column here and loses it there.
 		{34, "add bin-loader aggregate (bin_loaders/homes/payloads) for the Core-owned loader cutover",
 			v34BinLoaderAggregate,
 			func(q schema.Querier) bool {
@@ -3997,6 +3997,29 @@ func migrationList() []migration {
 					schema.ColumnExists(q, "bin_types", "length_in") &&
 					schema.ColumnExists(q, "node_properties", "updated_at") &&
 					schema.ColumnExists(q, "node_bin_types", "created_at")
+			}},
+
+		// v91 removes bin_loaders.buffer_dest, the loader staging group retired
+		// in the same release. Nothing has read or written it since; a live
+		// census at both plants before the retirement found zero rows carrying a
+		// value, so this drops a column that is blank everywhere it exists.
+		//
+		// THE ROLLBACK COST, stated because it is the reason this was very nearly
+		// deferred: a Core binary from before the retirement names buffer_dest in
+		// loaderCols, so ListLoaders/GetLoader/GetLoaderByName all fail against a
+		// database this has run on — no loader list, no downward sync, no
+		// replenishment. Rolling a plant back to its .previous binary after this
+		// lands therefore needs the column back first. Recovery is exact and is
+		// one statement, because every value was blank:
+		//
+		//	ALTER TABLE bin_loaders ADD COLUMN buffer_dest TEXT NOT NULL DEFAULT '';
+		//
+		// The owner accepted that trade knowingly (2026-08-18): roll-forward is
+		// the plan, and the manual repair is the fallback if it is ever not.
+		{91, "drop bin_loaders.buffer_dest — the retired loader staging group",
+			v91DropBufferDest,
+			func(q schema.Querier) bool {
+				return !schema.ColumnExists(q, "bin_loaders", "buffer_dest")
 			}},
 	}
 }
@@ -4874,6 +4897,18 @@ func v83LaneRobotConfidenceDaily(tx *sql.Tx) error {
 // width_in and height_in, so a code like "45x58x32" holds its own length in the
 // STRING and nowhere a query can reach. Metadata hygiene rather than behaviour —
 // nothing fits carriers by geometry, and this does not start.
+// v91DropBufferDest removes the retired loader staging group column.
+//
+// IF EXISTS so a database that never had it — or one this already ran on — is a
+// no-op rather than an error; the runner records the version either way and the
+// postcondition asks only that the column is gone.
+func v91DropBufferDest(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bin_loaders DROP COLUMN IF EXISTS buffer_dest`); err != nil {
+		return fmt.Errorf("v91 drop bin_loaders.buffer_dest: %w", err)
+	}
+	return nil
+}
+
 func v90MaintainedGroups(tx *sql.Tx) error {
 	stmts := []string{
 		// One row per (group, carrier type) the group is to hold. want=0 is a

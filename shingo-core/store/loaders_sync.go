@@ -123,15 +123,45 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Every member's name in ONE query, rather than a lookup per home.
+		//
+		// This sync runs on a timer — the node list, and this slice with it, is
+		// re-sent every other heartbeat tick (~2 min) whether or not anything
+		// changed. A per-home read made that a lookup for each position at every
+		// plant, forever, to rebuild a projection that is almost always identical
+		// to the one before it.
+		//
+		// The absent-node behaviour is preserved exactly: MemberNodeNames INNER
+		// JOINs nodes, so a home pointing at a deleted node is simply not in the
+		// map, and the !ok skip below is the old `node == nil` skip.
+		//
+		// A read FAILURE now fails the whole projection instead of dropping one
+		// position, and that is the safer end: the caller already logs and sends
+		// the node list without loaders, leaving Edge on its last-known-good
+		// cache. A loader shipped one position short would be cached as truth and
+		// spread empties across the wrong window count.
+		names, err := db.LoaderMemberNodeNames(l.ID)
+		if err != nil {
+			return nil, err
+		}
 		for _, h := range homes {
-			node, err := db.GetNode(h.PositionNodeID)
-			if err != nil || node == nil {
+			name, ok := names[h.PositionNodeID]
+			if !ok {
 				continue // position node vanished — skip rather than fail the sync
 			}
+			// home_kind, carried rather than left to be guessed at. Core reads
+			// it in InSourcePool to keep an unassigned home out of the source
+			// pool; the Edge had no way to ask, so it classified by empty
+			// payload and disagreed on exactly that case.
+			homeKind := h.Kind
+			if homeKind == "" {
+				homeKind = protocol.LoaderHomeKindHome // the column's own default
+			}
 			info.Positions = append(info.Positions, protocol.LoaderPosition{
-				CoreNodeName: node.Name,
+				CoreNodeName: name,
 				PayloadCode:  h.PayloadCode,
 				Kind:         positionKind,
+				HomeKind:     homeKind,
 				UOPThreshold: h.UOPThreshold,
 				// The operator's arrangement, carried down. It was persisted
 				// here and read by the admin screen, and stopped at this
@@ -211,6 +241,13 @@ func (db *DB) BuildDemandRegistryFromAggregate(stationID string) ([]demands.Regi
 		if err != nil {
 			return nil, err
 		}
+		// One query for every member name, same as BuildLoaderInfos above. Both
+		// loops below resolved a name per home; the second did it only to find
+		// the first resolvable one.
+		names, err := db.LoaderMemberNodeNames(l.ID)
+		if err != nil {
+			return nil, err
+		}
 		for _, h := range homes {
 			// A BUFFER slot holds kept partials and pins no payload — it drives no
 			// threshold demand of its own (it is fed by parked returns, not the
@@ -227,13 +264,13 @@ func (db *DB) BuildDemandRegistryFromAggregate(stationID string) ([]demands.Regi
 			if h.PayloadCode == "" {
 				continue
 			}
-			node, err := db.GetNode(h.PositionNodeID)
-			if err != nil || node == nil {
+			name, ok := names[h.PositionNodeID]
+			if !ok {
 				continue
 			}
 			out = append(out, demands.RegistryEntry{
 				StationID:             stationID,
-				CoreNodeName:          node.Name,
+				CoreNodeName:          name,
 				LoaderID:              l.ID,
 				Role:                  role,
 				PayloadCode:           h.PayloadCode,
@@ -255,8 +292,8 @@ func (db *DB) BuildDemandRegistryFromAggregate(stationID string) ([]demands.Regi
 			// not yet configured) is not operable and drives no demand.
 			addr := ""
 			for _, h := range homes {
-				if n, nerr := db.GetNode(h.PositionNodeID); nerr == nil && n != nil {
-					addr = n.Name
+				if n, ok := names[h.PositionNodeID]; ok {
+					addr = n
 					break
 				}
 			}

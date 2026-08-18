@@ -192,6 +192,230 @@ func TestBuildLoaderInfos(t *testing.T) {
 	}
 }
 
+// TestBuildLoaderInfos_CarriesHomeKind pins the fact the Edge could not
+// previously ask for: which of two empty-payload positions is a kept-partial
+// BUFFER and which is a HOME awaiting its payload.
+//
+// Core has always known — bin_loader_homes.home_kind, which InSourcePool reads
+// to keep an unassigned home out of the loader's source pool. It just stopped at
+// this projection, so the Edge classified by empty payload and reached the
+// opposite answer for an unpinned home.
+func TestBuildLoaderInfos_CarriesHomeKind(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	var ntID int64
+	if err := db.DB.QueryRow(
+		`INSERT INTO node_types (code,name) VALUES ('NT-HK','t') ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name RETURNING id`,
+	).Scan(&ntID); err != nil {
+		t.Fatalf("seed node_type: %v", err)
+	}
+	ids := map[string]int64{}
+	for _, n := range []string{"HK-PINNED", "HK-UNPINNED", "HK-BUFFER"} {
+		var id int64
+		if err := db.DB.QueryRow(
+			`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ($1,false,$2,true) RETURNING id`, n, ntID,
+		).Scan(&id); err != nil {
+			t.Fatalf("seed node %s: %v", n, err)
+		}
+		ids[n] = id
+	}
+
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "L-HK", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentThreshold,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	for _, h := range []loaders.Home{
+		{LoaderID: id, PositionNodeID: ids["HK-PINNED"], PayloadCode: "PART-A", Kind: loaders.HomeKindHome},
+		// The case the Edge got wrong: a home with no payload yet. Blank payload,
+		// but NOT a buffer — InSourcePool leaves it out of the source pool.
+		{LoaderID: id, PositionNodeID: ids["HK-UNPINNED"], PayloadCode: "", Kind: loaders.HomeKindHome},
+		{LoaderID: id, PositionNodeID: ids["HK-BUFFER"], PayloadCode: "", Kind: loaders.HomeKindBuffer},
+	} {
+		if err := db.UpsertLoaderHome(h); err != nil {
+			t.Fatalf("UpsertLoaderHome: %v", err)
+		}
+	}
+
+	infos, err := db.BuildLoaderInfos()
+	if err != nil {
+		t.Fatalf("BuildLoaderInfos: %v", err)
+	}
+	var li *protocol.LoaderInfo
+	for i := range infos {
+		if infos[i].Name == "L-HK" {
+			li = &infos[i]
+		}
+	}
+	if li == nil {
+		t.Fatal("loader missing from the projection")
+	}
+	got := map[string]string{}
+	for _, p := range li.Positions {
+		got[p.CoreNodeName] = p.HomeKind
+	}
+	for node, want := range map[string]string{
+		"HK-PINNED":   protocol.LoaderHomeKindHome,
+		"HK-UNPINNED": protocol.LoaderHomeKindHome,
+		"HK-BUFFER":   protocol.LoaderHomeKindBuffer,
+	} {
+		if got[node] != want {
+			t.Errorf("%s home_kind = %q, want %q", node, got[node], want)
+		}
+	}
+	// The load-bearing pair: two positions, both blank payload, different kinds.
+	// If these ever project the same value the Edge is back to guessing.
+	if got["HK-UNPINNED"] == got["HK-BUFFER"] {
+		t.Errorf("an unpinned home and a buffer slot both projected %q — the wire cannot tell them apart, which is the bug this field exists to fix", got["HK-BUFFER"])
+	}
+}
+
+// TestBuildLoaderInfos_SkipsAHomeWhoseNodeIsGone pins the one behaviour the
+// name-resolution batching could have changed silently.
+//
+// Member names used to be resolved a home at a time, and a home whose node had
+// been deleted was skipped so the sync stayed best-effort rather than failing
+// the whole node list. The batched read INNER JOINs nodes, so such a home is
+// simply absent from the map — this asserts the skip survived the rewrite, and
+// that the surviving positions are still projected in full.
+//
+// The row is created and then orphaned directly, because no service path leaves
+// a home pointing at a deleted node; it is the state a manual delete or a
+// half-finished rename produces, which is exactly when a sync must not break.
+func TestBuildLoaderInfos_SkipsAHomeWhoseNodeIsGone(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	var ntID, liveID, doomedID int64
+	if err := db.DB.QueryRow(
+		`INSERT INTO node_types (code,name) VALUES ('NT-GONE','t') ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name RETURNING id`,
+	).Scan(&ntID); err != nil {
+		t.Fatalf("seed node_type: %v", err)
+	}
+	if err := db.DB.QueryRow(
+		`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ('GONE-LIVE',false,$1,true) RETURNING id`, ntID,
+	).Scan(&liveID); err != nil {
+		t.Fatalf("seed live node: %v", err)
+	}
+	if err := db.DB.QueryRow(
+		`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ('GONE-DOOMED',false,$1,true) RETURNING id`, ntID,
+	).Scan(&doomedID); err != nil {
+		t.Fatalf("seed doomed node: %v", err)
+	}
+
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "L-GONE", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentThreshold,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	for _, h := range []loaders.Home{
+		{LoaderID: id, PositionNodeID: liveID, PayloadCode: "PART-LIVE", UOPThreshold: 7},
+		{LoaderID: id, PositionNodeID: doomedID, PayloadCode: "PART-DOOMED"},
+	} {
+		if err := db.UpsertLoaderHome(h); err != nil {
+			t.Fatalf("UpsertLoaderHome: %v", err)
+		}
+	}
+
+	// Orphan the second home: drop the node, leave the bin_loader_homes row.
+	if _, err := db.DB.Exec(`ALTER TABLE bin_loader_homes DROP CONSTRAINT IF EXISTS bin_loader_homes_position_node_id_fkey`); err != nil {
+		t.Fatalf("drop fk: %v", err)
+	}
+	if _, err := db.DB.Exec(`DELETE FROM nodes WHERE id=$1`, doomedID); err != nil {
+		t.Fatalf("delete doomed node: %v", err)
+	}
+
+	infos, err := db.BuildLoaderInfos()
+	if err != nil {
+		t.Fatalf("BuildLoaderInfos: %v — a vanished member node must skip that position, not fail the sync", err)
+	}
+	var li *protocol.LoaderInfo
+	for i := range infos {
+		if infos[i].Name == "L-GONE" {
+			li = &infos[i]
+		}
+	}
+	if li == nil {
+		t.Fatal("loader missing from the projection entirely")
+	}
+	if len(li.Positions) != 1 {
+		t.Fatalf("positions = %d, want 1 — the orphaned home must be skipped, the live one kept", len(li.Positions))
+	}
+	p := li.Positions[0]
+	if p.CoreNodeName != "GONE-LIVE" || p.PayloadCode != "PART-LIVE" || p.UOPThreshold != 7 {
+		t.Errorf("surviving position = %+v, want GONE-LIVE/PART-LIVE/thr7 projected in full", p)
+	}
+}
+
+// TestBuildDemandRegistry_SkipsAHomeWhoseNodeIsGone is the same pin on the other
+// consumer of the batched names. A registry entry addressed at a node that no
+// longer exists would be a demand nothing can deliver to.
+func TestBuildDemandRegistry_SkipsAHomeWhoseNodeIsGone(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	var ntID, liveID, doomedID int64
+	if err := db.DB.QueryRow(
+		`INSERT INTO node_types (code,name) VALUES ('NT-DGONE','t') ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name RETURNING id`,
+	).Scan(&ntID); err != nil {
+		t.Fatalf("seed node_type: %v", err)
+	}
+	if err := db.DB.QueryRow(
+		`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ('DGONE-LIVE',false,$1,true) RETURNING id`, ntID,
+	).Scan(&liveID); err != nil {
+		t.Fatalf("seed live node: %v", err)
+	}
+	if err := db.DB.QueryRow(
+		`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ('DGONE-DOOMED',false,$1,true) RETURNING id`, ntID,
+	).Scan(&doomedID); err != nil {
+		t.Fatalf("seed doomed node: %v", err)
+	}
+
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "L-DGONE", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentThreshold,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	for _, h := range []loaders.Home{
+		{LoaderID: id, PositionNodeID: liveID, PayloadCode: "PART-LIVE", UOPThreshold: 5},
+		{LoaderID: id, PositionNodeID: doomedID, PayloadCode: "PART-DOOMED", UOPThreshold: 9},
+	} {
+		if err := db.UpsertLoaderHome(h); err != nil {
+			t.Fatalf("UpsertLoaderHome: %v", err)
+		}
+	}
+	if _, err := db.DB.Exec(`ALTER TABLE bin_loader_homes DROP CONSTRAINT IF EXISTS bin_loader_homes_position_node_id_fkey`); err != nil {
+		t.Fatalf("drop fk: %v", err)
+	}
+	if _, err := db.DB.Exec(`DELETE FROM nodes WHERE id=$1`, doomedID); err != nil {
+		t.Fatalf("delete doomed node: %v", err)
+	}
+
+	entries, err := db.BuildDemandRegistryFromAggregate("edge.line1")
+	if err != nil {
+		t.Fatalf("BuildDemandRegistryFromAggregate: %v — a vanished node must skip its entry, not fail the derivation", err)
+	}
+	var mine []demands.RegistryEntry
+	for _, e := range entries {
+		if e.LoaderID == id {
+			mine = append(mine, e)
+		}
+	}
+	if len(mine) != 1 {
+		t.Fatalf("entries for this loader = %d, want 1 — the orphaned home drives no demand", len(mine))
+	}
+	if mine[0].CoreNodeName != "DGONE-LIVE" || mine[0].PayloadCode != "PART-LIVE" || mine[0].ReplenishUOPThreshold != 5 {
+		t.Errorf("entry = %+v, want DGONE-LIVE/PART-LIVE/thr5", mine[0])
+	}
+}
+
 // TestLoaderFunnelWindows_RoundTrip follows the window-delivery setting the whole
 // way: written on the aggregate, read back off it, and projected onto the wire
 // shape the Edge syncs from. A setting that survives the write but not the

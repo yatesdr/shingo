@@ -681,6 +681,24 @@ type LoaderPosition struct {
 	CoreNodeName string `json:"core_node_name"`
 	PayloadCode  string `json:"payload_code"`
 	Kind         string `json:"kind,omitempty"`
+	// HomeKind separates the two DIFFERENT things a blank PayloadCode can mean
+	// on a dedicated loader: a kept-partial BUFFER slot, and a HOME position the
+	// operator dragged in but has not assigned a payload to yet.
+	//
+	// Core has always distinguished them — bin_loader_homes.home_kind, which
+	// InSourcePool reads to keep an unassigned home OUT of the loader's source
+	// pool while a buffer stays in. It just never said so on the wire, so the
+	// Edge inferred "buffer" from an empty payload and reached the opposite
+	// answer for an unpinned home.
+	//
+	// That is the same re-derivation Kind above was added to stop, one level
+	// down. Kind resolved window-vs-dedicated; this resolves home-vs-buffer.
+	//
+	// Additive and unsentinelled, like Ordinal and BinTypes: a Core that
+	// predates the field sends nothing, every position decodes "", and the
+	// reader falls back to the empty-payload inference — exactly what it did
+	// before. See LoaderHomeKind* below.
+	HomeKind     string `json:"home_kind,omitempty"`
 	UOPThreshold int    `json:"uop_threshold"`
 	// Ordinal is where the operator put this window. An admin screen lets them
 	// drag a loader's windows into the order they want filled; Core persists
@@ -727,6 +745,18 @@ type LoaderQuota struct {
 const (
 	LoaderPositionKindWindow    = "window"
 	LoaderPositionKindDedicated = "dedicated"
+)
+
+// LoaderHomeKind values for LoaderPosition.HomeKind, mirroring Core's
+// bin_loader_homes.home_kind. A HOME is a payload-pinned position (or one
+// waiting for its payload); a BUFFER holds kept partials and pins nothing.
+//
+// Empty means "from a Core that predates this field" — the reader falls back to
+// classifying by empty payload, which is what it did before. Blank must NOT be
+// read as "home": an older Core sends blank for buffer slots too.
+const (
+	LoaderHomeKindHome   = "home"
+	LoaderHomeKindBuffer = "buffer"
 )
 
 // LoaderPayloadInfo is one entry in a shared_window loader's allowed payload set.

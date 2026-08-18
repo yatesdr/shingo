@@ -434,9 +434,6 @@ CREATE TABLE IF NOT EXISTS core_loaders (
     replenishment  TEXT    NOT NULL DEFAULT '',
     outbound_dest  TEXT    NOT NULL DEFAULT '',
     inbound_source TEXT    NOT NULL DEFAULT '',
-    -- RETIRED: nothing reads or writes this column. Kept so a rolled-back
-    -- binary finds the shape it expects; the DROP ships a release later.
-    buffer_dest    TEXT    NOT NULL DEFAULT '',
     config_gen     INTEGER NOT NULL DEFAULT 0,
     funnel_windows INTEGER NOT NULL DEFAULT 0,  -- 1 = one window at a time; 0 = spread across windows (the default everywhere)
     synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -447,6 +444,7 @@ CREATE TABLE IF NOT EXISTS core_loader_positions (
     position_node  TEXT    NOT NULL,   -- the position node NAME (a real node)
     payload_code   TEXT    NOT NULL,
     kind           TEXT    NOT NULL DEFAULT '',  -- 'window' | 'dedicated' (synced from Core; Layout is authoritative if empty)
+    home_kind      TEXT    NOT NULL DEFAULT '',  -- 'home' | 'buffer' (synced from Core); '' = pre-field Core, fall back to classifying by empty payload
     min_stock      INTEGER NOT NULL DEFAULT 0,
     uop_threshold  INTEGER NOT NULL DEFAULT 0,
     ordinal        INTEGER NOT NULL DEFAULT 0,   -- where the operator dragged this window; 0 everywhere = nothing arranged, fall back to a number-aware name sort
