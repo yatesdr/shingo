@@ -284,40 +284,6 @@ func nodeIDStrings(ns []domain.NodeID) []string {
 	return out
 }
 
-// loaderEmptySource is the group an L1 empty is RETRIEVED FROM. A loader with a
-// configured buffer (the near-line staging group, step 7) sources from it, so empties
-// rotate buffer→position to satisfy a threshold fill; the buffer is kept stocked by the
-// cell routing its emptied carriers back into it (plant config). Falls back to the
-// far-upstream inbound_source only when no buffer is CONFIGURED.
-//
-// A DRY BUFFER: RESOLVED, and this used to carry a TODO asking whether to fall
-// back to inbound_source when the buffer runs empty. The answer is no, and the
-// reason is that the fallback was solving the wrong half of the problem.
-//
-// What a dry buffer does today: the L1 is created, Core's finder scopes its
-// search to the buffer group, finds nothing, and parks the order under
-// "finder-group-empty" — scoped, named, and NOT widened to the inbound market.
-// The wait releases when a carrier lands in the buffer. The loader idles, but it
-// idles visibly and with the buffer named as what it is waiting on.
-//
-// What keeps the buffer stocked is the part that did not exist when the TODO was
-// written: a buffer group can be declared a MAINTAINED group with a level, and
-// Core's keeper tops it up against that level. The buffer stops depending solely
-// on the downstream cell recycling empties back into it, which is exactly the
-// starvation the TODO was worried about — addressed at the buffer rather than by
-// teaching every pull to go somewhere else.
-//
-// The fallback is also the more dangerous of the two fixes. It changes where a
-// robot physically drives, silently, on the first moment a buffer runs dry — and
-// a loader with a near-line buffer configured is configured that way for a
-// reason. Core records the same resolution in loader_replenish.go's emptySource.
-func loaderEmptySource(l *domain.Loader) string {
-	if b := l.BufferDest(); b != "" {
-		return b
-	}
-	return l.InboundSource()
-}
-
 // stageOperatorEmpty creates loader empties opportunistically when a window
 // frees up on an operator-driven loader. THIS PATH STAYS on the Edge: it is
 // driven by what the operator physically did, which Core does not observe.
@@ -347,8 +313,8 @@ func (e *Engine) createLoaderEmpties(loader *domain.Loader, payload domain.Paylo
 			source.logTag(), coreNode, payload)
 		return 0, nil
 	}
-	if loaderEmptySource(loader) == "" {
-		// No inbound/buffer source to pull empties from — a forklift/press-fed loader is
+	if loader.InboundSource() == "" {
+		// No inbound source to pull empties from — a forklift/press-fed loader is
 		// supplied directly (operator stages empties at the window). Skip auto-L1; nothing
 		// to queue. Symmetric to the unloader's no-inbound gate in createUnloaderFullInViaSeam.
 		e.debugFn("%s: loader=%s payload=%s skipped — no inbound source (fed directly)",
@@ -364,7 +330,7 @@ func (e *Engine) createLoaderEmpties(loader *domain.Loader, payload domain.Paylo
 			}
 			nodeID := node.ID
 			order, cerr := e.orderMgr.CreateRetrieveOrder(
-				&nodeID, true, 1, deliveryNode, loaderEmptySource(loader), "",
+				&nodeID, true, 1, deliveryNode, loader.InboundSource(), "",
 				"standard", string(payload), false, true, origin,
 			)
 			if cerr != nil {

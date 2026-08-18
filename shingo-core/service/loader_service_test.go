@@ -62,7 +62,7 @@ func TestLoaderService_InboundSourceIsResolveChecked(t *testing.T) {
 
 	t.Run("a node that exists is accepted", func(t *testing.T) {
 		if _, err := svc.Create("MG33-OK", "produce", "dedicated_positions",
-			loaders.ReplenishmentThreshold, "", "MG33-REAL-GROUP", "", false); err != nil {
+			loaders.ReplenishmentThreshold, "", "MG33-REAL-GROUP", false); err != nil {
 			t.Fatalf("a real node was rejected: %v", err)
 		}
 	})
@@ -71,14 +71,14 @@ func TestLoaderService_InboundSourceIsResolveChecked(t *testing.T) {
 		// The overwhelmingly common case, and the reason this is a resolve-check
 		// rather than a required field.
 		if _, err := svc.Create("MG33-BLANK", "produce", "dedicated_positions",
-			loaders.ReplenishmentThreshold, "", "", "", false); err != nil {
+			loaders.ReplenishmentThreshold, "", "", false); err != nil {
 			t.Fatalf("a blank inbound source was rejected: %v", err)
 		}
 	})
 
 	t.Run("a typo is refused at save", func(t *testing.T) {
 		_, err := svc.Create("MG33-TYPO", "produce", "dedicated_positions",
-			loaders.ReplenishmentThreshold, "", "MG33-NO-SUCH-GROUP", "", false)
+			loaders.ReplenishmentThreshold, "", "MG33-NO-SUCH-GROUP", false)
 		if err == nil {
 			t.Fatal("a claim naming a node that does not exist was saved. Save time is the " +
 				"only place this is cheap: the operator is standing there and knows what " +
@@ -93,10 +93,10 @@ func TestLoaderService_InboundSourceIsResolveChecked(t *testing.T) {
 
 	t.Run("update is checked too", func(t *testing.T) {
 		id, err := svc.Create("MG33-UPD", "produce", "dedicated_positions",
-			loaders.ReplenishmentThreshold, "", "", "", false)
+			loaders.ReplenishmentThreshold, "", "", false)
 		testutil.MustNoErr(t, err, "create")
 		if err := svc.Update(id, "MG33-UPD", "dedicated_positions",
-			loaders.ReplenishmentThreshold, "", "MG33-STILL-NO-SUCH-GROUP", "", false); err == nil {
+			loaders.ReplenishmentThreshold, "", "MG33-STILL-NO-SUCH-GROUP", false); err == nil {
 			t.Error("Update accepted an unresolvable inbound source. A field guarded only on " +
 				"create is guarded on the path nobody uses twice")
 		}

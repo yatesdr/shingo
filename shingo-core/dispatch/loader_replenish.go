@@ -97,48 +97,23 @@ type LoaderReplenishConfig struct {
 	// operator-driven. An operator-driven loader is refused here — see
 	// ReplenishLoader.
 	Replenishment string
-	// InboundSource is where the empty carriers are retrieved FROM. Blank means
-	// the loader is fed directly — by press, forklift or reach truck — and Core
-	// must not create carrier pulls for it at all.
+	// InboundSource is where the empty carriers are retrieved FROM, and it is
+	// the only answer to that question. Blank means the loader is fed directly —
+	// by press, forklift or reach truck — and Core must not create carrier pulls
+	// for it at all.
+	//
+	// WHAT A DRY SOURCE DOES, because this is the property a reader usually
+	// comes here for: the order is created and the finder scopes its search to
+	// the named group; finding nothing, it PARKS under "finder-group-empty" (or
+	// "finder-no-empty-of-type" when a mix names the type) and does NOT widen to
+	// anywhere else. The wait releases when a carrier lands in the group. So the
+	// order is not lost and the robot is not sent anywhere wrong — the loader
+	// waits, visibly, with the group named as the thing it is waiting on.
+	//
+	// That no-widen behaviour belongs to the finder's scoped search, not to this
+	// field. Naming a different group here changes where the robot drives; it
+	// does not change what happens when that group runs dry.
 	InboundSource string
-	// BufferDest is a staging group of empties for this loader. When set it is
-	// used INSTEAD of InboundSource, with no fallback if it runs dry. See
-	// emptySource for why that precedence is copied rather than chosen.
-	BufferDest string
-}
-
-// emptySource answers where this loader's empty carriers are pulled from.
-//
-// The buffer wins outright when one is configured, with NO fallback to the
-// inbound market if it is empty. That is not a preference — it reproduces
-// loaderEmptySource on the Edge, which is what the plant runs today. A loader
-// with a buffer configured would silently start sourcing from somewhere else the
-// day Core took over ordering, which is a physical change to where a robot
-// drives, delivered by a refactor.
-//
-// WHAT A DRY BUFFER ACTUALLY DOES, since this used to be recorded as an open
-// gap ("nothing checks whether the buffer group holds an unclaimed empty"). The
-// order is created and the finder scopes its search to the buffer group; finding
-// nothing, it PARKS under "finder-group-empty" (or "finder-no-empty-of-type"
-// when a mix names the type) and does not widen to the inbound market. The wait
-// releases when a carrier lands in the buffer. So the order is not lost and the
-// robot is not sent anywhere wrong — the loader simply waits, visibly, with the
-// buffer named as the thing it is waiting on.
-//
-// WHAT REFILLS THE BUFFER is the part that was missing when the gap was written.
-// A buffer group can now be declared a MAINTAINED group with a level, and the
-// keeper tops it up on its own: the buffer is stocked by something that watches
-// it rather than only by whatever the cell happens to recycle back. That is the
-// never-idle property the Edge note wanted from a fallback, without the
-// fallback's cost — a fallback would silently change where a robot drives the
-// day a buffer ran dry, which is the widening this seam exists to prevent.
-//
-// The Edge records the same resolution in the same place.
-func (c LoaderReplenishConfig) emptySource() string {
-	if c.BufferDest != "" {
-		return c.BufferDest
-	}
-	return c.InboundSource
 }
 
 // LoadReplenishConfig assembles the configuration ReplenishLoader decides from.
@@ -174,7 +149,6 @@ func (d *Dispatcher) LoadReplenishConfig(loaderID int64) (LoaderReplenishConfig,
 		Payloads:      cfg.Payloads,
 		Replenishment: cfg.Loader.Replenishment,
 		InboundSource: cfg.Loader.InboundSource,
-		BufferDest:    cfg.Loader.BufferDest,
 	}, true, nil
 }
 
@@ -264,8 +238,8 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 	// A loader nobody retrieves for. Blank source is a real, supported
 	// configuration — the loader is fed by hand — and creating a carrier pull for
 	// it would send a robot to fetch from nowhere.
-	if cfg.emptySource() == "" {
-		res.Skipped = "loader has no inbound source or buffer: it is fed directly, so Shingo pulls no carriers for it"
+	if cfg.InboundSource == "" {
+		res.Skipped = "loader has no inbound source: it is fed directly, so Shingo pulls no carriers for it"
 		return res, nil
 	}
 
@@ -414,7 +388,7 @@ func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderRepleni
 	order, err := d.AdmitCoreAsk(CoreAskSpec{
 		UUIDPrefix:   "core-l1-",
 		StationID:    req.StationID,
-		SourceNode:   cfg.emptySource(),
+		SourceNode:   cfg.InboundSource,
 		DeliveryNode: t.NodeName,
 		OriginID:     req.OriginID,
 		OriginClass:  req.OriginClass,

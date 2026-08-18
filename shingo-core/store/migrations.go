@@ -3374,10 +3374,13 @@ func migrationList() []migration {
 		// UNIQUE(position_node_id) is THE invariant — one payload per home
 		// position, one loader per node — making the SLN_002 misconfiguration
 		// unrepresentable. min_stock/uop_threshold default 0 (no silent floor; the
-		// magic-2 default was removed). buffer_dest models the overflow area (SME
-		// Q4 — runtime resolution lands with the read-cutover). No UNIQUE on
-		// (loader_id, payload_code) for homes: same payload on two home positions
-		// is legitimate (D1, allow+warn).
+		// magic-2 default was removed). No UNIQUE on (loader_id, payload_code) for
+		// homes: same payload on two home positions is legitimate (D1, allow+warn).
+		//
+		// buffer_dest was meant to model the overflow area (SME Q4). It is RETIRED:
+		// nothing reads or writes it, and the column is left in place so a
+		// rolled-back binary finds the shape it expects. The DROP is its own
+		// migration, a release later.
 		{34, "add bin-loader aggregate (bin_loaders/homes/payloads) for the Core-owned loader cutover",
 			v34BinLoaderAggregate,
 			func(q schema.Querier) bool {

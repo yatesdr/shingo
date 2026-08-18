@@ -444,7 +444,6 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			Replenishment: repl,
 			OutboundDest:  c.OutboundDestination,
 			InboundSource: c.InboundSource,
-			BufferDest:    c.BufferDest,
 		})
 		if err != nil {
 			return fmt.Errorf("create loader %s/%s: %w", k.node, k.role, err)
@@ -521,7 +520,6 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			Replenishment: repl,
 			OutboundDest:  lead.OutboundDestination,
 			InboundSource: lead.InboundSource,
-			BufferDest:    lead.BufferDest,
 		})
 		if err != nil {
 			return fmt.Errorf("create synthetic loader %s/%s: %w", id, lead.Role, err)
@@ -551,8 +549,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 	// the loader's identity is the home_of label (synthetic — never a node). Same
 	// payload on two positions is legal and is the same-payload-two-position fixture
 	// (each its own demand_registry row; the pooled threshold trips, ReservationTarget
-	// routes to the named position). buffer_dest carries onto the aggregate for the
-	// step-7 buffer behaviour. Sorted for a deterministic seed.
+	// routes to the named position). Sorted for a deterministic seed.
 	var deckIDs []string
 	for id := range homesByLoader {
 		deckIDs = append(deckIDs, id)
@@ -578,7 +575,6 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			Replenishment: repl,
 			OutboundDest:  lead.OutboundDestination,
 			InboundSource: lead.InboundSource,
-			BufferDest:    lead.BufferDest,
 		})
 		if err != nil {
 			return fmt.Errorf("create dedicated loader %s/%s: %w", id, lead.Role, err)

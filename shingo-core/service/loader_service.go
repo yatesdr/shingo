@@ -101,7 +101,7 @@ func (s *LoaderService) WindowBinTypes(loaderID int64) (map[int64][]string, erro
 // always taken. The form asks it first, as the question that decides which
 // other questions appear, so a create that dropped it contradicted the screen
 // that sent it.
-func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, inboundSource, bufferDest string, funnelWindows bool) (int64, error) {
+func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, inboundSource string, funnelWindows bool) (int64, error) {
 	if layout == "" {
 		layout = loaders.LayoutSharedWindow
 	}
@@ -124,7 +124,7 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 	id, err := s.db.CreateLoader(loaders.Loader{
 		Name: name, Role: role, Layout: layout,
 		Replenishment: replenishment, OutboundDest: outboundDest,
-		InboundSource: inboundSource, BufferDest: bufferDest,
+		InboundSource: inboundSource,
 		FunnelWindows: funnelWindows,
 	})
 	if err != nil {
@@ -136,9 +136,8 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 
 // Update changes a loader's editable fields and re-derives. role + the surrogate id
 // are the identity and stay fixed; layout/replenishment default to
-// the current value when blank. The shared_window flow endpoints
-// (inbound/outbound/buffer) are passed through verbatim — a dedicated_positions
-// loader sends them empty (each position is its own in/out).
+// the current value when blank. The flow endpoints (inbound/outbound) are
+// passed through verbatim.
 //
 // funnelWindows is settable at Create as well as here. It used to be editable
 // only on this path, on the reasoning that a loader is created before its
@@ -147,7 +146,7 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 // when the kind became the form's first question — the operator now answers it
 // before anything else, and a create that ignored the answer silently produced
 // a spread loader and then re-rendered the form showing it.
-func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDest, inboundSource, bufferDest string, funnelWindows bool) error {
+func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDest, inboundSource string, funnelWindows bool) error {
 	cur, err := s.db.GetLoader(id)
 	if err != nil {
 		return err
@@ -174,7 +173,6 @@ func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDe
 		return err
 	}
 	cur.InboundSource = inboundSource
-	cur.BufferDest = bufferDest
 	cur.FunnelWindows = funnelWindows
 	if err := s.db.UpdateLoader(*cur); err != nil {
 		return err

@@ -153,7 +153,7 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 	}
 
 	// Dedicated-positions loader: PLK_DECK keyed on a SYNTHETIC id (must not be a node),
-	// two BRKT positions (same-payload-two-position), buffer_dest wired for step 7.
+	// two BRKT positions (same-payload-two-position), sourcing from the near-line group.
 	if n, _ := db.GetNodeByName("PLK_DECK"); n != nil {
 		t.Fatalf("PLK_DECK must NOT be a node (synthetic identity), got node id %d", n.ID)
 	}
@@ -164,8 +164,8 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 	if deck.Layout != "dedicated_positions" {
 		t.Fatalf("PLK_DECK layout: want dedicated_positions, got %q", deck.Layout)
 	}
-	if deck.BufferDest != "SYN_BUF_Deck" {
-		t.Fatalf("PLK_DECK buffer_dest: want SYN_BUF_Deck, got %q", deck.BufferDest)
+	if deck.InboundSource != "SYN_BUF_Deck" {
+		t.Fatalf("PLK_DECK inbound_source: want SYN_BUF_Deck, got %q", deck.InboundSource)
 	}
 	dh, err := db.ListLoaderHomes(deck.ID)
 	if err != nil {

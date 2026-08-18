@@ -99,7 +99,6 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			Replenishment: l.Replenishment,
 			OutboundDest:  l.OutboundDest,
 			InboundSource: l.InboundSource,
-			BufferDest:    l.BufferDest,
 			ConfigGen:     l.ConfigGen,
 			FunnelWindows: l.FunnelWindows,
 		}

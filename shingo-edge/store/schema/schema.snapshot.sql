@@ -126,6 +126,8 @@ CREATE TABLE core_loaders (
     replenishment  TEXT    NOT NULL DEFAULT '',
     outbound_dest  TEXT    NOT NULL DEFAULT '',
     inbound_source TEXT    NOT NULL DEFAULT '',
+    -- RETIRED: nothing reads or writes this column. Kept so a rolled-back
+    -- binary finds the shape it expects; the DROP ships a release later.
     buffer_dest    TEXT    NOT NULL DEFAULT '',
     config_gen     INTEGER NOT NULL DEFAULT 0,
     funnel_windows INTEGER NOT NULL DEFAULT 0,  -- 1 = one window at a time; 0 = spread across windows (the default everywhere)

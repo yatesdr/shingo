@@ -655,7 +655,6 @@ type LoaderInfo struct {
 	Replenishment string `json:"replenishment"`
 	OutboundDest  string `json:"outbound_dest,omitempty"`
 	InboundSource string `json:"inbound_source,omitempty"`
-	BufferDest    string `json:"buffer_dest,omitempty"`
 	ConfigGen     int64  `json:"config_gen"`
 	// FunnelWindows restricts a shared_window loader to ONE window at a time:
 	// empties funnel to its first window on a budget of 1 instead of spreading one

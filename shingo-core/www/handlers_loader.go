@@ -34,7 +34,6 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		Replenishment string `json:"replenishment"`
 		OutboundDest  string `json:"outbound_dest"`
 		InboundSource string `json:"inbound_source"`
-		BufferDest    string `json:"buffer_dest"`
 		// FunnelWindows is the form's FIRST question — "Single window" versus
 		// "Multi window". The client has always sent it on create; this struct
 		// had no field for it, so it decoded into nothing and every loader was
@@ -50,7 +49,7 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := h.engine.LoaderService().Create(req.Name, req.Role, req.Layout,
-		req.Replenishment, req.OutboundDest, req.InboundSource, req.BufferDest, req.FunnelWindows)
+		req.Replenishment, req.OutboundDest, req.InboundSource, req.FunnelWindows)
 	if err != nil {
 		h.jsonError(w, "create loader: "+err.Error(), loaderWriteStatus(err))
 		return
@@ -58,8 +57,7 @@ func (h *Handlers) apiCreateLoader(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, map[string]any{"id": id, "name": req.Name})
 }
 
-// apiUpdateLoader edits a loader's mutable fields (name + shared_window flow
-// endpoints). role + core_node are the identity and are not editable here.
+// apiUpdateLoader edits a loader's mutable fields (name + flow endpoints). role + core_node are the identity and are not editable here.
 func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID            int64  `json:"id"`
@@ -68,7 +66,6 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		Replenishment string `json:"replenishment"`
 		OutboundDest  string `json:"outbound_dest"`
 		InboundSource string `json:"inbound_source"`
-		BufferDest    string `json:"buffer_dest"`
 		FunnelWindows bool   `json:"funnel_windows"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -79,7 +76,7 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.engine.LoaderService().Update(req.ID, req.Name, req.Layout, req.Replenishment,
-		req.OutboundDest, req.InboundSource, req.BufferDest, req.FunnelWindows); err != nil {
+		req.OutboundDest, req.InboundSource, req.FunnelWindows); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
 		return
 	}
