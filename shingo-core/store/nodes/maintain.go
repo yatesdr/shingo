@@ -55,6 +55,20 @@ const (
 	// answer: the push then parks holding its bin, which is backpressure into
 	// whatever was pushing — uncomfortable, not dangerous.
 	PropOverflowDestination = "overflow_destination"
+
+	// PropBinTypeMode is NOT a maintained-group setting — it predates all of
+	// this and governs how a node's allowed carrier types resolve ("all",
+	// "specific", or ""/"inherit" to walk the parent chain). It is named here
+	// because a maintained group has to carry an EXPLICIT one: inherit-by-
+	// default means an ancestor's list can silently govern a group that has just
+	// been told to hold two specific types.
+	PropBinTypeMode = "bin_type_mode"
+
+	// BinTypeModeAll is the no-restriction value, and the one a group gets when
+	// a maintained level is declared on a group that never had a mode. It is
+	// what an unconfigured group already behaves as; narrowing on the operator's
+	// behalf would be making a decision for them.
+	BinTypeModeAll = "all"
 )
 
 // MaintainLevel is one line of a maintained group's declared level: how many

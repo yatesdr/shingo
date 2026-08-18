@@ -5,6 +5,7 @@ import (
 
 	"shingocore/store"
 	"shingocore/store/nodes"
+	"shingocore/store/plantclaims"
 )
 
 // Maintained-group configuration, service side.
@@ -78,45 +79,111 @@ func (s *NodeService) GetMaintainedGroup(groupNodeID int64) (*MaintainedGroupCon
 	}, nil
 }
 
-// SetMaintainedGroupFlag writes one of the two boolean scalars through the
-// audited property path.
-//
-// Takes the key rather than exposing two near-identical methods, and REFUSES an
-// unknown one: the value of routing these through a named set is that a typo in
-// a caller becomes an error here instead of a property nothing will ever read.
-func (s *NodeService) SetMaintainedGroupFlag(groupNodeID int64, key string, on bool) error {
-	switch key {
-	case nodes.PropMaintainEnabled, nodes.PropStrictSourcing:
-	default:
-		return fmt.Errorf("not a maintained-group flag: %q", key)
-	}
-	v := propOff
-	if on {
-		v = propOn
-	}
-	return s.db.SetNodeProperty(groupNodeID, key, v)
+// MaintainedGroupSettings is the four scalars as one save.
+type MaintainedGroupSettings struct {
+	MaintainEnabled     bool
+	StrictSourcing      bool
+	MaintenanceStation  string
+	OverflowDestination string
 }
 
-// SetMaintainedGroupText writes one of the two string scalars through the same
-// audited path. Blank is a legitimate value for both and means "none".
-func (s *NodeService) SetMaintainedGroupText(groupNodeID int64, key, value string) error {
-	switch key {
-	case nodes.PropMaintenanceStation, nodes.PropOverflowDestination:
-	default:
-		return fmt.Errorf("not a maintained-group setting: %q", key)
+// NodePropertyWrite is one key/value a caller is to write through whatever
+// audited property path it owns.
+type NodePropertyWrite struct {
+	Key   string
+	Value string
+}
+
+// MaintainedGroupPropertyWrites turns a settings save into the ordered property
+// writes it means.
+//
+// IT RETURNS THE WRITES RATHER THAN PERFORMING THEM, and the split is the audit
+// trail's. The old→new row is appended by the HTTP layer, which is the only
+// place that knows the actor; a service method that wrote these four itself
+// would be a configuration path with no trail behind it, which is the SPR
+// Finding 2/3 shape exactly. So the vocabulary — which keys, and the on/off
+// spelling shared with asrs_enabled and resolve_around — stays here with the
+// aggregate that owns it, and the writing stays where the auditing already is.
+func MaintainedGroupPropertyWrites(s MaintainedGroupSettings) []NodePropertyWrite {
+	flag := func(b bool) string {
+		if b {
+			return propOn
+		}
+		return propOff
 	}
-	return s.db.SetNodeProperty(groupNodeID, key, value)
+	return []NodePropertyWrite{
+		{nodes.PropMaintainEnabled, flag(s.MaintainEnabled)},
+		{nodes.PropStrictSourcing, flag(s.StrictSourcing)},
+		{nodes.PropMaintenanceStation, s.MaintenanceStation},
+		{nodes.PropOverflowDestination, s.OverflowDestination},
+	}
 }
 
 // SetMaintainLevel declares how many empty carriers of one type a group holds.
-func (s *NodeService) SetMaintainLevel(l store.MaintainLevel) error {
-	return s.db.SetMaintainLevel(l)
+//
+// Validated against the configuration this write WOULD leave behind, not against
+// the row on its own: most of the save-time rules are about how the parts agree,
+// and a row in isolation has nothing to disagree with.
+func (s *NodeService) SetMaintainLevel(groupNodeID, binTypeID int64, want int) (MaintainedGroupCheck, error) {
+	if want < 0 {
+		return MaintainedGroupCheck{
+			Refusals: []string{fmt.Sprintf("a maintained level cannot be negative (got %d)", want)},
+		}, nil
+	}
+	bt, err := s.db.GetBinType(binTypeID)
+	if err != nil {
+		return MaintainedGroupCheck{}, fmt.Errorf("read carrier type %d: %w", binTypeID, err)
+	}
+	post, err := s.GetMaintainedGroup(groupNodeID)
+	if err != nil {
+		return MaintainedGroupCheck{}, err
+	}
+	replaced := false
+	for i := range post.Levels {
+		if post.Levels[i].BinTypeID == binTypeID {
+			post.Levels[i].Want = want
+			replaced = true
+		}
+	}
+	if !replaced {
+		post.Levels = append(post.Levels, store.MaintainLevel{
+			GroupNodeID: groupNodeID, BinTypeID: binTypeID, BinTypeCode: bt.Code, Want: want,
+		})
+	}
+	chk, err := s.ValidateMaintainedGroup(*post)
+	if err != nil || chk.Err() != nil {
+		return chk, err
+	}
+	// The mode is written FIRST and only when absent: a group that is about to
+	// carry a declared level must not still be resolving its allowed types off
+	// an ancestor.
+	if err := s.ensureExplicitBinTypeMode(groupNodeID); err != nil {
+		return chk, err
+	}
+	return chk, s.db.SetMaintainLevel(store.MaintainLevel{
+		GroupNodeID: groupNodeID, BinTypeID: binTypeID, Want: want,
+	})
 }
 
 // RemoveMaintainLevel stops declaring a carrier type for a group. Distinct from
 // setting want=0, which keeps the line.
-func (s *NodeService) RemoveMaintainLevel(groupNodeID, binTypeID int64) error {
-	return s.db.RemoveMaintainLevel(groupNodeID, binTypeID)
+func (s *NodeService) RemoveMaintainLevel(groupNodeID, binTypeID int64) (MaintainedGroupCheck, error) {
+	post, err := s.GetMaintainedGroup(groupNodeID)
+	if err != nil {
+		return MaintainedGroupCheck{}, err
+	}
+	kept := post.Levels[:0]
+	for _, l := range post.Levels {
+		if l.BinTypeID != binTypeID {
+			kept = append(kept, l)
+		}
+	}
+	post.Levels = kept
+	chk, err := s.ValidateMaintainedGroup(*post)
+	if err != nil || chk.Err() != nil {
+		return chk, err
+	}
+	return chk, s.db.RemoveMaintainLevel(groupNodeID, binTypeID)
 }
 
 // ListMaintainLevels returns a group's declared level.
@@ -125,11 +192,60 @@ func (s *NodeService) ListMaintainLevels(groupNodeID int64) ([]store.MaintainLev
 }
 
 // SetMaintainSupports replaces the set of process nodes a group serves.
-func (s *NodeService) SetMaintainSupports(groupNodeID int64, processNodeIDs []int64) error {
-	return s.db.SetMaintainSupports(groupNodeID, processNodeIDs)
+func (s *NodeService) SetMaintainSupports(groupNodeID int64, processNodeIDs []int64) (MaintainedGroupCheck, error) {
+	post, err := s.GetMaintainedGroup(groupNodeID)
+	if err != nil {
+		return MaintainedGroupCheck{}, err
+	}
+	post.Supports = post.Supports[:0]
+	for _, id := range processNodeIDs {
+		n, err := s.db.GetNode(id)
+		if err != nil {
+			return MaintainedGroupCheck{}, fmt.Errorf("read supported position %d: %w", id, err)
+		}
+		post.Supports = append(post.Supports, store.MaintainSupport{
+			GroupNodeID: groupNodeID, ProcessNodeID: id, ProcessNodeName: n.Name,
+		})
+	}
+	chk, err := s.ValidateMaintainedGroup(*post)
+	if err != nil || chk.Err() != nil {
+		return chk, err
+	}
+	return chk, s.db.SetMaintainSupports(groupNodeID, processNodeIDs)
+}
+
+// CheckMaintainedGroupSettings runs the save-time rules against a scalar change
+// WITHOUT writing it.
+//
+// The four scalars are written by the HTTP layer, through the audited property
+// path, so this half of the save splits: the rules live here with every other
+// rule, the write stays where the audit row can name an actor. The caller runs
+// this first and writes nothing if it refuses.
+func (s *NodeService) CheckMaintainedGroupSettings(groupNodeID int64, set MaintainedGroupSettings) (MaintainedGroupCheck, error) {
+	post, err := s.GetMaintainedGroup(groupNodeID)
+	if err != nil {
+		return MaintainedGroupCheck{}, err
+	}
+	post.Enabled = set.MaintainEnabled
+	post.StrictSourcing = set.StrictSourcing
+	post.MaintenanceStation = set.MaintenanceStation
+	post.OverflowDestination = set.OverflowDestination
+	return s.ValidateMaintainedGroup(*post)
 }
 
 // ListMaintainSupports returns the process nodes a group serves.
 func (s *NodeService) ListMaintainSupports(groupNodeID int64) ([]store.MaintainSupport, error) {
 	return s.db.ListMaintainSupports(groupNodeID)
+}
+
+// ListProcessNodeOptions returns each process with the Core nodes its claims
+// resolve to — the picker's contents.
+//
+// The editor OFFERS processes and STORES nodes, and the resolution happens here,
+// once, at config time. It has to: a claim lives on the Edge, so a rule stored as
+// "process P" would have nothing Core could evaluate it against later. What the
+// operator sees is a process; what lands in node_maintain_supports is the node
+// set that process's claims name at the moment they save.
+func (s *NodeService) ListProcessNodeOptions() ([]plantclaims.ProcessNodeOption, error) {
+	return s.db.ListProcessNodeOptions()
 }

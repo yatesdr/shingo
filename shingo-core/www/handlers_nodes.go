@@ -600,29 +600,46 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node_id and key are required", http.StatusBadRequest)
 		return
 	}
-	// THE OLD VALUE FIRST, because an audit row that cannot say what changed
-	// records that somebody touched something. Best-effort: a read that fails must
-	// not stop the write, it only makes the trail poorer.
-	before := h.engine.NodeService().GetNodeProperty(req.NodeID, req.Key)
-
-	if err := h.engine.NodeService().SetNodeProperty(req.NodeID, req.Key, req.Value); err != nil {
+	if err := h.setNodePropertyAudited(req.NodeID, req.Key, req.Value); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.jsonSuccess(w)
+}
 
-	// AUDITED, and this is where the waiting point earns it. Node properties are
-	// configuration — lane_gate_point decides whether a lane stages robots at all
-	// — and configuration that changes without a trail is the thing nobody can
-	// reconstruct afterwards. Same shape as every other admin write (bin_actions).
-	// Unconditional rather than keyed to the interesting keys: a list of which
-	// properties deserve an audit row is a list that goes stale.
-	if before != req.Value {
-		if err := h.engine.AuditService().Append("node", req.NodeID, "property:"+req.Key,
-			before, req.Value, protocol.AuditActorUI); err != nil {
-			log.Printf("node property set: audit %s on node %d: %v", req.Key, req.NodeID, err)
+// setNodePropertyAudited writes one node property and leaves the old→new trail
+// behind it.
+//
+// EXTRACTED SO THERE IS ONE OF IT. The maintained-group settings endpoint writes
+// four properties in one save, and the alternative — a second place that calls
+// SetNodeProperty and remembers to append an audit row — is how the trail
+// acquires a hole nobody notices until they go looking for a change that was
+// never recorded. Anything that writes a node property from the UI goes through
+// here.
+//
+// AUDITED, and this is where the waiting point earns it. Node properties are
+// configuration — lane_gate_point decides whether a lane stages robots at all —
+// and configuration that changes without a trail is the thing nobody can
+// reconstruct afterwards. Same shape as every other admin write (bin_actions).
+// Unconditional rather than keyed to the interesting keys: a list of which
+// properties deserve an audit row is a list that goes stale.
+func (h *Handlers) setNodePropertyAudited(nodeID int64, key, value string) error {
+	// THE OLD VALUE FIRST, because an audit row that cannot say what changed
+	// records that somebody touched something. Best-effort: a read that fails must
+	// not stop the write, it only makes the trail poorer.
+	before := h.engine.NodeService().GetNodeProperty(nodeID, key)
+
+	if err := h.engine.NodeService().SetNodeProperty(nodeID, key, value); err != nil {
+		return err
+	}
+
+	if before != value {
+		if err := h.engine.AuditService().Append("node", nodeID, "property:"+key,
+			before, value, protocol.AuditActorUI); err != nil {
+			log.Printf("node property set: audit %s on node %d: %v", key, nodeID, err)
 		}
 	}
-	h.jsonSuccess(w)
+	return nil
 }
 
 // apiGenerateTestNodes creates a representative set of test nodes for debugging.

@@ -199,6 +199,57 @@
         </div>
       </div>
       </div>
+      <!-- Shown when the group is maintained. The algorithms are NOT hidden in
+           that case, deliberately: they still decide everything about loaded
+           carriers here. Saying which half they stop deciding is information; a
+           control that vanishes is a question. -->
+      <div id="nf-maintain-algo-note" class="form-hint hide" style="margin-top:6px">
+        Inert for empty pulls while a level is held here. Loaded carriers unaffected.
+      </div>
+    </div>
+
+    <!-- Maintained group (NGRP only) -------------------------------------
+         The level Core holds here in EMPTY carriers. Not a "buffer": a loader
+         window with home_kind=buffer is a different, existing thing. -->
+    <div id="nf-maintain" class="hide mb-2">
+      <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Maintained group</label>
+      <div class="text-muted" style="font-size:0.75rem;margin-bottom:10px">
+        Keep empty carriers standing by here for the equipment this group serves.
+      </div>
+
+      <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
+        <input type="checkbox" id="nf-maintain-enabled" data-action-change="onMaintainToggle">
+        Hold a level here
+      </label>
+      <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">
+        <input type="checkbox" id="nf-maintain-strict">
+        Reserved — only the processes below may take these empties
+      </label>
+
+      <div class="grid grid-2 text-sm">
+        <div class="form-group">
+          <label for="nf-maintain-station">Station for these orders</label>
+          <select id="nf-maintain-station"></select>
+          <div class="form-hint">Without one, top-up orders show on no board.</div>
+        </div>
+        <div class="form-group">
+          <label for="nf-maintain-overflow">If this group is full, send to</label>
+          <select id="nf-maintain-overflow"></select>
+          <div class="form-hint">Optional — otherwise arrivals wait, holding their load.</div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Maintained level</label>
+        <div id="nf-maintain-levels"></div>
+        <div class="form-hint">Zero means none of that type, on purpose.</div>
+      </div>
+
+      <div class="form-group">
+        <label>Processes this group serves</label>
+        <div id="nf-maintain-supports"></div>
+        <div class="form-hint">Pick processes; their positions are what gets saved.</div>
+      </div>
     </div>
 
     <!-- Waiting points — on the GROUP, one row per lane (and on a LANE, its own row) -->
@@ -282,6 +333,10 @@
 
 <div id="page-data" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}" data-bin-types='{{.BinTypesJSON}}' data-edges='{{.EdgesJSON}}'></div>
 <script type="module" src="/static/pages/nodes-overview.js?v={{cacheBust}}"></script>
+<!-- nodes-maintain.js gets NO tag of its own: nodes-detail.js imports it. A tag
+     would load it a second time under a different URL (the cache-bust query),
+     and two module instances means two copies of the section's staged state —
+     the delegated handlers would mutate one while the modal renders the other. -->
 <script type="module" src="/static/pages/nodes-detail.js?v={{cacheBust}}"></script>
 <script type="module" src="/static/pages/nodes-supermarket.js?v={{cacheBust}}"></script>
 <script type="module" src="/static/pages/loaders.js?v={{cacheBust}}"></script>

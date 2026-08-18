@@ -23,9 +23,16 @@ func (db *DB) GetLoaderByName(name, role string) (*loaders.Loader, error) {
 	return loaders.GetLoaderByName(db.DB, name, role)
 }
 func (db *DB) ListLoaders() ([]loaders.Loader, error) { return loaders.ListLoaders(db.DB) }
-func (db *DB) UpdateLoader(l loaders.Loader) error    { return loaders.UpdateLoader(db.DB, l) }
-func (db *DB) DeleteLoader(id int64) error            { return loaders.DeleteLoader(db.DB, id) }
-func (db *DB) UpsertLoaderHome(h loaders.Home) error  { return loaders.UpsertHome(db.DB, h) }
+
+// LoadersStagingAt names the active loaders that stage empties in this node.
+// See loaders.LoadersStagingAt — it backs the one-owner-per-level refusal.
+func (db *DB) LoadersStagingAt(nodeName string) ([]string, error) {
+	return loaders.LoadersStagingAt(db.DB, nodeName)
+}
+
+func (db *DB) UpdateLoader(l loaders.Loader) error   { return loaders.UpdateLoader(db.DB, l) }
+func (db *DB) DeleteLoader(id int64) error           { return loaders.DeleteLoader(db.DB, id) }
+func (db *DB) UpsertLoaderHome(h loaders.Home) error { return loaders.UpsertHome(db.DB, h) }
 func (db *DB) RemoveLoaderHome(loaderID, positionNodeID int64) error {
 	return loaders.RemoveHome(db.DB, loaderID, positionNodeID)
 }

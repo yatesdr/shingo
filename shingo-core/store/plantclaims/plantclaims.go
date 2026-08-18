@@ -201,3 +201,68 @@ func DirtyIndex(db *sql.DB) (map[string][]ProcessKey, error) {
 	}
 	return out, nil
 }
+
+// ProcessNodeRef is one Core node a process's claims name.
+type ProcessNodeRef struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// ProcessNodeOption is one process and the Core nodes its claims resolve to —
+// the shape a config editor needs to let a person pick a PROCESS while what gets
+// stored is NODES.
+type ProcessNodeOption struct {
+	ProcessID string           `json:"process_id"`
+	Nodes     []ProcessNodeRef `json:"nodes"`
+}
+
+// ListProcessNodeOptions returns every process in the mirror with the Core nodes
+// its claims name, resolved to ids.
+//
+// It exists so a config screen can offer processes and PERSIST NODES. That
+// asymmetry is the round-1 ruling and it is not cosmetic: a process is what a
+// person points at, but a claim lives on the Edge and Core cannot read one at
+// decision time — so a rule stored as "process P" would have nothing to evaluate
+// against. Resolving here, at config time, is the only point where both halves
+// are in hand.
+//
+// The consequence is stated rather than hidden: a claim set that changes AFTER a
+// save leaves the stored node set describing the old topology. That is the same
+// bargain every resolved-at-save reference in this system makes, and the answer
+// is the editor showing what is stored, not a re-resolve nobody asked for.
+//
+// A process whose claims name nodes Core has never heard of contributes an entry
+// with fewer nodes than it has claims; a process with no resolvable node at all
+// is omitted, because an option that can select nothing is not an option.
+func ListProcessNodeOptions(db *sql.DB) ([]ProcessNodeOption, error) {
+	rows, err := db.Query(`
+		SELECT DISTINCT sc.process_id, n.id, n.name
+		FROM style_claims sc
+		JOIN nodes n ON n.name = sc.core_node_name
+		ORDER BY sc.process_id, n.name`)
+	if err != nil {
+		return nil, fmt.Errorf("plantclaims process node options: query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ProcessNodeOption
+	for rows.Next() {
+		var processID, nodeName string
+		var nodeID int64
+		if err := rows.Scan(&processID, &nodeID, &nodeName); err != nil {
+			return nil, fmt.Errorf("plantclaims process node options: scan: %w", err)
+		}
+		if n := len(out); n > 0 && out[n-1].ProcessID == processID {
+			out[n-1].Nodes = append(out[n-1].Nodes, ProcessNodeRef{ID: nodeID, Name: nodeName})
+			continue
+		}
+		out = append(out, ProcessNodeOption{
+			ProcessID: processID,
+			Nodes:     []ProcessNodeRef{{ID: nodeID, Name: nodeName}},
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("plantclaims process node options: rows: %w", err)
+	}
+	return out, nil
+}

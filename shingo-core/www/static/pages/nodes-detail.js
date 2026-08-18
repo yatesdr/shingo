@@ -1,4 +1,5 @@
 import { api, apiGet, apiPost, delegateActions, el, escapeHtml, removeClosestRow, toast, uiConfirm, uiPrompt } from '/static/app.js';
+import { renderMaintainSection, saveMaintainedGroup } from '/static/pages/nodes-maintain.js';
 
 // Node detail modal: form fields, chip pickers (bin types & stations),
 // inventory list with editable manifest, occupancy comparison modal.
@@ -70,6 +71,11 @@ export function openNodeModal(el) {
       if (asrsControls) asrsControls.classList.remove('hide');
     }
   }
+
+  // Maintained group — the same group-type test the algorithms use, and only
+  // for an operator who can edit: the section lives in the auth-only half of
+  // the modal and has no read-only twin.
+  renderMaintainSection(isAuth && isGroupType, d.id);
 
   if (isAuth) {
     var assocSection = document.getElementById('nf-assoc-section');
@@ -504,6 +510,10 @@ async function handleNodeSave(el, evt) {
   // Awaited, unlike the algorithm writes: this one can ask the human a question
   // (a mark the map does not know), and the form must not submit underneath it.
   await saveLaneGatePoints();
+  // Awaited for the same reason, and for a second one: the save-time rules on a
+  // maintained group can REFUSE, and a refusal the operator never sees because
+  // the page already navigated is a refusal that did not happen.
+  await saveMaintainedGroup();
   if (!expandedPayloadID || !isManifestDirty()) return true;
   if (evt) evt.preventDefault();
   var items = collectManifestItems();
