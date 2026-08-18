@@ -41,6 +41,8 @@ type Plant struct {
 	ReportingPoints  []ReportingPoint `yaml:"reporting_points"`
 	CellConfigs      []CellConfig     `yaml:"cell_configs"`
 	LinesideBuckets  []LinesideBucket `yaml:"lineside_buckets"`
+	// MaintainedGroups declares which zones Core holds an empty-carrier level in.
+	MaintainedGroups []MaintainedGroup `yaml:"maintained_groups,omitempty"`
 	// Headroom is the storage-slack rule the census at birth asserts (§R.78).
 	Headroom Headroom `yaml:"headroom,omitempty"`
 	// BaselineFrozenAt names the ruling that froze this spec as a MEASUREMENT
@@ -104,13 +106,24 @@ type Payload struct {
 	RobotGroup string `yaml:"robot_group,omitempty"`
 }
 
-// Zone is an NGRP storage zone holding lanes. RetrieveAlgorithm (e.g. FIFO) and
+// Zone is an NGRP storage zone. RetrieveAlgorithm (e.g. FIFO) and
 // StoreAlgorithm (DPTH/LKND) control kanban lane selection.
+//
+// A zone holds LANES (the deep-storage shape: aisles of depth-ordered slots), or
+// POSITIONS (the flat shape: slots hanging directly off the group), or both. The
+// flat shape exists because a MAINTAINED group is refused at save time unless it
+// is depth-1 — no lanes, no nested groups — and until now a spec had no way to
+// write one down, which would have left phase 2's soak unable to stage the very
+// shape it is soaking.
 type Zone struct {
 	Name              string `yaml:"name"`
 	RetrieveAlgorithm string `yaml:"retrieve_algorithm"`
 	StoreAlgorithm    string `yaml:"store_algorithm"`
 	Lanes             []Lane `yaml:"lanes"`
+	// Positions are slots parented directly by the zone, with no lane between.
+	// They carry a Depth like any other slot, and it should be 1 on all of them:
+	// nothing can be buried behind anything when there is no lane to bury it in.
+	Positions []Slot `yaml:"positions,omitempty"`
 }
 
 // Lane is a LANE node under a zone; its slots carry an explicit depth so buried
@@ -167,6 +180,50 @@ type Bin struct {
 	AgeS int64 `yaml:"age_s,omitempty"`
 }
 
+// MaintainedGroup declares that Core holds a standing supply of EMPTY carriers
+// in a zone, for the equipment that zone serves.
+//
+// "So many 45x58x32 and so many 45x48x24, unclaimed, at all times." The zone must
+// be FLAT — positions, no lanes — because that is what the save-time rules
+// require of a maintained group, and a spec that could declare a shape the UI
+// refuses would seed a plant nobody could then edit.
+//
+// NOT "buffer". A loader's staging group (Claim.BufferDest) is a different
+// mechanism with opposite behaviour, and a zone cannot be both.
+type MaintainedGroup struct {
+	// Group names the zone. It must be a declared zone with positions and no lanes.
+	Group string `yaml:"group"`
+	// Station is the Edge station the top-up orders are projected to. REQUIRED,
+	// and required here for the same reason the UI refuses a blank one:
+	// projectOrder no-ops on a blank StationID, so a seeded group without one
+	// would produce orders that run on the floor and show on no board. A seed
+	// that can only be discovered wrong at runtime is the kind this spec exists
+	// to refuse.
+	Station string `yaml:"station"`
+	// Strict reserves the group's empties for the supported processes.
+	Strict bool `yaml:"strict,omitempty"`
+	// Overflow names a second zone to try when this one is at level. Optional;
+	// blank means an arriving carrier waits instead.
+	Overflow string `yaml:"overflow,omitempty"`
+	// Levels is how many empty carriers of each type to hold.
+	Levels []MaintainLevel `yaml:"levels"`
+	// Supports names PROCESSES. What the seeder writes is the core nodes those
+	// processes' claims name — the same editor-speaks-process, storage-holds-nodes
+	// split the UI makes, and for the same reason: a claim is Edge-local and Core
+	// cannot read one when it has to decide anything.
+	Supports []string `yaml:"supports,omitempty"`
+}
+
+// MaintainLevel is one line of a maintained group's declared level.
+//
+// Want may be zero, which declares the type and asks for none of it — a
+// different statement from leaving the line out, and the distinction the store
+// preserves.
+type MaintainLevel struct {
+	BinType string `yaml:"bin_type"`
+	Want    int    `yaml:"want"`
+}
+
 // Process is an edge process (one independently-counting cell or line). Each
 // process runs exactly one ActiveStyle at a time; that style's claims are the
 // live ones (findActiveClaim keys on process.active_style_id). Independently-
@@ -198,13 +255,12 @@ type Claim struct {
 	AutoReorder         bool   `yaml:"auto_reorder"`
 	InboundSource       string `yaml:"inbound_source,omitempty"`
 	OutboundDestination string `yaml:"outbound_destination,omitempty"`
-	// BufferDest, on a manual_swap loader/unloader claim, names the buffer node
+	// BufferDest, on a manual_swap loader/unloader claim, names the staging node
 	// group (zone/NGRP) that stages empties to rotate into a position on threshold
 	// and parks changeover-orphaned partials (plain FIFO, engineered capacity — the
-	// loader-buffer model, ledger §J). Carried onto bin_loaders.buffer_dest; the
-	// runtime behaviour lands with the buffer build (step 7). Most useful on a
-	// dedicated_positions loader, where a parked partial that lost its home slot
-	// during a changeover needs somewhere to wait.
+	// loader-buffer model, ledger §J). Carried onto bin_loaders.buffer_dest. Most
+	// useful on a dedicated_positions loader, where a parked partial that lost its
+	// home slot during a changeover needs somewhere to wait.
 	BufferDest      string   `yaml:"buffer_dest,omitempty"`
 	InboundStaging  string   `yaml:"inbound_staging,omitempty"`
 	OutboundStaging string   `yaml:"outbound_staging,omitempty"`

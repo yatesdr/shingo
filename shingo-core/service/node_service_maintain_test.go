@@ -7,9 +7,12 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // Save-time rules for a maintained group.
@@ -294,5 +297,174 @@ func TestMaintainedGroup_WarnsOnUntypedSupportedPosition(t *testing.T) {
 	testutil.MustNoErr(t, err, "ListMaintainSupports")
 	if len(got) != 1 {
 		t.Errorf("supports = %+v, want the warned-about support written anyway", got)
+	}
+}
+
+// ── The holds-bins guard ───────────────────────────────────────────────────
+//
+// Separate from the save-time rules and reading a different thing: the rules
+// read CONFIGURATION and are true regardless of the floor, these read the FLOOR.
+// They are also DELTA checks — they fire on the transition, not the state, so a
+// group that has been reserved for a month does not re-ask every save.
+
+func mgPutBin(t *testing.T, db *store.DB, label string, binTypeID, nodeID int64) {
+	t.Helper()
+	testutil.MustNoErr(t, db.CreateBin(&bins.Bin{
+		Label: label, BinTypeID: binTypeID, NodeID: &nodeID, Status: domain.BinStatusAvailable,
+	}), "CreateBin "+label)
+}
+
+// Turning maintenance off on a group that still holds carriers leaves them
+// belonging to nothing. Refused, naming them — and force is the operator saying
+// they already know.
+func TestMaintainedGroupGuard_DisableWithResidents(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewNodeService(db)
+
+	grpID, kids := mgGroup(t, db, "GRP-HOLDING", 2)
+	bt := mgBinType(t, db, "HOLD-TOTE")
+	mgPutBin(t, db, "BIN-HELD-1", bt, kids[0].ID)
+
+	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintainEnabled, "on"), "enable")
+
+	g, err := svc.CheckMaintainedGroupSettingsChange(grpID,
+		MaintainedGroupSettings{MaintainEnabled: false}, false)
+	testutil.MustNoErr(t, err, "CheckMaintainedGroupSettingsChange")
+	if !strings.Contains(g.Blocked, "BIN-HELD-1") {
+		t.Fatalf("blocked = %q, want it to name the carrier standing there", g.Blocked)
+	}
+
+	// force is the whole point of the guard being a refusal rather than a
+	// prohibition.
+	g, err = svc.CheckMaintainedGroupSettingsChange(grpID,
+		MaintainedGroupSettings{MaintainEnabled: false}, true)
+	testutil.MustNoErr(t, err, "CheckMaintainedGroupSettingsChange forced")
+	if g.Blocked != "" {
+		t.Errorf("forced change still blocked: %q", g.Blocked)
+	}
+}
+
+// The guard is a DELTA check. A save that leaves both switches where they were
+// asks nothing, however many carriers are standing there.
+func TestMaintainedGroupGuard_NoTransitionAsksNothing(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewNodeService(db)
+
+	grpID, kids := mgGroup(t, db, "GRP-STEADY", 2)
+	bt := mgBinType(t, db, "STEADY-TOTE")
+	mgPutBin(t, db, "BIN-STEADY-1", bt, kids[0].ID)
+
+	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropMaintainEnabled, "on"), "enable")
+	testutil.MustNoErr(t, db.SetNodeProperty(grpID, nodes.PropStrictSourcing, "on"), "reserve")
+
+	g, err := svc.CheckMaintainedGroupSettingsChange(grpID, MaintainedGroupSettings{
+		MaintainEnabled: true, StrictSourcing: true, MaintenanceStation: "EDGE-2",
+	}, false)
+	testutil.MustNoErr(t, err, "CheckMaintainedGroupSettingsChange")
+	if g.Blocked != "" {
+		t.Errorf("a save with no transition was blocked: %q", g.Blocked)
+	}
+}
+
+// Turning the reserve ON reports the orders already sourcing here. Reported,
+// never blocking: they are admitted and looking, the fence does not reach back
+// and cancel them, and nothing in this program cancels anything.
+func TestMaintainedGroupGuard_StrictOnReportsDrain(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewNodeService(db)
+
+	grpID, _ := mgGroup(t, db, "GRP-DRAIN", 2)
+	o := &orders.Order{
+		EdgeUUID: "drain-1", StationID: "EDGE-1", OrderType: "retrieve",
+		Status: "queued", SourceNode: "GRP-DRAIN", Quantity: 1,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "CreateOrder")
+
+	g, err := svc.CheckMaintainedGroupSettingsChange(grpID,
+		MaintainedGroupSettings{StrictSourcing: true}, false)
+	testutil.MustNoErr(t, err, "CheckMaintainedGroupSettingsChange")
+	if g.Blocked != "" {
+		t.Fatalf("an empty group was blocked: %q", g.Blocked)
+	}
+	if len(g.Drain) != 1 || !strings.Contains(g.Drain[0], "GRP-DRAIN") {
+		t.Fatalf("drain = %v, want the one queued order sourcing from the group", g.Drain)
+	}
+}
+
+// Narrowing supports takes the carriers away from exactly the processes dropped.
+// Widening strands nobody and asks nothing.
+func TestMaintainedGroupGuard_SupportsNarrowingOnly(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewNodeService(db)
+
+	grpID, kids := mgGroup(t, db, "GRP-SCOPE", 2)
+	bt := mgBinType(t, db, "SCOPE-TOTE")
+	mgPutBin(t, db, "BIN-SCOPE-1", bt, kids[0].ID)
+
+	pressA := &nodes.Node{Name: "PRESS-SCOPE-A", Enabled: true}
+	pressB := &nodes.Node{Name: "PRESS-SCOPE-B", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(pressA), "create A")
+	testutil.MustNoErr(t, db.CreateNode(pressB), "create B")
+	testutil.MustNoErr(t, db.SetMaintainSupports(grpID, []int64{pressA.ID, pressB.ID}), "seed supports")
+
+	// Widening: nothing to ask.
+	pressC := &nodes.Node{Name: "PRESS-SCOPE-C", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(pressC), "create C")
+	g, err := svc.CheckMaintainedGroupSupportsChange(grpID,
+		[]int64{pressA.ID, pressB.ID, pressC.ID}, false)
+	testutil.MustNoErr(t, err, "widen")
+	if g.Blocked != "" {
+		t.Errorf("widening the supported set was blocked: %q", g.Blocked)
+	}
+
+	// Narrowing: named, and it names both the carrier and the process dropped.
+	g, err = svc.CheckMaintainedGroupSupportsChange(grpID, []int64{pressA.ID}, false)
+	testutil.MustNoErr(t, err, "narrow")
+	if !strings.Contains(g.Blocked, "BIN-SCOPE-1") || !strings.Contains(g.Blocked, "PRESS-SCOPE-B") {
+		t.Errorf("blocked = %q, want it to name the carrier and the dropped process", g.Blocked)
+	}
+}
+
+// Narrowing allowed types is scoped to the carriers ACTUALLY affected. Reciting
+// every resident when one type is dropped is a refusal an operator learns to
+// force past without reading.
+func TestMaintainedGroupGuard_TypeNarrowingNamesOnlyStranded(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewNodeService(db)
+
+	grpID, kids := mgGroup(t, db, "GRP-NARROW", 2)
+	big := mgBinType(t, db, "NARROW-BIG")
+	small := mgBinType(t, db, "NARROW-SMALL")
+	mgPutBin(t, db, "BIN-BIG-1", big, kids[0].ID)
+	mgPutBin(t, db, "BIN-SMALL-1", small, kids[1].ID)
+
+	// Keep only the small type: the big carrier is the one stranded.
+	g, err := svc.CheckMaintainedGroupTypesChange(grpID, []int64{small}, false)
+	testutil.MustNoErr(t, err, "narrow to small")
+	if !strings.Contains(g.Blocked, "BIN-BIG-1") {
+		t.Fatalf("blocked = %q, want it to name the stranded carrier", g.Blocked)
+	}
+	if strings.Contains(g.Blocked, "BIN-SMALL-1") {
+		t.Errorf("blocked = %q, must not recite the carrier this change does not affect", g.Blocked)
+	}
+
+	// The empty set means NO RESTRICTION — the resolver's own reading — so it
+	// strands nothing and is not a narrowing at all.
+	g, err = svc.CheckMaintainedGroupTypesChange(grpID, nil, false)
+	testutil.MustNoErr(t, err, "clear restriction")
+	if g.Blocked != "" {
+		t.Errorf("clearing the restriction was treated as a narrowing: %q", g.Blocked)
+	}
+
+	// Keeping both asks nothing.
+	g, err = svc.CheckMaintainedGroupTypesChange(grpID, []int64{big, small}, false)
+	testutil.MustNoErr(t, err, "keep both")
+	if g.Blocked != "" {
+		t.Errorf("keeping every resident's type was blocked: %q", g.Blocked)
 	}
 }

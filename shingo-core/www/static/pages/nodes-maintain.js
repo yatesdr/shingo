@@ -1,4 +1,4 @@
-import { apiGet, apiPost, delegateActions, escapeHtml, toast } from '/static/app.js';
+import { apiGet, apiPost, delegateActions, escapeHtml, toast, uiConfirm } from '/static/app.js';
 
 // Maintained-group section of the node group settings modal.
 //
@@ -283,6 +283,99 @@ export function toggleMaintainSupport(el) {
   else _mg.selected.delete(pid);
 }
 
+// rawPost is apiPost without the envelope-unwrapping.
+//
+// app.js's api() throws the server's `error` STRING on a non-2xx, which is the
+// right shape almost everywhere and the wrong one here: the holds-bins refusal
+// carries `needs_force` and `drain` alongside the message, and unwrapping to the
+// string throws both away. Ten lines of fetch rather than widening a helper the
+// whole application shares.
+function rawPost(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function (r) {
+    return r.text().then(function (t) {
+      var parsed = null;
+      try { parsed = JSON.parse(t); } catch (e) { /* not JSON: fall through */ }
+      return { ok: r.ok, body: parsed, text: t };
+    });
+  });
+}
+
+// postConfirmable posts, and when the server answers "carriers are standing
+// there" it ASKS and re-posts with force.
+//
+// The confirm is here rather than in front of the request because the browser
+// does not know what is standing in the group — only the server does, and only
+// at the moment of the save. Asking first would mean either asking every time
+// (which trains an operator to click through it) or duplicating the guard on
+// this side, where it would be a second definition of the rule.
+//
+// Only the holds-bins guard is confirmable. A rule refusal carries no
+// needs_force and throws, because "this group is already a loader's staging
+// group" does not become untrue when somebody clicks again.
+async function postConfirmable(url, body) {
+  var res = await rawPost(url, body);
+  if (res.ok) return res.body;
+
+  var b = res.body || {};
+  if (!b.needs_force) throw (b.error || res.text);
+
+  var msg = b.error || 'This change affects carriers standing in the group.';
+  if (b.drain && b.drain.length) {
+    msg += '\n\nAlso already on their way: ' + b.drain.join('; ');
+  }
+  if (!await uiConfirm(msg + '\n\nSave anyway?')) {
+    // Not an error — the operator answered. Nothing further is posted for this
+    // step and the rest of the flush carries on, which is the point of flushing
+    // per-thing rather than all at once.
+    return null;
+  }
+  var forced = {};
+  Object.keys(body).forEach(function (k) { forced[k] = body[k]; });
+  forced.force = true;
+  var again = await rawPost(url, forced);
+  if (!again.ok) throw ((again.body && again.body.error) || again.text);
+  return again.body;
+}
+
+// confirmAllowedBinsNarrowing asks before the node form posts a narrower Allowed
+// Bins set at a maintained group, and returns whether to go ahead.
+//
+// The form navigates, so the server cannot ask — a 409 there replaces the page
+// with an error document. It answers the question here and carries the answer in
+// as `force`; the form handler runs the same guard regardless, so a caller that
+// skips this is still refused.
+//
+// Returns true when there is nothing to ask about, which is the overwhelmingly
+// common case: any non-group node, any widening, any group holding nothing.
+export async function confirmAllowedBinsNarrowing(nodeID, binTypeIDs, form) {
+  if (!nodeID) return true;
+  var res;
+  try {
+    res = await apiPost('/api/nodes/maintained-group/check-types',
+      { node_id: Number(nodeID), bin_type_ids: binTypeIDs.map(Number) });
+  } catch (err) {
+    // A check that could not run must not silently become a pass — but it also
+    // must not block an ordinary save on an ordinary node. The server-side
+    // guard is the authority either way; this one only buys the dialog.
+    console.warn('allowed bins: holds-bins check', err);
+    return true;
+  }
+  if (!res || !res.blocked) return true;
+  if (!await uiConfirm(res.blocked + '\n\nSave anyway?')) return false;
+  if (form) {
+    var inp = document.createElement('input');
+    inp.type = 'hidden';
+    inp.name = 'force';
+    inp.value = 'on';
+    form.appendChild(inp);
+  }
+  return true;
+}
+
 // saveMaintainedGroup flushes the section. Called from the modal's Save, before
 // the form posts.
 //
@@ -306,11 +399,15 @@ export async function saveMaintainedGroup() {
   var warnings = [];
   var collect = function (res) {
     if (res && res.warnings) warnings = warnings.concat(res.warnings);
+    if (res && res.drain && res.drain.length) {
+      warnings.push(res.drain.length + ' order' + (res.drain.length === 1 ? '' : 's')
+        + ' already sourcing here will still be served: ' + res.drain.join('; '));
+    }
     return res;
   };
 
   try {
-    collect(await apiPost('/api/nodes/maintained-group/settings', {
+    collect(await postConfirmable('/api/nodes/maintained-group/settings', {
       group_node_id: nodeID,
       maintain_enabled: enabled,
       strict_sourcing: strict,
@@ -343,7 +440,7 @@ export async function saveMaintainedGroup() {
         if (nodeIDs.indexOf(Number(n.id)) < 0) nodeIDs.push(Number(n.id));
       });
     });
-    collect(await apiPost('/api/nodes/maintained-group/supports',
+    collect(await postConfirmable('/api/nodes/maintained-group/supports',
       { group_node_id: nodeID, process_node_ids: nodeIDs }));
 
     // The staged state now matches the server, so a second Save without

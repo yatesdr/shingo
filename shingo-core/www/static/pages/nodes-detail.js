@@ -1,5 +1,5 @@
 import { api, apiGet, apiPost, delegateActions, el, escapeHtml, removeClosestRow, toast, uiConfirm, uiPrompt } from '/static/app.js';
-import { renderMaintainSection, saveMaintainedGroup } from '/static/pages/nodes-maintain.js';
+import { confirmAllowedBinsNarrowing, renderMaintainSection, saveMaintainedGroup } from '/static/pages/nodes-maintain.js';
 
 // Node detail modal: form fields, chip pickers (bin types & stations),
 // inventory list with editable manifest, occupancy comparison modal.
@@ -504,29 +504,57 @@ function collectManifestItems() {
   return valid ? items : null;
 }
 
+// handleNodeSave runs everything the modal saves OUTSIDE the form post, then
+// posts the form.
+//
+// preventDefault IS THE FIRST STATEMENT, AND HAS TO BE. delegateActions ignores
+// what a handler returns and only calls preventDefault itself for
+// data-prevent-default, so a preventDefault reached after the first `await`
+// arrives once the browser has already begun navigating — the awaited work is
+// abandoned mid-flight and, worse, any question it wanted to ask is asked of a
+// page that is on its way out. That was already true of the waiting-point save
+// (whose confirm could not be seen) and it is load-bearing now: the
+// maintained-group save can be REFUSED, and a refusal nobody sees is a refusal
+// that did not happen.
+//
+// form.submit() at the end does not fire a submit event, so this cannot re-enter.
 async function handleNodeSave(el, evt) {
+  if (evt) evt.preventDefault();
+  var form = document.getElementById('node-form');
+
   serializeChipPickers();
   saveAlgorithmProperties();
-  // Awaited, unlike the algorithm writes: this one can ask the human a question
-  // (a mark the map does not know), and the form must not submit underneath it.
+
+  // Asked before anything is written, because it is a question about what the
+  // FORM is carrying — the narrower Allowed Bins set the post is about to apply.
+  var btMode = document.getElementById('nf-bt-mode');
+  if (btMode && btMode.value === 'specific') {
+    var ok = await confirmAllowedBinsNarrowing(
+      document.getElementById('nf-id').value,
+      _chipSelections['bin-types'].map(function(i) { return i.id; }),
+      form);
+    if (!ok) return;
+  }
+
+  // This one can ask the human a question (a mark the map does not know).
   await saveLaneGatePoints();
-  // Awaited for the same reason, and for a second one: the save-time rules on a
-  // maintained group can REFUSE, and a refusal the operator never sees because
-  // the page already navigated is a refusal that did not happen.
   await saveMaintainedGroup();
-  if (!expandedPayloadID || !isManifestDirty()) return true;
-  if (evt) evt.preventDefault();
-  var items = collectManifestItems();
-  if (!items) { toast('All rows must have a CATID', 'info'); return false; }
-  var reason = await uiPrompt('Reason for manifest correction:');
-  if (!reason) return false;
-  apiPost('/api/corrections/batch', {payload_id: expandedPayloadID, node_id: currentNodeID, reason: reason, items: items})
-    .then(function(data) {
-      if (data.error) { toast(data.error, 'error'); return; }
-      document.getElementById('node-form').submit();
-    })
-    .catch(function(err) { toast('Error saving manifest: ' + err, 'error'); });
-  return false;
+
+  if (expandedPayloadID && isManifestDirty()) {
+    var items = collectManifestItems();
+    if (!items) { toast('All rows must have a CATID', 'info'); return; }
+    var reason = await uiPrompt('Reason for manifest correction:');
+    if (!reason) return;
+    try {
+      var data = await apiPost('/api/corrections/batch',
+        {payload_id: expandedPayloadID, node_id: currentNodeID, reason: reason, items: items});
+      if (data && data.error) { toast(data.error, 'error'); return; }
+    } catch (err) {
+      toast('Error saving manifest: ' + err, 'error');
+      return;
+    }
+  }
+  form.submit();
 }
 
 function closeManifestExpand() {

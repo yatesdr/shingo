@@ -115,6 +115,23 @@ textarea { resize: vertical; min-height: 60px; }
   font-weight: 400; font-size: 0.85rem; margin-top: 0.4rem; margin-bottom: 0;
 }
 .form-check input[type="checkbox"] { width: auto; margin: 0; }
+/* A scrollable list of checkboxes, for picking SEVERAL of something.
+   It replaces <select multiple>, which needs ctrl-click to add and drops the
+   whole selection on a plain click — an easy way to clear a set by accident,
+   with nothing on screen saying you did. Bordered and scrolled rather than
+   growing without limit, so a long catalogue does not push the modal's buttons
+   off the screen. */
+.check-list {
+  max-height: 9rem; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 0.3rem;
+  padding: 0.3rem 0.4rem; background: var(--bg-dark);
+}
+.check-list-item {
+  display: flex; align-items: center; gap: 0.45rem;
+  font-weight: 400; font-size: 0.85rem; padding: 0.15rem 0; cursor: pointer;
+}
+.check-list-item input[type="checkbox"] { width: auto; margin: 0; flex: none; }
+.check-list-item:hover { color: var(--primary); }
 /* The visibility utility the form-state convention is written against: a form
    renders from its state and toggles this class, instead of event handlers
    reaching for element.style.display. !important because it lands on elements

@@ -29,7 +29,12 @@
 namespace: devplant
 line_id: line1
 
-bin_types: [STANDARD]
+# STANDARD-SM is declared but carried by no payload, on purpose: it gives the
+# maintained group below a SECOND carrier type so the sim stages a mixed level
+# (the real shape is "four of one, two of another"), and a type no payload maps
+# to cannot be drawn into any existing flow. STANDARD stays first — a bin that
+# names no type falls back to bin_types[0].
+bin_types: [STANDARD, STANDARD-SM]
 
 # robot_group is a CAPABILITY constraint, not a label: it names the SEER
 # robot-dispatch group allowed to carry the part, and an empty value means the
@@ -103,6 +108,32 @@ zones:
       - {name: Lane_14, slots: [{name: UTN_010, depth: 1}, {name: UTN_011, depth: 2}, {name: UTN_012, depth: 3}]}
       # Lane_19 = extra empty headroom so returned empties don't leave air bubbles behind.
       - {name: Lane_19, slots: [{name: UTN_013, depth: 1}, {name: UTN_014, depth: 2}, {name: UTN_015, depth: 3}]}
+
+  # ── Press empty bank — a MAINTAINED GROUP, and the only flat zone here. ──
+  #
+  # Core holds a standing level of empty carriers beside the presses, so a press
+  # never waits for one. Declared in maintained_groups at the foot of this file.
+  #
+  # FLAT — positions, no lanes — because the save-time rules refuse a maintained
+  # group that has any. A lane means a carrier can be buried, and a level counted
+  # over buried carriers is a number whose meaning changes with what is parked in
+  # front of it.
+  #
+  # SEEDED EMPTY, and nothing routes here yet: the config is inert until the level
+  # keeper is built, so this zone changes no flow in the current demo. It exists
+  # so phase 2's soak has the shape to run against.
+  - name: SYN_PRESS_EMPTIES
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    positions:
+      - {name: PEB_001, depth: 1}
+      - {name: PEB_002, depth: 1}
+      - {name: PEB_003, depth: 1}
+      - {name: PEB_004, depth: 1}
+      - {name: PEB_005, depth: 1}
+      - {name: PEB_006, depth: 1}
+      - {name: PEB_007, depth: 1}
+      - {name: PEB_008, depth: 1}
 
 stations:
   # ── PRESS-1: two_robot_press_index (front + paired back, no staging) ──
@@ -408,3 +439,21 @@ cell_configs:
   - {process: UNLOADER-A, station: UNLOADER-A-OPS}
   # Loaders have no single cell station — their windows are per-node operator stations
   # (PLK_W1/2-OPS, PLK_X1-OPS, PLK_X2-OPS), declared via operator_station above.
+
+# ── Maintained groups ───────────────────────────────────────────────────────
+#
+# The empty-carrier level Core holds, and for whom. Inert until the level keeper
+# is built; what it buys today is that the sim can stage the shape.
+#
+# Sum is six across eight positions, which deliberately leaves two free: a
+# maintained group with no spare position has nowhere to put a carrier coming
+# back in, and the save-time rules warn about exactly that.
+maintained_groups:
+  - group: SYN_PRESS_EMPTIES
+    station: devplant.line1
+    strict: false
+    overflow: SYN_MARKET
+    levels:
+      - {bin_type: STANDARD, want: 4}
+      - {bin_type: STANDARD-SM, want: 2}
+    supports: [PRESS-1, PRESS-2]

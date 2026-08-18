@@ -82,8 +82,11 @@ func (p *Plant) Validate() error {
 	}
 
 	laneCount, slotCount := 0, 0
+	zonePositions := make(map[string]int, len(p.Zones))
+	zoneLanes := make(map[string]int, len(p.Zones))
 	for _, z := range p.Zones {
 		addNode(z.Name, "zone")
+		zoneLanes[z.Name] = len(z.Lanes)
 		for _, ln := range z.Lanes {
 			addNode(ln.Name, "lane")
 			laneCount++
@@ -93,6 +96,18 @@ func (p *Plant) Validate() error {
 				if s.Depth <= 0 {
 					add("slot %q in lane %q has non-positive depth %d", s.Name, ln.Name, s.Depth)
 				}
+			}
+		}
+		// Flat positions: slots parented by the zone itself. They count as slots
+		// for the hierarchy check below — they ARE storage under an NGRP — but not
+		// as lanes, which is the distinction a maintained group turns on.
+		for _, s := range z.Positions {
+			addNode(s.Name, "position")
+			slotCount++
+			zonePositions[z.Name]++
+			if s.Depth != 1 {
+				add("position %q in zone %q has depth %d; a position hangs directly off the group, so nothing can be buried behind it and its depth is 1",
+					s.Name, z.Name, s.Depth)
 			}
 		}
 	}
@@ -323,6 +338,97 @@ func (p *Plant) Validate() error {
 		}
 		if fl.consume > 0 && fl.produce == 0 {
 			add("payload %q has %d consumer(s) but no producer — consumers will starve", code, fl.consume)
+		}
+	}
+
+	// ── Maintained groups ────────────────────────────────────────────────────
+	//
+	// MIRRORS THE SAVE-TIME REFUSALS, one for one. A spec that can declare a
+	// configuration the settings modal refuses would seed a plant nobody could
+	// then edit — the first save of an untouched screen would come back with a
+	// reason, and the operator would be right to read it as a bug.
+	//
+	// Only the refusals. The two save-time WARNINGS (a level filling every
+	// position, a supported position with no carrier types) stay warnings there
+	// and are absent here: a seed is allowed to be in a state a plant is allowed
+	// to be in.
+	stagingGroups := map[string]string{} // zone name → claim that stages there
+	for _, c := range p.Claims {
+		if c.BufferDest != "" {
+			stagingGroups[c.BufferDest] = c.CoreNode
+		}
+	}
+	seenGroup := map[string]bool{}
+	for _, mg := range p.MaintainedGroups {
+		if mg.Group == "" {
+			add("maintained_group with empty group")
+			continue
+		}
+		if seenGroup[mg.Group] {
+			add("duplicate maintained_group %q", mg.Group)
+		}
+		seenGroup[mg.Group] = true
+
+		if kind, ok := nodes[mg.Group]; !ok {
+			add("maintained_group %q references unknown zone", mg.Group)
+		} else if kind != "zone" {
+			add("maintained_group %q names a %s; a maintained group is a zone", mg.Group, kind)
+		} else {
+			// FLAT, because the save-time rule is flat. A lane means a carrier can
+			// be buried, and a level counted over buried carriers is a number whose
+			// meaning changes with what is parked in front of it.
+			if zoneLanes[mg.Group] > 0 {
+				add("maintained_group %q has %d lane(s); a maintained group is flat — declare its slots as positions",
+					mg.Group, zoneLanes[mg.Group])
+			}
+			if zonePositions[mg.Group] == 0 {
+				add("maintained_group %q has no positions to hold a level in", mg.Group)
+			}
+		}
+		// Two owners, one level.
+		if claim, ok := stagingGroups[mg.Group]; ok {
+			add("maintained_group %q is already the staging group for claim %q — a group has one owner of its level, not two",
+				mg.Group, claim)
+		}
+		// projectOrder no-ops on a blank StationID.
+		if strings.TrimSpace(mg.Station) == "" {
+			add("maintained_group %q has no station; its top-up orders would show on no board", mg.Group)
+		}
+		if mg.Overflow != "" {
+			if mg.Overflow == mg.Group {
+				add("maintained_group %q overflows to itself", mg.Group)
+			} else if kind, ok := nodes[mg.Overflow]; !ok || kind != "zone" {
+				add("maintained_group %q overflows to %q, which is not a declared zone", mg.Group, mg.Overflow)
+			}
+		}
+		if len(mg.Levels) == 0 {
+			add("maintained_group %q declares no levels", mg.Group)
+		}
+		seenType := map[string]bool{}
+		for _, l := range mg.Levels {
+			if l.BinType == "" || !binTypes[l.BinType] {
+				add("maintained_group %q level references unknown bin_type %q", mg.Group, l.BinType)
+				continue
+			}
+			if seenType[l.BinType] {
+				add("maintained_group %q declares bin_type %q twice", mg.Group, l.BinType)
+			}
+			seenType[l.BinType] = true
+			if l.Want < 0 {
+				add("maintained_group %q wants %d of %q; a level cannot be negative", mg.Group, l.Want, l.BinType)
+			}
+			// The episode key is `mnt|<group>|<type>`, so a code carrying the
+			// separator parses back into different components than it was built
+			// from. Refused where a code can still be changed.
+			if strings.Contains(l.BinType, "|") {
+				add("maintained_group %q level bin_type %q contains %q, which cannot be used in an episode key",
+					mg.Group, l.BinType, "|")
+			}
+		}
+		for _, proc := range mg.Supports {
+			if !processes[proc] {
+				add("maintained_group %q supports unknown process %q", mg.Group, proc)
+			}
 		}
 	}
 

@@ -101,6 +101,18 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 				nodeIDs[s.Name] = sID
 			}
 		}
+		// Flat positions: STOR children of the ZONE, with no lane between. This
+		// is the shape a maintained group has to be in — the save-time rules
+		// refuse a group with lanes — so a spec that could not express it could
+		// not stage one.
+		for _, s := range z.Positions {
+			depth := s.Depth
+			sID, err := ensureNode(db, s.Name, ptr(storType), ptr(zID), z.Name, &depth, false)
+			if err != nil {
+				return err
+			}
+			nodeIDs[s.Name] = sID
+		}
 	}
 	// --- stations (line/press/weld/loader/unloader/staging/dest) ---
 	for _, st := range p.Stations {
@@ -216,9 +228,111 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 		}
 	}
 
-	log.Printf("core: %d node types, %d payloads, %d nodes, %d bins, %d demands",
-		4, len(payloadIDs), len(nodeIDs), len(p.Bins), len(entries))
+	if err := seedMaintainedGroups(db, p, nodeIDs, binTypeIDs); err != nil {
+		return fmt.Errorf("seed maintained groups: %w", err)
+	}
+
+	log.Printf("core: %d node types, %d payloads, %d nodes, %d bins, %d demands, %d maintained groups",
+		4, len(payloadIDs), len(nodeIDs), len(p.Bins), len(entries), len(p.MaintainedGroups))
 	return nil
+}
+
+// seedMaintainedGroups writes the config a maintained group is: four node
+// properties and two node-keyed tables.
+//
+// THE SAME TWO HOMES THE UI WRITES, not a seed-only shortcut. The scalars go
+// through SetNodeProperty and the sets through the maintain tables, so a seeded
+// group and a hand-configured one are the same rows — which is the only thing
+// that makes the sim's staged shape evidence about the real one.
+//
+// bin_type_mode is written explicitly, for the reason the save-time rules write
+// it: inherit-by-default would let an ancestor's allowed-bins list silently
+// govern a group that has just been told to hold two specific carrier types.
+//
+// SUPPORTS RESOLVE HERE. The spec names processes because that is what a person
+// writes down; what lands in the table is the core nodes those processes' claims
+// name, which is the same resolution the settings modal does at save time and for
+// the same reason — Core cannot read an Edge claim when it has to decide
+// anything.
+//
+// Written unconditionally rather than only-when-absent: re-seeding an edited
+// spec has to be able to CHANGE a level, and a maintained group is spec-owned
+// state, not operator-owned state a seed should preserve. Same rule the lane gate
+// point follows.
+func seedMaintainedGroups(db *store.DB, p *plantspec.Plant, nodeIDs map[string]int64, binTypeIDs map[string]int64) error {
+	// process name → the core nodes its claims name, in spec order.
+	processNodes := map[string][]string{}
+	styleProcess := map[string]string{}
+	for _, s := range p.Styles {
+		styleProcess[s.Name] = s.Process
+	}
+	for _, c := range p.Claims {
+		proc, ok := styleProcess[c.Style]
+		if !ok || c.CoreNode == "" {
+			continue
+		}
+		already := false
+		for _, n := range processNodes[proc] {
+			if n == c.CoreNode {
+				already = true
+				break
+			}
+		}
+		if !already {
+			processNodes[proc] = append(processNodes[proc], c.CoreNode)
+		}
+	}
+
+	for _, mg := range p.MaintainedGroups {
+		groupID, ok := nodeIDs[mg.Group]
+		if !ok {
+			return fmt.Errorf("maintained group %q: zone not found among seeded nodes", mg.Group)
+		}
+		props := []struct{ key, value string }{
+			{nodes.PropMaintainEnabled, "on"},
+			{nodes.PropStrictSourcing, boolProp(mg.Strict)},
+			{nodes.PropMaintenanceStation, mg.Station},
+			{nodes.PropOverflowDestination, mg.Overflow},
+			{nodes.PropBinTypeMode, nodes.BinTypeModeAll},
+		}
+		for _, pr := range props {
+			if err := db.SetNodeProperty(groupID, pr.key, pr.value); err != nil {
+				return fmt.Errorf("maintained group %q property %s: %w", mg.Group, pr.key, err)
+			}
+		}
+		for _, l := range mg.Levels {
+			btID, ok := binTypeIDs[l.BinType]
+			if !ok {
+				return fmt.Errorf("maintained group %q: bin type %q not seeded", mg.Group, l.BinType)
+			}
+			if err := db.SetMaintainLevel(store.MaintainLevel{
+				GroupNodeID: groupID, BinTypeID: btID, Want: l.Want,
+			}); err != nil {
+				return fmt.Errorf("maintained group %q level %s: %w", mg.Group, l.BinType, err)
+			}
+		}
+		var supportIDs []int64
+		for _, proc := range mg.Supports {
+			for _, nodeName := range processNodes[proc] {
+				id, ok := nodeIDs[nodeName]
+				if !ok {
+					continue
+				}
+				supportIDs = append(supportIDs, id)
+			}
+		}
+		if err := db.SetMaintainSupports(groupID, supportIDs); err != nil {
+			return fmt.Errorf("maintained group %q supports: %w", mg.Group, err)
+		}
+	}
+	return nil
+}
+
+func boolProp(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
 }
 
 // seedBinLoaders derives the Core-owned bin_loaders aggregate from the plant's

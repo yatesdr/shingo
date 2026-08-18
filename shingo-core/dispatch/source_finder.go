@@ -669,7 +669,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			cause := CauseFinderPlantEmpty
 			if wantType != "" {
 				b, err = f.db.FindEmptyBinOfType(wantType, preferZone, excludeID)
-				cause = "finder-no-empty-of-type"
+				cause = CauseFinderNoEmptyOfType
 			} else {
 				b, err = f.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeID)
 			}

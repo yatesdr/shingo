@@ -99,11 +99,18 @@
       </div>
       <div class="form-group mb-1">
         <label>Bin Types <span class="tooltip-trigger" title="Which bin types can hold this payload">?</span></label>
-        <select id="plc-bin-types" multiple style="height:4rem">
+        <!-- Checkboxes, not a <select multiple>. Multi-select needs ctrl-click to
+             add and drops the entire selection on a plain click — an easy way to
+             clear a payload's carrier types by accident, with nothing on screen
+             saying you did. -->
+        <div id="plc-bin-types" class="check-list">
           {{range .BinTypes}}
-          <option value="{{.ID}}">{{.Code}}{{if .Description}} - {{.Description}}{{end}}</option>
+          <label class="check-list-item">
+            <input type="checkbox" value="{{.ID}}">
+            <span><strong>{{.Code}}</strong>{{if .Description}} <span class="text-muted">{{.Description}}</span>{{end}}</span>
+          </label>
           {{end}}
-        </select>
+        </div>
       </div>
       <div class="form-group mb-1">
         <label>Notes</label>
@@ -156,11 +163,14 @@
       </div>
       <div class="form-group mb-1">
         <label>Bin Types</label>
-        <select id="ple-bin-types" multiple style="height:4rem">
+        <div id="ple-bin-types" class="check-list">
           {{range .BinTypes}}
-          <option value="{{.ID}}">{{.Code}}{{if .Description}} - {{.Description}}{{end}}</option>
+          <label class="check-list-item">
+            <input type="checkbox" value="{{.ID}}">
+            <span><strong>{{.Code}}</strong>{{if .Description}} <span class="text-muted">{{.Description}}</span>{{end}}</span>
+          </label>
           {{end}}
-        </select>
+        </div>
       </div>
       <div class="form-group mb-1">
         <label>Notes</label>

@@ -413,6 +413,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				// omitted field means, and both answers are wrong — one deletes
 				// a level when the form fails to populate, the other makes
 				// clearing impossible.
+				r.Post("/nodes/maintained-group/check-types", h.apiMaintainedGroupCheckTypes)
 				r.Post("/nodes/maintained-group/settings", h.apiMaintainedGroupSettingsSet)
 				r.Post("/nodes/maintained-group/level", h.apiMaintainedGroupLevelSet)
 				r.Post("/nodes/maintained-group/level/remove", h.apiMaintainedGroupLevelRemove)
