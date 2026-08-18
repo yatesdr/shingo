@@ -198,9 +198,12 @@ func TestClient_Reconfigure(t *testing.T) {
 
 	_ = client.Subscribe("test-topic", handler)
 
-	// Reconfigure with new brokers
+	// Reconfigure with new brokers. 127.0.0.1:1, not a made-up hostname: Connect()
+	// wraps the dial in a 5s deadline and an unresolvable name blocks until it on
+	// this host's DNS, which made this test a flat 5.00s every run. Connection
+	// refused is instant and exercises the same unreachable-broker path.
 	newCfg := &config.MessagingConfig{
-		Kafka:         config.KafkaConfig{Brokers: []string{"newhost:9092"}},
+		Kafka:         config.KafkaConfig{Brokers: []string{"127.0.0.1:1"}},
 		OrdersTopic:   "shingo.orders",
 		DispatchTopic: "shingo.dispatch",
 	}
@@ -212,8 +215,8 @@ func TestClient_Reconfigure(t *testing.T) {
 	}
 
 	// Verify config was updated
-	if len(client.cfg.Kafka.Brokers) != 1 || client.cfg.Kafka.Brokers[0] != "newhost:9092" {
-		t.Errorf("brokers = %v, want [newhost:9092]", client.cfg.Kafka.Brokers)
+	if len(client.cfg.Kafka.Brokers) != 1 || client.cfg.Kafka.Brokers[0] != "127.0.0.1:1" {
+		t.Errorf("brokers = %v, want [127.0.0.1:1]", client.cfg.Kafka.Brokers)
 	}
 }
 

@@ -183,11 +183,16 @@ func TestHandleConfigSave_MessagingSection(t *testing.T) {
 	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
+	// Hosts are 127.0.0.1, ports closed, not made-up broker names: the save
+	// triggers ReconfigureMessaging → Connect(), whose 5s dial deadline on an
+	// unresolvable hostname made this test a flat ~11.7s (two brokers × 5s) — a
+	// quarter of the package's wall time. Connection refused is instant and
+	// exercises the same unreachable-broker path.
 	form := url.Values{}
 	form.Set("section", "messaging")
-	form.Set("kafka_host_0", "broker-a")
+	form.Set("kafka_host_0", "127.0.0.1")
 	form.Set("kafka_port_0", "9092")
-	form.Set("kafka_host_1", "broker-b")
+	form.Set("kafka_host_1", "127.0.0.1")
 	form.Set("kafka_port_1", "9093")
 	form.Set("group_id", "shingo-test")
 	form.Set("orders_topic", "orders.test")
@@ -202,10 +207,10 @@ func TestHandleConfigSave_MessagingSection(t *testing.T) {
 	if len(cfg.Messaging.Kafka.Brokers) != 2 {
 		t.Fatalf("brokers: got %d, want 2: %v", len(cfg.Messaging.Kafka.Brokers), cfg.Messaging.Kafka.Brokers)
 	}
-	if cfg.Messaging.Kafka.Brokers[0] != "broker-a:9092" {
+	if cfg.Messaging.Kafka.Brokers[0] != "127.0.0.1:9092" {
 		t.Errorf("broker[0]: got %q", cfg.Messaging.Kafka.Brokers[0])
 	}
-	if cfg.Messaging.Kafka.Brokers[1] != "broker-b:9093" {
+	if cfg.Messaging.Kafka.Brokers[1] != "127.0.0.1:9093" {
 		t.Errorf("broker[1]: got %q", cfg.Messaging.Kafka.Brokers[1])
 	}
 	if cfg.Messaging.OrdersTopic != "orders.test" {
