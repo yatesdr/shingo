@@ -193,6 +193,22 @@ func (e *Engine) Start() {
 		e.sourceabilityMonitor.Run(srcCtx)
 	}
 
+	// The maintained-group level keeper. Live-capable and gated ONLY by each
+	// group's own maintain_enabled property — no group has it set until an owner
+	// does, so starting it unconditionally starts nothing.
+	//
+	// LAST, and after the dispatcher exists: the keeper mints orders through
+	// AdmitCoreAsk, and Engine.New leaves e.dispatcher nil (Start constructs it
+	// above). A keeper ticking before that would panic on its first gap.
+	if e.maintainer != nil {
+		mntCtx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-e.stopChan
+			cancel()
+		}()
+		e.maintainer.Run(mntCtx)
+	}
+
 	e.logFn("engine: started")
 }
 

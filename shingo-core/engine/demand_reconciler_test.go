@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
 	"shingocore/store"
 	"shingocore/store/demands"
@@ -641,4 +642,70 @@ func orderClassCounts(t *testing.T, db *store.DB) map[string]int {
 		counts[c] = n
 	}
 	return counts
+}
+
+// THE CHILDLESS SWEEP IS EXEMPT FROM MAINTAIN EPISODES, and this test pins the
+// reason rather than the exemption: zero children is not evidence for a demand
+// whose orders Core creates itself.
+//
+// A maintained group with no free position opens an episode on the gap and then
+// pre-resolves nothing, because there is nowhere to put a carrier. That is a
+// group that is FULL — a steady state that can last a shift — and the sweep
+// reading it as a stranded demand would close an episode the keeper re-opens
+// sixty seconds later, forever, filling the demand surface with short
+// unattributed episodes describing nothing that ever happened.
+//
+// The threshold half of the test is the control: the same pass, same grace, same
+// live Edge, still closes a genuinely stranded threshold episode. Without it
+// this test would also pass if the sweep had simply stopped working.
+func TestDemandReconciler_LeavesMaintainEpisodesToTheKeeper(t *testing.T) {
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+	registerActiveEdge(t, db, "test-core")
+
+	// One position, want two, and that one position already holds a carrier of
+	// the type: a gap of one with nowhere to pre-resolve it to.
+	grpID, btID := mntFixture(t, db, "MNT-RECON", 1, "MNT-RC", 2)
+	children, err := db.ListChildNodes(grpID)
+	testutil.MustNoErr(t, err, "list children")
+	_, err = db.Exec(
+		`INSERT INTO bins (bin_type_id, label, node_id, status) VALUES ($1,'MNT-RC-BIN-1',$2,'available')`,
+		btID, children[0].ID)
+	testutil.MustNoErr(t, err, "occupy the only position")
+
+	eng.Maintainer().Tick()
+	st := mntState(t, eng.Maintainer(), "MNT-RECON", "MNT-RC")
+	if st.OriginID == "" {
+		t.Fatal("setup: the keeper opened no episode despite a gap of one")
+	}
+	if st.Created != 0 {
+		t.Fatalf("setup: created=%d asks, want 0 — the fixture left a free position "+
+			"and no longer builds the childless case this test is about", st.Created)
+	}
+	maintainOrigin := st.OriginID
+	backdateEpisode(t, db, maintainOrigin, time.Hour)
+
+	// The control: a stranded threshold episode of the same age.
+	m := eng.thresholdMonitor
+	b := episodeBinding(t, eng, "PANEL-RCX", 18)
+	registerBinding(t, db, b)
+	registerActiveEdge(t, db, b.stationID)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold", false)
+	open, _ := db.ListOpenThresholdEpisodes()
+	if len(open) != 1 {
+		t.Fatalf("control: no threshold episode opened: %d", len(open))
+	}
+	thresholdOrigin := open[0].OriginID
+	backdateEpisode(t, db, thresholdOrigin, time.Hour)
+
+	eng.reconcileDemandEpisodes()
+
+	if got := mustGetOrigin(t, db, maintainOrigin); got.ClosedAt != nil {
+		t.Errorf("the sweep closed a maintain episode as %q — the keeper owns ending these, "+
+			"and it will re-open this key on its next tick", got.CloseReason)
+	}
+	if got := mustGetOrigin(t, db, thresholdOrigin); got.ClosedAt == nil {
+		t.Error("control failed: the sweep left a stranded threshold episode open, so this " +
+			"test proves nothing about the exemption")
+	}
 }

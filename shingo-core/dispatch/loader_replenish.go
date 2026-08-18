@@ -397,33 +397,76 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 // insert. A second writer here is exactly the drift the order-writer
 // consolidation removed one layer down.
 func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderReplenishConfig, t loaders.Target) (*orders.Order, error) {
-	order := &orders.Order{
-		// Core mints its own identity, prefixed so a row's origin is readable
-		// without a join. Edge-authored UUIDs are bare; this one says where it came
-		// from at a glance and in a log line.
-		EdgeUUID:     "core-l1-" + uuid.New().String(),
+	order, err := d.AdmitCoreAsk(CoreAskSpec{
+		UUIDPrefix:   "core-l1-",
 		StationID:    req.StationID,
+		SourceNode:   cfg.emptySource(),
+		DeliveryNode: t.NodeName,
+		OriginID:     req.OriginID,
+		OriginClass:  req.OriginClass,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("admit replenishment for loader %d at %s: %w", req.LoaderID, t.NodeName, err)
+	}
+	return order, nil
+}
+
+// CoreAskSpec is one Core-authored carrier pull: everything that differs between
+// the two things Core asks for on its own initiative.
+//
+// TWO CALLERS, ONE DOOR. The loader replenishment loop and the maintained-group
+// level keeper both mint retrieve_empty orders nobody on the Edge requested. What
+// they share — the order shape, the admit, the projection, the origin-class rule
+// — is everything except the six fields below, and a second copy of that body is
+// exactly the drift the order-writer consolidation removed one layer down.
+type CoreAskSpec struct {
+	// UUIDPrefix marks where the order came from, readably, without a join.
+	// Edge-authored UUIDs are bare; Core's say so at a glance and in a log line.
+	// "core-l1-" is the loader loop, "core-mnt-" the level keeper.
+	UUIDPrefix   string
+	StationID    string
+	SourceNode   string
+	DeliveryNode string
+	// PayloadDesc is the human line on the Edge board card. The carrier is
+	// generic so PayloadCode stays blank (below), which leaves the card with
+	// nothing to render — this is what it renders instead ("empty 45x58x32").
+	PayloadDesc string
+	OriginID    string
+	OriginClass string
+}
+
+// AdmitCoreAsk builds and admits one Core-authored carrier pull.
+//
+// It goes through admitOrder, the same body wire-originated orders go through,
+// rather than writing a row itself — so a Core-originated order gets the same
+// reference checks, the same synthetic-destination resolution, and the same
+// insert.
+func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
+	order := &orders.Order{
+		EdgeUUID:     spec.UUIDPrefix + uuid.New().String(),
+		StationID:    spec.StationID,
 		OrderType:    OrderTypeRetrieveEmpty,
 		Status:       StatusPending,
 		Quantity:     1,
-		SourceNode:   cfg.emptySource(),
-		DeliveryNode: t.NodeName,
+		SourceNode:   spec.SourceNode,
+		DeliveryNode: spec.DeliveryNode,
 		// No payload code, deliberately. An empty carrier is generic: the part
 		// binds when the loader fills it. Stamping the payload here would tag a
 		// carrier that is supposed to be untagged, and that tag then picks the
 		// robot — the same rule lookupPayloadMeta states from the Edge side.
 		PayloadCode:  "",
+		PayloadDesc:  spec.PayloadDesc,
 		SourceIntent: SourceIntentForType(OrderTypeRetrieveEmpty),
 		// Origin attaches locally. Unlike the wire path there is no sender's claim
 		// to classify: Core opened this episode and knows what it is.
-		OriginID:    req.OriginID,
-		OriginClass: req.OriginClass,
+		OriginID:    spec.OriginID,
+		OriginClass: spec.OriginClass,
 	}
 	// Origin class, stated rather than defaulted. An order carrying an episode id
 	// IS attached by definition, and leaving the class blank would stamp every
-	// Core-originated replenishment as an orphan — turning the demand-grain
-	// bucket that exists to find lost attributions into a bucket containing
-	// nothing but correctly-attributed orders.
+	// Core-originated ask as an orphan — turning the demand-grain bucket that
+	// exists to find lost attributions into a bucket containing nothing but
+	// correctly-attributed orders.
 	//
 	// A caller that supplies neither is genuinely unattributed, and orphan is the
 	// honest reading rather than a guess that keeps the bucket quiet.
@@ -436,9 +479,9 @@ func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderRepleni
 	}
 	if lerr := d.lifecycle.admitOrder(order); lerr != nil {
 		if lerr.Err != nil {
-			return nil, fmt.Errorf("admit replenishment for loader %d at %s: %w", req.LoaderID, t.NodeName, lerr.Err)
+			return nil, lerr.Err
 		}
-		return nil, fmt.Errorf("admit replenishment for loader %d at %s: %s: %s", req.LoaderID, t.NodeName, lerr.Code, lerr.Detail)
+		return nil, fmt.Errorf("%s: %s", lerr.Code, lerr.Detail)
 	}
 	// THE case the projection exists for. Nobody on the Edge asked for this
 	// order, so nobody there has a row for it; without the projection the
@@ -446,4 +489,12 @@ func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderRepleni
 	// say why.
 	d.lifecycle.projectOrder(order)
 	return order, nil
+}
+
+// QueueCoreAsk puts an admitted Core ask into the fulfillment scanner's retry
+// set. Separate from AdmitCoreAsk because the loader loop queues per window
+// inside its own loop and wants the admit failure and the queue failure
+// distinguishable.
+func (d *Dispatcher) QueueCoreAsk(order *orders.Order, stationID string) {
+	d.queueOrderInternal(order, stationID, "")
 }

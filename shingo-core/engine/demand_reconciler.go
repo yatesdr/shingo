@@ -154,6 +154,29 @@ func (e *Engine) reconcileChildlessEpisodes() (closed int, unreachable int) {
 
 	for i := range states {
 		s := &states[i]
+		if s.Kind == protocol.EpisodeKindMaintain {
+			// EXEMPT, and not because maintain episodes are special-cased out of
+			// hygiene — because this check's evidence does not exist for them.
+			//
+			// Zero children means "Core never heard an order attributed to this
+			// demand", which is evidence only for demand whose orders arrive from
+			// somewhere else. A maintain episode's asks are created by Core, in
+			// this process, with the origin already stamped on them. If none
+			// exist, none were wanted: the keeper mints the episode on the gap and
+			// then pre-resolves each ask to a free position, so a group whose
+			// positions are all occupied opens an episode and legitimately creates
+			// nothing until one frees up. That is a group that is FULL, which is a
+			// steady state and can last a shift.
+			//
+			// Closing it would be worse than a false finding. The keeper re-opens
+			// the same key on its next tick, so the sweep and the keeper would
+			// fight at a one-minute cadence, filling the demand surface with short
+			// unattributed episodes that describe nothing that happened. The
+			// config-withdrawn pass in closeWithdrawn is what owns ending these,
+			// and it owns it on the only precondition that means anything here:
+			// the declaration going away.
+			continue
+		}
 		contact := classifyEdgeContact(s.EdgeLastSeen, now, horizon)
 		if contact != edgeContactRecent {
 			unreachable++

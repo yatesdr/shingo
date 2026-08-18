@@ -819,3 +819,9 @@ func (db *DB) UpdateOrderRobotID(id int64, robotID string) error {
 func (db *DB) ActiveOrderIDsByRobot() (map[string]int64, error) {
 	return orders.ActiveIDsByRobot(db.DB)
 }
+
+// ListOrdersByOrigin returns a demand episode's own orders, oldest first, with a
+// truncation flag. See orders.ListByOrigin.
+func (db *DB) ListOrdersByOrigin(originID string, limit int) ([]*orders.Order, bool, error) {
+	return orders.ListByOrigin(db.DB, originID, limit)
+}
