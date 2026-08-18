@@ -234,7 +234,7 @@
       <h2>Create Bin</h2>
       <button class="modal-close" data-action="closeCreateBinModal">&times;</button>
     </div>
-    <form method="POST" action="/bins/create">
+    <form method="POST" action="/bins/create" data-action-submit="confirmBinCreate">
       <div class="grid grid-2">
         <div class="form-group">
           <label>Bin Type</label>
@@ -246,8 +246,8 @@
           </select>
         </div>
         <div class="form-group">
-          <label>Label <span class="tooltip-trigger" title="Quantity 1 uses this exact label. For more than 1, a trailing number is incremented (e.g. 'BIN-010' generates BIN-010, BIN-011, …); with no trailing number it appends 0001, 0002, …">?</span></label>
-          <input type="text" name="label_prefix" placeholder="e.g. BIN-010" required>
+          <label>Label</label>
+          <input type="text" name="label_prefix" placeholder="e.g. CARRIER-0101" required data-action-input="previewBinLabels">
         </div>
         <div class="form-group">
           <label>Node (optional)</label>
@@ -259,8 +259,8 @@
           </select>
         </div>
         <div class="form-group">
-          <label>Quantity <span class="tooltip-trigger" title="Number of bins to create (1-100). Labels will be auto-numbered.">?</span></label>
-          <input type="number" name="quantity" value="1" min="1" max="100">
+          <label>Quantity — how many carriers to create (1–100)</label>
+          <input type="number" name="quantity" value="1" min="1" max="100" data-action-input="previewBinLabels">
         </div>
         <div class="form-group">
           <label>Status</label>
@@ -270,6 +270,7 @@
           </select>
         </div>
       </div>
+      <p class="form-hint" id="bin-label-preview" style="margin:0.25rem 0 0.75rem"></p>
       <button type="submit" class="btn btn-primary">Create</button>
       <button type="button" class="btn ml-05" data-action="closeCreateBinModal">Cancel</button>
     </form>

@@ -720,8 +720,78 @@ function openEditBTModal(btn) {
 function closeBTEditModal() { hideModal('bt-edit-modal'); }
 
 // ===== CREATE BIN MODAL =====
-function openCreateBinModal() { showModal('bin-create-modal'); }
+function openCreateBinModal() { showModal('bin-create-modal'); previewBinLabels(); }
 function closeCreateBinModal() { hideModal('bin-create-modal'); }
+
+// previewBinLabels mirrors the server's batchLabels rule (bin_service.go
+// batchLabels): quantity 1 uses the label as typed; a trailing number is
+// incremented across the batch; no trailing number appends 0001, 0002, ….
+// Showing the generated range before save is the one place the operator can
+// still catch a mis-typed prefix (the ALN_017 × 94 batch at Hopkinsville
+// looked exactly like a carrier fleet on the form and like node names
+// everywhere else).
+function previewBinLabels() {
+  var out = document.getElementById('bin-label-preview');
+  if (!out) return;
+  var form = document.getElementById('bin-create-modal');
+  var label = form.querySelector('input[name=label_prefix]').value.trim();
+  var qtyEl = form.querySelector('input[name=quantity]');
+  var qty = parseInt(qtyEl.value, 10) || 1;
+  if (!label) { out.textContent = ''; return; }
+  var labels = batchLabelsPreview(label, qty);
+  if (labels.length <= 2) {
+    out.textContent = 'Creates carrier: ' + labels.join(', ');
+  } else {
+    out.textContent = 'Creates ' + labels.length + ' carriers: ' + labels[0] + ' … ' + labels[labels.length - 1];
+  }
+}
+
+// batchLabelsPreview is the client twin of the server's label generation
+// (bin_service.go batchLabels): trailing number incremented at its own
+// width, else a 4-digit suffix appended.
+function batchLabelsPreview(label, count) {
+  count = Math.max(1, Math.min(count, 100));
+  var m = label.match(/^(.*?)(\d+)$/);
+  var out = [];
+  if (m) {
+    var start = parseInt(m[2], 10);
+    var width = m[2].length;
+    for (var i = 0; i < count; i++) out.push(m[1] + String(start + i).padStart(width, '0'));
+    return out;
+  }
+  for (var i = 0; i < count; i++) out.push(label + String(i + 1).padStart(4, '0'));
+  return out;
+}
+
+// confirmBinCreate is the submit gate on the create form. preventDefault is
+// first — delegateActions ignores what a handler returns, and a preventDefault
+// reached after the first await arrives once the browser is already navigating
+// (see handleNodeSave in nodes-detail.js for the same rule). form.submit() at
+// the end does not fire a submit event, so this cannot re-enter.
+//
+// A multi-carrier batch is confirmed with its full label range; a single
+// carrier goes through unasked. A generated label that matches an existing
+// NODE name is refused outright — that collision is the fingerprint of a
+// prefix typed from the wrong list (the Hopkinsville ALN_017 × 94 batch),
+// and no quantity of confirmations makes it right.
+async function confirmBinCreate(form, evt) {
+  if (evt) evt.preventDefault();
+  var label = form.querySelector('input[name=label_prefix]').value.trim();
+  var qty = parseInt(form.querySelector('input[name=quantity]').value, 10) || 1;
+  var labels = batchLabelsPreview(label, qty);
+  var nodeNames = {};
+  (PAGE_NODES || []).forEach(function(n) { nodeNames[n.name] = true; });
+  var collisions = labels.filter(function(l) { return nodeNames[l]; });
+  if (collisions.length > 0) {
+    toast('Label ' + collisions[0] + ' is already a NODE name — carriers and nodes cannot share labels. Fix the label prefix.', 'error');
+    return;
+  }
+  if (labels.length > 1) {
+    var msg = 'Create ' + labels.length + ' carriers labeled ' + labels[0] + ' … ' + labels[labels.length - 1] + '?';
+    if (!await uiConfirm(msg)) return;
+  }
+  form.submit();
+}
 
 // ===== KEYBOARD =====
 document.addEventListener('keydown', function(e) {
@@ -775,6 +845,7 @@ delegateActions(document.body, {
     ccStart,
     ccSummary,
     clearBin,
+    confirmBinCreate,
     clearSelection,
     closeBTCreateModal,
     closeBTEditModal,
@@ -794,6 +865,7 @@ delegateActions(document.body, {
     openCreateBinModal,
     openCycleCount,
     openEditBTModal,
+    previewBinLabels,
     recordCount,
     refreshBinRow,
     renderActions,
