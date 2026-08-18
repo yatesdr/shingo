@@ -21,12 +21,18 @@ CREATE TABLE IF NOT EXISTS nodes (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- bin_types.length_in is the third dimension, added at v90. The table carried
+-- width and height only, which left a code like "45x58x32" holding its own
+-- length in the STRING and nowhere a query could reach it. Nothing consumes any
+-- of the three — carrier fit is type identity everywhere — so this is metadata
+-- hygiene, not the start of geometry-based fitting.
 CREATE TABLE IF NOT EXISTS bin_types (
     id          BIGSERIAL PRIMARY KEY,
     code        TEXT NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT '',
     width_in    DOUBLE PRECISION NOT NULL DEFAULT 0,
     height_in   DOUBLE PRECISION NOT NULL DEFAULT 0,
+    length_in   DOUBLE PRECISION NOT NULL DEFAULT 0,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -507,18 +513,27 @@ CREATE TABLE IF NOT EXISTS node_payloads (
     PRIMARY KEY (node_id, payload_id)
 );
 
+-- node_properties.updated_at and node_bin_types.created_at arrived at v90.
+-- Both tables are written by the group settings modal, and neither row could say
+-- when it was last touched: the property UPSERT changes the value in place, so a
+-- created_at-only row reads as untouched forever, and node_bin_types carried no
+-- timestamp at all. The audit_log says who and what; these say when the ROW
+-- moved, which is the half SPR Finding 3 could not prove from the schema.
+-- (No backticks in this file: the whole DDL is one Go raw string literal.)
 CREATE TABLE IF NOT EXISTS node_properties (
     id         BIGSERIAL PRIMARY KEY,
     node_id    BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     key        TEXT NOT NULL,
     value      TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (node_id, key)
 );
 
 CREATE TABLE IF NOT EXISTS node_bin_types (
     node_id     BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     bin_type_id BIGINT NOT NULL REFERENCES bin_types(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (node_id, bin_type_id)
 );
 

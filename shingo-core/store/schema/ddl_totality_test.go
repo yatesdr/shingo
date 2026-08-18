@@ -37,6 +37,8 @@ var migrationOnlyTables = map[string]string{
 	"bin_uop_audit":               "added by a numbered migration after the baseline was frozen",
 	"cell_config":                 "added by a numbered migration after the baseline was frozen",
 	"demand_origins":              "added by a numbered migration after the baseline was frozen",
+	"node_maintain_levels":        "added by v90 — how many empty carriers of each type a maintained node group is to hold. Separate from bin_loader_quotas on purpose: a quota is a preference bounded by never-2N, a maintained level is the number Core keeps",
+	"node_maintain_supports":      "added by v90 — which process nodes a maintained group serves; the resolved node set, because a claim is Edge-local and Core cannot read one",
 	"edge_cells":                  "added by a numbered migration after the baseline was frozen",
 	"edge_lineside_reports":       "added by a numbered migration after the baseline was frozen",
 	"order_bins":                  "added by a numbered migration after the baseline was frozen",

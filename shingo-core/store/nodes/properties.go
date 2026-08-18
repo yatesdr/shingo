@@ -15,8 +15,15 @@ import (
 type Property = domain.NodeProperty
 
 // SetProperty upserts a key-value property on a node.
+//
+// updated_at moves on every write, including a write that sets the same value
+// again. That is deliberate: the question the column answers is "when did
+// somebody last save this", and a no-op save is still a save. What CHANGED is
+// the audit_log's question, and it is answered there (old→new, unconditionally,
+// at the property endpoint) — the two are different facts and each has one home.
 func SetProperty(db *sql.DB, nodeID int64, key, value string) error {
-	_, err := db.Exec(`INSERT INTO node_properties (node_id, key, value) VALUES ($1, $2, $3) ON CONFLICT (node_id, key) DO UPDATE SET value=$4`,
+	_, err := db.Exec(`INSERT INTO node_properties (node_id, key, value) VALUES ($1, $2, $3)
+		ON CONFLICT (node_id, key) DO UPDATE SET value=$4, updated_at=NOW()`,
 		nodeID, key, value, value)
 	return err
 }

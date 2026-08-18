@@ -3970,14 +3970,31 @@ func migrationList() []migration {
 		// this branch used to make AS v73, expressed here as its own new version
 		// instead of as a second definition of a number both trees have recorded.
 		//
-		// LAST IN THE LIST, AND THAT IS LOAD-BEARING TWICE OVER.
-		// latestMigrationVersion is read off the LAST ELEMENT rather than the
-		// maximum, so anything appended below this silently walks the reported
-		// head backwards; and this must run AFTER v73, which is the thing it
-		// undoes.
+		// MUST RUN AFTER v73, which is the thing it undoes — so it stays below it
+		// no matter what else arrives.
 		{89, "orders.edge_uuid unique — restore exemption retired (back to plain predicate)",
 			v89OrdersUUIDPlain,
 			func(q schema.Querier) bool { return uuidIndexIsUnique(q) && !uuidIndexExemptsRestore(q) }},
+
+		// v90 installs the maintained-group config surface — two node-keyed set
+		// tables, bin_types.length_in, and mtimes on node_properties /
+		// node_bin_types. Inert: nothing reads any of it until the maintainer
+		// lands. See v90MaintainedGroups.
+		//
+		// APPEND BELOW THIS, NEVER ABOVE IT. latestMigrationVersion is read off
+		// the LAST ELEMENT of this slice rather than the maximum, so a migration
+		// inserted above the tail silently walks the reported head backwards. The
+		// rule used to be written on v89 as "last in the list"; it is a property
+		// of whichever entry is last, so it travels with the tail.
+		{90, "maintained-group config: levels + supports tables, bin_types.length_in, modal mtimes",
+			v90MaintainedGroups,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "node_maintain_levels") &&
+					schema.TableExists(q, "node_maintain_supports") &&
+					schema.ColumnExists(q, "bin_types", "length_in") &&
+					schema.ColumnExists(q, "node_properties", "updated_at") &&
+					schema.ColumnExists(q, "node_bin_types", "created_at")
+			}},
 	}
 }
 
@@ -4825,6 +4842,80 @@ func v83LaneRobotConfidenceDaily(tx *sql.Tx) error {
 	for _, s := range stmts {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v83 lane_robot_confidence_daily: %w", err)
+		}
+	}
+	return nil
+}
+
+// v90MaintainedGroups installs the maintained-group config surface: the two
+// node-keyed set tables, the third bin-type dimension, and mtimes on the two
+// tables the group settings modal already writes.
+//
+// A MAINTAINED GROUP is a node group whose empty-carrier level Core holds — so
+// many of this carrier type, unclaimed, at all times. Nothing reads any of this
+// yet; the maintainer that will is a later phase. What lands here is the shape
+// an operator edits.
+//
+// NOT "buffer", anywhere. bin_loaders.home_kind='buffer' already names a
+// different thing with opposite semantics (a loader slot that counts as a
+// window, budget-bearing, no fallback — targets.go), and the two would be read
+// as one concept the first time somebody grepped for either.
+//
+// The two set tables mirror node_bin_types: composite PK, node FKs, no surrogate
+// id. The scalars that go with them (maintain_enabled, strict_sourcing,
+// maintenance_station, overflow_destination) are node_properties rows and need
+// no schema — which is most of why they are properties, since that write path
+// is audited old→new unconditionally and a new table's would not be.
+//
+// length_in is the third dimension the schema never had: bin_types carries
+// width_in and height_in, so a code like "45x58x32" holds its own length in the
+// STRING and nowhere a query can reach. Metadata hygiene rather than behaviour —
+// nothing fits carriers by geometry, and this does not start.
+func v90MaintainedGroups(tx *sql.Tx) error {
+	stmts := []string{
+		// One row per (group, carrier type) the group is to hold. want=0 is a
+		// legitimate declared value ("none of this type") and is how a level is
+		// zeroed without deleting the line; the row is deleted to stop declaring
+		// the type at all. Same distinction bin_loader_quotas draws — and the two
+		// tables stay separate on purpose: a quota is a PREFERENCE bounded by
+		// never-2N, a maintained level is a CAP the resolver will enforce.
+		`CREATE TABLE IF NOT EXISTS node_maintain_levels (
+			group_node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			bin_type_id   BIGINT NOT NULL REFERENCES bin_types(id) ON DELETE CASCADE,
+			want          INTEGER NOT NULL CHECK (want >= 0),
+			created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (group_node_id, bin_type_id)
+		)`,
+		// Which process NODES the group serves. The editor speaks "process"
+		// because that is what a person points at; what is stored is the resolved
+		// node set, because claims are Edge-local and structurally unreachable
+		// from Core (swap_peer.go) — a Core-side rule that had to resolve a claim
+		// at read time could not.
+		`CREATE TABLE IF NOT EXISTS node_maintain_supports (
+			group_node_id   BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			process_node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (group_node_id, process_node_id)
+		)`,
+		// The third dimension. Declared in the baseline CREATE TABLE too, so a
+		// fresh database gets it there and an aged one gets it here — the ordinary
+		// two-place pattern. It is NOT in migrateAddBaselineColumns: that list is
+		// for columns the baseline ASSUMES PRESENT (an index inside schema.Apply
+		// that would fail ahead of this migration), and nothing indexes length_in.
+		`ALTER TABLE bin_types ADD COLUMN IF NOT EXISTS length_in DOUBLE PRECISION NOT NULL DEFAULT 0`,
+		// mtimes on the modal's own two tables. node_properties had created_at and
+		// nothing else, so an UPSERT that changed a value left the row looking
+		// untouched; node_bin_types had no timestamps at all. The audit rows say
+		// who and what — SPR Finding 3 was that the ROWS could not corroborate it
+		// ("cannot be proven with the current schema"). Additive, no reader
+		// changes: the columns exist to be read off a plant later.
+		`ALTER TABLE node_properties ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+		`ALTER TABLE node_bin_types ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v90 maintained groups: %w", err)
 		}
 	}
 	return nil

@@ -46,6 +46,10 @@ import (
 // and v24's are — a live post-condition that a later migration undoes makes the
 // two re-run each other on every boot.
 //
+// v90 is the maintained-group config surface (two node-keyed set tables,
+// bin_types.length_in, mtimes on node_properties/node_bin_types). Appended below
+// v89, which is where the head has to stay.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -57,8 +61,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 89 {
-		t.Errorf("head migration = %d, want 89", got)
+	if got := store.LatestMigrationVersion(); got != 90 {
+		t.Errorf("head migration = %d, want 90", got)
 	}
 }
 

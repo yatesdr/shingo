@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"shingocore/store/nodes"
 	"testing"
+	"time"
 
 	"shingo/protocol/testutil"
 	"shingocore/domain"
@@ -763,6 +764,55 @@ func TestNodeProperties_SetGetDelete(t *testing.T) {
 
 	// nodes.Property type alias points at domain.NodeProperty — sanity check.
 	var _ *domain.NodeProperty = list2[0]
+}
+
+// TestNodeProperties_UpsertMovesUpdatedAt pins v90's mtime on the row a
+// re-saved property leaves behind.
+//
+// The column exists because the UPSERT changes the value IN PLACE: before it, a
+// property edited a hundred times still reported only when it was first written,
+// so the schema could not corroborate the audit trail at all (SPR Finding 3 —
+// "cannot be proven with the current schema").
+//
+// It moves on every write, including a write that stores the same value again.
+// That is the intended reading: created_at is when the property appeared,
+// updated_at is when somebody last saved it, and whether the SAVE CHANGED
+// ANYTHING is the audit_log's question, answered at the property endpoint.
+func TestNodeProperties_UpsertMovesUpdatedAt(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sdb := db.DB
+
+	n := &nodes.Node{Name: "MTIME", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(sdb, n), "nodes.Create")
+
+	readTimes := func() (created, updated time.Time) {
+		t.Helper()
+		testutil.MustNoErr(t, sdb.QueryRow(
+			`SELECT created_at, updated_at FROM node_properties WHERE node_id=$1 AND key='maintain_enabled'`,
+			n.ID).Scan(&created, &updated), "read property timestamps")
+		return
+	}
+
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "maintain_enabled", "off"), "SetProperty insert")
+	created1, updated1 := readTimes()
+
+	// A CHANGED value moves updated_at and leaves created_at where it was.
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "maintain_enabled", "on"), "SetProperty change")
+	created2, updated2 := readTimes()
+	if !created2.Equal(created1) {
+		t.Errorf("created_at moved on upsert: %v → %v", created1, created2)
+	}
+	if !updated2.After(updated1) {
+		t.Errorf("updated_at did not move on a changed value: %v → %v", updated1, updated2)
+	}
+
+	// An UNCHANGED value moves it too — a save is a save.
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "maintain_enabled", "on"), "SetProperty same value")
+	_, updated3 := readTimes()
+	if !updated3.After(updated2) {
+		t.Errorf("updated_at did not move on a re-save of the same value: %v → %v", updated2, updated3)
+	}
 }
 
 func TestListPropertiesEmpty(t *testing.T) {
