@@ -736,20 +736,27 @@ export function createBoard(root, opts) {
         return '<div class="lb-stat"><span>' + k + '</span><b>' + v + '</b></div>';
     }
     function histBlock(hist, title) {
-        const h = histPath(hist, 220, 56);
+        const w = 220, h0 = 56;
+        const h = histPath(hist, w, h0);
         if (!h.line) return '<p class="lb-note">No distribution for this window.</p>';
         const total = (hist || []).reduce(function (a, b) { return a + b; }, 0);
         const share = total ? (h.sentinel / total) : 0;
+        // The curve is translated +14 to clear the sentinel bar, so its
+        // screen span is [14, 14+w]. The 1.0 tick sits at the CURVE's right
+        // edge, not the viewBox's — the original drew it at 220 while the
+        // curve ran to 234, and the top bin rendered to the right of the
+        // "1.0" label, reading as values above 1.
+        const x0 = 14, x1 = 14 + w;
         return '<div class="lb-hist-title">' + title + '</div>' +
             '<svg class="lb-hist" viewBox="0 0 240 70" role="img" aria-label="' + title + '">' +
-            '<rect x="0" y="' + (56 - Math.min(56, share * 56 * 3)).toFixed(1) +
-            '" width="8" height="' + Math.min(56, share * 56 * 3).toFixed(1) +
+            '<rect x="0" y="' + (h0 - Math.min(h0, share * h0 * 3)).toFixed(1) +
+            '" width="8" height="' + Math.min(h0, share * h0 * 3).toFixed(1) +
             '" fill="var(--viz-coral)" opacity="0.85"><title>no estimate: ' +
             h.sentinel + '</title></rect>' +
-            '<path d="' + h.line + '" transform="translate(14,0)" fill="none" ' +
+            '<path d="' + h.line + '" transform="translate(' + x0 + ',0)" fill="none" ' +
             'stroke="var(--viz-primary)" stroke-width="1.4"/>' +
-            '<text x="0" y="68" font-size="7" fill="var(--text-muted)">0 (no est.)</text>' +
-            '<text x="220" y="68" font-size="7" fill="var(--text-muted)" text-anchor="end">1.0</text>' +
+            '<text x="' + x0 + '" y="68" font-size="7" fill="var(--text-muted)">0 (no est.)</text>' +
+            '<text x="' + x1 + '" y="68" font-size="7" fill="var(--text-muted)" text-anchor="end">1.0</text>' +
             '</svg>';
     }
 

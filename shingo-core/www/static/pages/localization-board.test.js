@@ -98,6 +98,22 @@ console.log('histPath');
     check('a missing histogram is absent, not empty-at-zero',
         m.histPath(null, 200, 50).line === '' && m.histPath([], 200, 50).line === '',
         'a padded or invented curve answers from a distribution nobody stored');
+
+    // THE SPAN CONTRACT: histPath draws over exactly [0, w]. histBlock
+    // translates the curve +14 to clear the sentinel bar, so the "1.0" axis
+    // label belongs at 14 + w — the curve's actual right edge. The original
+    // pinned the label at 220 while the curve ran to 234, and the top bin
+    // rendered to the right of "1.0", which read as values above 1. Confidence
+    // is bounded at 1.0 by construction; only the axis can be wrong.
+    const full = new Array(51).fill(0);
+    full[50] = 5;              // everything in the top bin
+    const hf = m.histPath(full, 220, 56);
+    const firstX = parseFloat(hf.line.slice(1));
+    const lastX = parseFloat(hf.line.slice(hf.line.lastIndexOf('L') + 1));
+    check('the curve starts at x=0 and ends at exactly x=w',
+        firstX === 0 && lastX === 220,
+        'first=' + firstX + ' last=' + lastX +
+        ' — the 1.0 label sits at 14 + w and drifts with this span');
 })();
 
 // --- the redundant channel -----------------------------------------------
