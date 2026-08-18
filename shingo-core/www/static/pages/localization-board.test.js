@@ -36,6 +36,7 @@ function load() {
     vm.createContext(ctx);
     vm.runInContext(src + '\n__out = { histPath: histPath, serverLaneKey: serverLaneKey, ' +
         'deltaVerdict: deltaVerdict, DELTA_SIGNIFICANT: DELTA_SIGNIFICANT, ' +
+        'annotationVerdict: annotationVerdict, ' +
         'VERDICT_TOKEN: VERDICT_TOKEN, VERDICT_STROKE: VERDICT_STROKE, ' +
         'VERDICT_DASH: VERDICT_DASH, ' +
         'BAND_STROKE: BAND_STROKE, BAND_TOKEN: BAND_TOKEN };', ctx);
@@ -225,6 +226,68 @@ console.log('deltaVerdict');
     check('no plant baselines at all leaves the raw delta',
         m.deltaVerdict(lane(0.60, 100), lane(0.70, 100), null, null, MIN) === 'better',
         'null on both sides — no adjustment, no invention');
+})();
+
+// The change annotation's verdict — same arithmetic as deltaVerdict, but over
+// a /lane-change payload, and it must return its pieces (num, lane, plant)
+// because the banner prints all three. Pinned here so banner and table cell
+// can never disagree, and so the suppressed/no-p50 cases stay verdicts with
+// banner weight rather than reverting to grey footnotes.
+console.log('annotationVerdict');
+(function () {
+    const ann = function (before, after, plant) {
+        return m.annotationVerdict({
+            p50_before: before, p50_after: after, plant_delta: plant,
+            suppress_p50: false
+        });
+    };
+
+    check('a lane that beats the plant is better, with the attributable number',
+        (function () {
+            const v = ann(0.60, 0.70, 0.01);
+            return v.cls === 'lb-better' && v.word === 'better' &&
+                Math.abs(v.num - 0.09) < 1e-9 &&
+                Math.abs(v.lane - 0.10) < 1e-9 && Math.abs(v.plant - 0.01) < 1e-9;
+        })(), 'lane +0.10, plant +0.01 → better +0.09');
+
+    check('a lane that moves with the plant is neutral',
+        ann(0.60, 0.70, 0.10).cls === 'lb-neutral',
+        'lane +0.10, plant +0.10 → attributable 0');
+
+    check('a lane that falls behind the plant is worse',
+        ann(0.60, 0.62, 0.10).cls === 'lb-worse',
+        'lane +0.02, plant +0.10 → attributable −0.08');
+
+    check('the ±0.02 threshold applies to the attributable delta',
+        ann(0.60, 0.60 + m.DELTA_SIGNIFICANT + 0.001, 0).cls === 'lb-better' &&
+        ann(0.60, 0.60 + m.DELTA_SIGNIFICANT - 0.001, 0).cls === 'lb-neutral',
+        'just over and just under, plant flat');
+
+    check('a suppressed payload is a withheld verdict, not a missing one',
+        (function () {
+            const v = m.annotationVerdict({ suppress_p50: true, suppressed: 'miss rate moved' });
+            return v.cls === 'lb-suppressed' && v.word === 'not comparable' &&
+                v.num === null && v.plant === null;
+        })(), 'suppress_p50 must still render a banner');
+
+    check('a null p50 on one side is stated, not guessed',
+        (function () {
+            const v = ann(null, 0.70, 0.0);
+            return v.cls === 'lb-neutral' && v.word === 'no p50 one side' &&
+                v.num === null;
+        })(), 'no before-average → no verdict number');
+
+    check('a null plant delta withholds the classification, keeps the raw delta',
+        (function () {
+            const v = ann(0.60, 0.70, null);
+            return v.cls === 'lb-neutral' && v.num === null &&
+                Math.abs(v.lane - 0.10) < 1e-9 && v.plant === null;
+        })(),
+        'without a baseline nothing is attributable; the lane delta is data, not a verdict');
+
+    check('a null payload is not a verdict',
+        m.annotationVerdict(null) === null,
+        'no annotation → no banner');
 })();
 
 // The greyscale channel: hue does not carry direction, so worse and

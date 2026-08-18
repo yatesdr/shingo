@@ -131,6 +131,34 @@ export function deltaVerdict(a, b, plantA, plantB, minSamples) {
     return 'neutral';
 }
 
+// annotationVerdict grades an annotation payload (the /lane-change answer)
+// for the change block's banner. It is the annotation's own arithmetic —
+// attributable = lane delta − plant delta, ±0.02, withheld when the miss
+// rate moved — lifted out of the table cell it used to hide in. Returned as
+// data, not HTML, so the threshold and the plant-null and suppressed cases
+// are assertable without a DOM.
+export function annotationVerdict(c) {
+    if (!c) return null;
+    if (c.suppress_p50) {
+        return { cls: 'lb-suppressed', word: 'not comparable',
+            num: null, lane: null, plant: null };
+    }
+    if (c.p50_before == null || c.p50_after == null) {
+        return { cls: 'lb-neutral', word: 'no p50 one side',
+            num: null, lane: null, plant: null };
+    }
+    const d = c.p50_after - c.p50_before;
+    const hasPlant = c.plant_delta !== null && c.plant_delta !== undefined;
+    const attributable = hasPlant ? d - c.plant_delta : null;
+    let cls = 'lb-neutral', word = 'no change', num = null;
+    if (attributable !== null) {
+        if (attributable > DELTA_SIGNIFICANT) { cls = 'lb-better'; word = 'better'; num = attributable; }
+        else if (attributable < -DELTA_SIGNIFICANT) { cls = 'lb-worse'; word = 'worse'; num = attributable; }
+    }
+    return { cls: cls, word: word, num: num, lane: d,
+        plant: hasPlant ? c.plant_delta : null };
+}
+
 // VERDICT_STROKE / VERDICT_TOKEN / VERDICT_DASH are the compare-mode marks.
 //
 // HUE ALONE DOES NOT CARRY DIRECTION. Green and coral collapse under
@@ -790,6 +818,9 @@ export function createBoard(root, opts) {
     }
 
     // annotationBlock renders the four guards, or says plainly why it cannot.
+    // The verdict leads as a banner — the number that answers "did the edit
+    // help" is the block's whole point, and it used to sit 11px and grey in a
+    // table cell third from the top.
     function annotationBlock() {
         const c = state.change;
         if (!c) return '';
@@ -802,6 +833,20 @@ export function createBoard(root, opts) {
         const moved = (c.moved_m === null || c.moved_m === undefined)
             ? 'redrawn (no distance — it gained or lost a vertex)'
             : 'moved ' + Number(c.moved_m).toFixed(2) + ' m';
+        const v = annotationVerdict(c);
+        // The banner. Suppressed and no-p50 are also verdicts, not footnotes —
+        // "withheld" carries the same visual weight as "worse", because an
+        // engineer skimming banners who skips the table must still see that
+        // nothing was concluded.
+        const banner = '<div class="lb-verdict-banner ' + v.cls +
+            (c.below_min_n ? ' lb-banner-thin' : '') + '">' + v.word +
+            (v.num === null ? '' : ' ' + (v.num >= 0 ? '+' : '') + v.num.toFixed(3)) +
+            (v.plant === null ? '' : '<span class="lb-plant-inline">lane ' +
+                (v.lane >= 0 ? '+' : '') + v.lane.toFixed(3) + ' · plant ' +
+                (v.plant >= 0 ? '+' : '') + v.plant.toFixed(3) + '</span>') +
+            (c.below_min_n ? '<span class="lb-plant-inline">few readings one side — ' +
+                'the number stands but is not strong</span>' : '') +
+            '</div>';
         let rows = '';
         // GUARD 1: the miss rate leads, and the p50 is suppressed when it moved.
         rows += '<tr><td>no estimate</td><td>' + pct(c.no_estimate_before) + ' → ' +
@@ -815,15 +860,10 @@ export function createBoard(root, opts) {
             const d = (c.p50_before !== null && c.p50_after !== null)
                 ? (c.p50_after - c.p50_before) : null;
             // GUARD 5: ink follows what is ATTRIBUTABLE. A lane that rose with
-            // the plant shows neutral, not the success colour.
-            let cls = 'lb-neutral';
-            if (d !== null && c.plant_delta !== null && c.plant_delta !== undefined) {
-                const attributable = d - c.plant_delta;
-                if (attributable > 0.02) cls = 'lb-better';
-                else if (attributable < -0.02) cls = 'lb-worse';
-            }
+            // the plant shows neutral, not the success colour. The class comes
+            // from annotationVerdict so banner and cell can never disagree.
             rows += '<tr><td>p50</td><td>' + fmtP(c.p50_before) + ' → ' + fmtP(c.p50_after) +
-                '</td><td class="' + cls + '">' +
+                '</td><td class="' + v.cls + '">' +
                 (d === null ? '—' : (d >= 0 ? '+' : '') + d.toFixed(2)) +
                 // GUARD 2: the plant baseline, always, never a toggle.
                 (c.plant_delta === null || c.plant_delta === undefined ? ''
@@ -835,7 +875,7 @@ export function createBoard(root, opts) {
         rows += '<tr><td>n</td><td colspan="2">' + c.n_before + ' before (' + c.days_before +
             ' d) · ' + c.n_after + ' after (' + c.days_after + ' d)</td></tr>';
 
-        return '<div class="lb-hist-title">Change</div>' +
+        return '<div class="lb-hist-title">Change</div>' + banner +
             '<div class="lb-change-hd">changed ' + new Date(c.changed_at).toLocaleString() +
             ' · ' + moved + '</div>' +
             // GUARD 4: grey below the minimum, never absent. Absence reads as fine.
