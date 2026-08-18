@@ -192,6 +192,87 @@ func TestBuildLoaderInfos(t *testing.T) {
 	}
 }
 
+// TestBuildLoaderInfos_CarriesHomeKind pins the fact the Edge could not
+// previously ask for: which of two empty-payload positions is a kept-partial
+// BUFFER and which is a HOME awaiting its payload.
+//
+// Core has always known — bin_loader_homes.home_kind, which InSourcePool reads
+// to keep an unassigned home out of the loader's source pool. It just stopped at
+// this projection, so the Edge classified by empty payload and reached the
+// opposite answer for an unpinned home.
+func TestBuildLoaderInfos_CarriesHomeKind(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	var ntID int64
+	if err := db.DB.QueryRow(
+		`INSERT INTO node_types (code,name) VALUES ('NT-HK','t') ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name RETURNING id`,
+	).Scan(&ntID); err != nil {
+		t.Fatalf("seed node_type: %v", err)
+	}
+	ids := map[string]int64{}
+	for _, n := range []string{"HK-PINNED", "HK-UNPINNED", "HK-BUFFER"} {
+		var id int64
+		if err := db.DB.QueryRow(
+			`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ($1,false,$2,true) RETURNING id`, n, ntID,
+		).Scan(&id); err != nil {
+			t.Fatalf("seed node %s: %v", n, err)
+		}
+		ids[n] = id
+	}
+
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "L-HK", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentThreshold,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	for _, h := range []loaders.Home{
+		{LoaderID: id, PositionNodeID: ids["HK-PINNED"], PayloadCode: "PART-A", Kind: loaders.HomeKindHome},
+		// The case the Edge got wrong: a home with no payload yet. Blank payload,
+		// but NOT a buffer — InSourcePool leaves it out of the source pool.
+		{LoaderID: id, PositionNodeID: ids["HK-UNPINNED"], PayloadCode: "", Kind: loaders.HomeKindHome},
+		{LoaderID: id, PositionNodeID: ids["HK-BUFFER"], PayloadCode: "", Kind: loaders.HomeKindBuffer},
+	} {
+		if err := db.UpsertLoaderHome(h); err != nil {
+			t.Fatalf("UpsertLoaderHome: %v", err)
+		}
+	}
+
+	infos, err := db.BuildLoaderInfos()
+	if err != nil {
+		t.Fatalf("BuildLoaderInfos: %v", err)
+	}
+	var li *protocol.LoaderInfo
+	for i := range infos {
+		if infos[i].Name == "L-HK" {
+			li = &infos[i]
+		}
+	}
+	if li == nil {
+		t.Fatal("loader missing from the projection")
+	}
+	got := map[string]string{}
+	for _, p := range li.Positions {
+		got[p.CoreNodeName] = p.HomeKind
+	}
+	for node, want := range map[string]string{
+		"HK-PINNED":   protocol.LoaderHomeKindHome,
+		"HK-UNPINNED": protocol.LoaderHomeKindHome,
+		"HK-BUFFER":   protocol.LoaderHomeKindBuffer,
+	} {
+		if got[node] != want {
+			t.Errorf("%s home_kind = %q, want %q", node, got[node], want)
+		}
+	}
+	// The load-bearing pair: two positions, both blank payload, different kinds.
+	// If these ever project the same value the Edge is back to guessing.
+	if got["HK-UNPINNED"] == got["HK-BUFFER"] {
+		t.Errorf("an unpinned home and a buffer slot both projected %q — the wire cannot tell them apart, which is the bug this field exists to fix", got["HK-BUFFER"])
+	}
+}
+
 // TestBuildLoaderInfos_SkipsAHomeWhoseNodeIsGone pins the one behaviour the
 // name-resolution batching could have changed silently.
 //

@@ -233,6 +233,24 @@ func (db *DB) migrate() error {
 	// gap-window. Old rows land at 0 (no pending). Idempotent ADD COLUMN.
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN pending_uop_delta INTEGER NOT NULL DEFAULT 0")
 
+	// buffer_dest is retired: the loader staging group it named is gone from
+	// Core and from this side. Dropped rather than left dormant, in the same
+	// release, on the owner's call. core_loaders is a CACHE — SyncCoreLoaders
+	// deletes every row and re-inserts from Core on each node-list sync — so
+	// there is nothing to preserve and no rebuild needed; a plain DROP COLUMN on
+	// a table whose contents are regenerated within ~2 minutes.
+	//
+	// No-op on a fresh DB that never had it (this pass re-runs every startup and
+	// ignores errors), and on one this already ran on.
+	db.Exec("ALTER TABLE core_loaders DROP COLUMN buffer_dest")
+
+	// home_kind on the cached loader positions: 'home' | 'buffer', synced from
+	// Core. Idempotent ADD COLUMN; existing rows land at '' and the readers fall
+	// back to classifying by empty payload, which is what they did before. The
+	// value arrives on its own within one node-list sync (~2 min) because the
+	// cache is a full-state replace, so no backfill is needed here.
+	db.Exec("ALTER TABLE core_loader_positions ADD COLUMN home_kind TEXT NOT NULL DEFAULT ''")
+
 	// Drop zombie nodes table (replaced by process_nodes + core node sync)
 	db.Exec("DROP TABLE IF EXISTS nodes")
 

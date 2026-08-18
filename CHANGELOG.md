@@ -25,9 +25,12 @@ belongs in the commit message or in `docs/` — this file is the index.
 - A loader's staging group (`bin_loaders.buffer_dest`) is retired. It named a group empties were pulled from, outranking `inbound_source` with no fallback — a second spelling of one question. Both readers, the wire field, the form row and the card zone are gone; a loader has one source and one destination. Zero rows carried a value at either plant.
 - The one-owner-per-level refusal goes with it: with no staging group to collide with, a group cannot have two owners of its level, and the guard becomes unrepresentable rather than unenforced. Declaring a former buffer group maintained is now configurable, which is what the corrected note above wanted.
 - The outbound group is asked of every loader layout. It was hidden on dedicated loaders, which made "an inbound group and an outbound group" — the shape a dedicated loader wants — unenterable on the screen that edits it.
-- `buffer_dest` columns are left in both schemas, unread and unwritten; the drop ships a release later, after soak. Kept-partial slots (`home_kind='buffer'`) are a different mechanism and are untouched.
+- The `buffer_dest` columns are DROPPED in this release too — Core migration v91, and a plain `DROP COLUMN` on the Edge cache table. They were blank at both plants, confirmed by a live census before the retirement landed, so this removes a column rather than data. The trade taken knowingly: a pre-retirement binary names `buffer_dest` in its loader read, so rolling a plant back needs the column re-added first — one exact statement, `ALTER TABLE bin_loaders ADD COLUMN buffer_dest TEXT NOT NULL DEFAULT ''`, because every value was blank.
+- Kept-partial slots (`home_kind='buffer'`) are a different mechanism and are untouched.
+- A loader position now carries its `home_kind` to the Edge. An unpinned home and a buffer slot both have no payload, and the Edge classified by that emptiness — so a home the operator had dragged in but not assigned read as a buffer, and Core excludes exactly that position from the loader's source pool. Additive and unsentinelled: a Core that predates the field sends nothing and the Edge falls back to the old inference.
+- The downward loader projection resolves member names in one query instead of one per home. Springfield's loader has 33 of them and the sync runs every ~2 minutes.
 - Three node-tree walks became one definition, two pages stopped loading their script twice, and a parentage cycle became uncreatable.
-- Migration heads: Core v90, Edge v35. Inert until a group is enabled.
+- Migration heads: Core v91, Edge v35. The maintained-group surface is inert until a group is enabled; v91 is the buffer_dest drop.
 
 ## 2026-08-17 — Lane campaign (work dated 2026-08-16, merged 08-17)
 

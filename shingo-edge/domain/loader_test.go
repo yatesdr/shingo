@@ -238,6 +238,43 @@ func TestReservationTarget(t *testing.T) {
 	}
 }
 
+// TestPositionIsBuffer pins the three-state classification, which is the whole
+// point of carrying home_kind: an unpinned HOME and a BUFFER slot both have an
+// empty payload, and before Core said which was which the Edge called both of
+// them buffers. Core keeps them apart — InSourcePool leaves an unassigned home
+// out of the loader's source pool — so a carrier moved onto one is parked where
+// nothing will source it.
+//
+// The blank case is a FALLBACK, not a default answer. A Core predating the field
+// sends blank for buffers too, so blank must reproduce the old inference exactly
+// rather than resolve to "home".
+func TestPositionIsBuffer(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		pos  Position
+		want bool
+		why  string
+	}{
+		{"core says buffer", Position{HomeKind: HomeKindBuffer}, true,
+			"an explicit buffer is a buffer"},
+		{"core says buffer, payload somehow set", Position{HomeKind: HomeKindBuffer, Payload: "PA"}, true,
+			"Core's answer wins over the payload; the payload is not the discriminator any more"},
+		{"core says home, pinned", Position{HomeKind: HomeKindHome, Payload: "PA"}, false,
+			"a pinned home is not a buffer"},
+		{"core says home, UNPINNED", Position{HomeKind: HomeKindHome}, false,
+			"THE BUG: an unassigned home has no payload but is not a buffer, and Core excludes it from the source pool"},
+		{"pre-field core, no payload", Position{}, true,
+			"fallback to the old inference — blank must not read as home"},
+		{"pre-field core, pinned", Position{Payload: "PA"}, false,
+			"fallback to the old inference"},
+	} {
+		if got := tc.pos.IsBuffer(); got != tc.want {
+			t.Errorf("%s: IsBuffer() = %v, want %v — %s", tc.name, got, tc.want, tc.why)
+		}
+	}
+}
+
 // TestLoaderFlowOptions pins the config carried on the aggregate so the completion
 // handlers read outbound off the Loader instead of the legacy claim. Unset fields
 // are empty.

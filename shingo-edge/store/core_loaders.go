@@ -49,6 +49,11 @@ type CoreLoaderPosition struct {
 	PositionNode string
 	PayloadCode  string
 	Kind         string
+	// HomeKind is 'home' | 'buffer', synced from Core. EMPTY MEANS UNKNOWN, not
+	// home: a Core predating the field sends blank for buffer slots too, so a
+	// reader must fall back to the old empty-payload inference rather than
+	// treating blank as a positive answer.
+	HomeKind     string
 	UOPThreshold int
 	// Ordinal is where the operator dragged this window, synced from Core.
 	// Zero on every row means nothing was arranged (or the Core that sent it
@@ -98,8 +103,8 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 		for _, p := range l.Positions {
 			// min_stock column left dormant (bin-count floor retired) — defaults to 0.
 			if _, err := tx.Exec(
-				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, kind, uop_threshold, ordinal) VALUES (?,?,?,?,?,?)`,
-				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.Kind, p.UOPThreshold, p.Ordinal,
+				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, kind, home_kind, uop_threshold, ordinal) VALUES (?,?,?,?,?,?,?)`,
+				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.Kind, p.HomeKind, p.UOPThreshold, p.Ordinal,
 			); err != nil {
 				return fmt.Errorf("insert position %s: %w", p.CoreNodeName, err)
 			}
@@ -200,13 +205,13 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 // This read used to be `ORDER BY position_node` — plain name order, with the
 // operator's arrangement discarded because there was no column to put it in.
 func (db *DB) attachCoreLoaderChildren(l *CoreLoader) error {
-	prows, err := db.Query(`SELECT position_node, payload_code, kind, uop_threshold, ordinal FROM core_loader_positions WHERE loader_key=?`, l.LoaderKey)
+	prows, err := db.Query(`SELECT position_node, payload_code, kind, home_kind, uop_threshold, ordinal FROM core_loader_positions WHERE loader_key=?`, l.LoaderKey)
 	if err != nil {
 		return fmt.Errorf("list positions %s: %w", l.LoaderKey, err)
 	}
 	for prows.Next() {
 		var p CoreLoaderPosition
-		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.Kind, &p.UOPThreshold, &p.Ordinal); err != nil {
+		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.Kind, &p.HomeKind, &p.UOPThreshold, &p.Ordinal); err != nil {
 			prows.Close()
 			return err
 		}

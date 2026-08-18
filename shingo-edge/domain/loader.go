@@ -123,9 +123,44 @@ type Window struct {
 // to one payload with its own replenishment policy. Positions do NOT share a
 // budget — each is an independent one-bin slot for a distinct payload.
 type Position struct {
-	Node         NodeID
-	Payload      PayloadCode // "" when the operator hasn't assigned a payload yet
+	Node    NodeID
+	Payload PayloadCode // "" when the operator hasn't assigned a payload yet
+	// HomeKind is Core's own classification of this position: HomeKindHome or
+	// HomeKindBuffer. EMPTY MEANS UNKNOWN — a Core predating the field on the
+	// wire — and callers must fall back to the blank-payload inference rather
+	// than reading blank as "home"; an older Core sends blank for buffers too.
+	//
+	// It exists because Payload == "" answers two questions at once: a BUFFER
+	// slot pins no payload, and so does a HOME the operator has dragged in but
+	// not yet assigned. Core keeps them apart (bin_loader_homes.home_kind, read
+	// by InSourcePool to leave an unassigned home out of the source pool); the
+	// Edge could not, and classified an unpinned home as a buffer.
+	HomeKind     string
 	UOPThreshold int
+}
+
+// Position home kinds, mirroring Core's bin_loader_homes.home_kind. Blank is a
+// third state — "this Core did not say" — and IsBuffer treats it as such.
+const (
+	HomeKindHome   = "home"
+	HomeKindBuffer = "buffer"
+)
+
+// IsBuffer reports whether this position is a kept-partial BUFFER slot.
+//
+// Prefers Core's answer and falls back to the old inference only when Core did
+// not give one. That fallback is the pre-field behaviour verbatim, so an Edge
+// talking to an older Core behaves exactly as it did — and an Edge talking to a
+// current Core stops calling an unassigned home a buffer.
+func (p Position) IsBuffer() bool {
+	switch p.HomeKind {
+	case HomeKindBuffer:
+		return true
+	case HomeKindHome:
+		return false
+	default:
+		return p.Payload == ""
+	}
 }
 
 // ── The aggregate ───────────────────────────────────────────────────

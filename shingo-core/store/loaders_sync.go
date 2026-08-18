@@ -149,10 +149,19 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			if !ok {
 				continue // position node vanished — skip rather than fail the sync
 			}
+			// home_kind, carried rather than left to be guessed at. Core reads
+			// it in InSourcePool to keep an unassigned home out of the source
+			// pool; the Edge had no way to ask, so it classified by empty
+			// payload and disagreed on exactly that case.
+			homeKind := h.Kind
+			if homeKind == "" {
+				homeKind = protocol.LoaderHomeKindHome // the column's own default
+			}
 			info.Positions = append(info.Positions, protocol.LoaderPosition{
 				CoreNodeName: name,
 				PayloadCode:  h.PayloadCode,
 				Kind:         positionKind,
+				HomeKind:     homeKind,
 				UOPThreshold: h.UOPThreshold,
 				// The operator's arrangement, carried down. It was persisted
 				// here and read by the admin screen, and stopped at this
