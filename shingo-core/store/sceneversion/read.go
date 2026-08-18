@@ -124,6 +124,15 @@ type DiffView struct {
 }
 
 // RecentDiffs returns the change log, newest first.
+//
+// ONLY EDITS, NOT ARCHIVES. A diff row with zero added/changed/removed is the
+// .smap path recording that the map's BYTES changed while nothing the board
+// cares about moved — ApplyMapSnapshot always commits its diff, where
+// ApplySceneSnapshot rolls the whole thing back on the same condition. The
+// row is still a legitimate map-version archive; it is not an edit, and
+// listing it made the rail half "0 changed · 0 added · 0 removed". The filter
+// lives here at the read rather than in the write because the archive must
+// keep existing — only the change log's audience must not see it.
 func RecentDiffs(db *sql.DB, limit int) ([]DiffView, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
@@ -132,7 +141,9 @@ func RecentDiffs(db *sql.DB, limit int) ([]DiffView, error) {
 		`SELECT id, source, observed_at, previous_sync,
 		        objects_added, objects_changed, objects_removed,
 		        median_delta_m, max_delta_m
-		   FROM scene_diffs ORDER BY observed_at DESC LIMIT $1`, limit)
+		   FROM scene_diffs
+		  WHERE objects_added + objects_changed + objects_removed > 0
+		  ORDER BY observed_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("sceneversion: recent diffs: %w", err)
 	}
