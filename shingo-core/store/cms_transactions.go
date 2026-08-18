@@ -9,6 +9,7 @@ import (
 
 	"shingocore/store/bins"
 	"shingocore/store/cms"
+	"shingocore/store/internal/nodetree"
 )
 
 func (db *DB) CreateCMSTransactions(txns []*cms.Transaction) error {
@@ -26,15 +27,16 @@ func (db *DB) ListAllCMSTransactions(limit, offset int) ([]*cms.Transaction, err
 // SumCatIDsAtBoundary returns total manifest quantities for all CATIDs
 // across all bins at nodes under the given boundary, parsing from bin
 // manifest JSON. Cross-aggregate (bins): kept at outer store/ level.
+//
+// SubtreeOf, NOT DescendantsOf — the boundary node's OWN bins count. This walk
+// and the group-scoped empty finders' were both spelled "WITH RECURSIVE
+// descendants" and are not the same question: those exclude the group node (it is
+// synthetic and holds no carriers), this includes the boundary node (it can hold
+// bins, and a total that skipped them would be wrong by exactly its contents).
+// The two now have different names for that reason.
 func (db *DB) SumCatIDsAtBoundary(boundaryID int64) map[string]int64 {
 	totals := make(map[string]int64)
-	rows, err := db.Query(`
-		WITH RECURSIVE descendants AS (
-			SELECT id FROM nodes WHERE id = $1
-			UNION ALL
-			SELECT n.id FROM nodes n
-			JOIN descendants d ON n.parent_id = d.id
-		)
+	rows, err := db.Query(nodetree.SubtreeOf(1)+`
 		SELECT b.manifest FROM bins b
 		JOIN descendants d ON b.node_id = d.id
 		WHERE b.manifest IS NOT NULL

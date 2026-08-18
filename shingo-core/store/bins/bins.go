@@ -19,6 +19,7 @@ import (
 
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
+	"shingocore/store/internal/nodetree"
 )
 
 // Bin is the bin domain entity. The struct lives in shingocore/domain
@@ -578,16 +579,30 @@ func claimBin(db binExecer, binID, orderID int64) error {
 // No payload-compatibility clause: this is an empty carrier and the type IS the
 // requirement. The payload rules exist to stop a part going into a carrier that
 // cannot hold it; here a person has said which carrier they want.
+//
+// ── RECURSES THE SUBTREE, AND THE PLANT HAS A SECOND ANSWER ──────────────────
+//
+// DescendantsOf walks the whole subtree, so a NESTED GROUP's slots are in scope
+// here: an empty parked inside a group inside this group is a candidate.
+//
+// The retrieve resolver answers the same question differently.
+// binresolver.GroupResolver.scanForBestBin iterates DIRECT CHILDREN only and
+// silently skips a synthetic child that is not a LANE — so for a LOADED carrier,
+// a nested group is invisible.
+//
+// Same question, two live answers, split by what is being sourced. Predates the
+// maintained-groups program and is not caused by it. NESTING SEMANTICS FOR
+// SOURCING IS AN OPEN OWNER RULING: maintained groups sidestep it (refused at
+// save time unless flat), every other group still lives with it, and whoever
+// needs it decided should get the ruling rather than quietly change one side.
+//
+// FindEmptyCompatibleInGroup below carries the same property for the same reason.
 func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, excludeNodeID int64) (*Bin, error) {
 	if binTypeCode == "" {
 		return nil, sql.ErrNoRows
 	}
 	row := db.QueryRow(fmt.Sprintf(`
-		WITH RECURSIVE descendants(id) AS (
-			SELECT id FROM nodes WHERE parent_id = $2
-			UNION ALL
-			SELECT n2.id FROM nodes n2 JOIN descendants d ON n2.parent_id = d.id
-		)
+		%s
 		%s
 		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 		  AND b.claimed_by IS NULL
@@ -600,7 +615,7 @@ func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, exclude
 		  AND b.node_id IN (SELECT id FROM descendants)
 		  AND ($3 = 0 OR b.node_id != $3)
 		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s`,
-		BinJoinQuery, AccessibleEmptyOrder), binTypeCode, groupNodeID, excludeNodeID)
+		nodetree.DescendantsOf(2), BinJoinQuery, AccessibleEmptyOrder), binTypeCode, groupNodeID, excludeNodeID)
 	return ScanBin(row)
 }
 
@@ -645,11 +660,7 @@ func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID i
 
 func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, excludeNodeID int64) (*Bin, error) {
 	row := db.QueryRow(fmt.Sprintf(`
-		WITH RECURSIVE descendants(id) AS (
-			SELECT id FROM nodes WHERE parent_id = $2
-			UNION ALL
-			SELECT n2.id FROM nodes n2 JOIN descendants d ON n2.parent_id = d.id
-		)
+		%s
 		%s
 		WHERE `+SourceableStatusSQL+` AND b.status <> 'staged'
 		  AND b.claimed_by IS NULL
@@ -660,7 +671,8 @@ func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, exc
 		  AND COALESCE(b.payload_code, '') = ''
 		  AND b.node_id IN (SELECT id FROM descendants)
 		  AND ($3 = 0 OR b.node_id != $3)
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s%s`, BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, groupNodeID, excludeNodeID)
+		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s%s`,
+		nodetree.DescendantsOf(2), BinJoinQuery, PayloadBinTypeAdvisoryClause, AccessibleEmptyOrder), payloadCode, groupNodeID, excludeNodeID)
 	return ScanBin(row)
 }
 

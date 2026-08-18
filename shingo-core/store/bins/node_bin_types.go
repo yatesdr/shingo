@@ -3,6 +3,8 @@ package bins
 import (
 	"database/sql"
 	"fmt"
+
+	"shingocore/store/internal/nodetree"
 )
 
 // SetNodeTypes replaces all bin type assignments for a node.
@@ -46,13 +48,7 @@ func ListTypesForNode(db *sql.DB, nodeID int64) ([]*BinType, error) {
 // branches live at the outer store/ level because they depend on a node
 // property lookup that spans aggregates.
 func ListEffectiveTypesInherited(db *sql.DB, nodeID int64) ([]*BinType, error) {
-	rows, err := db.Query(fmt.Sprintf(`
-		WITH RECURSIVE ancestors AS (
-			SELECT id, parent_id, 0 AS depth FROM nodes WHERE id = $1
-			UNION ALL
-			SELECT n.id, n.parent_id, a.depth + 1 FROM nodes n
-			JOIN ancestors a ON n.id = a.parent_id
-		)
+	rows, err := db.Query(fmt.Sprintf(nodetree.AncestorsOf(1)+`
 		SELECT %s FROM bin_types
 		WHERE id IN (
 			SELECT nbt.bin_type_id FROM node_bin_types nbt

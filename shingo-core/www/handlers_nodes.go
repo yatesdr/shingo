@@ -446,7 +446,18 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	beforeAssign := h.nodeAssignmentSnapshot(node.ID)
 
 	if err := h.engine.NodeService().UpdateNode(node); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// THIS is the path a parentage cycle can actually arrive by. The
+		// drag-and-drop reparent endpoint already refuses these shapes for
+		// unrelated reasons (its parent must be a lane or group, and a synthetic
+		// node cannot be reparented at all), but this form posts parent_id
+		// straight through with no such restriction. 400, not 500: the form is
+		// well-formed and the operator fixes it by choosing a different parent,
+		// and the message already names the chain that makes it impossible.
+		code := http.StatusInternalServerError
+		if service.IsParentCycle(err) {
+			code = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), code)
 		return
 	}
 

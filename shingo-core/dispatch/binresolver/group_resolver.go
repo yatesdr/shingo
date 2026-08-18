@@ -181,6 +181,30 @@ func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode
 // scanForBestBin is the shared scanner for all retrieve algorithms. It iterates
 // child nodes, finds accessible bins, optionally probes for buried bins, and
 // delegates the algorithm-specific decisions to the strategy.
+//
+// ── DIRECT CHILDREN ONLY, AND THE PLANT HAS A SECOND ANSWER ──────────────────
+//
+// This walks one level: a LANE child is searched via FindSourceBinInLane, a
+// non-synthetic child is a slot and is read directly, and a SYNTHETIC child that
+// is not a LANE — a NESTED GROUP — falls through both arms below and is silently
+// skipped. Bins inside a group inside this group are invisible here.
+//
+// The group-scoped EMPTY finders answer the same question differently: they
+// recurse the whole subtree (bins.FindEmptyOfTypeInGroup /
+// FindEmptyCompatibleInGroup, over nodetree.DescendantsOf), so a nested group's
+// slots ARE in scope for them.
+//
+// So "what is in this group" has two live answers, and which one you get depends
+// on whether you are retrieving a LOADED carrier (here, nesting invisible) or
+// sourcing an EMPTY one (there, nesting visible). Neither is wrong on its own;
+// they have simply never been reconciled.
+//
+// NESTING SEMANTICS FOR SOURCING IS AN OPEN OWNER RULING. It is not decided, and
+// this comment is not deciding it. Maintained groups sidestep the question
+// entirely — they are refused at save time unless they are flat — but every
+// other group in the plant still lives with the disagreement, so the first
+// person who needs nested sourcing to behave one specific way has to get that
+// ruling rather than fix whichever site they happened to open.
 func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s retrieveStrategy, asker reservations.DigAsker) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodesUnlocked(group.ID, asker)
 	if err != nil {

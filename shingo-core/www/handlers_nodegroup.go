@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/engine"
+	"shingocore/service"
 )
 
 func (h *Handlers) apiCreateNodeGroup(w http.ResponseWriter, r *http.Request) {
@@ -169,7 +170,14 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 
 	// Perform reparent
 	if err := nodes.ReparentNode(req.NodeID, req.ParentID, position); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		// A parentage cycle is a 400, not a 500: the request is well-formed and
+		// the caller fixes it by choosing a different parent. The message already
+		// names the chain that makes it impossible, so it goes through verbatim.
+		code := http.StatusInternalServerError
+		if service.IsParentCycle(err) {
+			code = http.StatusBadRequest
+		}
+		h.jsonError(w, err.Error(), code)
 		return
 	}
 

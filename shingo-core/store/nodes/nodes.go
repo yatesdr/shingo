@@ -18,6 +18,7 @@ import (
 
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
+	"shingocore/store/internal/nodetree"
 )
 
 // Node is the node domain entity. The struct lives in shingocore/domain
@@ -138,8 +139,19 @@ func Create(db *sql.DB, n *Node) error {
 }
 
 // Update writes the mutable columns on a node.
+//
+// Parentage is guarded here rather than at the caller: this statement sets
+// parent_id directly (it does not go through SetParent), and the node form posts
+// straight into it. A guard a caller has to remember is a guard that gets
+// forgotten — and the thing it prevents makes every recursive walk over the tree
+// run forever.
 func Update(db *sql.DB, n *Node) error {
 	n.Name = strings.TrimSpace(n.Name)
+	if n.ParentID != nil {
+		if err := CheckParentage(db, n.ID, *n.ParentID); err != nil {
+			return err
+		}
+	}
 	_, err := db.Exec(`UPDATE nodes SET name=$1, is_synthetic=$2, zone=$3, enabled=$4, depth=$5, node_type_id=$6, parent_id=$7, updated_at=NOW() WHERE id=$8`,
 		n.Name, n.IsSynthetic, n.Zone, n.Enabled, helpers.NullableInt(n.Depth), helpers.NullableInt64(n.NodeTypeID), helpers.NullableInt64(n.ParentID), n.ID)
 	if err != nil {
@@ -181,13 +193,14 @@ func GetByDotName(db *sql.DB, name string) (*Node, error) {
 // GetRoot walks the parent_id chain from the given node up to the
 // top-level ancestor (where parent_id IS NULL) and returns it.
 // If the node has no parent, it returns the node itself.
+//
+// Composes the same AncestorsOf walk the inheritance lookups use, and reads a
+// different row out of it: they want the NEAREST ancestor carrying rows
+// (ORDER BY depth), this wants the one with no parent. The walk's `depth` column
+// goes unread here — an unused derived column changes no row and no result,
+// which is cheaper than a second spelling of the same recursion.
 func GetRoot(db *sql.DB, nodeID int64) (*Node, error) {
-	row := db.QueryRow(fmt.Sprintf(`
-		WITH RECURSIVE ancestors AS (
-			SELECT id, parent_id FROM nodes WHERE id = $1
-			UNION ALL
-			SELECT n.id, n.parent_id FROM nodes n JOIN ancestors a ON n.id = a.parent_id
-		)
+	row := db.QueryRow(fmt.Sprintf(nodetree.AncestorsOf(1)+`
 		SELECT %s %s WHERE n.id = (SELECT id FROM ancestors WHERE parent_id IS NULL)`, SelectCols, FromClause), nodeID)
 	return ScanNode(row)
 }
@@ -213,7 +226,13 @@ func ListChildren(db *sql.DB, parentID int64) ([]*Node, error) {
 }
 
 // SetParent assigns a node to a parent.
+//
+// Guarded, and this is the reparent path: the drag-and-drop endpoint and the
+// lane-slot reorder both arrive here through Reparent. See CheckParentage.
 func SetParent(db *sql.DB, nodeID, parentID int64) error {
+	if err := CheckParentage(db, nodeID, parentID); err != nil {
+		return err
+	}
 	_, err := db.Exec(`UPDATE nodes SET parent_id=$1, updated_at=NOW() WHERE id=$2`, parentID, nodeID)
 	return err
 }

@@ -1,4 +1,16 @@
 import { api, apiPost, delegateActions, toast, uiConfirm } from '/static/app.js';
+// SIDE-EFFECT IMPORT, and the page's declaration that it needs the detail modal.
+// Nothing here calls into that module — what it needs is the module's delegated
+// handlers registered, because the node tiles this file filters carry
+// data-action="openNodeModal" and nodes-detail.js is what answers it.
+//
+// It is an IMPORT rather than a second <script> tag because the tag would load
+// the module a second time: {{cacheBust}} is a fresh timestamp per call and the
+// import below (and nodes-supermarket.js's) carries no query, so the two URLs
+// differ and the browser instantiates the module twice. Declaring the need here
+// also keeps it off nodes-supermarket.js, which imports the same module for its
+// own reasons — if that import ever went away, the tiles must not stop working.
+import '/static/pages/nodes-detail.js';
 
 // Page-level helpers for the nodes overview: fleet sync, accordion
 // toggle, search/filter. Sibling modules (nodes-detail.js,

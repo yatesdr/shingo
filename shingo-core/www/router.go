@@ -117,12 +117,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		// from the shingo/shared module. Registered BEFORE /static/* so
 		// the more specific prefix wins.
 		r.Handle("/static/shared/*", http.StripPrefix("/static/shared/",
-			http.FileServer(http.FS(shared.Files)),
+			staticCache(http.FileServer(http.FS(shared.Files))),
 		))
 
 		// Static files
 		staticSub, _ := fs.Sub(staticFS, "static")
-		r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+		r.Handle("/static/*", http.StripPrefix("/static/", staticCache(http.FileServer(http.FS(staticSub)))))
 
 		// ── Public pages ───────────────────────────────────────
 		// Wave 2 (Q-035): "/" is now the Operations Overview (the snapshot page).

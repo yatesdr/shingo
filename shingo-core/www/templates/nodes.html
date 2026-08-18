@@ -332,12 +332,16 @@
 </div>
 
 <div id="page-data" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}" data-bin-types='{{.BinTypesJSON}}' data-edges='{{.EdgesJSON}}'></div>
+<!-- ONE TAG PER MODULE, AND ONLY FOR MODULES NOBODY IMPORTS.
+     A module reached BOTH by a tag and by an import is loaded twice, because
+     {{cacheBust}} is a fresh timestamp per call and a bare import carries no
+     query — two URLs, two module instances, two copies of whatever state the
+     module holds, and which copy a handler sees depends on load order. Worse
+     after a deploy: the tag'd copy is un-cacheable and the imported copy is
+     not, so the two instances can be different VERSIONS of the file.
+     nodes-detail.js and nodes-maintain.js are therefore imported, never tagged;
+     see nodes-overview.js, which declares the dependency. -->
 <script type="module" src="/static/pages/nodes-overview.js?v={{cacheBust}}"></script>
-<!-- nodes-maintain.js gets NO tag of its own: nodes-detail.js imports it. A tag
-     would load it a second time under a different URL (the cache-bust query),
-     and two module instances means two copies of the section's staged state —
-     the delegated handlers would mutate one while the modal renders the other. -->
-<script type="module" src="/static/pages/nodes-detail.js?v={{cacheBust}}"></script>
 <script type="module" src="/static/pages/nodes-supermarket.js?v={{cacheBust}}"></script>
 <script type="module" src="/static/pages/loaders.js?v={{cacheBust}}"></script>
 
