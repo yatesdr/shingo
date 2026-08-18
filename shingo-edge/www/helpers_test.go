@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -412,15 +413,32 @@ func doRequest(t *testing.T, router *chi.Mux, method, path string, body any, coo
 	return w.Result()
 }
 
+// testHashes memoizes bcrypt hashes by plaintext. bcrypt at DefaultCost costs
+// ~87ms, and this serial package was spending ~6.5s of its ~8s wall re-deriving
+// the same handful of hashes across ~75 call sites. Same password → same hash,
+// one salt; the login round-trips still exercise CheckPassword on the verify
+// side, which is the side production runs per request.
+var testHashes sync.Map // string password → string hash
+
+// testHash returns the bcrypt hash for a password, computed once per process.
+func testHash(t *testing.T, password string) string {
+	t.Helper()
+	if v, ok := testHashes.Load(password); ok {
+		return v.(string)
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		t.Fatalf("hash %q: %v", password, err)
+	}
+	testHashes.Store(password, hash)
+	return hash
+}
+
 // authCookie creates an admin user and returns a valid session cookie.
 func authCookie(t *testing.T, h *Handlers) *http.Cookie {
 	t.Helper()
-	hash, err := auth.HashPassword("password")
-	if err != nil {
-		t.Fatalf("hash password: %v", err)
-	}
 	testDB.Exec("DELETE FROM admin_users WHERE username = 'testadmin'")
-	testDB.Exec("INSERT INTO admin_users (username, password_hash) VALUES ('testadmin', ?)", hash)
+	testDB.Exec("INSERT INTO admin_users (username, password_hash) VALUES ('testadmin', ?)", testHash(t, "password"))
 
 	req := httptest.NewRequest("POST", "/api/login-dummy", nil)
 	req.Header.Set("Content-Type", "application/json")

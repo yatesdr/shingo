@@ -85,10 +85,7 @@ func TestAdminGate_LoginRoundTripPreservesNext(t *testing.T) {
 	_, router := newAdminPagesRouter(t)
 
 	// Seed a known user.
-	hash, err := auth.HashPassword("rt-pw")
-	if err != nil {
-		t.Fatalf("hash: %v", err)
-	}
+	hash := testHash(t, "rt-pw")
 	testDB.Exec("DELETE FROM admin_users WHERE username = 'roundtripuser'")
 	if _, err := testDB.CreateAdminUser("roundtripuser", hash); err != nil {
 		t.Fatalf("seed admin user: %v", err)
@@ -125,10 +122,7 @@ func TestAdminGate_LoginRoundTripPreservesNext(t *testing.T) {
 func TestLogin_NextOpenRedirectRejected(t *testing.T) {
 	_, router := newAdminPagesRouter(t)
 
-	hash, err := auth.HashPassword("safe-pw")
-	if err != nil {
-		t.Fatalf("hash: %v", err)
-	}
+	hash := testHash(t, "safe-pw")
 	testDB.Exec("DELETE FROM admin_users WHERE username = 'safelogin'")
 	if _, err := testDB.CreateAdminUser("safelogin", hash); err != nil {
 		t.Fatalf("seed admin user: %v", err)
@@ -231,10 +225,7 @@ func TestLogin_ValidCredentialsRedirects(t *testing.T) {
 	_, router := newAdminPagesRouter(t)
 
 	// Seed a known user (separate from bootstrap test to avoid interleaving).
-	hash, err := auth.HashPassword("good-pw")
-	if err != nil {
-		t.Fatalf("hash: %v", err)
-	}
+	hash := testHash(t, "good-pw")
 	testDB.Exec("DELETE FROM admin_users WHERE username = 'validlogin'")
 	if _, err := testDB.CreateAdminUser("validlogin", hash); err != nil {
 		t.Fatalf("seed admin user: %v", err)
