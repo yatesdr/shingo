@@ -161,9 +161,27 @@ func (db *DB) SupersedeOpenEpisode(episodeKey, newOriginID string, at time.Time)
 // invariant the whole surface rests on, and a mint race is worth surfacing
 // rather than resolving into whichever wrote last.
 //
-// Core mints only this kind. Cell and changeover episodes are authored on Edge
-// and arrive through the state-transfer seam.
+// Core mints two kinds now — this one and the maintained-group keeper's. Cell
+// and changeover episodes are authored on Edge and arrive through the
+// state-transfer seam. One line over OpenCoreEpisode; kept as a name because the
+// threshold monitor and its tests read better asking for the thing they mean.
 func (db *DB) OpenThresholdEpisode(o DemandOrigin, usedEdgeReports bool) error {
+	return db.OpenCoreEpisode(o, usedEdgeReports)
+}
+
+// OpenCoreEpisode mints a Core-owned episode of any kind at revision 1.
+//
+// KIND COMES OFF THE ROW, which is what makes this the same INSERT for both
+// kinds Core mints — the threshold monitor's and the maintained-group keeper's.
+// It was already written that way; only the name said otherwise.
+//
+// THE INSERT IS PLAIN AND THE DUPLICATE GUARD IS THE DATABASE. A partial unique
+// index on demand_origins(episode_key) WHERE closed_at IS NULL makes "one open
+// episode per place" a constraint rather than a convention, so two ticks racing
+// to mint the same episode do not need a lock between them: the loser's INSERT
+// fails, and a failed mint must leave NOTHING stamped so the next tick retries.
+// A failure to record must never look like a recording.
+func (db *DB) OpenCoreEpisode(o DemandOrigin, usedEdgeReports bool) error {
 	var expected any
 	if o.ExpectedOrders != nil {
 		expected = *o.ExpectedOrders
@@ -411,21 +429,29 @@ func (db *DB) ListOrphanFindings() ([]OrphanFinding, error) {
 	return out, rows.Err()
 }
 
-// ListOpenThresholdEpisodes returns every open Core-owned threshold episode.
+// ListOpenEpisodesOfKind returns every open episode of one kind.
+//
+// KIND-PARAMETERISED BECAUSE CORE NOW MINTS TWO. It was
+// ListOpenThresholdEpisodes with "threshold" baked into the WHERE and stamped
+// back onto every row; the maintained-group keeper needs the identical read for
+// its own kind, and a second copy of this query is a second set of columns to
+// forget to add to.
 //
 // THIS IS WHAT startupSweep REHYDRATES FROM, and without it every Core restart
 // mints a duplicate for every place that is currently below threshold while the
 // original stays open forever. That is not an edge case: restarting Core is the
 // remedy an operator reaches for BECAUSE the counts look wrong, which is
-// exactly when open episodes exist.
-func (db *DB) ListOpenThresholdEpisodes() ([]DemandOrigin, error) {
+// exactly when open episodes exist. The keeper depends on it more strongly
+// still: it holds NO in-memory episode state at all, so this read IS its memory
+// and a restart is indistinguishable from an ordinary tick.
+func (db *DB) ListOpenEpisodesOfKind(kind string) ([]DemandOrigin, error) {
 	rows, err := db.Query(`
 		SELECT origin_id, revision, episode_key, station_id, core_node_name,
 		       payload_code, opened_at, opened_total, threshold
 		  FROM demand_origins
-		 WHERE kind = $1 AND closed_at IS NULL`, "threshold")
+		 WHERE kind = $1 AND closed_at IS NULL`, kind)
 	if err != nil {
-		return nil, fmt.Errorf("list open threshold episodes: %w", err)
+		return nil, fmt.Errorf("list open %s episodes: %w", kind, err)
 	}
 	defer rows.Close()
 
@@ -434,12 +460,64 @@ func (db *DB) ListOpenThresholdEpisodes() ([]DemandOrigin, error) {
 		var o DemandOrigin
 		if err := rows.Scan(&o.OriginID, &o.Revision, &o.EpisodeKey, &o.StationID,
 			&o.CoreNodeName, &o.PayloadCode, &o.OpenedAt, &o.OpenedTotal, &o.Threshold); err != nil {
-			return nil, fmt.Errorf("scan open threshold episode: %w", err)
+			return nil, fmt.Errorf("scan open %s episode: %w", kind, err)
 		}
-		o.Kind = "threshold"
+		o.Kind = kind
 		out = append(out, o)
 	}
 	return out, rows.Err()
+}
+
+// ListOpenThresholdEpisodes returns every open Core-owned threshold episode.
+// One line over ListOpenEpisodesOfKind — kept as a name because startupSweep and
+// its tests read better asking for the thing they mean.
+func (db *DB) ListOpenThresholdEpisodes() ([]DemandOrigin, error) {
+	return db.ListOpenEpisodesOfKind(protocol.EpisodeKindThreshold)
+}
+
+// MaintainedTypeForOrigin returns the carrier type an OPEN maintain episode is
+// short of, or "" when the origin is not one.
+//
+// THE SOURCING SIDE'S WHOLE VIEW OF THE TYPED ASK. wantedBinType's first arm
+// calls this: an ask carrying an origin that names an open maintain episode
+// sources THAT type and never re-derives one. Pinning at mint is a sourcing
+// correctness requirement rather than a convenience — a replayed ask that
+// re-derived its own shortfall could pick a different type than the keeper is
+// counting, and then the level never converges (SYNTH round 2 §1d).
+//
+// BLANK ORIGIN RETURNS WITHOUT QUERYING, and that is not an optimisation.
+// orders.origin_id is a UUID column; comparing it to "" is a type error at
+// Postgres, not an empty result. Every non-maintainer order in the plant has a
+// blank origin, so this is the overwhelmingly common call and it must be both
+// free and safe. Same guard episodeOutstanding carries, for the same reason.
+//
+// OPEN ONLY. A closed episode's type is history: an ask still live against a
+// settled episode must fall through to the ordinary derivation rather than keep
+// sourcing for a demand nobody is counting any more.
+func (db *DB) MaintainedTypeForOrigin(originID string) (string, error) {
+	if originID == "" {
+		return "", nil
+	}
+	var key string
+	err := db.QueryRow(`
+		SELECT episode_key FROM demand_origins
+		 WHERE origin_id = $1 AND kind = $2 AND closed_at IS NULL`,
+		originID, protocol.EpisodeKindMaintain).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("maintained type for origin %s: %w", originID, err)
+	}
+	parsed, err := protocol.ParseEpisodeKey(key)
+	if err != nil {
+		// A key that will not parse is a mint site that built the string by
+		// hand. Loud rather than silently untyped: an untyped maintainer ask
+		// sources any compatible empty, which is the mix drift the type exists
+		// to prevent.
+		return "", fmt.Errorf("maintained type for origin %s: episode key %q: %w", originID, key, err)
+	}
+	return parsed.BinType, nil
 }
 
 // GetDemandOrigin reads one episode back. Returns nil when absent.
