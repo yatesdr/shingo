@@ -260,13 +260,14 @@ func TestListOpenEpisodesOfKind_SeparatesKinds(t *testing.T) {
 	}
 }
 
-// MaintainedTypeForOrigin is the sourcing side's whole view of the typed ask.
+// MaintainedEpisodeForOrigin is the sourcing side's whole view of the typed ask:
+// the group it belongs to and the carrier type it is short of, from one read.
 //
 // The blank-origin case is the one that MUST NOT reach the database:
 // orders.origin_id is a UUID column and comparing it to "" is a type error at
 // Postgres, not an empty result — and every non-maintainer order in the plant
 // carries a blank origin, so this is the overwhelmingly common call.
-func TestMaintainedTypeForOrigin(t *testing.T) {
+func TestMaintainedEpisodeForOrigin(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	now := time.Now().UTC()
@@ -278,18 +279,23 @@ func TestMaintainedTypeForOrigin(t *testing.T) {
 		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
 	}, false), "mint maintain")
 
-	got, err := db.MaintainedTypeForOrigin("11111111-2222-3333-4444-555555555555")
-	testutil.MustNoErr(t, err, "MaintainedTypeForOrigin")
+	group, got, err := db.MaintainedEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
+	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin")
 	if got != "45x58x32" {
 		t.Errorf("type = %q, want 45x58x32", got)
+	}
+	// THE GROUP IS THE OTHER HALF, and it is load-bearing: it is what keeps a
+	// top-off ask from sourcing out of the group it is filling.
+	if group != "SYN_EMPTIES" {
+		t.Errorf("group = %q, want SYN_EMPTIES", group)
 	}
 
 	// BLANK ORIGIN: no query, no error, no type. If this ever reaches Postgres
 	// it fails with a UUID cast error rather than returning nothing.
-	got, err = db.MaintainedTypeForOrigin("")
-	testutil.MustNoErr(t, err, "MaintainedTypeForOrigin blank")
-	if got != "" {
-		t.Errorf("blank origin type = %q, want empty", got)
+	group, got, err = db.MaintainedEpisodeForOrigin("")
+	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin blank")
+	if got != "" || group != "" {
+		t.Errorf("blank origin gave group=%q type=%q, want both empty", group, got)
 	}
 
 	// An origin that is not a maintain episode is not an error — it is the
@@ -300,10 +306,12 @@ func TestMaintainedTypeForOrigin(t *testing.T) {
 		Kind:       protocol.EpisodeKindThreshold, StationID: "PLANT.LINE1",
 		CoreNodeName: "SLN_002", PayloadCode: "PANEL-A", OpenedAt: now,
 	}, false), "mint threshold")
-	got, err = db.MaintainedTypeForOrigin("99999999-8888-7777-6666-555555555555")
-	testutil.MustNoErr(t, err, "MaintainedTypeForOrigin threshold origin")
-	if got != "" {
-		t.Errorf("threshold origin type = %q, want empty", got)
+	group, got, err = db.MaintainedEpisodeForOrigin("99999999-8888-7777-6666-555555555555")
+	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin threshold origin")
+	if got != "" || group != "" {
+		t.Errorf("threshold origin gave group=%q type=%q, want both empty. A non-maintain "+
+			"episode has neither, and returning its core node as a `group` would hand the "+
+			"finder a subtree to exclude that nothing asked it to exclude", group, got)
 	}
 
 	// OPEN ONLY. A closed episode's type is history; an ask still live against a
@@ -312,9 +320,9 @@ func TestMaintainedTypeForOrigin(t *testing.T) {
 	_, err = db.CloseDemandOriginByID("11111111-2222-3333-4444-555555555555",
 		protocol.CloseReasonRecovered, protocol.ClosedByNotification, now.Add(time.Minute))
 	testutil.MustNoErr(t, err, "close maintain")
-	got, err = db.MaintainedTypeForOrigin("11111111-2222-3333-4444-555555555555")
-	testutil.MustNoErr(t, err, "MaintainedTypeForOrigin after close")
-	if got != "" {
-		t.Errorf("closed episode type = %q, want empty", got)
+	group, got, err = db.MaintainedEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
+	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin after close")
+	if got != "" || group != "" {
+		t.Errorf("closed episode gave group=%q type=%q, want both empty", group, got)
 	}
 }

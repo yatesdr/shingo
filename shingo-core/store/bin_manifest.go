@@ -33,6 +33,15 @@ func (db *DB) FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID i
 	return bins.FindEmptyOfType(db.DB, binTypeCode, preferZone, excludeNodeID)
 }
 
+// FindEmptyBinOfTypeOutsideGroup returns an empty carrier of one bin type from
+// anywhere EXCEPT below the given node. The level keeper's sourcing call: an ask
+// to top a group up must not source from that group. See
+// bins.FindEmptyOfTypeOutsideGroup for why that is a correctness rule and not a
+// tidiness one.
+func (db *DB) FindEmptyBinOfTypeOutsideGroup(binTypeCode, preferZone string, excludeSubtreeRootID, excludeNodeID int64) (*bins.Bin, error) {
+	return bins.FindEmptyOfTypeOutsideGroup(db.DB, binTypeCode, preferZone, excludeSubtreeRootID, excludeNodeID)
+}
+
 // FindEmptyBinOfTypeInGroup returns an empty carrier of one bin type from within
 // a node group. See bins.FindEmptyOfTypeInGroup.
 func (db *DB) FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error) {

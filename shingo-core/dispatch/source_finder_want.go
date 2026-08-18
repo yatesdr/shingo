@@ -64,10 +64,10 @@ func (f *SourceFinder) wantedBinType(need SourceNeed) string {
 	// keeper will then not count — one wasted carrier and a retry next tick,
 	// versus a wrong-typed carrier delivered as though it were right.
 	if need.OriginID != "" {
-		if code, err := f.db.MaintainedTypeForOrigin(need.OriginID); err == nil && code != "" {
+		if _, code, err := f.db.MaintainedEpisodeForOrigin(need.OriginID); err == nil && code != "" {
 			return code
 		} else if err != nil {
-			f.debug("wantedBinType: maintained type for origin %s: %v", need.OriginID, err)
+			f.debug("wantedBinType: maintained episode for origin %s: %v", need.OriginID, err)
 		}
 	}
 
@@ -147,4 +147,49 @@ func (f *SourceFinder) wantedBinType(need SourceNeed) string {
 		}
 	}
 	return best
+}
+
+// maintainedGroupExclusion answers "which subtree must this need NOT source
+// from", and it is non-zero for exactly one caller: a level keeper's top-off ask.
+//
+// THE DEFECT IT CLOSES, measured rather than reasoned. A keeper ask delivering
+// into a maintained group is free to source an empty ALREADY STANDING IN THAT
+// GROUP and carry it to another position in the same group. On a six-position
+// group standing at 2 of a level of 4, both remaining carriers were claimed by
+// the group's own top-off asks inside one tick — P03 to P01 and P04 to P02.
+//
+// It is not just two wasted trips. A claimed carrier stops counting as
+// `resident`, so the gap re-opens, so the keeper asks again: the group shuffles
+// itself and never reaches its level. The design named the rule before the
+// keeper was built — "never from the group itself" — and this is that rule.
+//
+// ZERO FOR EVERY OTHER NEED, which keeps the change scoped to the path that
+// demonstrated the problem. A plain retrieve_empty into an ordinary market lane
+// sourcing from the same market may well be pointless too, but that is a
+// different claim with no evidence behind it here, and widening a fix into a
+// behaviour change is how a fix stops being reviewable.
+//
+// A READ FAILURE RETURNS ZERO — no exclusion — rather than refusing to source.
+// The failure mode it restores is a wasted trip the next tick corrects; the
+// alternative (treat an unreadable episode as "exclude everything") would park
+// the keeper's asks on a database blip.
+func (f *SourceFinder) maintainedGroupExclusion(need SourceNeed) int64 {
+	if need.OriginID == "" {
+		return 0
+	}
+	group, _, err := f.db.MaintainedEpisodeForOrigin(need.OriginID)
+	if err != nil {
+		f.debug("maintainedGroupExclusion: origin %s: %v", need.OriginID, err)
+		return 0
+	}
+	if group == "" {
+		return 0
+	}
+	node, err := f.db.GetNodeByDotName(group)
+	if err != nil || node == nil {
+		f.debug("maintainedGroupExclusion: group %q for origin %s not found: %v",
+			group, need.OriginID, err)
+		return 0
+	}
+	return node.ID
 }

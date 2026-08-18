@@ -475,49 +475,49 @@ func (db *DB) ListOpenThresholdEpisodes() ([]DemandOrigin, error) {
 	return db.ListOpenEpisodesOfKind(protocol.EpisodeKindThreshold)
 }
 
-// MaintainedTypeForOrigin returns the carrier type an OPEN maintain episode is
-// short of, or "" when the origin is not one.
+// MaintainedEpisodeForOrigin resolves an ask's origin to BOTH halves of the
+// (group, carrier type) pair its open maintain episode names. Blank group and
+// blank type mean "this origin is not an open maintain episode" — an ordinary
+// answer, not an error.
 //
-// THE SOURCING SIDE'S WHOLE VIEW OF THE TYPED ASK. wantedBinType's first arm
-// calls this: an ask carrying an origin that names an open maintain episode
-// sources THAT type and never re-derives one. Pinning at mint is a sourcing
-// correctness requirement rather than a convenience — a replayed ask that
-// re-derived its own shortfall could pick a different type than the keeper is
-// counting, and then the level never converges (SYNTH round 2 §1d).
+// ONE READ, TWO ANSWERS, because the sourcing path needs both and they come out
+// of the same episode key. A second method with its own SELECT would be a second
+// spelling of the same question, free to disagree the first time one of them
+// learned something — the ListOpenThresholdEpisodes / ListOpenEpisodesOfKind
+// adapter shape, applied here.
 //
-// BLANK ORIGIN RETURNS WITHOUT QUERYING, and that is not an optimisation.
-// orders.origin_id is a UUID column; comparing it to "" is a type error at
-// Postgres, not an empty result. Every non-maintainer order in the plant has a
-// blank origin, so this is the overwhelmingly common call and it must be both
-// free and safe. Same guard episodeOutstanding carries, for the same reason.
-//
-// OPEN ONLY. A closed episode's type is history: an ask still live against a
-// settled episode must fall through to the ordinary derivation rather than keep
-// sourcing for a demand nobody is counting any more.
-func (db *DB) MaintainedTypeForOrigin(originID string) (string, error) {
+// The GROUP is what keeps the keeper out of its own group when it sources.
+// Without it an ask to top a group up can pick a carrier already standing IN
+// that group and deliver it to another position in the same group: a null trip
+// that also claims the carrier, drops `resident`, and re-opens the gap. The
+// design named this before the keeper existed — "never from the group itself".
+func (db *DB) MaintainedEpisodeForOrigin(originID string) (groupNode, binType string, err error) {
 	if originID == "" {
-		return "", nil
+		// The blank-origin guard, and it must come BEFORE the query: origin_id is
+		// a UUID column and Postgres errors on '' rather than returning no rows.
+		return "", "", nil
 	}
 	var key string
-	err := db.QueryRow(`
+	qerr := db.QueryRow(`
 		SELECT episode_key FROM demand_origins
 		 WHERE origin_id = $1 AND kind = $2 AND closed_at IS NULL`,
 		originID, protocol.EpisodeKindMaintain).Scan(&key)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+	if errors.Is(qerr, sql.ErrNoRows) {
+		return "", "", nil
 	}
-	if err != nil {
-		return "", fmt.Errorf("maintained type for origin %s: %w", originID, err)
+	if qerr != nil {
+		return "", "", fmt.Errorf("maintained episode for origin %s: %w", originID, qerr)
 	}
-	parsed, err := protocol.ParseEpisodeKey(key)
-	if err != nil {
+	parsed, perr := protocol.ParseEpisodeKey(key)
+	if perr != nil {
 		// A key that will not parse is a mint site that built the string by
 		// hand. Loud rather than silently untyped: an untyped maintainer ask
 		// sources any compatible empty, which is the mix drift the type exists
 		// to prevent.
-		return "", fmt.Errorf("maintained type for origin %s: episode key %q: %w", originID, key, err)
+		return "", "", fmt.Errorf("maintained episode for origin %s: episode key %q: %w",
+			originID, key, perr)
 	}
-	return parsed.BinType, nil
+	return parsed.CoreNode, parsed.BinType, nil
 }
 
 // GetDemandOrigin reads one episode back. Returns nil when absent.

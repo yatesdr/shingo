@@ -151,10 +151,14 @@ type FinderDB interface {
 	FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error)
 	FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID int64) (*bins.Bin, error)
 	FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error)
-	// MaintainedTypeForOrigin resolves an ask's origin to the carrier type its
-	// maintained-group episode is short of, or "" when the origin is not one.
-	// The finder's whole view of the typed ask; see wantedBinType's first arm.
-	MaintainedTypeForOrigin(originID string) (string, error)
+	// MaintainedEpisodeForOrigin is the same read with BOTH halves of the pair:
+	// the group the episode belongs to as well as its carrier type. The group is
+	// what keeps a top-off ask from sourcing out of the group it is filling.
+	MaintainedEpisodeForOrigin(originID string) (groupNode, binType string, err error)
+	// FindEmptyBinOfTypeOutsideGroup is the typed plant-wide empty search with a
+	// whole subtree excluded. Only the maintained-group path passes a non-zero
+	// subtree; everything else gets FindEmptyBinOfType's behaviour by delegation.
+	FindEmptyBinOfTypeOutsideGroup(binTypeCode, preferZone string, excludeSubtreeRootID, excludeNodeID int64) (*bins.Bin, error)
 	IsSlotAccessible(slotNodeID int64) (bool, error)
 	GetLoaderHomeByPositionNode(positionNodeID int64) (*loaders.Home, error)
 	GetLoader(id int64) (*loaders.Loader, error)

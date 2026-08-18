@@ -263,7 +263,7 @@ func ChangeoverEpisodeKey(station string, processChangeoverID int64) string {
 //
 // binTypeCode, not bin_type_id. The id is a local key; the code is what travels
 // on every other carrier-typed surface, what a person reads, and what
-// MaintainedTypeForOrigin hands back to the finder. An id here would make the
+// MaintainedEpisodeForOrigin hands back to the finder. An id here would make the
 // key unreadable in a log and unresolvable across a restore.
 //
 // The code must not contain "|" — config save refuses one that does

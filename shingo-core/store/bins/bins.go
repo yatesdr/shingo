@@ -733,6 +733,77 @@ func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID i
 	return ScanBin(row)
 }
 
+// FindEmptyOfTypeOutsideGroup is FindEmptyOfType with a whole SUBTREE excluded:
+// an empty of the type from anywhere EXCEPT below the given node.
+//
+// IT EXISTS FOR THE LEVEL KEEPER, and for a defect the design named before the
+// keeper was built: "sourcing tiers for top-offs ... never from the group
+// itself" (DESIGN-buffer-node-group-maintenance, §3.4). Without it the keeper's
+// ask is free to source a carrier ALREADY STANDING IN THE GROUP it is filling
+// and deliver it to another position in the same group.
+//
+// That is not merely a wasted robot trip, though it is one. The carrier gets
+// claimed, so it stops counting as `resident`, so the gap re-opens, so the
+// keeper asks again — a group with N carriers and a level of N+2 shuffles
+// itself forever and never reaches its level. Measured on a six-position group
+// standing at 2 of 4: both remaining carriers were claimed by the group's own
+// top-off asks within one tick, moving P03→P01 and P04→P02.
+//
+// SUBTREE, NOT CHILDREN, even though maintained groups are flat and refused at
+// save time if they are not. The flatness rule is a save-time check on
+// configuration, and a query that silently depends on it would answer wrongly
+// on the one row that predates the rule. The recursive walk costs nothing here
+// and does not need the invariant to hold.
+//
+// excludeNodeID is the ordinary same-node exclusion and is kept alongside: the
+// subtree answers "not from this group", the node answers "not from the
+// destination", and they are different questions that happen to coincide for a
+// keeper ask.
+// THE CTE IS CALLED `descendants` EVEN THOUGH THE WALK IS SubtreeOf. That is
+// nodetree's deliberate choice — the two walks are drop-in for one another at
+// the point of use, so the NAMES of the functions carry the difference and the
+// query body does not. Writing `FROM subtree` here compiled, ran, and failed at
+// runtime with "relation subtree does not exist" — which the source finder
+// swallows as "no empty found", so it looked like correct behaviour.
+func FindEmptyOfTypeOutsideGroup(db *sql.DB, binTypeCode, preferZone string, excludeSubtreeRootID, excludeNodeID int64) (*Bin, error) {
+	if binTypeCode == "" {
+		return nil, sql.ErrNoRows
+	}
+	if excludeSubtreeRootID <= 0 {
+		// No subtree named: this is FindEmptyOfType, and delegating rather than
+		// running a degenerate NOT IN keeps ONE spelling of the unexcluded query.
+		return FindEmptyOfType(db, binTypeCode, preferZone, excludeNodeID)
+	}
+	const where = `
+		WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
+		  AND b.claimed_by IS NULL
+		  AND b.locked = false
+		  AND b.node_id IS NOT NULL
+		  AND n.enabled = true
+		  AND n.is_synthetic = false
+		  AND COALESCE(b.payload_code, '') = ''
+		  AND bt.code = $1
+		  AND b.node_id NOT IN (SELECT id FROM descendants)
+		  AND ($3 = 0 OR b.node_id != $3)
+		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')`
+
+	// Zone-preferred first, exactly as FindEmptyOfType does. The preference is
+	// what made the defect easy to hit: a maintained group's own positions share
+	// its zone, so preferZone ranked the group's own carriers FIRST.
+	if preferZone != "" {
+		row := db.QueryRow(fmt.Sprintf(`%s%s%s AND n.zone = $4%s`,
+			nodetree.SubtreeOf(2), BinJoinQuery, where, AccessibleEmptyOrder),
+			binTypeCode, excludeSubtreeRootID, excludeNodeID, preferZone)
+		if b, err := ScanBin(row); err == nil && b != nil {
+			return b, nil
+		}
+	}
+	row := db.QueryRow(fmt.Sprintf(`%s%s%s%s`,
+		nodetree.SubtreeOf(2), BinJoinQuery, where, AccessibleEmptyOrder),
+		binTypeCode, excludeSubtreeRootID, excludeNodeID)
+	return ScanBin(row)
+}
+
 func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, excludeNodeID int64) (*Bin, error) {
 	row := db.QueryRow(fmt.Sprintf(`
 		%s

@@ -39,6 +39,14 @@ type fakeFinderDB struct {
 	// the carrier type that episode is short of. An origin absent from the map is
 	// not a maintain episode, which is every other order in the plant.
 	maintainedType map[string]string
+	// maintainedGroup is the other half of the same episode: origin id → the
+	// group node name. It is what the finder turns into a subtree exclusion so a
+	// top-off ask cannot source out of the group it is filling.
+	maintainedGroup map[string]string
+	// lastExcludedSubtree records what the typed plant-wide finder was actually
+	// asked to exclude. Recorded rather than ignored because the exclusion IS
+	// the behaviour under test.
+	lastExcludedSubtree int64
 	// maintainedTypeErr makes the episode read FAIL rather than answer, so the
 	// "a read failure returns no type rather than guessing" arm is exercisable.
 	maintainedTypeErr error
@@ -144,16 +152,27 @@ func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64) (*bins
 	return nil, errors.New("no empty of type " + binTypeCode)
 }
 
-func (f *fakeFinderDB) MaintainedTypeForOrigin(originID string) (string, error) {
+func (f *fakeFinderDB) MaintainedEpisodeForOrigin(originID string) (string, string, error) {
 	if f.maintainedTypeErr != nil {
-		return "", f.maintainedTypeErr
+		return "", "", f.maintainedTypeErr
 	}
 	if originID == "" {
 		// The real one returns without querying: origin_id is a UUID column and
 		// "" is a cast error, not an empty result.
-		return "", nil
+		return "", "", nil
 	}
-	return f.maintainedType[originID], nil
+	return f.maintainedGroup[originID], f.maintainedType[originID], nil
+}
+
+// FindEmptyBinOfTypeOutsideGroup RECORDS THE EXCLUSION IT WAS GIVEN. The whole
+// point of the call is the argument, so a fake that dropped it would let the
+// exclusion be removed with every test still green.
+func (f *fakeFinderDB) FindEmptyBinOfTypeOutsideGroup(binTypeCode, _ string, excludeSubtreeRootID, _ int64) (*bins.Bin, error) {
+	f.lastExcludedSubtree = excludeSubtreeRootID
+	if b, ok := f.typedEmpty[binTypeCode]; ok {
+		return b, nil
+	}
+	return nil, errors.New("no empty of type " + binTypeCode)
 }
 
 func (f *fakeFinderDB) FindEmptyBinOfTypeInGroup(binTypeCode string, _, _ int64) (*bins.Bin, error) {

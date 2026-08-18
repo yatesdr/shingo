@@ -1047,7 +1047,7 @@ func CountLiveByOrigin(db *sql.DB, originID string) (int, error) {
 func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 	if originID == "" {
 		// origin_id is a UUID column; comparing it to "" is a type error rather
-		// than an empty result. Same guard MaintainedTypeForOrigin carries.
+		// than an empty result. Same guard MaintainedEpisodeForOrigin carries.
 		return 0, nil
 	}
 	var count int

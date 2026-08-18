@@ -457,7 +457,11 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			var err error
 			cause := CauseFinderPlantEmpty
 			if wantType != "" {
-				b, err = f.db.FindEmptyBinOfType(wantType, preferZone, excludeID)
+				// EXCLUDING THE GROUP THIS ASK IS FILLING, when there is one.
+				// Zero for every other need, and then this is FindEmptyBinOfType
+				// by delegation. See maintainedGroupExclusion.
+				b, err = f.db.FindEmptyBinOfTypeOutsideGroup(
+					wantType, preferZone, f.maintainedGroupExclusion(need), excludeID)
 				cause = CauseFinderNoEmptyOfType
 			} else {
 				b, err = f.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeID)
