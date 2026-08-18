@@ -20,6 +20,13 @@ import (
 // model (e.g. a partial error from a specific method), add it inline
 // in that test rather than growing this struct.
 type fakeStore struct {
+	// maintainLevels / emptyCounts drive the MG4-1 level filter. Absent means
+	// "not a maintained group", which is the default and the plant-wide truth.
+	maintainLevels    map[int64][]nodes.MaintainLevel
+	maintainLevelsErr error
+	emptyCounts       map[groupKey]int
+	emptyCountErr     error
+
 	// Basic lookup tables.
 	nodes            map[int64]*nodes.Node
 	children         map[int64][]*nodes.Node // parentID -> children
@@ -223,3 +230,28 @@ func (f *fakeStore) LaneAcceptsInbound(laneID int64) (bool, error) {
 
 // Compile-time check: *fakeStore satisfies Store.
 var _ Store = (*fakeStore)(nil)
+
+// ── The maintained-group level (MG4-1) ──────────────────────────────────────
+//
+// Both default to "no level declared", which is what every group in every plant
+// is today — so every existing resolver test keeps its behaviour without being
+// told about levels at all. A test that wants the cap sets maintainLevels.
+
+func (f *fakeStore) ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error) {
+	if f.maintainLevelsErr != nil {
+		return nil, f.maintainLevelsErr
+	}
+	return f.maintainLevels[groupNodeID], nil
+}
+
+func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error) {
+	if f.emptyCountErr != nil {
+		return 0, f.emptyCountErr
+	}
+	return f.emptyCounts[groupKey{groupNodeID, binTypeCode}], nil
+}
+
+type groupKey struct {
+	group int64
+	code  string
+}

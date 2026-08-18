@@ -345,7 +345,19 @@ var causeReleasers = []causeReleaser{
 	{
 		cause:       CauseLaneLocked,
 		populations: []WaitPopulation{PopAcquiring},
-		what:        "the other reshuffle finishes and drops its lane lock",
+		what: "the lane's hold is dropped — by the excavation finishing, or by the demand " +
+			"holding its mouth releasing it",
+		finding: "IT USED TO PROMISE A RESHUFFLE THAT MAY NEVER COME. The sentence read " +
+			"\"the other reshuffle finishes and drops its lane lock\", which is true for an " +
+			"EXCAVATION hold and false for a §R.101 source lock — a mouth row held by a " +
+			"demand, with no reshuffle running on anybody's behalf and nothing scheduled to " +
+			"end. An operator reading the old sentence was told to wait for something that " +
+			"did not exist. " +
+			"MG3-1b makes the wait rarer rather than shorter: empty selection now skips " +
+			"lanes a foreign dig holds, so an order reaches this park only when every " +
+			"compatible empty is inside one. When it does, the honest answer is that SOME " +
+			"hold has to go, and the row's DigOrderID says which excavation to look at — or " +
+			"is zero, which is itself the tell that no excavation is involved.",
 	},
 	{
 		// ONE ROW, ONE CONSTANT — and it took a deletion to get here. This row used
@@ -654,6 +666,40 @@ var causeReleasers = []causeReleaser{
 		cause:       CauseLoaderSourceUnreadable,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "the loader pool becomes readable — says nothing about whether material is there",
+	},
+	{
+		cause:       CauseNGRPAtLevel,
+		populations: []WaitPopulation{PopAcquiring, PopCompoundLeg},
+		what: "a carrier LEAVES the group — or somebody raises the level. Two releasers, " +
+			"and the second is the one an operator can act on",
+		finding: "IT CLEARS ON TWO DIFFERENT THINGS, which is why it is not CauseNGRPFull. " +
+			"A physically full group clears when a carrier leaves and on nothing else. This " +
+			"group has EMPTY POSITIONS — they are spoken for by a number somebody " +
+			"configured — so it also clears the moment that number changes, and an operator " +
+			"reading \"full\" would go and look at a group with space in it and conclude the " +
+			"board was wrong. " +
+			"NO OVERFLOW CONFIGURED IS THE UNCOMFORTABLE CASE, and it is stated rather than " +
+			"solved: the push parks holding its bin, which is backpressure into whatever was " +
+			"pushing. That is the residual MG6-1 names and does not remove.",
+	},
+	{
+		cause:       CauseFinderGroupFenced,
+		populations: []WaitPopulation{PopAcquiring},
+		what: "NOTHING IN THE MATERIAL — the group is not this asker's. Somebody adds the " +
+			"process to the group's supports, or turns strict sourcing off, or the claim " +
+			"stops naming that group",
+		finding: "A CONFIGURATION WAIT, NOT A MATERIAL ONE, and the only one in this family. " +
+			"Every other finder cause clears when material arrives; this one clears when a " +
+			"person changes config, and an order carrying it will wait forever otherwise. " +
+			"That is why it is worth its own cause rather than folding into " +
+			"finder-group-empty: the two look identical on the board and one of them is a " +
+			"standing misconfiguration.",
+	},
+	{
+		cause:       CauseFinderSourceUnreadable,
+		populations: []WaitPopulation{PopAcquiring},
+		what: "the source search becomes readable — says nothing about whether material is " +
+			"there, because the search never ran",
 	},
 
 	// ── The fleet refused the create ──────────────────────────────────────

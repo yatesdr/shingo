@@ -93,6 +93,16 @@ type ServiceAccess interface {
 	// cached total (for drift detection), and configured thresholds. A pure read
 	// of the monitor snapshot + inventory.
 	ReplenishmentHealth(ctx context.Context) ([]engine.PayloadHealth, error)
+	// MaintainedGroupStates is the keeper's last tick, one line per (group, bin
+	// type): the declared level and the three populations it subtracted to reach
+	// its gap.
+	//
+	// A SNAPSHOT OF A COMPLETED TICK, not a fresh computation. The page shows what
+	// the keeper actually decided, so an operator reading a surprising gap is
+	// reading the arithmetic that produced the asks in front of them rather than a
+	// second opinion computed at render time. Empty until the first tick, and
+	// empty forever on a plant with no maintained group.
+	MaintainedGroupStates() []engine.MaintainerGroupState
 
 	// Ledger-integrity exception list (Phase 4.6). Read-side only.
 	OpenNegativeBins() ([]domain.OpenNegativeBin, error)

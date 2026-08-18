@@ -342,8 +342,12 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 				// The cause comes off the error rather than being written flat here: the
 				// three waits clear on three different signals, and a row that says only
 				// "congestion" cannot tell an engineer which one to go look at.
+				// THE PARAMS COME OFF THE ERROR, like the cause. This site wrote
+				// only the payload, so a lane-locked row named neither the corridor
+				// nor the excavation holding it — the two facts an operator needs
+				// and the only ones that make the wait actionable.
 				s.setQueueReason(order, protocol.QueueStorageRearranging, dispatch.ReshuffleWaitCause(err),
-					dispatch.QueueParams{Payload: order.PayloadCode})
+					dispatch.ReshuffleWaitParams(err, order.PayloadCode))
 				return false
 			}
 			// Structural — real lane geometry (no parent group, bad target slot). Route

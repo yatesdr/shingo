@@ -107,6 +107,26 @@ type QueueParams struct {
 	// lookup failure), rather than resolvable-but-full. Different problem,
 	// different fix, so it gets its own sentence.
 	DestUnresolved bool
+	// Reserved marks a material wait where the group DOES hold what is wanted
+	// and this asker may not have it — a strict maintained group the need is not
+	// supported at.
+	//
+	// It exists because "waiting for an empty bin in PRESS-BUFFER" is a lie by
+	// omission here. The empties are standing in that group, visible from where
+	// the operator is reading the board, and the sentence sends them to look for
+	// material that is already in front of them. The fix is not more material;
+	// it is adding this process to the group's supported list, or sourcing from
+	// somewhere else. Those are different actions, so it is a different sentence.
+	Reserved bool
+	// AtLevel marks a slot wait where the group is holding the number of empties
+	// it was configured to hold, rather than being physically out of space.
+	//
+	// Same argument as Reserved, one code over. "Waiting for a slot at
+	// PRESS-BUFFER" sends an operator to look for room, and there IS room — the
+	// positions are free and spoken for by a number somebody typed. What ends
+	// this wait is a carrier leaving OR the level being raised, and neither is
+	// findable from a sentence about slots.
+	AtLevel bool
 }
 
 // FormatQueueSentence renders the operator-visible sentence for a queue code +
@@ -162,6 +182,15 @@ func materialSentence(p QueueParams) string {
 	if p.Group != "" {
 		s += fmt.Sprintf(" in %s", p.Group)
 	}
+	// RESERVED REPLACES THE WHOLE SENTENCE rather than appending to it, because
+	// the sentence above is not true here: the group is not short of anything.
+	if p.Reserved {
+		if p.Group != "" {
+			s = fmt.Sprintf("%s is kept for other equipment — waiting for an empty from elsewhere", p.Group)
+		} else {
+			s = "That group's empties are kept for other equipment — waiting"
+		}
+	}
 	if p.Partial {
 		s += " — partial set already held"
 	}
@@ -178,6 +207,15 @@ func slotSentence(p QueueParams) string {
 			return "Waiting on a destination that cannot be resolved right now"
 		}
 		return fmt.Sprintf("Waiting on destination %s — cannot be resolved right now", p.Destination)
+	}
+	// AT LEVEL IS NOT OUT OF ROOM, and it gets its own sentence for the reason
+	// QueueParams.AtLevel gives: the positions are free.
+	if p.AtLevel {
+		if p.Destination != "" {
+			return fmt.Sprintf("%s already holds the empties it is set to keep — waiting for one to leave",
+				p.Destination)
+		}
+		return "That group already holds the empties it is set to keep — waiting for one to leave"
 	}
 	s := "Waiting for a slot"
 	if p.Destination != "" {

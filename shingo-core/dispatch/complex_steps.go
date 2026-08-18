@@ -28,6 +28,9 @@ import (
 func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payloadCode string, asker reservations.DigAsker) ([]resolvedStep, error) {
 	var resolved []resolvedStep
 	for i, step := range steps {
+		// MG3-4: where this leg's carrier is GOING, for the pickup that has not
+		// happened yet. See resolveStepNode.
+		nextDrop := nextDropoffNode(steps, i)
 		switch step.Action {
 		case protocol.ActionPickup, protocol.ActionDropoff:
 			// Blank dropoff = deferred destination (placeForDedicatedLoader resolves it
@@ -37,7 +40,7 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 					ExclusiveSlot: step.ExclusiveSlot})
 				continue
 			}
-			nodeName, group, err := d.resolveStepNode(step, payloadCode, asker)
+			nodeName, group, err := d.resolveStepNode(step, payloadCode, asker, nextDrop)
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
@@ -54,7 +57,7 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 			// station's by the drain-window default, which is right today by
 			// accident and wrong the moment that window closes.
 			if step.Node != "" {
-				nodeName, group, err := d.resolveStepNode(step, payloadCode, asker)
+				nodeName, group, err := d.resolveStepNode(step, payloadCode, asker, nextDrop)
 				if err != nil {
 					return nil, fmt.Errorf("step %d: %w", i, err)
 				}
@@ -129,7 +132,7 @@ func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode str
 		// the produce empty-leg distinction survives replay re-resolution.
 		ps := protocol.ComplexOrderStep{Action: step.Action, Node: step.Node, Empty: step.Empty,
 			ExclusiveSlot: step.ExclusiveSlot}
-		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode, asker)
+		newName, group, resolveErr := d.resolveStepNode(ps, payloadCode, asker, "")
 		if resolveErr != nil {
 			return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
 		}
@@ -167,7 +170,8 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 // (exclusions rule #7, complex_steps.go arm) is deleted with them. The
 // Reshuffle→blind-dispatch mappings below preserve pre-fold behaviour
 // byte-for-byte; surfacing the burial is a C(ii) decision.
-func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode string, asker reservations.DigAsker) (string, string, error) {
+func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode string,
+	asker reservations.DigAsker, nextDropoff string) (string, string, error) {
 	if step.Node != "" {
 		node, err := d.db.GetNodeByDotName(step.Node)
 		if err != nil {
@@ -190,6 +194,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 				res := d.finder.FindSourceForNeed(SourceNeed{
 					SourceNode:  step.Node,
 					PayloadCode: payloadCode,
+					ProcessNode: nextDropoff,
 					Intent:      IntentEmpty,
 					Asker:       asker,
 				})
@@ -251,6 +256,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 				PayloadCode: payloadCode,
 				Intent:      intent,
 				Asker:       asker,
+				ProcessNode: nextDropoff,
 			})
 			switch res.Outcome {
 			case OutcomeFound:
@@ -853,4 +859,41 @@ func (d *Dispatcher) recalcBuriedNeed(order *orders.Order, hb *heldReservation, 
 
 	// No substitute: the bin this order needs is the buried one, so dig for it.
 	return false, &SourceResult{Outcome: OutcomeReshuffle, Buried: buried}
+}
+
+// nextDropoffNode names where the carrier a leg is picking up is GOING — the
+// first dropoff at or after this step that names a node.
+//
+// ── MG3-4: OUTFLOW TYPING, AND WHY THE DESTINATION IS THE INPUT ─────────────
+//
+// A press empty pull has no payload to reason from: it is asking for an empty
+// carrier, and "empty" says nothing about which type. The only fact available at
+// selection time is the position it is going TO, and that position's effective
+// bin types say what fits there.
+//
+// This threads the destination in. The finder decides what to do with it —
+// exactly one effective type at the position means that is the want; zero or
+// many leaves today's behaviour untouched, because "this slot fits anything" and
+// "nobody has said" are both answered correctly by not narrowing.
+//
+// IT IS ALSO THE FENCE'S INPUT. A supported press reaches its own maintained
+// group through the supports list, keyed on this same node. Before MG3-4 a
+// complex leg carried no process identity at all, so every press-index swap was
+// an outsider at every group — including the one built to serve it.
+//
+// INERT ON EMPTY CONFIG, deliberately. A plant with no per-position bin types
+// and no maintained groups threads a node name that changes no decision. That is
+// why it lands regardless of what the census says about how many positions are
+// typed today: the wire has to exist before the config is worth populating.
+//
+// The FIRST dropoff at or after the step, not the last: a multi-leg plan drops
+// at several places, and the one that matters for a pickup is where that
+// carrier is set down next.
+func nextDropoffNode(steps []protocol.ComplexOrderStep, from int) string {
+	for i := from; i < len(steps); i++ {
+		if steps[i].Action == protocol.ActionDropoff && steps[i].Node != "" {
+			return steps[i].Node
+		}
+	}
+	return ""
 }

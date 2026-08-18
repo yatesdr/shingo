@@ -48,6 +48,17 @@ type CapacityDB interface {
 	// whole is "blocked" and the order should queue rather than fail at
 	// dispatch.
 	ListChildNodes(parentID int64) ([]*nodes.Node, error)
+
+	// ── The maintained-group level (MG4-3) ──────────────────────────────────
+	//
+	// The gate and the resolver must not disagree about whether a group can take
+	// a carrier, so the gate reads the level through the SAME two calls the
+	// resolver does. Without this, a group at its declared level looks free here
+	// — it has empty positions, they are just spoken for — and the order is
+	// admitted, resolved, refused, and parked one layer deeper with a cause that
+	// says nothing about the level.
+	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
+	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error)
 }
 
 // CapacityBlock is the structured result of a blocked dropoff-capacity check —
@@ -103,6 +114,21 @@ type CapacityBlock struct {
 // below fails it closed. The three reads now agree: if occupancy cannot be read,
 // do not risk the drop.
 func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int64) (blocked bool, block CapacityBlock) {
+	return CheckDropoffCapacityForType(db, deliveryNode, excludeOrderID, nil)
+}
+
+// CheckDropoffCapacityForType is CheckDropoffCapacity for a caller that knows
+// which carrier type is arriving.
+//
+// A SECOND ENTRY POINT RATHER THAN A WIDER SIGNATURE, because the type is known
+// at exactly one of the eight call sites. Threading a nil through the other
+// seven would be seven edits that each say "I do not know", and the reader of
+// any one of them would have to go and check that nil means what they hope.
+//
+// The type only changes the LEVEL question — physical occupancy is physical
+// whatever is arriving.
+func CheckDropoffCapacityForType(db CapacityDB, deliveryNode string, excludeOrderID int64,
+	binTypeID *int64) (blocked bool, block CapacityBlock) {
 	if deliveryNode == "" {
 		return false, CapacityBlock{}
 	}
@@ -117,7 +143,7 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 	}
 	if node.IsSynthetic {
 		if node.NodeTypeCode == protocol.NodeClassNGRP {
-			return checkNGRPCapacity(db, node, deliveryNode, excludeOrderID)
+			return checkNGRPCapacity(db, node, deliveryNode, excludeOrderID, binTypeID)
 		}
 		// LANE / _TRANSIT / future synthetic types — defer to whoever
 		// resolves them at dispatch time. _TRANSIT is never a legit
@@ -180,8 +206,35 @@ func CheckDropoffCapacity(db CapacityDB, deliveryNode string, excludeOrderID int
 // "Cannot see" and "full" are kept apart. A group whose children could not be
 // read reports capacity-check-failed, not ngrp-full: both queue the order, but
 // only one of them sends an operator to go clear a group that may be empty.
-func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, excludeOrderID int64) (blocked bool, block CapacityBlock) {
+func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, excludeOrderID int64,
+	binTypeID *int64) (blocked bool, block CapacityBlock) {
+
 	params := QueueParams{Destination: ngrpName}
+
+	// ── THE LEVEL, BEFORE THE PHYSICS ───────────────────────────────────────
+	//
+	// A maintained group at its declared level is FULL in the sense that matters,
+	// and it does not look full physically: it has empty positions, and they are
+	// spoken for by a number somebody configured. Asking here means the order
+	// parks with a cause that says so, instead of being admitted, resolved,
+	// refused by MG4-1, and parked a layer deeper under a generic capacity
+	// reason.
+	//
+	// SAME PREDICATE AS THE RESOLVER, read through the same two calls. Two
+	// answers to "is this group full" is exactly the drift that puts an order in
+	// a loop between a gate that admits it and a resolver that refuses it.
+	if atLevel, err := ngrpAtDeclaredLevel(db, ngrp, binTypeID); err != nil {
+		// Unknown is not permission, and it is not a claim of fullness either —
+		// it is the check failing, which has its own cause.
+		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
+	} else if atLevel {
+		// AtLevel, so the sentence says the group is holding what it was told to
+		// hold rather than "waiting for a slot" — there are free positions, and
+		// an operator sent to look for room finds room and no explanation.
+		atLevelParams := params
+		atLevelParams.AtLevel = true
+		return true, CapacityBlock{Cause: CauseNGRPAtLevel, Params: atLevelParams}
+	}
 	children, err := db.ListChildNodes(ngrp.ID)
 	if err != nil {
 		// The child list itself is unreadable, so nothing below can be judged.
@@ -233,4 +286,46 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
 	}
 	return true, CapacityBlock{Cause: CauseNGRPFull, Params: params}
+}
+
+// ngrpAtDeclaredLevel is the gate's copy of the level question, and it is a copy
+// of the CALL and not of the LOGIC: both this and the resolver's atDeclaredLevel
+// read ListMaintainLevels and CountEmptyBinsOfTypeInGroup, which is where the
+// one definition of "how full is this group" lives.
+//
+// The two cannot be one function without the resolver importing dispatch or
+// dispatch reaching into binresolver's unexported half. They can and do share
+// the reads, the per-type / group-total asymmetry, and the reason for it — see
+// binresolver.atDeclaredLevel, which carries the full account.
+func ngrpAtDeclaredLevel(db CapacityDB, ngrp *nodes.Node, binTypeID *int64) (bool, error) {
+	levels, err := db.ListMaintainLevels(ngrp.ID)
+	if err != nil {
+		return false, err
+	}
+	if len(levels) == 0 {
+		return false, nil
+	}
+	if binTypeID != nil {
+		for _, l := range levels {
+			if l.BinTypeID != *binTypeID {
+				continue
+			}
+			held, cerr := db.CountEmptyBinsOfTypeInGroup(l.BinTypeCode, ngrp.ID)
+			if cerr != nil {
+				return false, cerr
+			}
+			return held >= l.Want, nil
+		}
+		return false, nil
+	}
+	want, held := 0, 0
+	for _, l := range levels {
+		want += l.Want
+		n, cerr := db.CountEmptyBinsOfTypeInGroup(l.BinTypeCode, ngrp.ID)
+		if cerr != nil {
+			return false, cerr
+		}
+		held += n
+	}
+	return held >= want, nil
 }

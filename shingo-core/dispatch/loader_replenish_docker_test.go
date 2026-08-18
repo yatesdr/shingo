@@ -285,43 +285,84 @@ func TestReplenishLoader_RefusesAnOperatorDrivenLoader(t *testing.T) {
 	}
 }
 
-// TestReplenishLoader_SourcesFromTheBufferWhenThereIsOne pins the precedence the
-// Edge already uses: a configured buffer wins outright over the inbound market,
-// with no fallback. Copied rather than chosen — a loader with a buffer would
-// otherwise silently start sourcing from somewhere else the day Core took over,
-// which is a change to where a robot physically drives.
-func TestReplenishLoader_SourcesFromTheBufferWhenThereIsOne(t *testing.T) {
+// TestReplenishLoader_SourcesFromTheInboundGroup pins the one answer to where a
+// loader's empties come from. There is no override and no second field: every
+// order this path creates names the loader's inbound_source, on both layouts.
+//
+// A dedicated loader is asserted alongside the shared-window one because that is
+// the layout the retired staging field was offered on — it is the case where a
+// second source used to be reachable, and the case a reader will come here to
+// check.
+func TestReplenishLoader_SourcesFromTheInboundGroup(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, nil)
 	req, cfg, _ := replenishFixture(t, db, "RBF", 2)
-	cfg.BufferDest = "RBF-BUFFER-GROUP"
 
-	res, err := d.ReplenishLoader(req, cfg)
-	if err != nil {
-		t.Fatalf("ReplenishLoader: %v", err)
+	// The dedicated arm needs its OWN positions, and cannot reuse the shared
+	// fixture's. Two independent reasons, each of which makes the arm create
+	// nothing:
+	//
+	//   - DeliveryTargets matches a dedicated position on
+	//     h.PayloadCode == in.PayloadCode, and the fixture's homes are unpinned
+	//     windows. Flipping the layout field alone selects no target.
+	//   - Re-running against the same nodes hits "window-order-open": the shared
+	//     pass left a live carrier request on every one of them.
+	//
+	// A second replenishFixture call is not the way out either — it re-runs
+	// SetupStandardData and collides on nodes_name_key. So the positions are
+	// built here, pinned to the payload, reusing the fixture's source group.
+	//
+	// All three failure modes look identical from the outside: an empty
+	// res.Created. A test that only checked the sources of the orders it managed
+	// to make would pass on an empty set, which is what the Fatalf below is for.
+	dedicated := cfg
+	dedicated.Layout = loaders.LayoutDedicatedPositions
+	dedicated.Homes = nil
+	dedicated.NodeNames = map[int64]string{}
+	for i := range 2 {
+		n := &nodes.Node{Name: "RBD-POS-" + string(rune('A'+i)), Enabled: true}
+		if err := db.CreateNode(n); err != nil {
+			t.Fatalf("create dedicated position: %v", err)
+		}
+		dedicated.Homes = append(dedicated.Homes, loaders.Home{
+			PositionNodeID: n.ID, PayloadCode: req.PayloadCode,
+		})
+		dedicated.NodeNames[n.ID] = n.Name
 	}
-	if len(res.Created) == 0 {
-		t.Fatal("created nothing")
-	}
-	for _, o := range res.Created {
-		if o.SourceNode != "RBF-BUFFER-GROUP" {
-			t.Errorf("source = %q, want the buffer group — it wins over the inbound market", o.SourceNode)
+
+	for _, tc := range []struct {
+		name string
+		cfg  LoaderReplenishConfig
+	}{
+		{loaders.LayoutSharedWindow, cfg},
+		{loaders.LayoutDedicatedPositions, dedicated},
+	} {
+		res, err := d.ReplenishLoader(req, tc.cfg)
+		if err != nil {
+			t.Fatalf("ReplenishLoader %s: %v", tc.name, err)
+		}
+		if len(res.Created) == 0 {
+			t.Fatalf("%s: created nothing (held by %v, skipped %q), so the source assertion below proves nothing",
+				tc.name, res.HeldBy, res.Skipped)
+		}
+		for _, o := range res.Created {
+			if o.SourceNode != tc.cfg.InboundSource {
+				t.Errorf("%s: source = %q, want the inbound group %q", tc.name, o.SourceNode, tc.cfg.InboundSource)
+			}
 		}
 	}
-
 }
 
-// TestReplenishLoader_NoSourceAtAllOrdersNothing: with neither a buffer nor an
-// inbound market there is nowhere to pull a carrier from, which is a supported
-// configuration (the loader is fed by hand) rather than a fault.
+// TestReplenishLoader_NoSourceAtAllOrdersNothing: with no inbound market there is
+// nowhere to pull a carrier from, which is a supported configuration (the loader
+// is fed by hand) rather than a fault.
 func TestReplenishLoader_NoSourceAtAllOrdersNothing(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, nil)
 	req, cfg, _ := replenishFixture(t, db, "RNS", 2)
 	cfg.InboundSource = ""
-	cfg.BufferDest = ""
 
 	res, err := d.ReplenishLoader(req, cfg)
 	if err != nil {
@@ -395,7 +436,7 @@ func TestLoadReplenishConfig_ReadsWhatTheDecisionNeeds(t *testing.T) {
 	id, err := db.CreateLoader(loaders.Loader{
 		Name: "LRC-L", Role: loaders.RoleProduce, Layout: loaders.LayoutSharedWindow,
 		Replenishment: loaders.ReplenishmentThreshold,
-		InboundSource: "LRC-MARKET", BufferDest: "LRC-BUFFER", FunnelWindows: true,
+		InboundSource: "LRC-MARKET", FunnelWindows: true,
 	})
 	if err != nil {
 		t.Fatalf("create loader: %v", err)
@@ -417,8 +458,8 @@ func TestLoadReplenishConfig_ReadsWhatTheDecisionNeeds(t *testing.T) {
 	if cfg.Replenishment != loaders.ReplenishmentThreshold {
 		t.Errorf("replenishment = %q; without it the operator-driven refusal cannot fire", cfg.Replenishment)
 	}
-	if cfg.InboundSource != "LRC-MARKET" || cfg.BufferDest != "LRC-BUFFER" {
-		t.Errorf("sources = %q / %q, want LRC-MARKET / LRC-BUFFER", cfg.InboundSource, cfg.BufferDest)
+	if cfg.InboundSource != "LRC-MARKET" {
+		t.Errorf("source = %q, want LRC-MARKET", cfg.InboundSource)
 	}
 	if len(cfg.Homes) != 1 || len(cfg.Payloads) != 1 {
 		t.Errorf("homes=%d payloads=%d, want 1/1", len(cfg.Homes), len(cfg.Payloads))

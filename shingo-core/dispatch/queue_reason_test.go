@@ -53,6 +53,24 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want:   "Waiting for material: 767D2-6SA0A.06 in AMR Supermarket",
 		},
 		{
+			// A FENCE IS NOT A SHORTAGE. The group holds empties and this asker
+			// may not have them, so the sentence must not send anyone looking
+			// for material that is standing right there. What ends this wait is
+			// a config change or a different source — not a delivery.
+			name:   "a reserved group says so instead of claiming a shortage",
+			code:   protocol.QueueWaitingForMaterial,
+			params: QueueParams{Kind: "empty", Group: "PRESS-BUFFER-A", Reserved: true},
+			want:   "PRESS-BUFFER-A is kept for other equipment — waiting for an empty from elsewhere",
+		},
+		{
+			// AT LEVEL IS NOT OUT OF ROOM. "Waiting for a slot" sends an operator
+			// to find space at a group that has space.
+			name:   "an at-level group says so instead of claiming no room",
+			code:   protocol.QueueWaitingForSlot,
+			params: QueueParams{Destination: "PRESS-BUFFER-A", AtLevel: true},
+			want:   "PRESS-BUFFER-A already holds the empties it is set to keep — waiting for one to leave",
+		},
+		{
 			name:   "material partial set is called out",
 			code:   protocol.QueueWaitingForMaterial,
 			params: QueueParams{Payload: "SNF2-6SA0B.06", Partial: true},

@@ -3,6 +3,32 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-08-18 — Maintained node groups
+
+- A node group can be told to hold a level of empty carriers per carrier type, and Core orders the difference on a tick (`node_maintain_levels`, `node_maintain_supports`).
+- The level is a subtraction of three separately-counted populations — resident, already asked for, already inbound — because collapsing any two lets a group over- or under-fill with nothing reporting an error.
+- A shortfall is recorded as a demand episode on its own `maintain` kind, keyed `mnt|group|type`, with a partial unique index as the duplicate guard.
+- Strict sourcing reserves a group's empties for the processes it serves. Off by default; sharing stays the plant default.
+- A group never sources from itself, and two maintained groups cannot drain each other — reciprocity falls out of the supports rule rather than being configured.
+- The level is a ceiling as well as a floor: a group holding what it was told to hold refuses another carrier under `ngrp-at-level`, not `ngrp-full`, because its positions are usually free.
+- An optional overflow destination takes the extras — one hop, never a chain, decided at admission. Without one the push waits and backpressures into whatever was pushing.
+- A press empty pull derives its carrier type from the position it is going to, where exactly one type fits there.
+- Empty selection consults the excavation lock instead of selecting a carrier another order is digging toward.
+- A failed search no longer reads as an empty plant: `sql.ErrNoRows` is none-found, and any other error parks under its own reason.
+- `inbound_source` is resolve-checked at save time rather than failing silently months later at read time.
+- Three projection columns (`payload_desc`, `origin_id`, `origin_class`) were being sent by Core and discarded by the Edge on insert.
+- Scoped material waits dropped the node they had searched — it was populated in a field the formatter reads only for slot waits.
+- The park messages for a reserved group and for an at-level group both said the opposite of what was happening; each now names the real situation.
+- Operator text across the group editor, park messages and board cards rewritten in plain language, with a one-page floor guide.
+- The loader keeps "carrier mix" and the group editor says "maintained level" — two mechanisms, two names.
+- CORRECTION to the line this entry first carried: the dry-buffer notes claimed a buffer group could be declared maintained and refilled by the keeper. Validation refused exactly that configuration, in three places, under the one-owner-per-level rule. The pull did park scoped to the buffer; the remedy did not exist.
+- A loader's staging group (`bin_loaders.buffer_dest`) is retired. It named a group empties were pulled from, outranking `inbound_source` with no fallback — a second spelling of one question. Both readers, the wire field, the form row and the card zone are gone; a loader has one source and one destination. Zero rows carried a value at either plant.
+- The one-owner-per-level refusal goes with it: with no staging group to collide with, a group cannot have two owners of its level, and the guard becomes unrepresentable rather than unenforced. Declaring a former buffer group maintained is now configurable, which is what the corrected note above wanted.
+- The outbound group is asked of every loader layout. It was hidden on dedicated loaders, which made "an inbound group and an outbound group" — the shape a dedicated loader wants — unenterable on the screen that edits it.
+- `buffer_dest` columns are left in both schemas, unread and unwritten; the drop ships a release later, after soak. Kept-partial slots (`home_kind='buffer'`) are a different mechanism and are untouched.
+- Three node-tree walks became one definition, two pages stopped loading their script twice, and a parentage cycle became uncreatable.
+- Migration heads: Core v90, Edge v35. Inert until a group is enabled.
+
 ## 2026-08-17 — Lane campaign (work dated 2026-08-16, merged 08-17)
 
 - The lane mouth is a durable reservation (`resource_kind='mouth'`) with a work direction — `inbound`, `outbound`, or `dig`; the rows own the hold, not an in-process lock.

@@ -39,6 +39,14 @@ type Order struct {
 	// emission.
 	BinID       *int64 `json:"bin_id,omitempty"`
 	PayloadCode string `json:"payload_code"`
+	// PayloadDesc is the human sentence behind PayloadCode — what a robot is
+	// actually coming for, in words. Core has sent it on every projection since
+	// the projection existed; the Edge had no column for it until MG2-8, which is
+	// why a Core-authored order showed a bare code and nothing else.
+	//
+	// Blank is ordinary: an Edge-authored order has none, and so does a
+	// projection that landed before the column existed. Renders as nothing.
+	PayloadDesc string `json:"payload_desc"`
 	// SiblingOrderID is the id of the paired order in a two-robot swap
 	// (supply ↔ evac). Durable linkage so the supply guard and the
 	// release gate don't depend on volatile runtime slot pointers,
@@ -72,6 +80,21 @@ type Order struct {
 	// the projection tests assert against. Keeping it inert means turning the
 	// label off is a rendering change, not a behaviour change.
 	AuthoredBy string `json:"authored_by"`
+	// OriginID and OriginClass are the demand attribution Core stamped on the
+	// order: which demand episode it belongs to, and what kind of demand that is.
+	//
+	// THE WIRE TYPE HAS ALWAYS PROMISED THESE — "passed through so a projected
+	// row answers 'why does this exist' the same way a locally created one does"
+	// — and until MG2-8 the promise was not kept: both were dropped at the
+	// projection INSERT, so a Core-authored order on the board carried no
+	// attribution at all and the demand grain stopped at the module boundary.
+	//
+	// INERT HERE, like AuthoredBy. Nothing branches on either; they label the
+	// board and they are what the drift test asserts against. Blank means "not
+	// recorded" — an Edge-authored order has no Core origin by construction, and
+	// no backfill can invent one for a row whose value was dropped.
+	OriginID    string `json:"origin_id"`
+	OriginClass string `json:"origin_class"`
 	// LaneHeld reports that this order is parked on a wait CORE owns — a lane
 	// gate — rather than on one the station owns. Derived, never stored: an order
 	// is lane-held exactly when it is `staged` and carries no Edge-authored step

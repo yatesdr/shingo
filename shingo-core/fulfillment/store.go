@@ -42,6 +42,12 @@ type Store interface {
 	// Node reads (both are also part of the CapacityDB set).
 	GetNodeByDotName(name string) (*nodes.Node, error)
 	ListChildNodes(parentID int64) ([]*nodes.Node, error)
+	// The two maintained-group level reads. Here because the scanner hands this
+	// interface to dispatch.CheckDropoffCapacity, which consults the level so the
+	// gate and the resolver cannot disagree about whether a group can take a
+	// carrier (MG4-3). The scanner itself reads neither.
+	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
+	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error)
 
 	// Bin reads (CapacityDB).
 	CountBinsByNode(nodeID int64) (int, error)

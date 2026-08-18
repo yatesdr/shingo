@@ -92,6 +92,7 @@ type Engine struct {
 	heartbeatService      *service.HeartbeatService
 	thresholdMonitor      *ThresholdMonitor
 	sourceabilityMonitor  *SourceabilityMonitor
+	maintainer            *Maintainer
 	etaCache              *eta.Cache
 	notifier              *notify.Notifier
 	stopChan              chan struct{}
@@ -245,6 +246,7 @@ func New(c Config) *Engine {
 	e.heartbeatService = service.NewHeartbeatService(e.db)
 	e.thresholdMonitor = NewThresholdMonitor(e)
 	e.sourceabilityMonitor = NewSourceabilityMonitor(e)
+	e.maintainer = NewMaintainer(e, nil)
 	e.notifier = notify.New(&c.AppConfig.Notifications)
 	// Loader CRUD re-derives demand_registry + nudges the monitor on each edit.
 	e.loaderService = service.NewLoaderService(e.db, e.thresholdMonitor)

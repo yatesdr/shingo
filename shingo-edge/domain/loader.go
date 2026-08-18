@@ -160,7 +160,6 @@ type Loader struct {
 	// neither the legacy claim nor a second lookup. Set via LoaderOption.
 	inboundSource string              // the empty market L1s source from
 	outboundDest  string              // the market filled (L2) / emptied (U2) bins go to on completion
-	bufferDest    string              // the buffer node group (step 7): stages empties / parks orphaned partials
 	uopThreshold  map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in); dedicated carries it on Position
 	funnelWindows bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
 }
@@ -181,13 +180,6 @@ func WithInboundSource(src string) LoaderOption {
 // instead of the legacy claim once the legacy path is retired (step 5).
 func WithOutboundDest(dst string) LoaderOption {
 	return func(l *Loader) { l.outboundDest = dst }
-}
-
-// WithBufferDest sets the buffer node group (CoreLoader.BufferDest): a FIFO group
-// that stages empties to rotate into a position on threshold and parks
-// changeover-orphaned partials (the step-7 buffer). Empty when not configured.
-func WithBufferDest(dst string) LoaderOption {
-	return func(l *Loader) { l.bufferDest = dst }
 }
 
 // WithUOPThreshold sets the shared_window per-payload UOP threshold (the C-push
@@ -304,9 +296,6 @@ func (l *Loader) InboundSource() string { return l.inboundSource }
 // (U2) is sent to on completion. Empty when not configured — the completion handler
 // then logs and skips rather than firing a malformed move.
 func (l *Loader) OutboundDest() string { return l.outboundDest }
-
-// BufferDest is the buffer node group (step 7); empty when not configured.
-func (l *Loader) BufferDest() string { return l.bufferDest }
 
 // UOPThresholdFor returns the per-payload UOP threshold (the C-push opt-in): the
 // shared per-payload value for shared_window, or the matching position's

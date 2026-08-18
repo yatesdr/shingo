@@ -41,6 +41,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"shingocore/store/reservations"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -194,7 +195,7 @@ func TestExplainPlan_FindEmptyCompatible(t *testing.T) {
 	// Sanity check: the synthetic data actually exercises the real
 	// FindEmptyCompatible function, not just hand-rolled SQL.
 	t.Run("sanity_real_FindEmptyCompatible", func(t *testing.T) {
-		bin, err := bins.FindEmptyCompatible(db.DB, "EXP-WITH-RULES", "", 0)
+		bin, err := bins.FindEmptyCompatible(db.DB, "EXP-WITH-RULES", "", 0, bins.EmptyFence{}, reservations.Anyone)
 		switch {
 		case err == nil:
 			t.Logf("rules-enforced: returned bin %d (type=%s, label=%s)",
@@ -205,7 +206,7 @@ func TestExplainPlan_FindEmptyCompatible(t *testing.T) {
 			t.Fatalf("rules-enforced: unexpected error: %v", err)
 		}
 
-		bin, err = bins.FindEmptyCompatible(db.DB, "EXP-NO-RULES", "", 0)
+		bin, err = bins.FindEmptyCompatible(db.DB, "EXP-NO-RULES", "", 0, bins.EmptyFence{}, reservations.Anyone)
 		switch {
 		case err == nil:
 			t.Logf("no-rules: returned bin %d (type=%s, label=%s)",

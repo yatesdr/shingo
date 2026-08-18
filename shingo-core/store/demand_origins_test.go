@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 )
@@ -196,5 +198,131 @@ func TestUpsertDemandOrigin_DoesNotZeroCoreOwnedFields(t *testing.T) {
 	if signals != 7 || uop != 350 || !usedEdge {
 		t.Errorf("an Edge message zeroed Core's own fields: signal_count=%d uop_delivered=%d used_edge_reports=%v",
 			signals, uop, usedEdge)
+	}
+}
+
+// ── The maintained-group keeper's two reads ────────────────────────────────
+
+// ListOpenEpisodesOfKind is the kind-parameterised read that
+// ListOpenThresholdEpisodes became an adapter over. The keeper holds NO
+// in-memory episode state, so this read IS its memory — which makes "does it
+// return exactly the open episodes of the kind asked for, and nothing else" the
+// property everything downstream rests on.
+func TestListOpenEpisodesOfKind_SeparatesKinds(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	now := time.Now().UTC()
+
+	thr := store.DemandOrigin{
+		OriginID: "aaaaaaaa-1111-2222-3333-444444444444", EpisodeKey: protocol.ThresholdEpisodeKey("SLN_002", "PANEL-A"),
+		Kind: protocol.EpisodeKindThreshold, StationID: "PLANT.LINE1",
+		CoreNodeName: "SLN_002", PayloadCode: "PANEL-A", OpenedAt: now,
+	}
+	mnt := store.DemandOrigin{
+		OriginID: "bbbbbbbb-1111-2222-3333-444444444444", EpisodeKey: protocol.MaintainEpisodeKey("SYN_EMPTIES", "45x58x32"),
+		Kind: protocol.EpisodeKindMaintain, StationID: "PLANT.LINE1",
+		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
+	}
+	testutil.MustNoErr(t, db.OpenCoreEpisode(thr, false), "mint threshold")
+	testutil.MustNoErr(t, db.OpenCoreEpisode(mnt, false), "mint maintain")
+
+	gotMnt, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	testutil.MustNoErr(t, err, "ListOpenEpisodesOfKind maintain")
+	if len(gotMnt) != 1 || gotMnt[0].OriginID != "bbbbbbbb-1111-2222-3333-444444444444" {
+		t.Fatalf("maintain episodes = %+v, want only kind-mnt-1", gotMnt)
+	}
+	// The kind is stamped back onto the row from the argument, so a caller can
+	// read it without a second lookup.
+	if gotMnt[0].Kind != protocol.EpisodeKindMaintain {
+		t.Errorf("Kind = %q, want %q", gotMnt[0].Kind, protocol.EpisodeKindMaintain)
+	}
+
+	// The adapter still answers only its own kind.
+	gotThr, err := db.ListOpenThresholdEpisodes()
+	testutil.MustNoErr(t, err, "ListOpenThresholdEpisodes")
+	if len(gotThr) != 1 || gotThr[0].OriginID != "aaaaaaaa-1111-2222-3333-444444444444" {
+		t.Fatalf("threshold episodes = %+v, want only kind-thr-1", gotThr)
+	}
+
+	// A CLOSED maintain episode leaves the open set. The keeper re-reads this
+	// every tick, so a settled episode that kept showing up would suppress the
+	// next mint for that group and type forever.
+	closed, err := db.CloseDemandOriginByID("bbbbbbbb-1111-2222-3333-444444444444", protocol.CloseReasonRecovered,
+		protocol.ClosedByNotification, now.Add(time.Minute))
+	testutil.MustNoErr(t, err, "close maintain")
+	if !closed {
+		t.Fatal("close reported no row moved")
+	}
+	gotMnt, err = db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
+	testutil.MustNoErr(t, err, "ListOpenEpisodesOfKind after close")
+	if len(gotMnt) != 0 {
+		t.Errorf("maintain episodes after close = %+v, want none", gotMnt)
+	}
+}
+
+// MaintainedEpisodeForOrigin is the sourcing side's whole view of the typed ask:
+// the group it belongs to and the carrier type it is short of, from one read.
+//
+// The blank-origin case is the one that MUST NOT reach the database:
+// orders.origin_id is a UUID column and comparing it to "" is a type error at
+// Postgres, not an empty result — and every non-maintainer order in the plant
+// carries a blank origin, so this is the overwhelmingly common call.
+func TestMaintainedEpisodeForOrigin(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	now := time.Now().UTC()
+
+	testutil.MustNoErr(t, db.OpenCoreEpisode(store.DemandOrigin{
+		OriginID:   "11111111-2222-3333-4444-555555555555",
+		EpisodeKey: protocol.MaintainEpisodeKey("SYN_EMPTIES", "45x58x32"),
+		Kind:       protocol.EpisodeKindMaintain, StationID: "PLANT.LINE1",
+		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
+	}, false), "mint maintain")
+
+	group, got, err := db.MaintainedEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
+	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin")
+	if got != "45x58x32" {
+		t.Errorf("type = %q, want 45x58x32", got)
+	}
+	// THE GROUP IS THE OTHER HALF, and it is load-bearing: it is what keeps a
+	// top-off ask from sourcing out of the group it is filling.
+	if group != "SYN_EMPTIES" {
+		t.Errorf("group = %q, want SYN_EMPTIES", group)
+	}
+
+	// BLANK ORIGIN: no query, no error, no type. If this ever reaches Postgres
+	// it fails with a UUID cast error rather than returning nothing.
+	group, got, err = db.MaintainedEpisodeForOrigin("")
+	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin blank")
+	if got != "" || group != "" {
+		t.Errorf("blank origin gave group=%q type=%q, want both empty", group, got)
+	}
+
+	// An origin that is not a maintain episode is not an error — it is the
+	// ordinary answer for every other order in the plant.
+	testutil.MustNoErr(t, db.OpenCoreEpisode(store.DemandOrigin{
+		OriginID:   "99999999-8888-7777-6666-555555555555",
+		EpisodeKey: protocol.ThresholdEpisodeKey("SLN_002", "PANEL-A"),
+		Kind:       protocol.EpisodeKindThreshold, StationID: "PLANT.LINE1",
+		CoreNodeName: "SLN_002", PayloadCode: "PANEL-A", OpenedAt: now,
+	}, false), "mint threshold")
+	group, got, err = db.MaintainedEpisodeForOrigin("99999999-8888-7777-6666-555555555555")
+	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin threshold origin")
+	if got != "" || group != "" {
+		t.Errorf("threshold origin gave group=%q type=%q, want both empty. A non-maintain "+
+			"episode has neither, and returning its core node as a `group` would hand the "+
+			"finder a subtree to exclude that nothing asked it to exclude", group, got)
+	}
+
+	// OPEN ONLY. A closed episode's type is history; an ask still live against a
+	// settled episode must fall through to the ordinary derivation rather than
+	// keep sourcing for a demand nobody is counting.
+	_, err = db.CloseDemandOriginByID("11111111-2222-3333-4444-555555555555",
+		protocol.CloseReasonRecovered, protocol.ClosedByNotification, now.Add(time.Minute))
+	testutil.MustNoErr(t, err, "close maintain")
+	group, got, err = db.MaintainedEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
+	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin after close")
+	if got != "" || group != "" {
+		t.Errorf("closed episode gave group=%q type=%q, want both empty", group, got)
 	}
 }

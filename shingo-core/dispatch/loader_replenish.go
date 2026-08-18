@@ -97,34 +97,23 @@ type LoaderReplenishConfig struct {
 	// operator-driven. An operator-driven loader is refused here — see
 	// ReplenishLoader.
 	Replenishment string
-	// InboundSource is where the empty carriers are retrieved FROM. Blank means
-	// the loader is fed directly — by press, forklift or reach truck — and Core
-	// must not create carrier pulls for it at all.
+	// InboundSource is where the empty carriers are retrieved FROM, and it is
+	// the only answer to that question. Blank means the loader is fed directly —
+	// by press, forklift or reach truck — and Core must not create carrier pulls
+	// for it at all.
+	//
+	// WHAT A DRY SOURCE DOES, because this is the property a reader usually
+	// comes here for: the order is created and the finder scopes its search to
+	// the named group; finding nothing, it PARKS under "finder-group-empty" (or
+	// "finder-no-empty-of-type" when a mix names the type) and does NOT widen to
+	// anywhere else. The wait releases when a carrier lands in the group. So the
+	// order is not lost and the robot is not sent anywhere wrong — the loader
+	// waits, visibly, with the group named as the thing it is waiting on.
+	//
+	// That no-widen behaviour belongs to the finder's scoped search, not to this
+	// field. Naming a different group here changes where the robot drives; it
+	// does not change what happens when that group runs dry.
 	InboundSource string
-	// BufferDest is a staging group of empties for this loader. When set it is
-	// used INSTEAD of InboundSource, with no fallback if it runs dry. See
-	// emptySource for why that precedence is copied rather than chosen.
-	BufferDest string
-}
-
-// emptySource answers where this loader's empty carriers are pulled from.
-//
-// The buffer wins outright when one is configured, with NO fallback to the
-// inbound market if it is empty. That is not a preference — it reproduces
-// loaderEmptySource on the Edge, which is what the plant runs today. A loader
-// with a buffer configured would silently start sourcing from somewhere else the
-// day Core took over ordering, which is a physical change to where a robot
-// drives, delivered by a refactor.
-//
-// The known gap comes with it: nothing checks whether the buffer group actually
-// holds an unclaimed empty, so a dry buffer produces orders that cannot source.
-// The Edge has the same gap and records it in the same place. Fixing it is a
-// change to both sides.
-func (c LoaderReplenishConfig) emptySource() string {
-	if c.BufferDest != "" {
-		return c.BufferDest
-	}
-	return c.InboundSource
 }
 
 // LoadReplenishConfig assembles the configuration ReplenishLoader decides from.
@@ -160,7 +149,6 @@ func (d *Dispatcher) LoadReplenishConfig(loaderID int64) (LoaderReplenishConfig,
 		Payloads:      cfg.Payloads,
 		Replenishment: cfg.Loader.Replenishment,
 		InboundSource: cfg.Loader.InboundSource,
-		BufferDest:    cfg.Loader.BufferDest,
 	}, true, nil
 }
 
@@ -250,8 +238,8 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 	// A loader nobody retrieves for. Blank source is a real, supported
 	// configuration — the loader is fed by hand — and creating a carrier pull for
 	// it would send a robot to fetch from nowhere.
-	if cfg.emptySource() == "" {
-		res.Skipped = "loader has no inbound source or buffer: it is fed directly, so Shingo pulls no carriers for it"
+	if cfg.InboundSource == "" {
+		res.Skipped = "loader has no inbound source: it is fed directly, so Shingo pulls no carriers for it"
 		return res, nil
 	}
 
@@ -397,33 +385,76 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 // insert. A second writer here is exactly the drift the order-writer
 // consolidation removed one layer down.
 func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderReplenishConfig, t loaders.Target) (*orders.Order, error) {
-	order := &orders.Order{
-		// Core mints its own identity, prefixed so a row's origin is readable
-		// without a join. Edge-authored UUIDs are bare; this one says where it came
-		// from at a glance and in a log line.
-		EdgeUUID:     "core-l1-" + uuid.New().String(),
+	order, err := d.AdmitCoreAsk(CoreAskSpec{
+		UUIDPrefix:   "core-l1-",
 		StationID:    req.StationID,
+		SourceNode:   cfg.InboundSource,
+		DeliveryNode: t.NodeName,
+		OriginID:     req.OriginID,
+		OriginClass:  req.OriginClass,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("admit replenishment for loader %d at %s: %w", req.LoaderID, t.NodeName, err)
+	}
+	return order, nil
+}
+
+// CoreAskSpec is one Core-authored carrier pull: everything that differs between
+// the two things Core asks for on its own initiative.
+//
+// TWO CALLERS, ONE DOOR. The loader replenishment loop and the maintained-group
+// level keeper both mint retrieve_empty orders nobody on the Edge requested. What
+// they share — the order shape, the admit, the projection, the origin-class rule
+// — is everything except the six fields below, and a second copy of that body is
+// exactly the drift the order-writer consolidation removed one layer down.
+type CoreAskSpec struct {
+	// UUIDPrefix marks where the order came from, readably, without a join.
+	// Edge-authored UUIDs are bare; Core's say so at a glance and in a log line.
+	// "core-l1-" is the loader loop, "core-mnt-" the level keeper.
+	UUIDPrefix   string
+	StationID    string
+	SourceNode   string
+	DeliveryNode string
+	// PayloadDesc is the human line on the Edge board card. The carrier is
+	// generic so PayloadCode stays blank (below), which leaves the card with
+	// nothing to render — this is what it renders instead ("empty 45x58x32").
+	PayloadDesc string
+	OriginID    string
+	OriginClass string
+}
+
+// AdmitCoreAsk builds and admits one Core-authored carrier pull.
+//
+// It goes through admitOrder, the same body wire-originated orders go through,
+// rather than writing a row itself — so a Core-originated order gets the same
+// reference checks, the same synthetic-destination resolution, and the same
+// insert.
+func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
+	order := &orders.Order{
+		EdgeUUID:     spec.UUIDPrefix + uuid.New().String(),
+		StationID:    spec.StationID,
 		OrderType:    OrderTypeRetrieveEmpty,
 		Status:       StatusPending,
 		Quantity:     1,
-		SourceNode:   cfg.emptySource(),
-		DeliveryNode: t.NodeName,
+		SourceNode:   spec.SourceNode,
+		DeliveryNode: spec.DeliveryNode,
 		// No payload code, deliberately. An empty carrier is generic: the part
 		// binds when the loader fills it. Stamping the payload here would tag a
 		// carrier that is supposed to be untagged, and that tag then picks the
 		// robot — the same rule lookupPayloadMeta states from the Edge side.
 		PayloadCode:  "",
+		PayloadDesc:  spec.PayloadDesc,
 		SourceIntent: SourceIntentForType(OrderTypeRetrieveEmpty),
 		// Origin attaches locally. Unlike the wire path there is no sender's claim
 		// to classify: Core opened this episode and knows what it is.
-		OriginID:    req.OriginID,
-		OriginClass: req.OriginClass,
+		OriginID:    spec.OriginID,
+		OriginClass: spec.OriginClass,
 	}
 	// Origin class, stated rather than defaulted. An order carrying an episode id
 	// IS attached by definition, and leaving the class blank would stamp every
-	// Core-originated replenishment as an orphan — turning the demand-grain
-	// bucket that exists to find lost attributions into a bucket containing
-	// nothing but correctly-attributed orders.
+	// Core-originated ask as an orphan — turning the demand-grain bucket that
+	// exists to find lost attributions into a bucket containing nothing but
+	// correctly-attributed orders.
 	//
 	// A caller that supplies neither is genuinely unattributed, and orphan is the
 	// honest reading rather than a guess that keeps the bucket quiet.
@@ -436,9 +467,9 @@ func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderRepleni
 	}
 	if lerr := d.lifecycle.admitOrder(order); lerr != nil {
 		if lerr.Err != nil {
-			return nil, fmt.Errorf("admit replenishment for loader %d at %s: %w", req.LoaderID, t.NodeName, lerr.Err)
+			return nil, lerr.Err
 		}
-		return nil, fmt.Errorf("admit replenishment for loader %d at %s: %s: %s", req.LoaderID, t.NodeName, lerr.Code, lerr.Detail)
+		return nil, fmt.Errorf("%s: %s", lerr.Code, lerr.Detail)
 	}
 	// THE case the projection exists for. Nobody on the Edge asked for this
 	// order, so nobody there has a row for it; without the projection the
@@ -446,4 +477,12 @@ func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderRepleni
 	// say why.
 	d.lifecycle.projectOrder(order)
 	return order, nil
+}
+
+// QueueCoreAsk puts an admitted Core ask into the fulfillment scanner's retry
+// set. Separate from AdmitCoreAsk because the loader loop queues per window
+// inside its own loop and wants the admit failure and the queue failure
+// distinguishable.
+func (d *Dispatcher) QueueCoreAsk(order *orders.Order, stationID string) {
+	d.queueOrderInternal(order, stationID, "")
 }

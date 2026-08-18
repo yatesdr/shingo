@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -415,18 +416,67 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		node.ParentID = nil
 	}
 
-	if err := h.engine.NodeService().UpdateNode(node); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	// NodeService.ApplyAssignments always writes the station + bin-type mode,
 	// even when the form posts an empty mode — that matches the pre-refactor
 	// update-path behavior where an empty mode was written through verbatim.
 	a := parseNodeAssignments(r)
+
+	// The holds-bins guard, BEFORE anything is written. Narrowing what a
+	// MAINTAINED group may hold can strand the carriers already standing in it;
+	// for every other node, and for a widening, this is a no-op.
+	//
+	// The browser asks the question first (via /maintained-group/check-types) and
+	// carries the answer here as force, because this form POST navigates and a
+	// 409 would replace the page with an error document. The guard still runs on
+	// this side so a caller that skipped the question is still refused.
+	if a.BinTypeMode == "specific" {
+		g, gErr := h.engine.NodeService().CheckMaintainedGroupTypesChange(
+			node.ID, a.BinTypeIDs, r.FormValue("force") == "on")
+		if gErr != nil {
+			http.Error(w, gErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		if g.Blocked != "" {
+			http.Error(w, g.Blocked, http.StatusConflict)
+			return
+		}
+	}
+
+	// THE OLD ASSIGNMENTS FIRST, for the audit rows below.
+	beforeAssign := h.nodeAssignmentSnapshot(node.ID)
+
+	if err := h.engine.NodeService().UpdateNode(node); err != nil {
+		// THIS is the path a parentage cycle can actually arrive by. The
+		// drag-and-drop reparent endpoint already refuses these shapes for
+		// unrelated reasons (its parent must be a lane or group, and a synthetic
+		// node cannot be reparented at all), but this form posts parent_id
+		// straight through with no such restriction. 400, not 500: the form is
+		// well-formed and the operator fixes it by choosing a different parent,
+		// and the message already names the chain that makes it impossible.
+		code := http.StatusInternalServerError
+		if service.IsParentCycle(err) {
+			code = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), code)
+		return
+	}
+
 	if err := h.engine.NodeService().ApplyAssignments(node.ID, a); err != nil {
 		log.Printf("node update: apply assignments for node %d: %v", node.ID, err)
 	}
+
+	// AUDITED — and this is a bigger hole than the one phase 1 set out to close.
+	// apiSetNodeBinTypes was named as "the one unaudited write in the modal", but
+	// the modal's Allowed Bins and Allowed Stations controls do not go through
+	// it: they ride this form POST into ApplyAssignments, which writes four
+	// things and audited none of them. Every property write beside them on the
+	// same screen has left a trail since the waiting point landed.
+	//
+	// It stopped being tidiness when press typing started reading node_bin_types:
+	// what a position will accept becomes the thing that types an empty pull, so
+	// "who narrowed this and when" is a question somebody will ask about an
+	// incident.
+	h.auditNodeAssignments(node.ID, beforeAssign)
 
 	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: node.ID, NodeName: node.Name, Action: "updated",
@@ -600,29 +650,46 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node_id and key are required", http.StatusBadRequest)
 		return
 	}
-	// THE OLD VALUE FIRST, because an audit row that cannot say what changed
-	// records that somebody touched something. Best-effort: a read that fails must
-	// not stop the write, it only makes the trail poorer.
-	before := h.engine.NodeService().GetNodeProperty(req.NodeID, req.Key)
-
-	if err := h.engine.NodeService().SetNodeProperty(req.NodeID, req.Key, req.Value); err != nil {
+	if err := h.setNodePropertyAudited(req.NodeID, req.Key, req.Value); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.jsonSuccess(w)
+}
 
-	// AUDITED, and this is where the waiting point earns it. Node properties are
-	// configuration — lane_gate_point decides whether a lane stages robots at all
-	// — and configuration that changes without a trail is the thing nobody can
-	// reconstruct afterwards. Same shape as every other admin write (bin_actions).
-	// Unconditional rather than keyed to the interesting keys: a list of which
-	// properties deserve an audit row is a list that goes stale.
-	if before != req.Value {
-		if err := h.engine.AuditService().Append("node", req.NodeID, "property:"+req.Key,
-			before, req.Value, protocol.AuditActorUI); err != nil {
-			log.Printf("node property set: audit %s on node %d: %v", req.Key, req.NodeID, err)
+// setNodePropertyAudited writes one node property and leaves the old→new trail
+// behind it.
+//
+// EXTRACTED SO THERE IS ONE OF IT. The maintained-group settings endpoint writes
+// four properties in one save, and the alternative — a second place that calls
+// SetNodeProperty and remembers to append an audit row — is how the trail
+// acquires a hole nobody notices until they go looking for a change that was
+// never recorded. Anything that writes a node property from the UI goes through
+// here.
+//
+// AUDITED, and this is where the waiting point earns it. Node properties are
+// configuration — lane_gate_point decides whether a lane stages robots at all —
+// and configuration that changes without a trail is the thing nobody can
+// reconstruct afterwards. Same shape as every other admin write (bin_actions).
+// Unconditional rather than keyed to the interesting keys: a list of which
+// properties deserve an audit row is a list that goes stale.
+func (h *Handlers) setNodePropertyAudited(nodeID int64, key, value string) error {
+	// THE OLD VALUE FIRST, because an audit row that cannot say what changed
+	// records that somebody touched something. Best-effort: a read that fails must
+	// not stop the write, it only makes the trail poorer.
+	before := h.engine.NodeService().GetNodeProperty(nodeID, key)
+
+	if err := h.engine.NodeService().SetNodeProperty(nodeID, key, value); err != nil {
+		return err
+	}
+
+	if before != value {
+		if err := h.engine.AuditService().Append("node", nodeID, "property:"+key,
+			before, value, protocol.AuditActorUI); err != nil {
+			log.Printf("node property set: audit %s on node %d: %v", key, nodeID, err)
 		}
 	}
-	h.jsonSuccess(w)
+	return nil
 }
 
 // apiGenerateTestNodes creates a representative set of test nodes for debugging.
@@ -791,6 +858,8 @@ func (h *Handlers) apiSetNodeBinTypes(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NodeID     int64   `json:"node_id"`
 		BinTypeIDs []int64 `json:"bin_type_ids"`
+		// Force answers the holds-bins guard below.
+		Force bool `json:"force"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -799,11 +868,121 @@ func (h *Handlers) apiSetNodeBinTypes(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node_id is required", http.StatusBadRequest)
 		return
 	}
+	// THE OLD SET FIRST, for the same reason the property write reads the old
+	// value first: an audit row that cannot say what changed records only that
+	// somebody touched something. Best-effort — a read that fails must not stop
+	// the write, it only makes the trail poorer.
+	before := h.nodeBinTypeCodes(req.NodeID)
+
+	// Narrowing what a MAINTAINED group may hold can strand the carriers already
+	// standing in it. The guard is a no-op for every other node, and for a
+	// widening: it only fires when a resident's type is on its way out.
+	g, err := h.engine.NodeService().CheckMaintainedGroupTypesChange(req.NodeID, req.BinTypeIDs, req.Force)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !h.maintainedGroupHeld(w, g) {
+		return
+	}
+
 	if err := h.engine.NodeService().SetNodeBinTypes(req.NodeID, req.BinTypeIDs); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// AUDITED — this was the one write in the group settings modal that left no
+	// trail, while every property write beside it left one. It stopped being a
+	// tidiness item when press typing started reading this table: what a position
+	// will accept becomes the thing that types an empty pull, so "who narrowed
+	// this and when" is a question somebody will ask about an incident.
+	//
+	// CODES, not ids. The row is read by a person reconstructing a change, and a
+	// list of integers requires a second lookup against a table that may have
+	// moved on since.
+	after := h.nodeBinTypeCodes(req.NodeID)
+	if before != after {
+		if err := h.engine.AuditService().Append("node", req.NodeID, "bin_types",
+			before, after, protocol.AuditActorUI); err != nil {
+			log.Printf("set node bin types: audit on node %d: %v", req.NodeID, err)
+		}
+	}
 	h.jsonSuccess(w)
+}
+
+// nodeBinTypeCodes renders a node's directly-assigned carrier types as a stable,
+// comma-joined code list for the audit trail. Empty string means none assigned,
+// which on this table means "no restriction" — a distinction the audit row
+// carries by saying nothing, exactly as the resolver reads it.
+func (h *Handlers) nodeBinTypeCodes(nodeID int64) string {
+	bts, err := h.engine.NodeService().ListBinTypesForNode(nodeID)
+	if err != nil {
+		log.Printf("set node bin types: read current types on node %d: %v", nodeID, err)
+		return ""
+	}
+	codes := make([]string, 0, len(bts))
+	for _, bt := range bts {
+		codes = append(codes, bt.Code)
+	}
+	// ListTypesForNode already orders by code, so the two sides of the audit row
+	// are comparable without sorting here.
+	return strings.Join(codes, ", ")
+}
+
+// nodeAssignmentSnapshot is the four values ApplyAssignments writes, as the
+// audit trail renders them.
+//
+// CODES AND NAMES, not ids: the row is read by a person reconstructing a change,
+// and a list of integers needs a second lookup against a table that may have
+// moved on since. Best-effort throughout — a read that fails must not stop the
+// write, it only makes the trail poorer, which is the same posture the property
+// endpoint takes.
+type nodeAssignmentSnapshot struct {
+	stationMode string
+	stations    string
+	binTypeMode string
+	binTypes    string
+}
+
+func (h *Handlers) nodeAssignmentSnapshot(nodeID int64) nodeAssignmentSnapshot {
+	svc := h.engine.NodeService()
+	snap := nodeAssignmentSnapshot{
+		stationMode: svc.GetNodeProperty(nodeID, "station_mode"),
+		binTypeMode: svc.GetNodeProperty(nodeID, "bin_type_mode"),
+		binTypes:    h.nodeBinTypeCodes(nodeID),
+	}
+	if sts, err := svc.ListStationsForNode(nodeID); err == nil {
+		sorted := append([]string(nil), sts...)
+		sort.Strings(sorted)
+		snap.stations = strings.Join(sorted, ", ")
+	} else {
+		log.Printf("node update: read current stations on node %d: %v", nodeID, err)
+	}
+	return snap
+}
+
+// auditNodeAssignments appends one row per assignment that actually moved.
+//
+// PER FIELD, not one combined row: an operator asking "when did this stop
+// accepting the big carrier" is asking about bin_types, and a row that bundles
+// four values makes them read three they did not ask about to find out.
+func (h *Handlers) auditNodeAssignments(nodeID int64, before nodeAssignmentSnapshot) {
+	after := h.nodeAssignmentSnapshot(nodeID)
+	rows := []struct{ action, old, new string }{
+		{"station_mode", before.stationMode, after.stationMode},
+		{"stations", before.stations, after.stations},
+		{"bin_type_mode", before.binTypeMode, after.binTypeMode},
+		{"bin_types", before.binTypes, after.binTypes},
+	}
+	for _, row := range rows {
+		if row.old == row.new {
+			continue
+		}
+		if err := h.engine.AuditService().Append("node", nodeID, row.action,
+			row.old, row.new, protocol.AuditActorUI); err != nil {
+			log.Printf("node update: audit %s on node %d: %v", row.action, nodeID, err)
+		}
+	}
 }
 
 // apiGetNodeBinTypes returns bin types assigned to a node.

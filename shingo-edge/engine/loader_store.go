@@ -90,7 +90,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			domain.WithInboundSource(l.InboundSource),
 			domain.WithUOPThreshold(uopThreshold),
 			domain.WithFunnelWindows(l.FunnelWindows),
-			domain.WithOutboundDest(l.OutboundDest), domain.WithBufferDest(l.BufferDest))
+			domain.WithOutboundDest(l.OutboundDest))
 
 	case string(domain.LayoutDedicatedPositions):
 		positions := make([]domain.Position, 0, len(l.Positions))
@@ -103,7 +103,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 		}
 		return domain.NewDedicatedPositionsLoader(id, l.Name, role, repl, positions,
 			domain.WithInboundSource(l.InboundSource),
-			domain.WithOutboundDest(l.OutboundDest), domain.WithBufferDest(l.BufferDest))
+			domain.WithOutboundDest(l.OutboundDest))
 
 	default:
 		return nil, fmt.Errorf("loader %s/%s: unknown layout %q", l.LoaderKey, l.Role, l.Layout)

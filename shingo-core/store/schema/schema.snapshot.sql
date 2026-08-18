@@ -118,6 +118,7 @@ CREATE TABLE public.bin_types (
     description text DEFAULT ''::text NOT NULL,
     width_in double precision DEFAULT 0 NOT NULL,
     height_in double precision DEFAULT 0 NOT NULL,
+    length_in double precision DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -597,7 +598,23 @@ ALTER SEQUENCE public.mission_telemetry_id_seq OWNED BY public.mission_telemetry
 
 CREATE TABLE public.node_bin_types (
     node_id bigint NOT NULL,
-    bin_type_id bigint NOT NULL
+    bin_type_id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE public.node_maintain_levels (
+    group_node_id bigint NOT NULL,
+    bin_type_id bigint NOT NULL,
+    want integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT node_maintain_levels_want_check CHECK ((want >= 0))
+);
+
+CREATE TABLE public.node_maintain_supports (
+    group_node_id bigint NOT NULL,
+    process_node_id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE TABLE public.node_payloads (
@@ -611,7 +628,8 @@ CREATE TABLE public.node_properties (
     node_id bigint NOT NULL,
     key text NOT NULL,
     value text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE SEQUENCE public.node_properties_id_seq
@@ -1448,6 +1466,12 @@ ALTER TABLE ONLY public.mission_telemetry
 ALTER TABLE ONLY public.node_bin_types
     ADD CONSTRAINT node_bin_types_pkey PRIMARY KEY (node_id, bin_type_id);
 
+ALTER TABLE ONLY public.node_maintain_levels
+    ADD CONSTRAINT node_maintain_levels_pkey PRIMARY KEY (group_node_id, bin_type_id);
+
+ALTER TABLE ONLY public.node_maintain_supports
+    ADD CONSTRAINT node_maintain_supports_pkey PRIMARY KEY (group_node_id, process_node_id);
+
 ALTER TABLE ONLY public.node_payloads
     ADD CONSTRAINT node_payloads_pkey PRIMARY KEY (node_id, payload_id);
 
@@ -1756,6 +1780,18 @@ ALTER TABLE ONLY public.node_bin_types
 
 ALTER TABLE ONLY public.node_bin_types
     ADD CONSTRAINT node_bin_types_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.node_maintain_levels
+    ADD CONSTRAINT node_maintain_levels_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.node_maintain_levels
+    ADD CONSTRAINT node_maintain_levels_group_node_id_fkey FOREIGN KEY (group_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.node_maintain_supports
+    ADD CONSTRAINT node_maintain_supports_group_node_id_fkey FOREIGN KEY (group_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.node_maintain_supports
+    ADD CONSTRAINT node_maintain_supports_process_node_id_fkey FOREIGN KEY (process_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.node_payloads
     ADD CONSTRAINT node_payloads_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;

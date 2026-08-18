@@ -49,8 +49,11 @@ func (e *Engine) ApplyOrderProjection(p protocol.OrderProjection) (created bool,
 		SourceNode:    p.SourceNode,
 		DeliveryNode:  p.DeliveryNode,
 		PayloadCode:   p.PayloadCode,
+		PayloadDesc:   p.PayloadDesc,
 		QueueReason:   p.QueueReason,
 		QueueCode:     p.QueueCode,
+		OriginID:      p.OriginID,
+		OriginClass:   p.OriginClass,
 	}
 	created, err = orders.UpsertProjection(e.db.DB, row)
 	if err != nil {

@@ -21,3 +21,10 @@ func (db *DB) WipePlantClaims() error {
 func (db *DB) PlantClaimsDirtyIndex() (map[string][]plantclaims.ProcessKey, error) {
 	return plantclaims.DirtyIndex(db.DB)
 }
+
+// ListProcessNodeOptions returns each process with the Core nodes its claims
+// resolve to — what a config editor offers so a person can pick a PROCESS while
+// what gets stored is NODES. See plantclaims.ListProcessNodeOptions.
+func (db *DB) ListProcessNodeOptions() ([]plantclaims.ProcessNodeOption, error) {
+	return plantclaims.ListProcessNodeOptions(db.DB)
+}

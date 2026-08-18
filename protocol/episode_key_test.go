@@ -113,6 +113,18 @@ func TestEpisodeKeys_EveryKindIsParseable(t *testing.T) {
 				Kind: protocol.EpisodeKindChangeover, Station: "line-1", ChangeoverID: 907,
 			},
 		},
+		{
+			// The carrier type lands in BinType, NOT Payload. A maintained
+			// group's demand is for an EMPTY carrier, and a reader finding
+			// "45x58x32" in Payload would reasonably conclude the episode wanted
+			// parts of that code in it.
+			name: "maintain",
+			key:  protocol.MaintainEpisodeKey("SYN_PRESS_EMPTIES", "45x58x32"),
+			want: protocol.ParsedEpisodeKey{
+				Kind:     protocol.EpisodeKindMaintain,
+				CoreNode: "SYN_PRESS_EMPTIES", BinType: "45x58x32",
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := protocol.ParseEpisodeKey(tc.key)
@@ -234,6 +246,12 @@ func TestEpisodeKeys_KindsDoNotCollide(t *testing.T) {
 		"threshold":  protocol.ThresholdEpisodeKey("N1", "P"),
 		"cell":       protocol.CellEpisodeKey("P1", "P", protocol.ClaimRoleConsume),
 		"changeover": protocol.ChangeoverEpisodeKey("line-1", 1),
+		// maintain is a three-part key like threshold and changeover, and it is
+		// keyed on a NODE NAME exactly as threshold is — so "thr" vs "mnt" is
+		// the only thing separating a group's level episode from a threshold
+		// episode on a node of the same name. That is a real shape: a loader
+		// anchored at a node named like a group is not forbidden anywhere.
+		"maintain": protocol.MaintainEpisodeKey("N1", "P"),
 	}
 	seen := map[string]string{}
 	for kind, key := range keys {
@@ -263,6 +281,10 @@ func TestParseEpisodeKey_RejectsMalformed(t *testing.T) {
 		"cell||PANEL-B|supply",       // no process — names no place
 		"cell|SNF2|PANEL-B|sideways", // direction is not a direction
 		"thr|SMN_001",                // missing payload
+		"mnt|SYN_EMPTIES",            // missing carrier type
+		"mnt||45x58x32",              // no group — names no place
+		"mnt|SYN_EMPTIES|",           // no type — cannot say what it is short OF
+		"mnt|SYN_EMPTIES|45x58|32",   // a type code carrying the separator
 		"thr||74577-6SA0A.06",        // no Core node — names no place
 		"co|line-1",                  // missing id
 		"threshold|SMN_001|P",        // the kind's NAME, not its prefix

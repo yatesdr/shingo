@@ -238,27 +238,27 @@ func TestReservationTarget(t *testing.T) {
 	}
 }
 
-// TestLoaderOutboundBufferOptions pins the step-6a config carried on the aggregate so
-// the completion handlers (step 5) read outbound off the Loader instead of the legacy
-// claim, and the buffer (step 7) has its node group. Unset fields are empty.
-func TestLoaderOutboundBufferOptions(t *testing.T) {
+// TestLoaderFlowOptions pins the config carried on the aggregate so the completion
+// handlers read outbound off the Loader instead of the legacy claim. Unset fields
+// are empty.
+func TestLoaderFlowOptions(t *testing.T) {
 	t.Parallel()
 	l, err := NewDedicatedPositionsLoader("DECK", "n", RoleProduce, ReplenishmentThreshold,
 		[]Position{{Node: "POS-1", Payload: "PA"}},
-		WithOutboundDest("SYN_SM_Comp"), WithBufferDest("SYN_BUF_Deck"))
+		WithInboundSource("SYN_BUF_Deck"), WithOutboundDest("SYN_SM_Comp"))
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
 	if l.OutboundDest() != "SYN_SM_Comp" {
 		t.Errorf("OutboundDest = %q, want SYN_SM_Comp", l.OutboundDest())
 	}
-	if l.BufferDest() != "SYN_BUF_Deck" {
-		t.Errorf("BufferDest = %q, want SYN_BUF_Deck", l.BufferDest())
+	if l.InboundSource() != "SYN_BUF_Deck" {
+		t.Errorf("InboundSource = %q, want SYN_BUF_Deck", l.InboundSource())
 	}
 	bare, _ := NewSharedWindowLoader("L", "n", RoleProduce, ReplenishmentThreshold,
 		[]Window{{Node: "L"}}, []PayloadCode{"P1"})
-	if bare.OutboundDest() != "" || bare.BufferDest() != "" {
-		t.Errorf("unset outbound/buffer should be empty, got %q/%q", bare.OutboundDest(), bare.BufferDest())
+	if bare.OutboundDest() != "" || bare.InboundSource() != "" {
+		t.Errorf("unset outbound/inbound should be empty, got %q/%q", bare.OutboundDest(), bare.InboundSource())
 	}
 }
 

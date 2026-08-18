@@ -397,7 +397,33 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 		return nil, &planningError{Code: codeNode, Detail: err.Error(), Err: err}
 	}
 
-	if isMove {
+	// ── The synthetic-destination re-resolution ──────────────────────────────
+	//
+	// AN EMPTY NEEDS THIS AS MUCH AS A MOVE DOES, and until MG2-9 only a move got
+	// it. That was a gap, not a scoping decision.
+	//
+	// Intake resolves a group destination for EVERY order type
+	// (lifecycle_service.resolveSyntheticDestination), and deliberately does not
+	// fail when the group is full: it leaves the group name on the order and lets
+	// it queue, on the promise its own comment makes — "planMove resolves a
+	// concrete child at dispatch time". The promise was kept for moves and
+	// silently broken for empties, because this branch asked isMove.
+	//
+	// Nothing downstream covers for it. The fulfillment scanner reads
+	// order.DeliveryNode and looks it up with GetNodeByDotName, which FINDS a
+	// synthetic group — it is a real row — so there is no error to catch and no
+	// second resolver. The order goes to the fleet naming a node no robot can
+	// drive to.
+	//
+	// It is not only the queued path either: a retrieve_empty to a group with
+	// free capacity passes CheckDropoffCapacity on the first pass and reaches
+	// here with the group name still on it.
+	//
+	// MAINTAINED-GROUP ASKS DO NOT DEPEND ON THIS. The keeper pre-resolves each
+	// ask to a concrete position before admitting it, so this branch is a no-op
+	// for them by construction — which is the point of pre-resolving. This fixes
+	// the OTHER empties: the ones that arrive from a station naming a group.
+	if isMove || isEmpty {
 		// If the destination is still a synthetic NGRP, resolve a concrete child slot
 		// now. Intake (CreateInboundOrder) deferred it because the group was full;
 		// the scanner dispatches to order.DeliveryNode verbatim (it does not resolve
@@ -425,7 +451,18 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 			}
 		}
 		// A same-node move is physically impossible and would waste a fleet order.
-		if sourceNode.ID == destNode.ID {
+		//
+		// STAYS MOVE-ONLY. The same argument reads as though it applies to an
+		// empty — pick up here, put down here, the fleet cancels src == dst — but
+		// turning it into a hard planning error for empties is a REFUSAL this
+		// change has no evidence for. A move names its own source, so a same-node
+		// move is the operator having asked for something impossible. An empty's
+		// source is chosen by the finder, so the same condition would be Core
+		// refusing an order over its own selection, and the right answer there is
+		// probably to pick a different empty rather than to fail. Widening the
+		// resolution is a fix; widening the refusal would be a new behaviour
+		// riding along with it.
+		if isMove && sourceNode.ID == destNode.ID {
 			return nil, &planningError{Code: codeSameNode, Detail: fmt.Sprintf("source and destination are the same node (%s)", sourceNode.Name)}
 		}
 	}

@@ -23,12 +23,18 @@ func (h *Handlers) handleBinTypeCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid height_in", http.StatusBadRequest)
 		return
 	}
+	lengthIn, err := strconv.ParseFloat(r.FormValue("length_in"), 64)
+	if err != nil && r.FormValue("length_in") != "" {
+		http.Error(w, "invalid length_in", http.StatusBadRequest)
+		return
+	}
 
 	bt := &domain.BinType{
 		Code:        r.FormValue("code"),
 		Description: r.FormValue("description"),
 		WidthIn:     widthIn,
 		HeightIn:    heightIn,
+		LengthIn:    lengthIn,
 	}
 
 	if err := h.engine.BinService().CreateBinType(bt); err != nil {
@@ -65,6 +71,9 @@ func (h *Handlers) handleBinTypeUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if h, err := strconv.ParseFloat(r.FormValue("height_in"), 64); err == nil || r.FormValue("height_in") == "" {
 		bt.HeightIn = h
+	}
+	if l, err := strconv.ParseFloat(r.FormValue("length_in"), 64); err == nil || r.FormValue("length_in") == "" {
+		bt.LengthIn = l
 	}
 
 	if err := svc.UpdateBinType(bt); err != nil {

@@ -790,6 +790,20 @@ func (db *DB) CountLiveOrdersByOrigin(originID string) (int, error) {
 	return orders.CountLiveByOrigin(db.DB, originID)
 }
 
+// CountLiveRootsByOrigin counts an episode's own non-terminal ROOT orders — the
+// asks it made, not the legs those asks grew. The level keeper's "asked" tally.
+// See orders.CountLiveRootsByOrigin for why a dig child must not count.
+func (db *DB) CountLiveRootsByOrigin(originID string) (int, error) {
+	return orders.CountLiveRootsByOrigin(db.DB, originID)
+}
+
+// CountTypedInboundToGroup counts carriers of one type already on their way into
+// a group that the level keeper did not ask for. See
+// orders.CountTypedInboundToGroup.
+func (db *DB) CountTypedInboundToGroup(groupNodeID int64, groupNodeName, binTypeCode string) (int, error) {
+	return orders.CountTypedInboundToGroup(db.DB, groupNodeID, groupNodeName, binTypeCode)
+}
+
 // CountLiveCarrierRequestsByDeliveryNode counts every non-terminal order that
 // asked for a CARRIER at a node — queued included, origin-blind, returns
 // excluded. "Has a carrier already been asked for here". See
@@ -804,4 +818,10 @@ func (db *DB) UpdateOrderRobotID(id int64, robotID string) error {
 
 func (db *DB) ActiveOrderIDsByRobot() (map[string]int64, error) {
 	return orders.ActiveIDsByRobot(db.DB)
+}
+
+// ListOrdersByOrigin returns a demand episode's own orders, oldest first, with a
+// truncation flag. See orders.ListByOrigin.
+func (db *DB) ListOrdersByOrigin(originID string, limit int) ([]*orders.Order, bool, error) {
+	return orders.ListByOrigin(db.DB, originID, limit)
 }

@@ -26,7 +26,6 @@ type CoreLoader struct {
 	Replenishment string
 	OutboundDest  string
 	InboundSource string
-	BufferDest    string
 	ConfigGen     int64
 	// FunnelWindows: take one window at a time rather than spreading empties
 	// across all of them. Synced from Core, which owns the setting; false (spread)
@@ -90,9 +89,9 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 	for _, l := range loaders {
 		if _, err := tx.Exec(
-			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, buffer_dest, config_gen, funnel_windows, synced_at)
-			 VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
-			l.LoaderKey, l.Role, l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.BufferDest, l.ConfigGen, l.FunnelWindows,
+			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, synced_at)
+			 VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))`,
+			l.LoaderKey, l.Role, l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.ConfigGen, l.FunnelWindows,
 		); err != nil {
 			return fmt.Errorf("insert core_loader %s/%s: %w", l.LoaderKey, l.Role, err)
 		}
@@ -135,7 +134,7 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 // ListCoreLoaders returns every cached loader assembled with positions+payloads.
 func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, buffer_dest, config_gen, funnel_windows FROM core_loaders ORDER BY loader_key`)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows FROM core_loaders ORDER BY loader_key`)
 	if err != nil {
 		return nil, fmt.Errorf("list core_loaders: %w", err)
 	}
@@ -153,7 +152,7 @@ func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
 
 // GetCoreLoader returns the cached loader with loaderKey, or nil.
 func (db *DB) GetCoreLoader(loaderKey string) (*CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, buffer_dest, config_gen, funnel_windows FROM core_loaders WHERE loader_key=?`, loaderKey)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows FROM core_loaders WHERE loader_key=?`, loaderKey)
 	if err != nil {
 		return nil, fmt.Errorf("get core_loader %s: %w", loaderKey, err)
 	}
@@ -176,7 +175,7 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 	for rows.Next() {
 		var l CoreLoader
 		if err := rows.Scan(&l.LoaderKey, &l.Role, &l.Name, &l.Layout, &l.Replenishment,
-			&l.OutboundDest, &l.InboundSource, &l.BufferDest, &l.ConfigGen, &l.FunnelWindows); err != nil {
+			&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &l.FunnelWindows); err != nil {
 			return nil, fmt.Errorf("scan core_loader: %w", err)
 		}
 		out = append(out, l)

@@ -5,6 +5,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"shingocore/store/reservations"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -118,7 +119,7 @@ func TestBinManifestService_ClearForReuse_MakesVisibleToFindEmpty(t *testing.T) 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-VIS-1", sd.Payload.Code, 100)
 
 	// Bin with manifest should NOT be found by FindEmptyCompatibleBin
-	_, err := db.FindEmptyCompatibleBin(sd.Payload.Code, "", 0)
+	_, err := db.FindEmptyCompatibleBin(sd.Payload.Code, "", 0, bins.EmptyFence{}, reservations.Anyone)
 	if err == nil {
 		t.Fatal("expected FindEmptyCompatibleBin to return error for bin with manifest")
 	}
@@ -129,7 +130,7 @@ func TestBinManifestService_ClearForReuse_MakesVisibleToFindEmpty(t *testing.T) 
 	}
 
 	// Now FindEmptyCompatibleBin should find it
-	found, err := db.FindEmptyCompatibleBin(sd.Payload.Code, "", 0)
+	found, err := db.FindEmptyCompatibleBin(sd.Payload.Code, "", 0, bins.EmptyFence{}, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("FindEmptyCompatibleBin after clear: %v", err)
 	}

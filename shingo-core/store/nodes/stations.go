@@ -3,6 +3,8 @@ package nodes
 import (
 	"database/sql"
 	"fmt"
+
+	"shingocore/store/internal/nodetree"
 )
 
 // AssignStation links a station ID to a node.
@@ -79,13 +81,7 @@ func GetEffectiveStations(db *sql.DB, nodeID int64) ([]string, error) {
 	case "specific":
 		return ListStationsForNode(db, nodeID)
 	default: // "" or "inherit"
-		rows, err := db.Query(`
-			WITH RECURSIVE ancestors AS (
-				SELECT id, parent_id, 0 AS depth FROM nodes WHERE id = $1
-				UNION ALL
-				SELECT n.id, n.parent_id, a.depth + 1 FROM nodes n
-				JOIN ancestors a ON n.id = a.parent_id
-			)
+		rows, err := db.Query(nodetree.AncestorsOf(1)+`
 			SELECT ns.station_id FROM node_stations ns
 			WHERE ns.node_id = (
 				SELECT a.id FROM ancestors a

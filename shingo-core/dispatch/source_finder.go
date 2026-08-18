@@ -22,132 +22,19 @@ package dispatch
 // error handling, so the classifier must live in the seam.
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/binsource"
-	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
-	"shingocore/store/reservations"
 )
-
-// Intent distinguishes what kind of bin the caller needs. It is keyed on the
-// order's data, never on OrderType==Complex or StepsJSON.
-//
-// FindSource has exactly two callers — PlanningService (simple retrieve /
-// retrieve_empty / move intake) and the fulfillment scanner's replay. The
-// Allocator is NOT one of them: it sources complex orders through its own
-// findAvailableForNeed, which reads a single node. Do not assume complex
-// pickups are covered by anything in this file.
-type Intent int
-
-const (
-	// IntentFull needs a bin holding the order's payload (retrieve, move).
-	IntentFull Intent = iota
-	// IntentEmpty needs an empty compatible carrier (retrieve_empty).
-	IntentEmpty
-)
-
-// SourceNeed is the need-shaped input to the finder: WHAT is required and
-// WHERE it may come from, with no *orders.Order attached. It exists because
-// the finder used to derive its scoping from order fields, and a complex
-// order's fields describe the ORDER, not the individual source need -- a
-// complex pickup fed through the order-shaped entry point read as
-// SourceIntentFull and fell through to the tier-5 plant-wide scan while
-// steps_json still drove the robot to the step node.
-//
-// NodeLocal makes tier 5 UNREACHABLE BY TYPE: a node-local need queues at its
-// node instead of widening plant-wide. That is a parameter now, not a comment.
-type SourceNeed struct {
-	SourceNode   string
-	PayloadCode  string
-	DeliveryNode string
-	Intent       Intent
-	NodeLocal    bool
-
-	// Asker is the order this need belongs to, for the dig-lock question on the
-	// NGRP tier. The zero value is reservations.Anyone, which every dig
-	// excludes — the same answer this path gave before the field existed, so a
-	// construction site that does not set it is unchanged rather than wrong.
-	// FindSource fills it; callers building a need by hand should too when they
-	// have an order, or a resuming complex parent cannot see the bin its own
-	// dig uncovered.
-	Asker reservations.DigAsker
-}
-
-// Outcome is the closed disposition set FindSource returns.
-type Outcome int
-
-const (
-	// OutcomeFound — a bin was located; Bin and Node are both set.
-	OutcomeFound Outcome = iota
-	// OutcomeWait — no bin available now; the caller queues with QueueReason.
-	OutcomeWait
-	// OutcomeReshuffle — the only candidate is buried; Buried carries the plan input.
-	OutcomeReshuffle
-	// OutcomeStructural — a permanent/terminal failure; TermCode + Err describe it.
-	OutcomeStructural
-)
-
-// SourceResult is the closed result of FindSource. Bin and Node are returned
-// together on OutcomeFound so the caller never re-resolves the node (which
-// deleted two of the scanner's three ad-hoc rollbacks).
-type SourceResult struct {
-	Outcome Outcome
-
-	// OutcomeFound.
-	Bin  *bins.Bin
-	Node *nodes.Node
-
-	// OutcomeWait: the structured category the order is parked under + the
-	// params the operator sentence is generated from. Replaces a pre-formatted
-	// reason string so the caller parks through the formatter door (the same
-	// code surfaces from every finder tier). Cause is the engineer-only scope
-	// tag (which tier waited); the sentence is built by the caller from
-	// QueueCode + QueueParams.
-	QueueCode   protocol.QueueCode
-	QueueCause  QueueCause
-	QueueParams QueueParams
-
-	// OutcomeReshuffle: the buried bin + its slot/lane for reshuffle planning.
-	Buried *BuriedError
-
-	// OutcomeStructural: TermCode is the planningError code the intake caller
-	// re-raises verbatim (the queue_reason/skip-reason strings are a persisted,
-	// compared contract); Err is the underlying error. The scanner maps any
-	// structural outcome to its "structural" fail path.
-	TermCode string
-	Err      error
-}
-
-// FinderDB is the narrow store surface the finder needs. *store.DB satisfies it
-// structurally; the assertion below catches a drift in the store method set, and
-// finder tests drop a fake in to prove tier scoping (e.g. "FindSourceBinFIFO is
-// never called while the loader pool is empty").
-type FinderDB interface {
-	GetNodeByDotName(name string) (*nodes.Node, error)
-	GetNode(id int64) (*nodes.Node, error)
-	ListBinsByNode(nodeID int64) ([]*bins.Bin, error)
-	ListBinsByNodes(nodeIDs []int64) ([]*bins.Bin, error)
-	FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error)
-	FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64) (*bins.Bin, error)
-	FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error)
-	FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID int64) (*bins.Bin, error)
-	FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error)
-	IsSlotAccessible(slotNodeID int64) (bool, error)
-	GetLoaderHomeByPositionNode(positionNodeID int64) (*loaders.Home, error)
-	GetLoader(id int64) (*loaders.Loader, error)
-	ListLoaderHomes(loaderID int64) ([]loaders.Home, error)
-	ListLoaderQuotas(loaderID int64) ([]loaders.Quota, error)
-	ListLoaderHomeBinTypes(loaderID int64) (map[int64][]string, error)
-}
-
-var _ FinderDB = (*store.DB)(nil)
 
 // SourceFinder is the shared source-finding engine.
 type SourceFinder struct {
@@ -183,107 +70,6 @@ func NewSourceFinder(db FinderDB, resolver NodeResolver, dbg func(string, ...any
 // gate. If they are ever merged, merge them on purpose.
 func isFullCarrier(b *bins.Bin) bool {
 	return b != nil && b.UOPCapacity > 0 && b.UOPRemaining >= b.UOPCapacity
-}
-
-// wantedBinType decides WHICH carrier type an empty going to a loader window
-// should be, from the loader's declared carrier mix. Returns "" when the loader
-// has declared no mix — which is every loader today, and means "first come,
-// first served": take whatever compatible empty is available, exactly as before.
-//
-// The rule composes two facts that answer different questions:
-//
-//   - QUOTA is the loader's intent: three 45x48, one 32x32, one tote. It decides
-//     what to ask for — whatever the loader is most short of.
-//   - CAPABILITY is the window's physical fact: this slot fits a 45x48 or a tote.
-//     It filters what may be asked for AT THIS WINDOW. It is HARD; a carrier that
-//     does not fit is not a carrier, whatever the mix says.
-//
-// Shortfall is measured against what is at the loader's windows RIGHT NOW,
-// counted by type, which Core reads directly — it owns the bins. That is also
-// why this is derived here rather than carried on the order: the Edge would have
-// to be told, and a rule a caller has to remember is one that gets forgotten.
-//
-// A declared mix is HONOURED, NOT APPROXIMATED. If the
-// type the loader is short of is not available anywhere, the pull WAITS. It does
-// not substitute another type — declaring a mix and then ignoring it when it is
-// inconvenient makes declaring it pointless. A loader that wants any-type
-// behaviour says so by declaring no mix.
-func (f *SourceFinder) wantedBinType(need SourceNeed) string {
-	if need.Intent != IntentEmpty || need.DeliveryNode == "" {
-		return ""
-	}
-	dest, err := f.db.GetNodeByDotName(need.DeliveryNode)
-	if err != nil || dest == nil {
-		return ""
-	}
-	home, err := f.db.GetLoaderHomeByPositionNode(dest.ID)
-	if err != nil || home == nil {
-		return ""
-	}
-	quotas, err := f.db.ListLoaderQuotas(home.LoaderID)
-	if err != nil || len(quotas) == 0 {
-		return "" // no declared mix — first come, first served
-	}
-	homes, err := f.db.ListLoaderHomes(home.LoaderID)
-	if err != nil {
-		return ""
-	}
-	nodeIDs := make([]int64, 0, len(homes))
-	for _, h := range homes {
-		nodeIDs = append(nodeIDs, h.PositionNodeID)
-	}
-	resident, err := f.db.ListBinsByNodes(nodeIDs)
-	if err != nil {
-		return ""
-	}
-	have := map[string]int{}
-	for _, b := range resident {
-		have[b.BinTypeCode]++
-	}
-	// What this window can physically take. Absent = anything.
-	caps, err := f.db.ListLoaderHomeBinTypes(home.LoaderID)
-	if err != nil {
-		return ""
-	}
-	allowed := caps[dest.ID]
-	fits := func(code string) bool {
-		if len(allowed) == 0 {
-			return true
-		}
-		for _, a := range allowed {
-			if a == code {
-				return true
-			}
-		}
-		return false
-	}
-	// The most starved type this window can hold, measured as a PROPORTION of
-	// what was asked for rather than as a raw count.
-	//
-	// Raw count gets this wrong in the case that matters most. Wanting 3 of one
-	// type and 1 of another, holding 2 and 0, leaves both one short — and a
-	// count-based rule picks whichever sorts first. But holding none of a type
-	// means that part cannot run at all, while being one short of three means it
-	// can. The emptier line is the more urgent one.
-	//
-	// Compared by cross-multiplication rather than a ratio so the arithmetic
-	// stays integral and exact. Ties break on the type code, so the answer is
-	// stable rather than map-order.
-	var best string
-	var bestGap, bestWant int
-	for _, q := range quotas {
-		gap := q.Want - have[q.BinTypeCode]
-		if gap <= 0 || q.Want <= 0 || !fits(q.BinTypeCode) {
-			continue
-		}
-		switch {
-		case best == "",
-			gap*bestWant > bestGap*q.Want,
-			gap*bestWant == bestGap*q.Want && q.BinTypeCode < best:
-			best, bestGap, bestWant = q.BinTypeCode, gap, q.Want
-		}
-	}
-	return best
 }
 
 // requiresFullCarrier reports whether this need is feeding a DRAIN WINDOW — a
@@ -426,7 +212,67 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		// source node and never scans plant-wide. Keyed on the sourcing intent
 		// data (SourceIntentLocal), stamped at intake, never on OrderType.
 		NodeLocal: order.SourceIntent == SourceIntentLocal,
+		// Both read straight off the order, never re-derived: the values are in
+		// hand here, and a per-step lookup would put a database round trip inside
+		// the tier cascade for something the caller was already holding.
+		OriginID:    order.OriginID,
+		ProcessNode: order.ProcessNode,
+		// THE ASKER, ACTUALLY FILLED. SourceNeed.Asker's doc has claimed
+		// "FindSource fills it" since the field existed and this line is the
+		// first time it was true. Until the empty tiers read it the omission
+		// cost nothing; MG3-1b makes all four read it, so an unfilled asker
+		// would mean a compound parent excluded from its OWN dig — unable to see
+		// the carrier that dig uncovered for it.
+		Asker: digAskerFor(order),
 	})
+}
+
+// sourceSearchFailed reports whether a finder error means THE SEARCH DID NOT RUN,
+// as opposed to the search having run and matched nothing.
+//
+// THE DISTINCTION IS THE WHOLE OF MG3-1a. Every call site below used to read
+// `err != nil || bin == nil` as a single condition, which collapses two facts
+// that have opposite remedies: "the plant is out of material" is something an
+// operator acts on, and "Core could not ask" is something Core retries.
+//
+// It is not a theoretical collapse. The MG2 campaign shipped an exclusion query
+// naming a CTE that did not exist; it threw on every call, every caller read the
+// throw as "no empty found", the observable behaviour was indistinguishable from
+// a correct exclusion, and fmt/vet/lint/unit/race and all three docker suites
+// came back clean (SIM-CAMPAIGN-mg2 §2). The audit exists so phase 3's new
+// query bodies cannot hide the same way.
+//
+// The store side already draws this line: every finder returns sql.ErrNoRows for
+// none-found (ScanBin propagates it straight off row.Scan) and a wrapped error
+// for anything else. Only the call sites were losing it.
+//
+// nil is not a failure and not a match — a caller with a nil error checks the
+// bin, exactly as before.
+func sourceSearchFailed(err error) bool {
+	return err != nil && !errors.Is(err, sql.ErrNoRows)
+}
+
+// unreadableSource is the park every failed search produces. WAIT, NEVER FAIL:
+// a read that did not answer is not a fact about the plant, and the ordinary
+// scanner retry is the releaser.
+func unreadableSource(kind, payloadCode, where string) SourceResult {
+	return SourceResult{
+		Outcome:     OutcomeWait,
+		QueueCode:   protocol.QueueWaitingForMaterial,
+		QueueCause:  CauseFinderSourceUnreadable,
+		QueueParams: QueueParams{Kind: kind, Payload: payloadCode, Group: where},
+	}
+}
+
+// nodeLocalKind is the QueueParams.Kind a node-local need renders with: "empty"
+// for an empty pull, blank otherwise — matching the tier's own none-found park
+// two lines below, so an unreadable and an empty node read the same way in every
+// respect except the one that differs.
+func nodeLocalKind(intent Intent) string {
+	if intent == IntentEmpty {
+		return "empty"
+	}
+	return ""
 }
 
 // FindSourceForNeed runs the tier cascade for one NEED. Same cascade, same
@@ -493,7 +339,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
 					QueueCause:  CauseFinderGroupEmpty,
-					QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
+					QueueParams: QueueParams{Payload: payloadCode, Group: need.SourceNode},
 				}
 			}
 		}
@@ -505,7 +351,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
 				QueueCause:  CauseFinderGroupEmpty,
-				QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
+				QueueParams: QueueParams{Payload: payloadCode, Group: need.SourceNode},
 			}
 		}
 		bin = result.Bin
@@ -544,7 +390,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
 				QueueCause:  CauseLoaderSourceUnreadable,
-				QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
+				QueueParams: QueueParams{Payload: payloadCode, Group: need.SourceNode},
 			}
 		}
 		if isLoaderPos {
@@ -558,7 +404,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
 					QueueCause:  CauseFinderPoolEmpty,
-					QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
+					QueueParams: QueueParams{Payload: payloadCode, Group: need.SourceNode},
 				}
 			}
 			bin, binNode = chosen, node
@@ -579,14 +425,53 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// the plant-wide empty scan.
 	if bin == nil && intent == IntentEmpty && srcNode != nil && srcNode.IsSynthetic &&
 		(srcNode.NodeTypeCode == protocol.NodeClassNGRP || srcNode.NodeTypeCode == protocol.NodeClassLANE) {
+
+		// ── MG3-2: THE EXPLICIT-GROUP BOUNDARY ──────────────────────────────
+		//
+		// A need that NAMED a strict maintained group it is not supported at is
+		// turned away with a cause, before the group is searched at all.
+		//
+		// The plant-wide fence hides those carriers inside the query, which is
+		// right for a scan that never asked for them. It is wrong here: this need
+		// asked for that group by name, because somebody configured a claim to
+		// source from it. "The group is empty" would send an operator to look for
+		// material standing right in front of them; "the group is not yours" is
+		// the fact, and it is a CONFIGURATION wait rather than a material one.
+		//
+		// AND IT DOES NOT WIDEN. A scoped need that falls through to the
+		// plant-wide scan is the Hopkinsville wrong-supermarket pull, and being
+		// fenced out is not a reason to start doing it.
+		if fenced, ferr := f.db.GroupFencesAsker(srcNode.ID, need.ProcessNode); ferr != nil {
+			// The fence could not be read, so whether this need may be served is
+			// unknown. Unknown parks — it does not serve.
+			f.debug("finder: fence check for group %s unreadable: %v", need.SourceNode, ferr)
+			return unreadableSource("empty", payloadCode, need.SourceNode)
+		} else if fenced {
+			f.debug("finder: group %s is fenced against %q — parking", need.SourceNode, need.ProcessNode)
+			return SourceResult{
+				Outcome:    OutcomeWait,
+				QueueCode:  protocol.QueueWaitingForMaterial,
+				QueueCause: CauseFinderGroupFenced,
+				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode, Group: need.SourceNode,
+					Reserved: true},
+			}
+		}
+
 		var groupBin *bins.Bin
 		var gerr error
 		if wantType != "" {
-			groupBin, gerr = f.db.FindEmptyBinOfTypeInGroup(wantType, srcNode.ID, excludeID)
+			groupBin, gerr = f.db.FindEmptyBinOfTypeInGroup(wantType, srcNode.ID, excludeID, need.Asker)
 		} else {
-			groupBin, gerr = f.db.FindEmptyCompatibleBinInGroup(payloadCode, srcNode.ID, excludeID)
+			groupBin, gerr = f.db.FindEmptyCompatibleBinInGroup(payloadCode, srcNode.ID, excludeID, need.Asker)
 		}
-		if gerr != nil || groupBin == nil {
+		if sourceSearchFailed(gerr) {
+			// THE SEARCH DID NOT RUN. Nothing below this line is known about the
+			// group's contents, so none of the "the group has none of X" causes
+			// would be true.
+			f.debug("finder: group empty search for %s unreadable: %v", need.SourceNode, gerr)
+			return unreadableSource("empty", payloadCode, need.SourceNode)
+		}
+		if groupBin == nil {
 			cause := CauseFinderGroupEmpty
 			if wantType != "" {
 				// The loader asked for a specific type and the group has none.
@@ -601,7 +486,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
 				QueueCause:  cause,
-				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode, Destination: need.SourceNode},
+				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode, Group: need.SourceNode},
 			}
 		}
 		bin = groupBin
@@ -622,7 +507,20 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// would fall past every tier into a permanent Wait and strand every
 	// produce-side press-index empty refill.
 	if bin == nil && moveShaped && srcNode != nil && (intent == IntentFull || intent == IntentEmpty) {
-		candidates, _ := f.db.ListBinsByNode(srcNode.ID)
+		// THE ERROR WAS DISCARDED HERE UNTIL MG3-1a, and it is the same collapse
+		// as the finder call sites below wearing a different shape: a failed read
+		// yields zero candidates, and zero candidates parks under
+		// CauseFinderNodeEmpty — "the named source node holds nothing usable",
+		// which is a claim about the plant that nobody checked.
+		//
+		// It is not the same as the finders' `err != nil || bin == nil`; it is
+		// worse, because `_` cannot even be misread. It states that the outcome
+		// does not depend on whether the read worked.
+		candidates, lberr := f.db.ListBinsByNode(srcNode.ID)
+		if lberr != nil {
+			f.debug("finder: node-local candidates at %s unreadable: %v", need.SourceNode, lberr)
+			return unreadableSource(nodeLocalKind(intent), payloadCode, need.SourceNode)
+		}
 		claimPayload := payloadCode
 		if intent == IntentEmpty {
 			candidates = emptyBinsOnly(candidates)
@@ -636,7 +534,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			break
 		}
 		if bin == nil {
-			params := QueueParams{Payload: payloadCode, Destination: need.SourceNode}
+			params := QueueParams{Payload: payloadCode, Group: need.SourceNode}
 			if intent == IntentEmpty {
 				params.Kind = "empty"
 			}
@@ -654,7 +552,11 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	if bin == nil && !moveShaped {
 		if intent == IntentFull {
 			b, err := f.db.FindSourceBinFIFO(payloadCode, excludeID)
-			if err != nil || b == nil {
+			if sourceSearchFailed(err) {
+				f.debug("finder: plant-wide full search for %s unreadable: %v", payloadCode, err)
+				return unreadableSource("", payloadCode, "")
+			}
+			if b == nil {
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
@@ -667,13 +569,22 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			var b *bins.Bin
 			var err error
 			cause := CauseFinderPlantEmpty
+			// THE FENCE, on both arms. Zero for every need that names no process
+			// and carries no maintain origin, and then these render byte-for-byte
+			// the queries they were before MG3-1: sharing is the plant default and
+			// the only fenced zones are maintained groups.
+			fence := f.emptyFenceFor(need)
 			if wantType != "" {
-				b, err = f.db.FindEmptyBinOfType(wantType, preferZone, excludeID)
-				cause = "finder-no-empty-of-type"
+				b, err = f.db.FindEmptyBinOfType(wantType, preferZone, excludeID, fence, need.Asker)
+				cause = CauseFinderNoEmptyOfType
 			} else {
-				b, err = f.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeID)
+				b, err = f.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeID, fence, need.Asker)
 			}
-			if err != nil || b == nil {
+			if sourceSearchFailed(err) {
+				f.debug("finder: plant-wide empty search unreadable: %v", err)
+				return unreadableSource("empty", payloadCode, "")
+			}
+			if b == nil {
 				return SourceResult{
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
@@ -720,10 +631,15 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		f.debug("finder: %s is a drain window and bin %d is a partial (%d of %d) — waiting for a full",
 			need.DeliveryNode, bin.ID, bin.UOPRemaining, bin.UOPCapacity)
 		return SourceResult{
-			Outcome:     OutcomeWait,
-			QueueCode:   protocol.QueueWaitingForMaterial,
-			QueueCause:  CauseFinderNoFullCarrier,
-			QueueParams: QueueParams{Payload: payloadCode, Destination: need.DeliveryNode},
+			Outcome:    OutcomeWait,
+			QueueCode:  protocol.QueueWaitingForMaterial,
+			QueueCause: CauseFinderNoFullCarrier,
+			// NO Destination. It named the DRAIN WINDOW, which the material
+			// formatter does not render and must not: naming the lineside
+			// destination in a material wait is the F1 defect Group exists to
+			// end. Where the partial is standing is not reliably known here
+			// (tiers 1 and 5 set bin without a node), so the sentence says less.
+			QueueParams: QueueParams{Payload: payloadCode},
 		}
 	}
 
@@ -813,6 +729,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		}
 	}
 
+	f.auditSourcedOutsideItsGroup(need, binNode)
 	return SourceResult{Outcome: OutcomeFound, Bin: bin, Node: binNode}
 }
 
@@ -920,4 +837,62 @@ func (f *SourceFinder) sourceFromDedicatedLoader(sourceNodeName, payloadCode str
 		return nil, nil, true, fmt.Errorf("resolve node for bin %d: %w", chosen.ID, err)
 	}
 	return chosen, node, true, nil
+}
+
+// auditSourcedOutsideItsGroup logs when a press the level keeper serves takes
+// its empty from SOMEWHERE ELSE. MG3-5.
+//
+// ── THE SIGNAL IS "THE MAINTAINER IS LOSING" ────────────────────────────────
+//
+// A maintained group exists so the presses it supports never wait for a
+// carrier. When a supported press sources from outside that group, the group
+// was empty of what it needed AT THE MOMENT IT ASKED — the keeper had not
+// caught up, or the level is set too low, or the mix is wrong. Nothing failed:
+// the press got its carrier and the line kept running, which is exactly why
+// this is invisible without a line in the log.
+//
+// It is the counterpart to the level itself. `resident` says what the group
+// holds; this says when holding it did not help.
+//
+// A LOG LINE AND NOT A CAUSE, deliberately. The order is not waiting and there
+// is nothing for an operator to do about this one occurrence — it is a rate,
+// read over a shift, and a queue cause on a successful order would be a lie
+// about the order's state. If it turns out to want a surface, the log line is
+// what a query would be built from.
+//
+// IT RIDES THE DEBUG CHANNEL, AND THAT IS A STATED LIMITATION rather than a
+// choice. SourceFinder is constructed with one logger — the dispatcher's dbg —
+// so this is as loud as the seam can currently be. Promoting it means giving
+// the finder a second logger and threading it through every construction site,
+// which is a wider change than an observation warrants until somebody wants to
+// read the rate. Whoever does: that is the change.
+//
+// SILENT WHEN THERE IS NOTHING TO SAY: no process node, no carrier, or a
+// carrier that came from within a group this process is supported at.
+func (f *SourceFinder) auditSourcedOutsideItsGroup(need SourceNeed, binNode *nodes.Node) {
+	if need.ProcessNode == "" || binNode == nil {
+		return
+	}
+	groups, err := f.db.MaintainedGroupsSupporting(need.ProcessNode)
+	if err != nil {
+		// Best-effort by construction: this is an observation about an order that
+		// already succeeded, and a failed read must not change what it got.
+		f.debug("audit: maintained groups supporting %s unreadable: %v", need.ProcessNode, err)
+		return
+	}
+	if len(groups) == 0 {
+		return
+	}
+	inside, err := f.db.NodeIsUnderAny(binNode.ID, groups)
+	if err != nil {
+		f.debug("audit: group membership for node %d unreadable: %v", binNode.ID, err)
+		return
+	}
+	if inside {
+		return
+	}
+	f.debug("MAINTAINED GROUP MISSED: process %s sourced an empty from %s, which is outside "+
+		"the %d maintained group(s) that serve it. The group was short of what this press "+
+		"needed when it asked — level too low, mix wrong, or the keeper had not caught up. "+
+		"Nothing failed; the press is running.", need.ProcessNode, binNode.Name, len(groups))
 }

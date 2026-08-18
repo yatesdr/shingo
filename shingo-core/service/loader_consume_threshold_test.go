@@ -29,7 +29,7 @@ func TestLoaderService_RejectsConsumeThreshold(t *testing.T) {
 	// Create: refused, and refused by name so a caller can tell a bad config from
 	// a broken server.
 	_, err := svc.Create("CT-UNLOADER", loaders.RoleConsume, loaders.LayoutSharedWindow,
-		loaders.ReplenishmentThreshold, "", "", "", false)
+		loaders.ReplenishmentThreshold, "", "", false)
 	if err == nil {
 		t.Fatal("Create accepted a consume loader in threshold mode; want refusal")
 	}
@@ -40,18 +40,18 @@ func TestLoaderService_RejectsConsumeThreshold(t *testing.T) {
 	// The produce equivalent is the normal case and must still work — the guard
 	// has to be about the PAIR, not about threshold mode.
 	produceID, err := svc.Create("CT-LOADER", loaders.RoleProduce, loaders.LayoutSharedWindow,
-		loaders.ReplenishmentThreshold, "", "", "", false)
+		loaders.ReplenishmentThreshold, "", "", false)
 	testutil.MustNoErr(t, err, "create produce threshold loader")
 
 	// And a consume loader in its real mode is fine.
 	consumeID, err := svc.Create("CT-DRAIN", loaders.RoleConsume, loaders.LayoutSharedWindow,
-		loaders.ReplenishmentOperator, "", "", "", false)
+		loaders.ReplenishmentOperator, "", "", false)
 	testutil.MustNoErr(t, err, "create consume drain loader")
 
 	// Update: the same pair refused when editing an existing unloader. Role is
 	// not a parameter here, which is exactly why this needs its own check.
 	err = svc.Update(consumeID, "CT-DRAIN", loaders.LayoutSharedWindow,
-		loaders.ReplenishmentThreshold, "", "", "", false)
+		loaders.ReplenishmentThreshold, "", "", false)
 	if err == nil {
 		t.Fatal("Update edited an unloader into threshold mode; want refusal")
 	}
@@ -69,7 +69,7 @@ func TestLoaderService_RejectsConsumeThreshold(t *testing.T) {
 	// Editing the produce loader's other fields still works with threshold mode
 	// intact; the guard must not have caught the whole threshold vocabulary.
 	testutil.MustNoErr(t, svc.Update(produceID, "CT-LOADER-2", loaders.LayoutSharedWindow,
-		loaders.ReplenishmentThreshold, "", "", "", false), "update produce threshold loader")
+		loaders.ReplenishmentThreshold, "", "", false), "update produce threshold loader")
 }
 
 // TestLoaderService_ConsumeDefaultsToDrain pins that the role-aware default is
@@ -81,7 +81,7 @@ func TestLoaderService_ConsumeDefaultsToDrain(t *testing.T) {
 	db := testDB(t)
 	svc := NewLoaderService(db, nil)
 
-	id, err := svc.Create("CTD-UNLOADER", loaders.RoleConsume, loaders.LayoutSharedWindow, "", "", "", "", false)
+	id, err := svc.Create("CTD-UNLOADER", loaders.RoleConsume, loaders.LayoutSharedWindow, "", "", "", false)
 	testutil.MustNoErr(t, err, "create consume loader with blank replenishment")
 
 	got, err := db.GetLoader(id)

@@ -167,7 +167,20 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 func (d *Dispatcher) PlanBuriedReshuffle(order *orders.Order, buried *BuriedError) error {
 	if _, pe := d.planner.planBuriedReshuffle(order, buried); pe != nil {
 		if pe.Transient() {
-			return &ReshuffleWaitError{Cause: reshuffleWaitCause(pe.Code), Detail: pe.Detail}
+			return &ReshuffleWaitError{
+				Cause:  reshuffleWaitCause(pe.Code),
+				Detail: pe.Detail,
+				// THE PARAMS ARE ATTACHED HERE BECAUSE HERE IS WHERE THEY ARE
+				// KNOWN. The scanner writes this park and holds neither the lane
+				// nor the lane lock; it was writing only the payload, so a
+				// lane-locked row said "storage rearranging" and named neither the
+				// corridor nor the excavation holding it — the two facts an
+				// operator needs and cannot get from the board.
+				//
+				// The complex path has named them since it existed
+				// (complex_reshuffle.go). The plain path is what was thin.
+				Params: buriedWaitParams(d.laneLock, order, buried),
+			}
 		}
 		return pe
 	}
@@ -185,6 +198,34 @@ func (d *Dispatcher) PlanBuriedReshuffle(order *orders.Order, buried *BuriedErro
 type ReshuffleWaitError struct {
 	Cause  QueueCause
 	Detail string
+	// Params are the operator-facing facts about THIS wait — the lane, and the
+	// dig holding it. Filled at the planner, where they are known; read by
+	// ReshuffleWaitParams at the park site, which is in another package.
+	Params QueueParams
+}
+
+// buriedWaitParams names the corridor and the excavation for a buried-source
+// wait.
+//
+// DigOrderID IS BEST-EFFORT AND ZERO IS HONEST. digWaitFor reads the lane's
+// EXCAVATION owner, and the §R.101 source-lock case has no excavation — the
+// hold is a demand's, not a dig's. A zero there says "nothing is digging this
+// lane on anybody's behalf", which is exactly the situation the releaser
+// sentence had been lying about.
+func buriedWaitParams(laneLock *LaneLock, order *orders.Order, buried *BuriedError) QueueParams {
+	p := QueueParams{}
+	if order != nil {
+		p.Payload = order.PayloadCode
+	}
+	if buried == nil {
+		return p
+	}
+	// BuriedError carries the lane's ID, not its name — so the name comes from
+	// digWaitByLaneName's sibling read rather than off the error. A lane whose
+	// name cannot be read still gets its dig id, because the two facts fail
+	// independently and half an answer beats none.
+	p.DigOrderID = digWaitFor(laneLock, buried.LaneID)
+	return p
 }
 
 func (e *ReshuffleWaitError) Error() string {
@@ -202,6 +243,17 @@ func ReshuffleWaitCause(err error) QueueCause {
 		return rw.Cause
 	}
 	return CauseReshuffleCongestion
+}
+
+// ReshuffleWaitParams reads the operator-facing facts off a wait error, for the
+// park site outside this package. Falls back to the payload alone, which is
+// what the plain path wrote before MG3-1b.
+func ReshuffleWaitParams(err error, fallbackPayload string) QueueParams {
+	var rw *ReshuffleWaitError
+	if errors.As(err, &rw) {
+		return rw.Params
+	}
+	return QueueParams{Payload: fallbackPayload}
 }
 
 // reshuffleWaitCause maps a transient planning code onto the cause tag that goes

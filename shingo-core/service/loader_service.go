@@ -101,7 +101,7 @@ func (s *LoaderService) WindowBinTypes(loaderID int64) (map[int64][]string, erro
 // always taken. The form asks it first, as the question that decides which
 // other questions appear, so a create that dropped it contradicted the screen
 // that sent it.
-func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, inboundSource, bufferDest string, funnelWindows bool) (int64, error) {
+func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, inboundSource string, funnelWindows bool) (int64, error) {
 	if layout == "" {
 		layout = loaders.LayoutSharedWindow
 	}
@@ -118,10 +118,13 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 	if err := checkReplenishment(role, replenishment); err != nil {
 		return 0, err
 	}
+	if err := s.checkInboundSource(inboundSource); err != nil {
+		return 0, err
+	}
 	id, err := s.db.CreateLoader(loaders.Loader{
 		Name: name, Role: role, Layout: layout,
 		Replenishment: replenishment, OutboundDest: outboundDest,
-		InboundSource: inboundSource, BufferDest: bufferDest,
+		InboundSource: inboundSource,
 		FunnelWindows: funnelWindows,
 	})
 	if err != nil {
@@ -133,9 +136,8 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 
 // Update changes a loader's editable fields and re-derives. role + the surrogate id
 // are the identity and stay fixed; layout/replenishment default to
-// the current value when blank. The shared_window flow endpoints
-// (inbound/outbound/buffer) are passed through verbatim — a dedicated_positions
-// loader sends them empty (each position is its own in/out).
+// the current value when blank. The flow endpoints (inbound/outbound) are
+// passed through verbatim.
 //
 // funnelWindows is settable at Create as well as here. It used to be editable
 // only on this path, on the reasoning that a loader is created before its
@@ -144,7 +146,7 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 // when the kind became the form's first question — the operator now answers it
 // before anything else, and a create that ignored the answer silently produced
 // a spread loader and then re-rendered the form showing it.
-func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDest, inboundSource, bufferDest string, funnelWindows bool) error {
+func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDest, inboundSource string, funnelWindows bool) error {
 	cur, err := s.db.GetLoader(id)
 	if err != nil {
 		return err
@@ -167,8 +169,10 @@ func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDe
 	cur.Layout = layout
 	cur.Replenishment = replenishment
 	cur.OutboundDest = outboundDest
+	if err := s.checkInboundSource(inboundSource); err != nil {
+		return err
+	}
 	cur.InboundSource = inboundSource
-	cur.BufferDest = bufferDest
 	cur.FunnelWindows = funnelWindows
 	if err := s.db.UpdateLoader(*cur); err != nil {
 		return err
@@ -343,4 +347,47 @@ func (s *LoaderService) rederive() {
 			s.notifier.OnThresholdChanges(changes)
 		}
 	}
+}
+
+// ErrInboundSourceUnresolved is returned when a claim's inbound source names a
+// node that does not exist.
+var ErrInboundSourceUnresolved = errors.New("inbound source does not resolve to a node")
+
+// checkInboundSource resolve-checks a claim's inbound source at SAVE TIME.
+// MG3-3.
+//
+// ── IT WAS AN UNCHECKED STRING ──────────────────────────────────────────────
+//
+// inbound_source is typed by an operator, stored verbatim, and read months later
+// by the source finder — which resolves it, gets nothing, and falls through to
+// whatever its tier gates allow. A typo therefore produced no error at save, no
+// error at read, and a silent change of sourcing behaviour that nobody could
+// connect to the edit that caused it.
+//
+// It matters more now than it did. A maintained group is named by exactly this
+// field, and phase 3 makes naming it consequential: the group either serves this
+// claim or fences it, and both of those are decisions about a node. A field that
+// might name nothing at all cannot carry either.
+//
+// SAVE TIME IS THE ONLY PLACE THIS IS CHEAP. The operator is standing there and
+// knows what they meant; at read time the finder has an order to place and no
+// way to ask.
+//
+// BLANK IS VALID and means "no scoped source" — the overwhelmingly common case,
+// and the reason this is a resolve-check rather than a required field.
+//
+// IT CHECKS EXISTENCE, NOT SUITABILITY. Whether a node is a sensible source for
+// this claim is a judgement that depends on plant layout and on config that may
+// be edited in any order; refusing a save on it would make the form unusable
+// during a reconfiguration. Existence is the part that is always knowable and
+// always wrong when it fails.
+func (s *LoaderService) checkInboundSource(inboundSource string) error {
+	if inboundSource == "" {
+		return nil
+	}
+	node, err := s.db.GetNodeByDotName(inboundSource)
+	if err != nil || node == nil {
+		return fmt.Errorf("%w: %q", ErrInboundSourceUnresolved, inboundSource)
+	}
+	return nil
 }

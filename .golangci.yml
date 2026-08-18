@@ -101,6 +101,27 @@ linters:
           msg: "Direct FindSourceBinFIFO calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
         - pattern: 'db\.FindEmptyCompatibleBin'
           msg: "Direct FindEmptyCompatibleBin(InGroup) calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
+        # The TYPED empty finders, added with maintained groups (MG2). Same guard,
+        # same reason, and it matters more here than for the payload-matched
+        # finders: a maintained group's asks are empty pulls, and an empty pulled
+        # outside the seam skips the group scoping and the tier order that decide
+        # WHICH empty — which is the drift that produced wrong-source-on-replay
+        # for the untyped finders. `db\.FindEmptyBinOfType` prefix-matches
+        # FindEmptyBinOfTypeInGroup, so one pattern covers both.
+        #
+        # IT MUST NOT CATCH THE COUNT. db.CountEmptyBinsOfTypeInGroup is the level
+        # keeper's `resident` term — a read of how many are standing there, not a
+        # selection of which one to move — and it is REQUIRED to share a WHERE
+        # spelling with the finder it mirrors (bins.EmptyOfTypeInGroupWhere), which
+        # is the opposite of bypassing the seam. The pattern does not match it:
+        # the count's name has no "Find" in it. That is load-bearing, not luck, and
+        # renaming either one has to keep it true.
+        #
+        # source_finder.go IS the seam and calls both directly; it is already
+        # carved out by exclusions.rules #7, which keys on this message's text —
+        # so the wording below must keep saying "bypass the shared source seam".
+        - pattern: 'db\.FindEmptyBinOfType'
+          msg: "Direct FindEmptyBinOfType(InGroup) calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go). The COUNT of the same population (db.CountEmptyBinsOfTypeInGroup) is a read, not a selection, and is not covered by this guard."
         # Unclaim-inverse guard. Clearing bins.claimed_by WITHOUT releasing
         # the coupled reservation orphans a confirmed reservation and bricks the bin
         # via uq_reservations_bin_active — the exact failure the coupled release

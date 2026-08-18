@@ -79,3 +79,6 @@ func (e *Engine) SetCountGroupRunner(build func(countgroup.Emitter) *countgroup.
 	e.countGroupBuild = build
 	e.countGroup = build(&countGroupEventEmitter{bus: e.Events})
 }
+
+// Maintainer returns the maintained-group level keeper, for the health page.
+func (e *Engine) Maintainer() *Maintainer { return e.maintainer }

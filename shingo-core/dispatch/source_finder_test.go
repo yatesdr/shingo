@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -20,6 +21,14 @@ import (
 // consulted when a scoped tier applies — the exact drift the collapse fixes.
 
 // ── fake FinderDB ────────────────────────────────────────────────────────────
+//
+// EVERY FINDER HERE RETURNS sql.ErrNoRows FOR NONE-FOUND, because that is what
+// the real store returns — ScanBin propagates it straight off row.Scan, and a
+// wrapped error means the query failed. Until MG3-1a these returned
+// errors.New("no empty"), which was a lie the call sites could not catch
+// because they read any error as "none found" anyway. Now that the cascade
+// separates the two, a fake that kept lying would send every none-found path
+// down the unreadable arm and no test could tell.
 
 type fakeFinderDB struct {
 	nodesByID   map[int64]*nodes.Node
@@ -34,6 +43,49 @@ type fakeFinderDB struct {
 	quotas       map[int64][]loaders.Quota
 	homeBinTypes map[int64]map[int64][]string
 	typedEmpty   map[string]*bins.Bin
+
+	// maintainedType stands for the open maintained-group episodes: origin id →
+	// the carrier type that episode is short of. An origin absent from the map is
+	// not a maintain episode, which is every other order in the plant.
+	maintainedType map[string]string
+	// maintainedGroup is the other half of the same episode: origin id → the
+	// group node name. It is what the finder turns into a subtree exclusion so a
+	// top-off ask cannot source out of the group it is filling.
+	maintainedGroup map[string]string
+	// lastFence records the maintained-group fence the plant-wide finders were
+	// actually handed. Recorded rather than ignored because the fence IS the
+	// behaviour under test; it replaced lastExcludedSubtree when MG3-1 absorbed
+	// MG2-11's subtree exclusion into the fence's second rule.
+	lastFence bins.EmptyFence
+	// lastAsker records the dig asker the finders were handed. MG3-0 pinned that
+	// this was the ZERO value on the simple path; MG3-1b makes it real, so the
+	// record is what the inverted pin asserts against.
+	lastAsker reservations.DigAsker
+	// fencedGroups are the group node ids that turn every asker away, and
+	// fencedGroupErr makes the fence read FAIL. Both stand for a strict
+	// maintained group the need is not supported at.
+	fencedGroups   map[int64]bool
+	fencedGroupErr error
+
+	// supportingGroups: process node name -> the maintained groups serving it.
+	// nodeUnder: bin node id -> the group it sits under, if any.
+	supportingGroups    map[string][]int64
+	supportingGroupsErr error
+	nodeUnder           map[int64]int64
+	effectiveBinTypes   map[int64][]*bins.BinType
+	// maintainedTypeErr makes the episode read FAIL rather than answer, so the
+	// "a read failure returns no type rather than guessing" arm is exercisable.
+	maintainedTypeErr error
+	// searchErr makes EVERY empty/full finder fail with a real error rather than
+	// sql.ErrNoRows — the "the query did not run" case MG3-1a separates from
+	// "nothing matched". One field for all of them because they share one
+	// disposition at the caller, and one of them exercising it is enough.
+	searchErr error
+	// nodeBinsErr makes the node-local candidate read FAIL. Until MG3-1a that
+	// error was discarded outright — `candidates, _ :=` — so a failed read
+	// parked the order under "the node holds nothing usable", which is a claim
+	// about the plant nobody had checked.
+	nodeBinsErr error
 
 	fifoBin     *bins.Bin
 	globalEmpty *bins.Bin
@@ -56,6 +108,12 @@ type fakeFinderDB struct {
 	fifoCalls        int
 	globalEmptyCalls int
 	groupEmptyCalls  int
+	typedGroupCalls  int
+	// typedGlobalCalls counts the TYPED plant-wide empty search — the tier-5
+	// twin of globalEmptyCalls. Absent until MG3-0, which is why the golden
+	// matrix could not assert "and no neighbouring finder was consulted" on the
+	// one tier where the typed and untyped arms sit side by side.
+	typedGlobalCalls int
 }
 
 func newFakeFinderDB() *fakeFinderDB {
@@ -68,6 +126,16 @@ func newFakeFinderDB() *fakeFinderDB {
 		quotas:       map[int64][]loaders.Quota{},
 		homeBinTypes: map[int64]map[int64][]string{},
 		typedEmpty:   map[string]*bins.Bin{},
+		// Both episode maps are made here rather than lazily by each test. They
+		// were nil until MG3-0, so a test that stated a maintain origin panicked
+		// on assignment instead of exercising the arm — which is a fixture that
+		// can only be used by someone who already knows it is broken.
+		maintainedType:    map[string]string{},
+		maintainedGroup:   map[string]string{},
+		fencedGroups:      map[int64]bool{},
+		supportingGroups:  map[string][]int64{},
+		nodeUnder:         map[int64]int64{},
+		effectiveBinTypes: map[int64][]*bins.BinType{},
 	}
 }
 
@@ -109,6 +177,9 @@ func (f *fakeFinderDB) GetNode(id int64) (*nodes.Node, error) {
 }
 
 func (f *fakeFinderDB) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) {
+	if f.nodeBinsErr != nil {
+		return nil, f.nodeBinsErr
+	}
 	return f.binsByNode[nodeID], nil
 }
 
@@ -128,40 +199,113 @@ func (f *fakeFinderDB) ListLoaderHomeBinTypes(loaderID int64) (map[int64][]strin
 	return f.homeBinTypes[loaderID], nil
 }
 
-func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64) (*bins.Bin, error) {
+// FindEmptyBinOfType RECORDS THE FENCE IT WAS HANDED. The fence is the whole
+// behaviour under test on this path, so a fake that dropped the argument would
+// let it be removed with every test still green — the same reason its
+// predecessor recorded the subtree it was told to exclude.
+func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64, fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
+	f.typedGlobalCalls++
+	f.lastFence = fence
+	f.lastAsker = asker
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
 	if b, ok := f.typedEmpty[binTypeCode]; ok {
 		return b, nil
 	}
-	return nil, errors.New("no empty of type " + binTypeCode)
+	return nil, sql.ErrNoRows
 }
 
-func (f *fakeFinderDB) FindEmptyBinOfTypeInGroup(binTypeCode string, _, _ int64) (*bins.Bin, error) {
+// supportingGroups / nodeUnder stand for the MG3-5 audit's two reads. Recorded
+// rather than stubbed to nothing so the audit's SILENCE is testable: the line
+// must not fire for a press no group serves, and must not fire when the carrier
+// came from inside one that does.
+// effectiveBinTypes is MG3-4's input: what physically fits at a position.
+// Absent means "nobody has said", which is every position in every plant today
+// and must leave the choice alone.
+func (f *fakeFinderDB) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) {
+	return f.effectiveBinTypes[nodeID], nil
+}
+
+func (f *fakeFinderDB) MaintainedGroupsSupporting(processNode string) ([]int64, error) {
+	if f.supportingGroupsErr != nil {
+		return nil, f.supportingGroupsErr
+	}
+	return f.supportingGroups[processNode], nil
+}
+
+func (f *fakeFinderDB) NodeIsUnderAny(nodeID int64, roots []int64) (bool, error) {
+	for _, r := range roots {
+		if f.nodeUnder[nodeID] == r {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeFinderDB) GroupFencesAsker(groupNodeID int64, _ string) (bool, error) {
+	if f.fencedGroupErr != nil {
+		return false, f.fencedGroupErr
+	}
+	return f.fencedGroups[groupNodeID], nil
+}
+
+func (f *fakeFinderDB) MaintainedEpisodeForOrigin(originID string) (string, string, error) {
+	if f.maintainedTypeErr != nil {
+		return "", "", f.maintainedTypeErr
+	}
+	if originID == "" {
+		// The real one returns without querying: origin_id is a UUID column and
+		// "" is a cast error, not an empty result.
+		return "", "", nil
+	}
+	return f.maintainedGroup[originID], f.maintainedType[originID], nil
+}
+
+func (f *fakeFinderDB) FindEmptyBinOfTypeInGroup(binTypeCode string, _, _ int64, asker reservations.DigAsker) (*bins.Bin, error) {
+	f.typedGroupCalls++
+	f.lastAsker = asker
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
 	if b, ok := f.typedEmpty[binTypeCode]; ok {
 		return b, nil
 	}
-	return nil, errors.New("no empty of type " + binTypeCode + " in group")
+	return nil, sql.ErrNoRows
 }
 
 func (f *fakeFinderDB) FindSourceBinFIFO(_ string, _ int64) (*bins.Bin, error) {
 	f.fifoCalls++
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
 	if f.fifoBin == nil {
-		return nil, errors.New("no source bin")
+		return nil, sql.ErrNoRows
 	}
 	return f.fifoBin, nil
 }
 
-func (f *fakeFinderDB) FindEmptyCompatibleBin(_, _ string, _ int64) (*bins.Bin, error) {
+func (f *fakeFinderDB) FindEmptyCompatibleBin(_, _ string, _ int64, fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
 	f.globalEmptyCalls++
+	f.lastFence = fence
+	f.lastAsker = asker
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
 	if f.globalEmpty == nil {
-		return nil, errors.New("no empty")
+		return nil, sql.ErrNoRows
 	}
 	return f.globalEmpty, nil
 }
 
-func (f *fakeFinderDB) FindEmptyCompatibleBinInGroup(_ string, _, _ int64) (*bins.Bin, error) {
+func (f *fakeFinderDB) FindEmptyCompatibleBinInGroup(_ string, _, _ int64, asker reservations.DigAsker) (*bins.Bin, error) {
 	f.groupEmptyCalls++
+	f.lastAsker = asker
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
 	if f.groupEmpty == nil {
-		return nil, errors.New("no empty in group")
+		return nil, sql.ErrNoRows
 	}
 	return f.groupEmpty, nil
 }
@@ -537,5 +681,151 @@ func TestIntakeAndReplayAgree(t *testing.T) {
 				t.Errorf("expected no plant-wide FIFO scan, got %d calls", db.fifoCalls)
 			}
 		})
+	}
+}
+
+// ── MG2-4: the typed ask, pinned at mint ──────────────────────────────────
+//
+// An ask carrying an origin that names an open maintained-group episode sources
+// THAT type and never re-derives one. These pin the routing consequence: the
+// need must reach the TYPED group finder, not the compatible one, and a group
+// that has no carrier of the wanted type must WAIT rather than substitute.
+
+func TestFindSource_MaintainOriginPinsTheType(t *testing.T) {
+	db := newFakeFinderDB()
+	groupID := int64(100)
+	db.addNode(&nodes.Node{ID: groupID, Name: "PRESS-EMPTIES", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
+	// The keeper pre-resolves, so its DeliveryNode is a concrete child slot —
+	// NOT a loader window. The loader derivation below the new arm would find no
+	// home here and return "", which is exactly why the arm goes first.
+	slot := int64(101)
+	db.addNode(&nodes.Node{ID: slot, Name: "PEB_001"})
+
+	const origin = "11111111-2222-3333-4444-555555555555"
+	db.maintainedType = map[string]string{origin: "45x58x32"}
+
+	// Both types are physically present in the group. Only the pinned one may
+	// be taken.
+	wanted := int64(102)
+	db.addNode(&nodes.Node{ID: wanted, Name: "PEB_002"})
+	db.typedEmpty = map[string]*bins.Bin{
+		"45x58x32": {ID: 501, PayloadCode: "", NodeID: &wanted},
+	}
+	db.groupEmpty = &bins.Bin{ID: 999, PayloadCode: "", NodeID: &wanted} // the wrong-type trap
+
+	finder := NewSourceFinder(db, nil, nil)
+	order := &orders.Order{
+		ID: 7, OrderType: OrderTypeRetrieveEmpty,
+		SourceNode: "PRESS-EMPTIES", DeliveryNode: "PEB_001",
+		OriginID: origin,
+	}
+
+	res := finder.FindSource(order, IntentEmpty)
+	if res.Outcome != OutcomeFound {
+		t.Fatalf("outcome = %v, want OutcomeFound", res.Outcome)
+	}
+	if res.Bin == nil || res.Bin.ID != 501 {
+		t.Fatalf("bin = %v, want the 45x58x32 carrier (501)", res.Bin)
+	}
+	if db.typedGroupCalls == 0 {
+		t.Error("the typed group finder was never called — the pinned type did not reach the tier")
+	}
+	if db.groupEmptyCalls != 0 {
+		t.Errorf("the COMPATIBLE group finder was consulted %d time(s); a pinned ask must never "+
+			"fall through to any-compatible, which is how the mix drifts", db.groupEmptyCalls)
+	}
+	if db.globalEmptyCalls != 0 {
+		t.Errorf("plant-wide finder consulted %d time(s) while group-scoped", db.globalEmptyCalls)
+	}
+}
+
+// HONOURED, NOT APPROXIMATED. The group holds carriers — just not of the pinned
+// type. The ask WAITS under the type-specific cause rather than taking what is
+// there: substituting would deliver a carrier the keeper is not counting, so the
+// level never converges and nothing reports an error.
+func TestFindSource_MaintainOriginWaitsRatherThanSubstitute(t *testing.T) {
+	db := newFakeFinderDB()
+	groupID := int64(100)
+	db.addNode(&nodes.Node{ID: groupID, Name: "PRESS-EMPTIES", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
+	db.addNode(&nodes.Node{ID: 101, Name: "PEB_001"})
+
+	const origin = "11111111-2222-3333-4444-555555555555"
+	db.maintainedType = map[string]string{origin: "45x58x32"}
+
+	// No 45x58x32 anywhere — but a compatible empty IS in the group, and one is
+	// also available plant-wide. Neither may be taken.
+	other := int64(102)
+	db.addNode(&nodes.Node{ID: other, Name: "PEB_002"})
+	db.groupEmpty = &bins.Bin{ID: 601, PayloadCode: "", NodeID: &other}
+	db.globalEmpty = &bins.Bin{ID: 602, PayloadCode: "", NodeID: &other}
+
+	finder := NewSourceFinder(db, nil, nil)
+	order := &orders.Order{
+		ID: 8, OrderType: OrderTypeRetrieveEmpty,
+		SourceNode: "PRESS-EMPTIES", DeliveryNode: "PEB_001",
+		OriginID: origin,
+	}
+
+	res := finder.FindSource(order, IntentEmpty)
+	if res.Outcome != OutcomeWait {
+		t.Fatalf("outcome = %v, want OutcomeWait — a pinned type is honoured, not approximated", res.Outcome)
+	}
+	if res.QueueCause != CauseFinderNoEmptyOfType {
+		t.Errorf("cause = %q, want %q", res.QueueCause, CauseFinderNoEmptyOfType)
+	}
+	if db.groupEmptyCalls != 0 || db.globalEmptyCalls != 0 {
+		t.Errorf("substitution attempted: compatible-in-group=%d plant-wide=%d — both must be zero",
+			db.groupEmptyCalls, db.globalEmptyCalls)
+	}
+}
+
+// A blank origin is every other order in the plant, and must behave exactly as
+// it did before the arm existed: fall through to the loader derivation.
+func TestFindSource_BlankOriginUnchanged(t *testing.T) {
+	db := newFakeFinderDB()
+	db.addNode(&nodes.Node{ID: 100, Name: "GROUP-A", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
+	db.addNode(&nodes.Node{ID: 99, Name: "DEST"})
+	at := int64(101)
+	db.addNode(&nodes.Node{ID: at, Name: "GROUP-A-LANE-1"})
+	db.groupEmpty = &bins.Bin{ID: 701, PayloadCode: "", NodeID: &at}
+
+	finder := NewSourceFinder(db, nil, nil)
+	order := &orders.Order{ID: 9, OrderType: OrderTypeRetrieveEmpty, SourceNode: "GROUP-A", DeliveryNode: "DEST"}
+
+	res := finder.FindSource(order, IntentEmpty)
+	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 701 {
+		t.Fatalf("blank-origin empty pull changed shape: outcome=%v bin=%v", res.Outcome, res.Bin)
+	}
+	if db.typedGroupCalls != 0 {
+		t.Errorf("the typed finder was consulted for an untyped ask: %d calls", db.typedGroupCalls)
+	}
+}
+
+// A FAILED episode read returns no type rather than a guess. The ask falls
+// through untyped — one carrier the keeper will not count, retried next tick —
+// which is strictly better than confidently sourcing the wrong type.
+func TestFindSource_MaintainedTypeReadFailureDoesNotGuess(t *testing.T) {
+	db := newFakeFinderDB()
+	db.addNode(&nodes.Node{ID: 100, Name: "GROUP-A", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
+	db.addNode(&nodes.Node{ID: 99, Name: "DEST"})
+	at := int64(101)
+	db.addNode(&nodes.Node{ID: at, Name: "GROUP-A-LANE-1"})
+	db.groupEmpty = &bins.Bin{ID: 801, PayloadCode: "", NodeID: &at}
+	db.maintainedTypeErr = errors.New("episode read failed")
+
+	finder := NewSourceFinder(db, nil, nil)
+	order := &orders.Order{
+		ID: 10, OrderType: OrderTypeRetrieveEmpty,
+		SourceNode: "GROUP-A", DeliveryNode: "DEST",
+		OriginID: "11111111-2222-3333-4444-555555555555",
+	}
+
+	res := finder.FindSource(order, IntentEmpty)
+	if res.Outcome != OutcomeFound || res.Bin == nil || res.Bin.ID != 801 {
+		t.Fatalf("a failed episode read must fall through untyped, not fail the ask: outcome=%v bin=%v",
+			res.Outcome, res.Bin)
+	}
+	if db.typedGroupCalls != 0 {
+		t.Errorf("typed finder called despite an unreadable episode: %d calls", db.typedGroupCalls)
 	}
 }

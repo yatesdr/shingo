@@ -41,6 +41,21 @@ type Store interface {
 	ListBinsByNode(nodeID int64) ([]*bins.Bin, error)
 	CountBinsByNode(nodeID int64) (int, error)
 
+	// ── The maintained-group level (MG4-1) ──────────────────────────────────
+	//
+	// ListMaintainLevels is the declared CAP; CountEmptyBinsOfTypeInGroup is what
+	// the group is actually holding. The filter refuses a store into a group that
+	// has reached its level, so the two are read together.
+	//
+	// THE COUNT IS THE FROZEN PREDICATE. It is the same query the level keeper
+	// subtracts from — bins.CountEmptyOfTypeInGroup, sharing its WHERE with the
+	// finder by construction — and it is read here rather than recomputed. A
+	// resolver that counted the group its own way would be a second answer to
+	// "how full is this group", and the keeper and the resolver disagreeing about
+	// that is the whole feature quietly not working.
+	ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error)
+	CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error)
+
 	// In-flight orders (used for storage candidate screening).
 	CountActiveOrdersByDeliveryNode(nodeName string) (int, error)
 

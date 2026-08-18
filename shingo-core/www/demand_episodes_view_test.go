@@ -490,3 +490,81 @@ func TestOpenEpisodeDurationUsesTheInjectedClock(t *testing.T) {
 		t.Errorf("clock skew rendered a negative duration: %q", skewed.DurationText)
 	}
 }
+
+// A maintain episode fills its two otherwise-empty columns from what the row
+// already stores, and neither fill is allowed to touch any other kind.
+//
+// THE POINT IS THAT NOTHING NEW IS STORED. The carrier type comes back out of
+// the episode key — the canonical spelling of the (group, type) pair — and the
+// denominator is Threshold − OpenedTotal, two columns the maintainer already
+// writes. A duplicate copy in payload_code, or a new expected_orders write,
+// would each be a second spelling free to disagree with the first.
+func TestMaintainRowFillsPlaceAndExpectedFromWhatIsStored(t *testing.T) {
+	now := time.Date(2026, 8, 17, 9, 0, 0, 0, time.UTC)
+	row := BuildEpisodeRow(domain.DemandEpisode{
+		DemandOrigin: domain.DemandOrigin{
+			OriginID:     "mnt-1",
+			EpisodeKey:   "mnt|PRESS-BUFFER|45x58",
+			Kind:         "maintain",
+			StationID:    "core",
+			CoreNodeName: "PRESS-BUFFER",
+			OpenedAt:     now.Add(-at(20)),
+			OpenedTotal:  1, // one carrier standing there
+			Threshold:    4, // four wanted
+		},
+		Children: 3,
+	}, now, disp())
+
+	if row.KindLabel != "Maintained level" {
+		t.Errorf("KindLabel = %q, want %q", row.KindLabel, "Maintained level")
+	}
+	if row.Payload != "45x58" {
+		t.Errorf("Payload = %q, want the carrier type off the episode key — otherwise "+
+			"the Place column identifies the group but not what it is short OF", row.Payload)
+	}
+	if row.Expected.Kind != CellValue || row.Expected.Text != "3" {
+		t.Errorf("Expected = %+v, want a measured 3 (want 4 − resident 1) — the shortfall "+
+			"the episode was opened over", row.Expected)
+	}
+	if row.Ratio.Kind != CellValue {
+		t.Errorf("Ratio = %+v, want a real ratio: the denominator is knowable for this kind",
+			row.Ratio)
+	}
+	if row.SortGroup == sortGroupNoRatio {
+		t.Error("a maintain row landed in the unrankable group — it has a denominator, so " +
+			"it belongs in the ranked body where the ratio can order it")
+	}
+}
+
+// THE FILL IS SCOPED TO THE KIND. A threshold episode whose expected_orders is
+// NULL must stay unrankable: its denominator genuinely could not be computed,
+// and Threshold − OpenedTotal on that kind is a UOP shortfall, not an order
+// count. Silently borrowing it would put a fabricated number in the column the
+// whole page is built to keep honest.
+func TestShortfallDenominatorDoesNotLeakToOtherKinds(t *testing.T) {
+	now := time.Date(2026, 8, 17, 9, 0, 0, 0, time.UTC)
+	row := BuildEpisodeRow(domain.DemandEpisode{
+		DemandOrigin: domain.DemandOrigin{
+			OriginID:     "thr-1",
+			EpisodeKey:   "thr|SLN_002|PANEL-A",
+			Kind:         "threshold",
+			CoreNodeName: "SLN_002",
+			PayloadCode:  "PANEL-A",
+			OpenedAt:     now.Add(-at(20)),
+			OpenedTotal:  12,
+			Threshold:    40,
+		},
+		Children: 3,
+	}, now, disp())
+
+	if row.Expected.Kind != CellNoData {
+		t.Errorf("Expected = %+v, want no-data — a threshold episode with no stored "+
+			"expectation has no denominator, and 40−12 is UOP, not orders", row.Expected)
+	}
+	if row.SortGroup != sortGroupNoRatio {
+		t.Errorf("SortGroup = %d, want the unrankable group", row.SortGroup)
+	}
+	if row.Payload != "PANEL-A" {
+		t.Errorf("Payload = %q — the key parse overwrote a real payload code", row.Payload)
+	}
+}

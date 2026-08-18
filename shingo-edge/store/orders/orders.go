@@ -35,7 +35,7 @@ type (
 const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
-	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.created_at, o.updated_at,
+	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, ''),
 	CASE WHEN o.status = 'staged' AND COALESCE(o.steps_json, '') = '' THEN 1 ELSE 0 END`
 
@@ -110,7 +110,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &createdAt, &updatedAt,
+			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 			return nil, err
 		}
@@ -142,7 +142,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &createdAt, &updatedAt,
+		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 		return err
 	}
@@ -207,8 +207,16 @@ type ProjectionRow struct {
 	SourceNode    string
 	DeliveryNode  string
 	PayloadCode   string
+	PayloadDesc   string
 	QueueReason   string
 	QueueCode     string
+
+	// OriginID and OriginClass are the demand attribution Core stamped on the
+	// order. Blank is ordinary and MEANS "not recorded": an Edge-authored order
+	// has no Core origin by construction, and a projection that landed before
+	// these columns existed dropped the value with no way to recover it.
+	OriginID    string
+	OriginClass string
 }
 
 // UpsertProjection writes a Core-authored order row, creating it or updating it
@@ -242,8 +250,9 @@ func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
 	}
 	_, err = db.Exec(`
 		INSERT INTO orders (uuid, order_type, status, process_node_id, retrieve_empty, quantity,
-			source_node, delivery_node, payload_code, queue_reason, queue_code, authored_by)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,'core')
+			source_node, delivery_node, payload_code, payload_desc, queue_reason, queue_code,
+			origin_id, origin_class, authored_by)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'core')
 		ON CONFLICT(uuid) DO UPDATE SET
 			order_type=excluded.order_type,
 			status=excluded.status,
@@ -253,12 +262,16 @@ func UpsertProjection(db *sql.DB, r ProjectionRow) (created bool, err error) {
 			source_node=excluded.source_node,
 			delivery_node=excluded.delivery_node,
 			payload_code=excluded.payload_code,
+			payload_desc=excluded.payload_desc,
 			queue_reason=excluded.queue_reason,
 			queue_code=excluded.queue_code,
+			origin_id=excluded.origin_id,
+			origin_class=excluded.origin_class,
 			authored_by='core',
 			updated_at=datetime('now')`,
 		r.UUID, r.OrderType, r.Status, r.ProcessNodeID, r.RetrieveEmpty, r.Quantity,
-		r.SourceNode, r.DeliveryNode, r.PayloadCode, r.QueueReason, r.QueueCode)
+		r.SourceNode, r.DeliveryNode, r.PayloadCode, r.PayloadDesc, r.QueueReason, r.QueueCode,
+		r.OriginID, r.OriginClass)
 	if err != nil {
 		return false, fmt.Errorf("upsert projected order %s: %w", r.UUID, err)
 	}

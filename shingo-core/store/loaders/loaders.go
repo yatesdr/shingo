@@ -62,7 +62,6 @@ type Loader struct {
 	Replenishment string     `json:"replenishment"`
 	OutboundDest  string     `json:"outbound_dest"`
 	InboundSource string     `json:"inbound_source"`
-	BufferDest    string     `json:"buffer_dest"`
 	ConfigGen     int64      `json:"config_gen"`
 	ArchivedAt    *time.Time `json:"archived_at,omitempty"` // soft-delete marker; nil = active (step 7)
 
@@ -129,7 +128,7 @@ type Config struct {
 	Payloads []Payload `json:"payloads"`
 }
 
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, buffer_dest, config_gen, archived_at, funnel_windows`
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows`
 
 type scanner interface{ Scan(...any) error }
 
@@ -137,7 +136,7 @@ func scanLoader(s scanner) (Loader, error) {
 	var l Loader
 	var archivedAt sql.NullTime
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
-		&l.OutboundDest, &l.InboundSource, &l.BufferDest, &l.ConfigGen, &archivedAt, &l.FunnelWindows)
+		&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &archivedAt, &l.FunnelWindows)
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
 	}
@@ -150,9 +149,9 @@ func scanLoader(s scanner) (Loader, error) {
 func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	var id int64
 	err := db.QueryRow(`
-		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source, buffer_dest, funnel_windows)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.BufferDest, l.FunnelWindows,
+		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source, funnel_windows)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
@@ -214,10 +213,10 @@ func ListLoaders(db *sql.DB) ([]Loader, error) {
 func UpdateLoader(db *sql.DB, l Loader) error {
 	res, err := db.Exec(`
 		UPDATE bin_loaders SET name=$1, layout=$2, replenishment=$3,
-			outbound_dest=$4, inbound_source=$5, buffer_dest=$6, funnel_windows=$7,
+			outbound_dest=$4, inbound_source=$5, funnel_windows=$6,
 			config_gen=config_gen+1, updated_at=NOW()
-		WHERE id=$8`,
-		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.BufferDest, l.FunnelWindows, l.ID)
+		WHERE id=$7`,
+		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows, l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}

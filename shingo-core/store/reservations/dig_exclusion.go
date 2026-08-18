@@ -17,6 +17,15 @@ import "fmt"
 //     — a real improvement that consolidated onto the WRONG semantics, because
 //     IsLocked has no asker to exempt.
 //   - DIG PLANNING (dispatch.findShuffleSlots) did not ask at all.
+//   - EMPTY SELECTION (store/bins's four empty finders) did not ask at all
+//     either, and was the unlisted FOURTH reader. Added in MG3-1b, through
+//     NotForeignDugArm, which renders the predicate below rather than spelling
+//     it — so the count went from three answers to four readers of ONE.
+//
+// The empty finders are the reason this list is worth keeping accurate. This
+// file declared the dig-lock question closed at exactly three readers; a closed
+// accounting is the worst possible place to carry an unlisted fourth, because
+// the closure is what stops anyone looking.
 //
 // The cost of the disagreement, observed on the lane-stress rig 2026-08-10 and
 // the reason this file exists: an expose dig completes, the lock transfers to

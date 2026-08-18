@@ -117,12 +117,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		// from the shingo/shared module. Registered BEFORE /static/* so
 		// the more specific prefix wins.
 		r.Handle("/static/shared/*", http.StripPrefix("/static/shared/",
-			http.FileServer(http.FS(shared.Files)),
+			staticCache(http.FileServer(http.FS(shared.Files))),
 		))
 
 		// Static files
 		staticSub, _ := fs.Sub(staticFS, "static")
-		r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+		r.Handle("/static/*", http.StripPrefix("/static/", staticCache(http.FileServer(http.FS(staticSub)))))
 
 		// ── Public pages ───────────────────────────────────────
 		// Wave 2 (Q-035): "/" is now the Operations Overview (the snapshot page).
@@ -219,6 +219,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/nodes/occupancy", h.apiNodeOccupancy)
 			r.Get("/nodes/detail", h.apiNodeDetail)
 			r.Get("/nodes/bin-types", h.apiGetNodeBinTypes)
+			// Maintained-group config: read beside the other node reads, written
+			// under auth below. The section is admin-only on screen; the read is
+			// public for the same reason /nodes/detail is — it is what the node
+			// IS, and the shop floor gets to look at that.
+			r.Get("/nodes/maintained-group", h.apiMaintainedGroup)
+			r.Get("/nodes/process-options", h.apiMaintainedGroupProcessOptions)
 			r.Get("/nodestate", h.apiNodeState)
 			// Loaders are part of the node layout (shop-floor read access) — the
 			// box render reads this; all loader WRITES stay auth-gated below.
@@ -347,6 +353,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/inventory/monitor-totals", h.apiInventoryMonitorTotals)
 			r.Get("/inventory/anomaly-summary", h.apiInventoryAnomalySummary)
 			r.Get("/inventory/ledger-exceptions", h.apiInventoryLedgerExceptions)
+			r.Get("/inventory/maintained-groups", h.apiInventoryMaintainedGroups)
 			r.Get("/sourceability/events", h.apiSourceabilityEvents)
 			r.Get("/core/health", h.apiCoreHealth)
 			r.Get("/inventory/rejected-deltas", h.apiInventoryRejectedDeltas)
@@ -402,6 +409,16 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/nodes/delete-test", h.apiDeleteTestNodes)
 				r.Post("/nodes/bin-types", h.apiSetNodeBinTypes)
 				r.Post("/nodes/properties/set", h.apiNodePropertySet)
+				// Maintained groups: one endpoint per thing an operator edits.
+				// A single save-everything call would have to decide what an
+				// omitted field means, and both answers are wrong — one deletes
+				// a level when the form fails to populate, the other makes
+				// clearing impossible.
+				r.Post("/nodes/maintained-group/check-types", h.apiMaintainedGroupCheckTypes)
+				r.Post("/nodes/maintained-group/settings", h.apiMaintainedGroupSettingsSet)
+				r.Post("/nodes/maintained-group/level", h.apiMaintainedGroupLevelSet)
+				r.Post("/nodes/maintained-group/level/remove", h.apiMaintainedGroupLevelRemove)
+				r.Post("/nodes/maintained-group/supports", h.apiMaintainedGroupSupportsSet)
 				r.Post("/nodes/properties/delete", h.apiNodePropertyDelete)
 				r.Post("/nodes/reparent", h.apiReparentNode)
 

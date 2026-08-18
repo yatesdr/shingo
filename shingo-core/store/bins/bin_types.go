@@ -16,13 +16,13 @@ type BinType = domain.BinType
 
 // BinTypeSelectCols is exported so cross-aggregate readers (e.g. GetEffectiveBinTypes
 // at the outer store/ level, which JOINs node ancestors) can reuse the column list.
-const BinTypeSelectCols = `id, code, description, width_in, height_in, created_at, updated_at`
+const BinTypeSelectCols = `id, code, description, width_in, height_in, length_in, created_at, updated_at`
 
 // ScanBinType reads a single bin_types row. Exported so cross-aggregate readers
 // at the outer store/ level can use it.
 func ScanBinType(row interface{ Scan(...any) error }) (*BinType, error) {
 	var bt BinType
-	err := row.Scan(&bt.ID, &bt.Code, &bt.Description, &bt.WidthIn, &bt.HeightIn, &bt.CreatedAt, &bt.UpdatedAt)
+	err := row.Scan(&bt.ID, &bt.Code, &bt.Description, &bt.WidthIn, &bt.HeightIn, &bt.LengthIn, &bt.CreatedAt, &bt.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -44,8 +44,8 @@ func ScanBinTypes(rows *sql.Rows) ([]*BinType, error) {
 
 // CreateType inserts a new bin type and sets bt.ID on success.
 func CreateType(db *sql.DB, bt *BinType) error {
-	id, err := helpers.InsertID(db, `INSERT INTO bin_types (code, description, width_in, height_in) VALUES ($1, $2, $3, $4) RETURNING id`,
-		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn)
+	id, err := helpers.InsertID(db, `INSERT INTO bin_types (code, description, width_in, height_in, length_in) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.LengthIn)
 	if err != nil {
 		return fmt.Errorf("create bin type: %w", err)
 	}
@@ -55,8 +55,8 @@ func CreateType(db *sql.DB, bt *BinType) error {
 
 // UpdateType writes the mutable columns on a bin type.
 func UpdateType(db *sql.DB, bt *BinType) error {
-	_, err := db.Exec(`UPDATE bin_types SET code=$1, description=$2, width_in=$3, height_in=$4, updated_at=NOW() WHERE id=$5`,
-		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.ID)
+	_, err := db.Exec(`UPDATE bin_types SET code=$1, description=$2, width_in=$3, height_in=$4, length_in=$5, updated_at=NOW() WHERE id=$6`,
+		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.LengthIn, bt.ID)
 	return err
 }
 
