@@ -36,6 +36,12 @@ type LaneWindow struct {
 	// exists to remove -- so it travels with every window rather than being
 	// recoverable from a second query nobody makes.
 	Days int
+	// Robots is the widest single day's robot count, not a sum. The same robot
+	// driving a lane on Monday and Tuesday is one robot, and adding the daily
+	// counts would report two. BoardLane has carried this field since the
+	// board shipped; it read zero because this query never selected the
+	// column.
+	Robots int
 	// Versions is how many distinct geometry versions the window spans. More
 	// than one means the lane was EDITED inside it, so a single number over
 	// the whole window is averaging across a change -- exactly the blend the
@@ -70,7 +76,7 @@ func (w LaneWindow) PercentileEstimate(p float64) (float64, bool) {
 func LaneWindows(db *sql.DB, from, to time.Time) (map[string]*LaneWindow, error) {
 	rows, err := db.Query(
 		`SELECT day, area_name, lane, version_id, samples, samples_good,
-		        sentinel_samples, coalesce(conf_hist, '{}')
+		        sentinel_samples, robots, coalesce(conf_hist, '{}')
 		   FROM lane_confidence_daily
 		  WHERE day >= $1 AND day < $2`, from, to)
 	if err != nil {
@@ -81,13 +87,14 @@ func LaneWindows(db *sql.DB, from, to time.Time) (map[string]*LaneWindow, error)
 	out := map[string]*LaneWindow{}
 	versions := map[string]map[int64]bool{}
 	days := map[string]map[string]bool{}
+	robots := map[string]int{}
 	for rows.Next() {
 		var day time.Time
 		var area, lane, hist string
 		var versionID sql.NullInt64
-		var samples, good, sentinel int
+		var samples, good, sentinel, nrobots int
 		if err := rows.Scan(&day, &area, &lane, &versionID, &samples, &good,
-			&sentinel, &hist); err != nil {
+			&sentinel, &nrobots, &hist); err != nil {
 			return nil, err
 		}
 		key := area + "\x00" + lane
@@ -101,6 +108,11 @@ func LaneWindows(db *sql.DB, from, to time.Time) (map[string]*LaneWindow, error)
 		w.Samples += samples
 		w.SamplesGood += good
 		w.SentinelSamples += sentinel
+		// The widest day, for the same reason AreaWindows takes its widest
+		// day: a robot driving Monday and Tuesday is one robot, not a sum.
+		if nrobots > robots[key] {
+			robots[key] = nrobots
+		}
 		days[key][day.Format("2006-01-02")] = true
 		if versionID.Valid {
 			versions[key][versionID.Int64] = true
@@ -125,6 +137,7 @@ func LaneWindows(db *sql.DB, from, to time.Time) (map[string]*LaneWindow, error)
 	for key, w := range out {
 		w.Versions = len(versions[key])
 		w.Days = len(days[key])
+		w.Robots = robots[key]
 	}
 	return out, nil
 }
@@ -134,6 +147,11 @@ func LaneWindows(db *sql.DB, from, to time.Time) (map[string]*LaneWindow, error)
 // same LaneWindow return type — every lane is restricted to the ticks that one
 // vehicle produced. An empty vehicleID answers nothing; the caller falls back to
 // LaneWindows for the fleet view rather than passing "" here.
+//
+// Robots is set to 1 rather than selected: lane_robot_confidence_daily has no
+// robots column because every row IS one robot by construction, and a window
+// over it that reported 0 robots would repeat the fleet query's original defect
+// one grain over.
 func LaneRobotWindows(db *sql.DB, from, to time.Time, vehicleID string) (map[string]*LaneWindow, error) {
 	rows, err := db.Query(
 		`SELECT day, area_name, lane, version_id, samples, samples_good,
@@ -168,6 +186,7 @@ func LaneRobotWindows(db *sql.DB, from, to time.Time, vehicleID string) (map[str
 		w.Samples += samples
 		w.SamplesGood += good
 		w.SentinelSamples += sentinel
+		w.Robots = 1
 		days[key][day.Format("2006-01-02")] = true
 		if versionID.Valid {
 			versions[key][versionID.Int64] = true
