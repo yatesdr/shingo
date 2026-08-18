@@ -290,20 +290,27 @@ func nodeIDStrings(ns []domain.NodeID) []string {
 // cell routing its emptied carriers back into it (plant config). Falls back to the
 // far-upstream inbound_source only when no buffer is CONFIGURED.
 //
-// TODO(prod): EVALUATE FALLBACK-WHEN-DRY AGAINST REAL-PLANT BEHAVIOR. Today a buffered
-// loader sources UNCONDITIONALLY from the buffer — if the buffer is momentarily empty the
-// L1 just queues until the downstream cell recycles an empty back into it. That's fine for
-// the dev sim (a closed buffer↔cell loop), but in a real plant a slow or stalled
-// downstream cell would STARVE the loader, since it never reaches past the buffer. The
-// production-correct rule is almost certainly buffer-FIRST with a FALLBACK to
-// inbound_source (the big return bank) when the buffer is dry: the buffer as a near-line
-// cache, the return bank as the never-empty backstop, so the loader never idles. That
-// needs a runtime "does the buffer group hold an unclaimed empty?" check, which the Edge
-// can't do today — FetchNodeBins is per-NODE, not per-group, and there is no
-// empties-in-group query; the Edge only knows the buffer's group NAME, not its member
-// slots. Wiring it means a small Core endpoint (or threading the buffer's slots onto the
-// aggregate) plus a per-L1 lookup (mind the latency). Decide the real-plant semantics —
-// and whether a per-L1 Core round-trip is acceptable — before building it.
+// A DRY BUFFER: RESOLVED, and this used to carry a TODO asking whether to fall
+// back to inbound_source when the buffer runs empty. The answer is no, and the
+// reason is that the fallback was solving the wrong half of the problem.
+//
+// What a dry buffer does today: the L1 is created, Core's finder scopes its
+// search to the buffer group, finds nothing, and parks the order under
+// "finder-group-empty" — scoped, named, and NOT widened to the inbound market.
+// The wait releases when a carrier lands in the buffer. The loader idles, but it
+// idles visibly and with the buffer named as what it is waiting on.
+//
+// What keeps the buffer stocked is the part that did not exist when the TODO was
+// written: a buffer group can be declared a MAINTAINED group with a level, and
+// Core's keeper tops it up against that level. The buffer stops depending solely
+// on the downstream cell recycling empties back into it, which is exactly the
+// starvation the TODO was worried about — addressed at the buffer rather than by
+// teaching every pull to go somewhere else.
+//
+// The fallback is also the more dangerous of the two fixes. It changes where a
+// robot physically drives, silently, on the first moment a buffer runs dry — and
+// a loader with a near-line buffer configured is configured that way for a
+// reason. Core records the same resolution in loader_replenish.go's emptySource.
 func loaderEmptySource(l *domain.Loader) string {
 	if b := l.BufferDest(); b != "" {
 		return b

@@ -260,7 +260,7 @@ func unreadableSource(kind, payloadCode, where string) SourceResult {
 		Outcome:     OutcomeWait,
 		QueueCode:   protocol.QueueWaitingForMaterial,
 		QueueCause:  CauseFinderSourceUnreadable,
-		QueueParams: QueueParams{Kind: kind, Payload: payloadCode, Destination: where},
+		QueueParams: QueueParams{Kind: kind, Payload: payloadCode, Group: where},
 	}
 }
 
@@ -339,7 +339,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
 					QueueCause:  CauseFinderGroupEmpty,
-					QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
+					QueueParams: QueueParams{Payload: payloadCode, Group: need.SourceNode},
 				}
 			}
 		}
@@ -351,7 +351,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
 				QueueCause:  CauseFinderGroupEmpty,
-				QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
+				QueueParams: QueueParams{Payload: payloadCode, Group: need.SourceNode},
 			}
 		}
 		bin = result.Bin
@@ -390,7 +390,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
 				QueueCause:  CauseLoaderSourceUnreadable,
-				QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
+				QueueParams: QueueParams{Payload: payloadCode, Group: need.SourceNode},
 			}
 		}
 		if isLoaderPos {
@@ -404,7 +404,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 					Outcome:     OutcomeWait,
 					QueueCode:   protocol.QueueWaitingForMaterial,
 					QueueCause:  CauseFinderPoolEmpty,
-					QueueParams: QueueParams{Payload: payloadCode, Destination: need.SourceNode},
+					QueueParams: QueueParams{Payload: payloadCode, Group: need.SourceNode},
 				}
 			}
 			bin, binNode = chosen, node
@@ -449,10 +449,11 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		} else if fenced {
 			f.debug("finder: group %s is fenced against %q — parking", need.SourceNode, need.ProcessNode)
 			return SourceResult{
-				Outcome:     OutcomeWait,
-				QueueCode:   protocol.QueueWaitingForMaterial,
-				QueueCause:  CauseFinderGroupFenced,
-				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode, Destination: need.SourceNode},
+				Outcome:    OutcomeWait,
+				QueueCode:  protocol.QueueWaitingForMaterial,
+				QueueCause: CauseFinderGroupFenced,
+				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode, Group: need.SourceNode,
+					Reserved: true},
 			}
 		}
 
@@ -485,7 +486,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 				Outcome:     OutcomeWait,
 				QueueCode:   protocol.QueueWaitingForMaterial,
 				QueueCause:  cause,
-				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode, Destination: need.SourceNode},
+				QueueParams: QueueParams{Kind: "empty", Payload: payloadCode, Group: need.SourceNode},
 			}
 		}
 		bin = groupBin
@@ -533,7 +534,7 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 			break
 		}
 		if bin == nil {
-			params := QueueParams{Payload: payloadCode, Destination: need.SourceNode}
+			params := QueueParams{Payload: payloadCode, Group: need.SourceNode}
 			if intent == IntentEmpty {
 				params.Kind = "empty"
 			}
@@ -630,10 +631,15 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 		f.debug("finder: %s is a drain window and bin %d is a partial (%d of %d) — waiting for a full",
 			need.DeliveryNode, bin.ID, bin.UOPRemaining, bin.UOPCapacity)
 		return SourceResult{
-			Outcome:     OutcomeWait,
-			QueueCode:   protocol.QueueWaitingForMaterial,
-			QueueCause:  CauseFinderNoFullCarrier,
-			QueueParams: QueueParams{Payload: payloadCode, Destination: need.DeliveryNode},
+			Outcome:    OutcomeWait,
+			QueueCode:  protocol.QueueWaitingForMaterial,
+			QueueCause: CauseFinderNoFullCarrier,
+			// NO Destination. It named the DRAIN WINDOW, which the material
+			// formatter does not render and must not: naming the lineside
+			// destination in a material wait is the F1 defect Group exists to
+			// end. Where the partial is standing is not reliably known here
+			// (tiers 1 and 5 set bin without a node), so the sentence says less.
+			QueueParams: QueueParams{Payload: payloadCode},
 		}
 	}
 

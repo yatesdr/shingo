@@ -228,7 +228,12 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 		// it is the check failing, which has its own cause.
 		return true, CapacityBlock{Cause: CauseCapacityCheckFailed, Params: params}
 	} else if atLevel {
-		return true, CapacityBlock{Cause: CauseNGRPAtLevel, Params: params}
+		// AtLevel, so the sentence says the group is holding what it was told to
+		// hold rather than "waiting for a slot" — there are free positions, and
+		// an operator sent to look for room finds room and no explanation.
+		atLevelParams := params
+		atLevelParams.AtLevel = true
+		return true, CapacityBlock{Cause: CauseNGRPAtLevel, Params: atLevelParams}
 	}
 	children, err := db.ListChildNodes(ngrp.ID)
 	if err != nil {

@@ -82,8 +82,12 @@ func TestFindSourceForNeed_NodeLocalEmpty(t *testing.T) {
 	if res.QueueCause != "finder-node-empty" {
 		t.Errorf("QueueCause = %q, want finder-node-empty (the scoped sentence)", res.QueueCause)
 	}
-	if res.QueueParams.Kind != "empty" || res.QueueParams.Destination != "SEAT-SRC" {
-		t.Errorf("QueueParams = %+v, want Kind=empty Destination=SEAT-SRC", res.QueueParams)
+	// GROUP, NOT Destination. This assertion used to read Destination, which
+	// pinned the field being POPULATED rather than being RENDERED: the material
+	// formatter only ever reads Group, so the node name went nowhere and the
+	// operator got "Waiting for an empty bin" with no location at all.
+	if res.QueueParams.Kind != "empty" || res.QueueParams.Group != "SEAT-SRC" {
+		t.Errorf("QueueParams = %+v, want Kind=empty Group=SEAT-SRC", res.QueueParams)
 	}
 	if db.globalEmptyCalls != 0 || db.fifoCalls != 0 {
 		t.Errorf("dry node widened plant-wide (%d empty, %d fifo) — it must QUEUE, never widen",

@@ -214,41 +214,45 @@
     <div id="nf-maintain" class="hide mb-2">
       <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Maintained group</label>
       <div class="text-muted" style="font-size:0.75rem;margin-bottom:10px">
-        Keep empty carriers standing by here for the equipment this group serves.
+        Core can hold a set number of empty carriers here, so the equipment this group
+        serves never has to wait for one.
       </div>
 
       <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
         <input type="checkbox" id="nf-maintain-enabled" data-action-change="onMaintainToggle">
-        Hold a level here
+        Keep this group stocked
       </label>
       <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">
         <input type="checkbox" id="nf-maintain-strict">
-        Reserved — only the processes below may take these empties
+        Only the processes listed below may take empties from here
       </label>
 
       <div class="grid grid-2 text-sm">
         <div class="form-group">
-          <label for="nf-maintain-station">Station for these orders</label>
+          <label for="nf-maintain-station">Board these orders show on</label>
           <select id="nf-maintain-station"></select>
-          <div class="form-hint">Without one, top-up orders show on no board.</div>
+          <div class="form-hint">Without one, the top-up orders show on no board at all.</div>
         </div>
         <div class="form-group">
-          <label for="nf-maintain-overflow">If this group is full, send to</label>
+          <label for="nf-maintain-overflow">When this group has its level, send extras to</label>
           <select id="nf-maintain-overflow"></select>
-          <div class="form-hint">Optional — otherwise arrivals wait, holding their load.</div>
+          <div class="form-hint">Optional. Without one, a carrier that turns up anyway waits where it
+            is, still loaded.</div>
         </div>
       </div>
 
       <div class="form-group">
         <label>Maintained level</label>
         <div id="nf-maintain-levels"></div>
-        <div class="form-hint">Zero means none of that type, on purpose.</div>
+        <div class="form-hint">How many of each carrier type to keep here. Zero means none of that
+          type, on purpose.</div>
       </div>
 
       <div class="form-group">
         <label>Processes this group serves</label>
         <div id="nf-maintain-supports"></div>
-        <div class="form-hint">Pick processes; their positions are what gets saved.</div>
+        <div class="form-hint">Pick the processes that pull empties from here. Their positions are
+          what gets saved.</div>
       </div>
     </div>
 
@@ -439,9 +443,15 @@
       </div>
 
       <div class="form-group" id="loader-mix-row">
-        <label>Carriers wanted on hand <span class="form-label-aside">(optional)</span></label>
+        <!-- CARRIER MIX here, MAINTAINED LEVEL in the group section above. Two
+             mechanisms, two names, deliberately: this one is a loader's own
+             quota across its windows, that one is a level Core holds in a group.
+             Sharing a word would make them one thing in an operator's head. -->
+        <label>Carrier mix <span class="form-label-aside">(optional)</span></label>
         <div id="loader-mix-editor"></div>
-        <div class="form-hint">Leave empty to take whatever carrier is available. Declare a mix and it is honoured — a window waits rather than taking the wrong type.</div>
+        <div class="form-hint">How many of each carrier type this loader wants on hand. Leave it
+          empty to take whatever carrier is available. Declare a mix and it is honoured — a window
+          waits rather than taking the wrong type.</div>
       </div>
 
       <div class="form-group" id="loader-windows-row">

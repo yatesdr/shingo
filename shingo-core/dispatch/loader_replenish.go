@@ -116,10 +116,24 @@ type LoaderReplenishConfig struct {
 // day Core took over ordering, which is a physical change to where a robot
 // drives, delivered by a refactor.
 //
-// The known gap comes with it: nothing checks whether the buffer group actually
-// holds an unclaimed empty, so a dry buffer produces orders that cannot source.
-// The Edge has the same gap and records it in the same place. Fixing it is a
-// change to both sides.
+// WHAT A DRY BUFFER ACTUALLY DOES, since this used to be recorded as an open
+// gap ("nothing checks whether the buffer group holds an unclaimed empty"). The
+// order is created and the finder scopes its search to the buffer group; finding
+// nothing, it PARKS under "finder-group-empty" (or "finder-no-empty-of-type"
+// when a mix names the type) and does not widen to the inbound market. The wait
+// releases when a carrier lands in the buffer. So the order is not lost and the
+// robot is not sent anywhere wrong — the loader simply waits, visibly, with the
+// buffer named as the thing it is waiting on.
+//
+// WHAT REFILLS THE BUFFER is the part that was missing when the gap was written.
+// A buffer group can now be declared a MAINTAINED group with a level, and the
+// keeper tops it up on its own: the buffer is stocked by something that watches
+// it rather than only by whatever the cell happens to recycle back. That is the
+// never-idle property the Edge note wanted from a fallback, without the
+// fallback's cost — a fallback would silently change where a robot drives the
+// day a buffer ran dry, which is the widening this seam exists to prevent.
+//
+// The Edge records the same resolution in the same place.
 func (c LoaderReplenishConfig) emptySource() string {
 	if c.BufferDest != "" {
 		return c.BufferDest

@@ -355,9 +355,15 @@ func (m *Maintainer) createAsks(g *nodes.Node, lv store.MaintainLevel, station s
 			// make the keeper source from the group it is trying to fill.
 			SourceNode:   "",
 			DeliveryNode: res.Node.Name,
-			PayloadDesc:  "empty " + lv.BinTypeCode,
-			OriginID:     episode.OriginID,
-			OriginClass:  protocol.OriginClassAttached,
+			// THE BOARD CARD, and it names the GROUP rather than only the type.
+			// DeliveryNode beside it is the concrete position the pre-resolve
+			// chose (PRESS-BUFFER-A-P02), which is where the robot goes but not
+			// what the operator is looking at the board to learn. Group names
+			// happen to prefix position names in the demo plant; nothing
+			// enforces it, so the card says it rather than relying on it.
+			PayloadDesc: "empty " + lv.BinTypeCode + " → " + g.Name,
+			OriginID:    episode.OriginID,
+			OriginClass: protocol.OriginClassAttached,
 		})
 		if aerr != nil {
 			m.eng.logFn("maintainer: admit ask for %s/%s at %s: %v",
