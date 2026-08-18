@@ -181,10 +181,6 @@ func TestValidate_MaintainedGroupRefusals(t *testing.T) {
 			p.Zones[1].Lanes = []Lane{{Name: "PEB-LANE", Slots: []Slot{{Name: "PEB-L1", Depth: 1}}}}
 		}, "a maintained group is flat"},
 		{"no positions", func(p *Plant) { p.Zones[1].Positions = nil }, "no positions to hold a level"},
-		// Two owners, one level.
-		{"also a staging group", func(p *Plant) {
-			p.Claims[0].BufferDest = "PRESS-EMPTIES"
-		}, "one owner of its level"},
 		// projectOrder no-ops on a blank StationID.
 		{"no station", func(p *Plant) { p.MaintainedGroups[0].Station = "" }, "show on no board"},
 		{"no levels", func(p *Plant) { p.MaintainedGroups[0].Levels = nil }, "declares no levels"},

@@ -61,20 +61,6 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 	}
 	groupName := group.Name
 
-	// ── Two owners, one level ────────────────────────────────────────────────
-	// A loader's staging group is stocked and drained by the loader, with no
-	// fallback when it runs dry. A maintained group is stocked and capped by
-	// Core. Both on one node means each reads the other's work as the level
-	// moving by itself.
-	stagedBy, err := s.db.LoadersStagingAt(groupName)
-	if err != nil {
-		return chk, err
-	}
-	if len(stagedBy) > 0 {
-		refuse("%s is already the staging group for loader %s — a group can have one owner of its level, not two",
-			groupName, strings.Join(stagedBy, ", "))
-	}
-
 	// ── Depth-1 ──────────────────────────────────────────────────────────────
 	// Maintained groups are FLAT: direct children only, no lanes, no nested
 	// groups. It is a scope decision rather than a technical limit — depth

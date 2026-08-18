@@ -187,9 +187,6 @@ type Bin struct {
 // be FLAT — positions, no lanes — because that is what the save-time rules
 // require of a maintained group, and a spec that could declare a shape the UI
 // refuses would seed a plant nobody could then edit.
-//
-// NOT "buffer". A loader's staging group (Claim.BufferDest) is a different
-// mechanism with opposite behaviour, and a zone cannot be both.
 type MaintainedGroup struct {
 	// Group names the zone. It must be a declared zone with positions and no lanes.
 	Group string `yaml:"group"`
@@ -245,29 +242,32 @@ type Style struct {
 
 // Claim is one style→core-node binding — the full claim row.
 type Claim struct {
-	CoreNode            string `yaml:"core_node"`
-	Style               string `yaml:"style"`
-	Role                string `yaml:"role"`      // produce|consume
-	SwapMode            string `yaml:"swap_mode"` // sequential|single_robot|two_robot|two_robot_press_index|manual_swap (simple retired — runtime descriptor only)
-	Payload             string `yaml:"payload"`
-	UOPCapacity         int64  `yaml:"uop_capacity"`
-	ReorderPoint        int64  `yaml:"reorder_point"`
-	AutoReorder         bool   `yaml:"auto_reorder"`
-	InboundSource       string `yaml:"inbound_source,omitempty"`
-	OutboundDestination string `yaml:"outbound_destination,omitempty"`
-	// BufferDest, on a manual_swap loader/unloader claim, names the staging node
-	// group (zone/NGRP) that stages empties to rotate into a position on threshold
-	// and parks changeover-orphaned partials (plain FIFO, engineered capacity — the
-	// loader-buffer model, ledger §J). Carried onto bin_loaders.buffer_dest. Most
-	// useful on a dedicated_positions loader, where a parked partial that lost its
-	// home slot during a changeover needs somewhere to wait.
-	BufferDest      string   `yaml:"buffer_dest,omitempty"`
-	InboundStaging  string   `yaml:"inbound_staging,omitempty"`
-	OutboundStaging string   `yaml:"outbound_staging,omitempty"`
-	AutoPush        bool     `yaml:"auto_push"`
-	AutoConfirm     bool     `yaml:"auto_confirm"`
-	PairedCoreNode  string   `yaml:"paired_core_node,omitempty"`
-	AllowedPayloads []string `yaml:"allowed_payloads,omitempty"`
+	CoreNode     string `yaml:"core_node"`
+	Style        string `yaml:"style"`
+	Role         string `yaml:"role"`      // produce|consume
+	SwapMode     string `yaml:"swap_mode"` // sequential|single_robot|two_robot|two_robot_press_index|manual_swap (simple retired — runtime descriptor only)
+	Payload      string `yaml:"payload"`
+	UOPCapacity  int64  `yaml:"uop_capacity"`
+	ReorderPoint int64  `yaml:"reorder_point"`
+	AutoReorder  bool   `yaml:"auto_reorder"`
+	// InboundSource names the node group empty carriers are RETRIEVED FROM, and
+	// OutboundDestination the group full ones are SENT TO. Between them they are
+	// the whole of a loader's flow configuration (ledger §J).
+	//
+	// Partials are a different mechanism and do not appear here. A carrier
+	// orphaned by a changeover parks in a MEMBER SLOT of the loader — a home row
+	// with home_kind='buffer' (`home_of` below, kind chosen on the loaders
+	// screen) — not in a group named by this claim. The two were once documented
+	// as one field doing two jobs; they were always two representations, and the
+	// group-naming half is retired.
+	InboundSource       string   `yaml:"inbound_source,omitempty"`
+	OutboundDestination string   `yaml:"outbound_destination,omitempty"`
+	InboundStaging      string   `yaml:"inbound_staging,omitempty"`
+	OutboundStaging     string   `yaml:"outbound_staging,omitempty"`
+	AutoPush            bool     `yaml:"auto_push"`
+	AutoConfirm         bool     `yaml:"auto_confirm"`
+	PairedCoreNode      string   `yaml:"paired_core_node,omitempty"`
+	AllowedPayloads     []string `yaml:"allowed_payloads,omitempty"`
 	// WindowOf, when set on a manual_swap loader claim, makes this node a WINDOW
 	// of the named shared loader rather than its own loader: the seed groups it as
 	// a window home of that loader (the multi-window model the grid editor authors

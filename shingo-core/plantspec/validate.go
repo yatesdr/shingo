@@ -222,9 +222,6 @@ func (p *Plant) Validate() error {
 		if c.OutboundDestination != "" && !ref(c.OutboundDestination) {
 			add("%s: unknown outbound_destination %q", where, c.OutboundDestination)
 		}
-		if c.BufferDest != "" && !ref(c.BufferDest) {
-			add("%s: unknown buffer_dest %q", where, c.BufferDest)
-		}
 		if c.PairedCoreNode != "" && !ref(c.PairedCoreNode) {
 			add("%s: unknown paired_core_node %q", where, c.PairedCoreNode)
 		}
@@ -352,12 +349,6 @@ func (p *Plant) Validate() error {
 	// position, a supported position with no carrier types) stay warnings there
 	// and are absent here: a seed is allowed to be in a state a plant is allowed
 	// to be in.
-	stagingGroups := map[string]string{} // zone name → claim that stages there
-	for _, c := range p.Claims {
-		if c.BufferDest != "" {
-			stagingGroups[c.BufferDest] = c.CoreNode
-		}
-	}
 	seenGroup := map[string]bool{}
 	for _, mg := range p.MaintainedGroups {
 		if mg.Group == "" {
@@ -384,11 +375,6 @@ func (p *Plant) Validate() error {
 			if zonePositions[mg.Group] == 0 {
 				add("maintained_group %q has no positions to hold a level in", mg.Group)
 			}
-		}
-		// Two owners, one level.
-		if claim, ok := stagingGroups[mg.Group]; ok {
-			add("maintained_group %q is already the staging group for claim %q — a group has one owner of its level, not two",
-				mg.Group, claim)
 		}
 		// projectOrder no-ops on a blank StationID.
 		if strings.TrimSpace(mg.Station) == "" {

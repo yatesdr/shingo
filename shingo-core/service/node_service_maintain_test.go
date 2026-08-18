@@ -10,7 +10,6 @@ import (
 	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
-	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
@@ -61,30 +60,6 @@ func mgWarnedAbout(chk MaintainedGroupCheck, substr string) bool {
 		}
 	}
 	return false
-}
-
-// A group cannot be both a loader's staging group and a maintained group: two
-// owners would hold one level, each reading the other's work as the level moving
-// by itself.
-func TestMaintainedGroup_RefusesLoaderStagingGroup(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	svc := NewNodeService(db)
-
-	grpID, _ := mgGroup(t, db, "GRP-DOUBLE-OWNED", 2)
-	_, err := db.CreateLoader(loaders.Loader{
-		Name: "CT-L", Role: "produce", Layout: "shared_window", Replenishment: "operator",
-		BufferDest: "GRP-DOUBLE-OWNED",
-	})
-	testutil.MustNoErr(t, err, "CreateLoader")
-
-	chk, err2 := svc.CheckMaintainedGroupSettings(grpID, MaintainedGroupSettings{
-		MaintainEnabled: true, MaintenanceStation: "EDGE-1",
-	})
-	testutil.MustNoErr(t, err2, "CheckMaintainedGroupSettings")
-	if !mgRefusedBy(chk, "CT-L") {
-		t.Fatalf("refusals = %v, want one naming the loader CT-L", chk.Refusals)
-	}
 }
 
 // projectOrder no-ops on a blank StationID, so a top-up order minted without a
