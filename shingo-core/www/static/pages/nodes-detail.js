@@ -525,6 +525,12 @@ async function handleNodeSave(el, evt) {
   serializeChipPickers();
   saveAlgorithmProperties();
 
+  // Clear any force from a PREVIOUS save. The modal's form is one long-lived
+  // element, so a hidden input added when the operator confirmed a narrowing
+  // would otherwise still be there the next time they pressed Save — on a
+  // different node, with the guard silently overridden and nobody asked.
+  form.querySelectorAll('input[name="force"]').forEach(function(i) { i.remove(); });
+
   // Asked before anything is written, because it is a question about what the
   // FORM is carrying — the narrower Allowed Bins set the post is about to apply.
   var btMode = document.getElementById('nf-bt-mode');

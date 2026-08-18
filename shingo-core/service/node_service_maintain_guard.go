@@ -172,7 +172,7 @@ func (s *NodeService) CheckMaintainedGroupSupportsChange(groupNodeID int64, proc
 	if err != nil {
 		return g, err
 	}
-	g.Blocked = fmt.Sprintf("%s still holds %s — dropping %s takes %s away from what is standing there",
+	g.Blocked = fmt.Sprintf("%s still holds %s — dropping %s stops %s reaching what is standing there",
 		group.Name, strings.Join(binLabels(held), ", "), strings.Join(dropped, ", "),
 		plural(len(dropped), "it", "them"))
 	return g, nil
