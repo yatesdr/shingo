@@ -422,6 +422,16 @@ const (
 	// read, so the finder declined to answer rather than guessing. The finder's
 	// member of the undetermined family.
 	CauseFinderAccessibilityUnreadable QueueCause = "finder-accessibility-unreadable"
+	// CauseNGRPAtLevel — a maintained group is holding what it was told to hold,
+	// so it will not take another carrier of this type.
+	//
+	// NOT CauseNGRPFull, which says every position is physically occupied. This
+	// group has empty positions and they are spoken for by a number somebody
+	// configured — an operator who read "full" would go and look at a group with
+	// space in it. The two clear on different things too: full clears when a
+	// carrier leaves, this clears when a carrier leaves OR when somebody raises
+	// the level.
+	CauseNGRPAtLevel QueueCause = "ngrp-at-level"
 	// CauseFinderGroupFenced — the need named a STRICT maintained group it is not
 	// supported at. The group holds carriers; they are not this asker's.
 	//

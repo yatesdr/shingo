@@ -173,6 +173,10 @@ type FinderDB interface {
 	// MaintainedGroupsSupporting and NodeIsUnderAny are the MG3-5 audit's two
 	// reads: which groups serve this process, and did the carrier come from
 	// inside one of them.
+	// GetEffectiveBinTypes is MG3-4's read: what physically fits at a position,
+	// resolved through the inherit chain. One type is a statement; zero or many
+	// leave the choice to the cascade's ordering.
+	GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error)
 	MaintainedGroupsSupporting(processNode string) ([]int64, error)
 	NodeIsUnderAny(nodeID int64, roots []int64) (bool, error)
 

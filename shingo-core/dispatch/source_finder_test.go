@@ -72,6 +72,7 @@ type fakeFinderDB struct {
 	supportingGroups    map[string][]int64
 	supportingGroupsErr error
 	nodeUnder           map[int64]int64
+	effectiveBinTypes   map[int64][]*bins.BinType
 	// maintainedTypeErr makes the episode read FAIL rather than answer, so the
 	// "a read failure returns no type rather than guessing" arm is exercisable.
 	maintainedTypeErr error
@@ -129,11 +130,12 @@ func newFakeFinderDB() *fakeFinderDB {
 		// were nil until MG3-0, so a test that stated a maintain origin panicked
 		// on assignment instead of exercising the arm — which is a fixture that
 		// can only be used by someone who already knows it is broken.
-		maintainedType:   map[string]string{},
-		maintainedGroup:  map[string]string{},
-		fencedGroups:     map[int64]bool{},
-		supportingGroups: map[string][]int64{},
-		nodeUnder:        map[int64]int64{},
+		maintainedType:    map[string]string{},
+		maintainedGroup:   map[string]string{},
+		fencedGroups:      map[int64]bool{},
+		supportingGroups:  map[string][]int64{},
+		nodeUnder:         map[int64]int64{},
+		effectiveBinTypes: map[int64][]*bins.BinType{},
 	}
 }
 
@@ -218,6 +220,13 @@ func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64, fence 
 // rather than stubbed to nothing so the audit's SILENCE is testable: the line
 // must not fire for a press no group serves, and must not fire when the carrier
 // came from inside one that does.
+// effectiveBinTypes is MG3-4's input: what physically fits at a position.
+// Absent means "nobody has said", which is every position in every plant today
+// and must leave the choice alone.
+func (f *fakeFinderDB) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) {
+	return f.effectiveBinTypes[nodeID], nil
+}
+
 func (f *fakeFinderDB) MaintainedGroupsSupporting(processNode string) ([]int64, error) {
 	if f.supportingGroupsErr != nil {
 		return nil, f.supportingGroupsErr

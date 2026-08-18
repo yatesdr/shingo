@@ -372,6 +372,30 @@ func (r *GroupResolver) classifyEmptyGroup(
 
 // ResolveStore finds the best slot for storing a bin in a node group.
 func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
+	// ── MG4-1: THE LEVEL IS A CAP, AND THIS IS WHERE IT BINDS ───────────────
+	//
+	// A maintained group holds a declared number of empty carriers. The keeper
+	// tops UP to that number; this refuses a store that would push PAST it.
+	// Without both halves the level is only a floor, and a group configured to
+	// hold four would accept a fifth, a sixth, and every carrier anybody wanted
+	// to put down — which is how a press empty bank becomes the place the plant
+	// parks its overflow.
+	//
+	// ResolutionCapacity, which means QUEUE-ON-FULL: the caller parks the push
+	// and retries, inheriting the whole park / re-resolve / revert path a full
+	// group already has. It is not an error and nothing is cancelled. A push that
+	// finds every maintained destination at level is backpressure, which is
+	// uncomfortable and correct.
+	//
+	// EVALUATED PER RESOLVE, NOT PER CHILD. The level is a property of the GROUP
+	// — four carriers across it, wherever they stand — so a per-child evaluation
+	// would be asking a question the configuration does not answer.
+	if full, err := r.atDeclaredLevel(group, binTypeID); err != nil {
+		return nil, err
+	} else if full {
+		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
+	}
+
 	algo := r.getGroupAlgorithm(group.ID, "store_algorithm", StoreLKND)
 	switch algo {
 	case StoreDPTH:
@@ -638,4 +662,71 @@ func (r *GroupResolver) binTypeAllowed(nodeID int64, binTypeID int64) bool {
 		}
 	}
 	return false
+}
+
+// atDeclaredLevel reports whether a maintained group is already holding what it
+// was told to hold.
+//
+// ── THE ASYMMETRY, STATED ───────────────────────────────────────────────────
+//
+// PER-TYPE WHEN THE CALLER KNOWS THE TYPE. A group declaring "four 45x58 and two
+// 45x48" that is full of 45x58 must still accept a 45x48 — the levels are
+// separate declarations and the cap is per declaration.
+//
+// GROUP-TOTAL WHEN IT DOES NOT. An untyped store carries no way to say which
+// declaration it would fill, so the only honest cap is the sum: refuse when the
+// group holds as many empties as every declaration together asked for. That is
+// deliberately the LOOSER reading. The alternative — refuse whenever any single
+// declaration is met — would turn one satisfied type into a fence against every
+// other, and an untyped push has done nothing to deserve that.
+//
+// The asymmetry is a consequence of what the caller knows, not a policy choice,
+// and it disappears the moment MG4-2 gives the untyped path a derived type.
+//
+// A GROUP WITH NO DECLARED LEVEL IS NOT MAINTAINED, and this is a no-op for it —
+// which is every group in every plant today. The read is one query against a
+// table that is empty almost everywhere.
+//
+// A READ FAILURE REFUSES THE STORE rather than allowing it, and that direction
+// is chosen: allowing means overfilling a group past a cap somebody set, which
+// nothing later corrects, while refusing means the push parks and retries. The
+// error propagates rather than being swallowed into "not full" — MG3-1a's rule
+// applies here too.
+func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, binTypeID *int64) (bool, error) {
+	levels, err := r.DB.ListMaintainLevels(group.ID)
+	if err != nil {
+		return false, fmt.Errorf("read declared level for %s: %w", group.Name, err)
+	}
+	if len(levels) == 0 {
+		return false, nil
+	}
+
+	if binTypeID != nil {
+		for _, l := range levels {
+			if l.BinTypeID != *binTypeID {
+				continue
+			}
+			held, cerr := r.DB.CountEmptyBinsOfTypeInGroup(l.BinTypeCode, group.ID)
+			if cerr != nil {
+				return false, fmt.Errorf("count %s in %s: %w", l.BinTypeCode, group.Name, cerr)
+			}
+			return held >= l.Want, nil
+		}
+		// A type nobody declared. NOT refused: a maintained group is a group with
+		// a level on some types, not a group closed to every other. Declaring a
+		// level is saying "hold at least these"; it is not saying "and nothing
+		// else may ever stand here".
+		return false, nil
+	}
+
+	want, held := 0, 0
+	for _, l := range levels {
+		want += l.Want
+		n, cerr := r.DB.CountEmptyBinsOfTypeInGroup(l.BinTypeCode, group.ID)
+		if cerr != nil {
+			return false, fmt.Errorf("count %s in %s: %w", l.BinTypeCode, group.Name, cerr)
+		}
+		held += n
+	}
+	return held >= want, nil
 }

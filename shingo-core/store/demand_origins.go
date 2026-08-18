@@ -676,3 +676,33 @@ func (db *DB) ListClosedBySince(since time.Time) ([]string, error) {
 	}
 	return out, rows.Err()
 }
+
+// MaintainedBinTypeIDForOrigin resolves an ask's origin to the bin type ID its
+// open maintain episode names. Nil means "not an open maintain episode", which
+// is every other order in the plant.
+//
+// THE ID, BECAUSE THE RESOLVER TAKES ONE. The episode key carries the CODE —
+// deliberately, so a log line and a restore are both readable — and every other
+// reader wants the code. ResolveStore's binTypeID parameter is the exception,
+// and this is the one place the translation happens rather than at each call
+// site, so a caller cannot get the direction wrong.
+//
+// A CODE THAT NAMES NO BIN TYPE RETURNS NIL, not an error. It means the type was
+// deleted out from under an open episode, and the honest consequence is an
+// untyped resolve — the same behaviour every order had before MG4-2 — rather
+// than refusing to place a carrier at all.
+func (db *DB) MaintainedBinTypeIDForOrigin(originID string) (*int64, error) {
+	_, code, err := db.MaintainedEpisodeForOrigin(originID)
+	if err != nil || code == "" {
+		return nil, err
+	}
+	bt, err := db.GetBinTypeByCode(code)
+	if err != nil || bt == nil {
+		if errors.Is(err, sql.ErrNoRows) || bt == nil {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("bin type %q for origin %s: %w", code, originID, err)
+	}
+	id := bt.ID
+	return &id, nil
+}

@@ -75,15 +75,15 @@ func (f *SourceFinder) wantedBinType(need SourceNeed) string {
 
 	// ── The loader derivation. Needs a destination WINDOW to derive from. ────
 	if need.DeliveryNode == "" {
-		return ""
+		return f.typeFromDestinationPosition(need)
 	}
 	dest, err := f.db.GetNodeByDotName(need.DeliveryNode)
 	if err != nil || dest == nil {
-		return ""
+		return f.typeFromDestinationPosition(need)
 	}
 	home, err := f.db.GetLoaderHomeByPositionNode(dest.ID)
 	if err != nil || home == nil {
-		return ""
+		return f.typeFromDestinationPosition(need)
 	}
 	quotas, err := f.db.ListLoaderQuotas(home.LoaderID)
 	if err != nil || len(quotas) == 0 {
@@ -180,4 +180,47 @@ func (f *SourceFinder) emptyFenceFor(need SourceNeed) bins.EmptyFence {
 	}
 	fence.OriginGroup = group
 	return fence
+}
+
+// typeFromDestinationPosition is MG3-4's half of the answer: OUTFLOW TYPING.
+//
+// A press empty pull has no payload to reason from — it wants an empty carrier,
+// and "empty" says nothing about which type. The only fact available at
+// selection time is the POSITION the carrier is going to, and that position's
+// effective bin types say what physically fits there.
+//
+// ── EXACTLY ONE, OR NOTHING ─────────────────────────────────────────────────
+//
+// One effective type is a statement: this slot takes 45x58 and nothing else, so
+// asking for anything else produces a carrier that cannot be set down.
+//
+// ZERO OR MANY LEAVES TODAY'S BEHAVIOUR UNTOUCHED, and the two cases are
+// different facts with the same correct handling. Zero means nobody has said
+// what fits — the overwhelmingly common state, and narrowing on an operator's
+// behalf is making a decision for them. Many means several types fit, and
+// picking one of them here would be arbitrary: the cascade's ordering already
+// decides which carrier costs least to fetch, and it should keep deciding.
+//
+// AFTER THE LOADER DERIVATION, DELIBERATELY. A loader window with a declared mix
+// has a richer answer — which type it is most STARVED of, proportionally — and
+// that must not be overridden by the narrower physical fact. This runs only
+// where the loader derivation had nothing to say.
+//
+// INERT ON EMPTY CONFIG. A plant with no per-position bin types gets "" from
+// every call, which is what it got before MG3-4 existed. That is why the wire
+// lands regardless of how many positions are typed today: the config is not
+// worth populating until something reads it.
+func (f *SourceFinder) typeFromDestinationPosition(need SourceNeed) string {
+	if need.ProcessNode == "" {
+		return ""
+	}
+	node, err := f.db.GetNodeByDotName(need.ProcessNode)
+	if err != nil || node == nil {
+		return ""
+	}
+	types, err := f.db.GetEffectiveBinTypes(node.ID)
+	if err != nil || len(types) != 1 {
+		return ""
+	}
+	return types[0].Code
 }

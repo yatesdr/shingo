@@ -668,6 +668,21 @@ var causeReleasers = []causeReleaser{
 		what:        "the loader pool becomes readable — says nothing about whether material is there",
 	},
 	{
+		cause:       CauseNGRPAtLevel,
+		populations: []WaitPopulation{PopAcquiring, PopCompoundLeg},
+		what: "a carrier LEAVES the group — or somebody raises the level. Two releasers, " +
+			"and the second is the one an operator can act on",
+		finding: "IT CLEARS ON TWO DIFFERENT THINGS, which is why it is not CauseNGRPFull. " +
+			"A physically full group clears when a carrier leaves and on nothing else. This " +
+			"group has EMPTY POSITIONS — they are spoken for by a number somebody " +
+			"configured — so it also clears the moment that number changes, and an operator " +
+			"reading \"full\" would go and look at a group with space in it and conclude the " +
+			"board was wrong. " +
+			"NO OVERFLOW CONFIGURED IS THE UNCOMFORTABLE CASE, and it is stated rather than " +
+			"solved: the push parks holding its bin, which is backpressure into whatever was " +
+			"pushing. That is the residual MG6-1 names and does not remove.",
+	},
+	{
 		cause:       CauseFinderGroupFenced,
 		populations: []WaitPopulation{PopAcquiring},
 		what: "NOTHING IN THE MATERIAL — the group is not this asker's. Somebody adds the " +
