@@ -21,7 +21,11 @@ belongs in the commit message or in `docs/` — this file is the index.
 - The park messages for a reserved group and for an at-level group both said the opposite of what was happening; each now names the real situation.
 - Operator text across the group editor, park messages and board cards rewritten in plain language, with a one-page floor guide.
 - The loader keeps "carrier mix" and the group editor says "maintained level" — two mechanisms, two names.
-- The dry-buffer known-gap notes are closed on both sides: the pull parks scoped to the buffer, and a buffer group declared maintained is refilled by the keeper.
+- CORRECTION to the line this entry first carried: the dry-buffer notes claimed a buffer group could be declared maintained and refilled by the keeper. Validation refused exactly that configuration, in three places, under the one-owner-per-level rule. The pull did park scoped to the buffer; the remedy did not exist.
+- A loader's staging group (`bin_loaders.buffer_dest`) is retired. It named a group empties were pulled from, outranking `inbound_source` with no fallback — a second spelling of one question. Both readers, the wire field, the form row and the card zone are gone; a loader has one source and one destination. Zero rows carried a value at either plant.
+- The one-owner-per-level refusal goes with it: with no staging group to collide with, a group cannot have two owners of its level, and the guard becomes unrepresentable rather than unenforced. Declaring a former buffer group maintained is now configurable, which is what the corrected note above wanted.
+- The outbound group is asked of every loader layout. It was hidden on dedicated loaders, which made "an inbound group and an outbound group" — the shape a dedicated loader wants — unenterable on the screen that edits it.
+- `buffer_dest` columns are left in both schemas, unread and unwritten; the drop ships a release later, after soak. Kept-partial slots (`home_kind='buffer'`) are a different mechanism and are untouched.
 - Three node-tree walks became one definition, two pages stopped loading their script twice, and a parentage cycle became uncreatable.
 - Migration heads: Core v90, Edge v35. Inert until a group is enabled.
 
