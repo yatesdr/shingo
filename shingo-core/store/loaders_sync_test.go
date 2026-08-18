@@ -192,6 +192,149 @@ func TestBuildLoaderInfos(t *testing.T) {
 	}
 }
 
+// TestBuildLoaderInfos_SkipsAHomeWhoseNodeIsGone pins the one behaviour the
+// name-resolution batching could have changed silently.
+//
+// Member names used to be resolved a home at a time, and a home whose node had
+// been deleted was skipped so the sync stayed best-effort rather than failing
+// the whole node list. The batched read INNER JOINs nodes, so such a home is
+// simply absent from the map — this asserts the skip survived the rewrite, and
+// that the surviving positions are still projected in full.
+//
+// The row is created and then orphaned directly, because no service path leaves
+// a home pointing at a deleted node; it is the state a manual delete or a
+// half-finished rename produces, which is exactly when a sync must not break.
+func TestBuildLoaderInfos_SkipsAHomeWhoseNodeIsGone(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	var ntID, liveID, doomedID int64
+	if err := db.DB.QueryRow(
+		`INSERT INTO node_types (code,name) VALUES ('NT-GONE','t') ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name RETURNING id`,
+	).Scan(&ntID); err != nil {
+		t.Fatalf("seed node_type: %v", err)
+	}
+	if err := db.DB.QueryRow(
+		`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ('GONE-LIVE',false,$1,true) RETURNING id`, ntID,
+	).Scan(&liveID); err != nil {
+		t.Fatalf("seed live node: %v", err)
+	}
+	if err := db.DB.QueryRow(
+		`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ('GONE-DOOMED',false,$1,true) RETURNING id`, ntID,
+	).Scan(&doomedID); err != nil {
+		t.Fatalf("seed doomed node: %v", err)
+	}
+
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "L-GONE", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentThreshold,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	for _, h := range []loaders.Home{
+		{LoaderID: id, PositionNodeID: liveID, PayloadCode: "PART-LIVE", UOPThreshold: 7},
+		{LoaderID: id, PositionNodeID: doomedID, PayloadCode: "PART-DOOMED"},
+	} {
+		if err := db.UpsertLoaderHome(h); err != nil {
+			t.Fatalf("UpsertLoaderHome: %v", err)
+		}
+	}
+
+	// Orphan the second home: drop the node, leave the bin_loader_homes row.
+	if _, err := db.DB.Exec(`ALTER TABLE bin_loader_homes DROP CONSTRAINT IF EXISTS bin_loader_homes_position_node_id_fkey`); err != nil {
+		t.Fatalf("drop fk: %v", err)
+	}
+	if _, err := db.DB.Exec(`DELETE FROM nodes WHERE id=$1`, doomedID); err != nil {
+		t.Fatalf("delete doomed node: %v", err)
+	}
+
+	infos, err := db.BuildLoaderInfos()
+	if err != nil {
+		t.Fatalf("BuildLoaderInfos: %v — a vanished member node must skip that position, not fail the sync", err)
+	}
+	var li *protocol.LoaderInfo
+	for i := range infos {
+		if infos[i].Name == "L-GONE" {
+			li = &infos[i]
+		}
+	}
+	if li == nil {
+		t.Fatal("loader missing from the projection entirely")
+	}
+	if len(li.Positions) != 1 {
+		t.Fatalf("positions = %d, want 1 — the orphaned home must be skipped, the live one kept", len(li.Positions))
+	}
+	p := li.Positions[0]
+	if p.CoreNodeName != "GONE-LIVE" || p.PayloadCode != "PART-LIVE" || p.UOPThreshold != 7 {
+		t.Errorf("surviving position = %+v, want GONE-LIVE/PART-LIVE/thr7 projected in full", p)
+	}
+}
+
+// TestBuildDemandRegistry_SkipsAHomeWhoseNodeIsGone is the same pin on the other
+// consumer of the batched names. A registry entry addressed at a node that no
+// longer exists would be a demand nothing can deliver to.
+func TestBuildDemandRegistry_SkipsAHomeWhoseNodeIsGone(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	var ntID, liveID, doomedID int64
+	if err := db.DB.QueryRow(
+		`INSERT INTO node_types (code,name) VALUES ('NT-DGONE','t') ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name RETURNING id`,
+	).Scan(&ntID); err != nil {
+		t.Fatalf("seed node_type: %v", err)
+	}
+	if err := db.DB.QueryRow(
+		`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ('DGONE-LIVE',false,$1,true) RETURNING id`, ntID,
+	).Scan(&liveID); err != nil {
+		t.Fatalf("seed live node: %v", err)
+	}
+	if err := db.DB.QueryRow(
+		`INSERT INTO nodes (name,is_synthetic,node_type_id,enabled) VALUES ('DGONE-DOOMED',false,$1,true) RETURNING id`, ntID,
+	).Scan(&doomedID); err != nil {
+		t.Fatalf("seed doomed node: %v", err)
+	}
+
+	id, err := db.CreateLoader(loaders.Loader{
+		Name: "L-DGONE", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentThreshold,
+	})
+	if err != nil {
+		t.Fatalf("CreateLoader: %v", err)
+	}
+	for _, h := range []loaders.Home{
+		{LoaderID: id, PositionNodeID: liveID, PayloadCode: "PART-LIVE", UOPThreshold: 5},
+		{LoaderID: id, PositionNodeID: doomedID, PayloadCode: "PART-DOOMED", UOPThreshold: 9},
+	} {
+		if err := db.UpsertLoaderHome(h); err != nil {
+			t.Fatalf("UpsertLoaderHome: %v", err)
+		}
+	}
+	if _, err := db.DB.Exec(`ALTER TABLE bin_loader_homes DROP CONSTRAINT IF EXISTS bin_loader_homes_position_node_id_fkey`); err != nil {
+		t.Fatalf("drop fk: %v", err)
+	}
+	if _, err := db.DB.Exec(`DELETE FROM nodes WHERE id=$1`, doomedID); err != nil {
+		t.Fatalf("delete doomed node: %v", err)
+	}
+
+	entries, err := db.BuildDemandRegistryFromAggregate("edge.line1")
+	if err != nil {
+		t.Fatalf("BuildDemandRegistryFromAggregate: %v — a vanished node must skip its entry, not fail the derivation", err)
+	}
+	var mine []demands.RegistryEntry
+	for _, e := range entries {
+		if e.LoaderID == id {
+			mine = append(mine, e)
+		}
+	}
+	if len(mine) != 1 {
+		t.Fatalf("entries for this loader = %d, want 1 — the orphaned home drives no demand", len(mine))
+	}
+	if mine[0].CoreNodeName != "DGONE-LIVE" || mine[0].PayloadCode != "PART-LIVE" || mine[0].ReplenishUOPThreshold != 5 {
+		t.Errorf("entry = %+v, want DGONE-LIVE/PART-LIVE/thr5", mine[0])
+	}
+}
+
 // TestLoaderFunnelWindows_RoundTrip follows the window-delivery setting the whole
 // way: written on the aggregate, read back off it, and projected onto the wire
 // shape the Edge syncs from. A setting that survives the write but not the
