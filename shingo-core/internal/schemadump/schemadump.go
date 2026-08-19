@@ -67,11 +67,29 @@ type Instance struct {
 }
 
 // Start boots a Postgres container. The caller must Close it.
+//
+// The container runs with the same durability-off tuning as the gate's shared
+// server (scripts/gate.sh start_shared_pg): fsync/synchronous_commit/
+// full_page_writes off, data on tmpfs. Nothing here outlives the process —
+// the whole point is a shape to diff — and with default settings the
+// migration path's thousands of DDL fsyncs are this package's dominant cost
+// under co-tenancy.
 func Start(ctx context.Context) (*Instance, error) {
 	c, err := postgres.Run(ctx, pgImage,
 		postgres.WithDatabase("postgres"),
 		postgres.WithUsername(pgUser),
 		postgres.WithPassword(pgPass),
+		testcontainers.WithEnv(map[string]string{"PGDATA": "/var/lib/postgresql/data/pgdata"}),
+		testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
+			ContainerRequest: testcontainers.ContainerRequest{
+				Cmd: []string{
+					"-c", "fsync=off",
+					"-c", "synchronous_commit=off",
+					"-c", "full_page_writes=off",
+				},
+				Tmpfs: map[string]string{"/var/lib/postgresql/data": "rw,size=1g"},
+			},
+		}),
 		testcontainers.WithWaitStrategy(wait.ForAll(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
@@ -185,7 +203,10 @@ func (i *Instance) BuildAged(_ context.Context, baselineSQL string) (string, err
 }
 
 // dumpFile is where pg_dump writes inside the container before we copy it out.
-const dumpFile = "/tmp/shingo-schema.sql"
+// Per-database, not fixed: tests dump concurrently against one shared instance,
+// and a fixed path made every concurrent dump read whichever run's output
+// landed last — the staleness test read a vintage's dump as "fresh".
+func dumpFile(dbName string) string { return "/tmp/shingo-schema-" + dbName + ".sql" }
 
 // Dump runs pg_dump --schema-only inside the container and returns the
 // normalized result.
@@ -200,10 +221,11 @@ const dumpFile = "/tmp/shingo-schema.sql"
 // copy gives clean bytes and the difference is visible the moment you open the
 // snapshot.
 func (i *Instance) Dump(ctx context.Context, dbName string) (string, error) {
+	file := dumpFile(dbName)
 	code, reader, err := i.container.Exec(ctx, []string{
 		"sh", "-c",
 		fmt.Sprintf("pg_dump --schema-only --no-owner --no-privileges --no-comments --username=%s %s > %s",
-			pgUser, dbName, dumpFile),
+			pgUser, dbName, file),
 	})
 	if err != nil {
 		return "", fmt.Errorf("exec pg_dump: %w", err)
@@ -214,9 +236,9 @@ func (i *Instance) Dump(ctx context.Context, dbName string) (string, error) {
 		return "", fmt.Errorf("pg_dump exited %d: %s", code, sb.String())
 	}
 
-	rc, err := i.container.CopyFileFromContainer(ctx, dumpFile)
+	rc, err := i.container.CopyFileFromContainer(ctx, file)
 	if err != nil {
-		return "", fmt.Errorf("copy %s out of container: %w", dumpFile, err)
+		return "", fmt.Errorf("copy %s out of container: %w", file, err)
 	}
 	defer rc.Close()
 	body, err := io.ReadAll(rc)
