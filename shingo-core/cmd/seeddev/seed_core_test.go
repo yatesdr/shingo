@@ -20,6 +20,8 @@ import (
 // single-window, dedicated-positions, deep-lane ASRS). demo.yaml's own validity is
 // guarded separately by plantspec.TestShippedDemoPlantValid.
 func TestSeedCore_DemoPlant(t *testing.T) {
+	t.Parallel()
+
 	db := testdb.Open(t)
 
 	plant, err := plantspec.Load("testdata/seed-fixture.yaml")

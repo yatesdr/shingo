@@ -43,6 +43,8 @@ func demoPlant(t *testing.T) *plantspec.Plant {
 
 // The Core half: the group, its positions, its carriers and its levels.
 func TestSeedDemo_MaintainedGroupIsSeededAtItsLevel(t *testing.T) {
+	t.Parallel()
+
 	db := testdb.Open(t)
 	plant := demoPlant(t)
 	if err := seedCore(db, plant, map[string]int64{}); err != nil {
@@ -122,6 +124,8 @@ func TestSeedDemo_MaintainedGroupIsSeededAtItsLevel(t *testing.T) {
 // Without these the group is a shape with nothing routed to it — which is
 // exactly what MG1 left behind, and what MG2-0 exists to finish.
 func TestSeedDemo_PressesDrawFromTheGroupAndTheUnloaderPushesBack(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "edge.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -132,7 +136,7 @@ func TestSeedDemo_PressesDrawFromTheGroupAndTheUnloaderPushesBack(t *testing.T) 
 		t.Fatalf("apply edge DDL: %v", err)
 	}
 	plant := demoPlant(t)
-	if err := seedEdgeDB(db, plant, fakeBinIDs(plant)); err != nil {
+	if err := seedEdgeInTx(t, db, plant); err != nil {
 		t.Fatalf("seedEdgeDB(demo): %v", err)
 	}
 

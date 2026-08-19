@@ -94,10 +94,35 @@ func openSeededEdge(t *testing.T) (*sql.DB, string, *plantspec.Plant) {
 	if err := plant.Validate(); err != nil {
 		t.Fatalf("validate demo plant: %v", err)
 	}
-	if err := seedEdgeDB(db, plant, fakeBinIDs(plant)); err != nil {
+	// One transaction, the way the production entry point runs it (seed_edge.go
+	// wraps seedEdgeDB in Begin/Commit) — not 800-odd autocommit round trips.
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if err := seedEdgeDB(tx, plant, fakeBinIDs(plant)); err != nil {
 		t.Fatalf("seedEdgeDB: %v", err)
 	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
 	return db, path, plant
+}
+
+// seedEdgeInTx runs seedEdgeDB inside one transaction, the shape the
+// production entry point uses — a seed is hundreds of statements, and as
+// autocommit each one pays its own SQLite fsync.
+func seedEdgeInTx(t *testing.T, db *sql.DB, plant *plantspec.Plant) error {
+	t.Helper()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := seedEdgeDB(tx, plant, fakeBinIDs(plant)); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // fakeBinIDs assigns synthetic core bin ids per at-node slot (seedCore would
@@ -217,7 +242,7 @@ func TestSeedEdge_Idempotent(t *testing.T) {
 		return n
 	}
 	n1 := before()
-	if err := seedEdgeDB(db, plant, fakeBinIDs(plant)); err != nil { // re-run
+	if err := seedEdgeInTx(t, db, plant); err != nil { // re-run
 		t.Fatalf("re-run: %v", err)
 	}
 	if n2 := before(); n2 != n1 {
