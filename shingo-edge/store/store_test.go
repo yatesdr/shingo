@@ -18,7 +18,7 @@ import (
 
 // coverageDB opens a fresh in-tempdir SQLite file and returns a migrated DB.
 // A local helper (rather than reusing testDB from outbox_test.go, which is
-// gated behind //go:build docker) so these tests run under the default build.
+// gated behind a docker build tag) so these tests run under the default build.
 func coverageDB(t *testing.T) *DB {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "cov.db")
