@@ -481,22 +481,6 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 		return
 	}
 
-	// parentType resolves the parent's NodeTypeCode without assuming the
-	// parent sits in the current result slice. Station-scoped queries
-	// only return rows assigned to the station, so a storage slot's
-	// LANE parent typically won't be included — a single targeted Get
-	// is the cheapest correct lookup.
-	parentType := func(parentID *int64) string {
-		if parentID == nil {
-			return ""
-		}
-		p, err := s.db.GetNode(*parentID)
-		if err != nil || p == nil {
-			return ""
-		}
-		return p.NodeTypeCode
-	}
-
 	var infos []protocol.NodeInfo
 	if stationScoped {
 		for _, n := range nodeList {
@@ -505,9 +489,8 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 				name = n.ParentName + "." + n.Name
 			}
 			infos = append(infos, protocol.NodeInfo{
-				Name:           name,
-				NodeType:       n.NodeTypeCode,
-				ParentNodeType: parentType(n.ParentID),
+				Name:     name,
+				NodeType: n.NodeTypeCode,
 			})
 		}
 	} else {
@@ -524,9 +507,8 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 			} else if !n.IsSynthetic {
 				if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == protocol.NodeClassNGRP {
 					infos = append(infos, protocol.NodeInfo{
-						Name:           parent.Name + "." + n.Name,
-						NodeType:       n.NodeTypeCode,
-						ParentNodeType: parent.NodeTypeCode,
+						Name:     parent.Name + "." + n.Name,
+						NodeType: n.NodeTypeCode,
 					})
 				}
 			}
