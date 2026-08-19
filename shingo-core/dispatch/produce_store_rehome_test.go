@@ -17,7 +17,7 @@ import (
 // ingest is a manifest-only inventory write (the swap carries the bin).
 func TestHandleOrderIngest_RecordsManifestNoOrder(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
@@ -60,7 +60,7 @@ func TestHandleOrderIngest_RecordsManifestNoOrder(t *testing.T) {
 // choice.
 func TestHandleOrderIngest_BinIDPinsExactBin(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 
 	bt, _ := db.GetBinTypeByCode("DEFAULT")

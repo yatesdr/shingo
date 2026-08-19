@@ -55,7 +55,7 @@ func seedFutilityOrder(t *testing.T, db *store.DB, uuid, node, payload string) *
 func TestFutilityWiring_QueuedCancelCountsAsFutile(t *testing.T) {
 	t.Parallel()
 
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
 	aud := armDetector(t, d, 3, clk)
@@ -78,7 +78,7 @@ func TestFutilityWiring_QueuedCancelCountsAsFutile(t *testing.T) {
 func TestFutilityWiring_OrderThatMovedIsNotFutile(t *testing.T) {
 	t.Parallel()
 
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
 	aud := armDetector(t, d, 2, clk)
@@ -103,7 +103,7 @@ func TestFutilityWiring_OrderThatMovedIsNotFutile(t *testing.T) {
 func TestFutilityWiring_InTransitResetsTheTuple(t *testing.T) {
 	t.Parallel()
 
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
 	aud := armDetector(t, d, 3, clk)
@@ -138,7 +138,7 @@ func TestFutilityWiring_InTransitResetsTheTuple(t *testing.T) {
 func TestFutilityWiring_NilDetectorIsInert(t *testing.T) {
 	t.Parallel()
 
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	o := seedFutilityOrder(t, db, "fut-nil", "ALN_003", "PART-X")

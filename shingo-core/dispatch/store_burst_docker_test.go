@@ -115,7 +115,7 @@ func laneOf(t *testing.T, db *store.DB, nodeName string) *nodes.Node {
 // mechanisms in series and either one alone parks the burst.
 func TestStoreBurst_FiveAtOneDugLane_DivertToDistinctSlots(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, laneDug, laneMark, dugSlots, _, bp := storeBurstGroup(t, db, "SB", 5)
 	d := window4Dispatcher(t, db) // a real resolver — the re-selection has to be able to run
 
@@ -222,7 +222,7 @@ func TestStoreBurst_FiveAtOneDugLane_DivertToDistinctSlots(t *testing.T) {
 // lane.
 func TestStoreBurst_DivertedOntoAMarkedLane_StagesInsteadOfParking(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	backend := testdb.NewSuccessBackend()
 	grp, laneDug, laneMark, dugSlots, _, bp := storeBurstGroup(t, db, "SBG", 5)
 	d := NewDispatcher(db, backend, &mockEmitter{}, "core", "shingo.dispatch",

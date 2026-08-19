@@ -53,7 +53,7 @@ import (
 // the rig's own refusal, reproduced.
 func TestWantedBin_PreDispatchSwapWantsItsFirstStepNotThePostWaitPickup(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, lane, _, _, slots, _, bp := setupDwellGroup(t, db, "ENTRYSTEP", 2, false)
 

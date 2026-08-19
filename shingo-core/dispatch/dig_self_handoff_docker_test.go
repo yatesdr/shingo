@@ -66,7 +66,7 @@ func TestSelfHandoff_ACoordinatedDemandKeepsItsOwnCorridorAsOutbound(t *testing.
 
 	t.Run("coordinated: the dig row becomes the demand's own outbound hold", func(t *testing.T) {
 		t.Parallel()
-		db := testDB(t)
+		db := testDBShared(t)
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 		lane, _, _, _, _ := clearLaneFixture(t, db, "SELFHO")
 
@@ -98,7 +98,7 @@ func TestSelfHandoff_ACoordinatedDemandKeepsItsOwnCorridorAsOutbound(t *testing.
 
 	t.Run("plain: a demand whose fetch was its own leg has nothing standing", func(t *testing.T) {
 		t.Parallel()
-		db := testDB(t)
+		db := testDBShared(t)
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 		lane, _, _, _, _ := clearLaneFixture(t, db, "SELFHOP")
 

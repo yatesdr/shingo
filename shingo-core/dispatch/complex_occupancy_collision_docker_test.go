@@ -96,7 +96,7 @@ func terminalStatusArray() []string {
 // proxy for it.
 func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	srcNode, _, bp := setupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "COLL-A")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -161,7 +161,7 @@ func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *test
 // arrive together and the shape is obvious.
 func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	srcNode, _, bp := setupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "COLL-B")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -222,7 +222,7 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 // are covered by the collision pair above.
 func TestSeamGuard_UnderDeclaringALaneRefusesTheDispatch(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	srcNode, _, bp := setupTestData(t, db)
 	_, mouth := seamLane(t, db, "SEAMGUARD")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())

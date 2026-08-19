@@ -29,7 +29,7 @@ import (
 // number was wrong.
 func TestMoveOrder_CountsOneBin(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
@@ -58,7 +58,7 @@ func TestMoveOrder_CountsOneBin(t *testing.T) {
 // orders to create. Flooring it everywhere would break both.
 func TestRetrieveOrder_KeepsTheCountItWasAskedFor(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 

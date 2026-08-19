@@ -107,7 +107,7 @@ func stackedLane(t *testing.T, db *store.DB, prefix string) (grp, lane *nodes.No
 // is the whole reason ReshuffleWaitError carries one.
 func TestStacked_BuriedIrreplaceableNeed_InALockedLane_InAFullGroup(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, lane, slots, spare, bp := stackedLane(t, db, "STK")
 	d := window4Dispatcher(t, db) // a real resolver: the substitute search must be able to run
 

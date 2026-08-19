@@ -109,7 +109,7 @@ func holdsBin(t *testing.T, db *store.DB, orderID, binID int64) bool {
 // with a free sibling lane beside it.
 func TestStoreRedirect_DugLaneWithAFreeSibling_ReSelects(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, laneA, laneB, slotsA, _, bp := twoLaneGroup(t, db, "SR-DIV")
 	d := window4Dispatcher(t, db) // a dispatcher with a real resolver
 
@@ -162,7 +162,7 @@ func TestStoreRedirect_DugLaneWithAFreeSibling_ReSelects(t *testing.T) {
 // exactly as it was rather than half-re-aimed.
 func TestStoreRedirect_EveryLaneDug_ParksUnderTheExistingShape(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, laneA, laneB, slotsA, _, bp := twoLaneGroup(t, db, "SR-ALL")
 	d := window4Dispatcher(t, db)
 
@@ -211,7 +211,7 @@ func TestStoreRedirect_EveryLaneDug_ParksUnderTheExistingShape(t *testing.T) {
 // honest outcome for a destination Core did not choose.
 func TestStoreRedirect_LeavesAnOperatorsChoiceAlone(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, laneA, _, slotsA, _, bp := twoLaneGroup(t, db, "SR-OP")
 	d := window4Dispatcher(t, db)
 

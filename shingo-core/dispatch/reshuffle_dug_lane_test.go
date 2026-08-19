@@ -82,7 +82,7 @@ func dugLaneFixture(t *testing.T, db *store.DB, prefix string, extraLanes int) (
 // is why it lands now rather than then.
 func TestFindShuffleSlots_MustNotParkInTheDugLane(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, lane, slots, _ := dugLaneFixture(t, db, "D3", 0)
 
 	got, err := findShuffleSlots(db, lane.ID, grp.ID, 1, reservations.Anyone, nil)
@@ -111,7 +111,7 @@ func TestFindShuffleSlots_MustNotParkInTheDugLane(t *testing.T) {
 // sibling lane, which is the whole point of the pass.
 func TestFindShuffleSlots_StillParksInAnotherLane(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, lane, _, _ := dugLaneFixture(t, db, "D3ALT", 1)
 
 	got, err := findShuffleSlots(db, lane.ID, grp.ID, 1, reservations.Anyone, nil)

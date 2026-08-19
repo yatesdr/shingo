@@ -70,7 +70,7 @@ func stageDwellerBehindAWall(t *testing.T, db *store.DB, d *Dispatcher, tag stri
 // the "no tail" assertion fires.
 func TestAcceptance_NoAppendWhileItsOwnChapterIsOpen(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
@@ -111,7 +111,7 @@ func TestAcceptance_NoAppendWhileItsOwnChapterIsOpen(t *testing.T) {
 // and it is what keeps the acceptance arm from stacking digs on one lane.
 func TestAcceptance_ADiggingDwellerProposesNoSecondDig(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	wall, dweller, _ := stageDwellerBehindAWall(t, db, d, "ACC-ONCE")

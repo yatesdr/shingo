@@ -63,7 +63,7 @@ import (
 // rule), and with no row taken the rollback would have nothing to get wrong.
 func TestAppendRollback_DwellerKeepsItsSourceLaneRow(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
@@ -145,7 +145,7 @@ func TestAppendRollback_DwellerKeepsItsSourceLaneRow(t *testing.T) {
 // discriminator between the per-lane release and the order-wide one.
 func TestAppendRollback_InboundFailureReleasesOnlyTheTakenLane(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 

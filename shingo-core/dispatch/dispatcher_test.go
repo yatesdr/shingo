@@ -112,6 +112,17 @@ func testDB(t *testing.T) *store.DB {
 	return testdb.Open(t)
 }
 
+// testDBShared is testDB for files whose tests may share ONE database per
+// file: the first test in the file clones, the rest reuse it, and the last
+// one out drops it. Files using it MUST NOT alter schema (ALTER/RENAME),
+// close the DB mid-test, or assert over global unscoped state — the
+// shared_open_shared_test lint guard enforces the first two by refusing
+// OpenShared in a file that carries those shapes.
+func testDBShared(t *testing.T) *store.DB {
+	t.Helper()
+	return testdb.OpenShared(t, testdb.FileKey(t))
+}
+
 func setupTestData(t *testing.T, db *store.DB) (storageNode *nodes.Node, lineNode *nodes.Node, bp *payloads.Payload) {
 	t.Helper()
 	sd := testdb.SetupStandardData(t, db)

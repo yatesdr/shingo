@@ -41,7 +41,7 @@ import (
 // offered the slot in front again and the assertion fires.
 func TestFindShuffleSlots_WillNotSealAnEmptySlotSomebodyIsDrivingTo(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	grp, dug, park, _, dugSlots, parkSlots, bp := setupDwellGroup(t, db, "BUBBLE", 4, false)
 
@@ -149,7 +149,7 @@ func TestServiceDig_UngatedProposalIsCounted(t *testing.T) {
 	// concurrently running dig proposal increments it between this test's
 	// ResetUngatedDigTally and its assert. Same class as the engine's
 	// arrival-refusal/drift tallies.
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, first, second, _, firstSlots, secondSlots, bp := setupDwellGroup(t, db, "UNGATED", 2, true)
 
@@ -215,7 +215,7 @@ func TestServiceDig_UngatedProposalIsCounted(t *testing.T) {
 // The second dig starts, and the fixture's two digs hold each other's parking.
 func TestServiceDig_OneEpisodeGetsOneExcavationAtATime(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, first, second, _, firstSlots, secondSlots, bp := setupDwellGroup(t, db, "ONEDIG", 2, true)
 

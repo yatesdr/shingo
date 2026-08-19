@@ -31,7 +31,7 @@ import (
 
 func TestEveryTerminalTransitionReleasesReservations(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	sd := testdb.SetupStandardData(t, db)
 	lc, _ := newLifecycleForTest(t, db)
 
@@ -117,7 +117,7 @@ func TestEveryTerminalTransitionReleasesReservations(t *testing.T) {
 // bins.claimed_by and not a reservation row, so nothing it looks at moves.
 func TestEveryTerminalTransitionReleasesEveryHoldKind(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	sd := testdb.SetupStandardData(t, db)
 	lc, _ := newLifecycleForTest(t, db)
 

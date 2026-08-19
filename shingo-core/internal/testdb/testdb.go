@@ -38,6 +38,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -493,6 +494,15 @@ func advisoryKey(name string) int64 {
 	return int64(h.Sum64())
 }
 
+// fnvHash is the shared-DB name suffix: a stable short digest of the sharing
+// key, so two keys that sanitize() would collapse stay distinct in the
+// database name.
+func fnvHash(s string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	return h.Sum32()
+}
+
 // templateReady reports whether name exists AND is a finished template.
 //
 // datistemplate IS THE READINESS FLAG, not a detail of how the template is
@@ -812,7 +822,12 @@ func OpenSharedWithConfig(t testing.TB, key string) (*store.DB, *config.Database
 		return db, sharedCfgs[key]
 	}
 
-	dbName := fmt.Sprintf("shared_%s_p%d", sanitize(key), os.Getpid())
+	// The database name needs the file's IDENTITY, not its path: sanitize()
+	// caps at 40 chars, and on this tree every dispatch file's absolute path
+	// shares those first 40 chars — different keys, one name, 42P04 on the
+	// second clone. Basename keeps it readable; the fnv hash of the full key
+	// keeps it unique.
+	dbName := fmt.Sprintf("shared_%s_%x_p%d", sanitize(filepath.Base(key)), fnvHash(key), os.Getpid())
 	admin, err := adminConn()
 	if err != nil {
 		sharedMu.Unlock()
@@ -887,13 +902,13 @@ func releaseShared(key string) {
 	}
 }
 
-// testFileKey derives the per-file sharing key from the CALL SITE of
-// OpenShared in the caller's test file. runtime.Caller(1) from here is the
-// test helper (e.g. dispatch's testDBShared); runtime.Caller(2) is its
-// caller — the test function. The FILE part of that frame is stable per file
-// and unique across files, which is exactly the key property needed.
-func testFileKey() string {
-	for skip := 2; skip < 6; skip++ {
+// FileKey returns the sharing key for the caller's test file — the absolute
+// file path of the first _test.go frame above this package. Stable per file,
+// unique across files: exactly the key OpenShared wants. Wrappers like
+// dispatch's testDBShared call this and hand the result to OpenShared.
+func FileKey(t testing.TB) string {
+	t.Helper()
+	for skip := 2; skip < 8; skip++ {
 		_, file, _, ok := runtime.Caller(skip)
 		if !ok {
 			break
@@ -901,12 +916,15 @@ func testFileKey() string {
 		if !strings.HasSuffix(file, "_test.go") {
 			continue
 		}
-		// First _test.go frame above the testdb package = the test file.
 		if !strings.Contains(file, "internal/testdb/") {
 			return file
 		}
 	}
-	return "fallback"
+	// Not called from a test file (a helper one frame below the test, or a
+	// benchmark). Fall back to the immediate caller's file so sharing still
+	// keys on something stable.
+	_, file, _, _ := runtime.Caller(1)
+	return file
 }
 
 func sanitize(name string) string {
@@ -954,7 +972,12 @@ func SetupStandardData(t *testing.T, db *store.DB) *StandardData {
 	if err != nil {
 		storType = &nodes.NodeType{Code: "STOR", Name: "Storage Slot", IsSynthetic: false}
 		if err := db.CreateNodeType(storType); err != nil {
-			t.Fatalf("create STOR node type: %v", err)
+			// Lost a create race on a shared DB — take the winner's row.
+			if existing, rerr := db.GetNodeTypeByCode("STOR"); rerr == nil {
+				storType = existing
+			} else {
+				t.Fatalf("create STOR node type: %v", err)
+			}
 		}
 	}
 	// Get-or-create each entity. A missed SELECT followed by a racing INSERT

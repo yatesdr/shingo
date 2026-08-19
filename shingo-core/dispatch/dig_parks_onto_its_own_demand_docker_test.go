@@ -51,7 +51,7 @@ import (
 // which is the rig's own failure, reproduced.
 func TestFindShuffleSlots_WillNotWallInABinAnOrderHasResolvedOnto(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	grp, dug, park, _, dugSlots, parkSlots, bp := setupDwellGroup(t, db, "AIMBURY", 4, false)
 

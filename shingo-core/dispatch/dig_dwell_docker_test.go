@@ -154,7 +154,7 @@ func planOf(t *testing.T, db *store.DB, legID int64) []resolvedStep {
 // which is the cost the always-shallowest rule exists to avoid.
 func TestDwell_LiftsAndWaitsAtTheShallowestSlot(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, _, _, dugSlots, _, bp := setupDwellGroup(t, db, "DWSHAL", 2, true)
 
@@ -244,7 +244,7 @@ func TestDwell_LiftsAndWaitsAtTheShallowestSlot(t *testing.T) {
 // claim — the resolver releases on the trigger, and the plant pulls the trigger.
 func TestDwell_OpenDestinationReleasesOnArrival(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, _, park, dugSlots, _, bp := setupDwellGroup(t, db, "DWOPEN", 2, true)
 
@@ -322,7 +322,7 @@ func TestDwell_OpenDestinationReleasesOnArrival(t *testing.T) {
 // publishes the event and watches a dweller in a sibling lane release.
 func TestDwell_ClosedDestinationWaitsWithACauseAndWakesOnAGroupSlot(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, sib, _, dugSlots, sibSlots, bp := setupDwellGroup(t, db, "DWFULL", 2, false)
 
@@ -439,7 +439,7 @@ func TestDwell_ClosedDestinationWaitsWithACauseAndWakesOnAGroupSlot(t *testing.T
 // property of the fleet and Eric's question rather than the code's.
 func TestDwell_HoldsItsLaneUntilItDrivesOut(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, _, park, dugSlots, _, bp := setupDwellGroup(t, db, "DWOCC", 2, true)
 
@@ -519,7 +519,7 @@ func TestDwell_HoldsItsLaneUntilItDrivesOut(t *testing.T) {
 // lifecycle.
 func TestDwell_ClaimsItsSlotAtTheMomentItChoosesIt(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, _, park, dugSlots, _, bp := setupDwellGroup(t, db, "DWCLAIM", 2, true)
 
@@ -582,7 +582,7 @@ func TestDwell_ClaimsItsSlotAtTheMomentItChoosesIt(t *testing.T) {
 // reproduced in a fixture.
 func TestDwell_WalksPastASlotAdmissionRefuses(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	grp, dug, sib, _, dugSlots, sibSlots, bp := setupDwellGroup(t, db, "DWWALK", 2, false)
 
@@ -670,7 +670,7 @@ func TestDwell_WalksPastASlotAdmissionRefuses(t *testing.T) {
 // robot whose situation is ordinary congestion. Wait-not-fail, lost at the label.
 func TestDwell_WaitsWhenEveryCandidateIsRefused(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, sib, _, dugSlots, _, bp := setupDwellGroup(t, db, "DWALLHELD", 2, false)
 
@@ -732,7 +732,7 @@ func TestDwell_WaitsWhenEveryCandidateIsRefused(t *testing.T) {
 // which is the point of having both.
 func TestDwell_FullGroupIsNotBlamedOnADig(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, sib, _, dugSlots, sibSlots, bp := setupDwellGroup(t, db, "DWBLME", 2, false)
 
@@ -795,7 +795,7 @@ func TestDwell_FullGroupIsNotBlamedOnADig(t *testing.T) {
 // arm so exhaustion always reports CauseNoShuffleSlot. The cause assertion fires.
 func TestDwell_WaitsWhenTheWalkIsExhausted(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, sib, _, dugSlots, _, bp := setupDwellGroup(t, db, "DWEXH", 2, false)
 
@@ -860,7 +860,7 @@ func TestDwell_WaitsWhenTheWalkIsExhausted(t *testing.T) {
 // checked rather than assumed.
 func TestDwell_ComposesWithTheGatedEntry(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, _, park, dugSlots, _, bp := setupDwellGroup(t, db, "DWGATE", 2, true)
 	testutil.MustNoErr(t, db.SetNodeProperty(dug.ID, PropLaneGatePoint, "DWGATE-MARK"), "mark the dug lane")
@@ -984,7 +984,7 @@ func TestDwell_ComposesWithTheGatedEntry(t *testing.T) {
 // all four were found the same way — by running them.
 func TestFlip2_TheDigKeepsItsLaneWhileALegDwellsInIt(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	grp, dug, _, park, dugSlots, _, bp := setupDwellGroup(t, db, "DWFLIP", 2, true)
 
@@ -1149,7 +1149,7 @@ func TestFlip2_TheDigKeepsItsLaneWhileALegDwellsInIt(t *testing.T) {
 // fixture buries, and it arrives to find it walled — the dissolve path.
 func TestDwell_TheChosenSlotCannotBeBuriedBeforeTheRobotArrives(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	// A sibling lane AND a parking node: the sibling's deepest slot is what a
 	// plan-time pick takes (pass 2 fills deepest-first), and the parking is where
@@ -1242,7 +1242,7 @@ func TestDwell_TheChosenSlotCannotBeBuriedBeforeTheRobotArrives(t *testing.T) {
 // the lane the dig is digging, which is the dig undone.
 func TestNoReturnToADugLane_TheAssertionFires(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, _, _, dugSlots, sibSlots, bp := setupDwellGroup(t, db, "DWNORET", 2, false)
 
@@ -1302,7 +1302,7 @@ func TestNoReturnToADugLane_TheAssertionFires(t *testing.T) {
 // can no longer park anywhere at all, which is the famine made permanent.
 func TestNoReturnToADugLane_ALegalSlotStillBinds(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, sib, _, dugSlots, sibSlots, bp := setupDwellGroup(t, db, "DWNORETOK", 2, false)
 
@@ -1372,7 +1372,7 @@ func TestNoReturnToADugLane_ALegalSlotStillBinds(t *testing.T) {
 // use real compounds for that reason.
 func TestDwell_TheDigReleaseWakesTheDwellerItWasBlocking(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, sib, _, dugSlots, sibSlots, bp := setupDwellGroup(t, db, "DWWAKE", 2, false)
 

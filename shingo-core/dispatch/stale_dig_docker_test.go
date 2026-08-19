@@ -141,7 +141,7 @@ func parkingNodeID(t *testing.T, db *store.DB, name string) int64 {
 // — which is the wedge, restated as a failing test.
 func TestStaleDig_UnclaimedObstruction_DissolvesAndReplans(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	parent, lane, slots, bp := planStaleDigFixture(t, db, d, "SD-DISS")
 
@@ -238,7 +238,7 @@ func TestStaleDig_UnclaimedObstruction_DissolvesAndReplans(t *testing.T) {
 // torn down while a robot is already carrying the obstruction out.
 func TestStaleDig_HardClaimedObstruction_Waits(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	parent, lane, slots, bp := planStaleDigFixture(t, db, d, "SD-WAIT")
 
@@ -393,7 +393,7 @@ func window2Recheck(t *testing.T, d *Dispatcher, db *store.DB, order *orders.Ord
 //     load-bearing for the failure arm too, not only for the dissolve arm.
 func TestStaleDig_Window2Dig_DissolvesReplansAndCompletes(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, lane, slots, bp := staleDigLane(t, db, "SD-W2")
 
@@ -663,7 +663,7 @@ func TestStaleDig_DeadClaimantObstruction_Dissolves(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			db := testDB(t)
+			db := testDBShared(t)
 			d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 			parent, lane, slots, bp := planStaleDigFixture(t, db, d, tc.tag)
 

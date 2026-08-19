@@ -39,7 +39,7 @@ import (
 // REPLACEMENT (a second pickup, away from the line) rather than where it ends.
 func TestSwapHold_PressIndexR1_NotHeldOnItsSibling(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, press, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "PI-MARKET", Enabled: true}
@@ -117,7 +117,7 @@ func TestSwapHold_PressIndexR1_NotHeldOnItsSibling(t *testing.T) {
 // pulls the line's bin with nothing coming (swap-starvation, 2026-06-03).
 func TestSwapHold_TwoRobotEvac_StillHeldUntilSupplyClaims(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, line, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "TR-MARKET", Enabled: true}
@@ -200,7 +200,7 @@ func TestSwapHold_TwoRobotEvac_StillHeldUntilSupplyClaims(t *testing.T) {
 // R2's dropoff after R1's pickup — R2 is released.
 func TestSwapHold_PressIndexR2_HeldUntilEvacDispatched(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, press, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "PI2-MARKET", Enabled: true}
@@ -270,7 +270,7 @@ func TestSwapHold_PressIndexR2_HeldUntilEvacDispatched(t *testing.T) {
 // exempt it, because its evac sibling does not secure its own replacement.
 func TestSwapHold_TwoRobotSupply_NotHeld(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, line, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "TR2-MARKET", Enabled: true}
@@ -329,7 +329,7 @@ func TestSwapHold_TwoRobotSupply_NotHeld(t *testing.T) {
 // and a dead peer cannot be waiting on anyone.
 func TestSwapHold_Filler_HeldWhenClearerDied(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, line, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "DEAD-CLEARER-MARKET", Enabled: true}
@@ -383,7 +383,7 @@ func TestSwapHold_Filler_HeldWhenClearerDied(t *testing.T) {
 // its second leg.
 func TestSwapHold_Filler_ReleasedWhenClearerConfirmed(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, line, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "DONE-CLEARER-MARKET", Enabled: true}
@@ -442,7 +442,7 @@ func TestSwapHold_Filler_ReleasedWhenClearerConfirmed(t *testing.T) {
 // happened.
 func TestSwapHold_Filler_ReleasedWhenClearerSkipped(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, line, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "SKIP-CLEARER-MARKET", Enabled: true}

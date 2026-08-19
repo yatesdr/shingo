@@ -90,7 +90,7 @@ func orphanLane(t *testing.T, db *store.DB, prefix string) (lane *nodes.Node, sl
 // `config failure: lane node id 2 does not exist`.
 func TestPlanBuriedReshuffle_LaneInNoNodeGroup_TerminalWithItsOwnMessage(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lane, slots, bp := orphanLane(t, db, "PBRORPH")
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-PBRORPH-BLK")
@@ -159,7 +159,7 @@ func TestPlanBuriedReshuffle_LaneInNoNodeGroup_TerminalWithItsOwnMessage(t *test
 // fails and still carries invalid_node; the error_detail assertions fire.
 func TestComplexBuriedOnReplay_LaneInNoNodeGroup_FailsWithTheConfigMessage(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lane, slots, bp := orphanLane(t, db, "CPXORPH")
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-CPXORPH-BLK")

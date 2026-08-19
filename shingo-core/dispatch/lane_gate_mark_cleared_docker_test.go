@@ -255,7 +255,7 @@ func TestGateMark_ClearedLaneParksTheNextOrderPreDispatch(t *testing.T) {
 // is the state the rig sat in.
 func TestGateDwell_CarriesItsCauseAndClearsItOnEntry(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	srcNode, _, bp := setupTestData(t, db)
 	_, laneID, mouth := gatedLane(t, db, "DWELLCAUSE", "DWELLCAUSE-WAIT")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())

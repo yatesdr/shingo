@@ -39,7 +39,7 @@ import (
 // leave its lane locked, which is the floor behaviour R04-2 was about.
 func TestHandleChildOrderFailure_ReleasesTheLane(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	testdb.SetupStandardData(t, db)

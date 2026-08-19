@@ -191,7 +191,7 @@ func assertDugAfterSlotFreed(t *testing.T, db *store.DB, parent *orders.Order) {
 // copies of the same mistake.
 func TestComplexIntake_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	sc, parent, buried, squatter := complexBuriedFixture(t, db, "CXNOSHUF")
 	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
@@ -234,7 +234,7 @@ func TestComplexIntake_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 // parent `failed`; the intake test stays green.
 func TestComplexReplay_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	sc, parent, buried, squatter := complexBuriedFixture(t, db, "CXRPNOSHUF")
 	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
@@ -274,7 +274,7 @@ func TestComplexReplay_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 // Applied at this site alone, the replay fault test stays green too.
 func TestComplexIntake_PlannerFaultStillFails(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	sc, parent, buried, _ := complexBuriedFixture(t, db, "CXFAULT")
 	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
@@ -304,7 +304,7 @@ func TestComplexIntake_PlannerFaultStillFails(t *testing.T) {
 // tests fire and both wait tests stay green — four tests, four separate facts.
 func TestComplexReplay_PlannerFaultStillFails(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	sc, parent, buried, _ := complexBuriedFixture(t, db, "CXRPFAULT")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 

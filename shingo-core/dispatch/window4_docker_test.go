@@ -100,7 +100,7 @@ func window4Lane(t *testing.T, db *store.DB, prefix string) (grp, lane *nodes.No
 // assertion on the rewritten node fires.
 func TestWindow4_FungibleNeedBuried_SourcesASubstitute(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, _, slots, spare, bp := window4Lane(t, db, "W4-SUB")
 	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, "retrieve_algorithm", "COST"), "set COST")
 	d := window4Dispatcher(t, db)
@@ -158,7 +158,7 @@ func TestWindow4_FungibleNeedBuried_SourcesASubstitute(t *testing.T) {
 // back to waiting on a walled bin forever.
 func TestWindow4_NoSubstitute_TriggersTheDig(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, lane, slots, _, bp := window4Lane(t, db, "W4-DIG")
 	d := window4Dispatcher(t, db)
 
@@ -210,7 +210,7 @@ func TestWindow4_NoSubstitute_TriggersTheDig(t *testing.T) {
 // no rewrite.
 func TestWindow4_ReachableHeldNeedIsUntouched(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, _, slots, _, bp := window4Lane(t, db, "W4-OK")
 	d := window4Dispatcher(t, db)
 
@@ -261,7 +261,7 @@ func TestWindow4_ReachableHeldNeedIsUntouched(t *testing.T) {
 // yet claimed" to the gate, which is the state it already holds the evac for.
 func TestWindow4_SiblingGateStillHoldsThroughARecalc(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, _, slots, spare, bp := window4Lane(t, db, "W4-SWAP")
 	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, "retrieve_algorithm", "COST"), "set COST")
 	d := window4Dispatcher(t, db)
@@ -331,7 +331,7 @@ func TestWindow4_SiblingGateStillHoldsThroughARecalc(t *testing.T) {
 // overriding the configured one for exactly the orders that had bad luck.
 func TestWindow4_FIFOStillDigsForTheOlderBin(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, _, slots, spare, bp := window4Lane(t, db, "W4-FIFO") // default algorithm: FIFO
 	d := window4Dispatcher(t, db)
 

@@ -67,7 +67,7 @@ func makeOrderAt(t *testing.T, db *store.DB, uuid string, status protocol.Status
 
 func TestLifecycle_LegalTransitions_AllPersist(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, _ := newLifecycleForTest(t, db)
 
 	i := 0
@@ -97,7 +97,7 @@ func TestLifecycle_LegalTransitions_AllPersist(t *testing.T) {
 
 func TestLifecycle_IllegalTransitions_AllRejected(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, _ := newLifecycleForTest(t, db)
 
 	i := 0
@@ -138,7 +138,7 @@ func TestLifecycle_IllegalTransitions_AllRejected(t *testing.T) {
 
 func TestLifecycle_CancelOrder_PersistsCancelled(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "cancel-1", StatusInTransit)
 
@@ -158,7 +158,7 @@ func TestLifecycle_CancelOrder_PersistsCancelled(t *testing.T) {
 
 func TestLifecycle_CancelOrder_IdempotentOnTerminal(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "cancel-term-1", StatusConfirmed)
 
@@ -192,7 +192,7 @@ func TestLifecycle_CancelOrder_IdempotentOnTerminal(t *testing.T) {
 // raced for, so the invariant is pinned without depending on scheduling.
 func TestLifecycle_StaleCallerCannotResurrectTerminal(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, _ := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "stale-resurrect-1", StatusQueued)
 
@@ -228,7 +228,7 @@ func TestLifecycle_StaleCallerCannotResurrectTerminal(t *testing.T) {
 
 func TestLifecycle_ConfirmReceipt_AlreadyCompleted(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "confirm-dup", StatusDelivered)
 	testutil.MustNoErr(t, db.CompleteOrder(ord.ID), "complete order")
@@ -248,7 +248,7 @@ func TestLifecycle_ConfirmReceipt_AlreadyCompleted(t *testing.T) {
 
 func TestLifecycle_ConfirmReceipt_DeliveredToConfirmed(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "confirm-1", StatusDelivered)
 
@@ -270,7 +270,7 @@ func TestLifecycle_ConfirmReceipt_DeliveredToConfirmed(t *testing.T) {
 
 func TestLifecycle_Fail_PersistsFailed(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "fail-1", StatusInTransit)
 
@@ -289,7 +289,7 @@ func TestLifecycle_Fail_PersistsFailed(t *testing.T) {
 
 func TestLifecycle_Skip_PersistsSkipped(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "skip-1", StatusQueued)
 
@@ -312,7 +312,7 @@ func TestLifecycle_Skip_PersistsSkipped(t *testing.T) {
 
 func TestLifecycle_Skip_RejectsTerminal(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, _ := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "skip-term-1", StatusConfirmed)
 
@@ -332,7 +332,7 @@ func TestLifecycle_Skip_RejectsTerminal(t *testing.T) {
 // mid-flight order would silently strand a robot.
 func TestLifecycle_Skip_RejectsInFlight(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, _ := newLifecycleForTest(t, db)
 	for _, from := range []protocol.Status{StatusAcknowledged, StatusDispatched, StatusInTransit, StatusStaged} {
 		ord := makeOrderAt(t, db, "skip-inflight-"+string(from), from)
@@ -345,7 +345,7 @@ func TestLifecycle_Skip_RejectsInFlight(t *testing.T) {
 
 func TestLifecycle_Fail_RejectsTerminal(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, _ := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "fail-term-1", StatusCancelled)
 
@@ -361,7 +361,7 @@ func TestLifecycle_Fail_RejectsTerminal(t *testing.T) {
 
 func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, _ := newLifecycleForTest(t, db)
 
 	cases := []struct {
@@ -429,7 +429,7 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 // anything up yet).
 func TestActionMap_ReshufflingToQueued_FiresRequeued(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, emitter := newLifecycleForTest(t, db)
 
 	ord := makeOrderAt(t, db, "actionmap-resh-to-queued", StatusReshuffling)
@@ -472,7 +472,7 @@ func TestActionMap_ReshufflingToQueued_FiresRequeued(t *testing.T) {
 
 func TestLifecycle_EmitCancelled_PreviousStatusPopulated(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, emitter := newLifecycleForTest(t, db)
 
 	for _, from := range []protocol.Status{StatusInTransit, StatusStaged, StatusDispatched} {
@@ -490,7 +490,7 @@ func TestLifecycle_EmitCancelled_PreviousStatusPopulated(t *testing.T) {
 
 func TestLifecycle_MarkFaulted_FromEveryLegalSource(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 
 	sources := []protocol.Status{StatusDispatched, StatusAcknowledged, StatusInTransit, StatusStaged}
 	for i, from := range sources {
@@ -518,7 +518,7 @@ func TestLifecycle_MarkFaulted_FromEveryLegalSource(t *testing.T) {
 
 func TestLifecycle_MarkFaultedRecovered_TransitionsToInTransit(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "fault-recover-1", StatusFaulted)
 
@@ -540,7 +540,7 @@ func TestLifecycle_MarkFaultedRecovered_TransitionsToInTransit(t *testing.T) {
 
 func TestLifecycle_Faulted_IllegalTransitions(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	lc, _ := newLifecycleForTest(t, db)
 
 	illegalTargets := []protocol.Status{StatusConfirmed, StatusPending, StatusSourcing, StatusQueued}

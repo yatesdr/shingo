@@ -37,7 +37,7 @@ import (
 // offered as parking and the typed refusal never appears.
 func TestMouthConsultation_AHeldLaneIsNotParking(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// One group, two lanes: the one being dug, and the only parking.

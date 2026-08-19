@@ -69,7 +69,7 @@ func depthlessLaneFixture(t *testing.T, db *store.DB, prefix string) (lane, shal
 // particular verdict: what was broken was that one sentence had two answers.
 func TestReachability_NullDepthSiblingReadTheSameBothWays(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, target, depthless, _ := depthlessLaneFixture(t, db, "ND")
 
 	accessible, err := db.IsSlotAccessible(target.ID)
@@ -100,7 +100,7 @@ func TestReachability_NullDepthSiblingReadTheSameBothWays(t *testing.T) {
 // blind to the ones that count.
 func TestReachability_RealBlockerStillFound(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, shallow, target, _, bp := depthlessLaneFixture(t, db, "NDB")
 	createTestBinAtNode(t, db, bp.Code, shallow.ID, "NDB-BIN-S1")
 

@@ -8,6 +8,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty proves
@@ -17,7 +18,7 @@ import (
 // don't interact. Complete stays true (single-shot).
 func TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	storageNode, lineNode, payload := setupTestData(t, db)
 
 	// Configure the payload with the seeded child-cart sequence.
@@ -88,9 +89,15 @@ func TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty(t *te
 // [JackLoad, JackUnload] order.
 func TestDispatchDirect_UnconfiguredPayload_SingleLoadBlock(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
-	storageNode, lineNode, payload := setupTestData(t, db)
-	_ = payload // left unconfigured (AdvancedLoadSequence empty)
+	db := testDBShared(t)
+	storageNode, lineNode, _ := setupTestData(t, db)
+
+	// Own payload, not PART-A: this file's other test configures PART-A's
+	// AdvancedLoadSequence and persists it, and both tests share this file's
+	// database. Asserting "unconfigured" on PART-A would test write-order,
+	// not the unconfigured path.
+	payload := &payloads.Payload{Code: "PART-PLAIN", Description: "unconfigured twin", UOPCapacity: 100}
+	testutil.MustNoErr(t, db.CreatePayload(payload), "create plain payload")
 
 	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)

@@ -158,7 +158,7 @@ func TestAcceptanceDig_TellsASlowClaimantFromAStoppedOne(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			db := testDB(t)
+			db := testDBShared(t)
 			d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 			lane, entry, _, claimant := claimedWallFixture(t, db, tc.tag)
@@ -199,7 +199,7 @@ func TestSummonOwnDigs_StoppedBlockerNamesTheOrderAndCallsAHuman(t *testing.T) {
 
 	t.Run("a moving claimant is ordinary congestion and stays quiet", func(t *testing.T) {
 		t.Parallel()
-		db := testDB(t)
+		db := testDBShared(t)
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 		lane, entry, _, claimant := claimedWallFixture(t, db, "SB-LIVE")
@@ -224,7 +224,7 @@ func TestSummonOwnDigs_StoppedBlockerNamesTheOrderAndCallsAHuman(t *testing.T) {
 
 	t.Run("an ended claimant is the sweep's job, not a person's", func(t *testing.T) {
 		t.Parallel()
-		db := testDB(t)
+		db := testDBShared(t)
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 		lane, entry, _, claimant := claimedWallFixture(t, db, "SB-TERM")
@@ -252,7 +252,7 @@ func TestSummonOwnDigs_StoppedBlockerNamesTheOrderAndCallsAHuman(t *testing.T) {
 
 	t.Run("a stopped claimant names the order and calls a human, once", func(t *testing.T) {
 		t.Parallel()
-		db := testDB(t)
+		db := testDBShared(t)
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 		lane, entry, wallBin, claimant := claimedWallFixture(t, db, "SB-STOP")

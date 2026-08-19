@@ -36,7 +36,7 @@ import (
 // fix an empty request.
 func TestChar_HandleComplexOrderRequest_EmptySteps_RejectsAtIntake(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -65,7 +65,7 @@ func TestChar_HandleComplexOrderRequest_EmptySteps_RejectsAtIntake(t *testing.T)
 // create a queued row that replays forever.
 func TestChar_HandleComplexOrderRequest_UnresolvableNode_RejectsAtIntake(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -100,7 +100,7 @@ func TestChar_HandleComplexOrderRequest_UnresolvableNode_RejectsAtIntake(t *test
 // the Edge was told yes.
 func TestComplexIntake_RefusesAPayloadCoreDoesNotHave(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, _ := setupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -133,7 +133,7 @@ func TestComplexIntake_RefusesAPayloadCoreDoesNotHave(t *testing.T) {
 // guard is defense-in-depth for any direct caller past the scanner's own gate.
 func TestChar_DispatchPreparedComplex_NonAcquiringStatus_NoOp(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -164,7 +164,7 @@ func TestChar_DispatchPreparedComplex_NonAcquiringStatus_NoOp(t *testing.T) {
 // an EmitOrderFailed, and the error is returned to the scanner verbatim.
 func TestChar_DispatchPreparedComplex_InvalidStoredSteps_Fails(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -213,7 +213,7 @@ func TestChar_DispatchPreparedComplex_InvalidStoredSteps_Fails(t *testing.T) {
 // on BOTH paths.
 func TestChar_FailOrderInternal_TransitionErrorFallback(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -246,7 +246,7 @@ func TestChar_FailOrderInternal_TransitionErrorFallback(t *testing.T) {
 // on BOTH paths.
 func TestChar_SkipOrderInternal_TransitionErrorFallback(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -275,7 +275,7 @@ func TestChar_SkipOrderInternal_TransitionErrorFallback(t *testing.T) {
 // terminal-fails rather than silently dropping.
 func TestChar_DispatchPreparedComplex_FleetCreateFailure_Fails(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	// Failing backend: everything before CreateOrder (reserve/confirm/claim) is
 	// DB-only and succeeds; the fleet CreateOrder call is the failure point.
@@ -324,7 +324,7 @@ func TestChar_DispatchPreparedComplex_FleetCreateFailure_Fails(t *testing.T) {
 // slot-vacancy tick.
 func TestChar_DispatchPreparedComplex_ContendedConcreteSlot_QueuesWaitingForSlot(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	srcNode, _, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 

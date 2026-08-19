@@ -83,7 +83,7 @@ func acquiringHardSlotClaims(db *store.DB) ([]int64, error) {
 // fence that catches any future path that hard-claims before dispatch.
 func TestRule1_NoHardClaimWhileSourcing_Sweep(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 
 	// A storage dropoff slot and a source bin.
@@ -152,7 +152,7 @@ func TestRule1_NoHardClaimWhileSourcing_Sweep(t *testing.T) {
 // dispatch.
 func TestRule1_CompoundChildRawClaimIsExempted(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	src := &nodes.Node{Name: "R1EXM-SRC", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(src), "create src")

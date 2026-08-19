@@ -108,7 +108,7 @@ func setupTwoLanesOneShuffle(t *testing.T, db *store.DB) (grp *nodes.Node, laneA
 // two blockers never share a slot, which is what this now pins.
 func TestFindShuffleSlots_TwoDigsMustNotShareASlot(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	grp, laneA, laneB, slotsA, slotsB, shuf, bp := setupTwoLanesOneShuffle(t, db)
 
 	// Both lanes buried: a blocker at the mouth, the target behind it.
@@ -222,7 +222,7 @@ func TestFindShuffleSlots_TwoDigsMustNotShareASlot(t *testing.T) {
 // test above describes.
 func TestFindShuffleSlots_TwoDigsDivertOntoDifferentSlots(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, laneA, laneB, slotsA, slotsB, shufs, bp := setupTwoLanesWithShuffles(t, db, "2SHUF", 2)
 

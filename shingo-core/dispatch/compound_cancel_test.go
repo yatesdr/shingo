@@ -35,7 +35,7 @@ import (
 // reports the parent failed.
 func TestAdvanceCompoundOrder_CancelledChildRequeuesParent(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
@@ -82,7 +82,7 @@ func TestAdvanceCompoundOrder_CancelledChildRequeuesParent(t *testing.T) {
 // over-firing on a clean compound.
 func TestAdvanceCompoundOrder_AllChildrenConfirmed_Completes(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
@@ -149,7 +149,7 @@ func TestAdvanceCompoundOrder_AllChildrenConfirmed_Completes(t *testing.T) {
 // old one. The cascade itself is engine-level and is not pinned here.
 func TestGate1_TheDemandSurvivesItsDigsFailure(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 

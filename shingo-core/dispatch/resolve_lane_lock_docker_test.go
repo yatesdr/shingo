@@ -33,7 +33,7 @@ import (
 // buildable again.
 func TestResolveLock_PlacementIntoALockedLaneIsRefused(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	_, laneID, slot := gatedLane(t, db, "RLOCK-CHURN", "")
@@ -83,7 +83,7 @@ func TestResolveLock_PlacementIntoALockedLaneIsRefused(t *testing.T) {
 // "still holds it" assertion fires.
 func TestResolveLock_ClearsOnThePickupAndNotBefore(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	_, laneID, slot := gatedLane(t, db, "RLOCK-PICKUP", "")
@@ -136,7 +136,7 @@ func TestResolveLock_ClearsOnThePickupAndNotBefore(t *testing.T) {
 // "must be refused" assertion fires.
 func TestResolveLock_ComplexTakesTheSourceLaneToo(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	_, laneID, slot := gatedLane(t, db, "RLOCK-CX", "") // unmarked: the plant's shape
@@ -191,7 +191,7 @@ func TestResolveLock_ComplexTakesTheSourceLaneToo(t *testing.T) {
 // one lane is the incoherent state admitMouth refuses outright.
 func TestResolveLock_OnePlanOneLaneOneHold(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	_, laneID, slot := gatedLane(t, db, "RLOCK-DEDUP", "")

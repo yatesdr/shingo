@@ -43,7 +43,7 @@ func TestRightOfWay_NamesTheKindOfHolderItWasRefusedBy(t *testing.T) {
 
 	t.Run("a source lock refuses the dig and is not called an excavation", func(t *testing.T) {
 		t.Parallel()
-		db := testDB(t)
+		db := testDBShared(t)
 		newTestDispatcher(t, db, testdb.NewSuccessBackend())
 		grp, dug, park, _, dugSlots, _, bp := setupDwellGroup(t, db, "ROWSRC", 4, false)
 		createTestBinAtNode(t, db, bp.Code, dugSlots[0].ID, "ROWSRC-BLK")
@@ -79,7 +79,7 @@ func TestRightOfWay_NamesTheKindOfHolderItWasRefusedBy(t *testing.T) {
 
 	t.Run("a real excavation still refuses the dig AND is still called one", func(t *testing.T) {
 		t.Parallel()
-		db := testDB(t)
+		db := testDBShared(t)
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 		grp, dug, park, _, dugSlots, _, bp := setupDwellGroup(t, db, "ROWDIG", 4, false)
 		createTestBinAtNode(t, db, bp.Code, dugSlots[0].ID, "ROWDIG-BLK")

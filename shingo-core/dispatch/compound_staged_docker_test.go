@@ -60,7 +60,7 @@ func failADigLeg(t *testing.T, db *store.DB, d *Dispatcher, parentID int64) {
 // test.
 func TestStagedParent_LosesADigLeg_ParksAtTheMark(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
@@ -136,7 +136,7 @@ func TestStagedParent_LosesADigLeg_ParksAtTheMark(t *testing.T) {
 // returns all zeroes and the "one waiting" assertion fires.
 func TestStagedParent_StaleChapter_WatchdogSeesIt(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	wall, dweller, _ := stageDwellerBehindAWall(t, db, d, "STG-WATCH")
@@ -184,7 +184,7 @@ func TestStagedParent_StaleChapter_WatchdogSeesIt(t *testing.T) {
 // marker, and the assertion fires.
 func TestStagedParent_DissolverNotRefused(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	wall, dweller, _ := stageDwellerBehindAWall(t, db, d, "STG-DISS")
@@ -231,7 +231,7 @@ func TestStagedParent_DissolverNotRefused(t *testing.T) {
 // pacing — two policies on one row.
 func TestStagedParent_OperatorStagedRow_StaysWithTheAbandonSweep(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// A staged row with NO lane wait — no steps_json, so not gate-staged — and a

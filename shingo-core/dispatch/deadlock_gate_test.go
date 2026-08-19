@@ -25,7 +25,7 @@ import (
 // no-wait coordinated line delivery is not gated.
 func TestDeadlockGate_CoordinatedToOccupiedLine_NotGated(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
@@ -74,7 +74,7 @@ func TestDeadlockGate_CoordinatedToOccupiedLine_NotGated(t *testing.T) {
 // blocked, never dispatches into the collision.
 func TestDeadlockGate_PlainRetrieveToOccupiedLine_Gated(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})

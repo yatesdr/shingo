@@ -20,7 +20,7 @@ import (
 
 func TestComplexDispatch_ApplyEndState(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 

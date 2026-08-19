@@ -36,7 +36,7 @@ func mkStoreOrder(t *testing.T, db *store.DB, uuid, payload, destName string) *o
 // the loser can secure it on a later attempt — it never terminal-failed.
 func TestStoreDestinationSlot_ExactlyOneWins(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 	storType, _ := db.GetNodeTypeByCode("STOR")
 
@@ -82,7 +82,7 @@ func TestStoreDestinationSlot_ExactlyOneWins(t *testing.T) {
 // exactly one must succeed.
 func TestStoreDestinationSlot_ConcurrentExactlyOneWins(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 	storType, _ := db.GetNodeTypeByCode("STOR")
 

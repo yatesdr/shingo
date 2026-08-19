@@ -264,7 +264,7 @@ func legsOf(t *testing.T, db *store.DB, parentID int64) []*orders.Order {
 // testing the lane gate instead of the rule.
 func TestCrossFlow_TwoDigsOneLane_ANeverStarts(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, laneA, laneB, park, slotsA, slotsB, bp := twoDigsOneGroup(t, db, "XF")
 

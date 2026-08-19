@@ -68,7 +68,7 @@ func (b *syncBuffer) Write(p []byte) (int, error) {
 // configuration rather than congestion.
 func TestSummonOwnDigs_GeometryFaultIsLoudAndNamesTheSlot(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	lane, slots, bp := orphanLane(t, db, "GEOM")

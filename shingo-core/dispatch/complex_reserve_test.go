@@ -72,7 +72,7 @@ type complexOrderStore interface {
 // reconcile reuses A and acquires only B.
 func TestReserveReconcileKeepsOwnHolds(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -135,7 +135,7 @@ func TestReserveReconcileKeepsOwnHolds(t *testing.T) {
 // dispatched); once B appears the next reserve completes and confirm claims both.
 func TestPartialHoldRetriesToComplete(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -195,7 +195,7 @@ func TestPartialHoldRetriesToComplete(t *testing.T) {
 // (idempotent), not re-claimed into a false failure.
 func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -255,7 +255,7 @@ func TestConfirmZeroRowsSurfacesClaimFailed(t *testing.T) {
 // owner-idempotent claim CAS + claim/confirm-in-one-tx + the honest claimed-by-us skip.
 func TestConfirmHealsClaimedButPendingBin(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -313,7 +313,7 @@ func TestConfirmHealsClaimedButPendingBin(t *testing.T) {
 // reservations, order.BinID + order_bins correct, nothing double-claimed.
 func TestConfirmPartialFailureConverges(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -409,7 +409,7 @@ func TestConfirmPartialFailureConverges(t *testing.T) {
 // changeover advances), not reserveHolding (which would hold forever).
 func TestReserveMootWhenAllSourcesEmpty(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -446,7 +446,7 @@ func TestReserveMootWhenAllSourcesEmpty(t *testing.T) {
 // press-index and paired-position swap uses — could never wait for material.
 func TestReserveFillerLegWithEmptySourceHoldsNotMoot(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -487,7 +487,7 @@ func TestReserveFillerLegWithEmptySourceHoldsNotMoot(t *testing.T) {
 // moot boundary; (b) is pinned upstream by the NGRP re-resolve path.
 func TestReservePresentButTakenHoldsNotMoot(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -528,7 +528,7 @@ func TestReservePresentButTakenHoldsNotMoot(t *testing.T) {
 // a re-grab, not a missing need, so the order completes with just its real bin.
 func TestStagingRegrabsNotTreatedAsMissing(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -562,7 +562,7 @@ func TestStagingRegrabsNotTreatedAsMissing(t *testing.T) {
 // illegal transition is still rejected.
 func TestMoveToSourcingIdempotent(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -598,7 +598,7 @@ func TestMoveToSourcingIdempotent(t *testing.T) {
 // confirms together.
 func TestComplexHoldingSlotsAsReservationsAcrossTicks(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -687,7 +687,7 @@ func TestDeclaredStagingDropoffIsReserved(t *testing.T) {
 	// reserved. `declared` is the ONLY thing that differs between the two arms.
 	run := func(t *testing.T, tag string, declared bool) bool {
 		t.Helper()
-		db := testDB(t)
+		db := testDBShared(t)
 		_, _, bp := setupTestData(t, db)
 		d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -755,7 +755,7 @@ func TestDeclaredStagingDropoffIsReserved(t *testing.T) {
 // robot waiting in an aisle.
 func TestDeclaredStagingSlotConflictHolds(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -823,7 +823,7 @@ func TestDeclaredStagingSlotConflictHolds(t *testing.T) {
 // occupied staging node.
 func TestDeclaredStagingOccupiedByABinQueues(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -898,7 +898,7 @@ func TestDeclaredStagingOccupiedByABinQueues(t *testing.T) {
 // dropoff-occupied and never dispatches.
 func TestChoreographyRefillsANodeItEmptiesItself(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -954,7 +954,7 @@ func TestChoreographyRefillsANodeItEmptiesItself(t *testing.T) {
 // port above.
 func TestSlotConflictRevertsToNGRP(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -1020,7 +1020,7 @@ func TestSlotConflictRevertsToNGRP(t *testing.T) {
 // carrier), and the mismatch is surfaced.
 func TestEvacMismatchedPressBin_DispatchesCompleteAndSurfaces(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
