@@ -24,6 +24,8 @@ belongs in the commit message or in `docs/` — this file is the index.
 - `ReserveStorageDropoff` returns the destination it settled on. It already rewrote `delivery_node` (group resolve, dug-lane re-aim) and told no one, so both scanner arms declared the old lane, confirmed the slot whose reservation the re-aim had just released, and planned the robot into the lane the re-aim exists to avoid — with the record showing the new destination throughout.
 - An unresolved group parks under `ngrp-resolve`, not `fleet_unavailable`: the refusal happens before any create, so the fleet was never asked and the old cause pointed at a robot system that was not down.
 - The localization board's window is an explicit from→to day picker and its comparison is day against day. It asked the window as 7d/30d presets and the comparison as two arbitrary ranges, and nothing in the verdict arithmetic survives unequal windows intact.
+- The schema-convergence test proved its dump ran by the exec's exit code, which testcontainers reports as 0 for an exec the daemon has not scheduled yet — so on a loaded runner it copied a file `pg_dump` had not written, and failed naming the missing file rather than the cause. The dump now prints its own sentinel and the drain that reads it is the synchronisation.
+- A best-effort container reap could panic out of a path documented never to fail the run, and inside a `sync.Once`, so one unresolvable docker socket failed every test in the binary.
 - Migration heads: Core v94, Edge v35.
 
 ## 2026-08-18 — Maintained node groups
