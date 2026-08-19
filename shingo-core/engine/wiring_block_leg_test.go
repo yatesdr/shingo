@@ -40,7 +40,7 @@ func TestRecordBlockLeg_WritesTimingToMissionEvents(t *testing.T) {
 
 	db := testDB(t)
 	testdb.SetupStandardData(t, db)
-	eng := newTestEngine(t, db, simulator.New())
+	eng := newUnstartedEngine(t, db, simulator.New())
 
 	orderID := seedLegOrder(t, db, "leg-1")
 	testutil.MustNoErr(t, db.UpdateOrderRobotID(orderID, "AMR-03"), "set robot")
@@ -115,7 +115,7 @@ func TestRecordBlockLeg_MissingTimesLeaveDurationZero(t *testing.T) {
 
 	db := testDB(t)
 	testdb.SetupStandardData(t, db)
-	eng := newTestEngine(t, db, simulator.New())
+	eng := newUnstartedEngine(t, db, simulator.New())
 
 	orderID := seedLegOrder(t, db, "leg-2")
 	eng.recordBlockLeg(BlockCompletedEvent{
@@ -150,7 +150,7 @@ func TestRecordBlockLeg_InvertedTimesDoNotProduceNegativeDuration(t *testing.T) 
 
 	db := testDB(t)
 	testdb.SetupStandardData(t, db)
-	eng := newTestEngine(t, db, simulator.New())
+	eng := newUnstartedEngine(t, db, simulator.New())
 
 	orderID := seedLegOrder(t, db, "leg-3")
 	eng.recordBlockLeg(BlockCompletedEvent{

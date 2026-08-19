@@ -53,18 +53,28 @@ func testEnvelope() *protocol.Envelope {
 // goroutine that reads e.fleet.
 func newTestEngine(t *testing.T, db *store.DB, flt fleet.Backend) *Engine {
 	t.Helper()
+	eng := newUnstartedEngine(t, db, flt)
+	eng.Start()
+	t.Cleanup(func() { eng.Stop() })
+	return eng
+}
+
+// newUnstartedEngine is newTestEngine WITHOUT Start() — no boot census, no
+// recomputeAll, no goroutines. For tests that only touch the engine's fields
+// and methods directly (e.g. eng.db, eng.recordBlockLeg) rather than any
+// started-engine behavior; Start() costs ~100-700ms of blocking boot work per
+// call that such tests never observe.
+func newUnstartedEngine(t *testing.T, db *store.DB, flt fleet.Backend) *Engine {
+	t.Helper()
 	cfg := config.Defaults()
 	cfg.Messaging.StationID = "test-core"
 	cfg.Messaging.DispatchTopic = "shingo.dispatch"
 
-	eng := New(Config{
+	return New(Config{
 		AppConfig: cfg,
 		DB:        db,
 		Fleet:     flt,
 		MsgClient: nil, // safe: checkConnectionStatus nil-guards msgClient
 		LogFunc:   t.Logf,
 	})
-	eng.Start()
-	t.Cleanup(func() { eng.Stop() })
-	return eng
 }

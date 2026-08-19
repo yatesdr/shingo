@@ -35,7 +35,7 @@ func TestThresholdEpisode_OneEpisodeAcrossManyEvaluations(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
-	eng := newTestEngine(t, db, simulator.New())
+	eng := newUnstartedEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
 	b := episodeBinding(t, eng, "PANEL-EP1", 18)
 
@@ -86,7 +86,7 @@ func TestThresholdEpisode_RisingEdgeCloses(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
-	eng := newTestEngine(t, db, simulator.New())
+	eng := newUnstartedEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
 	b := episodeBinding(t, eng, "PANEL-EP2", 18)
 
@@ -130,7 +130,7 @@ func TestThresholdEpisode_SurvivesRestart(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
-	eng := newTestEngine(t, db, simulator.New())
+	eng := newUnstartedEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
 	b := episodeBinding(t, eng, "PANEL-EP3", 18)
 
@@ -180,7 +180,7 @@ func TestThresholdEpisode_UnknowableDenominatorIsNull(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
-	eng := newTestEngine(t, db, simulator.New())
+	eng := newUnstartedEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
 	// No catalog payload at all — the capacity is unknowable.
 	b := episodeBinding(t, eng, "PANEL-EP4-ABSENT", 0)
@@ -217,7 +217,7 @@ func TestThresholdEpisode_ThresholdChangeClosesAndReopens(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
-	eng := newTestEngine(t, db, simulator.New())
+	eng := newUnstartedEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
 	b := episodeBinding(t, eng, "PANEL-EP6", 18)
 
@@ -260,7 +260,7 @@ func TestThresholdEpisode_RemovedBindingClosesEvenWhenPayloadSurvives(t *testing
 	t.Parallel()
 
 	db := testDB(t)
-	eng := newTestEngine(t, db, simulator.New())
+	eng := newUnstartedEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
 
 	gone := episodeBinding(t, eng, "PANEL-EP7", 18)
@@ -309,7 +309,7 @@ func TestThresholdEpisode_NegativeTotalClampsTheDenominator(t *testing.T) {
 	t.Parallel()
 
 	db := testDB(t)
-	eng := newTestEngine(t, db, simulator.New())
+	eng := newUnstartedEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
 	b := episodeBinding(t, eng, "PANEL-EP5", 18)
 
