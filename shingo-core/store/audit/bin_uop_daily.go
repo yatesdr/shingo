@@ -26,6 +26,13 @@ import (
 // window are NOT re-derivable — call it for days still inside the window.
 //
 // day is the UTC calendar day; the caller (the daily ticker) passes yesterday.
+//
+// THE WINDOW IS WHOLE-STREAM, NOT DAY-SCOPED. epoch_seq counts bump ops from
+// the beginning of the bin's audit history, same as the v94 backfill and
+// NextBinUOPEpochSeq — a bin whose boundary happened last week carries that
+// epoch into today's roll-up. Scoping the window to the day would reset every
+// multi-day epoch to 0, disagreeing with both the backfill and the exceptions
+// ledger; only the OUTER predicate restricts to the day being rolled up.
 func RollupBinUOPDeltaDay(db *sql.DB, day time.Time) (int64, error) {
 	bumps := pgBumpOpsArraySQL()
 	res, err := db.Exec(`INSERT INTO bin_uop_delta_daily
@@ -47,9 +54,9 @@ func RollupBinUOPDeltaDay(db *sql.DB, day time.Time) (int64, error) {
 	           count(*) FILTER (WHERE a.op = ANY(`+bumps+`)) OVER (
 		       PARTITION BY a.bin_id ORDER BY a.id ROWS UNBOUNDED PRECEDING) AS epoch_seq
 	    FROM bin_uop_audit a
-	    WHERE a.applied_at >= $1 AND a.applied_at < $1 + interval '1 day'
 	) w
 	WHERE w.op = 'bin_uop_delta'
+	  AND w.applied_at >= $1 AND w.applied_at < $1 + interval '1 day'
 	GROUP BY 1, 2, 3, 4, 5, 6
 	ON CONFLICT (day, bin_id, epoch_seq, payload_code, reason, actor) DO UPDATE SET
 		ticks     = EXCLUDED.ticks,
@@ -71,8 +78,9 @@ func RollupBinUOPDeltaDay(db *sql.DB, day time.Time) (int64, error) {
 // the same 8-line spelling store/migrations.go carries for its v93/v94
 // backfills (audit cannot import store; store imports audit). The job's
 // statement is the migration's v94 backfill verbatim apart from the day filter
-// and the ON CONFLICT arm, and the lockstep is pinned by the docker test that
-// runs both against the same seeded stream and requires equal rows.
+// (outside the window) and the ON CONFLICT arm, and the lockstep is pinned by
+// the docker test that runs both against the same seeded stream and requires
+// equal rows.
 func pgBumpOpsArraySQL() string {
 	parts := make([]string, len(EpochBumpOps))
 	for i, op := range EpochBumpOps {

@@ -180,6 +180,19 @@ func TestV94_RollupJobMatchesBackfill(t *testing.T) {
 	if n2 != 1 {
 		t.Fatalf("day-2 rollup wrote %d rows, want 1", n2)
 	}
+	// The cross-day epoch pin: day 2's only delta follows the day-1 bump, so
+	// it must land in epoch 1. A day-scoped window would number it 0 —
+	// disagreeing with the backfill and with NextBinUOPEpochSeq — and this
+	// is the assertion that fails the day the window loses the whole-stream
+	// scope.
+	var day2Epoch int64
+	if err := db.QueryRow(`SELECT epoch_seq FROM bin_uop_delta_daily
+		WHERE bin_id=$1 AND day=$2::date`, bin1, day.AddDate(0, 0, 1).Format("2006-01-02")).Scan(&day2Epoch); err != nil {
+		t.Fatalf("read day-2 epoch: %v", err)
+	}
+	if day2Epoch != 1 {
+		t.Fatalf("day-2 delta landed in epoch %d, want 1 (the day-1 bump must carry across days)", day2Epoch)
+	}
 
 	var ticks, cons, first, last, min, cross int
 	if err := db.QueryRow(`SELECT ticks, consumed, first_uop, last_uop, min_uop, crossings
