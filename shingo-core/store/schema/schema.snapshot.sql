@@ -158,6 +158,22 @@ CREATE SEQUENCE public.bin_uop_audit_id_seq
 
 ALTER SEQUENCE public.bin_uop_audit_id_seq OWNED BY public.bin_uop_audit.id;
 
+CREATE TABLE public.bin_uop_delta_daily (
+    day date NOT NULL,
+    bin_id bigint NOT NULL,
+    epoch_seq bigint NOT NULL,
+    payload_code text DEFAULT ''::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    actor text DEFAULT ''::text NOT NULL,
+    ticks integer NOT NULL,
+    consumed integer NOT NULL,
+    added integer NOT NULL,
+    first_uop integer,
+    last_uop integer,
+    min_uop integer,
+    crossings integer DEFAULT 0 NOT NULL
+);
+
 CREATE TABLE public.bin_uop_exception (
     id bigint NOT NULL,
     kind text NOT NULL,
@@ -1391,6 +1407,9 @@ ALTER TABLE ONLY public.bin_types
 
 ALTER TABLE ONLY public.bin_uop_audit
     ADD CONSTRAINT bin_uop_audit_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.bin_uop_delta_daily
+    ADD CONSTRAINT bin_uop_delta_daily_pkey PRIMARY KEY (day, bin_id, epoch_seq, payload_code, reason, actor);
 
 ALTER TABLE ONLY public.bin_uop_exception
     ADD CONSTRAINT bin_uop_exception_pkey PRIMARY KEY (id);

@@ -152,6 +152,18 @@ func (s *CoreDataService) StartHeartbeatProjection() {
 			} else if purged > 0 {
 				log.Printf("core_handler: purged %d expired production.tick dedup row(s)", purged)
 			}
+			// The bin_uop_delta_daily roll-up (v94) rides the same daily
+			// ticker as the purges — it must run while the raw delta rows
+			// are still inside the 90-day window, and the one-day-ago day
+			// boundary is the natural cadence: yesterday is complete, still
+			// raw-resident, and re-derivable if this attempt fails (the
+			// upsert is idempotent per day).
+			if rolled, err := s.db.RollupBinUOPDeltaDay(now.AddDate(0, 0, -1)); err != nil {
+				log.Printf("core_handler: rollup bin_uop_delta_daily: %v", err)
+			} else if rolled > 0 {
+				log.Printf("core_handler: rolled up %d bin_uop_delta_daily row(s) for %s",
+					rolled, now.AddDate(0, 0, -1).UTC().Format("2006-01-02"))
+			}
 		}
 	}()
 }

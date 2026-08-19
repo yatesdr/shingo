@@ -75,6 +75,14 @@ import (
 // dropping the table destroys the backfill, so .previous against a purged
 // database cannot get this data back. That is the D2 trade, accepted.
 //
+// v94 CREATES bin_uop_delta_daily, the permanent daily roll-up of the raw
+// delta stream (owner decision D3: roll-up growth accepted, ~10 rows/day).
+// Same family and same rollback doctrine as v93: inert to a pre-v94 binary,
+// and the backfill — the daily part-flow history — is the thing that must
+// not be lost. Together v93+v94 are the durable half of the D6 retention
+// trade: after they exist, deleting raw deltas at 90 days (P4) destroys
+// nothing the owner named durable.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -86,8 +94,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 93 {
-		t.Errorf("head migration = %d, want 93", got)
+	if got := store.LatestMigrationVersion(); got != 94 {
+		t.Errorf("head migration = %d, want 94", got)
 	}
 }
 

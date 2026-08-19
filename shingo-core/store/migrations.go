@@ -4047,6 +4047,18 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.TableExists(q, "bin_uop_exception")
 			}},
+
+		// v94 installs bin_uop_delta_daily — the permanent daily roll-up of the
+		// raw delta stream (P3, owner decision D3: roll-up growth accepted).
+		// ~10 rows/day at current volume. The raw rows it summarizes are the
+		// ones P4's 90-day retention deletes; the roll-up is the "how parts
+		// moved" answer that outlives them. Backfilled in the same migration
+		// from every raw delta row still present. See v94BinUOPDeltaDaily.
+		{94, "bin_uop_delta_daily — permanent daily roll-up of the raw delta stream",
+			v94BinUOPDeltaDaily,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "bin_uop_delta_daily")
+			}},
 	}
 }
 
@@ -4895,6 +4907,108 @@ func v83LaneRobotConfidenceDaily(tx *sql.Tx) error {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v83 lane_robot_confidence_daily: %w", err)
 		}
+	}
+	return nil
+}
+
+// v94BinUOPDeltaDaily creates the permanent daily roll-up of the raw delta
+// stream and backfills it from every bin_uop_audit delta row still present.
+//
+// THE GRAIN: (day, bin_id, epoch_seq, payload_code, reason, actor) — one row
+// per binding per day per counter cause. reason stays IN the key because
+// capture_reduction and consume_tick are different physical events (a pull
+// vs a decrement), not two spellings of one; actor (not station) because
+// station is empty on all delta rows while actor carries the Edge station.
+// min_uop and crossings make a negative day visible in the aggregate without
+// re-reading the raw rows.
+//
+// NO RETENTION ON THIS TABLE, EVER. Owner decision D3 accepted the growth:
+// ~10 rows/day at current volume. This table IS the "how parts moved" answer
+// once P4 (D6) starts deleting the raw delta rows at 90 days — bounding it
+// would remove the only permanent record of daily part flow.
+//
+// epoch_seq is derived, not stored on the raw rows: the same bump-count
+// window the v93 backfill uses (count(*) FILTER (WHERE op = ANY(bumps))
+// OVER (PARTITION BY bin_id ORDER BY id)), verified against 8,202
+// independently-recorded epoch values — a single constant offset per bin,
+// no gaps. Deltas before a bin's first bump op land in epoch_seq 0, which
+// is correct: they predate any binding and their roll-up must not be folded
+// into epoch 1.
+//
+// THE BACKFILL rolls up every raw delta row still present at migration
+// time. Rows older than P4's 90-day window that have already been deleted
+// (there are none yet — P4 lands after this, in this same wave) would be
+// gone; the deployment order guarantees the backfill runs against the
+// complete raw history exactly once. Re-derivable by design: the roll-up
+// is a pure aggregate of the raw stream, so a TRUNCATE + re-run against
+// the still-present raw rows reproduces it (and the daily job, below, is
+// idempotent per day via ON CONFLICT DO UPDATE).
+//
+// ROLLBACK: same doctrine as v93 — a pre-v94 binary never reads or writes
+// the table; it sits inert. Dropping it destroys the backfill.
+func v94BinUOPDeltaDaily(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS bin_uop_delta_daily (
+			day          DATE   NOT NULL,
+			bin_id       BIGINT NOT NULL,
+			epoch_seq    BIGINT NOT NULL,
+			payload_code TEXT   NOT NULL DEFAULT '',
+			reason       TEXT   NOT NULL DEFAULT '',
+			actor        TEXT   NOT NULL DEFAULT '',
+			ticks        INTEGER NOT NULL,
+			consumed     INTEGER NOT NULL,
+			added        INTEGER NOT NULL,
+			first_uop    INTEGER,
+			last_uop     INTEGER,
+			min_uop      INTEGER,
+			crossings    INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (day, bin_id, epoch_seq, payload_code, reason, actor)
+		)`,
+		// The daily job's write path: it re-aggregates a whole day and upserts,
+		// so the PK alone serves it. A plant-local-day scan ("show me the flow
+		// for July") is served by the PK's leading day column.
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v94 bin_uop_delta_daily: %w", err)
+		}
+	}
+	// Idempotent under the self-heal re-run, same doctrine as v93: the
+	// backfill is a pure aggregate, so wipe-and-rederive beats duplicates.
+	if _, err := tx.Exec(`TRUNCATE bin_uop_delta_daily`); err != nil {
+		return fmt.Errorf("v94 bin_uop_delta_daily truncate: %w", err)
+	}
+	bumps := pgTextArraySQL(bumpOpsForBackfill)
+	// The inner window computes epoch_seq over the WHOLE audit stream — the
+	// op filter must sit OUTSIDE the window or the count is wrong (same trap
+	// v93's backfill documents). delta and reason live in metadata jsonb, not
+	// columns — the applier has always written them there
+	// (uop/applier.go:458). first/last_uop need order, not min/max:
+	// array_agg ordered by id, first and last element — Postgres has no
+	// first()/last() aggregates.
+	if _, err := tx.Exec(`INSERT INTO bin_uop_delta_daily
+		(day, bin_id, epoch_seq, payload_code, reason, actor,
+		 ticks, consumed, added, first_uop, last_uop, min_uop, crossings)
+	SELECT (w.applied_at AT TIME ZONE 'UTC')::date, w.bin_id, w.epoch_seq,
+	       w.payload_code,
+	       COALESCE(w.metadata->>'reason', ''), w.actor,
+	       count(*)::int,
+	       COALESCE(sum(-(w.metadata->>'delta')::int) FILTER (WHERE (w.metadata->>'delta')::int < 0), 0)::int,
+	       COALESCE(sum((w.metadata->>'delta')::int)  FILTER (WHERE (w.metadata->>'delta')::int > 0), 0)::int,
+	       (array_agg(w.before_uop ORDER BY w.id))[1],
+	       (array_agg(w.after_uop ORDER BY w.id))[array_upper(array_agg(w.after_uop ORDER BY w.id), 1)],
+	       min(w.after_uop),
+	       count(*) FILTER (WHERE w.before_uop >= 0 AND w.after_uop < 0)::int
+	FROM (
+	    SELECT a.id, a.op, a.bin_id, a.applied_at, a.before_uop, a.after_uop,
+	           a.payload_code, a.actor, a.metadata,
+	           count(*) FILTER (WHERE a.op = ANY(` + bumps + `)) OVER (
+		       PARTITION BY a.bin_id ORDER BY a.id ROWS UNBOUNDED PRECEDING) AS epoch_seq
+	    FROM bin_uop_audit a
+	) w
+	WHERE w.op = 'bin_uop_delta'
+	GROUP BY 1, 2, 3, 4, 5, 6`); err != nil {
+		return fmt.Errorf("v94 backfill: %w", err)
 	}
 	return nil
 }
