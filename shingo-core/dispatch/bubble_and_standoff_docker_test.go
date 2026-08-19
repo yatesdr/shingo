@@ -145,8 +145,10 @@ func TestFindShuffleSlots_WillNotSealAnEmptySlotSomebodyIsDrivingTo(t *testing.T
 // MUTATION (verified): drop the `case !asked:` arm from proposeLaneClearDig and
 // the delta reads 0 — the gate goes back to being silently off.
 func TestServiceDig_UngatedProposalIsCounted(t *testing.T) {
-	t.Parallel()
-
+	// Deliberately NOT t.Parallel: UngatedDigTally is package-level, and any
+	// concurrently running dig proposal increments it between this test's
+	// ResetUngatedDigTally and its assert. Same class as the engine's
+	// arrival-refusal/drift tallies.
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, first, second, _, firstSlots, secondSlots, bp := setupDwellGroup(t, db, "UNGATED", 2, true)

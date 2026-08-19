@@ -734,16 +734,16 @@ func TestDwell_FullGroupIsNotBlamedOnADig(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	_, dug, sib, _, dugSlots, sibSlots, bp := setupDwellGroup(t, db, "DWFULL", 2, false)
+	_, dug, sib, _, dugSlots, sibSlots, bp := setupDwellGroup(t, db, "DWBLME", 2, false)
 
-	createTestBinAtNode(t, db, bp.Code, dugSlots[0].ID, "DWFULL-BLK")
-	createTestBinAtNode(t, db, bp.Code, dugSlots[1].ID, "DWFULL-TGT")
+	createTestBinAtNode(t, db, bp.Code, dugSlots[0].ID, "DWBLME-BLK")
+	createTestBinAtNode(t, db, bp.Code, dugSlots[1].ID, "DWBLME-TGT")
 
 	demand := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID = "dwfull"
+		o.EdgeUUID = "dwblme"
 		o.OrderType = OrderTypeRetrieve
 		o.PayloadCode = bp.Code
-		o.DeliveryNode = lineNode(t, db, "DWFULL-LINE").Name
+		o.DeliveryNode = lineNode(t, db, "DWBLME-LINE").Name
 		o.Status = protocol.StatusPending
 	})
 	// THE DIG PLANS FIRST, against a group that had room — which is the only way
@@ -756,10 +756,10 @@ func TestDwell_FullGroupIsNotBlamedOnADig(t *testing.T) {
 	// from under a dig that had already planned — and the cause has to say which of
 	// the two facts is the reason.
 	for i, s := range sibSlots {
-		createTestBinAtNode(t, db, bp.Code, s.ID, fmt.Sprintf("DWFULL-SIB%d", i))
+		createTestBinAtNode(t, db, bp.Code, s.ID, fmt.Sprintf("DWBLME-SIB%d", i))
 	}
 
-	foreign := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "dwfull-foreign" })
+	foreign := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "dwblme-foreign" })
 	if !d.laneLock.TryLock(sib.ID, foreign.ID) {
 		t.Fatal("the foreign dig could not take the sibling lane")
 	}
