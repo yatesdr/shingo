@@ -92,8 +92,9 @@ type DemandOrigin struct {
 
 	// ExpectedOrders is NULLABLE BY DESIGN, and the nil is load-bearing.
 	//
-	// The threshold formula divides by the catalog's UOPCapacity and fireThresholdL1
-	// explicitly guards capacity <= 0, so an unknowable denominator genuinely
+	// The threshold formula divides by the catalog's UOPCapacity and the
+	// sizing entry point (dispatch.BinsToReachThreshold) explicitly refuses
+	// capacity <= 0, so an unknowable denominator genuinely
 	// happens. NOT 0 and NOT 1 — both are lies that render as a real ratio, and
 	// a demand whose denominator is unknowable is a DIFFERENT STATE from one
 	// whose denominator is 1. The pointer is what carries that difference as far

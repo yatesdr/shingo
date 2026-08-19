@@ -81,6 +81,64 @@ export function serverLaneKey(from, to) {
     return from < to ? from + '-' + to : to + '-' + from;
 }
 
+// ── Window control seeds and guards ─────────────────────────────────────────
+//
+// Pure date math, at module scope so the node harness can pin it: these are
+// the values that would be WRONG SILENTLY — an off-by-one that includes a
+// day the roll-up has not closed yet, or a span cap that stopped mirroring
+// the server's.
+
+function iso(d) { return d.toISOString().slice(0, 10); }
+
+// seedMainRange is the board's opening range: the last seven COMPLETE days,
+// ending yesterday. The roll-up writes a day's rows the night after, so a
+// range ending today silently overstates itself by one empty day.
+export function seedMainRange(today) {
+    const to = new Date(today); to.setUTCDate(to.getUTCDate() - 1);
+    const from = new Date(to); from.setUTCDate(from.getUTCDate() - 6);
+    return { from: iso(from), to: iso(to) };
+}
+
+// seedCompareDays is what compare mode opens with: B yesterday, A seven days
+// before it — the same weekday, the day-grain version of the old "equal
+// stretch immediately before it" seed.
+export function seedCompareDays(today) {
+    const b = new Date(today); b.setUTCDate(b.getUTCDate() - 1);
+    const a = new Date(b); a.setUTCDate(a.getUTCDate() - 7);
+    return { a: iso(a), b: iso(b) };
+}
+
+// RANGE_MAX_DAYS mirrors boardMaxSpanDays (handlers_robots.go). The endpoint
+// 400s past it; the picker refuses before the fetch. Both want changing
+// together.
+export const RANGE_MAX_DAYS = 366;
+
+// rangeProblem is the picker's client-side mirror of the endpoint's guards:
+// null means the range is askable. ISO dates compare lexicographically.
+// to == today is allowed, mirroring the handler: a legitimate inclusive end
+// with no rolled-up rows yet, which the window note reports via data_days.
+// Only a STRICTLY future date is refused.
+export function rangeProblem(from, to, today) {
+    if (!from || !to) return 'pick both dates';
+    if (from > to) return 'the end is before the start';
+    if (to > today) return 'the end date is in the future';
+    const days = (Date.parse(to) - Date.parse(from)) / 86400000 + 1;
+    if (days > RANGE_MAX_DAYS) {
+        return days + ' days is past the ' + RANGE_MAX_DAYS + '-day limit';
+    }
+    return null;
+}
+
+// jsonOK surfaces the server's own 400 text instead of letting the error
+// body parse as an empty-looking board. rangeProblem keeps the picker off
+// the guards; this covers everything else (a hand-edited URL, a 500).
+function jsonOK(r) {
+    return r.json().then(function (d) {
+        if (!r.ok) throw new Error(d && d.error ? d.error : 'HTTP ' + r.status);
+        return d;
+    });
+}
+
 // ── The compare verdict ─────────────────────────────────────────────────────
 //
 // Compare mode answers the engineer's actual question — "I changed things
@@ -212,11 +270,10 @@ export function createBoard(root, opts) {
     const o = opts || {};
     const state = {
         edges: [], board: null,
-        window: '7d',
-        compare: false,      // compare mode: two explicit date ranges, verdict colours
-        boardA: null,        // the "before" board in compare mode
-        fromB: '', toB: '',  // compare range B (later); ISO dates or ''
-        fromA: '', toA: '',  // compare range A (earlier)
+        from: '', to: '',    // the main view's explicit day range; ISO dates
+        compare: false,      // compare mode: one day against one day
+        boardA: null,        // the "before" (day A) board in compare mode
+        dayA: '', dayB: '',  // compare days A (earlier) and B (later); ISO dates
         showChanges: true, showReflectors: true,
         selected: null,      // lane key: area + lane, as serverLaneKey builds it
         focusDiff: null,     // diff id — dims lanes that edit did not touch
@@ -233,13 +290,15 @@ export function createBoard(root, opts) {
 
     root.innerHTML =
         '<div class="lb-controls">' +
-        '  <div class="lb-seg" id="lb-window"></div>' +
+        '  <label class="lb-dt" id="lb-range-wrap">' +
+        '    <input type="date" id="lb-from" title="First complete day">' +
+        '    <span aria-hidden="true">→</span>' +
+        '    <input type="date" id="lb-to" title="Last complete day">' +
+        '  </label>' +
         '  <label class="lb-toggle"><input type="checkbox" id="lb-compare"> Compare</label>' +
         '  <span id="lb-cmp" class="lb-cmp" hidden>' +
-        '    <label class="lb-dt">A <input type="date" id="lb-from-a"></label>' +
-        '    <label class="lb-dt">→ <input type="date" id="lb-to-a"></label>' +
-        '    <label class="lb-dt">B <input type="date" id="lb-from-b"></label>' +
-        '    <label class="lb-dt">→ <input type="date" id="lb-to-b"></label>' +
+        '    <label class="lb-dt">A <input type="date" id="lb-day-a" title="The earlier day"></label>' +
+        '    <label class="lb-dt">vs B <input type="date" id="lb-day-b" title="The later day"></label>' +
         '  </span>' +
         '  <label class="lb-toggle lb-robot-pick"><select id="lb-robot">' +
         '    <option value="">Fleet</option>' +
@@ -267,85 +326,91 @@ export function createBoard(root, opts) {
     const railBody = root.querySelector('#lb-rail-body');
     const note = root.querySelector('#lb-note');
 
-    // ── window selector ──────────────────────────────────────────────────
-    // Only windows the record can answer. Before the daily histograms landed,
-    // 30d could not be served at all against fourteen days of raw — a control
-    // whose label promises more than the data holds is the failure this whole
-    // design removes. 24h is absent for a different reason: the roll-up only
-    // closes complete days, so a one-day window ending now asks for a day
-    // that never exists yet, and short spans are asked for with explicit
-    // dates (compare mode or the API's from/to).
-    const winWrap = root.querySelector('#lb-window');
-    ['7d', '30d'].forEach(function (w) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.textContent = w;
-        b.dataset.win = w;
-        b.className = w === state.window ? 'on' : '';
-        b.addEventListener('click', function () {
-            if (state.window === w) return;
-            state.window = w;
-            winWrap.querySelectorAll('button').forEach(function (x) {
-                x.className = x.dataset.win === w ? 'on' : '';
-            });
-            load();
-        });
-        winWrap.appendChild(b);
+    // ── the range picker ─────────────────────────────────────────────────
+    //
+    // An explicit from→to REPLACED the 7d/30d presets. A preset is a trailing
+    // label, not a question: "30d" cannot ask about the week before the map
+    // edit, and its only virtue — being one click — is what the two date
+    // fields lose nothing of, since they open on the last seven complete
+    // days. The roll-up closes complete days, so the picker's ends are DAYS
+    // and both open on yesterday as the last closed one; a "today" end is a
+    // day that has no rows yet and reads as a plant-wide dropout.
+    const fromIn = root.querySelector('#lb-from');
+    const toIn = root.querySelector('#lb-to');
+    {
+        const seed = seedMainRange(new Date());
+        state.from = seed.from; state.to = seed.to;
+        fromIn.value = seed.from; toIn.value = seed.to;
+    }
+
+    function loadMainIfAskable() {
+        const problem = rangeProblem(state.from, state.to, iso(new Date()));
+        note.textContent = problem || '';
+        if (!problem) load();
+    }
+    fromIn.addEventListener('change', function () {
+        state.from = fromIn.value; loadMainIfAskable();
+    });
+    toIn.addEventListener('change', function () {
+        state.to = toIn.value; loadMainIfAskable();
     });
 
     // ── compare mode ─────────────────────────────────────────────────────
     //
-    // Two explicit date ranges, A (earlier) against B (later), and the map
-    // recolours by VERDICT rather than by band. Entering compare mode seeds
-    // B with the current window's own days and A with the equal-length window
-    // immediately before it — the natural first question is "did the recent
-    // window differ from the one before it", and the engineer edits from
-    // there. The ranges ride the SAME board endpoint via its from/to params;
-    // no second server surface exists to drift out of sync with the
-    // annotation's guards.
+    // ONE DAY AGAINST ONE DAY, A (earlier) vs B (later), and the map
+    // recolours by VERDICT rather than by band. The old mode let two
+    // arbitrary RANGES fight — a 3-day A against a 12-day B is not a
+    // comparison, and nothing about the verdict arithmetic survives unequal
+    // windows intact. A day is the smallest window the roll-up can answer
+    // honestly (both sides close, no mixing of geometry versions inside a
+    // side), which makes the two sides cleanly comparable populations. It
+    // opens with B yesterday, A seven days before it — the same weekday, the
+    // day-grain version of the old equal-stretch seed.
+    //
+    // Both days ride the SAME board endpoint via its from/to params (from =
+    // to = the day); no second server surface exists to drift out of sync
+    // with the annotation's guards.
     const cmpWrap = root.querySelector('#lb-cmp');
     const cmpToggle = root.querySelector('#lb-compare');
-    const dtA = { from: root.querySelector('#lb-from-a'), to: root.querySelector('#lb-to-a') };
-    const dtB = { from: root.querySelector('#lb-from-b'), to: root.querySelector('#lb-to-b') };
-    const iso = function (d) { return d.toISOString().slice(0, 10); };
+    const dayAIn = root.querySelector('#lb-day-a');
+    const dayBIn = root.querySelector('#lb-day-b');
 
-    function seedCompareDates() {
-        // B = the days the current preset actually covers, ending yesterday
-        // (the last complete day); A = the equal-length stretch before it.
-        const end = new Date();
-        end.setUTCDate(end.getUTCDate() - 1);          // yesterday, inclusive end
-        const days = boardWindows[state.window] || 7;
-        const bFrom = new Date(end); bFrom.setUTCDate(bFrom.getUTCDate() - days + 1);
-        const aTo = new Date(bFrom); aTo.setUTCDate(aTo.getUTCDate() - 1);
-        const aFrom = new Date(aTo); aFrom.setUTCDate(aFrom.getUTCDate() - days + 1);
-        dtB.from.value = iso(bFrom); dtB.to.value = iso(end);
-        dtA.from.value = iso(aFrom); dtA.to.value = iso(aTo);
-        state.fromA = dtA.from.value; state.toA = dtA.to.value;
-        state.fromB = dtB.from.value; state.toB = dtB.to.value;
+    function seedCompareDaysInputs() {
+        const seed = seedCompareDays(new Date());
+        state.dayA = seed.a; state.dayB = seed.b;
+        dayAIn.value = seed.a; dayBIn.value = seed.b;
     }
 
-    function wireRange(inputs, which) {
-        inputs.from.addEventListener('change', function () { rangeChanged(which); });
-        inputs.to.addEventListener('change', function () { rangeChanged(which); });
+    function dayProblem() {
+        if (!state.dayA || !state.dayB) return 'pick both days';
+        if (state.dayA === state.dayB) return 'the two days are the same';
+        if (state.dayA > state.dayB) return 'day A is after day B';
+        if (state.dayB > iso(new Date())) return 'day B is in the future';
+        return null;
     }
-    function rangeChanged(which) {
-        if (which === 'A') {
-            state.fromA = dtA.from.value; state.toA = dtA.to.value;
-        } else {
-            state.fromB = dtB.from.value; state.toB = dtB.to.value;
-        }
-        if (state.fromA && state.toA && state.fromB && state.toB) load();
+    // dayB == today is allowed on the same terms the range picker allows it.
+    function loadCompareIfAskable() {
+        const problem = dayProblem();
+        note.textContent = problem || '';
+        if (!problem) load();
     }
-    wireRange(dtA, 'A');
-    wireRange(dtB, 'B');
+    dayAIn.addEventListener('change', function () {
+        state.dayA = dayAIn.value; loadCompareIfAskable();
+    });
+    dayBIn.addEventListener('change', function () {
+        state.dayB = dayBIn.value; loadCompareIfAskable();
+    });
 
     cmpToggle.addEventListener('change', function () {
         state.compare = cmpToggle.checked;
         cmpWrap.hidden = !state.compare;
-        if (state.compare) {
-            seedCompareDates();
-            document.querySelector('.lb-legend'); // legend redraws with draw()
-        }
+        // The main picker is inert in compare mode — its change handler would
+        // otherwise fire a compare-shaped load, and a control that does
+        // something other than what it shows is the failure this page keeps
+        // refusing.
+        fromIn.disabled = state.compare;
+        toIn.disabled = state.compare;
+        if (state.compare) seedCompareDaysInputs();
         load();
     });
 
@@ -470,11 +535,9 @@ export function createBoard(root, opts) {
         applyTransform();
     }
 
-    // boardWindows mirrors the server's allowlist (handlers_robots.go) — the
-    // preset→days mapping seedCompareDates needs to split a preset into
-    // explicit dates. Kept here rather than fetched because it is two
-    // entries the server has already committed to in its 400 text.
-    const boardWindows = { '7d': 7, '30d': 30 };
+    // boardWindows (the 7d/30d presets) is gone: the picker asks every window
+    // as an explicit from→to, which is the only spelling of the question the
+    // endpoint answers without a label losing contact with its days.
 
     // ── data ─────────────────────────────────────────────────────────────
     async function load() {
@@ -485,16 +548,16 @@ export function createBoard(root, opts) {
             return '/api/robots/localization?from=' + from + '&to=' + to + robotParam;
         };
         let boardP;
-        if (state.compare && state.fromA && state.toA && state.fromB && state.toB) {
+        if (state.compare) {
+            // One day each side: from = to = the day.
             boardP = o.fetchBoard
-                ? Promise.all([o.fetchBoard(state.fromA, state.robot), o.fetchBoard(state.fromB, state.robot)])
-                : Promise.all([boardURL(state.fromA, state.toA), boardURL(state.fromB, state.toB)]
-                    .map(function (u) { return fetch(u).then(function (r) { return r.json(); }); }));
+                ? Promise.all([o.fetchBoard(state.dayA, state.robot), o.fetchBoard(state.dayB, state.robot)])
+                : Promise.all([boardURL(state.dayA, state.dayA), boardURL(state.dayB, state.dayB)]
+                    .map(function (u) { return fetch(u).then(jsonOK); }));
         } else {
             boardP = o.fetchBoard
-                ? o.fetchBoard(state.window, state.robot)
-                : fetch('/api/robots/localization?window=' + state.window + robotParam)
-                    .then(function (r) { return r.json(); });
+                ? o.fetchBoard(state.from + '/' + state.to, state.robot)
+                : fetch(boardURL(state.from, state.to)).then(jsonOK);
         }
         const [edges, boards] = await Promise.all([
             o.fetchEdges ? o.fetchEdges() : fetch('/api/map/edges').then(function (r) { return r.json(); }),
@@ -891,8 +954,7 @@ export function createBoard(root, opts) {
         if (!state.board) { panel.innerHTML = ''; return; }
         const w = state.board.window;
         if (state.compare && state.boardA) {
-            note.textContent = 'A ' + state.fromA + ' → ' + state.toA +
-                '  ·  B ' + state.fromB + ' → ' + state.toB;
+            note.textContent = 'A ' + state.dayA + '  vs  B ' + state.dayB;
             drawComparePanel();
             return;
         }

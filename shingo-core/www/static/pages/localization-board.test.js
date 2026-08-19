@@ -37,6 +37,8 @@ function load() {
     vm.runInContext(src + '\n__out = { histPath: histPath, serverLaneKey: serverLaneKey, ' +
         'deltaVerdict: deltaVerdict, DELTA_SIGNIFICANT: DELTA_SIGNIFICANT, ' +
         'annotationVerdict: annotationVerdict, ' +
+        'seedMainRange: seedMainRange, seedCompareDays: seedCompareDays, ' +
+        'rangeProblem: rangeProblem, RANGE_MAX_DAYS: RANGE_MAX_DAYS, ' +
         'VERDICT_TOKEN: VERDICT_TOKEN, VERDICT_STROKE: VERDICT_STROKE, ' +
         'VERDICT_DASH: VERDICT_DASH, ' +
         'BAND_STROKE: BAND_STROKE, BAND_TOKEN: BAND_TOKEN };', ctx);
@@ -148,6 +150,56 @@ console.log('bands');
     check('no-data does not share a hue with any measured band',
         order.every(function (b) { return m.BAND_TOKEN[b] !== m.BAND_TOKEN.nodata; }),
         m.BAND_TOKEN.nodata);
+})();
+
+// --- the window seeds and the picker's guards ------------------------------
+console.log('range seeds and guards');
+(function () {
+    // The roll-up closes COMPLETE days — a day's rows are written the night
+    // after — so a seed ending today asks for a day that never exists yet.
+    // Both seeds end yesterday, and the harness pins it with a FIXED date so
+    // the assertion cannot drift with the clock.
+    const TODAY = '2026-08-19';
+
+    const main = m.seedMainRange(new Date(TODAY + 'T12:00:00Z'));
+    check('the main seed is the last seven complete days, ending yesterday',
+        main.from === '2026-08-12' && main.to === '2026-08-18',
+        JSON.stringify(main));
+
+    const cmp = m.seedCompareDays(new Date(TODAY + 'T12:00:00Z'));
+    check('the compare seed is yesterday vs the same weekday a week before',
+        cmp.b === '2026-08-18' && cmp.a === '2026-08-11',
+        JSON.stringify(cmp) + ' — seven days apart, not six, or it compares ' +
+        'adjacent weekdays');
+
+    // The endpoint's guards, mirrored client-side. Every rule the server
+    // 400s on should be refused before the fetch, or the picker's error
+    // surface is a network toast instead of the input.
+    check('a good range passes',
+        m.rangeProblem('2026-08-01', '2026-08-13', TODAY) === null);
+    check('a one-day range is askable (from === to)',
+        m.rangeProblem('2026-08-13', '2026-08-13', TODAY) === null,
+        'compare mode asks for exactly this shape');
+    check('a half-picked range is refused',
+        !!m.rangeProblem('', '2026-08-13', TODAY) &&
+        !!m.rangeProblem('2026-08-01', '', TODAY));
+    check('an inverted range is refused',
+        m.rangeProblem('2026-08-13', '2026-08-01', TODAY) !== null);
+    check('an end of today is allowed, mirroring the handler',
+        m.rangeProblem('2026-08-01', TODAY, TODAY) === null,
+        'the handler serves it and lets data_days say the day is empty; ' +
+        'the client refusing it would be stricter than the server');
+    check('a strictly future end is refused',
+        m.rangeProblem('2026-08-01', '2026-08-20', TODAY) !== null);
+    // The inclusive span cap: Aug 1 2025 → Aug 1 2026 is 366 days and fits;
+    // one day more does not. Both sides pinned, the same boundary the
+    // server's boardMaxSpanDays 400s on.
+    check('the span cap is inclusive at both edges',
+        m.rangeProblem('2025-08-01', '2026-08-01', TODAY) === null &&
+        m.rangeProblem('2025-07-31', '2026-08-01', TODAY) !== null,
+        '366 fits, 367 does not — must move with boardMaxSpanDays');
+    check('RANGE_MAX_DAYS still mirrors the server cap',
+        m.RANGE_MAX_DAYS === 366);
 })();
 
 // --- the compare verdict --------------------------------------------------

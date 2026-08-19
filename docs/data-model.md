@@ -64,6 +64,20 @@ A physical container that can be tracked, moved, and stored. The bin is the prim
 - Sits at one **Node** (nullable)
 - Can be claimed by one **Order**
 
+**The UOP audit stream and its two permanent tables.** Every count change on a bin
+writes a row to `bin_uop_audit` (the raw stream, ~7,000 rows/day). Since 2026-08 the
+raw `bin_uop_delta` rows carry a **90-day retention** — deleted by the daily Core
+sweep. Two permanent tables carry what outlives them:
+
+- `bin_uop_exception` — one row per exception-worthy event, never deleted:
+  `negative_crossing` (a bin taken below zero; `deepest_uop`/`recovered_at` carry the
+  excursion's shape), `stale_epoch` and `payload_mismatch` (deltas the applier
+  dropped), and `boundary` (one row per epoch bump — the per-bin binding ordinal,
+  `epoch_seq`). This is the durable answer to "where are the negatives".
+- `bin_uop_delta_daily` — one row per (day, bin, epoch, payload, reason, actor):
+  ticks, consumed, added, first/last/min UOP, crossings. The durable "how parts
+  moved" answer once the raw rows age out.
+
 ### BinType
 
 Classification for physical containers. Controls compatibility with nodes and payloads.
@@ -358,6 +372,6 @@ audit_log               (system-wide audit)
 admin_users             (authentication)
 edge_registry           (connected edge stations)
 scene_points            (fleet map cache)
-demands, production_log (demand planning)
+demands                 (demand planning)
 test_commands           (fleet testing)
 ```

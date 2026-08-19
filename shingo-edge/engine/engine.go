@@ -139,8 +139,8 @@ type Engine struct {
 	strandedAlarms sync.Map
 
 	// loaderResv serializes the count→fire reservation per loader so concurrent
-	// writers (a Kafka demand signal vs an HTTP RequestEmptyBin, or the push
-	// sweep) can't both read the same in-flight count and both fire empties —
+	// writers (an HTTP RequestEmptyBin vs the push sweep) can't both read the
+	// same in-flight count and both fire empties —
 	// the never-2N invariant. map[loaderID]*sync.Mutex, keyed from day one (no
 	// global lock). NO transaction: see withLoaderBudget and
 	// FINAL-ADJUDICATION Q1 (monotonicity + non-tx-pure CreateRetrieveOrder) —
@@ -553,23 +553,23 @@ func (e *Engine) RequestCatalogSync() {
 // ── Payload catalog ─────────────────────────────────────────────────
 
 // HandlePayloadCatalog upserts payload catalog entries received from core and
-// prunes any local entries that no longer exist in core's response.
+// prunes any local entries that no longer exist in core's response — all in
+// ONE transaction (the sync fires every 2 minutes; 57 separate implicit
+// txns per sync held the edge's single SQLite connection ~41,000 times/day
+// to write back rows that almost never change). The upsert itself is
+// conditional on a real change, so an unchanged catalog writes nothing.
 func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
-	ids := make([]int64, 0, len(entries))
+	rows := make([]*catalog.CatalogEntry, 0, len(entries))
 	for _, b := range entries {
-		entry := &catalog.CatalogEntry{
+		rows = append(rows, &catalog.CatalogEntry{
 			ID: b.ID, Name: b.Name, Code: b.Code,
 			Description: b.Description,
 			UOPCapacity: b.UOPCapacity,
 			CATID:       b.CATID,
-		}
-		if err := e.db.UpsertPayloadCatalog(entry); err != nil {
-			log.Printf("engine: upsert payload catalog entry %s: %v", b.Name, err)
-		}
-		ids = append(ids, b.ID)
+		})
 	}
-	if err := e.db.DeleteStalePayloadCatalogEntries(ids); err != nil {
-		log.Printf("engine: prune stale payload catalog: %v", err)
+	if err := e.db.SyncPayloadCatalog(rows); err != nil {
+		log.Printf("engine: sync payload catalog: %v", err)
 	}
 	// Now that the catalog (and its CATIDs) is current, retire any expected_catid
 	// stamp that merely duplicates the style's derived single CATID (the guard now

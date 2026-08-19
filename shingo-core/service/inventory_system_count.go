@@ -136,8 +136,9 @@ type SystemUOPForPayloadResult struct {
 // the sum of bin remaining-UOP plus the sum of lineside-bucket qty
 // (1:1 BOM assumption: bucket.qty IS UOP). This is the value the
 // UOP-threshold replenishment monitor compares against
-// demand_registry.replenish_uop_threshold to decide whether to fire
-// LoopBelowThresholdSignal.
+// demand_registry.replenish_uop_threshold to decide whether to create
+// retrieve orders (the wire signal it used to fire,
+// LoopBelowThresholdSignal, is gone — Core owns the whole decision).
 //
 // Lifecycle filter on bins mirrors SystemBinCount — bins in flagged,
 // maintenance, quality_hold, or retired status are excluded

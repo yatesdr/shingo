@@ -328,7 +328,7 @@ export function renderModal(entry) {
             allowed.forEach(function(code) {
                 var payloadOrders = activeOrders.filter(function(o) { return o.payload_code === code; });
                 // Mirror operator-render.js: the no-payload-code fallback is
-                // for the empty-bin-parked demand-signaling phase only. After
+                // for the empty-bin-parked manual-request phase only. After
                 // load (bin has payload_code) or once any active order has a
                 // payload_code, fall back to the strict per-payload match.
                 var nodeBinIsEmpty = !!(binState && binState.occupied && !binState.payload_code);
@@ -353,9 +353,12 @@ export function renderModal(entry) {
                 // "no demand" cards with nothing actionable.
                 //
                 // Long term, manual_swap demand should flow in automatically
-                // (auto_request_payload, kanban / lineside demand signals,
-                // upstream consume-side reorder), so the operator never has
-                // to manually request a bin from this screen. Once that's
+                // (auto_push drains unloaders; upstream consume-side
+                // reorder feeds loaders), so the operator never has
+                // to manually request a bin from this screen. (The kanban
+                // / lineside demand-signal route this list used to name was
+                // deleted 2026-08; auto_request_payload is persisted but has
+                // no trigger reader.) Once that's
                 // wired up, the canRequest branch — and the matching
                 // /request-empty / /request-full URLs below — becomes dead
                 // code and should be deleted instead of being left as a

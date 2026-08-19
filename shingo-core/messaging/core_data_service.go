@@ -27,6 +27,11 @@ const heartbeatRetentionDays = 90
 // same 90-day window; no reason for the two to differ.
 const downtimeRetentionDays = 90
 
+// binUOPDeltaRetentionDays is the raw bin_uop_delta retention window (D6).
+// Same house number as the other two; the permanent records that outlive it
+// are bin_uop_exception (v93) and bin_uop_delta_daily (v94).
+const binUOPDeltaRetentionDays = 90
+
 type coreDataResponder interface {
 	dbg(format string, args ...any)
 	replyData(env *protocol.Envelope, subject string, payload any)
@@ -152,6 +157,29 @@ func (s *CoreDataService) StartHeartbeatProjection() {
 			} else if purged > 0 {
 				log.Printf("core_handler: purged %d expired production.tick dedup row(s)", purged)
 			}
+			// The bin_uop_delta_daily roll-up (v94) rides the same daily
+			// ticker as the purges — it must run while the raw delta rows
+			// are still inside the 90-day window, and the one-day-ago day
+			// boundary is the natural cadence: yesterday is complete, still
+			// raw-resident, and re-derivable if this attempt fails (the
+			// upsert is idempotent per day).
+			if rolled, err := s.db.RollupBinUOPDeltaDay(now.AddDate(0, 0, -1)); err != nil {
+				log.Printf("core_handler: rollup bin_uop_delta_daily: %v", err)
+			} else if rolled > 0 {
+				log.Printf("core_handler: rolled up %d bin_uop_delta_daily row(s) for %s",
+					rolled, now.AddDate(0, 0, -1).UTC().Format("2006-01-02"))
+			}
+			// The 90-day retention on the raw delta stream (D6), last of the
+			// family and ordered after the roll-up on purpose: the permanent
+			// records (v93 exceptions, v94 roll-up) exist by the time any
+			// binary carrying this purge runs, so this deletes nothing the
+			// owner named durable. Delta rows only — bump ops and the rare
+			// non-delta observations stay forever.
+			if purged, err := s.db.PurgeOldBinUOPDelta(binUOPDeltaRetentionDays, now); err != nil {
+				log.Printf("core_handler: purge old bin_uop_audit delta rows: %v", err)
+			} else if purged > 0 {
+				log.Printf("core_handler: purged %d expired bin_uop_delta audit row(s)", purged)
+			}
 		}
 	}()
 }
@@ -198,7 +226,7 @@ func (s *CoreDataService) HandleProductionTick(env *protocol.Envelope, snap *pro
 
 	// §14 production.report retirement — BLOCKED, see Q-024. The gate
 	// (isProductionTick) is ready and tested, and this isNew branch is the
-	// correct, dedup-guarded placement for the IncrementProduced/LogProduction
+	// correct, dedup-guarded placement for the IncrementProduced
 	// calls (§14 risk #4). But IncrementProduced needs cat_id = payload_code,
 	// and production.tick is emitted UPSTREAM of payload attribution
 	// (plc/manager.go enqueueProductionTick has only style/process; payload is
@@ -277,9 +305,6 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 			d.PayloadCode, station, qty, d.Reason)
 		if err := s.db.IncrementProduced(d.PayloadCode, qty); err != nil {
 			log.Printf("core_handler: increment produced payload=%s qty=%d: %v", d.PayloadCode, qty, err)
-		}
-		if err := s.db.LogProduction(d.PayloadCode, station, qty); err != nil {
-			log.Printf("core_handler: log production payload=%s: %v", d.PayloadCode, err)
 		}
 	}
 }
@@ -481,22 +506,6 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 		return
 	}
 
-	// parentType resolves the parent's NodeTypeCode without assuming the
-	// parent sits in the current result slice. Station-scoped queries
-	// only return rows assigned to the station, so a storage slot's
-	// LANE parent typically won't be included — a single targeted Get
-	// is the cheapest correct lookup.
-	parentType := func(parentID *int64) string {
-		if parentID == nil {
-			return ""
-		}
-		p, err := s.db.GetNode(*parentID)
-		if err != nil || p == nil {
-			return ""
-		}
-		return p.NodeTypeCode
-	}
-
 	var infos []protocol.NodeInfo
 	if stationScoped {
 		for _, n := range nodeList {
@@ -505,9 +514,8 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 				name = n.ParentName + "." + n.Name
 			}
 			infos = append(infos, protocol.NodeInfo{
-				Name:           name,
-				NodeType:       n.NodeTypeCode,
-				ParentNodeType: parentType(n.ParentID),
+				Name:     name,
+				NodeType: n.NodeTypeCode,
 			})
 		}
 	} else {
@@ -524,9 +532,8 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 			} else if !n.IsSynthetic {
 				if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == protocol.NodeClassNGRP {
 					infos = append(infos, protocol.NodeInfo{
-						Name:           parent.Name + "." + n.Name,
-						NodeType:       n.NodeTypeCode,
-						ParentNodeType: parent.NodeTypeCode,
+						Name:     parent.Name + "." + n.Name,
+						NodeType: n.NodeTypeCode,
 					})
 				}
 			}
@@ -537,12 +544,21 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 	// Empty (and omitted on the wire) until Core authors loaders — additive.
 	loaderInfos, lerr := s.db.BuildLoaderInfos()
 	if lerr != nil {
-		// Non-fatal: send the node list without loaders rather than nothing.
-		log.Printf("core_handler: build loader infos for %s: %v", env.Src.Station, lerr)
+		// Sending the node list WITHOUT loaders is not "degraded but safe" — the Edge
+		// cannot distinguish an absent Loaders field from "no loaders configured", and
+		// ReplaceCoreLoaders(nil) truncates all five cache tables. Send nothing; the
+		// Edge keeps its last-known-good cache and re-requests on the next tick.
+		log.Printf("core_handler: build loader infos for %s: %v — node list NOT sent", env.Src.Station, lerr)
+		return
 	}
 	// Payload→dunnage mapping: one query replaces the N+1 per-node
 	// GetEffectiveBinTypes calls. Edge uses this to derive picker options
 	// from the node's allowed payloads (claim.AllowedPayloadCodes).
+	//
+	// Unlike the loader branch above, a read failure here deliberately does
+	// NOT return: this slice is memory-only on the Edge (re-derived from the
+	// next node list), while the loader slice backs a durable cache that a
+	// wrong read destroys. Do not "unify" the two branches.
 	pbtPairs, pbtErr := s.db.ListPayloadBinTypeMappings()
 	if pbtErr != nil {
 		log.Printf("core_handler: list payload bin types for %s: %v", env.Src.Station, pbtErr)
@@ -567,12 +583,14 @@ func (s *CoreDataService) HandleProductionReport(env *protocol.Envelope, rpt *pr
 			continue
 		}
 		// §14 parallel-run (risk #3): the new bin_uop_delta path is now the
-		// SOLE writer of produced_qty / production_log. IncrementProduced is
+		// SOLE writer of produced_qty. IncrementProduced is
 		// NOT idempotent, so we must NOT also write here — double-writing would
 		// silently double the counter and the parity check would pass on both
 		// being wrong. Keep the handler + ack live and LOG what this path WOULD
 		// have written so Stephen can compare LOGS (not counter values) for a
 		// week before the production_reporter deletion lands (Q-024-FOLLOWUP).
+		// (The production_log half of the old claim was a duplicate ledger,
+		// dropped at v92 — this path's counter claim is the surviving half.)
 		log.Printf("core_handler: [production.report parallel-run] would write cat_id=%s station=%s count=%d",
 			entry.CatID, rpt.StationID, entry.Count)
 		accepted++

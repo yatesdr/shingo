@@ -14,14 +14,13 @@ func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
 	// list let operators pick a synthetic group (e.g. "Supermarket Area") and
 	// dead-end. Mirrors the core orders.js picker.
 	type coreNodeOpt struct {
-		Name       string `json:"name"`
-		NodeType   string `json:"node_type,omitempty"`
-		ParentType string `json:"parent_node_type,omitempty"`
+		Name     string `json:"name"`
+		NodeType string `json:"node_type,omitempty"`
 	}
 	coreNodeOpts := make([]coreNodeOpt, 0, len(coreNodes))
 	coreNodeNames := make([]string, 0, len(coreNodes))
 	for name, info := range coreNodes {
-		coreNodeOpts = append(coreNodeOpts, coreNodeOpt{Name: name, NodeType: info.NodeType, ParentType: info.ParentNodeType})
+		coreNodeOpts = append(coreNodeOpts, coreNodeOpt{Name: name, NodeType: info.NodeType})
 		coreNodeNames = append(coreNodeNames, name)
 	}
 	anomalies, rpMap := loadAnomalyData(h)

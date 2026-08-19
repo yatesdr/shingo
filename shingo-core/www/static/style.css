@@ -2557,11 +2557,12 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .mf-read-beyond .mf-read-name { color: var(--accent); }
 
 /* ── Localization board (robots page) ───────────────────────────────────── */
+/* (.lb-seg — the 7d/30d preset buttons — retired with the presets; every
+   window is now asked with the from→to picker.) */
 .lb-controls { display:flex; align-items:center; gap:16px; margin-bottom:10px; flex-wrap:wrap; }
-.lb-seg { display:inline-flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
-.lb-seg button { background:transparent; border:0; padding:5px 12px; color:var(--text-muted); cursor:pointer; font:inherit; font-size:.85rem; }
-.lb-seg button.on { background:var(--elev-raised); color:var(--text-strong); }
 .lb-toggle { display:inline-flex; align-items:center; gap:6px; font-size:.85rem; color:var(--text-muted); cursor:pointer; }
+/* the main range picker reuses the compare dates' field styling */
+#lb-range-wrap { gap:6px; }
 .lb-spacer { flex:1; }
 .lb-window-note { font-size:.8rem; color:var(--text-muted); }
 .lb-main { display:grid; grid-template-columns:260px minmax(0,1fr) 300px; gap:12px; align-items:stretch; }
@@ -2618,8 +2619,12 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .lb-warn-inline { color:var(--viz-amber); font-weight:600; }
 .lb-suppressed { color:var(--viz-amber); font-size:.78rem; font-weight:600; line-height:1.4; }
 
-/* compare mode — two explicit ranges, verdict colours */
+/* compare mode — one day vs one day, verdict colours. The display rule
+   re-enables hidden: without the [hidden] override the date inputs would
+   render with Compare unchecked — author display beats the UA's
+   display:none, the same trap .map-key-items hit. */
 .lb-cmp { display:inline-flex; align-items:center; gap:8px; }
+.lb-cmp[hidden] { display:none; }
 .lb-dt { display:inline-flex; align-items:center; gap:4px; font-size:.8rem; color:var(--text-muted); }
 .lb-dt input[type="date"] { background:var(--elev-raised); border:1px solid var(--border);
   border-radius:4px; color:var(--text-strong); font:inherit; font-size:.8rem; padding:2px 6px; }

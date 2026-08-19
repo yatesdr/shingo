@@ -136,10 +136,12 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 		// map, and the !ok skip below is the old `node == nil` skip.
 		//
 		// A read FAILURE now fails the whole projection instead of dropping one
-		// position, and that is the safer end: the caller already logs and sends
-		// the node list without loaders, leaving Edge on its last-known-good
-		// cache. A loader shipped one position short would be cached as truth and
-		// spread empties across the wrong window count.
+		// position, and that is the safer end: the caller refuses to send the
+		// node list at all on this error, leaving Edge on its last-known-good
+		// cache (this is the contract HandleNodeListRequest enforces — a
+		// loaders-less response would truncate the Edge cache). A loader
+		// shipped one position short would be cached as truth and spread
+		// empties across the wrong window count.
 		names, err := db.LoaderMemberNodeNames(l.ID)
 		if err != nil {
 			return nil, err

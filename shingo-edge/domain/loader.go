@@ -195,7 +195,7 @@ type Loader struct {
 	// neither the legacy claim nor a second lookup. Set via LoaderOption.
 	inboundSource string              // the empty market L1s source from
 	outboundDest  string              // the market filled (L2) / emptied (U2) bins go to on completion
-	uopThreshold  map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in); dedicated carries it on Position
+	uopThreshold  map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in, display-read only on Edge); dedicated carries it on Position
 	funnelWindows bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
 }
 
@@ -217,9 +217,11 @@ func WithOutboundDest(dst string) LoaderOption {
 	return func(l *Loader) { l.outboundDest = dst }
 }
 
-// WithUOPThreshold sets the shared_window per-payload UOP threshold (the C-push
-// opt-in the demand sweep checks to defer a payload to HandleLoopBelowThreshold).
-// Mirrors WithMinStock; dedicated loaders carry the threshold on each Position.
+// WithUOPThreshold sets the shared_window per-payload UOP threshold — carried
+// down from the Core aggregate for display/config parity. Nothing on the Edge
+// acts on it any more (the threshold receiver it fed is deleted; Core orders
+// directly). Mirrors WithMinStock; dedicated loaders carry the threshold on
+// each Position.
 func WithUOPThreshold(m map[PayloadCode]int) LoaderOption {
 	return func(l *Loader) {
 		l.uopThreshold = make(map[PayloadCode]int, len(m))
@@ -335,8 +337,8 @@ func (l *Loader) OutboundDest() string { return l.outboundDest }
 // UOPThresholdFor returns the per-payload UOP threshold (the C-push opt-in): the
 // shared per-payload value for shared_window, or the matching position's
 // UOPThreshold for dedicated. Zero means "no UOP-threshold policy" (not opted into
-// C-push). The demand sweep asks the aggregate directly instead of a node-keyed
-// cache lookup that the loader_key token can never match.
+// C-push). Only display reads this on the Edge (station board starvation tint);
+// ordering is Core's.
 func (l *Loader) UOPThresholdFor(p PayloadCode) int {
 	if v, ok := l.uopThreshold[p]; ok {
 		return v
@@ -585,7 +587,7 @@ func (l *Loader) ServesPayload(p PayloadCode) bool {
 //   - dedicated_positions: the payload maps to ONE independent one-bin position;
 //     budget 1, delivered there. When member names a position serving the payload,
 //     deliver to THAT position (the same-payload-two-positions fix) instead of
-//     first-match; member "" (legacy DemandSignal, operator request) falls back to
+//     first-match; member "" (operator request) falls back to
 //     first-match, preserving prior behaviour. Positions never share a budget.
 //
 // member is the specific loader member node the triggering signal names

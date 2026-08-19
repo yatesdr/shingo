@@ -1102,6 +1102,15 @@ func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 //
 // Blank payload on the carrier, matching the resident count: a carrier arriving
 // with parts in it is not joining an empty level.
+//
+// The status filter is the POSITIVE form (IN NonTerminalStatusSQLList), not
+// NOT IN terminal: a NOT IN against 4 values anti-joined the whole unbounded
+// orders table (324 buffers, 0.841 ms); the positive IN enumerates the 10
+// live values and the planner walks the partial path instead (25 buffers,
+// 0.036 ms). Semantic difference: a row carrying an off-spec (retired)
+// status would now read as not-inbound — under-counting `coming` and
+// over-asking, which is the direction the note above already declares safe.
+// The enum's drift tests hold both lists to the same source of truth.
 func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTypeCode string) (int, error) {
 	if binTypeCode == "" || groupNodeName == "" {
 		return 0, nil
@@ -1114,7 +1123,7 @@ func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binT
 		      JOIN bins b  ON b.id = o.bin_id
 		      JOIN bin_types bt ON bt.id = b.bin_type_id
 		      LEFT JOIN nodes dn ON dn.name = o.delivery_node
-		     WHERE o.status NOT IN (%[1]s)
+		     WHERE o.status IN (%[1]s)
 		       AND o.bin_id IS NOT NULL
 		       AND bt.code = $2
 		       AND COALESCE(b.payload_code, '') = ''
@@ -1129,14 +1138,14 @@ func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binT
 		      JOIN bins b  ON b.id = ob.bin_id
 		      JOIN bin_types bt ON bt.id = b.bin_type_id
 		      LEFT JOIN nodes dn ON dn.name = ob.dest_node
-		     WHERE o.status NOT IN (%[1]s)
+		     WHERE o.status IN (%[1]s)
 		       AND bt.code = $2
 		       AND COALESCE(b.payload_code, '') = ''
 		       AND (ob.dest_node = $3 OR dn.id IN (SELECT id FROM descendants))
 		       AND NOT EXISTS (
 		           SELECT 1 FROM demand_origins d
 		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND d.closed_at IS NULL)
-		) AS inbound`, protocol.TerminalStatusSQLList()),
+		) AS inbound`, protocol.NonTerminalStatusSQLList()),
 		groupNodeID, binTypeCode, groupNodeName, protocol.EpisodeKindMaintain).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count typed inbound to group %s (%s): %w", groupNodeName, binTypeCode, err)

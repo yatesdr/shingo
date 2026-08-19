@@ -4,17 +4,18 @@ import "fmt"
 
 // loader_sizing.go — how many carriers a loader needs to reach its threshold.
 //
-// This is the Core port of the sizing that lives in the Edge's
-// HandleLoopBelowThreshold (shingo-edge/engine/operator_demand_loader.go). The
-// arithmetic is carried over unchanged, including the negative-current clamp,
-// because Deploy 4's whole claim is that Core decides the same thing the Edge
-// decides. Golden vectors pin the two against each other; this file is one half
-// of that pair.
+// This is a port of the sizing that used to live in the Edge's
+// HandleLoopBelowThreshold (shingo-edge/engine/operator_demand_loader.go),
+// carried over unchanged — including the negative-current clamp — when Core
+// took over the whole decision. The Edge original is deleted (2026-08-02,
+// with the Edge's half of replenishment), so this file is now the only copy;
+// the golden vectors that pinned the two halves against each other retired
+// with it.
 //
 // The design notes for this work call the function "sizeAsk". No such function
-// exists on the Edge — it is an inline block, and its guard on per-bin capacity
-// sits OUTSIDE that block, in the caller. Naming it here and pulling the guard
-// in with it is the point of porting rather than copying: on Core the
+// existed on the Edge — it was an inline block, and its guard on per-bin capacity
+// sat OUTSIDE that block, in the caller. Naming it here and pulling the guard
+// in with it was the point of porting rather than copying: on Core the
 // precondition and the arithmetic cannot drift apart, because a caller cannot
 // reach the arithmetic without passing through the precondition.
 

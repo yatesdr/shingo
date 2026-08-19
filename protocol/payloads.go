@@ -600,16 +600,9 @@ type IngestManifestItem struct {
 type NodeListRequest struct{}
 
 // NodeInfo describes a single node in the core's node list.
-//
-// ParentNodeType is the node type of the immediate parent (e.g. "LANE",
-// "NGRP", empty for top-level nodes). Edge uses it to validate that
-// consume-role style claims land on LANE-parented storage slots — the
-// only nodes handleKanbanDemand will actually fire "consume" signals
-// for (see shingo-core/engine/wiring_kanban.go's isStorageSlot check).
 type NodeInfo struct {
-	Name           string `json:"name"`
-	NodeType       string `json:"node_type"`
-	ParentNodeType string `json:"parent_node_type,omitempty"`
+	Name     string `json:"name"`
+	NodeType string `json:"node_type"`
 }
 
 // PayloadBinTypeInfo maps one payload code to one bin-type code.
@@ -934,15 +927,6 @@ type NodeStructureChanged struct {
 	OldParentID *int64 `json:"old_parent_id,omitempty"`
 	NewParentID *int64 `json:"new_parent_id,omitempty"`
 	Action      string `json:"action"` // "reparented" or "group_deleted"
-}
-
-// DemandSignal is sent by Core to Edge when a kanban event fires.
-// Edge creates an order for the specified payload at the specified node.
-type DemandSignal struct {
-	CoreNodeName string    `json:"core_node_name"` // delivery node for the order
-	PayloadCode  string    `json:"payload_code"`   // which payload to request
-	Role         ClaimRole `json:"role"`           // determines order type
-	Reason       string    `json:"reason"`         // human-readable trigger (e.g., "empty bin returned to storage")
 }
 
 // CountGroupCommand is sent by Core to Edge when an advanced zone's occupancy state changes.
@@ -1444,8 +1428,9 @@ type DemandOriginState struct {
 	// falling edge and never recomputed or accumulated.
 	//
 	// NULLABLE, and that is deliberate. The threshold kind's formula divides by
-	// the payload catalog's UOPCapacity, and fireThresholdL1 explicitly guards
-	// `entry.UOPCapacity <= 0` — which means somebody has hit it. Neither 0 nor
+	// the payload catalog's UOPCapacity, and the sizing entry point
+	// (dispatch.BinsToReachThreshold, on Core) explicitly refuses
+	// `perBinCapacity <= 0` — which means somebody has hit it. Neither 0 nor
 	// 1 is honest there: both render as a real ratio and invite a conclusion
 	// from a denominator that does not exist. A demand whose denominator is
 	// UNKNOWABLE is a different state from one whose denominator is 1, and the

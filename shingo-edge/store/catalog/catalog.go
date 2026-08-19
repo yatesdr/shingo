@@ -58,14 +58,64 @@ func scanCatalogEntry(scanner interface{ Scan(...any) error }) (*CatalogEntry, e
 // ON CONFLICT update list so the engineer-edited Edge-local value is
 // preserved across syncs. On INSERT the column takes its DEFAULT 0;
 // SetCycleSeconds is the engineer-edit path.
+//
+// The upsert is CONDITIONAL: an unchanged row is not written (and its
+// updated_at is not stamped). updated_at means "last changed", not "last
+// synced" — nothing reads it as liveness (verified 2026-08-19: no JS,
+// template, or Go reader consumes the field beyond serialization).
 func UpsertCatalog(db *sql.DB, entry *CatalogEntry) error {
 	_, err := db.Exec(`INSERT INTO payload_catalog (id, name, code, description, uop_capacity, catid, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, code=excluded.code,
 		description=excluded.description, uop_capacity=excluded.uop_capacity,
-		catid=excluded.catid, updated_at=datetime('now')`,
+		catid=excluded.catid, updated_at=datetime('now')
+		WHERE payload_catalog.name        IS NOT excluded.name
+		   OR payload_catalog.code        IS NOT excluded.code
+		   OR payload_catalog.description IS NOT excluded.description
+		   OR payload_catalog.uop_capacity IS NOT excluded.uop_capacity
+		   OR payload_catalog.catid       IS NOT excluded.catid`,
 		entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity, entry.CATID)
 	return err
+}
+
+// SyncCatalog upserts the full Core catalog and prunes stale entries in ONE
+// transaction. The 2-minute sync used to run 57 separate implicit
+// transactions (115–326 ms holds of the edge's single SQLite connection, one
+// observed 2,450 ms — ~41,000 write txns/day) just to write back rows that
+// almost never change; one tx + the conditional upsert above turns that into
+// one short write txn per sync that only fires when something actually
+// changed. On any error the tx rolls back: the previous last-known-good
+// catalog stands, same doctrine as ReplaceCoreLoaders.
+func SyncCatalog(db *sql.DB, entries []*CatalogEntry) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	ids := make([]int64, 0, len(entries))
+	for _, entry := range entries {
+		if _, err := tx.Exec(`INSERT INTO payload_catalog (id, name, code, description, uop_capacity, catid, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+			ON CONFLICT(id) DO UPDATE SET name=excluded.name, code=excluded.code,
+			description=excluded.description, uop_capacity=excluded.uop_capacity,
+			catid=excluded.catid, updated_at=datetime('now')
+			WHERE payload_catalog.name        IS NOT excluded.name
+			   OR payload_catalog.code        IS NOT excluded.code
+			   OR payload_catalog.description IS NOT excluded.description
+			   OR payload_catalog.uop_capacity IS NOT excluded.uop_capacity
+			   OR payload_catalog.catid       IS NOT excluded.catid`,
+			entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity, entry.CATID); err != nil {
+			return fmt.Errorf("upsert catalog entry %s: %w", entry.Name, err)
+		}
+		ids = append(ids, entry.ID)
+	}
+	// The stale-entry prune joins the same tx — atomic with the upserts, so a
+	// catalog that pruned-but-didn't-refresh (or vice versa) can't exist.
+	if err := deleteStaleCatalogEntriesTx(tx, ids); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetCycleSeconds writes the engineer-edited per-part cycle time. No-op
@@ -107,6 +157,23 @@ func DeleteStaleCatalogEntries(db *sql.DB, activeIDs []int64) error {
 	if len(activeIDs) == 0 {
 		return nil
 	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := deleteStaleCatalogEntriesTx(tx, activeIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// deleteStaleCatalogEntriesTx is the prune shared by the standalone call and
+// SyncCatalog's single transaction.
+func deleteStaleCatalogEntriesTx(tx *sql.Tx, activeIDs []int64) error {
+	if len(activeIDs) == 0 {
+		return nil
+	}
 	placeholders := make([]string, len(activeIDs))
 	args := make([]any, len(activeIDs))
 	for i, id := range activeIDs {
@@ -114,6 +181,6 @@ func DeleteStaleCatalogEntries(db *sql.DB, activeIDs []int64) error {
 		args[i] = id
 	}
 	query := fmt.Sprintf("DELETE FROM payload_catalog WHERE id NOT IN (%s)", strings.Join(placeholders, ","))
-	_, err := db.Exec(query, args...)
+	_, err := tx.Exec(query, args...)
 	return err
 }

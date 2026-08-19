@@ -15,6 +15,12 @@ func (db *DB) UpsertPayloadCatalog(entry *catalog.CatalogEntry) error {
 	return catalog.UpsertCatalog(db.DB, entry)
 }
 
+// SyncPayloadCatalog upserts the full Core catalog and prunes stale entries
+// in one transaction — the 2-minute sync path. See catalog.SyncCatalog.
+func (db *DB) SyncPayloadCatalog(entries []*catalog.CatalogEntry) error {
+	return catalog.SyncCatalog(db.DB, entries)
+}
+
 // ListPayloadCatalog returns every payload_catalog row sorted by name.
 func (db *DB) ListPayloadCatalog() ([]*catalog.CatalogEntry, error) {
 	return catalog.ListCatalog(db.DB)

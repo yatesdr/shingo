@@ -377,7 +377,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 			// Demands
 			r.Get("/demands", h.apiListDemands)
-			r.Get("/demands/{id}/log", h.apiDemandLog)
 
 			// ── Protected API (auth required) ──────────────────
 			r.Group(func(r chi.Router) {

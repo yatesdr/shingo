@@ -177,13 +177,14 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// Core's wiring_kanban DemandSignal pipeline became the single
 	// trigger source for L1: every release that empties a bin moves it
 	// in Core, Core observes the move at storage, fires DemandSignal
-	// to Edge, Edge fires L1 with current supply count. The release-
-	// driven path created timing weirdness (release evaluated before
-	// Core's bin state settled) and partial coverage (non-release bin
-	// movements didn't fire). U1 stays release-driven because it's
-	// genuinely tied to the release event ("operator just finished a
-	// full bin"); the trigger isn't a count threshold, it's the act of
-	// finishing.
+	// to Edge, Edge fires L1 with current supply count. That pipeline
+	// was itself deleted (2026-08) with the rest of the kanban
+	// demand-signal route; consume empties are operator-driven now
+	// (manual request / opportunistic loader push), so nothing in this
+	// file needs to fire on a count any more. U1 stays release-driven
+	// because it's genuinely tied to the release event ("operator just
+	// finished a full bin"); the trigger isn't a count threshold, it's
+	// the act of finishing.
 	if !isSupply && disp.Mode == DispositionCaptureLineside && toClaim.Role == protocol.ClaimRoleProduce {
 		e.MaybeCreateUnloaderFullIn(toClaim.PayloadCode)
 	}

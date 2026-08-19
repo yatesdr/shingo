@@ -33,8 +33,9 @@ const manualSwapWindowSlots = 1
 // in incident records: the bin-count produce DemandSignal trigger
 // (MaybeCreateLoaderEmptyIn + findLoaderForDemand + refillLoaderForPayload), and
 // the threshold receiver that replaced it (HandleLoopBelowThreshold + its
-// park/replay machinery). Core still emits produce DemandSignals on bin
-// movements; the Edge routes them to no handler.
+// park/replay machinery). A third followed (2026-08): the DemandSignal wire
+// subject itself was deleted — Core no longer emits it, so the unloader's U1
+// full-in now fires from operator release alone (operator_release.go).
 
 // L1Source identifies which path is creating a loader empty-in (L1)
 // retrieve_empty order. Two sources are retired: the legacy bin-count one
@@ -73,7 +74,7 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 // mutex it counts non-terminal retrieve orders across the delivery-node set in
 // ONE snapshot, applies the per-payload dedup and the loader-capacity cap, and
 // fires the remainder via the caller's `fire` closure — all without releasing
-// the lock, so a concurrent demand signal or operator request cannot interleave
+// the lock, so a concurrent operator request or push sweep cannot interleave
 // between the count and the create.
 //
 // SCOPE — this is the never-2N guarantee only for the writers that route

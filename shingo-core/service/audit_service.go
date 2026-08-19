@@ -56,9 +56,10 @@ func (s *AuditService) ListBinUOPOverridesByStation(station string, limit, offse
 	return audit.ListBinUOPOverridesByStation(s.db.DB, station, limit, offset)
 }
 
-// ListBinUOPDiscrepancies exposes the discrepancy ledger — a read-only
-// view over bin_uop_audit (dropped stale ticks, negative remaining, and
-// release-empties that still carried counted parts). No separate table.
+// ListBinUOPDiscrepancies exposes the discrepancy ledger — a view over
+// bin_uop_audit UNION bin_uop_exception (dropped stale ticks, negative
+// crossings from the exceptions ledger, and release-empties that still
+// carried counted parts). See audit.ListBinUOPDiscrepancies for the arms.
 func (s *AuditService) ListBinUOPDiscrepancies(limit, offset int) ([]audit.BinUOPRow, error) {
 	return audit.ListBinUOPDiscrepancies(s.db.DB, limit, offset)
 }

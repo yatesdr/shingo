@@ -263,15 +263,18 @@ LIMIT $3`
 // reads -443 for 74577-6SA0A.06 and has done since 09:14" — the difference
 // between a log line nobody joins and a supervisor-actionable sentence.
 //
-// Reads bins directly (the live truth) and dates the crossing from the audit
-// trail. A bin whose crossing predates the audit retention shows a nil
-// NegativeSince rather than being hidden.
+// Reads bins directly (the live truth) and dates the crossing from the
+// PERMANENT exceptions ledger (bin_uop_exception, v93) rather than the raw
+// audit stream — one of the two reads the retention DELETE would otherwise
+// destroy (the 90-day window is shorter than some real excursions have lasted).
+// A bin whose crossing predates the backfill shows a nil NegativeSince rather
+// than being hidden.
 func OpenNegativeBins(db *sql.DB) ([]OpenNegativeBin, error) {
 	const q = `
 SELECT b.id, COALESCE(b.label,''), COALESCE(b.payload_code,''), COALESCE(n.name,''),
        b.uop_remaining,
-       (SELECT MAX(a.applied_at) FROM bin_uop_audit a
-        WHERE a.bin_id = b.id AND a.before_uop >= 0 AND a.after_uop < 0) AS negative_since,
+       (SELECT MAX(e.occurred_at) FROM bin_uop_exception e
+        WHERE e.bin_id = b.id AND e.kind = 'negative_crossing') AS negative_since,
        b.last_counted_at
 FROM bins b
 LEFT JOIN nodes n ON n.id = b.node_id

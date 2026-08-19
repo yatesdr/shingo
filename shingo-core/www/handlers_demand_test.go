@@ -336,17 +336,3 @@ func TestApiClearAllProduced_ZeroesEveryDemand(t *testing.T) {
 		}
 	}
 }
-
-// --- apiDemandLog -----------------------------------------------------------
-
-// TestApiDemandLog_NotFoundReturns404 pins the GetDemand-miss branch.
-func TestApiDemandLog_NotFoundReturns404(t *testing.T) {
-	t.Parallel()
-	h, _ := testHandlers(t)
-
-	rec := postJSONWithChi(t, h.apiDemandLog, "/api/demand/{id}/log",
-		map[string]string{"id": "9999999"}, nil)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status: got %d, want 404; body=%s", rec.Code, rec.Body.String())
-	}
-}

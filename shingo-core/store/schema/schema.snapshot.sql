@@ -158,6 +158,47 @@ CREATE SEQUENCE public.bin_uop_audit_id_seq
 
 ALTER SEQUENCE public.bin_uop_audit_id_seq OWNED BY public.bin_uop_audit.id;
 
+CREATE TABLE public.bin_uop_delta_daily (
+    day date NOT NULL,
+    bin_id bigint NOT NULL,
+    epoch_seq bigint NOT NULL,
+    payload_code text DEFAULT ''::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    actor text DEFAULT ''::text NOT NULL,
+    ticks integer NOT NULL,
+    consumed integer NOT NULL,
+    added integer NOT NULL,
+    first_uop integer,
+    last_uop integer,
+    min_uop integer,
+    crossings integer DEFAULT 0 NOT NULL
+);
+
+CREATE TABLE public.bin_uop_exception (
+    id bigint NOT NULL,
+    kind text NOT NULL,
+    bin_id bigint NOT NULL,
+    payload_code text DEFAULT ''::text NOT NULL,
+    actor text DEFAULT ''::text NOT NULL,
+    epoch_seq bigint,
+    occurred_at timestamp with time zone NOT NULL,
+    before_uop integer,
+    after_uop integer,
+    deepest_uop integer,
+    recovered_at timestamp with time zone,
+    op text NOT NULL,
+    detail jsonb
+);
+
+CREATE SEQUENCE public.bin_uop_exception_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.bin_uop_exception_id_seq OWNED BY public.bin_uop_exception.id;
+
 CREATE TABLE public.bins (
     id bigint NOT NULL,
     bin_type_id bigint NOT NULL,
@@ -865,23 +906,6 @@ CREATE TABLE public.process_styles (
     is_active boolean DEFAULT false NOT NULL
 );
 
-CREATE TABLE public.production_log (
-    id bigint NOT NULL,
-    cat_id text NOT NULL,
-    station_id text NOT NULL,
-    quantity bigint NOT NULL,
-    reported_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE SEQUENCE public.production_log_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.production_log_id_seq OWNED BY public.production_log.id;
-
 CREATE TABLE public.production_tick_dedup (
     station text NOT NULL,
     edge_snapshot_id bigint NOT NULL,
@@ -1276,6 +1300,8 @@ ALTER TABLE ONLY public.bin_types ALTER COLUMN id SET DEFAULT nextval('public.bi
 
 ALTER TABLE ONLY public.bin_uop_audit ALTER COLUMN id SET DEFAULT nextval('public.bin_uop_audit_id_seq'::regclass);
 
+ALTER TABLE ONLY public.bin_uop_exception ALTER COLUMN id SET DEFAULT nextval('public.bin_uop_exception_id_seq'::regclass);
+
 ALTER TABLE ONLY public.bins ALTER COLUMN id SET DEFAULT nextval('public.bins_id_seq'::regclass);
 
 ALTER TABLE ONLY public.cell_part_events ALTER COLUMN id SET DEFAULT nextval('public.cell_part_events_id_seq'::regclass);
@@ -1317,8 +1343,6 @@ ALTER TABLE ONLY public.outbox ALTER COLUMN id SET DEFAULT nextval('public.outbo
 ALTER TABLE ONLY public.payload_manifest ALTER COLUMN id SET DEFAULT nextval('public.payload_manifest_id_seq'::regclass);
 
 ALTER TABLE ONLY public.payloads ALTER COLUMN id SET DEFAULT nextval('public.payloads_id_seq'::regclass);
-
-ALTER TABLE ONLY public.production_log ALTER COLUMN id SET DEFAULT nextval('public.production_log_id_seq'::regclass);
 
 ALTER TABLE ONLY public.recovery_actions ALTER COLUMN id SET DEFAULT nextval('public.recovery_actions_id_seq'::regclass);
 
@@ -1383,6 +1407,12 @@ ALTER TABLE ONLY public.bin_types
 
 ALTER TABLE ONLY public.bin_uop_audit
     ADD CONSTRAINT bin_uop_audit_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.bin_uop_delta_daily
+    ADD CONSTRAINT bin_uop_delta_daily_pkey PRIMARY KEY (day, bin_id, epoch_seq, payload_code, reason, actor);
+
+ALTER TABLE ONLY public.bin_uop_exception
+    ADD CONSTRAINT bin_uop_exception_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.bins
     ADD CONSTRAINT bins_pkey PRIMARY KEY (id);
@@ -1525,9 +1555,6 @@ ALTER TABLE ONLY public.plant_confidence_daily
 ALTER TABLE ONLY public.process_styles
     ADD CONSTRAINT process_styles_pkey PRIMARY KEY (process_id, style_id);
 
-ALTER TABLE ONLY public.production_log
-    ADD CONSTRAINT production_log_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.production_tick_dedup
     ADD CONSTRAINT production_tick_dedup_pkey PRIMARY KEY (station, edge_snapshot_id);
 
@@ -1600,6 +1627,12 @@ CREATE INDEX idx_bin_uop_audit_op ON public.bin_uop_audit USING btree (op);
 
 CREATE INDEX idx_bin_uop_audit_op_time ON public.bin_uop_audit USING btree (op, applied_at DESC);
 
+CREATE INDEX idx_bin_uop_exception_bin ON public.bin_uop_exception USING btree (bin_id, occurred_at DESC);
+
+CREATE INDEX idx_bin_uop_exception_occurred ON public.bin_uop_exception USING btree (occurred_at DESC);
+
+CREATE INDEX idx_bin_uop_exception_open ON public.bin_uop_exception USING btree (kind, occurred_at DESC) WHERE (recovered_at IS NULL);
+
 CREATE UNIQUE INDEX idx_bins_label_unique ON public.bins USING btree (label) WHERE (label <> ''::text);
 
 CREATE INDEX idx_bins_locked ON public.bins USING btree (locked) WHERE (locked = true);
@@ -1669,8 +1702,6 @@ CREATE INDEX idx_orders_vendor ON public.orders USING btree (vendor_order_id);
 CREATE INDEX idx_outbox_pending ON public.outbox USING btree (sent_at) WHERE (sent_at IS NULL);
 
 CREATE INDEX idx_payload_manifest_payload ON public.payload_manifest USING btree (payload_id);
-
-CREATE INDEX idx_production_log_cat ON public.production_log USING btree (cat_id);
 
 CREATE INDEX idx_recovery_actions_created ON public.recovery_actions USING btree (created_at);
 

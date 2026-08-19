@@ -161,35 +161,6 @@ func TestCoverage_ListDemands(t *testing.T) {
 	}
 }
 
-func TestCoverage_LogProduction(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-
-	testutil.MustNoErr(t, demands.LogProduction(db.DB, "CAT-X", "line-1", 5), "LogProduction 1")
-	testutil.MustNoErr(t, demands.LogProduction(db.DB, "CAT-X", "line-2", 10), "LogProduction 2")
-	testutil.MustNoErr(t, demands.LogProduction(db.DB, "CAT-Y", "line-1", 7), "LogProduction 3")
-
-	entries, err := demands.ListProductionLog(db.DB, "CAT-X", 10)
-	if err != nil {
-		t.Fatalf("ListProductionLog: %v", err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("CAT-X entries = %d, want 2", len(entries))
-	}
-	for _, e := range entries {
-		if e.CatID != "CAT-X" {
-			t.Errorf("entry CatID = %q, want CAT-X", e.CatID)
-		}
-	}
-	var total int64
-	for _, e := range entries {
-		total += e.Quantity
-	}
-	if total != 15 {
-		t.Errorf("CAT-X total = %d, want 15", total)
-	}
-}
-
 func TestCoverage_SyncDemandRegistry(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

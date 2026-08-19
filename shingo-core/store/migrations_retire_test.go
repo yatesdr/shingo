@@ -58,6 +58,31 @@ import (
 // this has run on. Rolling back needs the column re-added first, which is exact
 // and is one statement because every value was blank.
 //
+// v92 drops production_log, the write-only shadow of bin_uop_audit's delta rows
+// since the §14 cutover. The baseline's CREATE went with it — see the v92 entry
+// — and rollback is self-healing (a pre-v92 binary re-creates the table empty
+// from its own baseline), so unlike v91 nothing manual stands between a plant
+// and its .previous binary.
+//
+// v93 CREATES bin_uop_exception, the permanent exceptions ledger (owner
+// decision D2: negatives and boundaries are durable; the raw stream they were
+// derived from is not — P4 starts deleting it at 90 days in this same wave).
+// The first migration since v89 that ADDS to the schema rather than retiring
+// from it, and the first whose backfill is the point rather than a repair:
+// the crossings/drops/boundaries it derives from bin_uop_audit are exactly
+// what the 90-day purge would otherwise make un-derivable. Rollback is inert
+// (a pre-v93 binary never reads or writes the table) but lossy to redo —
+// dropping the table destroys the backfill, so .previous against a purged
+// database cannot get this data back. That is the D2 trade, accepted.
+//
+// v94 CREATES bin_uop_delta_daily, the permanent daily roll-up of the raw
+// delta stream (owner decision D3: roll-up growth accepted, ~10 rows/day).
+// Same family and same rollback doctrine as v93: inert to a pre-v94 binary,
+// and the backfill — the daily part-flow history — is the thing that must
+// not be lost. Together v93+v94 are the durable half of the D6 retention
+// trade: after they exist, deleting raw deltas at 90 days (P4) destroys
+// nothing the owner named durable.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -69,8 +94,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 91 {
-		t.Errorf("head migration = %d, want 91", got)
+	if got := store.LatestMigrationVersion(); got != 94 {
+		t.Errorf("head migration = %d, want 94", got)
 	}
 }
 

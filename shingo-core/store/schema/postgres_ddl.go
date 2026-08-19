@@ -465,15 +465,6 @@ CREATE TABLE IF NOT EXISTS demands (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS production_log (
-    id          BIGSERIAL PRIMARY KEY,
-    cat_id      TEXT NOT NULL,
-    station_id  TEXT NOT NULL,
-    quantity    BIGINT NOT NULL,
-    reported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_production_log_cat ON production_log(cat_id);
-
 CREATE TABLE IF NOT EXISTS test_commands (
     id              BIGSERIAL PRIMARY KEY,
     command_type    TEXT NOT NULL,

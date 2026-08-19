@@ -275,11 +275,12 @@ type NodeClaim struct {
 	ReuseCompatibleBins bool `json:"reuse_compatible_bins"`
 	// AutoPush opts a consume manual_swap (unloader) claim into push-driven
 	// dispatch: when the unloader window is free and a full bin of an allowed
-	// payload exists in InboundSource, Edge fires a U1 retrieve_full without
-	// waiting for a kanban demand signal. Useful for finished-goods unloaders
-	// that should drain the FG supermarket continuously rather than wait for
-	// downstream consumption. Default false preserves the kanban-driven model
-	// (DemandSignal-only). See engine/operator_demand.go MaybePushUnloader.
+	// payload exists in InboundSource, Edge fires a U1 retrieve_full on its
+	// own. Useful for finished-goods unloaders that should drain the FG
+	// supermarket continuously. Default false keeps the unloader event-driven
+	// (fires only on a produce-role lineside release). See
+	// engine/operator_demand.go MaybePushUnloader. The kanban demand signal
+	// this comment used to name was deleted 2026-08.
 	AutoPush bool `json:"auto_push"`
 	// HomeLocationLoader is the same kind of computed, display-only field for the
 	// home_location_loaders set (the LAYOUT axis) — populated by the API list path

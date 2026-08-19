@@ -264,28 +264,6 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "core_node_name is required")
 		return
 	}
-	// Consume-role claims only pay off on LANE-parented storage slots —
-	// wiring_kanban.go only emits "consume" demand signals when a bin
-	// arrives at a child-of-LANE node (see isStorageSlot). Rejecting
-	// here keeps operators from silently configuring dead claims.
-	// Produce-role claims are unconstrained: the departure check in
-	// wiring_kanban is intentionally LANE-gated too, but producers
-	// also have lineside trigger points that are legitimately
-	// non-storage (the loader emits fulls back into the supermarket),
-	// so leave produce permissive and only guardrail consume.
-	if in.Role == protocol.ClaimRoleConsume {
-		if info, ok := h.engine.CoreNodes()[in.CoreNodeName]; ok {
-			// Empty ParentNodeType means an older Core that hasn't
-			// been upgraded yet — skip the check rather than false-
-			// reject on a missing field so rolling upgrades work.
-			if info.ParentNodeType != "" && info.ParentNodeType != protocol.NodeClassLANE {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf(
-					"consume claims require a LANE-parented storage slot; %s is parented by %s",
-					in.CoreNodeName, info.ParentNodeType))
-				return
-			}
-		}
-	}
 	// Press-index pairing requires the back position(s) to exist as
 	// process_nodes so the fleet manager has wait/pickup/dropoff
 	// coordinates for R2's leg. The back nodes hold no claim of their
@@ -401,8 +379,8 @@ func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "node-claim-deleted"}})
 	// Claim removed → push the refreshed (shorter) claim set to Core so
 	// demand_registry drops the corresponding row. Without this push the
-	// registry drifts and Core keeps sending demand signals to a node
-	// whose claim is gone.
+	// registry drifts and Core keeps threshold bindings for a node whose
+	// claim is gone.
 	h.requestSpecChangePublish()
 	writeJSON(w, map[string]string{"status": "ok"})
 }

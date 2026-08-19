@@ -402,9 +402,10 @@ func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingU
 
 	// L1 (consume-side empty-in) used to fire here too, mirroring the
 	// hook in operator_release.go. Removed when Core's wiring_kanban
-	// DemandSignal pipeline became the single trigger source for L1.
-	// See the same explanation in operator_release.go's side-cycle
-	// comment block.
+	// DemandSignal pipeline became the single trigger source for L1 —
+	// then removed again when that pipeline itself was deleted
+	// (2026-08). Consume empties are operator-driven now. See the
+	// side-cycle comment block in operator_release.go.
 
 	return order, nil
 }

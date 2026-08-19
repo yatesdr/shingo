@@ -350,21 +350,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			changed.NodeName, changed.Action)
 		hb.RequestNodeSync()
 	})
-	// Kanban demand signals from Core's wiring_kanban driver. PRODUCE-role signals
-	// are NO LONGER handled: the legacy bin-count produce trigger is retired — a
-	// produce loader's automatic replenishment is decided on Core and arrives as
-	// a whole order, never a bin-count floor. CONSUME-role signals fire
-	// the unloader U1 to pull a freshly-arrived full (MaybeCreateUnloaderFullIn); the
-	// withLoaderBudget seam dedups against the operator-release trigger by in-flight
-	// count. Core still emits produce DemandSignals on bin movements; the Edge drops
-	// them here harmlessly.
-	router.RegisterSubject(subjectRouter, protocol.SubjectDemandSignal, func(_ *protocol.Envelope, s *protocol.DemandSignal) {
-		log.Printf("edge_handler: demand signal: node=%s payload=%s role=%s reason=%s",
-			s.CoreNodeName, s.PayloadCode, s.Role, s.Reason)
-		if s.Role == protocol.ClaimRoleConsume {
-			eng.MaybeCreateUnloaderFullIn(s.PayloadCode)
-		}
-	})
 	if cgHandler != nil {
 		router.RegisterSubject(subjectRouter, protocol.SubjectCountGroupCommand, func(_ *protocol.Envelope, cmd *protocol.CountGroupCommand) {
 			cgHandler.OnCommand(*cmd)
@@ -539,13 +524,12 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 
 	eng.SetNodeSyncFunc(hb.RequestNodeSync)
 	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
-	log.Printf("kanban: demand-signal handler wired — consume->MaybeCreateUnloaderFullIn (produce-role signals are received and dropped by design; produce supply is Core-decided threshold replenishment or operator staging)")
 	// Says what this build does NOT do, on purpose. Threshold replenishment moved
 	// to Core; this Edge has no receiver for it and creates no loader empties from
 	// one. The window where somebody reads this line is the Edge-first half of a
 	// deploy, diagnosing a loader that is not being fed — and the answer they need
 	// is "look at Core", which the line this replaced actively argued against.
-	log.Printf("kanban: threshold replenishment is Core-owned — this Edge consumes no below-threshold signal and originates no loader empties from one (operator push and changeover paths unaffected)")
+	log.Printf("kanban: threshold replenishment is Core-owned — this Edge consumes no below-threshold signal and originates no loader empties from one (operator push and changeover paths unaffected; the kanban demand-signal route is gone entirely — unloader U1 fires from operator release alone)")
 
 	if err := eng.StartupReconcile(); err != nil {
 		log.Printf("initial startup reconcile: %v", err)
