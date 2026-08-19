@@ -264,7 +264,6 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `order.status_response` | Core -> Edge | `OrderStatusResponse` | The answer, plus `Unlisted`: orders for that station the Edge did **not** name |
 | `order.skipped` | Core -> Edge | `OrderSkipped` | Core declined to act on an order, with an error code |
 | `order.projected` | Core -> Edge | `OrderProjected` | A projected order, ahead of it being real |
-| `demand.signal` | Core -> Edge | `DemandSignal` | Kanban demand trigger |
 | `demand.origin` | Edge -> Core | `DemandOrigin` | The demand episodes the Edge owns |
 | `inventory.bin_uop_delta` | Edge -> Core | `BinUOPDelta` | A bin's UoP moved |
 | `inventory.lineside_bucket_delta` | Edge -> Core | `LinesideBucketDelta` | A lineside bucket's count moved |

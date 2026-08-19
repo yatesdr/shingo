@@ -208,10 +208,13 @@ func (h *CoreHandler) staleEdgeLoop() {
 				log.Printf("core_handler: edge %s marked stale, sending notification", sid)
 				h.sendStaleNotification(sid)
 				// Reap demand_registry rows for the stale station so
-				// bin-move events stop trying to route demand signals
-				// to an edge that isn't listening. The station's
+				// the threshold monitor stops evaluating bindings
+				// for an edge that isn't listening. The station's
 				// entries repopulate from the loader aggregate when
 				// the edge re-registers, same path as cold boot.
+				// (The comment used to say "route demand signals" —
+				// that route was deleted with the kanban
+				// demand-signal path, 2026-08.)
 				if _, err := h.db.SyncDemandRegistry(sid, nil); err != nil {
 					log.Printf("core_handler: reap demand registry for %s: %v", sid, err)
 				}

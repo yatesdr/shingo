@@ -58,16 +58,16 @@ const (
 
 	SubjectNodeStructureChanged = "node.structure_changed"
 
-	// UOP-threshold replenishment (C-push):
-	//   Core observes combined inventory (bins + buckets) per payload,
-	//   compares against the configured threshold from demand_registry,
-	//   and emits LoopBelowThresholdSignal on threshold crossing. Edge
-	//   fires L1 retrieve_empty on receipt, deduped by the reservation
-	//   seam (withLoaderBudget), which counts in-flight per loader.
-	//
-	//   There is no second automatic path any more. The kanban bin-count
-	//   DemandSignal route was removed entirely (2026-08): Core no longer
-	//   emits it and no handler exists on Edge.
+	// UOP-threshold replenishment (C-push): Core observes combined
+	// inventory (bins + buckets) per payload, compares it against the
+	// configured threshold from demand_registry, and — since the
+	// 2026-07-31 cutover — creates the retrieve orders itself.
+	// There is no replenishment subject on the wire: the earlier design
+	// (SubjectLoopBelowThreshold, Core→Edge, Edge sizing the ask) was
+	// deleted 2026-08-02 after a Springfield over-order showed the two
+	// halves counted different things. The kanban bin-count DemandSignal
+	// route followed (2026-08). Edge's only replenishment writers are the
+	// operator request, the operator push, and the unloader auto-push.
 
 	// Count-group light alerts (advanced-zone occupancy → PLC-driven warning light)
 	SubjectCountGroupCommand = "countgroup.command" // Core -> Edge: requested light state for a zone

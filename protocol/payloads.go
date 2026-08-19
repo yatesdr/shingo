@@ -1428,8 +1428,9 @@ type DemandOriginState struct {
 	// falling edge and never recomputed or accumulated.
 	//
 	// NULLABLE, and that is deliberate. The threshold kind's formula divides by
-	// the payload catalog's UOPCapacity, and fireThresholdL1 explicitly guards
-	// `entry.UOPCapacity <= 0` — which means somebody has hit it. Neither 0 nor
+	// the payload catalog's UOPCapacity, and the sizing entry point
+	// (dispatch.BinsToReachThreshold, on Core) explicitly refuses
+	// `perBinCapacity <= 0` — which means somebody has hit it. Neither 0 nor
 	// 1 is honest there: both render as a real ratio and invite a conclusion
 	// from a denominator that does not exist. A demand whose denominator is
 	// UNKNOWABLE is a different state from one whose denominator is 1, and the

@@ -572,8 +572,8 @@ func (e *Engine) wireEventHandlers() {
 	}, EventOrderResumed)
 
 	// ── UOP-threshold replenishment monitor ─────────────────────────────
-	// Combined bin + bucket UOP per payload — fires LoopBelowThresholdSignal
-	// when a monitored (loader, payload) drops below its configured
+	// Combined bin + bucket UOP per payload — the monitor creates retrieve
+	// orders when a monitored (loader, payload) drops below its configured
 	// threshold. Bucket-apply events go through OnBucketApplied from the
 	// messaging layer; bin updates land via this subscription so cell-side
 	// consume ticks and loader-side bin moves both re-evaluate.

@@ -11,9 +11,9 @@
 //   that payload (SystemUOPForPayload = SUM(bins.uop_remaining) + active
 //   lineside buckets) and evaluates it against the configured threshold.
 //   When the total is below the threshold for a (loader, payload) pair,
-//   Core emits a LoopBelowThresholdSignal on subject
-//   demand.loop_below_threshold. Edge responds by firing L1 retrieve_empty
-//   after its in-flight guard.
+//   Core creates the retrieve orders itself (see fireSignalCached —
+//   the 2026-07-31 cutover). Nothing replenishment-related crosses the
+//   wire to Edge any more.
 //
 // Reads the source of truth, holds no private tally. The monitor used to
 // keep its own incremental in-memory UOP total (uopCache), moved by each
@@ -40,11 +40,11 @@
 // reads the truth.
 //
 // There is no longer a second path to dedup against. The legacy bin-count
-// DemandSignal route is retired: Core still emits produce DemandSignals, but
-// Edge routes them to no handler, so the two-signals-race case this used to
-// describe cannot happen. Core still sends no LoopBelowThresholdSignal for a
-// pair with threshold = 0 — that pair is simply not monitored, and its loader
-// is stocked by the operator push instead.
+// DemandSignal route was removed entirely (2026-08): Core no longer emits
+// it and no handler exists on Edge, so the two-signals-race case this used
+// to describe cannot happen. Core still sends no LoopBelowThresholdSignal
+// for a pair with threshold = 0 — that pair is simply not monitored, and its
+// loader is stocked by the operator push instead.
 //
 // WHAT DEDUPS THE ORDERS IS THE EPISODE, and it is worth saying here because
 // this comment used to name the Edge's reservation seam (withLoaderBudget),
@@ -74,7 +74,8 @@ import (
 )
 
 // thresholdDebounceWindow is the per-(loader, payload) suppression
-// window for LoopBelowThresholdSignal. v5 brief: 15 seconds. Faster
+// window for order creation (it guarded the LoopBelowThresholdSignal
+// this monitor used to send). v5 brief: 15 seconds. Faster
 // than v4's 30s for legitimate-crossing response, still long enough to
 // absorb bursts from rapid bin-move / bucket-delta sequences.
 const thresholdDebounceWindow = 15 * time.Second
@@ -82,7 +83,7 @@ const thresholdDebounceWindow = 15 * time.Second
 // warmUpFloor is the floor in the per-binding warm-up cap formula
 // max(2, ceil(threshold / C)). The capacity C is per-claim and isn't
 // trivially queryable from Core, so for Phase 1 we apply only the
-// floor — at least 2 signals on cold start so Springfield's fresh-
+// floor — at least 2 fires on cold start so Springfield's fresh-
 // start scenario lands one bin in supermarket + one in flight while
 // the line consumes the initial bin. A later phase can lift C from
 // claim config and apply the ceiling.
@@ -142,8 +143,10 @@ type thresholdEntry struct {
 }
 
 // ThresholdMonitor tracks in-loop UOP per payload incrementally and
-// emits LoopBelowThresholdSignal when a monitored (loader, payload)
-// drops below its configured threshold.
+// creates retrieve orders when a monitored (loader, payload) drops
+// below its configured threshold. It no longer emits a wire signal —
+// the LoopBelowThresholdSignal it used to send was deleted with the
+// Edge's half of replenishment (2026-08-02); see fireSignalCached.
 type ThresholdMonitor struct {
 	eng *Engine
 
@@ -157,8 +160,8 @@ type ThresholdMonitor struct {
 
 	mu sync.Mutex
 	// debounce is the last-fired timestamp per (station, loader,
-	// payload) key. A SendLoopBelowThresholdSignal is only emitted
-	// when now > debounce[key] + thresholdDebounceWindow.
+	// payload) key. An order batch is only created when
+	// now > debounce[key] + thresholdDebounceWindow.
 	debounce map[string]time.Time
 	// warmUp tracks remaining cold-start fires per binding. Decremented
 	// each time the monitor signals; once at zero, normal debounced
@@ -685,7 +688,7 @@ func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int, r
 		}
 		key := bindingKey(b.stationID, b.coreNodeName, b.payloadCode)
 		// THE FALLING EDGE, AND IT IS MINTED BEFORE THE DEBOUNCE GATE ON
-		// PURPOSE. The episode is the DEMAND; the signal is the ACTION taken
+		// PURPOSE. The episode is the DEMAND; the fire is the ACTION taken
 		// about it. Debounce decides how often it is worth acting — it must not
 		// decide whether the need is recorded, or a demand that fired once and
 		// then stayed suppressed for hours would look like it lasted an
@@ -805,8 +808,9 @@ func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason 
 		CurrentUOP:     total,
 		PerBinCapacity: perBin,
 		// The demand episode the orders belong to. On the old wire path this
-		// travelled with the signal and came back on the Edge's orders; now the
-		// order is created here, so it is simply stamped.
+		// travelled with the LoopBelowThresholdSignal and came back on the
+		// Edge's orders; now the order is created here, so it is simply
+		// stamped.
 		OriginID:    originID,
 		OriginClass: string(protocol.OriginClassAttached),
 	}, cfg)
@@ -831,8 +835,8 @@ func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason 
 // SyncDemandRegistry returns its change list.
 //
 // After rebuilding the cache, this function re-evaluates the affected
-// bindings against the current cached UOP total and fires
-// LoopBelowThresholdSignal immediately for any binding already below
+// bindings against the current cached UOP total and creates orders
+// immediately for any binding already below
 // threshold. Closes the gap where a newly-added or threshold-increased
 // binding for a payload with no incoming bin/bucket deltas (e.g. a
 // zero-stock payload) would stay silent until Core restarted — the

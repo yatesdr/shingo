@@ -105,7 +105,8 @@ func (h *Handler) IsStarted() bool { return h.started.Load() }
 
 // OnCommand handles an incoming CountGroupCommand. Decode is done by
 // the caller (edge_handler.go) so this entry point takes a typed
-// struct — matches the existing SubjectDemandSignal pattern.
+// struct, same decode-at-the-router pattern as the other typed
+// subjects.
 func (h *Handler) OnCommand(cmd protocol.CountGroupCommand) {
 	binding, ok := h.cfg.Bindings[cmd.Group]
 	if !ok {

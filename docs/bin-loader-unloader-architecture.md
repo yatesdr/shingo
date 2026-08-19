@@ -88,7 +88,9 @@ The full list of allowed payloads comes from the claim's `allowed_payload_codes`
 
 ## Kanban Demand Wiring (Core-Side)
 
-Core is the natural home for the demand signal. `BinUpdatedEvent` already fires on bin movements. Core has system-wide bin visibility.
+The bin-count `DemandSignal` route this section used to describe is gone (2026-08; see
+Event Flow below). What remains Core-side is the demand registry and the threshold
+signal — the UOP C-push path.
 
 ### Demand Registry
 
@@ -106,13 +108,24 @@ demand_registry
 
 ### Event Flow
 
-1. Bin moves at a storage node (BinUpdatedEvent, action "moved").
-2. `handleKanbanDemand` checks whether the bin left or arrived at a storage slot:
-   - **Bin left storage** (supply decreased): send `DemandSignal` with role "produce" to matching loader stations.
-   - **Bin arrived at storage** (supply increased): send `DemandSignal` with role "consume" to matching unloader stations.
-3. Storage slot detection: `isStorageSlot` checks if the node's parent has `NodeTypeCode == "LANE"`.
-4. `sendDemandSignals` looks up the demand registry by payload code and role, sends a `DemandSignal` envelope to each matching Edge station.
-5. On the consume side, `MaybeCreateUnloaderFullIn` routes a U1 full-in through the reservation seam. There is no produce counterpart: the legacy produce DemandSignal handler is retired, and a produce loader is stocked by the threshold signal (`HandleLoopBelowThreshold`) or the operator push.
+**The bin-count DemandSignal route was removed entirely (2026-08).** Core no longer
+emits `demand.signal` and no handler exists on Edge. The removal closed the kanban-eval
+TODO with plant evidence: the produce leg emitted ~14 signals/day at Core, 100%
+discarded on arrival by design; the consume leg had zero `demand_registry` rows at
+either plant. Nothing downstream of either emission ever ran.
+
+What remains, per side:
+
+- **Produce (loader L1)**: Core's threshold monitor creates the orders directly (no wire
+  signal — `LoopBelowThresholdSignal`/`HandleLoopBelowThreshold` were deleted 2026-08-02
+  with the Edge's sizing half), plus the operator push. No bin-count trigger exists.
+- **Consume (unloader U1)**: `MaybeCreateUnloaderFullIn` routes a U1 full-in through the
+  reservation seam, fired by operator release and the auto-push sweep — no bin-arrival
+  trigger exists.
+
+`isStorageSlot` (formerly the storage-detection half of the trigger, step 3 below in
+older versions of this doc) survives in `wiring_staging.go` with live callers unrelated
+to demand.
 
 ### Deduplication
 
@@ -149,7 +162,7 @@ The seam runs in NO transaction, deliberately: its correctness is the per-loader
 
 ### Reservation Seam (the never-2N guarantee)
 
-Every loader empty-in (an L1 `retrieve_empty`) and every unloader full-in (a U1 retrieve of a full bin) is created through **one** chokepoint, `engine.withLoaderBudget`. It owns the count→fire decision so a demand signal (Kafka), an operator request (HTTP), and the push sweep can never both pass the in-flight count and both fire. The invariant: **one demand of N → exactly N bins in flight across the loader's delivery cluster, never 2N** — in either direction (a `retrieveEmpty` parameter selects which direction's in-flight orders the budget counts).
+Every loader empty-in (an L1 `retrieve_empty`) and every unloader full-in (a U1 retrieve of a full bin) is created through **one** chokepoint, `engine.withLoaderBudget`. It owns the count→fire decision so the threshold signal (Kafka), an operator request (HTTP), and the push sweep can never both pass the in-flight count and both fire. The invariant: **one demand of N → exactly N bins in flight across the loader's delivery cluster, never 2N** — in either direction (a `retrieveEmpty` parameter selects which direction's in-flight orders the budget counts).
 
 How it works:
 
@@ -164,7 +177,7 @@ How it works:
 
 **Re-entrancy rule (MUST be honoured by every event-bus subscriber):** `withLoaderBudget` calls its `fire` closure *while the loader's mutex is held*, and `CreateRetrieveOrder` dispatches `EmitOrderCreated` **synchronously** on the in-process bus (`eventbus.Emit` runs subscribers inline). **No `EventOrderCreated` (or any order-event) subscriber may synchronously call back into the reservation seam for the same loader** — `sync.Mutex` is non-reentrant and it would self-deadlock. A subscriber acting on a *different* loader is fine. If a subscriber ever needs to re-enter the same loader, split reserve-from-fire (end the lock after the DB insert; enqueue/emit after release). Guarded by `TestWithLoaderBudget_EmitDuringReservation_NoDeadlock`.
 
-Callers routed through the seam — **loader side:** `fireThresholdL1` (the threshold signal), `RequestEmptyBin` and `RequestFullBin` (operator, manual_swap), `maybeStageLoaderEmpty`/`MaybePushLoader` (the operator push), and `CreateRetrieveForAPI` (the HTTP order API). **Unloader side:** `createUnloaderFullInViaSeam`, reached from the consume `DemandSignal` / line-evac (`MaybeCreateUnloaderFullIn`) and the auto-push sweep (`MaybePushUnloader`/`SweepPushUnloaders`).
+Callers routed through the seam — **loader side:** `RequestEmptyBin` and `RequestFullBin` (operator, manual_swap), `maybeStageLoaderEmpty`/`MaybePushLoader` (the operator push), and `CreateRetrieveForAPI` (the HTTP order API). (`fireThresholdL1` is gone — deleted with the Edge's half of loader replenishment, 2026-08-02; the decision it carried is Core's.) **Unloader side:** `createUnloaderFullInViaSeam`, reached from produce-role lineside release (`MaybeCreateUnloaderFullIn`) and the auto-push sweep (`MaybePushUnloader`/`SweepPushUnloaders`).
 
 ---
 
@@ -192,7 +205,7 @@ One implementation, `aggregateLoaderStore` — it projects the Core-owned cache 
 
 Callers branch with `errors.Is(err, ErrLoaderNotFound)`. This closes the prior bug where `resolveCoreLoaderForPayload` returned `nil` for both a miss and a DB error and the caller fell open into payload-first-match on a transient flicker.
 
-**Consumed by both the loader and unloader paths.** `HandleLoopBelowThreshold` (the threshold signal) resolves a `*domain.Loader` through the store and passes it to the seam. There is no second resolver: the legacy DemandSignal path and its bin-count minimum-stock read are both retired. The unloader full-in resolves the same way — `MaybeCreateUnloaderFullIn` / `MaybePushUnloader` resolve a consume `*domain.Loader` through the store and route through the seam. The `manualSwapNode {node, claim}` shim is no longer the unit of resolution; every path now resolves a `*domain.Loader` from the aggregate.
+**Consumed by the unloader paths.** The unloader full-in resolves a `*domain.Loader` through the store and passes it to the seam — `MaybeCreateUnloaderFullIn` / `MaybePushUnloader` resolve a consume `*domain.Loader` and route through the seam. There is no loader-side threshold resolver on the Edge any more (`HandleLoopBelowThreshold` is deleted — Core's threshold monitor creates its orders directly, so it never needs the Edge aggregate), and the legacy DemandSignal resolver and its bin-count minimum-stock read are retired too. The `manualSwapNode {node, claim}` shim is no longer the unit of resolution; every remaining path resolves a `*domain.Loader` from the aggregate.
 
 ---
 
@@ -231,18 +244,12 @@ subject and was never part of `ClaimSync`. An earlier version of this section ke
 Core handler alive on the grounds that "Edge still publishes a plant-claims snapshot";
 that conflated the two subjects, and the handler was unreachable the whole time.)
 
-### DemandSignal (Core to Edge)
+### DemandSignal — REMOVED
 
-Subject: `demand.signal`
-
-```go
-type DemandSignal struct {
-    CoreNodeName string `json:"core_node_name"`
-    PayloadCode  string `json:"payload_code"`
-    Role         string `json:"role"`
-    Reason       string `json:"reason"`
-}
-```
+The `demand.signal` subject, its payload struct, and both halves of its handling
+were deleted in 2026-08 (Core's `sendDemandSignals`/`handleKanbanDemand`, Edge's
+handler registration). There is no wire message and no code path; see Event Flow
+above for what replaced each side.
 
 ### Existing (Unchanged)
 
@@ -266,7 +273,7 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 | `service/loader_service.go` | Loader CRUD service (Create/Update/Delete/SetHome/SetPayload). `rederive` rebuilds `demand_registry` from the aggregate for the union of registry stations + registered edges and nudges the threshold monitor. |
 | `store/loaders_sync.go` | `BuildLoaderInfos` (loader config for the node-list sync), `BuildDemandRegistryFromAggregate`, `DemandRegistryStations`. |
 | `store/demand_registry.go`, `store/demands/demands.go` | `demand_registry` table + `SyncDemandRegistry` (diff/upsert). |
-| `engine/wiring_*.go` | `handleKanbanDemand` on `BinUpdatedEvent`; `isStorageSlot` (parent LANE check); `sendDemandSignals` (demand_registry lookup → `DemandSignal` to the Edge). |
+| `engine/wiring_staging.go` | `isStorageSlot` (parent LANE/NGRP + loader-home check) — moved here from wiring_kanban.go when the kanban demand-signal path was deleted; `resolveNodeStaging` (arrival staging). (`handleKanbanDemand`/`sendDemandSignals` deleted — see DemandSignal REMOVED above.) |
 | `messaging/core_data_service.go` | Node-list response carries `Loaders` (`BuildLoaderInfos`); **seeds `demand_registry` from the aggregate on edge (re)connect**, then `thresholdMonitor.Resync`. (`HandleClaimSync` deleted.) |
 | `store/migrations.go` | `bin_loaders` aggregate schema (v34–v40); `UNIQUE` on `orders.edge_uuid`. |
 | `cmd/migrateloaders` | One-time per-plant migration: derive the aggregate from the legacy edge `style_node_claims` + seed `demand_registry`. |
@@ -279,10 +286,10 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 |------|------|
 | `store/core_loaders.go`, `engine/loader_store.go` | `core_loaders` cache + `aggregateLoaderStore` — an immutable in-memory snapshot of the Core loader config, swapped atomically on each node-list sync. |
 | `engine/core_loaders.go` | `SetCoreLoaders` / `Refresh` — ingest `NodeListResponse.Loaders` into the cache. |
-| `engine/operator_demand_loader.go`, `operator_demand_unloader.go` | `DemandSignal` handling; the `withLoaderBudget` never-2N seam; `funnel_windows` on the loader row (default OFF — i.e. spread). |
+| `engine/operator_demand_loader.go`, `operator_demand_unloader.go` | The operator push / release-triggered paths; the `withLoaderBudget` never-2N seam; `funnel_windows` on the loader row (default OFF — i.e. spread). (DemandSignal handling deleted — see above.) |
 | `domain/loader.go` | The `Loader` type, layouts (`shared_window` / `dedicated_positions`), `SlotCount`, `ReservationTarget`. |
 | `service/station_service.go` | `BuildView` resolves a node's parent loader + windows from the aggregate for the operator HMI. |
-| `messaging/edge_handler.go` | `onDemandSignal` callback; node-list handler feeds `SetCoreLoaders`. |
+| `messaging/edge_handler.go` | Node-list handler feeds `SetCoreLoaders`. (`onDemandSignal` callback deleted with the demand-signal route.) |
 | `config/config.go` | `LoadersMultiWindow` (`loaders_multi_window`, default ON). |
 | `www/static/operator-station/*` | Demand-queue payload board + per-window state. |
 | `engine/*` (retired) | `SendClaimSync` deleted; no `processes.js` loader-mode selector; `transitional_loaders` → `operator_driven_loaders` flag. |
@@ -291,8 +298,8 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 
 | File | Role |
 |------|------|
-| `protocol/payloads.go` | `LoaderInfo` (carried on `NodeListResponse.Loaders`), `DemandSignal`. (`ClaimSync`/`ClaimSyncEntry` deleted — see ClaimSync above.) |
-| `protocol/types.go` | `SubjectDemandSignal`, `SubjectLoopBelowThreshold`. (`SubjectClaimSync` deleted.) |
+| `protocol/payloads.go` | `LoaderInfo` (carried on `NodeListResponse.Loaders`). (`DemandSignal` and `ClaimSync`/`ClaimSyncEntry` both deleted — see their sections above.) |
+| `protocol/types.go` | No loader-replenishment subjects remain. (`SubjectClaimSync`, `SubjectDemandSignal`, and `SubjectLoopBelowThreshold` all deleted — the threshold signal went with the Edge's half of replenishment, 2026-08-02.) |
 
 ---
 
@@ -346,8 +353,9 @@ legacy Edge-only `operator_driven_loaders` table — renamed from `transitional_
 non-operator-driven on a DB error, but the Core replenishment field is authoritative.)
 
 **What it changes.** For an operator-driven loader the market-accounting automatic L1
-paths are suppressed — the UOP-threshold C-push (`HandleLoopBelowThreshold`)
-short-circuits in the reservation seam. Empties instead flow via
+path is suppressed — the UOP-threshold C-push is Core-owned and checks the
+operator-driven flag on the Core aggregate, so it never orders for an
+operator-driven loader. Empties instead flow via
 `MaybePushLoader`, the loader-side mirror of `MaybePushUnloader`: when a window is free
 it opportunistically stages one empty. The staged empty is **payload-agnostic** — a
 generic carrier with no payload tag, since an opportunistic stage has no
@@ -365,10 +373,12 @@ active process sharing the loader — so an operator at a loader feeding two cel
 both cells' payloads. An operator-driven loader defaults to PRELOAD; PRELOAD shows a
 distinct violet header (not amber/orange, which mean release/changeover).
 
-**Routing.** The automatic L1 paths resolve the loader by the demand signal's owning
+**Routing.** ~~The automatic L1 paths resolve the loader by the demand signal's owning
 loader (the Edge maps the signal's `CoreNodeName` to its `loader_key`), not by first
 payload match, so a payload loaded at two separate loaders routes to the one the signal
-names.
+names.~~ *(The signal this described is gone — 2026-08. The threshold signal names its
+loader directly from the threshold binding; the operator push and manual request paths
+resolve from the node the operator is at.)*
 
 **Supermarket browse/manipulate panel** (PRELOAD-mode reach into the loader's
 `InboundSource` / `OutboundDestination` markets, with a direction-aware server-side

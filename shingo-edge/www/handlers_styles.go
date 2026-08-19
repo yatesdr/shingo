@@ -379,8 +379,8 @@ func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "node-claim-deleted"}})
 	// Claim removed → push the refreshed (shorter) claim set to Core so
 	// demand_registry drops the corresponding row. Without this push the
-	// registry drifts and Core keeps sending demand signals to a node
-	// whose claim is gone.
+	// registry drifts and Core keeps threshold bindings for a node whose
+	// claim is gone.
 	h.requestSpecChangePublish()
 	writeJSON(w, map[string]string{"status": "ok"})
 }

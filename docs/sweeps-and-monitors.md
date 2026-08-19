@@ -85,11 +85,9 @@ none of them will notice a problem on their own if the path is never taken.
 
 | Mechanism | Where | Started by | Cadence |
 |---|---|---|---|
-| `HandleLoopBelowThreshold` | `engine/operator_demand_loader.go` | Core signal | per signal |
-| `parkThresholdSignalIfCold` / `warmLoaderCacheAndReplay` | `engine/operator_demand_loader.go` | signal / node sync | while cache cold, then once |
 | `SweepPushLoaders` / `MaybePushLoader` | `engine/operator_demand_loader.go` | register ack / window free | one-shot / per event |
 | `SweepPushUnloaders` / `MaybePushUnloader` | `engine/operator_demand_unloader.go` | register ack / window free | one-shot / per event |
-| `MaybeCreateUnloaderFullIn` | `engine/operator_demand_unloader.go` | consume signal, release | per event |
+| `MaybeCreateUnloaderFullIn` | `engine/operator_demand_unloader.go` | produce-role lineside release | per event |
 | `recordL1Burst` | `engine/loader_burst.go` | every in-bin order | 60s window, >8 warns |
 | stranded-carrier monitor | `engine/uop_stranded_monitor.go` | Start | 60s |
 | demand reconciler | `engine/demand_reconciler.go` | Start | 60s |

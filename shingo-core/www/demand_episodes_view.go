@@ -366,8 +366,9 @@ type EpisodeRow struct {
 	OrdersText string
 
 	// Expected is expected_orders, which is NULLABLE BY DESIGN: the threshold
-	// formula divides by the catalog's UOPCapacity and fireThresholdL1 explicitly
-	// guards capacity <= 0, so "unknowable" happens. NOT 0 and NOT 1 — both are
+	// formula divides by the catalog's UOPCapacity and the sizing entry point
+	// (dispatch.BinsToReachThreshold) explicitly refuses capacity <= 0, so
+	// "unknowable" happens. NOT 0 and NOT 1 — both are
 	// lies that render as a real ratio.
 	Expected Cell
 

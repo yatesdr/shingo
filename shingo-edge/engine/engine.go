@@ -139,8 +139,8 @@ type Engine struct {
 	strandedAlarms sync.Map
 
 	// loaderResv serializes the count→fire reservation per loader so concurrent
-	// writers (a Kafka demand signal vs an HTTP RequestEmptyBin, or the push
-	// sweep) can't both read the same in-flight count and both fire empties —
+	// writers (an HTTP RequestEmptyBin vs the push sweep) can't both read the
+	// same in-flight count and both fire empties —
 	// the never-2N invariant. map[loaderID]*sync.Mutex, keyed from day one (no
 	// global lock). NO transaction: see withLoaderBudget and
 	// FINAL-ADJUDICATION Q1 (monotonicity + non-tx-pure CreateRetrieveOrder) —

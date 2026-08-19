@@ -479,9 +479,10 @@ func (db *DB) migrate() error {
 	// v24 (Hopkinsville 2026-05-14): per-claim opt-in for unloader auto-push.
 	// When true on a consume manual_swap claim, Edge fires a U1 retrieve_full
 	// whenever the unloader window is free and a full bin of an allowed
-	// payload exists in claim.InboundSource — no kanban demand signal
-	// required. Default false preserves the existing kanban-driven model.
-	// See engine/operator_demand.go MaybePushUnloader for the trigger logic.
+	// payload exists in claim.InboundSource — no external trigger
+	// required. Default false preserves the event-driven model. (The
+	// kanban demand signal this comment used to contrast against was
+	// deleted 2026-08.) See engine/operator_demand.go MaybePushUnloader.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_push INTEGER NOT NULL DEFAULT 0")
 
 	// v25 (2026-05-16, UOP-threshold replenishment Phase 1): source

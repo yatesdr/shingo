@@ -27,9 +27,9 @@ type ThresholdNotifier interface {
 //
 // The combination is storable — the CHECK constraint on replenishment is
 // role-blind — and it produces a loader that does nothing at all. Core derives
-// its thresholds into demand_registry and fires LoopBelowThresholdSignal at it;
-// the Edge drops every one of those, because all three loader-resolution tiers
-// on the threshold path ask for the produce role. Meanwhile the drain that IS a
+// its thresholds into demand_registry and would fire retrieve orders at it;
+// all three loader-resolution tiers on the threshold path ask for the produce
+// role, so a consume loader is never resolved. Meanwhile the drain that IS a
 // consume loader's job is skipped for exactly this replenishment value. So the
 // unloader neither drains nor replenishes, and the existing misconfiguration
 // warning stays silent, because that one only catches threshold mode with no
