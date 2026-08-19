@@ -537,12 +537,21 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 	// Empty (and omitted on the wire) until Core authors loaders — additive.
 	loaderInfos, lerr := s.db.BuildLoaderInfos()
 	if lerr != nil {
-		// Non-fatal: send the node list without loaders rather than nothing.
-		log.Printf("core_handler: build loader infos for %s: %v", env.Src.Station, lerr)
+		// Sending the node list WITHOUT loaders is not "degraded but safe" — the Edge
+		// cannot distinguish an absent Loaders field from "no loaders configured", and
+		// ReplaceCoreLoaders(nil) truncates all five cache tables. Send nothing; the
+		// Edge keeps its last-known-good cache and re-requests on the next tick.
+		log.Printf("core_handler: build loader infos for %s: %v — node list NOT sent", env.Src.Station, lerr)
+		return
 	}
 	// Payload→dunnage mapping: one query replaces the N+1 per-node
 	// GetEffectiveBinTypes calls. Edge uses this to derive picker options
 	// from the node's allowed payloads (claim.AllowedPayloadCodes).
+	//
+	// Unlike the loader branch above, a read failure here deliberately does
+	// NOT return: this slice is memory-only on the Edge (re-derived from the
+	// next node list), while the loader slice backs a durable cache that a
+	// wrong read destroys. Do not "unify" the two branches.
 	pbtPairs, pbtErr := s.db.ListPayloadBinTypeMappings()
 	if pbtErr != nil {
 		log.Printf("core_handler: list payload bin types for %s: %v", env.Src.Station, pbtErr)

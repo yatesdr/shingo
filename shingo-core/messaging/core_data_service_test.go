@@ -172,6 +172,42 @@ func TestNodeListResponse_GlobalPath_IncludesNodeGroups(t *testing.T) {
 	}
 }
 
+// TestNodeListResponse_LoaderBuildFailure_SendsNothing verifies that a
+// BuildLoaderInfos failure suppresses the node list response entirely.
+//
+// The Loaders field is omitempty, so a loaders-less NodeListResponse is
+// indistinguishable on the Edge from "no loaders configured" — the Edge would
+// call ReplaceCoreLoaders(nil) and truncate all five loader cache tables in a
+// committed transaction. The handler must send NOTHING and let the Edge keep
+// its last-known-good cache until the next tick.
+func TestNodeListResponse_LoaderBuildFailure_SendsNothing(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	// Break the loader projection deliberately: hide the table it reads.
+	if _, err := db.Exec(`ALTER TABLE bin_loaders RENAME TO bin_loaders_hidden`); err != nil {
+		t.Fatalf("hide bin_loaders: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := db.Exec(`ALTER TABLE bin_loaders_hidden RENAME TO bin_loaders`); err != nil {
+			t.Fatalf("restore bin_loaders: %v", err)
+		}
+	})
+
+	resp := &captureResponder{}
+	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+
+	env := &protocol.Envelope{
+		Src: protocol.Address{Role: protocol.RoleEdge, Station: "edge.unknown"},
+		Dst: protocol.Address{Role: protocol.RoleCore, Station: "core"},
+	}
+	svc.HandleNodeListRequest(env)
+
+	if len(resp.replies) != 0 {
+		t.Fatalf("expected 0 replies on loader build failure, got %d", len(resp.replies))
+	}
+}
+
 func nodeNames(nodes []protocol.NodeInfo) []string {
 	names := make([]string, len(nodes))
 	for i, n := range nodes {
