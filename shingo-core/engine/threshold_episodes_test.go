@@ -32,6 +32,8 @@ func episodeBinding(t *testing.T, eng *Engine, payload string, capacity int) thr
 // per ORDER — which is exactly how 2026-07-21 rendered as hundreds of
 // unrelated firings instead of one demand that cost 484 orders.
 func TestThresholdEpisode_OneEpisodeAcrossManyEvaluations(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
@@ -81,6 +83,8 @@ func TestThresholdEpisode_OneEpisodeAcrossManyEvaluations(t *testing.T) {
 // was the absence of firing, so there was no way to say a demand had ENDED and
 // therefore no way to say what one had cost.
 func TestThresholdEpisode_RisingEdgeCloses(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
@@ -123,6 +127,8 @@ func TestThresholdEpisode_RisingEdgeCloses(t *testing.T) {
 // when demands are open — so this is the highest-frequency path, not an edge
 // case.
 func TestThresholdEpisode_SurvivesRestart(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
@@ -171,6 +177,8 @@ func TestThresholdEpisode_SurvivesRestart(t *testing.T) {
 // Both render as a real ratio somebody would draw a conclusion from. NULL plus
 // a recorded reason is a different state, and the surface shows a dash for it.
 func TestThresholdEpisode_UnknowableDenominatorIsNull(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
@@ -206,6 +214,8 @@ func TestThresholdEpisode_UnknowableDenominatorIsNull(t *testing.T) {
 // would claim the line got its material, and not threshold_removed, which would
 // claim the binding went away. Three different facts about the plant.
 func TestThresholdEpisode_ThresholdChangeClosesAndReopens(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
@@ -247,6 +257,8 @@ func TestThresholdEpisode_ThresholdChangeClosesAndReopens(t *testing.T) {
 // implementation misses: this payload keeps a binding at another station, so
 // "the rebuild came back empty" is false and only a key comparison catches it.
 func TestThresholdEpisode_RemovedBindingClosesEvenWhenPayloadSurvives(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)
@@ -294,6 +306,8 @@ func TestThresholdEpisode_RemovedBindingClosesEvenWhenPayloadSurvives(t *testing
 // The negative-total case, with the clamp. A -443 reading must not produce
 // ceil(543/18) = 31 expected orders computed from garbage.
 func TestThresholdEpisode_NegativeTotalClampsTheDenominator(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	m := NewThresholdMonitor(eng)

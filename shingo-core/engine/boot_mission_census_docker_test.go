@@ -63,6 +63,8 @@ func bootEngine(t *testing.T, db *store.DB, flt fleet.Backend, lg *capturingLog)
 // A mission the backend does hold is loaded quietly — the census must be silent
 // at zero, or nobody will read it when it is not.
 func TestBoot_MissionTheFleetHoldsLoadsQuietly(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	sim := simulator.New()
 
@@ -97,6 +99,8 @@ func TestBoot_MissionTheFleetHoldsLoadsQuietly(t *testing.T) {
 // touching the order — nothing terminates on a mission Core cannot see (§R.98,
 // refused 4/4).
 func TestBoot_MissionTheFleetLostScreams(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	sim := simulator.New() // the empty fleet a restarted Core wakes up beside
 

@@ -41,6 +41,8 @@ import (
 // claim-fail→requeue path is now covered directly at the scanner in
 // fulfillment.TestScannerSimpleClaimFailRequeues.
 func TestConcurrent_ClaimSerialized_NoDoubleClaim(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RACE")

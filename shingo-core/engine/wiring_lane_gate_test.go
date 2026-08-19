@@ -65,6 +65,8 @@ func laneWithSlots(t *testing.T, db *store.DB, name string, slotCount int) (int6
 // change its event set, and this fails at the final assertion while every other
 // test in the repo stays green.
 func TestLaneGateWiring_HeldCompoundLegResumesOnLaneClearingEvent(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 	lane, slots := laneWithSlots(t, db, "WIRED-LANE", 3)

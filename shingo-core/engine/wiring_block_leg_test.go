@@ -36,6 +36,8 @@ func seedLegOrder(t *testing.T, db *store.DB, uuid string) int64 {
 }
 
 func TestRecordBlockLeg_WritesTimingToMissionEvents(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	testdb.SetupStandardData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -109,6 +111,8 @@ func TestRecordBlockLeg_WritesTimingToMissionEvents(t *testing.T) {
 // "instant". A zero that reads as a real measurement would put a fake
 // zero-second leg into every percentile computed over these rows.
 func TestRecordBlockLeg_MissingTimesLeaveDurationZero(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	testdb.SetupStandardData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -142,6 +146,8 @@ func TestRecordBlockLeg_MissingTimesLeaveDurationZero(t *testing.T) {
 
 // A terminate that precedes its start is vendor garbage, not a negative leg.
 func TestRecordBlockLeg_InvertedTimesDoNotProduceNegativeDuration(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	testdb.SetupStandardData(t, db)
 	eng := newTestEngine(t, db, simulator.New())

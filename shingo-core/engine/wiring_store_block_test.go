@@ -22,6 +22,8 @@ import (
 // slot. handleStoreBlockCompleted now lands the stored bin at its slot the
 // moment the store block finishes.
 func TestHandleStoreBlockCompleted_RecordsIntermediateStore(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -143,6 +145,8 @@ func TestHandleStoreBlockCompleted_RecordsIntermediateStore(t *testing.T) {
 // MUTATION (fires): resolve by matching a junction row whose dest_node equals
 // the location, and the bin is never recorded at staging.
 func TestHandleStoreBlockCompleted_StagingDropWithNoJunctionRowForIt(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -190,6 +194,8 @@ func TestHandleStoreBlockCompleted_StagingDropWithNoJunctionRowForIt(t *testing.
 // Measured: order 1 on the same run — bin 5, claimed by order 1, zero junction
 // rows, staged holding an AMR for the whole soak.
 func TestHandleStoreBlockCompleted_SingleBinOrderHasNoJunctionAtAll(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -231,6 +237,8 @@ func TestHandleStoreBlockCompleted_SingleBinOrderHasNoJunctionAtAll(t *testing.T
 // dropoff is NOT recorded early here — it stays on the whole-order FINISHED
 // path (handleOrderDelivered), which also ships the Edge OrderDelivered notice.
 func TestHandleStoreBlockCompleted_SkipsFinalDelivery(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -289,6 +297,8 @@ func TestHandleStoreBlockCompleted_SkipsFinalDelivery(t *testing.T) {
 // setting it down mid-plan. A store is not a handoff: the order is still
 // responsible for that carrier and is coming back for it.
 func TestBinRoundTrip_IntermediateStoreThenFinalDelivery(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	eng := newTestEngine(t, db, simulator.New())

@@ -160,6 +160,8 @@ func mustGetOrigin(t *testing.T, db *store.DB, originID string) *store.DemandOri
 // only runs for bindings that still exist, engagePayloads only rebuilds
 // payloads somebody told it about, and nothing else looks.
 func TestDemandReconciler_ClosesWhatNoNotificationPathEverSees(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	m := eng.thresholdMonitor
@@ -224,6 +226,8 @@ func TestDemandReconciler_ClosesWhatNoNotificationPathEverSees(t *testing.T) {
 // question that already has an answer, and the two would race — the sweep
 // closing what the next delta re-opens. The sweep must not care.
 func TestDemandReconciler_LeavesAnEpisodeWhosePreconditionHolds(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	m := eng.thresholdMonitor
@@ -262,6 +266,8 @@ func TestDemandReconciler_LeavesAnEpisodeWhosePreconditionHolds(t *testing.T) {
 // emergency: a new Core against an older Edge gets every order back with no
 // origin on it, so EVERY episode has zero children.
 func TestDemandReconciler_ChildlessEpisodeClosesUnattributed(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	m := eng.thresholdMonitor
@@ -325,6 +331,8 @@ func mustListOpen(t *testing.T, db *store.DB) []store.DemandOrigin {
 // decorated, never closed: "this episode's Edge has been unreachable since X"
 // is an honest unknown, and an unknown is not a false alarm.
 func TestDemandReconciler_ChildlessOnAnUnreachableEdgeIsNotAFinding(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -384,6 +392,8 @@ func TestDemandReconciler_ChildlessOnAnUnreachableEdgeIsNotAFinding(t *testing.T
 // Both halves are broken here WITHOUT breaking any code: the tree is exactly
 // what production leaves behind when the stale loop does not run.
 func TestDemandReconciler_ReachabilityIsAPositiveAssertionNotAnAbsentFlag(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -463,6 +473,8 @@ func TestDemandReconciler_ReachabilityIsAPositiveAssertionNotAnAbsentFlag(t *tes
 // already hold" is not the standard, and a rule nothing asserts is one refactor
 // from being gone.
 func TestDemandReconciler_ChildlessCellCloseIsProvisional(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	registerActiveEdge(t, db, "PLANT.RIDER")
@@ -505,6 +517,8 @@ func TestDemandReconciler_ChildlessCellCloseIsProvisional(t *testing.T) {
 // This is the same reasoning SupersedeOpenEpisode is built on, and it is why
 // the aging close is a placeholder by construction rather than by intent.
 func TestDemandReconciler_InferredCloseStepsAsideForTheRealOne(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	registerActiveEdge(t, db, "PLANT.LINE1")
@@ -554,6 +568,8 @@ func TestDemandReconciler_InferredCloseStepsAsideForTheRealOne(t *testing.T) {
 // a broken one — and there is no deferred attach, so the finding set otherwise
 // only grows.
 func TestDemandReconciler_AgesOutOldOrphansOnly(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -659,6 +675,8 @@ func orderClassCounts(t *testing.T, db *store.DB) map[string]int {
 // live Edge, still closes a genuinely stranded threshold episode. Without it
 // this test would also pass if the sweep had simply stopped working.
 func TestDemandReconciler_LeavesMaintainEpisodesToTheKeeper(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	registerActiveEdge(t, db, "test-core")
