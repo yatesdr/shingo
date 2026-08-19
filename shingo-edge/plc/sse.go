@@ -24,6 +24,15 @@ import (
 // writes it.
 var sseReconcileInterval = 60 * time.Second
 
+// sseStallTimeout is how long an SSE stream may deliver nothing (no events,
+// no keepalives) before it is declared dead and reconnected. WarLink sends a
+// keepalive comment every 30s, so a healthy stream resets this constantly; a
+// genuine 120s of silence means the TCP path is dead — typically a silent
+// WiFi drop on the edge Pi — and blocking on it forever is the alternative.
+//
+// A var for the same reason as sseReconcileInterval.
+var sseStallTimeout = 120 * time.Second
+
 // --- SSE event payload types (from WarLink) ---
 
 type sseValueChange struct {
@@ -153,13 +162,23 @@ func (m *Manager) sseConnect() error {
 	// stream that is healthy and delivering value-change events, while the
 	// per-PLC connection statuses it carries are stale. Springfield's stream
 	// was never stalled — it was talking the whole weekend.
-	const stallTimeout = 120 * time.Second
+	//
+	// stalled is set BEFORE cancel() so the read loop below can tell this
+	// cancellation apart from a shutdown. That distinction is load-bearing:
+	// a context error normally means "we are stopping" (return nil, exit
+	// cleanly), but a stall means "reconnect". Returning nil here is what
+	// wedged Springfield on 2026-08-19 — the stall fired, the loop treated
+	// its own recovery as a shutdown, and the edge spent five hours
+	// "connected" to a stream that no longer existed.
+	stallTimeout := sseStallTimeout
+	stalled := make(chan struct{})
 	stallTimer := time.NewTimer(stallTimeout)
 	defer stallTimer.Stop()
 	go func() {
 		select {
 		case <-stallTimer.C:
 			log.Printf("WarLink SSE stall detected (no data for %s), reconnecting", stallTimeout)
+			close(stalled)
 			cancel()
 		case <-ctx.Done():
 		}
@@ -190,18 +209,31 @@ func (m *Manager) sseConnect() error {
 
 	reader := NewSSEReader(stream)
 	for {
-		ev, err := reader.Next()
+		ev, isEvent, err := reader.Next()
 		if err != nil {
+			// A stall cancels the context from our own timer; every other
+			// cancellation (StopWarLinkPoller, engine shutdown) is a stop.
+			// See the stall-detection block above for why conflating them
+			// kills the loop.
+			select {
+			case <-stalled:
+				return fmt.Errorf("SSE stall: no data for %s", stallTimeout)
+			default:
+			}
 			if err == io.EOF || ctx.Err() != nil {
 				if ctx.Err() != nil {
-					return nil // clean shutdown or stall timeout
+					return nil // clean shutdown
 				}
 				return fmt.Errorf("SSE stream EOF")
 			}
 			return fmt.Errorf("SSE read: %w", err)
 		}
 
-		// Reset stall timer on every event (including comments/keepalives)
+		// Both events and keepalive comments are stream activity — reset the
+		// stall timer on either. (Before the reader reported comments, a
+		// keepalive-only stream would still trip the stall timer and churn
+		// reconnects every interval; the health ticker's real events masked
+		// this in production.)
 		if !stallTimer.Stop() {
 			select {
 			case <-stallTimer.C:
@@ -209,6 +241,9 @@ func (m *Manager) sseConnect() error {
 			}
 		}
 		stallTimer.Reset(stallTimeout)
+		if !isEvent {
+			continue
+		}
 
 		switch ev.Event {
 		case "value-change":

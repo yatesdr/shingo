@@ -468,3 +468,105 @@ func TestSSE_ValueChangeCreatesUnknownPLC(t *testing.T) {
 	m.StopWarLinkPoller()
 	m.Stop()
 }
+
+// TestSSE_StallReconnects pins the Springfield 2026-08-19 failure.
+//
+// The edge Pi's WiFi path to the core died silently overnight. TCP stayed
+// half-open, so the SSE reader blocked forever and no keepalive arrived. The
+// stall timer correctly detected 120s of silence and cancelled the stream
+// context — and the read loop then treated that cancellation as a clean
+// shutdown and returned nil, permanently exiting sseLoop while
+// warlinkConnected stayed true. The edge spent five hours "online" with no
+// event stream and no reconcile loop, until a human re-saved the WarLink
+// config in the HMI (the only path that restarts the poller).
+//
+// The guarantee under test: a silent stream triggers a RECONNECT (a second
+// connection attempt), never a permanent loop exit.
+func TestSSE_StallReconnects(t *testing.T) {
+	t.Parallel()
+
+	orig := sseStallTimeout
+	sseStallTimeout = 150 * time.Millisecond
+	defer func() { sseStallTimeout = orig }()
+
+	var mu sync.Mutex
+	connectCount := 0
+
+	ts := newTestServer(
+		`[]`,
+		func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			connectCount++
+			n := connectCount
+			mu.Unlock()
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher := w.(http.Flusher)
+
+			// Initial comment so the client's bootstrap completes and the
+			// connection is considered established.
+			fmt.Fprintf(w, ": connected\n\n")
+			flusher.Flush()
+
+			if n == 1 {
+				// First connection: send nothing further and never close —
+				// a half-open TCP stream. Locally the server handler blocks
+				// until the client tears the connection down; the ONLY thing
+				// that can end it is the client cancelling its context, which
+				// is exactly the stall path under test.
+				<-r.Context().Done()
+				return
+			}
+			// Reconnected: keepalives keep the second stream alive.
+			ticker := time.NewTicker(50 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-r.Context().Done():
+					return
+				case <-ticker.C:
+					fmt.Fprintf(w, ": keepalive\n\n")
+					flusher.Flush()
+				}
+			}
+		},
+	)
+	defer ts.Close()
+
+	emitter := &mockEmitter{}
+	cfg := config.Defaults()
+	setTestURL(cfg, ts.URL)
+	cfg.WarLink.Mode = "sse"
+
+	m := NewManager(nil, cfg, emitter, nil)
+
+	m.StartWarLinkPoller()
+	defer m.StopWarLinkPoller()
+	defer m.Stop()
+
+	emitter.waitFor(t, "warlink_connected", 2*time.Second)
+
+	// The stall must produce a second connection, not a dead loop.
+	testutil.EventuallyWithInterval(t, 50*time.Millisecond, 5*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return connectCount >= 2
+	})
+
+	// After the reconnect the manager must still consider itself connected
+	// AND still be running — i.e. the loop survived its own recovery.
+	if !m.IsWarLinkConnected() {
+		t.Fatal("after stall-reconnect, warlinkConnected is false — the loop died " +
+			"instead of reconnecting")
+	}
+	// A third connection would prove the loop is cycling on stalls; its
+	// absence after a generous window proves the second stream (with
+	// keepalives) is being kept, not churned.
+	time.Sleep(600 * time.Millisecond)
+	mu.Lock()
+	n := connectCount
+	mu.Unlock()
+	if n > 2 {
+		t.Fatalf("connectCount = %d after stable keepalives; loop is churn-reconnecting", n)
+	}
+}
