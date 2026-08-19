@@ -27,6 +27,11 @@ const heartbeatRetentionDays = 90
 // same 90-day window; no reason for the two to differ.
 const downtimeRetentionDays = 90
 
+// binUOPDeltaRetentionDays is the raw bin_uop_delta retention window (D6).
+// Same house number as the other two; the permanent records that outlive it
+// are bin_uop_exception (v93) and bin_uop_delta_daily (v94).
+const binUOPDeltaRetentionDays = 90
+
 type coreDataResponder interface {
 	dbg(format string, args ...any)
 	replyData(env *protocol.Envelope, subject string, payload any)
@@ -163,6 +168,17 @@ func (s *CoreDataService) StartHeartbeatProjection() {
 			} else if rolled > 0 {
 				log.Printf("core_handler: rolled up %d bin_uop_delta_daily row(s) for %s",
 					rolled, now.AddDate(0, 0, -1).UTC().Format("2006-01-02"))
+			}
+			// The 90-day retention on the raw delta stream (D6), last of the
+			// family and ordered after the roll-up on purpose: the permanent
+			// records (v93 exceptions, v94 roll-up) exist by the time any
+			// binary carrying this purge runs, so this deletes nothing the
+			// owner named durable. Delta rows only — bump ops and the rare
+			// non-delta observations stay forever.
+			if purged, err := s.db.PurgeOldBinUOPDelta(binUOPDeltaRetentionDays, now); err != nil {
+				log.Printf("core_handler: purge old bin_uop_audit delta rows: %v", err)
+			} else if purged > 0 {
+				log.Printf("core_handler: purged %d expired bin_uop_delta audit row(s)", purged)
 			}
 		}
 	}()

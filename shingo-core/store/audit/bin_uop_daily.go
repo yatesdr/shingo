@@ -80,3 +80,35 @@ func pgBumpOpsArraySQL() string {
 	}
 	return `'{` + strings.Join(parts, ",") + `}'`
 }
+
+// PurgeOldBinUOPDelta deletes bin_uop_audit's bin_uop_delta rows older than
+// the retention window — the P4 half of the D6 trade (owner decision: raw
+// deltas live 90 days; the exceptions ledger v93 and the daily roll-up v94
+// are the permanent record and are NEVER deleted).
+//
+// DELTA ROWS ONLY. The 4.3% of non-delta ops (bump ops, cycle counts,
+// operator overrides, the drop observations) are never dropped: bump ops are
+// what the epoch derivation counts, and the rest are rare, cheap, and
+// load-bearing for forensics.
+//
+// DELETE, not partitions: the volume (~7,000 rows/day) doesn't justify
+// partitioning, and the hottest index is per-bin, which would go
+// cross-partition. 90 days matches heartbeatRetentionDays /
+// downtimeRetentionDays (the house number); the deepest code consumer of this
+// stream is 30 days (binsOccupancyDaily), so the window is 3× the deepest
+// read.
+//
+// ORDERING INVARIANT: this must not run until the v93 and v94 backfills have
+// (they run in their migrations, so any binary that carries this purge also
+// carries them — the invariant is enforced by shipping order, not by a guard
+// here). Purging raw deltas destroys the only source the backfills derive
+// from; after them, it destroys nothing the owner named durable.
+func PurgeOldBinUOPDelta(db *sql.DB, keepDays int, now time.Time) (int64, error) {
+	cutoff := now.UTC().AddDate(0, 0, -keepDays)
+	res, err := db.Exec(`DELETE FROM bin_uop_audit
+		WHERE op = 'bin_uop_delta' AND applied_at < $1`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("purge bin_uop_audit delta rows: %w", err)
+	}
+	return res.RowsAffected()
+}
