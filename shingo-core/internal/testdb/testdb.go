@@ -790,15 +790,18 @@ func SetupStandardData(t *testing.T, db *store.DB) *StandardData {
 // fully-loaded bin from the database.
 func CreateBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int64, label string) *bins.Bin {
 	t.Helper()
-	// Ensure DEFAULT bin type exists (idempotent — safe to call multiple times)
-	_, err := db.GetBinTypeByCode("DEFAULT")
-	if err != nil {
-		bt := &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
-		if err := db.CreateBinType(bt); err != nil {
-			t.Fatalf("create default bin type: %v", err)
-		}
+	// Ensure DEFAULT bin type exists. One statement, not check-then-insert: two
+	// concurrent calls against the same database (goroutine-spawning tests, and
+	// any future per-file DB sharing) both miss the SELECT, both INSERT, and one
+	// dies on bin_types_code_key — a flake that looks like a fixture bug.
+	if _, err := db.Exec(`INSERT INTO bin_types (code, description) VALUES ('DEFAULT', 'Default test bin type')
+		ON CONFLICT (code) DO NOTHING`); err != nil {
+		t.Fatalf("ensure default bin type: %v", err)
 	}
-	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	bt, err := db.GetBinTypeByCode("DEFAULT")
+	if err != nil {
+		t.Fatalf("read default bin type: %v", err)
+	}
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: label, NodeID: &nodeID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin %s: %v", label, err)
