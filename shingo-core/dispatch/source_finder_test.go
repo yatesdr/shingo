@@ -358,6 +358,8 @@ func (r *fakeResolver) Resolve(_ *nodes.Node, _ binresolver.ResolveMode, _ strin
 // ── A1: dedicated-loader pool (Drain), no plant-wide fall-through ─────────────
 
 func TestReplayUsesLoaderPool(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	posID := int64(51)
 	db.addNode(&nodes.Node{ID: posID, Name: "L1"})
@@ -401,6 +403,8 @@ func TestReplayUsesLoaderPool(t *testing.T) {
 // ── A2: group/lane-scoped empty, no plant-wide fall-through ───────────────────
 
 func TestReplayKeepsGroupScope(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	groupID := int64(100)
 	db.addNode(&nodes.Node{ID: groupID, Name: "GROUP-A", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
@@ -443,6 +447,8 @@ func TestReplayKeepsGroupScope(t *testing.T) {
 // ── A4: NGRP capacity error queues SCOPED (was the drift to plant-wide FIFO) ──
 
 func TestReplayNGRPCapacityStaysScoped(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	db.addNode(&nodes.Node{ID: 100, Name: "NGRP-A", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
 	db.addNode(&nodes.Node{ID: 99, Name: "DEST"})
@@ -481,6 +487,8 @@ func TestReplayNGRPCapacityStaysScoped(t *testing.T) {
 
 // NGRP structural error is terminal (both callers map it to their fail path).
 func TestFindSourceNGRPStructuralTerminal(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	db.addNode(&nodes.Node{ID: 100, Name: "NGRP-A", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
 	db.addNode(&nodes.Node{ID: 99, Name: "DEST"})
@@ -500,6 +508,8 @@ func TestFindSourceNGRPStructuralTerminal(t *testing.T) {
 // ── A6: payload-less move sources node-locally, never structurally failed ─────
 
 func TestMoveReplayNotStructurallyFailed(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	srcID := int64(600)
 	db.addNode(&nodes.Node{ID: srcID, Name: "MOVE-SRC"})
@@ -544,6 +554,8 @@ func TestMoveReplayNotStructurallyFailed(t *testing.T) {
 // (moveShaped := order.OrderType == OrderTypeMove) the second subcase would have
 // stayed node-local and this test would fail — that is the red-before-green.
 func TestFindSourceMoveShapeKeyedOnSourceIntent(t *testing.T) {
+	t.Parallel()
+
 	// SourceIntentLocal → move-shaped: no bin at the source queues scoped and
 	// never touches the plant-wide FIFO scan.
 	t.Run("local_intent_sources_node_local", func(t *testing.T) {
@@ -590,6 +602,8 @@ func TestFindSourceMoveShapeKeyedOnSourceIntent(t *testing.T) {
 
 // Empty-intent buried result routes to reshuffle (planRetrieveEmpty's :421 path).
 func TestFindSourceEmptyBuriedReshuffles(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	db.addNode(&nodes.Node{ID: 99, Name: "DEST"})
 	laneID := int64(400)
@@ -614,6 +628,8 @@ func TestFindSourceEmptyBuriedReshuffles(t *testing.T) {
 // ── the both-paths-through-one-finder contract, table form ────────────────────
 
 func TestIntakeAndReplayAgree(t *testing.T) {
+	t.Parallel()
+
 	// Both intake planning and the scanner replay call THIS finder, so the table
 	// below is the shared contract they both honor — there is no second
 	// implementation to drift from.
@@ -692,6 +708,8 @@ func TestIntakeAndReplayAgree(t *testing.T) {
 // that has no carrier of the wanted type must WAIT rather than substitute.
 
 func TestFindSource_MaintainOriginPinsTheType(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	groupID := int64(100)
 	db.addNode(&nodes.Node{ID: groupID, Name: "PRESS-EMPTIES", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
@@ -744,6 +762,8 @@ func TestFindSource_MaintainOriginPinsTheType(t *testing.T) {
 // there: substituting would deliver a carrier the keeper is not counting, so the
 // level never converges and nothing reports an error.
 func TestFindSource_MaintainOriginWaitsRatherThanSubstitute(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	groupID := int64(100)
 	db.addNode(&nodes.Node{ID: groupID, Name: "PRESS-EMPTIES", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
@@ -782,6 +802,8 @@ func TestFindSource_MaintainOriginWaitsRatherThanSubstitute(t *testing.T) {
 // A blank origin is every other order in the plant, and must behave exactly as
 // it did before the arm existed: fall through to the loader derivation.
 func TestFindSource_BlankOriginUnchanged(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	db.addNode(&nodes.Node{ID: 100, Name: "GROUP-A", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
 	db.addNode(&nodes.Node{ID: 99, Name: "DEST"})
@@ -805,6 +827,8 @@ func TestFindSource_BlankOriginUnchanged(t *testing.T) {
 // through untyped — one carrier the keeper will not count, retried next tick —
 // which is strictly better than confidently sourcing the wrong type.
 func TestFindSource_MaintainedTypeReadFailureDoesNotGuess(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	db.addNode(&nodes.Node{ID: 100, Name: "GROUP-A", IsSynthetic: true, NodeTypeCode: protocol.NodeClassNGRP})
 	db.addNode(&nodes.Node{ID: 99, Name: "DEST"})

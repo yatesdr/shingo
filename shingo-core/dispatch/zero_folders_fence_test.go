@@ -51,6 +51,8 @@ const bannedFolderSymbolsDigest = "88ccd92518fd3467e9a4ed3472880d8c541c3a76aad17
 // grows; the honest form of "this shape is gone" has no room in it for the shape
 // coming back quietly.
 func TestFence_NoFolderCanEverBeMinted(t *testing.T) {
+	t.Parallel()
+
 	sources := scanCoreSources(t)
 
 	// The minting machinery, by name. Each entry is a symbol that existed solely

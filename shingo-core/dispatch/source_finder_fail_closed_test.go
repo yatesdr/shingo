@@ -42,6 +42,8 @@ func buriedEmptyFinderFixture(t *testing.T) (*fakeFinderDB, *orders.Order, int64
 // to move is always recoverable, and driving into a lane whose state you could
 // not read is not. The order must wait for the next scan.
 func TestFindSource_UnreadableLaneIsBlockedNotClear(t *testing.T) {
+	t.Parallel()
+
 	db, order, _, _ := buriedEmptyFinderFixture(t)
 	db.accessibilityErr = errors.New("connection reset by peer")
 
@@ -67,6 +69,8 @@ func TestFindSource_UnreadableLaneIsBlockedNotClear(t *testing.T) {
 // dispatching to a slot the finder had just proven unreachable. Worse than the
 // first case, and it was the same silent shape.
 func TestFindSource_UnreadableLaneNodeIsBlockedNotClear(t *testing.T) {
+	t.Parallel()
+
 	db, order, laneID, slotID := buriedEmptyFinderFixture(t)
 	db.accessible = map[int64]bool{slotID: false} // definitively buried
 	db.nodeErr = map[int64]error{laneID: errors.New("lane read failed")}
@@ -86,6 +90,8 @@ func TestFindSource_UnreadableLaneNodeIsBlockedNotClear(t *testing.T) {
 // must not become fail-always: when every read succeeds and the slot really is
 // buried, the tier still routes to a dig.
 func TestFindSource_ReadableBuriedEmptyStillReshuffles(t *testing.T) {
+	t.Parallel()
+
 	db, order, laneID, slotID := buriedEmptyFinderFixture(t)
 	db.accessible = map[int64]bool{slotID: false}
 

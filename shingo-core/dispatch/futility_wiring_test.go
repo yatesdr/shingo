@@ -53,6 +53,8 @@ func seedFutilityOrder(t *testing.T, db *store.DB, uuid, node, payload string) *
 
 // An order cancelled straight out of queued never had a robot: futile.
 func TestFutilityWiring_QueuedCancelCountsAsFutile(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
@@ -74,6 +76,8 @@ func TestFutilityWiring_QueuedCancelCountsAsFutile(t *testing.T) {
 // a robot moved for it. `from` alone cannot tell these apart, which is why
 // the classification reads order_history.
 func TestFutilityWiring_OrderThatMovedIsNotFutile(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
@@ -97,6 +101,8 @@ func TestFutilityWiring_OrderThatMovedIsNotFutile(t *testing.T) {
 // One robot departing for the tuple clears the count, so an intermittent
 // problem never accumulates into a false record.
 func TestFutilityWiring_InTransitResetsTheTuple(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
@@ -130,6 +136,8 @@ func TestFutilityWiring_InTransitResetsTheTuple(t *testing.T) {
 // With no detector installed — the default until a plant opts in — the hook
 // is inert and nothing changes about the transition.
 func TestFutilityWiring_NilDetectorIsInert(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 

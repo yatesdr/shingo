@@ -26,6 +26,8 @@ import (
 // at the loader tier in source_finder.go. The outcome assertion fires
 // (OutcomeStructural, want OutcomeWait).
 func TestLoaderSourceUnreadable_Waits(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	posID := int64(51)
 	db.addNode(&nodes.Node{ID: posID, Name: "L1"})
@@ -80,6 +82,8 @@ func TestLoaderSourceUnreadable_Waits(t *testing.T) {
 // MoveToSourcing assertion fires with it" stood here and named two assertions
 // this function has never contained.
 func TestDispatchDirect_FleetRefusalIsNotTerminal(t *testing.T) {
+	t.Parallel()
+
 	// The state machine is the whole subject, so assert against it directly
 	// rather than against a comment: `failed` is terminal and the scanner's
 	// recovery edge does not exist from there.
@@ -100,6 +104,8 @@ func TestDispatchDirect_FleetRefusalIsNotTerminal(t *testing.T) {
 // be a code a caller can only render terminally. Cheap, and it is the assertion
 // the two findings above would each have tripped.
 func TestPlanningError_TransientCodesAreNotSilentlyTerminal(t *testing.T) {
+	t.Parallel()
+
 	for _, code := range []string{codeClaimFailed, codeLaneLocked, codeNoShuffleSlot, codeBlockerClaimed} {
 		pe := &planningError{Code: code, Detail: "x"}
 		if !pe.Transient() {

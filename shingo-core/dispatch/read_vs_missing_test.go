@@ -19,6 +19,8 @@ import (
 // the terminal that WAS correct said nothing an operator could act on.
 
 func TestReadFailed_SeparatesAbsenceFromFailure(t *testing.T) {
+	t.Parallel()
+
 	if readFailed(nil) {
 		t.Error("a successful read is not a failure")
 	}
@@ -39,6 +41,8 @@ func TestReadFailed_SeparatesAbsenceFromFailure(t *testing.T) {
 // the feature. An operator reading "reshuffle_error" learns nothing; the message
 // has to name whose problem it is and which thing is missing.
 func TestConfigFailure_SaysWhatToGoAndFix(t *testing.T) {
+	t.Parallel()
+
 	got := configFailure("lane node", "SMN_008")
 	for _, want := range []string{"config failure", "lane node", "SMN_008", "does not exist"} {
 		if !strings.Contains(got, want) {
@@ -58,6 +62,8 @@ func TestConfigFailure_SaysWhatToGoAndFix(t *testing.T) {
 // at once, and an operator surface that renders that as congestion sends someone
 // to look at lanes.
 func TestReadFailure_IsTransientAndCarriesItsOwnCause(t *testing.T) {
+	t.Parallel()
+
 	pe := &planningError{Code: codeReadFailed, Detail: "could not read lane 7"}
 	if !pe.Transient() {
 		t.Fatal("a failed read is terminal — one unanswered SELECT kills the order")
@@ -87,6 +93,8 @@ func TestReadFailure_IsTransientAndCarriesItsOwnCause(t *testing.T) {
 // codeNode }`. The outcome assertion fires — a failed node read terminates a
 // perfectly good source.
 func TestFinder_UnreadableBinNode_Waits(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	posID := int64(51)
 	db.addNode(&nodes.Node{ID: posID, Name: "RVM-SRC"})
@@ -114,6 +122,8 @@ func TestFinder_UnreadableBinNode_Waits(t *testing.T) {
 // TestFinder_MissingBinNode_IsAConfigFailure is the other arm at the same site:
 // the row points at a node id that is not there, which is real and terminal.
 func TestFinder_MissingBinNode_IsAConfigFailure(t *testing.T) {
+	t.Parallel()
+
 	db := newFakeFinderDB()
 	db.addNode(&nodes.Node{ID: 99, Name: "RVM2-DEST"})
 

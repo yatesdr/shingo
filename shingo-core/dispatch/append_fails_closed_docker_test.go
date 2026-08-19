@@ -101,6 +101,8 @@ func TestAppendSegment_AlreadyInTransitIsIdempotentSuccess(t *testing.T) {
 // That was logged and reported as success; a second pass would then append the
 // same segment twice with nothing anywhere saying why.
 func TestAppendSegment_UnwrittenWitnessIsNotSuccess(t *testing.T) {
+	t.Parallel()
+
 	db := testdb.Open(t)
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)

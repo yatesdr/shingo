@@ -36,6 +36,8 @@ import (
 // Test files are exempt: a fixture stating that a robot is inside a lane is
 // declaring a premise, not dispatching, and several legitimately do.
 func TestOccupancyIsTakenOnlyAtTheKnownSeams(t *testing.T) {
+	t.Parallel()
+
 	// The doors themselves, and the seams allowed to open them.
 	writers := map[string]string{
 		"lane_gate.go":          "the two doors: TakeLaneOccupancy (by node) and takeLaneOccupancyByID (the gated append's)",

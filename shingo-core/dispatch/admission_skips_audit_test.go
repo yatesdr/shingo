@@ -35,6 +35,8 @@ import (
 // with no audit line for them to write. Adding a field here means adding a way to
 // not ask a physical question; the test says so out loud.
 func TestAdmissionSkips_OnlyConditionalSkipIsOccupancyWhenGated(t *testing.T) {
+	t.Parallel()
+
 	typ := reflect.TypeOf(admissionSkips{})
 	got := make([]string, 0, typ.NumField())
 	for i := 0; i < typ.NumField(); i++ {
@@ -65,6 +67,8 @@ func TestAdmissionSkips_OnlyConditionalSkipIsOccupancyWhenGated(t *testing.T) {
 // declared with no comment block above it is the failure mode — a skip nobody
 // had to explain.
 func TestAdmissionSkips_EverySetHasItsJustification(t *testing.T) {
+	t.Parallel()
+
 	src := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "admission.go"))
 
 	// Every declared skip set, and the word its justification must contain. The

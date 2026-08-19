@@ -15,6 +15,8 @@ import (
 // by its own lock.
 
 func TestClosedWalks_FindsATwoCycle(t *testing.T) {
+	t.Parallel()
+
 	got := closedWalks(map[int64]int64{18: 35, 35: 18})
 	if len(got) != 1 {
 		t.Fatalf("found %d cycles, want exactly 1: %v", len(got), got)
@@ -28,6 +30,8 @@ func TestClosedWalks_FindsATwoCycle(t *testing.T) {
 // TestClosedWalks_ReportsAThreeCycleOnce is the rig's own specimen: digs 18, 23
 // and 35 holding each other. Reported once, not once per participant.
 func TestClosedWalks_ReportsAThreeCycleOnce(t *testing.T) {
+	t.Parallel()
+
 	got := closedWalks(map[int64]int64{18: 35, 35: 23, 23: 18})
 	if len(got) != 1 {
 		t.Fatalf("found %d cycles, want exactly 1 — a three-way standoff is ONE finding, and "+
@@ -43,6 +47,8 @@ func TestClosedWalks_ReportsAThreeCycleOnce(t *testing.T) {
 // waits on B waits on C, and C is not waiting on anybody — that is ordinary
 // congestion draining in order, and it must produce no alarm at all.
 func TestClosedWalks_IgnoresAChainThatDoesNotClose(t *testing.T) {
+	t.Parallel()
+
 	if got := closedWalks(map[int64]int64{1: 2, 2: 3}); len(got) != 0 {
 		t.Errorf("found %v in an open chain. A chain drains — C is not blocked, so it finishes, "+
 			"and B and A follow. Alarming here is crying wolf on the normal case", got)
@@ -54,6 +60,8 @@ func TestClosedWalks_IgnoresAChainThatDoesNotClose(t *testing.T) {
 // {2,3}, and must not report 1 as a member — 1 is a victim, not a participant,
 // and telling an operator to look at it sends them to the wrong robot.
 func TestClosedWalks_FindsACycleEnteredFromOutside(t *testing.T) {
+	t.Parallel()
+
 	got := closedWalks(map[int64]int64{1: 2, 2: 3, 3: 2})
 	if len(got) != 1 {
 		t.Fatalf("found %d cycles, want 1: %v", len(got), got)
@@ -67,6 +75,8 @@ func TestClosedWalks_FindsACycleEnteredFromOutside(t *testing.T) {
 // mutual hold, but it is just as stuck, and it is a sharper defect: right of way
 // exempts a dig from its own lane, so this should be impossible.
 func TestClosedWalks_ASelfLoopIsACycleOfOne(t *testing.T) {
+	t.Parallel()
+
 	got := closedWalks(map[int64]int64{7: 7})
 	if len(got) != 1 || len(got[0]) != 1 || got[0][0] != 7 {
 		t.Fatalf("got %v, want exactly one cycle [7] — a dig waiting on itself is stuck and must "+
@@ -77,6 +87,8 @@ func TestClosedWalks_ASelfLoopIsACycleOfOne(t *testing.T) {
 // TestClosedWalks_FindsTwoIndependentStandoffs — two separate groups can be in
 // trouble at once, and collapsing them into one record loses a whole incident.
 func TestClosedWalks_FindsTwoIndependentStandoffs(t *testing.T) {
+	t.Parallel()
+
 	got := closedWalks(map[int64]int64{1: 2, 2: 1, 10: 11, 11: 10})
 	if len(got) != 2 {
 		t.Fatalf("found %d cycles, want 2: %v", len(got), got)
@@ -87,6 +99,8 @@ func TestClosedWalks_FindsTwoIndependentStandoffs(t *testing.T) {
 }
 
 func TestClosedWalks_EmptyGraphIsQuiet(t *testing.T) {
+	t.Parallel()
+
 	if got := closedWalks(nil); len(got) != 0 {
 		t.Errorf("got %v from an empty graph, want nothing (law 9: quiet when zero)", got)
 	}

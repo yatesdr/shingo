@@ -71,6 +71,8 @@ func defaultCfg() FutilityConfig {
 var testKey = FutilityKey{StationID: "plant-a.line-1", ProcessNode: "ALN_003", PayloadCode: "74577-6SA0A.06"}
 
 func TestFutility_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
+
 	cfg := defaultCfg()
 	cfg.Enabled = false
 	if d := NewFutilityDetector(cfg, nil, nil); d != nil {
@@ -90,6 +92,8 @@ func TestFutility_DisabledReturnsNil(t *testing.T) {
 // The worst legitimate case on record must NOT fire: 26 futile terminals
 // spread over 6.6 hours is ~4/h, and the window only ever sees a fraction.
 func TestFutility_LegitimateSlowRunDoesNotFire(t *testing.T) {
+	t.Parallel()
+
 	clk := clock.NewManual(time.Date(2026, 6, 23, 12, 34, 0, 0, time.UTC))
 
 	d, aud, _ := testDetector(t, defaultCfg())
@@ -109,6 +113,8 @@ func TestFutility_LegitimateSlowRunDoesNotFire(t *testing.T) {
 
 // The cascade must fire: 484 terminals in under two hours is ~242/h.
 func TestFutility_CascadeFires(t *testing.T) {
+	t.Parallel()
+
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
 
 	d, aud, lines := testDetector(t, defaultCfg())
@@ -144,6 +150,8 @@ func TestFutility_CascadeFires(t *testing.T) {
 // The window rolls: terminals that age out stop counting, so a slow drip never
 // accumulates into a trigger no matter how long it runs.
 func TestFutility_WindowRolls(t *testing.T) {
+	t.Parallel()
+
 	clk := clock.NewManual(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
 
 	cfg := defaultCfg()
@@ -170,6 +178,8 @@ func TestFutility_WindowRolls(t *testing.T) {
 
 // One robot actually departing for this tuple proves the condition cleared.
 func TestFutility_InTransitResetsTheTuple(t *testing.T) {
+	t.Parallel()
+
 	clk := clock.NewManual(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
 
 	cfg := defaultCfg()
@@ -193,6 +203,8 @@ func TestFutility_InTransitResetsTheTuple(t *testing.T) {
 
 // Tuples are independent — one broken payload must not drag another over.
 func TestFutility_TuplesAreIndependent(t *testing.T) {
+	t.Parallel()
+
 	clk := clock.NewManual(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
 
 	cfg := defaultCfg()
@@ -219,6 +231,8 @@ func TestFutility_TuplesAreIndependent(t *testing.T) {
 // the cascade that motivated this writes 484 audit rows and 484 log lines,
 // which is the noise problem the same branch is trying to fix.
 func TestFutility_ThrottlesRepeats(t *testing.T) {
+	t.Parallel()
+
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
 
 	cfg := defaultCfg()
@@ -251,6 +265,8 @@ func TestFutility_ThrottlesRepeats(t *testing.T) {
 // probe's own run analysis had to discard exactly these rows — a blank
 // payload produced a spurious run of 41 across orders with nothing in common.
 func TestFutility_IgnoresIncompleteTuples(t *testing.T) {
+	t.Parallel()
+
 	d, aud, _ := testDetector(t, FutilityConfig{Enabled: true, Threshold: 1, Window: time.Hour, AlertThrottle: time.Minute})
 
 	for _, k := range []FutilityKey{

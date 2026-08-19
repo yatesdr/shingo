@@ -11,6 +11,8 @@ import "testing"
 // blocker_claimed is the same defect one layer in: a bin the dig must move is held by
 // a dispatched order whose robot is carrying it out of the lane. It waits.
 func TestPlanningError_Transient(t *testing.T) {
+	t.Parallel()
+
 	transient := []string{"claim_failed", "lane_locked", "no_shuffle_slot", "blocker_claimed"}
 	for _, code := range transient {
 		if !(&planningError{Code: code}).Transient() {

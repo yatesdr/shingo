@@ -31,6 +31,8 @@ import (
 // park forever under a cause nothing can clear. The sentinel cases below fail
 // immediately if that happens.
 func TestClassifyPlanError(t *testing.T) {
+	t.Parallel()
+
 	// A transport-shaped error, the way the store actually returns one: wrapped,
 	// several layers deep, never sql.ErrNoRows.
 	transport := fmt.Errorf("find shuffle slots: %w",
@@ -85,6 +87,8 @@ func TestClassifyPlanError(t *testing.T) {
 // MUTATION (verified): move the readFailed arm above the sentinels and every case
 // here fails at once.
 func TestClassifyPlanError_SentinelsBeatReadFailed(t *testing.T) {
+	t.Parallel()
+
 	for _, e := range []error{
 		fmt.Errorf("%w: x", ErrNoShuffleSlot),
 		fmt.Errorf("%w: x", ErrNothingInTheWay),

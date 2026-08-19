@@ -35,6 +35,8 @@ import (
 // and it would be invisible in a review of dispatch/ alone — the second door is
 // in www/. That is exactly how the manual robot move stayed off the map.
 func TestFleetCreate_HasExactlyTwoDoors(t *testing.T) {
+	t.Parallel()
+
 	root := repoRootFor(t)
 	// The vendor create call, however it is spelled at the call site.
 	create := regexp.MustCompile(`\.CreateOrder\(\s*(fleet\.CreateOrderRequest|req)\b`)
@@ -101,6 +103,8 @@ func TestFleetCreate_HasExactlyTwoDoors(t *testing.T) {
 // is honest about that. The alternative — no test — is how the door got built
 // without a lane question in the first place.
 func TestManualRobotMove_RefusesLaneDestinations(t *testing.T) {
+	t.Parallel()
+
 	body := readRepoFile(t, filepath.Join("shingo-core", "www", "handlers_robots.go"))
 	fn := funcBody(t, body, "func (h *Handlers) apiRobotMoveTo(")
 
@@ -136,6 +140,8 @@ func TestManualRobotMove_RefusesLaneDestinations(t *testing.T) {
 // state the scanner's held-bin path expects to pick the order up in, and it is
 // what makes the retry the ordinary machinery instead of a second copy of it.
 func TestBinMoveDoor_AsksAdmission(t *testing.T) {
+	t.Parallel()
+
 	body := readRepoFile(t, filepath.Join("shingo-core", "engine", "bin_move.go"))
 	fn := funcBody(t, body, "func (e *Engine) CreateBinMove(")
 
@@ -162,6 +168,8 @@ func TestBinMoveDoor_AsksAdmission(t *testing.T) {
 // TestRedirect_AsksAdmission — a redirect points a live order at a node its
 // original admission said nothing about, and it went straight to the fleet.
 func TestRedirect_AsksAdmission(t *testing.T) {
+	t.Parallel()
+
 	body := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "dispatcher.go"))
 	fn := funcBody(t, body, "func (d *Dispatcher) HandleOrderRedirect(")
 
@@ -184,6 +192,8 @@ func TestRedirect_AsksAdmission(t *testing.T) {
 // lane, so on the ungated lanes both plants run there was nothing between a
 // changeover swap and a corridor.
 func TestComplexDispatch_AsksAdmission(t *testing.T) {
+	t.Parallel()
+
 	body := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "complex_dispatch.go"))
 	fn := funcBody(t, body, "func (d *Dispatcher) DispatchPreparedComplex(")
 

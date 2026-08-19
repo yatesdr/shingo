@@ -145,6 +145,8 @@ func TestFindShuffleSlots_WillNotSealAnEmptySlotSomebodyIsDrivingTo(t *testing.T
 // MUTATION (verified): drop the `case !asked:` arm from proposeLaneClearDig and
 // the delta reads 0 — the gate goes back to being silently off.
 func TestServiceDig_UngatedProposalIsCounted(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, first, second, _, firstSlots, secondSlots, bp := setupDwellGroup(t, db, "UNGATED", 2, true)

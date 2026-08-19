@@ -15,6 +15,8 @@ import (
 // queue-reason study. Each one is a sentence an operator was actually shown that
 // was missing context or was wrong.
 func TestFormatQueueSentence_Snapshot(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name   string
 		code   protocol.QueueCode
@@ -225,6 +227,8 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 // rendered blank. (The empty "" code is excluded — it means "uncoded", not a
 // real category, and intentionally renders empty.)
 func TestFormatQueueSentence_Exhaustive(t *testing.T) {
+	t.Parallel()
+
 	for _, code := range protocol.AllQueueCodes() {
 		if got := FormatQueueSentence(code, QueueParams{}); got == "" {
 			t.Fatalf("FormatQueueSentence has no sentence for code %q — every code must render", code)
@@ -238,6 +242,8 @@ func TestFormatQueueSentence_Exhaustive(t *testing.T) {
 // Springfield failure was an operator sent to ALN_003 to look for a slot when
 // AMR Supermarket had no bin of the payload.
 func TestFormatQueueSentence_NeverNamesLinesideForGroupShortage(t *testing.T) {
+	t.Parallel()
+
 	const lineside = "ALN_003"
 	got := FormatQueueSentence(protocol.QueueWaitingForMaterial, QueueParams{
 		Payload: "767D2-6SA0A.06",
@@ -256,6 +262,8 @@ func TestFormatQueueSentence_NeverNamesLinesideForGroupShortage(t *testing.T) {
 // carries the GROUP and never the order's delivery node, and that an
 // unclassified error carries no payload to invent specificity with.
 func TestQueueParamsForCapacity_LocationRule(t *testing.T) {
+	t.Parallel()
+
 	const payload, delivery = "767D2-6SA0A.06", "ALN_003"
 
 	t.Run("payload shortage uses the group, not the delivery node", func(t *testing.T) {
