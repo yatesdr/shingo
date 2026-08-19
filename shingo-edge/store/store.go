@@ -181,6 +181,30 @@ func Open(path string) (*DB, error) {
 	return db, nil
 }
 
+// OpenMigrated opens a database that is ALREADY at this build's schema and
+// skips the migration chain. verifySchema still runs: it is the assert that
+// every table and column this build needs is present, so a file that is not
+// actually migrated fails loudly instead of behaving subtly wrong.
+//
+// For test fixtures copied from a pre-migrated template — the engine package's
+// test pool — where the migration chain's ~120 statements per open were the
+// package's dominant cost. Production opens must use Open.
+func OpenMigrated(path string) (*DB, error) {
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path)
+	sqlDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+
+	db := &DB{sqlDB}
+	if err := db.verifySchema(); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
 // CheckpointWAL runs PRAGMA wal_checkpoint(TRUNCATE) to flush the
 // write-ahead log back into the main database file and reclaim
 // disk space. Without periodic checkpoints the WAL can grow large

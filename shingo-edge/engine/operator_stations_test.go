@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"shingoedge/domain"
@@ -11,12 +13,63 @@ import (
 	"shingoedge/store/processes"
 )
 
-// testEngineDB opens a fresh SQLite database with full schema applied.
+// testEngineDB hands out a fresh SQLite database with the full schema applied.
+//
+// The schema comes from a TEMPLATE built once per test binary, not from running
+// the migration chain per call. A migration-chain Open costs ~70ms solo and
+// 350-400ms under this package's parallelism (119 DDL statements, and the
+// Windows file I/O under parallel open inflates 5x+); this package opens
+// hundreds of test databases, so that was most of its wall time. Copying a
+// pre-migrated file is pure sequential I/O.
+//
+// The template is built with the real store.Open (so migrations AND the
+// post-migration schema verification run for real, once) and closed cleanly —
+// SQLite in WAL mode leaves the data in the main file after the last
+// connection closes, so copying the single file is complete.
+var (
+	engineDBTemplateOnce sync.Once
+	engineDBTemplatePath string
+	engineDBTemplateErr  error
+)
+
+func buildEngineDBTemplate() error {
+	dir, err := os.MkdirTemp("", "shingo-edge-engine-tpl-*")
+	if err != nil {
+		return err
+	}
+	db, err := store.Open(filepath.Join(dir, "template.db"))
+	if err != nil {
+		os.RemoveAll(dir)
+		return err
+	}
+	if err := db.Close(); err != nil {
+		os.RemoveAll(dir)
+		return err
+	}
+	engineDBTemplatePath = filepath.Join(dir, "template.db")
+	return nil
+}
+
 func testEngineDB(t *testing.T) *store.DB {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	engineDBTemplateOnce.Do(func() { engineDBTemplateErr = buildEngineDBTemplate() })
+	if engineDBTemplateErr != nil {
+		t.Fatalf("build db template: %v", engineDBTemplateErr)
+	}
+	dst := filepath.Join(t.TempDir(), "test.db")
+	src, err := os.ReadFile(engineDBTemplatePath)
 	if err != nil {
-		t.Fatalf("open test db: %v", err)
+		t.Fatalf("read db template: %v", err)
+	}
+	if err := os.WriteFile(dst, src, 0o600); err != nil {
+		t.Fatalf("copy db template: %v", err)
+	}
+	// OpenMigrated, not Open: the copy already carries the template's schema,
+	// and re-running the migration chain per test was the cost this pool exists
+	// to remove. verifySchema still runs inside, so a bad template fails loudly.
+	db, err := store.OpenMigrated(dst)
+	if err != nil {
+		t.Fatalf("open copied db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
