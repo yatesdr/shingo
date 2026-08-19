@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"shingo/shared/clock"
 )
 
 // Standard op tags for bin_uop_audit.op. Stable strings — historical
@@ -193,9 +194,11 @@ var EpochBumpOps = []string{
 // AppendBinUOP takes it so the audit insert participates in the caller's
 // transaction when one exists, falling back to the connection pool when
 // the caller has no tx (degraded log path — atomicity lost but the row
-// still lands).
+// still lands). QueryRow joined Exec when v93's boundary hook needed to
+// number the row's epoch_seq inside the same tx.
 type BinUOPExecer interface {
 	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // BinUOPContext carries the §16-enrichment fields for a bin_uop_audit row: the node
@@ -255,6 +258,30 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		binID, before, afterUOP, op, source, ord, payloadCode, actor, node, ctx.Station, loader, detail); err != nil {
 		return fmt.Errorf("append bin_uop_audit bin=%d op=%q: %w", binID, op, err)
+	}
+	// Epoch-bump ops also write their boundary row on the permanent
+	// exceptions ledger (v93) — the one structural addition this function
+	// makes to its caller's transaction. Every bump site routes through here
+	// (the set is pinned to them by TestEpochBumpOpsCoversEveryBumpSite), so
+	// hooking the append rather than each caller is what keeps a sixth bump
+	// site from silently missing its boundary row. Same tx, same before/
+	// after, detail verbatim.
+	for _, bump := range EpochBumpOps {
+		if bump == op {
+			seq, err := NextBinUOPEpochSeq(execer, binID)
+			if err != nil {
+				return err
+			}
+			var det []byte
+			if len(ctx.Detail) > 0 {
+				det = ctx.Detail
+			}
+			if err := AppendBinUOPException(execer, ExcBoundary, binID, payloadCode, actor,
+				&seq, clock.Now().UTC(), beforeUOP, &afterUOP, nil, nil, op, det); err != nil {
+				return err
+			}
+			break
+		}
 	}
 	return nil
 }
@@ -408,20 +435,26 @@ func ListBinUOPOverridesByStation(db *sql.DB, station string, limit, offset int)
 }
 
 // ListBinUOPDiscrepancies returns the discrepancy ledger, newest first.
-// It is a view over bin_uop_audit — no separate table — surfacing rows where
-// the tracked count diverged from physical reality:
+// It is a view over bin_uop_audit UNION bin_uop_exception, surfacing rows
+// where the tracked count diverged from physical reality:
 //   - stale_epoch_dropped / payload_mismatch_dropped: a delta the applier
 //     dropped (lost production/consumption signal);
 //   - payload_rebound_with_inventory: a produce bin's label flipped while it
 //     held units under the old label — mixed contents, cycle count needed;
-//   - after_uop < 0: over-consume / negative remaining ("needs reconcile");
+//   - negative_crossing rows from bin_uop_exception (v93): a bin taken below
+//     zero. Repointed off the raw stream's after_uop < 0 arm — the permanent
+//     ledger outlives the raw delta rows (90-day retention, D6), so this view
+//     stays complete after the purge. The exception row carries the crossing
+//     itself; continuations are folded into deepest_uop, which lands in
+//     metadata so the row shape is unchanged;
 //   - released_empty / released_underpack (incl. the no-owner fallback) where
 //     the bin still carried counted parts at release (before_uop > after_uop) —
 //     parts that left without being counted down.
 //
 // Clean empties (before == after) are excluded so the ledger stays signal, and
 // payload_code is captured at release time (see SyncOrClearForReleased) so the
-// part is named. Served by idx_bin_uop_audit_op / idx_bin_uop_audit_op_time.
+// part is named. Served by idx_bin_uop_audit_op / idx_bin_uop_audit_op_time
+// and idx_bin_uop_exception_bin.
 func ListBinUOPDiscrepancies(db *sql.DB, limit, offset int) ([]BinUOPRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -429,15 +462,25 @@ func ListBinUOPDiscrepancies(db *sql.DB, limit, offset int) ([]BinUOPRow, error)
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := db.Query(`SELECT `+binUOPSelectCols+`
+	rows, err := db.Query(`SELECT * FROM (
+		SELECT `+binUOPSelectCols+`
 		FROM bin_uop_audit
 		WHERE op IN ($1, $2, $3)
-		   OR after_uop < 0
 		   OR (op IN ($4, $5, $6) AND COALESCE(before_uop, 0) > after_uop)
-		ORDER BY applied_at DESC, id DESC
-		LIMIT $7 OFFSET $8`,
+		UNION ALL
+		SELECT e.id, e.bin_id, e.before_uop, e.after_uop, e.op, 'bin_uop_exception' AS source,
+		       NULL::bigint AS order_id, e.payload_code, e.actor, NULL::bigint AS node_id,
+		       '' AS station, NULL::bigint AS loader_id,
+		       jsonb_build_object('deepest_uop', e.deepest_uop, 'recovered_at', e.recovered_at) AS metadata,
+		       e.occurred_at AS applied_at
+		FROM bin_uop_exception e
+		WHERE e.kind = $7
+	) u
+	ORDER BY u.applied_at DESC, u.id DESC
+	LIMIT $8 OFFSET $9`,
 		OpStaleEpochDropped, OpPayloadMismatchDropped, OpPayloadReboundWithInventory,
 		OpReleasedEmpty, OpReleasedEmptyFallback, OpReleasedUnderpack,
+		ExcNegativeCrossing,
 		limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list bin_uop_audit discrepancies: %w", err)

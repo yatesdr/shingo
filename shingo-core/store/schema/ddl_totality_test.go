@@ -59,6 +59,7 @@ var migrationOnlyTables = map[string]string{
 	"sourceability_events":        "added by a numbered migration after the baseline was frozen",
 	"style_claims":                "added by a numbered migration after the baseline was frozen",
 	"supply_refusals":             "added by a numbered migration after the baseline was frozen",
+	"bin_uop_exception":           "added by v93 — the permanent exceptions ledger (owner decision D2: no retention, ever). Migration-created rather than baseline because it carries a one-shot backfill from bin_uop_audit that must run while the raw rows still exist",
 }
 
 // TestBaselineDDL_DeclaresEveryTable pins which half of the schema each table

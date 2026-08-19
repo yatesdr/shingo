@@ -4,6 +4,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
@@ -106,9 +107,9 @@ func TestAuditService_ListForEntity_FiltersByEntity(t *testing.T) {
 }
 
 // TestAuditService_ListBinUOPDiscrepancies_FiltersToRealDivergence verifies the
-// discrepancy ledger: it surfaces stale-epoch drops, negative remaining, and
-// release-empties that still carried counted parts — but not clean empties or
-// ordinary cycle counts.
+// discrepancy ledger: it surfaces stale-epoch drops, negative crossings (from
+// bin_uop_exception, v93), and release-empties that still carried counted
+// parts — but not clean empties or ordinary cycle counts.
 func TestAuditService_ListBinUOPDiscrepancies_FiltersToRealDivergence(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -127,9 +128,17 @@ func TestAuditService_ListBinUOPDiscrepancies_FiltersToRealDivergence(t *testing
 	// Stale-epoch dropped observation (before == after): discrepancy.
 	testutil.MustNoErr(t, audit.AppendBinUOPOverride(db.DB, bin.ID, 50, 50,
 		audit.OpStaleEpochDropped, "test", nil, "PART-A", "ALN", []byte(`{"delta":-3}`)), "stale drop")
-	// Negative remaining (after_uop < 0): discrepancy regardless of op.
+	// Negative crossing (1 → -2): discrepancy, from the exceptions ledger —
+	// the raw delta arm was repointed to bin_uop_exception (v93) so the view
+	// stays complete after the 90-day purge. The crossing arrives via the
+	// applier's writer, planted here directly the way the applier writes it.
+	testutil.MustNoErr(t, audit.AppendBinUOPException(db.DB, audit.ExcNegativeCrossing, bin.ID,
+		"PART-A", "applier", nil, time.Now().UTC(), pi(1), pi(-2), nil, nil,
+		"bin_uop_delta", nil), "negative crossing")
+	// A raw negative delta row alone (no exception twin): NOT surfaced — after
+	// the repoint the view no longer reads after_uop < 0 off the raw stream.
 	testutil.MustNoErr(t, audit.AppendBinUOP(db.DB, bin.ID, pi(1), -2,
-		"bin_uop_delta", "test", nil, "PART-A", "ALN", audit.BinUOPContext{}), "negative remaining")
+		"bin_uop_delta", "test", nil, "PART-A", "ALN", audit.BinUOPContext{}), "raw negative delta")
 	// Ordinary cycle count (before == after, non-negative): NOT a discrepancy.
 	testutil.MustNoErr(t, audit.AppendBinUOP(db.DB, bin.ID, pi(100), 100,
 		audit.OpCycleCount, "test", nil, "PART-A", "op", audit.BinUOPContext{}), "cycle count")
@@ -137,22 +146,28 @@ func TestAuditService_ListBinUOPDiscrepancies_FiltersToRealDivergence(t *testing
 	rows, err := svc.ListBinUOPDiscrepancies(100, 0)
 	testutil.MustNoErr(t, err, "ListBinUOPDiscrepancies")
 
+	// Key on op AND source: the exception arm keeps the crossing's original op
+	// (bin_uop_delta) and tags source='bin_uop_exception', so op alone cannot
+	// tell the ledger row from its raw twin.
 	got := map[string]int{}
 	for _, r := range rows {
 		if r.BinID == bin.ID {
-			got[r.Op]++
+			got[r.Source+"/"+r.Op]++
 		}
 	}
-	if got[audit.OpStaleEpochDropped] != 1 {
-		t.Errorf("stale_epoch_dropped = %d, want 1", got[audit.OpStaleEpochDropped])
+	if got["test/"+audit.OpStaleEpochDropped] != 1 {
+		t.Errorf("stale_epoch_dropped = %d, want 1", got["test/"+audit.OpStaleEpochDropped])
 	}
-	if got["bin_uop_delta"] != 1 {
-		t.Errorf("negative bin_uop_delta = %d, want 1", got["bin_uop_delta"])
+	if got["bin_uop_exception/bin_uop_delta"] != 1 {
+		t.Errorf("exception-arm crossing = %d, want 1", got["bin_uop_exception/bin_uop_delta"])
 	}
-	if got[audit.OpReleasedEmpty] != 1 {
-		t.Errorf("released_empty = %d, want 1 (lossy included, clean excluded)", got[audit.OpReleasedEmpty])
+	if got["test/bin_uop_delta"] != 0 {
+		t.Errorf("raw negative bin_uop_delta = %d, want 0 (repointed to the exception arm)", got["test/bin_uop_delta"])
 	}
-	if got[audit.OpCycleCount] != 0 {
-		t.Errorf("cycle_count = %d, want 0 (not a discrepancy)", got[audit.OpCycleCount])
+	if got["test/"+audit.OpReleasedEmpty] != 1 {
+		t.Errorf("released_empty = %d, want 1 (lossy included, clean excluded)", got["test/"+audit.OpReleasedEmpty])
+	}
+	if got["test/"+audit.OpCycleCount] != 0 {
+		t.Errorf("cycle_count = %d, want 0 (not a discrepancy)", got["test/"+audit.OpCycleCount])
 	}
 }

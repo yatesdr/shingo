@@ -158,6 +158,31 @@ CREATE SEQUENCE public.bin_uop_audit_id_seq
 
 ALTER SEQUENCE public.bin_uop_audit_id_seq OWNED BY public.bin_uop_audit.id;
 
+CREATE TABLE public.bin_uop_exception (
+    id bigint NOT NULL,
+    kind text NOT NULL,
+    bin_id bigint NOT NULL,
+    payload_code text DEFAULT ''::text NOT NULL,
+    actor text DEFAULT ''::text NOT NULL,
+    epoch_seq bigint,
+    occurred_at timestamp with time zone NOT NULL,
+    before_uop integer,
+    after_uop integer,
+    deepest_uop integer,
+    recovered_at timestamp with time zone,
+    op text NOT NULL,
+    detail jsonb
+);
+
+CREATE SEQUENCE public.bin_uop_exception_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.bin_uop_exception_id_seq OWNED BY public.bin_uop_exception.id;
+
 CREATE TABLE public.bins (
     id bigint NOT NULL,
     bin_type_id bigint NOT NULL,
@@ -1259,6 +1284,8 @@ ALTER TABLE ONLY public.bin_types ALTER COLUMN id SET DEFAULT nextval('public.bi
 
 ALTER TABLE ONLY public.bin_uop_audit ALTER COLUMN id SET DEFAULT nextval('public.bin_uop_audit_id_seq'::regclass);
 
+ALTER TABLE ONLY public.bin_uop_exception ALTER COLUMN id SET DEFAULT nextval('public.bin_uop_exception_id_seq'::regclass);
+
 ALTER TABLE ONLY public.bins ALTER COLUMN id SET DEFAULT nextval('public.bins_id_seq'::regclass);
 
 ALTER TABLE ONLY public.cell_part_events ALTER COLUMN id SET DEFAULT nextval('public.cell_part_events_id_seq'::regclass);
@@ -1364,6 +1391,9 @@ ALTER TABLE ONLY public.bin_types
 
 ALTER TABLE ONLY public.bin_uop_audit
     ADD CONSTRAINT bin_uop_audit_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.bin_uop_exception
+    ADD CONSTRAINT bin_uop_exception_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.bins
     ADD CONSTRAINT bins_pkey PRIMARY KEY (id);
@@ -1577,6 +1607,12 @@ CREATE INDEX idx_bin_uop_audit_loader ON public.bin_uop_audit USING btree (loade
 CREATE INDEX idx_bin_uop_audit_op ON public.bin_uop_audit USING btree (op);
 
 CREATE INDEX idx_bin_uop_audit_op_time ON public.bin_uop_audit USING btree (op, applied_at DESC);
+
+CREATE INDEX idx_bin_uop_exception_bin ON public.bin_uop_exception USING btree (bin_id, occurred_at DESC);
+
+CREATE INDEX idx_bin_uop_exception_occurred ON public.bin_uop_exception USING btree (occurred_at DESC);
+
+CREATE INDEX idx_bin_uop_exception_open ON public.bin_uop_exception USING btree (kind, occurred_at DESC) WHERE (recovered_at IS NULL);
 
 CREATE UNIQUE INDEX idx_bins_label_unique ON public.bins USING btree (label) WHERE (label <> ''::text);
 

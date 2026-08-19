@@ -285,6 +285,13 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 				nil, d.PayloadCode, station, metadata); err != nil {
 				return err
 			}
+			// The permanent exceptions ledger (v93) — this drop is one of the
+			// four durable kinds. Same transaction, same metadata blob.
+			if err := audit.AppendBinUOPException(tx, audit.ExcStaleEpoch, d.BinID,
+				d.PayloadCode, station, nil, clock.Now().UTC(), &before, &before, nil,
+				nil, audit.OpStaleEpochDropped, metadata); err != nil {
+				return err
+			}
 			// Flag the bin so the bins page surfaces a carrier whose deltas are
 			// being refused (P2-C6). Payload-mismatch drops already do this; a
 			// stale-epoch drop is just as much a "counts aren't landing" signal.
@@ -469,6 +476,26 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		return fmt.Errorf("audit BinUOPDelta bin=%d: %w", d.BinID, err)
 	}
 
+	// The permanent exceptions ledger (v93): a crossing (>= 0 to < 0) opens a
+	// negative_crossing row; a recovery (< 0 back to >= 0) closes the open
+	// one and folds its deepest. Continuations (still negative) write
+	// nothing — they are the same excursion. This is the event-time half of
+	// what the backfill derived; after the 90-day retention lands, these rows
+	// are the only durable record of the negatives.
+	newValue := valueBefore + d.Delta
+	switch {
+	case valueBefore >= 0 && newValue < 0:
+		if err := audit.AppendBinUOPException(tx, audit.ExcNegativeCrossing, d.BinID,
+			d.PayloadCode, station, nil, clock.Now().UTC(), &valueBefore, &newValue, nil,
+			nil, "bin_uop_delta", metadata); err != nil {
+			return err
+		}
+	case valueBefore < 0 && newValue >= 0:
+		if err := audit.RecoverBinUOPOpenCrossing(tx, d.BinID, clock.Now().UTC()); err != nil {
+			return err
+		}
+	}
+
 	// Item 6 manifest-clear trigger: when a capture_reduction delta
 	// (the PULL PARTS LINESIDE path) drives uop_remaining to zero or
 	// below, the bin is empty by operator declaration and must be
@@ -536,6 +563,14 @@ func (s *InventoryDeltaService) recordRejectedDelta(station string, d *protocol.
 		audit.OpPayloadMismatchDropped, "service/inventory_delta_service.go:payloadMismatch",
 		nil, d.PayloadCode, station, metadata); err != nil {
 		log.Printf("audit rejected delta bin=%d: %v", d.BinID, err)
+	}
+	// The permanent exceptions ledger (v93), same best-effort contract as the
+	// row above: on s.db outside the rolled-back tx, and a failed write logs
+	// rather than masks the reject.
+	if err := audit.AppendBinUOPException(s.db.DB, audit.ExcPayloadMismatch, d.BinID,
+		d.PayloadCode, station, nil, clock.Now().UTC(), &valueBefore, &valueBefore, nil,
+		nil, audit.OpPayloadMismatchDropped, metadata); err != nil {
+		log.Printf("audit rejected-delta exception bin=%d: %v", d.BinID, err)
 	}
 	if !anomalyFlagged {
 		if err := s.db.MarkBinAnomaly(d.BinID); err != nil {

@@ -64,6 +64,17 @@ import (
 // from its own baseline), so unlike v91 nothing manual stands between a plant
 // and its .previous binary.
 //
+// v93 CREATES bin_uop_exception, the permanent exceptions ledger (owner
+// decision D2: negatives and boundaries are durable; the raw stream they were
+// derived from is not — P4 starts deleting it at 90 days in this same wave).
+// The first migration since v89 that ADDS to the schema rather than retiring
+// from it, and the first whose backfill is the point rather than a repair:
+// the crossings/drops/boundaries it derives from bin_uop_audit are exactly
+// what the 90-day purge would otherwise make un-derivable. Rollback is inert
+// (a pre-v93 binary never reads or writes the table) but lossy to redo —
+// dropping the table destroys the backfill, so .previous against a purged
+// database cannot get this data back. That is the D2 trade, accepted.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -75,8 +86,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 92 {
-		t.Errorf("head migration = %d, want 92", got)
+	if got := store.LatestMigrationVersion(); got != 93 {
+		t.Errorf("head migration = %d, want 93", got)
 	}
 }
 

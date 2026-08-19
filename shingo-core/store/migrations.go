@@ -4034,6 +4034,19 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return !schema.TableExists(q, "production_log")
 			}},
+
+		// v93 installs bin_uop_exception — the permanent exceptions ledger the
+		// 2026-08-18 data-model review named as the durable answer to "where
+		// are the negatives" (P1, owner decision D2: kept forever). Everything
+		// on it used to be derivable only from bin_uop_audit's raw delta rows,
+		// which P4's 90-day retention (later in this wave) is about to start
+		// deleting; this table is what survives that. See v93BinUOPException
+		// for the shape and the backfill.
+		{93, "bin_uop_exception — the permanent exceptions ledger (negatives, drops, boundaries)",
+			v93BinUOPException,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "bin_uop_exception")
+			}},
 	}
 }
 
@@ -4884,6 +4897,212 @@ func v83LaneRobotConfidenceDaily(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// v93BinUOPException creates the permanent exceptions ledger and backfills it
+// from bin_uop_audit in the same transaction.
+//
+// WHY A TABLE, WHEN EVERY ROW IS DERIVABLE FROM bin_uop_audit TODAY. Because
+// "today" is doing the work in that sentence. The raw delta stream carries
+// ~7,000 rows/day to capture ~140 exception-worthy events (3.6 of them negative
+// crossings), and P4 (D6) starts deleting it at 90 days in this same wave.
+// Once it does, every crossing older than the window stops being derivable —
+// including the still-open ones, the exact rows OpenNegativeBins dates. The
+// owner ruling (D2) is that this class is durable: how parts moved, and where
+// the negatives are. This table IS that ruling, materialized.
+//
+// NO RETENTION ON THIS TABLE, EVER. The measured volume is ~140 rows/day,
+// ~10 MB/year — the system currently spends ~7,000 raw rows/day to capture
+// those 140, so bounding this table to save space would discard the cheap half
+// and save nothing. If bounding is ever genuinely wanted, bound the two
+// DIAGNOSTIC kinds (stale_epoch, payload_mismatch — 97% of the rows); NEVER
+// the negative crossings, which are 3.6/day and are the durable question.
+//
+// THE FOUR KINDS, and why exactly these:
+//   - negative_crossing — before_uop >= 0 AND after_uop < 0 on an applied
+//     delta. The crossing, not the continuation: a bin going further negative
+//     is the same excursion. deepest_uop/recovered_at carry the excursion's
+//     shape (filled in by the readers; the event-time writer records the
+//     crossing itself).
+//   - stale_epoch — a delta dropped for carrying a retired generation.
+//   - payload_mismatch — a delta dropped for naming the wrong payload.
+//   - boundary — an epoch-bump op (EpochBumpOps): the row that starts a new
+//     binding. The roll-up grain (P3) needs it, and it makes the exceptions
+//     timeline self-contained: a crossing reads differently directly after a
+//     release boundary than in the middle of a binding.
+//
+// epoch_seq is the per-bin binding ordinal (see EpochBumpOps), computed at
+// write time by the same count-up-the-bump-rows window the backfill uses, so
+// P3's daily roll-up can join this table and the raw stream on one key.
+//
+// THE BACKFILL is the NegativeExcursions logic (store/bins/ledger_integrity.go)
+// run once with since = -infinity, plus the two drop kinds and the boundary
+// ops, straight from bin_uop_audit while the raw rows still exist. It must run
+// in THIS migration, not a background job: P4's first purge is the deadline,
+// and every day between deploy and backfill would be a day the derived history
+// silently disagrees with the raw one.
+//
+// ROLLBACK: a pre-v93 binary against this table simply never reads or writes
+// it (the applier writer and the repointed readers arrive in the same change);
+// the table sits inert. Dropping it would destroy the backfill, which is the
+// one thing this wave is not allowed to lose.
+func v93BinUOPException(tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS bin_uop_exception (
+			id           BIGSERIAL PRIMARY KEY,
+			kind         TEXT   NOT NULL,     -- negative_crossing | stale_epoch | payload_mismatch | boundary
+			bin_id       BIGINT NOT NULL,
+			payload_code TEXT   NOT NULL DEFAULT '',
+			actor        TEXT   NOT NULL DEFAULT '',
+			epoch_seq    BIGINT,
+			occurred_at  TIMESTAMPTZ NOT NULL,
+			before_uop   INTEGER,
+			after_uop    INTEGER,
+			deepest_uop  INTEGER,
+			recovered_at TIMESTAMPTZ,
+			op           TEXT NOT NULL,
+			detail       JSONB
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_bin_uop_exception_occurred ON bin_uop_exception (occurred_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_bin_uop_exception_bin ON bin_uop_exception (bin_id, occurred_at DESC)`,
+		// The open-exceptions reader: partial, because the question it serves
+		// ("which crossings never recovered?") is structurally about the NULL
+		// tail and every recovered row is dead weight in that index forever.
+		`CREATE INDEX IF NOT EXISTS idx_bin_uop_exception_open ON bin_uop_exception (kind, occurred_at DESC) WHERE recovered_at IS NULL`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v93 bin_uop_exception: %w", err)
+		}
+	}
+
+	// The backfill must be idempotent under the self-heal re-run (verify fails
+	// → v93 executes again): TRUNCATE + re-derive, never duplicate. On the two
+	// normal paths this is a no-op — first run creates an empty table; a re-run
+	// after the table was dropped recreates an empty one. The only case where
+	// the truncate wipes anything is a lost schema_migrations row with the
+	// table intact, and there wipe-and-rederive is still the correct answer:
+	// duplicated crossings would double the very history this table exists to
+	// keep. (Post-P4 caveat: exception rows whose raw twins have aged out of
+	// bin_uop_audit are not re-derivable — but that scenario requires both a
+	// corrupted schema_migrations AND a completed purge, and the alternative
+	// silently duplicates history in ordinary operation.)
+	if _, err := tx.Exec(`TRUNCATE bin_uop_exception`); err != nil {
+		return fmt.Errorf("v93 bin_uop_exception truncate: %w", err)
+	}
+
+	// bumps is the bump-op set as a quoted Postgres array literal, built once
+	// and concatenated into the three statements below. (A $n parameter would
+	// be cleaner, but the count(*) FILTER ... OVER window needs the set inside
+	// the window's own expression, and keeping all three statements literal
+	// means they replay verbatim from a pg_dump.)
+	bumps := pgTextArraySQL(bumpOpsForBackfill)
+
+	// Backfill part 1 — negative crossings, with deepest/recovered computed
+	// the same way NegativeExcursions computes them (min after_uop until the
+	// bin next reads >= 0; recovered_at = that next >= 0 read, NULL when the
+	// excursion is still open at backfill time). epoch_seq via the bump-count
+	// window shared with P3: bumps up to and INCLUDING this row (the bump row
+	// itself is its own boundary start).
+	if _, err := tx.Exec(`INSERT INTO bin_uop_exception
+		(kind, bin_id, payload_code, actor, epoch_seq, occurred_at, before_uop, after_uop,
+		 deepest_uop, recovered_at, op, detail)
+	SELECT 'negative_crossing', c.bin_id,
+	       COALESCE(NULLIF(c.payload_code,''), b.payload_code, ''),
+	       c.actor, c.epoch_seq, c.applied_at, c.before_uop, c.after_uop,
+	       COALESCE((SELECT MIN(d.after_uop) FROM bin_uop_audit d
+	                 WHERE d.bin_id = c.bin_id AND d.applied_at >= c.applied_at
+	                   AND d.applied_at < COALESCE((SELECT MIN(r.applied_at) FROM bin_uop_audit r
+	                                                WHERE r.bin_id = c.bin_id
+	                                                  AND r.applied_at > c.applied_at
+	                                                  AND r.after_uop >= 0), 'infinity')), c.after_uop),
+	       (SELECT MIN(r.applied_at) FROM bin_uop_audit r
+	        WHERE r.bin_id = c.bin_id AND r.applied_at > c.applied_at AND r.after_uop >= 0),
+	       c.op, NULL
+	FROM (
+	    SELECT w.id, w.bin_id, w.applied_at, w.before_uop, w.after_uop, w.op, w.actor,
+	           w.payload_code,
+	           count(*) FILTER (WHERE w.op = ANY(` + bumps + `)) OVER (
+	               PARTITION BY w.bin_id ORDER BY w.id ROWS UNBOUNDED PRECEDING) AS epoch_seq
+	    FROM bin_uop_audit w
+	) c
+	LEFT JOIN bins b ON b.id = c.bin_id
+	WHERE c.before_uop IS NOT NULL
+	  AND c.before_uop >= 0
+	  AND c.after_uop < 0
+	ORDER BY c.id`); err != nil {
+		return fmt.Errorf("v93 backfill crossings: %w", err)
+	}
+
+	// Backfill part 2 — the two drop kinds, one row per dropped delta, with
+	// the dropped quantity preserved in detail exactly as the applier's
+	// metadata column carries it (metadata is already jsonb; detail takes it
+	// verbatim). The window runs over the WHOLE audit stream so the count
+	// matches part 1's numbering; the drop predicate applies outside it.
+	if _, err := tx.Exec(`INSERT INTO bin_uop_exception
+		(kind, bin_id, payload_code, actor, epoch_seq, occurred_at, before_uop, after_uop, op, detail)
+	SELECT CASE a.op WHEN 'stale_epoch_dropped' THEN 'stale_epoch'
+	                 ELSE 'payload_mismatch' END,
+	       a.bin_id, a.payload_code, a.actor, e.epoch_seq,
+	       a.applied_at, a.before_uop, a.after_uop, a.op, a.metadata
+	FROM (
+	    SELECT w.id,
+	           count(*) FILTER (WHERE w.op = ANY(` + bumps + `)) OVER (
+	               PARTITION BY w.bin_id ORDER BY w.id ROWS UNBOUNDED PRECEDING) AS epoch_seq
+	    FROM bin_uop_audit w
+	) e
+	JOIN bin_uop_audit a ON a.id = e.id
+	WHERE a.op IN ('stale_epoch_dropped', 'payload_mismatch_dropped')
+	ORDER BY a.id`); err != nil {
+		return fmt.Errorf("v93 backfill drops: %w", err)
+	}
+
+	// Backfill part 3 — boundary ops, one row per epoch bump.
+	if _, err := tx.Exec(`INSERT INTO bin_uop_exception
+		(kind, bin_id, payload_code, actor, epoch_seq, occurred_at, before_uop, after_uop, op, detail)
+	SELECT 'boundary', a.bin_id, a.payload_code, a.actor,
+	       count(*) FILTER (WHERE a.op = ANY(` + bumps + `)) OVER (
+	           PARTITION BY a.bin_id ORDER BY a.id ROWS UNBOUNDED PRECEDING),
+	       a.applied_at, a.before_uop, a.after_uop, a.op, a.detail
+	FROM bin_uop_audit a
+	WHERE a.op = ANY(` + bumps + `)
+	ORDER BY a.id`); err != nil {
+		return fmt.Errorf("v93 backfill boundaries: %w", err)
+	}
+	return nil
+}
+
+// bumpOpsForBackfill is EpochBumpOps spelled for the v93 backfill. It is
+// spelled out rather than referenced because migrations.go cannot import
+// store/audit (store/audit imports store-level helpers; the dependency
+// direction would cycle). The audit-side set is pinned by
+// TestEpochBumpOpsCoversEveryBumpSite, and THIS copy is pinned to that one by
+// TestV93BackfillOpsMatchEpochBumpOps, so a sixth bump op arrives as two
+// failing tests pointing at each other rather than as a silently short
+// backfill.
+// BumpOpsForBackfill exports the set for TestV93BackfillOpsMatchEpochBumpOps;
+// see that test for why the pin exists.
+var BumpOpsForBackfill = bumpOpsForBackfill
+
+var bumpOpsForBackfill = []string{
+	"set_for_production", "clear_and_claim", "clear_for_reuse",
+	"released_empty", "released_partial", "released_empty_fallback",
+	"released_partial_fallback", "released_capture_empty", "released_underpack",
+}
+
+// pgTextArraySQL renders a Go string slice as a QUOTED Postgres array literal
+// ('{"a","b"}') for interpolation into a migration statement — the form
+// `= ANY(...)` accepts directly. The migration path runs through tx.Exec; a
+// literal (rather than a $n parameter) keeps the statement self-contained
+// under pg_dump/replay, where parameter positions do not survive. Every
+// element is a house op constant — no quoting hazards — but escape anyway so
+// the helper is safe to reuse.
+func pgTextArraySQL(xs []string) string {
+	parts := make([]string, len(xs))
+	for i, x := range xs {
+		parts[i] = `"` + strings.ReplaceAll(x, `"`, `\"`) + `"`
+	}
+	return `'{` + strings.Join(parts, ",") + `}'`
 }
 
 // v92DropProductionLog retires the write-only production shadow. Every row since
