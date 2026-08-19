@@ -184,18 +184,20 @@ step_lint() {
 # Per-worktree under $ROOT/.gate for the same reason step_docker's logs are:
 # see the note there about /tmp being machine-global on Git Bash.
 #
-# STILL SERIAL, AND THAT IS THE SECOND THING TRIED HERE. Running the five
-# modules at once works and is faster — 45s serial against ~26s, since
-# shingo-edge alone is 26.2s and the other four total ~19s — but it also puts
-# five modules' worth of tests on the CPU at once, and shingocore/rds's
-# TestPollerStopHaltsPolling asserts on a 30ms wall-clock drain window after
-# Stop(). Starve that window and the test reports "polls continued after Stop".
-# MEASURED: 10/10 green in isolation, 4/4 green running this step alone, and a
-# failure inside `gate.sh full` where lint's teardown overlaps the start of the
-# tests. A gate that fails ~1 run in 6 for a reason outside the diff is not a
-# gate, and 11s of a ~190s run does not buy that back. The test is genuinely
-# load-fragile and would bite on a slow or busy machine without any help from
-# here — worth hardening on its own terms, and then this can be revisited.
+# CONCURRENT, AFTER A SERIAL INTERLUDE. The modules run in parallel job
+# control, one log per module. Serial was chosen for one named reason —
+# shingocore/rds's TestPollerStopHaltsPolling asserted a 30ms wall-clock drain
+# window and failed ~1 run in 6 under concurrent load — and that test is now
+# gone: Stop() became synchronous (it waits on doneChan) and
+# TestPollerStop_IsSynchronous asserts the same property with no timing window
+# at all. MEASURED serial vs concurrent on the 20-core host: 45s -> ~26s bare
+# (all five modules), 29.5s -> ~18s in `full` (the three modules the docker
+# step does not cover).
+#
+# THE FAILURE MODE THIS CAN STILL FIND is a second load-fragile test that
+# serial execution was hiding. That is a finding, not a reason to go back:
+# the fix is to harden that test the way the poller's was hardened, not to
+# serialize five modules forever.
 # Which modules still need an untagged `go test` of their own.
 #
 # NOT ALL OF THEM, WHEN THE DOCKER STEP IS ALSO RUNNING. `-tags=docker` ADDS
@@ -244,12 +246,23 @@ step_test() {
   fi
   logdir="$ROOT/.gate"
   mkdir -p "$logdir" || { echo "FAIL tests — cannot create $logdir"; return 1; }
+  # One background job per module; collect failures when the last lands. The
+  # log stays per-module ($logdir/test-$m.log) so the excerpt printed on a
+  # failure is that module's own, not another's interleaving.
   for m in $mods; do
-    ( cd "$ROOT/$m" && go test -count=1 ./... >"$logdir/test-$m.log" 2>&1 ) || {
+    ( cd "$ROOT/$m" && go test -count=1 ./... >"$logdir/test-$m.log" 2>&1 ) &
+  done
+  wait
+  for m in $mods; do
+    if ! grep -q '^ok' "$logdir/test-$m.log" 2>/dev/null; then
       echo "  $m:"
       grep -Ev '^ok |no test files' "$logdir/test-$m.log" | head -30
       failed=1
-    }
+    elif grep -qE '^(FAIL|--- FAIL)' "$logdir/test-$m.log" 2>/dev/null; then
+      echo "  $m:"
+      grep -E '^(FAIL|--- FAIL)' "$logdir/test-$m.log" | head -30
+      failed=1
+    fi
   done
   [ "$failed" -eq 0 ] && echo "ok   tests" || echo "FAIL tests"
   return $failed
