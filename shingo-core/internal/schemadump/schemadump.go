@@ -35,6 +35,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
@@ -222,18 +223,42 @@ func dumpFile(dbName string) string { return "/tmp/shingo-schema-" + dbName + ".
 // snapshot.
 func (i *Instance) Dump(ctx context.Context, dbName string) (string, error) {
 	file := dumpFile(dbName)
+	// THE EXIT CODE IS NOT A COMPLETION SIGNAL, so the command prints its own.
+	//
+	// testcontainers' Exec creates the exec, attaches, then immediately polls
+	// ContainerExecInspect in a loop that breaks on !Running. An exec the daemon
+	// has not scheduled yet is also not running, and it inspects as
+	// {Running:false, ExitCode:0} — so a slow daemon returns "succeeded" before
+	// pg_dump has run at all, and the copy below then fails with a file-not-found
+	// that names the symptom and hides the cause.
+	//
+	// It is invisible on a fast machine and reproducible on a loaded one: this
+	// failed only in the -race shards, where the detector's slowdown and CI
+	// co-tenancy widen the window, and passed in the plain docker job and on a
+	// dev box every time.
+	//
+	// So success is proved by the sentinel, and the drain that reads it is also
+	// the synchronisation: the attached stream does not reach EOF until the exec's
+	// process exits, so io.Copy returning means pg_dump is done and the file is
+	// closed. Both facts come from the same read.
+	const doneSentinel = "__SHINGO_DUMP_OK__"
 	code, reader, err := i.container.Exec(ctx, []string{
 		"sh", "-c",
-		fmt.Sprintf("pg_dump --schema-only --no-owner --no-privileges --no-comments --username=%s %s > %s",
-			pgUser, dbName, file),
-	})
+		fmt.Sprintf("pg_dump --schema-only --no-owner --no-privileges --no-comments --username=%s %s > %s && test -s %s && echo %s",
+			pgUser, dbName, file, file, doneSentinel),
+	}, tcexec.Multiplexed()) // demuxed: the raw stream frames every chunk with an
+	// 8-byte header, which can land inside the sentinel and fail the check for a
+	// dump that actually succeeded.
 	if err != nil {
 		return "", fmt.Errorf("exec pg_dump: %w", err)
 	}
-	if code != 0 {
-		var sb strings.Builder
-		_, _ = io.Copy(&sb, reader)
-		return "", fmt.Errorf("pg_dump exited %d: %s", code, sb.String())
+	var out strings.Builder
+	if _, cErr := io.Copy(&out, reader); cErr != nil {
+		return "", fmt.Errorf("read pg_dump exec stream for %s: %w", dbName, cErr)
+	}
+	if !strings.Contains(out.String(), doneSentinel) {
+		return "", fmt.Errorf("pg_dump for %s did not report success (exec exit code %d, which is not "+
+			"trustworthy on its own): %s", dbName, code, strings.TrimSpace(out.String()))
 	}
 
 	rc, err := i.container.CopyFileFromContainer(ctx, file)
