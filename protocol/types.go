@@ -58,9 +58,6 @@ const (
 
 	SubjectNodeStructureChanged = "node.structure_changed"
 
-	// Kanban demand wiring (Phase 2)
-	SubjectDemandSignal = "demand.signal" // Core -> Edge: kanban demand trigger
-
 	// UOP-threshold replenishment (C-push):
 	//   Core observes combined inventory (bins + buckets) per payload,
 	//   compares against the configured threshold from demand_registry,
@@ -68,10 +65,9 @@ const (
 	//   fires L1 retrieve_empty on receipt, deduped by the reservation
 	//   seam (withLoaderBudget), which counts in-flight per loader.
 	//
-	//   There is no second automatic path any more. The legacy bin-count
-	//   DemandSignal route is retired: Core still emits produce
-	//   DemandSignals, but Edge routes them to no handler, so there are no
-	//   "opted-in pairs" for anything to skip.
+	//   There is no second automatic path any more. The kanban bin-count
+	//   DemandSignal route was removed entirely (2026-08): Core no longer
+	//   emits it and no handler exists on Edge.
 
 	// Count-group light alerts (advanced-zone occupancy → PLC-driven warning light)
 	SubjectCountGroupCommand = "countgroup.command" // Core -> Edge: requested light state for a zone
@@ -339,7 +335,7 @@ func CoreInboundSubjects() []string {
 
 // EdgeInboundSubjects returns every Subject Edge handles (envelopes
 // originated by Core: registration acks, node-list/catalog responses,
-// demand signals, count-group commands, bin-picked-up notifications).
+// count-group commands, bin-picked-up notifications).
 // Used by cmd/shingoedge/main.go's boot-time SubjectRouter coverage
 // assertion.
 //
@@ -360,7 +356,6 @@ func EdgeInboundSubjects() []string {
 		SubjectEdgeRegisterRequest,
 		SubjectEdgeStale,
 		SubjectNodeStructureChanged,
-		SubjectDemandSignal,
 		SubjectCountGroupCommand,
 		SubjectBinPickedUp,
 		SubjectUOPAdjustment,
@@ -411,8 +406,8 @@ const (
 // English word "role" — the two are unrelated and using the same type
 // for both would be misleading.
 //
-// Cross-module: this value crosses Edge ↔ Core boundaries via
-// DemandSignal.Role (and the plant-claims mirror); the typed alias keeps
+// Cross-module: this value crosses Edge ↔ Core boundaries via the
+// plant-claims mirror; the typed alias keeps
 // JSON serialization byte-identical to the prior untyped string while
 // giving Go callers compile-time distinction from raw strings.
 type ClaimRole string

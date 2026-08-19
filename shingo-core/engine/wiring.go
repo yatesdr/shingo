@@ -10,9 +10,9 @@
 //                                waybill/staged/terminal dispatch
 //   wiring_completion.go      â€" delivery arrival, completion cleanup,
 //                                multi-bin junction-table paths
-//   wiring_staging.go         â€" resolveNodeStaging / resolveStagingExpiry
+//   wiring_staging.go         â€" resolveNodeStaging / resolveStagingExpiry /
+//                                isStorageSlot
 //   wiring_auto_return.go     â€" maybeCreateReturnOrder and related
-//   wiring_kanban.go          â€" demand-registry signalling on bin moves
 //   wiring_telemetry.go       â€" per-transition mission events + summary
 //   wiring_count_group.go     â€" CountGroup broadcast to edges
 //
@@ -570,12 +570,6 @@ func (e *Engine) wireEventHandlers() {
 			e.dbg("resume notification sent to edge: station=%s uuid=%s", ev.StationID, ev.EdgeUUID)
 		}
 	}, EventOrderResumed)
-
-	// â"€â"€ Kanban demand â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-	// look up the demand registry and send a demand signal to Edge.
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
-		e.handleKanbanDemand(evt.Payload)
-	}, EventBinUpdated)
 
 	// ── UOP-threshold replenishment monitor ─────────────────────────────
 	// Combined bin + bucket UOP per payload — fires LoopBelowThresholdSignal

@@ -929,15 +929,6 @@ type NodeStructureChanged struct {
 	Action      string `json:"action"` // "reparented" or "group_deleted"
 }
 
-// DemandSignal is sent by Core to Edge when a kanban event fires.
-// Edge creates an order for the specified payload at the specified node.
-type DemandSignal struct {
-	CoreNodeName string    `json:"core_node_name"` // delivery node for the order
-	PayloadCode  string    `json:"payload_code"`   // which payload to request
-	Role         ClaimRole `json:"role"`           // determines order type
-	Reason       string    `json:"reason"`         // human-readable trigger (e.g., "empty bin returned to storage")
-}
-
 // CountGroupCommand is sent by Core to Edge when an advanced zone's occupancy state changes.
 // Edge translates this into a request/ack handshake against a PLC tag via WarLink.
 //
