@@ -786,10 +786,11 @@ func OpenSharedWithConfig(t testing.TB, key string) (*store.DB, *config.Database
 
 	sharedMu.Lock()
 	if db, ok := sharedDBs[key]; ok {
+		cfg := sharedCfgs[key] // read under the lock; the maps are written by releaseShared and sibling opens
 		sharedRefs[key]++
 		sharedMu.Unlock()
 		t.Cleanup(func() { releaseShared(key) })
-		return db, sharedCfgs[key]
+		return db, cfg
 	}
 	sharedMu.Unlock()
 
@@ -816,10 +817,11 @@ func OpenSharedWithConfig(t testing.TB, key string) (*store.DB, *config.Database
 	// cloned this key while we were waiting on the template.
 	sharedMu.Lock()
 	if db, ok := sharedDBs[key]; ok {
+		cfg := sharedCfgs[key] // under the lock, same as the fast path above
 		sharedRefs[key]++
 		sharedMu.Unlock()
 		t.Cleanup(func() { releaseShared(key) })
-		return db, sharedCfgs[key]
+		return db, cfg
 	}
 
 	// The database name needs the file's IDENTITY, not its path: sanitize()
