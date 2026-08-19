@@ -38,6 +38,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -719,7 +720,195 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 	return db, cfg
 }
 
-// sanitize strips characters that aren't safe for a Postgres database name.
+// sharedDBs tracks the per-key databases handed out by OpenShared. One clone
+// per key per process; every test in the process using the same key operates
+// on the same *store.DB. The entry is retired when the last test using it
+// finishes (see releaseShared), so a file's database never outlives the run.
+var (
+	sharedMu    sync.Mutex
+	sharedDBs   = map[string]*store.DB{}
+	sharedNames = map[string]string{} // key -> database name, for the drop
+	sharedCfgs  = map[string]*config.DatabaseConfig{}
+	sharedRefs  = map[string]int{} // key -> live tests holding it
+)
+
+// OpenShared returns a *store.DB shared by every test that passes the same
+// key. The first call for a key clones the template once; every later call —
+// including from parallel tests in the same file — gets the SAME database.
+// The database is closed and dropped when the LAST test using the key
+// finishes (refcounted t.Cleanup), not per test.
+//
+// This is why a shared-key file must not contain DDL mutators
+// (ALTER/RENAME), mid-test db.Close, or asserts over global unscoped state —
+// see the dispatch OpenShared lint guard.
+//
+// The intended key is the test FILE (testFileKey()), so "shared" means
+// "one database per file, all tests in the file on it". A hand-written key is
+// allowed but must be stable, not derived from t.Name().
+//
+// A test's fixture writes persist for its file-siblings. Tests must
+// therefore use unique fixture names (they already do: per-test prefixes
+// like "DWFULL-", "CCC-"), not shared constants.
+func OpenShared(t testing.TB, key string) *store.DB {
+	db, _ := OpenSharedWithConfig(t, key)
+	return db
+}
+
+// OpenSharedWithConfig is OpenShared plus the config reaching the same
+// database, for the same migration-test niche as OpenWithConfig.
+func OpenSharedWithConfig(t testing.TB, key string) (*store.DB, *config.DatabaseConfig) {
+	t.Helper()
+
+	// Docker-panic guard, same shape as OpenWithConfig's.
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprint(r)
+			if strings.Contains(strings.ToLower(msg), "docker") {
+				noteDockerDown(t, fmt.Errorf("%s", msg))
+				if os.Getenv(envRequireDocker) != "" {
+					t.Fatalf("SHINGO-DOCKER-DOWN (required): %s", msg)
+				}
+				t.Skipf("skipping integration test: %s", msg)
+			}
+			panic(r)
+		}
+	}()
+
+	sharedMu.Lock()
+	if db, ok := sharedDBs[key]; ok {
+		sharedRefs[key]++
+		sharedMu.Unlock()
+		t.Cleanup(func() { releaseShared(key) })
+		return db, sharedCfgs[key]
+	}
+	sharedMu.Unlock()
+
+	// Same startup sequence as OpenWithConfig — shared container, shared
+	// template — then diverge: one clone per key, refcounted lifetime
+	// instead of per-test drop.
+	containerOnce.Do(startContainer)
+	if containerErr != nil {
+		if strings.Contains(strings.ToLower(containerErr.Error()), "docker") {
+			noteDockerDown(t, containerErr)
+			if os.Getenv(envRequireDocker) != "" {
+				t.Fatalf("SHINGO-DOCKER-DOWN (required): start postgres container: %v", containerErr)
+			}
+			t.Skipf("skipping integration test: %v", containerErr)
+		}
+		t.Fatalf("start postgres container: %v", containerErr)
+	}
+	templateOnce.Do(setupTemplate)
+	if templateErr != nil {
+		t.Fatalf("setup template database: %v", templateErr)
+	}
+
+	// Re-check under the lock after the once-gates: a sibling test may have
+	// cloned this key while we were waiting on the template.
+	sharedMu.Lock()
+	if db, ok := sharedDBs[key]; ok {
+		sharedRefs[key]++
+		sharedMu.Unlock()
+		t.Cleanup(func() { releaseShared(key) })
+		return db, sharedCfgs[key]
+	}
+
+	dbName := fmt.Sprintf("shared_%s_p%d", sanitize(key), os.Getpid())
+	admin, err := adminConn()
+	if err != nil {
+		sharedMu.Unlock()
+		t.Fatalf("open admin connection: %v", err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", dbName, templateName())); err != nil {
+		sharedMu.Unlock()
+		t.Fatalf("create shared database %s: %v%s", dbName, err, ownContainerHint())
+	}
+	atomic.AddInt64(&testDBsCreated, 1)
+
+	cfg := &config.DatabaseConfig{
+		Postgres: config.PostgresConfig{
+			Host:     containerHost,
+			Port:     containerPort,
+			Database: dbName,
+			User:     "test",
+			Password: "test",
+			SSLMode:  "disable",
+		},
+	}
+	db, err := store.OpenWithoutMigrate(cfg)
+	if err != nil {
+		sharedMu.Unlock()
+		t.Fatalf("open shared db %s: %v%s", dbName, err, ownContainerHint())
+	}
+	sharedDBs[key] = db
+	sharedNames[key] = dbName
+	sharedCfgs[key] = cfg
+	sharedRefs[key] = 1
+	t.Cleanup(func() { releaseShared(key) })
+	sharedMu.Unlock()
+	return db, cfg
+}
+
+// releaseShared decrements the key's refcount; the caller that takes it to
+// zero closes and drops the shared database. Registered per-test by
+// OpenSharedWithConfig, so the drop lands when the last test in the file
+// finishes — no process-exit hook needed (Go test binaries have none).
+func releaseShared(key string) {
+	sharedMu.Lock()
+	defer sharedMu.Unlock()
+	n := sharedRefs[key]
+	if n > 1 {
+		sharedRefs[key] = n - 1
+		return
+	}
+	delete(sharedRefs, key)
+	db := sharedDBs[key]
+	name := sharedNames[key]
+	delete(sharedDBs, key)
+	delete(sharedNames, key)
+	delete(sharedCfgs, key)
+	if db != nil {
+		db.Close()
+	}
+	if name == "" {
+		return
+	}
+	admin, err := adminConn()
+	if err != nil {
+		return
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", name)); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "is being accessed") {
+			admin.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, name)
+			admin.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", name))
+			atomic.AddInt64(&terminateFired, 1)
+		}
+	}
+}
+
+// testFileKey derives the per-file sharing key from the CALL SITE of
+// OpenShared in the caller's test file. runtime.Caller(1) from here is the
+// test helper (e.g. dispatch's testDBShared); runtime.Caller(2) is its
+// caller — the test function. The FILE part of that frame is stable per file
+// and unique across files, which is exactly the key property needed.
+func testFileKey() string {
+	for skip := 2; skip < 6; skip++ {
+		_, file, _, ok := runtime.Caller(skip)
+		if !ok {
+			break
+		}
+		if !strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		// First _test.go frame above the testdb package = the test file.
+		if !strings.Contains(file, "internal/testdb/") {
+			return file
+		}
+	}
+	return "fallback"
+}
+
 func sanitize(name string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(name) {
@@ -745,6 +934,13 @@ type StandardData struct {
 // SetupStandardData creates the minimal fixture shared by most tests:
 // one storage node (STORAGE-A1, zone A), one line node (LINE1-IN),
 // one payload (PART-A), and one bin type (DEFAULT).
+//
+// IDEMPOTENT: every entity is get-or-create by its natural key. Tests that
+// share one database (OpenShared) call this concurrently, and two
+// SetupStandardData calls against one DB must not fight over nodes_name_key,
+// payloads_code_key or bin_types_code_key. The get-or-create on a shared DB
+// returns the existing row, so the returned StandardData is identical for
+// every caller on that DB — same IDs, no drift.
 func SetupStandardData(t *testing.T, db *store.DB) *StandardData {
 	t.Helper()
 	// STORAGE-A1 must be a STOR node: store-destination handling keys on the STOR
@@ -761,28 +957,82 @@ func SetupStandardData(t *testing.T, db *store.DB) *StandardData {
 			t.Fatalf("create STOR node type: %v", err)
 		}
 	}
-	storageNode := &nodes.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true, NodeTypeID: &storType.ID}
-	if err := db.CreateNode(storageNode); err != nil {
-		t.Fatalf("create storage node: %v", err)
-	}
-	lineNode := &nodes.Node{Name: "LINE1-IN", Enabled: true}
-	if err := db.CreateNode(lineNode); err != nil {
-		t.Fatalf("create line node: %v", err)
-	}
-	bp := &payloads.Payload{Code: "PART-A", Description: "Steel bracket tote", UOPCapacity: 1000}
-	if err := db.CreatePayload(bp); err != nil {
-		t.Fatalf("create payload: %v", err)
-	}
-	bt := &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
-	if err := db.CreateBinType(bt); err != nil {
-		t.Fatalf("create bin type: %v", err)
-	}
+	// Get-or-create each entity. A missed SELECT followed by a racing INSERT
+	// is fine here too: these run on the same shared DB, so the loser of the
+	// race re-reads and gets the winner's row.
+	storageNode := getOrCreateNode(t, db, "STORAGE-A1", func(existing *nodes.Node) {
+		existing.Zone = "A"
+		existing.Enabled = true
+		existing.NodeTypeID = &storType.ID
+	})
+	lineNode := getOrCreateNode(t, db, "LINE1-IN", func(existing *nodes.Node) {
+		existing.Enabled = true
+	})
+	bp := getOrCreatePayload(t, db, "PART-A", func(existing *payloads.Payload) {
+		existing.Description = "Steel bracket tote"
+		existing.UOPCapacity = 1000
+	})
+	bt := getOrCreateBinType(t, db, "DEFAULT", func(existing *bins.BinType) {
+		existing.Description = "Default test bin type"
+	})
 	return &StandardData{
 		StorageNode: storageNode,
 		LineNode:    lineNode,
 		Payload:     bp,
 		BinType:     bt,
 	}
+}
+
+// getOrCreateNode reads a node by name, creating it with applyToNew applied
+// when absent. When present, applyToNew is NOT applied — the first creator's
+// shape wins and later callers see the same row.
+func getOrCreateNode(t *testing.T, db *store.DB, name string, applyToNew func(n *nodes.Node)) *nodes.Node {
+	t.Helper()
+	if existing, err := db.GetNodeByName(name); err == nil {
+		return existing
+	}
+	n := &nodes.Node{Name: name}
+	applyToNew(n)
+	if err := db.CreateNode(n); err != nil {
+		// Lost a create race on a shared DB: re-read the winner's row.
+		if existing, rerr := db.GetNodeByName(name); rerr == nil {
+			return existing
+		}
+		t.Fatalf("create node %s: %v", name, err)
+	}
+	return n
+}
+
+func getOrCreatePayload(t *testing.T, db *store.DB, code string, applyToNew func(p *payloads.Payload)) *payloads.Payload {
+	t.Helper()
+	if existing, err := db.GetPayloadByCode(code); err == nil {
+		return existing
+	}
+	p := &payloads.Payload{Code: code}
+	applyToNew(p)
+	if err := db.CreatePayload(p); err != nil {
+		if existing, rerr := db.GetPayloadByCode(code); rerr == nil {
+			return existing
+		}
+		t.Fatalf("create payload %s: %v", code, err)
+	}
+	return p
+}
+
+func getOrCreateBinType(t *testing.T, db *store.DB, code string, applyToNew func(bt *bins.BinType)) *bins.BinType {
+	t.Helper()
+	if existing, err := db.GetBinTypeByCode(code); err == nil {
+		return existing
+	}
+	bt := &bins.BinType{Code: code}
+	applyToNew(bt)
+	if err := db.CreateBinType(bt); err != nil {
+		if existing, rerr := db.GetBinTypeByCode(code); rerr == nil {
+			return existing
+		}
+		t.Fatalf("create bin type %s: %v", code, err)
+	}
+	return bt
 }
 
 // CreateBinAtNode creates a bin at the given node with a confirmed manifest matching
