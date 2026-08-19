@@ -376,6 +376,22 @@ type MessagingConfig struct {
 type KafkaConfig struct {
 	Brokers []string `yaml:"brokers"`
 	GroupID string   `yaml:"group_id"`
+	// DialTimeout bounds the per-broker reachability probe in Connect.
+	// Zero means the 5s production default. A config that names unreachable
+	// brokers pays this per broker, serially — which is why it is a knob at
+	// all: the config-save handler reconfigures messaging inline, and a test
+	// (or a plant) saving broker names that don't resolve would hold the
+	// handler for 5s × brokers.
+	DialTimeout time.Duration `yaml:"dial_timeout"`
+}
+
+// DialTimeoutOr returns the effective broker-probe timeout: the configured
+// value, or the 5s production default when zero.
+func (k KafkaConfig) DialTimeoutOr() time.Duration {
+	if k.DialTimeout > 0 {
+		return k.DialTimeout
+	}
+	return 5 * time.Second
 }
 
 // RobotConfidenceConfig tunes the localization-confidence collector, which

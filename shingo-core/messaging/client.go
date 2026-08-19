@@ -104,7 +104,7 @@ func (c *Client) Connect() error {
 	var connErr error
 	for _, broker := range c.cfg.Kafka.Brokers {
 		c.dbg("connect: probing broker %s", broker)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.Kafka.DialTimeoutOr())
 		conn, connErr = kafka.DialContext(ctx, "tcp", broker)
 		cancel()
 		if connErr == nil {
