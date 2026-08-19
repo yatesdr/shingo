@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
@@ -147,6 +148,41 @@ func (d *Dispatcher) commitToFleet(order *orders.Order, req fleet.CreateOrderReq
 	return nil
 }
 
+// SyntheticLocation is the refusal an arm gets when one of its blocks names a
+// synthetic node — a Core-side grouping row (NGRP, LANE) that names a SET of
+// places rather than a place. No robot can drive to one, so a create carrying
+// it cannot succeed: the fleet rejects it (SEER 50001, "binTask JackUnload is
+// invalid in location X") and the order dies holding a name nothing resolves.
+//
+// IT IS A REFUSAL, NOT A FAILURE, and the distinction is the whole point. The
+// condition is "this destination was never resolved to a child", which the next
+// tick can still fix — a slot frees, the resolver picks one, the order goes. So
+// the order keeps its bin and its reservations and parks, exactly as it does for
+// an undeclared lane. Callers classify with IsSyntheticLocation and set the
+// queue reason, because a park nobody can explain is the one wait state that
+// reads as a hang.
+type SyntheticLocation struct {
+	OrderID  int64
+	Location string
+}
+
+func (s SyntheticLocation) Error() string {
+	return fmt.Sprintf(
+		"commit: order %d is being sent to %q, which is a synthetic node — a group naming a set of "+
+			"positions, not a position a robot can drive to. The fleet cannot accept it. The "+
+			"destination should have been resolved to a concrete child before dispatch; it was not, "+
+			"so this order is parked rather than sent",
+		s.OrderID, s.Location)
+}
+
+// IsSyntheticLocation reports whether err is a synthetic-location refusal, so a
+// caller can park under a queue reason that names the cause rather than
+// treating it as an opaque fleet error.
+func IsSyntheticLocation(err error) bool {
+	var sl SyntheticLocation
+	return errors.As(err, &sl)
+}
+
 // assertDeclaredEveryLaneItEnters is the INVARIANT, asserted where it is created.
 //
 // The caller declares what it is entering; this checks that declaration against
@@ -180,6 +216,16 @@ func (d *Dispatcher) commitToFleet(order *orders.Order, req fleet.CreateOrderReq
 // is a property and deliberately never resolved against nodes — resolve to
 // nothing and are skipped. That is what makes the gated arm's empty declaration
 // correct rather than merely tolerated: its create really does name no lane.
+//
+// ── IT ASSERTS A SECOND THING, AND THE NAME UNDER-SELLS IT ─────────────────
+//
+// The same walk also refuses a block naming a SYNTHETIC node (SyntheticLocation
+// above). Both rules ask the same question of the same list — is this block's
+// location a thing the robot can be sent to — and both answer it against the
+// blocks rather than against the order's columns, for the reason the phantom-
+// entrant paragraph gives. The name is kept because the lane invariant is the
+// load-bearing one and its message is cited elsewhere; a rename is worth doing
+// only alongside one that widens the contract deliberately.
 func (d *Dispatcher) assertDeclaredEveryLaneItEnters(orderID int64, req fleet.CreateOrderRequest, declared []*nodes.Node) error {
 	held := make(map[int64]bool, len(declared))
 	for _, laneID := range d.lanesFor(declared...) {
@@ -192,6 +238,20 @@ func (d *Dispatcher) assertDeclaredEveryLaneItEnters(orderID int64, req fleet.Cr
 		node, err := d.db.GetNodeByDotName(b.Location)
 		if err != nil || node == nil {
 			continue // not a Core node — a gate point, or a vendor-only location
+		}
+		// A SYNTHETIC NODE IS NOT A PLACE, and this is the last point at which
+		// that can still be said. It shares the walk above rather than getting a
+		// pass of its own because the skip immediately preceding it — "not a Core
+		// node, therefore not ours to judge" — is the subtle half of both rules,
+		// and a second loop would be a second copy of it, free to drift.
+		//
+		// The check is here rather than at the resolvers because there is more
+		// than one way to reach a create: three arms call commitToFleet, intake
+		// and the scanner both dispatch, and the deferral that leaves a group
+		// name on an order is made at three sites and kept at one. A guard at any
+		// one resolver protects that resolver. This protects the wire.
+		if node.IsSynthetic {
+			return SyntheticLocation{OrderID: orderID, Location: b.Location}
 		}
 		lane, err := d.db.LaneForNode(node.ID)
 		if err != nil {

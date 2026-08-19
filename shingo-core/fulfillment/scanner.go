@@ -520,7 +520,19 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		}
 		// Fleet rejected the dispatch — a transient robot-system issue. Park under
 		// fleet_unavailable so the row carries that code.
-		s.setQueueReason(order, protocol.QueueFleetUnavailable, dispatch.CauseFleetRefusedCreate, dispatch.QueueParams{})
+		//
+		// UNLESS THE FLEET WAS NEVER ASKED. A synthetic destination is refused at
+		// the commit seam BEFORE any create, so fleet_unavailable would state a
+		// robot-system outage that is not happening and send whoever reads the row
+		// to the wrong system entirely. It is the blank-wait problem one level up:
+		// not an absent cause, a confidently wrong one. Name the real fact, under
+		// the cause planning already writes for it, so the two cannot drift.
+		if dispatch.IsSyntheticLocation(err) {
+			s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.CauseNGRPResolve,
+				dispatch.QueueParams{Destination: order.DeliveryNode})
+		} else {
+			s.setQueueReason(order, protocol.QueueFleetUnavailable, dispatch.CauseFleetRefusedCreate, dispatch.QueueParams{})
+		}
 		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
 			s.logTransition(order.ID, "→ sourcing after fleet fail", err)
 		}
@@ -642,8 +654,15 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		}
 		// Same fleet_unavailable code as the plain-path fleet failure; both are
 		// transient robot-system issues. The hard claim is released so the order
-		// re-soft-acquires next tick.
-		s.setQueueReason(order, protocol.QueueFleetUnavailable, dispatch.CauseFleetRefusedCreate, dispatch.QueueParams{})
+		// re-soft-acquires next tick. And the same synthetic-destination carve-out,
+		// for the same reason — this arm reaches the same commit seam, so it can be
+		// refused before any create just as the plain path can.
+		if dispatch.IsSyntheticLocation(err) {
+			s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.CauseNGRPResolve,
+				dispatch.QueueParams{Destination: order.DeliveryNode})
+		} else {
+			s.setQueueReason(order, protocol.QueueFleetUnavailable, dispatch.CauseFleetRefusedCreate, dispatch.QueueParams{})
+		}
 		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
 			s.logTransition(order.ID, "held-bin → sourcing after fleet fail", err)
 		}

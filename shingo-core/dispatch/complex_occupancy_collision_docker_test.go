@@ -275,3 +275,103 @@ func mouthLaneOf(t *testing.T, db *store.DB, slot *nodes.Node) int64 {
 	}
 	return lane.ID
 }
+
+// TestSeamGuard_ASyntheticDestinationNeverReachesTheFleet — a synthetic node
+// names a SET of positions, not one, so a create carrying it cannot succeed:
+// SEER answers 50001 and the order dies holding a name nothing resolves.
+//
+// The guard is at the seam rather than at a resolver because three arms reach
+// commitToFleet, two entry points dispatch, and the deferral that leaves a group
+// name on an order is made at three sites. A resolver-side guard protects that
+// resolver; this asserts nothing naming a synthetic node reaches the fleet by
+// any route. Asserted on the fleet record, not the error — a guard that returns
+// an error after the create is a report.
+func TestSeamGuard_ASyntheticDestinationNeverReachesTheFleet(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	srcNode, _, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// The shape of Hopkinsville's "Supermarket Empty Totes".
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "NGRP node type")
+	grp := &nodes.Node{Name: "SYNGUARD-GROUP", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create the group")
+
+	bin := testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "SYNGUARD-BIN")
+	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "synguard"
+		o.OrderType = OrderTypeMove
+		o.PayloadCode = bp.Code
+		o.SourceNode = srcNode.Name
+		o.DeliveryNode = grp.Name // the group name, as intake leaves it
+		o.Status = StatusSourcing
+	})
+	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
+	order, _ = db.GetOrder(order.ID)
+
+	req := fleet.CreateOrderRequest{
+		OrderID:    mintVendorOrderID(order.ID),
+		ExternalID: order.EdgeUUID,
+		Blocks: []fleet.OrderBlock{
+			{BlockID: "1", Location: srcNode.Name},
+			{BlockID: "2", Location: grp.Name},
+		},
+	}
+	err = d.commitToFleet(order, req, "test", srcNode, grp)
+
+	if err == nil {
+		t.Fatalf("the seam accepted a dispatch to %s, a synthetic group and not a position any robot "+
+			"can drive to — the fleet rejects that create and the order dies.", grp.Name)
+	}
+	if !IsSyntheticLocation(err) {
+		t.Errorf("refusal did not classify as IsSyntheticLocation: %v\nThe callers pick their queue "+
+			"reason from this; unclassified, the row reads fleet_unavailable and blames a robot "+
+			"system that is not down.", err)
+	}
+	sent, _ := db.GetOrder(order.ID)
+	if sent.VendorOrderID != "" {
+		t.Errorf("a refused commit still reached the fleet as %q — the guard has to run BEFORE the "+
+			"handover or it is a report rather than a guard", sent.VendorOrderID)
+	}
+}
+
+// TestSeamGuard_AConcreteDestinationIsUntouched is the control. The predicate
+// keys on IsSynthetic, which covers LANE as well as NGRP, and it sits in the
+// last walk before the fleet — too wide there stops ordinary plant traffic.
+//
+// Deliberately narrow: it asserts the guard did not fire, not that the commit
+// succeeded. Other arms refuse for their own reasons and have their own tests.
+func TestSeamGuard_AConcreteDestinationIsUntouched(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	srcNode, lineNode, bp := setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	bin := testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "SYNGUARD-OK-BIN")
+	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "synguard-ok"
+		o.OrderType = OrderTypeMove
+		o.PayloadCode = bp.Code
+		o.SourceNode = srcNode.Name
+		o.DeliveryNode = lineNode.Name
+		o.Status = StatusSourcing
+	})
+	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
+	order, _ = db.GetOrder(order.ID)
+
+	req := fleet.CreateOrderRequest{
+		OrderID:    mintVendorOrderID(order.ID),
+		ExternalID: order.EdgeUUID,
+		Blocks: []fleet.OrderBlock{
+			{BlockID: "1", Location: srcNode.Name},
+			{BlockID: "2", Location: lineNode.Name},
+		},
+	}
+	err := d.commitToFleet(order, req, "test", srcNode, lineNode)
+
+	if IsSyntheticLocation(err) {
+		t.Fatalf("the guard refused %s, a concrete node, as synthetic: %v\nThe predicate is too wide "+
+			"— at this seam that stops ordinary plant traffic.", lineNode.Name, err)
+	}
+}
