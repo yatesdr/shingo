@@ -268,7 +268,6 @@ This builds a protocol envelope, encodes it, and enqueues it in the outbox. Used
 | `corrections` | Manual inventory corrections |
 | `cms_transactions` | Material movement transaction log |
 | `demands` | Material demand planning entries |
-| `production_log` | Production event log |
 | `outbox` | Message queue for Kafka delivery |
 | `audit_log` | System-wide audit trail |
 | `admin_users` | Web UI authentication |

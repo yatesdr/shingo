@@ -865,23 +865,6 @@ CREATE TABLE public.process_styles (
     is_active boolean DEFAULT false NOT NULL
 );
 
-CREATE TABLE public.production_log (
-    id bigint NOT NULL,
-    cat_id text NOT NULL,
-    station_id text NOT NULL,
-    quantity bigint NOT NULL,
-    reported_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE SEQUENCE public.production_log_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.production_log_id_seq OWNED BY public.production_log.id;
-
 CREATE TABLE public.production_tick_dedup (
     station text NOT NULL,
     edge_snapshot_id bigint NOT NULL,
@@ -1318,8 +1301,6 @@ ALTER TABLE ONLY public.payload_manifest ALTER COLUMN id SET DEFAULT nextval('pu
 
 ALTER TABLE ONLY public.payloads ALTER COLUMN id SET DEFAULT nextval('public.payloads_id_seq'::regclass);
 
-ALTER TABLE ONLY public.production_log ALTER COLUMN id SET DEFAULT nextval('public.production_log_id_seq'::regclass);
-
 ALTER TABLE ONLY public.recovery_actions ALTER COLUMN id SET DEFAULT nextval('public.recovery_actions_id_seq'::regclass);
 
 ALTER TABLE ONLY public.reservations ALTER COLUMN id SET DEFAULT nextval('public.reservations_id_seq'::regclass);
@@ -1525,9 +1506,6 @@ ALTER TABLE ONLY public.plant_confidence_daily
 ALTER TABLE ONLY public.process_styles
     ADD CONSTRAINT process_styles_pkey PRIMARY KEY (process_id, style_id);
 
-ALTER TABLE ONLY public.production_log
-    ADD CONSTRAINT production_log_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.production_tick_dedup
     ADD CONSTRAINT production_tick_dedup_pkey PRIMARY KEY (station, edge_snapshot_id);
 
@@ -1669,8 +1647,6 @@ CREATE INDEX idx_orders_vendor ON public.orders USING btree (vendor_order_id);
 CREATE INDEX idx_outbox_pending ON public.outbox USING btree (sent_at) WHERE (sent_at IS NULL);
 
 CREATE INDEX idx_payload_manifest_payload ON public.payload_manifest USING btree (payload_id);
-
-CREATE INDEX idx_production_log_cat ON public.production_log USING btree (cat_id);
 
 CREATE INDEX idx_recovery_actions_created ON public.recovery_actions USING btree (created_at);
 

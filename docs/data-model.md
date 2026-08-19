@@ -358,6 +358,6 @@ audit_log               (system-wide audit)
 admin_users             (authentication)
 edge_registry           (connected edge stations)
 scene_points            (fleet map cache)
-demands, production_log (demand planning)
+demands                 (demand planning)
 test_commands           (fleet testing)
 ```

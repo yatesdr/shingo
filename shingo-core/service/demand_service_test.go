@@ -159,24 +159,3 @@ func TestDemandService_ClearAllProduced_ZeroesEverything(t *testing.T) {
 		t.Errorf("produced = %d/%d, want 0/0", gotA.ProducedQty, gotB.ProducedQty)
 	}
 }
-
-func TestDemandService_ListProductionLog_EmptyWhenNoEntries(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	svc := NewDemandService(db)
-
-	// Fresh cat_id with no production log entries inserted.
-	rows, err := svc.ListProductionLog("CAT-PLOG-EMPTY", 10)
-	if err != nil {
-		t.Fatalf("ListProductionLog: %v", err)
-	}
-	if len(rows) != 0 {
-		t.Errorf("len(rows) = %d, want 0", len(rows))
-	}
-
-	// Sanity: database-side query returns the same zero result.
-	dbRows, _ := db.ListProductionLog("CAT-PLOG-EMPTY", 10)
-	if len(dbRows) != len(rows) {
-		t.Errorf("db rows = %d, svc rows = %d, should match", len(dbRows), len(rows))
-	}
-}

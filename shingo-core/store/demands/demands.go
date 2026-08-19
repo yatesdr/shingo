@@ -1,9 +1,11 @@
-// Package demands holds demand + production-log + demand-registry
-// persistence for shingo-core.
+// Package demands holds demand + demand-registry persistence for
+// shingo-core.
 //
-// Phase 5 of the architecture plan moved demands, production_log, and
-// demand_registry CRUD out of the flat store/ package and into this
-// sub-package. The outer store/ keeps type aliases
+// Phase 5 of the architecture plan moved demands and demand_registry
+// CRUD out of the flat store/ package and into this sub-package. (The
+// third table it moved, production_log, was dropped at v92 — a
+// write-only shadow of bin_uop_audit's delta rows since the §14
+// cutover.) The outer store/ keeps type aliases
 // (`store.Demand = demands.Demand`, etc.) and one-line delegate methods
 // on *store.DB so external callers see no API change.
 package demands
@@ -36,15 +38,6 @@ func (d *Demand) Remaining() int64 {
 		return 0
 	}
 	return r
-}
-
-// ProductionLogEntry records an individual station's production report.
-type ProductionLogEntry struct {
-	ID         int64     `json:"id"`
-	CatID      string    `json:"cat_id"`
-	StationID  string    `json:"station_id"`
-	Quantity   int64     `json:"quantity"`
-	ReportedAt time.Time `json:"reported_at"`
 }
 
 // RegistryEntry maps a payload code to a manual_swap node that accepts
@@ -180,32 +173,6 @@ func ClearProduced(db *sql.DB, id int64) error {
 func SetProduced(db *sql.DB, id int64, qty int64) error {
 	_, err := db.Exec(`UPDATE demands SET produced_qty = $1, updated_at=NOW() WHERE id=$2`, qty, id)
 	return err
-}
-
-// LogProduction appends a production_log row.
-func LogProduction(db *sql.DB, catID, stationID string, qty int64) error {
-	_, err := db.Exec(`INSERT INTO production_log (cat_id, station_id, quantity) VALUES ($1, $2, $3)`,
-		catID, stationID, qty)
-	return err
-}
-
-// ListProductionLog returns recent production_log entries for a cat_id.
-func ListProductionLog(db *sql.DB, catID string, limit int) ([]*ProductionLogEntry, error) {
-	rows, err := db.Query(`SELECT id, cat_id, station_id, quantity, reported_at FROM production_log WHERE cat_id=$1 ORDER BY reported_at DESC LIMIT $2`,
-		catID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var entries []*ProductionLogEntry
-	for rows.Next() {
-		e := &ProductionLogEntry{}
-		if err := rows.Scan(&e.ID, &e.CatID, &e.StationID, &e.Quantity, &e.ReportedAt); err != nil {
-			return nil, err
-		}
-		entries = append(entries, e)
-	}
-	return entries, rows.Err()
 }
 
 // RegistryChange describes a single (loader, payload) row whose

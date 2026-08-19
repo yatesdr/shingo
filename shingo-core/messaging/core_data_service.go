@@ -198,7 +198,7 @@ func (s *CoreDataService) HandleProductionTick(env *protocol.Envelope, snap *pro
 
 	// §14 production.report retirement — BLOCKED, see Q-024. The gate
 	// (isProductionTick) is ready and tested, and this isNew branch is the
-	// correct, dedup-guarded placement for the IncrementProduced/LogProduction
+	// correct, dedup-guarded placement for the IncrementProduced
 	// calls (§14 risk #4). But IncrementProduced needs cat_id = payload_code,
 	// and production.tick is emitted UPSTREAM of payload attribution
 	// (plc/manager.go enqueueProductionTick has only style/process; payload is
@@ -277,9 +277,6 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 			d.PayloadCode, station, qty, d.Reason)
 		if err := s.db.IncrementProduced(d.PayloadCode, qty); err != nil {
 			log.Printf("core_handler: increment produced payload=%s qty=%d: %v", d.PayloadCode, qty, err)
-		}
-		if err := s.db.LogProduction(d.PayloadCode, station, qty); err != nil {
-			log.Printf("core_handler: log production payload=%s: %v", d.PayloadCode, err)
 		}
 	}
 }
@@ -558,12 +555,14 @@ func (s *CoreDataService) HandleProductionReport(env *protocol.Envelope, rpt *pr
 			continue
 		}
 		// §14 parallel-run (risk #3): the new bin_uop_delta path is now the
-		// SOLE writer of produced_qty / production_log. IncrementProduced is
+		// SOLE writer of produced_qty. IncrementProduced is
 		// NOT idempotent, so we must NOT also write here — double-writing would
 		// silently double the counter and the parity check would pass on both
 		// being wrong. Keep the handler + ack live and LOG what this path WOULD
 		// have written so Stephen can compare LOGS (not counter values) for a
 		// week before the production_reporter deletion lands (Q-024-FOLLOWUP).
+		// (The production_log half of the old claim was a duplicate ledger,
+		// dropped at v92 — this path's counter claim is the surviving half.)
 		log.Printf("core_handler: [production.report parallel-run] would write cat_id=%s station=%s count=%d",
 			entry.CatID, rpt.StationID, entry.Count)
 		accepted++

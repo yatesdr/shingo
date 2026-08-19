@@ -4021,6 +4021,19 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return !schema.ColumnExists(q, "bin_loaders", "buffer_dest")
 			}},
+
+		// v92 drops production_log — the write-only shadow of bin_uop_audit's
+		// delta rows since the §14 cutover (2026-06-15). The baseline CREATE and
+		// every reader/writer went in the same change (see v92DropProductionLog
+		// for the duplication evidence and the self-healing rollback). Deploy
+		// note: the DROP takes a brief ACCESS EXCLUSIVE lock on the shared
+		// off-box Postgres; the pre-cutover rows (48,237 at SPR, not duplicated
+		// anywhere) must be \copy-exported BEFORE this migration reaches a plant.
+		{92, "drop production_log — duplicate ledger of bin_uop_audit deltas",
+			v92DropProductionLog,
+			func(q schema.Querier) bool {
+				return !schema.TableExists(q, "production_log")
+			}},
 	}
 }
 
@@ -4871,6 +4884,31 @@ func v83LaneRobotConfidenceDaily(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// v92DropProductionLog retires the write-only production shadow. Every row since
+// the §14 cutover (2026-06-15) is a strictly-lossier copy of a bin_uop_delta row
+// in bin_uop_audit — verified diff = 0 on rows AND summed quantity for eight
+// consecutive weeks at Springfield and every week at Hopkinsville. Its sole
+// reader (ListProductionLog -> apiDemandLog) is gated on a demands row, and
+// demands is empty at both plants; owner decision D1 records that it is not
+// intended to be used.
+//
+// THE BASELINE'S COPY GOES WITH IT (postgres_ddl.go). schema.Apply runs the
+// baseline on every startup ahead of this migration, so a CREATE left behind
+// re-creates the table every boot, this migration's post-condition fails every
+// boot, and the self-heal re-runs the drop every boot — the v24/v85 alarm
+// documented at the v24 entry, which cannot be answered here by neutering a
+// CREATE migration's verify because the creator is the baseline.
+//
+// ROLLBACK IS SELF-HEALING, unlike v91's. A Core binary from before this change
+// still declares the table in ITS baseline, so rolling back re-creates it empty
+// on first boot and the writer (deleted with this change) is gone anyway.
+//
+// IF EXISTS so a database seeded after this lands never had it.
+func v92DropProductionLog(tx *sql.Tx) error {
+	_, err := tx.Exec(`DROP TABLE IF EXISTS production_log`)
+	return err
 }
 
 // v90MaintainedGroups installs the maintained-group config surface: the two
