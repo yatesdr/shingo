@@ -62,8 +62,10 @@ func newTestEngine(t *testing.T, db *store.DB, flt fleet.Backend) *Engine {
 // newUnstartedEngine is newTestEngine WITHOUT Start() — no boot census, no
 // recomputeAll, no goroutines. For tests that only touch the engine's fields
 // and methods directly (e.g. eng.db, eng.recordBlockLeg) rather than any
-// started-engine behavior; Start() costs ~100-700ms of blocking boot work per
-// call that such tests never observe.
+// started-engine behavior; a started engine's background loops tick against
+// the test database for the test's whole life, which such tests never observe.
+// (Measured 2026-08-18: Start() itself costs ~13ms on a test fixture — boot
+// CPU is not the reason to skip it; goroutine noise is.)
 func newUnstartedEngine(t *testing.T, db *store.DB, flt fleet.Backend) *Engine {
 	t.Helper()
 	cfg := config.Defaults()
