@@ -383,32 +383,43 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 		})
 	}
 
-	// Detect bins stacked at a non-storage, non-staging concrete node — i.e.,
-	// more than one bin physically present at a process node (line node,
-	// dropoff target, etc.). This indicates a prior cycle's evac order failed
-	// to complete the bin handoff (e.g., Robot B faulted en route from core
-	// to AMR group, operator took manual control, transaction never finalized)
-	// while subsequent cycles continued to deliver new bins to the same node.
+	// Detect bins stacked at a concrete node that is not a storage
+	// container — i.e., more than one bin physically present at a process
+	// node (line node, dropoff target, etc.). This indicates a prior
+	// cycle's evac order failed to complete the bin handoff (e.g., Robot B
+	// faulted en route from core to AMR group, operator took manual
+	// control, transaction never finalized) while subsequent cycles
+	// continued to deliver new bins to the same node.
 	// See bug-fix-review-plan.md item 3.1.
 	//
-	// Excluded — these are aggregate/synthetic types, not concrete physical
-	// positions. Their bin_count rolls up across child slots and is
-	// meaningless for the "stacked at one position" check:
-	//   NGRP    — synthetic parent for lanes / direct nodes
-	//   LANE    — depth-ordered slot group (children are the actual slots)
-	//   STOR    — supermarket storage aggregate
-	//   TRANSIT — logical in-flight bin model (many bins can be "in transit")
+	// Excluded by type — containers whose bin_count legitimately rolls up
+	// across child slots, so >1 bin is normal, not stacked:
+	//   NGRP — synthetic parent for lanes / direct nodes
+	//   LANE — depth-ordered slot group (children are the actual slots)
+	//   STOR — a single physical supermarket position that holds many bins
+	//          (dispatch/store_slot.go treats STOR as one addressable slot
+	//          with multi-bin capacity — it is NOT an aggregate of children)
+	// The join is LEFT so an untyped node still gets checked (node_type_id
+	// NULL); only the three named codes are excluded. TRANSIT is not listed:
+	// no node_type with that code exists — the in-flight model is the
+	// synthetic _TRANSIT node, already excluded by is_synthetic.
 	//
-	// All other concrete node types (line nodes, dropoff targets, STAG
-	// staging positions, OVFL overflow positions) hold one physical bin at
-	// a time. >1 at the same node ID is the anomaly we want to surface.
+	// Retired bins are excluded (status <> 'retired'), matching
+	// CountByNode/ListByNode in store/bins: a retired bin parked on a node
+	// is inventory bookkeeping, not a physical stack, and counting it
+	// fires a false critical on the first live delivery to that node.
+	//
+	// Scope: root-level nodes only (parent_id IS NULL) — roughly two-thirds
+	// of slots. Group-parented slots are not watched by this check; a clean
+	// board is not proof that no group-parented slot is stacked.
 	rows, err = db.Query(`
 		SELECT n.id, n.name, COUNT(b.id) AS bin_count
 		FROM bins b
 		JOIN nodes n ON n.id = b.node_id
-		JOIN node_types nt ON nt.id = n.node_type_id
+		LEFT JOIN node_types nt ON nt.id = n.node_type_id
 		WHERE n.is_synthetic = false
-		  AND nt.code NOT IN ('NGRP', 'LANE', 'STOR', 'TRANSIT')
+		  AND b.status <> 'retired'
+		  AND COALESCE(nt.code, '') NOT IN ('NGRP', 'LANE', 'STOR')
 		  AND n.parent_id IS NULL
 		GROUP BY n.id, n.name
 		HAVING COUNT(b.id) > 1
