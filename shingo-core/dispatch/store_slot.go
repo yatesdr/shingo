@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
@@ -128,9 +129,101 @@ func reserveStorageDropoff(db *store.DB, order *orders.Order) error {
 // ours — the caller requeues and waits, keeping its bin. Owner-idempotent, so a
 // store/move that already reserved its slot at intake passes straight through on
 // replay; a no-op for non-storage dropoffs.
-func (d *Dispatcher) ReserveStorageDropoff(order *orders.Order) error {
+//
+// IT RETURNS THE DESTINATION, and that is the fix. It also SETTLES that
+// destination — resolving a group to a child, re-aiming off a dug lane — and it
+// used to do so silently. Callers read the node BEFORE calling and never
+// re-read, so a settled order carried the new name on its row and the OLD node
+// into the lane declaration, the slot confirm, and the transport plan: the
+// record was right and the robot still drove into the dug lane. Nil error ⇒ the
+// returned node is where the order is going, and the only one a caller may use.
+func (d *Dispatcher) ReserveStorageDropoff(order *orders.Order) (*nodes.Node, error) {
+	if err := d.resolveSyntheticDropoff(order); err != nil {
+		return nil, err
+	}
 	d.redirectStoreOffDugLane(order)
-	return reserveStorageDropoff(d.db, order)
+	if err := reserveStorageDropoff(d.db, order); err != nil {
+		return nil, err
+	}
+	node, err := d.db.GetNodeByDotName(order.DeliveryNode)
+	if err != nil {
+		return nil, fmt.Errorf("read settled destination %q for order %d: %w", order.DeliveryNode, order.ID, err)
+	}
+	if node == nil {
+		return nil, fmt.Errorf("settled destination %q for order %d does not exist", order.DeliveryNode, order.ID)
+	}
+	return node, nil
+}
+
+// SyntheticUnresolved is the refusal when a destination still names a synthetic
+// node and no concrete child can be had — group full, every lane dug, or no
+// children.
+//
+// It is a WAIT, not a failure: intake defers resolution deliberately when a
+// group is full and queues the order on the promise dispatch resolves it, so
+// "not yet" is legitimate. Proceeding is not — that is what produced the creates
+// the fleet rejected with 50001.
+type SyntheticUnresolved struct {
+	OrderID int64
+	Group   string
+	Err     error
+}
+
+func (s SyntheticUnresolved) Error() string {
+	return fmt.Sprintf("order %d is aimed at %s, which names a set of positions rather than one, "+
+		"and no child of it can take the bin: %v", s.OrderID, s.Group, s.Err)
+}
+
+func (s SyntheticUnresolved) Unwrap() error { return s.Err }
+
+// IsSyntheticUnresolved reports whether err is an unresolved-group wait, so a
+// caller can park under the cause that names it rather than one that blames the
+// slot layer for a resolution that never ran.
+func IsSyntheticUnresolved(err error) bool {
+	var su SyntheticUnresolved
+	return errors.As(err, &su)
+}
+
+// resolveSyntheticDropoff keeps the promise intake makes when it defers.
+//
+// The deferral is made at three sites and was kept at one: intake leaves the
+// group name on the order and queues it, planning_service re-resolves on its own
+// path, and the scanner had no resolver at all — GetNodeByDotName FINDS a group,
+// because it is a real row, so there was no error to catch. HK: 26 such orders
+// since June, none completed.
+//
+// It lives INSIDE ReserveStorageDropoff because that is the one call every plain
+// scanner path already makes between reading the destination and dispatching. A
+// separate step the scanner must remember is the shape of the bug, not the fix.
+//
+// Keyed on IsSynthetic, not IsSynthetic && NGRP: intake uses the broad predicate
+// and LANE is seeded synthetic too, so the narrow one would be born carrying the
+// divergence this removes. Resolve handles both — NGRP via GroupResolver, LANE
+// via resolveStore over its concrete children.
+func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) error {
+	if d.resolver == nil || order == nil || order.DeliveryNode == "" {
+		return nil
+	}
+	node, err := d.db.GetNodeByDotName(order.DeliveryNode)
+	if err != nil || node == nil || !node.IsSynthetic {
+		// A read error is left to the settle-read below, which reports it with
+		// the order id attached rather than swallowing it here.
+		return nil
+	}
+	result, rErr := d.resolver.Resolve(node, binresolver.ResolveModeStore, order.PayloadCode, nil, digAskerFor(order))
+	if rErr != nil || result == nil || result.Node == nil {
+		if rErr == nil {
+			rErr = fmt.Errorf("resolver returned no node")
+		}
+		return SyntheticUnresolved{OrderID: order.ID, Group: order.DeliveryNode, Err: rErr}
+	}
+	if uErr := d.db.UpdateOrderDeliveryNode(order.ID, result.Node.Name); uErr != nil {
+		return fmt.Errorf("order %d resolved %s to %s but delivery_node could not be written: %w",
+			order.ID, order.DeliveryNode, result.Node.Name, uErr)
+	}
+	d.dbg("store: order %d resolved group %s -> %s at dispatch", order.ID, order.DeliveryNode, result.Node.Name)
+	order.DeliveryNode = result.Node.Name
+	return nil
 }
 
 // redirectStoreOffDugLane re-aims a store whose destination lane has been taken

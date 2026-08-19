@@ -425,7 +425,7 @@ func TestGateRelease_RebindKeepsItsOwnSlot(t *testing.T) {
 	})
 	// Give it the real holds a dispatched store carries, so the resolver has
 	// something to be confused by.
-	if err := d.ReserveStorageDropoff(deep); err != nil {
+	if _, err := d.ReserveStorageDropoff(deep); err != nil {
 		t.Fatalf("reserve deep slot: %v", err)
 	}
 	if err := d.confirmDropoffSlot(deep, slots[1]); err != nil {

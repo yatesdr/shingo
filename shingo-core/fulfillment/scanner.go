@@ -419,8 +419,12 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// node. A storage dropoff reserves its slot soft (ReserveStorageDropoff); a line
 	// dest is a no-op. On conflict, park in sourcing under waiting_for_slot — no
 	// bin has been acquired yet, so there is nothing to release.
-	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
-	if err != nil {
+	// The node value is deliberately discarded: ReserveStorageDropoff below SETTLES
+	// the destination (group resolve, dug-lane re-aim) and returns the authoritative
+	// one. This read stays for the distinct disposition it owns — a destination that
+	// does not resolve at all parks under DestUnresolved, which the settle's generic
+	// error would not say.
+	if _, err := s.db.GetNodeByDotName(order.DeliveryNode); err != nil {
 		s.logFn("fulfillment: dest node %q not found for order %d: %v", order.DeliveryNode, order.ID, err)
 		// Destination node can't be resolved right now — re-queue and retry.
 		// This is a DESTINATION failure, so it parks under waiting_for_slot with
@@ -435,8 +439,17 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		}
 		return false
 	}
-	if err := s.dispatcher.ReserveStorageDropoff(order); err != nil {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.CauseStoreSlotContended,
+	// destNode comes from the settle, not from a read taken before it.
+	destNode, rErr := s.dispatcher.ReserveStorageDropoff(order)
+	if rErr != nil {
+		// An unresolved group is not slot contention — it is a destination that
+		// was never narrowed to one. Name it, or the row blames the slot layer for
+		// a resolution that never ran.
+		cause := dispatch.CauseStoreSlotContended
+		if dispatch.IsSyntheticUnresolved(rErr) {
+			cause = dispatch.CauseNGRPResolve
+		}
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
 			dispatch.QueueParams{Destination: order.DeliveryNode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "destination slot contended"); qerr != nil {
 			s.logTransition(order.ID, "→ sourcing after reserve conflict", qerr)
@@ -586,8 +599,9 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 			dispatch.QueueParams{Payload: order.PayloadCode})
 		return false
 	}
-	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
-	if err != nil {
+	// Node value discarded — the settle below returns the authoritative one. The
+	// read stays for the disposition it owns (see the fresh-bin arm).
+	if _, err := s.db.GetNodeByDotName(order.DeliveryNode); err != nil {
 		// The DESTINATION vocabulary, not the material one — the same distinction
 		// the fresh path draws at its own dest-resolve arm (CauseDestNodeUnresolved,
 		// F6 in the 2026-07-20 queue-reason study): parking a delivery-node lookup
@@ -602,11 +616,16 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// a no-op for non-storage dests). Owner-idempotent, so a store that reserved at
 	// intake passes through; a loser (or a slot that filled) requeues holding its
 	// bin, never dropping into an occupied slot (#115/#117, generalized).
-	if err := s.dispatcher.ReserveStorageDropoff(order); err != nil {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.CauseStoreSlotContended,
+	destNode, rErr := s.dispatcher.ReserveStorageDropoff(order)
+	if rErr != nil {
+		cause := dispatch.CauseStoreSlotContended
+		if dispatch.IsSyntheticUnresolved(rErr) {
+			cause = dispatch.CauseNGRPResolve
+		}
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
 			dispatch.QueueParams{Destination: order.DeliveryNode})
 		if s.debugLog != nil {
-			s.debugLog("fulfillment: held-bin order %d holding — destination slot not secured: %v", order.ID, err)
+			s.debugLog("fulfillment: held-bin order %d holding — destination slot not secured: %v", order.ID, rErr)
 		}
 		return false
 	}

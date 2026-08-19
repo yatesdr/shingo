@@ -35,7 +35,12 @@ type Dispatcher interface {
 	// a no-op for lines/consume points. A non-nil error means the slot is not
 	// (yet) ours — the scanner requeues, keeping the bin, and re-attempts next
 	// tick. Owner-idempotent.
-	ReserveStorageDropoff(order *orders.Order) error
+	//
+	// It also SETTLES the destination — resolving a synthetic group to a child and
+	// re-aiming off a dug lane both rewrite order.DeliveryNode — so the returned
+	// node, not one the caller read earlier, is where the order is going. Nil
+	// error ⇒ non-nil node.
+	ReserveStorageDropoff(order *orders.Order) (*nodes.Node, error)
 
 	// ConfirmForDispatch is the Rule-1 confirm-at-dispatch step: hard-claim the
 	// destination slot (if a storage dropoff) AND the source bin, in one step,

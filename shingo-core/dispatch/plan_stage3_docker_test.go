@@ -81,8 +81,8 @@ func TestStage3_MoveToStorageRace_ExactlyOneWins(t *testing.T) {
 	m1 := mkPlainOrder(t, db, "s3-mv-1", OrderTypeMove, bp.Code, dest.Name)
 	m2 := mkPlainOrder(t, db, "s3-mv-2", OrderTypeMove, bp.Code, dest.Name)
 
-	e1 := d.ReserveStorageDropoff(m1)
-	e2 := d.ReserveStorageDropoff(m2)
+	_, e1 := d.ReserveStorageDropoff(m1)
+	_, e2 := d.ReserveStorageDropoff(m2)
 	wins := 0
 	if e1 == nil {
 		wins++
@@ -113,8 +113,8 @@ func TestStage3_MoveVsStore_ExactlyOneWins(t *testing.T) {
 	// by the order type, so two differently-typed orders race the same slot.
 	st := mkPlainOrder(t, db, "s3-mvst-store", protocol.OrderType("store"), bp.Code, dest.Name)
 
-	e1 := d.ReserveStorageDropoff(mv)
-	e2 := d.ReserveStorageDropoff(st)
+	_, e1 := d.ReserveStorageDropoff(mv)
+	_, e2 := d.ReserveStorageDropoff(st)
 	wins := 0
 	if e1 == nil {
 		wins++

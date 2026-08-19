@@ -24,7 +24,9 @@ func (s *stubDispatcher) DispatchPreparedComplex(o *orders.Order) error {
 	s.preparedCalls = append(s.preparedCalls, o.ID)
 	return s.preparedErr
 }
-func (s *stubDispatcher) ReserveStorageDropoff(*orders.Order) error { return nil }
+func (s *stubDispatcher) ReserveStorageDropoff(o *orders.Order) (*nodes.Node, error) {
+	return &nodes.Node{Name: o.DeliveryNode}, nil
+}
 func (s *stubDispatcher) ConfirmForDispatch(*orders.Order, int64, *nodes.Node, *nodes.Node) error {
 	panic("scanner complex-order branch should not call ConfirmForDispatch")
 }

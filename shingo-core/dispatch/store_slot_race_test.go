@@ -49,22 +49,22 @@ func TestStoreDestinationSlot_ExactlyOneWins(t *testing.T) {
 	order2 := mkStoreOrder(t, db, "store-race-2", bp.Code, dest.Name)
 
 	// First store wins the slot (acquires the exclusive pending reservation).
-	if err := d.ReserveStorageDropoff(order1); err != nil {
+	if _, err := d.ReserveStorageDropoff(order1); err != nil {
 		t.Fatalf("first store must win the slot, got: %v", err)
 	}
 	// Second store loses and must be told to requeue (non-nil error) — it must
 	// NOT also secure the same single-bin slot.
-	if err := d.ReserveStorageDropoff(order2); err == nil {
+	if _, err := d.ReserveStorageDropoff(order2); err == nil {
 		t.Fatal("second store must lose the slot race (caller requeues), got nil")
 	}
 
 	// Replay idempotency: the winner re-securing its own slot succeeds without a
 	// spurious self-conflict (the scanner re-runs this every dispatch tick); the
 	// loser keeps losing while the winner holds the slot.
-	if err := d.ReserveStorageDropoff(order1); err != nil {
+	if _, err := d.ReserveStorageDropoff(order1); err != nil {
 		t.Fatalf("winner re-securing its own slot must succeed, got: %v", err)
 	}
-	if err := d.ReserveStorageDropoff(order2); err == nil {
+	if _, err := d.ReserveStorageDropoff(order2); err == nil {
 		t.Fatal("loser must keep losing while the winner holds the slot, got nil")
 	}
 
@@ -72,7 +72,7 @@ func TestStoreDestinationSlot_ExactlyOneWins(t *testing.T) {
 	// its reservation), the loser secures it on a later attempt — it was queued,
 	// never terminal-failed.
 	testutil.MustNoErr(t, db.ReleaseSlotReservation(dest.ID, order1.ID), "release winner reservation")
-	if err := d.ReserveStorageDropoff(order2); err != nil {
+	if _, err := d.ReserveStorageDropoff(order2); err != nil {
 		t.Fatalf("loser must secure the freed slot on a later attempt, got: %v", err)
 	}
 }
@@ -102,7 +102,7 @@ func TestStoreDestinationSlot_ConcurrentExactlyOneWins(t *testing.T) {
 	for i, o := range os {
 		go func(idx int, ord *orders.Order) {
 			defer wg.Done()
-			errs[idx] = d.ReserveStorageDropoff(ord)
+			_, errs[idx] = d.ReserveStorageDropoff(ord)
 		}(i, o)
 	}
 	wg.Wait()

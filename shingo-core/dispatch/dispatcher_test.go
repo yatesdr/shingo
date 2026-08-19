@@ -268,7 +268,7 @@ func dispatchSimpleViaScanner(t *testing.T, d *Dispatcher, db *store.DB, orderUU
 	if err != nil {
 		t.Fatalf("scanner-mirror dest node %q: %v", o.DeliveryNode, err)
 	}
-	if err := d.ReserveStorageDropoff(o); err != nil {
+	if _, err := d.ReserveStorageDropoff(o); err != nil {
 		t.Fatalf("scanner-mirror reserve dropoff %s: %v", orderUUID, err)
 	}
 	if _, err := d.DispatchDirect(o, sourceNode, destNode); err != nil {

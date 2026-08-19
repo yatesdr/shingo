@@ -134,9 +134,13 @@ func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
 
 // ReserveStorageDropoff honors reserveErr so the slot-reserve conflict requeue
 // is exercisable here; the node-driven reserve is also covered end-to-end in the
-// dispatch package's docker tests.
-func (d *recordingDispatcher) ReserveStorageDropoff(*orders.Order) error {
-	return d.reserveErr
+// dispatch package's docker tests. On success it returns the destination the
+// order names, which is the real contract: nil error ⇒ non-nil settled node.
+func (d *recordingDispatcher) ReserveStorageDropoff(o *orders.Order) (*nodes.Node, error) {
+	if d.reserveErr != nil {
+		return nil, d.reserveErr
+	}
+	return &nodes.Node{Name: o.DeliveryNode}, nil
 }
 
 // ConfirmForDispatch records the Rule-1 confirm-at-dispatch step and honors

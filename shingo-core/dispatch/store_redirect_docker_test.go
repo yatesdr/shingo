@@ -123,10 +123,24 @@ func TestStoreRedirect_DugLaneWithAFreeSibling_ReSelects(t *testing.T) {
 	}
 
 	// The re-entry every dispatch attempt makes.
-	testutil.MustNoErr(t, d.ReserveStorageDropoff(order), "re-entry")
+	settled, rErr := d.ReserveStorageDropoff(order)
+	testutil.MustNoErr(t, rErr, "re-entry")
 
 	after, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload order")
+
+	// THE RETURNED NODE IS THE RE-AIMED ONE. The row being right was never the
+	// whole job: the callers read the destination BEFORE this call and used to
+	// keep it, so a re-aimed order declared the old lane, confirmed the slot whose
+	// reservation this just released, and planned the robot into the dug lane the
+	// re-aim exists to avoid — with the record showing the new one throughout.
+	if settled == nil {
+		t.Fatal("re-entry returned no destination; a nil settle makes the caller keep its stale node")
+	}
+	if settled.Name != after.DeliveryNode {
+		t.Fatalf("re-entry returned %s but the row says %s — a caller using the return value and one "+
+			"reading the row would send the robot to different lanes", settled.Name, after.DeliveryNode)
+	}
 	if after.DeliveryNode == slotsA[1].Name {
 		t.Fatalf("the order is still aimed at %s, inside dug lane %s — admission will refuse it and "+
 			"it will wait out the whole excavation while lane %s stands empty",
@@ -175,7 +189,8 @@ func TestStoreRedirect_EveryLaneDug_ParksUnderTheExistingShape(t *testing.T) {
 		t.Fatal("both lanes must lock")
 	}
 
-	testutil.MustNoErr(t, d.ReserveStorageDropoff(order), "re-entry with nowhere to go")
+	_, nowhereErr := d.ReserveStorageDropoff(order)
+	testutil.MustNoErr(t, nowhereErr, "re-entry with nowhere to go")
 
 	after, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload order")
@@ -194,7 +209,8 @@ func TestStoreRedirect_EveryLaneDug_ParksUnderTheExistingShape(t *testing.T) {
 	// AND THE DIG COMPLETING RE-DRIVES IT. Releasing the lane is what the compound
 	// terminal does; the next re-entry then finds its own lane usable again.
 	d.laneLock.Unlock(laneA.ID, digA.ID)
-	testutil.MustNoErr(t, d.ReserveStorageDropoff(order), "re-entry after the dig cleared")
+	_, clearedErr := d.ReserveStorageDropoff(order)
+	testutil.MustNoErr(t, clearedErr, "re-entry after the dig cleared")
 	reloaded, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload after the clear")
 	if reloaded.DeliveryNode != slotsA[1].Name {
@@ -231,7 +247,7 @@ func TestStoreRedirect_LeavesAnOperatorsChoiceAlone(t *testing.T) {
 		t.Fatal("TryLock must succeed")
 	}
 
-	_ = d.ReserveStorageDropoff(order)
+	_, _ = d.ReserveStorageDropoff(order)
 
 	after, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload order")
@@ -239,5 +255,89 @@ func TestStoreRedirect_LeavesAnOperatorsChoiceAlone(t *testing.T) {
 		t.Fatalf("delivery node = %s — a human named %s, and moving their bin somewhere else "+
 			"without telling them is Core overruling the person at the door",
 			after.DeliveryNode, slotsA[1].Name)
+	}
+}
+
+// TestSettle_ResolvesASyntheticDestinationToAChild is the scanner gap, closed.
+//
+// Intake defers resolution when a group is full: it leaves the group name on the
+// order and queues it, on the promise dispatch narrows it to a child. That
+// promise was kept on the planning path and not on the scanner's, which has no
+// resolver — GetNodeByDotName FINDS a group, because it is a real row, so there
+// was no error to catch and the create went out naming a node no robot can drive
+// to. HK: 26 such orders since June, none completed.
+//
+// MUTATION: drop the resolveSyntheticDropoff call from ReserveStorageDropoff.
+// The row keeps the group name and both assertions below fire.
+func TestSettle_ResolvesASyntheticDestinationToAChild(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	grp, _, _, _, _, bp := twoLaneGroup(t, db, "SR-SYN")
+	d := window4Dispatcher(t, db)
+
+	bin := createTestBinAtNode(t, db, bp.Code, grp.ID, "SR-SYN-BIN")
+	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "sr-syn"
+		o.OrderType = protocol.OrderTypeMove
+		o.PayloadCode = bp.Code
+		o.DeliveryNode = grp.Name // the group name, as intake leaves it
+		o.Status = protocol.StatusQueued
+	})
+	testdb.ReserveBin(t, db, order.ID, bin.ID)
+	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp bin_id")
+	order, _ = db.GetOrder(order.ID)
+
+	settled, rErr := d.ReserveStorageDropoff(order)
+	testutil.MustNoErr(t, rErr, "settle a group with free children")
+
+	if settled == nil || settled.IsSynthetic {
+		t.Fatalf("settle returned %v — a synthetic node names a set of positions, and a create "+
+			"carrying one is rejected by the fleet (SEER 50001)", settled)
+	}
+	after, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "reload order")
+	if after.DeliveryNode == grp.Name {
+		t.Fatalf("the row still names the group %s — the scanner dispatches DeliveryNode verbatim, "+
+			"so this is the create the fleet refuses", grp.Name)
+	}
+	if settled.Name != after.DeliveryNode {
+		t.Errorf("settle returned %s but the row says %s", settled.Name, after.DeliveryNode)
+	}
+}
+
+// TestSettle_AFullGroupIsAWaitNotAFailure — every child occupied. Intake's
+// deferral is only safe if "not yet" stays re-tryable, so this must refuse in a
+// way the caller parks on rather than one it terminalises.
+func TestSettle_AFullGroupIsAWaitNotAFailure(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	grp, _, _, slotsA, slotsB, bp := twoLaneGroup(t, db, "SR-SYNFULL")
+	d := window4Dispatcher(t, db)
+
+	// Fill every slot in the group so no child can take a bin.
+	for i, s := range append(append([]*nodes.Node{}, slotsA...), slotsB...) {
+		createTestBinAtNode(t, db, bp.Code, s.ID, fmt.Sprintf("SR-SYNFULL-OCC-%d", i))
+	}
+
+	bin := createTestBinAtNode(t, db, bp.Code, grp.ID, "SR-SYNFULL-BIN")
+	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "sr-synfull"
+		o.OrderType = protocol.OrderTypeMove
+		o.PayloadCode = bp.Code
+		o.DeliveryNode = grp.Name
+		o.Status = protocol.StatusQueued
+	})
+	testdb.ReserveBin(t, db, order.ID, bin.ID)
+	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp bin_id")
+	order, _ = db.GetOrder(order.ID)
+
+	settled, rErr := d.ReserveStorageDropoff(order)
+	if rErr == nil {
+		t.Fatalf("a full group settled to %v — proceeding is what sent group names to the fleet", settled)
+	}
+	if !IsSyntheticUnresolved(rErr) {
+		t.Errorf("refusal did not classify as IsSyntheticUnresolved: %v\nThe scanner picks its queue "+
+			"reason from this; unclassified it parks under slot contention, blaming the slot layer "+
+			"for a resolution that never ran.", rErr)
 	}
 }
