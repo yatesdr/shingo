@@ -314,7 +314,7 @@ linters:
       # ---- funlen baseline (2026-08-19) ------------------------------------
       #
       # 39 production functions exceeded 60 statements on the day funlen was
-      # enabled. They are listed rather than the threshold being raised to
+      # enabled (40 entries: the D6 cut split one of them in two). They are listed rather than the threshold being raised to
       # clear them, because a threshold set above the worst offender guards
       # nothing: the point of the ceiling is that the NEXT one fails CI.
       #
@@ -397,10 +397,20 @@ linters:
           - funlen
       # AdvanceCompoundOrder: transitional
       # Owner decision D6 funds the chapter-close extraction only; the dispatch
-      # half waits for the north-star unification. Re-measure and shrink this
-      # entry after each approved cut.
+      # half waits for the north-star unification. That cut landed on
+      # 2026-08-19 and took this function from 136 statements to 74. The rest
+      # is the dispatch half and its four recursion sites, which are deferred
+      # by D6 — do not clear this entry by refactoring on your own judgement.
       - path: "shingo-core/dispatch/compound\\.go"
         text: "Function 'AdvanceCompoundOrder' has too many statements"
+        linters:
+          - funlen
+      # advanceCompoundChapterEnd: transitional
+      # The half extracted from AdvanceCompoundOrder by D6, 63 statements as
+      # moved. It was moved verbatim rather than reshaped, deliberately, so it
+      # arrives on this list rather than under it.
+      - path: "shingo-core/dispatch/compound\\.go"
+        text: "Function 'advanceCompoundChapterEnd' has too many statements"
         linters:
           - funlen
       # RollUp: transitional
