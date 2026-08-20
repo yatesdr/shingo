@@ -431,45 +431,49 @@ func TestKafkaWriterSetsRequiredAcks(t *testing.T) {
 	t.Parallel()
 
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("parse package: %v", err)
+		t.Fatalf("read package dir: %v", err)
 	}
 
 	found := 0
-	for _, pkg := range pkgs {
-		for path, file := range pkg.Files {
-			ast.Inspect(file, func(n ast.Node) bool {
-				lit, ok := n.(*ast.CompositeLit)
-				if !ok {
-					return true
-				}
-				sel, ok := lit.Type.(*ast.SelectorExpr)
-				if !ok || sel.Sel.Name != "Writer" {
-					return true
-				}
-				if ident, ok := sel.X.(*ast.Ident); !ok || ident.Name != "kafka" {
-					return true
-				}
-				found++
-				for _, elt := range lit.Elts {
-					kv, ok := elt.(*ast.KeyValueExpr)
-					if !ok {
-						continue
-					}
-					if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "RequiredAcks" {
-						return true
-					}
-				}
-				t.Errorf("%s:%d: kafka.Writer literal does not set RequiredAcks — "+
-					"it will publish at RequireNone and the drainer will treat "+
-					"broker rejections as successful sends",
-					path, fset.Position(lit.Pos()).Line)
-				return true
-			})
+	for _, entry := range entries {
+		path := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			continue
 		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			sel, ok := lit.Type.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Writer" {
+				return true
+			}
+			if ident, ok := sel.X.(*ast.Ident); !ok || ident.Name != "kafka" {
+				return true
+			}
+			found++
+			for _, elt := range lit.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "RequiredAcks" {
+					return true
+				}
+			}
+			t.Errorf("%s:%d: kafka.Writer literal does not set RequiredAcks — "+
+				"it will publish at RequireNone and the drainer will treat "+
+				"broker rejections as successful sends",
+				path, fset.Position(lit.Pos()).Line)
+			return true
+		})
 	}
 
 	if found == 0 {

@@ -34,14 +34,15 @@
 # DOCKER SUITES ARE SCOPED, NOT SKIPPED. See `scope` below.
 #
 # Usage:
-#   bash scripts/gate.sh                  fmt, vet, lint, unit tests
+#   bash scripts/gate.sh                  fmt, vet, lint, script guards, unit tests
 #   bash scripts/gate.sh scope [BASE]     say whether the docker suites are needed
 #                                         (exit 0 = needed, 1 = not needed)
 #   bash scripts/gate.sh race             -race over ./engine/... and ./www/...
 #                                         (borrows WSL's cgo on Windows)
 #   bash scripts/gate.sh docker           run the docker suites (no -race)
 #   bash scripts/gate.sh full [BASE]      the four, then race, then docker if scope says so
-#   bash scripts/gate.sh fmt|vet|lint|test|race  one step
+#   bash scripts/gate.sh scripts          the scripts/check-*.sh guards
+#   bash scripts/gate.sh fmt|vet|lint|scripts|test|race  one step
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -235,6 +236,33 @@ untagged_only_modules() {
     done
     [ "$covered" -eq 0 ] && printf '%s ' "$m"
   done
+}
+
+# THE GREP-BASED GUARDS, WHICH RAN ONLY IN CI UNTIL 2026-08-19.
+#
+# scripts/check-swap-mode-literals.sh had a job of its own in lint.yml and no
+# call anywhere in this file, so `gate.sh full` could go green on a change that
+# CI then rejected. A pre-push gate that does not run a CI gate is not telling
+# you what CI will say, which is the only thing it is for.
+#
+# DISCOVERED, NOT LISTED. Every scripts/check-*.sh runs. The alternative is a
+# hardcoded name here plus a job over in lint.yml, which is exactly the pairing
+# that let the first one go missing — a new guard would have to be remembered
+# in two places by whoever writes it. Globbing means it only has to be named
+# once, by its filename.
+step_scripts() {
+  local f failed=0 ran=0
+  for f in "$ROOT"/scripts/check-*.sh; do
+    [ -e "$f" ] || continue
+    ran=$((ran + 1))
+    bash "$f" || failed=1
+  done
+  if [ "$ran" -eq 0 ]; then
+    echo "ok   scripts (none found)"
+    return 0
+  fi
+  [ "$failed" -eq 0 ] && echo "ok   scripts ($ran)" || echo "FAIL scripts"
+  return $failed
 }
 
 step_test() {
@@ -697,6 +725,7 @@ case "${1:-all}" in
   fmt)   if step_fmt;  then note_step fmt;  else rc=1; fi ;;
   vet)   if step_vet;  then note_step vet;  else rc=1; fi ;;
   lint)  if step_lint; then note_step lint; else rc=1; fi ;;
+  scripts) if step_scripts; then note_step scripts; else rc=1; fi ;;
   test)  if step_test; then note_step unit; else rc=1; fi ;;
   race)  if step_race; then note_step race; else rc=1; fi ;;
   # EXIT CODE IS THE VERDICT: 0 = docker needed, 1 = not needed. It used to
@@ -710,6 +739,7 @@ case "${1:-all}" in
     if step_fmt;  then note_step fmt;  else rc=1; fi
     if step_vet;  then note_step vet;  else rc=1; fi
     if step_lint; then note_step lint; else rc=1; fi
+    if step_scripts; then note_step scripts; else rc=1; fi
     # Scope is decided BEFORE the tests here, because it decides what the tests
     # have to cover: when the docker step runs it already runs every untagged
     # test in the modules that carry docker tests, so only the modules it does
@@ -732,9 +762,10 @@ case "${1:-all}" in
     if step_fmt;  then note_step fmt;  else rc=1; fi
     if step_vet;  then note_step vet;  else rc=1; fi
     if step_lint; then note_step lint; else rc=1; fi
+    if step_scripts; then note_step scripts; else rc=1; fi
     if step_test; then note_step unit; else rc=1; fi
     ;;
-  *) echo "usage: bash scripts/gate.sh [fmt|vet|lint|test|race|scope|docker|full] [BASE]" >&2; exit 2 ;;
+  *) echo "usage: bash scripts/gate.sh [fmt|vet|lint|scripts|test|race|scope|docker|full] [BASE]" >&2; exit 2 ;;
 esac
 
 if [ "$rc" -eq 0 ]; then echo "gate: clean"; else echo "gate: FAILED"; fi
