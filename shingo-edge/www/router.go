@@ -1,14 +1,11 @@
 package www
 
 import (
-	"encoding/json"
-	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -107,59 +104,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	}
 	go h.specChangeLoop()
 
-	funcMap := template.FuncMap{
-		"join": strings.Join,
-		"truncate": func(s string, n int) string {
-			if len(s) <= n {
-				return s
-			}
-			return s[:n] + "..."
-		},
-		"divPercent": func(a, b int) float64 {
-			if b == 0 {
-				return 0
-			}
-			return float64(a) / float64(b) * 100
-		},
-		"deref": func(p *int64) int64 {
-			if p == nil {
-				return 0
-			}
-			return *p
-		},
-		"brokerHost": func(s string) string {
-			if i := strings.LastIndex(s, ":"); i >= 0 {
-				return s[:i]
-			}
-			return s
-		},
-		"brokerPort": func(s string) string {
-			if i := strings.LastIndex(s, ":"); i >= 0 {
-				return s[i+1:]
-			}
-			return ""
-		},
-		"buildVer":  func() string { return buildVer },
-		"cacheBust": func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
-		"formatTime": func(t time.Time) template.HTML {
-			if t.IsZero() {
-				return template.HTML("")
-			}
-			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
-				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
-		},
-		"formatTimePtr": func(t *time.Time) template.HTML {
-			if t == nil {
-				return template.HTML("")
-			}
-			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
-				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
-		},
-		"json": func(v any) template.JS {
-			b, _ := json.Marshal(v)
-			return template.JS(b)
-		},
-	}
+	funcMap := templateFuncs()
 	h.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
 
 	h.eventHub.Start()
