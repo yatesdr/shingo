@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"shingo/protocol/debuglog"
@@ -64,6 +65,10 @@ type Handlers struct {
 	// is now the only work on this signal.
 	specChangeCh   chan struct{}
 	specChangeStop chan struct{}
+	// specChangeOnce guards the close of specChangeStop in the cleanup
+	// closure NewRouter returns, for the same reason EventHub.Stop carries
+	// one: an unguarded close panics if the cleanup ever runs twice.
+	specChangeOnce sync.Once
 
 	// onPlantSpecChange is the plant-claims publisher's spec-change hook.
 	// Set by main after constructing the publisher; fired from
@@ -480,7 +485,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 	return h, r, func() {
 		h.eventHub.Stop()
-		close(h.specChangeStop)
+		h.specChangeOnce.Do(func() { close(h.specChangeStop) })
 	}
 }
 

@@ -153,7 +153,13 @@ func Requeue(db *sql.DB, id int64) error {
 // dead-lettered messages (retries >= MaxRetries) older than the given
 // duration.
 func PurgeOld(db *sql.DB, olderThan time.Duration) (int64, error) {
-	cutoff := time.Now().Add(-olderThan).Format(helpers.TimeLayout)
+	// .UTC() is load-bearing: created_at defaults to datetime('now') and
+	// sent_at is written as datetime('now'), both of which SQLite produces in
+	// UTC, and the comparison is a string compare against that layout. A local
+	// cutoff at a US-Central plant reads 5-6 hours older than it is, so rows
+	// survive ~29-30h under a 24h retention. Core's twin documents the same
+	// trap (shingo-core/store/messaging/messaging.go, PurgeOldOutbox).
+	cutoff := time.Now().UTC().Add(-olderThan).Format(helpers.TimeLayout)
 	res, err := db.Exec(`DELETE FROM outbox WHERE (sent_at IS NOT NULL AND sent_at < ?) OR (retries >= ? AND created_at < ?)`, cutoff, MaxRetries, cutoff)
 	if err != nil {
 		return 0, err

@@ -53,6 +53,7 @@ type EventHub struct {
 	clients   map[*sseClient]struct{}
 	broadcast chan SSEEvent
 	stopChan  chan struct{}
+	stopOnce  sync.Once
 }
 
 // NewEventHub creates a new EventHub.
@@ -69,13 +70,13 @@ func (h *EventHub) Start() {
 	go h.run()
 }
 
-// Stop shuts down the event hub.
+// Stop shuts down the event hub. Idempotent: the check-then-act this
+// replaced (select on stopChan, close in the default arm) is not atomic, so
+// two concurrent Stop calls could both observe the channel open and double
+// close it, which panics. Only one call site today, so this was latent —
+// core's hub already carried the sync.Once (shingo-core/www/sse.go).
 func (h *EventHub) Stop() {
-	select {
-	case <-h.stopChan:
-	default:
-		close(h.stopChan)
-	}
+	h.stopOnce.Do(func() { close(h.stopChan) })
 }
 
 // Broadcast sends an event to all connected clients.
