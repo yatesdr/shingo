@@ -34,7 +34,8 @@
 # DOCKER SUITES ARE SCOPED, NOT SKIPPED. See `scope` below.
 #
 # Usage:
-#   bash scripts/gate.sh                  fmt, vet, lint, script guards, unit tests
+#   bash scripts/gate.sh                  fmt, vet, standalone builds, lint,
+#                                         script guards, unit tests
 #   bash scripts/gate.sh scope [BASE]     say whether the docker suites are needed
 #                                         (exit 0 = needed, 1 = not needed)
 #   bash scripts/gate.sh race             -race over ./engine/... and ./www/...
@@ -42,7 +43,8 @@
 #   bash scripts/gate.sh docker           run the docker suites (no -race)
 #   bash scripts/gate.sh full [BASE]      the four, then race, then docker if scope says so
 #   bash scripts/gate.sh scripts          the scripts/check-*.sh guards
-#   bash scripts/gate.sh fmt|vet|lint|scripts|test|race  one step
+#   bash scripts/gate.sh modbuild         GOWORK=off go build, per module
+#   bash scripts/gate.sh fmt|vet|modbuild|lint|scripts|test|race  one step
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -114,6 +116,28 @@ step_fmt() {
     return 1
   fi
   echo "ok   gofmt"
+}
+
+# EACH MODULE MUST BUILD WITHOUT THE WORKSPACE, and until 2026-08-19 one did
+# not. go.work resolves every module's imports against the sibling directories,
+# so an import with no matching `require` in that module's own go.mod builds
+# fine in the workspace and fails for anyone consuming the module on its own.
+# That is what hid protocol -> shared/clock: protocol imported it with no
+# require, shared required protocol back, and the two were circular behind a
+# workspace that made the cycle invisible. README's "each module builds
+# independently" was false for months and nothing could tell you.
+#
+# GOWORK=off is the whole check. It costs one extra build per module and it is
+# the only thing in this gate that sees a missing require or a missing go.sum
+# entry — shingo-edge was also short a go.sum line for klauspost/compress, via
+# minio-go, which only the workspace build was covering.
+step_modbuild() {
+  local m failed=0
+  for m in $MODULES; do
+    ( cd "$ROOT/$m" && GOWORK=off go build ./... ) || { echo "  FAIL $m — does not build standalone (GOWORK=off)"; failed=1; }
+  done
+  [ "$failed" -eq 0 ] && echo "ok   modbuild" || echo "FAIL modbuild"
+  return $failed
 }
 
 # NOT parallelised across modules, unlike step_test, and that is a measured
@@ -724,6 +748,7 @@ gate_sentence() {
 case "${1:-all}" in
   fmt)   if step_fmt;  then note_step fmt;  else rc=1; fi ;;
   vet)   if step_vet;  then note_step vet;  else rc=1; fi ;;
+  modbuild) if step_modbuild; then note_step modbuild; else rc=1; fi ;;
   lint)  if step_lint; then note_step lint; else rc=1; fi ;;
   scripts) if step_scripts; then note_step scripts; else rc=1; fi ;;
   test)  if step_test; then note_step unit; else rc=1; fi ;;
@@ -738,6 +763,7 @@ case "${1:-all}" in
   full)
     if step_fmt;  then note_step fmt;  else rc=1; fi
     if step_vet;  then note_step vet;  else rc=1; fi
+    if step_modbuild; then note_step modbuild; else rc=1; fi
     if step_lint; then note_step lint; else rc=1; fi
     if step_scripts; then note_step scripts; else rc=1; fi
     # Scope is decided BEFORE the tests here, because it decides what the tests
@@ -761,11 +787,12 @@ case "${1:-all}" in
     # problem makes you re-run the slow parts once per problem.
     if step_fmt;  then note_step fmt;  else rc=1; fi
     if step_vet;  then note_step vet;  else rc=1; fi
+    if step_modbuild; then note_step modbuild; else rc=1; fi
     if step_lint; then note_step lint; else rc=1; fi
     if step_scripts; then note_step scripts; else rc=1; fi
     if step_test; then note_step unit; else rc=1; fi
     ;;
-  *) echo "usage: bash scripts/gate.sh [fmt|vet|lint|scripts|test|race|scope|docker|full] [BASE]" >&2; exit 2 ;;
+  *) echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|scope|docker|full] [BASE]" >&2; exit 2 ;;
 esac
 
 if [ "$rc" -eq 0 ]; then echo "gate: clean"; else echo "gate: FAILED"; fi

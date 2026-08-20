@@ -56,6 +56,17 @@ jobs:
           # module and recompiling from scratch. See core.yml for the full note.
           cache-dependency-path: "**/go.sum"
 
+      # THE MODULE MUST BUILD WITHOUT go.work. Runs before the linter because
+      # it is the cheaper check and it fails on a strictly more basic problem:
+      # golangci-lint resolves imports through the workspace like everything
+      # else, so a module missing a `require` for something it imports lints
+      # perfectly and is broken for anyone who consumes it on its own. That is
+      # how protocol came to import shared/clock with no require and be
+      # circular with shared behind a workspace that hid it. Mirrors
+      # scripts/gate.sh's modbuild step; keep the two together.
+      - name: standalone module build
+        run: cd ${{ matrix.module }} && GOWORK=off go build ./...
+
       - name: golangci-lint
         # v7 is the first action release that supports golangci-lint v2.x.
         # v6 errors out with "invalid version string" on any v2.* binary.
