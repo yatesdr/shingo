@@ -461,48 +461,6 @@ func (e *Engine) wireEventHandlers() {
 		e.dispatcher.HandleTransitForLaneGate(evt.Payload.OrderID, evt.Payload.FromNodeID)
 	}, EventBinEnteredTransit)
 
-	// Parent terminal: drop the lane-lock release listener so the lane
-	// isn't stuck held if the parent terminates before its pickup. All
-	// four terminal statuses are wired:
-	//
-	//   - Cancelled / Failed: explicit cleanup paths.
-	//   - Skipped: a complex parent that gets skipped at Queued (e.g.,
-	//     ApplyComplexPlan returns no_source_bin because the unburied
-	//     target was moved or anomalied between unbury completion and
-	//     scanner pickup) needs the same cleanup — no pickup happens,
-	//     so the bin-transit release will never fire.
-	//   - Completed: defensive idempotent sweep. On the normal happy
-	//     path the bin-transit release already fired before the parent
-	//     reached Confirmed, so this is a no-op. Covers the rare path
-	//     where an admin / recovery action force-confirms a parent past
-	//     the pickup leg.
-	//
-	// Safe to call on a parent with no hold — it no-ops when nothing matches.
-	// THE EXPOSE BRIDGE'S RELEASE ARMS USED TO HANG HERE. A complex parent going
-	// terminal, and a bin entering transit, each consumed a pending_lane_extensions
-	// row to drop a lane lock that had been TRANSFERRED to the parent past its
-	// compound's completion. Nothing transfers a lock any more — the demand is not
-	// re-parented into its own dig, so it never comes back and the lane is released
-	// at the compound's terminal like every other dig's (compound.go). The
-	// subscriptions are kept, empty of that call, because their OTHER arms are live.
-	terminal := func(orderID int64) {
-		if e.dispatcher == nil {
-			return
-		}
-	}
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
-		terminal(evt.Payload.OrderID)
-	}, EventOrderCancelled)
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
-		terminal(evt.Payload.OrderID)
-	}, EventOrderFailed)
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderSkippedEvent]) {
-		terminal(evt.Payload.OrderID)
-	}, EventOrderSkipped)
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
-		terminal(evt.Payload.OrderID)
-	}, EventOrderCompleted)
-
 	// â"€â"€ Queued order audit â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
 		ev := evt.Payload

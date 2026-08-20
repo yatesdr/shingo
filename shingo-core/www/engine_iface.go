@@ -6,7 +6,6 @@ import (
 
 	"shingocore/config"
 	"shingocore/dispatch"
-	"shingocore/dispatch/eta"
 	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/fleet"
@@ -128,7 +127,6 @@ type ServiceAccess interface {
 	// error (reject the save); an un-checkable case (no RDS, no nodes) returns a
 	// check with warnings and err=nil (save allowed, flagged unverified).
 	ValidateAdvancedLoadSequence(payloadID int64, seqName string) (*engine.LoadSequenceCheck, error)
-	EtaCache() *eta.Cache
 	GetActiveOrdersWithRobotLocation() ([]engine.BoardOrder, error)
 	GetActiveOrdersWithRobotLocationFiltered(stations []string) ([]engine.BoardOrder, error)
 	GetActiveOrderWithRobotLocation(orderID int64) (*engine.BoardOrder, error)

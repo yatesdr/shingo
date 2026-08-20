@@ -84,8 +84,6 @@ type EngineOrchestration interface {
 	SendEnvelope(env *protocol.Envelope) error
 	RequestNodeSync()
 	RequestCatalogSync()
-	RequestOrderStatusSync() error
-	StartupReconcile() error
 
 	// ── Material orchestration ─────────────────────────────────────
 	RequestNodeMaterial(nodeID int64, quantity int64) (*engine.NodeOrderResult, error)
