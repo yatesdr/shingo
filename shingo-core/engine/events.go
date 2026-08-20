@@ -147,7 +147,7 @@ type OrderCancelledEvent struct {
 	EdgeUUID       string
 	StationID      string
 	Reason         string
-	PreviousStatus string // status before cancellation â€” used to skip auto-return for delivered/confirmed orders
+	PreviousStatus string // status before cancellation — used to skip auto-return for delivered/confirmed orders
 }
 
 type OrderQueuedEvent struct {
@@ -260,7 +260,7 @@ type BlockCompletedEvent struct {
 }
 
 // BinEnteredTransitEvent fires when a bin's NodeID transitions to the
-// synthetic _TRANSIT node â€” the moment the source slot is freed for
+// synthetic _TRANSIT node — the moment the source slot is freed for
 // new placements. Subscribers: the fulfillment scanner trigger (so
 // queued orders re-check their dispatch eligibility against the now-
 // vacant source slot) and the materials/admin UI for live transit-lane

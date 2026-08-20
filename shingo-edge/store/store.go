@@ -18,8 +18,9 @@ import (
 //
 // The architectural terminus is *store.DB as a connection-lifecycle
 // wrapper with zero application methods. The current path is absorption;
-// switch to a focused sprint if the absorption tripwires (see
-// implementation-plan.md) fire.
+// switch to a focused sprint if the absorption tripwires fire. Those are
+// written down in the implementation plan (docs/plans/implementation-plan.md at the
+// GitHub root, OUTSIDE this repo — it was never committed in-tree).
 type DB struct {
 	*sql.DB
 }

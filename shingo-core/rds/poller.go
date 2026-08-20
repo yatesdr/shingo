@@ -13,7 +13,7 @@ import (
 //
 // EmitBlockCompleted fires once per block transition into FINISHED while
 // the parent order is still mid-flight. This is the per-pickup signal
-// the bin-transit-state design needs â€” vendor doesn't expose a separate
+// the bin-transit-state design needs — vendor doesn't expose a separate
 // "PICKED_UP" order state, but block-level state IS in the poll snapshot
 // (just unused pre-2026-04). For pickup blocks, the engine handler
 // transitions the corresponding bin onto the synthetic _TRANSIT node so
@@ -244,7 +244,7 @@ func (p *Poller) poll() {
 			oid, err := p.resolver.ResolveRDSOrderID(rdsID)
 			if err != nil {
 				log.Printf("poller: resolve %s: %v", rdsID, err)
-				p.dbg("poll error: resolve(%s): %v â€” will retry next cycle", rdsID, err)
+				p.dbg("poll error: resolve(%s): %v — will retry next cycle", rdsID, err)
 				return 0, false
 			}
 			resolvedOrderID = oid
@@ -255,7 +255,7 @@ func (p *Poller) poll() {
 		// last seen state for that block. Fire EmitBlockCompleted on the
 		// first transition into FINISHED. We do this BEFORE the order-
 		// state transition check so the per-block events arrive in
-		// causally-correct order (block FINISHED â†’ order moves on) â€” even
+		// causally-correct order (block FINISHED → order moves on) — even
 		// though the underlying RDS state field is sampled at one moment.
 		p.diffBlockStates(rdsID, detail, resolveOrderID)
 
@@ -267,13 +267,13 @@ func (p *Poller) poll() {
 
 		orderID, ok := resolveOrderID()
 		if !ok {
-			// Resolution failed â€” keep the old tracked state so the
+			// Resolution failed — keep the old tracked state so the
 			// transition is retried on the next poll cycle instead of
 			// being silently lost.
 			continue
 		}
 
-		// Resolution succeeded â€” now commit the state transition.
+		// Resolution succeeded — now commit the state transition.
 		p.mu.Lock()
 		if newState == StateFailed {
 			// FAILED is no longer terminal per SEER docs. Record grace deadline
@@ -343,9 +343,9 @@ func (p *Poller) checkGraceExpiry() {
 // state design uses: a "load" or "unload" block reaching FINISHED means
 // the robot has physically completed that step. The pickup-block case
 // drives a bin's transition onto the synthetic _TRANSIT node (engine
-// handler â€” see wiring_block_completed.go). Pre-2026-04 the per-block
+// handler — see wiring_block_completed.go). Pre-2026-04 the per-block
 // state was already in the poll snapshot but only marshalled into
-// mission_events JSON â€” never compared, never surfaced as an event.
+// mission_events JSON — never compared, never surfaced as an event.
 func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrderID func() (int64, bool)) {
 	if len(detail.Blocks) == 0 {
 		return
@@ -370,7 +370,7 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 			continue
 		}
 		prev[b.BlockID] = b.State
-		// Only fire on the transition INTO FINISHED â€” once. Subsequent
+		// Only fire on the transition INTO FINISHED — once. Subsequent
 		// polls keep `prev[blockID] = FINISHED` so the equality check
 		// above short-circuits.
 		//
@@ -396,7 +396,7 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 
 	orderID, ok := resolveOrderID()
 	if !ok {
-		// Resolution failed â€” drop these block events. They'll be
+		// Resolution failed — drop these block events. They'll be
 		// re-emitted next cycle since `prev` was already updated, but
 		// re-emit on the same already-FINISHED state is suppressed by
 		// the equality check. Lose these events but don't loop.

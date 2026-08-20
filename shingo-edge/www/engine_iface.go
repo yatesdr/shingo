@@ -21,12 +21,19 @@ import (
 // captures the architectural role distinction surfaced in three
 // independent dev reviews: most edge handlers do pure CRUD through
 // services and have no business reaching engine-level orchestration.
-// ServiceAccess gives those handlers a 16-method surface; orchestration
+// ServiceAccess gives those handlers a 19-method surface; orchestration
 // handlers take EngineOrchestration explicitly via h.orchestration.
+// The count is asserted by a test in this package — change it there when
+// you change it here.
 //
-// See implementation-plan.md "Post-Phase 6 tripwires" for the
-// boundary-creep guard: this split must stay at two interfaces, not
-// drift into N-per-handler.
+// The boundary-creep guard — this split must stay at two interfaces, not
+// drift into N-per-handler — is "Post-Phase 6 tripwires" in
+// the implementation plan (docs/plans/implementation-plan.md at the
+// GitHub root, OUTSIDE this repo — it was never committed in-tree).
+//
+// That document is why the widths above drifted unwatched: a ratchet
+// written only in a file the repo cannot see is a ratchet nothing enforces.
+// The enforced guard is the width test in this package's test file.
 type ServiceAccess interface {
 	// ── Subsystem accessors ────────────────────────────────────────
 	CoreAPI() *engine.CoreClient

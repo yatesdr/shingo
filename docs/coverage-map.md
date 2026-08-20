@@ -66,9 +66,10 @@
 > do with the *Handlers struct?"): unanimous "leave it alone." The
 > pattern is idiomatic Go at this scale (std lib, CockroachDB,
 > Hugo, Caddy, chi examples all use it). The decision is recorded
-> in the implementation-plan v6 with a tripwire condition (handler
-> count >50 / independent deployment / dep-set divergence) for any
-> future revisit.
+> in the implementation plan v6 (`docs/plans/implementation-plan.md`
+> at the GitHub root, outside this repo) with a tripwire condition
+> (handler count >50 / independent deployment / dep-set divergence)
+> for any future revisit.
 >
 > - **Phase 6.2 (handler sub-packages) WON'T DO.** Plan framed it
 >   as "pure import-path mechanics with no behavior change" — wrong.
@@ -179,7 +180,9 @@
 >   - Import blocks re-grouped per Go convention (stdlib /
 >     third-party / internal).
 >
-> See `implementation-plan.md` v6 for full reshape rationale.
+> See the implementation plan v6 for full reshape rationale
+> (`docs/plans/implementation-plan.md` at the GitHub root, outside
+> this repo).
 
 ---
 

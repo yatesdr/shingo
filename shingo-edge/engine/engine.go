@@ -89,8 +89,11 @@ type Engine struct {
 	// coordinators (stationService, changeoverService); Phase 6.2′
 	// completed the per-domain extraction, deleting
 	// engine_db_methods.go and dropping EngineAccess to ~30 methods;
-	// Phase 6.5 split that into ServiceAccess (16 methods) +
-	// EngineOrchestration (35 verbs, embeds ServiceAccess).
+	// Phase 6.5 split that into ServiceAccess + EngineOrchestration
+	// (embeds ServiceAccess). Measured 2026-08-19: 19 and 71, the latter
+	// adding 52 verbs of its own — the parenthetical here read "16" and
+	// "35 verbs" from the split until then. www's width test is the
+	// authority on both numbers; this comment is not.
 	stationService    *service.StationService
 	changeoverService *service.ChangeoverService
 	preflightChecker  *service.PreflightChecker

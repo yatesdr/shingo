@@ -22,14 +22,18 @@ import (
 // of different interface types so that compile-time enforcement
 // constrains where orchestration verbs can be reached:
 //
-//   - h.engine (ServiceAccess) — narrow surface, ~25 methods. CRUD-only
+//   - h.engine (ServiceAccess) — narrow surface, 49 methods. CRUD-only
 //     handlers and read-only state queries use this. Calling
 //     orchestration verbs through h.engine fails to compile because
 //     those methods are not on ServiceAccess.
-//   - h.orchestration (EngineOrchestration) — wide surface adding 12
+//   - h.orchestration (EngineOrchestration) — wide surface adding 14
 //     verbs (corrections, direct orders, scene sync, cross-edge
 //     messaging, live reconfig). Embeds ServiceAccess so it can also
 //     reach service accessors and state queries.
+//
+// Both counts measured 2026-08-19; they read "~25" and "12" from the
+// 6.5 split onwards and were never re-measured. engine_iface_width_test.go
+// asserts them now.
 //
 // In production both fields point to the same *engine.Engine. In tests
 // they may differ (a service-only test fixture can leave orchestration

@@ -22,18 +22,29 @@ import (
 // Phase 6.5 (2026-04-25) split this out of EngineAccess. The split
 // captures the architectural role distinction: most handlers do pure
 // CRUD through services and have no business reaching engine-level
-// orchestration. ServiceAccess gives those handlers a 25-method surface;
+// orchestration. ServiceAccess gives those handlers a 49-method surface;
 // orchestration handlers take EngineOrchestration explicitly via
 // h.orchestration.
+//
+// It said "25-method" from the split in 2026-04 until 2026-08-19, by which
+// point the interface had doubled. Nothing measured it, so nothing noticed.
+// The count above is now asserted by a test — change it there when you
+// change it here, and read that test's comment before widening either
+// interface.
 //
 // State queries (GetCachedRobotStatus, GetAllCachedRobots,
 // GetNodeOccupancy) live here despite being engine-side because they
 // are pure reads with no side effects — semantically equivalent to
 // service queries from the handler's perspective.
 //
-// See implementation-plan.md "Post-Phase 6 tripwires" for the
-// boundary-creep guard: this split must stay at two interfaces, not
-// drift into N-per-handler.
+// The boundary-creep guard — this split must stay at two interfaces, not
+// drift into N-per-handler — is "Post-Phase 6 tripwires" in
+// the implementation plan (docs/plans/implementation-plan.md at the
+// GitHub root, OUTSIDE this repo — it was never committed in-tree).
+//
+// That document is why the widths above drifted unwatched: a ratchet
+// written only in a file the repo cannot see is a ratchet nothing enforces.
+// The enforced guard is the width test in this package's test file.
 type ServiceAccess interface {
 	// ── Subsystem accessors ────────────────────────────────────────
 	AppConfig() *config.Config

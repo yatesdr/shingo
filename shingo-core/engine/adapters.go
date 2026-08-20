@@ -183,7 +183,7 @@ func (e *countGroupEventEmitter) Emit(t countgroup.Transition) {
 	})
 }
 
-// orderResolver implements fleet.OrderIDResolver â€” the tracker looks
+// orderResolver implements fleet.OrderIDResolver — the tracker looks
 // up the internal order ID for a vendor order ID when it emits a
 // status-change event. Lives here because it's the same shape as the
 // other fleet/countgroup adapters: a tiny struct wrapping a
