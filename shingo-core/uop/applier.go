@@ -38,10 +38,15 @@ import (
 
 const (
 	// invDeltaScopeBin / invDeltaScopeBucket — scope_kind values for the
-	// inventory_delta_dedup table. Stable strings. Edge has no awareness
-	// of these values; they are a Core-internal partition.
-	invDeltaScopeBin    = "bin"
-	invDeltaScopeBucket = "bucket"
+	// inventory_delta_dedup table.
+	//
+	// NOT a Core-internal partition, which is what this comment used to claim.
+	// Edge writes scope_kind when it allocates a sequence-id and Core dedups on
+	// the value it receives, so the two sides must agree; a rename on one side
+	// alone stops deduplication silently. Single-sourced in protocol/ for that
+	// reason.
+	invDeltaScopeBin    = protocol.InvDeltaScopeBin
+	invDeltaScopeBucket = protocol.InvDeltaScopeBucket
 )
 
 // ErrInventoryDeltaSkipped indicates the delta was a duplicate (its

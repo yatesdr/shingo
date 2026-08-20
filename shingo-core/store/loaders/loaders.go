@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"shingo/protocol"
 )
 
 // Key mints the opaque wire/identity token for a loader from its surrogate id:
@@ -32,23 +34,28 @@ func Key(id int64) string { return "loader:" + strconv.FormatInt(id, 10) }
 // A consume loader (unloader) is always operator — the window-queue drain.
 // "auto" was renamed to "threshold" (v40 migration) once the legacy bin-count
 // floor was retired, so "auto" no longer conflates threshold with bin-count.
+//
+// The strings themselves are single-sourced in protocol/: these values cross
+// the wire, and Edge spells the same vocabulary in shingo-edge/domain, so a
+// disagreement is a defect that reaches the floor rather than a style
+// difference. The names and the local surface are unchanged.
 const (
-	RoleProduce = "produce"
-	RoleConsume = "consume"
+	RoleProduce = string(protocol.ClaimRoleProduce)
+	RoleConsume = string(protocol.ClaimRoleConsume)
 
-	LayoutSharedWindow       = "shared_window"
-	LayoutDedicatedPositions = "dedicated_positions"
+	LayoutSharedWindow       = protocol.LoaderLayoutSharedWindow
+	LayoutDedicatedPositions = protocol.LoaderLayoutDedicatedPositions
 
-	ReplenishmentOperator  = "operator"
-	ReplenishmentThreshold = "threshold"
+	ReplenishmentOperator  = protocol.LoaderReplenishmentOperator
+	ReplenishmentThreshold = protocol.LoaderReplenishmentThreshold
 
 	// home_kind discriminates a dedicated loader's members: a HOME is a position
 	// the cell binds to (payload pinned, or blank when not yet assigned); a BUFFER
 	// is a kept-partial slot with no pinned payload. Source ranks homes ∪ buffers;
 	// an unpinned home (kind=home, blank payload) is inert. Replaces the
 	// blank-payload overload (D4 / round-3 Call 2).
-	HomeKindHome   = "home"
-	HomeKindBuffer = "buffer"
+	HomeKindHome   = protocol.LoaderHomeKindHome
+	HomeKindBuffer = protocol.LoaderHomeKindBuffer
 )
 
 // Loader is the aggregate root: a bin loader (produce) or unloader (consume)

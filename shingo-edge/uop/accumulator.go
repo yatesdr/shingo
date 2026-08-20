@@ -40,11 +40,12 @@ import (
 
 const (
 	// invDeltaScopeBin / invDeltaScopeBucket — scope_kind values used
-	// when allocating sequence-ids and when Core dedups. Stable
-	// strings; renames must come with a coordinated migration on
-	// both sides.
-	invDeltaScopeBin    = "bin"
-	invDeltaScopeBucket = "bucket"
+	// when allocating sequence-ids and when Core dedups. Renames must
+	// come with a coordinated migration on both sides, which is why the
+	// strings are single-sourced in protocol/ rather than spelled here
+	// and again in shingo-core/uop.
+	invDeltaScopeBin    = protocol.InvDeltaScopeBin
+	invDeltaScopeBucket = protocol.InvDeltaScopeBucket
 
 	// defaultInventoryDeltaInterval is the periodic flush cadence used
 	// when the caller leaves interval unset. 5s matches the original

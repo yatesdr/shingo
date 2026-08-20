@@ -11,11 +11,16 @@ package messaging
 import (
 	"database/sql"
 	"time"
+
+	"shingo/protocol/outbox"
 )
 
 // MaxOutboxRetries is the number of delivery attempts before a message
 // is considered dead-lettered and skipped by the drainer.
-const MaxOutboxRetries = 10
+// The cap itself is protocol/outbox's: the drainer that enforces it lives
+// there, and this constant, edge's twin and the drainer's own were three
+// independent spellings of one number.
+const MaxOutboxRetries = outbox.MaxRetries
 
 // OutboxMessage is one queued outbound envelope.
 type OutboxMessage struct {

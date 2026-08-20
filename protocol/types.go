@@ -417,6 +417,19 @@ const (
 	ClaimRoleProduce ClaimRole = "produce" // node produces a material payload for downstream
 )
 
+// scope_kind values for the inventory-delta dedup partition.
+//
+// These DO cross the wire, which core's copy used to deny: its comment said
+// "Edge has no awareness of these values; they are a Core-internal partition",
+// while Edge writes scope_kind when it allocates a sequence-id and Core dedups
+// on the value it receives. Both sides spelled them independently and
+// identically; a rename on one side alone silently stops deduplication, which
+// is the failure this single definition exists to prevent.
+const (
+	InvDeltaScopeBin    = "bin"
+	InvDeltaScopeBucket = "bucket"
+)
+
 // OrderType is the typed kind-of-order for fulfillment orders. Used by
 // edge `orders.Order.OrderType` and the core dispatch layer; centralised
 // here so both sides agree on the canonical values and so the JSON wire

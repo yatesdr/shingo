@@ -752,6 +752,33 @@ const (
 	LoaderHomeKindBuffer = "buffer"
 )
 
+// The remaining two loader-vocabulary families, defined here for the same
+// reason home_kind is: they cross the wire, so a disagreement between Core and
+// Edge about the spelling is a defect that reaches the floor, not a style
+// difference. Role (produce/consume) is the third family and already lives in
+// types.go as ClaimRole; these two had no protocol home and were spelled
+// independently in shingo-core/store/loaders and shingo-edge/domain. The values
+// were identical when they were consolidated (2026-08-19, verified per value) —
+// this makes that a property of the code rather than a coincidence.
+//
+// Both sides keep their own typed constants derived from these, so
+// loaders.LayoutSharedWindow and domain.LayoutSharedWindow still exist and are
+// still distinct types. Only the string literal is single-sourced.
+const (
+	// LoaderLayoutSharedWindow: load points draw on one shared budget.
+	LoaderLayoutSharedWindow = "shared_window"
+	// LoaderLayoutDedicatedPositions: each position is bound to its own cell.
+	LoaderLayoutDedicatedPositions = "dedicated_positions"
+)
+
+const (
+	// LoaderReplenishmentOperator: the operator stages and clears at the board.
+	LoaderReplenishmentOperator = "operator"
+	// LoaderReplenishmentThreshold: UOP kanban autoreorder. Renamed from "auto"
+	// in the v40 migration, once the legacy bin-count floor was retired.
+	LoaderReplenishmentThreshold = "threshold"
+)
+
 // LoaderPayloadInfo is one entry in a shared_window loader's allowed payload set.
 type LoaderPayloadInfo struct {
 	PayloadCode  string `json:"payload_code"`

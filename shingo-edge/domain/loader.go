@@ -66,8 +66,8 @@ func (p PayloadCode) String() string { return string(p) }
 type LoaderLayout string
 
 const (
-	LayoutSharedWindow       LoaderLayout = "shared_window"
-	LayoutDedicatedPositions LoaderLayout = "dedicated_positions"
+	LayoutSharedWindow       LoaderLayout = protocol.LoaderLayoutSharedWindow
+	LayoutDedicatedPositions LoaderLayout = protocol.LoaderLayoutDedicatedPositions
 )
 
 // LoaderRole is produce (a bin loader: operator fills empties) or consume (an
@@ -75,8 +75,8 @@ const (
 type LoaderRole string
 
 const (
-	RoleProduce LoaderRole = "produce"
-	RoleConsume LoaderRole = "consume"
+	RoleProduce LoaderRole = LoaderRole(protocol.ClaimRoleProduce)
+	RoleConsume LoaderRole = LoaderRole(protocol.ClaimRoleConsume)
 )
 
 func (r LoaderRole) valid() bool { return r == RoleProduce || r == RoleConsume }
@@ -88,8 +88,8 @@ func (r LoaderRole) valid() bool { return r == RoleProduce || r == RoleConsume }
 type LoaderReplenishment string
 
 const (
-	ReplenishmentOperator  LoaderReplenishment = "operator"
-	ReplenishmentThreshold LoaderReplenishment = "threshold"
+	ReplenishmentOperator  LoaderReplenishment = protocol.LoaderReplenishmentOperator
+	ReplenishmentThreshold LoaderReplenishment = protocol.LoaderReplenishmentThreshold
 )
 
 // PositionKind is the EXPLICIT marker that replaces the empty-payload-means-window
@@ -142,8 +142,8 @@ type Position struct {
 // Position home kinds, mirroring Core's bin_loader_homes.home_kind. Blank is a
 // third state — "this Core did not say" — and IsBuffer treats it as such.
 const (
-	HomeKindHome   = "home"
-	HomeKindBuffer = "buffer"
+	HomeKindHome   = protocol.LoaderHomeKindHome
+	HomeKindBuffer = protocol.LoaderHomeKindBuffer
 )
 
 // IsBuffer reports whether this position is a kept-partial BUFFER slot.

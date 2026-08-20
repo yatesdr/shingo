@@ -14,12 +14,14 @@ import (
 	"database/sql"
 	"time"
 
+	"shingo/protocol/outbox"
 	"shingoedge/store/internal/helpers"
 )
 
 // MaxRetries is the number of delivery attempts before a message is
 // considered dead-lettered and skipped by the drainer.
-const MaxRetries = 10
+// The cap is protocol/outbox's — the drainer that enforces it lives there.
+const MaxRetries = outbox.MaxRetries
 
 // Message is one outbox row.
 type Message struct {
