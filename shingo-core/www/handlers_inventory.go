@@ -8,7 +8,7 @@ import (
 
 	"github.com/xuri/excelize/v2"
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/domain"
 )
 

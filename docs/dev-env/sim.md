@@ -43,7 +43,7 @@ hardware seams.
 | Piece | Where | What it does |
 |---|---|---|
 | Build-tag + runtime guards | `//go:build sim`, `SHINGO_ALLOW_SIM=1` | Sim code is absent from prod builds *and* refuses to run without the env flag; prints a NOT-FOR-PRODUCTION banner. |
-| Injectable clock | `shared/clock` | All sim timing goes through an injected `Clock` (real today; the seam for the speed knob + DST). |
+| Injectable clock | `protocol/clock` | All sim timing goes through an injected `Clock` (real today; the seam for the speed knob + DST). |
 | Docker stack | `docker-compose.dev.yml`, `Dockerfile.dev`, `Makefile` | postgres + kafka (KRaft) + core + edge + a one-shot seed service. |
 | Fleet simulator | `shingo-core/fleet/simulator` | Clock-driven robot moves with jitter + fault injection, monotonic IDs, eviction; `RobotLister` parity with the real fleet. |
 | Fake WarLink PLC | `shingo-edge/plc/simwarlink` | Emits counter ticks per process node; injected at `engine.New`, handshake-verified like a real PLC. |

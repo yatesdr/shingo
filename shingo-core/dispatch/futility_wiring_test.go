@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
-	"shingo/shared/clock"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"

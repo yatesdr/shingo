@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 // Standard op tags for bin_uop_audit.op. Stable strings — historical

@@ -3,7 +3,7 @@ package eta
 import (
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 // ── THESE STAMPS SIT BESIDE SIM-CLOCK ROWS AND WERE MADE OF WALL TIME ─────

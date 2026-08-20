@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 // The threshold these pin is set from plant history, not from taste. Over 120

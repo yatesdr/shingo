@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 // Address identifies a message source or destination.

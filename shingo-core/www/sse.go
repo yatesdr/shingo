@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"shingo/protocol/clock"
 	"shingo/protocol/eventbus"
-	"shingo/shared/clock"
 	"shingocore/dispatch/eta"
 	"shingocore/engine"
 )

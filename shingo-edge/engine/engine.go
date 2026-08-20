@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/debuglog"
 	"shingo/protocol/types"
-	"shingo/shared/clock"
 	"shingoedge/config"
 	"shingoedge/orders"
 	"shingoedge/plc"

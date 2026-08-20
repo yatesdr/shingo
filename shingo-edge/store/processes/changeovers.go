@@ -23,7 +23,7 @@ import (
 	"database/sql"
 	"errors"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )

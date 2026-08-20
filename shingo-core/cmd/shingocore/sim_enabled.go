@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/config"
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"

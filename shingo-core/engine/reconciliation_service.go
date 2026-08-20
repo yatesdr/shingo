@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/dispatch"
 	"shingocore/service"
 	"shingocore/store/messaging"

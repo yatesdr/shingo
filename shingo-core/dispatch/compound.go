@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"

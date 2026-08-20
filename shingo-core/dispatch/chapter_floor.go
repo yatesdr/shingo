@@ -5,7 +5,7 @@ import (
 	"log"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/store/orders"
 )
 

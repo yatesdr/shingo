@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingoedge/config"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"

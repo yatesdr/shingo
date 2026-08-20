@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/fleet"

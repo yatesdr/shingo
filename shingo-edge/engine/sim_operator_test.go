@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 func newTestSimOperator(clk clock.Clock) *simOperator {

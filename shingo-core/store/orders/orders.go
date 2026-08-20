@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/internal/nodetree"

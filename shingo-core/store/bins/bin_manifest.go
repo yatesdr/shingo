@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/domain"
 )
 

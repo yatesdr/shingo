@@ -68,7 +68,7 @@ import (
 	"sync"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 // FutilityKey is the tuple the detector counts on: the unit of work that

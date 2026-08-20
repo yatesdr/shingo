@@ -9,7 +9,7 @@ import (
 	"math/rand"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/config"
 )
 

@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingoedge/config"
 	"shingoedge/plc"
 )

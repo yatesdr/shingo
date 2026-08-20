@@ -14,7 +14,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"strings"
 	"time"
 

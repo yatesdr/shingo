@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/fleet"
 )
 

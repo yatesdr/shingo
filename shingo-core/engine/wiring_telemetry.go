@@ -12,7 +12,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/store/telemetry"
 )
 

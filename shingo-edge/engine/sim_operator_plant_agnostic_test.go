@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 // TestSimOperator_NamesNoPlantsNodes is a tripwire for the defect class that

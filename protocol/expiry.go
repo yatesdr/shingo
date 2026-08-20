@@ -3,7 +3,7 @@ package protocol
 import (
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 // Default TTLs by message type.
