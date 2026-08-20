@@ -14,6 +14,10 @@ func (db *DB) GetAdminUser(username string) (*admin.User, error) {
 	return admin.Get(db.DB, username)
 }
 
+func (db *DB) UpdateAdminPassword(username, passwordHash string) error {
+	return admin.UpdatePassword(db.DB, username, passwordHash)
+}
+
 func (db *DB) AdminUserExists() (bool, error) {
 	return admin.AnyExists(db.DB)
 }

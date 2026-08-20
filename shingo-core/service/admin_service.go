@@ -44,3 +44,13 @@ func (s *AdminService) UserExists() (bool, error) {
 func (s *AdminService) CreateUser(username, passwordHash string) error {
 	return s.db.CreateAdminUser(username, passwordHash)
 }
+
+// UpdatePassword changes the password_hash for an existing admin. The handler
+// computes the hash via auth.HashPassword and verifies the current password
+// before calling, the same division of labour CreateUser uses.
+//
+// Before this existed, rotating a core admin password meant an UPDATE against
+// Postgres by hand; edge has had the store/service/handler chain all along.
+func (s *AdminService) UpdatePassword(username, passwordHash string) error {
+	return s.db.UpdateAdminPassword(username, passwordHash)
+}

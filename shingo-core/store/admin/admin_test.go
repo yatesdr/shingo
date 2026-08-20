@@ -88,3 +88,58 @@ func TestCoverage_CreateAdminUser_MultipleUsers(t *testing.T) {
 		t.Errorf("alice and bob should have distinct IDs (both = %d)", a.ID)
 	}
 }
+
+func TestCoverage_UpdateAdminPassword(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	if err := admin.Create(db.DB, "alice", "hash-old"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := admin.UpdatePassword(db.DB, "alice", "hash-new"); err != nil {
+		t.Fatalf("UpdatePassword: %v", err)
+	}
+	got, err := admin.Get(db.DB, "alice")
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+	if got.PasswordHash != "hash-new" {
+		t.Errorf("PasswordHash = %q, want %q", got.PasswordHash, "hash-new")
+	}
+}
+
+// TestCoverage_UpdateAdminPassword_TouchesOnlyTheNamedUser guards the WHERE
+// clause. A missing or wrong predicate on an UPDATE against admin_users
+// rewrites every admin's hash at once, which is silent — the caller still gets
+// a nil error and the user who changed their password still logs in.
+func TestCoverage_UpdateAdminPassword_TouchesOnlyTheNamedUser(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	if err := admin.Create(db.DB, "alice", "h-alice"); err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	if err := admin.Create(db.DB, "bob", "h-bob"); err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	if err := admin.UpdatePassword(db.DB, "alice", "h-alice-new"); err != nil {
+		t.Fatalf("UpdatePassword: %v", err)
+	}
+	b, err := admin.Get(db.DB, "bob")
+	if err != nil {
+		t.Fatalf("get bob: %v", err)
+	}
+	if b.PasswordHash != "h-bob" {
+		t.Errorf("bob hash = %q, want it untouched at %q", b.PasswordHash, "h-bob")
+	}
+}
+
+// TestCoverage_UpdateAdminPassword_UnknownUserIsNotAnError pins the deliberate
+// choice at this layer: the caller has already fetched the row to verify the
+// current password, and surfacing "no such user" from the update would leak
+// account existence.
+func TestCoverage_UpdateAdminPassword_UnknownUserIsNotAnError(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	if err := admin.UpdatePassword(db.DB, "nobody", "h"); err != nil {
+		t.Errorf("UpdatePassword on a missing user returned %v, want nil", err)
+	}
+}

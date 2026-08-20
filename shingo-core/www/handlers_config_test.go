@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/auth"
 	"shingo/protocol/debuglog"
 	"shingo/protocol/testutil"
 	"shingocore/config"
@@ -284,4 +285,122 @@ func excerpt(s string) string {
 		return s[:200] + "…"
 	}
 	return s
+}
+
+// --- handleConfigPassword (admin password rotation) --------------------------
+
+// loggedInSession returns a session cookie for the seeded admin/admin user, so
+// the password handler can read a username off the request the way a real
+// browser request carries one.
+func loggedInSession(t *testing.T, h *Handlers) *http.Cookie {
+	t.Helper()
+	h.ensureDefaultAdmin()
+
+	form := url.Values{}
+	form.Set("username", "admin")
+	form.Set("password", "admin")
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.handleLogin(rec, req)
+
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionName {
+			return c
+		}
+	}
+	t.Fatalf("no %s cookie after login; status=%d", sessionName, rec.Code)
+	return nil
+}
+
+func postPassword(t *testing.T, h *Handlers, cookie *http.Cookie, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/config/password", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	h.handleConfigPassword(rec, req)
+	return rec
+}
+
+func TestHandleConfigPassword_HappyPathRotatesTheHash(t *testing.T) {
+	t.Parallel()
+	h, _, _ := testHandlersWithConfigPath(t)
+	cookie := loggedInSession(t, h)
+
+	before, err := h.engine.AdminService().GetUser("admin")
+	if err != nil {
+		t.Fatalf("GetUser before: %v", err)
+	}
+
+	rec := postPassword(t, h, cookie,
+		`{"old_password":"admin","new_password":"a-new-password"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	after, err := h.engine.AdminService().GetUser("admin")
+	if err != nil {
+		t.Fatalf("GetUser after: %v", err)
+	}
+	if after.PasswordHash == before.PasswordHash {
+		t.Error("password hash unchanged after a successful rotation")
+	}
+	// The new password must actually authenticate, and the old one must not.
+	if !auth.CheckPassword(after.PasswordHash, "a-new-password") {
+		t.Error("new password does not verify against the stored hash")
+	}
+	if auth.CheckPassword(after.PasswordHash, "admin") {
+		t.Error("old password still verifies after rotation")
+	}
+}
+
+func TestHandleConfigPassword_WrongCurrentPasswordIsRejected(t *testing.T) {
+	t.Parallel()
+	h, _, _ := testHandlersWithConfigPath(t)
+	cookie := loggedInSession(t, h)
+
+	before, err := h.engine.AdminService().GetUser("admin")
+	if err != nil {
+		t.Fatalf("GetUser before: %v", err)
+	}
+
+	rec := postPassword(t, h, cookie,
+		`{"old_password":"not-the-password","new_password":"whatever"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+
+	after, err := h.engine.AdminService().GetUser("admin")
+	if err != nil {
+		t.Fatalf("GetUser after: %v", err)
+	}
+	if after.PasswordHash != before.PasswordHash {
+		t.Error("password hash changed despite a rejected current password")
+	}
+}
+
+func TestHandleConfigPassword_UnauthenticatedIsRejected(t *testing.T) {
+	t.Parallel()
+	h, _, _ := testHandlersWithConfigPath(t)
+	h.ensureDefaultAdmin()
+
+	rec := postPassword(t, h, nil,
+		`{"old_password":"admin","new_password":"a-new-password"}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleConfigPassword_EmptyNewPasswordIsRejected(t *testing.T) {
+	t.Parallel()
+	h, _, _ := testHandlersWithConfigPath(t)
+	cookie := loggedInSession(t, h)
+
+	rec := postPassword(t, h, cookie, `{"old_password":"admin","new_password":""}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
 }

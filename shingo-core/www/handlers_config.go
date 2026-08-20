@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"shingo/protocol/auth"
 	"shingocore/notify"
 )
 
@@ -264,4 +265,71 @@ func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request)
 
 	log.Printf("config: test %s alert sent to %d recipient(s)", alertType, len(n.Recipients))
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": fmt.Sprintf("Test %s alert sent to %d recipient(s)", alertType, len(n.Recipients))})
+}
+
+// handleConfigPassword rotates the logged-in admin's password.
+//
+// Core had no password-change path of any kind until this landed: the only
+// rotation available was an UPDATE against admin_users in Postgres by hand.
+// Edge has carried the store/service/handler chain since its setup page was
+// built, and this mirrors it — same old-password check, same hash-then-update
+// order, same JSON shape as the rest of core's /config POSTs.
+//
+// The current password is verified here rather than at the service layer
+// because that is where edge verifies it and where the session lives. There is
+// no UI calling this yet; core's config page has no account section.
+func (h *Handlers) handleConfigPassword(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	username := h.getUsername(r)
+	if username == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "not logged in"})
+		return
+	}
+
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	if req.NewPassword == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "new password is required"})
+		return
+	}
+
+	user, err := h.engine.AdminService().GetUser(username)
+	if err != nil {
+		log.Printf("config: password change: lookup %q: %v", username, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "user not found"})
+		return
+	}
+
+	if !auth.CheckPassword(user.PasswordHash, req.OldPassword) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "current password is incorrect"})
+		return
+	}
+
+	hash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "failed to hash password"})
+		return
+	}
+
+	if err := h.engine.AdminService().UpdatePassword(username, hash); err != nil {
+		log.Printf("config: password change: update %q: %v", username, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "failed to update password"})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
