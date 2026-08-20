@@ -56,24 +56,35 @@ The one rule the HMI *is* already held to is the no-emoji policy: Edge's
 
 ### Shared module structure
 
-**Decided: third Go module + Go workspace.**
+**Decided: its own Go module + Go workspace.**
+
+`shared/` was the third module when this section was written and the UI assets
+below were all of it. The workspace now lists five (`protocol`, `shared`,
+`shingo-core`, `shingo-edge`, `integration`), and `shared/` has since taken on
+cross-surface answers and cross-module test fixtures alongside the assets. It is
+still not the home for shared infrastructure — that is `protocol/`. See
+[`shared-layer-promotion.md`](shared-layer-promotion.md).
 
 ```
 shingo/                          ← repo root
-├── go.work                      ← workspace file, lists all three modules
+├── go.work                      ← workspace file, lists all five modules
+├── protocol/
+│   └── go.mod                   ← wire protocol + shared infrastructure
 ├── shingo-core/
 │   └── go.mod                   ← imports shingo/shared
 ├── shingo-edge/
 │   └── go.mod                   ← imports shingo/shared
-└── shared/                      ← new third Go module
+└── shared/
     ├── go.mod
     ├── static.go                ← go:embed *.css *.js *.html
     ├── tokens.css               ← semantic design tokens
     ├── status-classes.css       ← per-status badge classes
-    └── utils.js                 ← h, el, escapeHtml, api, modal, confirm, toast, SSE factory
+    ├── utils.js                 ← h, el, escapeHtml, api, modal, confirm, toast, SSE factory
+    ├── windoworder/             ← a cross-surface answer, not an asset
+    └── loadervectors/           ← cross-module fixtures pinning Core against Edge
 ```
 
-The `go.work` file at the repo root declares all three modules as a
+The `go.work` file at the repo root declares all of them as a
 workspace. Local development picks up edits to `shared/` immediately; no
 version bumps or `replace` directives needed during normal work. Plant
 deploys (`git pull` + service restart + rebuild) work transparently — the
@@ -104,10 +115,17 @@ Template references use the prefixed path:
 ### Adding to shared/
 
 Promote a file to `shared/` only when **both** Core and Edge need it
-identically. Don't preemptively populate. Concrete current candidates
-(known to belong in shared based on the consistency refactor): tokens,
-status-classes CSS, the JS utility module. Add others as a real shared
-need surfaces.
+identically, and only when a disagreement between them would actually be a
+defect. Don't preemptively populate. The full criterion — all four clauses, and
+the rule that the drift guard ships in the promoting commit — is in
+[`docs/shared-layer-promotion.md`](shared-layer-promotion.md); read it before
+promoting anything.
+
+For UI specifically the candidates are tokens, status-classes CSS and the JS
+utility module. Note that `shared/` is no longer UI-only: it also holds
+cross-surface answers (`windoworder`) and cross-module fixtures
+(`loadervectors`). Shared *infrastructure* does not go here — that is
+`protocol/`.
 
 ## Design tokens
 
