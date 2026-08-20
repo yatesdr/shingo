@@ -53,6 +53,19 @@ func List(db *sql.DB) ([]Order, error) {
 	return scanOrders(rows)
 }
 
+// ListByProcess returns every order for one process, newest first.
+// Mirrors List's predicate (no status filtering) but scopes to one process.
+func ListByProcess(db *sql.DB, processID int64) ([]Order, error) {
+	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
+		WHERE pl.id = ?
+		ORDER BY o.created_at DESC`, processID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
 // ListActive returns orders visible on the edge HMI orders history screen.
 //
 // Always shown: non-terminal active statuses (queued, in_transit, staged, …).
@@ -64,6 +77,35 @@ func ListActive(db *sql.DB) ([]Order, error) {
 		WHERE o.status NOT IN ('cancelled','skipped')
 		AND (o.status NOT IN ('confirmed','failed','faulted') OR o.created_at > datetime('now', '-7 days'))
 		ORDER BY o.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// ListActiveStrict returns only non-terminal orders — the same predicate
+// Core uses for its "Active" tab. Excludes confirmed, failed, faulted,
+// cancelled and skipped. Use this where the UI wants the "in flight" set
+// (orders still being worked), as opposed to ListActive which carries
+// recent history for the operator HMI.
+func ListActiveStrict(db *sql.DB) ([]Order, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s %s
+		WHERE o.status NOT IN (%s)
+		ORDER BY o.created_at DESC`, selectCols, joinClause, protocol.TerminalStatusSQLList()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// ListActiveStrictByProcess mirrors ListActiveStrict, scoped to one process.
+func ListActiveStrictByProcess(db *sql.DB, processID int64) ([]Order, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s %s
+		WHERE o.status NOT IN (%s)
+		AND pl.id = ?
+		ORDER BY o.created_at DESC`, selectCols, joinClause, protocol.TerminalStatusSQLList()), processID)
 	if err != nil {
 		return nil, err
 	}

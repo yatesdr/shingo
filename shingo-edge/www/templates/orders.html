@@ -1,6 +1,22 @@
 {{template "header" .}}
 
-<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap">
+<div class="orders-head">
+    <h1 class="orders-title">Orders</h1>
+    <div class="order-filters" role="group" aria-label="Filter orders by status">
+        {{/* All/Active are the two aggregate views and carry no dot. */}}
+        <a href="/orders?status=all&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "all"}} is-active{{end}}">All</a>
+        <a href="/orders?process={{.ActiveProcessID}}" class="ofilter{{if not .FilterStatus}} is-active{{end}}">Active</a>
+        <span class="ofilter-sep" aria-hidden="true"></span>
+        {{/* Status pills — each dot carries the same hue as the badge in the table. */}}
+        <a href="/orders?status=faulted&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "faulted"}} is-active{{end}}"><span class="ofilter-dot" data-status="faulted"></span>Faulted</a>
+        <a href="/orders?status=failed&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "failed"}} is-active{{end}}"><span class="ofilter-dot" data-status="failed"></span>Failed</a>
+        <a href="/orders?status=queued&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "queued"}} is-active{{end}}"><span class="ofilter-dot" data-status="queued"></span>Queued</a>
+        <a href="/orders?status=in_transit&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "in_transit"}} is-active{{end}}"><span class="ofilter-dot" data-status="in_transit"></span>In Transit</a>
+        <a href="/orders?status=confirmed&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "confirmed"}} is-active{{end}}"><span class="ofilter-dot" data-status="confirmed"></span>Confirmed</a>
+    </div>
+</div>
+
+<div class="filter-bar">
     {{if .Processes}}
     <select class="form-input" style="width:14rem" data-action-change="navigateToProcessOrOrders">
         <option value="" {{if eq .ActiveProcessID 0}}selected{{end}}>All Processes</option>
@@ -9,24 +25,18 @@
         {{end}}
     </select>
     {{end}}
-    <a href="/orders?process={{.ActiveProcessID}}" class="btn btn-sm{{if not .FilterStatus}} btn-primary{{end}}">All</a>
-    <a href="/orders?process={{.ActiveProcessID}}&status=confirmed" class="btn btn-sm{{if eq .FilterStatus "confirmed"}} btn-primary{{end}}">Confirmed</a>
-    <a href="/orders?process={{.ActiveProcessID}}&status=faulted" class="btn btn-sm{{if eq .FilterStatus "faulted"}} btn-primary{{end}}">Faulted</a>
-    <a href="/orders?process={{.ActiveProcessID}}&status=failed" class="btn btn-sm{{if eq .FilterStatus "failed"}} btn-primary{{end}}">Failed</a>
-    <a href="/orders?process={{.ActiveProcessID}}&status=queued" class="btn btn-sm{{if eq .FilterStatus "queued"}} btn-primary{{end}}">Queued</a>
-    <a href="/orders?process={{.ActiveProcessID}}&status=in_transit" class="btn btn-sm{{if eq .FilterStatus "in_transit"}} btn-primary{{end}}">In Transit</a>
+    <input type="text" id="filter-search" class="form-input orders-search" placeholder="Filter by UUID, type, payload, node...">
+    <span id="filter-count" class="text-muted-xs tnum"></span>
 </div>
 
-<div class="card">
-    <div class="card-body"
-         id="orders-content"
-         hx-get="/orders/partial?process={{.ActiveProcessID}}&status={{.FilterStatus}}"
-         hx-trigger="refreshOrders from:body, sse:order-update throttle:3s, sse:order-completed, sse:order-failed"
-         hx-swap="innerHTML"
-         hx-ext="sse"
-         sse-connect="/events">
-        {{template "orders-body" .}}
-    </div>
+<div class="card orders-card"
+     id="orders-content"
+     hx-get="/orders/partial?process={{.ActiveProcessID}}&status={{.FilterStatus}}"
+     hx-trigger="refreshOrders from:body, sse:order-update throttle:3s, sse:order-completed, sse:order-failed"
+     hx-swap="innerHTML"
+     hx-ext="sse"
+     sse-connect="/events">
+     {{template "orders-body" .}}
 </div>
 
 <script type="module" src="/static/js/pages/orders.js?v={{cacheBust}}"></script>

@@ -37,9 +37,6 @@ func run() error {
 	}
 
 	dump, err := schemadump.Dump(path)
-	if err != nil {
-		return err
-	}
 
 	out := schemadump.SnapshotPath
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {

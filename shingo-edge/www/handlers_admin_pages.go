@@ -47,6 +47,7 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	processList, _ := h.engine.ProcessService().List()
+	groupList, _ := h.engine.ProcessService().ListGroups()
 	styles, _ := h.engine.StyleService().List()
 	stationList, _ := h.engine.StationService().List()
 	coreNodes := h.engine.CoreNodes()
@@ -120,6 +121,7 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Page":              "processes",
 		"Processes":         processList,
+		"ProcessGroups":     groupList,
 		"Styles":            styles,
 		"Stations":          stationList,
 		"CoreNodes":         coreNodes,

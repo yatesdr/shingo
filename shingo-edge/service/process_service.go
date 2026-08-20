@@ -60,6 +60,45 @@ func (s *ProcessService) SetChangeoverAutoArm(processID int64, mode string) erro
 	return s.db.SetChangeoverAutoArm(processID, mode)
 }
 
+// SetGroupID assigns a process to a group, or unassigns it (pass nil)
+// back to "Ungrouped". Pure UI taxonomy.
+func (s *ProcessService) SetGroupID(processID int64, groupID *int64) error {
+	return s.db.SetProcessGroupID(processID, groupID)
+}
+
+// ── Process groups ──────────────────────────────────────────────────
+
+// ListGroups returns all process_groups ordered by name.
+func (s *ProcessService) ListGroups() ([]store.ProcessGroup, error) {
+	return s.db.ListProcessGroups()
+}
+
+// GetGroup returns one process_group by id.
+func (s *ProcessService) GetGroup(id int64) (*store.ProcessGroup, error) {
+	return s.db.GetProcessGroup(id)
+}
+
+// CreateGroup inserts a new process_group and returns the new id.
+func (s *ProcessService) CreateGroup(name, description string) (int64, error) {
+	return s.db.CreateProcessGroup(name, description)
+}
+
+// UpdateGroup modifies a process_group's name and description.
+func (s *ProcessService) UpdateGroup(id int64, name, description string) error {
+	return s.db.UpdateProcessGroup(id, name, description)
+}
+
+// DeleteGroup removes a process_group. Member processes revert to
+// Ungrouped via the ON DELETE SET NULL FK.
+func (s *ProcessService) DeleteGroup(id int64) error {
+	return s.db.DeleteProcessGroup(id)
+}
+
+// CountGroupMembers returns how many processes are in a group.
+func (s *ProcessService) CountGroupMembers(id int64) (int, error) {
+	return s.db.CountProcessGroupMembers(id)
+}
+
 // ── Process nodes ──────────────────────────────────────────────────
 
 // ListNodes returns every process_nodes row.

@@ -249,6 +249,12 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN keep_staged INTEGER NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN evacuate_on_changeover INTEGER NOT NULL DEFAULT 0")
 
+	// Processes page group taxonomy (UI-only). New column on processes +
+	// the process_groups table itself is created by the canonical schema
+	// pass above. Idempotent: the ADD COLUMN fails silently on a DB that
+	// already has it.
+	db.Exec("ALTER TABLE processes ADD COLUMN group_id INTEGER REFERENCES process_groups(id) ON DELETE SET NULL")
+
 	// Rename staging_node → inbound_staging, release_node → outbound_staging on style_node_claims
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN inbound_staging TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN outbound_staging TEXT NOT NULL DEFAULT ''")

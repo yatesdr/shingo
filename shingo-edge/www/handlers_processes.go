@@ -30,6 +30,7 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 		CounterTagName    string `json:"counter_tag_name"`
 		CounterEnabled    bool   `json:"counter_enabled"`
 		ChangeoverAutoArm string `json:"changeover_auto_arm"`
+		GroupID           *int64 `json:"group_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -49,6 +50,12 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 	if err := h.engine.ProcessService().SetChangeoverAutoArm(id, req.ChangeoverAutoArm); err != nil {
 		log.Printf("set changeover_auto_arm on new process %d: %v", id, err)
 	}
+	// Assign to a group if one was selected (optional — nil = Ungrouped).
+	if req.GroupID != nil && *req.GroupID > 0 {
+		if err := h.engine.ProcessService().SetGroupID(id, req.GroupID); err != nil {
+			log.Printf("set group_id on new process %d: %v", id, err)
+		}
+	}
 	h.requestBackup("process-created")
 	writeJSON(w, map[string]int64{"id": id})
 }
@@ -67,6 +74,7 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		CounterTagName    string `json:"counter_tag_name"`
 		CounterEnabled    bool   `json:"counter_enabled"`
 		ChangeoverAutoArm string `json:"changeover_auto_arm"`
+		GroupID           *int64 `json:"group_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -79,6 +87,16 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 	// Persist the 3-value CATID auto-arm mode alongside the counter-config edit.
 	if err := h.engine.ProcessService().SetChangeoverAutoArm(id, req.ChangeoverAutoArm); err != nil {
 		log.Printf("set changeover_auto_arm on process %d: %v", id, err)
+	}
+	// Update group assignment. req.GroupID == nil means "Ungrouped" (clear
+	// the FK); a positive value means "assign to that group". We always write
+	// so the user can ungroup via the General tab dropdown.
+	var gid *int64
+	if req.GroupID != nil && *req.GroupID > 0 {
+		gid = req.GroupID
+	}
+	if err := h.engine.ProcessService().SetGroupID(id, gid); err != nil {
+		log.Printf("set group_id on process %d: %v", id, err)
 	}
 	// Re-sync the reporting point so the counter config edit takes effect
 	// immediately — previously, this only ran on SetActiveStyle, which meant

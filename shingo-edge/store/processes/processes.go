@@ -37,10 +37,15 @@ type (
 func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 	var p Process
 	var createdAt string
-	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.ChangeoverAutoArm, &createdAt); err != nil {
+	var groupID sql.NullInt64
+	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.ChangeoverAutoArm, &groupID, &createdAt); err != nil {
 		return p, err
 	}
 	p.CreatedAt = helpers.ScanTime(createdAt)
+	if groupID.Valid {
+		id := groupID.Int64
+		p.GroupID = &id
+	}
 	return p, nil
 }
 
@@ -48,7 +53,7 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 // (the Changeover_Active tag was never wired at any plant). The column stays on
 // disk — dropping it means a SQLite table rebuild, and a rebuild is what
 // generates the dangling REFERENCES clauses the FK repair exists to fix.
-const processSelect = `id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, changeover_auto_arm, created_at`
+const processSelect = `id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, changeover_auto_arm, group_id, created_at`
 
 // List returns every process row sorted by name.
 func List(db *sql.DB) ([]Process, error) {
@@ -142,6 +147,13 @@ func SetProductionState(db *sql.DB, processID int64, state string) error {
 // mode threads through without churning every process-CRUD call site.
 func SetChangeoverAutoArm(db *sql.DB, processID int64, mode string) error {
 	_, err := db.Exec(`UPDATE processes SET changeover_auto_arm=? WHERE id=?`, domain.NormalizeChangeoverAutoArm(mode), processID)
+	return err
+}
+
+// SetGroupID assigns a process to a group, or unassigns it (pass nil) back
+// to "Ungrouped". Pure UI taxonomy — the runtime never reads group_id.
+func SetGroupID(db *sql.DB, processID int64, groupID *int64) error {
+	_, err := db.Exec(`UPDATE processes SET group_id=? WHERE id=?`, groupID, processID)
 	return err
 }
 

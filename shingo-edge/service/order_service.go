@@ -38,6 +38,29 @@ func (s *OrderService) ListActiveByProcess(processID int64) ([]orders.Order, err
 	return s.db.ListActiveOrdersByProcess(processID)
 }
 
+// ListActiveStrict returns only non-terminal orders — Core's "Active"
+// tab predicate. Use this for the orders page Active tab; use ListActive
+// for the operator HMI which carries 7-day recent history.
+func (s *OrderService) ListActiveStrict() ([]orders.Order, error) {
+	return s.db.ListActiveOrdersStrict()
+}
+
+// ListActiveStrictByProcess mirrors ListActiveStrict, scoped to one process.
+func (s *OrderService) ListActiveStrictByProcess(processID int64) ([]orders.Order, error) {
+	return s.db.ListActiveOrdersByProcessStrict(processID)
+}
+
+// ListAll returns every order across all processes (the "All" tab).
+func (s *OrderService) ListAll() ([]orders.Order, error) {
+	return s.db.ListOrders()
+}
+
+// ListAllByProcess returns every order scoped to one process (the "All"
+// tab with a process filter applied).
+func (s *OrderService) ListAllByProcess(processID int64) ([]orders.Order, error) {
+	return s.db.ListOrdersByProcess(processID)
+}
+
 // UpdateFinalCount writes the final_count + count_confirmed fields
 // on an order. Used at operator final-count confirmation time after
 // material delivery.

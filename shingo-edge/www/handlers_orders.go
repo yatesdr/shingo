@@ -14,7 +14,6 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 	var activeProcessID int64
 	if lineParam := r.URL.Query().Get("process"); lineParam != "" {
 		if id, err := strconv.ParseInt(lineParam, 10, 64); err == nil {
-			// Validate process exists
 			for _, l := range processes {
 				if l.ID == id {
 					activeProcessID = id
@@ -24,24 +23,42 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var activeOrders []domain.Order
-	if activeProcessID > 0 {
-		activeOrders, _ = h.engine.OrderService().ListActiveByProcess(activeProcessID)
-	} else {
-		activeOrders, _ = h.engine.OrderService().ListActive()
-	}
-
-	// Optional status filter — post-filter from operator-visible set so the
-	// tab counts reflect what's actually on screen.
+	// Status filter — mirrors Core's orders handler exactly:
+	//   status == ""      → Active tab: strict non-terminal set
+	//   status == "all"   → All tab: every order
+	//   anything else     → orders of that specific status (from all orders)
 	filterStatus := r.URL.Query().Get("status")
-	if filterStatus != "" {
+
+	var orders []domain.Order
+	switch {
+	case filterStatus == "":
+		// Active tab — non-terminal only (Core's ListActiveOrders predicate)
+		if activeProcessID > 0 {
+			orders, _ = h.engine.OrderService().ListActiveStrictByProcess(activeProcessID)
+		} else {
+			orders, _ = h.engine.OrderService().ListActiveStrict()
+		}
+	case filterStatus == "all":
+		// All tab — every order
+		if activeProcessID > 0 {
+			orders, _ = h.engine.OrderService().ListAllByProcess(activeProcessID)
+		} else {
+			orders, _ = h.engine.OrderService().ListAll()
+		}
+	default:
+		// Specific status pill — from ALL orders, post-filtered
+		if activeProcessID > 0 {
+			orders, _ = h.engine.OrderService().ListAllByProcess(activeProcessID)
+		} else {
+			orders, _ = h.engine.OrderService().ListAll()
+		}
 		var filtered []domain.Order
-		for _, o := range activeOrders {
+		for _, o := range orders {
 			if string(o.Status) == filterStatus {
 				filtered = append(filtered, o)
 			}
 		}
-		activeOrders = filtered
+		orders = filtered
 	}
 
 	// Core-synced nodes for redirect dropdown
@@ -58,7 +75,7 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		"Processes":         processes,
 		"ActiveProcessID":   activeProcessID,
 		"FilterStatus":      filterStatus,
-		"ActiveOrders":      activeOrders,
+		"ActiveOrders":      orders,
 		"KnownNodes":        knownNodes,
 		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
@@ -74,24 +91,40 @@ func (h *Handlers) handleOrdersPartial(w http.ResponseWriter, r *http.Request) {
 			activeProcessID = id
 		}
 	}
-	var activeOrders []domain.Order
-	if activeProcessID > 0 {
-		activeOrders, _ = h.engine.OrderService().ListActiveByProcess(activeProcessID)
-	} else {
-		activeOrders, _ = h.engine.OrderService().ListActive()
-	}
+
 	filterStatus := r.URL.Query().Get("status")
-	if filterStatus != "" {
+
+	var orders []domain.Order
+	switch {
+	case filterStatus == "":
+		if activeProcessID > 0 {
+			orders, _ = h.engine.OrderService().ListActiveStrictByProcess(activeProcessID)
+		} else {
+			orders, _ = h.engine.OrderService().ListActiveStrict()
+		}
+	case filterStatus == "all":
+		if activeProcessID > 0 {
+			orders, _ = h.engine.OrderService().ListAllByProcess(activeProcessID)
+		} else {
+			orders, _ = h.engine.OrderService().ListAll()
+		}
+	default:
+		if activeProcessID > 0 {
+			orders, _ = h.engine.OrderService().ListAllByProcess(activeProcessID)
+		} else {
+			orders, _ = h.engine.OrderService().ListAll()
+		}
 		var filtered []domain.Order
-		for _, o := range activeOrders {
+		for _, o := range orders {
 			if string(o.Status) == filterStatus {
 				filtered = append(filtered, o)
 			}
 		}
-		activeOrders = filtered
+		orders = filtered
 	}
+
 	data := map[string]any{
-		"ActiveOrders": activeOrders,
+		"ActiveOrders": orders,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "orders-body", data); err != nil {

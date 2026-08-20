@@ -4,7 +4,15 @@ package store
 // This file preserves the *store.DB method surface so external callers
 // do not need to change.
 
-import "shingoedge/store/processes"
+import (
+	"shingoedge/store/processes"
+	"shingoedge/store/process_groups"
+)
+
+// ProcessGroup is the row type for the process_groups table; aliased
+// here so callers can reference it as store.ProcessGroup without
+// importing the sub-package.
+type ProcessGroup = process_groups.Group
 
 // ListProcesses returns every process row sorted by name.
 func (db *DB) ListProcesses() ([]processes.Process, error) {
@@ -56,4 +64,42 @@ func (db *DB) SetProcessProductionState(processID int64, state string) error {
 // process; unknown/empty ⇒ auto.
 func (db *DB) SetChangeoverAutoArm(processID int64, mode string) error {
 	return processes.SetChangeoverAutoArm(db.DB, processID, mode)
+}
+
+// SetProcessGroupID assigns a process to a group (pass nil to ungroup).
+func (db *DB) SetProcessGroupID(processID int64, groupID *int64) error {
+	return processes.SetGroupID(db.DB, processID, groupID)
+}
+
+// ── Process groups ──────────────────────────────────────────────────
+
+// ListProcessGroups returns every process_groups row, ordered by name.
+func (db *DB) ListProcessGroups() ([]ProcessGroup, error) {
+	return process_groups.ListGroups(db.DB)
+}
+
+// GetProcessGroup returns one process_group by id.
+func (db *DB) GetProcessGroup(id int64) (*ProcessGroup, error) {
+	return process_groups.GetGroup(db.DB, id)
+}
+
+// CreateProcessGroup inserts a process_group and returns the new id.
+func (db *DB) CreateProcessGroup(name, description string) (int64, error) {
+	return process_groups.CreateGroup(db.DB, name, description)
+}
+
+// UpdateProcessGroup modifies a process_group's name and description.
+func (db *DB) UpdateProcessGroup(id int64, name, description string) error {
+	return process_groups.UpdateGroup(db.DB, id, name, description)
+}
+
+// DeleteProcessGroup removes a process_group. Member processes revert to
+// Ungrouped via the ON DELETE SET NULL FK.
+func (db *DB) DeleteProcessGroup(id int64) error {
+	return process_groups.DeleteGroup(db.DB, id)
+}
+
+// CountProcessGroupMembers returns how many processes are in a group.
+func (db *DB) CountProcessGroupMembers(id int64) (int, error) {
+	return process_groups.CountGroupMembers(db.DB, id)
 }

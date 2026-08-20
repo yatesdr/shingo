@@ -1,16 +1,16 @@
 {{template "header" .}}
 
-<div class="card" style="margin-bottom:0.75rem">
-    <div class="card-header" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
-        <strong>Production</strong>
-        <span style="margin-left:auto;font-size:0.85rem;color:var(--text-muted)">
-            Current: <strong>{{if .CurrentStyle}}{{.CurrentStyle}}{{else}}None{{end}}</strong>
-            {{if .TargetStyle}} | Target: <strong>{{.TargetStyle}}</strong>{{end}}
-        </span>
+<div class="orders-head">
+    <h1 class="orders-title">Production</h1>
+    <div class="flex items-center gap-1">
+        <span class="text-muted-sm">Current: <strong>{{if .CurrentStyle}}{{.CurrentStyle}}{{else}}None{{end}}</strong>{{if .TargetStyle}} | Target: <strong>{{.TargetStyle}}</strong>{{end}}</span>
     </div>
+</div>
+
+<div class="card">
     <div class="card-body" style="padding:0">
         <div id="production-content"
-     hx-get="/production/partial?process={{.ActiveProcessID}}"
+     hx-get="/production/partial?process={{if .IsAll}}all{{else}}{{.ActiveProcessID}}{{end}}"
      hx-trigger="refreshProduction from:body, sse:order-update throttle:5s, sse:order-completed, sse:order-failed, sse:counter-update throttle:10s"
      hx-swap="innerHTML"
      hx-ext="sse"
@@ -21,13 +21,13 @@
 </div>
 
 <!-- Manual Order -->
-<div class="card" style="margin-top:1rem">
-    <div class="card-header" style="display:flex;align-items:center;gap:0.75rem">
+<div class="card mt-4">
+    <div class="card-header card-header-row">
         <strong>Manual Order</strong>
         <button class="btn btn-sm btn-secondary" data-action="syncNodes" id="sync-nodes-btn" title="Re-fetch node list from core">Sync Nodes</button>
     </div>
     <div class="card-body">
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0.75rem">
+        <div class="grid-autofit">
             <div class="form-group" style="margin:0">
                 <label>Type</label>
                 <select id="mo-type" class="form-input" data-action-change="updateOrderForm">
@@ -68,20 +68,20 @@
                 <input type="number" id="mo-qty" class="form-input" value="1" min="1">
             </div>
         </div>
-        <div style="text-align:right;margin-top:0.75rem">
+        <div class="flex-end mt-3">
             <button class="btn btn-sm btn-primary" data-action="createOrder">Create Order</button>
         </div>
     </div>
 </div>
 
 <!-- Lineside Buckets -->
-<div class="card" style="margin-top:1rem">
-    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+<div class="card mt-4">
+    <div class="card-header card-header-row">
         <strong>Lineside Buckets</strong>
-        <span style="font-size:0.85rem;color:var(--text-muted)">Part chips currently kitted at nodes</span>
+        <span class="text-muted-sm">Part chips currently kitted at nodes</span>
     </div>
     <div class="card-body" style="padding:0;overflow-x:auto">
-        <table class="table" id="lineside-table">
+        <table class="table table-compact" id="lineside-table">
             <thead>
                 <tr>
                     <th>Process</th>
@@ -112,7 +112,7 @@
                             <input type="number" min="0" value="{{.Qty}}" class="lineside-qty-input" style="width:90px;">
                             <button class="btn btn-sm btn-primary" data-action="editLinesideBucket">Apply</button>
                         </div>
-                        <div class="lineside-warn text-muted" style="font-size:0.8rem;display:none;"></div>
+                        <div class="lineside-warn text-muted-xs" style="display:none;"></div>
                     </td>
                     <td>
                         <button class="btn btn-sm btn-danger" data-action="clearLinesideBucket">Clear</button>
@@ -127,15 +127,18 @@
 </div>
 
 <!-- Shift Production Graph -->
-<div class="card" style="margin-top:1rem">
-    <div class="card-header" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
-        <strong>Shift Production</strong>
-        <select class="form-input" style="width:16rem" id="shift-process-select" data-action-change="onShiftProcessChange">
-            {{range .Processes}}
-            <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
-            {{end}}
-        </select>
-        <span style="margin-left:auto;font-size:0.85rem;color:var(--text-muted)" id="shift-graph-date"></span>
+<div class="card mt-4">
+    <div class="card-header card-header-row">
+        <div class="flex items-center gap-1 flex-wrap">
+            <strong>Shift Production</strong>
+            <select class="form-input" style="width:16rem" id="shift-process-select" data-action-change="onShiftProcessChange">
+                <option value="all" {{if .IsAll}}selected{{end}}>All Processes</option>
+                {{range .Processes}}
+                <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}{{if not $.IsAll}}selected{{end}}{{end}}>{{.Name}}</option>
+                {{end}}
+            </select>
+        </div>
+        <span class="text-muted-sm" id="shift-graph-date"></span>
     </div>
     <div class="card-body">
         <canvas id="shift-production-chart" style="width:100%;height:260px"></canvas>
@@ -144,7 +147,7 @@
 
 <div id="page-data"
      data-shifts='{{.ShiftsJSON}}'
-     data-hourly-counts='{{.HourlyCountsJSON}}'
+     data-prod-counts='{{.HourlyCountsJSON}}'
      data-today-date="{{.TodayDate}}"
      data-active-process-id="{{.ActiveProcessID}}"
      data-nodes='{{.NodesJSON}}'
@@ -153,7 +156,7 @@
 
 <!-- View Bin Contents Modal -->
 <div class="modal-overlay" id="view-bin-modal">
-    <div class="modal" style="max-width:480px">
+    <div class="modal modal-md">
         <div class="modal-header">
             <span id="view-bin-title">Bin Contents</span>
             <button class="btn btn-sm" data-action="hideModal:view-bin-modal">&times;</button>
@@ -164,13 +167,10 @@
         </div>
     </div>
 </div>
-<!-- Page JS extracted to /static/js/pages/production.js; loaded once below all
-     modal markup so DOM lookups inside the helpers resolve. -->
-
 
 <!-- Request Empty Bin Modal -->
 <div class="modal-overlay" id="request-empty-modal">
-    <div class="modal" style="max-width:400px">
+    <div class="modal">
         <div class="modal-header">
             <span>Request Empty Bin</span>
             <button class="btn btn-sm" data-action="hideModal:request-empty-modal">&times;</button>
@@ -188,9 +188,10 @@
         </div>
     </div>
 </div>
+
 <!-- Load Bin Modal (Manual Swap nodes) -->
 <div class="modal-overlay" id="load-bin-modal">
-    <div class="modal" style="max-width:480px">
+    <div class="modal modal-md">
         <div class="modal-header">
             <span>Load Bin</span>
             <button class="btn btn-sm" data-action="closeLoadBinModal">&times;</button>
@@ -198,11 +199,11 @@
         <div class="card-body">
             <input type="hidden" id="rb-node-id">
             <input type="hidden" id="rb-payload-code">
-            <div class="form-group" style="margin-bottom:0.75rem">
+            <div class="form-group mb-3">
                 <label>Payload</label>
                 <select id="rb-payload" class="form-input" data-action-change="onLoadPayloadChanged"></select>
             </div>
-            <div id="rb-manifest-rows" style="margin-bottom:0.5rem"></div>
+            <div id="rb-manifest-rows" class="mb-2"></div>
         </div>
         <div class="modal-footer">
             <button class="btn" data-action="closeLoadBinModal">Cancel</button>

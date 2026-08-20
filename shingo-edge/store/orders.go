@@ -16,9 +16,26 @@ func (db *DB) ListOrders() ([]orders.Order, error) {
 	return orders.List(db.DB)
 }
 
+// ListOrdersByProcess returns every order for one process, newest first.
+func (db *DB) ListOrdersByProcess(processID int64) ([]orders.Order, error) {
+	return orders.ListByProcess(db.DB, processID)
+}
+
 // ListActiveOrders returns every non-terminal order, newest first.
 func (db *DB) ListActiveOrders() ([]orders.Order, error) {
 	return orders.ListActive(db.DB)
+}
+
+// ListActiveOrdersStrict returns only non-terminal orders — the same
+// predicate Core uses for its "Active" tab (no recent-history inclusion).
+func (db *DB) ListActiveOrdersStrict() ([]orders.Order, error) {
+	return orders.ListActiveStrict(db.DB)
+}
+
+// ListActiveOrdersByProcessStrict returns non-terminal orders for one
+// process, scoped to the "in flight" set (no recent-history inclusion).
+func (db *DB) ListActiveOrdersByProcessStrict(processID int64) ([]orders.Order, error) {
+	return orders.ListActiveStrictByProcess(db.DB, processID)
 }
 
 // CountActiveOrders returns the count of non-terminal orders.

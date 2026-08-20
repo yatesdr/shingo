@@ -1,28 +1,27 @@
 {{define "production-body"}}
 {{if $.Processes}}
-<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem">
-    <select class="form-input" style="width:14rem;font-size:0.85rem" data-action-change="navigateToProcess">
+<div class="filter-bar">
+    <select class="form-input" style="width:14rem" data-action-change="navigateToProcess">
+        <option value="all" {{if $.IsAll}}selected{{end}}>All Processes</option>
         {{range $.Processes}}
-        <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
+        <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}{{if not $.IsAll}}selected{{end}}{{end}}>{{.Name}}</option>
         {{end}}
     </select>
 </div>
 {{end}}
 {{if .StationViews}}
 {{range .StationViews}}
-<div class="card" style="margin-bottom:1rem">
-    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap">
-        <div>
+<div class="card mb-4">
+    <div class="card-header card-header-row">
+        <div class="flex items-center gap-1">
             <strong>{{.Station.Name}}</strong>
-            <span style="color:var(--text-muted);margin-left:0.5rem">{{.Station.AreaLabel}}</span>
+            <span class="text-muted-sm">{{.Station.AreaLabel}}</span>
         </div>
-        <div style="display:flex;align-items:center;gap:0.5rem">
-            <span class="status-badge">{{.Station.HealthStatus}}</span>
-        </div>
+        <span class="status-badge">{{.Station.HealthStatus}}</span>
     </div>
     <div class="card-body">
         <div class="table-scroll-y">
-        <table class="table">
+        <table class="table table-compact">
             <thead>
                 <tr>
                     <th>Node</th>
@@ -37,8 +36,8 @@
                 <tr>
                     <td>
                         <div class="mono">{{.Node.CoreNodeName}}</div>
-                        <div style="color:var(--text-muted);font-size:0.85rem">{{.Node.Name}}</div>
-                        {{if .BinState}}{{if .BinState.BinLabel}}<div style="font-size:0.8rem;color:var(--text-muted)">Bin: <strong>{{.BinState.BinLabel}}</strong></div>{{end}}{{end}}
+                        <div class="text-muted-xs">{{.Node.Name}}</div>
+                        {{if .BinState}}{{if .BinState.BinLabel}}<div class="text-muted-xs">Bin: <strong>{{.BinState.BinLabel}}</strong></div>{{end}}{{end}}
                     </td>
                     <td>
                         {{if .ActiveClaim}}
@@ -47,23 +46,23 @@
                                 {{if .BinState}}{{if .BinState.PayloadCode}}
                                     <strong>{{.BinState.PayloadCode}}</strong>
                                 {{else}}
-                                    <span style="color:var(--text-muted)">empty</span>
+                                    <span class="text-muted">empty</span>
                                 {{end}}{{else}}
-                                    <span style="color:var(--text-muted)">empty</span>
+                                    <span class="text-muted">empty</span>
                                 {{end}}
                             {{else}}
                                 <span class="status-badge">{{.ActiveClaim.Role}}</span>
                                 {{.ActiveClaim.PayloadCode}}
                             {{end}}
                         {{else}}
-                            <span style="color:var(--text-muted)">No claim</span>
+                            <span class="text-muted">No claim</span>
                         {{end}}
                     </td>
                     <td>
                         {{if .ActiveClaim}}
                             {{if eq .ActiveClaim.SwapMode "manual_swap"}}
                                 {{if .Runtime}}
-                                    {{if gt .Runtime.RemainingUOPCached 0}}<strong>{{.Runtime.RemainingUOPCached}}</strong>{{else}}<span style="color:var(--text-muted)">0</span>{{end}}
+                                    {{if gt .Runtime.RemainingUOPCached 0}}<strong>{{.Runtime.RemainingUOPCached}}</strong>{{else}}<span class="text-muted">0</span>{{end}}
                                 {{else}}--{{end}}
                             {{else}}
                                 {{if .Runtime}}
@@ -76,13 +75,13 @@
                     <td>
                         {{if .Orders}}
                             {{range .Orders}}
-                            <div style="font-size:0.85rem">
+                            <div class="text-muted-xs">
                                 <code>{{printf "%.8s" .UUID}}</code>
                                 <span class="badge badge-{{.Status}}">{{.Status}}</span>
                             </div>
                             {{end}}
                         {{else}}
-                            <span style="color:var(--text-muted)">None</span>
+                            <span class="text-muted">None</span>
                         {{end}}
                     </td>
                     <td style="white-space:nowrap">

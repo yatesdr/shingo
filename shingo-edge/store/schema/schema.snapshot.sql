@@ -362,6 +362,14 @@ CREATE TABLE process_changeovers (
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE process_groups (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE process_node_runtime_states (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     process_node_id    INTEGER NOT NULL UNIQUE REFERENCES process_nodes(id) ON DELETE CASCADE,
@@ -419,6 +427,7 @@ CREATE TABLE processes (
     counter_enabled     INTEGER NOT NULL DEFAULT 0,
     auto_cutover_enabled INTEGER NOT NULL DEFAULT 0,
     changeover_auto_arm TEXT NOT NULL DEFAULT 'auto',
+    group_id            INTEGER REFERENCES process_groups(id) ON DELETE SET NULL,
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

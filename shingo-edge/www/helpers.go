@@ -8,9 +8,13 @@ import (
 )
 
 // resolveProcessFromQuery reads the "process" query param and returns the
-// matching process, falling back to the first process if none specified.
+// matching process. Returns nil for "all" (the caller checks and renders
+// every process). Falls back to the first process if none specified.
 func resolveProcessFromQuery(r *http.Request, processes []domain.Process) *domain.Process {
 	if param := r.URL.Query().Get("process"); param != "" {
+		if param == "all" {
+			return nil // "All Processes" — caller handles the nil case
+		}
 		if id, err := strconv.ParseInt(param, 10, 64); err == nil {
 			for i := range processes {
 				if processes[i].ID == id {

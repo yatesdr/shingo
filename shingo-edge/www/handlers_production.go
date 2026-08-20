@@ -28,7 +28,7 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStati
 	if len(nodeNames) == 0 {
 		return
 	}
-	bins, err := coreAPI.FetchNodeBins(nodeNames)
+	bins, _, err := coreAPI.FetchNodeBins(nodeNames)
 	if err != nil || len(bins) == 0 {
 		return
 	}
@@ -66,6 +66,27 @@ func buildStationViews(ctx context.Context, eng ServiceAccess, activeProcess *do
 		}
 		if view, err := eng.StationService().BuildView(ctx, station.ID); err == nil {
 			views = append(views, *view)
+		}
+	}
+	return views
+}
+
+// buildAllStationViews gathers station views across every process, used
+// when the Production page "All Processes" option is selected. Each
+// process's stations render in their own card just like the
+// single-process view.
+func buildAllStationViews(ctx context.Context, eng ServiceAccess) []domain.OperatorStationView {
+	processes, _ := eng.ProcessService().List()
+	var views []domain.OperatorStationView
+	for _, p := range processes {
+		if ctx.Err() != nil {
+			break
+		}
+		stations, _ := eng.StationService().ListByProcess(p.ID)
+		for _, station := range stations {
+			if view, err := eng.StationService().BuildView(ctx, station.ID); err == nil {
+				views = append(views, *view)
+			}
 		}
 	}
 	return views
@@ -121,10 +142,17 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	processes, _ := h.engine.ProcessService().List()
 	activeProcess := resolveProcessFromQuery(r, processes)
 
+	isAll := r.URL.Query().Get("process") == "all"
+
 	var activeProcessID int64
 	var currentStyleName, targetStyleName string
 
-	stationViews := buildStationViews(r.Context(), h.engine, activeProcess)
+	var stationViews []domain.OperatorStationView
+	if isAll {
+		stationViews = buildAllStationViews(r.Context(), h.engine)
+	} else {
+		stationViews = buildStationViews(r.Context(), h.engine, activeProcess)
+	}
 	enrichViewBinState(h.engine.CoreAPI(), stationViews)
 
 	if activeProcess != nil {
@@ -149,9 +177,25 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		shiftsJSON = []byte("[]")
 	}
 	todayStr := time.Now().Format("2006-01-02")
-	hourlyCounts, _ := h.engine.CounterService().HourlyTotals(activeProcessID, todayStr)
-	if hourlyCounts == nil {
+	var hourlyCounts map[int]int64
+	if isAll {
+		// Sum hourly counts across all processes for the initial page load
+		// so the Shift Production graph renders populated in "All Processes" mode.
 		hourlyCounts = make(map[int]int64)
+		for _, p := range processes {
+			counts, err := h.engine.CounterService().HourlyTotals(p.ID, todayStr)
+			if err != nil {
+				continue
+			}
+			for hour, total := range counts {
+				hourlyCounts[hour] += total
+			}
+		}
+	} else {
+		hourlyCounts, _ = h.engine.CounterService().HourlyTotals(activeProcessID, todayStr)
+		if hourlyCounts == nil {
+			hourlyCounts = make(map[int]int64)
+		}
 	}
 	hourlyCountsJSON, _ := json.Marshal(hourlyCounts)
 	if hourlyCountsJSON == nil {
@@ -186,6 +230,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		"Page":              "production",
 		"Processes":         processes,
 		"ActiveProcessID":   activeProcessID,
+		"IsAll":             isAll,
 		"StationViews":      stationViews,
 		"CurrentStyle":      currentStyleName,
 		"TargetStyle":       targetStyleName,
@@ -206,7 +251,14 @@ func (h *Handlers) handleProductionPartial(w http.ResponseWriter, r *http.Reques
 	processes, _ := h.engine.ProcessService().List()
 	activeProcess := resolveProcessFromQuery(r, processes)
 
-	stationViews := buildStationViews(r.Context(), h.engine, activeProcess)
+	isAll := r.URL.Query().Get("process") == "all"
+
+	var stationViews []domain.OperatorStationView
+	if isAll {
+		stationViews = buildAllStationViews(r.Context(), h.engine)
+	} else {
+		stationViews = buildStationViews(r.Context(), h.engine, activeProcess)
+	}
 	enrichViewBinState(h.engine.CoreAPI(), stationViews)
 
 	var activeProcessID int64
@@ -218,6 +270,7 @@ func (h *Handlers) handleProductionPartial(w http.ResponseWriter, r *http.Reques
 		"StationViews":    stationViews,
 		"Processes":       processes,
 		"ActiveProcessID":  activeProcessID,
+		"IsAll":           isAll,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "production-body", data); err != nil {
@@ -270,8 +323,26 @@ func (h *Handlers) apiGetHourlyCounts(w http.ResponseWriter, r *http.Request) {
 	if dateStr == "" {
 		dateStr = time.Now().Format("2006-01-02")
 	}
-	processID, _ := strconv.ParseInt(r.URL.Query().Get("process_id"), 10, 64)
+	processIDStr := r.URL.Query().Get("process_id")
 
+	// "all" (or 0) sums hourly counts across every process.
+	if processIDStr == "all" || processIDStr == "" || processIDStr == "0" {
+		processes, _ := h.engine.ProcessService().List()
+		combined := make(map[int]int64)
+		for _, p := range processes {
+			counts, err := h.engine.CounterService().HourlyTotals(p.ID, dateStr)
+			if err != nil {
+				continue
+			}
+			for hour, total := range counts {
+				combined[hour] += total
+			}
+		}
+		writeJSON(w, combined)
+		return
+	}
+
+	processID, _ := strconv.ParseInt(processIDStr, 10, 64)
 	if processID == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("{}"))

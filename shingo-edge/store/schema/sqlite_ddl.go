@@ -19,6 +19,18 @@ CREATE TABLE IF NOT EXISTS admin_users (
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- process_groups is an organizational layer for the Processes admin page.
+-- A process is in at most one group (or none — "Ungrouped"). Deleting a
+-- group reverts its members to Ungrouped (ON DELETE SET NULL). Pure UI
+-- taxonomy; nothing in the runtime reads group_id.
+CREATE TABLE IF NOT EXISTS process_groups (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS processes (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     name                TEXT NOT NULL UNIQUE,
@@ -31,6 +43,7 @@ CREATE TABLE IF NOT EXISTS processes (
     counter_enabled     INTEGER NOT NULL DEFAULT 0,
     auto_cutover_enabled INTEGER NOT NULL DEFAULT 0,
     changeover_auto_arm TEXT NOT NULL DEFAULT 'auto',
+    group_id            INTEGER REFERENCES process_groups(id) ON DELETE SET NULL,
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -4,35 +4,46 @@
     <h1>Processes</h1>
 </div>
 
-<div id="page-data" data-active-process-id="{{.ActiveProcessID}}" data-production-state="{{if .ActiveProcess}}{{.ActiveProcess.ProductionState}}{{else}}active_production{{end}}"></div>
+<div id="page-data"
+     data-active-process-id="{{.ActiveProcessID}}"
+     data-production-state="{{if .ActiveProcess}}{{.ActiveProcess.ProductionState}}{{else}}active_production{{end}}"
+     data-processes='{{json .Processes}}'
+     data-process-groups='{{json .ProcessGroups}}'
+></div>
 
 <div class="split-2col-sidebar">
     <div>
-        <div class="card" class="mb-4">
+        <div class="card mb-4">
             <div class="card-header"><strong>Processes</strong></div>
             <div class="card-body">
-                <div style="display:flex;flex-direction:column;gap:0.5rem">
-                    {{range .Processes}}
-                    <a href="/processes?process={{.ID}}" class="btn {{if eq .ID $.ActiveProcessID}}btn-primary{{end}}" style="justify-content:flex-start;text-align:left">
-                        <span>{{.Name}}</span>
-                        {{if .TargetStyleID}}<span style="margin-left:auto;font-size:0.8rem">CO</span>{{end}}
-                    </a>
-                    {{else}}
-                    <div class="empty-cell">No processes configured</div>
-                    {{end}}
+                <div id="process-sidebar" style="display:flex;flex-direction:column;gap:0.5rem">
+                    {{/* Rendered by processes.js — groups with collapsible sections, Ungrouped last. */}}
+                    <noscript>
+                        {{range .Processes}}
+                        <a href="/processes?process={{.ID}}" class="btn {{if eq .ID $.ActiveProcessID}}btn-primary{{end}}" style="justify-content:flex-start;text-align:left">
+                            <span>{{.Name}}</span>
+                            {{if .TargetStyleID}}<span class="ml-auto text-muted-xs" title="Changeover target style set">CO</span>{{end}}
+                        </a>
+                        {{else}}
+                        <div class="empty-cell">No processes configured.</div>
+                        {{end}}
+                    </noscript>
                 </div>
-                <button class="btn btn-primary" class="mt-3 full-width" data-action="openCreateProcessModal">Add Process</button>
+                <div class="flex gap-1 flex-wrap mt-3">
+                    <button class="btn btn-primary full-width" data-action="openCreateProcessModal">Add Process</button>
+                    <button class="btn full-width" data-action="openCreateGroupModal">Add Group</button>
+                </div>
             </div>
         </div>
     </div>
 
     <div>
         {{if .ActiveProcess}}
-        <div class="card" class="mb-4">
-            <div class="card-body" class="card-header-row">
+        <div class="card mb-4">
+            <div class="card-body card-header-row">
                 <div>
                     <h2 class="form-group--nogap">{{.ActiveProcess.Name}}</h2>
-                    <div style="color:var(--text-muted);margin-top:0.25rem">{{.ActiveProcess.Description}}</div>
+                    <div class="text-muted-sm" style="margin-top:0.25rem">{{.ActiveProcess.Description}}</div>
                 </div>
                 <button class="btn btn-danger btn-sm" data-action="deleteProcess:{{.ActiveProcess.ID}}">Delete Process</button>
             </div>
@@ -40,10 +51,10 @@
 
         <div class="card">
             <div class="card-body" style="padding-bottom:0">
-                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem">
-                    <button class="btn btn-sm btn-primary process-tab active" data-tab="general" data-action="showProcessTab:general">General</button>
-                    <button class="btn btn-sm process-tab" data-tab="claims" data-action="showProcessTab:claims">Node Claims</button>
-                    <button class="btn btn-sm process-tab" data-tab="stations" data-action="showProcessTab:stations">Operator Screens</button>
+                <div class="tab-bar">
+                    <button class="tab-btn process-tab active" data-tab="general" data-action="showProcessTab:general">General</button>
+                    <button class="tab-btn process-tab" data-tab="claims" data-action="showProcessTab:claims">Node Claims</button>
+                    <button class="tab-btn process-tab" data-tab="stations" data-action="showProcessTab:stations">Operator Screens</button>
                 </div>
             </div>
 
@@ -52,20 +63,30 @@
                 <input type="hidden" id="process-production-state" value="{{.ActiveProcess.ProductionState}}">
 
                 <div class="form-grid-2 mb-4">
-                    <div class="form-group" class="form-group--nogap">
+                    <div class="form-group form-group--nogap">
                         <label>Name</label>
                         <input type="text" id="process-name" class="form-input" value="{{.ActiveProcess.Name}}">
                     </div>
-                    <div class="form-group" class="form-group--nogap">
+                    <div class="form-group form-group--nogap">
                         <label>Description</label>
                         <input type="text" id="process-description" class="form-input" value="{{.ActiveProcess.Description}}">
                     </div>
                 </div>
 
+                <div class="form-group form-group--nogap mb-4">
+                    <label>Group</label>
+                    <select id="process-group" class="form-input" style="max-width:20rem">
+                        <option value="" {{if not .ActiveProcess.GroupID}}selected{{end}}>Ungrouped</option>
+                        {{range .ProcessGroups}}
+                        <option value="{{.ID}}" {{if $.ActiveProcess.GroupID}}{{if eq .ID (deref $.ActiveProcess.GroupID)}}selected{{end}}{{end}}>{{.Name}}</option>
+                        {{end}}
+                    </select>
+                </div>
+
                 <fieldset class="fieldset-card">
                     <legend class="fieldset-legend">Production Counter</legend>
                     <div class="form-grid-2-aux">
-                        <div class="form-group" class="form-group--nogap">
+                        <div class="form-group form-group--nogap">
                             <label>PLC</label>
                             <select id="counter-plc" class="form-input">
                                 <option value="">-- None --</option>
@@ -74,11 +95,11 @@
                                 {{end}}
                             </select>
                         </div>
-                        <div class="form-group" class="form-group--nogap">
+                        <div class="form-group form-group--nogap">
                             <label>Tag</label>
                             <input type="text" id="counter-tag" class="form-input" value="{{.ActiveProcess.CounterTagName}}" placeholder="GoodPartCount">
                         </div>
-                        <label style="display:flex;align-items:center;gap:0.5rem;padding-bottom:0.35rem">
+                        <label class="check-row" style="padding-bottom:0.35rem">
                             <input type="checkbox" id="counter-enabled" {{if .ActiveProcess.CounterEnabled}}checked{{end}}>
                             <span>Enabled</span>
                         </label>
@@ -101,12 +122,12 @@
                 <fieldset class="fieldset-card">
                     <legend class="fieldset-legend">Styles</legend>
                     {{if and .ProcessStyles (not .ActiveProcess.ActiveStyleID)}}
-                    <div class="alert alert-warn" style="margin:0 0 0.75rem 0; padding:0.5rem 0.75rem; background:var(--warn-bg, #fff3cd); border:1px solid var(--warn-border, #ffe69c); border-radius:4px; font-size:0.9rem;">
+                    <div class="alert alert-warn mb-3">
                         <strong>No active style selected.</strong>
                         Choose one below — production and changeover both require an active style.
                     </div>
                     {{end}}
-                    <table class="table" style="margin:0 0 0.75rem 0">
+                    <table class="table table-compact mb-3">
                         <thead>
                             <tr>
                                 <th>Name</th>
@@ -131,25 +152,25 @@
                                 </td>
                             </tr>
                             {{else}}
-                            <tr><td colspan="4" class="empty-cell">No styles defined — add at least one style to complete the process definition.</td></tr>
+                            <tr><td colspan="4" class="empty-cell">No styles configured.</td></tr>
                             {{end}}
                         </tbody>
                     </table>
-                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+                    <div class="flex gap-1 flex-wrap">
                         <button class="btn" data-action="openCreateStyleModal">Add Style</button>
                         {{if .ProcessStyles}}<button class="btn" data-action="openGenerateModal">Generate Variants</button>{{end}}
                     </div>
                 </fieldset>
 
                 <div class="flex-end">
-                    <button class="btn btn-primary" data-action="saveProcess">Save Process</button>
+                    <button class="btn btn-primary" data-action="saveProcess">Save Process Settings</button>
                 </div>
             </div>
 
             <div class="card-body process-tab-panel" id="process-tab-claims" hidden>
                 <div class="card-header-row">
-                    <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap">
-                        <span id="claims-single-style-wrap" style="display:flex;gap:0.5rem;align-items:center">
+                    <div class="flex flex-wrap gap-1 items-center">
+                        <span id="claims-single-style-wrap" class="flex gap-1 items-center">
                             <label class="form-group--nogap" style="font-weight:500">Style:</label>
                             <select id="claims-style-selector" class="form-input" style="max-width:20rem" data-action-change="onClaimsStyleChanged">
                                 {{range .ProcessStyles}}
@@ -158,11 +179,11 @@
                             </select>
                         </span>
                         {{if .ProcessStyles}}
-                        <span style="display:inline-flex;gap:0.4rem;align-items:center;border-left:1px solid var(--border);padding-left:0.75rem">
-                            <label class="check-row" style="display:inline-flex;margin:0"><input type="radio" name="claims-view" value="one" checked data-action-change="onCompareViewChanged"> one style</label>
-                            <label class="check-row" style="display:inline-flex;margin:0"><input type="radio" name="claims-view" value="all" data-action-change="onCompareViewChanged"> compare all</label>
+                        <span class="flex gap-1 items-center" style="border-left:1px solid var(--border);padding-left:0.75rem">
+                            <label class="check-row" style="margin:0"><input type="radio" name="claims-view" value="one" checked data-action-change="onCompareViewChanged"> one style</label>
+                            <label class="check-row" style="margin:0"><input type="radio" name="claims-view" value="all" data-action-change="onCompareViewChanged"> compare all</label>
                         </span>
-                        <span id="compare-field-wrap" hidden style="display:inline-flex;gap:0.4rem;align-items:center">
+                        <span id="compare-field-wrap" hidden class="flex gap-1 items-center">
                             <label class="form-group--nogap">Field:</label>
                             <select id="compare-field" class="form-input" style="max-width:12rem" data-action-change="onCompareFieldChanged">
                                 <option value="payload">Payload</option>
@@ -177,25 +198,25 @@
 
                 <div id="claims-list"></div>
                 <div id="claims-compare-list" hidden></div>
-                <div id="compare-help" hidden style="color:var(--text-muted);font-size:0.85rem;margin-top:0.5rem">
+                <div id="compare-help" hidden class="text-muted-xs mt-2">
                     Edit a cell to change that one claim (capacity auto-fills from the payload). Click a style heading to jump to its full claim editor for staging, pairing, or flags.
                 </div>
 
                 {{if .ProcessStyles}}
-                <button id="claims-add-claim-btn" class="btn" data-action="openClaimModal" class="mt-3">+ Add Claim</button>
+                <button id="claims-add-claim-btn" class="btn mt-3" data-action="openClaimModal">+ Add Claim</button>
                 {{else}}
-                <div style="color:var(--text-muted);font-style:italic;margin-top:1rem">Add styles in the General tab before configuring node claims.</div>
+                <div class="text-muted-sm" style="font-style:italic;margin-top:1rem">Add styles in the General tab before configuring node claims.</div>
                 {{end}}
             </div>
 
             <div class="card-body process-tab-panel" id="process-tab-stations" hidden>
 
                 <div class="card-header-row">
-                    <div class="text-muted">Each operator screen claims the physical core nodes in its area. Nodes are auto-managed when you save the screen configuration.</div>
+                    <div class="text-muted-sm">Each operator screen claims the physical core nodes in its area. Nodes are auto-managed when you save the screen configuration.</div>
                     <button class="btn btn-primary" data-action="openCreateStationModal">Add Operator Screen</button>
                 </div>
 
-                <table class="table">
+                <table class="table table-compact">
                     <thead>
                         <tr>
                             <th>Screen</th>
@@ -210,12 +231,12 @@
                         <tr>
                             <td>
                                 <div>{{.Name}}</div>
-                                <div class="text-muted-sm">{{.Code}}</div>
+                                <div class="text-muted-xs">{{.Code}}</div>
                             </td>
-                            <td class="mono" class="text-muted-sm">{{if index $.StationNodeMap .ID}}{{join (index $.StationNodeMap .ID) ", "}}{{else}}<span class="text-muted">None</span>{{end}}</td>
+                            <td class="mono text-muted-xs">{{if index $.StationNodeMap .ID}}{{join (index $.StationNodeMap .ID) ", "}}{{else}}<span class="text-muted">None</span>{{end}}</td>
                             <td>{{if .Note}}{{.Note}}{{else}}<span class="text-muted">-</span>{{end}}</td>
                             <td><span class="status-badge">{{.HealthStatus}}</span></td>
-                            <td style="display:flex;gap:0.4rem;flex-wrap:wrap">
+                            <td class="flex gap-1 flex-wrap">
                                 <button class="btn btn-sm" data-action="moveStation:{{.ID}}:up">Up</button>
                                 <button class="btn btn-sm" data-action="moveStation:{{.ID}}:down">Down</button>
                                 <button class="btn btn-sm" data-action="editStation" data-station="{{json .}}">Edit</button>
@@ -224,7 +245,7 @@
                             </td>
                         </tr>
                         {{else}}
-                        <tr><td colspan="5" class="empty-cell">No operator screens configured</td></tr>
+                        <tr><td colspan="5" class="empty-cell">No operator screens configured.</td></tr>
                         {{end}}
                     </tbody>
                 </table>
@@ -233,7 +254,7 @@
 
         </div>
         {{else}}
-        <div class="card"><div class="card-body"><p class="empty-cell">Create a process to begin building styles, counters, and operator screens.</p></div></div>
+        <div class="card"><div class="card-body"><p class="empty-cell">Create a process to begin.</p></div></div>
         {{end}}
     </div>
 </div>
@@ -257,10 +278,19 @@ window.claimedByStation = {{json .ClaimedByStation}};
                 <label>Description</label>
                 <input type="text" id="new-process-description" class="form-input" placeholder="Assembled process">
             </div>
+            <div class="form-group">
+                <label>Group <span class="text-muted-xs">(optional)</span></label>
+                <select id="new-process-group" class="form-input">
+                    <option value="">Ungrouped</option>
+                    {{range .ProcessGroups}}
+                    <option value="{{.ID}}">{{.Name}}</option>
+                    {{end}}
+                </select>
+            </div>
             <fieldset class="fieldset-card mt-2 mb-0">
                 <legend class="fieldset-legend">Production Counter</legend>
                 <div class="form-grid-2">
-                    <div class="form-group" class="form-group--nogap">
+                    <div class="form-group form-group--nogap">
                         <label>PLC</label>
                         <select id="new-process-counter-plc" class="form-input">
                             <option value="">-- None --</option>
@@ -269,13 +299,13 @@ window.claimedByStation = {{json .ClaimedByStation}};
                             {{end}}
                         </select>
                     </div>
-                    <div class="form-group" class="form-group--nogap">
+                    <div class="form-group form-group--nogap">
                         <label>Tag</label>
                         <input type="text" id="new-process-counter-tag" class="form-input" placeholder="GoodPartCount">
                     </div>
                 </div>
             </fieldset>
-            <div style="color:var(--text-muted);font-size:0.85rem;margin-top:0.75rem">A default style will be created automatically. You can add more styles after creation.</div>
+            <div class="text-muted-sm mt-3">A default style will be created automatically. You can add more styles after creation.</div>
         </div>
         <div class="modal-footer">
             <button class="btn" data-action="closeProcessModal">Cancel</button>
@@ -320,7 +350,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
             <button class="btn btn-sm" data-action="closeCloneStyleModal">&times;</button>
         </div>
         <div class="card-body">
-            <div style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.75rem">
+            <div class="text-muted-sm mb-3">
                 Creates a new style in this process with the same node claims as
                 <strong id="clone-style-src-name"></strong>. Set payload codes on the
                 new style afterward (Node Claims &rarr; Compare all).
@@ -342,7 +372,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
 </div>
 
 <div class="modal-overlay" id="generate-modal">
-    <div class="modal" style="max-width:880px">
+    <div class="modal modal-wide">
         <div class="modal-header">
             <span>Generate Variants</span>
             <button class="btn btn-sm" data-action="closeGenerateModal">&times;</button>
@@ -356,7 +386,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                 <div class="field-help--inline">Each new style copies this style's node layout and swap choreography; you set only the payload per produce node below. Capacity auto-fills from the payload catalog.</div>
             </div>
             <div id="generate-grid-wrap" style="overflow-x:auto;margin:0.5rem 0"></div>
-            <div style="display:flex;gap:0.5rem;align-items:center">
+            <div class="flex gap-1 items-center">
                 <button class="btn btn-sm" type="button" data-action="addGenerateRow">+ Add variant</button>
                 <button class="btn btn-sm" type="button" data-action="syncPayloadCatalog" title="Sync payload catalog from core">Sync Catalog</button>
             </div>
@@ -369,7 +399,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
 </div>
 
 <div class="modal-overlay" id="claim-modal">
-    <div class="modal" style="max-width:640px">
+    <div class="modal modal-md">
         <div class="modal-header">
             <span id="claim-modal-title">Add Node Claim</span>
             <button class="btn btn-sm" data-action="closeClaimModal">&times;</button>
@@ -377,21 +407,21 @@ window.claimedByStation = {{json .ClaimedByStation}};
         <div class="card-body">
             <input type="hidden" id="claims-edit-id">
             <div style="display:grid;grid-template-columns:1fr auto auto;gap:0.75rem 1rem;margin-bottom:0.75rem">
-                <div class="form-group" class="form-group--nogap">
+                <div class="form-group form-group--nogap">
                     <label>Core Node</label>
                     <select id="claims-add-node" class="form-input">
                         <option value="">-- Select a node --</option>
                         {{range $name, $info := .CoreNodes}}<option value="{{$name}}" data-type="{{$info.NodeType}}">{{$name}}{{if eq $info.NodeType "NGRP"}} (group){{end}}</option>{{end}}
                     </select>
                 </div>
-                <div class="form-group" class="form-group--nogap">
+                <div class="form-group form-group--nogap">
                     <label>Role</label>
                     <select id="claims-add-role" class="form-input" data-action-change="renderClaimForm">
                         <option value="consume">Consume</option>
                         <option value="produce">Produce</option>
                     </select>
                 </div>
-                <div class="form-group" class="form-group--nogap" id="claims-add-swap-group">
+                <div class="form-group form-group--nogap" id="claims-add-swap-group">
                     <label>Swap Mode</label>
                     <select id="claims-add-swap" class="form-input" data-action-change="renderClaimForm">
                         <option value="simple" hidden>Simple</option>
@@ -399,18 +429,12 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         <option value="single_robot">1-Robot Swap</option>
                         <option value="two_robot">2-Robot Swap</option>
                         <option value="two_robot_press_index">2-Robot Press Index Swap</option>
-                        <!-- Manual Swap (bin loader / unloader) is intentionally NOT offered here:
-                             loaders are Core-owned topology now. Configure them on the Core loader
-                             setup screen (Nodes -> Create/Edit Loader) and add the position nodes to
-                             an Operator Station; the runtime resolves them as manual_swap via the
-                             loader aggregate (SynthClaim). Existing manual_swap claims still render
-                             below and can be removed, but are no longer authored/edited here. -->
                     </select>
                 </div>
             </div>
             <div class="form-group" id="claims-add-payload-group">
                 <label>Payload</label>
-                <div style="display:flex;gap:0.5rem;align-items:center">
+                <div class="flex gap-1 items-center">
                     <select id="claims-add-payload" class="form-input" data-action-change="autoFillClaimsCapacity">
                         <option value="">-- Select a payload --</option>
                     </select>
@@ -419,25 +443,22 @@ window.claimedByStation = {{json .ClaimedByStation}};
             </div>
             <div class="form-group" id="claims-add-allowed-group" hidden>
                 <label>Allowed Payloads</label>
-                <div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:0.3rem">Select which payloads can be loaded at this source node.</div>
+                <div class="text-muted-xs mb-2">Select which payloads can be loaded at this source node.</div>
                 <div id="claims-allowed-picker" style="display:flex;flex-direction:column;gap:0.3rem;max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:0.5rem"></div>
-                <button class="btn btn-sm" type="button" data-action="syncPayloadCatalog" class="mt-2" title="Sync payload catalog from core">Sync Catalog</button>
+                <button class="btn btn-sm mt-2" type="button" data-action="syncPayloadCatalog" title="Sync payload catalog from core">Sync Catalog</button>
             </div>
-            <!-- Loader replenishment (operator-driven vs auto/UoP-threshold) and the
-                 dedicated-position layout are configured on the Core loader setup screen
-                 (Nodes → Create/Edit Loader), not per style here. -->
             <div class="form-grid-2 mb-3">
-                <div class="form-group" class="form-group--nogap" id="claims-add-capacity-group">
+                <div class="form-group form-group--nogap" id="claims-add-capacity-group">
                     <label>UoP per Bin</label>
                     <input type="number" id="claims-add-capacity" class="form-input" value="0" readonly style="background:var(--bg)">
                 </div>
-                <div class="form-group" class="form-group--nogap" id="claims-add-reorder-group">
+                <div class="form-group form-group--nogap" id="claims-add-reorder-group">
                     <label>Reorder At</label>
                     <input type="number" id="claims-add-reorder" class="form-input" value="0">
                 </div>
             </div>
-            <div id="claims-add-lineside-group" class="form-group" class="mb-3">
-                <label>Lineside Soft Cap <span style="color:var(--text-muted);font-weight:normal;font-size:0.8rem">(per-part; 0 = off)</span></label>
+            <div id="claims-add-lineside-group" class="form-group mb-3">
+                <label>Lineside Soft Cap <span class="text-muted-xs">(per-part; 0 = off)</span></label>
                 <input type="number" id="claims-add-lineside-soft" class="form-input" value="0" min="0">
                 <div class="field-help--inline">When set, the release prompt warns if an entered qty exceeds 2× this value. Catches typos; never blocks release.</div>
             </div>
@@ -445,7 +466,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
             <fieldset id="claims-staging-fieldset" class="fieldset-card mb-0">
                 <legend class="fieldset-legend">Staging</legend>
                 <div class="form-grid-2">
-                    <div class="form-group" class="form-group--nogap">
+                    <div class="form-group form-group--nogap">
                         <label>Inbound</label>
                         <select id="claims-add-inbound" class="form-input" data-action-change="validateClaimStaging">
                             <option value="">-- None --</option>
@@ -453,7 +474,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         </select>
                         <div class="field-help--inline">New material stages here before delivery</div>
                     </div>
-                    <div class="form-group" class="form-group--nogap">
+                    <div class="form-group form-group--nogap">
                         <label>Outbound</label>
                         <select id="claims-add-outbound" class="form-input" data-action-change="validateClaimStaging">
                             <option value="">-- None --</option>
@@ -462,24 +483,23 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         <div class="field-help--inline">Old material parks here after removal</div>
                     </div>
                 </div>
-                <div id="claims-staging-warning" style="color:var(--warning, #c59000);font-size:0.85rem;margin-top:0.5rem;display:none">
+                <div id="claims-staging-warning" class="text-muted-xs mt-2" style="color:var(--warning, #c59000);display:none">
                     1-Robot requires both inbound and outbound staging. 2-Robot requires inbound staging.
                 </div>
-                <!-- KeepStaged checkbox is intentionally absent here; the backend column and planner branches are preserved for a future rewire. -->
             </fieldset>
 
             <fieldset id="claims-source-fieldset" class="fieldset-card--stacked">
                 <legend class="fieldset-legend">Source / Destination</legend>
                 <div class="field-help">Where material comes from / goes to. Can be a specific node or a node group (Core auto-detects). Leave blank for Core global fallback.</div>
                 <div class="form-grid-2">
-                    <div class="form-group" class="form-group--nogap" id="claims-inbound-source-group">
+                    <div class="form-group form-group--nogap" id="claims-inbound-source-group">
                         <label>Inbound Source</label>
                         <select id="claims-add-inbound-source" class="form-input">
                             <option value="">-- None --</option>
                             {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}{{if eq $info.NodeType "NGRP"}} (group){{end}}</option>{{end}}
                         </select>
                     </div>
-                    <div class="form-group" class="form-group--nogap" id="claims-outbound-destination-group">
+                    <div class="form-group form-group--nogap" id="claims-outbound-destination-group">
                         <label>Outbound Destination</label>
                         <select id="claims-add-outbound-destination" class="form-input">
                             <option value="">-- None --</option>
@@ -500,7 +520,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
             <fieldset id="claims-ab-fieldset" class="fieldset-card--stacked" hidden>
                 <legend id="claims-ab-legend" class="fieldset-legend">A/B Node Cycling</legend>
                 <div id="claims-ab-help" class="field-help">Pair this node with another node for alternating operation. The operator flips which node is active via the station HMI.</div>
-                <div class="form-group" class="form-group--nogap">
+                <div class="form-group form-group--nogap">
                     <label id="claims-ab-label">Paired Node</label>
                     <select id="claims-add-paired-node" class="form-input">
                         <option value="">-- None (no A/B cycling) --</option>
@@ -533,7 +553,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                 </div>
                 <div id="claims-auto-request-standard" hidden>
                     <div class="field-help">When the node becomes vacant after a loaded bin is moved out, automatically request a new empty bin for this payload.</div>
-                    <div class="form-group" class="form-group--nogap">
+                    <div class="form-group form-group--nogap">
                         <label>Auto-Request Payload</label>
                         <select id="claims-add-auto-request" class="form-input">
                             <option value="">-- Disabled --</option>
@@ -554,7 +574,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
 </div>
 
 <div class="modal-overlay" id="station-modal">
-        <div class="modal" style="max-width:860px">
+        <div class="modal modal-wide">
         <div class="modal-header">
             <span id="station-modal-title">Add Operator Screen</span>
             <button class="btn btn-sm" data-action="closeStationModal">&times;</button>
@@ -562,9 +582,9 @@ window.claimedByStation = {{json .ClaimedByStation}};
         <div class="card-body">
             <input type="hidden" id="station-id">
             <div class="grid-autofit">
-                <label class="form-group" class="form-group--nogap"><span>Name</span><input type="text" id="station-name" class="form-input"></label>
+                <label class="form-group form-group--nogap"><span>Name</span><input type="text" id="station-name" class="form-input"></label>
             </div>
-            <label class="form-group" class="mt-3">
+            <label class="form-group mt-3">
                 <span>Note</span>
                 <textarea id="station-note" class="form-input" rows="3" placeholder="Short description for operators and admins"></textarea>
             </label>
@@ -580,7 +600,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                     <label class="check-row" data-node="{{$name}}">
                         <input type="checkbox" class="station-node-cb" value="{{$name}}">
                         <span class="mono">{{$name}}</span>
-                        <span class="station-node-owner" style="color:var(--text-muted);font-size:0.8rem;margin-left:auto"></span>
+                        <span class="station-node-owner text-muted-xs ml-auto"></span>
                     </label>
                     {{else}}
                     <div class="text-muted-italic">No core nodes synced. Use the &ldquo;Sync Nodes&rdquo; button on the Config page (Core API card) to force-refresh.</div>
@@ -591,6 +611,34 @@ window.claimedByStation = {{json .ClaimedByStation}};
         <div class="modal-footer">
             <button class="btn" data-action="closeStationModal">Cancel</button>
             <button class="btn btn-primary" data-action="saveStation">Save</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="group-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <span id="group-modal-title">Add Group</span>
+            <button class="btn btn-sm" data-action="closeGroupModal">&times;</button>
+        </div>
+        <div class="card-body">
+            <input type="hidden" id="group-id">
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="group-name" class="form-input" placeholder="Front Rail Line">
+            </div>
+            <div class="form-group">
+                <label>Description <span class="text-muted-xs">(optional)</span></label>
+                <input type="text" id="group-description" class="form-input" placeholder="All processes on the front rail">
+            </div>
+            <fieldset class="fieldset-card mb-0">
+                <legend class="fieldset-legend">Processes <span class="text-muted-xs">(check to add to this group)</span></legend>
+                <div id="group-process-picker" style="display:flex;flex-direction:column;gap:0.35rem;max-height:200px;overflow-y:auto"></div>
+            </fieldset>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" data-action="closeGroupModal">Cancel</button>
+            <button class="btn btn-primary" data-action="saveGroup">Save Group</button>
         </div>
     </div>
 </div>

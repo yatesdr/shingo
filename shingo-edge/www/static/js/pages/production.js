@@ -247,7 +247,7 @@ try {
     var _pd = document.getElementById('page-data');
     if (_pd) {
         _chartData.shifts = JSON.parse(_pd.dataset.shifts || '[]');
-        _chartData.hourlyCounts = JSON.parse(_pd.dataset.hourlyCounts || '{}');
+        _chartData.hourlyCounts = JSON.parse(_pd.dataset.prodCounts || '{}');
         _chartData.todayDate = _pd.dataset.todayDate || '';
         _chartData.activeProcessID = parseInt(_pd.dataset.activeProcessId || '0', 10);
     }
@@ -281,6 +281,22 @@ var _chartColors = ['#7C7CF0', '#2DD4BF', '#FACC5B'];
 
 function roundUp10(n) {
     return Math.ceil(n / 10) * 10;
+}
+
+// niceStep picks a "human-friendly" Y-axis grid step (1, 2, 5, 10, 20,
+// 50, 100, 200, 500, 1000, ...) for a given target value so the axis
+// always shows ~5-8 evenly-spaced labels regardless of magnitude.
+function niceStep(target) {
+    if (target <= 0) return 1;
+    var exp = Math.floor(Math.log10(target));
+    var base = Math.pow(10, exp);
+    var norm = target / base; // 1.0 – 10.0
+    var step;
+    if (norm <= 1.5) step = 1;
+    else if (norm <= 3) step = 2;
+    else if (norm <= 7) step = 5;
+    else step = 10;
+    return step * base;
 }
 
 function renderShiftChart() {
@@ -331,7 +347,10 @@ function renderShiftChart() {
     }
     if (maxVal === 0) maxVal = 10;
     maxVal = roundUp10(maxVal * 1.15);
-    var yStep = 25;
+    // Dynamically scale the Y-axis step so we always get ~5-8 gridlines,
+    // regardless of whether maxVal is 50 or 50,000. Picks a "nice" step
+    // (1, 2, 5, 10, 20, 50, 100, 200, 500, ...) based on magnitude.
+    var yStep = niceStep(maxVal / 6);
     maxVal = Math.ceil(maxVal / yStep) * yStep;
 
     var resolved = getComputedStyle(document.documentElement);
@@ -436,14 +455,17 @@ function renderShiftChart() {
 }
 
 async function onShiftProcessChange() {
-    var processID = parseInt(document.getElementById('shift-process-select').value, 10);
-    if (!processID) return;
-    _chartData.activeProcessID = processID;
+    var sel = document.getElementById('shift-process-select');
+    var rawVal = sel.value;
+    var isAll = rawVal === 'all';
+    var processID = parseInt(rawVal, 10);
+    if (!isAll && !processID) return;
+    _chartData.activeProcessID = isAll ? 0 : processID;
     try {
         var today = new Date();
         var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
         _chartData.todayDate = todayStr;
-        _chartData.hourlyCounts = await api.get('/api/hourly-counts?process_id=' + processID + '&date=' + todayStr) || {};
+        _chartData.hourlyCounts = await api.get('/api/hourly-counts?process_id=' + encodeURIComponent(rawVal) + '&date=' + todayStr) || {};
         if (!_chartData.hourlyCounts || typeof _chartData.hourlyCounts !== 'object') _chartData.hourlyCounts = {};
     } catch(e) {
         _chartData.hourlyCounts = {};
@@ -455,7 +477,10 @@ renderShiftChart();
 
 createSSE('/events', {
     onCounterUpdate: function(data) {
-        if (data.process_id !== _chartData.activeProcessID) return;
+        // When viewing "All Processes" (activeProcessID = 0), accept
+        // counter updates from any process. Otherwise only match the
+        // selected process.
+        if (_chartData.activeProcessID && data.process_id !== _chartData.activeProcessID) return;
         var today = new Date();
         var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
         if (_chartData.todayDate !== todayStr) return;

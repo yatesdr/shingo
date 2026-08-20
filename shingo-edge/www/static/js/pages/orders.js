@@ -95,6 +95,31 @@ function updateCountdowns() {
 updateCountdowns();
 setInterval(updateCountdowns, 60000);
 
+// ─── Client-side table filter (mirrors Core's orders.js) ───
+function applyOrderSearch() {
+    var input = document.getElementById('filter-search');
+    var countEl = document.getElementById('filter-count');
+    var table = document.getElementById('orders-table');
+    if (!input || !table) return;
+    var rows = table.querySelectorAll('tbody tr');
+    var q = input.value.toLowerCase().trim();
+    var visible = 0;
+    for (var i = 0; i < rows.length; i++) {
+        var text = rows[i].textContent.toLowerCase();
+        var show = !q || text.indexOf(q) !== -1;
+        rows[i].style.display = show ? '' : 'none';
+        if (show) visible++;
+    }
+    if (countEl) countEl.textContent = q ? visible + ' of ' + rows.length : '';
+}
+applyOrderSearch();
+// Re-apply on input, and re-run after htmx swaps the table partial.
+var _searchInput = document.getElementById('filter-search');
+if (_searchInput) {
+    _searchInput.addEventListener('input', applyOrderSearch);
+    document.body.addEventListener('htmx:afterSwap', applyOrderSearch);
+}
+
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions
 // on document.body. Multiple event types share the same handler

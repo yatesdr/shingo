@@ -121,13 +121,20 @@ export function createSSE(url, handlers) {
 // wizard / long edit-flow callers that legitimately need preservation.
 export function showModal(id) {
     var m = document.getElementById(id);
-    if (m) m.classList.add('active');
+    if (m) {
+        m.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
 }
 
 export function hideModal(id, opts) {
     var modal = document.getElementById(id);
     if (!modal) return;
     modal.classList.remove('active');
+    // Restore body scroll only if no other modal is still open.
+    if (!document.querySelector('.modal-overlay.active')) {
+        document.body.style.overflow = '';
+    }
     if (opts && opts.preserveState) return;
     var inputs = modal.querySelectorAll('input, select, textarea');
     for (var i = 0; i < inputs.length; i++) {
@@ -440,7 +447,8 @@ export function navigateToProcess(el) {
 }
 
 export function navigateToProcessOrOrders(el) {
-    var status = new URLSearchParams(window.location.search).get('status');
+    var params = new URLSearchParams(window.location.search);
+    var status = params.get('status');
     var qs = el && el.value ? 'process=' + el.value : '';
     if (status) qs = (qs ? qs + '&' : '') + 'status=' + status;
     window.location = '/orders' + (qs ? '?' + qs : '');

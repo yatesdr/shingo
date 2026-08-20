@@ -205,6 +205,27 @@ main.container {
     font-weight: 600;
 }
 
+/* === Tab bar (mirrors Core's .tab-bar / .tab-btn) === */
+.tab-bar {
+    display: flex;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 1rem;
+}
+.tab-btn {
+    padding: 0.5rem 1rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    transition: color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+
 /* === Tables === */
 .table {
     width: 100%;
@@ -538,6 +559,21 @@ textarea.form-input {
     max-width: 500px;
     margin: 1rem;
 }
+
+/* Standard modal sizes (replacing inline max-width). */
+.modal-md { max-width: 640px; }
+.modal-wide { max-width: 880px; }
+
+/* === Flexbox utilities (mirror Core) === */
+.flex { display: flex; }
+.flex-col { display: flex; flex-direction: column; }
+.flex-wrap { flex-wrap: wrap; }
+.flex-center { display: flex; align-items: center; }
+.flex-between { justify-content: space-between; align-items: center; }
+.items-center { align-items: center; }
+.gap-1 { gap: 0.5rem; }
+.gap-2 { gap: 1rem; }
+.ml-auto { margin-left: auto; }
 
 .modal-header {
     display: flex;
@@ -1355,4 +1391,201 @@ textarea.form-input {
 }
 .debug-group-child {
     border-left: 2px solid #404850;
+}
+
+/* ─── Orders page: tab + pill filters ───────────────────────
+ * Mirrors Core's layout (orders-head + order-filters). The All/Active
+ * aggregate tabs carry no dot; the status pills each carry a colored
+ * dot in the same hue as the matching badge in the table.
+ */
+.orders-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+.orders-title {
+    font-size: 1.1rem;
+    margin: 0;
+    font-weight: 700;
+}
+
+.order-filters {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+.ofilter {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+}
+.ofilter:hover {
+    background: var(--elev-raised);
+    color: var(--text);
+    text-decoration: none;
+}
+.ofilter.is-active {
+    background: var(--accent-solid);
+    color: #fff;
+}
+.ofilter.is-active:hover {
+    background: var(--accent-solid-hover);
+    color: #fff;
+}
+.ofilter-sep {
+    width: 1px;
+    height: 1.1rem;
+    background: var(--border);
+    margin: 0 0.3rem;
+    flex-shrink: 0;
+}
+.ofilter-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+}
+.ofilter.is-active .ofilter-dot {
+    background: #fff;
+}
+/* Dot hues mirror the badge palette in shared/status-classes.css. */
+.ofilter-dot[data-status="faulted"]    { background: var(--warning); }
+.ofilter-dot[data-status="failed"]     { background: var(--danger); }
+.ofilter-dot[data-status="queued"]     { background: var(--status-queued-dot, #7aa2f0); }
+.ofilter-dot[data-status="in_transit"] { background: var(--status-in-transit-dot, #34c3e0); }
+.ofilter-dot[data-status="confirmed"]  { background: var(--status-delivered-dot, #3fb950); }
+
+.filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+}
+
+/* ─── Orders table (mirrors Core's .orders-card / .orders-table) ─── */
+.orders-card { padding: 0.75rem; }
+.orders-search { min-width: 220px; max-width: 260px; }
+
+/* Compact table: tighter rows than the default .table. */
+.table-compact { font-size: 0.82rem; }
+.table-compact th, .table-compact td { padding: 0.3rem 0.6rem; }
+.table-compact th { font-size: 0.72rem; }
+
+/* Force a table to fit its container regardless of content width.
+ * table-layout: fixed distributes width equally across columns; the
+ * break-word fallback lets long unbroken tokens (node names, payload
+ * codes) wrap inside their cell instead of pushing the table wide. */
+.table-fit { table-layout: fixed; word-break: break-word; }
+
+.orders-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+    background: var(--surface);
+    box-shadow: inset 0 -1px 0 var(--border);
+}
+.orders-table code { white-space: nowrap; }
+.orders-uuid {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    max-width: 13rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.orders-time {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.orders-subtext { font-size: 0.72rem; color: var(--text-muted); }
+.orders-reason { max-width: 22rem; white-space: normal; }
+.orders-actions { white-space: nowrap; }
+
+/* Destructive control on every row is loud structure; keep it quiet
+ * until the row is under the cursor (mirrors Core). */
+.orders-table tbody .btn-danger { opacity: 0.55; transition: opacity 0.15s; }
+.orders-table tbody tr:hover .btn-danger,
+.orders-table tbody .btn-danger:focus-visible { opacity: 1; }
+
+.tnum { font-variant-numeric: tabular-nums; }
+.text-muted-xs { font-size: 0.72rem; color: var(--text-muted); }
+
+/* ─── Process sidebar groups (collapsible) ─── */
+.proc-group-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.5rem;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text);
+    border-radius: var(--radius);
+    user-select: none;
+    transition: background 0.15s;
+}
+.proc-group-header:hover { background: var(--elev-raised); }
+.proc-group-chevron {
+    display: inline-block;
+    width: 0.9rem;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    transition: transform 0.15s;
+}
+.proc-group-header.collapsed .proc-group-chevron { transform: rotate(-90deg); }
+.proc-group-count {
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--text-muted);
+}
+.proc-group-actions {
+    margin-left: auto;
+    display: inline-flex;
+    gap: 0.25rem;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.proc-group-header:hover .proc-group-actions { opacity: 1; }
+.proc-group-actions button {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0.1rem 0.3rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1;
+}
+.proc-group-actions button:hover { color: var(--text); border-color: var(--text-muted); }
+.proc-group-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.35rem 0 0 0.5rem;
+}
+.proc-group-body.collapsed { display: none; }
+.proc-group-body .btn {
+    font-size: 0.82rem;
+    padding: 0.3rem 0.6rem;
+}
+.proc-group-empty {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 0.2rem 0.5rem;
 }

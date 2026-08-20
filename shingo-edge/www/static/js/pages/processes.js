@@ -27,6 +27,17 @@ import { api, confirm, delegateActions, escapeHtml, hideModal, showModal, tagSel
 const activeProcessID = parseInt(document.getElementById('page-data').dataset.activeProcessId || '0', 10);
 const claimedByStation = window.claimedByStation || {};
 
+// Process + group data injected by the template for sidebar rendering.
+var _processes = [];
+var _processGroups = [];
+try {
+    var _pd = document.getElementById('page-data');
+    if (_pd) {
+        _processes = JSON.parse(_pd.dataset.processes || '[]') || [];
+        _processGroups = JSON.parse(_pd.dataset.processGroups || '[]') || [];
+    }
+} catch(e) {}
+
 // ─── Process editor ─────────────────────────────────────────────────────
 
 function resetProcessForm() {
@@ -36,6 +47,8 @@ function resetProcessForm() {
     if (el) el.value = '';
     var sel = document.getElementById('new-process-counter-plc');
     if (sel) sel.selectedIndex = 0;
+    var grp = document.getElementById('new-process-group');
+    if (grp) grp.value = '';
 }
 
 function openCreateProcessModal() {
@@ -51,7 +64,6 @@ function closeProcessModal() {
 
 function showProcessTab(tab) {
     document.querySelectorAll('.process-tab').forEach(function(button) {
-        button.classList.toggle('btn-primary', button.dataset.tab === tab);
         button.classList.toggle('active', button.dataset.tab === tab);
     });
     document.querySelectorAll('.process-tab-panel').forEach(function(panel) {
@@ -67,6 +79,9 @@ async function createProcess() {
     }
     const counterPLC = document.getElementById('new-process-counter-plc').value;
     const counterTag = document.getElementById('new-process-counter-tag').value.trim();
+    const groupVal = document.getElementById('new-process-group') ? document.getElementById('new-process-group').value : '';
+    var groupID = null;
+    if (groupVal) groupID = parseInt(groupVal, 10);
     try {
         const res = await api.post('/api/processes', {
             name: name,
@@ -74,7 +89,8 @@ async function createProcess() {
             production_state: 'active_production',
             counter_plc_name: counterPLC,
             counter_tag_name: counterTag,
-            counter_enabled: !!(counterPLC && counterTag)
+            counter_enabled: !!(counterPLC && counterTag),
+            group_id: groupID
         });
         // Auto-create a Default style and set it active
         try {
@@ -96,6 +112,9 @@ async function createProcess() {
 }
 
 async function saveProcess() {
+    var groupVal = document.getElementById('process-group') ? document.getElementById('process-group').value : '';
+    var groupID = null;
+    if (groupVal) groupID = parseInt(groupVal, 10);
     try {
         await api.put('/api/processes/' + activeProcessID, {
             name: document.getElementById('process-name').value.trim(),
@@ -104,7 +123,8 @@ async function saveProcess() {
             counter_plc_name: document.getElementById('counter-plc') ? document.getElementById('counter-plc').value : '',
             counter_tag_name: document.getElementById('counter-tag') ? document.getElementById('counter-tag').value.trim() : '',
             counter_enabled: document.getElementById('counter-enabled') ? document.getElementById('counter-enabled').checked : false,
-            changeover_auto_arm: document.getElementById('changeover-auto-arm') ? document.getElementById('changeover-auto-arm').value : 'auto'
+            changeover_auto_arm: document.getElementById('changeover-auto-arm') ? document.getElementById('changeover-auto-arm').value : 'auto',
+            group_id: groupID
         });
         toast('Process saved', 'success');
         location.reload();
@@ -122,6 +142,254 @@ async function deleteProcess(id) {
         toast('Error: ' + e, 'error');
     }
 }
+
+// ─── Process groups (sidebar organizational taxonomy) ──────────────────
+
+function resetGroupForm() {
+    var idEl = document.getElementById('group-id');
+    if (idEl) idEl.value = '';
+    var nameEl = document.getElementById('group-name');
+    if (nameEl) nameEl.value = '';
+    var descEl = document.getElementById('group-description');
+    if (descEl) descEl.value = '';
+}
+
+function openCreateGroupModal() {
+    resetGroupForm();
+    document.getElementById('group-modal-title').textContent = 'Add Group';
+    populateGroupProcessPicker(null);
+    showModal('group-modal');
+}
+
+function closeGroupModal() {
+    hideModal('group-modal');
+    resetGroupForm();
+}
+
+// populateGroupProcessPicker renders checkboxes for ungrouped processes
+// in the group modal. When editing, processes already in this group are
+// checked too (so the user can uncheck to remove them).
+function populateGroupProcessPicker(currentGroupID) {
+    var picker = document.getElementById('group-process-picker');
+    if (!picker) return;
+    picker.innerHTML = '';
+
+    var candidates = _processes.filter(function(p) {
+        return !p.group_id || (currentGroupID && p.group_id === currentGroupID);
+    });
+
+    if (candidates.length === 0) {
+        picker.innerHTML = '<div class="text-muted-xs" style="padding:0.3rem 0">No ungrouped processes available.</div>';
+        return;
+    }
+
+    candidates.forEach(function(p) {
+        var label = document.createElement('label');
+        label.className = 'check-row';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = p.id;
+        cb.className = 'group-process-cb';
+        if (currentGroupID && p.group_id === currentGroupID) cb.checked = true;
+        label.appendChild(cb);
+        var span = document.createElement('span');
+        span.textContent = p.name;
+        label.appendChild(span);
+        picker.appendChild(label);
+    });
+}
+
+function getSelectedGroupProcessIDs() {
+    var ids = [];
+    document.querySelectorAll('.group-process-cb:checked').forEach(function(cb) {
+        ids.push(parseInt(cb.value, 10));
+    });
+    return ids;
+}
+
+async function saveGroup() {
+    var id = document.getElementById('group-id').value;
+    var name = document.getElementById('group-name').value.trim();
+    var description = document.getElementById('group-description').value.trim();
+    if (!name) {
+        toast('Enter a group name', 'warning');
+        return;
+    }
+    try {
+        var groupID;
+        if (id) {
+            await api.put('/api/process-groups/' + id, { name: name, description: description });
+            groupID = parseInt(id, 10);
+            toast('Group updated', 'success');
+        } else {
+            var res = await api.post('/api/process-groups', { name: name, description: description });
+            groupID = res.id;
+            toast('Group created', 'success');
+        }
+        // Assign selected processes to this group.
+        var selectedIDs = getSelectedGroupProcessIDs();
+        var gid = groupID;
+        for (var i = 0; i < selectedIDs.length; i++) {
+            try {
+                await api.put('/api/processes/' + selectedIDs[i] + '/group', { group_id: gid });
+            } catch(e) {
+                // Non-fatal — group was still saved.
+            }
+        }
+        location.reload();
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
+function editGroup(id) {
+    // Use the in-memory _processGroups array instead of a server fetch
+    // (there's no GET /api/process-groups/{id} route — only list, and
+    // PUT/DELETE on {id}).
+    var group = _processGroups.find(function(g) { return g.id === id; });
+    if (!group) {
+        toast('Group not found', 'error');
+        return;
+    }
+    document.getElementById('group-id').value = group.id;
+    document.getElementById('group-name').value = group.name || '';
+    document.getElementById('group-description').value = group.description || '';
+    document.getElementById('group-modal-title').textContent = 'Edit Group';
+    populateGroupProcessPicker(group.id);
+    showModal('group-modal');
+}
+
+async function deleteGroup(id) {
+    try {
+        var resp = await api.get('/api/process-groups/' + id + '/member-count');
+        var count = resp.count || 0;
+        var msg = count > 0
+            ? 'Delete this group? ' + count + ' process(es) will be moved back to Ungrouped.'
+            : 'Delete this empty group?';
+        if (!await confirm(msg)) return;
+        await api.del('/api/process-groups/' + id);
+        toast('Group deleted', 'success');
+        location.reload();
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
+// renderSidebar renders the process list grouped by group, with collapsible
+// sections. Ungrouped is always last. Collapse state persists in localStorage.
+function renderSidebar() {
+    var container = document.getElementById('process-sidebar');
+    if (!container) return;
+    container.innerHTML = '';
+
+    // Group processes by group_id
+    var byGroup = {};
+    var ungrouped = [];
+    _processes.forEach(function(p) {
+        if (p.group_id) {
+            if (!byGroup[p.group_id]) byGroup[p.group_id] = [];
+            byGroup[p.group_id].push(p);
+        } else {
+            ungrouped.push(p);
+        }
+    });
+
+    // Render each group (alphabetical by name)
+    _processGroups.forEach(function(g) {
+        var members = byGroup[g.id] || [];
+        var collapsed = isGroupCollapsed(g.id);
+
+        var header = document.createElement('div');
+        header.className = 'proc-group-header' + (collapsed ? ' collapsed' : '');
+        header.onclick = function() { toggleGroupCollapse(g.id); renderSidebar(); };
+        header.innerHTML =
+            '<span class="proc-group-chevron">&#9662;</span>' +
+            '<span>' + escapeHtml(g.name) + '</span>' +
+            '<span class="proc-group-count">(' + members.length + ')</span>' +
+            '<span class="proc-group-actions">' +
+                '<button onclick="event.stopPropagation();editGroup(' + g.id + ')" title="Edit group">&#9998;</button>' +
+                '<button onclick="event.stopPropagation();deleteGroup(' + g.id + ')" title="Delete group">&times;</button>' +
+            '</span>';
+
+        var body = document.createElement('div');
+        body.className = 'proc-group-body' + (collapsed ? ' collapsed' : '');
+        if (members.length === 0) {
+            body.innerHTML = '<div class="proc-group-empty">No processes in this group.</div>';
+        } else {
+            members.forEach(function(p) {
+                body.appendChild(renderProcessLink(p));
+            });
+        }
+
+        container.appendChild(header);
+        container.appendChild(body);
+    });
+
+    // Ungrouped section (always last, no edit/delete)
+    if (ungrouped.length > 0 || _processGroups.length === 0) {
+        var ugCollapsed = isGroupCollapsed('__ungrouped__');
+        var ugHeader = document.createElement('div');
+        ugHeader.className = 'proc-group-header' + (ugCollapsed ? ' collapsed' : '');
+        ugHeader.onclick = function() { toggleGroupCollapse('__ungrouped__'); renderSidebar(); };
+        var ugLabel = _processGroups.length > 0 ? 'Ungrouped' : 'All Processes';
+        ugHeader.innerHTML =
+            '<span class="proc-group-chevron">&#9662;</span>' +
+            '<span>' + ugLabel + '</span>' +
+            '<span class="proc-group-count">(' + ungrouped.length + ')</span>';
+
+        var ugBody = document.createElement('div');
+        ugBody.className = 'proc-group-body' + (ugCollapsed ? ' collapsed' : '');
+        if (ungrouped.length === 0) {
+            ugBody.innerHTML = '<div class="proc-group-empty">No ungrouped processes.</div>';
+        } else {
+            ungrouped.forEach(function(p) {
+                ugBody.appendChild(renderProcessLink(p));
+            });
+        }
+
+        container.appendChild(ugHeader);
+        container.appendChild(ugBody);
+    }
+}
+
+function renderProcessLink(p) {
+    var a = document.createElement('a');
+    a.href = '/processes?process=' + p.id;
+    a.className = 'btn' + (p.id === activeProcessID ? ' btn-primary' : '');
+    a.style.justifyContent = 'flex-start';
+    a.style.textAlign = 'left';
+    var html = '<span>' + escapeHtml(p.name) + '</span>';
+    if (p.target_style_id) {
+        html += '<span class="ml-auto text-muted-xs" title="Changeover target style set">CO</span>';
+    }
+    a.innerHTML = html;
+    return a;
+}
+
+var GROUP_COLLAPSE_KEY = 'shingo-edge-process-group-collapse';
+
+function isGroupCollapsed(groupId) {
+    try {
+        var state = JSON.parse(localStorage.getItem(GROUP_COLLAPSE_KEY) || '{}');
+        return !!state[groupId];
+    } catch(e) { return false; }
+}
+
+function toggleGroupCollapse(groupId) {
+    try {
+        var state = JSON.parse(localStorage.getItem(GROUP_COLLAPSE_KEY) || '{}');
+        state[groupId] = !state[groupId];
+        localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(state));
+    } catch(e) {}
+}
+
+// Render the sidebar on page load.
+renderSidebar();
+
+// editGroup and deleteGroup are called via inline onclick in the sidebar
+// HTML (rendered by renderSidebar), so they need to be on window.
+window.editGroup = editGroup;
+window.deleteGroup = deleteGroup;
 
 // ─── Style editor ───────────────────────────────────────────────────────
 
@@ -720,8 +988,20 @@ async function loadClaims(styleID) {
             return;
         }
         var table = document.createElement('table');
-        table.className = 'table';
-        table.innerHTML = '<thead><tr><th>Core Node</th><th>Role</th><th>Swap</th><th>Wants</th><th>Inbound</th><th>Outbound</th><th>Source</th><th>Dest</th><th>A/B Pair</th><th style="width:1%"></th></tr></thead>';
+        table.className = 'table table-compact table-fit';
+        table.innerHTML = '<colgroup>' +
+            '<col style="width:11%">' +   // Core Node
+            '<col style="width:9%">' +    // Role
+            '<col style="width:9%">' +    // Swap
+            '<col style="width:11%">' +   // Wants
+            '<col style="width:9%">' +    // Inbound
+            '<col style="width:9%">' +    // Outbound
+            '<col style="width:9%">' +    // Source
+            '<col style="width:9%">' +    // Dest
+            '<col style="width:9%">' +    // A/B Pair
+            '<col style="width:15%">' +   // Actions
+            '</colgroup>' +
+            '<thead><tr><th>Core Node</th><th>Role</th><th>Swap</th><th>Wants</th><th>Inbound</th><th>Outbound</th><th>Source</th><th>Dest</th><th>A/B Pair</th><th style="width:1%"></th></tr></thead>';
         var tbody = document.createElement('tbody');
         claims.forEach(function(c) {
             tbody.appendChild(renderClaimRow(c));
@@ -765,14 +1045,14 @@ function renderClaimRow(c) {
         '<td class="mono" style="font-size:0.8rem">' + esc(c.inbound_source || '—') + '</td>' +
         '<td class="mono" style="font-size:0.8rem">' + esc(c.outbound_destination || '—') + '</td>' +
         '<td class="mono" style="font-size:0.8rem">' + esc(c.paired_core_node || '—') + '</td>' +
-        '<td style="white-space:nowrap">' +
+        '<td style="white-space:normal;font-size:0.75rem">' +
             // manual_swap = a bin loader/unloader. Loaders are Core-owned now and
             // resolve via SynthClaim, so they are no longer authored or edited here
             // (the Swap Mode dropdown drops the option). An existing manual_swap claim
             // is read-only — show a hint instead of Edit — but stays removable so a
             // legacy/stray loader claim can still be cleaned up.
             (c.swap_mode === 'manual_swap'
-                ? '<span class="badge" title="Bin loaders are configured on Core (Nodes -> loader setup) and added to an Operator Station; they resolve automatically here. This row is read-only.">Core loader</span> '
+                ? '<span class="badge" title="Bin loaders are configured on Core (Nodes -> loader setup) and added to an Operator Station; they resolve automatically here. This row is read-only.">Loader</span> '
                 : '<button class="btn btn-sm" data-action="edit-claim" data-claim-id="' + c.id + '">Edit</button> ') +
             '<button class="btn btn-sm btn-danger" data-action="remove-claim" data-claim-id="' + c.id + '">Remove</button>' +
         '</td>';
@@ -1451,15 +1731,18 @@ delegateActions(document.body, {
     closeClaimModal,
     closeCloneStyleModal,
     closeGenerateModal,
+    closeGroupModal,
     closeProcessModal,
     closeStationModal,
     closeStyleModal,
     createProcess,
     defaultClaimState,
+    deleteGroup,
     deleteProcess,
     deleteStation,
     deleteStyle,
     editClaim,
+    editGroup,
     editStation,
     editStyle,
     ensureClaimsListDelegation,
@@ -1476,6 +1759,7 @@ delegateActions(document.body, {
     onGenerateBaseChanged,
     openClaimModal,
     openCloneStyleModal,
+    openCreateGroupModal,
     openCreateProcessModal,
     openCreateStationModal,
     openCreateStyleModal,
@@ -1490,6 +1774,7 @@ delegateActions(document.body, {
     resetStationForm,
     resetStyleForm,
     saveClaim,
+    saveGroup,
     saveProcess,
     saveStation,
     saveStyle,
