@@ -33,7 +33,7 @@ import (
 //
 // That document is why the widths above drifted unwatched: a ratchet
 // written only in a file the repo cannot see is a ratchet nothing enforces.
-// The enforced guard is the width test in this package's test file.
+// The enforced guard is engine_iface_width_test.go in this package.
 type ServiceAccess interface {
 	// ── Subsystem accessors ────────────────────────────────────────
 	CoreAPI() *engine.CoreClient
