@@ -2,6 +2,11 @@ package messaging
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -407,5 +412,68 @@ func TestClient_BackoffCalculation(t *testing.T) {
 
 	if backoff != maxBackoff {
 		t.Errorf("backoff = %v, want %v (capped)", backoff, maxBackoff)
+	}
+}
+
+// TestKafkaWriterSetsRequiredAcks guards the defect fixed in this package:
+// the writer was built as a &kafka.Writer{} struct literal that never set
+// RequiredAcks, so it published at the zero value — RequireNone — under which
+// the broker returns no response and WriteMessages reports success for a
+// message the broker rejected. The outbox drainer reads that nil as "sent"
+// and deletes the row. kafka-go's 0-means-RequireAll fixup is inside
+// NewWriter, which a struct literal does not go through.
+//
+// The assertion is on the source, not on a constructed writer, because
+// connect() needs a live broker to reach the construction site. A composite
+// literal is exactly the shape that lost the field, so the literal is what
+// gets checked.
+func TestKafkaWriterSetsRequiredAcks(t *testing.T) {
+	t.Parallel()
+
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parse package: %v", err)
+	}
+
+	found := 0
+	for _, pkg := range pkgs {
+		for path, file := range pkg.Files {
+			ast.Inspect(file, func(n ast.Node) bool {
+				lit, ok := n.(*ast.CompositeLit)
+				if !ok {
+					return true
+				}
+				sel, ok := lit.Type.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "Writer" {
+					return true
+				}
+				if ident, ok := sel.X.(*ast.Ident); !ok || ident.Name != "kafka" {
+					return true
+				}
+				found++
+				for _, elt := range lit.Elts {
+					kv, ok := elt.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "RequiredAcks" {
+						return true
+					}
+				}
+				t.Errorf("%s:%d: kafka.Writer literal does not set RequiredAcks — "+
+					"it will publish at RequireNone and the drainer will treat "+
+					"broker rejections as successful sends",
+					path, fset.Position(lit.Pos()).Line)
+				return true
+			})
+		}
+	}
+
+	if found == 0 {
+		t.Fatal("no kafka.Writer composite literal found — the writer moved or " +
+			"changed shape; re-point this guard rather than deleting it")
 	}
 }

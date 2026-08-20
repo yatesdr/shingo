@@ -33,6 +33,15 @@ type MessageHandler func(topic string, payload []byte)
 // Keep the writer SYNCHRONOUS. The drainer relies on WriteMessages returning
 // the publish error to drive its retry and dead-letter path; setting
 // Async: true would swallow that and silently drop messages.
+//
+// For the same reason the writer MUST set RequiredAcks explicitly. The zero
+// value of kafka.Writer.RequiredAcks is RequireNone, under which the broker
+// sends no response at all and WriteMessages returns nil for a message the
+// broker rejected — the drainer would mark the outbox row sent and the
+// message would be gone. kafka-go's 0-means-RequireAll fixup lives inside
+// NewWriter, which this struct literal does not go through, so the default
+// does not apply here. Edge sets RequireOne the same way
+// (shingo-edge/messaging/client.go).
 const writerBatchTimeout = 10 * time.Millisecond
 
 type Client struct {
@@ -127,6 +136,7 @@ func (c *Client) Connect() error {
 		writer: &kafka.Writer{
 			Addr:         kafka.TCP(c.cfg.Kafka.Brokers...),
 			Balancer:     &kafka.Hash{},
+			RequiredAcks: kafka.RequireOne,
 			BatchTimeout: writerBatchTimeout,
 		},
 	}
@@ -267,10 +277,16 @@ func (c *Client) readLoop(topic string, reader *kafka.Reader, handler MessageHan
 			}
 			c.mu.Unlock()
 
-			bo.Reset()
+			// No Reset here. Resetting on the error path re-arms the
+			// backoff to base on every failure, so a down broker is
+			// reconnected against at the base interval forever and the
+			// "reconnecting in %v" log above always prints ~base.
+			// protocol/backoff's own doc shows reset-on-success, which is
+			// what the reset below the loop body does.
 			continue
 		}
 
+		// Reset backoff on successful read.
 		bo.Reset()
 		c.dbg("received: topic=%s size=%d", msg.Topic, len(msg.Value))
 		func() {
