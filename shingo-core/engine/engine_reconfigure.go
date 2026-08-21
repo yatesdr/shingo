@@ -30,31 +30,6 @@ func (e *Engine) ReconfigureFleet() {
 	e.checkConnectionStatus()
 }
 
-// ReconfigureCountGroups stops the current count-group runner and starts
-// a new one with the latest config. Safe to call when the builder is nil
-// (feature was never enabled) — it logs and returns.
-func (e *Engine) ReconfigureCountGroups() {
-	if e.countGroupBuild == nil {
-		e.logFn("engine: count-group reconfigure skipped (no builder registered)")
-		return
-	}
-
-	e.countGroupMu.Lock()
-	defer e.countGroupMu.Unlock()
-
-	// Stop the old runner gracefully.
-	if e.countGroup != nil {
-		e.countGroup.Stop()
-		e.logFn("engine: count-group runner stopped for reconfiguration")
-	}
-
-	// Build and start a fresh runner — the builder's closure reads
-	// cfg.CountGroups at call time, so it picks up the new group list.
-	e.countGroup = e.countGroupBuild(&countGroupEventEmitter{bus: e.Events})
-	e.countGroup.Start()
-	e.logFn("engine: count-group runner reconfigured (%d groups)", len(e.cfg.CountGroups.Groups))
-}
-
 // ReconfigureMessaging reconnects messaging with current config.
 func (e *Engine) ReconfigureMessaging() {
 	if err := e.msgClient.Reconfigure(&e.cfg.Messaging); err != nil {

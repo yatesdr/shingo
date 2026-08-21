@@ -15,7 +15,6 @@
 //   wiring_block_completed.go — per-block completion fan-out
 //   wiring_lane_gate.go       — lane-mouth gate hold/release
 //   wiring_telemetry.go       — per-transition mission events + summary
-//   wiring_count_group.go     — CountGroup broadcast to edges
 //
 // sendToEdge (the outbound envelope helper) also lives here since it
 // is shared by the subscription handlers above.
@@ -571,15 +570,6 @@ func (e *Engine) wireEventHandlers() {
 			e.sourceabilityMonitor.onPayloadChanged(evt.Payload.PayloadCode)
 		}, EventOrderQueued)
 	}
-
-	// ── Count-group transitions ────────────────────────────────────
-	// When the countgroup runner detects a debounced occupancy change
-	// (or fires the RDS-down fail-safe), ship a CountGroupCommand to
-	// all edges. Each edge checks its own bindings map and either
-	// drives the PLC tag or ignores.
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CountGroupTransitionEvent]) {
-		e.handleCountGroupTransition(evt.Payload)
-	}, EventCountGroupTransition)
 	// Grace-expiry: poller detected a faulted order whose grace period expired
 	// without fleet recovery. Best-effort cancel at RDS, then local fail.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, GraceExpiredEvent]) {

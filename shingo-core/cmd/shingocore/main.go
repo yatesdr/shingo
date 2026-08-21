@@ -34,14 +34,12 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/debuglog"
 	"shingocore/config"
-	"shingocore/countgroup"
 	"shingocore/dispatch"
 	"shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
 	"shingocore/messaging"
 	"shingocore/messaging/middleware"
-	"shingocore/rds"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/robotconfidence"
@@ -107,7 +105,6 @@ func printUsage() {
 	fmt.Println("  outbox        Outbox drain cycles and delivery")
 	fmt.Println("  core_handler  Inbound message handler dispatch")
 	fmt.Println("  engine        Engine wiring, vendor status changes")
-	fmt.Println("  countgroup    Advanced-zone occupancy changes")
 	fmt.Println()
 	fmt.Println("--log-debug gates the FILE only. What reaches stderr (journald under")
 	fmt.Println("systemd) is logging.stderr_subsystems in the YAML; the browser log UI")
@@ -350,24 +347,6 @@ func main() {
 		MsgClient:  msgClient,
 		DebugLog:   dbg.Func("engine"),
 	})
-
-	// ── Count-group runner (advanced-zone light alerts) ────────────────
-	// Uses a dedicated short-timeout RDS client separate from the 10s
-	// fleet adapter so one slow response can't back up N poll cycles.
-	// Always register the builder so the Traffic UI can add groups at
-	// runtime. Runner.Start() is a no-op if no groups are enabled.
-	// Skipped entirely in sim mode — there is no RDS to poll (brief T1.1).
-	if !cfg.Sim.Enabled {
-		cgTimeout := cfg.CountGroups.RDSTimeout
-		if cgTimeout <= 0 {
-			cgTimeout = 400 * time.Millisecond
-		}
-		cgClient := rds.NewClient(cfg.RDS.BaseURL, cgTimeout)
-		cgClient.DebugLog = dbg.Func("countgroup")
-		eng.SetCountGroupRunner(func(em countgroup.Emitter) *countgroup.Runner {
-			return countgroup.NewRunner(cfg.CountGroups, cgClient, em, log.Printf)
-		})
-	}
 
 	eng.Start()
 	defer eng.Stop()

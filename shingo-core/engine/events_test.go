@@ -46,7 +46,6 @@ func TestEventTypes_AllDistinctAndNonZero(t *testing.T) {
 		EventDBDisconnected,
 		EventRobotsUpdated,
 		EventCMSTransaction,
-		EventCountGroupTransition,
 	}
 	seen := map[EventType]bool{}
 	for _, tp := range types {
@@ -294,31 +293,6 @@ func TestEventPayloads_RoundTripAllShapes(t *testing.T) {
 				p := got.(CMSTransactionEvent)
 				if len(p.Transactions) != 2 {
 					t.Errorf("transactions = %d, want 2", len(p.Transactions))
-				}
-			},
-		},
-		{
-			name:    "CountGroupTransition",
-			evtType: EventCountGroupTransition,
-			payload: CountGroupTransitionEvent{
-				Group: "Cross1", Desired: "on",
-				Robots:            []string{"AMR-1"},
-				FailSafeTriggered: true,
-				Timestamp:         now,
-			},
-			check: func(t *testing.T, got any) {
-				p := got.(CountGroupTransitionEvent)
-				if p.Group != "Cross1" || p.Desired != "on" {
-					t.Errorf("payload = %+v", p)
-				}
-				if !p.FailSafeTriggered {
-					t.Error("FailSafeTriggered should be true")
-				}
-				if !p.Timestamp.Equal(now) {
-					t.Errorf("timestamp drift: got %v want %v", p.Timestamp, now)
-				}
-				if len(p.Robots) != 1 || p.Robots[0] != "AMR-1" {
-					t.Errorf("robots = %v", p.Robots)
 				}
 			},
 		},

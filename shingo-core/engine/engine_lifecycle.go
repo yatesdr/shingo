@@ -151,14 +151,6 @@ func (e *Engine) Start() {
 	// Start periodic reconciliation logging and auto-confirm
 	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered, e.cfg.Staging.AbandonStuck, e.cfg.Staging.AbandonStuckOperatorGated)
 
-	// Start count-group runner if configured (no-op if no groups enabled).
-	e.countGroupMu.Lock()
-	if e.countGroup != nil {
-		e.countGroup.Start()
-		e.logFn("engine: count-group runner started")
-	}
-	e.countGroupMu.Unlock()
-
 	// ETA medians cache — initial refresh + 10-min background refresh.
 	// Errors are logged but non-fatal: a cold-start failure leaves the
 	// cache empty, the in-transit OrderUpdate path falls back to the
@@ -284,11 +276,6 @@ func (e *Engine) Stop() {
 	if e.tracker != nil {
 		e.tracker.Stop()
 	}
-	e.countGroupMu.Lock()
-	if e.countGroup != nil {
-		e.countGroup.Stop()
-	}
-	e.countGroupMu.Unlock()
 	e.logFn("engine: stopped")
 }
 

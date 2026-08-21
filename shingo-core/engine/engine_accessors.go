@@ -2,7 +2,6 @@ package engine
 
 import (
 	"shingocore/config"
-	"shingocore/countgroup"
 	"shingocore/dispatch"
 	"shingocore/dispatch/eta"
 	"shingocore/fleet"
@@ -62,23 +61,6 @@ func (e *Engine) HeartbeatService() *service.HeartbeatService { return e.heartbe
 func (e *Engine) EventBus() *EventBus                         { return e.Events }
 func (e *Engine) EtaCache() *eta.Cache                        { return e.etaCache }
 func (e *Engine) Notifier() *notify.Notifier                  { return e.notifier }
-
-// SetCountGroupRunner registers a configured Runner built by the
-// composition root. The caller passes the Runner directly — transitions
-// land on the engine's EventBus via the internal emitter adapter.
-// Engine.Start() will call .Start() on it; Engine.Stop() will call .Stop().
-// Pass nil (or just don't call) to disable the feature.
-//
-// Takes a factory function that receives the EventBus-backed emitter so
-// the caller can build the Runner without the engine exposing emitter
-// construction as part of its public API.
-func (e *Engine) SetCountGroupRunner(build func(countgroup.Emitter) *countgroup.Runner) {
-	if build == nil {
-		return
-	}
-	e.countGroupBuild = build
-	e.countGroup = build(&countGroupEventEmitter{bus: e.Events})
-}
 
 // Maintainer returns the maintained-group level keeper, for the health page.
 func (e *Engine) Maintainer() *Maintainer { return e.maintainer }

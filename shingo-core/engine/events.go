@@ -29,7 +29,6 @@ const (
 	EventDBDisconnected
 	EventRobotsUpdated
 	EventCMSTransaction
-	EventCountGroupTransition
 	EventBlockCompleted
 	EventBinEnteredTransit
 	EventOrderFaulted
@@ -219,18 +218,6 @@ type RobotsUpdatedEvent struct {
 type CMSTransactionEvent struct {
 	eventbus.PayloadBase
 	Transactions []*cms.Transaction
-}
-
-// CountGroupTransitionEvent is emitted by the countgroup Runner whenever
-// an advanced zone's debounced occupancy flips (or the RDS-down fail-safe
-// fires). A wiring subscriber picks it up and ships it to edge via the outbox.
-type CountGroupTransitionEvent struct {
-	eventbus.PayloadBase
-	Group             string
-	Desired           string // "on" | "off"
-	Robots            []string
-	FailSafeTriggered bool
-	Timestamp         time.Time
 }
 
 // BlockCompletedEvent fires when a single block within a vendor order

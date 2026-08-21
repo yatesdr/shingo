@@ -5,10 +5,10 @@
 // Sibling files:
 //
 //   engine_lifecycle.go   Start, Stop, loadActiveOrders
-//   engine_accessors.go   one-liner subsystem getters + SetCountGroupRunner
+//   engine_accessors.go   one-liner subsystem getters
 //   engine_messaging.go   SendDataToEdge, RunFulfillmentScan
 //   engine_connection.go  checkConnectionStatus, connectionHealthLoop
-//   engine_reconfigure.go ReconfigureDatabase/Fleet/CountGroups/Messaging
+//   engine_reconfigure.go ReconfigureDatabase/Fleet/Messaging
 //   engine_scene_sync.go  SyncScenePoints, SyncFleetNodes, UpdateNodeZones, SceneSync
 //   engine_background.go  robotRefreshLoop, stagedBinSweepLoop
 //
@@ -27,7 +27,6 @@ import (
 
 	"shingo/protocol/types"
 	"shingocore/config"
-	"shingocore/countgroup"
 	"shingocore/dispatch"
 	"shingocore/dispatch/eta"
 	"shingocore/fleet"
@@ -59,9 +58,6 @@ type Engine struct {
 	msgClient             *messaging.Client
 	dispatcher            *dispatch.Dispatcher
 	tracker               fleet.OrderTracker
-	countGroup            *countgroup.Runner                          // nil if feature disabled / no groups configured
-	countGroupMu          sync.Mutex                                  // guards the countGroup pointer (ReconfigureCountGroups vs Start/Stop)
-	countGroupBuild       func(countgroup.Emitter) *countgroup.Runner // stored for ReconfigureCountGroups
 	Events                *EventBus
 	logFn                 LogFunc
 	debugLog              types.DebugLogFunc

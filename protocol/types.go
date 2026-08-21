@@ -69,9 +69,8 @@ const (
 	// route followed (2026-08). Edge's only replenishment writers are the
 	// operator request, the operator push, and the unloader auto-push.
 
-	// Count-group light alerts (advanced-zone occupancy → PLC-driven warning light)
-	SubjectCountGroupCommand = "countgroup.command" // Core -> Edge: requested light state for a zone
-	SubjectCountGroupAck     = "countgroup.ack"     // Edge -> Core: PLC ack outcome for a prior command
+	// Count-group ack (Edge -> Core: PLC ack outcome for a prior command).
+	SubjectCountGroupAck = "countgroup.ack"
 
 	// Inventory delta envelopes. Edge → Core. Carry signed count
 	// changes against bins and lineside buckets. Routed on subject
