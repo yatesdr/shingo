@@ -190,7 +190,6 @@
 
 | Package              | Baseline | PR 4    | Δ        | Notes                                       |
 |---|---|---|---|---|
-| countgroup           | 95.2%    | 95.2%   | —        |                                              |
 | domain               | 0.0%     | 100.0%  | +100.0   |                                              |
 | config               | 0.0%     | 88.9%   | +88.9    |                                              |
 | store/bins           | 0.0%     | 89.1%   | +89.1    |                                              |
@@ -227,7 +226,6 @@ bugfix from `f20ae40`).
 |---|---|---|
 | **orders** | **83.3%** | up from 13.3% — PR 3.1                |
 | **store**  | **79.4%** | up from 22.5% — PR 3.2                |
-| countgroup | 73.7%     |                                       |
 | plc        | 54.9%     |                                       |
 | **engine** | **50.3%** | up from 40.0% — PR 3.3                |
 | **www**    | **49.3%** | up from 0% — PRs 2.1–2.9              |
@@ -301,7 +299,6 @@ averages (mean of per-function coverage) from `coverage-edge-func.txt`:
 | core_sync_service.go       | 0%     | 96.7%   | StartupReconcile hook-firing + RequestOrderStatusSync (no-sendFn, no-orders, success, sendFn-error) + HandleOrderStatusSnapshots (known + unknown UUID) |
 | core_client.go             | 0%     | 96.0%   | Available/SetBaseURL + all HTTP methods against httptest servers — success, 404/500, bad-JSON, network-error, empty-input short-circuits |
 | engine.go (accessors)      | 0%     | 85.7%   | DB/CoreAPI/AppConfig/ConfigPath/PLCManager/OrderManager/Uptime/Stop; SetCoreNodes/CoreNodes sync + event emission; SetNodeSyncFunc/SetCatalogSyncFunc/SetSendFunc/SetKafkaReconnectFunc injection + RequestNodeSync/RequestCatalogSync/SendEnvelope/ReconnectKafka with + without fn set; HandlePayloadCatalog upsert + prune + empty-safety |
-| countgroup_sender.go       | 0%     | 83.3%   | SendCountGroupAck: no-sendFn, success with envelope decode assertions, sendFn-error |
 | material_orders.go         | —      | 79.5%   | pre-existing coverage preserved                                  |
 | operator_produce.go        | —      | 75.5%   | pre-existing                                                     |
 | operator_ab_cycling.go     | —      | 70.6%   | pre-existing                                                     |
@@ -365,7 +362,6 @@ averages (mean of per-function coverage) from `coverage-edge-func.txt`:
 | handlers_robots.go            | N     | 0.0%          |                                                       |
 | handlers_telemetry.go         | N     | 0.0%          |                                                       |
 | handlers_test_orders.go       | Y     | 5.5%          | `handlers_test_orders_test.go`                        |
-| handlers_traffic.go           | N     | 0.0%          |                                                       |
 
 ---
 
@@ -394,7 +390,6 @@ post-PR 2.9):
 | handlers_material.go          | buildStationViews 100%; enrichViewBinState 10.0% | handleMaterial / handleMaterialPartial 0% | `handlers_prod_material_test.go` (PR 2.7) |
 | handlers_operator_stations.go | 50.0–100%; apiGetOperatorStationView 100%, handleOperatorStationDisplay 72.7%; `apiNodeChildren` / `apiPayloadManifest` 0% (nil CoreAPI stub) | n/a | `handlers_operator_stations_test.go` (PR 2.2, +release-staged in `51ac5dc`) |
 | handlers_production.go        | apiSaveShifts 88.2%, apiGetHourlyCounts 84.6%, apiListShifts 60.0% | handleProduction 0% | `handlers_prod_material_test.go` (PR 2.7) |
-| handlers_traffic.go           | bindings/heartbeat/add/delete 84.6–100% | handleTraffic 0% (nil PLCManager) | `handlers_traffic_test.go` (PR 2.4)   |
 
 **Lowest-coverage testable APIs** worth a follow-up pass:
 `apiStageBackupRestore` (15.8%), `apiTestBackupConfig` (23.1%),
@@ -473,7 +468,6 @@ Branch started from `ded0543`. Landed on top of baseline (`36ea180`):
 | `fc48fac` | feature | Cherry-pick of `5ef5bc0` — two-robot swap `ReleaseStagedOrders` / `/process-nodes/{id}/release-staged` |
 | `51ac5dc` | test    | Stub `EngineAccess.ReleaseStagedOrders` + 2 handler tests for the new endpoint              |
 | `8268b52` | PR 2.3  | `handlers_api_orders_test.go` (33 tests, per-fn 58.8–100%, all 20 DB/engine sites exercised); `stubOrderEmitter` + `seedOrder` added to harness |
-| `01f19a3` | PR 2.4  | `handlers_traffic_test.go` (13 tests, 4 API endpoints + admin-gate; config file written to ConfigPath; `handleTraffic` admin-gated only because of nil PLCManager) |
 | `af1d7be` | PR 2.5  | `handlers_admin_pages_test.go` (admin-gate on 5 pages + login/logout/bootstrap-first-admin; template-rendering branches skipped) |
 | `fa02f0e` | PR 2.6  | `handlers_diag_manual_test.go` (all 9 `apiSendManualMessage` branches + validation; `apiReplayOutbox` validation only — RequeueOutbox needs real Reconciliation) |
 | `05bcf2b` | PR 2.7  | `handlers_prod_material_test.go` (production API endpoints + `buildStationViews` / `enrichViewBinState` helpers; page handlers render templates) |
@@ -481,7 +475,7 @@ Branch started from `ded0543`. Landed on top of baseline (`36ea180`):
 | _pending_ | PR 2.9  | `handlers_manualorder_changeover_test.go` (`buildChangeoverViewData` state machine: nil process, no active, pending, switched, central tasks; page handlers render templates) |
 | _pending_ | PR 3.1  | `shingo-edge/orders/manager_coverage_test.go` — 36 tests covering Manager lifecycle (CreateRetrieve/Store/Move/Complex/Ingest, Submit/Abort/Redirect/Release, HandleDelivered/ConfirmDelivery), the 8-way HandleDispatchReply switch, and ApplyCoreStatusSnapshot reconciliation; orders package 13.3% → 83.3% |
 | _pending_ | PR 3.2  | `shingo-edge/store/store_coverage_test.go` — ~46 tests covering admin_users, processes, styles, shifts, payload_catalog, reporting_points, orders, operator_stations, process_nodes, process_node_runtime, counter_snapshots, hourly_counts, reconciliation (including dead-letter + critical age), style_node_claims (all swap modes + manual_swap validation), process_changeovers atomic create; bundled bugfix in `reconciliation.go` (`GetReconciliationSummary` now scans `MIN(created_at)` into `sql.NullString` to handle empty-outbox case); store package 22.5% → 79.4% |
-| _pending_ | PR 3.3  | `shingo-edge/engine/engine_coverage_test.go` — 44 tests covering engine accessors, SetCoreNodes event emission, func-injection surface (SetNodeSyncFunc/SetCatalogSyncFunc/SetSendFunc/SetKafkaReconnectFunc + Request* + SendEnvelope + ReconnectKafka with/without fn), HandlePayloadCatalog upsert+prune+empty-safety, plcEmitter/orderEmitter every event branch, CoreClient against `httptest.NewServer` (success/404/500/bad-JSON/network-error/short-circuits), CoreSyncService StartupReconcile + RequestOrderStatusSync (all branches) + HandleOrderStatusSnapshots, ReconciliationService Summary/ListAnomalies/ListDeadLetterOutbox/RequeueOutbox round-trip, SendCountGroupAck envelope-build + subject assertion; engine package 40% → 50.3% (Start()-required paths in `warlink.go` 2.5%, `operator_demand.go` 7.4%, `hourly_tracker.go` 21.4%, `changeover_restore.go` / `operator_bin_ops.go` 0% remain uncovered by design) |
+| _pending_ | PR 3.3  | `shingo-edge/engine/engine_coverage_test.go` — 44 tests covering engine accessors, SetCoreNodes event emission, func-injection surface (SetNodeSyncFunc/SetCatalogSyncFunc/SetSendFunc/SetKafkaReconnectFunc + Request* + SendEnvelope + ReconnectKafka with/without fn), HandlePayloadCatalog upsert+prune+empty-safety, plcEmitter/orderEmitter every event branch, CoreClient against `httptest.NewServer` (success/404/500/bad-JSON/network-error/short-circuits), CoreSyncService StartupReconcile + RequestOrderStatusSync (all branches) + HandleOrderStatusSnapshots, ReconciliationService Summary/ListAnomalies/ListDeadLetterOutbox/RequeueOutbox round-trip; engine package 40% → 50.3% (Start()-required paths in `warlink.go` 2.5%, `operator_demand.go` 7.4%, `hourly_tracker.go` 21.4%, `changeover_restore.go` / `operator_bin_ops.go` 0% remain uncovered by design) |
 | _pending_ | PR 4    | shingo-core coverage PR: store/bins (audit_log, manifest JSONB), store/nodes (NGRP/LANE seeded types, station SQL fix), store (telemetry JSONB, node types/groups lifecycle), engine (auto-return wiring, ListOrders signature), www (payload templates CRUD, diagnostics replay); fixed production SQL bug in `nodes/stations.go` (unbalanced parens in `ListNodesForStation`); shingo-core total 29.0% → 56.8% |
 
 **Test harness shape** (all in `shingo-edge/www/`):
@@ -490,7 +484,6 @@ Branch started from `ded0543`. Landed on top of baseline (`36ea180`):
 - `handlers_api_config_test.go` — declares `seedReportingPoint`, `seedAnomalySnapshot`, `itoa` (package-visible, reuse anywhere).
 - `handlers_operator_stations_test.go` — declares `newOperatorStationsRouter`.
 - `handlers_api_orders_test.go` — declares `newApiOrdersRouter`; table-drives the 5 `apiCreate*Order` decode-error cases.
-- `handlers_traffic_test.go` — declares `newTrafficRouter`.
 - `handlers_admin_pages_test.go` — declares `newAdminPagesRouter`, `postForm` (form-encoded POST helper for `r.FormValue`-based handlers).
 - `handlers_diag_manual_test.go` — declares `newDiagnosticsManualRouter`, `sendManualPayload` (wraps the `{type, payload}` shape expected by `apiSendManualMessage`).
 - `handlers_prod_material_test.go` — declares `newProdMaterialRouter`; calls `buildStationViews`/`enrichViewBinState` directly.
@@ -503,6 +496,5 @@ Branch started from `ded0543`. Landed on top of baseline (`36ea180`):
 - PLC-health handlers in `handlers_api_config.go` — out of scope for PR 2.1.
 - Template-rendering branches of any `handle*` page handler — `renderTemplate` is a no-op (h.tmpl nil) and `h.tmpl.ExecuteTemplate` direct calls panic. Coverage of these handlers comes through admin-gate redirects (where applicable) and via package-level helpers (`buildChangeoverViewData`, `buildStationViews`, `enrichViewBinState`).
 - `apiReplayOutbox` RequeueOutbox path in `handlers_diagnostics.go` — needs a real `*engine.ReconciliationService`; only input validation covered.
-- `handleTraffic` body — calls `PLCManager().PLCNames()` on nil; covered only via admin-gate.
 - `handleConfig` / `handleProcesses` bodies — same nil-PLCManager reason; admin-gate only.
 - `handleKanbans` / `handleKanbansPartial` — both render templates and are public routes (no admin-gate); no test surface in the harness.

@@ -111,9 +111,9 @@ func (l *Logger) SetStderr(w io.Writer) {
 // mutes the mirror entirely.
 //
 // Under systemd, stderr is journald. Until 2026-07-25 the mirror was
-// unconditional and Springfield's journal ran at 633,129 lines/day — 53% of it
-// the two countgroup poll lines at a 500ms tick — which collapsed retention to
-// ~15 days, shorter than the incidents being investigated. The allow-list is
+// unconditional and Springfield's journal ran at 633,129 lines/day — over half
+// of it a single 500ms poll loop's two trace lines — which collapsed retention
+// to ~15 days, shorter than the incidents being investigated. The allow-list is
 // the knob that makes journal retention a decision instead of a side effect.
 //
 // The ring buffer and the browser log UI are unaffected: a muted subsystem is

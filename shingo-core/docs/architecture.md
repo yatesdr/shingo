@@ -16,12 +16,11 @@ shingo-core/
   material/             Pure CMS-transaction mapping for bin movement and manifest corrections
   service/              Service layer (BinService, BinManifestService) — validation + mutation behind handlers
   scenesync/            Reconciles the fleet backend's authoritative scene with shingo nodes and scene points
-  countgroup/           Advanced-zone polling with N-of-M hysteresis and fail-safe safety lighting
   messaging/            Kafka producer/consumer, outbox drainer, InboxDedup decorator, CoreHandler
   fleet/                Fleet backend interface (vendor-agnostic)
   fleet/seerrds/        Seer RDS fleet.Backend adapter
   fleet/simulator/      In-memory fleet.Backend for deterministic tests
-  rds/                  Seer RDS HTTP client (transport used by seerrds adapter and countgroup poller)
+  rds/                  Seer RDS HTTP client (transport used by the seerrds adapter)
   store/                Database: schema, migrations, queries, outbox/inbox tables
   store/bins/           Bin, bin_types, and bin_manifest queries
   store/nodes/          Node CRUD, lane/group queries, dot-notation resolution

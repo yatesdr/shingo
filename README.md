@@ -30,7 +30,7 @@ When a production line switches styles, Shingo orchestrates the material changeo
 
 ### Plant Integration
 
-Edge integrates with plant-floor PLCs through **WarLink**, its PLC client. Reads drive consumption tracking — reporting-point counters tick whenever the line produces a unit. Writes drive plant-side signaling: a heartbeat tag tells the plant Shingo is alive, and zone-output tags drive safety lighting in advanced zones (crosswalks, forklift aisles) based on robot presence reported by the fleet, with asymmetric hysteresis and a fail-safe forced-on timeout. Bindings are configured per-process from the Traffic admin page.
+Edge integrates with plant-floor PLCs through **WarLink**, its PLC client. Reads drive consumption tracking — reporting-point counters tick whenever the line produces a unit. Writes drive plant-side signaling from the same tag surface.
 
 ### Decoupled Architecture
 

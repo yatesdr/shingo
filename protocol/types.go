@@ -330,7 +330,7 @@ func CoreInboundSubjects() []string {
 
 // EdgeInboundSubjects returns every Subject Edge handles (envelopes
 // originated by Core: registration acks, node-list/catalog responses,
-// count-group commands, bin-picked-up notifications).
+// bin-picked-up notifications).
 // Used by cmd/shingoedge/main.go's boot-time SubjectRouter coverage
 // assertion.
 //
