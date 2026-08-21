@@ -78,7 +78,7 @@ var notCarried = map[string]map[string]string{
 		"src_release":             "RDS build string",
 		"isLoaded":                "duplicate of jack/container state already carried",
 		"remaining_time":          "RDS's own ETA; Core computes its own from mission telemetry",
-		"area_resources_occupied": "traffic-control bookkeeping, owned by the count-group loop",
+		"area_resources_occupied": "RDS traffic-control bookkeeping; nothing in Core consumes it",
 		"finished_path":           "route actually driven — WANTED, and deliberately deferred: it belongs with the per-traversal tier, which is not built",
 		"unfinished_path":         "route remaining — same as finished_path",
 	},
