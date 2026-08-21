@@ -3,7 +3,6 @@ package messaging
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"time"
 
@@ -351,20 +350,6 @@ func (s *CoreDataService) HandleLinesideBucketDelta(env *protocol.Envelope, d *p
 	// fine — the monitor short-circuits on unknown payload.
 	if s.thresholdMonitor != nil {
 		s.thresholdMonitor.OnBucketApplied(station, d.CoreNodeName, d.PayloadCode, d.Delta, d.Reason)
-	}
-}
-
-// HandleCountGroupAck records an edge's response to a prior CountGroupCommand.
-// One audit row per ack — combined with the transition-side row emitted by
-// countgroup_wiring.go, this gives end-to-end forensics: core saw X, edge
-// wrote Y, PLC took Z ms to ack (or timed out).
-func (s *CoreDataService) HandleCountGroupAck(env *protocol.Envelope, ack *protocol.CountGroupAck) {
-	log.Printf("core_handler: countgroup ack from=%s group=%s outcome=%s latency=%dms corr=%s",
-		env.Src.Station, ack.Group, ack.Outcome, ack.AckLatencyMs, ack.CorrelationID)
-	detail := fmt.Sprintf("group=%s outcome=%s latency_ms=%d corr=%s station=%s",
-		ack.Group, ack.Outcome, ack.AckLatencyMs, ack.CorrelationID, env.Src.Station)
-	if err := s.db.AppendAudit("countgroup_ack", 0, string(ack.Outcome), "", detail, env.Src.Station); err != nil {
-		log.Printf("core_handler: countgroup ack audit: %v", err)
 	}
 }
 

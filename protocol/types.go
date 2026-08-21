@@ -321,7 +321,6 @@ func CoreInboundSubjects() []string {
 		SubjectTagVerifyRequest,
 		SubjectCatalogPayloadsRequest,
 		SubjectOrderStatusRequest,
-		SubjectCountGroupAck,
 		SubjectBinUOPDelta,
 		SubjectLinesideBucketDelta,
 		SubjectProductionTick,
