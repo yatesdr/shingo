@@ -350,11 +350,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			changed.NodeName, changed.Action)
 		hb.RequestNodeSync()
 	})
-	if cgHandler != nil {
-		router.RegisterSubject(subjectRouter, protocol.SubjectCountGroupCommand, func(_ *protocol.Envelope, cmd *protocol.CountGroupCommand) {
-			cgHandler.OnCommand(*cmd)
-		})
-	}
 	// Item 11: SEND PARTIAL BACK pickup notification. Fires when Core's
 	// rds.Poller observes the robot finished the pickup block — Edge
 	// flushes the released bin's accumulator and clears the runtime's
@@ -408,14 +403,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			log.Printf("edge_handler: order projection %s: %v", p.OrderUUID, err)
 		}
 	})
-	// SubjectCountGroupCommand may be skipped above when cgHandler is nil
-	// (countgroup is an optional feature). The boot-time coverage assertion
-	// below is gated on the same condition so a non-countgroup edge doesn't
-	// fail to start over an unregistered optional subject.
 	for _, s := range protocol.EdgeInboundSubjects() {
-		if s == protocol.SubjectCountGroupCommand && cgHandler == nil {
-			continue
-		}
 		if !subjectRouter.Has(s) {
 			log.Fatalf("shingoedge: subject router missing handler for %s — composition root is incomplete", s)
 		}

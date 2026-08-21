@@ -48,10 +48,6 @@ func TestEveryInboundSubjectIsRegisteredAtItsCompositionRoot(t *testing.T) {
 			side:     "Edge",
 			root:     "../shingo-edge/cmd/shingoedge/main.go",
 			subjects: protocol.EdgeInboundSubjects(),
-			optional: map[string]string{
-				"SubjectCountGroupCommand": "countgroup is an optional feature; " +
-					"the boot check skips it when no handler is configured",
-			},
 		},
 	}
 

@@ -356,7 +356,6 @@ func EdgeInboundSubjects() []string {
 		SubjectEdgeRegisterRequest,
 		SubjectEdgeStale,
 		SubjectNodeStructureChanged,
-		SubjectCountGroupCommand,
 		SubjectBinPickedUp,
 		SubjectUOPAdjustment,
 		SubjectBinEpochRefresh,
