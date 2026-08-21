@@ -597,6 +597,9 @@ func (h *Handlers) render(w http.ResponseWriter, r *http.Request, name string, d
 	// service worker) serves a stale page after a rebuild — e.g. a new toolbar
 	// button that's deployed but invisible until the user clears cache.
 	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+	// Before the first write: the compression middleware reads Content-Type at
+	// WriteHeader and skips compression when it is empty. See shared.SetHTMLContentType.
+	shared.SetHTMLContentType(w)
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		log.Printf("render %s: %v", name, err)
 		http.Error(w, "template error", http.StatusInternalServerError)
@@ -615,6 +618,7 @@ func (h *Handlers) renderBare(w http.ResponseWriter, name string, data map[strin
 		http.Error(w, "template not found", http.StatusInternalServerError)
 		return
 	}
+	shared.SetHTMLContentType(w)
 	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
 		log.Printf("renderBare %s: %v", name, err)
 		http.Error(w, "template error", http.StatusInternalServerError)

@@ -544,6 +544,9 @@ func (h *Handlers) renderTemplate(w http.ResponseWriter, r *http.Request, name s
 		_, isAuth := h.sessions.getUser(r)
 		m["Authenticated"] = isAuth
 	}
+	// Before the first write: the compression middleware reads Content-Type at
+	// WriteHeader and skips compression when it is empty. See shared.SetHTMLContentType.
+	shared.SetHTMLContentType(w)
 	if err := h.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
