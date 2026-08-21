@@ -38,7 +38,6 @@ import (
 	"shingo/protocol/router"
 	"shingoedge/backup"
 	"shingoedge/config"
-	"shingoedge/countgroup"
 	"shingoedge/engine"
 	"shingoedge/messaging"
 	"shingoedge/store"
@@ -240,12 +239,7 @@ func startHTTPServer(addr string, handler http.Handler) *http.Server {
 
 // setupKafkaSubscribers wires protocol ingestor, heartbeater, and all handler
 // callbacks that require a live Kafka connection. Called only when Connect succeeds.
-//
-// cgHandler may be nil — countgroup is an optional feature. If non-nil, the
-// handler's MarkStarted() is called after the Kafka subscribe succeeds, which
-// enables the heartbeat writer (deadman). See countgroup/handler.go for the
-// `started` guard rationale.
-func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID, instanceID string, db *store.DB, cgHandler *countgroup.Handler) {
+func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID, instanceID string, db *store.DB) {
 	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager())
 	edgeHandler.DebugLog = messaging.DebugLogFunc(dbg.Func("edge_handler"))
 	dataDbg := dbg.Func("edge_handler")
@@ -277,7 +271,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// ── Subject router (Data sub-dispatch) ─────────────────────────────
 	// Every protocol.SubjectX is registered against the closure that
 	// drives the corresponding Edge subsystem (engine method, heartbeater
-	// resync trigger, countgroup command, etc). Pre-router this was done
+	// resync trigger, node structure changes, etc). Pre-router this was done
 	// via nine EdgeHandler.SetXHandler setters; the router is now the
 	// registration surface and EdgeHandler holds only order-channel
 	// state.
@@ -454,14 +448,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		log.Printf("protocol ingestor subscribe: %v", err)
 	} else {
 		log.Printf("protocol ingestor listening on %s (station=%s)", cfg.Messaging.DispatchTopic, stationID)
-		// Kafka subscription is live — flip the countgroup started flag
-		// so the heartbeat writer can begin. Before this moment the
-		// heartbeat is intentionally suppressed so the PLC deadman
-		// trips ON during the startup window (fail-safe).
-		if cgHandler != nil {
-			cgHandler.MarkStarted()
-			log.Printf("countgroup: subscription confirmed, heartbeat enabled")
-		}
 	}
 
 	// Wrap msgClient.Reconnect so a UI-triggered reconnect (operator saves
@@ -722,21 +708,6 @@ func main() {
 	uopMutator.Start()
 	defer uopMutator.Stop()
 
-	// ── Count-group handler (advanced-zone light alerts) ────────────────
-	// Constructed before Kafka connect so the heartbeat writer can start
-	// immediately (but gated by `started` until subscription confirms).
-	// Handler is nil if feature disabled / no bindings — setupKafkaSubscribers
-	// tolerates nil and simply doesn't register the handler.
-	var cgHandler *countgroup.Handler
-	var cgHeartbeat *countgroup.HeartbeatWriter
-	if len(cfg.CountGroups.Bindings) > 0 {
-		cgHandler = countgroup.New(cfg.CountGroups, eng.PLCManager(), eng.SendCountGroupAck, log.Printf)
-		cgHeartbeat = countgroup.NewHeartbeatWriter(cgHandler, log.Printf)
-		cgHeartbeat.Start()
-		defer cgHeartbeat.Stop()
-		log.Printf("countgroup: edge handler active (%d bindings)", len(cfg.CountGroups.Bindings))
-	}
-
 	// ── Kafka connect & subscribe ───────────────────────────────────────
 	//
 	// Background retry-with-backoff: if Connect fails at boot, Edge
@@ -747,7 +718,7 @@ func main() {
 	// operators can see the deaf-but-running state. Log loudly at
 	// startup so operators notice from the boot log too.
 	if msgClient.IsConnected() {
-		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db, cgHandler)
+		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db)
 	} else {
 		log.Printf("WARNING messaging not connected at boot — Edge will run deaf to inbound (orders, demand, stale) until Kafka is reachable. Outbox drainer is active and will flush when connected.")
 		goSafe("kafka-connect-retry", func() {
@@ -765,7 +736,7 @@ func main() {
 					continue
 				}
 				log.Printf("kafka connect succeeded — wiring subscribers")
-				setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db, cgHandler)
+				setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db)
 				return
 			}
 		})
