@@ -181,7 +181,6 @@ type EngineOrchestration interface {
 	ReconfigureDatabase()
 	ReconfigureFleet()
 	ReconfigureMessaging()
-	ReconfigureCountGroups()
 	ReconfigureNotifications()
 }
 

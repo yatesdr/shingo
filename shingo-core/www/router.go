@@ -26,7 +26,7 @@ import (
 //     handlers and read-only state queries use this. Calling
 //     orchestration verbs through h.engine fails to compile because
 //     those methods are not on ServiceAccess.
-//   - h.orchestration (EngineOrchestration) — wide surface adding 14
+//   - h.orchestration (EngineOrchestration) — wide surface adding 13
 //     verbs (corrections, direct orders, scene sync, cross-edge
 //     messaging, live reconfig). Embeds ServiceAccess so it can also
 //     reach service accessors and state queries.
@@ -165,7 +165,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Get("/material-flags", h.handleMaterialFlags)
 		r.Get("/missions", h.handleMissions)
 		r.Get("/missions/{orderID}", h.handleMissionDetail)
-		r.Get("/traffic", h.handleTraffic)
 		// Wall displays: the per-instance display for a floor monitor
 		// (public, no nav). Framed by default so a person clicking from the
 		// hub keeps Core's chrome; ?kiosk=1 is the chromeless page a monitor
@@ -338,8 +337,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/bins/available", h.apiListAvailableBins)
 			r.Get("/bins/detail", h.apiBinDetail)
 
-			// Traffic (count groups)
-			r.Get("/traffic/groups", h.apiTrafficGroups)
 
 			// Telemetry
 			r.Get("/telemetry/node-bins", h.apiTelemetryNodeBins)
@@ -558,10 +555,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			// to match POST /api/edges/rename, which the page calls.
 			r.Get("/edges", h.handleEdgesAdmin)
 
-			// Traffic (count group CRUD)
-			r.Post("/traffic/save", h.handleTrafficSave)
-			r.Post("/traffic/add", h.handleTrafficAdd)
-			r.Post("/traffic/delete", h.handleTrafficDelete)
 
 			// Node CRUD
 			r.Post("/nodes/create", h.handleNodeCreate)

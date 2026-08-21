@@ -207,7 +207,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Group(func(r chi.Router) {
 			r.Use(h.adminMiddleware)
 			r.Get("/config", h.handleConfig)
-			r.Get("/traffic", h.handleTraffic)
 			r.Get("/processes", h.handleProcesses)
 			r.Get("/manual-order", h.handleManualOrder)
 			r.Get("/manual-message", h.handleManualMessage)
@@ -393,11 +392,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Get("/shifts", h.apiListShifts)
 				r.Put("/shifts", h.apiSaveShifts)
 
-				// Traffic (count-group bindings)
-				r.Get("/traffic/bindings", h.apiTrafficBindings)
-				r.Put("/traffic/heartbeat", h.apiTrafficSaveHeartbeat)
-				r.Post("/traffic/bindings", h.apiTrafficAddBinding)
-				r.Post("/traffic/bindings/delete", h.apiTrafficDeleteBinding)
 
 				// Config & backups
 				r.Put("/config/core-api", h.apiUpdateCoreAPI)

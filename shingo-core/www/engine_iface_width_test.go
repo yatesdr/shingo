@@ -162,7 +162,6 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"PartsService",
 		"PayloadService",
 		"Reconciliation",
-		"ReconfigureCountGroups",
 		"ReconfigureDatabase",
 		"ReconfigureFleet",
 		"ReconfigureMessaging",

@@ -15,10 +15,9 @@
 // The IIFE wrap that used to populate `var ShingoEdge = {}` was
 // dropped in SPRINT 4. Helpers are now top-level `export function` /
 // `export const` declarations; the trailing `window.ShingoEdge = { … }`
-// block exists only for the two remaining non-module consumers:
-//   - traffic.html inline <script> reads ShingoEdge.api / ShingoEdge.toast
+// block exists only for the one remaining non-module consumer:
 //   - operator-station/operator.js reads window.ShingoEdge.createSSE
-// Migrate those to module imports and the window-bridge can go.
+// Migrate it to module imports and the window-bridge can go.
 
 import {
     installBackdropClose,
@@ -454,11 +453,10 @@ export function navigateToProcessOrOrders(el) {
 export { delegateActions } from '/static/shared/utils.js';
 
 // --- window.ShingoEdge for non-module consumers ---
-// Two remaining non-module consumers still reach for these as bare
+// One remaining non-module consumer still reaches for these as bare
 // globals on the window:
-//   - traffic.html: inline <script> uses ShingoEdge.api / .toast
 //   - operator-station/operator.js: uses window.ShingoEdge.createSSE
-// When those two are migrated to module imports, this block (and the
+// When it is migrated to module imports, this block (and the
 // IIFE-era comment block at the top) can be deleted outright.
 window.ShingoEdge = {
     escapeHtml: escapeHtml,
