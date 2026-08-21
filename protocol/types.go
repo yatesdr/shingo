@@ -375,19 +375,6 @@ func AllSubjects() []string {
 	return out
 }
 
-// AckOutcome is the typed outcome of a CountGroupAck. Wraps string for
-// SQL/JSON-native serialization while gaining compile-time distinction
-// from raw strings and other enum-shaped types in this package.
-type AckOutcome string
-
-// CountGroupAck.Outcome values.
-// Use these constants instead of string literals at every call site.
-const (
-	AckOutcomeAcked      AckOutcome = "acked"         // PLC ladder cleared the request tag.
-	AckOutcomeTimeout    AckOutcome = "ack_timeout"   // PLC did not clear within ack_dead; edge abandoned the request.
-	AckOutcomeWarlinkErr AckOutcome = "warlink_error" // WarLink read or write failed.
-)
-
 // Roles for Address.Role.
 const (
 	RoleEdge = "edge"

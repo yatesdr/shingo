@@ -8,7 +8,7 @@ import (
 
 // BinStatus is the typed canonical bin status. Wraps string so it serializes
 // natively over JSON / SQL while gaining compile-time distinction from raw
-// strings and other enum-shaped string types (order Status, AckOutcome, etc.).
+// strings and other enum-shaped string types (order Status, etc.).
 //
 // Mirrors the protocol.Status pattern (shingo/protocol/status.go) — same
 // Scanner/Valuer shape, same advisory CanTransitionTo / IsTerminal helpers

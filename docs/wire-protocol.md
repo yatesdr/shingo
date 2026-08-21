@@ -268,15 +268,13 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `inventory.bin_uop_delta` | Edge -> Core | `BinUOPDelta` | A bin's UoP moved |
 | `inventory.lineside_bucket_delta` | Edge -> Core | `LinesideBucketDelta` | A lineside bucket's count moved |
 | `production.downtime` | Edge -> Core | `DowntimeEvent` | A persisted downtime start or end |
-| `countgroup.command` | Core -> Edge | `CountGroupCommand` | Requested light state for an advanced zone |
-| `countgroup.ack` | Edge -> Core | `CountGroupAck` | PLC ack outcome for a prior command |
 
-The seventeen rows above `edge.register` carry full schemas below. The seventeen
-added here do not — the Go structs in `protocol/payloads.go` are the reference
+The sixteen rows with linked schemas carry full field tables below. The fourteen
+added after them do not — the Go structs in `protocol/payloads.go` are the reference
 for their fields.
 
 All of them were absent from this document until 2026-08-17, having accumulated
-across the supply-refusal, count-group, demand-origin and inventory work.
+across the supply-refusal, demand-origin and inventory work.
 `supply.refusal` / `supply.refusal_state` are the whole supply-refusal channel
 that shipped 2026-07-30.
 
