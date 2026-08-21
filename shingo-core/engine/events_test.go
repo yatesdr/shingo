@@ -69,7 +69,6 @@ func TestEventTypes_AllDistinctAndNonZero(t *testing.T) {
 // events.go in one pass, with per-type assertions.
 func TestEventPayloads_RoundTripAllShapes(t *testing.T) {
 	t.Parallel()
-	now := time.Now()
 	cases := []struct {
 		name    string
 		evtType EventType

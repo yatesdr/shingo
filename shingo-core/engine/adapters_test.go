@@ -5,7 +5,6 @@ package engine
 import (
 	"sync"
 	"testing"
-	"time"
 
 	"shingo/protocol/testutil"
 	"shingocore/fleet"
