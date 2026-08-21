@@ -392,7 +392,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Get("/shifts", h.apiListShifts)
 				r.Put("/shifts", h.apiSaveShifts)
 
-
 				// Config & backups
 				r.Put("/config/core-api", h.apiUpdateCoreAPI)
 				r.Post("/config/core-api/test", h.apiTestCoreAPI)

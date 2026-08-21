@@ -46,13 +46,13 @@ type Config struct {
 
 	Timezone string `yaml:"timezone"` // IANA timezone for shift/hourly bucketing (e.g. "America/Chicago")
 
-	CoreAPI     string            `yaml:"core_api"` // Core HTTP base URL (e.g. "http://192.168.1.10:8080")
-	WarLink     WarLinkConfig     `yaml:"warlink"`
-	Web         WebConfig         `yaml:"web"`
-	Messaging   MessagingConfig   `yaml:"messaging"`
-	Counter     CounterConfig     `yaml:"counter"`
-	Backup      BackupConfig      `yaml:"backup"`
-	Sim         SimConfig         `yaml:"sim"`
+	CoreAPI   string          `yaml:"core_api"` // Core HTTP base URL (e.g. "http://192.168.1.10:8080")
+	WarLink   WarLinkConfig   `yaml:"warlink"`
+	Web       WebConfig       `yaml:"web"`
+	Messaging MessagingConfig `yaml:"messaging"`
+	Counter   CounterConfig   `yaml:"counter"`
+	Backup    BackupConfig    `yaml:"backup"`
+	Sim       SimConfig       `yaml:"sim"`
 
 	// LoadersMultiWindow — DEPRECATED. The setting moved onto the loader itself:
 	// Core's bin_loaders.funnel_windows, synced down and read by

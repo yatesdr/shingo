@@ -337,7 +337,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/bins/available", h.apiListAvailableBins)
 			r.Get("/bins/detail", h.apiBinDetail)
 
-
 			// Telemetry
 			r.Get("/telemetry/node-bins", h.apiTelemetryNodeBins)
 			r.Get("/telemetry/uop-state", h.apiTelemetryUOPState)
@@ -554,7 +553,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			// Stations — enrolled edges and the display-name rename. Auth-gated
 			// to match POST /api/edges/rename, which the page calls.
 			r.Get("/edges", h.handleEdgesAdmin)
-
 
 			// Node CRUD
 			r.Post("/nodes/create", h.handleNodeCreate)
