@@ -17,7 +17,6 @@ type Config struct {
 	Web           WebConfig           `yaml:"web"`
 	Messaging     MessagingConfig     `yaml:"messaging"`
 	Staging       StagingConfig       `yaml:"staging"`
-	CountGroups   CountGroupsConfig   `yaml:"count_groups"`
 	FireAlarm     FireAlarmConfig     `yaml:"fire_alarm"`
 	Notifications NotificationsConfig `yaml:"notifications"`
 	Sim           SimConfig           `yaml:"sim"`
@@ -124,9 +123,11 @@ type FutilityConfig struct {
 // LoggingConfig gates what reaches stderr — under systemd, journald.
 //
 // debuglog mirrors every dbg() call to stderr. That mirror was unconditional
-// until 2026-07-25, which put Springfield's journal at 633,129 lines/day (53%
-// of it the two countgroup poll lines at a 500ms tick) and collapsed journald
-// retention to ~15 days — shorter than the incidents being investigated.
+// until 2026-07-25, which put Springfield's journal at 633,129 lines/day and
+// collapsed journald retention to ~15 days — shorter than the incidents being
+// investigated. Over half of that volume was a 500ms poll loop that has since
+// been retired outright, but the allow-list is what keeps the next one from
+// costing the same.
 //
 // The ring buffer and the browser log UI are NOT gated by this. A muted
 // subsystem is still fully readable in the UI; only the journal is quieter.
@@ -150,12 +151,12 @@ type LoggingConfig struct {
 }
 
 // DefaultStderrSubsystems is the allow-list applied when logging config is
-// absent: everything except the two poll loops. countgroup (334,361 lines/day)
-// and rds (125,817) are 75% of the journal between them and neither carries a
-// signal that is not also in the ring buffer.
+// absent: everything except the rds poll loop, which was 125,817 lines/day at
+// Springfield and carries no signal that is not also in the ring buffer.
 //
-// Muting countgroup's logging is NOT disabling countgroup. The interlock
-// returns 1-2 robots 6,265 times a day and stays enabled; see rds/robots.go.
+// Muting a subsystem's logging is NOT disabling it. The poller runs exactly as
+// it did; only the journal is quieter, and the browser log UI still shows
+// every subsystem.
 func DefaultStderrSubsystems() []string {
 	return []string{"dispatch", "engine", "core_handler", "kafka", "outbox", "protocol"}
 }
@@ -190,25 +191,6 @@ type ReplenishmentConfig struct {
 	// Unknown values fall back to "edge_reports" with a warning. Either way the
 	// ledger-vs-edge disagreement audit line is logged permanently.
 	LinesideDecisionMode string `yaml:"lineside_decision_mode"`
-}
-
-// CountGroupsConfig configures the advanced-zone polling feature.
-// Empty Groups slice ⇒ feature disabled.
-// All fields are overridable per-deployment via shingocore.yaml.
-type CountGroupsConfig struct {
-	PollInterval       time.Duration      `yaml:"poll_interval"`
-	RDSTimeout         time.Duration      `yaml:"rds_timeout"`
-	OnThreshold        int                `yaml:"on_threshold"`
-	OffThreshold       int                `yaml:"off_threshold"`
-	FailSafeTimeout    time.Duration      `yaml:"fail_safe_timeout"`
-	NeverOccupiedWarn  time.Duration      `yaml:"never_occupied_warn"`
-	NeverOccupiedError time.Duration      `yaml:"never_occupied_error"`
-	Groups             []CountGroupConfig `yaml:"groups"`
-}
-
-type CountGroupConfig struct {
-	Name    string `yaml:"name"`
-	Enabled bool   `yaml:"enabled"`
 }
 
 type FireAlarmConfig struct {
@@ -530,15 +512,6 @@ func Defaults() *Config {
 			OutboxDrainInterval: 5 * time.Second,
 			StationID:           "core",
 			StaleEdgeThreshold:  15 * time.Minute,
-		},
-		CountGroups: CountGroupsConfig{
-			PollInterval:       500 * time.Millisecond,
-			RDSTimeout:         400 * time.Millisecond,
-			OnThreshold:        2,
-			OffThreshold:       3,
-			FailSafeTimeout:    5 * time.Second,
-			NeverOccupiedWarn:  5 * time.Minute,
-			NeverOccupiedError: 30 * time.Minute,
 		},
 		Notifications: NotificationsConfig{
 			Enabled:         false,

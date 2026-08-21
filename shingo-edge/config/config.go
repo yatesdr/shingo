@@ -52,7 +52,6 @@ type Config struct {
 	Messaging   MessagingConfig   `yaml:"messaging"`
 	Counter     CounterConfig     `yaml:"counter"`
 	Backup      BackupConfig      `yaml:"backup"`
-	CountGroups CountGroupsConfig `yaml:"count_groups"`
 	Sim         SimConfig         `yaml:"sim"`
 
 	// LoadersMultiWindow — DEPRECATED. The setting moved onto the loader itself:
@@ -167,29 +166,6 @@ func (c *Config) HysteresisMargin(reorderPoint int) int {
 		return MinHysteresisUOP
 	}
 	return margin
-}
-
-// CountGroupsConfig holds the edge side of the advanced-zone light feature.
-// Unresolved bindings produce a startup WARN but don't block the handler —
-// commands for unbound groups log and return.
-//
-// Heartbeat is a single shared tag; all configured bindings must live on
-// HeartbeatPLC for v1. Multi-PLC support is a v2 candidate.
-type CountGroupsConfig struct {
-	HeartbeatInterval time.Duration      `yaml:"heartbeat_interval"`
-	HeartbeatTag      string             `yaml:"heartbeat_tag"`
-	HeartbeatPLC      string             `yaml:"heartbeat_plc"`
-	AckWarn           time.Duration      `yaml:"ack_warn"`
-	AckDead           time.Duration      `yaml:"ack_dead"`
-	Codes             map[string]int     `yaml:"codes"`    // desired state -> DINT action code
-	Bindings          map[string]Binding `yaml:"bindings"` // group name -> plc+request_tag
-}
-
-// Binding resolves a group name (used by core) to the PLC + tag pair
-// WarLink talks to.
-type Binding struct {
-	PLC        string `yaml:"plc"`
-	RequestTag string `yaml:"request_tag"`
 }
 
 // WarLinkConfig defines the WarLink connection.
@@ -413,16 +389,6 @@ func Defaults() *Config {
 				Region:       "us-east-1",
 				UsePathStyle: true,
 			},
-		},
-		CountGroups: CountGroupsConfig{
-			HeartbeatInterval: 1 * time.Second,
-			AckWarn:           2 * time.Second,
-			AckDead:           10 * time.Second,
-			Codes: map[string]int{
-				"on":  1,
-				"off": 2,
-			},
-			Bindings: map[string]Binding{},
 		},
 		Sim: SimConfig{
 			// Enabled false by default. Sim operator timings default here so a dev

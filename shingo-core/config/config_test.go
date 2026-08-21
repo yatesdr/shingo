@@ -46,9 +46,6 @@ func TestDefaults_NonNil(t *testing.T) {
 	if len(c.Messaging.Kafka.Brokers) != 1 || c.Messaging.Kafka.Brokers[0] != "localhost:9092" {
 		t.Errorf("Messaging.Kafka.Brokers = %v, want [localhost:9092]", c.Messaging.Kafka.Brokers)
 	}
-	if c.CountGroups.OnThreshold != 2 {
-		t.Errorf("CountGroups.OnThreshold = %d, want 2", c.CountGroups.OnThreshold)
-	}
 }
 
 func TestSaveAndLoad_Roundtrip(t *testing.T) {

@@ -33,12 +33,10 @@ func TestStderrSubsystems_AbsentUsesDefaults(t *testing.T) {
 	if !reflect.DeepEqual(got, DefaultStderrSubsystems()) {
 		t.Fatalf("absent key should fall back to defaults, got %v", got)
 	}
-	// countgroup and rds are 75% of the journal between them (334,361 and
-	// 125,817 lines/day at Springfield). Both stay off by default.
-	for _, muted := range []string{"countgroup", "rds"} {
-		if slices.Contains(got, muted) {
-			t.Fatalf("%q must be off the default allow-list, got %v", muted, got)
-		}
+	// rds is the remaining poll loop — 125,817 lines/day at Springfield.
+	// It stays off by default.
+	if slices.Contains(got, "rds") {
+		t.Fatalf("%q must be off the default allow-list, got %v", "rds", got)
 	}
 }
 

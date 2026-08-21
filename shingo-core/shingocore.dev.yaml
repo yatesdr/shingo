@@ -32,8 +32,8 @@ messaging:
   outbox_drain_interval: 500ms
   station_id: core
 
-# rds / count_groups / fire_alarm intentionally omitted — sim mode skips the RDS
-# adapter and the count-group runner (T1.1). Defaults apply for anything else.
+# rds / fire_alarm intentionally omitted — sim mode skips the RDS adapter
+# (T1.1). Defaults apply for anything else.
 
 # Staging / reconciliation cadence. The sim has no human operator to confirm a
 # produce/consume delivery, so `delivered` orders rely on the reconciliation
