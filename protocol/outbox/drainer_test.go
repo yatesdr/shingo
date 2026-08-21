@@ -18,6 +18,7 @@ type mockStore struct {
 	exhausted []exhaustedRow
 	purged    bool
 	listErr   error
+	listCalls int // drain passes observed; a drain always lists first
 }
 
 type exhaustedRow struct {
@@ -28,6 +29,7 @@ type exhaustedRow struct {
 func (m *mockStore) ListPendingOutbox(limit int) ([]Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.listCalls++
 	if m.listErr != nil {
 		return nil, m.listErr
 	}

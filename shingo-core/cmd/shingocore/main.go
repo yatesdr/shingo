@@ -42,6 +42,7 @@ import (
 	"shingocore/messaging/middleware"
 	"shingocore/service"
 	"shingocore/store"
+	storemessaging "shingocore/store/messaging"
 	"shingocore/store/robotconfidence"
 	"shingocore/www"
 )
@@ -450,6 +451,11 @@ func main() {
 	// ── Outbox drainer (outbound to ShinGo Edge) ───────────────────────
 	drainer := messaging.NewOutboxDrainer(db, msgClient, cfg.Messaging.OutboxDrainInterval)
 	drainer.DebugLog = dbg.Func("outbox")
+	// Ring the drainer on enqueue so a message does not wait out the tick for
+	// its first send attempt. The interval keeps its other job — the retry and
+	// purge cadence — unchanged.
+	storemessaging.SetEnqueueNotifier(drainer.Notify)
+	defer storemessaging.SetEnqueueNotifier(nil)
 	drainer.Start()
 	defer drainer.Stop()
 

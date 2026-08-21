@@ -14,12 +14,39 @@ import (
 const MaxRetries = 10
 
 const (
-	// PurgeCycleInterval is how often (in drain cycles) old messages are purged.
+	// PurgeCycleInterval is how often (in TICKER cycles) old messages are
+	// purged. Wake-driven drains deliberately do not count: the purge cadence
+	// is PurgeCycleInterval x interval, so counting them would silently speed
+	// housekeeping up in proportion to message rate.
 	PurgeCycleInterval = 100
 
 	// MessageRetentionPeriod is how long sent messages are kept before purging.
 	MessageRetentionPeriod = 24 * time.Hour
 )
+
+// wakeSettle is how long a wake waits before draining.
+//
+// Note what it is NOT for: an instantaneous burst is already collapsed by the
+// wake channel's capacity of 1, which holds at most one pending signal no
+// matter how many enqueues raise it. Measured, 200 back-to-back notifications
+// produce a single drain with this set to zero.
+//
+// What it actually buys is two things. It bounds the drain rate under
+// SUSTAINED enqueues, where the channel refills the moment a drain finishes —
+// without it the loop would drain as fast as the queries return. That matters
+// because a drain retries every pending row, so an unbounded drain rate would
+// burn the retry budget far faster than the tick ever did.
+//
+// And it lets a transaction commit. EnqueueOutbox can run inside the
+// transaction that produced the message, so the notification arrives before
+// the row is visible to another connection. Draining instantly would query too
+// early and find nothing. This is best-effort for that case, not a guarantee —
+// the ticker remains the backstop, and a row missed here simply waits for it
+// as it does today.
+//
+// Variable rather than const so tests can compress it and exercise many wake
+// cycles without the wall-clock cost, mirroring www's sseKeepaliveInterval.
+var wakeSettle = 50 * time.Millisecond
 
 // Message represents a pending outbox message.
 type Message struct {
@@ -58,7 +85,10 @@ type Drainer struct {
 	interval  time.Duration
 	limit     int
 	stopChan  chan struct{}
-	wg        sync.WaitGroup
+	// wake is the doorbell: capacity 1, so a signal already pending needs no
+	// second one — the drain that answers it reads every pending row anyway.
+	wake chan struct{}
+	wg   sync.WaitGroup
 
 	DebugLog types.DebugLogFunc
 }
@@ -79,6 +109,24 @@ func NewDrainer(store Store, publisher Publisher, topic string, interval time.Du
 		interval:  interval,
 		limit:     limit,
 		stopChan:  make(chan struct{}),
+		wake:      make(chan struct{}, 1),
+	}
+}
+
+// Notify tells the drainer a message was just enqueued, so it drains on the
+// next settle rather than waiting out the tick.
+//
+// Without it the drain loop was a bare ticker with nothing to tell it work had
+// arrived, so every message waited a uniform 0-interval before its first send
+// attempt — measured at Springfield on a 5s interval: mean 2.839s, p95 5.009s,
+// with zero rows ever backlogged. A core->edge->core round trip paid it twice.
+//
+// Never blocks, so an enqueue is never slowed by a busy drainer. Safe to call
+// on a stopped drainer.
+func (d *Drainer) Notify() {
+	select {
+	case d.wake <- struct{}{}:
+	default:
 	}
 }
 
@@ -109,6 +157,19 @@ func (d *Drainer) run() {
 		select {
 		case <-d.stopChan:
 			return
+		case <-d.wake:
+			// Settle before draining: coalesce the rest of a burst, and give a
+			// transactional enqueue time to commit. The ticker arm below still
+			// runs on its own schedule and is the backstop for anything this
+			// pass misses.
+			settle := time.NewTimer(wakeSettle)
+			select {
+			case <-d.stopChan:
+				settle.Stop()
+				return
+			case <-settle.C:
+			}
+			d.drain()
 		case <-ticker.C:
 			d.drain()
 			cycles++

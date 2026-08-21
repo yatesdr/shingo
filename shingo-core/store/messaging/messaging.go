@@ -10,6 +10,7 @@ package messaging
 
 import (
 	"database/sql"
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol/outbox"
@@ -40,7 +41,35 @@ type OutboxMessage struct {
 func EnqueueOutbox(ex Execer, topic string, payload []byte, eventType, stationID string) error {
 	_, err := ex.Exec(`INSERT INTO outbox (topic, payload, msg_type, station_id) VALUES ($1, $2, $3, $4)`,
 		topic, payload, eventType, stationID)
-	return err
+	if err != nil {
+		return err
+	}
+	notifyEnqueued()
+	return nil
+}
+
+// enqueueNotifier is the drainer's doorbell, set once at wiring time.
+//
+// It lives here rather than on DB because this is the only INSERT into outbox,
+// and it is reached two ways: through DB.EnqueueOutbox for an ordinary send,
+// and directly with a transaction for a message that must live or die with the
+// work that caused it. A hook on DB would miss the second.
+var enqueueNotifier atomic.Pointer[func()]
+
+// SetEnqueueNotifier registers fn to run after each successful enqueue. Passing
+// nil clears it. Wired in cmd/shingocore to the drainer's Notify.
+func SetEnqueueNotifier(fn func()) {
+	if fn == nil {
+		enqueueNotifier.Store(nil)
+		return
+	}
+	enqueueNotifier.Store(&fn)
+}
+
+func notifyEnqueued() {
+	if p := enqueueNotifier.Load(); p != nil {
+		(*p)()
+	}
 }
 
 // ListPendingOutbox returns unsent rows whose retries are below the cap.

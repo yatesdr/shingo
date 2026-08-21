@@ -42,6 +42,7 @@ import (
 	"shingoedge/messaging"
 	"shingoedge/store"
 	"shingoedge/store/counters"
+	storemessaging "shingoedge/store/messaging"
 	"shingoedge/uop"
 	"shingoedge/www"
 )
@@ -679,6 +680,11 @@ func main() {
 	// Outbox drainer — runs unconditionally, drains when connected
 	drainer := messaging.NewOutboxDrainer(db, msgClient, &cfg.Messaging)
 	drainer.DebugLog = messaging.DebugLogFunc(dbg.Func("outbox"))
+	// Ring the drainer on enqueue so a message does not wait out the tick for
+	// its first send attempt. The interval keeps its other job — the retry and
+	// purge cadence — unchanged.
+	storemessaging.SetEnqueueNotifier(drainer.Notify)
+	defer storemessaging.SetEnqueueNotifier(nil)
 	drainer.Start()
 	defer drainer.Stop()
 

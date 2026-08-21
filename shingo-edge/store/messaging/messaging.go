@@ -12,6 +12,7 @@ package messaging
 
 import (
 	"database/sql"
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol/outbox"
@@ -39,7 +40,28 @@ func Enqueue(db *sql.DB, payload []byte, msgType string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	notifyEnqueued()
 	return res.LastInsertId()
+}
+
+// enqueueNotifier is the drainer's doorbell, set once at wiring time. It lives
+// here rather than on DB because this is the only INSERT into outbox.
+var enqueueNotifier atomic.Pointer[func()]
+
+// SetEnqueueNotifier registers fn to run after each successful enqueue. Passing
+// nil clears it. Wired in cmd/shingoedge to the drainer's Notify.
+func SetEnqueueNotifier(fn func()) {
+	if fn == nil {
+		enqueueNotifier.Store(nil)
+		return
+	}
+	enqueueNotifier.Store(&fn)
+}
+
+func notifyEnqueued() {
+	if p := enqueueNotifier.Load(); p != nil {
+		(*p)()
+	}
 }
 
 // ListUnsentByType returns every un-sent outbox message matching one of
