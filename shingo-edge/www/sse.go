@@ -31,9 +31,43 @@ var serverInstance = fmt.Sprintf("%x", time.Now().UnixNano())
 // path without a 30-second wait.
 var sseKeepaliveInterval = 30 * time.Second
 
+// lossySSETopics names the high-rate diagnostic feeds. They are delivered
+// best-effort on a separate queue so a burst of them can never consume the
+// capacity reserved for state changes.
+//
+// Before the split every topic shared one 64-slot queue and the fan-out
+// dropped whatever arrived once it was full. These two are the bulk of the
+// traffic, so what they evicted was everything else — including order-update,
+// which the operator board is edge-triggered on and never polls as a backstop.
+// Losing a frame here costs a gap in a diagnostic view; losing one there
+// leaves the board silently stale.
+//
+// Both are safe to shed because neither is authoritative:
+//   - counter-read is the raw PLC poll reading. The count the HMI acts on
+//     arrives as counter-update (EventCounterDelta / EventUOPAdjusted), which
+//     stays on the durable queue.
+//   - debug-log is the debug-console feed, wired from dbg.SetOnEntry in
+//     router.go. Every debug line is broadcast to every client, so with
+//     --log-debug on (as it is at Springfield and Hopkinsville) it is pure
+//     volume — logging should not be able to degrade the operator UI.
+//
+// Do NOT add a state change here to quieten a drop log. Anything the operator
+// or the engine acts on belongs on the durable queue, including the per-PLC
+// plc-status and the plc-health-alert / plc-health-recover pair.
+var lossySSETopics = map[string]bool{
+	"counter-read": true,
+	"debug-log":    true,
+}
+
 type sseClient struct {
+	// events carries state changes. Nothing lossy is written here, so its
+	// capacity is reserved for frames whose loss is observable.
 	events chan SSEEvent
-	drops  int // consecutive event drops; eviction trigger.
+	// lossy carries lossySSETopics, best-effort. Shallower than events on
+	// purpose: a client this far behind on diagnostics gains nothing from a
+	// deeper backlog of them.
+	lossy chan SSEEvent
+	drops int // consecutive DURABLE drops; eviction trigger.
 }
 
 // MaxSSEClients caps concurrent SSE connections to prevent a
@@ -106,6 +140,7 @@ func (h *EventHub) unregister(c *sseClient) {
 	}
 	delete(h.clients, c)
 	close(c.events)
+	close(c.lossy)
 }
 
 func (h *EventHub) run() {
@@ -130,7 +165,19 @@ func (h *EventHub) run() {
 			// upgrade-during-iterate races on h.clients).
 			h.mu.RLock()
 			var stuck []*sseClient
+			lossy := lossySSETopics[evt.Type]
 			for c := range h.clients {
+				if lossy {
+					// Best-effort, and deliberately not logged: these are the
+					// bulk of the traffic, so a line per drop is itself noise.
+					// They also do not count toward eviction — falling behind
+					// on diagnostics is not the same as being stuck.
+					select {
+					case c.lossy <- evt:
+					default:
+					}
+					continue
+				}
 				select {
 				case c.events <- evt:
 					c.drops = 0
@@ -174,7 +221,10 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	client := &sseClient{events: make(chan SSEEvent, 64)}
+	client := &sseClient{
+		events: make(chan SSEEvent, 64),
+		lossy:  make(chan SSEEvent, 16),
+	}
 	h.register(client)
 	defer h.unregister(client)
 
@@ -193,6 +243,20 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 		case <-h.stopChan:
 			return
 		case evt, ok := <-client.events:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(evt.Data)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Type, data)
+			flusher.Flush()
+		case evt, ok := <-client.lossy:
+			// Diagnostics. Ordering against the durable stream is not
+			// preserved across the two queues, which is fine: each event type
+			// is handled by its own client-side listener, and ordering WITHIN
+			// a type still holds.
 			if !ok {
 				return
 			}

@@ -28,15 +28,57 @@ type SSEEvent struct {
 	Data  string
 }
 
+// coalescingSSETopics names the events whose payload is a COMPLETE snapshot,
+// so a newer frame wholly supersedes an older one and only the newest needs
+// to reach the client.
+//
+// These arrive far more often than everything else combined (robot-update is
+// ~97% of all frames), and before the split they shared one fixed-size queue
+// with the state-change events. A client that fell behind therefore lost
+// whatever happened to arrive next — including order-update, which the orders
+// board is edge-triggered on (hx-trigger sse:order-update). A dropped
+// order-update leaves that board silently stale, with no retry and no signal:
+// telemetry nobody would miss was evicting the frames the operator acts on.
+//
+// Only add a topic here when a newer frame makes the older one worthless.
+// Per-entity events do NOT qualify even when they are frequent: coalescing
+// keys on the event name alone, so a per-entity topic would let one entity's
+// frame discard another's. That is why plc-status (keyed by plcName) and
+// system-status stay durable.
+var coalescingSSETopics = map[string]bool{
+	// RobotsUpdatedEvent carries every robot's full state (position, battery,
+	// blocked, error). The next poll re-sends all of it, so a superseded frame
+	// has no value.
+	"robot-update": true,
+}
+
+// sseClient is one subscriber. It holds two independent queues so a burst on
+// one class can never consume the other's capacity.
+type sseClient struct {
+	// durable carries state changes. Nothing coalescing is written here, so
+	// its capacity is reserved for frames whose loss is observable.
+	durable chan SSEEvent
+	// topics is the client's event-name filter; nil means "all events".
+	topics map[string]bool
+
+	mu sync.Mutex
+	// coalesced holds the newest pending frame per coalescing topic. Writing
+	// an entry that already exists overwrites it, which is the coalescing.
+	coalesced map[string]SSEEvent
+	// wake has capacity 1 and signals "coalesced is non-empty". A signal
+	// already pending needs no second one — the reader drains the whole map.
+	wake chan struct{}
+}
+
 type EventHub struct {
 	mu sync.RWMutex
-	// clients maps each subscriber channel to its topic filter: a set of
-	// event names the client wants. A nil set means "all events" (the
-	// legacy, unfiltered behavior). Topic filtering lets the dashboard SSE
-	// bus (shared/utils.js onSSE) request only the event types a tab
-	// subscribed to via /events?topics=… so a /missions admin tab never
-	// receives the per-pulse cell-heartbeat firehose (plan §6).
-	clients   map[chan SSEEvent]map[string]bool
+	// clients holds every subscriber. Each carries its own topic filter: a
+	// set of event names the client wants, nil meaning "all events". Topic
+	// filtering lets the dashboard SSE bus (shared/utils.js onSSE) request
+	// only the event types a tab subscribed to via /events?topics=… so a
+	// /missions admin tab never receives the per-pulse cell-heartbeat
+	// firehose (plan §6).
+	clients   map[*sseClient]struct{}
 	broadcast chan SSEEvent
 	stopChan  chan struct{}
 	stopOnce  sync.Once
@@ -44,7 +86,7 @@ type EventHub struct {
 
 func NewEventHub() *EventHub {
 	return &EventHub{
-		clients:   make(map[chan SSEEvent]map[string]bool),
+		clients:   make(map[*sseClient]struct{}),
 		broadcast: make(chan SSEEvent, 256),
 		stopChan:  make(chan struct{}),
 	}
@@ -64,14 +106,22 @@ func (h *EventHub) run() {
 		case <-h.stopChan:
 			return
 		case evt := <-h.broadcast:
+			coalescing := coalescingSSETopics[evt.Event]
 			h.mu.RLock()
-			for ch, topics := range h.clients {
-				if topics != nil && !topics[evt.Event] {
+			for c := range h.clients {
+				if c.topics != nil && !c.topics[evt.Event] {
 					continue // client filtered this event type out
 				}
+				if coalescing {
+					c.offerCoalesced(evt)
+					continue
+				}
 				select {
-				case ch <- evt:
+				case c.durable <- evt:
 				default:
+					// The durable queue is full of state changes the client
+					// has not read. Nothing coalescing can land here, so this
+					// is genuine backpressure rather than telemetry crowding.
 					log.Printf("sse: dropped %s event for slow client", evt.Event)
 				}
 			}
@@ -88,8 +138,37 @@ func (h *EventHub) Broadcast(event, data string) {
 	}
 }
 
+// offerCoalesced stores evt as the newest pending frame for its topic,
+// replacing any earlier one, and signals the reader. It never blocks and
+// never drops: a superseded snapshot is not a loss, and an unread signal
+// already covers whatever else is waiting in the map.
+func (c *sseClient) offerCoalesced(evt SSEEvent) {
+	c.mu.Lock()
+	c.coalesced[evt.Event] = evt
+	c.mu.Unlock()
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
+}
+
+// takeCoalesced removes and returns every pending coalesced frame.
+func (c *sseClient) takeCoalesced() []SSEEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.coalesced) == 0 {
+		return nil
+	}
+	out := make([]SSEEvent, 0, len(c.coalesced))
+	for _, evt := range c.coalesced {
+		out = append(out, evt)
+	}
+	clear(c.coalesced)
+	return out
+}
+
 // AddClient registers an unfiltered subscriber that receives every event.
-func (h *EventHub) AddClient() chan SSEEvent {
+func (h *EventHub) AddClient() *sseClient {
 	return h.AddClientFiltered(nil)
 }
 
@@ -97,8 +176,7 @@ func (h *EventHub) AddClient() chan SSEEvent {
 // event types. An empty/nil topics slice means "all events" (same as
 // AddClient). Blank entries are ignored. The always-on connected/heartbeat
 // frames are written directly by SSEHandler and are never filtered here.
-func (h *EventHub) AddClientFiltered(topics []string) chan SSEEvent {
-	ch := make(chan SSEEvent, 64)
+func (h *EventHub) AddClientFiltered(topics []string) *sseClient {
 	var set map[string]bool
 	for _, t := range topics {
 		t = strings.TrimSpace(t)
@@ -110,17 +188,30 @@ func (h *EventHub) AddClientFiltered(topics []string) chan SSEEvent {
 		}
 		set[t] = true
 	}
+	c := &sseClient{
+		durable:   make(chan SSEEvent, 64),
+		topics:    set,
+		coalesced: make(map[string]SSEEvent),
+		wake:      make(chan struct{}, 1),
+	}
 	h.mu.Lock()
-	h.clients[ch] = set
+	h.clients[c] = struct{}{}
 	h.mu.Unlock()
-	return ch
+	return c
 }
 
-func (h *EventHub) RemoveClient(ch chan SSEEvent) {
+// RemoveClient unregisters c and closes its durable queue. The close is
+// done under the same lock the fan-out holds while sending, so a send can
+// never race a close. The coalesced side needs no close — its reader only
+// ever wakes on a signal the fan-out no longer sends.
+func (h *EventHub) RemoveClient(c *sseClient) {
 	h.mu.Lock()
-	delete(h.clients, ch)
+	_, ok := h.clients[c]
+	delete(h.clients, c)
 	h.mu.Unlock()
-	close(ch)
+	if ok {
+		close(c.durable)
+	}
 }
 
 func (h *EventHub) ClientCount() int {
@@ -366,13 +457,13 @@ func (h *EventHub) SSEHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Optional ?topics=a,b,c narrows this client to the listed event types
 	// (plan §6 SSE bus). Absent → unfiltered, matching legacy behavior.
-	var ch chan SSEEvent
+	var c *sseClient
 	if topicsParam := r.URL.Query().Get("topics"); topicsParam != "" {
-		ch = h.AddClientFiltered(strings.Split(topicsParam, ","))
+		c = h.AddClientFiltered(strings.Split(topicsParam, ","))
 	} else {
-		ch = h.AddClient()
+		c = h.AddClient()
 	}
-	defer h.RemoveClient(ch)
+	defer h.RemoveClient(c)
 
 	// Send connected event with the per-process build id so reconnects
 	// after a core restart trigger a hard-reload on the client. ts is the SIM
@@ -391,10 +482,22 @@ func (h *EventHub) SSEHandler(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case evt := <-ch:
+		case evt := <-c.durable:
 			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Event, evt.Data); err != nil {
 				log.Printf("sse: write error: %v", err)
 				return
+			}
+			flusher.Flush()
+		case <-c.wake:
+			// Snapshot frames. Ordering against the durable stream is not
+			// preserved across the two queues, which is fine: each event type
+			// is handled by its own client-side listener, and ordering WITHIN
+			// a type still holds.
+			for _, evt := range c.takeCoalesced() {
+				if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Event, evt.Data); err != nil {
+					log.Printf("sse: write error: %v", err)
+					return
+				}
 			}
 			flusher.Flush()
 		case <-keepalive.C:

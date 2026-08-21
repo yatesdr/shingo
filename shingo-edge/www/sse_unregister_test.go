@@ -9,7 +9,10 @@ import "testing"
 // channel".
 func TestUnregister_Idempotent_NoDoubleClosePanic(t *testing.T) {
 	h := NewEventHub()
-	c := &sseClient{events: make(chan SSEEvent, 1)}
+	// Both queues, as HandleSSE builds them: unregister closes each, and a
+	// nil channel would panic there rather than exercising the double-close
+	// guard this test is about.
+	c := &sseClient{events: make(chan SSEEvent, 1), lossy: make(chan SSEEvent, 1)}
 	h.register(c)
 
 	h.unregister(c)

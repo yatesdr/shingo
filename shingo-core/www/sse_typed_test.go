@@ -1,6 +1,7 @@
 package www
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -68,12 +69,15 @@ func TestSetupEngineListeners_TypedBroadcast(t *testing.T) {
 	}
 }
 
-// drainFrames clears any frames left in the channel from a prior case so the
-// next assertion only sees frames from its own emit.
-func drainFrames(ch chan SSEEvent) {
+// drainFrames clears any frames left from a prior case so the next assertion
+// only sees frames from its own emit. Both queues are drained: a subscriber
+// receives coalescing topics on one and everything else on the other.
+func drainFrames(c *sseClient) {
 	for {
 		select {
-		case <-ch:
+		case <-c.durable:
+		case <-c.wake:
+			c.takeCoalesced()
 		default:
 			return
 		}
@@ -83,12 +87,19 @@ func drainFrames(ch chan SSEEvent) {
 // waitForFrame reads frames until one matches event (and, if sub != "", whose
 // Data contains sub), or the timeout elapses. Non-matching frames — e.g. the
 // mission-event that also fires on a status change — are skipped.
-func waitForFrame(ch chan SSEEvent, event, sub string, timeout time.Duration) bool {
+func waitForFrame(c *sseClient, event, sub string, timeout time.Duration) bool {
 	deadline := time.After(timeout)
+	match := func(evt SSEEvent) bool {
+		return evt.Event == event && (sub == "" || strings.Contains(evt.Data, sub))
+	}
 	for {
 		select {
-		case evt := <-ch:
-			if evt.Event == event && (sub == "" || strings.Contains(evt.Data, sub)) {
+		case evt := <-c.durable:
+			if match(evt) {
+				return true
+			}
+		case <-c.wake:
+			if slices.ContainsFunc(c.takeCoalesced(), match) {
 				return true
 			}
 		case <-deadline:
