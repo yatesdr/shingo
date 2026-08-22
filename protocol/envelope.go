@@ -49,7 +49,10 @@ func NewEnvelope(msgType string, src, dst Address, payload any) (*Envelope, erro
 	// constant REAL-time budget even under fast-forward (clock.ScaleTTL is a
 	// no-op in production / at 1×). Without this, lifecycle messages expire in
 	// the pipeline at high speed and strand orders. See clock.ScaleTTL.
-	exp := now.Add(clock.ScaleTTL(DefaultTTLFor(msgType)))
+	// A zero TTL means NO expiry, not "expires now" — see NoExpiry. now.Add(0)
+	// would stamp exp = now and expire on the next tick. No msgType currently
+	// uses NoExpiry; the guard is here so adding one cannot silently invert.
+	exp := zeroOrDeadline(now, clock.ScaleTTL(DefaultTTLFor(msgType)))
 
 	return &Envelope{
 		Version:   Version,
@@ -61,6 +64,17 @@ func NewEnvelope(msgType string, src, dst Address, payload any) (*Envelope, erro
 		ExpiresAt: exp,
 		Payload:   p,
 	}, nil
+}
+
+// zeroOrDeadline returns a zero time for a NoExpiry TTL and now+ttl otherwise.
+//
+// One function so both stamping sites cannot drift: the trap is that the
+// natural expression, now.Add(ttl), turns "no expiry" into "already expired".
+func zeroOrDeadline(now time.Time, ttl time.Duration) time.Time {
+	if ttl <= 0 {
+		return time.Time{}
+	}
+	return now.Add(ttl)
 }
 
 // NewReply creates a reply envelope, setting CorID to the original message ID.
@@ -88,9 +102,14 @@ func NewDataEnvelope(subject string, src, dst Address, body any) (*Envelope, err
 	now := clock.Now().UTC()
 	// Scale into the stamping clock domain (no-op in production / at 1×) so the
 	// expiry window is a constant real-time budget under fast-forward — see
-	// clock.ScaleTTL. Telemetry deltas (bin_uop_delta) that expire are lost
-	// production counts, so data envelopes get the same treatment.
-	exp := now.Add(clock.ScaleTTL(DataTTLFor(subject)))
+	// clock.ScaleTTL.
+	//
+	// The comment here used to say telemetry deltas "get the same treatment"
+	// because an expired delta is a lost production count. Scaling was never
+	// enough: at Springfield the 5-minute budget was simply exceeded by the
+	// transport, and ~17 deltas a day were dropped at Core's ingestor. Those
+	// subjects now carry NoExpiry and leave ExpiresAt zero.
+	exp := zeroOrDeadline(now, clock.ScaleTTL(DataTTLFor(subject)))
 
 	return &Envelope{
 		Version:   Version,
