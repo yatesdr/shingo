@@ -1204,6 +1204,21 @@ func MoveToTransit(db *sql.DB, binID, transitNodeID int64) error {
 	return err
 }
 
+// ListOnCarrierNodes returns every bin parked on a per-robot carrier node
+// (`_ROBOT:<vehicle>`), with the vehicle id its node names.
+//
+// The prefix IS the query. A carrier node is created lazily per robot and there
+// is no separate table of them; the name carries the robot, and a LIKE on a
+// short prefix over the node table is cheaper than the bookkeeping to avoid it.
+func ListOnCarrierNodes(db *sql.DB) ([]*Bin, error) {
+	rows, err := db.Query(BinJoinQuery + ` WHERE n.name LIKE '_ROBOT:%' ORDER BY b.id`)
+	if err != nil {
+		return nil, fmt.Errorf("list bins on carrier nodes: %w", err)
+	}
+	defer rows.Close()
+	return scanBins(rows)
+}
+
 // MarkAnomalyWithNote stamps the anomaly and records where the robot carrying
 // the bin last was, so the operator gets a map pin instead of a search.
 //

@@ -98,39 +98,6 @@ func TestStrandedTransit_BranchA_PlacesTheBinAtTheRobotsStation(t *testing.T) {
 	}
 }
 
-// Branch C, the loaded deck. Until the bin has somewhere to live (unit 13) it
-// stays at _TRANSIT, but the note says why rather than "lost".
-func TestStrandedTransit_LoadedDeckStaysAtTransitAndSaysSo(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	eng := newUnstartedEngine(t, db, simulator.New())
-
-	bin, ord := seedStranded(t, db, "AMR-B")
-	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-B", JackState: 1, JackIsFull: true, IsLoaded: true,
-		LiftHeight: 0.0601, CurrentStation: "", LastStation: "SMN_024", X: 40.1, Y: 8.75,
-	})
-
-	eng.inferStrandedTransitBin(ord.ID)
-
-	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
-		t.Errorf("bin moved to %q — a bin still on the deck is not at a station", got)
-	}
-	b, err := db.GetBin(bin.ID)
-	testutil.MustNoErr(t, err, "get bin")
-	if b.AnomalyAt == nil {
-		t.Error("a stranded bin must be stamped anomalous")
-	}
-	if b.AnomalyNote == "" {
-		t.Fatal("the anomaly must carry where the robot was")
-	}
-	for _, want := range []string{"deck", "AMR-B", "x=40.10", "last station SMN_024"} {
-		if !strings.Contains(b.AnomalyNote, want) {
-			t.Errorf("anomaly note %q is missing %q", b.AnomalyNote, want)
-		}
-	}
-}
-
 // The empty-node guard is NOT bypassed. A robot parked at a node something else
 // already occupies means the inference is stale, and forcing it would put two
 // bins in one slot.
@@ -212,5 +179,118 @@ func TestStrandedTransit_IgnoresABinThatIsNotStranded(t *testing.T) {
 	testutil.MustNoErr(t, err, "get bin")
 	if b.AnomalyAt != nil {
 		t.Error("a bin that reached its destination must not be stamped anomalous")
+	}
+}
+
+// ── Branch B: the bin is still on the deck ──────────────────────────────────
+
+// A loaded deck means the bin is not lost and not at a station — it is on that
+// robot. It lives on the robot's own synthetic node until the deck reports
+// empty, so nothing can source from it and nothing reports it missing.
+func TestStrandedTransit_BranchB_LoadedDeckParksTheBinOnTheRobot(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newUnstartedEngine(t, db, simulator.New())
+
+	bin, ord := seedStranded(t, db, "AMR-03")
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-03", JackState: 1, JackIsFull: true, IsLoaded: true,
+		LiftHeight: 0.0601, LastStation: "SMN_024",
+	})
+
+	eng.inferStrandedTransitBin(ord.ID)
+
+	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-03" {
+		t.Fatalf("bin is at %q, want _ROBOT:AMR-03", got)
+	}
+	// Synthetic, so every finder in Core already excludes it: a bin on a deck
+	// must not be re-claimed or sourced from.
+	node, err := db.GetNodeByName("_ROBOT:AMR-03")
+	testutil.MustNoErr(t, err, "get carrier node")
+	if !node.IsSynthetic {
+		t.Error("the carrier node must be synthetic — otherwise the finders can source from a robot's deck")
+	}
+	// NOT an anomaly. _TRANSIT + no claim is the anomaly definition, and a bin
+	// whose location we know perfectly well is not lost.
+	b, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "get bin")
+	if b.AnomalyAt != nil {
+		t.Error("a bin on a known robot's deck must not be reported as an anomaly")
+	}
+	var actor string
+	testutil.MustNoErr(t, db.DB.QueryRow(
+		`SELECT actor FROM recovery_actions WHERE target_type='bin' AND target_id=$1
+		 AND action='transit_bin_on_robot' ORDER BY id DESC LIMIT 1`, bin.ID).Scan(&actor),
+		"read carrier audit row")
+	if actor != "system:inferred" {
+		t.Errorf("carrier audit actor = %q", actor)
+	}
+}
+
+// The watch: once the deck reports empty at a station we can name, the bin is
+// placed there.
+func TestStrandedTransit_CarriedBinIsPlacedWhenTheJackUnloads(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newUnstartedEngine(t, db, simulator.New())
+
+	dest := &nodes.Node{Name: "DROP-B", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(dest), "create dest node")
+
+	bin, ord := seedStranded(t, db, "AMR-13")
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-13", JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
+	})
+	eng.inferStrandedTransitBin(ord.ID)
+	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-13" {
+		t.Fatalf("setup: bin is at %q, want the carrier node", got)
+	}
+
+	// Still loaded: the sweep leaves it alone rather than guessing.
+	eng.sweepCarriedBins()
+	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-13" {
+		t.Fatalf("a still-loaded deck must not place the bin, went to %q", got)
+	}
+
+	// The robot drives to DROP-B and sets the bin down.
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-13", JackState: 3, LiftHeight: -0.0001,
+		CurrentStation: "DROP-B", LastStation: "DROP-B",
+	})
+	eng.sweepCarriedBins()
+
+	if got := binNodeName(t, db, bin.ID); got != "DROP-B" {
+		t.Errorf("bin is at %q, want DROP-B — the jack unloaded there", got)
+	}
+}
+
+// The deck empties somewhere Core cannot name — a charging bay, a waypoint. The
+// bin becomes an anomaly carrying the position, which is the operator's map pin.
+func TestStrandedTransit_CarriedBinUnloadedNowhereKnownBecomesAnAnomaly(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newUnstartedEngine(t, db, simulator.New())
+
+	bin, ord := seedStranded(t, db, "AMR-14")
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-14", JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
+	})
+	eng.inferStrandedTransitBin(ord.ID)
+
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-14", JackState: 3, LiftHeight: -0.0001,
+		CurrentStation: "CHARGER-2", LastStation: "CHARGER-2", X: 55.5, Y: 2.5,
+	})
+	eng.sweepCarriedBins()
+
+	b, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "get bin")
+	if b.AnomalyAt == nil {
+		t.Error("a bin set down at an unknown point is an anomaly")
+	}
+	for _, want := range []string{"x=55.50", "CHARGER-2"} {
+		if !strings.Contains(b.AnomalyNote, want) {
+			t.Errorf("anomaly note %q is missing %q — the operator needs the pin", b.AnomalyNote, want)
+		}
 	}
 }

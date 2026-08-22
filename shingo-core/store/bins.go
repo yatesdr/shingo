@@ -109,6 +109,12 @@ func (db *DB) MoveBinToTransit(binID, transitNodeID int64) error {
 // MarkBinAnomaly stamps bins.anomaly_at = NOW().
 func (db *DB) MarkBinAnomaly(binID int64) error { return bins.MarkAnomaly(db.DB, binID) }
 
+// ListBinsOnCarrierNodes returns every bin riding a robot's deck — see
+// bins.ListOnCarrierNodes.
+func (db *DB) ListBinsOnCarrierNodes() ([]*bins.Bin, error) {
+	return bins.ListOnCarrierNodes(db.DB)
+}
+
 // MarkBinAnomalyWithNote stamps the anomaly and records where the robot
 // carrying the bin last was — see bins.MarkAnomalyWithNote.
 func (db *DB) MarkBinAnomalyWithNote(binID int64, note string) error {
