@@ -92,7 +92,9 @@ const T0 = Date.parse('2026-08-22T14:00:00Z');
     const span = root.append(node({ 'data-since': '2026-08-22T14:00:00Z' }));
 
     ctx.renderLiveDurations(root);
-    assert(span.textContent === '14s', 'data-since renders elapsed, got ' + span.textContent);
+    // '14 s', with the space: the Go ladder's sub-minute form, which this one
+    // now matches. It read '14s' while the two ladders disagreed.
+    assert(span.textContent === '14 s', 'data-since renders elapsed, got ' + span.textContent);
 
     now.value = T0 + 192000; // 3m 12s
     ctx.renderLiveDurations(root);
@@ -106,7 +108,9 @@ const T0 = Date.parse('2026-08-22T14:00:00Z');
     const until = root.append(node({ 'data-until': '2026-08-22T14:41:00Z' }));
 
     ctx.renderLiveDurations(root);
-    assert(until.textContent === '41m 0s', 'data-until renders remaining, got ' + until.textContent);
+    // '41m': past ten minutes the Go ladder drops seconds, because they stop
+    // carrying anything a reader acts on. It read '41m 0s' before unification.
+    assert(until.textContent === '41m', 'data-until renders remaining, got ' + until.textContent);
 
     now.value = Date.parse('2026-08-22T14:41:01Z');
     ctx.renderLiveDurations(root);
@@ -205,6 +209,71 @@ const T0 = Date.parse('2026-08-22T14:00:00Z');
     try { ctx.renderLiveDurations(root); } catch (e) { threw = true; }
     assert(!threw, 'an unparseable instant must not throw');
     assert(bad.textContent === 'untouched', 'an unparseable instant is left alone');
+}
+
+// ─── THE LADDER, byte for byte against protocol.FormatDuration (Go) ───────
+//
+// This table is duplicated verbatim in protocol/duration_test.go. The two exist
+// to be compared: the fault line is rendered once by the server through the Go
+// ladder and then every second by this one, so any disagreement shows on the
+// floor as a row that rewrites itself a second after it paints.
+//
+// If you change a row here, change it there, or the suites disagree and one of
+// them is lying.
+{
+    const { ctx } = loadUtils({ value: T0 });
+    const table = [
+        [0, '0 s'],
+        [999, '0 s'],
+        [1000, '1 s'],
+        [18000, '18 s'],
+        [59999, '59 s'],
+        [60000, '1m 00s'],
+        [247000, '4m 07s'],
+        [599000, '9m 59s'],
+        [600000, '10m'],
+        [1380000, '23m'],
+        [3599000, '59m'],
+        [3600000, '1h 00m'],
+        [7500000, '2h 05m'],
+        [86399000, '23h 59m'],
+        [86400000, '1d 00h'],
+        [273600000, '3d 04h'],
+    ];
+    for (const [ms, want] of table) {
+        const got = ctx.formatDuration(ms);
+        assert(got === want, 'formatDuration(' + ms + ') = ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
+    }
+    // Negative is floored at zero, as the Go ladder does — "-3 s" on the floor
+    // reads as a bug in the page, not as two clocks disagreeing.
+    assert(ctx.formatDuration(-3000) === '0 s', 'a negative duration floors at zero');
+    // ABSENT is the dash, and it is a different thing from zero. Go never
+    // renders it: BuildFaultLine omits the element rather than printing a
+    // duration measured from the zero time.
+    assert(ctx.formatDuration(null) === '—', 'null is the em dash, not "0 s"');
+    assert(ctx.formatDuration(undefined) === '—', 'undefined is the em dash');
+    assert(ctx.formatDuration(NaN) === '—', 'NaN is the em dash');
+}
+
+// ─── the first live render must not change the server's text ──────────────
+//
+// THE WHOLE POINT OF THE SHARED LADDER. The server renders the elapsed into the
+// span; one second later this module overwrites it. If the two ladders disagree
+// the row visibly rewrites itself, which is what a faulted order did on every
+// board before the ladders were unified.
+{
+    const now = { value: Date.parse('2026-08-22T14:04:07Z') };
+    const { ctx, root } = loadUtils(now);
+    const line = root.append(node({}));
+    const clock = line.append(node({ 'data-since': '2026-08-22T14:00:00Z' }));
+    // Exactly what protocol.FormatDuration produced server-side for 4m07s.
+    const serverText = '4m 07s';
+    clock.textContent = serverText;
+
+    ctx.renderLiveDurations(root);
+    assert(clock.textContent === serverText,
+        'first live render changed the server text from ' + JSON.stringify(serverText) +
+        ' to ' + JSON.stringify(clock.textContent) + ' — the ladders have drifted');
 }
 
 console.log('live durations: ' + passed + ' passed, ' + failed + ' failed');

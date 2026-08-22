@@ -809,6 +809,15 @@ func (s *BinService) ClearAnomaly(binID int64) error {
 	return nil
 }
 
+// InferredActor is the actor the stranded-bin inference records on a placement
+// it made without a human walking out to confirm it.
+//
+// It lives HERE, not in engine, because this is where it is ENFORCED: it is the
+// one actor allowed to move a bin off a carrier node, on the grounds that the
+// jack watch has verified what an operator cannot — deck at rest, deck empty,
+// robot parked. engine spells its placements with this constant.
+const InferredActor = "system:inferred"
+
 // RecoverTransitAnomaly is the operator's "I found this bin and put it
 // at node X" action: moves the bin out of _TRANSIT to the chosen real
 // node and clears the anomaly flag. Validates that the destination is
@@ -823,6 +832,31 @@ func (s *BinService) ClearAnomaly(binID int64) error {
 func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) error {
 	if actor == "" {
 		return fmt.Errorf("actor is required for recovery")
+	}
+	// THE SOURCE IS GUARDED TOO, not just the destination — but only against a
+	// HUMAN.
+	//
+	// A bin on a carrier node is riding a robot's deck: its location is known
+	// exactly, and the honest way for it to move is for the robot to set it
+	// down. "I found it, it's at X" about a bin on a moving robot would record
+	// the bin at a node the floor is then sent to fetch, and leave the real one
+	// to be placed a second time when the deck reports empty. The listing no
+	// longer offers these (ListAnomalousTransitBins), so a human reaching here
+	// means a stale page or a hand-made request.
+	//
+	// The jack watch is the EXCEPTION, and it is the whole reason this is keyed
+	// on the actor rather than on the source alone: sweepCarriedBins places a
+	// carried bin through this very method the moment the deck reports empty at
+	// a station it can name, and that is the sanctioned way off a carrier node.
+	// It has verified what the operator cannot — that the deck is at rest, empty,
+	// and the robot parked. A flat refusal broke that path and stranded every
+	// carried bin on its robot forever, which the docker suite caught.
+	if actor != InferredActor {
+		if src, err := s.db.GetBin(binID); err == nil && src != nil &&
+			strings.HasPrefix(src.NodeName, bins.CarrierNodePrefix) {
+			return fmt.Errorf("bin %d is on %s — it is riding a robot, not lost; "+
+				"it is placed automatically when the deck reports empty", binID, src.NodeName)
+		}
 	}
 	dest, err := s.db.GetNode(toNodeID)
 	if err != nil {

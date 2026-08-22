@@ -15,6 +15,12 @@ import (
 // Defaults() and Load()'s fallback must not be able to disagree.
 const defaultFaultNoticeAfter = 60 * time.Second
 
+// defaultStrandedSweepWindow is the shipped age limit on the stranded-bin
+// inference, named for the same reason as the constant above: Defaults() and
+// Load()'s fallback must not be able to disagree. See
+// RDSConfig.StrandedSweepWindow for why the sweep declines older bins.
+const defaultStrandedSweepWindow = 2 * time.Hour
+
 type Config struct {
 	mu sync.RWMutex `yaml:"-"`
 
@@ -362,6 +368,30 @@ type RDSConfig struct {
 	// RDSConfig.Validate. At or above the grace window it could never fire,
 	// because the order is failed by then.
 	FaultNoticeAfter time.Duration `yaml:"fault_notice_after"`
+	// StrandedSweepWindow is how recently a `_TRANSIT` bin's order must have
+	// ended for the reconciliation sweep to infer where that bin was set down.
+	//
+	// THE SWEEP IS A BACKSTOP FOR THE FAST PATH, NOT A BACKFILL OF HISTORY, and
+	// this number is what makes that true. The inference reads the robot's
+	// CURRENT telemetry: where it is standing now, and whether its deck is
+	// empty now. That answers "where did this bin go" only while the robot has
+	// not moved on. An hour later the robot has run a dozen other jobs and its
+	// position says nothing about a bin it set down before them — placing on it
+	// would invent a bin at a node the floor would then be sent to fetch.
+	//
+	// So bins older than this window are LEFT AS ANOMALIES for an operator to
+	// resolve, which is what they were before any of this shipped. Nothing is
+	// lost by declining; something real is broken by guessing.
+	//
+	// Two hours is comfortably longer than FaultGrace (45m default), so an
+	// order that faulted, sat out its whole grace window and was written off is
+	// still inside it — that is the case the sweep exists to catch when the
+	// terminal-event hook is missed.
+	//
+	// Carrier (`_ROBOT:*`) bins are NOT subject to this window: the jack is the
+	// jack, and a deck that reports empty has set its bin down regardless of how
+	// long the bin has been riding.
+	StrandedSweepWindow time.Duration `yaml:"stranded_sweep_window"`
 }
 
 // Validate reports a fault-window configuration that cannot do its job.
@@ -504,11 +534,12 @@ func Defaults() *Config {
 			},
 		},
 		RDS: RDSConfig{
-			BaseURL:          "http://192.168.1.100:8088",
-			PollInterval:     5 * time.Second,
-			Timeout:          10 * time.Second,
-			FaultGrace:       45 * time.Minute,
-			FaultNoticeAfter: defaultFaultNoticeAfter,
+			BaseURL:             "http://192.168.1.100:8088",
+			PollInterval:        5 * time.Second,
+			Timeout:             10 * time.Second,
+			FaultGrace:          45 * time.Minute,
+			FaultNoticeAfter:    defaultFaultNoticeAfter,
+			StrandedSweepWindow: defaultStrandedSweepWindow,
 		},
 		Web: WebConfig{
 			Host:          "0.0.0.0",
@@ -627,6 +658,15 @@ func Load(path string) (*Config, error) {
 		}
 		log.Printf("config: %v — using fault_notice_after=%s", err, fallback)
 		cfg.RDS.FaultNoticeAfter = fallback
+	}
+	// A zero window is what every pre-2026-08-22 config file carries, and it
+	// would read as "sweep nothing" — the inference would decline every bin and
+	// the backstop would silently stop being one. Own that here rather than
+	// letting an absent key turn a feature off. Not part of RDSConfig.Validate:
+	// that reports ONE error and Load's fallback above repairs the fault window,
+	// so a second condition sharing it would misassign the repair.
+	if cfg.RDS.StrandedSweepWindow <= 0 {
+		cfg.RDS.StrandedSweepWindow = defaultStrandedSweepWindow
 	}
 	return cfg, nil
 }

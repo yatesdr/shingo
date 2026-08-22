@@ -60,20 +60,26 @@ func (e *Engine) robotRefreshLoop() {
 			// are exactly the ones that leave the fleet hash untouched.
 			e.sampleRobotConfidence(robots, time.Now())
 
-			// A bin riding a robot's deck is placed the moment that deck
-			// reports empty. Before the hash short-circuit for the same reason
-			// as the sampler: a robot that has parked and set a bin down has
-			// stopped changing, which is exactly when its hash stops moving.
-			// There is no jack-unload event to subscribe to — the jack is
-			// sampled state — so this is a watch on a poll Core already makes.
-			e.sweepCarriedBins()
-
 			data, _ := json.Marshal(robots)
 			hash := sha256.Sum256(data)
 			if hash == prevHash {
 				continue
 			}
 			prevHash = hash
+
+			// A bin riding a robot's deck is placed the moment that deck
+			// reports empty. BEHIND the hash short-circuit, unlike the sampler
+			// above: the sampler wants the readings a still robot produces, and
+			// this wants a transition. jack_state is part of the hashed status,
+			// so a deck going 1 → 3 MOVES the hash by construction — the tick
+			// that matters is never the one short-circuited away. An earlier cut
+			// ran it before the check on the reasoning that a parked robot stops
+			// changing, which bought nothing (the unload had already changed the
+			// hash) and cost a DB query every 2 seconds forever on a plant with
+			// no carried bins at all. The reconciliation sweep re-checks the same
+			// population, so a missed edge is bounded by that interval, not lost.
+			e.sweepCarriedBins()
+
 			e.Events.Emit(Event{
 				Type:    EventRobotsUpdated,
 				Payload: RobotsUpdatedEvent{Robots: robots},

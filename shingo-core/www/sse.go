@@ -410,8 +410,16 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			// The order this robot is on. See RobotOrderLine — no alarms.
 			RobotOrderLine
 		}
-		// Once per broadcast, not once per robot.
-		orderLines := robotOrderLines(eng.OrderService(), eng.AppConfig())
+		// Once per broadcast, not once per robot — and not at all when nobody is
+		// listening. This costs a ListActiveOrders plus a history read, and the
+		// event that carries it fires on every fleet change, which on a running
+		// plant is most 2-second ticks. Without the guard a Core with no browser
+		// open anywhere still paid for it around the clock. Broadcast to zero
+		// clients is already a no-op; this makes BUILDING the payload one too.
+		var orderLines map[string]RobotOrderLine
+		if h.ClientCount() > 0 {
+			orderLines = robotOrderLines(eng.OrderService(), eng.AppConfig())
+		}
 		out := make([]robotJSON, len(ev.Robots))
 		for i, r := range ev.Robots {
 			out[i] = robotJSON{

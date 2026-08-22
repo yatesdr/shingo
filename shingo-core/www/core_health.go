@@ -238,6 +238,24 @@ type CoreHealth struct {
 	// amber for those is amber most of the day and read by nobody.
 	FaultedNow    int `json:"faulted_now"`
 	FaultedNotice int `json:"faulted_notice"`
+	// FaultedHalfGrace is the subset past HALF the grace window — the only one
+	// that colours the verdict.
+	//
+	// The notice threshold turned out to be the wrong line for a VERDICT even
+	// though it is the right one for a gauge. At 60s it fires on any order that
+	// takes a slightly long replan, so a strip driven by it reads `degraded`
+	// several times a shift for something that resolves itself, and a verdict
+	// that cries wolf is a verdict nobody reads — which is the same argument
+	// that kept replans off the gauge, one level up.
+	//
+	// Half the grace window is the point of no return: past it the order is
+	// closer to being written off than to having started, and Core giving up on
+	// it is now the likely outcome rather than a remote one. That IS a degraded
+	// core, and it is rare enough that saying so means something.
+	FaultedHalfGrace int `json:"faulted_half_grace"`
+	// FaultHalfGraceSeconds is the threshold behind FaultedHalfGrace, carried so
+	// deriveReasons can name the duration instead of asserting a bare number.
+	FaultHalfGraceSeconds int `json:"fault_half_grace_seconds"`
 	// FaultNoticeAfterSeconds is the threshold behind FaultedNotice, carried so
 	// the sentence can name it rather than asserting a bare number of seconds.
 	FaultNoticeAfterSeconds int `json:"fault_notice_after_seconds"`
@@ -301,7 +319,7 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 		c.CompletionAnomalyWindowHours = recon.CompletionAnomalyWindowHours
 	}
 
-	c.FaultedNow, c.FaultedNotice, c.FaultNoticeAfterSeconds = h.faultedGauge()
+	c.FaultedNow, c.FaultedNotice, c.FaultedHalfGrace, c.FaultNoticeAfterSeconds, c.FaultHalfGraceSeconds = h.faultedGauge()
 
 	if !depsOK {
 		c.DepsDown = depReasons
@@ -361,14 +379,17 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 			plural(c.CompletionAnomalies, "anomaly", "anomalies"),
 			formatWindow(c.CompletionAnomalyWindowHours)))
 	}
-	// NOTICE faults only. A 20-second replan is the overwhelming majority of
-	// faults and is not a degraded core; colouring the verdict for it would
-	// leave the strip amber most of the day.
-	if c.FaultedNotice > 0 {
-		reasons = append(reasons, fmt.Sprintf("%d %s faulted over %ds",
-			c.FaultedNotice,
-			plural(c.FaultedNotice, "order", "orders"),
-			c.FaultNoticeAfterSeconds))
+	// HALF-GRACE faults only — not the notice count, which is the gauge's line
+	// and not the verdict's. A 20-second replan is the overwhelming majority of
+	// faults and is not a degraded core; neither is a 90-second one, which is
+	// all `notice` means at the default threshold. Past half the grace window
+	// the order is more likely to be written off than to recover, and that is
+	// worth the word.
+	if c.FaultedHalfGrace > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d %s faulted more than %s — halfway to giving up",
+			c.FaultedHalfGrace,
+			plural(c.FaultedHalfGrace, "order", "orders"),
+			FormatDuration(time.Duration(c.FaultHalfGraceSeconds)*time.Second)))
 	}
 	return reasons
 }
@@ -379,30 +400,57 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 // A read failure reports zeros. The strip is a health surface: it must not
 // itself become the outage, and a missing gauge is visible next to the
 // dependency dots that would also be down.
-func (h *Handlers) faultedGauge() (now, notice, thresholdS int) {
-	noticeAfter := h.engine.AppConfig().RDS.FaultNoticeAfter
-	thresholdS = int(noticeAfter.Seconds())
+func (h *Handlers) faultedGauge() (now, notice, halfGrace, thresholdS, halfGraceS int) {
+	cfg := h.engine.AppConfig()
+	noticeAfter := cfg.RDS.FaultNoticeAfter
+	// Half the grace window is the verdict's line. Derived rather than
+	// configured: it is not an independent policy, it is "the point of no
+	// return" expressed in terms of the one number that already says when Core
+	// gives up, so a plant that retunes fault_grace moves both together.
+	halfGraceAfter := cfg.RDS.FaultGrace / 2
+	thresholdS, halfGraceS = int(noticeAfter.Seconds()), int(halfGraceAfter.Seconds())
 	svc := h.engine.OrderService()
 	orders, err := svc.ListActiveOrders()
 	if err != nil {
 		log.Printf("core health: list active orders: %v", err)
-		return 0, 0, thresholdS
+		return 0, 0, 0, thresholdS, halfGraceS
 	}
 	at := clock.Now().UTC()
+	faultedIDs := make([]int64, 0, 8)
 	for _, o := range orders {
 		if o.Status != protocol.StatusFaulted {
 			continue
 		}
 		now++
-		if noticeAfter <= 0 {
+		faultedIDs = append(faultedIDs, o.ID)
+	}
+	if len(faultedIDs) == 0 || (noticeAfter <= 0 && halfGraceAfter <= 0) {
+		return now, 0, 0, thresholdS, halfGraceS
+	}
+	// ONE query for the whole set, not one per faulted order. This runs on a
+	// 15-second poll per open dashboard, and the per-order form made it cost
+	// more the worse the plant's day was: a fleet-wide dropout faults thirty
+	// orders at once, which is exactly when nobody wants the health endpoint
+	// adding thirty queries to the pile.
+	since, err := svc.LatestOrderHistoryTimesForStatus(faultedIDs, protocol.StatusFaulted)
+	if err != nil {
+		log.Printf("core health: fault clocks for %d orders: %v", len(faultedIDs), err)
+		return now, 0, 0, thresholdS, halfGraceS
+	}
+	for _, id := range faultedIDs {
+		t, ok := since[id]
+		if !ok {
 			continue
 		}
-		if hrow, herr := svc.LatestOrderHistoryForStatus(o.ID, protocol.StatusFaulted); herr == nil &&
-			hrow != nil && at.Sub(hrow.CreatedAt) >= noticeAfter {
+		elapsed := at.Sub(t)
+		if noticeAfter > 0 && elapsed >= noticeAfter {
 			notice++
 		}
+		if halfGraceAfter > 0 && elapsed >= halfGraceAfter {
+			halfGrace++
+		}
 	}
-	return now, notice, thresholdS
+	return now, notice, halfGrace, thresholdS, halfGraceS
 }
 
 // plural picks the singular or plural WORD for n. Two call sites were writing

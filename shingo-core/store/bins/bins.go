@@ -704,14 +704,49 @@ func ListByClaim(db *sql.DB, orderID int64) ([]*Bin, error) {
 // the stamp is written by the paths that KNOW they stranded something, and a bin
 // nobody stamped is the one nobody noticed. Ordering still puts stamped rows
 // first (NULLS LAST) so the diagnosed ones read at the top.
+//
+// ── EXCEPT THE CARRIER NODES ──────────────────────────────────────────────
+// `_ROBOT:<vehicle>` is synthetic and its bins are unclaimed, so they matched
+// both predicates and this listed them — which put "a bin riding a robot" on the
+// operator's needs-physical-recovery list. That is the precise error the carrier
+// node exists to avoid: a bin whose location is known exactly is not lost. Worse
+// than the noise, the recovery button was then live on it, and "I found it, it's
+// at X" would have moved a bin off a robot still carrying it (RecoverTransitAnomaly
+// now refuses that too).
+//
+// Excluded by prefix rather than by narrowing back to `_TRANSIT`, because the
+// widening above is load-bearing: a bin stray at a node group or a lane root is
+// still an anomaly nobody else lists.
 func ListAnomalousTransitBins(db *sql.DB) ([]*Bin, error) {
-	rows, err := db.Query(fmt.Sprintf(`%s WHERE b.claimed_by IS NULL AND n.is_synthetic AND b.status != 'retired' ORDER BY b.anomaly_at NULLS LAST, b.id`, BinJoinQuery))
+	// Concatenated, not Sprintf'd: NotCarrierNodeSQL contains a LIKE pattern
+	// ending `%'`, which Sprintf reads as a verb.
+	rows, err := db.Query(BinJoinQuery + ` WHERE b.claimed_by IS NULL AND n.is_synthetic AND b.status != 'retired'
+		AND ` + NotCarrierNodeSQL + ` ORDER BY b.anomaly_at NULLS LAST, b.id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanBins(rows)
 }
+
+// CarrierNodePrefix names the per-robot synthetic nodes a bin rides on while it
+// is still on that robot's deck: `_ROBOT:<vehicle>`. One spelling, here, because
+// three layers match on it (this package's queries, the engine's sweep, the www
+// bins page) and a second literal is how they drift apart.
+const CarrierNodePrefix = "_ROBOT:"
+
+// CarrierNodeSQL / NotCarrierNodeSQL match (or exclude) the carrier nodes by
+// name.
+//
+// THE UNDERSCORE IS ESCAPED, and it has to be: `_` is LIKE's single-character
+// wildcard, so the obvious `LIKE '_ROBOT:%'` means "any character, then ROBOT:".
+// Nothing in the live node set collides today — `_TRANSIT` does not match — so
+// this was latent rather than broken, which is exactly the kind of thing that
+// stops being latent when someone adds a node type.
+const (
+	CarrierNodeSQL    = `n.name LIKE '\_ROBOT:%' ESCAPE '\'`
+	NotCarrierNodeSQL = `n.name NOT LIKE '\_ROBOT:%' ESCAPE '\'`
+)
 
 // CountByAllNodes returns a map of node_id -> bin count for all nodes that have bins.
 func CountByAllNodes(db *sql.DB) (map[int64]int, error) {
@@ -1211,7 +1246,7 @@ func MoveToTransit(db *sql.DB, binID, transitNodeID int64) error {
 // is no separate table of them; the name carries the robot, and a LIKE on a
 // short prefix over the node table is cheaper than the bookkeeping to avoid it.
 func ListOnCarrierNodes(db *sql.DB) ([]*Bin, error) {
-	rows, err := db.Query(BinJoinQuery + ` WHERE n.name LIKE '_ROBOT:%' ORDER BY b.id`)
+	rows, err := db.Query(BinJoinQuery + ` WHERE ` + CarrierNodeSQL + ` ORDER BY b.id`)
 	if err != nil {
 		return nil, fmt.Errorf("list bins on carrier nodes: %w", err)
 	}

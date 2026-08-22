@@ -23,16 +23,24 @@ package engine
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/fleet"
 	"shingocore/service"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // inferredActor is the actor on the recovery_actions row and the bin audit. It
 // is deliberately distinguishable from an operator: a placement nobody walked
 // out and confirmed should be readable as such afterwards.
-const inferredActor = "system:inferred"
+//
+// Defined in service, where it is also ENFORCED — it is the only actor allowed
+// to move a bin off a carrier node. One spelling, on the side that checks it.
+const inferredActor = service.InferredActor
 
 // inferStrandedTransitBin runs the A/B/C decision for every bin the terminating
 // order left at _TRANSIT.
@@ -95,8 +103,18 @@ func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.Robot
 		return
 	}
 
-	// Branch A. The deck is empty; if the robot is standing somewhere we can
+	// Branch A. The deck is empty; if the robot is PARKED somewhere we can
 	// name, that is where it put the bin.
+	if robot.Busy {
+		// A robot under way is not standing anywhere. ResolveRobotStation falls
+		// back to LastStation when CurrentStation is empty, and CurrentStation
+		// is empty for most of the time a robot is moving — so without this the
+		// inference would happily place the bin at a node the robot merely
+		// PASSED on its way somewhere else. The jack check above says the deck
+		// is at rest; it says nothing about the vehicle under it.
+		e.strandedAnomaly(binID, robotID, robot, true, "robot is under way, not parked")
+		return
+	}
 	node, ok := service.ResolveRobotStation(e.NodeService(), robot)
 	if !ok {
 		e.strandedAnomaly(binID, robotID, robot, true, "robot is not at a node we know")
@@ -128,7 +146,7 @@ func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.Robot
 // definition, and a bin whose location we know perfectly well — it is on that
 // robot — is not an anomaly. Putting it there would be reporting a lost bin
 // that is not lost.
-func carrierNodeName(robotID string) string { return "_ROBOT:" + robotID }
+func carrierNodeName(robotID string) string { return bins.CarrierNodePrefix + robotID }
 
 // parkOnCarrier is branch B: move the bin onto the robot's own node.
 //
@@ -175,6 +193,15 @@ func (e *Engine) carrierNode(robotID string) (*nodes.Node, error) {
 	if node, err := e.db.GetNodeByName(name); err == nil && node != nil {
 		return node, nil
 	}
+	// NO node_type_id, deliberately, and matching `_TRANSIT` is the reason: v15
+	// creates that node as `(name, is_synthetic, enabled)` and nothing else, so
+	// the two bookkeeping nodes have the same shape. Inventing a `carrier` node
+	// type would give the carriers a classification `_TRANSIT` does not have,
+	// for a row nothing groups or filters by type — and every predicate that
+	// matters keys on is_synthetic, which is set.
+	//
+	// The row is temporary besides: DeleteCarrierNodeIfEmpty retires it as soon
+	// as the deck is clear, so a carrier node exists only while a bin is on it.
 	node := &nodes.Node{Name: name, IsSynthetic: true, Enabled: true}
 	if err := e.db.CreateNode(node); err != nil {
 		// A concurrent sweep may have created it between the read and the
@@ -200,7 +227,7 @@ func (e *Engine) sweepCarriedBins() {
 		return
 	}
 	for _, bin := range carried {
-		robotID := strings.TrimPrefix(bin.NodeName, "_ROBOT:")
+		robotID := strings.TrimPrefix(bin.NodeName, bins.CarrierNodePrefix)
 		if robotID == "" || robotID == bin.NodeName {
 			continue
 		}
@@ -214,7 +241,14 @@ func (e *Engine) sweepCarriedBins() {
 			// next poll asks again.
 			continue
 		}
-		// The deck is empty. Apply branch A at this tick's station.
+		// The deck is empty. Apply branch A at this tick's station — but only
+		// if the robot is parked there, for the reason in placeStrandedBin: a
+		// moving robot resolves to a station it passed, not one it stopped at.
+		// The bin keeps riding and the next tick asks again, which is exactly
+		// what happens while it is still loaded.
+		if robot.Busy {
+			continue
+		}
 		node, resolved := service.ResolveRobotStation(e.NodeService(), robot)
 		if !resolved {
 			e.strandedAnomaly(bin.ID, robotID, robot, true,
@@ -227,20 +261,38 @@ func (e *Engine) sweepCarriedBins() {
 			continue
 		}
 		e.logFn("engine: carried bin %d placed at %s after %s unloaded", bin.ID, node.Name, robotID)
+		// The bin has left the deck; if it was the last one, the carrier node
+		// has served its purpose. Removed here rather than left to accumulate —
+		// a lazily-created node per vehicle would otherwise be permanent
+		// furniture on a table operators read. The query declines while any bin
+		// is still on it, so a robot carrying two is unaffected.
+		if err := e.db.DeleteCarrierNodeIfEmpty(bin.NodeName); err != nil {
+			e.dbg("engine: carried bins: retire %s: %v", bin.NodeName, err)
+		}
 	}
 }
 
 // sweepStrandedBins is the reconciliation half: ask the world, not an event.
 //
-// Two populations. Every bin at _TRANSIT with no claim — the anomaly by
-// definition — gets the A/B/C decision re-run against its last claiming order's
-// robot. Every bin already riding a deck gets its jack re-checked, which is the
-// same work the 2-second poll does and is repeated here so a Core that restarted
-// between the unload and the poll still places the bin.
+// Two populations. Every bin already riding a deck gets its jack re-checked,
+// which is the same work the 2-second poll does and is repeated here so a Core
+// that restarted between the unload and the poll still places the bin. And every
+// bin at _TRANSIT with no claim whose order ended RECENTLY gets the A/B/C
+// decision re-run against that order's robot.
 //
-// IT ALSO CLEARS THE BACKLOG. Every bin stranded before this shipped is in the
-// first population, so the first sweep after deploy is the one the floor will
-// notice: bins that have been "lost" for days get placed or get a map pin.
+// IT DOES NOT BACKFILL HISTORY, and that is the design. An earlier cut of this
+// swept every unclaimed _TRANSIT bin regardless of age, which read as a feature
+// ("the first sweep clears the backlog") and was a defect: the inference is
+// computed from the robot's CURRENT telemetry, so it only answers "where did
+// this bin go" while the robot has not moved on. For a bin stranded days ago the
+// robot has run hundreds of jobs since and its position is unrelated to the bin;
+// an empty node at that position would take the placement and invent a bin the
+// floor would then be dispatched to fetch. Older bins stay anomalies for an
+// operator to resolve, exactly as before any of this shipped. Declining costs
+// nothing; guessing costs a phantom.
+//
+// The window does not apply to carrier bins. The jack is the jack: a deck that
+// reports empty has set its bin down, however long the bin has been riding.
 func (e *Engine) sweepStrandedBins() {
 	e.sweepCarriedBins()
 
@@ -249,38 +301,93 @@ func (e *Engine) sweepStrandedBins() {
 		e.logFn("engine: stranded sweep: list anomalies: %v", err)
 		return
 	}
+	window := e.strandedSweepWindow()
+	declined := 0
 	for _, bin := range stranded {
 		if bin.NodeName != transitNodeName {
-			// ListAnomalies is "unclaimed at a synthetic node", which now also
-			// matches the carrier nodes. Those are handled above and are not
-			// anomalies.
+			// ListAnomalies is "unclaimed at _TRANSIT" since the carrier-node
+			// fix, so this should no longer match. Kept as a cheap assertion:
+			// the carrier bins are handled above and are not anomalies.
 			continue
 		}
-		orderID, robotID, ok := e.lastClaimingRobot(bin.ID)
+		ord, robotID, ok := e.lastClaimingOrder(bin.ID)
 		if !ok {
 			// No order ever claimed it, or the order is gone. Stamp it so the
 			// operator at least sees it, with the honest reason.
 			e.strandedAnomaly(bin.ID, "", fleet.RobotStatus{}, false, "no claiming order on record")
 			continue
 		}
+		if endedAt, fresh := e.terminalWithin(ord, window); !fresh {
+			// Too old to infer from, or not terminal, or unreadable. Left as
+			// the anomaly it already is — no stamp rewrite, because a later
+			// sweep has nothing new to say about a bin it has declined.
+			declined++
+			e.dbg("engine: stranded sweep: bin %d declined — order %d ended %v (window %s)",
+				bin.ID, ord.ID, endedAt, window)
+			continue
+		}
 		robot, haveRobot := e.GetCachedRobotStatus(robotID)
-		e.dbg("engine: stranded sweep: bin %d from order %d robot %q", bin.ID, orderID, robotID)
+		e.dbg("engine: stranded sweep: bin %d from order %d robot %q", bin.ID, ord.ID, robotID)
 		e.placeStrandedBin(bin.ID, robotID, robot, haveRobot)
+	}
+	if declined > 0 {
+		e.logFn("engine: stranded sweep: %d bin(s) left as anomalies — older than %s, "+
+			"robot telemetry no longer describes where they went", declined, window)
 	}
 }
 
-// lastClaimingRobot finds the order that most recently owned this bin, and the
+// strandedSweepWindow is the config age limit, with the shipped default when
+// config is absent (tests construct an Engine without one).
+func (e *Engine) strandedSweepWindow() time.Duration {
+	if e.cfg == nil || e.cfg.RDS.StrandedSweepWindow <= 0 {
+		return defaultStrandedSweepWindow
+	}
+	return e.cfg.RDS.StrandedSweepWindow
+}
+
+// defaultStrandedSweepWindow mirrors config's shipped value for the nil-config
+// path. The config comment carries the reasoning.
+const defaultStrandedSweepWindow = 2 * time.Hour
+
+// terminalWithin reports whether the order ended recently enough for its
+// robot's current position to still mean something, and when it ended.
+//
+// The end time is the TERMINAL HISTORY ROW, not orders.updated_at. updated_at is
+// rewritten by UpdateOrderVendor, which runs after every vendor status change
+// including ones the lifecycle rejected on an already-terminal order — so a
+// stale order can carry a fresh updated_at, which is the wrong direction to be
+// wrong in here. The history row is when the order actually ended.
+//
+// FAIL CLOSED. An unreadable row, a missing one, or a non-terminal order all
+// report false: this gates a write that moves a bin, and declining leaves an
+// anomaly an operator resolves while guessing puts a phantom bin on the floor.
+func (e *Engine) terminalWithin(ord *orders.Order, window time.Duration) (time.Time, bool) {
+	if ord == nil || !protocol.IsTerminal(ord.Status) {
+		return time.Time{}, false
+	}
+	h, err := e.db.LatestOrderHistoryForStatus(ord.ID, ord.Status)
+	if err != nil {
+		e.logFn("engine: stranded sweep: terminal row for order %d: %v", ord.ID, err)
+		return time.Time{}, false
+	}
+	if h == nil {
+		return time.Time{}, false
+	}
+	return h.CreatedAt, clock.Now().UTC().Sub(h.CreatedAt) <= window
+}
+
+// lastClaimingOrder finds the order that most recently owned this bin, and the
 // robot it was on.
 //
 // orders.bin_id survives terminalisation (bins.claimed_by and the order_bins
 // junction do not), so the order's own column is the only durable link back from
 // a stranded bin to the robot that was carrying it.
-func (e *Engine) lastClaimingRobot(binID int64) (orderID int64, robotID string, ok bool) {
+func (e *Engine) lastClaimingOrder(binID int64) (ord *orders.Order, robotID string, ok bool) {
 	ords, err := e.db.ListOrdersByBin(binID, 1)
 	if err != nil || len(ords) == 0 {
-		return 0, "", false
+		return nil, "", false
 	}
-	return ords[0].ID, ords[0].RobotID, true
+	return ords[0], ords[0].RobotID, true
 }
 
 // strandedAnomaly is branch C: leave the bin at _TRANSIT, stamp it, and record

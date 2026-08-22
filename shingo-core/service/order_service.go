@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"time"
 
 	"shingo/protocol"
 	"shingocore/fleet"
@@ -163,6 +164,17 @@ func (s *OrderService) ListOrderHistory(orderID int64) ([]*orders.History, error
 // the first, and why not orders.updated_at.
 func (s *OrderService) LatestOrderHistoryForStatus(orderID int64, status protocol.Status) (*orders.History, error) {
 	return s.db.LatestOrderHistoryForStatus(orderID, status)
+}
+
+// LatestOrderHistoryTimesForStatus is the batch form of the method above: one
+// round trip for a SET of orders, returning when each most recently reached the
+// status.
+//
+// The fault surfaces ask this question of a whole list — every faulted order on
+// the health gauge, every robot's order on the robots page — and asking it one
+// order at a time made the cost scale with how bad the plant's day was.
+func (s *OrderService) LatestOrderHistoryTimesForStatus(orderIDs []int64, status protocol.Status) (map[int64]time.Time, error) {
+	return s.db.LatestOrderHistoryTimesForStatus(orderIDs, status)
 }
 
 // ListChildOrders returns the sequenced child orders for a compound

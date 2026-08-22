@@ -157,17 +157,43 @@ export function formatTime(ts, opts) {
     return d.toLocaleString();
 }
 
+// formatDuration is THE SAME LADDER as protocol.FormatDuration (Go), output
+// byte for byte. That is a hard requirement, not a nicety.
+//
+// The fault line is rendered ONCE by the server and then re-rendered every
+// second by installLiveDurations below. When the two ladders disagreed, every
+// faulted row on every board visibly rewrote itself one second after it
+// painted — "Replanning · 4m 07s" became "Replanning · 4m 7s" — and again after
+// each reconcile, because the reconcile restores the server's text. The
+// mismatch was not one space: the old ladder kept seconds all the way to an
+// hour where Go drops them at ten minutes, zero-padded nothing, had a
+// millisecond tier Go has no equivalent for, had no days tier at all, and
+// rendered zero as "-" where Go renders "0 s".
+//
+// The tiers, from protocol/duration.go — change them in both or in neither:
+//
+//	< 1m    "18 s"     seconds, with the space
+//	< 10m   "4m 07s"   zero-padded seconds so a tnum column stays aligned
+//	< 1h    "23m"      whole minutes; seconds stop carrying anything
+//	< 24h   "2h 05m"
+//	else    "3d 04h"
+//
+// Zero is "0 s", NOT the dash — Go's ladder floors negatives at zero and prints
+// that, and a fault line rendered at the instant of the fault must agree. The
+// dash is reserved for ABSENT (null / undefined / NaN), which Go never renders:
+// BuildFaultLine omits the element entirely when it has no instant, rather than
+// printing a duration measured from the zero time.
 export function formatDuration(ms) {
-    if (!ms || ms <= 0) return '-';
-    if (ms < 1000) return ms + 'ms';
-    let s = Math.floor(ms / 1000);
-    if (s < 60) return s + 's';
-    let m = Math.floor(s / 60);
-    s = s % 60;
-    if (m < 60) return m + 'm ' + s + 's';
+    if (ms === null || ms === undefined || isNaN(ms)) return '—';
+    const total = Math.max(0, Math.floor(ms));
+    const s = Math.floor(total / 1000);
+    if (s < 60) return s + ' s';
+    const m = Math.floor(s / 60);
+    if (s < 600) return m + 'm ' + String(s % 60).padStart(2, '0') + 's';
+    if (s < 3600) return m + 'm';
     const h = Math.floor(m / 60);
-    m = m % 60;
-    return h + 'h ' + m + 'm';
+    if (s < 86400) return h + 'h ' + String(m % 60).padStart(2, '0') + 'm';
+    return Math.floor(h / 24) + 'd ' + String(h % 24).padStart(2, '0') + 'h';
 }
 
 // ─── Live durations ──────────────────────────────────────────────────────

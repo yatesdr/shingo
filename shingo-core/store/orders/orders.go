@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -818,6 +819,58 @@ func ListHistory(db *sql.DB, orderID int64) ([]*History, error) {
 // ORDER BY id DESC rather than created_at DESC: two rows written inside the same
 // clock tick sort by insertion, and id is the only monotonic column. Served by
 // idx_order_history_order.
+// LatestHistoryTimesForStatus is LatestHistoryForStatus over MANY orders in one
+// round trip: order id -> when that order most recently reached the status.
+//
+// Exists because the callers that want it want it for a SET — the health gauge
+// asks "how long has each faulted order been faulted", the robots page asks the
+// same for every robot's order. One query per order made the cost scale with how
+// bad the plant's day was: a fleet-wide dropout faults thirty orders at once and
+// turned a 15-second health poll into thirty-one queries.
+//
+// DISTINCT ON is the latest row per order, ordered the same way the single-row
+// query orders it (id DESC), so the two cannot disagree about which row is
+// "latest" for an order that reached the status twice.
+//
+// Only the instant is returned, not the row. Every batch caller so far wants the
+// clock; the one caller that wants the REF (the orders board's fault line) wants
+// it for one order at a time and keeps using LatestHistoryForStatus.
+//
+// An empty id list is a nil map and no query.
+func LatestHistoryTimesForStatus(db *sql.DB, orderIDs []int64, status protocol.Status) (map[int64]time.Time, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+	// pq.Array is unavailable in this package (it takes a bare *sql.DB and the
+	// driver is wired above it), so the id set is expanded as a positional IN
+	// list — the same workaround bins.CarrierBindings uses.
+	ph := make([]string, len(orderIDs))
+	args := make([]any, 0, len(orderIDs)+1)
+	for i, id := range orderIDs {
+		ph[i] = fmt.Sprintf("$%d", i+1)
+		args = append(args, id)
+	}
+	args = append(args, string(status))
+	rows, err := db.Query(`SELECT DISTINCT ON (order_id) order_id, created_at
+		FROM order_history WHERE order_id IN (`+strings.Join(ph, ",")+`)
+		  AND status=$`+strconv.Itoa(len(orderIDs)+1)+`
+		ORDER BY order_id, id DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("latest %s history for %d orders: %w", status, len(orderIDs), err)
+	}
+	defer rows.Close()
+	out := make(map[int64]time.Time, len(orderIDs))
+	for rows.Next() {
+		var id int64
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		out[id] = at
+	}
+	return out, rows.Err()
+}
+
 func LatestHistoryForStatus(db *sql.DB, orderID int64, status protocol.Status) (*History, error) {
 	var h History
 	var code, actor sql.NullString

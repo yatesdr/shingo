@@ -5,8 +5,10 @@ package engine
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
@@ -50,7 +52,25 @@ func seedStranded(t *testing.T, db *store.DB, robotID string) (*bins.Bin, *order
 	_, err := db.DB.Exec(`UPDATE orders SET robot_id=$1, bin_id=$2, status='cancelled' WHERE id=$3`,
 		robotID, bin.ID, ord.ID)
 	testutil.MustNoErr(t, err, "set robot, bin and terminal status on order")
+	// The TERMINAL HISTORY ROW, because the sweep dates the bin from it. Written
+	// at "now" so the default fixture is a freshly stranded bin — the case the
+	// inference is for. ageStrandedOrder backdates it for the cases it is not.
+	strandOrderAt(t, db, ord, clock.Now().UTC())
 	return bin, ord
+}
+
+// strandOrderAt sets when the order terminalised, by writing (or moving) its
+// terminal history row. The sweep reads that row and nothing else — see
+// Engine.terminalWithin for why not orders.updated_at.
+func strandOrderAt(t *testing.T, db *store.DB, ord *orders.Order, at time.Time) {
+	t.Helper()
+	_, err := db.DB.Exec(`DELETE FROM order_history WHERE order_id=$1 AND status=$2`,
+		ord.ID, string(ord.Status))
+	testutil.MustNoErr(t, err, "clear terminal history")
+	_, err = db.DB.Exec(
+		`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1,$2,$3,$4)`,
+		ord.ID, string(ord.Status), "test terminalisation", at)
+	testutil.MustNoErr(t, err, "write terminal history")
 }
 
 // cacheRobot writes a robot into the engine's cache, which is what the
@@ -306,7 +326,7 @@ func TestStrandedTransit_CarriedBinUnloadedNowhereKnownBecomesAnAnomaly(t *testi
 // Two bins already stranded before any of this ran — the backlog the first
 // sweep after deploy clears. One resolvable, one not; they must end in
 // different places, and neither may be left as a bare "lost".
-func TestStrandedSweep_ClearsTheBacklog(t *testing.T) {
+func TestStrandedSweep_PlacesRecentWork(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newUnstartedEngine(t, db, simulator.New())
@@ -356,8 +376,8 @@ func TestStrandedSweep_ClearsTheBacklog(t *testing.T) {
 }
 
 // A bin on a carrier node is not an anomaly and the sweep must not treat it as
-// one — ListAnomalies matches "unclaimed at a synthetic node", which the carrier
-// nodes now also satisfy.
+// one. ListAnomalies no longer returns the carrier nodes at all, and the sweep
+// skips them besides; this pins both.
 func TestStrandedSweep_DoesNotTreatACarriedBinAsLost(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -381,5 +401,110 @@ func TestStrandedSweep_DoesNotTreatACarriedBinAsLost(t *testing.T) {
 	testutil.MustNoErr(t, err, "get bin")
 	if b.AnomalyAt != nil {
 		t.Error("a bin riding a known robot must not be stamped anomalous by the sweep")
+	}
+}
+
+// THE SWEEP IS A BACKSTOP, NOT A BACKFILL. A bin whose order ended three hours
+// ago is not something the robot's CURRENT position can speak to: the robot has
+// run other jobs since, and an empty node under it now has nothing to do with
+// where that bin was set down. The sweep must decline rather than place, even
+// though every other condition (deck empty, parked, station resolves, node free)
+// is satisfied — which is exactly what makes this the dangerous case.
+func TestStrandedSweep_DeclinesABinOlderThanTheWindow(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newUnstartedEngine(t, db, simulator.New())
+
+	dest := &nodes.Node{Name: "DROP-STALE", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(dest), "create dest node")
+
+	stale, staleOrd := seedStranded(t, db, "AMR-OLD")
+	strandOrderAt(t, db, staleOrd, clock.Now().UTC().Add(-3*time.Hour))
+
+	// Everything the inference wants, so only the AGE can be what stops it.
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-OLD", JackState: 3, LiftHeight: -0.0001,
+		CurrentStation: "DROP-STALE", LastStation: "DROP-STALE",
+	})
+
+	eng.sweepStrandedBins()
+
+	if got := binNodeName(t, db, stale.ID); got != "_TRANSIT" {
+		t.Errorf("a bin stranded 3h ago was placed at %q — the sweep must not backfill history, "+
+			"because the robot's position now says nothing about where that bin went", got)
+	}
+}
+
+// The window is for _TRANSIT bins only. A bin riding a deck is dated by the
+// JACK, not by an order that ended long ago: however stale the order, a deck
+// that reports empty has set its bin down and that is a fact about now.
+func TestStrandedSweep_CarrierBinIsRecheckedDespiteAStaleOrder(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newUnstartedEngine(t, db, simulator.New())
+
+	dest := &nodes.Node{Name: "DROP-CARRIED", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(dest), "create dest node")
+
+	bin, ord := seedStranded(t, db, "AMR-RIDE")
+	// Park it on the deck first, while the order is still fresh.
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-RIDE", JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
+	})
+	eng.inferStrandedTransitBin(ord.ID)
+	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-RIDE" {
+		t.Fatalf("setup: bin is at %q, want the carrier node", got)
+	}
+
+	// Now age the order well past the window and unload the deck.
+	strandOrderAt(t, db, ord, clock.Now().UTC().Add(-6*time.Hour))
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-RIDE", JackState: 3, LiftHeight: -0.0001,
+		CurrentStation: "DROP-CARRIED", LastStation: "DROP-CARRIED",
+	})
+
+	eng.sweepStrandedBins()
+
+	if got := binNodeName(t, db, bin.ID); got != "DROP-CARRIED" {
+		t.Errorf("carried bin is at %q, want DROP-CARRIED — the age window is for _TRANSIT bins, "+
+			"not for a deck that just reported empty", got)
+	}
+	// And the carrier node is retired once nothing is on it.
+	var n int
+	testutil.MustNoErr(t, db.DB.QueryRow(
+		`SELECT count(*) FROM nodes WHERE name='_ROBOT:AMR-RIDE'`).Scan(&n), "count carrier node")
+	if n != 0 {
+		t.Errorf("carrier node survived with no bins on it — it would accumulate one row per vehicle")
+	}
+}
+
+// A robot that is DRIVING resolves to a station it merely passed, because
+// CurrentStation is empty while it moves and ResolveRobotStation falls back to
+// LastStation. The jack being at rest says nothing about the vehicle under it.
+func TestStrandedTransit_MovingRobotIsNotAPlacement(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newUnstartedEngine(t, db, simulator.New())
+
+	dest := &nodes.Node{Name: "DROP-PASSED", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(dest), "create dest node")
+
+	bin, ord := seedStranded(t, db, "AMR-MOVING")
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-MOVING", JackState: 3, LiftHeight: -0.0001,
+		Busy:        true, // under way
+		LastStation: "DROP-PASSED", X: 44.5, Y: 9.75,
+	})
+
+	eng.inferStrandedTransitBin(ord.ID)
+
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
+		t.Errorf("bin was placed at %q from a MOVING robot's last station — "+
+			"that is a node it drove past, not one it stopped at", got)
+	}
+	b, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "get bin")
+	if !strings.Contains(b.AnomalyNote, "under way") {
+		t.Errorf("the note must say why it declined: %q", b.AnomalyNote)
 	}
 }

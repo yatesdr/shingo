@@ -206,6 +206,30 @@ func GetRoot(db *sql.DB, nodeID int64) (*Node, error) {
 }
 
 // List returns every node ordered by name.
+// DeleteCarrierNodeIfEmpty removes a per-robot carrier node (`_ROBOT:<vehicle>`)
+// once nothing is on it.
+//
+// The carrier nodes are created lazily as robots pick bins up, so without this
+// they only ever accumulate: one permanent row per vehicle that has ever carried
+// a stranded bin, on a table operators read. With it, a carrier node exists only
+// while a bin is actually riding that deck — which is rare and short — and the
+// node list stays a list of places.
+//
+// ONE STATEMENT, and the NOT EXISTS is the interlock. A concurrent park that has
+// created the node but not yet moved its bin onto it is the only race, and it
+// resolves safely in both orders: if the bin lands first the delete finds it and
+// declines; if the delete wins the park's move fails, logs, and the bin falls to
+// an anomaly the next sweep re-runs. Deleting a node with a bin still on it is
+// the outcome that must not happen, and cannot.
+//
+// Guarded on is_synthetic as well as the name so a hand-made physical node that
+// happens to be called `_ROBOT:something` is never removed by a sweep.
+func DeleteCarrierNodeIfEmpty(db *sql.DB, name string) error {
+	_, err := db.Exec(`DELETE FROM nodes n WHERE n.name=$1 AND n.is_synthetic
+		AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)`, name)
+	return err
+}
+
 func List(db *sql.DB) ([]*Node, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s %s ORDER BY n.name`, SelectCols, FromClause))
 	if err != nil {

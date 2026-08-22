@@ -121,3 +121,9 @@ func (db *DB) ReparentNode(nodeID int64, parentID *int64, position int) error {
 func (db *DB) ReorderLaneSlots(laneID int64, orderedNodeIDs []int64) error {
 	return nodes.ReorderLaneSlots(db.DB, laneID, orderedNodeIDs)
 }
+
+// DeleteCarrierNodeIfEmpty removes an empty per-robot carrier node — see
+// nodes.DeleteCarrierNodeIfEmpty.
+func (db *DB) DeleteCarrierNodeIfEmpty(name string) error {
+	return nodes.DeleteCarrierNodeIfEmpty(db.DB, name)
+}

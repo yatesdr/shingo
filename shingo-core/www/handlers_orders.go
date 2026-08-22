@@ -49,7 +49,16 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) handleOrdersRows(w http.ResponseWriter, r *http.Request) {
 	orders, err := h.listOrdersForPage(r)
 	if err != nil {
+		// 500, NOT a 200 with an empty <tbody>. This fragment REPLACES the
+		// board's rows, so answering a failed read with an empty body told the
+		// operator the plant had no orders — a DB blip rendering as "nothing is
+		// happening" on the one page whose job is to say what is. The client
+		// treats a non-2xx as "keep what you have and log it", which is the
+		// honest failure: stale rows an operator can see are worth more than
+		// fresh emptiness they cannot distinguish from the truth.
 		log.Printf("orders rows: list orders: %v", err)
+		http.Error(w, "could not list orders", http.StatusInternalServerError)
+		return
 	}
 	faultLines, noticeCount := h.faultLinesFor(orders)
 	tmpl, ok := h.tmpls["orders.html"]

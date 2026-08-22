@@ -39,6 +39,9 @@ type binRow struct {
 }
 
 // carrierNodePrefix names the per-robot synthetic nodes a bin rides on.
+// Duplicated from store/bins.CarrierNodePrefix rather than imported: depguard
+// forbids www reaching the store. Kept byte-identical; the store constant is the
+// definition and carries the reasoning.
 const carrierNodePrefix = "_ROBOT:"
 
 // transitOrderFor finds the order behind an in-flight bin: its live claim if it

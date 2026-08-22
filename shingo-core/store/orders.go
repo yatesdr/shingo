@@ -463,6 +463,13 @@ func (db *DB) LatestOrderHistoryForStatus(orderID int64, status protocol.Status)
 	return orders.LatestHistoryForStatus(db.DB, orderID, status)
 }
 
+// LatestOrderHistoryTimesForStatus is the batch form: order id -> when each of
+// those orders most recently reached the status, in one round trip. See
+// orders.LatestHistoryTimesForStatus.
+func (db *DB) LatestOrderHistoryTimesForStatus(orderIDs []int64, status protocol.Status) (map[int64]time.Time, error) {
+	return orders.LatestHistoryTimesForStatus(db.DB, orderIDs, status)
+}
+
 // OrderEverReachedStatus reports whether the order ever recorded the status —
 // see orders.EverReachedStatus.
 func (db *DB) OrderEverReachedStatus(orderID int64, status string) (bool, error) {

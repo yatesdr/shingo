@@ -50,6 +50,15 @@ func robotOrderLines(svc *service.OrderService, cfg *config.Config) map[string]R
 	}
 	now := clock.Now().UTC()
 
+	// Two passes so the fault clocks are ONE query for the whole page rather
+	// than one per faulted order — the same batching the health gauge does, and
+	// for the same reason: this runs on every fleet change, and the per-order
+	// form cost the most exactly when the most orders were faulted.
+	// Keyed by order id rather than holding the rows: `orders` is the local
+	// slice's name here, so the package's type is not nameable in this scope,
+	// and the second pass only needs the id → robot mapping anyway.
+	faultedRobot := map[int64]string{}
+	faultedIDs := make([]int64, 0, 4)
 	for _, o := range orders {
 		if o.RobotID == "" {
 			continue
@@ -57,17 +66,32 @@ func robotOrderLines(svc *service.OrderService, cfg *config.Config) map[string]R
 		if _, seen := lines[o.RobotID]; seen {
 			continue
 		}
-		line := RobotOrderLine{OrderID: o.ID, OrderStatus: string(o.Status)}
+		lines[o.RobotID] = RobotOrderLine{OrderID: o.ID, OrderStatus: string(o.Status)}
 		if o.Status == protocol.StatusFaulted {
-			if h, herr := svc.LatestOrderHistoryForStatus(o.ID, protocol.StatusFaulted); herr != nil {
-				log.Printf("robot order lines: fault row for order %d: %v", o.ID, herr)
-			} else if h != nil {
-				since := h.CreatedAt
-				line.FaultSince = &since
-				line.FaultNotice = noticeAfter > 0 && now.Sub(since) >= noticeAfter
-			}
+			faultedIDs = append(faultedIDs, o.ID)
+			faultedRobot[o.ID] = o.RobotID
 		}
-		lines[o.RobotID] = line
+	}
+	if len(faultedIDs) == 0 {
+		return lines
+	}
+	since, err := svc.LatestOrderHistoryTimesForStatus(faultedIDs, protocol.StatusFaulted)
+	if err != nil {
+		// The tiles still name their orders; they just carry no clock. A fault
+		// row we could not read must not cost the page the rest of the line.
+		log.Printf("robot order lines: fault clocks for %d orders: %v", len(faultedIDs), err)
+		return lines
+	}
+	for id, robotID := range faultedRobot {
+		t, ok := since[id]
+		if !ok {
+			continue
+		}
+		line := lines[robotID]
+		at := t
+		line.FaultSince = &at
+		line.FaultNotice = noticeAfter > 0 && now.Sub(at) >= noticeAfter
+		lines[robotID] = line
 	}
 	return lines
 }
