@@ -460,14 +460,29 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	// approach has no escaping). Typed marshal handles every JSON
 	// edge case correctly and matches the pattern in
 	// bin_manifest.AuditReleaseOverride.
+	// wire_epoch and bin_epoch use the SAME JSON keys the stale-epoch drop
+	// branch above writes, so one query answers the question across both
+	// outcomes.
+	//
+	// Until 2026-08-22 the epoch was recorded ONLY when a delta was dropped, so
+	// a delta that ARRIVED on a stale generation and was applied left no trace
+	// of which generation it carried — and "did a late delta ever land on the
+	// wrong generation" was unanswerable from the ledger by construction. That
+	// matters more since bin_uop_delta stopped expiring: a delta can now arrive
+	// arbitrarily late, and the epoch is the only thing that says whether that
+	// was harmless.
 	metadata, err := json.Marshal(struct {
 		Reason     string `json:"reason"`
 		Delta      int    `json:"delta"`
 		SequenceID int64  `json:"sequence_id"`
+		WireEpoch  int64  `json:"wire_epoch"`
+		BinEpoch   int64  `json:"bin_epoch"`
 	}{
 		Reason:     string(d.Reason),
 		Delta:      d.Delta,
 		SequenceID: d.SequenceID,
+		WireEpoch:  d.Epoch,
+		BinEpoch:   currentEpoch,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal BinUOPDelta audit metadata bin=%d: %w", d.BinID, err)

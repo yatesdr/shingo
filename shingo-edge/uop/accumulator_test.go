@@ -300,7 +300,7 @@ func TestInventoryDeltaReporter_BucketScopeKeyComposite(t *testing.T) {
 
 // Pending-delta guard tests removed alongside the reconciler deletion
 // (bin-ownership flip): with no reconciler healing, there is no caller
-// for IsPendingBinDelta / IsPendingBucketDelta / LoadPendingFromOutbox.
+// for IsPendingBinDelta / IsPendingBucketDelta.
 // Outbox health is now signaled exclusively via FlushFailures + Kafka
 // consumer-lag dashboards; correctness lives in inventory_delta_dedup
 // at Core.

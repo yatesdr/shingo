@@ -39,21 +39,15 @@ func (s *AuditService) ListForEntity(entityType string, entityID int64) ([]*audi
 	return s.db.ListEntityAudit(entityType, entityID)
 }
 
-// ListBinUOPByBin / ListBinUOPByOperator / ListBinUOPOverridesByStation
-// expose the read side of bin_uop_ledger for the Item 10 audit UI.
-// Handlers call these directly so the UI can render per-bin timelines,
-// per-operator activity, and per-station override-pattern reports
-// without composing SQL in the handler layer.
+// ListBinUOPByBin exposes the read side of bin_uop_ledger for the audit UI,
+// so the handler can render a per-bin timeline without composing SQL.
+//
+// The per-operator and per-station-override readers that used to sit beside it
+// were removed on 2026-08-22: their routes had no caller in any page or script,
+// and they were the only queries filtering the ledger on `actor` — a column
+// with no index and 99.2% of its rows under a single value.
 func (s *AuditService) ListBinUOPByBin(binID int64, limit, offset int) ([]audit.BinUOPRow, error) {
 	return audit.ListBinUOPByBin(s.db.DB, binID, limit, offset)
-}
-
-func (s *AuditService) ListBinUOPByOperator(actor string, limit, offset int) ([]audit.BinUOPRow, error) {
-	return audit.ListBinUOPByOperator(s.db.DB, actor, limit, offset)
-}
-
-func (s *AuditService) ListBinUOPOverridesByStation(station string, limit, offset int) ([]audit.BinUOPRow, error) {
-	return audit.ListBinUOPOverridesByStation(s.db.DB, station, limit, offset)
 }
 
 // ListBinUOPDiscrepancies exposes the discrepancy ledger — a view over

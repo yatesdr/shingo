@@ -36,10 +36,26 @@ func (db *DB) ListPendingOutbox(limit int) ([]messaging.Message, error) {
 	return messaging.ListPending(db.DB, limit)
 }
 
-// ListUnsentOutboxByType returns every un-sent outbox message matching
-// any of the given msg_type values. Used at startup to recover
-// in-memory state from durable outbox entries (e.g. inventory delta
-// pending sets after a crash).
+// ListUnsentOutboxByType returns every un-sent outbox message matching any of
+// the given msg_type values.
+//
+// ⚠️ IT HAS NO PRODUCTION CALLER. This comment used to claim it was "used at
+// startup to recover in-memory state from durable outbox entries (e.g.
+// inventory delta pending sets after a crash)". No such caller exists, and the
+// LoadPendingFromOutbox that a test comment in the uop package named as though
+// it were real does not exist anywhere in the tree. Whatever wired that up was
+// removed, or never written, and the sentence outlived it.
+//
+// It is kept because it IS used — by test helpers reading the outbox directly
+// (engine/demand_origin_state_test.go). Deleting a working test helper to
+// satisfy a claim that was only ever in a comment would be the wrong trade.
+//
+// What is genuinely NOT rebuilt after an edge restart is the uop accumulator's
+// in-flight knowledge — which deltas it has already enqueued. The MESSAGES are
+// safe regardless: they are durable in the outbox, the drainer sends them on
+// the next pass, and since 2026-08-22 the delta subjects carry no expiry so
+// arriving late cannot destroy them. Whether the accumulator can double-count
+// after a restart is a real design question and is NOT answered here.
 func (db *DB) ListUnsentOutboxByType(msgTypes []string) ([]messaging.Message, error) {
 	return messaging.ListUnsentByType(db.DB, msgTypes)
 }

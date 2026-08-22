@@ -1174,3 +1174,51 @@ func TestInventoryDelta_C6_AnomalyObservability(t *testing.T) {
 		t.Error("stale-staged bin must NOT appear in rejected-delta detail (it is not anomaly-flagged)")
 	}
 }
+
+// TestInventoryDelta_AppliedDeltaRecordsItsEpoch pins the ledger row of an
+// APPLIED delta carrying wire_epoch and bin_epoch.
+//
+// Until 2026-08-22 the epoch was recorded only when a delta was DROPPED, so a
+// delta that arrived on a stale generation and applied left no trace of which
+// generation it carried. "Did a late delta ever land on the wrong generation"
+// was therefore unanswerable from the ledger by construction — the question was
+// asked on 2026-08-22 and could only be answered from a 24-hour window of edge
+// outbox payloads, the one place the epoch survived.
+//
+// It matters more since bin_uop_delta stopped expiring: a delta can now arrive
+// arbitrarily late, and the epoch is the only field that says whether that was
+// harmless. Same JSON keys as the drop branch, so one query covers both
+// outcomes.
+func TestInventoryDelta_AppliedDeltaRecordsItsEpoch(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-APPLIED-EPOCH", "PART-A", 100)
+	_, err := db.Exec(`UPDATE bins SET delta_epoch=4 WHERE id=$1`, bin.ID)
+	testutil.MustNoErr(t, err, "set epoch")
+
+	d := makeBinDelta(bin.ID, "PART-A", -6, 1, protocol.ReasonConsumeTick)
+	d.Epoch = 4
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, d), "apply delta")
+
+	var meta string
+	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata FROM bin_uop_ledger
+		WHERE bin_id=$1 AND op='bin_uop_delta'`, bin.ID).Scan(&meta), "read applied ledger row")
+
+	var m struct {
+		Delta     int   `json:"delta"`
+		WireEpoch int64 `json:"wire_epoch"`
+		BinEpoch  int64 `json:"bin_epoch"`
+	}
+	testutil.MustNoErr(t, json.Unmarshal([]byte(meta), &m), "parse metadata")
+	if m.Delta != -6 {
+		t.Errorf("delta = %d, want -6", m.Delta)
+	}
+	if m.WireEpoch != 4 || m.BinEpoch != 4 {
+		t.Errorf("wire_epoch/bin_epoch = %d/%d, want 4/4 — without these the ledger "+
+			"cannot say which generation an applied delta belonged to",
+			m.WireEpoch, m.BinEpoch)
+	}
+}

@@ -53,49 +53,6 @@ func (h *Handlers) apiAuditBinTimeline(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, rows)
 }
 
-// apiAuditOperatorActivity returns activity by an operator (or system
-// actor like a station id).
-//
-//	GET /api/audit/operator/{name}[?limit=N&offset=M]
-//
-// "name" is the actor field — anything from a username to a station
-// id like "ALN_001". Exact match.
-func (h *Handlers) apiAuditOperatorActivity(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	if name == "" {
-		h.jsonError(w, "missing operator name", http.StatusBadRequest)
-		return
-	}
-	limit, offset := h.parseAuditPaging(r)
-	rows, err := h.engine.AuditService().ListBinUOPByOperator(name, limit, offset)
-	if err != nil {
-		h.jsonError(w, "list audit: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonOK(w, rows)
-}
-
-// apiAuditStationOverrides returns recent override rows for a station —
-// only the operator_override_pull_parts and
-// operator_override_release_partial op tags. SCO and management use
-// this to spot mislabelled bins, upstream overfill, and miscount drift.
-//
-//	GET /api/audit/station/{station}[?limit=N&offset=M]
-func (h *Handlers) apiAuditStationOverrides(w http.ResponseWriter, r *http.Request) {
-	station := chi.URLParam(r, "station")
-	if station == "" {
-		h.jsonError(w, "missing station id", http.StatusBadRequest)
-		return
-	}
-	limit, offset := h.parseAuditPaging(r)
-	rows, err := h.engine.AuditService().ListBinUOPOverridesByStation(station, limit, offset)
-	if err != nil {
-		h.jsonError(w, "list audit: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonOK(w, rows)
-}
-
 // apiAuditDiscrepancies returns the discrepancy ledger: bin_uop_ledger
 // rows where the tracked count diverged from reality — dropped stale ticks,
 // negative remaining, and release-empties that still carried counted parts.

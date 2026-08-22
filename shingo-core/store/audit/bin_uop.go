@@ -387,52 +387,17 @@ func ListBinUOPByBin(db *sql.DB, binID int64, limit, offset int) ([]BinUOPRow, e
 	return scanBinUOPRows(rows)
 }
 
-// ListBinUOPByOperator returns recent activity by one actor (operator
-// or system), newest first. Filter is exact match on the actor
-// column; callers that want fuzzy match can do that client-side.
-func ListBinUOPByOperator(db *sql.DB, actor string, limit, offset int) ([]BinUOPRow, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	rows, err := db.Query(`SELECT `+binUOPSelectCols+`
-		FROM bin_uop_ledger
-		WHERE actor = $1
-		ORDER BY applied_at DESC, id DESC
-		LIMIT $2 OFFSET $3`, actor, limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("list bin_uop_ledger by actor %q: %w", actor, err)
-	}
-	return scanBinUOPRows(rows)
-}
-
-// ListBinUOPOverridesByStation returns recent operator-override rows
-// for a station, newest first. Filters to OpOperatorOverridePullParts
-// and OpOperatorOverrideReleasePartial — the audit-relevant override
-// observations — so the per-station UI surfaces the divergence
-// patterns SCO and management actually want to review.
-func ListBinUOPOverridesByStation(db *sql.DB, station string, limit, offset int) ([]BinUOPRow, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	rows, err := db.Query(`SELECT `+binUOPSelectCols+`
-		FROM bin_uop_ledger
-		WHERE actor = $1
-		AND op IN ($2, $3)
-		ORDER BY applied_at DESC, id DESC
-		LIMIT $4 OFFSET $5`,
-		station, OpOperatorOverridePullParts, OpOperatorOverrideReleasePartial,
-		limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("list bin_uop_ledger overrides by station %q: %w", station, err)
-	}
-	return scanBinUOPRows(rows)
-}
+// The per-actor readers that used to sit here — ListBinUOPByOperator and
+// ListBinUOPOverridesByStation — were removed on 2026-08-22.
+//
+// Their HTTP routes (/audit/operator/{name}, /audit/station/{station}) had zero
+// callers in any page or script, and they were the only queries that filtered
+// this table on `actor`: a column with no index, 99.2% of rows under a single
+// value, and a plan that parallel-seq-scanned 402k rows for both the common and
+// the rare value. Adding the index they wanted would have been a sixth index on
+// an insert-only table to serve a query nobody ran. If a per-operator view is
+// wanted later, write it against the index the access pattern actually needs
+// rather than reviving these.
 
 // ListBinUOPDiscrepancies returns the discrepancy ledger, newest first.
 // It is a view over bin_uop_ledger UNION bin_uop_exception, surfacing rows
