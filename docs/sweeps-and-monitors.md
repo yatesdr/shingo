@@ -18,7 +18,7 @@ were enumerated during the audit and none couples to this machinery.
 | `OnBinUOPDelta` | `engine/threshold_monitor.go` | Edge UOP delta | per delta | → `evaluatePayload` |
 | `OnBucketApplied` | `engine/threshold_monitor.go` | bucket delta | per delta | → `evaluatePayload` |
 | `handleBinUpdated` | `engine/threshold_monitor.go` | `EventBinUpdated` | every bin move | → `evaluatePayload` |
-| `OnLinesideReports` | `engine/threshold_monitor_shadow.go` | Edge report | ~60s | decides in `edge_reports` mode, audits only in `ledger` mode |
+| `OnLinesideReports` | `engine/threshold_monitor_lineside.go` | Edge report | ~60s | decides in `edge_reports` mode, audits only in `ledger` mode |
 | `NoteSwapRequestContradiction` | `engine/threshold_monitor.go` | complex order received | per order | contradiction re-check |
 | `OnThresholdChanges` | `engine/threshold_monitor.go` | loader config edit | per registry change | clears debounce so a new threshold takes effect at once |
 | `Resync` | `engine/threshold_monitor.go` | station resync | per resync | re-engages payloads, clears debounce, fires already-below |
@@ -26,7 +26,7 @@ were enumerated during the audit and none couples to this machinery.
 | `rehydrateThresholdEpisodes` | `engine/threshold_episodes.go` | inside `startupSweep` | boot | rebuilds open-episode maps — without it every restart doubles open demand |
 | `reconcileThresholdBindings` | `engine/threshold_episodes.go` | demand reconciler | reconcile interval | closes episodes whose binding vanished |
 
-**The shadow file is no longer a shadow.** In `edge_reports` mode it decides.
+**The lineside read-model decides, it does not shadow.** In `edge_reports` mode — the default — the Edge reports carry the adjustment the fire gate acts on. The file was named `threshold_monitor_shadow.go` until 2026-08-22; it is now `threshold_monitor_lineside.go`.
 
 ## Core — sweeps
 

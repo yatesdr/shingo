@@ -6,8 +6,17 @@ import (
 )
 
 // EdgeLinesideReport is one persisted per-(station, node, payload) lineside
-// level as Edge reported it — the R1 shadow read-model row. Its own table
+// level as Edge reported it — the R1 lineside read-model row. Its own table
 // (edge_lineside_reports, v52); nothing here touches bins.uop_remaining.
+//
+// These rows are read by the fire gate, not just logged: under the default
+// lineside_decision_mode=edge_reports they carry the adjustment the
+// replenishment decision is made on. See
+// shingo-core/engine/threshold_monitor_lineside.go.
+//
+// The v52 TABLE COMMENT in the database still calls this a shadow read-model.
+// Correcting it needs a migration and a schema-snapshot regeneration for one
+// string, so it was deliberately left; this comment is the accurate one.
 type EdgeLinesideReport struct {
 	Station      string
 	CoreNodeName string
@@ -56,8 +65,9 @@ func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) error {
 }
 
 // ListLinesideReportsForPayload returns every edge_lineside_reports row for a
-// payload across all stations/nodes. The caller (the shadow) splits fresh from
-// stale by comparing reported_at to now − staleness window.
+// payload across all stations/nodes. The caller (the lineside read-model) splits
+// fresh from stale by comparing reported_at to now − staleness window, which is
+// why UpsertEdgeLinesideReport must never let reported_at move backwards.
 func (db *DB) ListLinesideReportsForPayload(payloadCode string) ([]EdgeLinesideReport, error) {
 	rows, err := db.Query(`
 		SELECT station, core_node_name, payload_code, bin_count, bin_uop, bucket_qty, reported_at

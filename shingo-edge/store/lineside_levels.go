@@ -4,7 +4,12 @@ import "fmt"
 
 // LinesideLevel is one consuming node's current lineside on-hand, read from
 // Edge's own authoritative counters (post the bin-ownership flip) for the R1
-// shadow reporter.
+// lineside reporter.
+//
+// Note the cardinality: BinCount is 0 or 1, the BOUND bin. Core's own per-node
+// term sums EVERY bin whose node_id points at the node, bound or not, which is
+// the whole reason this feed exists — three bins delivered with one bound reads
+// as three on Core and one here.
 type LinesideLevel struct {
 	CoreNodeName string
 	PayloadCode  string
@@ -16,7 +21,9 @@ type LinesideLevel struct {
 // ListLinesideLevels returns the current per-consuming-node lineside on-hand:
 // for every process node whose ACTIVE claim is a consume claim carrying a
 // payload, the bound-bin count + its remaining_uop_cached, and the node's
-// active lineside bucket qty. Read-only; feeds the 60s R1 reporter.
+// active lineside bucket qty. Read-only; feeds the 60s R1 reporter, whose
+// output DECIDES replenishment on Core by default (see
+// shingo-edge/engine/lineside_reporter.go).
 //
 // Bucket qty is the node's total ACTIVE bucket parts, attributed to the active
 // claim's payload — a consuming node consumes one payload at a time, so this
