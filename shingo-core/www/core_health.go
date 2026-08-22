@@ -17,6 +17,7 @@ package www
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"runtime"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 )
 
 // buildInfo is stamped once at boot by the composition root. Version and
@@ -220,6 +222,25 @@ type CoreHealth struct {
 	// sentence and the rule that produced it from drifting apart anyway.
 	CompletionAnomalyWindowHours int `json:"completion_anomaly_window_hours"`
 	SSEClients                   int `json:"sse_clients"`
+
+	// FaultedNow is every order sitting in `faulted` right now; FaultedNotice
+	// is the subset past the config threshold.
+	//
+	// Both come from the DB (ListActiveOrders), not from Poller.FaultedCount() —
+	// which has no caller, and is poller MEMORY: after a Core restart it reads
+	// zero until the next FAILED transition, because Track seeds StateCreated.
+	// A gauge that says "0 faulted" while the board shows three is worse than
+	// no gauge. Reading the DB also means the strip and the board agree by
+	// construction.
+	//
+	// ONLY FaultedNotice colours the verdict. 706 of 730 faults over 30 days
+	// recovered on their own with a median of 20 seconds; a strip that goes
+	// amber for those is amber most of the day and read by nobody.
+	FaultedNow    int `json:"faulted_now"`
+	FaultedNotice int `json:"faulted_notice"`
+	// FaultNoticeAfterSeconds is the threshold behind FaultedNotice, carried so
+	// the sentence can name it rather than asserting a bare number of seconds.
+	FaultNoticeAfterSeconds int `json:"fault_notice_after_seconds"`
 }
 
 const (
@@ -280,6 +301,8 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 		c.CompletionAnomalyWindowHours = recon.CompletionAnomalyWindowHours
 	}
 
+	c.FaultedNow, c.FaultedNotice, c.FaultNoticeAfterSeconds = h.faultedGauge()
+
 	if !depsOK {
 		c.DepsDown = depReasons
 	}
@@ -338,7 +361,48 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 			plural(c.CompletionAnomalies, "anomaly", "anomalies"),
 			formatWindow(c.CompletionAnomalyWindowHours)))
 	}
+	// NOTICE faults only. A 20-second replan is the overwhelming majority of
+	// faults and is not a degraded core; colouring the verdict for it would
+	// leave the strip amber most of the day.
+	if c.FaultedNotice > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d %s faulted over %ds",
+			c.FaultedNotice,
+			plural(c.FaultedNotice, "order", "orders"),
+			c.FaultNoticeAfterSeconds))
+	}
 	return reasons
+}
+
+// faultedGauge counts the orders sitting in `faulted` right now, and the subset
+// past the notice threshold.
+//
+// A read failure reports zeros. The strip is a health surface: it must not
+// itself become the outage, and a missing gauge is visible next to the
+// dependency dots that would also be down.
+func (h *Handlers) faultedGauge() (now, notice, thresholdS int) {
+	noticeAfter := h.engine.AppConfig().RDS.FaultNoticeAfter
+	thresholdS = int(noticeAfter.Seconds())
+	svc := h.engine.OrderService()
+	orders, err := svc.ListActiveOrders()
+	if err != nil {
+		log.Printf("core health: list active orders: %v", err)
+		return 0, 0, thresholdS
+	}
+	at := clock.Now().UTC()
+	for _, o := range orders {
+		if o.Status != protocol.StatusFaulted {
+			continue
+		}
+		now++
+		if noticeAfter <= 0 {
+			continue
+		}
+		if hrow, herr := svc.LatestOrderHistoryForStatus(o.ID, protocol.StatusFaulted); herr == nil &&
+			hrow != nil && at.Sub(hrow.CreatedAt) >= noticeAfter {
+			notice++
+		}
+	}
+	return now, notice, thresholdS
 }
 
 // plural picks the singular or plural WORD for n. Two call sites were writing

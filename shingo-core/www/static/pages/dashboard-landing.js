@@ -406,6 +406,20 @@ function renderCoreHealth(h) {
             .join('');
     }
 
+    // Faulted orders past the threshold. is-bad only when there are some: a
+    // replan is not a degraded core.
+    const faulted = document.getElementById('cs-faulted-val');
+    if (faulted) {
+        faulted.textContent = h.faulted_notice;
+        faulted.classList.toggle('is-bad', h.faulted_notice > 0);
+        faulted.classList.toggle('is-zero', !h.faulted_notice);
+        const fig = faulted.closest('.cs-fig');
+        if (fig) {
+            fig.title = h.faulted_now + ' faulted right now; the tile counts the ones past '
+                + h.fault_notice_after_seconds + 's, which is what the verdict reads.';
+        }
+    }
+
     // DB pool: in-use against the configured max.
     const poolVal = document.getElementById('cs-pool-val');
     if (poolVal) {
