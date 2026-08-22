@@ -21,6 +21,21 @@ type EdgeLinesideReport struct {
 // UpsertEdgeLinesideReport writes (or replaces) one edge_lineside_reports row,
 // keyed by (station, core_node_name, payload_code). Called by the Core handler
 // for each entry of an inbound LinesideLevelReport.
+//
+// LATEST-WINS on Edge's reported_at. The upsert used to overwrite
+// unconditionally, which let an out-of-order or replayed report move a row
+// BACKWARDS in time — and reported_at is what the monitor's freshness test
+// reads. A row pushed behind linesideReportStaleness stops contributing its
+// adjustment, so that node falls back to the pure ledger for up to the next
+// report interval: exactly the "ledger reads STOCKED while the line starves"
+// case this feed exists to correct.
+//
+// Replay is not hypothetical. The outbox is at-least-once by construction and
+// a requeued dead letter re-delivers whatever it was carrying, so a report from
+// an hour ago can arrive after a current one.
+//
+// Strict `<`, so an exact duplicate is a no-op rather than a pointless write,
+// and updated_at stays inside the SET so it only moves when the row does.
 func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) error {
 	_, err := db.Exec(`
 		INSERT INTO edge_lineside_reports
@@ -31,7 +46,8 @@ func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) error {
 			bin_uop     = EXCLUDED.bin_uop,
 			bucket_qty  = EXCLUDED.bucket_qty,
 			reported_at = EXCLUDED.reported_at,
-			updated_at  = NOW()`,
+			updated_at  = NOW()
+		WHERE edge_lineside_reports.reported_at < EXCLUDED.reported_at`,
 		r.Station, r.CoreNodeName, r.PayloadCode, r.BinCount, r.BinUOP, r.BucketQty, r.ReportedAt)
 	if err != nil {
 		return fmt.Errorf("upsert edge_lineside_report %s/%s/%s: %w", r.Station, r.CoreNodeName, r.PayloadCode, err)
