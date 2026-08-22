@@ -44,7 +44,7 @@ type Bin = domain.Bin
 const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node_id, b.status, b.claimed_by, b.staged_at, b.staged_expires_at,
 	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.delta_epoch, b.manifest_confirmed,
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
-	b.loaded_at, b.anomaly_at, b.created_at, b.updated_at,
+	b.loaded_at, b.anomaly_at, COALESCE(b.anomaly_note, ''), b.created_at, b.updated_at,
 	bt.code, COALESCE(n.name, ''), COALESCE(p.uop_capacity, 0),
 	EXISTS(SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending') AS has_pending_reservation
 	` + BinFromClause
@@ -510,7 +510,7 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.StagedAt, &b.StagedExpiresAt,
 		&b.PayloadCode, &manifest, &b.UOPRemaining, &b.DeltaEpoch, &b.ManifestConfirmed,
 		&b.Locked, &b.LockedBy, &b.LockedAt, &b.LastCountedAt, &b.LastCountedBy,
-		&b.LoadedAt, &b.AnomalyAt, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity,
+		&b.LoadedAt, &b.AnomalyAt, &b.AnomalyNote, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity,
 		&b.HasPendingReservation)
 	if err != nil {
 		return nil, err
@@ -1201,6 +1201,20 @@ func MoveToTransit(db *sql.DB, binID, transitNodeID int64) error {
 	_, err := db.Exec(
 		`UPDATE bins SET node_id=$1, updated_at=$3 WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`,
 		transitNodeID, binID, clock.Now().UTC())
+	return err
+}
+
+// MarkAnomalyWithNote stamps the anomaly and records where the robot carrying
+// the bin last was, so the operator gets a map pin instead of a search.
+//
+// COALESCE on anomaly_at preserves an earlier stamp — the anomaly state is
+// "still unresolved", not "happened at exactly this moment" — but the NOTE is
+// overwritten, because a later sweep has newer robot telemetry than the first
+// one did and stale coordinates are worse than none.
+func MarkAnomalyWithNote(db *sql.DB, binID int64, note string) error {
+	now := clock.Now().UTC()
+	_, err := db.Exec(`UPDATE bins SET anomaly_at=COALESCE(anomaly_at, $2), anomaly_note=$3, updated_at=$2
+		WHERE id=$1`, binID, now, note)
 	return err
 }
 

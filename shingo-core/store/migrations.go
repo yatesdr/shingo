@@ -4069,7 +4069,32 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.TableExists(q, "bin_uop_ledger")
 			}},
+		{96, "bins.anomaly_note — where the robot was when a transit bin was stranded",
+			v96BinAnomalyNote,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "bins", "anomaly_note")
+			}},
 	}
+}
+
+// v96BinAnomalyNote adds the free-text note that travels with a transit anomaly.
+//
+// A bin stranded at _TRANSIT is found by an operator walking the plant, and most
+// of that job is the FINDING. anomaly_at said only that a bin was lost; this
+// column says where the robot carrying it last was — coordinates, station, and
+// what its deck reported — so the search starts at a map pin.
+//
+// Free text rather than typed columns, deliberately. This is evidence for a
+// human, not a dimension anything queries: nothing groups by a robot's X, and a
+// schema that pretended otherwise would need six columns and a migration every
+// time the inference learned to say something new.
+//
+// ROLLBACK: a pre-v96 binary never reads or writes it; the column sits unused.
+func v96BinAnomalyNote(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bins ADD COLUMN IF NOT EXISTS anomaly_note TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v96 bins.anomaly_note: %w", err)
+	}
+	return nil
 }
 
 // MigrationsFailingTheirPostCondition returns every RECORDED-APPLIED migration

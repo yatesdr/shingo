@@ -140,6 +140,11 @@ func (e *Engine) wireEventHandlers() {
 				e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, dispatch.SwapTerminalFailed)
 			}
 		}
+
+		// Where did the bin go. The claim was released without touching
+		// node_id, so a bin the robot had picked up is now at _TRANSIT with
+		// nobody holding it. See stranded_transit.go.
+		e.inferStrandedTransitBin(ev.OrderID)
 	}, EventOrderFailed)
 
 	// ── Order skipped ────────────────────────────────────────────────────
@@ -171,6 +176,10 @@ func (e *Engine) wireEventHandlers() {
 		if e.dispatcher != nil {
 			e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, dispatch.SwapTerminalSkipped)
 		}
+
+		// A skipped order rarely has a bin on a deck, but the terminal
+		// chokepoint treats every terminal alike and so does this.
+		e.inferStrandedTransitBin(ev.OrderID)
 	}, EventOrderSkipped)
 
 	// ── Order completion ────────────────────────────────────────────
@@ -310,6 +319,9 @@ func (e *Engine) wireEventHandlers() {
 				}()
 			}
 		}
+		// The commonest way a bin is stranded: a robot is carrying it and the
+		// order is cancelled out from under it.
+		e.inferStrandedTransitBin(ev.OrderID)
 	}, EventOrderCancelled)
 
 	// ── Audit-only subscriptions ────────────────────────────────────

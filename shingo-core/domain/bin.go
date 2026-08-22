@@ -38,8 +38,13 @@ type Bin struct {
 	LastCountedBy     string     `json:"last_counted_by"`
 	LoadedAt          *time.Time `json:"loaded_at,omitempty"`
 	AnomalyAt         *time.Time `json:"anomaly_at,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	// AnomalyNote is where the robot carrying this bin last was, recorded when
+	// the bin was stranded. Free text for a human: most of finding a stranded
+	// bin is the walking, and this turns the search into a map pin. Empty when
+	// nothing could be inferred, and on every bin stranded before v96.
+	AnomalyNote string    `json:"anomaly_note,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 	// Joined fields
 	BinTypeCode string `json:"bin_type_code"`
 	NodeName    string `json:"node_name"`
