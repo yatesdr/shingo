@@ -74,6 +74,12 @@ type CoreDataService struct {
 	// (Phase E). Optional; nil in tests and headless runs. Set once before
 	// StartHeartbeatProjection, so the worker reads it race-free.
 	cellTickEmitter func(station string, processID, styleID int64, recordedAt time.Time)
+	// faultGrace / faultNoticeAfter are config durations echoed onto faulted
+	// order snapshots so a reconciling Edge can render the fault line and its
+	// clock. Optional (see SetFaultWindow); zero means the snapshot carries the
+	// status without the clock.
+	faultGrace       time.Duration
+	faultNoticeAfter time.Duration
 }
 
 // SetThresholdMonitor wires the engine's threshold-monitor for
@@ -82,6 +88,18 @@ type CoreDataService struct {
 // path can skip it.
 func (s *CoreDataService) SetThresholdMonitor(tm ThresholdMonitor) {
 	s.thresholdMonitor = tm
+}
+
+// SetFaultWindow wires the two config durations the boot reconcile needs to
+// answer "how long has this been faulted, and when does Core give up".
+//
+// Optional, like SetThresholdMonitor: unset means the snapshot carries the
+// status and no clock, which is what an Edge gets from an older Core anyway.
+// The reconcile matters here precisely because a faulted order may be stuck —
+// an Edge that restarts beside one would otherwise show a badge with no
+// sentence until a push that may never come.
+func (s *CoreDataService) SetFaultWindow(grace, noticeAfter time.Duration) {
+	s.faultGrace, s.faultNoticeAfter = grace, noticeAfter
 }
 
 // SetCellTickEmitter wires a callback invoked after each production.tick is
@@ -658,11 +676,42 @@ func (s *CoreDataService) HandleOrderStatusRequest(env *protocol.Envelope, req *
 			snap.ErrorDetail = order.ErrorDetail
 			snap.QueueReason = order.QueueReason
 			snap.QueueCode = order.QueueCode
+			s.attachFaultWindow(&snap, order.ID, order.Status)
 		}
 		resp.Orders = append(resp.Orders, snap)
 	}
 	resp.Unlisted = s.unlistedFor(env.Src.Station, asked)
 	s.resp.replyData(env, protocol.SubjectOrderStatusResponse, resp)
+}
+
+// attachFaultWindow puts the fault clock on a snapshot for a faulted order.
+//
+// One extra read per FAULTED order in the reconcile, and none for any other
+// status — a reconcile names the Edge's open orders, of which the faulted ones
+// are a handful at worst. Served by idx_order_history_order.
+//
+// A read failure or a missing faulted row leaves the clock off. The Edge then
+// renders the status word without a sentence, which is what it does today; the
+// reconcile's job is the Edge's whole order list and one unreadable history row
+// must not cost it.
+func (s *CoreDataService) attachFaultWindow(snap *protocol.OrderStatusSnapshot, orderID int64, status protocol.Status) {
+	if status != protocol.StatusFaulted || s.faultNoticeAfter <= 0 {
+		return
+	}
+	snap.FaultNoticeAfterS = int(s.faultNoticeAfter.Seconds())
+	h, err := s.db.LatestOrderHistoryForStatus(orderID, protocol.StatusFaulted)
+	if err != nil {
+		log.Printf("core_handler: fault window for order %d: %v — snapshot goes without the clock", orderID, err)
+		return
+	}
+	if h == nil {
+		return
+	}
+	since := h.CreatedAt
+	deadline := since.Add(s.faultGrace)
+	snap.FaultSince = &since
+	snap.FaultDeadline = &deadline
+	snap.FaultNotice = clock.Now().UTC().Sub(since) >= s.faultNoticeAfter
 }
 
 // unlistedFor collects this station's active orders that the Edge did not name.

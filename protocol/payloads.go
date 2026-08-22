@@ -218,6 +218,52 @@ type OrderUpdate struct {
 	// to the sentence. Ships alongside QueueReason so Edge can persist the code
 	// for future branching without a schema change.
 	QueueCode string `json:"queue_code,omitempty"`
+
+	// ── Fault fields ────────────────────────────────────────────────────
+	//
+	// Set only when Status is "faulted". They are what the Edge board needs to
+	// render a live fault line without asking Core again: WHEN it faulted, when
+	// Core gives up, and whether the threshold has been crossed.
+	//
+	// They do NOT reuse QueueReason/QueueCode. Those are documented as
+	// queued-only and the Edge has a queue_code column that means exactly that;
+	// a faulted order borrowing them would be a category error on the wire and
+	// in the schema.
+	//
+	// CLEARING IS THE EDGE'S JOB, DERIVED FROM STATUS — not a pushed zero. An
+	// absent omitempty field is indistinguishable from a deliberately empty
+	// one, so an Edge that trusted a pushed clear would let any unrelated
+	// status update wipe a live fault. This is the queue_reason bug of
+	// 2026-08-03 (a hold reason outliving its hold, quoted by the board 2½
+	// hours later) pointed the other way, and the fix is the same one:
+	// Core sends these only while faulted, the Edge keeps them only while
+	// faulted. See shingo-edge/messaging/edge_handler.go.
+
+	// FaultSince is when the order faulted — the faulted history row's
+	// created_at, not orders.updated_at, which the vendor poll rewrites.
+	// The Edge ticks its clock from this.
+	FaultSince *time.Time `json:"fault_since,omitempty"`
+	// FaultDeadline is when Core gives up (FaultSince + config fault_grace).
+	// A live config change mid-grace drifts it, which is acceptable for a
+	// countdown and beats the poller's copy, which does not survive a restart.
+	FaultDeadline *time.Time `json:"fault_deadline,omitempty"`
+	// FaultNotice is Core's decision AT PUSH TIME about whether this is a
+	// replan or a fault worth the word. Always false on the push that creates
+	// the fault, because nothing has been faulted for a minute at the instant
+	// it faults — which is exactly why FaultNoticeAfterS rides along.
+	FaultNotice bool `json:"fault_notice,omitempty"`
+	// FaultNoticeAfterS is Core's threshold in whole seconds (config
+	// rds.fault_notice_after). It is echoed rather than hard-coded so the Edge
+	// can flip its own sentence from "Replanning" to "Fault" as the clock
+	// passes it, without owning the rule or waiting for another push. Same
+	// reasoning as DisplayConstants() on Core's own pages: the number that
+	// decides what an operator is told lives in one config file, and every
+	// surface is told what it is.
+	//
+	// Whole seconds because it crosses to a browser that does millisecond
+	// arithmetic on it, and a duration string would need a parser at the far
+	// end for a number nobody sets below a second.
+	FaultNoticeAfterS int `json:"fault_notice_after_s,omitempty"`
 }
 
 // OrderDelivered signals fleet delivery complete.
@@ -908,6 +954,13 @@ type OrderProjection struct {
 	// arrives for a queued order explains the wait without a second round trip.
 	QueueReason string `json:"queue_reason,omitempty"`
 	QueueCode   string `json:"queue_code,omitempty"`
+	// Fault fields mirror OrderStatusSnapshot's for the same reason: a
+	// projection that arrives for a faulted order explains the fault without a
+	// second round trip.
+	FaultSince        *time.Time `json:"fault_since,omitempty"`
+	FaultDeadline     *time.Time `json:"fault_deadline,omitempty"`
+	FaultNotice       bool       `json:"fault_notice,omitempty"`
+	FaultNoticeAfterS int        `json:"fault_notice_after_s,omitempty"`
 }
 
 // OrderStatusSnapshot is the current Core-side view of an order.
@@ -929,6 +982,15 @@ type OrderStatusSnapshot struct {
 	// (protocol.QueueCode). Carried on the snapshot (additive) so an Edge
 	// resync doesn't lose the code; old Edge ignores it.
 	QueueCode string `json:"queue_code,omitempty"`
+	// Fault fields mirror OrderUpdate's, so a boot reconcile restores a faulted
+	// order's clock instead of leaving the board with a badge and no sentence
+	// until the next push — which, for an order that is already stuck, may
+	// never come. Same semantics: set only while faulted, cleared by the Edge
+	// from the status. See OrderUpdate for why they are not QueueReason.
+	FaultSince        *time.Time `json:"fault_since,omitempty"`
+	FaultDeadline     *time.Time `json:"fault_deadline,omitempty"`
+	FaultNotice       bool       `json:"fault_notice,omitempty"`
+	FaultNoticeAfterS int        `json:"fault_notice_after_s,omitempty"`
 }
 
 // OrderStatusResponse carries the authoritative Core-side state for requested orders.

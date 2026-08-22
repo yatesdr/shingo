@@ -198,6 +198,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// live order.
 		update.Detail = protocol.FormatFaultSentence(
 			protocol.FaultPhaseLive, faultRef, faultSince, now, false)
+		e.attachFaultFields(update, faultSince)
 	}
 	if newStatus == dispatch.StatusInTransit {
 		if etaStr := eta.Stamp(e.etaCache, order.SourceNode, order.DeliveryNode); etaStr != "" {
@@ -278,6 +279,30 @@ func faultRefFrom(snap *fleet.OrderSnapshot, ord *orders.Order) protocol.TermRef
 		ref.VendorDesc = snap.Errors[0].Desc
 	}
 	return ref
+}
+
+// attachFaultFields puts the fault clock on an outbound Edge update.
+//
+// FaultNotice is computed here rather than left to the Edge because the
+// threshold is Core's config and this is the same "server decides, client
+// renders" rule the rest of the fault surfaces follow. It is almost always
+// false on this push — nothing has been faulted for a minute at the instant it
+// faults — which is why the threshold itself rides along: the Edge flips its
+// own sentence as the clock passes it without owning the rule.
+//
+// A zero since means the faulted row could not be read. The clock fields are
+// then omitted rather than sent as the zero time, which the Edge would render
+// as a fault that started in year one.
+func (e *Engine) attachFaultFields(update *protocol.OrderUpdate, since time.Time) {
+	noticeAfter := e.cfg.RDS.FaultNoticeAfter
+	update.FaultNoticeAfterS = int(noticeAfter.Seconds())
+	if since.IsZero() {
+		return
+	}
+	deadline := since.Add(e.cfg.RDS.FaultGrace)
+	update.FaultSince = &since
+	update.FaultDeadline = &deadline
+	update.FaultNotice = clock.Now().UTC().Sub(since) >= noticeAfter
 }
 
 // latestFaultReason reads back the order's most recent faulted row for the ref

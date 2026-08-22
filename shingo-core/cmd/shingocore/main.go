@@ -389,6 +389,11 @@ func main() {
 	// re-evaluation. Engine.Start() has already constructed the monitor
 	// and kicked its startup-sweep goroutine.
 	coreDataService.SetThresholdMonitor(eng.ThresholdMonitor())
+	// So a reconciling Edge can render a faulted order's sentence and clock
+	// instead of a badge with nothing under it. Read once at boot: a live
+	// config edit drifts an in-flight countdown, which is acceptable for a
+	// countdown and is the same trade the live push makes.
+	coreDataService.SetFaultWindow(cfg.RDS.FaultGrace, cfg.RDS.FaultNoticeAfter)
 
 	subjectRouter, err := buildSubjectRouter(coreDataService)
 	if err != nil {
