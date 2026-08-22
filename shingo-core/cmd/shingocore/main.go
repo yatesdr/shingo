@@ -481,6 +481,19 @@ func main() {
 				} else if n > 0 {
 					log.Printf("shingocore: purged %d inbox record(s) older than %s", n, store.InboxRetentionPeriod)
 				}
+				// Rides this ticker rather than getting its own: both are daily
+				// housekeeping over a handful of rows, and a second goroutine
+				// for a DELETE that removes two rows a month is not worth the
+				// lifecycle. Latest-wins (529dbe1a) cannot clear a row nothing
+				// will ever update again, which is what a decommissioned or
+				// renamed station leaves behind.
+				ln, err := db.PurgeStaleLinesideReports(store.LinesideReportRetentionPeriod)
+				if err != nil {
+					log.Printf("shingocore: purge stale lineside reports: %v", err)
+				} else if ln > 0 {
+					log.Printf("shingocore: purged %d lineside report(s) not updated in %s",
+						ln, store.LinesideReportRetentionPeriod)
+				}
 			}
 		}
 	}()

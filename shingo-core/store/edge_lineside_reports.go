@@ -64,6 +64,38 @@ func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) error {
 	return nil
 }
 
+// LinesideReportRetentionPeriod is how long a per-(station, node, payload) row
+// is kept after its last report.
+//
+// Seven days, chosen against the two windows that bracket it: the monitor stops
+// trusting a row after 3 minutes (linesideReportStaleness), so anything at this
+// age has long since stopped contributing an adjustment, and a week is inside
+// any plausible "that station came back" story.
+//
+// It exists because latest-wins cannot clear a row nothing will ever update
+// again. Springfield carried two rows for station stn-4c2bcb20ebfac90f — an id
+// that no longer exists, the live station being plant-a.line-1 — reported
+// 2026-07-29 and still logging an R1 STALE fallback on every monitor cycle
+// 570 hours later.
+const LinesideReportRetentionPeriod = 7 * 24 * time.Hour
+
+// PurgeStaleLinesideReports deletes rows whose last report is older than
+// olderThan, and returns how many went.
+//
+// Deliberately keyed on reported_at (EDGE's clock, the same field the monitor's
+// freshness test reads) rather than updated_at, so a row that keeps being
+// rewritten with an unchanging old timestamp still ages out.
+func (db *DB) PurgeStaleLinesideReports(olderThan time.Duration) (int64, error) {
+	// Bind a time.Time, not a formatted string: reported_at is TIMESTAMPTZ and
+	// a zoneless literal would be compared in the session TimeZone.
+	res, err := db.Exec(`DELETE FROM edge_lineside_reports WHERE reported_at < $1`,
+		time.Now().UTC().Add(-olderThan))
+	if err != nil {
+		return 0, fmt.Errorf("purge stale lineside reports: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // ListLinesideReportsForPayload returns every edge_lineside_reports row for a
 // payload across all stations/nodes. The caller (the lineside read-model) splits
 // fresh from stale by comparing reported_at to now − staleness window, which is
