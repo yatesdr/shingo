@@ -26,6 +26,8 @@ were enumerated during the audit and none couples to this machinery.
 | `rehydrateThresholdEpisodes` | `engine/threshold_episodes.go` | inside `startupSweep` | boot | rebuilds open-episode maps — without it every restart doubles open demand |
 | `reconcileThresholdBindings` | `engine/threshold_episodes.go` | demand reconciler | reconcile interval | closes episodes whose binding vanished |
 
+**The plant-claims snapshot is a safety net, not the delivery mechanism.** Changes reach Core via `PublishChanged` on every style/claim edit, and a full snapshot goes out on every registration — including the re-register Core asks for after it restarts. The ticker only has to catch a change whose publish was lost outright, which is why it moved from 5 minutes to 60: at 5 it was ~65 messages an hour of unchanged config and 66% of everything Core discarded for expiry.
+
 **The lineside read-model decides, it does not shadow.** In `edge_reports` mode — the default — the Edge reports carry the adjustment the fire gate acts on. The file was named `threshold_monitor_shadow.go` until 2026-08-22; it is now `threshold_monitor_lineside.go`.
 
 ## Core — sweeps
@@ -92,6 +94,7 @@ none of them will notice a problem on their own if the path is never taken.
 | stranded-carrier monitor | `engine/uop_stranded_monitor.go` | Start | 60s |
 | demand reconciler | `engine/demand_reconciler.go` | Start | 60s |
 | lineside reporter | `engine/lineside_reporter.go` | Start | 60s |
+| plant-claims snapshot | `messaging/plant_claims_publisher.go` | Start | **60m** (was 5m until 2026-08-22) |
 | CATID monitor | `engine/plc_catid_monitor.go` | Start | 500ms |
 | `restoreChangeoverState` | `engine/changeover_restore.go` | Start | boot once |
 | `applyHoldAndReplay` | `engine/wiring_counter_delta.go` | counter delta with no bound bin | per tick |

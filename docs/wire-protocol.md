@@ -301,7 +301,27 @@ Data messages have a default TTL of 5 minutes, but individual subjects can overr
 | `edge.register_request` | 5 minutes | Should trigger re-register promptly |
 | `node.list_request` | 5 minutes | Sync request |
 | `node.list_response` | 5 minutes | Sync response |
+| `inventory.bin_uop_delta` | **none** | Sequenced increment — see below |
+| `inventory.lineside_bucket_delta` | **none** | Sequenced increment — see below |
 | Unknown subjects | 5 minutes | Safe general default |
+
+**Two subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22). Every other data
+subject is a snapshot whose successor carries the same truth seconds later, so discarding a late
+copy costs nothing. The two inventory deltas are *increments*: a dropped one is a permanently
+wrong count that never self-corrects.
+
+They are safe to arrive arbitrarily late because Core guards both ends — `ApplyBinUOPDelta`
+dedups on `SequenceID` via `inventory_delta_dedup`, and the stale-epoch guard routes a delta from
+a superseded generation to the discrepancy audit instead of applying it. So a late copy is applied
+exactly once or recorded as a discrepancy; only *dropping* it leaves no record.
+
+Measured at Springfield before the edge was hardwired: ~17 `bin_uop_delta` a day arrived past the
+five-minute default and were discarded at the ingestor, averaging 142 minutes late and peaking at
+23 hours — while the edge recorded every one as sent.
+
+⚠️ A zero TTL means **no `exp` on the wire**, not "expires now". `now.Add(0)` stamps `exp = now`,
+which reads as expired on the next tick — the exact inverse. Both stamping sites go through
+`zeroOrDeadline`.
 
 ---
 

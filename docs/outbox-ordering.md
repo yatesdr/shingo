@@ -27,12 +27,32 @@ failing while message B succeeds in the same pass delivers B first and A on a
 later cycle.
 
 `IsConnected()` gates the whole cycle, so a clean disconnect is safe — nothing
-publishes at all. What reorders is a *per-message* failure: a context timeout, an
+publishes at all. ⚠️ On EDGE that gate does not fire: `IsConnected()` there is
+`kafkaW != nil` and `Connect()` performs no I/O (`kafkago.TCP` resolves lazily),
+so it is true from the first connect until shutdown regardless of the network.
+It reports that a writer object exists, not that a broker is reachable — see
+`kafka_last_publish_ok` on edge `/status` for the latter. It must stay that way:
+`drain()` returns early on a false, so a "reachable now" answer would stop
+retrying at exactly the moment retrying is the point. What reorders is a *per-message* failure: a context timeout, an
 oversized payload, a broker error that recovers mid-pass.
 
 Worse, and the part to design against: once a message exhausts `MaxRetries` the
 `retries < N` filter drops it from the stream **permanently**, while everything
 behind it keeps flowing. That is not a delay, it is a hole.
+
+Three things changed around this on 2026-08-22, none of which close the hole:
+
+- **The wake arm mutes on failure.** The drainer's doorbell fires a drain per
+  enqueue, and a drain retries *every* pending row — so under a transport
+  failure each enqueue spent one of the message's `MaxRetries`. A publish
+  failure now stands the wake arm down until a ticker drain succeeds, putting
+  the tolerance back at `MaxRetries × interval`.
+- **Dead letters are kept seven days**, delivered rows one. They shared a 24-hour
+  cutoff, which destroyed the evidence of a loss before anyone found it. The
+  purge is now two statements in one transaction rather than one with an `OR`.
+- **`MaxRetries` is still a COUNT**, so its real-world tolerance silently
+  rescales whenever the drain cadence changes — which is exactly what the
+  doorbell did to it. Expressing it as a duration is the open item.
 
 ## Two smaller caveats
 

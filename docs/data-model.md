@@ -64,8 +64,12 @@ A physical container that can be tracked, moved, and stored. The bin is the prim
 - Sits at one **Node** (nullable)
 - Can be claimed by one **Order**
 
-**The UOP audit stream and its two permanent tables.** Every count change on a bin
-writes a row to `bin_uop_ledger` (the raw stream, ~7,000 rows/day). Since 2026-08 the
+**The UOP ledger and its two permanent tables.** Every count change on a bin
+writes a row to `bin_uop_ledger` (the raw stream, ~7,000 rows/day). The table was
+called `bin_uop_audit` until 2026-08-22 (migration v95, metadata-only rename): it
+holds every APPLIED delta with before/after totals, which is a ledger, and eight
+files read it as one. `bin_uop_exception` keeps its name — the exceptions really
+are the audit trail. Since 2026-08 the
 raw `bin_uop_delta` rows carry a **90-day retention** — deleted by the daily Core
 sweep. Two permanent tables carry what outlives them:
 
