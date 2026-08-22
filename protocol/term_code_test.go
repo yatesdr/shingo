@@ -64,14 +64,25 @@ func TestTermRef_String(t *testing.T) {
 	if got := (TermRef{Peer: 4812}).String(); got != "peer=4812" {
 		t.Errorf("peer render = %q", got)
 	}
+	// The vendor pair renders too, or a faulted row logs as if the fleet said
+	// nothing — which is the state this field was added to end.
+	got := TermRef{Node: "ALN_003", VendorCode: 60011, VendorDesc: "cannot replan"}.String()
+	if want := "node=ALN_003, vendor=60011, vendor_desc=cannot replan"; got != want {
+		t.Errorf("vendor render = %q, want %q", got, want)
+	}
 }
 
 func TestTermRef_Empty(t *testing.T) {
 	if !(TermRef{}).Empty() {
 		t.Error("zero value is empty")
 	}
+	// A ref carrying ONLY a vendor code is the shape a faulted row takes when
+	// the fleet named a reason but the order had no node or payload on it. If
+	// Empty() missed the vendor fields, refJSON would store that row's ref as
+	// NULL and the one thing it knew would be the one thing it dropped.
 	for _, r := range []TermRef{
 		{Node: "n"}, {Payload: "p"}, {Peer: 1}, {Detail: "d"},
+		{VendorCode: 60011}, {VendorDesc: "cannot replan"},
 	} {
 		if r.Empty() {
 			t.Errorf("%+v should not be empty", r)
@@ -91,17 +102,28 @@ func TestTermRef_JSONOmitsEmptyFields(t *testing.T) {
 	if got != `{"payload":"74577-6SA0A.06"}` {
 		t.Fatalf("marshal = %s, want only the set field", got)
 	}
-	for _, absent := range []string{"node", "peer", "detail"} {
+	for _, absent := range []string{"node", "peer", "detail", "vendor_code", "vendor_desc"} {
 		if strings.Contains(got, absent) {
 			t.Errorf("empty %q should be omitted, got %s", absent, got)
 		}
+	}
+	// vendor_code is the one that matters here: ~94% of faulted orders have no
+	// fleet reason, so a non-omitted zero would make ref->>'vendor_code' return
+	// "0" on nine rows in ten and turn "the fleet said nothing" into a code.
+	b, err = json.Marshal(TermRef{VendorCode: 60011, VendorDesc: "cannot replan"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if got := string(b); got != `{"vendor_code":60011,"vendor_desc":"cannot replan"}` {
+		t.Fatalf("vendor marshal = %s", got)
 	}
 }
 
 // Round-trip: the column is written by Core and read back by Core, so a
 // symmetric encode/decode is the whole contract.
 func TestTermRef_RoundTrip(t *testing.T) {
-	want := TermRef{Node: "ALN_003", Payload: "74577-6SA0A.06", Peer: 991, Detail: "evac sibling terminal"}
+	want := TermRef{Node: "ALN_003", Payload: "74577-6SA0A.06", Peer: 991,
+		VendorCode: 60011, VendorDesc: "cannot replan", Detail: "evac sibling terminal"}
 	b, err := json.Marshal(want)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"log"
 	"os"
 	"slices"
 	"sync"
@@ -8,6 +10,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// defaultFaultNoticeAfter is the shipped fault-notice threshold, named because
+// Defaults() and Load()'s fallback must not be able to disagree.
+const defaultFaultNoticeAfter = 60 * time.Second
 
 type Config struct {
 	mu sync.RWMutex `yaml:"-"`
@@ -331,7 +337,53 @@ type RDSConfig struct {
 	// inside the window (FAILED->RUNNING) clears the deadline and the
 	// order carries on, so this is really "how long we let the floor sort
 	// a stuck AMR out before the order is written off".
+	//
+	// It is the OUTER bound. FaultNoticeAfter below is the inner one, and the
+	// two together are the whole fault policy: nothing is said before the
+	// inner, everything is over at the outer.
 	FaultGrace time.Duration `yaml:"fault_grace"`
+	// FaultNoticeAfter is how long an order must have been faulted before the
+	// floor is told the word "fault". Below it the order is described as
+	// REPLANNING; at or above it, as a FAULT with the fleet's reason.
+	//
+	// THIS IS THE ONLY NUMBER THAT CHANGES WHAT AN OPERATOR IS TOLD, which is
+	// why it is config and not a constant in five JS files. 30 days of
+	// Springfield history: 730 faulted transitions, 706 of them recovered on
+	// their own with a median of 20 seconds. A badge that fires on all 730
+	// trains the floor to ignore the 24 that matter. Sixty seconds is three
+	// times that median and well inside any grace window — it hides the
+	// replans and shows the stalls.
+	//
+	// It is a default, not a truth. A plant whose robots re-plan more slowly
+	// will hide real stalls at 60s, and one with a faster fleet will cry fault
+	// at noise; both are a config edit, which is the point.
+	//
+	// Must be greater than zero and strictly less than FaultGrace — see
+	// RDSConfig.Validate. At or above the grace window it could never fire,
+	// because the order is failed by then.
+	FaultNoticeAfter time.Duration `yaml:"fault_notice_after"`
+}
+
+// Validate reports a fault-window configuration that cannot do its job.
+//
+// Reported, not fatal: the caller (Load) falls back to the shipped default for
+// the offending field rather than refusing to boot. A number that decides what
+// wording an operator sees must not be able to stop a plant's core from
+// starting — the same reasoning as DisplayConfig.Validate, and the same
+// reasoning as the zero-guard on the fault_grace form field
+// (handlers_config.go). A plant that lowers fault_grace below the notice
+// threshold gets a working core and a log line, not a dead one.
+func (r RDSConfig) Validate() error {
+	if r.FaultNoticeAfter <= 0 {
+		return fmt.Errorf("rds: fault_notice_after (%s) must be greater than zero — "+
+			"at zero every replan is announced as a fault", r.FaultNoticeAfter)
+	}
+	if r.FaultGrace > 0 && r.FaultNoticeAfter >= r.FaultGrace {
+		return fmt.Errorf("rds: fault_notice_after (%s) must be strictly less than fault_grace (%s) — "+
+			"at or above it the notice could never fire, because the order is failed by then",
+			r.FaultNoticeAfter, r.FaultGrace)
+	}
+	return nil
 }
 
 type WebConfig struct {
@@ -452,10 +504,11 @@ func Defaults() *Config {
 			},
 		},
 		RDS: RDSConfig{
-			BaseURL:      "http://192.168.1.100:8088",
-			PollInterval: 5 * time.Second,
-			Timeout:      10 * time.Second,
-			FaultGrace:   45 * time.Minute,
+			BaseURL:          "http://192.168.1.100:8088",
+			PollInterval:     5 * time.Second,
+			Timeout:          10 * time.Second,
+			FaultGrace:       45 * time.Minute,
+			FaultNoticeAfter: defaultFaultNoticeAfter,
 		},
 		Web: WebConfig{
 			Host:          "0.0.0.0",
@@ -561,6 +614,19 @@ func Load(path string) (*Config, error) {
 	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+	// A bad fault window degrades to a working one rather than killing the boot.
+	// See RDSConfig.Validate for why this is reported and not fatal.
+	if err := cfg.RDS.Validate(); err != nil {
+		fallback := defaultFaultNoticeAfter
+		if cfg.RDS.FaultGrace > 0 && fallback >= cfg.RDS.FaultGrace {
+			// A grace window shorter than the default notice. The notice still
+			// has to fit inside it or it can never fire, so it takes half the
+			// window — the replan/fault distinction survives at any grace.
+			fallback = cfg.RDS.FaultGrace / 2
+		}
+		log.Printf("config: %v — using fault_notice_after=%s", err, fallback)
+		cfg.RDS.FaultNoticeAfter = fallback
 	}
 	return cfg, nil
 }

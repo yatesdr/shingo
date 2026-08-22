@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Status is the typed canonical order status. Wraps string so it serializes
@@ -261,8 +262,13 @@ func ValidTermCode(c TermCode) bool {
 	return false
 }
 
-// TermRef is what a terminal reason CONCERNS — VDA 5050's errorReferences
-// idea. It is not decoration.
+// TermRef is what a reason CONCERNS — VDA 5050's errorReferences idea. It is
+// not decoration.
+//
+// Named for the terminal rows it was built for, it rides non-terminal reason
+// rows too — queued and faulted history rows already carry {node, payload}
+// through historyReason's default. That is deliberate: "where" is worth the
+// same on a row that explains a wait as on one that explains an ending.
 //
 // The live terminal-code distribution at Springfield is two values,
 // no_source_bin and grace_timeout, so the code alone partitions a hundred
@@ -281,7 +287,23 @@ type TermRef struct {
 	// Peer is the sibling order whose fate caused this one — swap legs unwound
 	// together, reshuffle children abandoned with their parent.
 	Peer int64 `json:"peer,omitempty"`
-	// Detail is free text for the cases the three fields above do not cover.
+	// VendorCode is the fleet's own numeric reason, as RDS reported it on the
+	// ORDER (OrderDetail.Errors[].Code) — not a robot's standing alarm, which
+	// is a different stream and is background rather than cause. Zero means the
+	// fleet gave no reason, which is the common case: ~94% of faulted orders
+	// carry no errors[] entry at all, so this field is absent far more often
+	// than it is present and its absence is information, not a gap.
+	//
+	// A reference, not a category. It is deliberately NOT a typed code
+	// vocabulary: one vendor code over 22 events is not a population to
+	// classify, and order_history.code stays empty on faulted rows. Classify at
+	// read time on ref->>'vendor_code' if a plant ever produces the variety.
+	VendorCode int `json:"vendor_code,omitempty"`
+	// VendorDesc is the fleet's text for VendorCode, stored as received. No
+	// translation table until there is something to translate — the live values
+	// are "cannot replan" and "Robot Suspended", which need none.
+	VendorDesc string `json:"vendor_desc,omitempty"`
+	// Detail is free text for the cases the fields above do not cover.
 	// Deliberately last and deliberately optional: anything that ends up here
 	// repeatedly is a missing field, not a place to put prose.
 	Detail string `json:"detail,omitempty"`
@@ -289,7 +311,8 @@ type TermRef struct {
 
 // Empty reports whether the reference carries nothing worth storing.
 func (r TermRef) Empty() bool {
-	return r.Node == "" && r.Payload == "" && r.Peer == 0 && r.Detail == ""
+	return r.Node == "" && r.Payload == "" && r.Peer == 0 &&
+		r.VendorCode == 0 && r.VendorDesc == "" && r.Detail == ""
 }
 
 // String renders the reference the way the design writes it — the form that
@@ -297,7 +320,7 @@ func (r TermRef) Empty() bool {
 //
 //	node=PLN_01.R1, payload=74577-6SA0A.06
 func (r TermRef) String() string {
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 6)
 	if r.Node != "" {
 		parts = append(parts, "node="+r.Node)
 	}
@@ -307,10 +330,140 @@ func (r TermRef) String() string {
 	if r.Peer != 0 {
 		parts = append(parts, "peer="+strconv.FormatInt(r.Peer, 10))
 	}
+	if r.VendorCode != 0 {
+		parts = append(parts, "vendor="+strconv.Itoa(r.VendorCode))
+	}
+	if r.VendorDesc != "" {
+		parts = append(parts, "vendor_desc="+r.VendorDesc)
+	}
 	if r.Detail != "" {
 		parts = append(parts, r.Detail)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// ─── The fault sentence ───────────────────────────────────────────────────
+
+// FaultPhase selects which of the fault sentences to render. A faulted order
+// passes through at most three of them: it is live, and then it either
+// recovered or Core gave up on it.
+//
+// It exists because the times alone cannot tell those apart — a recovery and a
+// grace expiry are both "a faulted row followed by something else", and the
+// difference is which transition fired, not how long it took.
+type FaultPhase string
+
+const (
+	// FaultPhaseLive is a faulted order that is still faulted: the robot may
+	// yet recover it and an operator may yet finish or cancel it. Renders
+	// "Replanning" or "Fault", never anything with "fail" in it.
+	FaultPhaseLive FaultPhase = "live"
+	// FaultPhaseRecovered is the history row written when the fleet reports the
+	// order moving again.
+	FaultPhaseRecovered FaultPhase = "recovered"
+	// FaultPhaseGaveUp is the terminal row written when the grace window closes
+	// with the order still faulted.
+	FaultPhaseGaveUp FaultPhase = "gave_up"
+)
+
+// FormatFaultSentence renders the operator-visible sentence for a faulted
+// order. This is the ONE place the wording lives — Core's board, the order
+// modal, the robots page, the health strip and the Edge board all print what
+// this returns, so they agree by construction rather than by five files
+// happening to say the same thing.
+//
+// It renders the STATIC part only. The two live durations — how long the order
+// has been faulted, and how long until Core gives up — tick in the browser from
+// data-since / data-until attributes, because a sentence with a baked-in
+// "3m 12s" is wrong one second after it is rendered and the page that would
+// have to re-fetch to fix it is the page this design just stopped reloading.
+// The recovered and gave-up phases DO carry their duration: those are history
+// rows, and a history row's duration is a fact that has stopped changing.
+//
+// THE WORDING RULE, and the reason for the test that pins it: a faulted order
+// is still live. The robot can recover it, an operator can finish or cancel it.
+// No sentence for a live order may contain "fail" in any form — that word
+// belongs to the `failed` badge of an order that actually is one, and an
+// operator who reads "failing" on a 20-second replan learns to ignore the word
+// on the 45-minute one. "Gives up" is what Core does at grace expiry; "gave up"
+// is what it did.
+//
+// notice is the server's decision (now-since >= config FaultNoticeAfter) about
+// whether this is a replan or a fault worth the word. It is passed in rather
+// than computed here because the threshold is config and protocol does not read
+// config; every caller gets it from the same place.
+//
+// There is deliberately NO deadline parameter. The grace deadline is a live
+// countdown ("gives up in 41 m"), so it belongs to the browser beside the other
+// live duration; a formatter that accepted it and ignored it would invite
+// someone to render it here, which is the bug this comment prevents.
+func FormatFaultSentence(phase FaultPhase, ref TermRef, since, now time.Time, notice bool) string {
+	switch phase {
+	case FaultPhaseRecovered:
+		return "Recovered after " + FormatDuration(faultElapsed(since, now))
+	case FaultPhaseGaveUp:
+		return joinFaultParts("Gave up after "+FormatDuration(faultElapsed(since, now)), vendorReason(ref))
+	case FaultPhaseLive:
+		// Under the threshold this is a replan, and a replan is not a fault an
+		// operator should walk toward. The vendor reason is withheld with the
+		// word: "cannot replan (60011)" beside "Replanning" reads as a
+		// contradiction, and at 14 seconds it is not yet true.
+		if !notice {
+			return "Replanning"
+		}
+		return joinFaultParts("Fault", vendorReason(ref))
+	default:
+		return ""
+	}
+}
+
+// vendorReason renders the fleet's own words for the fault, or "" when it gave
+// none — which is the common case. Lower-cased as received and never
+// translated: the two live values ("cannot replan", "Robot Suspended") are
+// already sentences, and a mapping table built on one code over 22 events would
+// be a vocabulary invented ahead of its data.
+//
+// The code rides in parentheses because it is the thing a plant quotes to the
+// vendor, and the description alone is not searchable in RDS.
+func vendorReason(ref TermRef) string {
+	desc := strings.ToLower(strings.TrimSpace(ref.VendorDesc))
+	switch {
+	case desc != "" && ref.VendorCode != 0:
+		return desc + " (" + strconv.Itoa(ref.VendorCode) + ")"
+	case desc != "":
+		return desc
+	case ref.VendorCode != 0:
+		// A code with no text still names the thing to look up.
+		return "fleet code " + strconv.Itoa(ref.VendorCode)
+	}
+	return ""
+}
+
+// faultElapsed is now-since, floored at zero and rounded to the second. A
+// negative elapsed means the two clocks disagree, not that the fault is in the
+// future, and "-3 s" on the floor reads as a bug in the page.
+func faultElapsed(since, now time.Time) time.Duration {
+	if since.IsZero() || now.IsZero() {
+		return 0
+	}
+	d := now.Sub(since)
+	if d < 0 {
+		return 0
+	}
+	return d.Round(time.Second)
+}
+
+// joinFaultParts joins the sentence's clauses with the middot the rest of the
+// UI uses, skipping the ones that are absent so a missing vendor reason never
+// leaves a dangling separator.
+func joinFaultParts(parts ...string) string {
+	kept := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, " · ")
 }
 
 // ─── Status set predicates ────────────────────────────────────────────────
