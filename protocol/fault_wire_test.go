@@ -123,23 +123,3 @@ func TestOrderStatusSnapshot_Fault_MixedVersion(t *testing.T) {
 		t.Errorf("old snapshot must decode to no clock: %+v", newEdge)
 	}
 }
-
-// The projection carries them too, so an order Core heals down to an Edge that
-// has no row for it explains its own fault on arrival.
-func TestOrderProjection_Fault_RoundTrip(t *testing.T) {
-	since := time.Date(2026, 8, 22, 14, 0, 0, 0, time.UTC)
-	buf, err := json.Marshal(OrderProjection{
-		OrderUUID: "U1", Status: "faulted",
-		FaultSince: &since, FaultNoticeAfterS: 60,
-	})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var got OrderProjection
-	if err := json.Unmarshal(buf, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if got.FaultSince == nil || !got.FaultSince.Equal(since) || got.FaultNoticeAfterS != 60 {
-		t.Errorf("projection round-trip lost the fault window: %+v", got)
-	}
-}

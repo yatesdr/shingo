@@ -386,9 +386,23 @@ func SetQueueReason(db *sql.DB, uuid, reason, code string) error {
 // never from an empty pushed value, which is indistinguishable from an absent
 // one. See SetQueueReason and the incident on domain.Order.QueueReason.
 func SetFaultClock(db *sql.DB, uuid string, since, deadline *time.Time, noticeAfterS int, ref string) error {
+	// The WHERE clause's second half makes this a NO-OP WHEN NOTHING CHANGES,
+	// and that is not a micro-optimisation.
+	//
+	// The handler calls this on EVERY OrderUpdate — the clear rides the else
+	// branch — so without the guard, every status push for an order that has
+	// never faulted rewrote four columns to the values they already held and
+	// bumped updated_at for it. updated_at is a real column that staleness
+	// sweeps read, so a spurious bump on every push is a wrong answer, not just
+	// a wasted write. It also doubled this path's write pressure on a SQLite
+	// database whose DSN sets no busy_timeout.
+	sinceS, deadlineS := faultInstant(since), faultInstant(deadline)
 	_, err := db.Exec(`UPDATE orders SET fault_since=?, fault_deadline=?, fault_notice_after_s=?,
-		fault_ref=?, updated_at=datetime('now') WHERE uuid=?`,
-		faultInstant(since), faultInstant(deadline), noticeAfterS, ref, uuid)
+		fault_ref=?, updated_at=datetime('now')
+		WHERE uuid=?
+		  AND (fault_since<>? OR fault_deadline<>? OR fault_notice_after_s<>? OR fault_ref<>?)`,
+		sinceS, deadlineS, noticeAfterS, ref, uuid,
+		sinceS, deadlineS, noticeAfterS, ref)
 	return err
 }
 

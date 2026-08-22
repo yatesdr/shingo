@@ -966,14 +966,20 @@ type OrderProjection struct {
 	// arrives for a queued order explains the wait without a second round trip.
 	QueueReason string `json:"queue_reason,omitempty"`
 	QueueCode   string `json:"queue_code,omitempty"`
-	// Fault fields mirror OrderStatusSnapshot's for the same reason: a
-	// projection that arrives for a faulted order explains the fault without a
-	// second round trip.
-	FaultSince        *time.Time `json:"fault_since,omitempty"`
-	FaultDeadline     *time.Time `json:"fault_deadline,omitempty"`
-	FaultNotice       bool       `json:"fault_notice,omitempty"`
-	FaultNoticeAfterS int        `json:"fault_notice_after_s,omitempty"`
-	FaultRef          *TermRef   `json:"fault_ref,omitempty"`
+	// NO FAULT FIELDS HERE, deliberately — see OrderUpdate and
+	// OrderStatusSnapshot, which carry them.
+	//
+	// A projection is built by dispatch.ProjectionFor, a pure mapping from the
+	// orders ROW. The fault clock is derived from order_history, so populating
+	// it here would need either a DB read inside that mapper or fault columns on
+	// the orders table for something already derivable. Both are worse than the
+	// gap, and the gap is narrow and self-closing: a projection only heals an
+	// order the Edge has never heard of, and the very next reconcile names that
+	// order, so it arrives as an OrderStatusSnapshot with the clock attached.
+	//
+	// Adding them "for symmetry" is exactly what
+	// integration/scenarios/order_projection_drift_test.go exists to refuse: a
+	// field on the wire that nothing populates and nothing stores.
 }
 
 // OrderStatusSnapshot is the current Core-side view of an order.

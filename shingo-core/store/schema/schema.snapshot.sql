@@ -222,7 +222,8 @@ CREATE TABLE public.bins (
     loaded_at timestamp with time zone,
     anomaly_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    anomaly_note text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.bins_id_seq
