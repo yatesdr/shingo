@@ -1,6 +1,7 @@
 package outbox
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -23,6 +24,26 @@ func (m *mockStore) didPurge() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.purged
+}
+
+// retryCount reports how many times IncrementOutboxRetries fired for one row.
+func (m *mockStore) retryCount(id int64) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, got := range m.retried {
+		if got == id {
+			n++
+		}
+	}
+	return n
+}
+
+// setPublishErr swaps the publisher's failure mode mid-test.
+func (m *mockPublisher) setPublishErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.publishErr = err
 }
 
 // TestDrainer_NotifyDrainsBeforeTick is the regression guard for the doorbell.
@@ -129,5 +150,93 @@ func TestDrainer_WakeDoesNotAdvancePurgeCadence(t *testing.T) {
 		t.Fatalf("purge ran after %d wake-driven drains — purge must ride ticker "+
 			"cycles only, or its cadence becomes a function of message rate",
 			store.calls())
+	}
+}
+
+// TestDrainer_WakeDoesNotRetryFailedRows is the regression guard for the
+// doorbell's effect on the RETRY budget, which is separate from its effect on
+// latency and was missed when the doorbell landed.
+//
+// drain() retries every pending row, so a wake-driven drain is a retry attempt
+// for every message already in the backlog. Under a transport failure that
+// turns each enqueue into one of the message's MaxRetries attempts, and a
+// message that used to survive MaxRetries x interval (~50s at 5s) dies in a
+// fraction of that. Measured at Springfield's ~0.27 enqueues/s the cost was
+// ~2.5x; at the settle window's limit it is ~0.5s.
+//
+// The notifications here are spaced past the settle so the wake channel's
+// capacity of 1 does NOT coalesce them — that is the whole point. Every one is
+// a distinct opportunity to burn a retry, and the interval is an hour so no
+// tick can be responsible for anything observed.
+func TestDrainer_WakeDoesNotRetryFailedRows(t *testing.T) {
+	compressWakeSettle(t, time.Millisecond)
+
+	store := &mockStore{pending: []Message{{ID: 1, Topic: "orders", Payload: []byte("x")}}}
+	pub := &mockPublisher{connected: true, publishErr: errors.New("kafka down")}
+
+	d := NewDrainer(store, pub, "orders", time.Hour, 50)
+	d.Start()
+	defer d.Stop()
+
+	for range 200 {
+		d.Notify()
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	// One failing drain is expected — the wake that arrives before anything has
+	// failed yet. Every wake after it must find the arm muted.
+	if got := store.retryCount(1); got > 1 {
+		t.Fatalf("row 1 advanced to %d retries on wakes alone, want at most 1 — a "+
+			"publish failure must mute the wake arm, or an outage burns MaxRetries "+
+			"at the enqueue rate instead of the drain interval", got)
+	}
+}
+
+// TestDrainer_MuteClearsOnSuccessfulTick pins the other half: muting is not
+// permanent. Once a TICKER drain completes with no failure the doorbell is
+// armed again, so the latency win returns as soon as the broker does.
+//
+// Only a ticker drain clears it. A wake-driven success must not, or a broker
+// that accepts one publish in ten would let the multiplier re-arm between
+// failures — which is the partial-failure case the mute exists for.
+func TestDrainer_MuteClearsOnSuccessfulTick(t *testing.T) {
+	compressWakeSettle(t, time.Millisecond)
+
+	const interval = 30 * time.Millisecond
+	store := &mockStore{pending: []Message{{ID: 1, Topic: "orders", Payload: []byte("x")}}}
+	pub := &mockPublisher{connected: true, publishErr: errors.New("kafka down")}
+
+	d := NewDrainer(store, pub, "orders", interval, 50)
+	d.Start()
+	defer d.Stop()
+
+	// Establish the muted state.
+	for range 20 {
+		d.Notify()
+		time.Sleep(time.Millisecond)
+	}
+
+	// Broker recovers; let a ticker drain succeed and clear the mute.
+	pub.setPublishErr(nil)
+	time.Sleep(3 * interval)
+
+	// The doorbell should be live again: a burst of spaced wakes now drives far
+	// more drains than the ticker alone could in the same window.
+	before := store.calls()
+	deadline := time.After(60 * time.Millisecond)
+	for {
+		select {
+		case <-deadline:
+			got := store.calls() - before
+			// ~2 ticks fit in 60ms; wakes should add many more than that.
+			if got < 5 {
+				t.Fatalf("only %d drains in 60ms after recovery, want >=5 — the wake "+
+					"arm did not re-arm, so the doorbell stays dead until restart", got)
+			}
+			return
+		case <-time.After(2 * time.Millisecond):
+			d.Notify()
+		}
 	}
 }
