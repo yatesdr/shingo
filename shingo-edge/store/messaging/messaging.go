@@ -254,17 +254,46 @@ func Requeue(db *sql.DB, id int64) error {
 // PurgeOld deletes sent messages older than the given duration, and
 // dead-lettered messages (retries >= MaxRetries) older than the given
 // duration.
-func PurgeOld(db *sql.DB, olderThan time.Duration) (int64, error) {
+// PurgeOld deletes delivered rows past the delivered cutoff and dead-lettered
+// rows past their own, longer one. See Core's PurgeOldOutbox for why the
+// statement splits (the cutoffs differ; it is not a performance change).
+func PurgeOld(db *sql.DB, delivered, deadLetter time.Duration) (int64, error) {
 	// .UTC() is load-bearing: created_at defaults to datetime('now') and
 	// sent_at is written as datetime('now'), both of which SQLite produces in
 	// UTC, and the comparison is a string compare against that layout. A local
 	// cutoff at a US-Central plant reads 5-6 hours older than it is, so rows
 	// survive ~29-30h under a 24h retention. Core's twin documents the same
 	// trap (shingo-core/store/messaging/messaging.go, PurgeOldOutbox).
-	cutoff := time.Now().UTC().Add(-olderThan).Format(helpers.TimeLayout)
-	res, err := db.Exec(`DELETE FROM outbox WHERE (sent_at IS NOT NULL AND sent_at < ?) OR (retries >= ? AND created_at < ?)`, cutoff, MaxRetries, cutoff)
+	now := time.Now().UTC()
+	sentCutoff := now.Add(-delivered).Format(helpers.TimeLayout)
+	deadCutoff := now.Add(-deadLetter).Format(helpers.TimeLayout)
+
+	tx, err := db.Begin()
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	defer tx.Rollback()
+
+	sentRes, err := tx.Exec(`DELETE FROM outbox WHERE sent_at IS NOT NULL AND sent_at < ?`, sentCutoff)
+	if err != nil {
+		return 0, err
+	}
+	deadRes, err := tx.Exec(`DELETE FROM outbox WHERE sent_at IS NULL AND retries >= ? AND created_at < ?`,
+		MaxRetries, deadCutoff)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	sentN, err := sentRes.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	deadN, err := deadRes.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return sentN + deadN, nil
 }

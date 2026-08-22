@@ -240,3 +240,47 @@ func TestDrainer_MuteClearsOnSuccessfulTick(t *testing.T) {
 		}
 	}
 }
+
+// TestDrainer_PurgeUsesSeparateRetentions pins that the two cutoffs stay apart.
+//
+// They shared a 24h window, and it cost evidence twice in one week: an
+// investigation found a clean outbox and concluded Springfield had never
+// retried a message — it had, the proof had been purged — and two dead-lettered
+// production deltas were ~50 minutes from deletion before anyone knew they
+// existed. A dead letter is the ONLY surviving record of a destroyed message,
+// where a delivered row is just a receipt, so they cannot share a lifetime.
+func TestDrainer_PurgeUsesSeparateRetentions(t *testing.T) {
+	compressWakeSettle(t, time.Millisecond)
+
+	store := &mockStore{}
+	pub := &mockPublisher{connected: true}
+
+	d := NewDrainer(store, pub, "orders", time.Millisecond, 50)
+	d.Start()
+	defer d.Stop()
+
+	deadline := time.After(3 * time.Second)
+	for !store.didPurge() {
+		select {
+		case <-deadline:
+			t.Fatal("no purge observed — the test could not establish its condition")
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+
+	store.mu.Lock()
+	gotDelivered, gotDead := store.purgeDelivered, store.purgeDeadLetter
+	store.mu.Unlock()
+
+	if gotDelivered != MessageRetentionPeriod {
+		t.Errorf("delivered cutoff = %v, want %v", gotDelivered, MessageRetentionPeriod)
+	}
+	if gotDead != DeadLetterRetentionPeriod {
+		t.Errorf("dead-letter cutoff = %v, want %v", gotDead, DeadLetterRetentionPeriod)
+	}
+	if gotDead <= gotDelivered {
+		t.Errorf("dead letters (%v) are kept no longer than delivered rows (%v) — "+
+			"the whole point is that the destroyed message outlives the receipt",
+			gotDead, gotDelivered)
+	}
+}

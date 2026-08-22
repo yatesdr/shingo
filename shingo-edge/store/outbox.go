@@ -102,9 +102,10 @@ func (db *DB) RequeueOutbox(id int64) error {
 	return messaging.Requeue(db.DB, id)
 }
 
-// PurgeOldOutbox deletes sent messages older than the given duration,
-// and dead-lettered messages (retries >= max) older than the given
-// duration.
-func (db *DB) PurgeOldOutbox(olderThan time.Duration) (int64, error) {
-	return messaging.PurgeOld(db.DB, olderThan)
+// PurgeOldOutbox deletes delivered messages past the delivered cutoff and
+// dead-lettered ones past their own, longer cutoff. The two windows differ
+// because the rows mean opposite things — a delivered row is a receipt, a dead
+// letter is the only surviving record of a destroyed message.
+func (db *DB) PurgeOldOutbox(delivered, deadLetter time.Duration) (int64, error) {
+	return messaging.PurgeOld(db.DB, delivered, deadLetter)
 }

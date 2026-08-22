@@ -20,8 +20,22 @@ const (
 	// housekeeping up in proportion to message rate.
 	PurgeCycleInterval = 100
 
-	// MessageRetentionPeriod is how long sent messages are kept before purging.
+	// MessageRetentionPeriod is how long DELIVERED messages are kept.
 	MessageRetentionPeriod = 24 * time.Hour
+
+	// DeadLetterRetentionPeriod is how long an UNDELIVERED message that
+	// exhausted its retries is kept. Deliberately longer than the delivered
+	// window, because the two rows mean opposite things: a delivered row is
+	// receipt, a dead letter is the only surviving record of a message that
+	// was destroyed.
+	//
+	// They shared a 24h cutoff, and it cost real evidence twice in one week —
+	// once when an investigation found a clean table and concluded Springfield
+	// had never retried a message (it had; the proof had been purged), and once
+	// when two dead-lettered production deltas were ~50 minutes from deletion
+	// before anyone noticed they existed. Seven days spans a weekend, so a
+	// Friday-evening loss is still on disk on Monday.
+	DeadLetterRetentionPeriod = 7 * 24 * time.Hour
 )
 
 // wakeSettle is how long a wake waits before draining.
@@ -72,7 +86,7 @@ type Store interface {
 	// message from looping forever. reason is logged at the panic
 	// site and may or may not be persisted by the implementation.
 	MarkOutboxExhausted(id int64, reason string) error
-	PurgeOldOutbox(olderThan time.Duration) (int, error)
+	PurgeOldOutbox(delivered, deadLetter time.Duration) (int, error)
 }
 
 // Publisher is the messaging client interface the drainer needs.
@@ -199,7 +213,7 @@ func (d *Drainer) run() {
 			muted = d.drain()
 			cycles++
 			if cycles%PurgeCycleInterval == 0 {
-				if n, err := d.store.PurgeOldOutbox(MessageRetentionPeriod); err != nil {
+				if n, err := d.store.PurgeOldOutbox(MessageRetentionPeriod, DeadLetterRetentionPeriod); err != nil {
 					log.Printf("outbox: purge old: %v", err)
 				} else if n > 0 {
 					log.Printf("outbox: purged %d old messages", n)
