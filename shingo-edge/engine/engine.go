@@ -164,6 +164,10 @@ type Engine struct {
 	// durable fix, not a tidy-up.
 
 	kafkaConnFn func() bool
+	// kafkaLastPublishFn reports the outcome of the most recent publish
+	// attempt. Injected like kafkaConnFn so the engine keeps no hard
+	// dependency on the messaging package.
+	kafkaLastPublishFn func() (bool, time.Time, bool)
 
 	// homeConsolidations tracks pending two-order consolidation sequences
 	// initiated by ClearLoaderHome. Key = Order A's UUID. When Order A's robot
@@ -383,6 +387,26 @@ func (e *Engine) SetKafkaConnFunc(fn func() bool) {
 	e.kafkaConnFn = fn
 }
 
+// SetKafkaLastPublishFunc injects the messaging client's LastPublish
+// closure. Same indirection as SetKafkaConnFunc.
+func (e *Engine) SetKafkaLastPublishFunc(fn func() (bool, time.Time, bool)) {
+	e.kafkaLastPublishFn = fn
+}
+
+// KafkaLastPublish reports the outcome of the most recent publish attempt:
+// whether it succeeded, when it was, and whether one has happened at all.
+//
+// This is the field that answers "is Kafka reachable". KafkaConnected reports
+// only that a writer object exists — on Edge that is true from the first
+// Connect until shutdown, because Connect performs no I/O. During the
+// Springfield outage of 2026-08-21 KafkaConnected read true throughout.
+func (e *Engine) KafkaLastPublish() (bool, time.Time, bool) {
+	if e.kafkaLastPublishFn == nil {
+		return false, time.Time{}, false
+	}
+	return e.kafkaLastPublishFn()
+}
+
 // StationID returns the station identifier from config.
 func (e *Engine) StationID() string {
 	return e.cfg.StationID()
@@ -393,6 +417,15 @@ func (e *Engine) StationID() string {
 // operational signal that Kafka or Core is unreachable.
 func (e *Engine) CountPendingOutbox() (int, error) {
 	return e.db.CountPendingOutbox()
+}
+
+// CountDeadLetterOutbox returns the count of un-sent outbox messages that have
+// exhausted their retries and will never be sent. Surfaced via /status beside
+// the pending depth, which cannot be read safely on its own: pending counts
+// only rows still under the retry cap, so a depth falling to zero during an
+// outage can mean recovery or can mean the backlog died.
+func (e *Engine) CountDeadLetterOutbox() (int, error) {
+	return e.db.CountDeadLetterOutbox()
 }
 
 // Stop shuts down all subsystems gracefully.

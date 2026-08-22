@@ -665,6 +665,9 @@ func main() {
 	// Inject the Kafka IsConnected closure so /status can report
 	// kafka_connected without a hard engine→messaging dep.
 	eng.SetKafkaConnFunc(msgClient.IsConnected)
+	// And the last-publish outcome, which is the one that actually reports
+	// broker reachability — IsConnected only says a writer exists.
+	eng.SetKafkaLastPublishFunc(msgClient.LastPublish)
 
 	// ── Data sender & outbox drainer ────────────────────────────────────
 	dataSender := messaging.NewDataSender(msgClient, cfg.Messaging.OrdersTopic, nil)

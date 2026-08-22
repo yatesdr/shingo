@@ -6,6 +6,7 @@ import (
 	"log"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
@@ -44,6 +45,10 @@ type Client struct {
 	kafkaR     *kafkago.Reader
 	stopChan   chan struct{}
 	SigningKey []byte // optional HMAC key; when set, outbound messages are signed
+
+	// lastPublish is the most recent Publish outcome, for LastPublish().
+	// Separate from the mutex above so /status never contends with a publish.
+	lastPublish atomic.Pointer[publishOutcome]
 
 	// PartitionKey is stamped on every outbound message as the Kafka record
 	// key. On the Edge it is the station uid; on Core it is the destination
@@ -129,7 +134,13 @@ func (c *Client) Reconnect() error {
 }
 
 // Publish sends a message to the given topic.
-func (c *Client) Publish(topic string, payload []byte) error {
+func (c *Client) Publish(topic string, payload []byte) (err error) {
+	// Registered first so it runs LAST, after the read lock is released.
+	// Every exit path is recorded, not just the WriteMessages result: the
+	// field answers "did the last publish attempt work", and an unset writer
+	// or a signing failure are attempts that did not.
+	defer func() { c.recordPublish(err) }()
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -260,11 +271,45 @@ func (c *Client) readLoop(topic string, handler func(payload []byte)) {
 	}
 }
 
-// IsConnected returns whether the messaging client is connected.
+// IsConnected reports that a Kafka WRITER EXISTS. It is not broker
+// reachability, and callers that want that must use LastPublish.
+//
+// Connect() performs no I/O — kafkago.TCP resolves lazily — so it cannot fail
+// except on an empty broker list, and this returns true from the first Connect
+// until Close regardless of whether the broker has been reachable since. The
+// drainer nonetheless keys its opening guard off this, and must: a false here
+// stops the drain entirely, so making it mean "reachable" would stop retrying
+// exactly when retrying is the point.
 func (c *Client) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.kafkaW != nil
+}
+
+// publishOutcome is the result of the most recent Publish attempt. Stored
+// behind a single atomic pointer so the flag and its timestamp are always read
+// as one value — reading two atomics could report a fresh time against a stale
+// verdict.
+type publishOutcome struct {
+	ok bool
+	at time.Time
+}
+
+func (c *Client) recordPublish(err error) {
+	c.lastPublish.Store(&publishOutcome{ok: err == nil, at: time.Now()})
+}
+
+// LastPublish reports the outcome of the most recent Publish attempt.
+//
+// ever is false until something has actually been published, so a freshly
+// booted Edge does not report a failure it never had. This is the field that
+// answers "is Kafka reachable" — IsConnected does not.
+func (c *Client) LastPublish() (ok bool, at time.Time, ever bool) {
+	o := c.lastPublish.Load()
+	if o == nil {
+		return false, time.Time{}, false
+	}
+	return o.ok, o.at, true
 }
 
 // Close shuts down the messaging connection.

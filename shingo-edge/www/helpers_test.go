@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -96,6 +97,15 @@ type stubEngine struct {
 	// requestProduceSwapErr, when set, is returned by RequestProduceSwap so a
 	// handler test can drive the armed-changeover exit path.
 	requestProduceSwapErr error
+
+	// /status fields. The outbox counts deliberately go through the real db so
+	// a test can seed rows and exercise the actual queries; the Kafka ones are
+	// canned, since the client is not wired in these tests.
+	statusKafkaConnected   bool
+	statusSubscribersWired bool
+	statusLastPublishOK    bool
+	statusLastPublishAt    time.Time
+	statusLastPublishEver  bool
 
 	gateCanComplete bool
 	gateBlockers    []domain.Blocker
@@ -566,4 +576,31 @@ func seedOrder(t *testing.T, orderType protocol.OrderType, status protocol.Statu
 		}
 	}
 	return id
+}
+
+// ── /status stub methods ────────────────────────────────────────────────
+//
+// statusEngine (handler_status.go) is type-asserted off h.orchestration, so
+// without these apiStatus answers 503 and every assertion about its body is
+// vacuous. That is what it did before these landed: the endpoint had no test
+// coverage at all.
+
+func (s *stubEngine) Uptime() int64 { return 42 }
+
+func (s *stubEngine) StationID() string { return "test.station" }
+
+func (s *stubEngine) StartedAt() time.Time {
+	return time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+}
+
+func (s *stubEngine) KafkaConnected() bool { return s.statusKafkaConnected }
+
+func (s *stubEngine) SubscribersWired() bool { return s.statusSubscribersWired }
+
+func (s *stubEngine) CountPendingOutbox() (int, error) { return s.db.CountPendingOutbox() }
+
+func (s *stubEngine) CountDeadLetterOutbox() (int, error) { return s.db.CountDeadLetterOutbox() }
+
+func (s *stubEngine) KafkaLastPublish() (bool, time.Time, bool) {
+	return s.statusLastPublishOK, s.statusLastPublishAt, s.statusLastPublishEver
 }

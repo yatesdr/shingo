@@ -71,6 +71,24 @@ func (db *DB) CountPendingOutbox() (int, error) {
 	return n, err
 }
 
+// CountDeadLetterOutbox returns the number of un-sent messages that
+// have exhausted their retries (sent_at IS NULL AND retries >=
+// MaxRetries). These will never be sent again: the drainer's own
+// pending query filters on retries < MaxRetries, so an exhausted row
+// stops matching it and simply falls out of every later pass.
+//
+// It is the counterpart CountPendingOutbox needs to be read with.
+// Pending counts only rows still below the cap, so during an outage
+// the depth RISES while rows retry and then FALLS AS THEY DIE — a
+// draining-to-zero depth reads like recovery and can equally mean the
+// backlog was destroyed. Springfield, 2026-08-21: depth returned to
+// zero with 120 messages permanently lost.
+func (db *DB) CountDeadLetterOutbox() (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE sent_at IS NULL AND retries >= ?`, messaging.MaxRetries).Scan(&n)
+	return n, err
+}
+
 // RequeueOutbox resets the retry counter so a dead-lettered message
 // will be picked up by the drainer again.
 func (db *DB) RequeueOutbox(id int64) error {
