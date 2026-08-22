@@ -55,6 +55,12 @@ func (h *Handlers) apiCreateStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("style-created")
+	// A new style changes what the process can run, and PlantClaimsReport
+	// carries every style with its Active flag — so Core's mirror is wrong
+	// until this lands. Missing here until 2026-08-22; the 5-minute snapshot
+	// timer hid it by catching up within a tick, which stops being true now
+	// the safety snapshot is hourly.
+	h.requestSpecChangePublish()
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -89,6 +95,10 @@ func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("style-updated")
+	// Same as apiCreateStyle: the style NAME is what rides the wire as
+	// PlantClaimsStyle.StyleID, so a rename that never republishes leaves Core
+	// mirroring a style that no longer exists under that name.
+	h.requestSpecChangePublish()
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

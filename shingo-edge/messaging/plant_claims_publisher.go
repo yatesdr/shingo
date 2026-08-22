@@ -19,9 +19,12 @@ import (
 // onto Core. Three publish triggers:
 //   - PublishChanged: called by the spec-edit handlers on every style/claim
 //     change (one full snapshot — a message per process).
-//   - a periodic full snapshot (snapshotInterval), so a late-joining or
-//     restarted Core rebuilds its mirror from the most recent snapshot.
-//   - PublishAll on boot/reconnect (Start calls it once).
+//   - PublishAll on registration — Start calls it at boot, and the
+//     SubjectEdgeRegistered handler calls it again on every re-register, which
+//     covers Core restarting (Core sends EdgeRegisterRequest to an edge it does
+//     not know, the edge re-registers, and the ack lands on that handler).
+//   - a periodic full snapshot (snapshotInterval) as the last-resort safety net
+//     for a change whose publish was lost outright.
 //
 // Together the periodic + boot snapshots replace Kafka compaction for late
 // joiners: Core persists the mirror on every message, and a snapshot rebuilds
@@ -31,10 +34,16 @@ import (
 type PlantClaimsPublisher struct {
 	db        *store.DB
 	stationID string
-	// snapshotInterval is the full-snapshot cadence. Defaults to 5 minutes —
-	// long enough to avoid chatter, short enough that a late-joining Core is
-	// current within a few minutes of reconnect. Mirrors the cadence shape of
-	// other periodic Edge publishers.
+	// snapshotInterval is the full-snapshot cadence — the SAFETY NET, not the
+	// delivery mechanism. Changes are published by PublishChanged, and a
+	// register/re-register publishes a full snapshot, so this only has to catch
+	// a change whose publish was lost entirely.
+	//
+	// It was 5 minutes, which cost ~65 messages an hour at Springfield (one per
+	// process, twelve times an hour) for config that changes a few times a
+	// shift. That made plant.claims 66% of all envelopes Core discarded for
+	// expiry — 181 a day — and every one of them was carrying config identical
+	// to the snapshot before it.
 	snapshotInterval time.Duration
 
 	stopOnce sync.Once
@@ -50,7 +59,7 @@ func NewPlantClaimsPublisher(db *store.DB, stationID string) *PlantClaimsPublish
 	return &PlantClaimsPublisher{
 		db:               db,
 		stationID:        stationID,
-		snapshotInterval: 5 * time.Minute,
+		snapshotInterval: 60 * time.Minute,
 		stopCh:           make(chan struct{}),
 	}
 }

@@ -30,6 +30,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -240,6 +241,17 @@ func startHTTPServer(addr string, handler http.Handler) *http.Server {
 
 // setupKafkaSubscribers wires protocol ingestor, heartbeater, and all handler
 // callbacks that require a live Kafka connection. Called only when Connect succeeds.
+// plantClaimsPub hands the plant-claims publisher to the SubjectEdgeRegistered
+// handler, which lives in setupKafkaSubscribers while the publisher is built in
+// main().
+//
+// Package-level rather than a parameter because setupKafkaSubscribers already
+// takes seven, and atomic rather than a plain pointer because ORDERING MAKES
+// THE RACE REAL: subscribers are wired (twice — once inline, once from the
+// kafka-connect-retry goroutine) well before main constructs the publisher, so
+// a Registered ack can genuinely arrive while this is still nil.
+var plantClaimsPub atomic.Pointer[messaging.PlantClaimsPublisher]
+
 func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID, instanceID string, db *store.DB) {
 	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager())
 	edgeHandler.DebugLog = messaging.DebugLogFunc(dbg.Func("edge_handler"))
@@ -277,8 +289,21 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// registration surface and EdgeHandler holds only order-channel
 	// state.
 	subjectRouter := router.NewSubject()
+
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegistered, func(_ *protocol.Envelope, reg *protocol.EdgeRegistered) {
 		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", reg.StationID, reg.Message)
+		// Republish the full claim set on every registration, not just at boot.
+		// This is the path that covers CORE restarting: Core sends
+		// EdgeRegisterRequest to an edge it does not recognise, the edge
+		// re-registers, and the ack lands here. Without it, a restarted Core
+		// waits out the (now hourly) safety snapshot with an empty mirror.
+		if pub := plantClaimsPub.Load(); pub != nil {
+			goSafe("plant-claims-on-register", func() {
+				if err := pub.PublishAll(); err != nil {
+					log.Printf("plant_claims: publish on register: %v", err)
+				}
+			})
+		}
 		if eng.Uptime() > 30 {
 			hb.RequestNodeSync()
 			hb.RequestCatalogSync()
@@ -899,6 +924,9 @@ func main() {
 	// edit via the coalesced spec-change signal.
 	plantClaims := messaging.NewPlantClaimsPublisher(db, stationID)
 	plantClaims.DebugLog = messaging.DebugLogFunc(dbg.Func("plant_claims"))
+	// Publish it for the SubjectEdgeRegistered handler registered far above,
+	// which cannot capture a variable that does not exist yet.
+	plantClaimsPub.Store(plantClaims)
 	h.SetPlantSpecChangeHook(func() {
 		if err := plantClaims.PublishChanged(); err != nil {
 			log.Printf("plant_claims: spec-change publish: %v", err)
