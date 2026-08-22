@@ -46,7 +46,12 @@ type RobotStatus struct {
 	NetworkDelay     int            `json:"network_delay"`
 	BasicInfo        RobotBasicInfo `json:"basic_info"`
 	RbkReport        RbkReport      `json:"rbk_report"`
-	CurrentOrder     any            `json:"current_order"`
+	// IsLoaded is the ROBOT-level "carrying something" bool, beside the deck's
+	// own jack.jack_isFull. Ingested as a third opinion: the stranded-bin
+	// inference turns on "is the bin still on this robot", and one signal
+	// disagreeing with the other two is how we would learn it is unsafe.
+	IsLoaded     bool `json:"isLoaded"`
+	CurrentOrder any  `json:"current_order"`
 	// UndispatchableReason is RDS's own account of why a robot is not taking
 	// work. mapRobotStatus used to hardcode Suspended: false behind a
 	// "Phase 2" comment while this struct sat on the wire unread — a
@@ -223,6 +228,27 @@ type JackReport struct {
 	JackLoadTimes int     `json:"jack_load_times"`
 	JackHeight    float64 `json:"jack_height"`
 	JackErrorCode int     `json:"jack_error_code"`
+	// JackState is the deck's own state machine, from the Robokit API Protocol
+	// §11027 robot_status_jack_res enum:
+	//
+	//	0 loading   1 loading in place   2 unloading
+	//	3 unloading in place             4 stop      0xFF execution failed
+	//
+	// 1 and 3 are the two at-rest values and the ones worth reading: 1 means a
+	// bin is up on the deck, 3 means the deck is empty. Confirmed live at
+	// Springfield — every loaded robot reads jack_state 1 with jack_height
+	// 0.0601 and jack_isFull true; every empty one reads 3 with height ≈ -0.0001.
+	//
+	// THERE IS NO JACK-UNLOAD EVENT. This is sampled state, so a set-down is
+	// seen as a 2→3 transition between polls and never as a notification.
+	// jack_load_times increments on LOAD only (observed 944→945 across a load,
+	// unchanged across unloads), so it cannot stand in for one.
+	JackState int `json:"jack_state"`
+	// JackIsFull is the vendor's own "there is something on the deck" bool. It
+	// agrees with JackState 1 vs 3 in every sample taken so far; both are
+	// ingested because a disagreement between them is the thing that would tell
+	// us the inference is unsafe.
+	JackIsFull bool `json:"jack_isFull"`
 }
 
 type Container struct {

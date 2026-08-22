@@ -76,7 +76,6 @@ var notCarried = map[string]map[string]string{
 		"labels":                  "RDS grouping metadata",
 		"changes":                 "RDS internal diff bookkeeping",
 		"src_release":             "RDS build string",
-		"isLoaded":                "duplicate of jack/container state already carried",
 		"remaining_time":          "RDS's own ETA; Core computes its own from mission telemetry",
 		"area_resources_occupied": "RDS traffic-control bookkeeping; nothing in Core consumes it",
 		"finished_path":           "route actually driven — WANTED, and deliberately deferred: it belongs with the per-traversal tier, which is not built",
@@ -116,17 +115,20 @@ var notCarried = map[string]map[string]string{
 		"available_containers": "carried",
 		"total_containers":     "carried",
 	},
-	// Six of the nine jack fields are unmapped. Load count, height and error
-	// code are the three with consumers; the rest describe a lift mechanism
-	// nothing in Core reasons about.
+	// Four of the nine jack fields are unmapped. Load count, height, error
+	// code, state and isFull are the five with consumers; the rest describe a
+	// lift mechanism nothing in Core reasons about.
+	//
+	// jack_state and jack_isFull LEFT this list on 2026-08-22, along with
+	// report[].isLoaded, when the stranded-transit-bin inference gave them a
+	// consumer: "is the bin still on the robot" is the question the whole
+	// inference turns on, and jack_state is the vendor's own answer to it.
 	//
 	// The names here are read off the wire, not off a design note. An
 	// earlier draft of this list guessed jack_pos and jack_max_pos from a
 	// prose description and this test rejected both — which is the same
 	// class of error it exists to catch, caught on itself.
 	"report[].rbk_report.jack": {
-		"jack_state":  "lift state machine; no consumer",
-		"jack_isFull": "no consumer",
 		"jack_enable": "no consumer",
 		"jack_speed":  "no consumer",
 		"jack_emc":    "lift emergency stop; the chassis-level emergency flag is the one Core acts on",

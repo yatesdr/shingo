@@ -175,8 +175,18 @@ type RobotStatus struct {
 	LiftCount      int
 	LiftHeight     float64
 	LiftError      int
-	BatteryV       float64
-	BatteryA       float64
+	// JackState is the deck's at-rest state: 1 = a bin is up, 3 = the deck is
+	// empty. See rds.JackReport.JackState for the full enum and for why there
+	// is no unload EVENT to listen for.
+	//
+	// This is the primary "is the bin still on the robot" signal, with
+	// JackIsFull and IsLoaded as corroboration and LiftHeight as the fallback
+	// proxy for a fleet that does not report the state.
+	JackState  int
+	JackIsFull bool
+	IsLoaded   bool
+	BatteryV   float64
+	BatteryA   float64
 	// Battery pack telemetry. Nothing in this system has ever retained a
 	// battery time-series — RDS has no column for it and its
 	// t_batterylevelrecord is empty — so this poll is the only place it can
