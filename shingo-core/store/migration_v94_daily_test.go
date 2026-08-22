@@ -21,7 +21,7 @@ import (
 func seedV94Delta(t *testing.T, db *store.DB, binID int64, before, after int, payload, reason, actor string, at time.Time) {
 	t.Helper()
 	delta := after - before
-	if _, err := db.Exec(`INSERT INTO bin_uop_audit
+	if _, err := db.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, applied_at)
 		VALUES ($1,$2,$3,'bin_uop_delta','test',$4,$5,jsonb_build_object('reason',$6::text,'delta',$7::int,'sequence_id',1),$8)`,
 		binID, before, after, payload, actor, reason, delta, at.Truncate(time.Microsecond)); err != nil {

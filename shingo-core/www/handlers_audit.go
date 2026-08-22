@@ -7,7 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Item 10 audit UI backend. Three read endpoints surface bin_uop_audit
+// Item 10 audit UI backend. Three read endpoints surface bin_uop_ledger
 // for the per-bin timeline, per-operator activity, and per-station
 // override-pattern views. Frontend (templates/audit.html, pages/audit.js,
 // nav link) is deferred — defining the JSON shape here lets the UI
@@ -96,10 +96,10 @@ func (h *Handlers) apiAuditStationOverrides(w http.ResponseWriter, r *http.Reque
 	h.jsonOK(w, rows)
 }
 
-// apiAuditDiscrepancies returns the discrepancy ledger: bin_uop_audit
+// apiAuditDiscrepancies returns the discrepancy ledger: bin_uop_ledger
 // rows where the tracked count diverged from reality — dropped stale ticks,
 // negative remaining, and release-empties that still carried counted parts.
-// A read-only view over bin_uop_audit, not a separate ledger table.
+// A read-only view over bin_uop_ledger, not a separate ledger table.
 //
 //	GET /api/audit/discrepancies[?limit=N&offset=M]
 func (h *Handlers) apiAuditDiscrepancies(w http.ResponseWriter, r *http.Request) {

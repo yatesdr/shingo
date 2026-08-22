@@ -486,7 +486,7 @@ var displayProvenance = []ConstantProvenance{
 		Kind: ProvenanceSimDerived,
 		Note: "MEASURED AT ONE PLANT AND THEREFORE NOT AT YOURS — method (3) on " +
 			"ProvenanceSimDerived. Source: the Springfield dump of 2026-07-27, " +
-			"bin_uop_audit, 234,725 rows over 82.2 days (2026-05-04 to 2026-07-25) across " +
+			"bin_uop_ledger, 234,725 rows over 82.2 days (2026-05-04 to 2026-07-25) across " +
 			"29 carriers, segmented into 531 completed bindings at the epoch-bumping " +
 			"boundaries (audit.EpochBumpOps). That distribution: p50 = 2h 54m, p90 = 1.98 " +
 			"days, p95 = 4.17 days, p99 = 20.98 days, longest = 22.99 days. 72 hours sits " +

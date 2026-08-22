@@ -53,7 +53,7 @@ func RollupBinUOPDeltaDay(db *sql.DB, day time.Time) (int64, error) {
 	           a.payload_code, a.actor, a.metadata,
 	           count(*) FILTER (WHERE a.op = ANY(`+bumps+`)) OVER (
 		       PARTITION BY a.bin_id ORDER BY a.id ROWS UNBOUNDED PRECEDING) AS epoch_seq
-	    FROM bin_uop_audit a
+	    FROM bin_uop_ledger a
 	) w
 	WHERE w.op = 'bin_uop_delta'
 	  AND w.applied_at >= $1 AND w.applied_at < $1 + interval '1 day'
@@ -89,7 +89,7 @@ func pgBumpOpsArraySQL() string {
 	return `'{` + strings.Join(parts, ",") + `}'`
 }
 
-// PurgeOldBinUOPDelta deletes bin_uop_audit's bin_uop_delta rows older than
+// PurgeOldBinUOPDelta deletes bin_uop_ledger's bin_uop_delta rows older than
 // the retention window — the P4 half of the D6 trade (owner decision: raw
 // deltas live 90 days; the exceptions ledger v93 and the daily roll-up v94
 // are the permanent record and are NEVER deleted).
@@ -113,10 +113,10 @@ func pgBumpOpsArraySQL() string {
 // from; after them, it destroys nothing the owner named durable.
 func PurgeOldBinUOPDelta(db *sql.DB, keepDays int, now time.Time) (int64, error) {
 	cutoff := now.UTC().AddDate(0, 0, -keepDays)
-	res, err := db.Exec(`DELETE FROM bin_uop_audit
+	res, err := db.Exec(`DELETE FROM bin_uop_ledger
 		WHERE op = 'bin_uop_delta' AND applied_at < $1`, cutoff)
 	if err != nil {
-		return 0, fmt.Errorf("purge bin_uop_audit delta rows: %w", err)
+		return 0, fmt.Errorf("purge bin_uop_ledger delta rows: %w", err)
 	}
 	return res.RowsAffected()
 }

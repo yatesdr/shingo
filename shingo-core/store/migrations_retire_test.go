@@ -58,7 +58,7 @@ import (
 // this has run on. Rolling back needs the column re-added first, which is exact
 // and is one statement because every value was blank.
 //
-// v92 drops production_log, the write-only shadow of bin_uop_audit's delta rows
+// v92 drops production_log, the write-only shadow of bin_uop_ledger's delta rows
 // since the §14 cutover. The baseline's CREATE went with it — see the v92 entry
 // — and rollback is self-healing (a pre-v92 binary re-creates the table empty
 // from its own baseline), so unlike v91 nothing manual stands between a plant
@@ -69,7 +69,7 @@ import (
 // derived from is not — P4 starts deleting it at 90 days in this same wave).
 // The first migration since v89 that ADDS to the schema rather than retiring
 // from it, and the first whose backfill is the point rather than a repair:
-// the crossings/drops/boundaries it derives from bin_uop_audit are exactly
+// the crossings/drops/boundaries it derives from bin_uop_ledger are exactly
 // what the 90-day purge would otherwise make un-derivable. Rollback is inert
 // (a pre-v93 binary never reads or writes the table) but lossy to redo —
 // dropping the table destroys the backfill, so .previous against a purged

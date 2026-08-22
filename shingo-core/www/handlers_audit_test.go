@@ -17,7 +17,7 @@ import (
 )
 
 // Item 10 audit-UI backend tests. Each endpoint round-trips a real
-// bin_uop_audit row through the JSON shape so a future column rename
+// bin_uop_ledger row through the JSON shape so a future column rename
 // surfaces here, not at a dashboard.
 
 // TestApiAuditBinTimeline pins the per-bin endpoint: every audit row

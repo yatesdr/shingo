@@ -143,7 +143,7 @@ func (e *Engine) ReplenishmentHealth(ctx context.Context) ([]PayloadHealth, erro
 
 // ── Ledger-integrity reads (Phase 4.6) ───────────────────────────────────
 //
-// Read-side only: every value comes from bins and bin_uop_audit, which are
+// Read-side only: every value comes from bins and bin_uop_ledger, which are
 // already on disk. See store/bins/ledger_integrity.go for what each answers
 // and why the negatives are deliberately not clamped away.
 

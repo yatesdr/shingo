@@ -187,7 +187,7 @@ func TestBinManifestService_ClearForReuse_SetsBinTypeID(t *testing.T) {
 	// Audit detail must record from→to codes, not just a bare boolean.
 	var rawDetail []byte
 	testutil.MustNoErr(t, db.QueryRow(
-		`SELECT detail FROM bin_uop_audit WHERE bin_id=$1 ORDER BY id DESC LIMIT 1`, bin.ID,
+		`SELECT detail FROM bin_uop_ledger WHERE bin_id=$1 ORDER BY id DESC LIMIT 1`, bin.ID,
 	).Scan(&rawDetail), "load audit detail")
 	var detail map[string]string
 	testutil.MustNoErr(t, json.Unmarshal(rawDetail, &detail), "parse audit detail")
@@ -526,9 +526,9 @@ func TestBinManifestService_RecordProducedBin_AtomicCountAndConfirm(t *testing.T
 		t.Error("LoadedAt = nil, want non-nil after confirm")
 	}
 	var nSet, nConfirmed int
-	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger WHERE bin_id=$1 AND op=$2`,
 		bin.ID, string(audit.OpSetForProduction)).Scan(&nSet), "count set-for-production audit")
-	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger WHERE bin_id=$1 AND op=$2`,
 		bin.ID, string(audit.OpManifestConfirmed)).Scan(&nConfirmed), "count manifest-confirmed audit")
 	if nSet != 1 || nConfirmed != 1 {
 		t.Errorf("audit rows: OpSetForProduction=%d OpManifestConfirmed=%d, want 1 each (one atomic tx)", nSet, nConfirmed)
@@ -550,7 +550,7 @@ func TestBinManifestService_RecordProducedBin_RollsBackOnError(t *testing.T) {
 		t.Fatal("RecordProducedBin on a nonexistent bin: want error, got nil")
 	}
 	var n int
-	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit WHERE bin_id=$1`, ghostBin).Scan(&n),
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger WHERE bin_id=$1`, ghostBin).Scan(&n),
 		"count audit rows for failed record")
 	if n != 0 {
 		t.Errorf("audit rows after a failed record = %d, want 0 (rolled back, no half-state)", n)
@@ -1063,7 +1063,7 @@ func TestBinManifestService_SyncOrClearForReleased_IdempotentRetry(t *testing.T)
 // TestBinManifestService_SetFromTemplate pins the Item 19 audit-
 // completeness contract: the SetFromTemplate wrapper resolves a
 // payload template AND writes the bin via SetForProduction, which
-// audits via bin_uop_audit. Pre-Item-19 the dispatch ingest path
+// audits via bin_uop_ledger. Pre-Item-19 the dispatch ingest path
 // and the operator load-payload action called the lower-level
 // *store.DB.SetBinManifestFromTemplate which bypassed audit; Item
 // 10's UI surface made the audit-bypass a real gap.
@@ -1091,7 +1091,7 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 
 	// Audit row must exist with op=set_for_production.
 	var auditCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op='set_for_production'`, bin.ID).Scan(&auditCount); err != nil {
 		t.Fatalf("read audit: %v", err)
 	}
@@ -1202,7 +1202,7 @@ func TestRegression_ReleaseUnderpack_AuditRecordsMissingDelta(t *testing.T) {
 		actor     string
 	)
 	if err := db.QueryRow(`SELECT op, before_uop, after_uop, actor
-		FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+		FROM bin_uop_ledger WHERE bin_id=$1 AND op=$2`,
 		bin.ID, audit.OpReleasedUnderpack).Scan(&op, &beforeUOP, &afterUOP, &actor); err != nil {
 		t.Fatalf("read released_underpack audit row: %v", err)
 	}
@@ -1225,7 +1225,7 @@ func TestRegression_ReleaseUnderpack_AuditRecordsMissingDelta(t *testing.T) {
 	// And NO released_empty audit row should exist for this bin —
 	// underpack is its own thing, not an extra event.
 	var emptyCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpReleasedEmpty).Scan(&emptyCount); err != nil {
 		t.Fatalf("count released_empty rows: %v", err)
 	}

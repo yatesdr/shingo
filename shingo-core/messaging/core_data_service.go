@@ -175,7 +175,7 @@ func (s *CoreDataService) StartHeartbeatProjection() {
 			// owner named durable. Delta rows only — bump ops and the rare
 			// non-delta observations stay forever.
 			if purged, err := s.db.PurgeOldBinUOPDelta(binUOPDeltaRetentionDays, now); err != nil {
-				log.Printf("core_handler: purge old bin_uop_audit delta rows: %v", err)
+				log.Printf("core_handler: purge old bin_uop_ledger delta rows: %v", err)
 			} else if purged > 0 {
 				log.Printf("core_handler: purged %d expired bin_uop_delta audit row(s)", purged)
 			}

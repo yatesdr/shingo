@@ -47,7 +47,7 @@ type BinManifestStore interface {
 	UnconfirmBinManifest(binID int64) error
 	ClaimBin(binID, orderID int64) error
 
-	// High-level audit-row append (legacy audit table, not bin_uop_audit
+	// High-level audit-row append (legacy audit table, not bin_uop_ledger
 	// — that one is reached via Exec / the BinUOPExecer interface).
 	AppendAudit(entityType string, entityID int64, action, oldValue, newValue, actor string) error
 

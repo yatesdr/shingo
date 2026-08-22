@@ -467,10 +467,10 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 	} else {
 		// Item 19 of the bin-as-truth refactor: route through the audited
 		// BinManifestService so the 0→capacity initial fill surfaces in
-		// bin_uop_audit. Pre-Item-19 this path called the lower-level
+		// bin_uop_ledger. Pre-Item-19 this path called the lower-level
 		// SetBinManifestFromTemplate directly, bypassing audit; the resulting
 		// timeline gap made forensics confusing because freshly-loaded bins
-		// appeared in bin_uop_audit only at the first downstream delta.
+		// appeared in bin_uop_ledger only at the first downstream delta.
 		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, p.PayloadCode, nil, p.ProducedAt); err != nil {
 			return lifecycleErr("internal_error", err.Error(), err)
 		}

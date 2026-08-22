@@ -74,7 +74,7 @@ func TestAppliedDeltaStillCarriesNoNode(t *testing.T) {
 	// The INSERT that writes an APPLIED delta. Located by its op literal so this
 	// does not match the observation-row inserts (stale-epoch, payload-mismatch),
 	// which are a different shape and are not cycles.
-	re := regexp.MustCompile(`(?s)INSERT INTO bin_uop_audit\s*\n?\s*\(([^)]*)\)[^;]*?'` + OpBinUOPDelta + `'`)
+	re := regexp.MustCompile(`(?s)INSERT INTO bin_uop_ledger\s*\n?\s*\(([^)]*)\)[^;]*?'` + OpBinUOPDelta + `'`)
 	m := re.FindStringSubmatch(src)
 	if m == nil {
 		t.Fatalf("could not locate the applied-delta INSERT in uop/applier.go — the pattern " +

@@ -16,7 +16,7 @@ import (
 // The v93 permanent exceptions ledger, event-time half: every exception the
 // applier can produce at apply time must land on bin_uop_exception in the
 // same transaction as its raw-stream twin — that table is what survives the
-// 90-day retention on bin_uop_audit (D6), so a missing writer here is a
+// 90-day retention on bin_uop_ledger (D6), so a missing writer here is a
 // permanently missing row, not a stale one.
 
 // TestExceptionLedger_CrossingAndRecoveryLifecycle drives one bin through a

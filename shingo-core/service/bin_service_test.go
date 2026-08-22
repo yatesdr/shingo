@@ -754,9 +754,9 @@ func TestBinService_RecordCount_WithDiscrepancy(t *testing.T) {
 }
 
 // TestBinService_RecordCount_WritesAuditRow pins the Item 19 audit-
-// completeness contract: every cycle count writes a bin_uop_audit row
+// completeness contract: every cycle count writes a bin_uop_ledger row
 // (op=cycle_count) capturing the operator-vs-system divergence.
-// Pre-Item-19 cycle counts were silent in bin_uop_audit and therefore
+// Pre-Item-19 cycle counts were silent in bin_uop_ledger and therefore
 // invisible in Item 10's audit timeline UI.
 func TestBinService_RecordCount_WritesAuditRow(t *testing.T) {
 	t.Parallel()
@@ -776,7 +776,7 @@ func TestBinService_RecordCount_WritesAuditRow(t *testing.T) {
 		actor      string
 		auditCount int
 	)
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op='cycle_count'`, bin.ID).Scan(&auditCount); err != nil {
 		t.Fatalf("count audit rows: %v", err)
 	}
@@ -784,7 +784,7 @@ func TestBinService_RecordCount_WritesAuditRow(t *testing.T) {
 		t.Fatalf("cycle_count audit rows = %d, want 1", auditCount)
 	}
 	if err := db.QueryRow(`SELECT op, before_uop, after_uop, actor
-		FROM bin_uop_audit WHERE bin_id=$1 AND op='cycle_count'`,
+		FROM bin_uop_ledger WHERE bin_id=$1 AND op='cycle_count'`,
 		bin.ID).Scan(&op, &beforeUOP, &afterUOP, &actor); err != nil {
 		t.Fatalf("read audit row: %v", err)
 	}

@@ -66,7 +66,7 @@ func TestTemplateDB_HasAllSchema(t *testing.T) {
 		"nodes",
 		"payloads",
 		"order_bins",
-		"bin_uop_audit",
+		"bin_uop_ledger",
 		"lineside_buckets",
 		"inventory_delta_dedup",
 	}

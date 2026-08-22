@@ -300,7 +300,7 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 		t.Errorf("after stale delta uop = %d, want 0 unchanged", got)
 	}
 	var dropped int
-	if err := coreDB.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit WHERE bin_id=$1 AND op='stale_epoch_dropped'`, bin.ID).Scan(&dropped); err != nil {
+	if err := coreDB.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger WHERE bin_id=$1 AND op='stale_epoch_dropped'`, bin.ID).Scan(&dropped); err != nil {
 		t.Fatalf("count discrepancy rows: %v", err)
 	}
 	if dropped != 1 {

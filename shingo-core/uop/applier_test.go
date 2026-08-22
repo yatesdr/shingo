@@ -135,7 +135,7 @@ func TestInventoryDelta_BinUOPDelta_StaleEpochDroppedAndAudited(t *testing.T) {
 
 	var before, after int
 	var meta string
-	testutil.MustNoErr(t, db.QueryRow(`SELECT before_uop, after_uop, metadata FROM bin_uop_audit
+	testutil.MustNoErr(t, db.QueryRow(`SELECT before_uop, after_uop, metadata FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op='stale_epoch_dropped'`, bin.ID).Scan(&before, &after, &meta), "read stale audit row")
 	if before != 100 || after != 100 {
 		t.Errorf("audit before/after = %d/%d, want 100/100 (count-unchanged observation)", before, after)
@@ -600,7 +600,7 @@ func TestApplyBinUOPDelta_CaptureReductionToZeroFiresClearForReuse(t *testing.T)
 
 	// Audit row with op=released_capture_empty must exist for this bin.
 	var auditCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2`,
 		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&auditCount); err != nil {
 		t.Fatalf("read audit: %v", err)
@@ -645,7 +645,7 @@ func TestApplyBinUOPDelta_ConsumeTickToZeroDoesNotFireClearForReuse(t *testing.T
 	}
 
 	var auditCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2`,
 		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&auditCount); err != nil {
 		t.Fatalf("read audit: %v", err)
@@ -698,7 +698,7 @@ func TestApplyBinUOPDelta_CaptureReductionOverpackToNegativeFiresClear(t *testin
 	// Audit trail: must contain both the bin_uop_delta row with after_uop=-1
 	// AND the released_capture_empty row with after_uop=0.
 	var deltaCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op='bin_uop_delta' AND after_uop=-1`, bin.ID).Scan(&deltaCount); err != nil {
 		t.Fatalf("read delta audit: %v", err)
 	}
@@ -706,7 +706,7 @@ func TestApplyBinUOPDelta_CaptureReductionOverpackToNegativeFiresClear(t *testin
 		t.Errorf("bin_uop_delta audit rows with after_uop=-1 = %d, want 1", deltaCount)
 	}
 	var clearCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2 AND after_uop=0`,
 		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&clearCount); err != nil {
 		t.Fatalf("read clear audit: %v", err)
@@ -826,7 +826,7 @@ func TestApplyBinUOPDelta_CaptureReductionReplayShortCircuits(t *testing.T) {
 	}
 
 	var clearCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2`,
 		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&clearCount); err != nil {
 		t.Fatalf("read clear audit: %v", err)
@@ -895,7 +895,7 @@ func TestApplyBinUOPDelta_FirstDeltaBindsBlankProduceBin(t *testing.T) {
 	}
 
 	var old string
-	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload' FROM bin_uop_audit
+	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload' FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpPayloadBoundFirstDelta).Scan(&old), "read bind audit row")
 	if old != "" {
 		t.Errorf("audit old_payload = %q, want blank (bin was a fresh carrier)", old)
@@ -930,7 +930,7 @@ func TestApplyBinUOPDelta_FirstDeltaRebindsStaleLabelAtZero(t *testing.T) {
 	}
 
 	var old string
-	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload' FROM bin_uop_audit
+	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload' FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpPayloadBoundFirstDelta).Scan(&old), "read bind audit row")
 	if old != "PART-OLD" {
 		t.Errorf("audit old_payload = %q, want PART-OLD", old)
@@ -974,7 +974,7 @@ func TestApplyBinUOPDelta_ProduceRebindWithInventoryKeepsCounting(t *testing.T) 
 	var old string
 	var aboard int
 	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload', (metadata->>'inventory_at_rebind')::int
-		FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpPayloadReboundWithInventory).Scan(&old, &aboard), "read rebind audit row")
+		FROM bin_uop_ledger WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpPayloadReboundWithInventory).Scan(&old, &aboard), "read rebind audit row")
 	if old != "PART-OLD" || aboard != 480 {
 		t.Errorf("rebind audit old=%q aboard=%d, want PART-OLD/480", old, aboard)
 	}
@@ -983,7 +983,7 @@ func TestApplyBinUOPDelta_ProduceRebindWithInventoryKeepsCounting(t *testing.T) 
 	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation,
 		makeBinDelta(bin.ID, "PART-NEW", 2, 2, protocol.ReasonProduceTick)), "apply follow-up tick")
 	var rebindRows int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger WHERE bin_id=$1 AND op=$2`,
 		bin.ID, audit.OpPayloadReboundWithInventory).Scan(&rebindRows)
 	if rebindRows != 1 {
 		t.Errorf("rebind audit rows = %d, want 1 (follow-up ticks match the new label)", rebindRows)
@@ -1030,7 +1030,7 @@ func TestApplyBinUOPDelta_ConsumeMismatchStillRejectsButLoudly(t *testing.T) {
 	var droppedRows int
 	var droppedSum int
 	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*), COALESCE(SUM((metadata->>'delta')::int), 0)
-		FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+		FROM bin_uop_ledger WHERE bin_id=$1 AND op=$2`,
 		bin.ID, audit.OpPayloadMismatchDropped).Scan(&droppedRows, &droppedSum), "read dropped observation rows")
 	if droppedRows != 2 || droppedSum != -8 {
 		t.Errorf("dropped rows/sum = %d/%d, want 2/-8 (one observation per drop, quantities reconstructible)",

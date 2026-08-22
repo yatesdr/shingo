@@ -472,7 +472,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	if err != nil {
 		return fmt.Errorf("marshal BinUOPDelta audit metadata bin=%d: %w", d.BinID, err)
 	}
-	if _, err := tx.Exec(`INSERT INTO bin_uop_audit
+	if _, err := tx.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata)
 		VALUES ($1, $2, $3, 'bin_uop_delta', 'service/inventory_delta_service.go', $4, $5, $6)`,
 		d.BinID, valueBefore, valueBefore+d.Delta,
@@ -541,7 +541,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 }
 
 // recordRejectedDelta makes a payload-mismatch drop visible: one
-// bin_uop_audit observation row PER dropped delta (before == after, the
+// bin_uop_ledger observation row PER dropped delta (before == after, the
 // dropped quantity in metadata — the same shape as OpStaleEpochDropped, so
 // the discrepancy ledger can reconstruct the missing total for a later
 // cycle count), plus the bin's anomaly flag, set once, so the bins page
@@ -654,12 +654,12 @@ type RejectedDeltaBin struct {
 func (s *InventoryDeltaService) RejectedDeltaDetail() ([]RejectedDeltaBin, error) {
 	rows, err := s.db.Query(`SELECT b.id, COALESCE(b.label,''), COALESCE(n.name,''),
 		COALESCE(b.payload_code,''), b.anomaly_at,
-		(SELECT a.op FROM bin_uop_audit a
+		(SELECT a.op FROM bin_uop_ledger a
 		   WHERE a.bin_id=b.id AND a.op IN ('stale_epoch_dropped','payload_mismatch_dropped')
 		   ORDER BY a.applied_at DESC LIMIT 1),
-		(SELECT MAX(a.applied_at) FROM bin_uop_audit a
+		(SELECT MAX(a.applied_at) FROM bin_uop_ledger a
 		   WHERE a.bin_id=b.id AND a.op IN ('stale_epoch_dropped','payload_mismatch_dropped')),
-		(SELECT COUNT(*) FROM bin_uop_audit a
+		(SELECT COUNT(*) FROM bin_uop_ledger a
 		   WHERE a.bin_id=b.id AND a.op IN ('stale_epoch_dropped','payload_mismatch_dropped'))
 		FROM bins b
 		LEFT JOIN nodes n ON n.id=b.node_id

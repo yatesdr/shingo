@@ -47,7 +47,7 @@ func TestPurgeOldBinUOPDelta_DeletesOnlyExpiredDeltaRows(t *testing.T) {
 		count(*) FILTER (WHERE op = $2),
 		count(*) FILTER (WHERE op = $3),
 		count(*) FILTER (WHERE op='bin_uop_delta' AND applied_at >= $1)
-		FROM bin_uop_audit WHERE bin_id=1`,
+		FROM bin_uop_ledger WHERE bin_id=1`,
 		now.Add(-90*24*time.Hour), audit.OpSetForProduction, audit.OpStaleEpochDropped).
 		Scan(&deltas, &bumps, &obs, &freshDeltas); err != nil {
 		t.Fatalf("read: %v", err)
@@ -72,8 +72,8 @@ func TestPurgeOldBinUOPDelta_DeletesOnlyExpiredDeltaRows(t *testing.T) {
 	}
 }
 
-// mustAppend writes one bin_uop_audit row at a controlled time. bin_id is
-// planted directly (no FK on bin_uop_audit.bin_id? it has none — the audit
+// mustAppend writes one bin_uop_ledger row at a controlled time. bin_id is
+// planted directly (no FK on bin_uop_ledger.bin_id? it has none — the audit
 // stream deliberately keeps rows whose bin is gone).
 func mustAppend(t *testing.T, db *sql.DB, binID int64, before *int, after int, op string, at time.Time) {
 	t.Helper()
@@ -81,7 +81,7 @@ func mustAppend(t *testing.T, db *sql.DB, binID int64, before *int, after int, o
 	if before != nil {
 		b = *before
 	}
-	if _, err := db.Exec(`INSERT INTO bin_uop_audit
+	if _, err := db.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, applied_at)
 		VALUES ($1,$2,$3,$4,'test','PART-A','test',$5)`,
 		binID, b, after, op, at.Truncate(time.Microsecond)); err != nil {
@@ -91,7 +91,7 @@ func mustAppend(t *testing.T, db *sql.DB, binID int64, before *int, after int, o
 
 func mustAppendOverride(t *testing.T, db *sql.DB, binID int64, suggested, operator int, op string, at time.Time) {
 	t.Helper()
-	if _, err := db.Exec(`INSERT INTO bin_uop_audit
+	if _, err := db.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, applied_at)
 		VALUES ($1,$2,$3,$4,'test','PART-A','test','{"delta":-3}',$5)`,
 		binID, suggested, operator, op, at.Truncate(time.Microsecond)); err != nil {

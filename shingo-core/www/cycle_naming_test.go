@@ -20,7 +20,7 @@ import (
 // /api/parts/cycle-time averaged mission_telemetry.duration_ms — how long a
 // ROBOT took to carry a payload, attributed to every part in that payload's
 // manifest. Unit: one order's journey. /cycle-time reads consecutive PLC ticks
-// out of bin_uop_audit. Unit: one part crossing one station. Same word, two
+// out of bin_uop_ledger. Unit: one part crossing one station. Same word, two
 // grains, two tables, no shared key — and the misnamed one was the pre-existing
 // endpoint, not the new page. So the page kept the word and the endpoint became
 // /api/parts/mission-duration.
@@ -56,7 +56,7 @@ func TestCycleNamesOneMeasurement(t *testing.T) {
 	if len(cycleRoutes) != 1 || cycleRoutes[0] != theOne {
 		t.Errorf("routes matching \"cycle\" = %v, want exactly [%s].\n\n"+
 			"\"Cycle time\" in this codebase means ONE measurement: the interval between "+
-			"consecutive units at a station, from consecutive PLC ticks in bin_uop_audit. "+
+			"consecutive units at a station, from consecutive PLC ticks in bin_uop_ledger. "+
 			"It does not mean a mission duration, an order's end-to-end time, or a takt — "+
 			"/api/parts/cycle-time used to mean the first of those and was renamed to "+
 			"/api/parts/mission-duration for exactly this reason.\n\n"+
@@ -94,7 +94,7 @@ func TestPartsDurationSymbolsDoNotSayCycle(t *testing.T) {
 	if code := stripGoComments(string(src)); strings.Contains(code, "CycleTime") {
 		t.Error("handlers_parts.go still names a CycleTime symbol. The parts endpoints " +
 			"measure carrying-mission durations (mission_telemetry.duration_ms); cycle " +
-			"time is /cycle-time, off bin_uop_audit. Two names for two things, not one " +
+			"time is /cycle-time, off bin_uop_ledger. Two names for two things, not one " +
 			"name for both.")
 	}
 }

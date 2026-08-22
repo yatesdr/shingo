@@ -18,7 +18,7 @@ import (
 // ── WHAT A CYCLE IS HERE ─────────────────────────────────────────────────────
 //
 // One interval between consecutive produce (or consume) ticks at the same
-// place, for the same part. The source is bin_uop_audit rows written by
+// place, for the same part. The source is bin_uop_ledger rows written by
 // uop.(*InventoryDeltaService).ApplyBinUOPDelta — the path that actually moved
 // bins.uop_remaining. cell_part_events is NOT used, and the usual reason given
 // (at-most-once delivery) is not the disqualifier: its payload_code is EMPTY ON
@@ -48,7 +48,7 @@ import (
 //
 //  2. A GENUINE REPLAY WRITES NO AUDIT ROW AT ALL. The applier returns before
 //     the INSERT when the dedup sequence has already been consumed. Replays are
-//     therefore unobservable in bin_uop_audit BY CONSTRUCTION, and a dedup pass
+//     therefore unobservable in bin_uop_ledger BY CONSTRUCTION, and a dedup pass
 //     over rows that are all first applications would discard real events and
 //     manufacture the very gaps it was meant to remove.
 //

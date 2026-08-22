@@ -131,33 +131,6 @@ CREATE SEQUENCE public.bin_types_id_seq
 
 ALTER SEQUENCE public.bin_types_id_seq OWNED BY public.bin_types.id;
 
-CREATE TABLE public.bin_uop_audit (
-    id bigint NOT NULL,
-    bin_id bigint NOT NULL,
-    before_uop integer,
-    after_uop integer NOT NULL,
-    op text NOT NULL,
-    source text DEFAULT ''::text NOT NULL,
-    order_id bigint,
-    payload_code text DEFAULT ''::text NOT NULL,
-    actor text DEFAULT ''::text NOT NULL,
-    metadata jsonb,
-    applied_at timestamp with time zone DEFAULT now() NOT NULL,
-    node_id bigint,
-    station text DEFAULT ''::text NOT NULL,
-    detail jsonb,
-    loader_id bigint
-);
-
-CREATE SEQUENCE public.bin_uop_audit_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.bin_uop_audit_id_seq OWNED BY public.bin_uop_audit.id;
-
 CREATE TABLE public.bin_uop_delta_daily (
     day date NOT NULL,
     bin_id bigint NOT NULL,
@@ -198,6 +171,33 @@ CREATE SEQUENCE public.bin_uop_exception_id_seq
     CACHE 1;
 
 ALTER SEQUENCE public.bin_uop_exception_id_seq OWNED BY public.bin_uop_exception.id;
+
+CREATE TABLE public.bin_uop_ledger (
+    id bigint NOT NULL,
+    bin_id bigint NOT NULL,
+    before_uop integer,
+    after_uop integer NOT NULL,
+    op text NOT NULL,
+    source text DEFAULT ''::text NOT NULL,
+    order_id bigint,
+    payload_code text DEFAULT ''::text NOT NULL,
+    actor text DEFAULT ''::text NOT NULL,
+    metadata jsonb,
+    applied_at timestamp with time zone DEFAULT now() NOT NULL,
+    node_id bigint,
+    station text DEFAULT ''::text NOT NULL,
+    detail jsonb,
+    loader_id bigint
+);
+
+CREATE SEQUENCE public.bin_uop_ledger_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.bin_uop_ledger_id_seq OWNED BY public.bin_uop_ledger.id;
 
 CREATE TABLE public.bins (
     id bigint NOT NULL,
@@ -1298,9 +1298,9 @@ ALTER TABLE ONLY public.bin_loaders ALTER COLUMN id SET DEFAULT nextval('public.
 
 ALTER TABLE ONLY public.bin_types ALTER COLUMN id SET DEFAULT nextval('public.bin_types_id_seq'::regclass);
 
-ALTER TABLE ONLY public.bin_uop_audit ALTER COLUMN id SET DEFAULT nextval('public.bin_uop_audit_id_seq'::regclass);
-
 ALTER TABLE ONLY public.bin_uop_exception ALTER COLUMN id SET DEFAULT nextval('public.bin_uop_exception_id_seq'::regclass);
+
+ALTER TABLE ONLY public.bin_uop_ledger ALTER COLUMN id SET DEFAULT nextval('public.bin_uop_ledger_id_seq'::regclass);
 
 ALTER TABLE ONLY public.bins ALTER COLUMN id SET DEFAULT nextval('public.bins_id_seq'::regclass);
 
@@ -1405,14 +1405,14 @@ ALTER TABLE ONLY public.bin_types
 ALTER TABLE ONLY public.bin_types
     ADD CONSTRAINT bin_types_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.bin_uop_audit
-    ADD CONSTRAINT bin_uop_audit_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.bin_uop_delta_daily
     ADD CONSTRAINT bin_uop_delta_daily_pkey PRIMARY KEY (day, bin_id, epoch_seq, payload_code, reason, actor);
 
 ALTER TABLE ONLY public.bin_uop_exception
     ADD CONSTRAINT bin_uop_exception_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.bin_uop_ledger
+    ADD CONSTRAINT bin_uop_ledger_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.bins
     ADD CONSTRAINT bins_pkey PRIMARY KEY (id);
@@ -1619,19 +1619,19 @@ CREATE INDEX idx_audit_entity ON public.audit_log USING btree (entity_type, enti
 
 CREATE INDEX idx_bin_loader_homes_loader ON public.bin_loader_homes USING btree (loader_id);
 
-CREATE INDEX idx_bin_uop_audit_bin_time ON public.bin_uop_audit USING btree (bin_id, applied_at DESC);
-
-CREATE INDEX idx_bin_uop_audit_loader ON public.bin_uop_audit USING btree (loader_id, applied_at) WHERE (loader_id IS NOT NULL);
-
-CREATE INDEX idx_bin_uop_audit_op ON public.bin_uop_audit USING btree (op);
-
-CREATE INDEX idx_bin_uop_audit_op_time ON public.bin_uop_audit USING btree (op, applied_at DESC);
-
 CREATE INDEX idx_bin_uop_exception_bin ON public.bin_uop_exception USING btree (bin_id, occurred_at DESC);
 
 CREATE INDEX idx_bin_uop_exception_occurred ON public.bin_uop_exception USING btree (occurred_at DESC);
 
 CREATE INDEX idx_bin_uop_exception_open ON public.bin_uop_exception USING btree (kind, occurred_at DESC) WHERE (recovered_at IS NULL);
+
+CREATE INDEX idx_bin_uop_ledger_bin_time ON public.bin_uop_ledger USING btree (bin_id, applied_at DESC);
+
+CREATE INDEX idx_bin_uop_ledger_loader ON public.bin_uop_ledger USING btree (loader_id, applied_at) WHERE (loader_id IS NOT NULL);
+
+CREATE INDEX idx_bin_uop_ledger_op ON public.bin_uop_ledger USING btree (op);
+
+CREATE INDEX idx_bin_uop_ledger_op_time ON public.bin_uop_ledger USING btree (op, applied_at DESC);
 
 CREATE UNIQUE INDEX idx_bins_label_unique ON public.bins USING btree (label) WHERE (label <> ''::text);
 

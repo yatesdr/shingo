@@ -21,7 +21,7 @@ import (
 //   - QtyByPartSuggested: per-part counts the chip grid was pre-populated
 //     with at modal-open. Paired with QtyByPart for capture_lineside —
 //     any (part, qty) where the operator-submitted value differs from the
-//     suggested value writes a bin_uop_audit override row at Core.
+//     suggested value writes a bin_uop_ledger override row at Core.
 //   - PartialCount, PartialCountSuggested: operator-entered count and
 //     baseline for SEND PARTIAL BACK. PartialCount supersedes the
 //     server-side runtime read for the wire when set; PartialCountSuggested

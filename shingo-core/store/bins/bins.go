@@ -1231,8 +1231,8 @@ func RecoverToNode(db *sql.DB, binID, toNodeID int64) error {
 
 // RecordCount updates UOP and records the count timestamp. Accepts
 // any Execer (*sql.DB or *sql.Tx) so the service layer can wrap the
-// count + bin_uop_audit insert in one transaction. Item 19: cycle
-// counts now write a bin_uop_audit row (OpCycleCount) — see
+// count + bin_uop_ledger insert in one transaction. Item 19: cycle
+// counts now write a bin_uop_ledger row (OpCycleCount) — see
 // BinService.RecordCount.
 // A SUCCESSFUL COUNT CLEARS anomaly_at, and that is the point of the flag.
 //

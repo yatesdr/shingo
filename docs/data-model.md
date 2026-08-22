@@ -65,7 +65,7 @@ A physical container that can be tracked, moved, and stored. The bin is the prim
 - Can be claimed by one **Order**
 
 **The UOP audit stream and its two permanent tables.** Every count change on a bin
-writes a row to `bin_uop_audit` (the raw stream, ~7,000 rows/day). Since 2026-08 the
+writes a row to `bin_uop_ledger` (the raw stream, ~7,000 rows/day). Since 2026-08 the
 raw `bin_uop_delta` rows carry a **90-day retention** — deleted by the daily Core
 sweep. Two permanent tables carry what outlives them:
 

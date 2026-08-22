@@ -34,7 +34,7 @@ var migrationOnlyTables = map[string]string{
 	"bin_loader_quotas":           "added by v75 — a loader's declared carrier mix",
 	"bin_loader_payloads":         "added by a numbered migration after the baseline was frozen",
 	"bin_loaders":                 "added by a numbered migration after the baseline was frozen",
-	"bin_uop_audit":               "added by a numbered migration after the baseline was frozen",
+	"bin_uop_ledger":              "added by a numbered migration after the baseline was frozen",
 	"cell_config":                 "added by a numbered migration after the baseline was frozen",
 	"demand_origins":              "added by a numbered migration after the baseline was frozen",
 	"node_maintain_levels":        "added by v90 — how many empty carriers of each type a maintained node group is to hold. Separate from bin_loader_quotas on purpose: a quota is a preference bounded by never-2N, a maintained level is the number Core keeps",
@@ -59,7 +59,7 @@ var migrationOnlyTables = map[string]string{
 	"sourceability_events":        "added by a numbered migration after the baseline was frozen",
 	"style_claims":                "added by a numbered migration after the baseline was frozen",
 	"supply_refusals":             "added by a numbered migration after the baseline was frozen",
-	"bin_uop_exception":           "added by v93 — the permanent exceptions ledger (owner decision D2: no retention, ever). Migration-created rather than baseline because it carries a one-shot backfill from bin_uop_audit that must run while the raw rows still exist",
+	"bin_uop_exception":           "added by v93 — the permanent exceptions ledger (owner decision D2: no retention, ever). Migration-created rather than baseline because it carries a one-shot backfill from bin_uop_ledger that must run while the raw rows still exist",
 	"bin_uop_delta_daily":         "added by v94 — the permanent daily roll-up of the raw delta stream (owner decision D3: growth accepted). Migration-created for the same reason as v93: the backfill must run while the raw rows still exist",
 }
 

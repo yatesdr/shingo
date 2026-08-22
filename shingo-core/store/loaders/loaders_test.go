@@ -84,7 +84,7 @@ func TestLoaderCRUD(t *testing.T) {
 	if err := db.DeleteLoader(id); err != nil {
 		t.Fatalf("DeleteLoader: %v", err)
 	}
-	// Soft-delete (step 7): the row survives (its non-cascading bin_uop_audit loader_id
+	// Soft-delete (step 7): the row survives (its non-cascading bin_uop_ledger loader_id
 	// history must outlive the loader), but it is archived and excluded from the active
 	// enumeration. Get* are raw lookups and still return it (with archived_at set).
 	archived, err := db.GetLoader(id)

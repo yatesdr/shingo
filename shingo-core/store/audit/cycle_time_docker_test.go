@@ -31,11 +31,11 @@ func seedDelta(t *testing.T, db *sql.DB, op, payload, actor, reason string, at t
 	if reason != "" {
 		meta = `{"reason":"` + reason + `","delta":1,"sequence_id":7}`
 	}
-	if _, err := db.Exec(`INSERT INTO bin_uop_audit
+	if _, err := db.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, applied_at)
 		VALUES (901, 0, 1, $1, 'test', $2, $3, $4, $5)`,
 		op, payload, actor, meta, at); err != nil {
-		t.Fatalf("seed bin_uop_audit: %v", err)
+		t.Fatalf("seed bin_uop_ledger: %v", err)
 	}
 }
 
@@ -160,7 +160,7 @@ func TestListCycleEvents_WindowAndCap(t *testing.T) {
 	// arbitrary page, would leave gaps that skip over unread rows and read as
 	// long cycles that never happened.
 	var newest time.Time
-	if err := db.QueryRow(`SELECT MAX(applied_at) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT MAX(applied_at) FROM bin_uop_ledger
 		WHERE op = 'bin_uop_delta'
 		  AND metadata->>'reason' IN ('produce_tick','consume_tick')`).Scan(&newest); err != nil {
 		t.Fatalf("read newest qualifying row: %v", err)

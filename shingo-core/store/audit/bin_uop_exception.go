@@ -11,7 +11,7 @@ import (
 //
 // THE TABLE IS THE RULING, MATERIALIZED. "How parts moved / were consumed or
 // produced, and where the negatives are" is the durable question; until v93 it
-// could only be answered from bin_uop_audit's raw delta rows (~7,000/day), and
+// could only be answered from bin_uop_ledger's raw delta rows (~7,000/day), and
 // the 90-day retention on those (D6, later in the same wave) is about to start
 // deleting that derivation path. This table captures the ~140 events/day worth
 // keeping — 3.6 of them negative crossings — at event time.
@@ -125,7 +125,7 @@ func RecoverBinUOPOpenCrossing(execer BinUOPExecer, binID int64, recoveredAt tim
 	if _, err := execer.Exec(`
 		UPDATE bin_uop_exception e
 		SET deepest_uop = COALESCE((
-		        SELECT MIN(d.after_uop) FROM bin_uop_audit d
+		        SELECT MIN(d.after_uop) FROM bin_uop_ledger d
 		        WHERE d.bin_id = e.bin_id AND d.applied_at >= e.occurred_at
 		          AND d.applied_at <= $2), e.after_uop),
 		    recovered_at = $2

@@ -97,7 +97,7 @@ func (h *Handlers) apiInventoryMonitorTotals(w http.ResponseWriter, r *http.Requ
 // handful of points is worse than nothing, and a list that is empty until
 // something is wrong is the right instrument.
 //
-// Read-side only — every value comes from bins and bin_uop_audit, which are
+// Read-side only — every value comes from bins and bin_uop_ledger, which are
 // already on disk. No new table.
 //
 // ?since=<RFC3339> and ?limit= control the excursion history (default 7 days,

@@ -196,7 +196,7 @@ func GetLoaderByName(db *sql.DB, name, role string) (*Loader, error) {
 // ListLoaders returns every ACTIVE loader (archived_at IS NULL), ordered by name. This
 // is the config enumeration the downward sync (BuildLoaderInfos) and demand derivation
 // (BuildDemandRegistryFromAggregate) consume, so a soft-deleted loader stops driving the
-// plant. Analytics that must include retired loaders read bin_uop_audit (the stamped
+// plant. Analytics that must include retired loaders read bin_uop_ledger (the stamped
 // loader_id survives), not this.
 func ListLoaders(db *sql.DB) ([]Loader, error) {
 	rows, err := db.Query(`SELECT ` + loaderCols + ` FROM bin_loaders WHERE archived_at IS NULL ORDER BY name`)
@@ -231,11 +231,11 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 }
 
 // DeleteLoader SOFT-deletes a loader: it sets archived_at instead of removing the row,
-// so the stamped bin_uop_audit history (loader_id is non-cascading) survives a retired
+// so the stamped bin_uop_ledger history (loader_id is non-cascading) survives a retired
 // loader — the whole reason the cascade was removed (6 reviewers flagged it). The
 // homes/payloads rows are left intact (a hard DELETE would have cascaded them away).
 // Active reads (ListLoaders) filter on archived_at IS NULL, so an archived loader stops
-// syncing to Edge and driving demand; analytics read bin_uop_audit, which is preserved.
+// syncing to Edge and driving demand; analytics read bin_uop_ledger, which is preserved.
 // Idempotent: re-archiving just re-stamps archived_at. config_gen bumps so the next
 // downward sync drops the loader from the Edge cache.
 //

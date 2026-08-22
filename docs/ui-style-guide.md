@@ -789,7 +789,7 @@ digit beyond what the input supports is an assertion the data cannot back, made
 by a formatter that has no idea what the data is.
 
 Work it through on the number Phase 6 actually ships. Cycle time (5.10) is a
-difference between two `bin_uop_audit` timestamps on a stream that is
+difference between two `bin_uop_ledger` timestamps on a stream that is
 deliberately lossy in known ways — a stale-epoch drop erases the interval it
 lands in, and the drops are episodic rather than steady: zero on most days,
 then a burst past 3,000 in one — stamped by service clocks not synchronised to
@@ -824,7 +824,7 @@ that is much harder to catch, because the number involved is not wrong.
 
 `1,779` was a true count: stale-epoch drops at Springfield in the 24 hours to
 2026-07-25T05:18Z, read off a `journalctl` fingerprint and later reproduced to
-the digit by querying `bin_uop_audit` over the same window. Nobody rounded it,
+the digit by querying `bin_uop_ledger` over the same window. Nobody rounded it,
 nobody estimated it, and it survived re-measurement in a different tool. It then
 misled every document that carried it — and both reasons are about what failed
 to travel *with* the number, not about the number.
@@ -1910,7 +1910,7 @@ SHA inside the passage about getting the record wrong; corrected here.)
 
 **Raw `UOP` counts are meaningless here.** Most occurrences in the tree are
 supposed to be uppercase — `{{.UOPRemaining}}`, `UOPCapacity`, `remainingUOP`,
-`lsUOP`, `data-uop`, `bin_uop_audit`. An unfiltered grep returns ~199 and reads
+`lsUOP`, `data-uop`, `bin_uop_ledger`. An unfiltered grep returns ~199 and reads
 as catastrophic drift; a differently-scoped one returned "34 vs 7" and then
 "44 vs 30", which reads as a rule actively decaying. **Neither number described
 a real problem**, and the second was used to justify re-opening an item that had

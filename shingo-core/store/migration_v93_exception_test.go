@@ -13,17 +13,17 @@ import (
 )
 
 // The v93 exceptions ledger: one migration test that proves the backfill
-// derives the same rows the readers used to derive from raw bin_uop_audit,
+// derives the same rows the readers used to derive from raw bin_uop_ledger,
 // plus the op-set pin that keeps the backfill's copy of EpochBumpOps honest.
 
-// seedV93Audit writes one bin_uop_audit row directly.
+// seedV93Audit writes one bin_uop_ledger row directly.
 func seedV93Audit(t *testing.T, db *store.DB, binID int64, before, after int, op, payload string, at time.Time) {
 	t.Helper()
 	var b any
 	if before >= 0 || before < 0 {
 		b = before
 	}
-	if _, err := db.Exec(`INSERT INTO bin_uop_audit
+	if _, err := db.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, applied_at)
 		VALUES ($1,$2,$3,$4,'test',$5,'test','{"reason":"consume_tick"}',$6)`,
 		binID, b, after, op, payload, at); err != nil {
@@ -210,7 +210,7 @@ func TestV93_OpenNegativeBinsReadsTheExceptionTable(t *testing.T) {
 
 	crossed := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Microsecond)
 	// An old raw audit row that the purge WILL delete...
-	if _, err := db.Exec(`INSERT INTO bin_uop_audit
+	if _, err := db.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, applied_at)
 		VALUES ($1, 4, -13, 'bin_uop_delta', 'test', 'PART-E', 'test', $2)`, b.ID, crossed); err != nil {
 		t.Fatalf("seed raw crossing: %v", err)
@@ -223,7 +223,7 @@ func TestV93_OpenNegativeBinsReadsTheExceptionTable(t *testing.T) {
 	}
 
 	// The purge happens: the raw row goes, the exception row stays.
-	if _, err := db.Exec(`DELETE FROM bin_uop_audit WHERE bin_id = $1`, b.ID); err != nil {
+	if _, err := db.Exec(`DELETE FROM bin_uop_ledger WHERE bin_id = $1`, b.ID); err != nil {
 		t.Fatalf("purge raw: %v", err)
 	}
 

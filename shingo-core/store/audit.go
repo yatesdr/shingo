@@ -32,7 +32,7 @@ func (db *DB) RollupBinUOPDeltaDay(day time.Time) (int64, error) {
 	return audit.RollupBinUOPDeltaDay(db.DB, day)
 }
 
-// PurgeOldBinUOPDelta deletes bin_uop_audit delta rows older than the
+// PurgeOldBinUOPDelta deletes bin_uop_ledger delta rows older than the
 // retention window (D6: 90 days). The exceptions ledger and the daily roll-up
 // carry the permanent record; see audit.PurgeOldBinUOPDelta.
 func (db *DB) PurgeOldBinUOPDelta(keepDays int, now time.Time) (int64, error) {

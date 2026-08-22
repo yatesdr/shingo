@@ -10,7 +10,7 @@ package domain
 import "time"
 
 // SourceabilityEvent is one recorded sourceability verdict change. Column vocabulary follows
-// bin_uop_audit (op / source / actor / metadata) rather than inventing a new
+// bin_uop_ledger (op / source / actor / metadata) rather than inventing a new
 // one — that table is the best-designed shape in this schema and new tables
 // converge on it.
 type SourceabilityEvent struct {

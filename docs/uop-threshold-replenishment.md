@@ -260,7 +260,7 @@ There's a gap between physical pickup of the old bin at the cell and delivery of
 
 ### Backfill: there isn't one
 
-There is no payload-code backfill for pre-existing `lineside_buckets` rows. Springfield is a fresh install; all future plants get correct `payload_code` from day 1 because `capture.go` writes it from the order context at emit time. If a plant ever upgrades from a pre-feature version with existing buckets, the right design is `bin_uop_audit` correlation (the audit table records every `capture_reduction` operation with the bin's `order_id` and `payload_code`, so joining gives correct payload attribution). That work is deferred until a real plant needs it. Pre-existing empty `payload_code` rows are excluded from `SystemUOPForPayload` — conservative undercount, never overcount.
+There is no payload-code backfill for pre-existing `lineside_buckets` rows. Springfield is a fresh install; all future plants get correct `payload_code` from day 1 because `capture.go` writes it from the order context at emit time. If a plant ever upgrades from a pre-feature version with existing buckets, the right design is `bin_uop_ledger` correlation (the audit table records every `capture_reduction` operation with the bin's `order_id` and `payload_code`, so joining gives correct payload attribution). That work is deferred until a real plant needs it. Pre-existing empty `payload_code` rows are excluded from `SystemUOPForPayload` — conservative undercount, never overcount.
 
 ---
 

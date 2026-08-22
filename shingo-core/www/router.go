@@ -363,7 +363,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/buckets", h.apiBuckets)
 			r.Post("/buckets/delete", h.apiBucketDelete)
 
-			// Audit (Item 10) — bin_uop_audit read endpoints
+			// Audit (Item 10) — bin_uop_ledger read endpoints
 			r.Get("/audit/bin/{id}", h.apiAuditBinTimeline)
 			r.Get("/audit/operator/{name}", h.apiAuditOperatorActivity)
 			r.Get("/audit/station/{station}", h.apiAuditStationOverrides)

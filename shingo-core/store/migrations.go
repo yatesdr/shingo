@@ -3184,12 +3184,17 @@ func migrationList() []migration {
 		// flip flag are absent — they served the rollable cutover
 		// machinery, which we don't need without a production
 		// audience.
-		{17, "uop bin-as-truth: audit log + delta apply infrastructure", v17UOPBinAsTruth,
+		// The ledger table is checked by BOTH names. A postcondition is
+		// re-verified on every boot, long after its own migration ran, so
+		// after v95 renames bin_uop_audit -> bin_uop_ledger this has to hold
+		// against the new name — while a database that has not reached v95 yet
+		// still has the old one.
+		{17, "uop bin-as-truth: ledger + delta apply infrastructure", v17UOPBinAsTruth,
 			func(q schema.Querier) bool {
-				return schema.TableExists(q, "bin_uop_audit") &&
+				return binUOPLedgerTableExists(q) &&
 					schema.TableExists(q, "lineside_buckets") &&
 					schema.TableExists(q, "inventory_delta_dedup") &&
-					schema.ColumnExists(q, "bin_uop_audit", "metadata")
+					binUOPLedgerColumnExists(q, "metadata")
 			}},
 		{18, "add skip_auto_confirm column to orders", v18OrderSkipAutoConfirm,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "skip_auto_confirm") }},
@@ -3330,9 +3335,9 @@ func migrationList() []migration {
 		// (inventory refactor §16 PR 2): node_id / station / detail JSONB +
 		// a (op, applied_at) index for op-filtered timelines (the footprint
 		// velocity query, §16 PR 1). Additive — existing rows get NULLs.
-		{28, "enrich bin_uop_audit with node_id/station/detail + (op, applied_at) index",
+		{28, "enrich the bin UOP ledger with node_id/station/detail + (op, applied_at) index",
 			v28BinUOPAuditEnrich,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_uop_audit", "node_id") }},
+			func(q schema.Querier) bool { return binUOPLedgerColumnExists(q, "node_id") }},
 
 		// v29 adds the per-mission robot-alarm snapshot column for the
 		// failure-Pareto enrichment (Q-026). Additive; populated when a mission
@@ -3408,9 +3413,9 @@ func migrationList() []migration {
 		// per loader. PLAIN value column, NO REFERENCES / NO cascade: archiving or
 		// deleting a loader must NOT destroy its audit history, and a node later
 		// reassigned to a different loader keeps each event's historical attribution.
-		{37, "add bin_uop_audit.loader_id (non-cascading) for per-loader load/unload analytics",
+		{37, "add the bin UOP ledger's loader_id (non-cascading) for per-loader load/unload analytics",
 			v37BinUOPAuditLoaderID,
-			func(q schema.Querier) bool { return schema.ColumnExists(q, "bin_uop_audit", "loader_id") }},
+			func(q schema.Querier) bool { return binUOPLedgerColumnExists(q, "loader_id") }},
 		// v38: loader_id on demand_registry — the loader IDENTITY behind a binding, set
 		// from the aggregate at re-derive time (the step-4 cutover). The threshold
 		// monitor mints LoaderKey="loader:<id>" from it onto the signal so the Edge
@@ -4058,6 +4063,11 @@ func migrationList() []migration {
 			v94BinUOPDeltaDaily,
 			func(q schema.Querier) bool {
 				return schema.TableExists(q, "bin_uop_delta_daily")
+			}},
+		{95, "rename bin_uop_audit to bin_uop_ledger — it is the ledger, not the audit",
+			v95RenameBinUOPLedger,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "bin_uop_ledger")
 			}},
 	}
 }
@@ -4944,6 +4954,65 @@ func v83LaneRobotConfidenceDaily(tx *sql.Tx) error {
 // the still-present raw rows reproduces it (and the daily job, below, is
 // idempotent per day via ON CONFLICT DO UPDATE).
 //
+// binUOPLedgerTableExists and binUOPLedgerColumnExists answer for the bin UOP
+// ledger under EITHER name.
+//
+// Postconditions are re-verified on every boot, not just when their own
+// migration runs, so v17/v28/v37 are still checked long after v95 has renamed
+// the table out from under them. Without this, a fully-migrated database would
+// report three historical migrations as failing their postconditions — which is
+// the signal an operator is supposed to trust.
+func binUOPLedgerTableExists(q schema.Querier) bool {
+	return schema.TableExists(q, "bin_uop_ledger") || schema.TableExists(q, "bin_uop_audit")
+}
+
+func binUOPLedgerColumnExists(q schema.Querier, column string) bool {
+	if schema.TableExists(q, "bin_uop_ledger") {
+		return schema.ColumnExists(q, "bin_uop_ledger", column)
+	}
+	return schema.ColumnExists(q, "bin_uop_audit", column)
+}
+
+// v95RenameBinUOPLedger renames bin_uop_audit to bin_uop_ledger.
+//
+// The name stopped matching the behaviour a long time ago. The table holds
+// every APPLIED delta with its before/after totals — that is a ledger, and it
+// is read as one by eight files: the daily roll-up, the cycle-time analytics,
+// ledger_integrity's seven queries, delta_integrity, footprint, and the audit
+// page. "Audit" reads as archival, which is why nobody looked at what querying
+// it cost until it turned up as the largest single consumer of database work in
+// the system.
+//
+// bin_uop_exception keeps its name and the `audit` PACKAGE keeps its name:
+// exceptions really are the audit trail, and the package still owns them.
+//
+// RENAME IS METADATA-ONLY in Postgres — no rewrite of the 165 MB, no lock held
+// for longer than the catalogue update, and the indexes and sequence follow.
+// They are renamed explicitly anyway so a DBA reading \d does not find five
+// indexes named after a table that no longer exists.
+//
+// ROLLBACK: a pre-v95 binary queries bin_uop_audit and gets "relation does not
+// exist" on every read AND every write of the delta path, so this is a
+// forward-only migration in practice. That is the same class as any rename and
+// the reason it ships alone rather than riding with behaviour changes.
+func v95RenameBinUOPLedger(tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE IF EXISTS bin_uop_audit RENAME TO bin_uop_ledger`,
+		`ALTER INDEX IF EXISTS bin_uop_audit_pkey RENAME TO bin_uop_ledger_pkey`,
+		`ALTER INDEX IF EXISTS idx_bin_uop_audit_bin_time RENAME TO idx_bin_uop_ledger_bin_time`,
+		`ALTER INDEX IF EXISTS idx_bin_uop_audit_op RENAME TO idx_bin_uop_ledger_op`,
+		`ALTER INDEX IF EXISTS idx_bin_uop_audit_op_time RENAME TO idx_bin_uop_ledger_op_time`,
+		`ALTER INDEX IF EXISTS idx_bin_uop_audit_loader RENAME TO idx_bin_uop_ledger_loader`,
+		`ALTER SEQUENCE IF EXISTS bin_uop_audit_id_seq RENAME TO bin_uop_ledger_id_seq`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("v95 rename bin_uop_ledger: %q: %w", stmt, err)
+		}
+	}
+	return nil
+}
+
 // ROLLBACK: same doctrine as v93 — a pre-v94 binary never reads or writes
 // the table; it sits inert. Dropping it destroys the backfill.
 func v94BinUOPDeltaDaily(tx *sql.Tx) error {

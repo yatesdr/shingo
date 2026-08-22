@@ -40,7 +40,7 @@ func (s *AuditService) ListForEntity(entityType string, entityID int64) ([]*audi
 }
 
 // ListBinUOPByBin / ListBinUOPByOperator / ListBinUOPOverridesByStation
-// expose the read side of bin_uop_audit for the Item 10 audit UI.
+// expose the read side of bin_uop_ledger for the Item 10 audit UI.
 // Handlers call these directly so the UI can render per-bin timelines,
 // per-operator activity, and per-station override-pattern reports
 // without composing SQL in the handler layer.
@@ -57,7 +57,7 @@ func (s *AuditService) ListBinUOPOverridesByStation(station string, limit, offse
 }
 
 // ListBinUOPDiscrepancies exposes the discrepancy ledger — a view over
-// bin_uop_audit UNION bin_uop_exception (dropped stale ticks, negative
+// bin_uop_ledger UNION bin_uop_exception (dropped stale ticks, negative
 // crossings from the exceptions ledger, and release-empties that still
 // carried counted parts). See audit.ListBinUOPDiscrepancies for the arms.
 func (s *AuditService) ListBinUOPDiscrepancies(limit, offset int) ([]audit.BinUOPRow, error) {

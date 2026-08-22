@@ -34,7 +34,7 @@ type Footprint struct {
 	CellsSpark []int64 `json:"cells_spark"` // cumulative-by-day, last 30 pts
 	BinsSpark  []int64 `json:"bins_spark"`  // cumulative total (kept for back-compat)
 	// BinsSeries is true historical full/empty per day, reconstructed by replaying
-	// the bin_uop_audit uop log (Q-032). Depth is limited to the log's history.
+	// the bin_uop_ledger uop log (Q-032). Depth is limited to the log's history.
 	BinsSeries []BinDayBucket `json:"bins_series"`
 	LoadSeries []Bucket       `json:"load_series"` // last 30 days, daily
 }
@@ -57,7 +57,7 @@ type Bucket struct {
 
 // Get assembles the footprint. Count queries are fatal; the trend series are
 // best-effort (a failed series returns empty rather than failing the call).
-// loadedOp / unloadedOps are the bin_uop_audit op tags counted as loaded vs
+// loadedOp / unloadedOps are the bin_uop_ledger op tags counted as loaded vs
 // unloaded; the caller (outer store layer) supplies them from store/audit so
 // this sub-package doesn't cross-import another store aggregate.
 func Get(db *sql.DB, loc *time.Location, loadedOp string, unloadedOps []string) (*Footprint, error) {
@@ -111,10 +111,10 @@ func cumulativeDaily(db *sql.DB, query string, n int) []int64 {
 }
 
 // binsOccupancyDaily reconstructs total/full/empty bins per (plant-local) day
-// over the trailing n days by replaying the bin_uop_audit uop log: a bin's uop
+// over the trailing n days by replaying the bin_uop_ledger uop log: a bin's uop
 // as of a day is the after_uop of its latest change up to that day (else the
 // before_uop of its first later change, else its current uop if never logged).
-// full = uop > 0. History depth is bounded by how far back bin_uop_audit goes;
+// full = uop > 0. History depth is bounded by how far back bin_uop_ledger goes;
 // the (bin_id, applied_at DESC) index keeps the per-day lookups cheap.
 func binsOccupancyDaily(db *sql.DB, loc *time.Location, n int) []BinDayBucket {
 	tz := loc.String()
@@ -131,8 +131,8 @@ func binsOccupancyDaily(db *sql.DB, loc *time.Location, n int) []BinDayBucket {
 		FROM days
 		LEFT JOIN LATERAL (
 			SELECT b.id, COALESCE(
-				(SELECT a.after_uop  FROM bin_uop_audit a WHERE a.bin_id = b.id AND a.applied_at <  (dl + interval '1 day') AT TIME ZONE $1 ORDER BY a.applied_at DESC LIMIT 1),
-				(SELECT a.before_uop FROM bin_uop_audit a WHERE a.bin_id = b.id AND a.applied_at >= (dl + interval '1 day') AT TIME ZONE $1 ORDER BY a.applied_at ASC  LIMIT 1),
+				(SELECT a.after_uop  FROM bin_uop_ledger a WHERE a.bin_id = b.id AND a.applied_at <  (dl + interval '1 day') AT TIME ZONE $1 ORDER BY a.applied_at DESC LIMIT 1),
+				(SELECT a.before_uop FROM bin_uop_ledger a WHERE a.bin_id = b.id AND a.applied_at >= (dl + interval '1 day') AT TIME ZONE $1 ORDER BY a.applied_at ASC  LIMIT 1),
 				b.uop_remaining) AS uop
 			FROM bins b WHERE b.created_at < (dl + interval '1 day') AT TIME ZONE $1) q ON TRUE
 		GROUP BY dl ORDER BY dl`, tz, n)
@@ -152,7 +152,7 @@ func binsOccupancyDaily(db *sql.DB, loc *time.Location, n int) []BinDayBucket {
 }
 
 // loadUnloadDaily returns zero-filled daily loaded/unloaded counts for the
-// last n days, sourced from the bin_uop_audit event log (inventory refactor
+// last n days, sourced from the bin_uop_ledger event log (inventory refactor
 // §16 PR 1). Loaded = op 'set_for_production' (operator established a bin's
 // manifest); unloaded = the full bin-release family (audit.ReleaseFamilyOps).
 //
@@ -193,7 +193,7 @@ func plantDayKeys(now time.Time, loc *time.Location, n int) []time.Time {
 	return out
 }
 
-// opDayCounts returns per-(plant-local-)day counts of bin_uop_audit rows whose
+// opDayCounts returns per-(plant-local-)day counts of bin_uop_ledger rows whose
 // op is in the given set, over the trailing n days. tz is an IANA name; the
 // AT TIME ZONE conversion buckets each row's day in the plant zone.
 func opDayCounts(db *sql.DB, tz string, n int, ops ...string) map[string]int64 {
@@ -212,7 +212,7 @@ func opDayCounts(db *sql.DB, tz string, n int, ops ...string) map[string]int64 {
 	// which silently dropped counts (loaded read 0 with real set_for_production
 	// rows present).
 	q := fmt.Sprintf(`SELECT to_char(date_trunc('day', applied_at AT TIME ZONE $2), 'YYYY-MM-DD') AS day, COUNT(*)
-		FROM bin_uop_audit
+		FROM bin_uop_ledger
 		WHERE applied_at >= NOW() - make_interval(days => $1)
 		  AND op IN (%s)
 		GROUP BY 1`, strings.Join(ph, ", "))

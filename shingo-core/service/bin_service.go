@@ -245,7 +245,7 @@ func (s *BinService) Unlock(binID int64) error {
 // UOP capacity; non-nil is the operator's declared count — explicit zero
 // included ("labeled but empty"). Item 19: routes through
 // BinManifestService.SetFromTemplate so the operator load-payload action
-// audits via bin_uop_audit.
+// audits via bin_uop_ledger.
 //
 // Compat semantics mirror PayloadBinTypeAdvisoryClause used by FindSourceFIFO
 // / FindEmptyCompatible: payload_bin_types is treated as an allow-list when
@@ -371,7 +371,7 @@ type CountResult struct {
 // actual counts. Discrepancy notes are written by the caller so the note's
 // actor matches the audit actor convention already used by handlers.
 //
-// Item 19 of the bin-as-truth refactor: the count + bin_uop_audit
+// Item 19 of the bin-as-truth refactor: the count + bin_uop_ledger
 // insert run in one transaction with op=OpCycleCount, before/suggested
 // = the pre-count uop_remaining (system's expected), after =
 // actualUOP. Without this row the Item 10 audit timeline UI would be

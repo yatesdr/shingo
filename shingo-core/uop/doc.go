@@ -12,7 +12,7 @@
 // is authoritative for at-node bin counts; Core's row is the
 // aggregating mirror for cross-station inventory).
 //
-// Audit append (bin_uop_audit row writes) lives in store/audit and is
+// Audit append (bin_uop_ledger row writes) lives in store/audit and is
 // shared with bin_manifest_service — kept there because manifest sync
 // is the other major path that audits UOP changes alongside this one.
 // Future cleanup may consolidate, but the audit boundary is its own

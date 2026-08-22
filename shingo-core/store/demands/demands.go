@@ -4,7 +4,7 @@
 // Phase 5 of the architecture plan moved demands and demand_registry
 // CRUD out of the flat store/ package and into this sub-package. (The
 // third table it moved, production_log, was dropped at v92 — a
-// write-only shadow of bin_uop_audit's delta rows since the §14
+// write-only shadow of bin_uop_ledger's delta rows since the §14
 // cutover.) The outer store/ keeps type aliases
 // (`store.Demand = demands.Demand`, etc.) and one-line delegate methods
 // on *store.DB so external callers see no API change.

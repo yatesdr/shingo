@@ -70,7 +70,7 @@ func (db *DB) FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.
 // (Item 19 of the bin-as-truth refactor: SetBinManifestFromTemplate
 // removed from the public *store.DB surface. Production callers
 // route through BinManifestService.SetFromTemplate so the bin write
-// audits via bin_uop_audit. The deleted function bypassed audit;
+// audits via bin_uop_ledger. The deleted function bypassed audit;
 // post-Item-10 the audit timeline UI requires every manifest write
-// to surface in bin_uop_audit. Test helpers that need an
+// to surface in bin_uop_ledger. Test helpers that need an
 // audit-bypass write path should call bins.SetManifest directly.)

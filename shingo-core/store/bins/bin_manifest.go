@@ -82,7 +82,7 @@ func ConfirmManifest(db *sql.DB, binID int64, producedAt string) error {
 
 // ConfirmManifestTx is ConfirmManifest inside a caller's transaction. Returns
 // the resolved loaded_at plus the bin's current uop_remaining and payload_code
-// so the caller can write a same-tx bin_uop_audit row for the confirm event
+// so the caller can write a same-tx bin_uop_ledger row for the confirm event
 // (§16 PR 3 — confirm was previously a silent mutation). Reuses resolveLoadedAt
 // so producedAt parsing matches ConfirmManifest.
 func ConfirmManifestTx(tx *sql.Tx, binID int64, producedAt string) (loadedAt time.Time, uop int, payloadCode string, err error) {

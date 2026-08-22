@@ -513,7 +513,7 @@ const (
 // have shipped without operator intervention — the snapshot from the
 // runtime / manifest at the moment the release modal opened. Core
 // compares them against Count / Captures at release time and writes a
-// bin_uop_audit row whenever they differ, surfacing every operator
+// bin_uop_ledger row whenever they differ, surfacing every operator
 // override (mislabelled bin, upstream overfill, miscount) as forensic
 // evidence. Both fields are populated by UI-aware Edge clients only;
 // legacy clients leave them nil/empty and no override audit is recorded.
