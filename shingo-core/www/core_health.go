@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"shingo/protocol"
 )
 
 // buildInfo is stamped once at boot by the composition root. Version and
@@ -79,6 +81,44 @@ var dbWaitGauge = struct {
 
 // dbWaitWindow matches the strip's poll interval (dashboard-landing.js).
 const dbWaitWindow = 15 * time.Second
+
+// expiredDropGauge windows protocol.ExpiredDrops the same way dbWaitGauge
+// windows sql.DBStats.WaitCount, and for the same reason: the underlying number
+// is a process-lifetime total, so reporting it raw would latch the verdict
+// degraded forever after a single bad afternoon.
+var expiredDropGauge = struct {
+	mu         sync.Mutex
+	started    bool
+	baseline   int64
+	baselineAt time.Time
+	reported   int64
+}{}
+
+// expiredDropWindow is deliberately far longer than dbWaitWindow. Expired drops
+// arrive in bursts at reconnect — Springfield saw 124 in one minute and then
+// nothing for an hour — so a 15-second window would show zero almost always and
+// miss the event entirely. Five minutes is long enough to still be showing the
+// burst when someone opens the dashboard because of it.
+const expiredDropWindow = 5 * time.Minute
+
+// expiredDropsSinceBaseline reports drops in the last completed window. Same
+// contract as waitsSinceBaseline: closed-window delta so concurrent pollers
+// agree, zero on first observation so startup does not report history as a
+// symptom, and a re-baseline if the total ever goes backwards.
+func expiredDropsSinceBaseline(total int64, now time.Time) int64 {
+	expiredDropGauge.mu.Lock()
+	defer expiredDropGauge.mu.Unlock()
+	if !expiredDropGauge.started || total < expiredDropGauge.baseline {
+		expiredDropGauge.started = true
+		expiredDropGauge.baseline, expiredDropGauge.baselineAt, expiredDropGauge.reported = total, now, 0
+		return 0
+	}
+	if now.Sub(expiredDropGauge.baselineAt) >= expiredDropWindow {
+		expiredDropGauge.reported = total - expiredDropGauge.baseline
+		expiredDropGauge.baseline, expiredDropGauge.baselineAt = total, now
+	}
+	return expiredDropGauge.reported
+}
 
 // waitsSinceBaseline reports the waits recorded in the last completed window.
 //
@@ -157,6 +197,15 @@ type CoreHealth struct {
 	Goroutines       int   `json:"goroutines"`
 	GoroutineHistory []int `json:"goroutine_history"`
 
+	// ExpiredDropsRecent is envelopes discarded for expiry in the last
+	// completed window — the SECOND silent loss channel, and the larger one.
+	// Core's ingestor drops an expired envelope before any handler runs while
+	// the sender records a successful publish, so this number is the only place
+	// the loss is visible at all. ExpiredDropsTotal is the process lifetime, so
+	// a quiet window can still say how much has been lost since boot.
+	ExpiredDropsRecent int64 `json:"expired_drops_recent"`
+	ExpiredDropsTotal  int64 `json:"expired_drops_total"`
+
 	// Already computed by the reconciliation loop; surfaced rather than
 	// recomputed.
 	DeadLetters int `json:"dead_letters"`
@@ -219,6 +268,11 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 	}
 	c.Load1 = loadAverage1()
 
+	// WALL clock, same reason as the DB gauge above: a real-time window must
+	// not be fast-forwarded by the sim.
+	c.ExpiredDropsTotal = protocol.ExpiredDrops()
+	c.ExpiredDropsRecent = expiredDropsSinceBaseline(c.ExpiredDropsTotal, time.Now())
+
 	if recon, err := h.engine.Reconciliation().Summary(); err == nil && recon != nil {
 		c.DeadLetters = recon.DeadLetters
 		c.CompletionAnomalies = recon.CompletionAnomalies
@@ -265,6 +319,14 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 	if c.DeadLetters > 0 {
 		reasons = append(reasons, fmt.Sprintf("%d %s", c.DeadLetters,
 			plural(c.DeadLetters, "dead letter", "dead letters")))
+	}
+	// Windowed like the DB waits, and named so the sentence points somewhere.
+	// An expired drop is almost always transport: the message sat in a sender's
+	// outbox past its TTL and Core threw it away on arrival.
+	if c.ExpiredDropsRecent > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d expired %s dropped in the last %s",
+			c.ExpiredDropsRecent,
+			plural(int(c.ExpiredDropsRecent), "message", "messages"), expiredDropWindow))
 	}
 	// Named, windowed, and it says which. "Core degraded" on its own sent a
 	// reader looking for a dependency outage; the condition is an order-

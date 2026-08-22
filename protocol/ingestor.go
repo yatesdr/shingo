@@ -3,6 +3,10 @@ package protocol
 import (
 	"encoding/json"
 	"log"
+	"sync/atomic"
+	"time"
+
+	"shingo/protocol/clock"
 )
 
 // FilterFunc returns true if the message should be processed.
@@ -72,7 +76,9 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 
 	// Check expiry
 	if IsExpiredHeader(&hdr) {
-		log.Printf("protocol: dropping expired message %s (type=%s)", hdr.ID, hdr.Type)
+		expiredDrops.Add(1)
+		log.Printf("protocol: dropping expired message %s (type=%s subject=%s expired %s ago)",
+			hdr.ID, hdr.Type, subjectOf(data), clock.Now().UTC().Sub(hdr.ExpiresAt).Round(time.Second))
 		return
 	}
 
@@ -110,4 +116,46 @@ func truncateBytes(data []byte, maxLen int) string {
 		return string(data)
 	}
 	return string(data[:maxLen]) + "...(truncated)"
+}
+
+// expiredDrops counts envelopes discarded for expiry, for the lifetime of the
+// process.
+//
+// Package-level rather than a field on Ingestor because there is exactly one
+// ingestor per process and the health strip needs to read it without a new
+// accessor chain through the engine. It is a total, not a rate: the caller
+// windows it (see waitsSinceBaseline in shingo-core/www/core_health.go), so a
+// long-running Core does not latch a green strip red on history.
+//
+// It exists because this drop was the larger of the two silent loss channels
+// and nothing counted it. Springfield discarded 797 envelopes on 2026-08-20 and
+// 544 on 2026-08-21 with no signal anywhere; a number on /status would have
+// pointed at the failing WiFi weeks before anyone went looking.
+var expiredDrops atomic.Int64
+
+// ExpiredDrops reports how many envelopes this process has dropped for expiry.
+func ExpiredDrops() int64 { return expiredDrops.Load() }
+
+// subjectOf digs the data-channel subject out of a raw envelope.
+//
+// The subject is the only field that says whether a dropped message mattered —
+// a lineside snapshot is superseded in 60s, a bin_uop_delta is a permanently
+// wrong count — and it is NOT on RawHeader: it lives inside the payload, which
+// the two-phase decode deliberately does not touch until after the expiry and
+// filter checks.
+//
+// So this is a second unmarshal, and it runs ONLY on the drop branch. Adding
+// the payload to RawHeader would have put a json.RawMessage allocation on every
+// message to serve a path that fires a few hundred times a day. Returns "" for
+// a non-data envelope or an undecodable payload; the caller logs it either way.
+func subjectOf(raw []byte) string {
+	var probe struct {
+		P struct {
+			Subject string `json:"subject"`
+		} `json:"p"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return ""
+	}
+	return probe.P.Subject
 }
