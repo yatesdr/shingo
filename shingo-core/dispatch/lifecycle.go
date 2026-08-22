@@ -513,6 +513,21 @@ func (s *LifecycleService) Dispatch(ord *orders.Order, vendorOrderID, actor stri
 // Fail transitions any non-terminal status to Failed via FailOrderAtomic
 // (which also releases bin claims).
 func (s *LifecycleService) Fail(ord *orders.Order, stationID, errorCode, detail string) error {
+	return s.FailWithRef(ord, stationID, errorCode, detail, protocol.TermRef{})
+}
+
+// FailWithRef is Fail with an explicit reference on the terminal row.
+//
+// Exists for grace expiry. An order that times out was faulted for the whole
+// grace window and the fleet may have said why at the start of it; by the time
+// the deadline fires the poller has dropped its entry (rds/poller.go) so the
+// reason is gone from memory, and the terminal row is the last chance to keep
+// it. A failed order that says "gave up after 45m · cannot replan (60011)" is a
+// different artifact from one that says it timed out.
+//
+// An empty ref behaves exactly as before: historyReason fills in the order's own
+// node and payload.
+func (s *LifecycleService) FailWithRef(ord *orders.Order, stationID, errorCode, detail string, ref protocol.TermRef) error {
 	if protocol.IsTerminal(ord.Status) {
 		return IllegalTransition{From: ord.Status, To: StatusFailed}
 	}
@@ -522,6 +537,7 @@ func (s *LifecycleService) Fail(ord *orders.Order, stationID, errorCode, detail 
 		ErrorCode:   errorCode,
 		ErrorDetail: detail,
 		StationID:   stationID,
+		Ref:         ref,
 	})
 }
 
@@ -723,21 +739,45 @@ func fireFaultedRecovered(s *LifecycleService, ord *orders.Order, ev Event) erro
 // MarkFaulted transitions {Dispatched,Acknowledged,InTransit,Staged} to Faulted
 // when the fleet reports a transient failure. The grace timer is handled by
 // the engine wiring layer.
-func (s *LifecycleService) MarkFaulted(ord *orders.Order, robotID, reason string) error {
+//
+// ref carries the FLEET'S OWN REASON when it gave one — the vendor code and
+// text off the order's errors[]. It arrives on the status event and was dropped
+// here until 2026-08-22, which is why all 730 faulted rows in a 30-day window
+// carry the identical detail and a NULL code. It is usually empty: about 94% of
+// faulted orders have no errors[] entry, so the absence is the fleet's, not
+// ours.
+//
+// The caller must fill ref.Node and ref.Payload itself when it sets any vendor
+// field. historyReason only defaults those two when the ref is EMPTY, so a ref
+// carrying just a vendor code would otherwise record why and lose where.
+func (s *LifecycleService) MarkFaulted(ord *orders.Order, robotID string, ref protocol.TermRef, reason string) error {
 	return s.transition(ord, StatusFaulted, Event{
 		Actor:   "fleet",
 		Reason:  reason,
 		RobotID: robotID,
+		Ref:     ref,
 	})
 }
 
 // MarkFaultedRecovered transitions Faulted back to InTransit when the fleet
 // recovers within the grace window.
-func (s *LifecycleService) MarkFaultedRecovered(ord *orders.Order, robotID string) error {
+//
+// THIS IS NOW THE RECOVERY PATH. It had no callers: the fleet reporting RUNNING
+// mapped to StatusInTransit and went through MarkInTransit, which writes
+// "fleet reported in transit" — the same row a normal transit transition
+// writes, making a recovery indistinguishable from an order that was never in
+// trouble. 706 of 730 faults recover, so that was the common case recording
+// nothing about itself.
+//
+// reason carries the dwell ("Recovered after 18 s"); ref is copied from the
+// faulted row so the recovery says what it recovered FROM, which is the only
+// place that reason survives once the order is moving again.
+func (s *LifecycleService) MarkFaultedRecovered(ord *orders.Order, robotID string, ref protocol.TermRef, reason string) error {
 	return s.transition(ord, StatusInTransit, Event{
 		Actor:   "fleet",
-		Reason:  "recovered from faulted",
+		Reason:  reason,
 		RobotID: robotID,
+		Ref:     ref,
 	})
 }
 

@@ -452,6 +452,12 @@ func (db *DB) ListOrderHistory(orderID int64) ([]*orders.History, error) {
 	return orders.ListHistory(db.DB, orderID)
 }
 
+// LatestOrderHistoryForStatus returns the order's most recent row for a status,
+// or nil if it never recorded one — see orders.LatestHistoryForStatus.
+func (db *DB) LatestOrderHistoryForStatus(orderID int64, status protocol.Status) (*orders.History, error) {
+	return orders.LatestHistoryForStatus(db.DB, orderID, status)
+}
+
 // OrderEverReachedStatus reports whether the order ever recorded the status —
 // see orders.EverReachedStatus.
 func (db *DB) OrderEverReachedStatus(orderID int64, status string) (bool, error) {

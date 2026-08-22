@@ -13,6 +13,7 @@ package orders
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -799,6 +800,51 @@ func ListHistory(db *sql.DB, orderID int64) ([]*History, error) {
 		history = append(history, &h)
 	}
 	return history, rows.Err()
+}
+
+// LatestHistoryForStatus returns the most recent history row an order recorded
+// for a given status, or nil when it never recorded one.
+//
+// THE MOST RECENT, not the first, and that is the whole reason this exists. An
+// order can fault more than once — 730 faulted transitions over 30 days at
+// Springfield spread across fewer orders than that — so "when did this fault
+// start" is answered by the last faulted row, and the first one would time a
+// recovery from a fault the order already recovered from.
+//
+// It is also why orders.updated_at is not the source: UpdateOrderVendor rewrites
+// it after every poll (engine/wiring_vendor_status.go), so it measures the last
+// time the fleet said anything, not the last time the order's state changed.
+//
+// ORDER BY id DESC rather than created_at DESC: two rows written inside the same
+// clock tick sort by insertion, and id is the only monotonic column. Served by
+// idx_order_history_order.
+func LatestHistoryForStatus(db *sql.DB, orderID int64, status protocol.Status) (*History, error) {
+	var h History
+	var code, actor sql.NullString
+	var ref []byte
+	err := db.QueryRow(`SELECT id, order_id, status, detail, code, actor, ref, created_at
+		FROM order_history WHERE order_id=$1 AND status=$2 ORDER BY id DESC LIMIT 1`,
+		orderID, string(status)).
+		Scan(&h.ID, &h.OrderID, &h.Status, &h.Detail, &code, &actor, &ref, &h.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Never recorded that status. Not an error — the caller asking "when
+		// did this fault start" for an order that never faulted gets nil and
+		// decides what that means.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("order %d latest %s history: %w", orderID, status, err)
+	}
+	h.Code, h.Actor = code.String, actor.String
+	// Same tolerance as ListHistory: a malformed ref is left nil rather than
+	// failing the read.
+	if len(ref) > 0 {
+		var r protocol.TermRef
+		if err := json.Unmarshal(ref, &r); err == nil {
+			h.Ref = &r
+		}
+	}
+	return &h, nil
 }
 
 // EverReachedStatus reports whether the order ever recorded the given status.

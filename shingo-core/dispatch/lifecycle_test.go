@@ -497,7 +497,7 @@ func TestLifecycle_MarkFaulted_FromEveryLegalSource(t *testing.T) {
 		lc, emitter := newLifecycleForTest(t, db)
 		ord := makeOrderAt(t, db, fmt.Sprintf("fault-in-%d", i), from)
 
-		if err := lc.MarkFaulted(ord, "robot-42", "obstacle detected"); err != nil {
+		if err := lc.MarkFaulted(ord, "robot-42", protocol.TermRef{}, "obstacle detected"); err != nil {
 			t.Fatalf("MarkFaulted from %s: %v", from, err)
 		}
 		if ord.Status != StatusFaulted {
@@ -522,7 +522,8 @@ func TestLifecycle_MarkFaultedRecovered_TransitionsToInTransit(t *testing.T) {
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "fault-recover-1", StatusFaulted)
 
-	testutil.MustNoErr(t, lc.MarkFaultedRecovered(ord, "robot-42"), "MarkFaultedRecovered")
+	testutil.MustNoErr(t, lc.MarkFaultedRecovered(ord, "robot-42", protocol.TermRef{}, "Recovered after 18 s"),
+		"MarkFaultedRecovered")
 	if ord.Status != StatusInTransit {
 		t.Errorf("status = %q, want %q", ord.Status, StatusInTransit)
 	}
