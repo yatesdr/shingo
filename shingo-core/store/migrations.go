@@ -860,7 +860,7 @@ func v28BinUOPAuditEnrich(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_bin_uop_audit_op_time ON bin_uop_audit(op, applied_at DESC)`,
 	}
 	for _, s := range stmts {
-		if _, err := tx.Exec(s); err != nil {
+		if _, err := tx.Exec(ledgerSQL(tx, s)); err != nil {
 			return fmt.Errorf("v28 bin_uop_audit enrich: %w", err)
 		}
 	}
@@ -1052,7 +1052,7 @@ func v37BinUOPAuditLoaderID(tx *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_bin_uop_audit_loader ON bin_uop_audit (loader_id, applied_at) WHERE loader_id IS NOT NULL`,
 	}
 	for _, s := range stmts {
-		if _, err := tx.Exec(s); err != nil {
+		if _, err := tx.Exec(ledgerSQL(tx, s)); err != nil {
 			return fmt.Errorf("v37 bin_uop_audit loader_id: %w", err)
 		}
 	}
@@ -1734,7 +1734,7 @@ func v24PendingLaneExtensions(tx *sql.Tx) error {
 //     last_seq high-water mark for at-most-once delta application.
 //     Distinct from inbox_dedup (which gates order-message processing).
 func v17UOPBinAsTruth(tx *sql.Tx) error {
-	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS bin_uop_audit (
+	if _, err := tx.Exec(ledgerSQL(tx, `CREATE TABLE IF NOT EXISTS bin_uop_audit (
 		id           BIGSERIAL PRIMARY KEY,
 		bin_id       BIGINT NOT NULL,
 		before_uop   INTEGER,
@@ -1746,13 +1746,13 @@ func v17UOPBinAsTruth(tx *sql.Tx) error {
 		actor        TEXT NOT NULL DEFAULT '',
 		metadata     JSONB,
 		applied_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	)`); err != nil {
+	)`)); err != nil {
 		return fmt.Errorf("create bin_uop_audit: %w", err)
 	}
-	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_bin_uop_audit_bin_time ON bin_uop_audit(bin_id, applied_at DESC)`); err != nil {
+	if _, err := tx.Exec(ledgerSQL(tx, `CREATE INDEX IF NOT EXISTS idx_bin_uop_audit_bin_time ON bin_uop_audit(bin_id, applied_at DESC)`)); err != nil {
 		return fmt.Errorf("index bin_uop_audit(bin_id, applied_at): %w", err)
 	}
-	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_bin_uop_audit_op ON bin_uop_audit(op)`); err != nil {
+	if _, err := tx.Exec(ledgerSQL(tx, `CREATE INDEX IF NOT EXISTS idx_bin_uop_audit_op ON bin_uop_audit(op)`)); err != nil {
 		return fmt.Errorf("index bin_uop_audit(op): %w", err)
 	}
 
@@ -4954,6 +4954,29 @@ func v83LaneRobotConfidenceDaily(tx *sql.Tx) error {
 // the still-present raw rows reproduces it (and the daily job, below, is
 // idempotent per day via ON CONFLICT DO UPDATE).
 //
+// ledgerSQL rewrites the OLD ledger table name in a migration's SQL to whatever
+// the table is called on this database right now.
+//
+// A migration body is not run only once in chain order. The v93 and v94 tests
+// delete a migration's schema_migrations row and re-open, forcing a re-apply
+// against a database that is already at HEAD — and after v95 that database
+// calls the table bin_uop_ledger, so every statement naming bin_uop_audit fails
+// with "relation does not exist". CI caught exactly this; the pre-push gate
+// could not, because it does not run the docker suites.
+//
+// The substring rewrite covers the index names too (idx_bin_uop_audit_* becomes
+// idx_bin_uop_ledger_*), which is why it is a rewrite rather than a format
+// argument threaded through the twelve sites in v93 alone.
+//
+// Migrations written from here on should use the CURRENT name directly and will
+// not need this. It exists for the ones written before the rename.
+func ledgerSQL(tx *sql.Tx, query string) string {
+	if schema.TableExists(tx, "bin_uop_ledger") {
+		return strings.ReplaceAll(query, "bin_uop_audit", "bin_uop_ledger")
+	}
+	return query
+}
+
 // binUOPLedgerTableExists and binUOPLedgerColumnExists answer for the bin UOP
 // ledger under EITHER name.
 //
@@ -5055,7 +5078,7 @@ func v94BinUOPDeltaDaily(tx *sql.Tx) error {
 	// (uop/applier.go:458). first/last_uop need order, not min/max:
 	// array_agg ordered by id, first and last element — Postgres has no
 	// first()/last() aggregates.
-	if _, err := tx.Exec(`INSERT INTO bin_uop_delta_daily
+	if _, err := tx.Exec(ledgerSQL(tx, `INSERT INTO bin_uop_delta_daily
 		(day, bin_id, epoch_seq, payload_code, reason, actor,
 		 ticks, consumed, added, first_uop, last_uop, min_uop, crossings)
 	SELECT (w.applied_at AT TIME ZONE 'UTC')::date, w.bin_id, w.epoch_seq,
@@ -5071,12 +5094,12 @@ func v94BinUOPDeltaDaily(tx *sql.Tx) error {
 	FROM (
 	    SELECT a.id, a.op, a.bin_id, a.applied_at, a.before_uop, a.after_uop,
 	           a.payload_code, a.actor, a.metadata,
-	           count(*) FILTER (WHERE a.op = ANY(` + bumps + `)) OVER (
+	           count(*) FILTER (WHERE a.op = ANY(`+bumps+`)) OVER (
 		       PARTITION BY a.bin_id ORDER BY a.id ROWS UNBOUNDED PRECEDING) AS epoch_seq
 	    FROM bin_uop_audit a
 	) w
 	WHERE w.op = 'bin_uop_delta'
-	GROUP BY 1, 2, 3, 4, 5, 6`); err != nil {
+	GROUP BY 1, 2, 3, 4, 5, 6`)); err != nil {
 		return fmt.Errorf("v94 backfill: %w", err)
 	}
 	return nil
@@ -5187,7 +5210,7 @@ func v93BinUOPException(tx *sql.Tx) error {
 	// excursion is still open at backfill time). epoch_seq via the bump-count
 	// window shared with P3: bumps up to and INCLUDING this row (the bump row
 	// itself is its own boundary start).
-	if _, err := tx.Exec(`INSERT INTO bin_uop_exception
+	if _, err := tx.Exec(ledgerSQL(tx, `INSERT INTO bin_uop_exception
 		(kind, bin_id, payload_code, actor, epoch_seq, occurred_at, before_uop, after_uop,
 		 deepest_uop, recovered_at, op, detail)
 	SELECT 'negative_crossing', c.bin_id,
@@ -5205,7 +5228,7 @@ func v93BinUOPException(tx *sql.Tx) error {
 	FROM (
 	    SELECT w.id, w.bin_id, w.applied_at, w.before_uop, w.after_uop, w.op, w.actor,
 	           w.payload_code,
-	           count(*) FILTER (WHERE w.op = ANY(` + bumps + `)) OVER (
+	           count(*) FILTER (WHERE w.op = ANY(`+bumps+`)) OVER (
 	               PARTITION BY w.bin_id ORDER BY w.id ROWS UNBOUNDED PRECEDING) AS epoch_seq
 	    FROM bin_uop_audit w
 	) c
@@ -5213,7 +5236,7 @@ func v93BinUOPException(tx *sql.Tx) error {
 	WHERE c.before_uop IS NOT NULL
 	  AND c.before_uop >= 0
 	  AND c.after_uop < 0
-	ORDER BY c.id`); err != nil {
+	ORDER BY c.id`)); err != nil {
 		return fmt.Errorf("v93 backfill crossings: %w", err)
 	}
 
@@ -5222,7 +5245,7 @@ func v93BinUOPException(tx *sql.Tx) error {
 	// metadata column carries it (metadata is already jsonb; detail takes it
 	// verbatim). The window runs over the WHOLE audit stream so the count
 	// matches part 1's numbering; the drop predicate applies outside it.
-	if _, err := tx.Exec(`INSERT INTO bin_uop_exception
+	if _, err := tx.Exec(ledgerSQL(tx, `INSERT INTO bin_uop_exception
 		(kind, bin_id, payload_code, actor, epoch_seq, occurred_at, before_uop, after_uop, op, detail)
 	SELECT CASE a.op WHEN 'stale_epoch_dropped' THEN 'stale_epoch'
 	                 ELSE 'payload_mismatch' END,
@@ -5230,26 +5253,26 @@ func v93BinUOPException(tx *sql.Tx) error {
 	       a.applied_at, a.before_uop, a.after_uop, a.op, a.metadata
 	FROM (
 	    SELECT w.id,
-	           count(*) FILTER (WHERE w.op = ANY(` + bumps + `)) OVER (
+	           count(*) FILTER (WHERE w.op = ANY(`+bumps+`)) OVER (
 	               PARTITION BY w.bin_id ORDER BY w.id ROWS UNBOUNDED PRECEDING) AS epoch_seq
 	    FROM bin_uop_audit w
 	) e
 	JOIN bin_uop_audit a ON a.id = e.id
 	WHERE a.op IN ('stale_epoch_dropped', 'payload_mismatch_dropped')
-	ORDER BY a.id`); err != nil {
+	ORDER BY a.id`)); err != nil {
 		return fmt.Errorf("v93 backfill drops: %w", err)
 	}
 
 	// Backfill part 3 — boundary ops, one row per epoch bump.
-	if _, err := tx.Exec(`INSERT INTO bin_uop_exception
+	if _, err := tx.Exec(ledgerSQL(tx, `INSERT INTO bin_uop_exception
 		(kind, bin_id, payload_code, actor, epoch_seq, occurred_at, before_uop, after_uop, op, detail)
 	SELECT 'boundary', a.bin_id, a.payload_code, a.actor,
-	       count(*) FILTER (WHERE a.op = ANY(` + bumps + `)) OVER (
+	       count(*) FILTER (WHERE a.op = ANY(`+bumps+`)) OVER (
 	           PARTITION BY a.bin_id ORDER BY a.id ROWS UNBOUNDED PRECEDING),
 	       a.applied_at, a.before_uop, a.after_uop, a.op, a.detail
 	FROM bin_uop_audit a
-	WHERE a.op = ANY(` + bumps + `)
-	ORDER BY a.id`); err != nil {
+	WHERE a.op = ANY(`+bumps+`)
+	ORDER BY a.id`)); err != nil {
 		return fmt.Errorf("v93 backfill boundaries: %w", err)
 	}
 	return nil
