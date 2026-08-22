@@ -136,6 +136,25 @@ var expiredDrops atomic.Int64
 // ExpiredDrops reports how many envelopes this process has dropped for expiry.
 func ExpiredDrops() int64 { return expiredDrops.Load() }
 
+// ParseHeader decodes the routing header from raw envelope bytes, stripping the
+// signature wrapper first exactly as HandleRaw does.
+//
+// Exported so callers that need to inspect a stored envelope — the edge's
+// dead-letter Replay button, which must not offer to replay something Core will
+// discard — use the same parse the ingestor does rather than re-implementing
+// the unwrap-then-decode order and getting it subtly different.
+func ParseHeader(raw []byte, signingKey []byte) (*RawHeader, error) {
+	inner, err := VerifyAndUnwrap(raw, signingKey)
+	if err != nil {
+		return nil, err
+	}
+	var hdr RawHeader
+	if err := json.Unmarshal(inner, &hdr); err != nil {
+		return nil, err
+	}
+	return &hdr, nil
+}
+
 // subjectOf digs the data-channel subject out of a raw envelope.
 //
 // The subject is the only field that says whether a dropped message mattered —

@@ -200,6 +200,26 @@ func ListPending(db *sql.DB, limit int) ([]Message, error) {
 	return msgs, rows.Err()
 }
 
+// Get returns one outbox row by id. Used by the Replay path, which has to read
+// the stored envelope before offering to resend it.
+func Get(db *sql.DB, id int64) (*Message, error) {
+	var m Message
+	var sentAt sql.NullString
+	var createdAt string
+	err := db.QueryRow(
+		`SELECT id, payload, msg_type, retries, created_at, sent_at FROM outbox WHERE id = ?`, id,
+	).Scan(&m.ID, &m.Payload, &m.MsgType, &m.Retries, &createdAt, &sentAt)
+	if err != nil {
+		return nil, err
+	}
+	m.CreatedAt = helpers.ScanTime(createdAt)
+	if sentAt.Valid {
+		t := helpers.ScanTime(sentAt.String)
+		m.SentAt = &t
+	}
+	return &m, nil
+}
+
 // ListDeadLetter returns un-sent messages that have hit MaxRetries.
 func ListDeadLetter(db *sql.DB, limit int) ([]Message, error) {
 	rows, err := db.Query(`SELECT id, payload, msg_type, retries, created_at FROM outbox WHERE sent_at IS NULL AND retries >= ? ORDER BY id LIMIT ?`, MaxRetries, limit)

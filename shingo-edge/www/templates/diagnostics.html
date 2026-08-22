@@ -103,7 +103,8 @@
             <td>{{formatTime .CreatedAt}}</td>
             <td>{{.MsgType}}</td>
             <td>{{.Retries}}</td>
-            <td><button class="btn btn-sm" data-action="replayDeadLetter:{{.ID}}">Replay</button></td>
+            <td><button class="btn btn-sm" data-action="replayDeadLetter:{{.ID}}">Replay</button>
+                <span class="text-muted" id="replay-note-{{.ID}}"></span></td>
           </tr>
           {{end}}
         {{else}}
@@ -119,6 +120,16 @@
 <script>
 async function replayDeadLetter(id) {
   const resp = await fetch('/api/diagnostics/outbox/replay?id=' + encodeURIComponent(id), { method: 'POST' });
+  // 409 means the envelope expired before it could be resent. Core discards an
+  // expired envelope before any handler runs, so a replay would report success
+  // and change nothing — which is exactly what happened on 2026-08-22. Render
+  // the reason beside the row instead of a generic alert.
+  if (resp.status === 409) {
+    const body = await resp.json().catch(() => ({}));
+    const note = document.getElementById('replay-note-' + id);
+    if (note) note.textContent = body.error || 'expired — cannot replay';
+    return;
+  }
   if (resp.ok) location.reload();
 }
 async function requestOrderStatusSync() {

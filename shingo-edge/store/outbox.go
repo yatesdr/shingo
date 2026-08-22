@@ -44,6 +44,11 @@ func (db *DB) ListUnsentOutboxByType(msgTypes []string) ([]messaging.Message, er
 	return messaging.ListUnsentByType(db.DB, msgTypes)
 }
 
+// GetOutboxMessage returns one outbox row by id.
+func (db *DB) GetOutboxMessage(id int64) (*messaging.Message, error) {
+	return messaging.Get(db.DB, id)
+}
+
 // ListDeadLetterOutbox returns un-sent messages that have hit
 // MaxOutboxRetries.
 func (db *DB) ListDeadLetterOutbox(limit int) ([]messaging.Message, error) {

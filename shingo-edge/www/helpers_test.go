@@ -121,12 +121,18 @@ type stubEngine struct {
 	lastReleaseStagedOrdersDisposition *engine.ReleaseDisposition
 }
 
-func (s *stubEngine) AppConfig() *config.Config                                           { return s.cfg }
-func (s *stubEngine) ConfigPath() string                                                  { return s.cfgPath }
-func (s *stubEngine) CoreAPI() *engine.CoreClient                                         { return nil }
-func (s *stubEngine) PLCManager() *plc.Manager                                            { return nil }
-func (s *stubEngine) OrderManager() *orders.Manager                                       { return s.orderMgr }
-func (s *stubEngine) Reconciliation() *engine.ReconciliationService                       { return nil }
+func (s *stubEngine) AppConfig() *config.Config     { return s.cfg }
+func (s *stubEngine) ConfigPath() string            { return s.cfgPath }
+func (s *stubEngine) CoreAPI() *engine.CoreClient   { return nil }
+func (s *stubEngine) PLCManager() *plc.Manager      { return nil }
+func (s *stubEngine) OrderManager() *orders.Manager { return s.orderMgr }
+
+// A REAL reconciliation service over testDB. It used to return nil, which made
+// every handler that touches it untestable — apiReplayOutbox panicked on the
+// first call, so it shipped with no coverage at all.
+func (s *stubEngine) Reconciliation() *engine.ReconciliationService {
+	return engine.NewReconciliationService(s.db)
+}
 func (s *stubEngine) CoreSync() *engine.CoreSyncService                                   { return nil }
 func (s *stubEngine) ApplyWarLinkConfig()                                                 {}
 func (s *stubEngine) ReconnectKafka() error                                               { return nil }

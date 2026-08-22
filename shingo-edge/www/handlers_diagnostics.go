@@ -3,6 +3,9 @@ package www
 import (
 	"fmt"
 	"net/http"
+	"time"
+
+	"shingo/protocol"
 )
 
 func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -40,6 +43,26 @@ func (h *Handlers) apiReplayOutbox(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid id"}`, http.StatusBadRequest)
 		return
 	}
+	// REFUSE AN EXPIRED ENVELOPE. On 2026-08-22 two dead-lettered production
+	// deltas were replayed here: the row got sent_at, the edge logged "published
+	// outbox msg N", the dead-letter count fell by two — and Core's ingestor
+	// discarded both because the envelopes had expired 23 hours earlier. Every
+	// layer reported a recovery that had not happened.
+	//
+	// The exp stamp is fixed at enqueue time, so age is decided before the
+	// button exists. Re-stamping it on replay would be a per-subject class
+	// decision nobody has made, and for a snapshot subject it would be wrong.
+	if msg, err := h.engine.Reconciliation().GetOutboxMessage(id); err == nil && msg != nil {
+		if hdr, perr := protocol.ParseHeader(msg.Payload, []byte(h.engine.AppConfig().Messaging.SigningKey)); perr == nil && protocol.IsExpiredHeader(hdr) {
+			age := time.Since(hdr.ExpiresAt).Round(time.Second)
+			writeError(w, http.StatusConflict, fmt.Sprintf(
+				"expired at %s, %s ago — cannot replay; Core drops an expired envelope "+
+					"before any handler runs, so this would report success and change nothing",
+				hdr.ExpiresAt.UTC().Format(time.RFC3339), age))
+			return
+		}
+	}
+
 	if err := h.engine.Reconciliation().RequeueOutbox(id); err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
