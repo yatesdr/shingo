@@ -101,6 +101,50 @@ type Manager struct {
 	wg              sync.WaitGroup
 
 	sseCancel context.CancelFunc
+
+	// SSE timing, per manager rather than per package.
+	//
+	// These were package-level vars that tests overwrote and restored. Two
+	// parallel tests plus a poller goroutine outliving the test that started it
+	// is all it took: CI caught TestSSE_StallReconnects writing the global while
+	// TestSSE_HealthEvent's leaked sseConnect read it. Zero means "use the
+	// shipped default", so a Manager built without them still behaves as
+	// production does. Read and written under mu like every other mutable field
+	// here, which is what makes the race structurally impossible rather than
+	// merely unlikely.
+	sseStallTimeoutOverride      time.Duration
+	sseReconcileIntervalOverride time.Duration
+}
+
+// stallTimeout / reconcileInterval return this manager's SSE timings, falling
+// back to the shipped defaults.
+func (m *Manager) stallTimeout() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.sseStallTimeoutOverride > 0 {
+		return m.sseStallTimeoutOverride
+	}
+	return defaultSSEStallTimeout
+}
+
+func (m *Manager) reconcileInterval() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.sseReconcileIntervalOverride > 0 {
+		return m.sseReconcileIntervalOverride
+	}
+	return defaultSSEReconcileInterval
+}
+
+// SetSSETimingsForTest shortens this manager's SSE timings. Test-only, and
+// named so: production has no reason to move them off the defaults, and the
+// previous mechanism for "tests can shorten it" was the package global that
+// raced.
+func (m *Manager) SetSSETimingsForTest(stall, reconcile time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sseStallTimeoutOverride = stall
+	m.sseReconcileIntervalOverride = reconcile
 }
 
 // NewManager creates a PLC manager. If wl is nil the default WarLink HTTP

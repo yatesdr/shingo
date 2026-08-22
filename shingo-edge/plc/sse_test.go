@@ -485,10 +485,6 @@ func TestSSE_ValueChangeCreatesUnknownPLC(t *testing.T) {
 func TestSSE_StallReconnects(t *testing.T) {
 	t.Parallel()
 
-	orig := sseStallTimeout
-	sseStallTimeout = 150 * time.Millisecond
-	defer func() { sseStallTimeout = orig }()
-
 	var mu sync.Mutex
 	connectCount := 0
 
@@ -539,6 +535,9 @@ func TestSSE_StallReconnects(t *testing.T) {
 	cfg.WarLink.Mode = "sse"
 
 	m := NewManager(nil, cfg, emitter, nil)
+	// This manager's own stall timeout, not a package global — see
+	// Manager.SetSSETimingsForTest.
+	m.SetSSETimingsForTest(150*time.Millisecond, 0)
 
 	m.StartWarLinkPoller()
 	defer m.StopWarLinkPoller()

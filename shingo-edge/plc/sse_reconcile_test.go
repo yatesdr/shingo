@@ -47,10 +47,8 @@ func TestSSEReconcileLoop_PromotesStaleConnecting(t *testing.T) {
 		t.Fatal("precondition: PLC should start stuck at Connecting")
 	}
 
-	// Shorten the interval for the test; restore so we don't leak into others.
-	orig := sseReconcileInterval
-	sseReconcileInterval = 10 * time.Millisecond
-	defer func() { sseReconcileInterval = orig }()
+	// This manager's own interval — no package global to leak into others.
+	mgr.SetSSETimingsForTest(0, 10*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -79,9 +77,7 @@ func TestSSEReconcileLoop_StopsWithContext(t *testing.T) {
 	mgr := NewManager(nil, cfg, &mockEmitter{}, nil)
 	mgr.wl = &mockWarlinkClient{plcs: []WarlinkPLC{}, tags: map[string]map[string]WarlinkTag{}}
 
-	orig := sseReconcileInterval
-	sseReconcileInterval = 5 * time.Millisecond
-	defer func() { sseReconcileInterval = orig }()
+	mgr.SetSSETimingsForTest(0, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -142,9 +138,7 @@ func TestSSEReconcile_RESTFailureDoesNotFlapConnection(t *testing.T) {
 	// loop was edited to pass ownsConnState=true. The bug this guards against
 	// is a wrong argument at the call site, so the call site has to be in the
 	// path under test.
-	orig := sseReconcileInterval
-	sseReconcileInterval = 10 * time.Millisecond
-	defer func() { sseReconcileInterval = orig }()
+	mgr.SetSSETimingsForTest(0, 10*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go mgr.sseReconcileLoop(ctx)
