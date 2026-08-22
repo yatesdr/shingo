@@ -514,6 +514,10 @@ textarea { resize: vertical; min-height: 60px; }
  * and motion here would read as a change that did not happen. */
 .robot-confidence { margin-top: 0.35rem; }
 
+/* The order line under the robot's name. Text, never the tile's colour: the
+ * tile's colour is the ROBOT's state, and a stuck order is not a stuck robot. */
+.robot-order { margin-top: 0.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* THE CHIP GETS AN OPAQUE BACKDROP HERE, AND THIS IS A CONTRAST FIX, NOT A
  * STYLE PREFERENCE.
  *

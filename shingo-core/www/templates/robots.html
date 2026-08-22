@@ -55,6 +55,22 @@
         {{.VehicleID}}
         {{if .Charging}}<span class="robot-charging" title="Charging">&#9889;</span>{{end}}
       </div>
+      {{/* The order this robot is on. Text, not tile colour — the tile's colour
+           is the ROBOT's state, and an order's trouble is not the robot's. */}}
+      {{/* `if .OrderID`, not `with`: a struct is never "empty" to a template,
+           so a missing map key would render as "on #0" on every idle robot. */}}
+      {{$line := index $.OrderLines .VehicleID}}
+      {{if $line.OrderID}}
+        {{with $line}}
+        {{if .FaultNotice}}
+        <div class="chip chip-warn robot-order">on #{{.OrderID}} · fault <span class="tnum" data-since="{{.FaultSince.UTC.Format "2006-01-02T15:04:05Z07:00"}}"></span></div>
+        {{else if .FaultSince}}
+        <div class="text-muted-xs robot-order">on #{{.OrderID}} · replanning</div>
+        {{else}}
+        <div class="text-muted-xs robot-order">on #{{.OrderID}}</div>
+        {{end}}
+        {{end}}
+      {{end}}
       <div class="robot-battery" title="Battery: {{pct .BatteryLevel}}%">
         <div class="robot-battery-fill" style="width:{{pct .BatteryLevel}}%"></div>
       </div>

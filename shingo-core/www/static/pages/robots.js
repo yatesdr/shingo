@@ -1,5 +1,5 @@
 import { api, debounce, delegateActions, el, hideModal, showModal, uiConfirm } from '/static/app.js';
-import { reconcileList, onSSE } from '/static/shared/utils.js';
+import { installLiveDurations, reconcileList, onSSE } from '/static/shared/utils.js';
 import { createRobotTile, updateRobotTile } from '/static/components/RobotTile.js';
 import { createBoard } from '/static/components/localization-board.js';
 
@@ -141,8 +141,13 @@ onSSE('robot-update', debounce(function(robots) {
   if (countEl) countEl.textContent = robots.length + ' robots';
   grid.style.display = robots.length === 0 ? 'none' : '';
 
+  // The fault clock on any tile the reconcile just touched.
+  installLiveDurations(grid);
   filterRobots();
 }, 2000));
+
+// Server-rendered tiles carry the same spans on first paint.
+installLiveDurations(document.getElementById('robot-grid') || document);
 
 
 // ── The localization board ────────────────────────────────────────────────

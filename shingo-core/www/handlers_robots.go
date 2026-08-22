@@ -16,6 +16,9 @@ func (h *Handlers) handleRobots(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Page":   "robots",
 		"Robots": robots,
+		// The order each robot is on, so a tile names it. Keyed by vehicle id;
+		// the template looks its own robot up.
+		"OrderLines": robotOrderLines(h.engine.OrderService(), h.engine.AppConfig()),
 	}
 	h.render(w, r, "robots.html", data)
 }

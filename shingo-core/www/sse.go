@@ -407,7 +407,11 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			X              float64 `json:"x"`
 			Y              float64 `json:"y"`
 			Angle          float64 `json:"angle"`
+			// The order this robot is on. See RobotOrderLine — no alarms.
+			RobotOrderLine
 		}
+		// Once per broadcast, not once per robot.
+		orderLines := robotOrderLines(eng.OrderService(), eng.AppConfig())
 		out := make([]robotJSON, len(ev.Robots))
 		for i, r := range ev.Robots {
 			out[i] = robotJSON{
@@ -429,6 +433,7 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 				X:              r.X,
 				Y:              r.Y,
 				Angle:          r.Angle,
+				RobotOrderLine: orderLines[r.VehicleID],
 			}
 		}
 		h.Broadcast("robot-update", sseJSON(out))
