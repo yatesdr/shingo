@@ -12,9 +12,11 @@ package messaging
 
 import (
 	"database/sql"
+	"fmt"
 	"sync/atomic"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/outbox"
 	"shingoedge/store/internal/helpers"
 )
@@ -42,6 +44,82 @@ func Enqueue(db *sql.DB, payload []byte, msgType string) (int64, error) {
 	}
 	notifyEnqueued()
 	return res.LastInsertId()
+}
+
+// coalescableSubjects is the ONE list of message types a newer message may
+// delete an older unsent one for. Guarded rather than documented, because the
+// cost of getting it wrong is silent permanent data loss.
+//
+// A type belongs here only if every message of it is a COMPLETE snapshot, so
+// that receiving only the newest loses nothing by construction:
+//
+//   - inventory.lineside_level_report carries every consuming node.
+//   - plant.claims PublishAll carries every process, and Core replaces its
+//     mirror per process on each message.
+//
+// Everything else must NOT be here, and the reasons differ:
+// bin_uop_delta and lineside_bucket_delta are sequenced INCREMENTS — dropping
+// one is a permanently wrong count, which is the whole reason they were given
+// NoExpiry. production.tick and demand.origin are discrete events. Every
+// order.* is operator intent that exists exactly once.
+var coalescableSubjects = map[string]bool{
+	protocol.SubjectLinesideLevelReport: true,
+	protocol.SubjectPlantClaims:         true,
+}
+
+// EnqueueSnapshot replaces every unsent row of msgType with the given payloads,
+// in one transaction.
+//
+// Why this exists: after an outage the edge holds an hour of superseded
+// snapshots and publishes all of them in a burst on recovery. Core then
+// processes an hour of history to arrive where the newest message alone would
+// have put it — and before that, most of the burst is discarded at the ingestor
+// for expiry anyway. Only the newest snapshot was ever worth sending.
+//
+// The DELETE deliberately includes DEAD-LETTERED rows of the type. A superseded
+// snapshot that exhausted its retries is doubly worthless, and this is the only
+// thing that clears one before the retention window.
+//
+// The transaction is load-bearing in one direction: a crash between the delete
+// and the inserts must not leave the type with zero snapshots. Committing both
+// together means the worst case is the previous snapshot surviving, never none.
+//
+// notifyEnqueued fires ONCE, after commit — the drainer reads every pending row
+// per pass, so one doorbell covers the whole batch, and ringing it before commit
+// would race the drainer against uncommitted rows.
+func EnqueueSnapshot(db *sql.DB, payloads [][]byte, msgType string) error {
+	if !coalescableSubjects[msgType] {
+		return fmt.Errorf("EnqueueSnapshot: %q is not a coalescable subject — only "+
+			"full-snapshot types may supersede their predecessors; sequenced deltas "+
+			"and discrete events must use Enqueue", msgType)
+	}
+	if len(payloads) == 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("enqueue snapshot %s: begin: %w", msgType, err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM outbox WHERE sent_at IS NULL AND msg_type = ?`, msgType); err != nil {
+		return fmt.Errorf("enqueue snapshot %s: supersede: %w", msgType, err)
+	}
+	for _, payload := range payloads {
+		if _, err := tx.Exec(
+			`INSERT INTO outbox (topic, payload, msg_type) VALUES ('orders', ?, ?)`,
+			payload, msgType,
+		); err != nil {
+			return fmt.Errorf("enqueue snapshot %s: insert: %w", msgType, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("enqueue snapshot %s: commit: %w", msgType, err)
+	}
+
+	notifyEnqueued()
+	return nil
 }
 
 // enqueueNotifier is the drainer's doorbell, set once at wiring time. It lives

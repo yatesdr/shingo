@@ -111,18 +111,32 @@ func (p *PlantClaimsPublisher) PublishAll() error {
 	if err != nil {
 		return err
 	}
+	// Build every process's payload first, then enqueue the whole set in ONE
+	// call. EnqueueSnapshot supersedes the unsent predecessors, so this has to
+	// be atomic across processes: enqueuing per-process would have each one
+	// delete the payloads the previous ones just wrote, and Core would end up
+	// mirroring a single process.
+	payloads := make([][]byte, 0, len(procs))
 	for _, proc := range procs {
-		if err := p.publishProcess(proc); err != nil {
-			log.Printf("plant_claims: publish %s: %v", proc.Name, err)
+		data, err := p.buildProcess(proc)
+		if err != nil {
+			// One unreadable process must not block the rest — the same
+			// contract this loop had when it published per process.
+			log.Printf("plant_claims: build %s: %v", proc.Name, err)
+			continue
 		}
+		payloads = append(payloads, data)
 	}
-	return nil
+	if len(payloads) == 0 {
+		return nil
+	}
+	return p.db.EnqueueSnapshotOutbox(payloads, protocol.SubjectPlantClaims)
 }
 
-func (p *PlantClaimsPublisher) publishProcess(proc processes.Process) error {
+func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, error) {
 	styles, err := processes.ListStylesByProcess(p.db.DB, proc.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	report := protocol.PlantClaimsReport{
 		ProcessID: proc.Name,
@@ -131,7 +145,7 @@ func (p *PlantClaimsPublisher) publishProcess(proc processes.Process) error {
 	for _, st := range styles {
 		claims, err := processes.ListClaims(p.db.DB, st.ID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		// Mark the running style. proc.ActiveStyleID is the field Edge itself
 		// resolves claims through (findActiveClaim keys on it), so publishing it
@@ -157,10 +171,13 @@ func (p *PlantClaimsPublisher) publishProcess(proc processes.Process) error {
 		}
 		report.Styles = append(report.Styles, wire)
 	}
-	return p.enqueue(report)
+	return p.encode(report)
 }
 
-func (p *PlantClaimsPublisher) enqueue(report protocol.PlantClaimsReport) error {
+// encode builds one process's envelope. It does NOT touch the outbox — the
+// caller enqueues the whole set together, because a per-process enqueue would
+// make each process supersede the last.
+func (p *PlantClaimsPublisher) encode(report protocol.PlantClaimsReport) ([]byte, error) {
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectPlantClaims,
 		protocol.Address{Role: protocol.RoleEdge, Station: p.stationID},
@@ -168,15 +185,12 @@ func (p *PlantClaimsPublisher) enqueue(report protocol.PlantClaimsReport) error 
 		&report,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	data, err := env.Encode()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := p.db.EnqueueOutbox(data, protocol.SubjectPlantClaims); err != nil {
-		return err
-	}
-	p.DebugLog.Log("published %s: %d styles", report.ProcessID, len(report.Styles))
-	return nil
+	p.DebugLog.Log("built %s: %d styles", report.ProcessID, len(report.Styles))
+	return data, nil
 }

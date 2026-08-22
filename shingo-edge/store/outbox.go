@@ -23,6 +23,13 @@ func (db *DB) EnqueueOutbox(payload []byte, msgType string) (int64, error) {
 	return messaging.Enqueue(db.DB, payload, msgType)
 }
 
+// EnqueueSnapshotOutbox replaces every unsent row of msgType with the given
+// payloads. Only full-snapshot subjects may use it; see
+// store/messaging.EnqueueSnapshot, which refuses anything else.
+func (db *DB) EnqueueSnapshotOutbox(payloads [][]byte, msgType string) error {
+	return messaging.EnqueueSnapshot(db.DB, payloads, msgType)
+}
+
 // ListPendingOutbox returns the next batch of un-sent messages whose
 // retry count is below MaxOutboxRetries.
 func (db *DB) ListPendingOutbox(limit int) ([]messaging.Message, error) {

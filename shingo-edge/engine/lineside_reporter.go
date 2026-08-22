@@ -88,7 +88,11 @@ func (e *Engine) reportLinesideLevels() {
 		log.Printf("lineside-reporter: encode envelope: %v", err)
 		return
 	}
-	if _, err := e.db.EnqueueOutbox(data, protocol.SubjectLinesideLevelReport); err != nil {
+	// Snapshot enqueue: this report carries EVERY consuming node, so an unsent
+	// predecessor is worthless. Without this, an outage leaves an hour of
+	// superseded reports to publish in a burst on recovery — and Core discards
+	// most of them for expiry on arrival anyway.
+	if err := e.db.EnqueueSnapshotOutbox([][]byte{data}, protocol.SubjectLinesideLevelReport); err != nil {
 		log.Printf("lineside-reporter: enqueue: %v", err)
 	}
 }
