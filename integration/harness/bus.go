@@ -74,7 +74,7 @@ type EdgeOutboxOps interface {
 	AckOutbox(id int64) error
 	IncrementOutboxRetries(id int64) error
 	MarkOutboxExhausted(id int64, reason string) error
-	PurgeOldOutbox(olderThan time.Duration) (int64, error)
+	PurgeOldOutbox(delivered, deadLetter time.Duration) (int64, error)
 }
 
 // CoreOutboxOps is the Core-side counterpart. Core's outbox returns
@@ -86,7 +86,7 @@ type CoreOutboxOps interface {
 	AckOutbox(id int64) error
 	IncrementOutboxRetries(id int64) error
 	MarkOutboxExhausted(id int64, reason string) error
-	PurgeOldOutbox(olderThan time.Duration) (int64, error)
+	PurgeOldOutbox(delivered, deadLetter time.Duration) (int64, error)
 }
 
 // NewBus wires the routing between two pre-constructed sides. Caller
@@ -207,8 +207,8 @@ func (a *edgeOutboxAdapter) MarkOutboxExhausted(id int64, reason string) error {
 	return a.ops.MarkOutboxExhausted(id, reason)
 }
 
-func (a *edgeOutboxAdapter) PurgeOldOutbox(olderThan time.Duration) (int, error) {
-	n, err := a.ops.PurgeOldOutbox(olderThan)
+func (a *edgeOutboxAdapter) PurgeOldOutbox(delivered, deadLetter time.Duration) (int, error) {
+	n, err := a.ops.PurgeOldOutbox(delivered, deadLetter)
 	return int(n), err
 }
 
@@ -246,7 +246,7 @@ func (a *coreOutboxAdapter) MarkOutboxExhausted(id int64, reason string) error {
 	return a.ops.MarkOutboxExhausted(id, reason)
 }
 
-func (a *coreOutboxAdapter) PurgeOldOutbox(olderThan time.Duration) (int, error) {
-	n, err := a.ops.PurgeOldOutbox(olderThan)
+func (a *coreOutboxAdapter) PurgeOldOutbox(delivered, deadLetter time.Duration) (int, error) {
+	n, err := a.ops.PurgeOldOutbox(delivered, deadLetter)
 	return int(n), err
 }

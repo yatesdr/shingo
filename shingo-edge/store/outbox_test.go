@@ -3,9 +3,11 @@ package store
 import (
 	"os"
 	"path/filepath"
-	"shingo/protocol/testutil"
 	"testing"
 	"time"
+
+	"shingo/protocol/outbox"
+	"shingo/protocol/testutil"
 )
 
 func testDB(t *testing.T) *DB {
@@ -113,7 +115,7 @@ func TestOutbox_PurgeOld(t *testing.T) {
 	db.AckOutbox(id)
 
 	// Purge with a very short duration won't catch it (just created)
-	deleted, err := db.PurgeOldOutbox(24 * time.Hour)
+	deleted, err := db.PurgeOldOutbox(24*time.Hour, outbox.DeadLetterRetentionPeriod)
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
