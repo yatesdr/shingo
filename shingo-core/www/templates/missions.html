@@ -62,6 +62,25 @@
     <div class="dwell-row" id="m-dwell-row"><span class="text-muted-sm">Loading dwell&hellip;</span></div>
   </section>
 
+  <!-- Faults: what a faulted order does next, and which faults were worth a
+       word. Split by the server's notice threshold, because the totals alone
+       say "730 faults a month" and hide the two dozen that mattered.
+
+       No chart, same rule as Dwell above: under ten categories a table is
+       faster to read and carries the exact figures. -->
+  <section class="card" id="m-faults">
+    <div class="section-head">
+      <h2>Faults</h2>
+      <span class="text-muted-sm" id="m-faults-note"></span>
+    </div>
+    <div class="dwell-row" id="m-faults-row"><span class="text-muted-sm">Loading faults&hellip;</span></div>
+    <div class="grid grid-3">
+      <div><div class="chart-caption">By robot (top 10)</div><div id="m-faults-robot"></div></div>
+      <div><div class="chart-caption">By node (top 10)</div><div id="m-faults-node"></div></div>
+      <div><div class="chart-caption">By fleet reason (top 10)</div><div id="m-faults-reason"></div></div>
+    </div>
+  </section>
+
   <!-- D: Cells (§3.D, Phase E). Per-cell production rhythm — a pulsing primary
        Process dot plus satellite sub-Process dots, live on cell-heartbeat.
        Empty until cells are configured at /admin/cells. -->

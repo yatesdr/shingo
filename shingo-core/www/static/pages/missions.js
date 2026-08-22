@@ -162,11 +162,103 @@ function refreshDwell(state) {
     });
 }
 
+// ─── Faults ─────────────────────────────────────────────────────────────────
+//
+// A faulted order is two populations wearing one badge: a 20-second replan and
+// a stall that needs somebody. The split by the server's threshold is the point
+// of this card — the totals alone say 730 faults a month and hide the 24 that
+// mattered.
+//
+// No chart. Under ten categories the page's own rule is a table.
+
+const FAULT_OUTCOME_LABELS = {
+    in_transit: 'Recovered',
+    cancelled: 'Cancelled',
+    failed: 'Gave up',
+    delivered: 'Delivered anyway',
+    '': 'Still faulted',
+};
+
+function refreshFaults(state) {
+    const host = document.getElementById('m-faults-row');
+    if (!host) return;
+    apiGet('/api/missions/faults?' + filterQS(state, {})).then((data) => {
+        const s = (data && data.stats) || {};
+        const outcomes = s.outcomes || [];
+        const perDay = s.per_day || [];
+
+        const note = document.getElementById('m-faults-note');
+        if (note) {
+            note.textContent = s.notice_after_seconds
+                ? 'a fault under ' + s.notice_after_seconds + 's is a replan'
+                : '';
+        }
+
+        if (!outcomes.length) {
+            host.innerHTML = '<span class="text-muted-sm">No faults in this window</span>';
+            renderFaultTables({});
+            return;
+        }
+
+        // Replanning vs notice, summed across the days. The distinction the
+        // card exists for, so it leads.
+        let replan = 0, notice = 0;
+        perDay.forEach((d) => { replan += d.replanning; notice += d.notice; });
+        const days = perDay.length || 1;
+
+        const cells = [
+            faultCell('Replanning', replan ? perDay1(replan, days) + ' / day' : 'no data',
+                replan + ' total', !replan),
+            faultCell('Faults', notice ? perDay1(notice, days) + ' / day' : 'no data',
+                notice + ' total', !notice),
+        ].concat(outcomes.map((o) => faultCell(
+            FAULT_OUTCOME_LABELS[o.status] || o.status,
+            fmtSeconds(o.p50_seconds) + ' / ' + fmtSeconds(o.p95_seconds),
+            o.count + (o.count === 1 ? ' order' : ' orders'),
+            !o.count)));
+
+        host.innerHTML = cells.join('');
+        renderFaultTables(s);
+    }).catch(() => {
+        host.innerHTML = '<span class="text-muted-sm">Faults unavailable</span>';
+    });
+}
+
+// One decimal, because a per-day rate under ten is the common case and whole
+// numbers would round a 0.8/day stall problem to 1 or to nothing.
+function perDay1(total, days) {
+    return (total / days).toFixed(1);
+}
+
+// Same shape as the dwell cells, including the em-dash rule: no data is said,
+// not printed as a zero.
+function faultCell(label, value, count, empty) {
+    return '<div class="dwell-cell' + (empty ? ' dwell-empty' : '') + '">'
+        + '<span class="dwell-label">' + escapeText(label) + '</span>'
+        + '<span class="dwell-val">' + escapeText(empty ? '—' : value) + '</span>'
+        + '<span class="dwell-count">' + escapeText(count) + '</span>'
+        + '</div>';
+}
+
+function renderFaultTables(s) {
+    const cols = (head) => [
+        { head: head, value: (r) => r.label ? r.key + ' — ' + r.label : r.key },
+        { head: 'Faults', num: true, value: (r) => r.count },
+        { head: 'Over threshold', num: true, title: 'Faults that lasted past the notice threshold',
+          value: (r) => r.notice_hits },
+        { head: 'p50', num: true, value: (r) => fmtSeconds(r.p50_seconds) },
+    ];
+    breakdownTable(document.getElementById('m-faults-robot'), s.by_robot, { columns: cols('Robot') });
+    breakdownTable(document.getElementById('m-faults-node'), s.by_node, { columns: cols('Node') });
+    breakdownTable(document.getElementById('m-faults-reason'), s.by_reason, { columns: cols('Fleet reason') });
+}
+
 let paretoChart = null;
 
 function refresh(state) {
     offset = 0;
     refreshDwell(state);
+    refreshFaults(state);
     refreshBreakdowns(state);
     refreshFailures(state);
     refreshList(state);
@@ -349,6 +441,23 @@ function breakdownTable(container, rows, opts) {
         container.innerHTML = '<div class="dash-empty">No missions in this window.</div>';
         return;
     }
+    // opts.columns generalises this table for callers whose rows are not
+    // missions (the Faults card). Without it the mission-specific columns below
+    // apply, unchanged.
+    if (opts.columns) {
+        const cHead = '<thead><tr>' + opts.columns.map((c) =>
+            '<th' + (c.num ? ' class="col-num"' : '') + (c.title ? ' title="' + escapeAttr(c.title) + '"' : '')
+            + '>' + escapeText(c.head) + '</th>').join('') + '</tr></thead>';
+        const cBody = rows.map((r) => '<tr>' + opts.columns.map((c) => {
+            const v = c.value(r);
+            return '<td class="' + (c.num ? 'col-num tnum' : '') + '" title="' + escapeAttr(String(v)) + '">'
+                + escapeText(v) + '</td>';
+        }).join('') + '</tr>').join('');
+        container.innerHTML = (opts.note ? '<p class="u3-note">' + escapeText(opts.note) + '</p>' : '')
+            + '<table class="u3-tbl">' + cHead + '<tbody>' + cBody + '</tbody></table>';
+        return;
+    }
+
     const showIndex = !!opts.showIndex;
     const minRobot = opts.minRobotSamples || 0;
 

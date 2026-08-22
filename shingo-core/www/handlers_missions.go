@@ -349,6 +349,35 @@ func (h *Handlers) apiMissionDwell(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// apiMissionFaults serves the Faults card: what a faulted order does next, how
+// long it takes, and where faults come from.
+//
+// Same filter params as /api/missions/dwell so the two cards move together.
+func (h *Handlers) apiMissionFaults(w http.ResponseWriter, r *http.Request) {
+	f := parseMissionFilter(r)
+	end := clock.Now().UTC()
+	if f.Until != nil {
+		end = *f.Until
+	}
+	start := end.AddDate(0, 0, -30)
+	if f.Since != nil {
+		start = *f.Since
+	}
+
+	stats, err := h.engine.MissionService().FaultStats(start, end,
+		h.engine.AppConfig().RDS.FaultNoticeAfter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"since": start,
+		"until": end,
+		"stats": stats,
+	})
+}
+
 // apiMissionFailures serves the §3.G failure Pareto: classified failure
 // reasons with counts and sample order IDs, sorted desc.
 func (h *Handlers) apiMissionFailures(w http.ResponseWriter, r *http.Request) {

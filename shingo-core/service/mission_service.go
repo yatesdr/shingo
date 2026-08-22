@@ -77,6 +77,20 @@ func (s *MissionService) DwellStats(pairs []domain.DwellPair, payloadCode, order
 		orders.LeadTimeRange{Start: start, End: end})
 }
 
+// FaultStats returns the /missions Faults card over [start, end].
+//
+// NOT DwellStats pairs. DwellStats measures an order's OUTERMOST faulted→X span,
+// so an order that faulted twice would land in two outcome buckets and its
+// recovery dwell would span a fault it had already recovered from. The card
+// needs each faulted row paired with what actually followed it, which is a LEAD
+// window — see orders.GetFaultStats.
+//
+// noticeAfter is the config threshold. It is passed in rather than read here so
+// the card's split and every other fault surface use the same number.
+func (s *MissionService) FaultStats(start, end time.Time, noticeAfter time.Duration) (*orders.FaultStats, error) {
+	return s.db.GetFaultStats(orders.LeadTimeRange{Start: start, End: end}, noticeAfter)
+}
+
 // Breakdown returns the top-10 mission groups by robot or route (plan §3.F).
 func (s *MissionService) Breakdown(f telemetry.Filter, by string) ([]telemetry.BreakdownRow, error) {
 	return s.db.GetMissionBreakdown(f, by)
