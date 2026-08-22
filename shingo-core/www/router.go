@@ -140,6 +140,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Get("/logout", h.handleLogout)
 		r.Get("/nodes", h.handleNodes)
 		r.Get("/orders", h.handleOrders)
+		// The board's row fragment. Same filter params as /orders; used by the
+		// SSE handler to refresh rows instead of reloading the page.
+		r.Get("/orders/rows", h.handleOrdersRows)
 		r.Get("/orders/detail", h.handleOrderDetail)
 		r.Get("/robots", h.handleRobots)
 		r.Get("/inventory", h.handleInventory)

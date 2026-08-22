@@ -1026,6 +1026,9 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .ofilter-dot[data-status="in_transit"]  { background:var(--status-in-transit-dot); }
 .ofilter-dot[data-status="delivered"]   { background:var(--status-delivered-dot); }
 .ofilter-dot[data-status="confirmed"]   { background:var(--status-delivered-dot); }
+/* faulted reuses --warning the way failed reuses --danger. No new hue: the
+   palette has none free, and the pill's label carries the meaning. */
+.ofilter-dot[data-status="faulted"]     { background:var(--warning); }
 .ofilter-dot[data-status="failed"]      { background:var(--danger); }
 .ofilter-dot[data-status="reshuffling"] { background:var(--status-reshuffling-dot); }
 

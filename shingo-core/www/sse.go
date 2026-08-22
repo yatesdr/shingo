@@ -310,6 +310,19 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "cancelled", "order_id": ev.OrderID, "reason": ev.Reason}))
 	}, engine.EventOrderCancelled)
 
+	// Faulted and recovered, mirroring failed above. Without these the board
+	// learned about a fault only from its periodic refresh, which is the one
+	// status where a row's own clock is the point.
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderFaultedEvent]) {
+		ev := evt.Payload
+		h.Broadcast("order-update", sseJSON(map[string]any{"type": "faulted", "order_id": ev.OrderID, "detail": ev.Reason}))
+	}, engine.EventOrderFaulted)
+
+	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderFaultedRecoveredEvent]) {
+		ev := evt.Payload
+		h.Broadcast("order-update", sseJSON(map[string]any{"type": "recovered", "order_id": ev.OrderID, "robot_id": ev.RobotID}))
+	}, engine.EventOrderFaultedRecovered)
+
 	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderSkippedEvent]) {
 		ev := evt.Payload
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "skipped", "order_id": ev.OrderID, "detail": ev.Detail}))

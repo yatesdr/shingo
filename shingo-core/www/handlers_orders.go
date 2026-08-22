@@ -2,19 +2,78 @@ package www
 
 import (
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
+	"shingo/shared"
 	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/fleet"
 )
 
 func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
+	orders, err := h.listOrdersForPage(r)
+	if err != nil {
+		log.Printf("orders page: list orders: %v", err)
+	}
+
+	faultLines, noticeCount := h.faultLinesFor(orders)
+	data := map[string]any{
+		"Page":               "orders",
+		"Orders":             orders,
+		"FilterStatus":       r.URL.Query().Get("status"),
+		"QueueCodeCounts":    countQueueCodes(orders),
+		"QueueCodeLabels":    queueCodeLabels(),
+		"FaultLines":         faultLines,
+		"FaultedNoticeCount": noticeCount,
+	}
+	h.render(w, r, "orders.html", data)
+}
+
+// handleOrdersRows renders just the table rows for the current filter.
+//
+// It exists so the board can refresh without reloading the page. The rows come
+// from the same partial the page renders, so there is no second copy of the row
+// markup in JS — which is what a "build the row client-side from /api/orders/N"
+// refresh would have required.
+//
+// Same filter semantics as handleOrders, read from the same query params, so a
+// refresh cannot quietly widen or narrow what the page is showing.
+func (h *Handlers) handleOrdersRows(w http.ResponseWriter, r *http.Request) {
+	orders, err := h.listOrdersForPage(r)
+	if err != nil {
+		log.Printf("orders rows: list orders: %v", err)
+	}
+	faultLines, noticeCount := h.faultLinesFor(orders)
+	tmpl, ok := h.tmpls["orders.html"]
+	if !ok {
+		http.Error(w, "template not found", http.StatusInternalServerError)
+		return
+	}
+	// The notice count rides a header so the page can update its chip without a
+	// second request or a JSON envelope wrapping HTML.
+	w.Header().Set("X-Faulted-Notice-Count", strconv.Itoa(noticeCount))
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+	shared.SetHTMLContentType(w)
+	if err := tmpl.ExecuteTemplate(w, "orders-rows", map[string]any{
+		"Orders":        orders,
+		"FaultLines":    faultLines,
+		"Authenticated": h.isAuthenticated(r),
+	}); err != nil {
+		log.Printf("orders rows: %v", err)
+	}
+}
+
+// listOrdersForPage is the order list behind both the page and the row
+// fragment. One function so the two cannot answer the same query differently.
+func (h *Handlers) listOrdersForPage(r *http.Request) ([]*domain.Order, error) {
 	status := r.URL.Query().Get("status")
 	limit := 100
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -22,30 +81,59 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-
 	svc := h.engine.OrderService()
-	var orders []*domain.Order
-	var err error
 	switch {
 	case status == "":
-		orders, err = svc.ListActiveOrders()
+		return svc.ListActiveOrders()
 	case status == "all":
-		orders, err = svc.ListOrders("", limit)
+		return svc.ListOrders("", limit)
 	default:
-		orders, err = svc.ListOrders(status, limit)
+		return svc.ListOrders(status, limit)
 	}
-	if err != nil {
-		log.Printf("orders page: list orders: %v", err)
-	}
+}
 
-	data := map[string]any{
-		"Page":            "orders",
-		"Orders":          orders,
-		"FilterStatus":    status,
-		"QueueCodeCounts": countQueueCodes(orders),
-		"QueueCodeLabels": queueCodeLabels(),
+// faultLinesFor builds the rendered fault line for each faulted order on the
+// page, keyed by order id, and counts the ones over the notice threshold.
+//
+// Only NOTICE faults are counted. A replan is not actionable and a chip that
+// fires on all 730 faults in a month teaches the floor to ignore the chip.
+//
+// One history read per faulted order. That is a handful on any real page: if a
+// board ever lists hundreds of faulted orders at once, the fault is the plant's,
+// not the query's.
+func (h *Handlers) faultLinesFor(orders []*domain.Order) (map[int64]template.HTML, int) {
+	lines := make(map[int64]template.HTML)
+	notice := 0
+	cfg := h.engine.AppConfig()
+	grace, noticeAfter := cfg.RDS.FaultGrace, cfg.RDS.FaultNoticeAfter
+	svc := h.engine.OrderService()
+	now := clock.Now().UTC()
+
+	for _, o := range orders {
+		if o.Status != protocol.StatusFaulted {
+			continue
+		}
+		var ref protocol.TermRef
+		var since, deadline time.Time
+		// A read failure costs the clock, not the row: the sentence still
+		// renders and simply has no duration under it.
+		if hrow, err := svc.LatestOrderHistoryForStatus(o.ID, protocol.StatusFaulted); err != nil {
+			log.Printf("orders page: fault row for order %d: %v", o.ID, err)
+		} else if hrow != nil {
+			since = hrow.CreatedAt
+			deadline = since.Add(grace)
+			if hrow.Ref != nil {
+				ref = *hrow.Ref
+			}
+		}
+		line := protocol.BuildFaultLine(ref, since, deadline, now, noticeAfter)
+		if line.Notice {
+			notice++
+		}
+		// Safe: FaultLine.HTML escapes every interpolated value.
+		lines[o.ID] = template.HTML(line.HTML())
 	}
-	h.render(w, r, "orders.html", data)
+	return lines, notice
 }
 
 // countQueueCodes tallies the active orders by their structured queue_code so the

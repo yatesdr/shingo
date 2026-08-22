@@ -1,5 +1,5 @@
 import { api, apiGet, apiPost, debounce, delegateActions, escapeHtml, formatTime, h, hideModal, showModal, toggleVisibility, uiConfirm } from '/static/app.js';
-import { onSSE } from '/static/shared/utils.js';
+import { installLiveDurations, onSSE, reconcileList } from '/static/shared/utils.js';
 
 // Controls live inside the manifest, which can be on screen twice at once
 // (detail page with a child-step modal open over it), so the status line is
@@ -482,9 +482,73 @@ onSSE('order-update', debounce(function(data) {
     }
     return;
   }
-  // No modal open: refresh the order list to reflect status changes.
-  location.reload();
+  // No modal open: refresh the rows in place.
+  refreshOrderRows();
 }, 2000));
+
+// A page that reloads itself every two seconds cannot host a one-second clock,
+// and it also threw away the text filter and the scroll position on every
+// unrelated event. Rows are now refreshed in place from the same partial the
+// page renders, keyed by order id.
+//
+// The 30s sweep is the backstop: an event-only board goes stale silently when
+// one is dropped, so the refresh does not depend on having heard about it.
+var ORDER_ROWS_BACKSTOP_MS = 30000;
+var _rowsRefreshInFlight = false;
+
+function refreshOrderRows() {
+  if (_rowsRefreshInFlight) return;
+  var tbody = document.getElementById('orders-rows');
+  if (!tbody) return;
+  _rowsRefreshInFlight = true;
+  // Same query string as the page, so the server applies the same status
+  // filter. Reconciling rows the current filter excludes would quietly widen
+  // the view.
+  fetch('/orders/rows' + location.search, { headers: { 'Accept': 'text/html' } })
+    .then(function(r) {
+      if (!r.ok) throw new Error('rows ' + r.status);
+      var count = r.headers.get('X-Faulted-Notice-Count');
+      return r.text().then(function(html) { return { html: html, count: count }; });
+    })
+    .then(function(res) {
+      var doc = new DOMParser().parseFromString('<table><tbody>' + res.html + '</tbody></table>', 'text/html');
+      var fresh = Array.prototype.slice.call(doc.querySelectorAll('tr[data-order-id]'));
+      reconcileList(tbody, fresh, {
+        key: function(tr) { return tr.getAttribute('data-order-id'); },
+        nodeKey: function(node) { return node.getAttribute && node.getAttribute('data-order-id'); },
+        create: function(tr) { return document.importNode(tr, true); },
+        update: function(node, tr) { node.innerHTML = tr.innerHTML; },
+      });
+      updateFaultedChip(res.count);
+      applyOrderFilter();
+      installLiveDurations(tbody);
+    })
+    .catch(function(e) { console.error('refreshOrderRows', e); })
+    .then(function() { _rowsRefreshInFlight = false; });
+}
+
+// The chip counts only faults past the notice threshold, so it can reach zero
+// while faulted rows remain on the board. Removed at zero rather than shown as
+// "faulted: 0", which reads as a state rather than the absence of one.
+function updateFaultedChip(count) {
+  var n = parseInt(count, 10);
+  var bar = document.querySelector('.queue-why');
+  var chip = bar ? bar.querySelector('.chip-warn') : null;
+  if (!bar || isNaN(n)) return;
+  if (!n) {
+    if (chip) chip.remove();
+    return;
+  }
+  if (!chip) {
+    chip = document.createElement('span');
+    chip.className = 'chip chip-warn';
+    bar.appendChild(chip);
+  }
+  chip.innerHTML = 'faulted: <span class="tnum"></span>';
+  chip.querySelector('.tnum').textContent = String(n);
+}
+
+setInterval(refreshOrderRows, ORDER_ROWS_BACKSTOP_MS);
 
 // --- Manual order modal ---
 var _moNodesLoaded = false;
@@ -845,26 +909,32 @@ function submitManualOrder() {
     });
 }
 
-// Client-side table filter
-(function() {
+// Client-side table filter.
+//
+// Rows are re-queried on every pass rather than cached at load: refreshOrderRows
+// inserts and removes them, and a cached NodeList would leave new rows
+// unfilterable and stale ones counted.
+function applyOrderFilter() {
   var input = document.getElementById('filter-search');
   var countEl = document.getElementById('filter-count');
   var table = document.getElementById('orders-table');
   if (!input || !table) return;
 
   var rows = table.querySelectorAll('tbody tr');
+  var q = input.value.toLowerCase().trim();
+  var visible = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var show = !q || rows[i].textContent.toLowerCase().indexOf(q) !== -1;
+    rows[i].style.display = show ? '' : 'none';
+    if (show) visible++;
+  }
+  if (countEl) countEl.textContent = q ? visible + ' of ' + rows.length : '';
+}
 
-  input.addEventListener('input', function() {
-    var q = this.value.toLowerCase().trim();
-    var visible = 0;
-    for (var i = 0; i < rows.length; i++) {
-      var text = rows[i].textContent.toLowerCase();
-      var show = !q || text.indexOf(q) !== -1;
-      rows[i].style.display = show ? '' : 'none';
-      if (show) visible++;
-    }
-    countEl.textContent = q ? visible + ' of ' + rows.length : '';
-  });
+(function() {
+  var input = document.getElementById('filter-search');
+  if (input) input.addEventListener('input', applyOrderFilter);
+  installLiveDurations();
 })();
 
 // ─── delegated event handlers ─────────────────────────
