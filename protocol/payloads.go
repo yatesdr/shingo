@@ -264,6 +264,18 @@ type OrderUpdate struct {
 	// arithmetic on it, and a duration string would need a parser at the far
 	// end for a number nobody sets below a second.
 	FaultNoticeAfterS int `json:"fault_notice_after_s,omitempty"`
+	// FaultRef is the fleet's reason, the same reference stored on the faulted
+	// history row. Nil when the fleet gave none, which is the common case.
+	//
+	// THE REFERENCE CROSSES, NOT THE SENTENCE, and that is what makes one
+	// formatter possible. Detail carries the sentence as it stood at push time,
+	// and at push time an order has just faulted, so it always reads
+	// "Replanning" — the vendor reason is deliberately withheld under the
+	// threshold. An Edge given only Detail could therefore never show the
+	// reason, because no second push arrives to reveal it. Given the ref, the
+	// Edge calls FormatFaultSentence itself, with the same code Core calls, and
+	// crosses the threshold on its own clock.
+	FaultRef *TermRef `json:"fault_ref,omitempty"`
 }
 
 // OrderDelivered signals fleet delivery complete.
@@ -961,6 +973,7 @@ type OrderProjection struct {
 	FaultDeadline     *time.Time `json:"fault_deadline,omitempty"`
 	FaultNotice       bool       `json:"fault_notice,omitempty"`
 	FaultNoticeAfterS int        `json:"fault_notice_after_s,omitempty"`
+	FaultRef          *TermRef   `json:"fault_ref,omitempty"`
 }
 
 // OrderStatusSnapshot is the current Core-side view of an order.
@@ -991,6 +1004,7 @@ type OrderStatusSnapshot struct {
 	FaultDeadline     *time.Time `json:"fault_deadline,omitempty"`
 	FaultNotice       bool       `json:"fault_notice,omitempty"`
 	FaultNoticeAfterS int        `json:"fault_notice_after_s,omitempty"`
+	FaultRef          *TermRef   `json:"fault_ref,omitempty"`
 }
 
 // OrderStatusResponse carries the authoritative Core-side state for requested orders.

@@ -21,15 +21,21 @@
 
 import {
     installBackdropClose,
+    installHtmxLiveDurations,
     installHtmxTimestampConversion,
+    installLiveDurations,
     installTableSort,
     convertTimestamps,
 } from '/static/shared/utils.js';
 installBackdropClose();
 installHtmxTimestampConversion();
+// Live elapsed/countdown spans, re-armed after htmx swaps. The interval only
+// runs while such nodes exist, so pages without them pay nothing.
+installHtmxLiveDurations();
 document.addEventListener('DOMContentLoaded', function() {
     convertTimestamps();
     installTableSort();
+    installLiveDurations();
 });
 
 // --- HTML escaping ---

@@ -198,7 +198,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// live order.
 		update.Detail = protocol.FormatFaultSentence(
 			protocol.FaultPhaseLive, faultRef, faultSince, now, false)
-		e.attachFaultFields(update, faultSince)
+		e.attachFaultFields(update, faultRef, faultSince)
 	}
 	if newStatus == dispatch.StatusInTransit {
 		if etaStr := eta.Stamp(e.etaCache, order.SourceNode, order.DeliveryNode); etaStr != "" {
@@ -293,9 +293,12 @@ func faultRefFrom(snap *fleet.OrderSnapshot, ord *orders.Order) protocol.TermRef
 // A zero since means the faulted row could not be read. The clock fields are
 // then omitted rather than sent as the zero time, which the Edge would render
 // as a fault that started in year one.
-func (e *Engine) attachFaultFields(update *protocol.OrderUpdate, since time.Time) {
+func (e *Engine) attachFaultFields(update *protocol.OrderUpdate, ref protocol.TermRef, since time.Time) {
 	noticeAfter := e.cfg.RDS.FaultNoticeAfter
 	update.FaultNoticeAfterS = int(noticeAfter.Seconds())
+	if !ref.Empty() {
+		update.FaultRef = &ref
+	}
 	if since.IsZero() {
 		return
 	}

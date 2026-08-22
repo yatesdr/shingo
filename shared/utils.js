@@ -170,6 +170,108 @@ export function formatDuration(ms) {
     return h + 'h ' + m + 'm';
 }
 
+// ─── Live durations ──────────────────────────────────────────────────────
+
+// Tick the elapsed / remaining durations on a page.
+//
+//   <span class="tnum" data-since="2026-08-22T14:00:00Z"></span>   -> "3m 12s"
+//   <span class="tnum" data-until="2026-08-22T14:45:00Z"></span>   -> "41m"
+//
+// Both render through formatDuration. A past data-until shows its data-past
+// text, or an em-dash. A data-since may also carry data-notice-after (seconds)
+// to swap a sibling's wording at a server-supplied threshold — see
+// applyNoticeWording; the client only compares, it never picks the number.
+//
+// The interval runs only while such nodes exist, so a page without them pays
+// nothing. Idempotent; re-run after any DOM change that may insert nodes.
+let _liveDurationTimer = null;
+
+export function installLiveDurations(root) {
+    const live = renderLiveDurations(root);
+    if (_liveDurationTimer || !live) return;
+    _liveDurationTimer = setInterval(() => {
+        // Sweep the document, not `root` — a second caller's nodes must keep
+        // ticking after the first caller's are gone.
+        if (!renderLiveDurations(document)) {
+            clearInterval(_liveDurationTimer);
+            _liveDurationTimer = null;
+        }
+    }, 1000);
+}
+
+// Paint one frame; report whether anything remains to tick. Exported for tests
+// and for a single repaint without arming the interval.
+export function renderLiveDurations(root) {
+    const scope = root || document;
+    let live = 0;
+    scope.querySelectorAll('[data-since]').forEach(elem => {
+        const since = Date.parse(elem.getAttribute('data-since'));
+        if (isNaN(since)) return;
+        live++;
+        const elapsed = Date.now() - since;
+        elem.textContent = formatDuration(elapsed);
+        applyNoticeWording(elem, elapsed);
+    });
+    scope.querySelectorAll('[data-until]').forEach(elem => {
+        const until = Date.parse(elem.getAttribute('data-until'));
+        if (isNaN(until)) return;
+        const left = until - Date.now();
+        if (left <= 0) {
+            elem.textContent = elem.getAttribute('data-past') || '—';
+            return;
+        }
+        live++;
+        elem.textContent = formatDuration(left);
+    });
+    return live > 0;
+}
+
+// Swap a sibling's wording once elapsed crosses the server's threshold. The
+// node carries the threshold and both words, so no policy lives here.
+function applyNoticeWording(elem, elapsedMs) {
+    const afterS = parseInt(elem.getAttribute('data-notice-after'), 10);
+    if (!afterS) return;
+    const target = elem.parentNode && elem.parentNode.querySelector
+        ? elem.parentNode.querySelector('[data-notice-word]') : null;
+    if (!target) return;
+    const over = elapsedMs >= afterS * 1000;
+    const word = over
+        ? target.getAttribute('data-notice-over')
+        : target.getAttribute('data-notice-under');
+    if (word !== null && word !== undefined && target.textContent !== word) {
+        target.textContent = word;
+    }
+    // Clauses that belong only to the over-threshold sentence (the grace
+    // countdown: noise beside a 14s replan, the point beside a 3m fault).
+    const parent = elem.parentNode;
+    if (parent && parent.querySelectorAll) {
+        parent.querySelectorAll('[data-notice-only-over]').forEach(node => {
+            node.hidden = !over;
+        });
+    }
+}
+
+// Re-render live durations after an htmx swap, as
+// installHtmxTimestampConversion does for <time data-utc>. Without it a
+// swapped-in row's duration stays empty until the next tick, or forever if the
+// interval had already stopped.
+let _htmxLiveDurInstalled = false;
+export function installHtmxLiveDurations() {
+    if (_htmxLiveDurInstalled) return;
+    _htmxLiveDurInstalled = true;
+    const attach = () => {
+        document.body.addEventListener('htmx:afterSwap', (evt) => {
+            const target = (evt && evt.detail && evt.detail.target) || document;
+            installLiveDurations(target);
+        });
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attach);
+    } else {
+        attach();
+    }
+}
+
 // Rewrite <time data-utc="..."> elements to the browser's local-time string.
 // Idempotent; safe to re-run after htmx swaps insert new <time> nodes.
 export function convertTimestamps(root) {

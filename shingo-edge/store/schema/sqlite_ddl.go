@@ -144,6 +144,19 @@ CREATE TABLE IF NOT EXISTS orders (
     -- it: it labels the board and it is what a projected-row test asserts
     -- against. Deliberately cheap to stop rendering.
     authored_by     TEXT NOT NULL DEFAULT 'edge',
+    -- The fault clock (v36). Set only while the order is faulted; the handler
+    -- clears them on any other status, derived from the status rather than from
+    -- a pushed empty value — see messaging/edge_handler.go and the queue_reason
+    -- incident it documents. fault_notice_after_s is Core's replan/fault
+    -- threshold in seconds as it stood when the fault was pushed; 0 means an
+    -- older Core that did not send one.
+    fault_since     TEXT NOT NULL DEFAULT '',
+    fault_deadline  TEXT NOT NULL DEFAULT '',
+    fault_notice_after_s INTEGER NOT NULL DEFAULT 0,
+    -- The fleet's reason as protocol.TermRef JSON. Stored as a reference, not a
+    -- rendered sentence: the sentence changes when the clock crosses the
+    -- threshold, and the board re-renders it without another push.
+    fault_ref       TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

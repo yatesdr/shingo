@@ -689,6 +689,36 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE orders ADD COLUMN origin_id TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE orders ADD COLUMN origin_class TEXT NOT NULL DEFAULT ''")
 
+	// v36 (2026-08-22, fault presentation): the fault clock, so the Edge board
+	// can say how long an order has been faulted and when Core gives up.
+	//
+	// A faulted order on the Edge board is a badge and nothing else today, and
+	// the Detail it did receive said "fleet state: FAILED" — the vendor's word
+	// for a state that recovers on its own within 20 seconds in 97% of cases.
+	// Core now sends a sentence and these three values with it.
+	//
+	// TEXT, not a timestamp type: SQLite has none, and every other instant on
+	// this schema is RFC3339 text. Empty is the honest value for "not faulted"
+	// and for every pre-v36 row — no backfill can invent when an order faulted,
+	// and Core re-sends on the next push and the boot reconcile, so live orders
+	// heal on their own.
+	//
+	// fault_notice_after_s is Core's threshold, stored per order rather than as
+	// a setting, because it is the threshold that was in force when this fault
+	// was pushed. A plant that retunes the number mid-fault should not have
+	// in-flight rows silently re-classify themselves. 0 = not supplied (an
+	// older Core), and the board then renders the sentence Core sent without
+	// re-deciding the wording.
+	db.Exec("ALTER TABLE orders ADD COLUMN fault_since TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE orders ADD COLUMN fault_deadline TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE orders ADD COLUMN fault_notice_after_s INTEGER NOT NULL DEFAULT 0")
+	// fault_ref is the fleet's reason as JSON (protocol.TermRef), the same shape
+	// Core stores on the history row. The REFERENCE is stored rather than the
+	// rendered sentence because the sentence changes as the clock crosses the
+	// threshold, and the board must be able to re-render it without another
+	// push. Empty = the fleet gave no reason, which is the common case.
+	db.Exec("ALTER TABLE orders ADD COLUMN fault_ref TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }
 

@@ -9,6 +9,7 @@ package orders
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -35,7 +36,8 @@ type (
 const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
-	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class, o.created_at, o.updated_at,
+	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class,
+	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, ''),
 	CASE WHEN o.status = 'staged' AND COALESCE(o.steps_json, '') = '' THEN 1 ELSE 0 END`
 
@@ -104,17 +106,20 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 	for rows.Next() {
 		var o Order
 		var stagedExpireAt sql.NullString
+		var faultSince, faultDeadline, faultRef sql.NullString
 		var binID, siblingID sql.NullInt64
 		var createdAt, updatedAt string
 		var laneHeld int
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass, &createdAt, &updatedAt,
+			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
+			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 			return nil, err
 		}
 		o.LaneHeld = laneHeld == 1
+		applyFaultClock(&o, faultSince, faultDeadline, faultRef)
 		if stagedExpireAt.Valid {
 			t := helpers.ScanTime(stagedExpireAt.String)
 			o.StagedExpireAt = &t
@@ -136,17 +141,20 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 
 func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	var stagedExpireAt sql.NullString
+	var faultSince, faultDeadline, faultRef sql.NullString
 	var binID, siblingID sql.NullInt64
 	var createdAt, updatedAt string
 	var laneHeld int
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass, &createdAt, &updatedAt,
+		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
+		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 		return err
 	}
 	o.LaneHeld = laneHeld == 1
+	applyFaultClock(o, faultSince, faultDeadline, faultRef)
 	if stagedExpireAt.Valid {
 		t := helpers.ScanTime(stagedExpireAt.String)
 		o.StagedExpireAt = &t
@@ -368,6 +376,52 @@ func UpdateBinID(db *sql.DB, id int64, binID *int64) error {
 func SetQueueReason(db *sql.DB, uuid, reason, code string) error {
 	_, err := db.Exec(`UPDATE orders SET queue_reason=?, queue_code=?, updated_at=datetime('now') WHERE uuid=?`, reason, code, uuid)
 	return err
+}
+
+// SetFaultClock writes (or clears) the fault window on an order. Called from
+// the edge handler when Core pushes an OrderUpdate or a boot snapshot: the two
+// instants as RFC3339 text, the threshold in seconds.
+//
+// Pass "", "", 0 to clear. The handler decides when that is, from the STATUS —
+// never from an empty pushed value, which is indistinguishable from an absent
+// one. See SetQueueReason and the incident on domain.Order.QueueReason.
+func SetFaultClock(db *sql.DB, uuid string, since, deadline *time.Time, noticeAfterS int, ref string) error {
+	_, err := db.Exec(`UPDATE orders SET fault_since=?, fault_deadline=?, fault_notice_after_s=?,
+		fault_ref=?, updated_at=datetime('now') WHERE uuid=?`,
+		faultInstant(since), faultInstant(deadline), noticeAfterS, ref, uuid)
+	return err
+}
+
+// faultInstant renders an optional instant in the schema's own time layout —
+// the one applyFaultClock reads back. "" for absent.
+func faultInstant(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(helpers.TimeLayout)
+}
+
+// applyFaultClock puts the two scanned instants onto the order. Empty text (the
+// column default, and every pre-v36 row) leaves them nil — the board then has
+// no clock to tick, which is correct: it does not know when the fault started.
+func applyFaultClock(o *Order, since, deadline, ref sql.NullString) {
+	if since.Valid && since.String != "" {
+		t := helpers.ScanTime(since.String)
+		o.FaultSince = &t
+	}
+	if deadline.Valid && deadline.String != "" {
+		t := helpers.ScanTime(deadline.String)
+		o.FaultDeadline = &t
+	}
+	// A malformed ref leaves the order without one rather than failing the read:
+	// the board's job is the order list, and one bad blob must not hide it. Same
+	// tolerance Core's ListHistory applies to the same column.
+	if ref.Valid && ref.String != "" {
+		var r protocol.TermRef
+		if err := json.Unmarshal([]byte(ref.String), &r); err == nil && !r.Empty() {
+			o.FaultRef = &r
+		}
+	}
 }
 
 // LinkSiblings sets a bidirectional sibling pointer between two orders

@@ -82,18 +82,10 @@ async function abortOrder(orderID) {
     } catch (e) { toast('Error: ' + e, 'error'); }
 }
 
-// Staged bin expiry countdown
-function updateCountdowns() {
-    document.querySelectorAll('[data-countdown]').forEach(function(el) {
-        var exp = new Date(el.getAttribute('data-countdown'));
-        var diff = exp - new Date();
-        if (diff <= 0) { el.textContent = 'Expired'; return; }
-        var mins = Math.floor(diff / 60000);
-        el.textContent = mins >= 60 ? Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm' : mins + 'm';
-    });
-}
-updateCountdowns();
-setInterval(updateCountdowns, 60000);
+// Staged-expiry and fault clocks tick from shared installLiveDurations
+// (installed in shingoedge.js). This page's own minute-resolution countdown
+// loop was a second implementation of the same thing; the staged span now
+// carries data-until + data-past="Expired".
 
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions

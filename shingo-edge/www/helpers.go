@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 )
 
@@ -106,6 +107,29 @@ func templateFuncs() template.FuncMap {
 		"json": func(v any) template.JS {
 			b, _ := json.Marshal(v)
 			return template.JS(b)
+		},
+		// faultLine renders a faulted order's sentence and live clock via
+		// protocol.BuildFaultLine — the same builder Core's board uses, so the
+		// two cannot disagree. Empty for anything not faulted.
+		"faultLine": func(o domain.Order) template.HTML {
+			if o.Status != protocol.StatusFaulted {
+				return template.HTML("")
+			}
+			var ref protocol.TermRef
+			if o.FaultRef != nil {
+				ref = *o.FaultRef
+			}
+			var since, deadline time.Time
+			if o.FaultSince != nil {
+				since = *o.FaultSince
+			}
+			if o.FaultDeadline != nil {
+				deadline = *o.FaultDeadline
+			}
+			line := protocol.BuildFaultLine(ref, since, deadline, time.Now().UTC(),
+				time.Duration(o.FaultNoticeAfterS)*time.Second)
+			// Safe: FaultLine.HTML escapes every interpolated value.
+			return template.HTML(line.HTML())
 		},
 	}
 }

@@ -71,6 +71,32 @@ type Order struct {
 	// change; display keeps rendering the sentence today. Empty on non-queued
 	// orders. Cause never leaves Core.
 	QueueCode string `json:"queue_code"`
+	// FaultSince / FaultDeadline / FaultNoticeAfterS are the fault clock,
+	// mirrored from Core via the OrderUpdate push and the boot snapshot. They
+	// are what lets the board say "Replanning · 14 s" or "Fault · cannot replan
+	// (60011) · 3m 12s · gives up in 41m" instead of showing a badge and
+	// nothing.
+	//
+	// Non-nil only while the status is faulted, cleared on arrival for any
+	// other status by messaging/edge_handler.HandleOrderUpdate — derived from
+	// the status, NOT from a pushed empty value, for the reason written on
+	// QueueReason above. That invariant was claimed and unheld once already;
+	// queue_reason_clear_test.go exists because of it, and the fault fields are
+	// covered by the same kind of test.
+	//
+	// FaultNoticeAfterS is Core's replan-vs-fault threshold in seconds as it
+	// stood when the fault was pushed, so a plant retuning the number does not
+	// silently re-classify in-flight rows. 0 means an older Core sent none, and
+	// the board then renders Core's sentence without re-deciding the wording.
+	FaultSince        *time.Time `json:"fault_since,omitempty"`
+	FaultDeadline     *time.Time `json:"fault_deadline,omitempty"`
+	FaultNoticeAfterS int        `json:"fault_notice_after_s,omitempty"`
+	// FaultRef is the fleet's reason, mirrored from Core. Nil when the fleet
+	// gave none, which is the common case. The REFERENCE is stored rather than
+	// the rendered sentence so the board can re-render as its clock crosses the
+	// threshold, using protocol.FormatFaultSentence — the same function Core
+	// renders with.
+	FaultRef *protocol.TermRef `json:"fault_ref,omitempty"`
 	// AuthoredBy says who decided this order should exist: "edge" (this Edge
 	// created it and sent it up) or "core" (Core created it and pushed the row
 	// down as a projection). Every row that predates the column is "edge", which

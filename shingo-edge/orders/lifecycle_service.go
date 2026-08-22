@@ -1,6 +1,7 @@
 package orders
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -242,12 +243,49 @@ func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail str
 	return s.Transition(order.ID, StatusDelivered, statusDetail)
 }
 
+// encodeSnapshotFaultRef renders the fleet's reason as the JSON the Edge column
+// stores, or "" when Core sent none.
+func encodeSnapshotFaultRef(ref *protocol.TermRef) string {
+	if ref == nil || ref.Empty() {
+		return ""
+	}
+	b, err := json.Marshal(ref)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatusSnapshot) error {
 	order, err := s.db.GetOrderByUUID(snapshot.OrderUUID)
 	if err != nil {
 		return err
 	}
 	snapStatus := protocol.Status(snapshot.Status)
+
+	// The fault clock is written BEFORE the unchanged-status early return, and
+	// that placement is the point. The case this reconcile exists for is an Edge
+	// restarting beside an order that is ALREADY faulted — its own row says
+	// faulted too, so the status matches and the return below fires. Writing
+	// after it would restore the clock in exactly the situation it is never
+	// needed and skip it in the one it is.
+	//
+	// Cleared on any other status, derived from the status, for the reason
+	// documented in messaging/edge_handler.go.
+	if snapshot.Found {
+		if snapStatus == protocol.StatusFaulted {
+			if ferr := s.db.SetOrderFaultClock(order.UUID,
+				snapshot.FaultSince, snapshot.FaultDeadline,
+				snapshot.FaultNoticeAfterS, encodeSnapshotFaultRef(snapshot.FaultRef)); ferr != nil {
+				log.Printf("lifecycle: snapshot set fault clock for %s: %v", order.UUID, ferr)
+			}
+		} else if order.FaultSince != nil {
+			if ferr := s.db.SetOrderFaultClock(order.UUID, nil, nil, 0, ""); ferr != nil {
+				log.Printf("lifecycle: snapshot clear fault clock for %s: %v", order.UUID, ferr)
+			}
+		}
+	}
+
 	if !snapshot.Found || snapStatus == "" || snapStatus == order.Status {
 		return nil
 	}

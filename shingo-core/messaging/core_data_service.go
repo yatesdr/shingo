@@ -711,6 +711,9 @@ func (s *CoreDataService) attachFaultWindow(snap *protocol.OrderStatusSnapshot, 
 	deadline := since.Add(s.faultGrace)
 	snap.FaultSince = &since
 	snap.FaultDeadline = &deadline
+	if h.Ref != nil && !h.Ref.Empty() {
+		snap.FaultRef = h.Ref
+	}
 	snap.FaultNotice = clock.Now().UTC().Sub(since) >= s.faultNoticeAfter
 }
 
