@@ -28,6 +28,33 @@ type binRow struct {
 	TransitPayload string
 	TransitSource  string
 	TransitDest    string
+	// Stranded is a _TRANSIT bin nobody is holding — the anomaly. It used to
+	// lose its cargo and route decoration at exactly this point, because the
+	// decoration was gated on the claim the terminalisation had just cleared:
+	// the bin an operator most needs to identify was the one the page said
+	// least about.
+	Stranded bool
+	// CarriedBy is the robot whose deck this bin is riding (_ROBOT:<vehicle>).
+	CarriedBy string
+}
+
+// carrierNodePrefix names the per-robot synthetic nodes a bin rides on.
+const carrierNodePrefix = "_ROBOT:"
+
+// transitOrderFor finds the order behind an in-flight bin: its live claim if it
+// has one, otherwise the most recent order that carried it.
+func (h *Handlers) transitOrderFor(b *domain.Bin) *domain.Order {
+	svc := h.engine.OrderService()
+	if b.ClaimedBy != nil {
+		if o, err := svc.GetOrder(*b.ClaimedBy); err == nil {
+			return o
+		}
+		return nil
+	}
+	if ords, err := svc.ListByBin(b.ID, 1); err == nil && len(ords) > 0 {
+		return ords[0]
+	}
+	return nil
 }
 
 func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
@@ -66,9 +93,19 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 	rows := make([]binRow, len(bins))
 	for i, b := range bins {
 		row := binRow{Bin: b}
-		if b.NodeName == domain.TransitNodeName && b.ClaimedBy != nil {
+		switch {
+		case b.NodeName == domain.TransitNodeName:
 			row.InTransit = true
-			if o, err := h.engine.OrderService().GetOrder(*b.ClaimedBy); err == nil && o != nil {
+			row.Stranded = b.ClaimedBy == nil
+		case strings.HasPrefix(b.NodeName, carrierNodePrefix):
+			row.InTransit = true
+			row.CarriedBy = strings.TrimPrefix(b.NodeName, carrierNodePrefix)
+		}
+		if row.InTransit {
+			// The claim first, then the bin's last order. A stranded bin has no
+			// claim left — that release is what stranded it — so its history is
+			// the only way back to what it was carrying and where it was going.
+			if o := h.transitOrderFor(b); o != nil {
 				row.TransitPayload = o.PayloadCode
 				row.TransitSource = o.SourceNode
 				row.TransitDest = o.DeliveryNode

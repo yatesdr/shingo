@@ -146,7 +146,18 @@ func (e *Engine) parkOnCarrier(binID int64, robotID string, robot fleet.RobotSta
 		e.strandedAnomaly(binID, robotID, robot, true, "bin still on the robot's deck")
 		return
 	}
-	if err := e.db.MoveBinClearingStaging(binID, node.ID, true); err != nil {
+	// Through BinService.Move, not the store: the service owns the occupancy
+	// fail-close and the orphaned-order guard, and the forbidigo rule exists
+	// because bypassing it is exactly the mistake this code would make. A
+	// synthetic destination skips the occupancy check by design — many bins may
+	// not ride one deck, but a carrier node has no slot to contend for — and
+	// the orphan guard passes because the order is already terminal.
+	bin, err := e.BinService().GetBin(binID)
+	if err != nil || bin == nil {
+		e.logFn("engine: stranded transit: read bin %d: %v", binID, err)
+		return
+	}
+	if _, err := e.BinService().Move(bin, node.ID); err != nil {
 		e.logFn("engine: stranded transit: park bin %d on %s: %v", binID, node.Name, err)
 		e.strandedAnomaly(binID, robotID, robot, true, "bin still on the robot's deck")
 		return
@@ -219,11 +230,64 @@ func (e *Engine) sweepCarriedBins() {
 	}
 }
 
+// sweepStrandedBins is the reconciliation half: ask the world, not an event.
+//
+// Two populations. Every bin at _TRANSIT with no claim — the anomaly by
+// definition — gets the A/B/C decision re-run against its last claiming order's
+// robot. Every bin already riding a deck gets its jack re-checked, which is the
+// same work the 2-second poll does and is repeated here so a Core that restarted
+// between the unload and the poll still places the bin.
+//
+// IT ALSO CLEARS THE BACKLOG. Every bin stranded before this shipped is in the
+// first population, so the first sweep after deploy is the one the floor will
+// notice: bins that have been "lost" for days get placed or get a map pin.
+func (e *Engine) sweepStrandedBins() {
+	e.sweepCarriedBins()
+
+	stranded, err := e.BinService().ListAnomalies()
+	if err != nil {
+		e.logFn("engine: stranded sweep: list anomalies: %v", err)
+		return
+	}
+	for _, bin := range stranded {
+		if bin.NodeName != transitNodeName {
+			// ListAnomalies is "unclaimed at a synthetic node", which now also
+			// matches the carrier nodes. Those are handled above and are not
+			// anomalies.
+			continue
+		}
+		orderID, robotID, ok := e.lastClaimingRobot(bin.ID)
+		if !ok {
+			// No order ever claimed it, or the order is gone. Stamp it so the
+			// operator at least sees it, with the honest reason.
+			e.strandedAnomaly(bin.ID, "", fleet.RobotStatus{}, false, "no claiming order on record")
+			continue
+		}
+		robot, haveRobot := e.GetCachedRobotStatus(robotID)
+		e.dbg("engine: stranded sweep: bin %d from order %d robot %q", bin.ID, orderID, robotID)
+		e.placeStrandedBin(bin.ID, robotID, robot, haveRobot)
+	}
+}
+
+// lastClaimingRobot finds the order that most recently owned this bin, and the
+// robot it was on.
+//
+// orders.bin_id survives terminalisation (bins.claimed_by and the order_bins
+// junction do not), so the order's own column is the only durable link back from
+// a stranded bin to the robot that was carrying it.
+func (e *Engine) lastClaimingRobot(binID int64) (orderID int64, robotID string, ok bool) {
+	ords, err := e.db.ListOrdersByBin(binID, 1)
+	if err != nil || len(ords) == 0 {
+		return 0, "", false
+	}
+	return ords[0].ID, ords[0].RobotID, true
+}
+
 // strandedAnomaly is branch C: leave the bin at _TRANSIT, stamp it, and record
 // where the robot last was so the operator gets a map pin instead of a search.
 func (e *Engine) strandedAnomaly(binID int64, robotID string, robot fleet.RobotStatus, haveRobot bool, why string) {
 	note := strandedNote(robotID, robot, haveRobot, why)
-	if err := e.db.MarkBinAnomalyWithNote(binID, note); err != nil {
+	if err := e.BinService().MarkAnomalyWithPosition(binID, note); err != nil {
 		e.logFn("engine: stranded transit: mark bin %d anomalous: %v", binID, err)
 		return
 	}

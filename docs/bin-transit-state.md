@@ -19,6 +19,24 @@ already filters `claimed_by IS NULL AND is_synthetic = false`. A bin in
 transit therefore can't be re-claimed by another order, without any
 predicate changes in those queries.
 
+### Carrier Node
+
+A per-robot synthetic node named `_ROBOT:<vehicle>` (created lazily on first
+use). A bin sits here when its order terminated while the robot was still
+holding it on the deck — the bin is not lost, it is on that robot.
+
+Synthetic for the same reason `_TRANSIT` is: the finders already exclude
+synthetic nodes, so a bin riding a deck cannot be re-claimed or sourced from,
+and it is never offered as a destination. It is deliberately NOT `_TRANSIT`,
+because `_TRANSIT` plus no claim is the anomaly definition below, and a bin
+whose location is known exactly is not an anomaly.
+
+A bin leaves a carrier node when that robot's jack reports unloaded: the robot
+poll places it at whatever station the robot is standing at, or files it as an
+anomaly if that point is not a Core node. There is no jack-unload event to
+subscribe to — the jack is sampled state — so this is a watch on the poll Core
+already makes every two seconds.
+
 ### Anomaly
 
 A bin where `node_id = _TRANSIT AND claimed_by IS NULL`. This state is
@@ -32,6 +50,33 @@ binary (no TTL) and emerges naturally:
 
 `bins.anomaly_at` is an optional sort key for the operator's anomaly
 view; the binary signal is what fires alerts.
+
+`bins.anomaly_note` (v96) is where the robot carrying the bin last was —
+coordinates, station names, and what its deck reported. Most of recovering a
+stranded bin is the FINDING, and this turns the search into a map pin. Free
+text, for a human; nothing queries it.
+
+### Drop-point inference
+
+When an order terminates with its bin still at `_TRANSIT`, Core asks the robot
+where it went, rather than waiting for an operator to find it. Three outcomes:
+
+| Robot's deck | Station resolves? | Outcome |
+|---|---|---|
+| empty (`jack_state` 3) | yes, and the node is free | bin placed there, `system:inferred` |
+| loaded (`jack_state` 1) | — | bin moves to `_ROBOT:<vehicle>` |
+| anything else | no, or the node is occupied | anomaly, with the position in `anomaly_note` |
+
+A deck MID-TRAVEL (`jack_state` 0 or 2) is not an answer: a bin halfway down is
+neither on the robot nor at the station, so the inference declines rather than
+making a placement an operator would have to undo. Placement goes through the
+same `RecoverTransitAnomaly` the operator's own button calls, so the empty-node
+guard is never bypassed.
+
+The terminal-event hook is the fast path; `ReconciliationService.Loop` re-runs
+the whole decision over every stranded bin on its sweep, which is the guarantee
+— and which also clears whatever was already stranded before any of this
+existed.
 
 ### Reservation layer
 

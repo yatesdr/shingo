@@ -762,13 +762,32 @@ func (s *BinService) MoveToTransit(binID int64) error {
 	return nil
 }
 
-// MarkAnomaly stamps `bins.anomaly_at = NOW()` for the given bin. Called
-// by the failure-completion path when an order terminates while one of
-// its bins is still at `_TRANSIT`. Idempotent — repeated calls update
-// the timestamp; that's fine because the anomaly state is "still
-// unresolved" rather than "happened at exactly this moment."
+// MarkAnomaly stamps `bins.anomaly_at = NOW()` for the given bin. Idempotent —
+// repeated calls update the timestamp; that's fine because the anomaly state is
+// "still unresolved" rather than "happened at exactly this moment."
+//
+// ITS COMMENT USED TO SAY the failure-completion path called it, and no such
+// call existed. The BEHAVIOUR was real — TerminalizeOrderWithReason stamps
+// anomaly_at inline in SQL for a still-claimed _TRANSIT bin — so the comment
+// described a real effect through a call site that was not there, which reads
+// as live code and is worse than a stale note. Prefer MarkAnomalyWithPosition
+// below: an anomaly with no position is the "lost bin" an operator then has to
+// go and find.
 func (s *BinService) MarkAnomaly(binID int64) error {
 	if err := s.db.MarkBinAnomaly(binID); err != nil {
+		return fmt.Errorf("mark bin %d anomaly: %w", binID, err)
+	}
+	return nil
+}
+
+// MarkAnomalyWithPosition stamps the anomaly and records where the robot
+// carrying the bin last was, so the operator gets a map pin instead of a search.
+//
+// This is the stranded-transit inference's branch C. The note is free text for a
+// human — coordinates, station names, what the deck reported — and nothing
+// queries it.
+func (s *BinService) MarkAnomalyWithPosition(binID int64, note string) error {
+	if err := s.db.MarkBinAnomalyWithNote(binID, note); err != nil {
 		return fmt.Errorf("mark bin %d anomaly: %w", binID, err)
 	}
 	return nil

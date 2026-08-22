@@ -221,6 +221,7 @@ func New(c Config) *Engine {
 	// when newReconciliationService runs — the same ordering every other
 	// late-bound callback on that service works around.
 	e.reconciliation.burialTally = e.binService.BurialShadowTally
+	e.reconciliation.strandedBinSweep = e.sweepStrandedBins
 	e.orderService = service.NewOrderService(e.db, e.fleet)
 	e.nodeService = service.NewNodeService(e.db)
 

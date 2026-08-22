@@ -36,14 +36,20 @@ func seedStranded(t *testing.T, db *store.DB, robotID string) (*bins.Bin, *order
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "stranded-" + robotID, NodeID: &transitID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
 
+	// TERMINAL, because that is the state the inference actually runs in: the
+	// hook fires from the terminal event handler, after TerminalizeOrderWithReason
+	// has flipped the status and released the claim. A fixture that left the
+	// order live would be testing a world that cannot happen — and would trip
+	// BinService.Move's orphaned-order guard, which is right to refuse it.
 	ord := &orders.Order{
 		EdgeUUID: "stranded-" + robotID, StationID: "edge.test", OrderType: "retrieve",
-		Status: protocol.StatusInTransit, Quantity: 1, DeliveryNode: "DELV.1",
+		Status: protocol.StatusCancelled, Quantity: 1, DeliveryNode: "DELV.1",
 		RobotID: robotID, BinID: &bin.ID,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(ord), "create order")
-	_, err := db.DB.Exec(`UPDATE orders SET robot_id=$1, bin_id=$2 WHERE id=$3`, robotID, bin.ID, ord.ID)
-	testutil.MustNoErr(t, err, "set robot and bin on order")
+	_, err := db.DB.Exec(`UPDATE orders SET robot_id=$1, bin_id=$2, status='cancelled' WHERE id=$3`,
+		robotID, bin.ID, ord.ID)
+	testutil.MustNoErr(t, err, "set robot, bin and terminal status on order")
 	return bin, ord
 }
 
@@ -292,5 +298,88 @@ func TestStrandedTransit_CarriedBinUnloadedNowhereKnownBecomesAnAnomaly(t *testi
 		if !strings.Contains(b.AnomalyNote, want) {
 			t.Errorf("anomaly note %q is missing %q — the operator needs the pin", b.AnomalyNote, want)
 		}
+	}
+}
+
+// ── The sweep: the guarantee, not the fast path ─────────────────────────────
+
+// Two bins already stranded before any of this ran — the backlog the first
+// sweep after deploy clears. One resolvable, one not; they must end in
+// different places, and neither may be left as a bare "lost".
+func TestStrandedSweep_ClearsTheBacklog(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newUnstartedEngine(t, db, simulator.New())
+
+	dest := &nodes.Node{Name: "DROP-SWEEP", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(dest), "create dest node")
+
+	// Both bins are in the state terminalisation leaves behind: at _TRANSIT
+	// with the claim already released. The events that would have triggered the
+	// fast path are long gone.
+	resolvable, _ := seedStranded(t, db, "AMR-S1")
+	lost, _ := seedStranded(t, db, "AMR-S2")
+
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-S1", JackState: 3, LiftHeight: -0.0001,
+		CurrentStation: "DROP-SWEEP", LastStation: "DROP-SWEEP",
+	})
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-S2", JackState: 3, LiftHeight: -0.0001,
+		CurrentStation: "NOWHERE-WE-KNOW", LastStation: "NOWHERE-WE-KNOW", X: 71.25, Y: 4.5,
+	})
+
+	eng.sweepStrandedBins()
+
+	if got := binNodeName(t, db, resolvable.ID); got != "DROP-SWEEP" {
+		t.Errorf("resolvable bin is at %q, want DROP-SWEEP — the sweep must place what it can", got)
+	}
+	if got := binNodeName(t, db, lost.ID); got != "_TRANSIT" {
+		t.Errorf("unresolvable bin moved to %q — it must stay put", got)
+	}
+	b, err := db.GetBin(lost.ID)
+	testutil.MustNoErr(t, err, "get lost bin")
+	if b.AnomalyAt == nil {
+		t.Error("the unresolvable bin must be stamped anomalous")
+	}
+	if !strings.Contains(b.AnomalyNote, "x=71.25") {
+		t.Errorf("the unresolvable bin must carry the robot's position: %q", b.AnomalyNote)
+	}
+	// And the placement is auditable as a machine's.
+	var actor string
+	testutil.MustNoErr(t, db.DB.QueryRow(
+		`SELECT actor FROM recovery_actions WHERE target_type='bin' AND target_id=$1
+		 ORDER BY id DESC LIMIT 1`, resolvable.ID).Scan(&actor), "read recovery action")
+	if actor != "system:inferred" {
+		t.Errorf("sweep placement actor = %q, want system:inferred", actor)
+	}
+}
+
+// A bin on a carrier node is not an anomaly and the sweep must not treat it as
+// one — ListAnomalies matches "unclaimed at a synthetic node", which the carrier
+// nodes now also satisfy.
+func TestStrandedSweep_DoesNotTreatACarriedBinAsLost(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newUnstartedEngine(t, db, simulator.New())
+
+	bin, ord := seedStranded(t, db, "AMR-S3")
+	cacheRobot(eng, fleet.RobotStatus{
+		VehicleID: "AMR-S3", JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
+	})
+	eng.inferStrandedTransitBin(ord.ID)
+	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-S3" {
+		t.Fatalf("setup: bin is at %q", got)
+	}
+
+	eng.sweepStrandedBins()
+
+	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-S3" {
+		t.Errorf("the sweep moved a carried bin to %q", got)
+	}
+	b, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "get bin")
+	if b.AnomalyAt != nil {
+		t.Error("a bin riding a known robot must not be stamped anomalous by the sweep")
 	}
 }

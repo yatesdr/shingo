@@ -51,6 +51,17 @@ type ReconciliationService struct {
 	// loop would be a second thing to reason about for a measurement that is
 	// meant to be deleted once it has answered.
 	burialTally func() service.BurialTally
+	// strandedBinSweep re-runs the A/B/C drop-point inference over every bin
+	// left at _TRANSIT with no claim, and re-checks every bin riding a robot's
+	// deck. Late-bound in engine.New like the callbacks above.
+	//
+	// THIS IS THE GUARANTEE; the terminal-event hook is the fast path
+	// (AGENTS.md). A hook fires once and can be missed — a crash between the
+	// terminalize and the event, an Edge-driven cancel Core never saw as an
+	// event, a bin stranded by a code path nobody has thought of. This sweep
+	// asks the question of the world instead of of an event, so it also clears
+	// whatever was already stranded before any of this shipped.
+	strandedBinSweep func()
 	// lastFolderShadow is the previous folder-recognition reading, so the sweep
 	// only speaks when the number has MOVED. See logFolderShadow.
 	lastFolderShadow string
@@ -137,6 +148,9 @@ func (s *ReconciliationService) Loop(stopCh <-chan struct{}, interval, autoConfi
 				s.logFn("engine: reap orphaned reservations error: %v", err)
 			} else if n > 0 {
 				s.logFn("engine: reaped %d orphaned reservations from terminal/gone orders", n)
+			}
+			if s.strandedBinSweep != nil {
+				s.strandedBinSweep()
 			}
 			s.logBurialShadow()
 			s.logFolderShadow()

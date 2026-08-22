@@ -132,6 +132,11 @@
         <td data-sort-value="{{if .InTransit}}{{.TransitSource}} → {{.TransitDest}}{{else}}{{.NodeName}}{{end}}">
           {{if .InTransit}}<span title="In transit">{{if .TransitSource}}{{.TransitSource}} &rarr; {{.TransitDest}}{{else}}in transit{{end}}</span>
           {{else if .NodeName}}{{.NodeName}}{{else}}<span class="text-muted">-</span>{{end}}
+          {{/* Where it actually is. A bin on a robot names the robot; a stranded
+               one carries the position inferred from that robot's last telemetry,
+               so the operator walks to a pin instead of searching. */}}
+          {{if .CarriedBy}}<div class="text-muted-xs">on {{.CarriedBy}}</div>{{end}}
+          {{if .Stranded}}<div class="text-muted-xs">stranded{{if .AnomalyNote}} &mdash; {{.AnomalyNote}}{{end}}</div>{{end}}
         </td>
         <td data-sort-value="{{if .PayloadCode}}{{.PayloadCode}}{{else}}{{.TransitPayload}}{{end}}">
           {{if .PayloadCode}}<code>{{.PayloadCode}}</code>
