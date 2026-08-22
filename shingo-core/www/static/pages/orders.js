@@ -189,6 +189,38 @@ function durationText(secs) {
     : Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
 }
 
+// timelineExtra adds what a fault row knows and the timeline never read: the
+// fleet's reason, and how long the order stayed in this status.
+//
+// The history JSON has carried code/actor/ref since migration 55; only detail
+// was ever rendered. Dwell is shown on faulted rows because that is the number
+// the whole replan-vs-fault distinction rests on. The last row has no next row,
+// so its dwell is live (data-since) rather than fixed.
+function timelineExtra(ev, next) {
+  var parts = '';
+  var ref = ev.ref || {};
+  if (ev.status === 'faulted' || ev.code === 'grace_timeout') {
+    if (ref.vendor_desc || ref.vendor_code) {
+      var reason = ref.vendor_desc
+        ? String(ref.vendor_desc).toLowerCase() + (ref.vendor_code ? ' (' + ref.vendor_code + ')' : '')
+        : 'fleet code ' + ref.vendor_code;
+      parts += h`<span class="tl-detail">${'· ' + reason}</span>`;
+    }
+  }
+  if (ev.status !== 'faulted') return parts;
+  if (next && next.created_at) {
+    var secs = Math.round((new Date(next.created_at) - new Date(ev.created_at)) / 1000);
+    if (isFinite(secs) && secs >= 0) {
+      parts += h`<span class="tl-detail tnum">${'· ' + durationText(secs)}</span>`;
+    }
+    return parts;
+  }
+  // Still faulted: the dwell is running.
+  parts += '<span class="tl-detail tnum">· <span class="tnum" data-since="' +
+    escapeHtml(ev.created_at) + '"></span></span>';
+  return parts;
+}
+
 function elapsedLabel(o) {
   if (!o.created_at) return '';
   var start = new Date(o.created_at).getTime();
@@ -230,6 +262,9 @@ function buildManifest(data, opts) {
   // on exactly the orders someone opens that page to understand.
   if (o.error_detail) out += '<div class="manifest-error">' + escapeHtml(o.error_detail) + '</div>';
   if (o.queue_reason) out += '<div class="manifest-reason">' + escapeHtml(o.queue_reason) + '</div>';
+  // .manifest-reason, not .manifest-error: a faulted order is still live, and
+  // the error slot is red and terminal. Server-rendered and pre-escaped.
+  if (data.fault_line) out += '<div class="manifest-reason">' + data.fault_line + '</div>';
 
   // Identity strip: small, muted, one wrapping line. Zones ride along with
   // the nodes they belong to instead of taking their own cells.
@@ -398,11 +433,13 @@ function buildManifest(data, opts) {
       }
     }
     out += h`<ul class="timeline-list">${{__html:true, value: lead}}${
-      data.history.map(function(ev) {
+      data.history.map(function(ev, i) {
+        var extra = timelineExtra(ev, data.history[i + 1]);
         return h`<li>
           <span class="tl-time">${{__html:true, value: formatTime(ev.created_at)}}</span>
           <span class="badge badge-xs badge-${ev.status}">${ev.status}</span>
           ${ev.detail ? {__html:true, value: h`<span class="tl-detail">${ev.detail}</span>`} : ''}
+          ${extra ? {__html:true, value: extra} : ''}
         </li>`;
       })
     }</ul>`;
@@ -453,7 +490,10 @@ function buildManifest(data, opts) {
 }
 
 function renderOrderModal(data) {
-  document.getElementById('order-modal-content').innerHTML = buildManifest(data);
+  var host = document.getElementById('order-modal-content');
+  host.innerHTML = buildManifest(data);
+  // The hero sentence and the timeline's open fault row carry live spans.
+  installLiveDurations(host);
 }
 
 // Deep link: /orders?open=N opens that order's modal on load. There is no

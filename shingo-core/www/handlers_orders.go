@@ -291,6 +291,11 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		// station-owned wait belongs to the station's board, and the handler
 		// refuses it too.
 		CanHardRelease bool `json:"can_hard_release"`
+		// FaultLine is the rendered fault sentence with its live-clock spans,
+		// for a faulted order. Server-rendered for the same reason CanCancel is
+		// computed here: the threshold is Core's, and the modal must say what
+		// the board says. Every value inside is escaped by FaultLine.HTML.
+		FaultLine string `json:"fault_line,omitempty"`
 	}
 
 	result := enrichedOrder{
@@ -300,6 +305,12 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result.History, _ = svc.ListOrderHistory(id)
+
+	if order.Status == protocol.StatusFaulted {
+		if lines, _ := h.faultLinesFor([]*domain.Order{order}); lines != nil {
+			result.FaultLine = string(lines[order.ID])
+		}
+	}
 
 	if order.BinID != nil {
 		result.Bin, _ = h.engine.BinService().GetBin(*order.BinID)
