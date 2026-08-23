@@ -122,7 +122,11 @@ func retrieveCreatorSites(t *testing.T) []string {
 // scope comment on withLoaderBudget in the same commit.
 func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	t.Parallel()
-	const want = 9
+	// 10 since the press-index partial-empty prime (operator_produce.go) was
+	// added. Censused: it targets a press paired position, not a loader window,
+	// so it does NOT belong behind withLoaderBudget — it has its own per-cell
+	// lock at its own grain. See that function's SCOPE comment.
+	const want = 10
 	sites := retrieveCreatorSites(t)
 	if len(sites) != want {
 		t.Errorf("retrieve-order creator sites = %d, expected %d.\nA creator was added or removed. Re-run the census and update this count WITH the seam's scope comment.\nSites:\n  %s",

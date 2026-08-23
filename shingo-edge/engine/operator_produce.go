@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"shingo/protocol"
@@ -51,9 +52,40 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 		return nil, err
 	}
 
-	plan, err := BuildProducePlan(node, runtime, claim, time.Now())
+	// The partial-empty prime reads two things and then writes: what is
+	// physically on the cell's positions, and what empties are already on
+	// their way to them. Both reads and the create that follows sit inside one
+	// per-cell lock so a double-tap cannot fire two empties at one bare
+	// position. Cheap: these are operator clicks and autoreorder ticks, not a
+	// hot path.
+	mu := e.primeNodeLock(claim)
+	mu.Lock()
+	defer mu.Unlock()
+
+	occupancy := e.occupancyKnownNodesOnly(e.claimOccupancy(claim), node.Name)
+	primedPositions, err := e.pairedPositionsAlreadyPrimed(node, claim)
 	if err != nil {
 		return nil, err
+	}
+
+	plan, err := BuildProducePlan(node, runtime, claim, time.Now(), occupancy, primedPositions)
+	if err != nil {
+		return nil, err
+	}
+	if plan.SuppressSwap {
+		if len(plan.PrimePairedPositions) == 0 {
+			// HOLD: every bare position already has an empty on the way. Refuse
+			// BEFORE the episode opens — an episode with expected_orders 0 is
+			// noise, and the operator needs a sentence, not a silent success.
+			return nil, fmt.Errorf("node %s: an empty bin is already inbound to the index position — "+
+				"the swap will run once it lands", node.Name)
+		}
+		dests := make([]string, 0, len(plan.PrimePairedPositions))
+		for _, p := range plan.PrimePairedPositions {
+			dests = append(dests, p.Dest)
+		}
+		log.Printf("[produce-swap] node %s: head occupied, paired %v bare — priming from %s, no swap this round",
+			node.Name, dests, claim.InboundSource)
 	}
 
 	// Bug 3 guard: refuse to start a second swap on top of an in-flight one.
@@ -69,6 +101,15 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	// The evacuate-direction episode, opened after the plan exists and before
 	// any order does — same ordering and same reasoning as the consume side.
 	//
+	// A primes-only round opens the episode HERE TOO, deliberately. A prime is
+	// a supply move and this is nominally the evacuate entry point, but the
+	// cell episode is direction-agnostic by design (see openEpisodeForProduce
+	// below): this path and RequestEmptyBin already join the ONE episode for
+	// this cell's circle rather than opening a row each. Splitting a supply
+	// episode out for the primes-only round would re-create exactly the
+	// two-rows-for-one-cell shape that change removed. expected_orders comes
+	// from ProducePlan.OrderCount, which counts the primes.
+	//
 	// A produce node's level runs the OTHER WAY: it fills toward capacity
 	// rather than draining toward a reorder point, so "needs attention" is a
 	// HIGH reading. The episode still means one thing — this process needs
@@ -77,6 +118,105 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	origin := e.openEpisodeForProduce(node, runtime, claim, plan, trigger)
 
 	return e.applyProducePlan(node, runtime, claim, plan, origin)
+}
+
+// primeNodeLock returns the per-cell prime mutex, creating it on first use.
+// Keyed by the claim's CORE node name so every process_node row that shares
+// one physical cell serialises against the same lock — the in-flight count it
+// protects is itself scoped by delivery node, and a shared core node carries
+// many process_node rows for one slot.
+func (e *Engine) primeNodeLock(claim *processes.NodeClaim) *sync.Mutex {
+	key := ""
+	if claim != nil {
+		key = claim.CoreNodeName
+	}
+	m, _ := e.primeResv.LoadOrStore(key, &sync.Mutex{})
+	return m.(*sync.Mutex)
+}
+
+// pairedPositionsAlreadyPrimed reports which of the claim's paired positions
+// already have a non-terminal empty inbound, so a second request while the
+// first prime is still travelling adds nothing. Reuses the same in-flight
+// count RequestEmptyBin uses for its one-slot anti-spam guard, scoped by
+// delivery node for the same reason.
+//
+// FAILS CLOSED. A read error means we do not know what is inbound, and
+// priming on that is how a position collects a carrier it has no room for; a
+// refused request is a click the operator can repeat.
+func (e *Engine) pairedPositionsAlreadyPrimed(node *processes.Node, claim *processes.NodeClaim) (map[string]bool, error) {
+	if claim == nil || claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		return nil, nil
+	}
+	primed := map[string]bool{}
+	for _, pos := range []string{claim.PairedCoreNode, claim.SecondPairedCoreNode} {
+		if pos == "" {
+			continue
+		}
+		n, err := e.countActiveOrdersAtNode(pos, func(o orders.Order) bool { return o.RetrieveEmpty })
+		if err != nil {
+			return nil, fmt.Errorf("node %s: check inbound empties at paired position %s: %w", node.Name, pos, err)
+		}
+		if n > 0 {
+			primed[pos] = true
+		}
+	}
+	return primed, nil
+}
+
+// occupancyKnownNodesOnly re-reads an "empty" telemetry answer as occupied
+// when the node it names is not one Core knows.
+//
+// Core reports an unknown node as a PRESENT entry with Occupied=false
+// (shingo-core/www/handlers_telemetry.go) — "there is no bin at a place that
+// does not exist", which is true and is the wrong sentence to prime on. A
+// typo'd or scenesync-reaped PairedCoreNode would read bare forever and take a
+// carrier every cycle. The missing-entry default already covers a node Core
+// declined to answer about; this covers the node Core answered about and does
+// not have.
+//
+// AND IT MUST KNOW WHETHER IT HAD THE INPUT TO CHECK. An EMPTY node set is not
+// evidence that a name is wrong — a fresh Edge, a restart or a Kafka gap all
+// present that way, and Core answers node-bins over a different transport than
+// the node-list sync. So an empty set SKIPS the check and says so, rather than
+// suppressing every prime during the startup window and handing the cell back
+// the un-sourceable swap this whole path exists to prevent. Same reading as
+// coreNodeNameIsUnknown in www/handlers_process_nodes.go.
+func (e *Engine) occupancyKnownNodesOnly(occ map[string]bool, nodeName string) map[string]bool {
+	known := e.CoreNodes()
+	if len(known) == 0 {
+		log.Printf("[produce-swap] node %s: core node list is EMPTY, so paired positions could not be "+
+			"checked against Core's plant — reading telemetry as-is. This is not a pass: Core has "+
+			"not been heard from.", nodeName)
+		return occ
+	}
+	out := make(map[string]bool, len(occ))
+	for name, occupied := range occ {
+		out[name] = occupied
+		if occupied || coreNodeKnown(known, name) {
+			continue
+		}
+		log.Printf("[produce-swap] node %s: position %q is not a node Core knows (%d known) — reading it "+
+			"as occupied, no prime. Check the spelling against the node picker, or sync nodes if Core "+
+			"has just been reconfigured.", nodeName, name, len(known))
+		out[name] = true
+	}
+	return out
+}
+
+// coreNodeKnown resolves a name against Core's synced node set, falling back
+// to the bare child name. Core sends group children as "Group.CHILD";
+// SetCoreNodes normally trims that on ingestion, but keeps the qualified form
+// when two children collide on one bare name.
+func coreNodeKnown(known map[string]protocol.NodeInfo, name string) bool {
+	if _, ok := known[name]; ok {
+		return true
+	}
+	for full := range known {
+		if bareNodeName(full) == name {
+			return true
+		}
+	}
+	return false
 }
 
 // openEpisodeForProduce opens or joins the evacuate-direction episode.
@@ -124,6 +264,34 @@ func (e *Engine) openEpisodeForProduce(
 // glue around the shared SwapDispatch.
 func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, plan *ProducePlan, origin ordermgr.Origin) (*NodeOrderResult, error) {
 	nodeID := node.ID
+
+	// Primes-only round: fill the bare paired position(s) and mint nothing
+	// else. No manifest (there is no departing bin), no dispatch, and NO
+	// runtime order slots — those belong to the head node's serial-order
+	// machinery for swap cycles, and a prime is not a swap. Same treatment the
+	// consume side's downgrade primes get.
+	//
+	// A retrieve, not a move: a move is a full-intent local relocation of the
+	// bin AT a concrete source node, so it would hunt a FULL bin in what is an
+	// empties pool. RetrieveEmpty is the intent that matches.
+	if plan.SuppressSwap {
+		// The merged signal, not a hard-coded true: one auto-confirm policy for
+		// both directions of this cell.
+		autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
+		var primes []*orders.Order
+		for _, p := range plan.PrimePairedPositions {
+			// No re-read: CreateRetrieveOrder already returns the stored row and
+			// nothing below rewrites it.
+			po, err := e.orderMgr.CreateRetrieveOrder(&nodeID, true, 1,
+				p.Dest, p.Source, "", "standard", claim.PayloadCode,
+				autoConfirm, false, origin)
+			if err != nil {
+				return nil, fmt.Errorf("prime %s: %w", p.Dest, err)
+			}
+			primes = append(primes, po)
+		}
+		return &NodeOrderResult{CycleMode: protocol.SwapModeSimple, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
+	}
 
 	// Fix D: two-robot modes DEFER the paperwork (manifest ingest + count
 	// reset) to the release tap — the bin keeps filling until the robots are

@@ -150,6 +150,15 @@ type Engine struct {
 	// shingo-library/archive/bin-loader-multiwindow-reviews-2026-06-12/FINAL-ADJUDICATION.md.
 	loaderResv sync.Map
 
+	// primeResv serializes the count->decide->create sequence for the
+	// press-index partial-empty prime, so two concurrent produce requests on
+	// one cell cannot both read "nothing inbound" and both fire an empty at
+	// the same bare paired position. Keyed by the claim's CORE node name, not
+	// its process_node id: a shared core node carries many process_node rows
+	// for one physical cell, and the in-flight count that the lock protects is
+	// itself scoped by delivery node. map[coreNodeName]*sync.Mutex.
+	primeResv sync.Map
+
 	// loaderStore is the consumer-defined resolver for loaders, backed by the
 	// Core-owned aggregate (the synced core_loaders cache), refreshed on each
 	// node-list sync.
