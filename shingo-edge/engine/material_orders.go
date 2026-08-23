@@ -2,6 +2,7 @@ package engine
 
 import (
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -492,6 +493,14 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inact
 	case protocol.SwapModeSequential:
 		return buildSequentialChangeoverEvacuate(fromClaim, toClaim)
 	case pressPositionSwapMode:
+		// A STAGED seat is told apart by its staging node, and that is not a
+		// guess: SynthesizePressPositionClaim zeroes InboundStaging, so the
+		// only producer that puts one back on a per-position claim is
+		// FanOutStagedToolingEvacuation. A different-bin-type per-position
+		// claim therefore never carries one and never takes this branch.
+		if toClaim != nil && toClaim.InboundStaging != "" {
+			return buildPressIndexSeatEvacuate(fromClaim, toClaim)
+		}
 		// Per-position dispatch: the parent evacuate situation drives the
 		// "evacuate" semantics, but at the per-position level the robot
 		// work is identical to Swap (evac old, fetch new, deliver new).
@@ -698,6 +707,79 @@ func buildPressIndexPerPositionSwap(fromClaim, toClaim *processes.NodeClaim) Cha
 	}
 }
 
+// buildToolingEvacSteps is the one-robot tooling-evacuation shape: take the
+// blocking bin off a line position, put the replacement where it waits, and
+// deliver it when the operator says the tool is done.
+//
+//	pickup(position)      lift the bin that blocks the tool
+//	dropoff(evacDest)     get it off the line
+//	pickup(inboundSource) fetch the incoming style's bin
+//	wait(waitNode)        the tooling-done gate
+//	dropoff(position)     deliver on release
+//
+// ── WHY waitNode IS A PARAMETER AND NOT A CONSTANT ────────────────────────
+//
+// Sequential passes "" — a BARE wait. Its robot holds the bin wherever it
+// happens to be when the gate closes, and one tooling-done click releases both
+// positions' waits through ReleaseChangeoverWait's per-task fan-out. That
+// works because a sequential cell is two positions beside each other and the
+// robot has nowhere better to be.
+//
+// The staged press-index seats pass InboundStaging — a wait AT A NODE, so the
+// robot drives there holding the bin and parks. That difference is DELIBERATE
+// and owner-chosen, not an accident of two builders growing apart: a press
+// tooling change can take a shift, and robots idling on the press apron for
+// that long block the very access the millwrights need. Staging gets them out
+// of the cell while still holding the bin, so release is a short move in
+// rather than a full fetch.
+//
+// Same steps, one parameter, so the difference is legible at both call sites
+// instead of living in two builders that merely look similar.
+func buildToolingEvacSteps(position, evacDest, inboundSource, waitNode string) []protocol.ComplexOrderStep {
+	return []protocol.ComplexOrderStep{
+		{Action: "pickup", Node: position},
+		buildStep("dropoff", evacDest),
+		buildStep("pickup", inboundSource),
+		stationWait(waitNode),
+		{Action: "dropoff", Node: position},
+	}
+}
+
+// buildPressIndexSeatEvacuate is the STAGED tooling evacuation for ONE press
+// seat. The per-seat fan-out (FanOutStagedToolingEvacuation) has already split
+// the cell into one synthesized position claim per marked seat, so this builds
+// a single robot's order and the fan-out's count is the robot count.
+//
+// Evac destination is the claim's ChangeoverEvacDestination, falling back to
+// OutboundDestination — blank means "unchanged from today".
+//
+// Empty dispatch is the planner's "I rejected this" signal; the arm gate has
+// already refused a staged changeover with no staging node, so reaching here
+// without one is a programming error rather than a configuration one.
+func buildPressIndexSeatEvacuate(fromClaim, toClaim *processes.NodeClaim) ChangeoverDispatch {
+	evacDest := domain.EvacDestinationFor(fromClaim)
+	if evacDest == "" || toClaim.InboundSource == "" || toClaim.InboundStaging == "" {
+		return ChangeoverDispatch{}
+	}
+	steps := buildToolingEvacSteps(
+		fromClaim.CoreNodeName, evacDest, toClaim.InboundSource, toClaim.InboundStaging)
+	// A produce seat's replacement is a fresh EMPTY carrier, not a full
+	// payload-matched bin — same reason as the press-index changeover builder
+	// above, and the same failure without it ("no bin of requested payload").
+	if toClaim.Role == protocol.ClaimRoleProduce {
+		markInboundEmpty(steps, toClaim.InboundSource)
+	}
+	return ChangeoverDispatch{
+		StepsA:        steps,
+		DeliveryNodeA: fromClaim.CoreNodeName,
+		AutoConfirmA:  true,
+		// The order OPENS by lifting the old bin off the seat, so it carries
+		// the from-style payload; without it the pickup filters for the new
+		// payload and finds no bin (the ALN_001 shape).
+		CarriesFromPayloadA: true,
+	}
+}
+
 // buildSequentialChangeoverEvacuate handles sequential A/B paired
 // evacuate. Sequential swap_mode is always A/B paired (two physical
 // bins at the line; A/B cycling keeps the line running). Evacuate
@@ -733,20 +815,10 @@ func buildSequentialChangeoverEvacuate(fromClaim, toClaim *processes.NodeClaim) 
 	}
 	posA := fromClaim.CoreNodeName
 	posB := fromClaim.PairedCoreNode
-	stepsA := []protocol.ComplexOrderStep{
-		{Action: "pickup", Node: posA},                      // evac old A
-		buildStep("dropoff", fromClaim.OutboundDestination), // old A to destination
-		buildStep("pickup", toClaim.InboundSource),          // fetch new A
-		stationWait(""),                 // shared "tooling done" gate
-		{Action: "dropoff", Node: posA}, // deliver new A
-	}
-	stepsB := []protocol.ComplexOrderStep{
-		{Action: "pickup", Node: posB},                      // evac old B
-		buildStep("dropoff", fromClaim.OutboundDestination), // old B to destination
-		buildStep("pickup", toClaim.InboundSource),          // fetch new B
-		stationWait(""),                 // shared "tooling done" gate
-		{Action: "dropoff", Node: posB}, // deliver new B
-	}
+	// The bare wait is sequential's own choice — see buildToolingEvacSteps for
+	// why the staged press seats pass a node instead.
+	stepsA := buildToolingEvacSteps(posA, fromClaim.OutboundDestination, toClaim.InboundSource, "")
+	stepsB := buildToolingEvacSteps(posB, fromClaim.OutboundDestination, toClaim.InboundSource, "")
 	return ChangeoverDispatch{
 		StepsA:        stepsA,
 		DeliveryNodeA: posA,

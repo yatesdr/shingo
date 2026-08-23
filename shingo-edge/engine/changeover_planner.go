@@ -160,6 +160,21 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			action.Err = fmt.Errorf("evacuate requires both from and to claims")
 			return action
 		}
+		// A staged seat is one synthesized position with its own routing; the
+		// per-mode staging fallbacks below are about whole cells and would
+		// send it down the wrong branch.
+		if diff.FromClaim.SwapMode == pressPositionSwapMode && diff.ToClaim.InboundStaging != "" {
+			disp := buildPressIndexSeatEvacuate(diff.FromClaim, diff.ToClaim)
+			if disp.rejected() {
+				action.Err = fmt.Errorf("node %s: staged tooling evacuation needs an evac destination, "+
+					"an inbound source and an inbound staging node", node.Name)
+				return action
+			}
+			assignDispatch(&action, diff.CoreNodeName, diff.FromClaim.PayloadCode, disp)
+			action.NextState = domain.NodeTaskStagingRequested
+			action.LogTag = "evacuate_staged_seat"
+			return action
+		}
 		if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
 			switch diff.FromClaim.SwapMode {
 			case protocol.SwapModeTwoRobot:
