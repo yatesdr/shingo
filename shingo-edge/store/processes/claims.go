@@ -62,18 +62,20 @@ const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code
 	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
-	reuse_compatible_bins, auto_push, below_reorder_since, created_at`
+	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
+	changeover_evac_seats, changeover_evac_destination`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
-	var createdAt, allowedJSON string
+	var createdAt, allowedJSON, evacSeatsJSON string
 	var belowSince sql.NullString
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&c.UOPCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &allowedJSON, &c.AutoRequestPayload,
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
-		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt); err != nil {
+		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
+		&evacSeatsJSON, &c.ChangeoverEvacDestination); err != nil {
 		return c, err
 	}
 	// NULL means "not below", which is the ordinary state — a zero time would
@@ -86,6 +88,9 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	c.CreatedAt = helpers.ScanTime(createdAt)
 	if allowedJSON != "" {
 		_ = json.Unmarshal([]byte(allowedJSON), &c.AllowedPayloadCodes)
+	}
+	if evacSeatsJSON != "" {
+		_ = json.Unmarshal([]byte(evacSeatsJSON), &c.ChangeoverEvacSeats)
 	}
 	return c, nil
 }
@@ -275,13 +280,15 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		uop_capacity, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
-		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
+		changeover_evac_seats, changeover_evac_destination)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
-		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush)
+		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
+		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination)
 	if err != nil {
 		return 0, err
 	}
@@ -312,6 +319,7 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 		`allowed_payload_codes=?`, `auto_request_payload=?`, `evacuate_on_changeover=?`,
 		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
 		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
+		`changeover_evac_seats=?`, `changeover_evac_destination=?`,
 	}
 	args := []any{
 		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint,
@@ -319,6 +327,7 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 		allowedJSON, in.AutoRequestPayload, in.EvacuateOnChangeover,
 		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
 		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
+		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination,
 	}
 
 	if in.ReorderPointSource != nil {
@@ -343,6 +352,14 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	args = append(args, id)
 	_, err := db.Exec(`UPDATE style_node_claims SET `+strings.Join(sets, ", ")+` WHERE id=?`, args...)
 	return err
+}
+
+// marshalEvacSeats stores the per-seat tooling-relevance set the same way
+// allowed_payload_codes is stored: a JSON array, and the EMPTY STRING for an
+// empty set rather than "[]", so "no seat marked" reads identically on a row
+// written today and a row that predates the column.
+func marshalEvacSeats(seats []string) string {
+	return marshalAllowedPayloads(seats)
 }
 
 func marshalAllowedPayloads(codes []string) string {

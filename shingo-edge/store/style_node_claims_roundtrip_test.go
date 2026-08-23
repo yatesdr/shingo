@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -39,6 +40,9 @@ func claimEditorBody(c *processes.NodeClaim) processes.NodeClaimInput {
 		PairedCoreNode:        c.PairedCoreNode,
 		SecondPairedCoreNode:  c.SecondPairedCoreNode,
 		AutoConfirm:           c.AutoConfirm,
+		// Round 3: the editor owns controls for both, so the body carries them.
+		ChangeoverEvacSeats:       c.ChangeoverEvacSeats,
+		ChangeoverEvacDestination: c.ChangeoverEvacDestination,
 	}
 }
 
@@ -84,6 +88,12 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		PairedCoreNode:        "RT-NODE-B",
 		SecondPairedCoreNode:  "RT-NODE-C",
 		AutoConfirm:           true,
+		// A new column is not done until something reads it back and asserts on
+		// the value. Distinctive on both: a two-seat selection (not one, not
+		// all three) and a destination that is NOT outbound_destination, so a
+		// fallback silently standing in for the real column would show.
+		ChangeoverEvacSeats:       []string{"front", "second"},
+		ChangeoverEvacDestination: "RT-TOOLING-EVAC",
 		// The four the editor never sends, seeded to values that are NOT the
 		// zero value, so a stomp is visible.
 		Sequence:           domain.Ptr(7),
@@ -131,6 +141,7 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		{"lineside_soft_threshold", before.LinesideSoftThreshold, after.LinesideSoftThreshold},
 		{"reuse_compatible_bins", before.ReuseCompatibleBins, after.ReuseCompatibleBins},
 		{"auto_push", before.AutoPush, after.AutoPush},
+		{"changeover_evac_destination", before.ChangeoverEvacDestination, after.ChangeoverEvacDestination},
 	} {
 		if c.before != c.got {
 			t.Errorf("%s changed across an editor save: %v -> %v (the editor owns no control for it)",
@@ -140,9 +151,19 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 	if len(after.AllowedPayloadCodes) != len(before.AllowedPayloadCodes) {
 		t.Errorf("allowed_payload_codes changed: %v -> %v", before.AllowedPayloadCodes, after.AllowedPayloadCodes)
 	}
+	if strings.Join(after.ChangeoverEvacSeats, ",") != strings.Join(before.ChangeoverEvacSeats, ",") {
+		t.Errorf("changeover_evac_seats changed across an editor save: %v -> %v",
+			before.ChangeoverEvacSeats, after.ChangeoverEvacSeats)
+	}
 
 	// And the seeded values really were distinctive — a test that seeded zeros
 	// would pass no matter what updateClaim did.
+	// The round-3 columns must have taken too, or their assertions above are
+	// comparing two blanks and proving nothing.
+	if len(before.ChangeoverEvacSeats) != 2 || before.ChangeoverEvacDestination != "RT-TOOLING-EVAC" {
+		t.Fatalf("round-3 seed did not take: seats=%v dest=%q",
+			before.ChangeoverEvacSeats, before.ChangeoverEvacDestination)
+	}
 	if before.Sequence != 7 || before.ReorderPointSource != "calculated" || !before.AutoReorder || !before.KeepStaged {
 		t.Fatalf("seed did not take, so this test proves nothing: seq=%d source=%q autoReorder=%v keepStaged=%v",
 			before.Sequence, before.ReorderPointSource, before.AutoReorder, before.KeepStaged)
@@ -199,6 +220,72 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 	}
 	if after.KeepStaged {
 		t.Error("keep_staged = true, want false — an explicit false must write")
+	}
+}
+
+// TestUpsertStyleNodeClaim_EvacFieldsAreEditable is the other half of the
+// round-trip, and the no-op test cannot stand in for it.
+//
+// That test asserts these columns do not CHANGE across a save. A store that
+// stopped writing them on UPDATE entirely would satisfy it perfectly — the
+// seeded values would simply sit there. This asserts the opposite direction:
+// an editor that CHANGES the selection persists the change. A column is not
+// done until something reads back a value it actually wrote.
+func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	processID, err := db.CreateProcess("EV-PROC", "", "active_production", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+	styleID, err := db.CreateStyle("EV-STYLE", "", processID)
+	testutil.MustNoErr(t, err, "create style")
+
+	base := processes.NodeClaimInput{
+		StyleID:                   styleID,
+		CoreNodeName:              "EV-PRESS",
+		Role:                      protocol.ClaimRoleProduce,
+		SwapMode:                  protocol.SwapModeTwoRobotPressIndex,
+		PayloadCode:               "PART-EV",
+		OutboundDestination:       "EV-MARKET",
+		PairedCoreNode:            "EV-PRESS-B",
+		SecondPairedCoreNode:      "EV-PRESS-C",
+		ChangeoverEvacSeats:       []string{"front"},
+		ChangeoverEvacDestination: "EV-BAY-1",
+	}
+	claimID, err := db.UpsertStyleNodeClaim(base)
+	testutil.MustNoErr(t, err, "seed claim")
+
+	upd := base
+	upd.ChangeoverEvacSeats = []string{"paired", "second"}
+	upd.ChangeoverEvacDestination = "EV-BAY-2"
+	if _, err := db.UpsertStyleNodeClaim(upd); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	after, err := db.GetStyleNodeClaim(claimID)
+	testutil.MustNoErr(t, err, "fetch after")
+	if got := strings.Join(after.ChangeoverEvacSeats, ","); got != "paired,second" {
+		t.Errorf("changeover_evac_seats = %q, want paired,second", got)
+	}
+	if after.ChangeoverEvacDestination != "EV-BAY-2" {
+		t.Errorf("changeover_evac_destination = %q, want EV-BAY-2", after.ChangeoverEvacDestination)
+	}
+
+	// Clearing the selection has to persist too — an empty set is a real
+	// answer ("no seat blocks the tool"), not an absent one.
+	clr := base
+	clr.ChangeoverEvacSeats = nil
+	clr.ChangeoverEvacDestination = ""
+	if _, err := db.UpsertStyleNodeClaim(clr); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	cleared, err := db.GetStyleNodeClaim(claimID)
+	testutil.MustNoErr(t, err, "fetch cleared")
+	if len(cleared.ChangeoverEvacSeats) != 0 {
+		t.Errorf("cleared seats = %v, want none", cleared.ChangeoverEvacSeats)
+	}
+	if cleared.ChangeoverEvacDestination != "" {
+		t.Errorf("cleared destination = %q, want empty", cleared.ChangeoverEvacDestination)
 	}
 }
 

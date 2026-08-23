@@ -500,6 +500,15 @@ CREATE TABLE style_node_claims (
     sequence                INTEGER NOT NULL DEFAULT 0,
     lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
     reuse_compatible_bins   INTEGER NOT NULL DEFAULT 0,
+    -- Which press-index seats hold bins that block the tooling change, as a
+    -- JSON array of seat keys ("front"/"paired"/"second"). Same shape and same
+    -- reasoning as allowed_payload_codes: a small set on one row rather than a
+    -- child table, because the back seats have no claim rows of their own.
+    -- Empty = no seat marked = today's behaviour.
+    changeover_evac_seats   TEXT NOT NULL DEFAULT '',
+    -- Where a tooling evacuation sends the bins it lifts off the press. A node
+    -- OR a group name; blank falls back to outbound_destination.
+    changeover_evac_destination TEXT NOT NULL DEFAULT '',
     auto_push               INTEGER NOT NULL DEFAULT 0,
     -- UOP-threshold replenishment: tracks how reorder_point was set.
     -- 'legacy' = default, never edited (silent-inert when 0).

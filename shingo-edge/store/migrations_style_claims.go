@@ -262,6 +262,8 @@ var styleNodeClaimsColumnGuards = []string{
 	`ALTER TABLE style_node_claims ADD COLUMN outbound_source TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE style_node_claims ADD COLUMN mode TEXT NOT NULL DEFAULT 'loader'`,
 	`ALTER TABLE style_node_claims ADD COLUMN second_paired_core_node TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE style_node_claims ADD COLUMN changeover_evac_seats TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE style_node_claims ADD COLUMN changeover_evac_destination TEXT NOT NULL DEFAULT ''`,
 }
 
 // styleNodeClaimsRebuildSQL must produce the SAME shape as sqlite_ddl.go's
@@ -305,6 +307,8 @@ CREATE TABLE style_node_claims (
     outbound_source         TEXT NOT NULL DEFAULT '',
     mode                    TEXT NOT NULL DEFAULT 'loader',
     second_paired_core_node TEXT NOT NULL DEFAULT '',
+    changeover_evac_seats   TEXT NOT NULL DEFAULT '',
+    changeover_evac_destination TEXT NOT NULL DEFAULT '',
     UNIQUE(style_id, core_node_name)
 );
 INSERT INTO style_node_claims (
@@ -315,7 +319,8 @@ INSERT INTO style_node_claims (
     lineside_soft_threshold, reuse_compatible_bins, auto_push, reorder_point_source,
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,
     inbound_source_node_group, outbound_source_node, outbound_source_node_group,
-    outbound_source, mode, second_paired_core_node
+    outbound_source, mode, second_paired_core_node,
+    changeover_evac_seats, changeover_evac_destination
 )
 SELECT
     id, style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
@@ -325,7 +330,8 @@ SELECT
     lineside_soft_threshold, reuse_compatible_bins, auto_push, reorder_point_source,
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,
     inbound_source_node_group, outbound_source_node, outbound_source_node_group,
-    outbound_source, mode, second_paired_core_node
+    outbound_source, mode, second_paired_core_node,
+    changeover_evac_seats, changeover_evac_destination
 FROM style_node_claims_legacy;
 DROP TABLE style_node_claims_legacy;
 `

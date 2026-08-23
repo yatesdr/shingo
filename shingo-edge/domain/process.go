@@ -259,6 +259,32 @@ type NodeClaim struct {
 	// two_robot_press_index. When set, the layout is C → B → A and R1's
 	// final dropoff goes to C instead of B. Empty = legacy 2-position.
 	SecondPairedCoreNode string `json:"second_paired_core_node"`
+	// ChangeoverEvacSeats names which of a press-index cell's seats hold bins
+	// that BLOCK THE TOOLING CHANGE and must therefore leave the press before
+	// the tool can be swapped. Values are ChangeoverEvacSeat constants.
+	//
+	// A SET ON THE FRONT CLAIM, not a flag per seat, because the back seats
+	// have no claim rows to carry one: only the front position of a
+	// press-index cell is a style_node_claims row, and UpsertClaim rejects
+	// SwapModePressPosition outright so per-seat rows cannot be created.
+	//
+	// Empty is the standing default and means what it has always meant: no
+	// seat is marked, so nothing is evacuated for tooling and the cell takes
+	// the ordinary index choreography. Unmarked seats stay put.
+	//
+	// The scalar EvacuateOnChangeover above remains the whole answer for
+	// single-seat consume/process nodes; this is the press-index shape of the
+	// same question, which is why it lives beside it and not in a new struct.
+	ChangeoverEvacSeats []string `json:"changeover_evac_seats,omitempty"`
+	// ChangeoverEvacDestination is where a tooling evacuation sends the bins
+	// it lifts off the press. Free-form: a node name or a group name, exactly
+	// like InboundSource — Core resolves either.
+	//
+	// Blank means today's behaviour: the evacuation falls back to
+	// OutboundDestination. There is deliberately no enum and no unloader
+	// special case; an unloader is reached by naming a group it projects over,
+	// which keeps this field ignorant of what is on the other end.
+	ChangeoverEvacDestination string `json:"changeover_evac_destination"`
 	AutoConfirm          bool   `json:"auto_confirm"`
 	Sequence             int    `json:"sequence"`
 	// LinesideSoftThreshold is the per-claim soft cap for the release
@@ -362,6 +388,92 @@ func (c *NodeClaim) AllowedPayloads() []string {
 // on NodeClaimInput below, which cannot be written as &true / &1 inline.
 func Ptr[T any](v T) *T { return &v }
 
+// ChangeoverEvacSeat identifies one seat of a press-index cell in the per-seat
+// tooling-relevance selection.
+//
+// POSITIONAL, NOT BY NODE NAME. A seat is "the front position", not
+// "PLN_002_B" — the names live on PairedCoreNode / SecondPairedCoreNode and
+// change when a press is re-cabled or a style re-pairs it. Storing the
+// position means a selection survives a rename; storing the name would leave
+// a set pointing at a seat that is no longer part of the cell.
+const (
+	EvacSeatFront  = "front"  // CoreNodeName
+	EvacSeatPaired = "paired" // PairedCoreNode
+	EvacSeatSecond = "second" // SecondPairedCoreNode
+)
+
+// ChangeoverEvacSeats is the ordered, canonical seat vocabulary — front to
+// back, the direction bins index. Order matters for rendering and for the
+// deterministic plan the builder emits.
+func ChangeoverEvacSeatKeys() []string {
+	return []string{EvacSeatFront, EvacSeatPaired, EvacSeatSecond}
+}
+
+// SeatCoreNode resolves a seat key to the core node holding it on this claim.
+// Returns "" for a seat the claim's layout does not have — a 2-position press
+// asked for its third seat.
+func SeatCoreNode(c *NodeClaim, seat string) string {
+	if c == nil {
+		return ""
+	}
+	switch seat {
+	case EvacSeatFront:
+		return c.CoreNodeName
+	case EvacSeatPaired:
+		return c.PairedCoreNode
+	case EvacSeatSecond:
+		return c.SecondPairedCoreNode
+	}
+	return ""
+}
+
+// EvacSeatMarked reports whether this claim marks the given seat as holding
+// bins that block the tooling change.
+func EvacSeatMarked(c *NodeClaim, seat string) bool {
+	if c == nil {
+		return false
+	}
+	for _, s := range c.ChangeoverEvacSeats {
+		if s == seat {
+			return true
+		}
+	}
+	return false
+}
+
+// MarkedEvacSeatNodes returns the core nodes of every marked seat that this
+// claim's layout actually has, front to back.
+//
+// A marked seat the layout does not have contributes nothing rather than an
+// empty string: a 2-position press whose claim still carries "second" from a
+// 3-position past must plan two evacuations, not two and a phantom.
+func MarkedEvacSeatNodes(c *NodeClaim) []string {
+	var out []string
+	for _, seat := range ChangeoverEvacSeatKeys() {
+		if !EvacSeatMarked(c, seat) {
+			continue
+		}
+		if node := SeatCoreNode(c, seat); node != "" {
+			out = append(out, node)
+		}
+	}
+	return out
+}
+
+// EvacDestinationFor is where a tooling evacuation sends this claim's bins.
+// ChangeoverEvacDestination when set, else the ordinary OutboundDestination —
+// blank means "unchanged from today", which is the whole compatibility story
+// for the field.
+func EvacDestinationFor(c *NodeClaim) string {
+	if c == nil {
+		return ""
+	}
+	if c.ChangeoverEvacDestination != "" {
+		return c.ChangeoverEvacDestination
+	}
+	return c.OutboundDestination
+}
+
 // NodeClaimInput is the request shape for creating or updating a
 // NodeClaim — the persisted NodeClaim fields minus ID and CreatedAt.
 type NodeClaimInput struct {
@@ -381,6 +493,11 @@ type NodeClaimInput struct {
 	EvacuateOnChangeover  bool               `json:"evacuate_on_changeover"`
 	PairedCoreNode        string             `json:"paired_core_node"`
 	SecondPairedCoreNode  string             `json:"second_paired_core_node"`
+	// See the same-named fields on NodeClaim. Plain values rather than the
+	// pointer contract below: the claim editor owns controls for both, so it
+	// always has an opinion.
+	ChangeoverEvacSeats       []string `json:"changeover_evac_seats"`
+	ChangeoverEvacDestination string   `json:"changeover_evac_destination"`
 	AutoConfirm           bool               `json:"auto_confirm"`
 	LinesideSoftThreshold int                `json:"lineside_soft_threshold"`
 	ReuseCompatibleBins   bool               `json:"reuse_compatible_bins"`
