@@ -38,7 +38,7 @@
                  Blank origin renders as the bare "core" tag, unchanged. That is
                  every row projected before this column existed — the value was
                  dropped in flight and no backfill can invent it. */}}
-            <td class="tag-name"{{if eq .Status "faulted"}} style="border-left:3px solid var(--warning)"{{else if eq .Status "failed"}} style="border-left:3px solid var(--danger)"{{end}}>{{printf "%.8s" .UUID}}{{if eq .AuthoredBy "core"}} <span title="Core created this order; this station did not request it{{if .OriginID}}&#10;Demand episode: {{.OriginID}}{{end}}" style="font-size:0.7rem;color:var(--text-muted);border:1px solid var(--border);border-radius:3px;padding:0 0.25rem">core{{if .OriginClass}} · {{.OriginClass}}{{end}}</span>{{end}}</td>
+            <td class="tag-name" style="border-left:3px solid var(--warning); border-left:3px solid var(--danger)" eq if eq>{{printf "%.8s" .UUID}}{{if eq .AuthoredBy "core"}} <span title="Core created this order; this station did not request it{{if .OriginID}}&#10;Demand episode: {{.OriginID}}{{end}}" style="font-size:0.7rem;color:var(--text-muted);border:1px solid var(--border);border-radius:3px;padding:0 0.25rem">core{{if .OriginClass}} · {{.OriginClass}}{{end}}</span>{{end}}</td>
             <td>{{.OrderType}}</td>
             {{/* Payload: the code, and under it the words.
 

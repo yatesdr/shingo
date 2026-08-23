@@ -181,7 +181,73 @@
 
 /* ─── Utility classes (cross-surface) ───────────────────────────────── */
 /* Mirror the style guide's limited utility set so inline margin/text
- * tweaks don't need to be repeated everywhere. */
+ * tweaks don't need to be repeated everywhere.
+ *
+ * THE GUIDE LISTED THESE AND NOTHING IMPLEMENTED THEM. § "Utility classes"
+ * names .flex, .flex-center, .flex-between, .gap-1/2/3, .mt-1, .mb-1,
+ * .text-muted, .text-center, .nowrap and .ml-auto as available; only the
+ * margin steps and .mono existed. `.text-muted` was the expensive one — 22
+ * elements across the edge templates ask for it, and measured in Chrome they
+ * render at rgb(33,37,41), identical to plain body text, while the -sm
+ * variant beside them correctly renders rgb(104,113,122). Text somebody
+ * deliberately quietened has been shouting.
+ *
+ * Same failure shape as a duplicate class attribute: written, plausible,
+ * inert, and invisible to every gate. Implementing the documented set is what
+ * makes the document true. */
+.flex { display: flex; }
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.gap-1 { gap: 0.5rem; }
+.gap-2 { gap: 1rem; }
+.gap-3 { gap: 1.5rem; }
+.text-muted { color: var(--text-muted); }
+.text-center { text-align: center; }
+.nowrap { white-space: nowrap; }
+.ml-auto { margin-left: auto; }
+.mt-1  { margin-top: 0.25rem; }
+.mb-1  { margin-bottom: 0.25rem; }
+
+/* An inline row of controls that reads as one line — a select and its
+ * button, a label and its chip. The single most repeated inline style on
+ * the processes page. */
+.row-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* A row of items that wraps rather than overflowing: chip lists, button
+ * clusters, filter bars. */
+.row-wrap {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* A scrolling column of checkboxes or chips inside a fieldset. Height is a
+ * custom property so a caller can vary it without a new class. */
+.scroll-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: var(--scroll-list-h, 220px);
+  overflow-y: auto;
+}
+
+/* A table column that should take only the width its content needs. */
+.col-shrink { width: 1%; }
+
+/* Medium weight — a label that is emphasised without being a heading. */
+.fw-500 { font-weight: 500; }
 .mt-2  { margin-top: 0.5rem; }
 .mt-3  { margin-top: 0.75rem; }
 .mt-4  { margin-top: 1rem; }
