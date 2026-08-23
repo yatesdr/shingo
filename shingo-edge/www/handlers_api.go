@@ -6,6 +6,8 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+
+	"shingoedge/domain"
 )
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -26,6 +28,24 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// writeFieldErrors refuses with per-field detail. `error` carries the first
+// message so every existing consumer — which reads exactly that key — keeps
+// working unchanged; `field_errors` is additive, and is what lets a client
+// render each message ON the field it is about instead of as one toast that
+// does not say where to look.
+func writeFieldErrors(w http.ResponseWriter, status int, findings []domain.FieldError) {
+	msg := "invalid claim"
+	for _, f := range findings {
+		if f.Severity == domain.SeverityError {
+			msg = f.Message
+			break
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]any{"error": msg, "field_errors": findings})
 }
 
 // actionExit is an inline recovery action attached to a refusal so the client

@@ -447,15 +447,21 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 	sid := seedStyle(t, "ClaimStyle", pid)
 
 	// --- Upsert (insert) ---
+	// single_robot needs both staging nodes. This fixture used to omit them
+	// and the API stored it: the requirement lived only in the browser, so
+	// every non-browser writer bypassed it. ValidateNodeClaim now refuses it
+	// server-side, which is what makes this fixture have to be valid.
 	body := processes.NodeClaimInput{
-		StyleID:      sid,
-		CoreNodeName: "node-1",
-		Role:         "consume",
-		SwapMode:     "single_robot",
-		PayloadCode:  "BIN-A",
-		UOPCapacity:  100,
-		ReorderPoint: 10,
-		AutoReorder:  domain.Ptr(true),
+		StyleID:         sid,
+		CoreNodeName:    "node-1",
+		Role:            "consume",
+		SwapMode:        "single_robot",
+		PayloadCode:     "BIN-A",
+		UOPCapacity:     100,
+		ReorderPoint:    10,
+		InboundStaging:  "node-1-in",
+		OutboundStaging: "node-1-out",
+		AutoReorder:     domain.Ptr(true),
 	}
 	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
@@ -486,14 +492,16 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 
 	// --- Upsert (update same style_id+core_node_name) ---
 	updateBody := processes.NodeClaimInput{
-		StyleID:      sid,
-		CoreNodeName: "node-1",
-		Role:         "consume",
-		SwapMode:     "single_robot",
-		PayloadCode:  "BIN-B",
-		UOPCapacity:  200,
-		ReorderPoint: 20,
-		AutoReorder:  domain.Ptr(true),
+		StyleID:         sid,
+		CoreNodeName:    "node-1",
+		Role:            "consume",
+		SwapMode:        "single_robot",
+		PayloadCode:     "BIN-B",
+		UOPCapacity:     200,
+		ReorderPoint:    20,
+		InboundStaging:  "node-1-in",
+		OutboundStaging: "node-1-out",
+		AutoReorder:     domain.Ptr(true),
 	}
 	resp = doRequest(t, router, "POST", "/api/style-node-claims", updateBody, cookie)
 	assertStatus(t, resp, http.StatusOK)
