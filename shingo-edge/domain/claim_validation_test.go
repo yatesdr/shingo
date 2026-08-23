@@ -62,6 +62,26 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 		{"missing payload", func(c *NodeClaimInput) { c.PayloadCode = "" }, "payload_code"},
 		{"negative board order", func(c *NodeClaimInput) { c.Sequence = Ptr(-1) }, "sequence"},
 
+		// Per-seat tooling evacuation. A marked seat the layout does not have
+		// is not an unlikely config — it is a reference to nothing, and the
+		// evacuation it asks for silently never happens.
+		{"third seat marked on a 2-position press", func(c *NodeClaimInput) {
+			c.SecondPairedCoreNode = ""
+			c.ChangeoverEvacSeats = []string{EvacSeatSecond}
+		}, "changeover_evac_seats"},
+		{"back seat marked with no back node", func(c *NodeClaimInput) {
+			c.PairedCoreNode = ""
+			c.ChangeoverEvacSeats = []string{EvacSeatPaired}
+		}, "changeover_evac_seats"},
+		{"seats marked on a non-press-index mode", func(c *NodeClaimInput) {
+			c.SwapMode = SwapModeForTest
+			c.InboundStaging = "IN"
+			c.ChangeoverEvacSeats = []string{EvacSeatFront}
+		}, "changeover_evac_seats"},
+		{"an unknown seat name", func(c *NodeClaimInput) {
+			c.ChangeoverEvacSeats = []string{"middle-ish"}
+		}, "changeover_evac_seats"},
+
 		{"press-index without back position", func(c *NodeClaimInput) { c.PairedCoreNode = "" }, "paired_core_node"},
 		{"press-index without outbound", func(c *NodeClaimInput) { c.OutboundDestination = "" }, "outbound_destination"},
 		{"back position same as front", func(c *NodeClaimInput) { c.PairedCoreNode = "PRESS" }, "paired_core_node"},
@@ -120,6 +140,45 @@ func TestValidateNodeClaim_SequenceAbsentOrZeroIsFine(t *testing.T) {
 				t.Fatalf("sequence %v must be accepted; findings = %+v", tc.seq, got)
 			}
 		})
+	}
+}
+
+// SwapModeForTest is two_robot — a mode with no seats, used to pin that seats
+// are press-index-only. Named rather than inlined so the intent survives
+// someone changing which mode the row uses.
+var SwapModeForTest = protocol.SwapModeTwoRobot
+
+// A seat selection the layout DOES have is accepted, including the whole set
+// on a 3-position press. Without this the rows above would pass with the check
+// written as "any seat selection is an error".
+func TestValidateNodeClaim_ValidSeatSelectionsAccepted(t *testing.T) {
+	t.Parallel()
+	for _, seats := range [][]string{
+		nil,
+		{EvacSeatFront},
+		{EvacSeatPaired},
+		{EvacSeatFront, EvacSeatPaired},
+		{EvacSeatFront, EvacSeatPaired, EvacSeatSecond},
+	} {
+		c := validClaim()
+		c.SecondPairedCoreNode = "INDEX-C"
+		c.ChangeoverEvacSeats = seats
+		if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
+			t.Errorf("seats %v must be accepted on a 3-position press; findings = %+v", seats, got)
+		}
+	}
+}
+
+// A free-form evac destination is never refused — node OR group, and blank is
+// the ordinary default.
+func TestValidateNodeClaim_EvacDestinationIsFreeForm(t *testing.T) {
+	t.Parallel()
+	for _, dest := range []string{"", "TOOLING-BAY", "SMG_01", "some.group.name"} {
+		c := validClaim()
+		c.ChangeoverEvacDestination = dest
+		if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
+			t.Errorf("evac destination %q must be accepted; findings = %+v", dest, got)
+		}
 	}
 }
 

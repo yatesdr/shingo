@@ -133,6 +133,35 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		}
 	}
 
+	// Seats can only be marked on a cell that HAS seats, and only seats the
+	// layout actually holds. Marking the third position of a 2-position press
+	// is not an unlikely configuration, it is a reference to a seat that does
+	// not exist — and the evacuation it asks for can never happen, silently,
+	// because MarkedEvacSeatNodes correctly drops it.
+	if len(in.ChangeoverEvacSeats) > 0 {
+		if in.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+			add("changeover_evac_seats",
+				"Per-seat tooling evacuation applies to 2-Robot Press Index only; use Evacuate on changeover for a single-position node")
+		} else {
+			for _, seat := range in.ChangeoverEvacSeats {
+				switch seat {
+				case EvacSeatFront:
+					// The front seat is CoreNodeName, always present.
+				case EvacSeatPaired:
+					if in.PairedCoreNode == "" {
+						add("changeover_evac_seats", "The back press position is marked for tooling evacuation but no Back Press Node is set")
+					}
+				case EvacSeatSecond:
+					if in.SecondPairedCoreNode == "" {
+						add("changeover_evac_seats", "The third press position is marked for tooling evacuation but this claim has no third position")
+					}
+				default:
+					add("changeover_evac_seats", fmt.Sprintf("%q is not a press seat", seat))
+				}
+			}
+		}
+	}
+
 	// Positions must be distinct, whatever the mode names them. Any two the
 	// same is a step whose pickup and dropoff are one node — a robot asked to
 	// move a bin to where it already is.

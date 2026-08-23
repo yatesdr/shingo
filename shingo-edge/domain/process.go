@@ -285,8 +285,8 @@ type NodeClaim struct {
 	// special case; an unloader is reached by naming a group it projects over,
 	// which keeps this field ignorant of what is on the other end.
 	ChangeoverEvacDestination string `json:"changeover_evac_destination"`
-	AutoConfirm          bool   `json:"auto_confirm"`
-	Sequence             int    `json:"sequence"`
+	AutoConfirm               bool   `json:"auto_confirm"`
+	Sequence                  int    `json:"sequence"`
 	// LinesideSoftThreshold is the per-claim soft cap for the release
 	// qty-override prompt. Zero means "off" (default). When >0, the HMI
 	// warns — but doesn't block — if the operator enters a qty greater
@@ -460,6 +460,59 @@ func MarkedEvacSeatNodes(c *NodeClaim) []string {
 	return out
 }
 
+// StagedToolingChangeover reports whether this OUTGOING claim puts the cell
+// into the staged tooling-evacuation mode: a press-index cell with at least
+// one seat marked as holding bins that block the tool change.
+//
+// ── THE OUTGOING CLAIM OWNS THE ANSWER ────────────────────────────────────
+//
+// The question is "which bins are physically in the way of the tool change".
+// The bins on the press at that moment were put there by the OUTGOING setup
+// and belong to the outgoing style; the incoming style has not placed
+// anything yet. So the claim that knows is the one being replaced.
+//
+// It also settles an inconsistency rather than adding one. The Drop branch of
+// the planner already reads fromClaim.EvacuateOnChangeover to decide whether
+// cutover waits for a bin to leave, while DiffStyleClaims read
+// to.EvacuateOnChangeover for the same concept — two readings of one flag,
+// three files apart. Both now read the outgoing claim.
+//
+// CONSEQUENCE, and it is a real one: a plant that set EvacuateOnChangeover on
+// the INCOMING style's claim and relied on the diff reading it will stop
+// evacuating. changeoverEvacConfigOnWrongSide below exists to make that
+// visible instead of silent.
+func StagedToolingChangeover(from *NodeClaim) bool {
+	if from == nil || from.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		return false
+	}
+	return len(MarkedEvacSeatNodes(from)) > 0
+}
+
+// ChangeoverNeedsEvacuation reports whether this transition has to take bins
+// off the line before the tool can change, reading the OUTGOING claim per the
+// rule above. Either the whole-node scalar or a per-seat selection says yes.
+func ChangeoverNeedsEvacuation(from *NodeClaim) bool {
+	if from == nil {
+		return false
+	}
+	return from.EvacuateOnChangeover || StagedToolingChangeover(from)
+}
+
+// EvacConfigOnWrongSide reports the case worth a log line: the INCOMING claim
+// asks for evacuation and the outgoing one does not, so this transition will
+// not evacuate where the old read would have.
+//
+// Not a refusal and not a fallback — a diagnostic. Honouring it would be a
+// second ownership rule, and the whole point of the decision above is that
+// there is one. Naming it is what turns "the config is on the wrong claim"
+// from a silent behaviour change into a line an engineer can act on.
+func EvacConfigOnWrongSide(from, to *NodeClaim) bool {
+	if from == nil || to == nil {
+		return false
+	}
+	return to.EvacuateOnChangeover && !ChangeoverNeedsEvacuation(from)
+}
+
 // EvacDestinationFor is where a tooling evacuation sends this claim's bins.
 // ChangeoverEvacDestination when set, else the ordinary OutboundDestination —
 // blank means "unchanged from today", which is the whole compatibility story
@@ -477,31 +530,31 @@ func EvacDestinationFor(c *NodeClaim) string {
 // NodeClaimInput is the request shape for creating or updating a
 // NodeClaim — the persisted NodeClaim fields minus ID and CreatedAt.
 type NodeClaimInput struct {
-	StyleID               int64              `json:"style_id"`
-	CoreNodeName          string             `json:"core_node_name"`
-	Role                  protocol.ClaimRole `json:"role"`
-	SwapMode              protocol.SwapMode  `json:"swap_mode"`
-	PayloadCode           string             `json:"payload_code"`
-	UOPCapacity           int                `json:"uop_capacity"`
-	ReorderPoint          int                `json:"reorder_point"`
-	InboundStaging        string             `json:"inbound_staging"`
-	OutboundStaging       string             `json:"outbound_staging"`
-	InboundSource         string             `json:"inbound_source"`
-	OutboundDestination   string             `json:"outbound_destination"`
-	AllowedPayloadCodes   []string           `json:"allowed_payload_codes"`
-	AutoRequestPayload    string             `json:"auto_request_payload"`
-	EvacuateOnChangeover  bool               `json:"evacuate_on_changeover"`
-	PairedCoreNode        string             `json:"paired_core_node"`
-	SecondPairedCoreNode  string             `json:"second_paired_core_node"`
+	StyleID              int64              `json:"style_id"`
+	CoreNodeName         string             `json:"core_node_name"`
+	Role                 protocol.ClaimRole `json:"role"`
+	SwapMode             protocol.SwapMode  `json:"swap_mode"`
+	PayloadCode          string             `json:"payload_code"`
+	UOPCapacity          int                `json:"uop_capacity"`
+	ReorderPoint         int                `json:"reorder_point"`
+	InboundStaging       string             `json:"inbound_staging"`
+	OutboundStaging      string             `json:"outbound_staging"`
+	InboundSource        string             `json:"inbound_source"`
+	OutboundDestination  string             `json:"outbound_destination"`
+	AllowedPayloadCodes  []string           `json:"allowed_payload_codes"`
+	AutoRequestPayload   string             `json:"auto_request_payload"`
+	EvacuateOnChangeover bool               `json:"evacuate_on_changeover"`
+	PairedCoreNode       string             `json:"paired_core_node"`
+	SecondPairedCoreNode string             `json:"second_paired_core_node"`
 	// See the same-named fields on NodeClaim. Plain values rather than the
 	// pointer contract below: the claim editor owns controls for both, so it
 	// always has an opinion.
 	ChangeoverEvacSeats       []string `json:"changeover_evac_seats"`
 	ChangeoverEvacDestination string   `json:"changeover_evac_destination"`
-	AutoConfirm           bool               `json:"auto_confirm"`
-	LinesideSoftThreshold int                `json:"lineside_soft_threshold"`
-	ReuseCompatibleBins   bool               `json:"reuse_compatible_bins"`
-	AutoPush              bool               `json:"auto_push"`
+	AutoConfirm               bool     `json:"auto_confirm"`
+	LinesideSoftThreshold     int      `json:"lineside_soft_threshold"`
+	ReuseCompatibleBins       bool     `json:"reuse_compatible_bins"`
+	AutoPush                  bool     `json:"auto_push"`
 	// ── ABSENT MEANS LEAVE UNTOUCHED ────────────────────────────────────
 	//
 	// These are columns no single writer owns. updateClaim writes every

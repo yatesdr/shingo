@@ -9,6 +9,7 @@ package engine
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -41,6 +42,31 @@ type changeoverPlan struct {
 // Note: validation errors use changeover-specific messages ("process is already running
 // style %d", etc). If this is later reused for a dry-run API, the error messages will
 // still be appropriate — but callers should be aware they're changeover-flavored.
+// refuseStagedChangeoverWithoutStaging is the arm-time gate for the staged
+// tooling mode: every cell whose outgoing claim marks seats needs the incoming
+// claim to name a staging node for the new bins to wait at.
+//
+// Named fields, named nodes. "changeover requires inbound staging" sends an
+// engineer to the wrong page on a line with six presses; this says which cell
+// and which field, which is the round-1 runbook lesson.
+func refuseStagedChangeoverWithoutStaging(diffs []ChangeoverNodeDiff) error {
+	var missing []string
+	for _, d := range diffs {
+		if !domain.StagedToolingChangeover(d.FromClaim) || d.ToClaim == nil {
+			continue
+		}
+		if d.ToClaim.InboundStaging == "" {
+			missing = append(missing, d.CoreNodeName)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("cannot start changeover: %s marks press seats for tooling evacuation, "+
+		"which stages the incoming bins — set Inbound Staging on the incoming style's claim for %s",
+		strings.Join(missing, ", "), strings.Join(missing, ", "))
+}
+
 func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, error) {
 	process, err := e.db.GetProcess(processID)
 	if err != nil {
@@ -80,6 +106,16 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 	}
 	diffs, err := e.applyChangeoverDiffPostProcessors(processID, DiffStyleClaims(fromClaims, toClaims))
 	if err != nil {
+		return nil, err
+	}
+	// The staged tooling changeover parks the incoming style's bins at
+	// InboundStaging until tooling-done. Refuse to arm without one, LOUDLY and
+	// by name: the alternative is a plan whose supply legs have nowhere to go,
+	// discovered as robots idling mid-changeover.
+	//
+	// Scoped to this mode alone. Plain press-index production neither uses nor
+	// requires staging, and swap_dispatch.go's per-mode checks are untouched.
+	if err := refuseStagedChangeoverWithoutStaging(diffs); err != nil {
 		return nil, err
 	}
 	nodes, err := e.db.ListProcessNodesByProcess(processID)
