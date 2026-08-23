@@ -621,6 +621,31 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		}
 	}
 
+	// ── v1'S SAFETY: NEVER PLACE ONTO A PRESS THAT IS NOT CLEAR YET ──────
+	//
+	// The supply leg puts a bin ON the process node; the evac leg takes the
+	// old one OFF. Releasing the placing leg while its sibling is still coming
+	// is the two-bins-on-one-node collision, and it is reachable through the
+	// operator's ordinary RELEASE click: ComputeSwapReady shows the button when
+	// EITHER leg is staged, and the loop below happily released whichever leg
+	// Core would accept.
+	//
+	// THIS IS WHERE v1 ENFORCES, and it is the whole reason swap_hold.go is
+	// untouched. A dispatch-time hold on both legs is a permanent mutual
+	// deadlock (SYNTH-round2, 5/5 reviewers); a refused RELEASE is a click the
+	// operator repeats a minute later. Under the IndexRobotSupplies flip both
+	// legs open with a wait and neither is self-sufficient, so dispatch fails
+	// open by design and this is the only thing standing between the flip and
+	// a collision.
+	//
+	// Scoped to press-index. two_robot's release ordering has been in
+	// production unchanged for a long time and its supply leg parks at a
+	// staging node rather than the press, so widening this would be a change
+	// to a mode nobody is working on.
+	if err := e.refusePlacingLegWhileSiblingPending(node, claim, evacOrderID, supplyOrderID); err != nil {
+		return err
+	}
+
 	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
 
 	// Order B (evacuation) — full disposition. Gated per-leg on
@@ -658,6 +683,66 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		e.rememberDeferredSiblingRelease(*evacOrderID, disp)
 	}
 	return nil
+}
+
+// SwapPairNotReadyError refuses a RELEASE that would drop a bin onto a press
+// its sibling has not cleared yet.
+//
+// ADVISORY: nothing is broken and nothing needs fixing. The other robot is on
+// its way, and the operator's only correct action is to click again once it
+// arrives. Rendered red it reads as a fault to escalate; the Advisory() marker
+// is what makes the station show it as a notice (round 2's PrimeInFlightError
+// pattern, keyed on behaviour so the handler needed no change).
+type SwapPairNotReadyError struct {
+	NodeName     string
+	SiblingState string
+}
+
+func (e *SwapPairNotReadyError) Error() string {
+	return fmt.Sprintf("node %s: the other robot has not cleared the press yet (%s) — "+
+		"release again once it is staged", e.NodeName, e.SiblingState)
+}
+
+// Advisory marks this as the system working rather than a fault.
+func (e *SwapPairNotReadyError) Advisory() bool { return true }
+
+// refusePlacingLegWhileSiblingPending is v1's collision guard. See the call
+// site for why it lives at RELEASE and not at dispatch.
+//
+// A TERMINAL EVAC IS NOT PENDING. If the evac already ran — or was cancelled,
+// or skipped because the press was found empty — nothing is coming to collide
+// with, and refusing then would strand a supply leg forever with no sibling
+// that can ever stage.
+func (e *Engine) refusePlacingLegWhileSiblingPending(
+	node *processes.Node, claim *processes.NodeClaim, evacOrderID, supplyOrderID *int64,
+) error {
+	if claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		return nil
+	}
+	if supplyOrderID == nil || evacOrderID == nil {
+		// One-legged: there is no sibling to wait for.
+		return nil
+	}
+	supply, err := e.db.GetOrder(*supplyOrderID)
+	if err != nil {
+		return nil // resolution problems are the caller's to report, not this guard's
+	}
+	if !orders.ReleasableAtCore(supply.Status) {
+		// The placing leg is not going anywhere on this click anyway; the
+		// existing per-leg gate handles it and the deferral remembers it.
+		return nil
+	}
+	evac, err := e.db.GetOrder(*evacOrderID)
+	if err != nil {
+		return nil
+	}
+	if orders.IsTerminal(evac.Status) || orders.ReleasableAtCore(evac.Status) {
+		return nil
+	}
+	e.logFn("release-staged HELD node=%s: supply leg %d is staged but evac leg %d is %q — "+
+		"releasing now would place a bin on a press the other robot has not cleared",
+		node.Name, supply.ID, evac.ID, evac.Status)
+	return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: string(evac.Status)}
 }
 
 // rememberDeferredSiblingRelease records a two-robot leg whose consolidated
