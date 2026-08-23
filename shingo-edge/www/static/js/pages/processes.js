@@ -898,6 +898,162 @@ function validateClaimState(state) {
     return { ok: errors.length === 0, errors: errors };
 }
 
+// ── Field-level validation feedback ─────────────────────────────────
+//
+// CLAIM_ERROR_SLOTS maps a validation finding's field name to the DOM it
+// renders on: the message slot, and the input that gets the error border.
+//
+// KEYED ON THE WIRE NAME, because two validators feed this and only one of
+// them is JavaScript. domain.ValidateNodeClaim (round 1) tags its findings
+// with NodeClaimInput's json names, and it is the authority — the browser's
+// validateClaimState is a fast local echo of the same rules, so its camelCase
+// keys are normalised into these rather than the other way round. A rule that
+// exists only on the server still lands on the right field.
+const CLAIM_ERROR_SLOTS = {
+    style_id:                { slot: 'claims-err-form' },
+    core_node_name:          { slot: 'claims-err-core-node-name',          input: 'claims-add-node',
+                               notice: 'claims-notice-core-node-name' },
+    swap_mode:               { slot: 'claims-err-swap-mode',               input: 'claims-add-swap' },
+    payload_code:            { slot: 'claims-err-payload-code',            input: 'claims-add-payload' },
+    inbound_staging:         { slot: 'claims-err-inbound-staging',         input: 'claims-add-inbound' },
+    outbound_staging:        { slot: 'claims-err-outbound-staging',        input: 'claims-add-outbound' },
+    inbound_source:          { slot: 'claims-err-inbound-source',          input: 'claims-add-inbound-source' },
+    outbound_destination:    { slot: 'claims-err-outbound-destination',    input: 'claims-add-outbound-destination' },
+    paired_core_node:        { slot: 'claims-err-paired-core-node',        input: 'claims-add-paired-node' },
+    second_paired_core_node: { slot: 'claims-err-second-paired-core-node', input: 'claims-add-second-paired-node' },
+};
+
+// The browser validator's own key spellings, normalised to wire names.
+// `staging` is browser-only and has no single field — it is the pair, and the
+// inbound slot is where the operator looks first.
+const CLAIM_ERROR_KEY_ALIASES = {
+    coreNodeName:         'core_node_name',
+    payloadCode:          'payload_code',
+    swapMode:             'swap_mode',
+    staging:              'inbound_staging',
+    inboundStaging:       'inbound_staging',
+    outboundStaging:      'outbound_staging',
+    inboundSource:        'inbound_source',
+    outboundDestination:  'outbound_destination',
+    pairedCoreNode:       'paired_core_node',
+    secondPairedCoreNode: 'second_paired_core_node',
+};
+
+function normalizeClaimErrorField(field) {
+    if (!field) return '';
+    return CLAIM_ERROR_KEY_ALIASES[field] || field;
+}
+
+// clearClaimFieldErrors wipes every slot and border. Called before each render
+// and on any edit, so a message never outlives the value that caused it.
+function clearClaimFieldErrors() {
+    Object.keys(CLAIM_ERROR_SLOTS).forEach(function(key) {
+        var spec = CLAIM_ERROR_SLOTS[key];
+        [spec.slot, spec.notice].forEach(function(id) {
+            if (!id) return;
+            var el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = '';
+            el.hidden = true;
+            el.style.display = 'none';
+        });
+        if (spec.input) {
+            var input = document.getElementById(spec.input);
+            if (input && input.classList) input.classList.remove('form-input--error');
+        }
+    });
+    var form = document.getElementById('claims-err-form');
+    if (form) { form.textContent = ''; form.hidden = true; form.style.display = 'none'; }
+}
+
+// renderClaimFieldErrors puts each finding on its own field.
+//
+// Findings are {field, message|msg, severity}. Severity "warning" renders in
+// the notice slot and does NOT mark the input — a warning did not refuse the
+// save, and colouring it like a refusal is how a refusal colour stops meaning
+// anything. Everything else is an error.
+//
+// A finding whose field has no slot still renders, at the form level. Silently
+// dropping it would be the toast problem again with extra steps: the operator
+// would see a refusal and no reason at all.
+function renderClaimFieldErrors(findings) {
+    clearClaimFieldErrors();
+    var orphans = [];
+    (findings || []).forEach(function(f) {
+        var key = normalizeClaimErrorField(f.field);
+        var text = f.message || f.msg || '';
+        var isWarning = f.severity === 'warning';
+        var spec = CLAIM_ERROR_SLOTS[key];
+        var slotID = spec && (isWarning ? (spec.notice || spec.slot) : spec.slot);
+        var el = slotID ? document.getElementById(slotID) : null;
+        if (!el) { orphans.push(text); return; }
+        el.textContent = el.textContent ? el.textContent + ' ' + text : text;
+        el.hidden = false;
+        el.style.display = '';
+        if (!isWarning && spec.input) {
+            var input = document.getElementById(spec.input);
+            if (input && input.classList) input.classList.add('form-input--error');
+        }
+    });
+    if (orphans.length > 0) {
+        var form = document.getElementById('claims-err-form');
+        if (form) {
+            form.textContent = orphans.join(' ');
+            form.hidden = false;
+            form.style.display = '';
+        }
+    }
+}
+
+// CLAIM_INPUT_TO_ERROR_FIELD is CLAIM_ERROR_SLOTS read the other way: which
+// finding does editing THIS input answer. Built once from the table so the two
+// directions cannot disagree.
+const CLAIM_INPUT_TO_ERROR_FIELD = (function() {
+    var out = {};
+    Object.keys(CLAIM_ERROR_SLOTS).forEach(function(key) {
+        var input = CLAIM_ERROR_SLOTS[key].input;
+        if (input) out[input] = key;
+    });
+    return out;
+})();
+
+// clearClaimFieldError drops one field's message and border.
+//
+// A message that outlives the value it was about is worse than no message: the
+// operator fixes the field, the red stays, and they stop believing the red.
+function clearClaimFieldError(field) {
+    var spec = CLAIM_ERROR_SLOTS[field];
+    if (!spec) return;
+    [spec.slot, spec.notice].forEach(function(id) {
+        if (!id) return;
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = '';
+        el.hidden = true;
+        el.style.display = 'none';
+    });
+    if (spec.input) {
+        var input = document.getElementById(spec.input);
+        if (input && input.classList) input.classList.remove('form-input--error');
+    }
+}
+
+// ensureClaimErrorDelegation clears a field's error the moment it is edited.
+// One delegated listener on the modal rather than a handler per input, and
+// idempotent so re-opening the modal does not stack listeners.
+function ensureClaimErrorDelegation() {
+    var modal = document.getElementById('claim-modal');
+    if (!modal || modal.dataset.errDelegated === '1') return;
+    modal.dataset.errDelegated = '1';
+    var onEdit = function(e) {
+        var id = e.target && e.target.id;
+        var field = id && CLAIM_INPUT_TO_ERROR_FIELD[id];
+        if (field) clearClaimFieldError(field);
+    };
+    modal.addEventListener('change', onEdit);
+    modal.addEventListener('input', onEdit);
+}
+
 // renderClaimForm: drives the editor DOM from current role/swap mode.
 // Replaces the prior toggleClaimsAddPayload + validateClaimStaging
 // pair. The lookup at claimFieldVisibility is the single source of
@@ -1067,6 +1223,8 @@ function openClaimModal() {
     sel.disabled = false;
     writeClaimStateToForm(defaultClaimState());
     document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
+    ensureClaimErrorDelegation();
+    clearClaimFieldErrors();
     renderClaimForm();
     showModal('claim-modal');
 }
@@ -1115,6 +1273,8 @@ function editClaim(claim) {
         updateAutoRequestDropdown();
         document.getElementById('claims-add-auto-request').value = claim.auto_request_payload || '';
     }
+    ensureClaimErrorDelegation();
+    clearClaimFieldErrors();
     renderClaimForm();
     showModal('claim-modal');
 }
@@ -1128,11 +1288,18 @@ async function saveClaim() {
     var state = readClaimStateFromForm();
     var validation = validateClaimState(state);
     if (!validation.ok) {
-        // Surface the first error; field-level error rendering is a
-        // follow-up. Today's UX matches the prior single-toast behavior.
-        toast(validation.errors[0].msg, 'warning');
+        // EVERY error, each on its own field. This used to surface
+        // validation.errors[0] as a toast and throw the rest away, which told
+        // an operator with three problems about one of them and did not say
+        // which input it meant. The toast stays as the summary line — the
+        // fields carry the detail.
+        renderClaimFieldErrors(validation.errors);
+        toast(validation.errors.length === 1
+            ? validation.errors[0].msg
+            : validation.errors.length + ' fields need attention', 'warning');
         return;
     }
+    clearClaimFieldErrors();
 
     // manual_swap claims carry no edge-side payload: Core owns the loader's
     // payload set (loader board), so payload_code is blank and the operator
@@ -1199,17 +1366,34 @@ async function saveClaim() {
         }
     }
 
-    try {
-        for (var i = 0; i < nodeNames.length; i++) {
-            claimBody.core_node_name = nodeNames[i];
-            await api.post('/api/style-node-claims', claimBody);
+    // postDetailed, not post: a refusal from domain.ValidateNodeClaim carries
+    // field_errors, and a successful save can carry warnings (the
+    // node-membership notice). api.post throws away both. The server's
+    // findings render through the SAME path as the browser's, so the operator
+    // sees one thing whether JS or Go caught it.
+    var warnings = [];
+    for (var i = 0; i < nodeNames.length; i++) {
+        claimBody.core_node_name = nodeNames[i];
+        var res = await api.postDetailed('/api/style-node-claims', claimBody);
+        if (!res.ok) {
+            if (res.fieldErrors.length > 0) {
+                renderClaimFieldErrors(res.fieldErrors);
+                toast(res.fieldErrors.length === 1
+                    ? (res.fieldErrors[0].message || res.error)
+                    : res.fieldErrors.length + ' fields need attention', 'warning');
+            } else {
+                toast('Error: ' + res.error, 'error');
+            }
+            return; // modal stays open on the offending values
         }
-        closeClaimModal();
-        await loadClaims(_claimsStyleID);
-        if (nodeNames.length > 1) toast('Created ' + nodeNames.length + ' claims', 'success');
-    } catch (e) {
-        toast('Error: ' + e, 'error');
+        warnings = warnings.concat(res.warnings || []);
     }
+    closeClaimModal();
+    await loadClaims(_claimsStyleID);
+    if (nodeNames.length > 1) toast('Created ' + nodeNames.length + ' claims', 'success');
+    // Advisory, and the save already happened. Surfaced after the reload so it
+    // is not mistaken for a refusal.
+    warnings.forEach(function(w) { toast(w.message || String(w), 'warning'); });
 }
 
 async function removeClaim(id) {
@@ -1471,6 +1655,9 @@ delegateActions(document.body, {
     readClaimStateFromForm,
     removeClaim,
     removeGenerateRow,
+    clearClaimFieldError,
+    clearClaimFieldErrors,
+    renderClaimFieldErrors,
     renderClaimForm,
     renderClaimRow,
     resetNodePicker,

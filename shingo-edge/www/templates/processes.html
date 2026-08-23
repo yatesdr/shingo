@@ -383,6 +383,8 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         <option value="">-- Select a node --</option>
                         {{range $name, $info := .CoreNodes}}<option value="{{$name}}" data-type="{{$info.NodeType}}">{{$name}}{{if eq $info.NodeType "NGRP"}} (group){{end}}</option>{{end}}
                     </select>
+                    <div class="field-error-msg" id="claims-err-core-node-name" hidden></div>
+                    <div class="field-notice-msg" id="claims-notice-core-node-name" hidden></div>
                 </div>
                 <div class="form-group" class="form-group--nogap">
                     <label>Role</label>
@@ -406,8 +408,10 @@ window.claimedByStation = {{json .ClaimedByStation}};
                              loader aggregate (SynthClaim). Existing manual_swap claims still render
                              below and can be removed, but are no longer authored/edited here. -->
                     </select>
+                    <div class="field-error-msg" id="claims-err-swap-mode" hidden></div>
                 </div>
             </div>
+            <div class="field-error-msg" id="claims-err-form" hidden></div>
             <div class="form-group" id="claims-add-payload-group">
                 <label>Payload</label>
                 <div style="display:flex;gap:0.5rem;align-items:center">
@@ -416,6 +420,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                     </select>
                     <button class="btn btn-sm" type="button" data-action="syncPayloadCatalog" title="Sync payload catalog from core">Sync</button>
                 </div>
+                <div class="field-error-msg" id="claims-err-payload-code" hidden></div>
             </div>
             <div class="form-group" id="claims-add-allowed-group" hidden>
                 <label>Allowed Payloads</label>
@@ -452,6 +457,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                             {{range $name, $_ := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
                         </select>
                         <div class="field-help--inline">New material stages here before delivery</div>
+                        <div class="field-error-msg" id="claims-err-inbound-staging" hidden></div>
                     </div>
                     <div class="form-group" class="form-group--nogap">
                         <label>Outbound</label>
@@ -460,6 +466,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                             {{range $name, $_ := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
                         </select>
                         <div class="field-help--inline">Old material parks here after removal</div>
+                        <div class="field-error-msg" id="claims-err-outbound-staging" hidden></div>
                     </div>
                 </div>
                 <div id="claims-staging-warning" style="color:var(--warning, #c59000);font-size:0.85rem;margin-top:0.5rem;display:none">
@@ -478,6 +485,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                             <option value="">-- None --</option>
                             {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}{{if eq $info.NodeType "NGRP"}} (group){{end}}</option>{{end}}
                         </select>
+                        <div class="field-error-msg" id="claims-err-inbound-source" hidden></div>
                     </div>
                     <div class="form-group" class="form-group--nogap" id="claims-outbound-destination-group">
                         <label>Outbound Destination</label>
@@ -485,6 +493,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                             <option value="">-- None --</option>
                             {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}{{if eq $info.NodeType "NGRP"}} (group){{end}}</option>{{end}}
                         </select>
+                        <div class="field-error-msg" id="claims-err-outbound-destination" hidden></div>
                     </div>
                 </div>
             </fieldset>
@@ -506,6 +515,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         <option value="">-- None (no A/B cycling) --</option>
                         {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
                     </select>
+                    <div class="field-error-msg" id="claims-err-paired-core-node" hidden></div>
                 </div>
                 <div class="form-group" id="claims-add-second-paired-group" style="margin:0.75rem 0 0 0;display:none">
                     <label>Third Press Position (optional)</label>
@@ -513,6 +523,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         <option value="">-- None (2-position layout) --</option>
                         {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
                     </select>
+                    <div class="field-error-msg" id="claims-err-second-paired-core-node" hidden></div>
                     <div class="field-help--inline">Set for a 3-position press where bins index C → B → A. R1 drops fresh empties at C; R2 indexes C → B and B → A. Leave blank for the default 2-position layout (R1 → B, R2 → A).</div>
                 </div>
                 <label id="claims-add-reuse-bins-row" class="check-row mt-2" hidden>

@@ -202,6 +202,23 @@ function buildDOM() {
     add('claims-add-auto-request', { tag: 'select', value: '' });
     add('claims-add-auto-confirm', { tag: 'input', type: 'checkbox' });
 
+    // Claim-modal validation slots (round 2 unit 1). The modal element itself
+    // is present because ensureClaimErrorDelegation marks it.
+    add('claim-modal');
+    [
+        'claims-err-form',
+        'claims-err-core-node-name',
+        'claims-notice-core-node-name',
+        'claims-err-swap-mode',
+        'claims-err-payload-code',
+        'claims-err-inbound-staging',
+        'claims-err-outbound-staging',
+        'claims-err-inbound-source',
+        'claims-err-outbound-destination',
+        'claims-err-paired-core-node',
+        'claims-err-second-paired-core-node',
+    ].forEach(function(id) { add(id, { display: 'none' }); });
+
     // Station modal
     add('station-id', { tag: 'input', type: 'hidden' });
     add('station-name', { tag: 'input' });
@@ -249,6 +266,13 @@ function createContext(elements, apiRecorder) {
         api: {
             get: () => Promise.resolve([]),
             post: (url, body) => { apiRecorder.push({ method: 'POST', url, body }); return Promise.resolve({ id: 1 }); },
+            // postDetailed never throws; it reports. Default is a clean save
+            // with no findings — a case that wants a server refusal overrides
+            // it on its own context.
+            postDetailed: (url, body) => {
+                apiRecorder.push({ method: 'POST', url, body });
+                return Promise.resolve({ ok: true, status: 200, data: { id: 1 }, error: '', fieldErrors: [], warnings: [] });
+            },
             put: () => Promise.resolve({}),
             del: () => Promise.resolve({}),
         },
@@ -651,8 +675,142 @@ async function runSaveClaimEvacuateOnChangeoverCase() {
     }
 }
 
+// -----------------------------------------------------------------------
+// Round 2 unit 1 — validation errors render ON the field
+// -----------------------------------------------------------------------
+//
+// saveClaim used to surface validation.errors[0] as a toast and discard the
+// rest: an operator with three problems heard about one of them, and the
+// message never said which input it meant. These assert the DOM after a
+// refused save, because "does the operator see where" is a question about what
+// is on the page.
+
+function shown(el) {
+    return !!el && el.hidden === false && el.style.display !== 'none';
+}
+
+async function runFieldErrorRenderCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+
+    elements['claims-style-selector'].value = '5';
+    ctx.onClaimsStyleChanged();
+
+    // press-index with NO back press node and NO outbound destination: two
+    // errors at once, which is the case the single toast could not report.
+    elements['claims-add-node'].value = 'NODE_A';
+    elements['claims-add-role'].value = 'produce';
+    elements['claims-add-swap'].value = 'two_robot_press_index';
+    elements['claims-add-payload'].value = 'PL1';
+    elements['claims-add-paired-node'].value = '';
+    elements['claims-add-outbound-destination'].value = '';
+
+    await ctx.saveClaim();
+
+    if (apiRecorder.length !== 0) {
+        reportFailure('fieldErrors: a refused save must not POST', 0, apiRecorder.length);
+    } else { passed++; }
+
+    const pairedSlot = elements['claims-err-paired-core-node'];
+    const destSlot = elements['claims-err-outbound-destination'];
+
+    if (!shown(pairedSlot)) {
+        reportFailure('fieldErrors: paired_core_node slot visible', 'visible',
+            JSON.stringify({ hidden: pairedSlot.hidden, display: pairedSlot.style.display }));
+    } else { passed++; }
+    if (!/Back Press Node/.test(pairedSlot.textContent)) {
+        reportFailure('fieldErrors: paired slot carries its message', 'mentions Back Press Node', pairedSlot.textContent);
+    } else { passed++; }
+
+    // The SECOND error is the one the old toast threw away.
+    if (!shown(destSlot)) {
+        reportFailure('fieldErrors: outbound_destination slot visible (the error the toast discarded)',
+            'visible', JSON.stringify({ hidden: destSlot.hidden, display: destSlot.style.display }));
+    } else { passed++; }
+    if (!/Outbound Destination/.test(destSlot.textContent)) {
+        reportFailure('fieldErrors: destination slot carries its message', 'mentions Outbound Destination', destSlot.textContent);
+    } else { passed++; }
+
+    // The inputs are marked, so the eye lands on them.
+    if (!elements['claims-add-paired-node'].classList._has('form-input--error')) {
+        reportFailure('fieldErrors: paired input marked', 'form-input--error', 'absent');
+    } else { passed++; }
+
+    // Untouched fields stay clean.
+    if (shown(elements['claims-err-payload-code'])) {
+        reportFailure('fieldErrors: a valid field shows nothing', 'hidden', 'visible');
+    } else { passed++; }
+
+    // Editing the field clears its message — a red that outlives its cause
+    // teaches the operator to ignore red.
+    ctx.clearClaimFieldError('paired_core_node');
+    if (shown(pairedSlot)) {
+        reportFailure('fieldErrors: editing clears the field message', 'hidden', 'visible');
+    } else { passed++; }
+    if (elements['claims-add-paired-node'].classList._has('form-input--error')) {
+        reportFailure('fieldErrors: editing clears the input border', 'unmarked', 'still marked');
+    } else { passed++; }
+    // ...and only that field's.
+    if (!shown(destSlot)) {
+        reportFailure('fieldErrors: clearing one field leaves the others', 'still visible', 'cleared');
+    } else { passed++; }
+}
+
+// Server findings render through the SAME path, so the operator sees one thing
+// whether JS or Go caught it — including the wire (snake_case) field names,
+// which is what domain.ValidateNodeClaim actually emits.
+function runServerFieldErrorCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+
+    ctx.renderClaimFieldErrors([
+        { field: 'inbound_staging', message: 'Single-robot swap requires inbound staging', severity: 'error' },
+        { field: 'core_node_name', message: 'not a node on this style process', severity: 'warning' },
+    ]);
+
+    if (!shown(elements['claims-err-inbound-staging'])) {
+        reportFailure('serverErrors: wire-named field lands on its slot', 'visible', 'hidden');
+    } else { passed++; }
+
+    // A WARNING is not a refusal: separate slot, and the input is NOT marked.
+    // Rendering advice in the refusal colour is how a refusal colour stops
+    // meaning anything.
+    if (!shown(elements['claims-notice-core-node-name'])) {
+        reportFailure('serverErrors: warning renders in the notice slot', 'visible', 'hidden');
+    } else { passed++; }
+    if (shown(elements['claims-err-core-node-name'])) {
+        reportFailure('serverErrors: warning must NOT use the error slot', 'hidden', 'visible');
+    } else { passed++; }
+    if (elements['claims-add-node'].classList._has('form-input--error')) {
+        reportFailure('serverErrors: warning must not mark the input as an error', 'unmarked', 'marked');
+    } else { passed++; }
+}
+
+// A finding for a field with no slot must still reach the operator. Dropping
+// it silently is the toast problem again: a refusal with no stated reason.
+function runOrphanFieldErrorCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+
+    ctx.renderClaimFieldErrors([
+        { field: 'a_field_the_ui_has_never_heard_of', message: 'something is wrong', severity: 'error' },
+    ]);
+    const form = elements['claims-err-form'];
+    if (!shown(form) || !/something is wrong/.test(form.textContent)) {
+        reportFailure('orphanErrors: unmapped finding falls back to the form slot', 'visible with text',
+            JSON.stringify({ hidden: form.hidden, text: form.textContent }));
+    } else { passed++; }
+}
+
 (async () => {
     runVisibilityCases();
+    await runFieldErrorRenderCase();
+    runServerFieldErrorCase();
+    runOrphanFieldErrorCase();
     await runSaveClaimSchemaCase();
     await runSaveClaimManualSwapCase();
     await runSaveClaimManualSwapNoPickerCase();

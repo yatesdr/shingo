@@ -70,6 +70,35 @@
   margin-top: 0.25rem;
 }
 
+/* Validation feedback, rendered ON the field it is about.
+ *
+ * A form that reports "Select a payload" as one toast has told the operator
+ * what is wrong and not where — and a claim editor with six geometry pickers
+ * has plenty of places for it to be. The message sits under its input and the
+ * input carries a border, so the two answers arrive together.
+ *
+ * ERROR AND NOTICE ARE DIFFERENT THINGS, and the colours say which. An error
+ * refused the save. A notice did not: the node-membership check warns that a
+ * claim's node is not on its style's process, which is usually a mis-pick and
+ * sometimes a perfectly good shared loader window, so it is advice the
+ * engineer overrules by ignoring it. Rendering advice in the refusal colour
+ * teaches people the refusal colour means nothing. */
+.field-error-msg {
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
+.field-notice-msg {
+  color: var(--warning);
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
+.form-input--error {
+  border-color: var(--danger);
+}
+
 /* Checkbox + label row inside a fieldset (manual_swap toggles,
  * evacuate-on-changeover, etc.) */
 .check-row {
