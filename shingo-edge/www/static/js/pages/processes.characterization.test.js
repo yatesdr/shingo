@@ -117,12 +117,19 @@ function querySelectorImpl(root, sel, all) {
 function matchesSelector(node, sel) {
     if (!node) return false;
     if (sel.startsWith('[data-action')) return !!node.dataset.action;
-    if (sel === '.station-node-cb') return node.classList._has('station-node-cb');
-    if (sel === '.station-node-cb:checked') return node.classList._has('station-node-cb') && node.checked;
-    if (sel === '.allowed-payload-cb') return node.classList._has('allowed-payload-cb');
-    if (sel === '.allowed-payload-cb:checked') return node.classList._has('allowed-payload-cb') && node.checked;
-    if (sel === '.process-tab') return node.classList._has('process-tab');
-    if (sel === '.process-tab-panel') return node.classList._has('process-tab-panel');
+    // A SINGLE CLASS SELECTOR, GENERICALLY — `.foo` and `.foo:checked`.
+    //
+    // This was six hard-coded equality checks with a `return false` after
+    // them, which meant a selector nobody had listed matched NOTHING and said
+    // nothing about it: round 3's `.claims-evac-seat` read as "no seats are
+    // checked" and every assertion about them was quietly about an empty list.
+    // A stub that answers "no" to a question it does not understand is the
+    // vacuous-test shape this file exists to avoid, so it answers properly.
+    const cls = sel.match(/^\.([-a-zA-Z0-9_]+)(:checked)?$/);
+    if (cls) {
+        if (!node.classList._has(cls[1])) return false;
+        return cls[2] ? !!node.checked : true;
+    }
     if (sel === 'input, select, textarea' || sel === 'input,select,textarea') {
         return ['INPUT', 'SELECT', 'TEXTAREA'].includes(node.tagName);
     }
@@ -222,6 +229,20 @@ function buildDOM() {
     add('claims-add-outbound-destination', { tag: 'select', value: 'DST1' });
     add('claims-changeover-fieldset');
     add('claims-add-evacuate', { tag: 'input', type: 'checkbox' });
+    // Round 3: per-seat tooling relevance + the evac destination.
+    add('claims-add-tooling-relevance-row');
+    add('claims-add-evac-destination-group');
+    add('claims-add-evac-destination', { tag: 'select', value: '' });
+    add('claims-err-changeover-evac-seats', { display: 'none' });
+    ['front', 'paired', 'second'].forEach(function(seat) {
+        const row = add('claims-seat-' + seat + '-row');
+        add('claims-seat-' + seat + '-node');
+        const cb = makeElement('claims-evac-seat-' + seat, { tag: 'input', type: 'checkbox' });
+        cb.value = seat;
+        cb.classList.add('claims-evac-seat');
+        row.appendChild(cb);
+        elements['claims-evac-seat-' + seat] = cb;
+    });
     add('claims-ab-fieldset', { display: 'none' });
     add('claims-ab-legend');
     add('claims-ab-help');
@@ -427,13 +448,27 @@ function expectedVisibility(role, swap) {
         'claims-add-auto-reorder-row': !isManual,
         'claims-add-lineside-group': role === 'consume' && !isManual,
         'claims-lineside-help': role === 'consume' && !isManual,
-        'claims-staging-fieldset': !isManual && usesStaging,
-        'claims-add-keep-staged-row': !isManual && usesStaging,
+        // Round 3: the staged tooling mode stages the incoming style at
+        // InboundStaging, so press-index shows these too. VISIBLE, not
+        // required — requiring it is an arm-time gate scoped to cells with
+        // marked seats, so plain press-index production is untouched.
+        'claims-staging-fieldset': !isManual && (usesStaging || isPressIndex),
+        'claims-add-keep-staged-row': !isManual && (usesStaging || isPressIndex),
         'claims-add-swap-group': true,
         'claims-source-fieldset': !isManual,
         'claims-inbound-source-group': !isManual,
         'claims-outbound-destination-group': !isManual,
         'claims-changeover-fieldset': !isManual,
+        // Round 3. The seat rows follow the LAYOUT: the harness's fixture
+        // leaves claims-add-second-paired-node empty, so the third seat is
+        // hidden even on press-index — which is the case that matters, since
+        // offering a seat the press does not have is how an unfireable
+        // selection gets made.
+        'claims-add-tooling-relevance-row': isPressIndex,
+        'claims-seat-front-row': isPressIndex,
+        'claims-seat-paired-row': isPressIndex,
+        'claims-seat-second-row': false,
+        'claims-add-evac-destination-group': !isManual,
         'claims-ab-fieldset': showPair,
         'claims-add-second-paired-group': showPair && isPressIndex,
         'claims-third-position-help': showPair && isPressIndex,
@@ -1341,9 +1376,10 @@ function runCompareGridStillOmitsCase() {
 // identically whether or not the key had ever been added. That is the vacuous
 // test this file exists to avoid.
 
+// Round 3 activated the first two of round 2's prepared slots, so they are no
+// longer inert and have moved into the visibility matrix proper. What remains
+// here is round 4's, still registered and still false.
 const ROUND_3_4_SLOTS = [
-    'claims-add-tooling-relevance-row',
-    'claims-add-evac-destination-group',
     'claims-add-index-robot-supplies-row',
     'claims-routing-fieldset',
     'claims-add-key-routes-group',
@@ -1372,14 +1408,15 @@ function runRound34SlotCases() {
         }
     }
 
-    // Today's staging rule is UNCHANGED: plain press-index neither shows nor
-    // requires staging. Round 3's evac mode is what grants it, and that is
-    // behind a constant — so this must stay false now, and it is the assertion
-    // that catches someone "preparing" round 3 by turning it on early.
+    // Round 3 shipped: the staged tooling mode stages the incoming style, so
+    // press-index now SHOWS the staging fieldset. It is still not REQUIRED —
+    // that is an arm-time gate scoped to cells with marked seats
+    // (refuseStagedChangeoverWithoutStaging), not a form rule, so plain
+    // press-index production is untouched.
     const pressIndex = ctx.claimFieldVisibility('produce', 'two_robot_press_index');
-    if (pressIndex['claims-staging-fieldset'] !== false) {
-        reportFailure('round3/4 slots: press-index staging stays hidden until round 3',
-            false, pressIndex['claims-staging-fieldset']);
+    if (pressIndex['claims-staging-fieldset'] !== true) {
+        reportFailure('round3: press-index shows staging now the staged mode exists',
+            true, pressIndex['claims-staging-fieldset']);
     } else { passed++; }
     // ...while the modes that use staging today are untouched by the new term.
     for (const swap of ['single_robot', 'two_robot']) {
@@ -1388,6 +1425,216 @@ function runRound34SlotCases() {
             reportFailure(`round3/4 slots: ${swap} still shows staging`, true, v['claims-staging-fieldset']);
         } else { passed++; }
     }
+}
+
+// -----------------------------------------------------------------------
+// Round 3 unit 1 — per-seat tooling relevance in the editor
+// -----------------------------------------------------------------------
+
+async function runEvacSeatsSaveCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+    elements['claims-style-selector'].value = '20';
+    ctx.onClaimsStyleChanged();
+
+    ctx.editClaim({
+        id: 90,
+        core_node_name: 'PRESS_A',
+        role: 'produce',
+        swap_mode: 'two_robot_press_index',
+        payload_code: 'PL1',
+        paired_core_node: 'PRESS_B',
+        second_paired_core_node: 'PRESS_C',
+        outbound_destination: 'MARKET',
+        changeover_evac_seats: ['front', 'second'],
+        changeover_evac_destination: 'TOOLING-BAY',
+    });
+
+    // The stored selection reaches the boxes.
+    if (!elements['claims-evac-seat-front'].checked) {
+        reportFailure('evacSeats: front loads checked', true, false);
+    } else { passed++; }
+    if (elements['claims-evac-seat-paired'].checked) {
+        reportFailure('evacSeats: an unmarked seat loads unchecked', false, true);
+    } else { passed++; }
+    if (!elements['claims-evac-seat-second'].checked) {
+        reportFailure('evacSeats: second loads checked', true, false);
+    } else { passed++; }
+    if (elements['claims-add-evac-destination'].value !== 'TOOLING-BAY') {
+        reportFailure('evacSeats: destination loads', 'TOOLING-BAY', elements['claims-add-evac-destination'].value);
+    } else { passed++; }
+
+    // Each seat says WHICH node it is. "Back position" is the same words on
+    // every press on the line.
+    if (elements['claims-seat-paired-node'].textContent !== '(PRESS_B)') {
+        reportFailure('evacSeats: the seat label names its node', '(PRESS_B)',
+            elements['claims-seat-paired-node'].textContent);
+    } else { passed++; }
+
+    // The operator changes the selection.
+    elements['claims-evac-seat-front'].checked = false;
+    elements['claims-evac-seat-paired'].checked = true;
+    await ctx.saveClaim();
+
+    if (apiRecorder.length !== 1) {
+        reportFailure('evacSeats: expected 1 POST', 1, apiRecorder.length);
+        return;
+    }
+    const body = apiRecorder[0].body;
+    if (JSON.stringify(body.changeover_evac_seats) !== JSON.stringify(['paired', 'second'])) {
+        reportFailure('evacSeats: the edited selection is sent, front to back',
+            ['paired', 'second'], body.changeover_evac_seats);
+    } else { passed++; }
+    if (body.changeover_evac_destination !== 'TOOLING-BAY') {
+        reportFailure('evacSeats: destination is sent', 'TOOLING-BAY', body.changeover_evac_destination);
+    } else { passed++; }
+}
+
+// A SEAT THE LAYOUT DOES NOT HAVE IS A PARTIAL DROP. A 2-position press
+// carrying "second" from a 3-position past would otherwise have the store take
+// it and ValidateNodeClaim refuse the save, telling the operator about a box
+// they cannot see.
+//
+// Only that seat goes. Dropping the whole set would take the front and back
+// marks with it, which is a config change nobody asked for — so the assertion
+// is on what SURVIVES, not just on what leaves.
+async function runHiddenSeatIsNotSentCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+    elements['claims-style-selector'].value = '20';
+    ctx.onClaimsStyleChanged();
+
+    ctx.editClaim({
+        id: 91,
+        core_node_name: 'PRESS_A',
+        role: 'produce',
+        swap_mode: 'two_robot_press_index',
+        payload_code: 'PL1',
+        paired_core_node: 'PRESS_B',
+        second_paired_core_node: '',           // 2-position layout
+        outbound_destination: 'MARKET',
+        changeover_evac_seats: ['front', 'second'],
+    });
+    ctx.renderClaimForm();
+
+    if (elements['claims-seat-second-row'].hidden !== true) {
+        reportFailure('hiddenSeat: the third seat is not offered on a 2-position press', 'hidden', 'visible');
+    } else { passed++; }
+
+    // Named before it happens, like every other mode drop.
+    const note = elements['claims-mode-drop-note'];
+    if (note.textContent.indexOf('Third press position') < 0) {
+        reportFailure('hiddenSeat: the note names the seat that will be cleared',
+            'mentions Third press position', note.textContent);
+    } else { passed++; }
+
+    await ctx.saveClaim();
+    if (apiRecorder.length !== 1) {
+        reportFailure('hiddenSeat: expected 1 POST', 1, apiRecorder.length);
+        return;
+    }
+    const seats = apiRecorder[0].body.changeover_evac_seats;
+    if (JSON.stringify(seats) !== JSON.stringify(['front'])) {
+        reportFailure('hiddenSeat: only the impossible seat is dropped; front survives', ['front'], seats);
+    } else { passed++; }
+}
+
+// Collapsing hides detail, not state: a marked selection shows in the summary
+// and opens the card, so nobody has to open it to find out whether it matters.
+function runEvacSeatsCollapseHintCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+    elements['claims-style-selector'].value = '20';
+    ctx.onClaimsStyleChanged();
+
+    ctx.editClaim({
+        id: 92,
+        core_node_name: 'PRESS_A',
+        role: 'produce',
+        swap_mode: 'two_robot_press_index',
+        payload_code: 'PL1',
+        paired_core_node: 'PRESS_B',
+        outbound_destination: 'MARKET',
+        changeover_evac_seats: ['paired'],
+    });
+    ctx.renderClaimForm();
+    const hint = elements['claims-changeover-hint'].textContent;
+    if (hint.indexOf('paired') < 0) {
+        reportFailure('evacSeatsHint: a marked selection shows in the collapsed summary',
+            'mentions paired', hint);
+    } else { passed++; }
+    if (elements['claims-changeover-fieldset'].open !== true) {
+        reportFailure('evacSeatsHint: a non-default selection opens the card', true,
+            elements['claims-changeover-fieldset'].open);
+    } else { passed++; }
+}
+
+// Switching a press-index claim to a mode with no seats drops the selection —
+// once, at save, with the operator told first.
+async function runSeatsDroppedOnModeChangeCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+    elements['claims-style-selector'].value = '20';
+    ctx.onClaimsStyleChanged();
+
+    ctx.editClaim({
+        id: 93,
+        core_node_name: 'PRESS_A',
+        role: 'produce',
+        swap_mode: 'two_robot_press_index',
+        payload_code: 'PL1',
+        paired_core_node: 'PRESS_B',
+        outbound_destination: 'MARKET',
+        inbound_staging: 'IN1',
+        changeover_evac_seats: ['front'],
+    });
+    elements['claims-add-swap'].value = 'two_robot';
+    ctx.renderClaimForm();
+
+    const note = elements['claims-mode-drop-note'];
+    if (note.textContent.indexOf('Per-position tooling evacuation') < 0) {
+        reportFailure('seatsDropped: the note names what will be cleared',
+            'mentions Per-position tooling evacuation', note.textContent);
+    } else { passed++; }
+
+    await ctx.saveClaim();
+    if (apiRecorder.length !== 1) {
+        reportFailure('seatsDropped: expected 1 POST', 1, apiRecorder.length);
+        return;
+    }
+    // An ARRAY must clear to [], not to '' — the store would store the string.
+    const seats = apiRecorder[0].body.changeover_evac_seats;
+    if (JSON.stringify(seats) !== JSON.stringify([])) {
+        reportFailure('seatsDropped: an array field clears to [], not to a string', [], seats);
+    } else { passed++; }
+}
+
+// The compare grid ECHOES these two rather than omitting them: they are plain
+// values on NodeClaimInput, so an absent key decodes to the zero value and
+// would clear the selection on every cell edit.
+function runCompareGridEchoesEvacFieldsCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+    const body = ctx.claimToBody({
+        style_id: 1, core_node_name: 'PRESS_A', role: 'produce',
+        swap_mode: 'two_robot_press_index', payload_code: 'PL1',
+        changeover_evac_seats: ['front', 'paired'],
+        changeover_evac_destination: 'TOOLING-BAY',
+    });
+    if (JSON.stringify(body.changeover_evac_seats) !== JSON.stringify(['front', 'paired'])) {
+        reportFailure('compareGrid: seats are echoed, not dropped', ['front', 'paired'], body.changeover_evac_seats);
+    } else { passed++; }
+    if (body.changeover_evac_destination !== 'TOOLING-BAY') {
+        reportFailure('compareGrid: destination is echoed', 'TOOLING-BAY', body.changeover_evac_destination);
+    } else { passed++; }
 }
 
 (async () => {
@@ -1403,6 +1650,11 @@ function runRound34SlotCases() {
     await runSequenceZeroStaysAbsentCase();
     runCompareGridStillOmitsCase();
     runRound34SlotCases();
+    await runEvacSeatsSaveCase();
+    await runHiddenSeatIsNotSentCase();
+    runEvacSeatsCollapseHintCase();
+    await runSeatsDroppedOnModeChangeCase();
+    runCompareGridEchoesEvacFieldsCase();
     runServerFieldErrorCase();
     runOrphanFieldErrorCase();
     await runSaveClaimSchemaCase();
