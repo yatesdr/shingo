@@ -388,6 +388,11 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- Where a tooling evacuation sends the bins it lifts off the press. A node
     -- OR a group name; blank falls back to outbound_destination.
     changeover_evac_destination TEXT NOT NULL DEFAULT '',
+    -- Turns a loader's card into a loading instruction during a changeover:
+    -- which empty bin type the changing-over cells are waiting for. Off by
+    -- default; see NodeClaim.ChangeoverLoadDirective for why it lives here
+    -- rather than on the Core loader aggregate.
+    changeover_load_directive INTEGER NOT NULL DEFAULT 0,
     auto_push               INTEGER NOT NULL DEFAULT 0,
     -- UOP-threshold replenishment: tracks how reorder_point was set.
     -- 'legacy' = default, never edited (silent-inert when 0).

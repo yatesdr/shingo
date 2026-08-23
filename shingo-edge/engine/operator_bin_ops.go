@@ -70,6 +70,25 @@ func (e *Engine) operatorRequestOrigin(node *processes.Node, claim *processes.No
 	return ordermgr.Attached(originID)
 }
 
+// changeoverLoadOrigin returns the active changeover's episode when THIS load
+// is one the changeover asked for, and a zero Origin otherwise.
+//
+// Gated on the claim's directive flag, not merely on a changeover existing. A
+// loader that was never opted in serves its ordinary steady-state demand right
+// through a changeover — attributing those to the changeover would inflate its
+// ratio with bins it did not cause, which is the mirror of the under-count this
+// exists to fix.
+func (e *Engine) changeoverLoadOrigin(node *processes.Node, claim *processes.NodeClaim) ordermgr.Origin {
+	if claim == nil || !claim.ChangeoverLoadDirective {
+		return ordermgr.Origin{}
+	}
+	co, err := e.db.GetActiveProcessChangeover(node.ProcessID)
+	if err != nil || co == nil {
+		return ordermgr.Origin{}
+	}
+	return e.changeoverOrigin(co.ID)
+}
+
 // loadablePayloads returns the payload codes an operator may load or request at
 // this manual_swap loader node. Post-cutover the loader's payload set is
 // Core-owned, so this resolves it from the aggregate — the SAME resolver the
@@ -552,7 +571,16 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 
 	// The operator asking for an empty IS the demand. Open (or join) the cell
 	// episode before creating anything so the order can name what caused it.
-	reqOrigin := e.operatorRequestOrigin(node, claim, runtime.RemainingUOPCached)
+	//
+	// UNLESS A CHANGEOVER ASKED. A load the operator makes off the changeover
+	// directive is that changeover's demand, not this cell's steady-state
+	// pull: attributed to the cell it reads in demand-origin reporting as an
+	// orphan replenishment nobody can tie to the changeover it served, and the
+	// changeover's own ratio under-counts by exactly the bins it caused.
+	reqOrigin := e.changeoverLoadOrigin(node, claim)
+	if reqOrigin.ID == "" {
+		reqOrigin = e.operatorRequestOrigin(node, claim, runtime.RemainingUOPCached)
+	}
 
 	// Payload handling splits by mode:
 	//

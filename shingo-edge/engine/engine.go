@@ -258,6 +258,9 @@ func New(c Config) *Engine {
 	// Wire the parked-ticks alarm (P2-C7) onto the operator tile: BuildView reads
 	// the live alarm map so the chip renders on load and on every refresh.
 	e.stationService.SetStrandedResolver(e.StrandedAlarmDetail)
+	// The changeover load directive names a BIN TYPE, so it needs the payload
+	// -> dunnage catalog Core delivers with every node-list sync.
+	e.stationService.SetBinTypeResolver(e.BinTypeForPayload)
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)

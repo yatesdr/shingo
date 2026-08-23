@@ -63,7 +63,7 @@ const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
-	changeover_evac_seats, changeover_evac_destination`
+	changeover_evac_seats, changeover_evac_destination, changeover_load_directive`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
@@ -75,7 +75,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
-		&evacSeatsJSON, &c.ChangeoverEvacDestination); err != nil {
+		&evacSeatsJSON, &c.ChangeoverEvacDestination, &c.ChangeoverLoadDirective); err != nil {
 		return c, err
 	}
 	// NULL means "not below", which is the ordinary state — a zero time would
@@ -281,14 +281,14 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
-		changeover_evac_seats, changeover_evac_destination)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		changeover_evac_seats, changeover_evac_destination, changeover_load_directive)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
-		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination)
+		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination, in.ChangeoverLoadDirective)
 	if err != nil {
 		return 0, err
 	}
@@ -319,7 +319,7 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 		`allowed_payload_codes=?`, `auto_request_payload=?`, `evacuate_on_changeover=?`,
 		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
 		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
-		`changeover_evac_seats=?`, `changeover_evac_destination=?`,
+		`changeover_evac_seats=?`, `changeover_evac_destination=?`, `changeover_load_directive=?`,
 	}
 	args := []any{
 		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint,
@@ -327,7 +327,7 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 		allowedJSON, in.AutoRequestPayload, in.EvacuateOnChangeover,
 		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
 		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
-		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination,
+		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination, in.ChangeoverLoadDirective,
 	}
 
 	if in.ReorderPointSource != nil {

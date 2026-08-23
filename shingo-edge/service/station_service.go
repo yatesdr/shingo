@@ -150,6 +150,11 @@ type StationService struct {
 	// core node name. Optional: nil leaves StrandedAlarm empty. The engine injects
 	// the live resolver (its strandedAlarms map) via SetStrandedResolver.
 	stranded func(coreNodeName string) string
+	// binTypes resolves a payload code to its dunnage code, for the
+	// changeover load directive. Optional, and OPTIONAL MATTERS: unset means
+	// no bin type resolves, which means no directive — a card that cannot
+	// name the carrier says nothing rather than guessing one.
+	binTypes func(payloadCode string) string
 
 	// touched throttles the liveness write — see Touch.
 	touchMu sync.Mutex
@@ -184,6 +189,20 @@ func (s *StationService) SetLoaderResolver(r LoaderResolver) { s.loaders = r }
 // engine's StrandedAlarmDetail — so BuildView can render the tile chip. Optional;
 // unset leaves StrandedAlarm empty for the lighter test constructors.
 func (s *StationService) SetStrandedResolver(r func(coreNodeName string) string) { s.stranded = r }
+
+// SetBinTypeResolver injects the payload -> dunnage lookup the changeover load
+// directive needs. Optional; unset leaves every directive nil.
+func (s *StationService) SetBinTypeResolver(r func(payloadCode string) string) { s.binTypes = r }
+
+// binTypeForPayload is the nil-safe read. An unwired resolver answers "unknown"
+// for every payload, and BuildChangeoverLoadDirective drops an unknown rather
+// than naming a carrier it cannot identify.
+func (s *StationService) binTypeForPayload(payloadCode string) string {
+	if s.binTypes == nil {
+		return ""
+	}
+	return s.binTypes(payloadCode)
+}
 
 // ── Cross-aggregate orchestrations ──────────────────────────────────
 
@@ -487,6 +506,13 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	// reason as loaderPayloads/runtimes/boardOrders above — never a query inside
 	// the tile loop. Empty (and free) on any board without an active changeover.
 	pressPositionClaims := pressPositionClaimsForBoard(s.db.DB, nodes, nodeTaskMap, activeClaims, targetClaims)
+	// The incoming style's claims as a list, computed once: the load directive
+	// asks "what are the changing-over cells waiting for", which is a question
+	// about the whole target style, not about this tile.
+	targetClaimList := make([]processes.NodeClaim, 0, len(targetClaims))
+	for _, c := range targetClaims {
+		targetClaimList = append(targetClaimList, c)
+	}
 	nodeIDs := make([]int64, 0, len(nodes))
 	nodeKeys := make([]orders.NodeKey, 0, len(nodes))
 	for _, node := range nodes {
@@ -577,6 +603,19 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 				nodeView.TargetClaim = &claim
 			}
 		}
+		// A loader's card becomes a LOADING INSTRUCTION during a changeover:
+		// which empty bin type the changing-over cells are waiting for.
+		//
+		// BUILT FROM CHANGEOVER STATE, not from delivered orders. The obvious
+		// hook — the U1-confirm path that watches for arrivals — matches
+		// RETRIEVE orders only, and a changeover's evac arrivals are COMPLEX
+		// ones, so a card wired there would stay silent through exactly the
+		// window it exists for.
+		if view.ActiveChangeover != nil && nodeView.ActiveClaim != nil {
+			nodeView.ChangeoverLoadDirective = domain.BuildChangeoverLoadDirective(
+				view.ActiveChangeover.ID, nodeView.ActiveClaim, targetClaimList, s.binTypeForPayload)
+		}
+
 		// Core-owned-loader fallback: a window/position of a Core loader with no
 		// per-style edge claim still reads as a manual_swap loader node, so the
 		// operator board renders (and the runtime treats it as a loader). Synthesize

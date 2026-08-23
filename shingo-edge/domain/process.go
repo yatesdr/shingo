@@ -285,6 +285,19 @@ type NodeClaim struct {
 	// special case; an unloader is reached by naming a group it projects over,
 	// which keeps this field ignorant of what is on the other end.
 	ChangeoverEvacDestination string `json:"changeover_evac_destination"`
+	// ChangeoverLoadDirective turns this loader's card into a LOADING
+	// INSTRUCTION during a changeover: instead of the operator choosing from
+	// the loader's whole payload list, the card names the empty bin type the
+	// changing-over cells are actually waiting for.
+	//
+	// ON THE CLAIM, not on the Core loader aggregate. The behaviour is an Edge
+	// station's rendering of Edge's own changeover state — Core has no
+	// changeover concept for loaders and could only be told about this, never
+	// decide it. It also follows where every other per-station behaviour fact
+	// already lives; domain.Loader carries no config at all.
+	//
+	// Off by default: a plant that has never wanted this sees no change.
+	ChangeoverLoadDirective bool `json:"changeover_load_directive"`
 	AutoConfirm               bool   `json:"auto_confirm"`
 	Sequence                  int    `json:"sequence"`
 	// LinesideSoftThreshold is the per-claim soft cap for the release
@@ -551,6 +564,7 @@ type NodeClaimInput struct {
 	// always has an opinion.
 	ChangeoverEvacSeats       []string `json:"changeover_evac_seats"`
 	ChangeoverEvacDestination string   `json:"changeover_evac_destination"`
+	ChangeoverLoadDirective   bool     `json:"changeover_load_directive"`
 	AutoConfirm               bool     `json:"auto_confirm"`
 	LinesideSoftThreshold     int      `json:"lineside_soft_threshold"`
 	ReuseCompatibleBins       bool     `json:"reuse_compatible_bins"`

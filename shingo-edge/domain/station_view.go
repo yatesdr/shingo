@@ -33,6 +33,12 @@ type StationNodeView struct {
 	// points and a single coordinated release can move both forward.
 	// Non-two-robot nodes always report false.
 	SwapReady bool `json:"swap_ready"`
+
+	// ChangeoverLoadDirective tells a loader's card what to load during a
+	// changeover — see the type. Nil when there is no changeover, the claim
+	// has the flag off, or no bin type could be resolved: a card that always
+	// shows a directive is a card whose directive nobody reads.
+	ChangeoverLoadDirective *ChangeoverLoadDirective `json:"changeover_load_directive,omitempty"`
 	// ChildOfNode is set when this tile is rendered on a station only because
 	// the node it EXTENDS lives here — a press-index seat with no
 	// operator_station_id of its own, shown under its press. Carries the
