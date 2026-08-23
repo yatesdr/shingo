@@ -75,6 +75,7 @@ async function startProcessChangeover() {
             toast('Changeover started — awaiting stock for: ' + co.awaiting_stock.join(', ') +
                 '. These supply orders will dispatch automatically once the bins are loaded and manifest-confirmed.', 'warning');
         }
+        renderUnresolvedParticipants(co && co.unresolved_participants);
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
         toast('Error: ' + e, 'error');
@@ -85,6 +86,7 @@ async function cancelProcessChangeover() {
     if (!await confirm('Cancel the active process changeover?')) return;
     try {
         await api.post('/api/processes/' + processID + '/changeover/cancel', {});
+        renderUnresolvedParticipants(null);
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
         toast('Error: ' + e, 'error');
@@ -94,6 +96,7 @@ async function cancelProcessChangeover() {
 async function completeCutover() {
     try {
         await api.post('/api/processes/' + processID + '/changeover/cutover', {});
+        renderUnresolvedParticipants(null);
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
         toast('Error: ' + e, 'error');
@@ -115,6 +118,38 @@ async function switchStation(stationID) {
 function closeChangeoverPreview() {
     var panel = document.getElementById('changeover-preview');
     if (panel) panel.style.display = 'none';
+}
+
+// renderUnresolvedParticipants shows the start response's advisory: participant
+// nodes whose core_node_name resolves to no process_nodes row. Almost always
+// press-index extension seats — physically traversed by the index motion,
+// owning no task and no order, and invisible to every consumer without a row.
+//
+// A BANNER, NOT A TOAST, and never blocking. The changeover has already
+// started; this is a config gap the engineer fixes on the process-nodes page,
+// which is not something to read in the three seconds a toast lasts. It is also
+// the only place this list is ever available — it is transient and not
+// persisted, so nothing re-renders it from state.
+//
+// Pass a falsy or empty list to clear it, which is what cancel and cutover do:
+// the advisory belongs to one changeover and must not outlive it.
+function renderUnresolvedParticipants(nodes) {
+    var el = document.getElementById('changeover-advisory');
+    if (!el) return;
+    if (!nodes || !nodes.length) {
+        el.hidden = true;
+        el.innerHTML = '';
+        return;
+    }
+    var names = nodes.map(function(n) { return '<span class="mono">' + escapeHtml(String(n)) + '</span>'; }).join(', ');
+    var one = nodes.length === 1;
+    el.innerHTML =
+        '<strong>Changeover started.</strong> ' + nodes.length +
+        (one ? ' participant node has' : ' participant nodes have') +
+        ' no process node configured: ' + names +
+        '. These positions cannot be gated, rendered or released until they are added on the ' +
+        '<a href="/processes">process nodes</a> page. The changeover is running regardless.';
+    el.hidden = false;
 }
 
 // ─── delegated event handlers ─────────────────────────
