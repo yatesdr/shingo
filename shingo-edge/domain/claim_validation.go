@@ -86,6 +86,13 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		add("swap_mode", fmt.Sprintf("%q is not a configurable swap mode", in.SwapMode))
 	}
 
+	// Board order. A negative position is not a position; absent means "no
+	// opinion" and the store assigns the next free slot, which is why nil is
+	// fine and -1 is not.
+	if in.Sequence != nil && *in.Sequence < 0 {
+		add("sequence", "Board order cannot be negative")
+	}
+
 	// manual_swap loaders carry no edge-side payload: Core owns the loader's
 	// payload set from the loader board. Every other mode needs a primary.
 	if in.SwapMode != protocol.SwapModeManualSwap &&

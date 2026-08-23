@@ -398,7 +398,12 @@ window.processNodeNames = {{json .ProcessNodeNames}};
                         <option value="produce">Produce</option>
                     </select>
                 </div>
-                <div class="form-group" class="form-group--nogap" id="claims-add-swap-group">
+                <div class="form-group form-group--nogap" id="claims-add-sequence-group">
+                    <label>Board Order <span class="label-aside">(low first)</span></label>
+                    <input type="number" id="claims-add-sequence" class="form-input" value="0" min="0">
+                    <div class="field-error-msg" id="claims-err-sequence" hidden></div>
+                </div>
+                <div class="form-group form-group--nogap" id="claims-add-swap-group">
                     <label>Swap Mode</label>
                     <select id="claims-add-swap" class="form-input" data-action-change="renderClaimForm">
                         <option value="simple" hidden>Simple</option>
@@ -462,6 +467,10 @@ window.processNodeNames = {{json .ProcessNodeNames}};
                     <input type="number" id="claims-add-lineside-soft" class="form-input" value="0" min="0">
                 </div>
             </div>
+            <label class="check-row mb-2" id="claims-add-auto-reorder-row">
+                <input type="checkbox" id="claims-add-auto-reorder">
+                <span>Auto-reorder <span class="label-aside">request material automatically when the count falls to the reorder point</span></span>
+            </label>
             <div class="field-help--inline mb-3" id="claims-lineside-help">Lineside soft cap: the release prompt warns if an entered qty exceeds 2× this value. Catches typos; never blocks release.</div>
 
             <fieldset id="claims-staging-fieldset" class="fieldset-card mb-0">
@@ -489,7 +498,10 @@ window.processNodeNames = {{json .ProcessNodeNames}};
                 <div id="claims-staging-warning" style="color:var(--warning, #c59000);font-size:0.85rem;margin-top:0.5rem;display:none">
                     1-Robot requires both inbound and outbound staging. 2-Robot requires inbound staging.
                 </div>
-                <!-- KeepStaged checkbox is intentionally absent here; the backend column and planner branches are preserved for a future rewire. -->
+                <label class="check-row mt-2" id="claims-add-keep-staged-row">
+                    <input type="checkbox" id="claims-add-keep-staged">
+                    <span>Keep staged <span class="label-aside">leave the incoming bin on the staging node instead of delivering it; the operator releases it</span></span>
+                </label>
             </fieldset>
 
             <fieldset id="claims-source-fieldset" class="fieldset-card--stacked">

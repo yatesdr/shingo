@@ -201,6 +201,13 @@ function buildDOM() {
     add('claims-add-capacity', { tag: 'input', value: '10' });
     add('claims-add-reorder-group');
     add('claims-add-reorder', { tag: 'input', value: '2' });
+    add('claims-add-sequence-group');
+    add('claims-add-sequence', { tag: 'input', value: '0' });
+    add('claims-err-sequence', { display: 'none' });
+    add('claims-add-auto-reorder-row');
+    add('claims-add-auto-reorder', { tag: 'input', type: 'checkbox' });
+    add('claims-add-keep-staged-row');
+    add('claims-add-keep-staged', { tag: 'input', type: 'checkbox' });
     add('claims-add-lineside-group');
     add('claims-lineside-help');
     add('claims-add-lineside-soft', { tag: 'input', value: '0' });
@@ -416,9 +423,12 @@ function expectedVisibility(role, swap) {
         'claims-add-payload-group': !isManual,
         'claims-add-allowed-group': false,
         'claims-add-reorder-group': !isManual,
+        'claims-add-sequence-group': true,
+        'claims-add-auto-reorder-row': !isManual,
         'claims-add-lineside-group': role === 'consume' && !isManual,
         'claims-lineside-help': role === 'consume' && !isManual,
         'claims-staging-fieldset': !isManual && usesStaging,
+        'claims-add-keep-staged-row': !isManual && usesStaging,
         'claims-add-swap-group': true,
         'claims-source-fieldset': !isManual,
         'claims-inbound-source-group': !isManual,
@@ -428,7 +438,11 @@ function expectedVisibility(role, swap) {
         'claims-add-second-paired-group': showPair && isPressIndex,
         'claims-third-position-help': showPair && isPressIndex,
         'claims-add-reuse-bins-row': showPair && isPressIndex,
-        'claims-auto-request-fieldset': false,
+        // Was pinned `false` unconditionally, matching a bug rather than an
+        // intent: 2635ad10 set out to hide this for manual_swap only and said
+        // so in its message, but wrote the parent without the condition. The
+        // consequence was that auto_confirm had no reachable control at all.
+        'claims-auto-request-fieldset': !isManual,
         'claims-auto-request-manual-swap': false,
         'claims-auto-request-standard': !isManual,
         'claims-add-auto-push-row': isManual && role === 'consume',
@@ -567,16 +581,30 @@ async function runSaveClaimSchemaCase() {
             passed++;
         }
     }
-    // ABSENCE IS THE ASSERTION for these four. The editor owns no control for
-    // any of them, and NodeClaimInput types them as pointers so that omitting
-    // one means "leave the stored value alone". Sending a literal instead —
-    // auto_reorder was hard-coded `true`, then hand-echoed; keep_staged was
-    // hard-coded `false` — rewrote plant config on every unrelated field edit,
-    // because updateClaim wrote all 22 columns whatever the caller meant.
-    // A present key here is that bug coming back, so pin the absence.
-    for (const k of ['auto_reorder', 'keep_staged', 'sequence', 'reorder_point_source']) {
+    // ABSENT MEANS "THIS FORM HAS NO OPINION", and which fields that covers
+    // moved in round 2 unit 4.
+    //
+    // reorder_point_source: nothing in this editor sets provenance, so it stays
+    // absent and updateClaim leaves the stored value alone. A literal here is
+    // the round-1 bug coming back — every save reset provenance to "legacy".
+    //
+    // sequence: absent only because THIS fixture leaves the input at 0, which
+    // means "no opinion" and lets the store assign the next free board slot. A
+    // non-zero value IS sent — see runSurfacedFieldsSaveCase.
+    for (const k of ['sequence', 'reorder_point_source']) {
         if (k in rec.body) {
-            reportFailure(`saveClaim body[${k}] must be ABSENT (editor owns no control for it)`, undefined, rec.body[k]);
+            reportFailure(`saveClaim body[${k}] must be ABSENT here`, undefined, rec.body[k]);
+        } else {
+            passed++;
+        }
+    }
+    // auto_reorder and keep_staged now have controls, so the form owns them and
+    // sends them. They were absent in round 1 because there was nothing to
+    // send; sending them is not a regression of that fix, it is the reason the
+    // fix used pointers instead of preservation hacks.
+    for (const k of ['auto_reorder', 'keep_staged']) {
+        if (!(k in rec.body)) {
+            reportFailure(`saveClaim body[${k}] must be PRESENT (the form owns a control for it)`, 'present', 'absent');
         } else {
             passed++;
         }
@@ -1182,6 +1210,122 @@ function runShowAllNodesCase() {
     } else { passed++; }
 }
 
+// -----------------------------------------------------------------------
+// Round 2 unit 4 — the invisible fields get controls
+// -----------------------------------------------------------------------
+//
+// auto_reorder, keep_staged and sequence are live persisted columns. Round 1
+// stopped the editor CORRUPTING them; they were still unreachable. A form that
+// owns a field sends it, so these now appear in the POST body — except
+// sequence 0, which means "no opinion" and stays absent so the store can
+// assign the next free board slot.
+
+async function runSurfacedFieldsSaveCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+    elements['claims-style-selector'].value = '11';
+    ctx.onClaimsStyleChanged();
+
+    ctx.editClaim({
+        id: 80,
+        core_node_name: 'N1',
+        role: 'consume',
+        swap_mode: 'single_robot',
+        payload_code: 'PL1',
+        inbound_staging: 'IN1',
+        outbound_staging: 'OUT1',
+        sequence: 4,
+        auto_reorder: true,
+        keep_staged: true,
+    });
+
+    // The stored values reach the controls.
+    if (elements['claims-add-sequence'].value !== '4') {
+        reportFailure('surfaced: sequence loads into its input', '4', elements['claims-add-sequence'].value);
+    } else { passed++; }
+    if (!elements['claims-add-auto-reorder'].checked) {
+        reportFailure('surfaced: auto_reorder loads into its checkbox', true, false);
+    } else { passed++; }
+    if (!elements['claims-add-keep-staged'].checked) {
+        reportFailure('surfaced: keep_staged loads into its checkbox', true, false);
+    } else { passed++; }
+
+    // The operator changes them.
+    elements['claims-add-sequence'].value = '9';
+    elements['claims-add-auto-reorder'].checked = false;
+    elements['claims-add-keep-staged'].checked = false;
+
+    await ctx.saveClaim();
+    if (apiRecorder.length !== 1) {
+        reportFailure('surfaced: expected 1 POST', 1, apiRecorder.length);
+        return;
+    }
+    const body = apiRecorder[0].body;
+    const want = { sequence: 9, auto_reorder: false, keep_staged: false };
+    for (const k of Object.keys(want)) {
+        if (JSON.stringify(body[k]) !== JSON.stringify(want[k])) {
+            reportFailure(`surfaced: body[${k}] — a form that owns a field sends it`, want[k], body[k]);
+        } else { passed++; }
+    }
+}
+
+// sequence 0 is "no opinion", not "position zero". It must stay ABSENT so the
+// store's next-free-slot default still fires; sending a literal 0 would claim
+// the top of the board for every new claim.
+async function runSequenceZeroStaysAbsentCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+    elements['claims-style-selector'].value = '11';
+    ctx.onClaimsStyleChanged();
+
+    ctx.openClaimModal();
+    elements['claims-add-node'].value = 'PRESS_A';
+    elements['claims-add-role'].value = 'consume';
+    elements['claims-add-swap'].value = 'sequential';
+    elements['claims-add-payload'].value = 'PL1';
+    elements['claims-add-sequence'].value = '0';
+
+    await ctx.saveClaim();
+    if (apiRecorder.length !== 1) {
+        reportFailure('sequenceZero: expected 1 POST', 1, apiRecorder.length);
+        return;
+    }
+    if ('sequence' in apiRecorder[0].body) {
+        reportFailure('sequenceZero: 0 means no opinion and must not be sent',
+            'absent', apiRecorder[0].body.sequence);
+    } else { passed++; }
+    // ...but the two flags are always sent, because the form owns them.
+    for (const k of ['auto_reorder', 'keep_staged']) {
+        if (!(k in apiRecorder[0].body)) {
+            reportFailure(`sequenceZero: ${k} is owned by this form and must be sent`, 'present', 'absent');
+        } else { passed++; }
+    }
+}
+
+// The compare grid is a DIFFERENT surface with a different answer: it edits one
+// field per cell and owns none of these, so it must keep omitting all four.
+// That is the whole point of absent-means-untouched, and it is easy to break by
+// copying the modal's body.
+function runCompareGridStillOmitsCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+    const body = ctx.claimToBody({
+        style_id: 1, core_node_name: 'N1', role: 'consume', swap_mode: 'sequential',
+        payload_code: 'PL1', sequence: 5, auto_reorder: true, keep_staged: true,
+        reorder_point_source: 'calculated',
+    });
+    for (const k of ['sequence', 'auto_reorder', 'keep_staged', 'reorder_point_source']) {
+        if (k in body) {
+            reportFailure(`compareGrid: ${k} must stay absent (the grid owns no control for it)`, 'absent', body[k]);
+        } else { passed++; }
+    }
+}
+
 (async () => {
     runVisibilityCases();
     await runFieldErrorRenderCase();
@@ -1191,6 +1335,9 @@ function runShowAllNodesCase() {
     runNodePickerFilterCase();
     runNodePickerKeepsOutOfFilterValueCase();
     runShowAllNodesCase();
+    await runSurfacedFieldsSaveCase();
+    await runSequenceZeroStaysAbsentCase();
+    runCompareGridStillOmitsCase();
     runServerFieldErrorCase();
     runOrphanFieldErrorCase();
     await runSaveClaimSchemaCase();

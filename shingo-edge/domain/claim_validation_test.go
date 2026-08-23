@@ -60,6 +60,7 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 		{"missing swap mode", func(c *NodeClaimInput) { c.SwapMode = "" }, "swap_mode"},
 		{"unconfigurable swap mode", func(c *NodeClaimInput) { c.SwapMode = "simple" }, "swap_mode"},
 		{"missing payload", func(c *NodeClaimInput) { c.PayloadCode = "" }, "payload_code"},
+		{"negative board order", func(c *NodeClaimInput) { c.Sequence = Ptr(-1) }, "sequence"},
 
 		{"press-index without back position", func(c *NodeClaimInput) { c.PairedCoreNode = "" }, "paired_core_node"},
 		{"press-index without outbound", func(c *NodeClaimInput) { c.OutboundDestination = "" }, "outbound_destination"},
@@ -97,6 +98,31 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 
 // manual_swap loaders carry no edge-side payload — Core owns the loader's
 // payload set — so the payload requirement must not fire for them.
+// Absent and zero are both fine: absent means "no opinion" and the store
+// assigns the next free slot, and 0 is what an untouched number input reads.
+// Only a negative is a refusal — a test that only checked nil would pass with
+// the guard written as `*in.Sequence <= 0` and break every new claim.
+func TestValidateNodeClaim_SequenceAbsentOrZeroIsFine(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		seq  *int
+	}{
+		{"absent", nil},
+		{"zero", Ptr(0)},
+		{"positive", Ptr(7)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := validClaim()
+			c.Sequence = tc.seq
+			if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
+				t.Fatalf("sequence %v must be accepted; findings = %+v", tc.seq, got)
+			}
+		})
+	}
+}
+
 func TestValidateNodeClaim_ManualSwapNeedsNoPayload(t *testing.T) {
 	t.Parallel()
 	c := validClaim()

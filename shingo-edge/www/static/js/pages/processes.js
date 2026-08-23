@@ -512,10 +512,11 @@ function ensureCompareDelegation(wrap) {
 // saveClaim's claimBody so a compare-grid edit preserves every field it does
 // not touch (staging, pairing, flags).
 //
-// SEND ONLY WHAT THIS EDITOR OWNS. sequence, reorder_point_source,
-// keep_staged and auto_reorder are omitted because there is no control for
-// any of them; they are *bool/*int/*string on NodeClaimInput and absent means
-// leave untouched. auto_reorder used to be echoed back by hand here — read
+// SEND ONLY WHAT THIS EDITOR OWNS. The compare grid edits one field per cell,
+// so sequence, reorder_point_source, keep_staged and auto_reorder are all
+// omitted here — it has a control for none of them. (The claim MODAL now has
+// controls for three and sends those; this grid is a different surface with a
+// different answer, which is the point of absent-means-untouched.) auto_reorder used to be echoed back by hand here — read
 // the claim, send its own value — which was the same problem patched one
 // field at a time, and only after a hard-coded `true` had spent a while
 // re-arming cell auto-reorder on every claim an engineer touched. The store
@@ -627,6 +628,12 @@ function claimFieldVisibility(role, swap) {
         'claims-add-allowed-group':           false,
         'claims-add-capacity-group':          !isManual,
         'claims-add-reorder-group':           !isManual,
+        // Board order is an identity fact — every claim has a place in the
+        // list, whatever it does.
+        'claims-add-sequence-group':          true,
+        // Auto-reorder arms the reorder point, so it shows exactly where the
+        // reorder point does.
+        'claims-add-auto-reorder-row':        !isManual,
         'claims-add-lineside-group':          role === 'consume' && !isManual,
         // Extracted from inside the field group when the numeric row became a
         // 3-column grid; it follows the field it explains.
@@ -635,6 +642,9 @@ function claimFieldVisibility(role, swap) {
         // then further hidden when the swap mode doesn't use staging at
         // all (sequential / press_index).
         'claims-staging-fieldset':            !isManual && usesStaging,
+        // keep_staged parks the incoming bin ON the staging node, so it is
+        // meaningless without one.
+        'claims-add-keep-staged-row':         !isManual && usesStaging,
         'claims-add-swap-group':              true,
         'claims-source-fieldset':             !isManual,
         'claims-inbound-source-group':        !isManual,
@@ -646,7 +656,15 @@ function claimFieldVisibility(role, swap) {
         'claims-add-second-paired-group':     showPair && isPressIndex,
         'claims-third-position-help':         showPair && isPressIndex,
         'claims-add-reuse-bins-row':          showPair && isPressIndex,
-        'claims-auto-request-fieldset':       false,
+        // Was an unconditional `false`, which killed the whole group for every
+        // claim type. 2635ad10 meant to hide it for manual_swap only — its
+        // message says "every other claim type (presses, welds, ...) is
+        // untouched" — and the inner claims-auto-request-standard entry below
+        // was written that way. The parent was not, so auto_confirm has had no
+        // reachable control since: the checkbox renders inside a hidden
+        // fieldset, editClaim echoes the stored value into it, and no operator
+        // can change it.
+        'claims-auto-request-fieldset':       !isManual,
         'claims-auto-request-manual-swap':    false,
         'claims-auto-request-standard':       !isManual,
         // Auto-push is only meaningful for a consume manual_swap
@@ -821,6 +839,9 @@ function readClaimStateFromForm() {
         allowedPayloadCodes: allowedCodes,
         uopCapacity: parseInt(get('claims-add-capacity').value, 10) || 0,
         reorderPoint: parseInt(get('claims-add-reorder').value, 10) || 0,
+        sequence: Math.max(0, parseInt(get('claims-add-sequence').value, 10) || 0),
+        autoReorder: get('claims-add-auto-reorder').checked,
+        keepStaged: get('claims-add-keep-staged').checked,
         linesideSoftThreshold: Math.max(0, parseInt(get('claims-add-lineside-soft').value, 10) || 0),
         inboundStaging: get('claims-add-inbound').value,
         outboundStaging: get('claims-add-outbound').value,
@@ -848,6 +869,9 @@ function writeClaimStateToForm(state) {
     get('claims-add-payload').value = state.payloadCode || '';
     get('claims-add-capacity').value = String(state.uopCapacity || 0);
     get('claims-add-reorder').value = String(state.reorderPoint || 0);
+    get('claims-add-sequence').value = String(state.sequence || 0);
+    get('claims-add-auto-reorder').checked = !!state.autoReorder;
+    get('claims-add-keep-staged').checked = !!state.keepStaged;
     get('claims-add-lineside-soft').value = String(state.linesideSoftThreshold || 0);
     get('claims-add-inbound').value = state.inboundStaging || '';
     get('claims-add-outbound').value = state.outboundStaging || '';
@@ -1466,6 +1490,11 @@ function defaultClaimState() {
         allowedPayloadCodes: [],
         uopCapacity: 0,
         reorderPoint: 0,
+        // 0 means "no opinion": the store gives a new claim the next free
+        // board slot. Not a real position, and not sent as one.
+        sequence: 0,
+        autoReorder: false,
+        keepStaged: false,
         linesideSoftThreshold: 0,
         inboundStaging: '',
         outboundStaging: '',
@@ -1520,6 +1549,9 @@ function editClaim(claim) {
         payloadCode: claim.payload_code || '',
         uopCapacity: claim.uop_capacity || 0,
         reorderPoint: claim.reorder_point || 0,
+        sequence: claim.sequence || 0,
+        autoReorder: !!claim.auto_reorder,
+        keepStaged: !!claim.keep_staged,
         linesideSoftThreshold: claim.lineside_soft_threshold || 0,
         inboundStaging: claim.inbound_staging || '',
         outboundStaging: claim.outbound_staging || '',
@@ -1589,11 +1621,14 @@ async function saveClaim() {
     // switches among the aggregate's payloads at load time.
     var primaryPayload = state.swapMode === 'manual_swap' ? '' : state.payloadCode;
 
-    // sequence / reorder_point_source / keep_staged / auto_reorder are NOT in
-    // this body. The modal owns no control for them, and omitting them is now
-    // how you say so — see claimToBody. A new claim gets the store's defaults
-    // (next free board slot, "legacy", both flags off); an edit leaves
-    // whatever is there alone.
+    // A FORM THAT OWNS A FIELD SENDS IT. Round 1 made these pointers on
+    // NodeClaimInput so a writer could decline to speak; this editor now has
+    // controls for three of them, so it speaks. reorder_point_source stays
+    // absent — nothing here sets provenance.
+    //
+    // sequence 0 is the exception, and stays absent: it means "no opinion",
+    // and the store reads an absent sequence as "give a new claim the next
+    // free board slot". Sending a literal 0 would claim position zero.
     var claimBody = {
         style_id: state.styleId,
         core_node_name: state.coreNodeName,
@@ -1615,7 +1650,10 @@ async function saveClaim() {
         paired_core_node: state.pairedCoreNode,
         second_paired_core_node: state.secondPairedCoreNode,
         auto_confirm: state.autoConfirm,
+        auto_reorder: state.autoReorder,
+        keep_staged: state.keepStaged,
     };
+    if (state.sequence > 0) claimBody.sequence = state.sequence;
 
     // Loader replenishment + dedicated-position layout are configured on the Core
     // loader setup screen (Nodes -> Create/Edit Loader), not via this claim, so the
