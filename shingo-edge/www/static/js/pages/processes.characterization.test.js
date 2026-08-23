@@ -217,6 +217,7 @@ function buildDOM() {
         'claims-err-outbound-destination',
         'claims-err-paired-core-node',
         'claims-err-second-paired-core-node',
+        'claims-mode-drop-note',
     ].forEach(function(id) { add(id, { display: 'none' }); });
 
     // Station modal
@@ -806,9 +807,163 @@ function runOrphanFieldErrorCase() {
     } else { passed++; }
 }
 
+// -----------------------------------------------------------------------
+// Round 2 unit 2 — hiding a field must not eat its value
+// -----------------------------------------------------------------------
+//
+// renderClaimForm used to blank paired_core_node, second_paired_core_node and
+// reuse_compatible_bins whenever the A/B fieldset went out of view. Toggling
+// the swap mode to look at another mode's fields and toggling back silently
+// destroyed a press-index pairing the operator never touched.
+//
+// Rendering is not editing. The state is the model; visibility is a view.
+
+async function runHiddenFieldSurvivalCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+
+    elements['claims-style-selector'].value = '9';
+    ctx.onClaimsStyleChanged();
+
+    // An existing 3-position press-index claim, fully configured.
+    ctx.editClaim({
+        id: 42,
+        core_node_name: 'PRESS_A',
+        role: 'produce',
+        swap_mode: 'two_robot_press_index',
+        payload_code: 'PL1',
+        uop_capacity: 720,
+        reorder_point: 10,
+        inbound_source: 'SRC1',
+        outbound_destination: 'DST1',
+        paired_core_node: 'PRESS_B',
+        second_paired_core_node: 'PRESS_C',
+        reuse_compatible_bins: true,
+    });
+
+    // The operator looks at what 2-Robot Swap offers, then goes back.
+    elements['claims-add-swap'].value = 'two_robot';
+    ctx.renderClaimForm();
+    elements['claims-add-swap'].value = 'two_robot_press_index';
+    ctx.renderClaimForm();
+
+    await ctx.saveClaim();
+
+    if (apiRecorder.length !== 1) {
+        // 0 POSTs means the save was REFUSED: the round trip ate
+        // paired_core_node, and press-index validation then rejected the
+        // claim the operator never edited. That is the bug, not a test setup
+        // problem — stop renderClaimForm blanking hidden fields.
+        reportFailure('hiddenFields: the round trip must not eat values (0 POSTs = save refused because a value was destroyed)', 1, apiRecorder.length);
+        return;
+    }
+    const body = apiRecorder[0].body;
+    const survives = {
+        paired_core_node: 'PRESS_B',
+        second_paired_core_node: 'PRESS_C',
+        reuse_compatible_bins: true,
+        outbound_destination: 'DST1',
+        inbound_source: 'SRC1',
+    };
+    for (const k of Object.keys(survives)) {
+        if (JSON.stringify(body[k]) !== JSON.stringify(survives[k])) {
+            reportFailure(`hiddenFields: ${k} survives a swap-mode round trip`, survives[k], body[k]);
+        } else { passed++; }
+    }
+}
+
+// The other half: a mode that genuinely cannot use a value still drops it —
+// this is not "never clear anything", it is "clear once, at save, for the mode
+// the operator actually chose".
+async function runForbiddenFieldDropCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+
+    elements['claims-style-selector'].value = '9';
+    ctx.onClaimsStyleChanged();
+
+    ctx.editClaim({
+        id: 43,
+        core_node_name: 'PRESS_A',
+        role: 'produce',
+        swap_mode: 'two_robot_press_index',
+        payload_code: 'PL1',
+        inbound_staging: 'IN1',
+        paired_core_node: 'PRESS_B',
+        second_paired_core_node: 'PRESS_C',
+        reuse_compatible_bins: true,
+        outbound_destination: 'DST1',
+    });
+
+    // Actually switch to two_robot and save there.
+    elements['claims-add-swap'].value = 'two_robot';
+    ctx.renderClaimForm();
+
+    // The operator is told BEFORE saving what the mode will discard.
+    const note = elements['claims-mode-drop-note'];
+    if (!(note.hidden === false && note.style.display !== 'none')) {
+        reportFailure('forbiddenFields: drop note is shown before saving', 'visible', 'hidden');
+    } else { passed++; }
+    for (const want of ['Paired Node', 'Third Press Position', 'Reuse compatible bins']) {
+        if (note.textContent.indexOf(want) < 0) {
+            reportFailure(`forbiddenFields: note names "${want}"`, want, note.textContent);
+        } else { passed++; }
+    }
+
+    await ctx.saveClaim();
+    if (apiRecorder.length !== 1) {
+        reportFailure('forbiddenFields: expected 1 POST', 1, apiRecorder.length);
+        return;
+    }
+    const body = apiRecorder[0].body;
+    const cleared = {
+        paired_core_node: '',
+        second_paired_core_node: '',
+        reuse_compatible_bins: false,
+    };
+    for (const k of Object.keys(cleared)) {
+        if (JSON.stringify(body[k]) !== JSON.stringify(cleared[k])) {
+            reportFailure(`forbiddenFields: ${k} dropped for two_robot`, cleared[k], body[k]);
+        } else { passed++; }
+    }
+    // ...and what the mode DOES use is untouched.
+    if (body.inbound_staging !== 'IN1') {
+        reportFailure('forbiddenFields: two_robot keeps inbound staging', 'IN1', body.inbound_staging);
+    } else { passed++; }
+}
+
+// A mode with nothing to discard says nothing. A note that is always on is a
+// note nobody reads.
+function runNoDropNoteWhenNothingToDropCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+
+    ctx.editClaim({
+        id: 44,
+        core_node_name: 'N1',
+        role: 'consume',
+        swap_mode: 'two_robot',
+        payload_code: 'PL1',
+        inbound_staging: 'IN1',
+    });
+    ctx.renderClaimForm();
+    const note = elements['claims-mode-drop-note'];
+    if (note.hidden === false && note.style.display !== 'none') {
+        reportFailure('dropNote: silent when the mode discards nothing', 'hidden', note.textContent);
+    } else { passed++; }
+}
+
 (async () => {
     runVisibilityCases();
     await runFieldErrorRenderCase();
+    await runHiddenFieldSurvivalCase();
+    await runForbiddenFieldDropCase();
+    runNoDropNoteWhenNothingToDropCase();
     runServerFieldErrorCase();
     runOrphanFieldErrorCase();
     await runSaveClaimSchemaCase();

@@ -1054,6 +1054,76 @@ function ensureClaimErrorDelegation() {
     modal.addEventListener('input', onEdit);
 }
 
+// claimForbiddenFields answers: which populated values does THIS mode not use.
+//
+// Derived from the same (role, swap) facts as claimFieldVisibility, so the
+// answer cannot disagree with what the form shows. Only POPULATED fields are
+// reported — a mode that does not use a field the operator never set has
+// nothing to say about it.
+//
+// This is the whole set that renderClaimForm used to blank on sight. Moving it
+// here changes WHEN a value dies, not WHICH: a straight-through save drops the
+// same fields it always did, and a mode toggled away and back no longer loses
+// anything, because the question is asked once, at save, about the mode the
+// operator actually chose.
+function claimForbiddenFields(role, swap, state) {
+    var isManual = swap === 'manual_swap';
+    var isPressIndex = swap === 'two_robot_press_index';
+    var usesStaging = swap === 'single_robot' || swap === 'two_robot';
+    var showPair = swap === 'sequential' || isPressIndex;
+    var out = [];
+    var forbid = function(key, label) {
+        var v = state[key];
+        if (v === '' || v === false || v === undefined || v === null) return;
+        out.push({ key: key, label: label });
+    };
+
+    if (!showPair) {
+        forbid('pairedCoreNode', 'Paired Node');
+    }
+    if (!(showPair && isPressIndex)) {
+        forbid('secondPairedCoreNode', 'Third Press Position');
+        forbid('reuseCompatibleBins', 'Reuse compatible bins');
+    }
+    if (!(isManual && role === 'consume')) {
+        forbid('autoPush', 'Auto-push full bins');
+    }
+    if (!usesStaging && !isManual) {
+        forbid('inboundStaging', 'Inbound Staging');
+        forbid('outboundStaging', 'Outbound Staging');
+    }
+    // two_robot uses inbound staging only; robot B takes the old bin straight
+    // out, so an outbound staging node is ignored by the builder.
+    if (swap === 'two_robot') {
+        forbid('outboundStaging', 'Outbound Staging');
+    }
+    return out;
+}
+
+// renderModeDropNote tells the operator, while they are still looking at the
+// form, what the selected mode will discard.
+//
+// BEFORE, NOT AFTER. The old behaviour blanked the field the instant its
+// fieldset hid, so the operator's only signal was noticing later that a value
+// had gone. Naming them up front makes the drop a decision rather than a
+// discovery.
+function renderModeDropNote(role, swap, state) {
+    var el = document.getElementById('claims-mode-drop-note');
+    if (!el) return;
+    var dropped = claimForbiddenFields(role, swap, state);
+    if (dropped.length === 0) {
+        el.textContent = '';
+        el.hidden = true;
+        el.style.display = 'none';
+        return;
+    }
+    var names = dropped.map(function(d) { return d.label; }).join(', ');
+    el.textContent = (SWAP_MODE_LABELS[swap] || swap) +
+        ' does not use: ' + names + ' — cleared when you save.';
+    el.hidden = false;
+    el.style.display = '';
+}
+
 // renderClaimForm: drives the editor DOM from current role/swap mode.
 // Replaces the prior toggleClaimsAddPayload + validateClaimStaging
 // pair. The lookup at claimFieldVisibility is the single source of
@@ -1092,7 +1162,9 @@ function renderClaimForm() {
     var outboundSel = document.getElementById('claims-add-outbound');
     if (outboundSel) {
         if (isTwoRobot) {
-            outboundSel.value = '';
+            // Disabled, NOT blanked: two_robot ignores outbound staging, and
+            // the value is dropped at save. Blanking it here would lose it on
+            // a mode toggle the operator was only browsing with.
             outboundSel.disabled = true;
             outboundSel.style.opacity = '0.5';
         } else {
@@ -1121,36 +1193,26 @@ function renderClaimForm() {
             if (pairSel.options.length > 0 && pairSel.options[0].value === '') {
                 pairSel.options[0].textContent = '-- None (no A/B cycling) --';
             }
-            // Reset state that doesn't apply outside press index.
-            document.getElementById('claims-add-second-paired-node').value = '';
-            document.getElementById('claims-add-reuse-bins').checked = false;
         }
-    } else {
-        // AB fieldset hidden entirely → clear paired-node state.
-        document.getElementById('claims-add-paired-node').value = '';
-        document.getElementById('claims-add-second-paired-node').value = '';
-        document.getElementById('claims-add-reuse-bins').checked = false;
     }
 
-    // Auto-push only applies to a consume manual_swap (unloader).
-    if (!(isManual && role === 'consume')) {
-        document.getElementById('claims-add-auto-push').checked = false;
-    }
+    // NOTHING IS CLEARED HERE, AND THAT IS THE POINT.
+    //
+    // This function used to blank paired_core_node, second_paired_core_node,
+    // reuse_compatible_bins, auto_push and both staging fields whenever their
+    // fieldset went out of view. Rendering is not editing: toggling the swap
+    // mode to look at another mode's fields, then toggling back, silently
+    // destroyed a press-index pairing the operator never touched. The state is
+    // the model; visibility is a view of it.
+    //
+    // Values a mode genuinely cannot use are dropped at SAVE, by
+    // claimForbiddenFields below, and the operator is told which — see
+    // renderModeDropNote.
 
     // Manual swap on a fresh open clears staging fields (no concept of
     // staging there). When editing, leave alone so the operator can
     // see prior values before manual_swap was selected.
     var isEditing = !!document.getElementById('claims-edit-id').value;
-    if (isManual && !isEditing) {
-        document.getElementById('claims-add-reorder').value = '0';
-        document.getElementById('claims-add-payload').value = '';
-        document.getElementById('claims-add-inbound').value = '';
-        document.getElementById('claims-add-outbound').value = '';
-        document.getElementById('claims-add-inbound-source').value = '';
-        document.getElementById('claims-add-evacuate').checked = false;
-        document.getElementById('claims-add-paired-node').value = '';
-        buildAllowedPayloadPicker([]);
-    }
     if (isManual && isEditing) {
         var picker = document.getElementById('claims-allowed-picker');
         var hasCheckboxes = picker && picker.querySelector('.allowed-payload-cb');
@@ -1162,20 +1224,15 @@ function renderClaimForm() {
         }
     }
 
-    // Clear staging values when not used so they aren't saved.
-    if (!(swap === 'single_robot' || swap === 'two_robot') && !isManual) {
-        document.getElementById('claims-add-inbound').value = '';
-        document.getElementById('claims-add-outbound').value = '';
-    }
-
     // Validation warning for missing required staging.
+    var state = readClaimStateFromForm();
     var warn = document.getElementById('claims-staging-warning');
     if (warn) {
-        var state = readClaimStateFromForm();
         var missing = (swap === 'single_robot' && (!state.inboundStaging || !state.outboundStaging))
             || (swap === 'two_robot' && !state.inboundStaging);
         warn.style.display = missing ? '' : 'none';
     }
+    renderModeDropNote(role, swap, state);
 }
 
 // Backwards-compat shims for inline onchange handlers in processes.html.
@@ -1301,6 +1358,14 @@ async function saveClaim() {
     }
     clearClaimFieldErrors();
 
+    // Drop what this mode cannot use, ONCE, here — not every time a fieldset
+    // went out of view. The operator has already been shown the list by
+    // renderModeDropNote; the toast below is the confirmation that it happened.
+    var dropped = claimForbiddenFields(state.role, state.swapMode, state);
+    dropped.forEach(function(d) {
+        state[d.key] = (typeof state[d.key] === 'boolean') ? false : '';
+    });
+
     // manual_swap claims carry no edge-side payload: Core owns the loader's
     // payload set (loader board), so payload_code is blank and the operator
     // switches among the aggregate's payloads at load time.
@@ -1391,6 +1456,10 @@ async function saveClaim() {
     closeClaimModal();
     await loadClaims(_claimsStyleID);
     if (nodeNames.length > 1) toast('Created ' + nodeNames.length + ' claims', 'success');
+    if (dropped.length > 0) {
+        toast('Cleared (not used by ' + (SWAP_MODE_LABELS[state.swapMode] || state.swapMode) + '): ' +
+            dropped.map(function(d) { return d.label; }).join(', '), 'warning');
+    }
     // Advisory, and the save already happened. Surfaced after the reload so it
     // is not mistaken for a refusal.
     warnings.forEach(function(w) { toast(w.message || String(w), 'warning'); });
@@ -1655,6 +1724,7 @@ delegateActions(document.body, {
     readClaimStateFromForm,
     removeClaim,
     removeGenerateRow,
+    claimForbiddenFields,
     clearClaimFieldError,
     clearClaimFieldErrors,
     renderClaimFieldErrors,
