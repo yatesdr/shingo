@@ -512,6 +512,10 @@ function ensureCompareDelegation(wrap) {
 // saveClaim's claimBody so a compare-grid edit preserves every field it does
 // not touch (staging, pairing, flags).
 //
+// index_robot_supplies is absent here too, and it is pointer-typed for exactly
+// this reason: it describes the press's hardware, and a grid cell edit about a
+// payload must not be able to flip a cell's choreography by omitting a field.
+//
 // SEND ONLY WHAT THIS EDITOR OWNS. The compare grid edits one field per cell,
 // so sequence, reorder_point_source, keep_staged and auto_reorder are all
 // omitted here — it has a control for none of them. (The claim MODAL now has
@@ -704,7 +708,8 @@ function claimFieldVisibility(role, swap) {
         // Round 4 — Press Index Pairing fieldset. Which robot supplies the
         // press is a per-claim fact (every other press-index geometry fact
         // already lives on NodeClaim), so it belongs beside the positions.
-        'claims-add-index-robot-supplies-row': ROUND4_ROUTING && isPressIndex,
+        // Round 4 shipped the flip. Registered by round 2, real now.
+        'claims-add-index-robot-supplies-row': isPressIndex,
         // Was an unconditional `false`, which killed the whole group for every
         // claim type. 2635ad10 meant to hide it for manual_swap only — its
         // message says "every other claim type (presses, welds, ...) is
@@ -906,6 +911,7 @@ function readClaimStateFromForm() {
         autoPush: get('claims-add-auto-push').checked,
         pairedCoreNode: get('claims-add-paired-node').value,
         secondPairedCoreNode: get('claims-add-second-paired-node').value,
+        indexRobotSupplies: get('claims-add-index-robot-supplies').checked,
         changeoverEvacSeats: readEvacSeats(),
         changeoverEvacDestination: get('claims-add-evac-destination').value,
         autoConfirm: get('claims-add-auto-confirm').checked,
@@ -938,6 +944,7 @@ function writeClaimStateToForm(state) {
     get('claims-add-auto-push').checked = !!state.autoPush;
     get('claims-add-paired-node').value = state.pairedCoreNode || '';
     get('claims-add-second-paired-node').value = state.secondPairedCoreNode || '';
+    get('claims-add-index-robot-supplies').checked = !!state.indexRobotSupplies;
     writeEvacSeats(state.changeoverEvacSeats || []);
     get('claims-add-evac-destination').value = state.changeoverEvacDestination || '';
     get('claims-add-auto-confirm').checked = !!state.autoConfirm;
@@ -1421,6 +1428,9 @@ function claimForbiddenFields(role, swap, state) {
         forbid('pairedCoreNode', 'Paired Node');
     }
     var seats = state.changeoverEvacSeats || [];
+    if (!isPressIndex && state.indexRobotSupplies) {
+        out.push({ key: 'indexRobotSupplies', label: 'Index robot fetches the replacement', value: false });
+    }
     if (!isPressIndex) {
         // Per-seat relevance is a press-index concept; a single-position node
         // answers the same question with Evacuate on changeover.
@@ -1630,6 +1640,7 @@ function defaultClaimState() {
         secondPairedCoreNode: '',
         changeoverEvacSeats: [],
         changeoverEvacDestination: '',
+        indexRobotSupplies: false,
         autoConfirm: false,
     };
 }
@@ -1687,6 +1698,7 @@ function editClaim(claim) {
         autoPush: !!claim.auto_push,
         pairedCoreNode: claim.paired_core_node || '',
         secondPairedCoreNode: claim.second_paired_core_node || '',
+        indexRobotSupplies: !!claim.index_robot_supplies,
         changeoverEvacSeats: claim.changeover_evac_seats || [],
         changeoverEvacDestination: claim.changeover_evac_destination || '',
         autoConfirm: !!claim.auto_confirm,
@@ -1784,6 +1796,7 @@ async function saveClaim() {
         auto_push: state.autoPush,
         paired_core_node: state.pairedCoreNode,
         second_paired_core_node: state.secondPairedCoreNode,
+        index_robot_supplies: state.indexRobotSupplies,
         changeover_evac_seats: state.changeoverEvacSeats,
         changeover_evac_destination: state.changeoverEvacDestination,
         auto_confirm: state.autoConfirm,

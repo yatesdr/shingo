@@ -581,6 +581,10 @@ window.processNodeNames = {{json .ProcessNodeNames}};
                     </div>
                 </div>
                 <div class="field-help--inline" id="claims-third-position-help">Third position: for a 3-position press where bins index C → B → A. R1 drops fresh empties at C; R2 indexes C → B and B → A. Leave blank for the default 2-position layout (R1 → B, R2 → A).</div>
+                <label id="claims-add-index-robot-supplies-row" class="check-row mt-2" hidden>
+                    <input type="checkbox" id="claims-add-index-robot-supplies">
+                    <span>Index robot fetches the replacement <span class="label-aside">R1 evacuates and leaves; R2 indexes forward and collects the new carrier. Describes the cell's hardware — set it the same on every style for this press.</span></span>
+                </label>
                 <label id="claims-add-reuse-bins-row" class="check-row mt-2" hidden>
                     <input type="checkbox" id="claims-add-reuse-bins">
                     <span>Reuse compatible bins on changeover (skip swap when next style needs same payload and bin is empty)</span>

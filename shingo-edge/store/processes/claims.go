@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"slices"
 	"strings"
 
@@ -63,7 +64,8 @@ const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
-	changeover_evac_seats, changeover_evac_destination, changeover_load_directive`
+	changeover_evac_seats, changeover_evac_destination, changeover_load_directive,
+	index_robot_supplies`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
@@ -75,7 +77,8 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
-		&evacSeatsJSON, &c.ChangeoverEvacDestination, &c.ChangeoverLoadDirective); err != nil {
+		&evacSeatsJSON, &c.ChangeoverEvacDestination, &c.ChangeoverLoadDirective,
+		&c.IndexRobotSupplies); err != nil {
 		return c, err
 	}
 	// NULL means "not below", which is the ordinary state — a zero time would
@@ -245,6 +248,17 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 			}
 		}
 	}
+	// IndexRobotSupplies describes the CELL'S HARDWARE — which robot can reach
+	// the supermarket from that press. Two styles on one press disagreeing
+	// about it is not a configuration, it is an operator who edited one style
+	// and not the other, and the symptom is a press that choreographs
+	// differently depending on what it is running.
+	//
+	// A WARNING, NOT A REFUSAL, and the direction matters: refusing would make
+	// the flag unsettable, because changing a press with four styles means
+	// four saves and the first three would each be refused by the other three.
+	warnIndexRobotSuppliesDrift(db, in)
+
 	var existingID int64
 	err := db.QueryRow(`SELECT id FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
 		in.StyleID, in.CoreNodeName).Scan(&existingID)
@@ -265,6 +279,7 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		sequence = maxSeq + 1
 	}
 	autoReorder := in.AutoReorder != nil && *in.AutoReorder
+	indexRobotSupplies := in.IndexRobotSupplies != nil && *in.IndexRobotSupplies
 	keepStaged := in.KeepStaged != nil && *in.KeepStaged
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 	// INSERT OR IGNORE: if a concurrent writer inserted the same
@@ -281,14 +296,16 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
-		changeover_evac_seats, changeover_evac_destination, changeover_load_directive)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		changeover_evac_seats, changeover_evac_destination, changeover_load_directive,
+		index_robot_supplies)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
-		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination, in.ChangeoverLoadDirective)
+		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination, in.ChangeoverLoadDirective,
+		indexRobotSupplies)
 	if err != nil {
 		return 0, err
 	}
@@ -310,6 +327,56 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 // to be one unconditional UPDATE of all 22 columns, which meant a caller
 // sending 18 of them silently reset the other four to their zero values on
 // every save.
+// warnIndexRobotSuppliesDrift logs when this save would leave two styles on the
+// same press disagreeing about which robot fetches the replacement.
+//
+// Scoped to claims on the SAME core node in the same process, because that is
+// what "one press" means; two presses may legitimately differ.
+//
+// Silent on a caller with no opinion (nil) — an import or the compare grid is
+// not asserting anything about the hardware and must not be reported as if it
+// were.
+func warnIndexRobotSuppliesDrift(db *sql.DB, in NodeClaimInput) {
+	if in.IndexRobotSupplies == nil || in.CoreNodeName == "" {
+		return
+	}
+	want := *in.IndexRobotSupplies
+	rows, err := db.Query(`
+		SELECT s.name, c.index_robot_supplies
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE c.core_node_name = ?
+		  AND c.style_id != ?
+		  AND s.deleted_at IS NULL
+		  AND s.process_id = (SELECT process_id FROM styles WHERE id = ?)`,
+		in.CoreNodeName, in.StyleID, in.StyleID)
+	if err != nil {
+		// Cannot check is not a finding. Saying nothing is right here: the
+		// save proceeds either way and a warning we could not substantiate
+		// would be worse than none.
+		return
+	}
+	defer rows.Close()
+	var disagree []string
+	for rows.Next() {
+		var styleName string
+		var flag bool
+		if err := rows.Scan(&styleName, &flag); err != nil {
+			return
+		}
+		if flag != want {
+			disagree = append(disagree, styleName)
+		}
+	}
+	if len(disagree) > 0 {
+		log.Printf("claim %s: index_robot_supplies=%v disagrees with style(s) %s on the same press. "+
+			"This flag describes which robot can reach the supermarket — a fact about the cell, not "+
+			"about a style — so the press will choreograph differently depending on what it runs. "+
+			"Set it the same on every style for this node.",
+			in.CoreNodeName, want, strings.Join(disagree, ", "))
+	}
+}
+
 func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 
@@ -347,6 +414,9 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	}
 	if in.Sequence != nil {
 		sets, args = append(sets, `sequence=?`), append(args, *in.Sequence)
+	}
+	if in.IndexRobotSupplies != nil {
+		sets, args = append(sets, `index_robot_supplies=?`), append(args, *in.IndexRobotSupplies)
 	}
 
 	args = append(args, id)

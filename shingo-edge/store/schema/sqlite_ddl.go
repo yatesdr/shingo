@@ -393,6 +393,11 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- default; see NodeClaim.ChangeoverLoadDirective for why it lives here
     -- rather than on the Core loader aggregate.
     changeover_load_directive INTEGER NOT NULL DEFAULT 0,
+    -- Which robot of a press-index pair fetches the replacement carrier.
+    -- 0 = today's shape (R1 evacuates and refills); 1 = flipped (R1 evacuates
+    -- only, R2 indexes and refills). Describes the cell's hardware, so
+    -- UpsertClaim warns when two styles on one press disagree.
+    index_robot_supplies    INTEGER NOT NULL DEFAULT 0,
     auto_push               INTEGER NOT NULL DEFAULT 0,
     -- UOP-threshold replenishment: tracks how reorder_point was set.
     -- 'legacy' = default, never edited (silent-inert when 0).

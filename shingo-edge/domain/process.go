@@ -298,6 +298,22 @@ type NodeClaim struct {
 	//
 	// Off by default: a plant that has never wanted this sees no change.
 	ChangeoverLoadDirective bool `json:"changeover_load_directive"`
+	// IndexRobotSupplies flips which robot of a press-index pair fetches the
+	// replacement carrier.
+	//
+	// Unflipped (false, today): R1 evacuates the full tote AND fetches the
+	// replacement from InboundSource, dropping it on the back position; R2 just
+	// indexes the on-deck carrier forward onto the press.
+	//
+	// Flipped (true): R1 does the evacuation and stops. R2 indexes forward and
+	// then goes for the replacement itself. One robot leaves the cell as soon
+	// as the press is clear; the other owns the whole refill.
+	//
+	// IT DESCRIBES HARDWARE, not a style. Which robot can reach the
+	// supermarket is a fact about the cell's layout and reach, so two styles on
+	// one press disagreeing about it is operator confusion rather than
+	// configuration — UpsertClaim warns on the drift.
+	IndexRobotSupplies bool `json:"index_robot_supplies"`
 	AutoConfirm             bool `json:"auto_confirm"`
 	Sequence                int  `json:"sequence"`
 	// LinesideSoftThreshold is the per-claim soft cap for the release
@@ -565,6 +581,11 @@ type NodeClaimInput struct {
 	ChangeoverEvacSeats       []string `json:"changeover_evac_seats"`
 	ChangeoverEvacDestination string   `json:"changeover_evac_destination"`
 	ChangeoverLoadDirective   bool     `json:"changeover_load_directive"`
+	// IndexRobotSupplies is POINTER-typed: absent means leave the stored value
+	// alone. It describes hardware, so a caller that has no opinion — an
+	// import, the compare grid — must not be able to flip a press's
+	// choreography by omitting a field.
+	IndexRobotSupplies *bool `json:"index_robot_supplies,omitempty"`
 	AutoConfirm               bool     `json:"auto_confirm"`
 	LinesideSoftThreshold     int      `json:"lineside_soft_threshold"`
 	ReuseCompatibleBins       bool     `json:"reuse_compatible_bins"`

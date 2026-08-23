@@ -94,6 +94,9 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		// fallback silently standing in for the real column would show.
 		ChangeoverEvacSeats:       []string{"front", "second"},
 		ChangeoverEvacDestination: "RT-TOOLING-EVAC",
+		// Pointer-typed and NOT sent by the editor body below, so an editor
+		// save must leave it alone: it describes the press's hardware.
+		IndexRobotSupplies: domain.Ptr(true),
 		// The four the editor never sends, seeded to values that are NOT the
 		// zero value, so a stomp is visible.
 		Sequence:           domain.Ptr(7),
@@ -142,6 +145,7 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		{"reuse_compatible_bins", before.ReuseCompatibleBins, after.ReuseCompatibleBins},
 		{"auto_push", before.AutoPush, after.AutoPush},
 		{"changeover_evac_destination", before.ChangeoverEvacDestination, after.ChangeoverEvacDestination},
+		{"index_robot_supplies", before.IndexRobotSupplies, after.IndexRobotSupplies},
 	} {
 		if c.before != c.got {
 			t.Errorf("%s changed across an editor save: %v -> %v (the editor owns no control for it)",
@@ -163,6 +167,9 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 	if len(before.ChangeoverEvacSeats) != 2 || before.ChangeoverEvacDestination != "RT-TOOLING-EVAC" {
 		t.Fatalf("round-3 seed did not take: seats=%v dest=%q",
 			before.ChangeoverEvacSeats, before.ChangeoverEvacDestination)
+	}
+	if !before.IndexRobotSupplies {
+		t.Fatal("round-4 seed did not take: index_robot_supplies is false, so its no-op assertion proves nothing")
 	}
 	if before.Sequence != 7 || before.ReorderPointSource != "calculated" || !before.AutoReorder || !before.KeepStaged {
 		t.Fatalf("seed did not take, so this test proves nothing: seq=%d source=%q autoReorder=%v keepStaged=%v",
@@ -203,6 +210,7 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 	upd.ReorderPointSource = domain.Ptr("manual")
 	upd.AutoReorder = domain.Ptr(false)
 	upd.KeepStaged = domain.Ptr(false)
+	upd.IndexRobotSupplies = domain.Ptr(true)
 	if _, err := db.UpsertStyleNodeClaim(upd); err != nil {
 		t.Fatalf("explicit update: %v", err)
 	}
@@ -220,6 +228,9 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 	}
 	if after.KeepStaged {
 		t.Error("keep_staged = true, want false — an explicit false must write")
+	}
+	if !after.IndexRobotSupplies {
+		t.Error("index_robot_supplies = false, want true — an explicit value must write")
 	}
 }
 

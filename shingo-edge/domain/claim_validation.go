@@ -162,6 +162,14 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		}
 	}
 
+	// The flip is press-index choreography; nothing else has two robots to
+	// swap between.
+	if in.IndexRobotSupplies != nil && *in.IndexRobotSupplies &&
+		in.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		add("index_robot_supplies",
+			"Index robot fetches the replacement applies to 2-Robot Press Index only")
+	}
+
 	// Positions must be distinct, whatever the mode names them. Any two the
 	// same is a step whose pickup and dropoff are one node — a robot asked to
 	// move a bin to where it already is.

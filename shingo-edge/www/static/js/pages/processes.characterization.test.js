@@ -252,6 +252,8 @@ function buildDOM() {
     add('claims-add-second-paired-group', { display: 'none' });
     add('claims-third-position-help', { display: 'none' });
     add('claims-add-second-paired-node', { tag: 'select', value: '' });
+    add('claims-add-index-robot-supplies-row', { display: 'none' });
+    add('claims-add-index-robot-supplies', { tag: 'input', type: 'checkbox' });
     add('claims-add-reuse-bins-row', { display: 'none' });
     add('claims-add-reuse-bins', { tag: 'input', type: 'checkbox' });
     add('claims-auto-request-fieldset', { display: 'none' });
@@ -473,6 +475,8 @@ function expectedVisibility(role, swap) {
         'claims-add-second-paired-group': showPair && isPressIndex,
         'claims-third-position-help': showPair && isPressIndex,
         'claims-add-reuse-bins-row': showPair && isPressIndex,
+        // Round 4 shipped the flip; round 2's registered slot is real now.
+        'claims-add-index-robot-supplies-row': isPressIndex,
         // Was pinned `false` unconditionally, matching a bug rather than an
         // intent: 2635ad10 set out to hide this for manual_swap only and said
         // so in its message, but wrote the parent without the condition. The
@@ -1379,8 +1383,9 @@ function runCompareGridStillOmitsCase() {
 // Round 3 activated the first two of round 2's prepared slots, so they are no
 // longer inert and have moved into the visibility matrix proper. What remains
 // here is round 4's, still registered and still false.
+// Round 4 activated the flip's slot, so it has moved into the visibility
+// matrix proper. What remains inert is the Routing fieldset, until Unit 4.
 const ROUND_3_4_SLOTS = [
-    'claims-add-index-robot-supplies-row',
     'claims-routing-fieldset',
     'claims-add-key-routes-group',
 ];
@@ -1637,6 +1642,67 @@ function runCompareGridEchoesEvacFieldsCase() {
     } else { passed++; }
 }
 
+// -----------------------------------------------------------------------
+// Round 4 unit 1 — the IndexRobotSupplies flip
+// -----------------------------------------------------------------------
+//
+// The flag describes which robot of a press-index pair can reach the
+// supermarket. The modal OWNS a control for it, so it always sends it; the
+// compare grid owns none, so it must never send it — the field is pointer-
+// typed precisely so a grid cell edit about a payload cannot flip a press's
+// choreography by omitting it.
+
+async function runIndexRobotSuppliesCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+    elements['claims-style-selector'].value = '40';
+    ctx.onClaimsStyleChanged();
+
+    ctx.editClaim({
+        id: 100,
+        core_node_name: 'PRESS_A',
+        role: 'produce',
+        swap_mode: 'two_robot_press_index',
+        payload_code: 'PL1',
+        paired_core_node: 'PRESS_B',
+        outbound_destination: 'MARKET',
+        index_robot_supplies: true,
+    });
+    if (!elements['claims-add-index-robot-supplies'].checked) {
+        reportFailure('flip: the stored flag loads into its checkbox', true, false);
+    } else { passed++; }
+
+    elements['claims-add-index-robot-supplies'].checked = false;
+    await ctx.saveClaim();
+    if (apiRecorder.length !== 1) {
+        reportFailure('flip: expected 1 POST', 1, apiRecorder.length);
+        return;
+    }
+    if (apiRecorder[0].body.index_robot_supplies !== false) {
+        reportFailure('flip: the modal owns the control, so it sends it',
+            false, apiRecorder[0].body.index_robot_supplies);
+    } else { passed++; }
+}
+
+// The compare grid must stay silent about it — absent means "leave the
+// hardware alone".
+function runIndexRobotSuppliesNotInCompareGridCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+    const body = ctx.claimToBody({
+        style_id: 1, core_node_name: 'PRESS_A', role: 'produce',
+        swap_mode: 'two_robot_press_index', payload_code: 'PL1',
+        index_robot_supplies: true,
+    });
+    if ('index_robot_supplies' in body) {
+        reportFailure('flip: the compare grid owns no control and must not send it',
+            'absent', body.index_robot_supplies);
+    } else { passed++; }
+}
+
 (async () => {
     runVisibilityCases();
     await runFieldErrorRenderCase();
@@ -1655,6 +1721,8 @@ function runCompareGridEchoesEvacFieldsCase() {
     runEvacSeatsCollapseHintCase();
     await runSeatsDroppedOnModeChangeCase();
     runCompareGridEchoesEvacFieldsCase();
+    await runIndexRobotSuppliesCase();
+    runIndexRobotSuppliesNotInCompareGridCase();
     runServerFieldErrorCase();
     runOrphanFieldErrorCase();
     await runSaveClaimSchemaCase();

@@ -236,39 +236,71 @@ func BuildTwoRobotSwapSteps(claim *processes.NodeClaim) (orderA, orderB []protoc
 // Both robots fire on operator release. The fleet manager handles cross-leg
 // sequencing on shared nodes (R2's dropoff(A) waits for R1's pickup(A);
 // R1's dropoff(C) waits for R2's pickup(C) in the 3-position case).
+// ── THE FLIP (IndexRobotSupplies), and why it is safe without a gate change ──
+//
+// Unflipped, R1 is self-sufficient: it evacuates AND backfills, so today's
+// INDEX anti-collision arm in swap_hold.go reads it as a leg that needs no
+// partner and lets it through. Flipped, R1 is evac-only and R2 owns the
+// refill, and the same arm reads BOTH legs as needing a partner.
+//
+// v1 DOES NOT TOUCH swap_hold.go. SYNTH-round2 established why: applySwapGates
+// runs BEFORE acquireComplexSources, so a hold gates CLAIMING, not
+// fleet-create — and a stamp that holds both legs is a permanent mutual
+// deadlock, both robots and the press out until someone cancels a leg. 5/5
+// reviewers reached that independently.
+//
+// So flipped pairs FAIL OPEN at dispatch, deliberately: both legs dispatch and
+// park at their opening stationWait. The physical collision needs one leg
+// RELEASED while the other is not, and that is what Unit 2's release-gate
+// precondition refuses (see ReleaseStagedOrders). A refused release is a click
+// the operator repeats; a refused dispatch is a mutual wait.
 func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orderR2 []protocol.ComplexOrderStep) {
 	if claim.PairedCoreNode == "" || claim.OutboundDestination == "" {
 		return nil, nil
 	}
+	// R1's opening is the same either way: drive to the press, hold, lift the
+	// full tote off, take it away.
+	orderR1 = []protocol.ComplexOrderStep{
+		stationWait(claim.CoreNodeName),
+		{Action: "pickup", Node: claim.CoreNodeName},
+		buildStep("dropoff", claim.OutboundDestination),
+	}
+	backfill := claim.PairedCoreNode
 	if claim.SecondPairedCoreNode != "" {
-		// 3-position: C → B → A index, R1's final dropoff feeds C.
-		orderR1 = []protocol.ComplexOrderStep{
-			stationWait(claim.CoreNodeName),
-			{Action: "pickup", Node: claim.CoreNodeName},
-			buildStep("dropoff", claim.OutboundDestination),
-			buildStep("pickup", claim.InboundSource),
-			{Action: "dropoff", Node: claim.SecondPairedCoreNode},
-		}
+		backfill = claim.SecondPairedCoreNode
+	}
+	if claim.IndexRobotSupplies {
+		// FLIPPED: R1 stops at the destination; R2 indexes forward and then
+		// goes for the replacement itself. One robot leaves the cell the
+		// moment the press is clear.
 		orderR2 = []protocol.ComplexOrderStep{
 			stationWait(claim.PairedCoreNode),
 			{Action: "pickup", Node: claim.PairedCoreNode},
 			{Action: "dropoff", Node: claim.CoreNodeName},
-			{Action: "pickup", Node: claim.SecondPairedCoreNode},
-			{Action: "dropoff", Node: claim.PairedCoreNode},
 		}
+		if claim.SecondPairedCoreNode != "" {
+			orderR2 = append(orderR2,
+				protocol.ComplexOrderStep{Action: "pickup", Node: claim.SecondPairedCoreNode},
+				protocol.ComplexOrderStep{Action: "dropoff", Node: claim.PairedCoreNode})
+		}
+		orderR2 = append(orderR2,
+			buildStep("pickup", claim.InboundSource),
+			protocol.ComplexOrderStep{Action: "dropoff", Node: backfill})
 	} else {
-		// 2-position: B → A index, R1's final dropoff feeds B.
-		orderR1 = []protocol.ComplexOrderStep{
-			stationWait(claim.CoreNodeName),
-			{Action: "pickup", Node: claim.CoreNodeName},
-			buildStep("dropoff", claim.OutboundDestination),
+		// UNFLIPPED (today): R1 carries on to the supermarket and backfills the
+		// rearmost position; R2 only shifts the on-deck carrier forward.
+		orderR1 = append(orderR1,
 			buildStep("pickup", claim.InboundSource),
-			{Action: "dropoff", Node: claim.PairedCoreNode},
-		}
+			protocol.ComplexOrderStep{Action: "dropoff", Node: backfill})
 		orderR2 = []protocol.ComplexOrderStep{
 			stationWait(claim.PairedCoreNode),
 			{Action: "pickup", Node: claim.PairedCoreNode},
 			{Action: "dropoff", Node: claim.CoreNodeName},
+		}
+		if claim.SecondPairedCoreNode != "" {
+			orderR2 = append(orderR2,
+				protocol.ComplexOrderStep{Action: "pickup", Node: claim.SecondPairedCoreNode},
+				protocol.ComplexOrderStep{Action: "dropoff", Node: claim.PairedCoreNode})
 		}
 	}
 	// hop A3 (2026-07-23): a PRODUCE press-index indexes ON-DECK EMPTIES forward
@@ -286,6 +318,24 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 	// / BuildSequentialBackfillSteps' own markInboundEmpty gate.
 	if claim.Role == protocol.ClaimRoleProduce {
 		markPressIndexOnDeckEmpty(orderR2, claim)
+		// TWO FLAGGERS ON ONE LEG, and only under the flip.
+		//
+		// markPressIndexOnDeckEmpty catches the on-deck pickups (B, and C on a
+		// 3-position press); markInboundEmpty catches the supermarket pickup.
+		// Unflipped those sit on different legs and never met. Flipped they are
+		// both on R2, so they have to compose — each matches on node name and
+		// only ever SETS Empty, so neither can clear the other's. Pinned by
+		// TestPressIndexFlipped_BothEmptyFlaggersCompose, because a flagger
+		// rewritten to assign rather than set would silently unflag the other's
+		// pickup and reopen the Hopkinsville waiting_for_material hang.
+		if claim.IndexRobotSupplies {
+			markInboundEmpty(orderR2, claim.InboundSource)
+		}
+	} else if claim.IndexRobotSupplies {
+		// Consume never flags Empty (it indexes FULL bins forward), so the
+		// flipped supermarket pickup stays a full retrieve — same invariant as
+		// the unflipped R1's.
+		_ = backfill
 	}
 	return orderR1, orderR2
 }
