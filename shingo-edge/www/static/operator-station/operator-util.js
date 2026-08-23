@@ -228,6 +228,47 @@ export async function postAction(url, body, loadView) {
 // and the modal's waiting label need it, and a pure formatter is exactly
 // what this module is for — the alternative was the modal importing the
 // tile renderer for one function.
+// withQueueCause appends Core's typed queue-cause sentence to a status label.
+//
+// THE STATUS WORD STAYS. `queued` and `sourcing` are distinct lifecycles and
+// are not merged, renamed or collapsed anywhere — the cause is rendered BESIDE
+// whatever the surface already said, never instead of it.
+//
+// The sentence is built once, at set-time, by Core's queue-reason formatter
+// from the structured cause (queue_code + queue_cause carry the analytic
+// signal; this carries the human one) and pushed to the Edge order row via
+// OrderUpdate. Nothing here rebuilds or interprets it — this only puts what is
+// already on the row in front of the operator.
+//
+// It is preferred over the status word wherever both exist because it is a
+// whole sentence ("Waiting for material: 74577-6SA0A.06") and because it
+// survives the status-write path independently: SetOrderQueueReason bypasses
+// the transition validator, so the reason lands even in the window where the
+// status push itself was refused.
+//
+// No cause returns the label untouched — an order parked with nothing said
+// about it must not grow a dangling dash.
+export function withQueueCause(label, order) {
+    const cause = order && order.queue_reason;
+    return cause ? label + ' — ' + cause : label;
+}
+
+// distinctQueueCauses returns the cause sentences across a set of parked
+// orders, in first-seen order, with duplicates dropped. A swap pair parked for
+// the same reason has one reason, not two identical lines.
+//
+// Orders with no cause contribute nothing rather than a blank entry: the count
+// line already says how many are parked, and an empty line would read as a
+// cause nobody can name.
+export function distinctQueueCauses(orders) {
+    const out = [];
+    (orders || []).forEach(function(o) {
+        const cause = o && o.queue_reason;
+        if (cause && out.indexOf(cause) === -1) out.push(cause);
+    });
+    return out;
+}
+
 export function formatETA(etaStr) {
     if (!etaStr) return { text: '', overdue: false, empty: true };
     const etaMs = Date.parse(etaStr);

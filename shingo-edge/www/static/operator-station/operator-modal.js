@@ -1,4 +1,4 @@
-import { esc, fillColor, postAction, formatETA } from './operator-util.js';
+import { esc, fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses } from './operator-util.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, REFUSE_LABEL, UNDO_LABEL,
 } from './operator-supply-refusal.js';
@@ -172,8 +172,11 @@ export function renderModal(entry) {
 
     if (isReplenishing(entry)) {
         const activeOrders = (entry.orders || []).filter(o => isActive(o.status));
+        // The status word stays and the cause is appended to it: an operator
+        // reading "retrieve: queued" cannot tell a capacity gate from a missing
+        // bin, and Core already generated the sentence that distinguishes them.
         const statusText = activeOrders.length > 0
-            ? activeOrders.map(o => o.order_type + ': ' + o.status).join(', ')
+            ? activeOrders.map(o => withQueueCause(o.order_type + ': ' + o.status, o)).join(', ')
             : 'Order in progress';
         html += '<div class="modal-status">[REP] ' + esc(statusText) + '</div>';
     } else {
@@ -321,7 +324,15 @@ export function renderModal(entry) {
                 html += '</div>';
             }
             if (queued.length > 0) {
+                // "2 orders queued" tells the loader operator nothing they can
+                // act on. Core's cause sentence does — and it is already on the
+                // row. One line per distinct cause so a pair parked for the
+                // same reason does not print it twice.
+                var causes = distinctQueueCauses(queued);
                 html += '<div style="color:#999;font-size:12px;margin-bottom:10px">' + queued.length + ' order' + (queued.length > 1 ? 's' : '') + ' queued</div>';
+                causes.forEach(function(c) {
+                    html += '<div style="color:#999;font-size:12px;margin-bottom:10px;padding-left:8px;border-left:2px solid #444">' + esc(c) + '</div>';
+                });
             }
 
             var queuePos = 1;
@@ -753,7 +764,7 @@ function isStationReleasable(o) {
 function waitingLabel(blocker) {
     const base = 'WAITING FOR OTHER ROBOT';
     if (!blocker) return base;
-    if (blocker.queue_reason) return base + ' — ' + blocker.queue_reason;
+    if (blocker.queue_reason) return withQueueCause(base, blocker);
     switch (blocker.status) {
         case 'faulted':
             return base + ' — faulted, recovering';
