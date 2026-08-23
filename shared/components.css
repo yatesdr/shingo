@@ -45,6 +45,14 @@
   gap: 0.75rem 1rem;
 }
 
+/* Three-column grid for short numeric inputs that read as a set
+ * (capacity / reorder point / soft cap). */
+.form-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.75rem 1rem;
+}
+
 /* Two-column-plus-trailing grid for inputs that include a trailing
  * checkbox / action button. */
 .form-grid-2-aux {
@@ -97,6 +105,50 @@
 
 .form-input--error {
   border-color: var(--danger);
+}
+
+/* A fieldset-card that collapses. Same border, padding and legend
+ * treatment as .fieldset-card--stacked, on a <details> so the open/closed
+ * state is the browser's and needs no JavaScript.
+ *
+ * For groups that are configured once and then read rarely — a claim's
+ * changeover and auto-request settings — where the rows cost more vertical
+ * space than the information is worth on most visits. The summary carries a
+ * hint of the current value so collapsing does not hide state, only detail.
+ *
+ * There are two older ad-hoc spellings of this on Core (nodes.html
+ * .dev-menu, sourcing.html .src-collapse) that could fold into this class;
+ * they are left alone here rather than widen this round into Core. */
+.collapse-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-top: 0.75rem;
+}
+
+.collapse-card > summary {
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  list-style: revert;
+}
+
+.collapse-card > summary:focus-visible {
+  outline: 2px solid var(--accent, var(--danger));
+  outline-offset: 2px;
+}
+
+/* The current-value hint beside a collapsed group's title. Quiet, because
+ * it is orientation rather than content. */
+.collapse-hint {
+  font-weight: normal;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-left: 0.5rem;
+}
+
+.collapse-card[open] > summary {
+  margin-bottom: 0.5rem;
 }
 
 /* Checkbox + label row inside a fieldset (manual_swap toggles,

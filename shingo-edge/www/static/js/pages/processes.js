@@ -628,6 +628,9 @@ function claimFieldVisibility(role, swap) {
         'claims-add-capacity-group':          !isManual,
         'claims-add-reorder-group':           !isManual,
         'claims-add-lineside-group':          role === 'consume' && !isManual,
+        // Extracted from inside the field group when the numeric row became a
+        // 3-column grid; it follows the field it explains.
+        'claims-lineside-help':               role === 'consume' && !isManual,
         // Staging fieldset is hidden by manual_swap (no staging concept),
         // then further hidden when the swap mode doesn't use staging at
         // all (sequential / press_index).
@@ -641,6 +644,7 @@ function claimFieldVisibility(role, swap) {
         'claims-changeover-fieldset':         !isManual,
         'claims-ab-fieldset':                 showPair,
         'claims-add-second-paired-group':     showPair && isPressIndex,
+        'claims-third-position-help':         showPair && isPressIndex,
         'claims-add-reuse-bins-row':          showPair && isPressIndex,
         'claims-auto-request-fieldset':       false,
         'claims-auto-request-manual-swap':    false,
@@ -1236,6 +1240,31 @@ function toggleShowAllNodes() {
     renderClaimForm();
 }
 
+// renderCollapseHints keeps a collapsed group honest.
+//
+// Collapsing may hide DETAIL; it must not hide STATE. A card whose summary
+// reads "Changeover" tells the operator nothing about whether this claim
+// evacuates, so they open every card every time and the collapse has bought
+// nothing. The hint carries the current value, and a group holding a
+// non-default value opens itself.
+function renderCollapseHints(state) {
+    var setHint = function(cardID, hintID, text, isDefault) {
+        var hint = document.getElementById(hintID);
+        if (hint) hint.textContent = text;
+        var card = document.getElementById(cardID);
+        // Only force OPEN. Forcing closed would slam the card shut under an
+        // operator who had just opened it to look.
+        if (card && !isDefault) card.open = true;
+    };
+    setHint('claims-changeover-fieldset', 'claims-changeover-hint',
+        state.evacuateOnChangeover ? 'evacuate: on' : 'evacuate: off',
+        !state.evacuateOnChangeover);
+    setHint('claims-auto-request-fieldset', 'claims-auto-request-hint',
+        state.autoRequestPayload ? ('payload: ' + state.autoRequestPayload)
+                                 : (state.autoConfirm ? 'auto-confirm: on' : 'disabled'),
+        !state.autoRequestPayload && !state.autoConfirm);
+}
+
 // claimForbiddenFields answers: which populated values does THIS mode not use.
 //
 // Derived from the same (role, swap) facts as claimFieldVisibility, so the
@@ -1419,6 +1448,7 @@ function renderClaimForm() {
         warn.style.display = missing ? '' : 'none';
     }
     renderModeDropNote(role, swap, state);
+    renderCollapseHints(state);
 }
 
 // Backwards-compat shims for inline onchange handlers in processes.html.
@@ -1918,6 +1948,7 @@ delegateActions(document.body, {
     clearClaimFieldErrors,
     renderClaimFieldErrors,
     renderClaimForm,
+    renderCollapseHints,
     renderClaimRow,
     resetNodePicker,
     resetProcessForm,

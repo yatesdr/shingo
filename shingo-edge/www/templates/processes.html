@@ -374,7 +374,7 @@ window.processNodeNames = {{json .ProcessNodeNames}};
 </div>
 
 <div class="modal-overlay" id="claim-modal">
-    <div class="modal" style="max-width:640px">
+    <div class="modal modal--wide">
         <div class="modal-header">
             <span id="claim-modal-title">Add Node Claim</span>
             <button class="btn btn-sm" data-action="closeClaimModal">&times;</button>
@@ -448,21 +448,21 @@ window.processNodeNames = {{json .ProcessNodeNames}};
             <!-- Loader replenishment (operator-driven vs auto/UoP-threshold) and the
                  dedicated-position layout are configured on the Core loader setup screen
                  (Nodes → Create/Edit Loader), not per style here. -->
-            <div class="form-grid-2 mb-3">
-                <div class="form-group" class="form-group--nogap" id="claims-add-capacity-group">
+            <div class="form-grid-3 mb-3">
+                <div class="form-group form-group--nogap" id="claims-add-capacity-group">
                     <label>UoP per Bin</label>
-                    <input type="number" id="claims-add-capacity" class="form-input" value="0" readonly style="background:var(--bg)">
+                    <input type="number" id="claims-add-capacity" class="form-input input-readonly" value="0" readonly>
                 </div>
-                <div class="form-group" class="form-group--nogap" id="claims-add-reorder-group">
+                <div class="form-group form-group--nogap" id="claims-add-reorder-group">
                     <label>Reorder At</label>
                     <input type="number" id="claims-add-reorder" class="form-input" value="0">
                 </div>
+                <div id="claims-add-lineside-group" class="form-group form-group--nogap">
+                    <label>Lineside Soft Cap <span class="label-aside">(per-part; 0 = off)</span></label>
+                    <input type="number" id="claims-add-lineside-soft" class="form-input" value="0" min="0">
+                </div>
             </div>
-            <div id="claims-add-lineside-group" class="form-group" class="mb-3">
-                <label>Lineside Soft Cap <span style="color:var(--text-muted);font-weight:normal;font-size:0.8rem">(per-part; 0 = off)</span></label>
-                <input type="number" id="claims-add-lineside-soft" class="form-input" value="0" min="0">
-                <div class="field-help--inline">When set, the release prompt warns if an entered qty exceeds 2× this value. Catches typos; never blocks release.</div>
-            </div>
+            <div class="field-help--inline mb-3" id="claims-lineside-help">Lineside soft cap: the release prompt warns if an entered qty exceeds 2× this value. Catches typos; never blocks release.</div>
 
             <fieldset id="claims-staging-fieldset" class="fieldset-card mb-0">
                 <legend class="fieldset-legend">Staging</legend>
@@ -515,42 +515,44 @@ window.processNodeNames = {{json .ProcessNodeNames}};
                 </div>
             </fieldset>
 
-            <fieldset id="claims-changeover-fieldset" class="fieldset-card--stacked">
-                <legend class="fieldset-legend">Changeover</legend>
+            <details id="claims-changeover-fieldset" class="collapse-card">
+                <summary>Changeover <span class="collapse-hint" id="claims-changeover-hint"></span></summary>
                 <label class="check-row">
                     <input type="checkbox" id="claims-add-evacuate">
                     <span>Evacuate on changeover (even if same payload)</span>
                 </label>
-            </fieldset>
+            </details>
 
             <fieldset id="claims-ab-fieldset" class="fieldset-card--stacked" hidden>
                 <legend id="claims-ab-legend" class="fieldset-legend">A/B Node Cycling</legend>
                 <div id="claims-ab-help" class="field-help">Pair this node with another node for alternating operation. The operator flips which node is active via the station HMI.</div>
-                <div class="form-group" class="form-group--nogap">
-                    <label id="claims-ab-label">Paired Node</label>
-                    <select id="claims-add-paired-node" class="form-input">
-                        <option value="">-- None (no A/B cycling) --</option>
-                        {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
-                    </select>
-                    <div class="field-error-msg" id="claims-err-paired-core-node" hidden></div>
+                <div class="form-grid-2">
+                    <div class="form-group form-group--nogap">
+                        <label id="claims-ab-label">Paired Node</label>
+                        <select id="claims-add-paired-node" class="form-input">
+                            <option value="">-- None (no A/B cycling) --</option>
+                            {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
+                        </select>
+                        <div class="field-error-msg" id="claims-err-paired-core-node" hidden></div>
+                    </div>
+                    <div class="form-group form-group--nogap" id="claims-add-second-paired-group">
+                        <label>Third Press Position (optional)</label>
+                        <select id="claims-add-second-paired-node" class="form-input">
+                            <option value="">-- None (2-position layout) --</option>
+                            {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
+                        </select>
+                        <div class="field-error-msg" id="claims-err-second-paired-core-node" hidden></div>
+                    </div>
                 </div>
-                <div class="form-group" id="claims-add-second-paired-group" style="margin:0.75rem 0 0 0;display:none">
-                    <label>Third Press Position (optional)</label>
-                    <select id="claims-add-second-paired-node" class="form-input">
-                        <option value="">-- None (2-position layout) --</option>
-                        {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
-                    </select>
-                    <div class="field-error-msg" id="claims-err-second-paired-core-node" hidden></div>
-                    <div class="field-help--inline">Set for a 3-position press where bins index C → B → A. R1 drops fresh empties at C; R2 indexes C → B and B → A. Leave blank for the default 2-position layout (R1 → B, R2 → A).</div>
-                </div>
+                <div class="field-help--inline" id="claims-third-position-help">Third position: for a 3-position press where bins index C → B → A. R1 drops fresh empties at C; R2 indexes C → B and B → A. Leave blank for the default 2-position layout (R1 → B, R2 → A).</div>
                 <label id="claims-add-reuse-bins-row" class="check-row mt-2" hidden>
                     <input type="checkbox" id="claims-add-reuse-bins">
                     <span>Reuse compatible bins on changeover (skip swap when next style needs same payload and bin is empty)</span>
                 </label>
             </fieldset>
 
-            <fieldset id="claims-auto-request-fieldset" class="fieldset-card--stacked" hidden>
-                <legend class="fieldset-legend">Auto-Request</legend>
+            <details id="claims-auto-request-fieldset" class="collapse-card" hidden>
+                <summary>Auto-Request <span class="collapse-hint" id="claims-auto-request-hint"></span></summary>
                 <div id="claims-auto-request-manual-swap" hidden>
                     <div class="field-help">Demand signals automatically create orders for all allowed payloads. When a bin is consumed downstream, the system requests replenishment for that payload.</div>
                     <div class="field-help--inline">Auto-confirm delivery is always enabled for manual swap nodes.</div>
@@ -572,7 +574,7 @@ window.processNodeNames = {{json .ProcessNodeNames}};
                         <span>Auto-confirm delivery (skip operator acknowledgement)</span>
                     </label>
                 </div>
-            </fieldset>
+            </details>
         </div>
         <div class="modal-footer">
             <button class="btn" data-action="closeClaimModal">Cancel</button>

@@ -555,6 +555,27 @@ textarea.form-input {
     flex-direction: column;
 }
 
+/* A modal carrying a real form rather than a confirmation. 500px forces
+ * every paired field onto its own row, which is most of why the claim editor
+ * grew past the viewport in the first place. */
+/* A readonly input that is derived rather than entered (UoP per bin comes
+ * from the payload catalog). Reads as a value, not a field you failed to
+ * fill in. */
+.input-readonly {
+  background: var(--bg);
+}
+
+/* A quiet qualifier inside a <label> — units, ranges, "(optional)". */
+.label-aside {
+  color: var(--text-muted);
+  font-weight: normal;
+  font-size: 0.8rem;
+}
+
+.modal--wide {
+  max-width: 880px;
+}
+
 /* The scrolling region. Both spellings: the style guide prescribes
  * .modal-body, and every modal in this template predates that and uses
  * .card-body. */

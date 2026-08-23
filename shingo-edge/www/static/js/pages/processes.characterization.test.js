@@ -202,6 +202,7 @@ function buildDOM() {
     add('claims-add-reorder-group');
     add('claims-add-reorder', { tag: 'input', value: '2' });
     add('claims-add-lineside-group');
+    add('claims-lineside-help');
     add('claims-add-lineside-soft', { tag: 'input', value: '0' });
     add('claims-staging-fieldset');
     add('claims-add-inbound', { tag: 'select', value: 'IN1' });
@@ -221,6 +222,7 @@ function buildDOM() {
     const pairSel = add('claims-add-paired-node', { tag: 'select', value: '' });
     pairSel.options = [{ value: '', textContent: '-- None --' }];
     add('claims-add-second-paired-group', { display: 'none' });
+    add('claims-third-position-help', { display: 'none' });
     add('claims-add-second-paired-node', { tag: 'select', value: '' });
     add('claims-add-reuse-bins-row', { display: 'none' });
     add('claims-add-reuse-bins', { tag: 'input', type: 'checkbox' });
@@ -250,6 +252,9 @@ function buildDOM() {
         'claims-mode-drop-note',
     ].forEach(function(id) { add(id, { display: 'none' }); });
     add('claims-show-all-nodes', { tag: 'input', type: 'checkbox' });
+    // Collapse-card hints (density pass).
+    add('claims-changeover-hint');
+    add('claims-auto-request-hint');
 
     // Station modal
     add('station-id', { tag: 'input', type: 'hidden' });
@@ -412,6 +417,7 @@ function expectedVisibility(role, swap) {
         'claims-add-allowed-group': false,
         'claims-add-reorder-group': !isManual,
         'claims-add-lineside-group': role === 'consume' && !isManual,
+        'claims-lineside-help': role === 'consume' && !isManual,
         'claims-staging-fieldset': !isManual && usesStaging,
         'claims-add-swap-group': true,
         'claims-source-fieldset': !isManual,
@@ -420,6 +426,7 @@ function expectedVisibility(role, swap) {
         'claims-changeover-fieldset': !isManual,
         'claims-ab-fieldset': showPair,
         'claims-add-second-paired-group': showPair && isPressIndex,
+        'claims-third-position-help': showPair && isPressIndex,
         'claims-add-reuse-bins-row': showPair && isPressIndex,
         'claims-auto-request-fieldset': false,
         'claims-auto-request-manual-swap': false,
