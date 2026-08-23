@@ -183,39 +183,18 @@
 /* Mirror the style guide's limited utility set so inline margin/text
  * tweaks don't need to be repeated everywhere.
  *
- * THE GUIDE LISTED THESE AND NOTHING IMPLEMENTED THEM. § "Utility classes"
- * names .flex, .flex-center, .flex-between, .gap-1/2/3, .mt-1, .mb-1,
- * .text-muted, .text-center, .nowrap and .ml-auto as available; only the
- * margin steps and .mono existed. `.text-muted` was the expensive one — 22
- * elements across the edge templates ask for it, and measured in Chrome they
- * render at rgb(33,37,41), identical to plain body text, while the -sm
- * variant beside them correctly renders rgb(104,113,122). Text somebody
- * deliberately quietened has been shouting.
+ * THE DOCUMENTED SET IS NOT HERE, DELIBERATELY. The style guide's § "Utility
+ * classes" names .flex, .flex-center, .flex-between, .gap-*, .text-muted,
+ * .text-center, .nowrap and .ml-auto; Core's style.css already declares them
+ * and is co-loaded with this file on every Core page, so a copy here is the
+ * exact collision TestNoBareClassDeclaredInTwoCoLoadedStylesheets exists to
+ * catch — and three of them diverge in value (Core's .mt-1 is 0.5rem, which
+ * is this file's .mt-2).
  *
- * Same failure shape as a duplicate class attribute: written, plausible,
- * inert, and invisible to every gate. Implementing the documented set is what
- * makes the document true. */
-.flex { display: flex; }
-.flex-center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.flex-between {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.gap-1 { gap: 0.5rem; }
-.gap-2 { gap: 1rem; }
-.gap-3 { gap: 1.5rem; }
-.text-muted { color: var(--text-muted); }
-.text-center { text-align: center; }
-.nowrap { white-space: nowrap; }
-.ml-auto { margin-left: auto; }
-.mt-1  { margin-top: 0.25rem; }
-.mb-1  { margin-bottom: 0.25rem; }
-
+ * Edge declares the ones it needs in shingoedge.css instead, where nothing
+ * co-loads with Core's sheet. Hoisting the set into shared means reconciling
+ * the divergences across both surfaces, which is its own piece of work and
+ * not something to smuggle into an Edge round. */
 /* An inline row of controls that reads as one line — a select and its
  * button, a label and its chip. The single most repeated inline style on
  * the processes page. */
