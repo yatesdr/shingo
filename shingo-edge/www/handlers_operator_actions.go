@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"shingoedge/domain"
 	"shingoedge/engine"
 )
 
@@ -79,22 +78,21 @@ func (h *Handlers) apiReleaseNodeEmpty(w http.ResponseWriter, r *http.Request) {
 		// fall through to the legacy ReleaseNodeEmpty path.
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
-	var order *domain.Order
 	if req.PartialCount != nil {
 		count := *req.PartialCount
 		if count < 0 {
 			writeError(w, http.StatusBadRequest, "partial_count must be >= 0")
 			return
 		}
-		order, err = h.orchestration.ReleaseNodeWithRemainingUOP(id, 1, count)
+		_, err = h.orchestration.ReleaseNodeWithRemainingUOP(id, 1, count)
 	} else {
-		order, err = h.orchestration.ReleaseNodeEmpty(id)
+		_, err = h.orchestration.ReleaseNodeEmpty(id)
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSONWithTrigger(w, r, order, "refreshMaterial")
+	writeActionOK(w, r, "refreshMaterial")
 }
 
 func (h *Handlers) apiReleaseNodePartial(w http.ResponseWriter, r *http.Request) {
@@ -110,12 +108,12 @@ func (h *Handlers) apiReleaseNodePartial(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	order, err := h.orchestration.ReleaseNodePartial(id, req.Qty)
+	_, err = h.orchestration.ReleaseNodePartial(id, req.Qty)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSONWithTrigger(w, r, order, "refreshMaterial")
+	writeActionOK(w, r, "refreshMaterial")
 }
 
 // apiReleaseNodeStagedOrders releases both orders of a two-robot swap in one

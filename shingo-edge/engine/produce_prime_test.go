@@ -322,9 +322,6 @@ func TestApplyProducePlan_PrimesOnly(t *testing.T) {
 	if res.ProcessNodeID != nodeID {
 		t.Errorf("ProcessNodeID = %d, want %d", res.ProcessNodeID, nodeID)
 	}
-	if res.CycleMode != protocol.SwapModeSimple {
-		t.Errorf("CycleMode = %q, want %q", res.CycleMode, protocol.SwapModeSimple)
-	}
 	if res.Order != nil || res.OrderA != nil || res.OrderB != nil {
 		t.Errorf("a primes-only round mints no swap legs; Order=%v OrderA=%v OrderB=%v", res.Order, res.OrderA, res.OrderB)
 	}

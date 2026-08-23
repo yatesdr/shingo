@@ -316,7 +316,7 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 			}
 			primes = append(primes, po)
 		}
-		return &NodeOrderResult{CycleMode: protocol.SwapModeSimple, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{PrimeOrders: primes, ProcessNodeID: nodeID}, nil
 	}
 
 	// Fix D: two-robot modes DEFER the paperwork (manifest ingest + count
@@ -374,9 +374,9 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	}
 
 	if orderB == nil {
-		return &NodeOrderResult{CycleMode: dispatch.CycleMode, Order: orderA, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{Order: orderA, ProcessNodeID: nodeID}, nil
 	}
-	return &NodeOrderResult{CycleMode: dispatch.CycleMode, OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
+	return &NodeOrderResult{OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
 }
 
 // dispatchProduceIngest stamps Core's bin manifest with the produced count.

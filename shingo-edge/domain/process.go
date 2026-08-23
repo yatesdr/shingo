@@ -298,8 +298,8 @@ type NodeClaim struct {
 	//
 	// Off by default: a plant that has never wanted this sees no change.
 	ChangeoverLoadDirective bool `json:"changeover_load_directive"`
-	AutoConfirm               bool   `json:"auto_confirm"`
-	Sequence                  int    `json:"sequence"`
+	AutoConfirm             bool `json:"auto_confirm"`
+	Sequence                int  `json:"sequence"`
 	// LinesideSoftThreshold is the per-claim soft cap for the release
 	// qty-override prompt. Zero means "off" (default). When >0, the HMI
 	// warns — but doesn't block — if the operator enters a qty greater

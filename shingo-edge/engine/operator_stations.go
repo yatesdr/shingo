@@ -13,11 +13,19 @@ import (
 	"shingoedge/store/processes"
 )
 
+// NodeOrderResult is what an operator's material action returns.
+//
+// NO cycle_mode. It had no reader anywhere — and worse, it could not have
+// been a useful one: a primes-only produce round and a consume downgrade both
+// report "simple", so the one discrimination anyone would reach for it to make
+// is the one it cannot make. Round 2 already had to key primeNoticeText on the
+// swap legs instead and write a test forbidding the cycle_mode reading. A
+// field that is unread AND fenced off by a test is not costing a line, it is
+// a trap; the round-3 body audit is what settled removing it.
 type NodeOrderResult struct {
-	CycleMode protocol.SwapMode  `json:"cycle_mode"`
-	Order     *storeorders.Order `json:"order,omitempty"`
-	OrderA    *storeorders.Order `json:"order_a,omitempty"`
-	OrderB    *storeorders.Order `json:"order_b,omitempty"`
+	Order  *storeorders.Order `json:"order,omitempty"`
+	OrderA *storeorders.Order `json:"order_a,omitempty"`
+	OrderB *storeorders.Order `json:"order_b,omitempty"`
 	// PrimeOrders are additional simple deliveries emitted alongside Order
 	// when a press-index empty-station downgrade prime-filled the paired
 	// positions. Empty for non-press-index requests and for press-index
@@ -229,7 +237,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 			}
 			primes = append(primes, refreshed)
 		}
-		return &NodeOrderResult{CycleMode: protocol.SwapModeSimple, Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
 	}
 
 	dispatch := plan.Dispatch
@@ -282,9 +290,9 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 	}
 
 	if orderB == nil {
-		return &NodeOrderResult{CycleMode: dispatch.CycleMode, Order: orderA, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{Order: orderA, ProcessNodeID: nodeID}, nil
 	}
-	return &NodeOrderResult{CycleMode: dispatch.CycleMode, OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
+	return &NodeOrderResult{OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
 }
 
 // refreshOrderStation re-reads an order after the runtime-orders write

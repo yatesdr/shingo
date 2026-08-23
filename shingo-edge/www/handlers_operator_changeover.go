@@ -363,13 +363,13 @@ func (h *Handlers) apiStageNodeChangeoverMaterial(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	order, err := h.orchestration.StageNodeChangeoverMaterial(processID, nodeID)
+	_, err = h.orchestration.StageNodeChangeoverMaterial(processID, nodeID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "stage-material"}})
-	writeJSONWithTrigger(w, r, order, "refreshChangeover")
+	writeActionOK(w, r, "refreshChangeover")
 }
 
 func (h *Handlers) apiEvacuateNode(w http.ResponseWriter, r *http.Request) {
@@ -387,13 +387,13 @@ func (h *Handlers) apiEvacuateNode(w http.ResponseWriter, r *http.Request) {
 		Qty int64 `json:"qty"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	order, err := h.orchestration.EvacuateNode(processID, nodeID, req.Qty)
+	_, err = h.orchestration.EvacuateNode(processID, nodeID, req.Qty)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "evacuate-node"}})
-	writeJSONWithTrigger(w, r, order, "refreshChangeover")
+	writeActionOK(w, r, "refreshChangeover")
 }
 
 func (h *Handlers) apiDeliverNewMaterialForChangeover(w http.ResponseWriter, r *http.Request) {
@@ -407,13 +407,13 @@ func (h *Handlers) apiDeliverNewMaterialForChangeover(w http.ResponseWriter, r *
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	order, err := h.orchestration.DeliverNewMaterialForChangeover(processID, nodeID)
+	_, err = h.orchestration.DeliverNewMaterialForChangeover(processID, nodeID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "deliver-new-material"}})
-	writeJSONWithTrigger(w, r, order, "refreshChangeover")
+	writeActionOK(w, r, "refreshChangeover")
 }
 
 func (h *Handlers) apiSwitchNodeToTarget(w http.ResponseWriter, r *http.Request) {
