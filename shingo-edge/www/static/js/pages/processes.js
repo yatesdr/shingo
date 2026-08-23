@@ -610,6 +610,21 @@ function jumpToStyleEditor(styleID) {
 // editClaim/toggleClaimsAddPayload/validateClaimStaging looking for
 // every place to add a `style.display = ''`.
 
+// ROUND-3 AND ROUND-4 SLOTS.
+//
+// Both rounds add fields to this editor. Their visibility rules are written
+// here NOW, inert behind these two constants, so that those rounds add a
+// control and a table value rather than going hunting for every place a field
+// has to be registered — which is the trap this table exists to close and the
+// one that made IndexRobotSupplies unenterable in the round-1 design review.
+//
+// The rules are real, not placeholders: flipping a constant is what turns the
+// group on, and nothing else here has to change. Until then every entry
+// evaluates false, no DOM exists for them, and renderClaimForm skips an id it
+// cannot resolve.
+const ROUND3_CHANGEOVER = false; // per-seat tooling relevance + evac destination
+const ROUND4_ROUTING = false;    // IndexRobotSupplies + key routes
+
 function claimFieldVisibility(role, swap) {
     const isManual = swap === 'manual_swap';
     const isPressIndex = swap === 'two_robot_press_index';
@@ -641,10 +656,14 @@ function claimFieldVisibility(role, swap) {
         // Staging fieldset is hidden by manual_swap (no staging concept),
         // then further hidden when the swap mode doesn't use staging at
         // all (sequential / press_index).
-        'claims-staging-fieldset':            !isManual && usesStaging,
+        // Round 3's changeover-evac mode stages the incoming style at
+        // InboundStaging, so press-index gains this fieldset THEN — and only
+        // then. Today's runtime rule is unchanged: plain press-index neither
+        // shows nor requires staging.
+        'claims-staging-fieldset':            !isManual && (usesStaging || (ROUND3_CHANGEOVER && isPressIndex)),
         // keep_staged parks the incoming bin ON the staging node, so it is
         // meaningless without one.
-        'claims-add-keep-staged-row':         !isManual && usesStaging,
+        'claims-add-keep-staged-row':         !isManual && (usesStaging || (ROUND3_CHANGEOVER && isPressIndex)),
         'claims-add-swap-group':              true,
         'claims-source-fieldset':             !isManual,
         'claims-inbound-source-group':        !isManual,
@@ -652,10 +671,20 @@ function claimFieldVisibility(role, swap) {
         // two_robot (the old bin still goes somewhere).
         'claims-outbound-destination-group':  !isManual,
         'claims-changeover-fieldset':         !isManual,
+        // Round 3 — Changeover fieldset. Per-seat tooling relevance applies to
+        // any consume or process node, not only presses, so it is not
+        // press-index scoped. The evac destination is free-form: a node or a
+        // group.
+        'claims-add-tooling-relevance-row':   ROUND3_CHANGEOVER && !isManual,
+        'claims-add-evac-destination-group':  ROUND3_CHANGEOVER && !isManual,
         'claims-ab-fieldset':                 showPair,
         'claims-add-second-paired-group':     showPair && isPressIndex,
         'claims-third-position-help':         showPair && isPressIndex,
         'claims-add-reuse-bins-row':          showPair && isPressIndex,
+        // Round 4 — Press Index Pairing fieldset. Which robot supplies the
+        // press is a per-claim fact (every other press-index geometry fact
+        // already lives on NodeClaim), so it belongs beside the positions.
+        'claims-add-index-robot-supplies-row': ROUND4_ROUTING && isPressIndex,
         // Was an unconditional `false`, which killed the whole group for every
         // claim type. 2635ad10 meant to hide it for manual_swap only — its
         // message says "every other claim type (presses, welds, ...) is
@@ -670,6 +699,10 @@ function claimFieldVisibility(role, swap) {
         // Auto-push is only meaningful for a consume manual_swap
         // (unloader pulling parts from a bin).
         'claims-add-auto-push-row':           isManual && role === 'consume',
+        // Round 4 — Routing, a new fieldset. Key routes are the named paths a
+        // leg may take; meaningless for a loader, which does not drive.
+        'claims-routing-fieldset':            ROUND4_ROUTING && !isManual,
+        'claims-add-key-routes-group':        ROUND4_ROUTING && !isManual,
     };
 }
 

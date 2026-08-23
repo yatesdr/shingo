@@ -1326,6 +1326,70 @@ function runCompareGridStillOmitsCase() {
     }
 }
 
+// -----------------------------------------------------------------------
+// Round 2 unit 6 — the table knows about rounds 3 and 4
+// -----------------------------------------------------------------------
+//
+// The point of these is PRESENCE. A field that is not registered in
+// claimFieldVisibility is unenterable no matter how much backend supports it —
+// that is the round-1 trap that would have shipped IndexRobotSupplies with no
+// way to set it. Rounds 3 and 4 should add a control and a value, not go
+// hunting for every place a field must be declared.
+//
+// Asserted against the table directly, not against DOM visibility: with no
+// element present isVisible() returns false, so a DOM assertion would pass
+// identically whether or not the key had ever been added. That is the vacuous
+// test this file exists to avoid.
+
+const ROUND_3_4_SLOTS = [
+    'claims-add-tooling-relevance-row',
+    'claims-add-evac-destination-group',
+    'claims-add-index-robot-supplies-row',
+    'claims-routing-fieldset',
+    'claims-add-key-routes-group',
+];
+
+function runRound34SlotCases() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+
+    for (const role of ROLES) {
+        for (const swap of SWAPS) {
+            const vis = ctx.claimFieldVisibility(role, swap);
+            for (const key of ROUND_3_4_SLOTS) {
+                if (!(key in vis)) {
+                    reportFailure(
+                        `round3/4 slots: ${key} missing from claimFieldVisibility(${role}, ${swap}) — ` +
+                        `an unregistered field is unenterable whatever the backend does`,
+                        'present', 'absent');
+                } else if (vis[key] !== false) {
+                    reportFailure(
+                        `round3/4 slots: ${key} must be inert until its round ships`,
+                        false, vis[key]);
+                } else { passed++; }
+            }
+        }
+    }
+
+    // Today's staging rule is UNCHANGED: plain press-index neither shows nor
+    // requires staging. Round 3's evac mode is what grants it, and that is
+    // behind a constant — so this must stay false now, and it is the assertion
+    // that catches someone "preparing" round 3 by turning it on early.
+    const pressIndex = ctx.claimFieldVisibility('produce', 'two_robot_press_index');
+    if (pressIndex['claims-staging-fieldset'] !== false) {
+        reportFailure('round3/4 slots: press-index staging stays hidden until round 3',
+            false, pressIndex['claims-staging-fieldset']);
+    } else { passed++; }
+    // ...while the modes that use staging today are untouched by the new term.
+    for (const swap of ['single_robot', 'two_robot']) {
+        const v = ctx.claimFieldVisibility('consume', swap);
+        if (v['claims-staging-fieldset'] !== true) {
+            reportFailure(`round3/4 slots: ${swap} still shows staging`, true, v['claims-staging-fieldset']);
+        } else { passed++; }
+    }
+}
+
 (async () => {
     runVisibilityCases();
     await runFieldErrorRenderCase();
@@ -1338,6 +1402,7 @@ function runCompareGridStillOmitsCase() {
     await runSurfacedFieldsSaveCase();
     await runSequenceZeroStaysAbsentCase();
     runCompareGridStillOmitsCase();
+    runRound34SlotCases();
     runServerFieldErrorCase();
     runOrphanFieldErrorCase();
     await runSaveClaimSchemaCase();
