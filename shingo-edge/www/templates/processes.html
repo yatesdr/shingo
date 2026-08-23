@@ -240,6 +240,11 @@
 
 <script>
 window.claimedByStation = {{json .ClaimedByStation}};
+// The node catalog the claim editor's pickers are built from: every core node
+// with its class (NGRP = group, LANE, STOR, or plain), plus which names are
+// line positions on the active process. See buildNodePickers.
+window.coreNodeCatalog = {{json .CoreNodes}};
+window.processNodeNames = {{json .ProcessNodeNames}};
 </script>
 
 <div class="modal-overlay" id="process-modal">
@@ -412,6 +417,14 @@ window.claimedByStation = {{json .ClaimedByStation}};
                 </div>
             </div>
             <div class="field-error-msg" id="claims-err-form" hidden></div>
+            <!-- The node pickers below are filtered to what each field can
+                 actually use, and ranked into optgroups for what it likely
+                 wants. A plant's naming can defeat any heuristic, so this
+                 reveals everything. Deliberately not persisted. -->
+            <label class="check-row" style="margin:0 0 0.5rem 0;font-size:0.8rem;color:var(--text-muted)">
+                <input type="checkbox" id="claims-show-all-nodes" data-action-change="toggleShowAllNodes">
+                <span>Show every node in the pickers below</span>
+            </label>
             <!-- Fields the selected mode does not use. Populated live by
                  renderClaimForm so the operator sees what a mode change will
                  discard BEFORE saving, rather than finding it gone after. -->

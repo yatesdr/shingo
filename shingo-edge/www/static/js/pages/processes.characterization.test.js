@@ -41,6 +41,36 @@ function makeElement(id, opts = {}) {
         _parent: null,
         _listeners: {},
     };
+    // A SELECT's option list is what the picker code produces, so the stub has
+    // to parse it — otherwise a test can only assert that innerHTML was
+    // assigned, which is true no matter what is in it.
+    if (tagName === 'SELECT') {
+        let _html = '';
+        Object.defineProperty(el, 'innerHTML', {
+            get() { return _html; },
+            set(v) {
+                _html = String(v);
+                const opts = [];
+                let group = '';
+                const re = /<optgroup label="([^"]*)">|<\/optgroup>|<option value="([^"]*)"([^>]*)>([^<]*)<\/option>/g;
+                let m;
+                while ((m = re.exec(_html)) !== null) {
+                    if (m[1] !== undefined) { group = m[1]; continue; }
+                    if (m[0] === '</optgroup>') { group = ''; continue; }
+                    opts.push({
+                        value: m[2],
+                        textContent: m[4],
+                        selected: /\bselected\b/.test(m[3] || ''),
+                        _group: group,
+                        dataset: {},
+                        disabled: false,
+                        style: {},
+                    });
+                }
+                el.options = opts;
+            },
+        });
+    }
     el.getAttribute = (k) => el.dataset[k] || '';
     el.setAttribute = (k, v) => { el.dataset[k] = v; };
     el.removeAttribute = () => {};
@@ -219,6 +249,7 @@ function buildDOM() {
         'claims-err-second-paired-core-node',
         'claims-mode-drop-note',
     ].forEach(function(id) { add(id, { display: 'none' }); });
+    add('claims-show-all-nodes', { tag: 'input', type: 'checkbox' });
 
     // Station modal
     add('station-id', { tag: 'input', type: 'hidden' });
@@ -284,7 +315,24 @@ function createContext(elements, apiRecorder) {
 
     return vm.createContext({
         document,
-        window: { claimedByStation: {} },
+        window: {
+            claimedByStation: {},
+            // A small plant: two press positions on this process, a
+            // supermarket GROUP, one of its lanes, a storage node, a staging
+            // spot, and a dedicated loader home that is ALSO a line position
+            // (the source_finder tier-2 case the filter must not hide).
+            coreNodeCatalog: {
+                PRESS_A:  { name: 'PRESS_A',  node_type: '' },
+                PRESS_B:  { name: 'PRESS_B',  node_type: '' },
+                PRESS_C:  { name: 'PRESS_C',  node_type: '' },
+                SMG_01:   { name: 'SMG_01',   node_type: 'NGRP' },
+                SMG_01_L1:{ name: 'SMG_01_L1',node_type: 'LANE' },
+                STOR_01:  { name: 'STOR_01',  node_type: 'STOR' },
+                STAGE_01: { name: 'STAGE_01', node_type: '' },
+                SMN_014:  { name: 'SMN_014',  node_type: '' },
+            },
+            processNodeNames: ['PRESS_A', 'PRESS_B', 'PRESS_C', 'SMN_014'],
+        },
         ShingoEdge,
         // ES-module imports get stripped before vm.runInContext; the
         // stripped bindings (api, escapeHtml, showModal, hideModal,
@@ -958,12 +1006,184 @@ function runNoDropNoteWhenNothingToDropCase() {
     } else { passed++; }
 }
 
+// -----------------------------------------------------------------------
+// Round 2 unit 3 — the node pickers are filtered and ranked
+// -----------------------------------------------------------------------
+//
+// All six geometry pickers were dumps of every core node. These assert the
+// options the code actually produces, so a filter that silently stops
+// filtering, or one that starts hiding a legitimate choice, both show up.
+
+function optionValues(sel) {
+    return (sel.options || []).map((o) => o.value).filter((v) => v !== '');
+}
+function optionGroup(sel, value) {
+    const o = (sel.options || []).find((x) => x.value === value);
+    return o ? o._group : '(absent)';
+}
+
+function runNodePickerFilterCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+
+    // A style must be selected: editClaim and openClaimModal both
+    // early-return without one, and every assertion below would then be
+    // about a form that was never populated.
+    elements['claims-style-selector'].value = '9';
+    ctx.onClaimsStyleChanged();
+
+    ctx.editClaim({
+        id: 70,
+        core_node_name: 'PRESS_A',
+        role: 'produce',
+        swap_mode: 'two_robot_press_index',
+        payload_code: 'PL1',
+        paired_core_node: 'PRESS_B',
+        outbound_destination: 'SMG_01',
+    });
+    ctx.renderClaimForm();
+
+    // A paired POSITION cannot be a group: the press-index builder emits
+    // pickup/dropoff at concrete coordinates.
+    const paired = elements['claims-add-paired-node'];
+    if (optionValues(paired).indexOf('SMG_01') >= 0) {
+        reportFailure('pickers: a group is not offered as a press position', 'SMG_01 absent', optionValues(paired).join(','));
+    } else { passed++; }
+
+    // ...and not the claim's own node, nor the other paired position.
+    if (optionValues(paired).indexOf('PRESS_A') >= 0) {
+        reportFailure('pickers: a position cannot be paired with itself', 'PRESS_A absent', optionValues(paired).join(','));
+    } else { passed++; }
+    const second = elements['claims-add-second-paired-node'];
+    if (optionValues(second).indexOf('PRESS_B') >= 0) {
+        reportFailure('pickers: the third position excludes the back position', 'PRESS_B absent', optionValues(second).join(','));
+    } else { passed++; }
+
+    // Line positions on this process rank first.
+    if (optionGroup(paired, 'PRESS_C') !== 'This process') {
+        reportFailure('pickers: this process ranks first for positions', 'This process', optionGroup(paired, 'PRESS_C'));
+    } else { passed++; }
+    if (optionGroup(paired, 'STOR_01') !== 'Other nodes') {
+        reportFailure('pickers: off-process nodes rank second', 'Other nodes', optionGroup(paired, 'STOR_01'));
+    } else { passed++; }
+
+    // STAGING excludes groups but keeps concrete nodes.
+    const inbound = elements['claims-add-inbound'];
+    if (optionValues(inbound).indexOf('SMG_01') >= 0) {
+        reportFailure('pickers: staging excludes groups', 'SMG_01 absent', optionValues(inbound).join(','));
+    } else { passed++; }
+    if (optionValues(inbound).indexOf('STAGE_01') < 0) {
+        reportFailure('pickers: staging keeps concrete nodes', 'STAGE_01 present', optionValues(inbound).join(','));
+    } else { passed++; }
+
+    // ENDPOINTS take a group OR a node, groups first — and hide NOTHING but
+    // self. SMN_014 is a dedicated loader home: a line position AND a valid
+    // InboundSource (source_finder tier 2). A filter keyed on "not a line
+    // position" would hide a supported configuration, so it must be offered.
+    const src = elements['claims-add-inbound-source'];
+    if (optionValues(src).indexOf('SMN_014') < 0) {
+        reportFailure('pickers: a dedicated loader home is still a valid source', 'SMN_014 present', optionValues(src).join(','));
+    } else { passed++; }
+    if (optionGroup(src, 'SMG_01') !== 'Groups') {
+        reportFailure('pickers: endpoints rank groups first', 'Groups', optionGroup(src, 'SMG_01'));
+    } else { passed++; }
+    if (optionValues(src).indexOf('PRESS_A') >= 0) {
+        reportFailure('pickers: a cell cannot source from itself', 'PRESS_A absent', optionValues(src).join(','));
+    } else { passed++; }
+    // A press other than this one is unusual, not impossible — still offered.
+    if (optionValues(src).indexOf('PRESS_C') < 0) {
+        reportFailure('pickers: endpoints exclude only self', 'PRESS_C present', optionValues(src).join(','));
+    } else { passed++; }
+}
+
+// The value a claim already holds is ALWAYS in its picker, even when the
+// filter would exclude it. A picker that drops the value it is displaying
+// makes the next save write a blank — unit 2's bug in a different hat.
+function runNodePickerKeepsOutOfFilterValueCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+
+    // A style must be selected: editClaim and openClaimModal both
+    // early-return without one, and every assertion below would then be
+    // about a form that was never populated.
+    elements['claims-style-selector'].value = '9';
+    ctx.onClaimsStyleChanged();
+
+    // A press-index claim whose back position was configured as a GROUP —
+    // wrong, and exactly what an operator inherits from an older config.
+    ctx.editClaim({
+        id: 71,
+        core_node_name: 'PRESS_A',
+        role: 'produce',
+        swap_mode: 'two_robot_press_index',
+        payload_code: 'PL1',
+        paired_core_node: 'SMG_01',
+        outbound_destination: 'SMG_01',
+    });
+    ctx.renderClaimForm();
+
+    const paired = elements['claims-add-paired-node'];
+    if (paired.value !== 'SMG_01') {
+        reportFailure('pickers: an out-of-filter current value survives', 'SMG_01', paired.value);
+    } else { passed++; }
+    const kept = (paired.options || []).find((o) => o.value === 'SMG_01');
+    if (!kept) {
+        reportFailure('pickers: the out-of-filter value is still an option', 'present', 'dropped');
+    } else if (!/not offered/.test(kept.textContent)) {
+        reportFailure('pickers: the kept value says why it looks odd', 'labelled', kept.textContent);
+    } else { passed++; }
+}
+
+// The escape hatch: a plant's naming can defeat any heuristic.
+function runShowAllNodesCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+
+    // A style must be selected: editClaim and openClaimModal both
+    // early-return without one, and every assertion below would then be
+    // about a form that was never populated.
+    elements['claims-style-selector'].value = '9';
+    ctx.onClaimsStyleChanged();
+
+    ctx.editClaim({
+        id: 72,
+        core_node_name: 'PRESS_A',
+        role: 'produce',
+        swap_mode: 'two_robot_press_index',
+        payload_code: 'PL1',
+        paired_core_node: 'PRESS_B',
+        outbound_destination: 'SMG_01',
+    });
+    ctx.renderClaimForm();
+    if (optionValues(elements['claims-add-paired-node']).indexOf('SMG_01') >= 0) {
+        reportFailure('showAll: filtered by default', 'SMG_01 absent', 'present');
+    } else { passed++; }
+
+    elements['claims-show-all-nodes'].checked = true;
+    ctx.toggleShowAllNodes();
+    if (optionValues(elements['claims-add-paired-node']).indexOf('SMG_01') < 0) {
+        reportFailure('showAll: reveals every node', 'SMG_01 present', 'absent');
+    } else { passed++; }
+
+    // Not persisted — re-opening the modal starts filtered again.
+    ctx.openClaimModal();
+    if (elements['claims-show-all-nodes'].checked) {
+        reportFailure('showAll: not persisted across a modal open', 'unchecked', 'checked');
+    } else { passed++; }
+}
+
 (async () => {
     runVisibilityCases();
     await runFieldErrorRenderCase();
     await runHiddenFieldSurvivalCase();
     await runForbiddenFieldDropCase();
     runNoDropNoteWhenNothingToDropCase();
+    runNodePickerFilterCase();
+    runNodePickerKeepsOutOfFilterValueCase();
+    runShowAllNodesCase();
     runServerFieldErrorCase();
     runOrphanFieldErrorCase();
     await runSaveClaimSchemaCase();

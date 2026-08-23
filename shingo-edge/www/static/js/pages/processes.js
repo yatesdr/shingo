@@ -1054,6 +1054,188 @@ function ensureClaimErrorDelegation() {
     modal.addEventListener('input', onEdit);
 }
 
+// ── Node pickers ────────────────────────────────────────────────────
+//
+// All six geometry pickers were unfiltered dumps of every core node, so "Back
+// Press Node" offered supermarkets and groups and "Inbound Source" offered
+// presses.
+//
+// TWO MECHANISMS, AND THE DIFFERENCE MATTERS.
+//
+//   EXCLUDE only what the runtime CANNOT do. A robot cannot index a bin into a
+//   group — the press-index builder emits pickup/dropoff at concrete nodes — so
+//   a group in a paired-position picker is not an unlikely choice, it is an
+//   impossible one.
+//
+//   RANK what is merely unlikely, into labelled optgroups. The signals
+//   available here (node class, and whether the name is a line position on this
+//   process) do not separate a press from a supermarket: both are plain
+//   concrete nodes. And the one case where the distinction looks obvious is a
+//   trap — a dedicated loader's home position is BOTH a line position AND a
+//   legitimate InboundSource (Core's source_finder tier 2, sourceFromDedicated-
+//   Loader). Filtering sources by "not a line position" would hide a supported,
+//   tested configuration. So sources rank groups first and hide nothing.
+//
+// The escape hatch exists because a plant's naming and topology can defeat any
+// heuristic: "Show every node" reveals the excluded entries in all six pickers.
+// Not persisted — it is a per-session look, not a setting.
+const NODE_PICKER_KIND = {
+    'claims-add-inbound':              'staging',
+    'claims-add-outbound':             'staging',
+    'claims-add-inbound-source':       'endpoint',
+    'claims-add-outbound-destination': 'endpoint',
+    'claims-add-paired-node':          'position',
+    'claims-add-second-paired-node':   'position',
+};
+
+// The blank first option each picker keeps, by element id.
+const NODE_PICKER_PLACEHOLDER = {
+    'claims-add-inbound':              '-- None --',
+    'claims-add-outbound':             '-- None --',
+    'claims-add-inbound-source':       '-- None --',
+    'claims-add-outbound-destination': '-- None --',
+    'claims-add-paired-node':          '-- None (no A/B cycling) --',
+    'claims-add-second-paired-node':   '-- None (2-position layout) --',
+};
+
+var _showAllNodes = false;
+
+function nodeCatalog() {
+    var cat = (typeof window !== 'undefined' && window.coreNodeCatalog) || {};
+    var out = [];
+    Object.keys(cat).forEach(function(name) {
+        var info = cat[name] || {};
+        out.push({ name: name, type: info.node_type || '' });
+    });
+    out.sort(function(a, b) { return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0); });
+    return out;
+}
+
+function isLinePosition(name) {
+    var names = (typeof window !== 'undefined' && window.processNodeNames) || [];
+    return names.indexOf(name) >= 0;
+}
+
+// nodeAllowedForPicker: is this node a POSSIBLE answer for this field.
+//
+// Every rule here removes something the runtime cannot use, never something it
+// merely usually does not. `self` is the claim's own core node and its paired
+// positions — a cell cannot stage at, source from or deliver to itself, and a
+// press position cannot be paired with itself.
+function nodeAllowedForPicker(kind, node, self) {
+    if (self && self.indexOf(node.name) >= 0) return false;
+    switch (kind) {
+        case 'position':
+            // The builder emits pickup/dropoff at a concrete node; a group has
+            // no coordinates to drive to.
+            return node.type !== 'NGRP';
+        case 'staging':
+            // Staging is a place a robot parks a bin. A group is not a place.
+            return node.type !== 'NGRP';
+        case 'endpoint':
+            // Sources and destinations accept a group OR a concrete node —
+            // Core resolves either. Nothing is excluded but self.
+            return true;
+        default:
+            return true;
+    }
+}
+
+// nodePickerGroupLabel: which optgroup a node sorts into, or '' for a flat
+// list. Ranking only; every entry is still selectable.
+function nodePickerGroupLabel(kind, node) {
+    if (kind === 'position') {
+        return isLinePosition(node.name) ? 'This process' : 'Other nodes';
+    }
+    if (kind === 'endpoint') {
+        return node.type === 'NGRP' ? 'Groups' : 'Nodes';
+    }
+    return '';
+}
+
+const NODE_PICKER_GROUP_ORDER = ['This process', 'Groups', 'Other nodes', 'Nodes'];
+
+// buildNodePickers rewrites the six geometry selects from the catalog.
+//
+// THE CURRENT VALUE IS ALWAYS PRESENT, even when the filter would exclude it.
+// A picker that drops the value it is displaying is the round-2 unit-2 bug
+// wearing a different hat: the operator opens a claim, the select silently
+// falls back to blank, and the next save writes the blank. An out-of-filter
+// value is kept and marked so the operator can see WHY it looks odd.
+function buildNodePickers(state) {
+    var catalog = nodeCatalog();
+    Object.keys(NODE_PICKER_KIND).forEach(function(selID) {
+        var sel = document.getElementById(selID);
+        if (!sel) return;
+        var kind = NODE_PICKER_KIND[selID];
+        var current = sel.value || '';
+        var self = claimSelfNodes(selID, state);
+
+        var buckets = {};
+        var order = [];
+        var currentIncluded = false;
+        catalog.forEach(function(node) {
+            if (!_showAllNodes && !nodeAllowedForPicker(kind, node, self)) return;
+            var g = _showAllNodes ? '' : nodePickerGroupLabel(kind, node);
+            if (!buckets[g]) { buckets[g] = []; order.push(g); }
+            buckets[g].push(node);
+            if (node.name === current) currentIncluded = true;
+        });
+
+        var html = '<option value="">' + escapeHtml(NODE_PICKER_PLACEHOLDER[selID] || '-- None --') + '</option>';
+        if (current && !currentIncluded) {
+            html += '<option value="' + escapeHtml(current) + '" selected>' +
+                escapeHtml(current) + ' (not offered for this field)</option>';
+        }
+        order.sort(function(a, b) {
+            var ia = NODE_PICKER_GROUP_ORDER.indexOf(a);
+            var ib = NODE_PICKER_GROUP_ORDER.indexOf(b);
+            return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+        });
+        order.forEach(function(g) {
+            if (g) html += '<optgroup label="' + escapeHtml(g) + '">';
+            buckets[g].forEach(function(node) {
+                var label = node.name + (node.type === 'NGRP' ? ' (group)' : '');
+                html += '<option value="' + escapeHtml(node.name) + '">' + escapeHtml(label) + '</option>';
+            });
+            if (g) html += '</optgroup>';
+        });
+        sel.innerHTML = html;
+        sel.value = current;
+    });
+}
+
+// claimSelfNodes: the node names this picker must not offer, because the claim
+// already uses them somewhere the field cannot repeat.
+function claimSelfNodes(selID, state) {
+    if (!state) return [];
+    var kind = NODE_PICKER_KIND[selID];
+    var out = [];
+    if (state.coreNodeName) out.push(state.coreNodeName);
+    if (kind === 'position') {
+        // The three press positions must be distinct — the same rule
+        // domain.ValidateNodeClaim enforces server-side.
+        if (selID !== 'claims-add-paired-node' && state.pairedCoreNode) out.push(state.pairedCoreNode);
+        if (selID !== 'claims-add-second-paired-node' && state.secondPairedCoreNode) out.push(state.secondPairedCoreNode);
+    }
+    return out;
+}
+
+// toggleShowAllNodes is the escape hatch. Deliberately NOT persisted: a plant
+// whose naming defeats the heuristic needs a look, not a permanent setting that
+// quietly turns the filtering off for everyone who follows.
+function resetShowAllNodes() {
+    _showAllNodes = false;
+    var cb = document.getElementById('claims-show-all-nodes');
+    if (cb) cb.checked = false;
+}
+
+function toggleShowAllNodes() {
+    var cb = document.getElementById('claims-show-all-nodes');
+    _showAllNodes = !!(cb && cb.checked);
+    renderClaimForm();
+}
+
 // claimForbiddenFields answers: which populated values does THIS mode not use.
 //
 // Derived from the same (role, swap) facts as claimFieldVisibility, so the
@@ -1224,6 +1406,10 @@ function renderClaimForm() {
         }
     }
 
+    // Rebuild the geometry pickers for the current claim before reading state
+    // back out, so the note below sees the values the pickers actually hold.
+    buildNodePickers(readClaimStateFromForm());
+
     // Validation warning for missing required staging.
     var state = readClaimStateFromForm();
     var warn = document.getElementById('claims-staging-warning');
@@ -1282,6 +1468,7 @@ function openClaimModal() {
     document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
     ensureClaimErrorDelegation();
     clearClaimFieldErrors();
+    resetShowAllNodes();
     renderClaimForm();
     showModal('claim-modal');
 }
@@ -1332,6 +1519,7 @@ function editClaim(claim) {
     }
     ensureClaimErrorDelegation();
     clearClaimFieldErrors();
+    resetShowAllNodes();
     renderClaimForm();
     showModal('claim-modal');
 }
@@ -1724,6 +1912,7 @@ delegateActions(document.body, {
     readClaimStateFromForm,
     removeClaim,
     removeGenerateRow,
+    buildNodePickers,
     claimForbiddenFields,
     clearClaimFieldError,
     clearClaimFieldErrors,
@@ -1742,6 +1931,7 @@ delegateActions(document.body, {
     showProcessTab,
     syncPayloadCatalog,
     toggleClaimsAddPayload,
+    toggleShowAllNodes,
     updateAutoRequestDropdown,
     validateClaimStaging,
     validateClaimState,
