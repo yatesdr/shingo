@@ -30,6 +30,17 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+// writeAdvisoryRefusal declines a request that was declined for a GOOD reason —
+// the work it asked for is already under way. Same status and same `error` key
+// as any other refusal, so nothing that reads this endpoint today changes; the
+// additive `notice` flag is what lets a client pick a colour that does not say
+// "something is broken".
+func writeAdvisoryRefusal(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(map[string]any{"error": msg, "notice": true})
+}
+
 // writeFieldErrors refuses with per-field detail. `error` carries the first
 // message so every existing consumer — which reads exactly that key — keeps
 // working unchanged; `field_errors` is additive, and is what lets a client

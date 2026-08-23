@@ -32,6 +32,16 @@ func writeMaterialRequestError(w http.ResponseWriter, err error) {
 		})
 		return
 	}
+	// An ADVISORY refusal is the system working, not a fault: the request was
+	// declined because the thing it needed is already happening. `error` is
+	// unchanged for every existing consumer; `notice` is additive and tells a
+	// client that knows about it to render this quietly rather than in the
+	// colour reserved for things that are broken.
+	var advisory interface{ Advisory() bool }
+	if errors.As(err, &advisory) && advisory.Advisory() {
+		writeAdvisoryRefusal(w, err.Error())
+		return
+	}
 	writeError(w, http.StatusBadRequest, err.Error())
 }
 

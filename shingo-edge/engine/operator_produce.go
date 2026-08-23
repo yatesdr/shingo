@@ -77,8 +77,12 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 			// HOLD: every bare position already has an empty on the way. Refuse
 			// BEFORE the episode opens — an episode with expected_orders 0 is
 			// noise, and the operator needs a sentence, not a silent success.
-			return nil, fmt.Errorf("node %s: an empty bin is already inbound to the index position — "+
-				"the swap will run once it lands", node.Name)
+			//
+			// TYPED, because this refusal is the system working. Rendered as a
+			// red error it reads as a fault the operator has to do something
+			// about, and the only correct response is to wait. The type is what
+			// lets the station render it as a notice instead.
+			return nil, &PrimeInFlightError{NodeName: node.Name}
 		}
 		dests := make([]string, 0, len(plan.PrimePairedPositions))
 		for _, p := range plan.PrimePairedPositions {
@@ -119,6 +123,28 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 
 	return e.applyProducePlan(node, runtime, claim, plan, origin)
 }
+
+// PrimeInFlightError says a press-index swap was refused because the empty it
+// needs is already on its way. It is ADVISORY: nothing is wrong, nothing needs
+// fixing, and the next press of the button after the bin lands will run the
+// swap.
+//
+// A distinct type rather than a message the UI matches on. The station has to
+// decide a colour, and deciding it by substring is how a reworded sentence
+// silently turns an all-clear back into a red alarm.
+type PrimeInFlightError struct {
+	NodeName string
+}
+
+func (e *PrimeInFlightError) Error() string {
+	return fmt.Sprintf("node %s: an empty bin is already inbound to the index position — "+
+		"the swap will run once it lands", e.NodeName)
+}
+
+// Advisory reports that this refusal is the system behaving correctly rather
+// than a fault. The handler keys on the behaviour, not on the concrete type,
+// so a second advisory refusal later needs no handler change.
+func (e *PrimeInFlightError) Advisory() bool { return true }
 
 // primeNodeLock returns the per-cell prime mutex, creating it on first use.
 // Keyed by the claim's CORE node name so every process_node row that shares

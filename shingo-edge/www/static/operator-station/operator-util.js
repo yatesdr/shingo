@@ -169,7 +169,24 @@ export async function fetchWithTimeout(url, opts, ms) {
 // postAction is the single POST→refresh path. Returns true on 2xx.
 // Caller passes its own loadView callback so this module stays free of
 // state/view dependencies.
-export async function postAction(url, body, loadView) {
+// postAction posts an operator action and refreshes the view.
+//
+// opts is ADDITIVE and every existing 3-argument caller is unchanged:
+//   opts.onResult(parsedBody)  — called with the decoded success body.
+//
+// WHY THE RESPONSE AND NOT AN EVENT. The station is event-driven: an action
+// returns, the client re-renders from the orders list, and the structured
+// response body has gone unread for so long that reaching for it needs a
+// reason. This is the reason — the primes-only outcome is the OUTCOME OF THIS
+// CLICK, not a fact about the node. Broadcast as an SSE event it would reach
+// every station watching that cell and tell operators who pressed nothing to
+// "press again when it lands". A per-click answer belongs on the reply to that
+// click.
+//
+// It is also symmetric with what this function already does: it parses the
+// body on failure, for `error` and for the inline `exit` action. It only ever
+// threw the body away on success.
+export async function postAction(url, body, loadView, opts) {
     try {
         const res = await fetch(url, {
             method: 'POST',
@@ -200,8 +217,27 @@ export async function postAction(url, body, loadView) {
                 });
                 return false;
             }
+            // An ADVISORY refusal is the system working: the request was
+            // declined because what it asked for is already under way. Red
+            // says "something is broken and you must act", and the only
+            // correct action here is to wait — so a notice, and the view
+            // still refreshes because the state it reports did change.
+            if (parsed && parsed.notice) {
+                showToast(msg, 'info');
+                if (loadView) await loadView();
+                return false;
+            }
             showToast(msg, 'error');
             return false;
+        }
+        if (opts && typeof opts.onResult === 'function') {
+            // Read before the refresh so a caller can compare against what it
+            // asked for; failures here must not swallow the refresh.
+            try {
+                opts.onResult(await res.clone().json());
+            } catch (e) {
+                console.error('postAction onResult', url, e);
+            }
         }
         if (loadView) await loadView();
         return true;
@@ -228,6 +264,29 @@ export async function postAction(url, body, loadView) {
 // and the modal's waiting label need it, and a pure formatter is exactly
 // what this module is for — the alternative was the modal importing the
 // tile renderer for one function.
+// primeNoticeText turns a primes-only NodeOrderResult into the sentence the
+// operator needs, or '' when the result is an ordinary swap.
+//
+// A primes-only round is the press-index partial-empty fix doing its job: the
+// cell had a bare index position, so the swap that would have wedged was not
+// minted and an empty was sent to fill the position instead. Without this the
+// operator presses REQUEST SWAP, no swap appears, and nothing says why.
+//
+// Keyed on "primes and no swap legs", not on cycle_mode: a consume downgrade
+// emits primes ALONGSIDE its delivery, and that round did do the thing the
+// operator asked for.
+export function primeNoticeText(result) {
+    if (!result) return '';
+    var primes = result.prime_orders || [];
+    if (primes.length === 0) return '';
+    if (result.order_a || result.order_b) return '';
+    var where = primes.map(function(p) {
+        var dest = p.delivery_node || 'the index position';
+        return p.source_node ? (dest + ' from ' + p.source_node) : dest;
+    }).join(' and ');
+    return 'Priming ' + where + ' — press again when it lands.';
+}
+
 // withQueueCause appends Core's typed queue-cause sentence to a status label.
 //
 // THE STATUS WORD STAYS. `queued` and `sourcing` are distinct lifecycles and

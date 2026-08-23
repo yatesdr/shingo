@@ -1,4 +1,4 @@
-import { esc, fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses } from './operator-util.js';
+import { esc, fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, primeNoticeText, showToast } from './operator-util.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, REFUSE_LABEL, UNDO_LABEL,
 } from './operator-supply-refusal.js';
@@ -871,7 +871,15 @@ export async function handleModalAction(evt) {
         url = parts[0];
         body = { payload_code: parts[1] };
     }
-    const ok = await postAction(url, body, loadViewRef);
+    // onResult is where a primes-only round becomes visible. Every station
+    // action funnels through this branch, so the produce swap and the consume
+    // downgrade are both covered by one hook rather than one per verb.
+    const ok = await postAction(url, body, loadViewRef, {
+        onResult: (result) => {
+            const notice = primeNoticeText(result);
+            if (notice) showToast(notice, 'info');
+        },
+    });
     if (ok) closeModal();
 }
 

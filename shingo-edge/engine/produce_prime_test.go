@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -399,6 +400,14 @@ func TestRequestProduceSwap_PrimesOnceThenHolds(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already inbound") {
 		t.Errorf("second request error = %q, want it to say an empty is already inbound", err)
+	}
+	// TYPED AND ADVISORY. The station colours a refusal by asking the error
+	// whether it is advisory; matching on the sentence instead is how a
+	// reworded message silently turns an all-clear back into a red alarm.
+	var advisory interface{ Advisory() bool }
+	if !errors.As(err, &advisory) || !advisory.Advisory() {
+		t.Errorf("the hold refusal must report itself advisory — the system is working, "+
+			"the operator's only correct action is to wait; got %T", err)
 	}
 
 	all, err := db.ListOrders()
