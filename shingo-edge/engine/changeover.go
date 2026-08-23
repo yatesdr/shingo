@@ -73,8 +73,25 @@ func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNod
 			}
 		case from != nil && from.PayloadCode == "__empty__":
 			situation = SituationAdd // node was empty, now needs material
+		// A TOOLING EVACUATION IS NOT A PAYLOAD QUESTION.
+		//
+		// SituationEvacuate used to hang off the same-payload arm, which made
+		// it unreachable on the common case it exists for: a press whose
+		// tooling changes almost always changes what it makes, so the payloads
+		// differ, the switch fell to Swap, and the flag was inert. Marked
+		// seats now select it whatever the payloads do — the staged
+		// choreography subsumes the swap, since the incoming bins arrive
+		// through staging either way.
+		//
+		// Read off the OUTGOING claim; see domain.StagedToolingChangeover for
+		// why the outgoing setup owns the answer.
+		case domain.StagedToolingChangeover(from):
+			situation = SituationEvacuate
 		case from.PayloadCode == to.PayloadCode && from.Role == to.Role:
-			if to.EvacuateOnChangeover {
+			// Same-payload, whole-node evacuation — the single-position shape.
+			// Also the outgoing claim now, where this read said `to`: one flag,
+			// one owner, and the planner's Drop branch already read it this way.
+			if from.EvacuateOnChangeover {
 				situation = SituationEvacuate
 			} else {
 				situation = SituationUnchanged
@@ -301,6 +318,100 @@ func fanOutPositions(parent ChangeoverNodeDiff) []ChangeoverNodeDiff {
 // see that doc comment for why (Hopkinsville 2026-08-05).
 func synthesizePressPositionClaim(parent *processes.NodeClaim, coreNodeName string) *processes.NodeClaim {
 	return domain.SynthesizePressPositionClaim(parent, coreNodeName)
+}
+
+// FanOutStagedToolingEvacuation expands one staged-tooling press-index diff
+// into ONE DIFF PER MARKED SEAT.
+//
+// ── WHY FAN OUT RATHER THAN WIDEN NodeAction ──────────────────────────────
+//
+// A NodeAction carries one supply and one evac by design, and that is not an
+// accident of the struct: it is what the applier, the task states and the
+// order-count all assume. A three-seat evacuation is six orders, which is
+// simply inexpressible on one action — so it becomes three actions, exactly
+// as the different-bin-type case already does. The machinery for per-position
+// diffs is built, tested and understood; this reuses it rather than growing a
+// second shape beside it.
+//
+// UNMARKED SEATS GET NO DIFF AT ALL. That is the stated default — a seat whose
+// bins do not block the tool keeps them, and the press indexes around it.
+//
+// Each emitted diff carries synthesized per-position claims, the same as the
+// bin-type fan-out, so the planner routes them to the per-position builder
+// rather than back into the press-index branch. The FROM side keeps the
+// parent's evac destination so the seat knows where its bin goes; the TO side
+// keeps the parent's staging node so the incoming bin knows where to wait.
+func FanOutStagedToolingEvacuation(diffs []ChangeoverNodeDiff) []ChangeoverNodeDiff {
+	out := make([]ChangeoverNodeDiff, 0, len(diffs))
+	for _, d := range diffs {
+		if !shouldFanOutStagedTooling(d) {
+			out = append(out, d)
+			continue
+		}
+		out = append(out, fanOutMarkedSeats(d)...)
+	}
+	return out
+}
+
+// shouldFanOutStagedTooling reports whether this diff is a staged tooling
+// evacuation with seats to expand.
+//
+// Situation is checked as well as the claim, because DiffStyleClaims is not
+// the only producer of diffs: the cross-mode walk synthesizes Drop and Add
+// diffs whose from-claim may still carry a seat selection, and those already
+// describe a single position.
+func shouldFanOutStagedTooling(d ChangeoverNodeDiff) bool {
+	if d.Situation != SituationEvacuate {
+		return false
+	}
+	if d.FromClaim == nil || d.ToClaim == nil {
+		return false
+	}
+	return domain.StagedToolingChangeover(d.FromClaim)
+}
+
+// fanOutMarkedSeats emits one Evacuate diff per marked seat the layout has.
+func fanOutMarkedSeats(parent ChangeoverNodeDiff) []ChangeoverNodeDiff {
+	from, to := parent.FromClaim, parent.ToClaim
+	var diffs []ChangeoverNodeDiff
+	for _, seat := range domain.ChangeoverEvacSeatKeys() {
+		if !domain.EvacSeatMarked(from, seat) {
+			continue
+		}
+		node := domain.SeatCoreNode(from, seat)
+		if node == "" {
+			// Marked, but this layout has no such seat. MarkedEvacSeatNodes
+			// drops it for the same reason: a diff at "" is a plan to move a
+			// bin to nowhere.
+			continue
+		}
+		fromSeat := synthesizePressPositionClaim(from, node)
+		toSeat := synthesizePressPositionClaim(to, node)
+		// SynthesizePressPositionClaim copies the parent and zeroes the
+		// press-index geometry — correct, a single position has no partner.
+		// InboundStaging is among what it zeroes, and a STAGED evacuation is
+		// the one per-position shape that needs it: the incoming bin waits
+		// there for tooling-done. Put it back.
+		//
+		// The evac destination, outbound destination and inbound source are
+		// already copied by the synthesizer and are deliberately NOT restated
+		// here — a re-assignment that cannot fail reads as load-bearing and
+		// hides which line actually is.
+		toSeat.InboundStaging = to.InboundStaging
+		// A synthesized single position has no seats of its own. Leaving the
+		// parent's set on it is noise today (SwapModePressPosition already
+		// makes StagedToolingChangeover false) and a trap the moment anything
+		// reads the set without checking the mode first.
+		fromSeat.ChangeoverEvacSeats = nil
+		toSeat.ChangeoverEvacSeats = nil
+		diffs = append(diffs, ChangeoverNodeDiff{
+			CoreNodeName: node,
+			Situation:    SituationEvacuate,
+			FromClaim:    fromSeat,
+			ToClaim:      toSeat,
+		})
+	}
+	return diffs
 }
 
 // FanOutPressIndexCrossMode emits per-position Drop or Add diffs for

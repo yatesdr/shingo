@@ -778,22 +778,25 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 		InboundSource:       "SOURCE-OLD",
 		OutboundStaging:     "OUT-STAGING",
 		OutboundDestination: "DEST-OLD",
+		// The OUTGOING claim carries the flag: the bins in the way of the tool
+		// change are the ones this setup put on the node.
+		EvacuateOnChangeover: true,
 	})
 	if err != nil {
 		t.Fatalf("upsert from claim: %v", err)
 	}
 
-	// To-claim: same payload code + EvacuateOnChangeover → SituationEvacuate
+	// To-claim: same payload code, and the outgoing evacuate flag above is
+	// what resolves this to SituationEvacuate.
 	_, err = upsertClaimLegacySimple(db, processes.NodeClaimInput{
-		StyleID:              toStyleID,
-		CoreNodeName:         "P3E-NODE",
-		Role:                 "consume",
-		SwapMode:             "simple",
-		PayloadCode:          "PART-SAME",
-		UOPCapacity:          200,
-		InboundSource:        "SOURCE-NEW",
-		InboundStaging:       "IN-STAGING",
-		EvacuateOnChangeover: true,
+		StyleID:        toStyleID,
+		CoreNodeName:   "P3E-NODE",
+		Role:           "consume",
+		SwapMode:       "simple",
+		PayloadCode:    "PART-SAME",
+		UOPCapacity:    200,
+		InboundSource:  "SOURCE-NEW",
+		InboundStaging: "IN-STAGING",
 	})
 	if err != nil {
 		t.Fatalf("upsert to claim: %v", err)
@@ -1255,7 +1258,8 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	fcID, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "SEQ-A", Role: "consume", SwapMode: "sequential",
 		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "MARKET", OutboundDestination: "DEST",
-		PairedCoreNode: "SEQ-B",
+		// Outgoing claim owns the evacuate flag.
+		PairedCoreNode: "SEQ-B", EvacuateOnChangeover: true,
 	})
 	if err != nil {
 		t.Fatalf("upsert from claim: %v", err)
@@ -1263,7 +1267,7 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "SEQ-A", Role: "consume", SwapMode: "sequential",
 		PayloadCode: "PART-SAME", UOPCapacity: 250, InboundSource: "MARKET", OutboundDestination: "DEST",
-		PairedCoreNode: "SEQ-B", EvacuateOnChangeover: true,
+		PairedCoreNode: "SEQ-B",
 	}); err != nil {
 		t.Fatalf("upsert to claim: %v", err)
 	}

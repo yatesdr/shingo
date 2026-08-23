@@ -42,6 +42,31 @@ type changeoverPlan struct {
 // Note: validation errors use changeover-specific messages ("process is already running
 // style %d", etc). If this is later reused for a dry-run API, the error messages will
 // still be appropriate — but callers should be aware they're changeover-flavored.
+// logEvacConfigOnWrongSide names the case the ownership decision changes: the
+// INCOMING claim asks for evacuation and the outgoing one does not, so this
+// transition will not evacuate where the old read would have.
+//
+// A DIAGNOSTIC, NOT A FALLBACK. Honouring it would be a second ownership rule,
+// and the point of the decision is that there is one. Saying it is what turns
+// "the config is on the wrong claim" from a silent behaviour change into a
+// line an engineer can act on.
+func (e *Engine) logEvacConfigOnWrongSide(fromClaims, toClaims []processes.NodeClaim) {
+	toByNode := make(map[string]*processes.NodeClaim, len(toClaims))
+	for i := range toClaims {
+		toByNode[toClaims[i].CoreNodeName] = &toClaims[i]
+	}
+	for i := range fromClaims {
+		from := &fromClaims[i]
+		to := toByNode[from.CoreNodeName]
+		if domain.EvacConfigOnWrongSide(from, to) {
+			e.logFn("changeover: node %s — 'Evacuate on changeover' is set on the INCOMING style's "+
+				"claim but not the outgoing one, and the outgoing claim is what decides. This "+
+				"transition will NOT evacuate. Move the setting to the outgoing style's claim.",
+				from.CoreNodeName)
+		}
+	}
+}
+
 // refuseStagedChangeoverWithoutStaging is the arm-time gate for the staged
 // tooling mode: every cell whose outgoing claim marks seats needs the incoming
 // claim to name a staging node for the new bins to wait at.
@@ -118,6 +143,11 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 	if err := refuseStagedChangeoverWithoutStaging(diffs); err != nil {
 		return nil, err
 	}
+	// One diff per marked seat, AFTER the arm gate — the gate speaks about the
+	// cell the operator configured, not about three synthesized positions
+	// carrying the same message.
+	diffs = FanOutStagedToolingEvacuation(diffs)
+	e.logEvacConfigOnWrongSide(fromClaims, toClaims)
 	nodes, err := e.db.ListProcessNodesByProcess(processID)
 	if err != nil {
 		return nil, err

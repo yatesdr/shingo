@@ -39,7 +39,31 @@ func TestDiffStyleClaims_Swap(t *testing.T) {
 	}
 }
 
+// THE OUTGOING CLAIM OWNS THE FLAG. This test used to set it on the INCOMING
+// claim, matching a read that disagreed with the planner's Drop branch three
+// files away (which has always read fromClaim.EvacuateOnChangeover). One flag,
+// one owner: the bins in the way of the tool change are the ones the outgoing
+// setup put there.
 func TestDiffStyleClaims_Evacuate(t *testing.T) {
+	t.Parallel()
+	diffs := DiffStyleClaims(
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", EvacuateOnChangeover: true}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+	)
+	d := findDiff(diffs, "N1")
+	if d == nil {
+		t.Fatal("missing diff for N1")
+	}
+	if d.Situation != SituationEvacuate {
+		t.Errorf("situation = %q, want %q", d.Situation, SituationEvacuate)
+	}
+}
+
+// The other side of the same decision, and the one with a live consequence: a
+// plant that set the flag on the INCOMING style will stop evacuating. Pinned
+// so the change is a decision on the record rather than a surprise, and so
+// anyone who "fixes" it by reading both sides has to argue with a test.
+func TestDiffStyleClaims_EvacuateOnIncomingClaimIsNotHonoured(t *testing.T) {
 	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
@@ -49,8 +73,43 @@ func TestDiffStyleClaims_Evacuate(t *testing.T) {
 	if d == nil {
 		t.Fatal("missing diff for N1")
 	}
+	if d.Situation != SituationUnchanged {
+		t.Errorf("situation = %q, want %q — the incoming claim does not decide", d.Situation, SituationUnchanged)
+	}
+}
+
+// A TOOLING EVACUATION IS NOT A PAYLOAD QUESTION.
+//
+// SituationEvacuate used to hang off the same-payload arm, which made it
+// unreachable on the case it exists for: a press whose tooling changes almost
+// always changes what it makes, so the payloads differ, the switch fell
+// through to Swap, and the flag was inert. Marked seats select it either way.
+func TestDiffStyleClaims_MarkedSeatsEvacuateAcrossAPayloadChange(t *testing.T) {
+	t.Parallel()
+	from := processes.NodeClaim{
+		CoreNodeName: "PRESS", PayloadCode: "PART-A", Role: "produce",
+		SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PRESS_B",
+		ChangeoverEvacSeats: []string{"front"},
+	}
+	to := processes.NodeClaim{
+		CoreNodeName: "PRESS", PayloadCode: "PART-B", Role: "produce",
+		SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PRESS_B",
+	}
+	d := findDiff(DiffStyleClaims([]processes.NodeClaim{from}, []processes.NodeClaim{to}), "PRESS")
+	if d == nil {
+		t.Fatal("missing diff for PRESS")
+	}
 	if d.Situation != SituationEvacuate {
-		t.Errorf("situation = %q, want %q", d.Situation, SituationEvacuate)
+		t.Errorf("situation = %q, want %q — marked seats evacuate whatever the payloads do",
+			d.Situation, SituationEvacuate)
+	}
+
+	// And with no seats marked it is an ordinary swap, so the new arm has not
+	// swallowed the default.
+	from.ChangeoverEvacSeats = nil
+	d2 := findDiff(DiffStyleClaims([]processes.NodeClaim{from}, []processes.NodeClaim{to}), "PRESS")
+	if d2.Situation != SituationSwap {
+		t.Errorf("no seats marked: situation = %q, want %q", d2.Situation, SituationSwap)
 	}
 }
 
@@ -194,7 +253,7 @@ func TestDiffStyleClaims_MultiNode(t *testing.T) {
 	from := []processes.NodeClaim{
 		{CoreNodeName: "SWAP-NODE", PayloadCode: "OLD", Role: "consume"},
 		{CoreNodeName: "UNCHANGED-NODE", PayloadCode: "SAME", Role: "consume"},
-		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume"},
+		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume", EvacuateOnChangeover: true},
 		{CoreNodeName: "DROP-NODE", PayloadCode: "DROP-PART", Role: "consume"},
 	}
 	to := []processes.NodeClaim{
