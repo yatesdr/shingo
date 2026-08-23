@@ -27,10 +27,15 @@ import (
 	"shingoedge/store/processes"
 )
 
-// processClaimToInput maps a persisted NodeClaim back to its
-// NodeClaimInput shape — needed because the admin replenishment edits
-// touch only a subset of claim fields but UpsertStyleNodeClaim writes
-// the whole row.
+// processClaimToInput maps a persisted NodeClaim back to its NodeClaimInput
+// shape — needed because the admin replenishment edits touch only a subset of
+// claim fields but UpsertStyleNodeClaim writes every column the editor owns.
+//
+// It echoes the four absent-means-untouched columns explicitly rather than
+// leaving them nil. This path reads the whole claim, so it HAS an opinion about
+// all four and passing it on is a no-op write; leaving them nil would be
+// equally correct today and would quietly stop being so if this ever became a
+// partial read.
 func processClaimToInput(c *processes.NodeClaim) domain.NodeClaimInput {
 	return domain.NodeClaimInput{
 		StyleID:               c.StyleID,
@@ -40,20 +45,20 @@ func processClaimToInput(c *processes.NodeClaim) domain.NodeClaimInput {
 		PayloadCode:           c.PayloadCode,
 		UOPCapacity:           c.UOPCapacity,
 		ReorderPoint:          c.ReorderPoint,
-		ReorderPointSource:    c.ReorderPointSource,
-		AutoReorder:           c.AutoReorder,
+		ReorderPointSource:    &c.ReorderPointSource,
+		AutoReorder:           &c.AutoReorder,
 		InboundStaging:        c.InboundStaging,
 		OutboundStaging:       c.OutboundStaging,
 		InboundSource:         c.InboundSource,
 		OutboundDestination:   c.OutboundDestination,
 		AllowedPayloadCodes:   c.AllowedPayloadCodes,
 		AutoRequestPayload:    c.AutoRequestPayload,
-		KeepStaged:            c.KeepStaged,
+		KeepStaged:            &c.KeepStaged,
 		EvacuateOnChangeover:  c.EvacuateOnChangeover,
 		PairedCoreNode:        c.PairedCoreNode,
 		SecondPairedCoreNode:  c.SecondPairedCoreNode,
 		AutoConfirm:           c.AutoConfirm,
-		Sequence:              c.Sequence,
+		Sequence:              &c.Sequence,
 		LinesideSoftThreshold: c.LinesideSoftThreshold,
 		ReuseCompatibleBins:   c.ReuseCompatibleBins,
 		AutoPush:              c.AutoPush,
@@ -92,8 +97,8 @@ func (e *Engine) UpdateCellReorder(in CellReorderInput) error {
 	// fields outside this admin path's concern.
 	upd := processClaimToInput(current)
 	upd.ReorderPoint = in.ReorderPoint
-	upd.ReorderPointSource = source
-	upd.AutoReorder = in.AutoReorder
+	upd.ReorderPointSource = &source
+	upd.AutoReorder = &in.AutoReorder
 	if _, err := e.db.UpsertStyleNodeClaim(upd); err != nil {
 		return fmt.Errorf("cell reorder: upsert: %w", err)
 	}

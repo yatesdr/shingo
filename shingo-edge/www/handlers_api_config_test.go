@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/catalog"
 	"shingoedge/store/counters"
 	"shingoedge/store/processes"
@@ -454,7 +455,7 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 		PayloadCode:  "BIN-A",
 		UOPCapacity:  100,
 		ReorderPoint: 10,
-		AutoReorder:  true,
+		AutoReorder:  domain.Ptr(true),
 	}
 	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
@@ -492,7 +493,7 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 		PayloadCode:  "BIN-B",
 		UOPCapacity:  200,
 		ReorderPoint: 20,
-		AutoReorder:  true,
+		AutoReorder:  domain.Ptr(true),
 	}
 	resp = doRequest(t, router, "POST", "/api/style-node-claims", updateBody, cookie)
 	assertStatus(t, resp, http.StatusOK)

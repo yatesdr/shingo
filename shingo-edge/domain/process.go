@@ -358,6 +358,10 @@ func (c *NodeClaim) AllowedPayloads() []string {
 	return nil
 }
 
+// Ptr returns a pointer to v. It exists for the absent-means-untouched fields
+// on NodeClaimInput below, which cannot be written as &true / &1 inline.
+func Ptr[T any](v T) *T { return &v }
+
 // NodeClaimInput is the request shape for creating or updating a
 // NodeClaim — the persisted NodeClaim fields minus ID and CreatedAt.
 type NodeClaimInput struct {
@@ -368,23 +372,39 @@ type NodeClaimInput struct {
 	PayloadCode           string             `json:"payload_code"`
 	UOPCapacity           int                `json:"uop_capacity"`
 	ReorderPoint          int                `json:"reorder_point"`
-	ReorderPointSource    string             `json:"reorder_point_source"`
-	AutoReorder           bool               `json:"auto_reorder"`
 	InboundStaging        string             `json:"inbound_staging"`
 	OutboundStaging       string             `json:"outbound_staging"`
 	InboundSource         string             `json:"inbound_source"`
 	OutboundDestination   string             `json:"outbound_destination"`
 	AllowedPayloadCodes   []string           `json:"allowed_payload_codes"`
 	AutoRequestPayload    string             `json:"auto_request_payload"`
-	KeepStaged            bool               `json:"keep_staged"`
 	EvacuateOnChangeover  bool               `json:"evacuate_on_changeover"`
 	PairedCoreNode        string             `json:"paired_core_node"`
 	SecondPairedCoreNode  string             `json:"second_paired_core_node"`
 	AutoConfirm           bool               `json:"auto_confirm"`
-	Sequence              int                `json:"sequence"`
 	LinesideSoftThreshold int                `json:"lineside_soft_threshold"`
 	ReuseCompatibleBins   bool               `json:"reuse_compatible_bins"`
 	AutoPush              bool               `json:"auto_push"`
+	// ── ABSENT MEANS LEAVE UNTOUCHED ────────────────────────────────────
+	//
+	// These are columns no single writer owns. updateClaim writes every
+	// column it is given, and a value type cannot say "I have no opinion" —
+	// it says 0, "" or false. So the claims editor, which has controls for
+	// none of these four, reset board order to 0, the reorder point's
+	// provenance to "legacy", and both flags to false on EVERY save of an
+	// unrelated field. The auto_reorder case had already been patched by
+	// hand in the UI (read the claim back, echo the value); that is the same
+	// disease treated one field at a time, and it is deleted with this.
+	//
+	// A pointer is the fix at the contract rather than at each caller: nil
+	// means the writer is not speaking about this column. On INSERT they
+	// take their documented defaults (sequence = next free, source =
+	// "legacy", flags off). Same rules as HomeLocationLoader below.
+	ReorderPointSource *string `json:"reorder_point_source,omitempty"`
+	AutoReorder        *bool   `json:"auto_reorder,omitempty"`
+	KeepStaged         *bool   `json:"keep_staged,omitempty"`
+	Sequence           *int    `json:"sequence,omitempty"`
+
 	// HomeLocationLoader toggles the loader-wide home_location_loaders set
 	// (Edge-only, keyed by core_node_name) — the dedicated-position LAYOUT.
 	// Same rules as OperatorDriven: applied only for a produce manual_swap

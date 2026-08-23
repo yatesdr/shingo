@@ -7,6 +7,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/config"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	ordertestutil "shingoedge/orders/testutil"
 	"shingoedge/service"
@@ -54,7 +55,7 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (pr
 		SwapMode:            swapMode,
 		PayloadCode:         "WIDGET-A",
 		UOPCapacity:         100,
-		AutoReorder:         true,
+		AutoReorder:         domain.Ptr(true),
 		InboundSource:       "EMPTY-STORAGE",
 		InboundStaging:      "PRODUCE-IN-STAGING",
 		OutboundStaging:     "PRODUCE-OUT-STAGING",

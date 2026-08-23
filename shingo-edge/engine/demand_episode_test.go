@@ -45,7 +45,7 @@ func episodeFixture(t *testing.T, procName, node string, reorderPoint int) (*Eng
 	claimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: node, Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PANEL-B",
-		UOPCapacity: 300, ReorderPoint: reorderPoint, AutoReorder: true,
+		UOPCapacity: 300, ReorderPoint: reorderPoint, AutoReorder: domain.Ptr(true),
 		InboundSource: "SYN_MARKET", OutboundDestination: "SYN_MARKET",
 		InboundStaging: "SLN_001", OutboundStaging: "SLN_011",
 	})
@@ -256,7 +256,7 @@ func TestOpenCellEpisode_SecondFireJoinsRatherThanMints(t *testing.T) {
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: claim.StyleID, CoreNodeName: produceNode, Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PANEL-B",
-		UOPCapacity: 300, ReorderPoint: 50, AutoReorder: true,
+		UOPCapacity: 300, ReorderPoint: 50, AutoReorder: domain.Ptr(true),
 		InboundSource: "SYN_MARKET", OutboundDestination: "SYN_MARKET",
 		InboundStaging: "SLN_001", OutboundStaging: "SLN_011",
 	}); err != nil {
@@ -587,7 +587,7 @@ func produceClaimFixture(t *testing.T, procName, node string) (*Engine, *store.D
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: claim.StyleID, CoreNodeName: node, Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PANEL-B",
-		UOPCapacity: 300, ReorderPoint: 50, AutoReorder: true,
+		UOPCapacity: 300, ReorderPoint: 50, AutoReorder: domain.Ptr(true),
 		InboundSource: "SYN_MARKET", OutboundDestination: "SYN_MARKET",
 		InboundStaging: "SLN_001", OutboundStaging: "SLN_011",
 	}); err != nil {

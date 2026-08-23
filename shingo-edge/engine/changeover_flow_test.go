@@ -703,7 +703,7 @@ func TestChangeoverFlow_KeepStagedWithEvacuate(t *testing.T) {
 		StyleID: fromStyleID, CoreNodeName: "KS-EV-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "SRC",
 		InboundStaging: "STAGING", OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST",
-		KeepStaged: true, EvacuateOnChangeover: true,
+		KeepStaged: domain.Ptr(true), EvacuateOnChangeover: true,
 	})
 	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "KS-EV-NODE", Role: "consume", SwapMode: "simple",
@@ -776,7 +776,7 @@ func TestChangeoverFlow_KeepStagedToNoKeep(t *testing.T) {
 		StyleID: fromStyleID, CoreNodeName: "KS2NK-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-OLD", UOPCapacity: 100, InboundSource: "SRC-OLD",
 		InboundStaging: "STAGING", OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST",
-		KeepStaged: true,
+		KeepStaged: domain.Ptr(true),
 	})
 	upsertClaimLegacySimple(db, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "KS2NK-NODE", Role: "consume", SwapMode: "simple",
@@ -823,7 +823,7 @@ func TestChangeoverFlow_KeepStagedMissingStaging(t *testing.T) {
 		StyleID: fromStyleID, CoreNodeName: "KSMS-NODE", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-OLD", UOPCapacity: 100, InboundSource: "SRC-OLD",
 		OutboundStaging: "OUT-STAGE", OutboundDestination: "DEST",
-		KeepStaged: true,
+		KeepStaged: domain.Ptr(true),
 		// InboundStaging not set — can't stage
 	})
 	upsertClaimLegacySimple(db, processes.NodeClaimInput{

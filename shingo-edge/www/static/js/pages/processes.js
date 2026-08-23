@@ -510,8 +510,16 @@ function ensureCompareDelegation(wrap) {
 
 // claimToBody maps a fetched claim to the upsert POST body, mirroring
 // saveClaim's claimBody so a compare-grid edit preserves every field it does
-// not touch (staging, pairing, flags). transitional_loader is omitted so the
-// *bool "absent = leave untouched" contract holds.
+// not touch (staging, pairing, flags).
+//
+// SEND ONLY WHAT THIS EDITOR OWNS. sequence, reorder_point_source,
+// keep_staged and auto_reorder are omitted because there is no control for
+// any of them; they are *bool/*int/*string on NodeClaimInput and absent means
+// leave untouched. auto_reorder used to be echoed back by hand here — read
+// the claim, send its own value — which was the same problem patched one
+// field at a time, and only after a hard-coded `true` had spent a while
+// re-arming cell auto-reorder on every claim an engineer touched. The store
+// contract handles all four now; do not reintroduce an echo.
 function claimToBody(c) {
     return {
         style_id: c.style_id,
@@ -523,22 +531,11 @@ function claimToBody(c) {
         uop_capacity: c.uop_capacity || 0,
         reorder_point: c.reorder_point || 0,
         lineside_soft_threshold: c.lineside_soft_threshold || 0,
-        // Preserve, never assert. This editor has no auto_reorder control, and
-        // UpsertStyleNodeClaim writes the WHOLE row — so a hard-coded value
-        // here silently rewrites plant config on every unrelated field edit.
-        // It was `true`, which re-armed cell auto-reorder on any claim an
-        // engineer touched, undoing a plant-wide disable one claim at a time.
-        // Note the field is a plain bool on the wire (domain.NodeClaimInput),
-        // NOT a *bool — omitting it decodes to false and would bulk-DISARM
-        // just as silently. Echoing the fetched value is the only neutral
-        // option, same as auto_push / auto_confirm below.
-        auto_reorder: !!c.auto_reorder,
         inbound_staging: c.inbound_staging || '',
         outbound_staging: c.outbound_staging || '',
         inbound_source: c.inbound_source || '',
         outbound_destination: c.outbound_destination || '',
         auto_request_payload: c.auto_request_payload || '',
-        keep_staged: false,
         evacuate_on_changeover: !!c.evacuate_on_changeover,
         reuse_compatible_bins: !!c.reuse_compatible_bins,
         auto_push: !!c.auto_push,
@@ -1142,16 +1139,11 @@ async function saveClaim() {
     // switches among the aggregate's payloads at load time.
     var primaryPayload = state.swapMode === 'manual_swap' ? '' : state.payloadCode;
 
-    // Preserve the claim's existing auto_reorder — see claimToBody. The modal
-    // has no control for it, so an edit must carry whatever the claim already
-    // had; a NEW claim (no id) starts off rather than arming itself. Read from
-    // the loaded claim rather than form state because the flag has no DOM
-    // field to round-trip through.
-    var existingClaim = (_currentClaims || []).find(function(c) {
-        return String(c.id) === String(state.id);
-    });
-    var autoReorder = !!(existingClaim && existingClaim.auto_reorder);
-
+    // sequence / reorder_point_source / keep_staged / auto_reorder are NOT in
+    // this body. The modal owns no control for them, and omitting them is now
+    // how you say so — see claimToBody. A new claim gets the store's defaults
+    // (next free board slot, "legacy", both flags off); an edit leaves
+    // whatever is there alone.
     var claimBody = {
         style_id: state.styleId,
         core_node_name: state.coreNodeName,
@@ -1162,15 +1154,11 @@ async function saveClaim() {
         uop_capacity: state.uopCapacity,
         reorder_point: state.reorderPoint,
         lineside_soft_threshold: state.linesideSoftThreshold,
-        auto_reorder: autoReorder,
         inbound_staging: state.inboundStaging,
         outbound_staging: state.outboundStaging,
         inbound_source: state.inboundSource,
         outbound_destination: state.outboundDestination,
         auto_request_payload: state.autoRequestPayload,
-        // KeepStaged column persists as a backend safety net for the
-        // future supermarket rewire; the editor never sets it true.
-        keep_staged: false,
         evacuate_on_changeover: state.evacuateOnChangeover,
         reuse_compatible_bins: state.reuseCompatibleBins,
         auto_push: state.autoPush,

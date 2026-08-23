@@ -246,20 +246,30 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	if err == nil {
 		return existingID, updateClaim(db, existingID, in)
 	}
-	if in.Sequence <= 0 {
+	// INSERT takes the documented defaults for the absent-means-untouched
+	// columns: a claim has to have a board position, a provenance and two
+	// flag values from the moment it exists. Only UPDATE can leave a column
+	// alone, because only UPDATE has a prior value to leave.
+	sequence := 0
+	if in.Sequence != nil {
+		sequence = *in.Sequence
+	}
+	if sequence <= 0 {
 		var maxSeq int
 		db.QueryRow(`SELECT COALESCE(MAX(sequence), 0) FROM style_node_claims WHERE style_id=?`, in.StyleID).Scan(&maxSeq)
-		in.Sequence = maxSeq + 1
+		sequence = maxSeq + 1
 	}
+	autoReorder := in.AutoReorder != nil && *in.AutoReorder
+	keepStaged := in.KeepStaged != nil && *in.KeepStaged
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 	// INSERT OR IGNORE: if a concurrent writer inserted the same
 	// (style_id, core_node_name) between our SELECT above and this
 	// INSERT, RowsAffected==0 and we fall through to UPDATE the
 	// winner's row with our values. Plain INSERT failed here with
 	// UNIQUE constraint on the same race.
-	source := in.ReorderPointSource
-	if source == "" {
-		source = "legacy"
+	source := "legacy"
+	if in.ReorderPointSource != nil && *in.ReorderPointSource != "" {
+		source = *in.ReorderPointSource
 	}
 	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		uop_capacity, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
@@ -268,9 +278,9 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
-		in.UOPCapacity, in.ReorderPoint, source, in.AutoReorder, in.InboundStaging, in.OutboundStaging,
+		in.UOPCapacity, in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
-		in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence,
+		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush)
 	if err != nil {
 		return 0, err
@@ -285,25 +295,53 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	return existingID, updateClaim(db, existingID, in)
 }
 
+// updateClaim writes the columns the caller expressed an opinion about.
+//
+// The always-written set is every column the claims editor owns a control for.
+// The four below it are pointer-typed on NodeClaimInput precisely so a writer
+// can decline to speak about them (see the contract on that struct): this used
+// to be one unconditional UPDATE of all 22 columns, which meant a caller
+// sending 18 of them silently reset the other four to their zero values on
+// every save.
 func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
-	source := in.ReorderPointSource
-	if source == "" {
-		source = "legacy"
+
+	sets := []string{
+		`role=?`, `swap_mode=?`, `payload_code=?`, `uop_capacity=?`, `reorder_point=?`,
+		`inbound_staging=?`, `outbound_staging=?`, `inbound_source=?`, `outbound_destination=?`,
+		`allowed_payload_codes=?`, `auto_request_payload=?`, `evacuate_on_changeover=?`,
+		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
+		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
 	}
-	_, err := db.Exec(`UPDATE style_node_claims SET role=?, swap_mode=?, payload_code=?,
-		uop_capacity=?, reorder_point=?, reorder_point_source=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
-		inbound_source=?, outbound_destination=?, allowed_payload_codes=?, auto_request_payload=?,
-		keep_staged=?, evacuate_on_changeover=?, paired_core_node=?, auto_confirm=?, sequence=?,
-		lineside_soft_threshold=?, second_paired_core_node=?,
-		reuse_compatible_bins=?, auto_push=?
-		WHERE id=?`,
-		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, source, in.AutoReorder,
-		in.InboundStaging, in.OutboundStaging,
-		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
-		in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence,
-		in.LinesideSoftThreshold, in.SecondPairedCoreNode,
-		in.ReuseCompatibleBins, in.AutoPush, id)
+	args := []any{
+		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint,
+		in.InboundStaging, in.OutboundStaging, in.InboundSource, in.OutboundDestination,
+		allowedJSON, in.AutoRequestPayload, in.EvacuateOnChangeover,
+		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
+		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
+	}
+
+	if in.ReorderPointSource != nil {
+		// An explicit empty string still means "legacy" — the column has never
+		// been allowed to hold "", and a caller that speaks is answered.
+		source := *in.ReorderPointSource
+		if source == "" {
+			source = "legacy"
+		}
+		sets, args = append(sets, `reorder_point_source=?`), append(args, source)
+	}
+	if in.AutoReorder != nil {
+		sets, args = append(sets, `auto_reorder=?`), append(args, *in.AutoReorder)
+	}
+	if in.KeepStaged != nil {
+		sets, args = append(sets, `keep_staged=?`), append(args, *in.KeepStaged)
+	}
+	if in.Sequence != nil {
+		sets, args = append(sets, `sequence=?`), append(args, *in.Sequence)
+	}
+
+	args = append(args, id)
+	_, err := db.Exec(`UPDATE style_node_claims SET `+strings.Join(sets, ", ")+` WHERE id=?`, args...)
 	return err
 }
 

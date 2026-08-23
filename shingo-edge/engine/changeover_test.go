@@ -954,7 +954,7 @@ func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode protocol.Sw
 		InboundStaging:      "STAGING-AREA", // shared staging area
 		OutboundStaging:     "OUT-STAGING",
 		OutboundDestination: "DEST-OLD",
-		KeepStaged:          true,
+		KeepStaged:          domain.Ptr(true),
 	})
 	if err != nil {
 		t.Fatalf("upsert from claim: %v", err)

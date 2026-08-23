@@ -468,19 +468,11 @@ async function runSaveClaimSchemaCase() {
         uop_capacity: 30,
         reorder_point: 5,
         lineside_soft_threshold: 2,
-        // Was pinned `true` — a hard-coded literal in saveClaim, not an
-        // operator choice: the editor exposes no auto_reorder control, and
-        // UpsertStyleNodeClaim writes the whole row, so every unrelated claim
-        // edit re-armed cell auto-reorder. This fixture saves a NEW claim
-        // (no matching id in _currentClaims), and a new claim must not arm
-        // itself. An EDIT carries the claim's existing value through instead.
-        auto_reorder: false,
         inbound_staging: 'STAGE_IN_1',
         outbound_staging: 'STAGE_OUT_1',
         inbound_source: 'SRC_A',
         outbound_destination: 'DEST_A',
         auto_request_payload: '',
-        keep_staged: false,
         evacuate_on_changeover: true,
         reuse_compatible_bins: false,
         auto_push: false,
@@ -491,6 +483,20 @@ async function runSaveClaimSchemaCase() {
     for (const k of Object.keys(expected)) {
         if (JSON.stringify(rec.body[k]) !== JSON.stringify(expected[k])) {
             reportFailure(`saveClaim body[${k}]`, expected[k], rec.body[k]);
+        } else {
+            passed++;
+        }
+    }
+    // ABSENCE IS THE ASSERTION for these four. The editor owns no control for
+    // any of them, and NodeClaimInput types them as pointers so that omitting
+    // one means "leave the stored value alone". Sending a literal instead —
+    // auto_reorder was hard-coded `true`, then hand-echoed; keep_staged was
+    // hard-coded `false` — rewrote plant config on every unrelated field edit,
+    // because updateClaim wrote all 22 columns whatever the caller meant.
+    // A present key here is that bug coming back, so pin the absence.
+    for (const k of ['auto_reorder', 'keep_staged', 'sequence', 'reorder_point_source']) {
+        if (k in rec.body) {
+            reportFailure(`saveClaim body[${k}] must be ABSENT (editor owns no control for it)`, undefined, rec.body[k]);
         } else {
             passed++;
         }
