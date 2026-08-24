@@ -15,7 +15,23 @@ type Vintage struct {
 }
 
 // Vintages are the pinned baselines the convergence test builds.
+//
+// THE LIST MUST ALWAYS CONTAIN AT LEAST ONE ENTRY ON THE FAR SIDE OF THE MOST
+// RECENT TABLE REBUILD. A rebuild migration is self-disarming: it decides
+// whether to run by reading the live table's shape, so on a database that has
+// already crossed it, it returns early and everything it does — including any
+// column it adds on the way past — stops happening. Every vintage older than
+// the rebuild exercises the rebuilt path and therefore cannot see that. The
+// 2026-07-25 v33 style_node_claims rebuild is why this rule is written down:
+// both original vintages predate it, so the test passed for two rounds while
+// six columns were reaching fresh installs only.
 var Vintages = []Vintage{
+	{
+		Rev: "71d1d149",
+		Why: "the far side of the 2026-07-25 v33 style_node_claims rebuild (2026-08-22) — a " +
+			"database of this vintage takes rebuildStyleNodeClaims' early return, so it is " +
+			"the only vintage that can see a column addition that lives inside the rebuild",
+	},
 	{
 		Rev: "06da8cdf^",
 		Why: "before the structured queue codes landed (06da8cdf, 2026-07-19) — the most recent " +

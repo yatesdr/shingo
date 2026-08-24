@@ -645,6 +645,69 @@ func (db *DB) migrate() error {
 	// why the rebuild is unavoidable and what else it folds in.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN below_reorder_since TEXT")
 	db.Exec("ALTER TABLE process_changeovers ADD COLUMN origin_id TEXT NOT NULL DEFAULT ''")
+
+	// EVERY style_node_claims COLUMN THE BASELINE CREATE CAN NO LONGER DELIVER
+	// IS ADDED HERE, AND ONLY HERE.
+	//
+	// These fourteen used to live in a private list inside
+	// migrations_style_claims.go, executed by the rebuild on its way past. That
+	// was a SECOND road for adding a column, and it is a road that closes: the
+	// rebuild is self-disarming (it reads the live table's defaults to decide
+	// whether to run), so on every database that has already crossed it the list
+	// stops executing. Six columns — changeover_evac_seats,
+	// changeover_evac_destination, changeover_load_directive,
+	// index_robot_supplies, key_route, key_task — reached fresh installs through
+	// the baseline CREATE and reached no upgraded plant at all, because their only
+	// ALTER was behind that early return. A fresh database had 41 columns and an
+	// upgraded one 35.
+	//
+	// One road, one source of truth. The rebuild below now does only the rebuild.
+	//
+	// The definitions are the baseline CREATE's, character for character, and
+	// TestAlterPassMatchesBaselineCreate holds them there. That is not tidiness:
+	// an ALTER-added column's declared DEFAULT is permanent on an upgraded
+	// database — no rebuild downstream normalises it — so any drift between the
+	// two statements splits fresh installs from plants forever.
+	//
+	// The first eight are older columns that only ever arrived through the
+	// baseline CREATE, which is a no-op on a table that already exists. They are
+	// no-ops on any database that has crossed the rebuild, and they are what makes
+	// the rebuild's INSERT ... SELECT safe to name on a database of any age.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN role TEXT NOT NULL DEFAULT 'consume'")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN uop_capacity INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN reorder_point INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_reorder INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN outbound_destination TEXT NOT NULL DEFAULT ''")
+	// outbound_source is RE-ADDED here, and it is not a duplicate of the add
+	// earlier in this pass. The RENAME COLUMN above (outbound_source ->
+	// outbound_destination) consumes the earlier one, so by this point in the
+	// pass the column is gone — while the rebuild's CREATE and its
+	// INSERT ... SELECT both still name it. Without this line the rebuild dies
+	// with "no such column: outbound_source" on a database of any vintage, which
+	// is what the store package's rebuild tests report the moment it is missing.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN outbound_source TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0")
+	// created_at CANNOT BE DELIVERED BY AN ALTER on a database that has rows:
+	// SQLite rejects a non-constant default ("Cannot add a column with
+	// non-constant default"), and this one is (datetime('now')). It is kept
+	// because it is correct on an empty table and because the definition has to
+	// be declared somewhere the drift assertion can see it — but a populated
+	// database missing created_at is NOT repaired here. It fails loudly instead,
+	// at the rebuild's INSERT, which is the honest outcome. Changing the default
+	// to a constant to make this "work" would be exactly the fresh-vs-upgraded
+	// split the comment above describes.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))")
+
+	// v37 (2026-08-24, B1): the six the private list was swallowing. Same
+	// definitions as the baseline CREATE.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_evac_seats TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_evac_destination TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_load_directive INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN index_robot_supplies INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN key_route TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN key_task TEXT NOT NULL DEFAULT ''")
+
 	if err := db.rebuildStyleNodeClaims(); err != nil {
 		return err
 	}

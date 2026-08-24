@@ -103,24 +103,13 @@ func (db *DB) rebuildStyleNodeClaims() error {
 		return nil // already the current shape: a fresh install, or already run
 	}
 
-	// Make every column the copy names exist before naming it.
-	//
-	// The INSERT ... SELECT below enumerates the full column list, so a single
-	// column missing from THIS database's table fails the whole rebuild — and
-	// migrate() would return the error, so Edge would not start. Not
-	// hypothetical: the first run of the rebuild test died on `sequence`,
-	// because some columns only ever arrived through the baseline CREATE, which
-	// is a no-op on a table that already exists. Which columns a given plant
-	// has therefore depends on when it was installed, which is the whole reason
-	// this class of bug exists.
-	//
-	// Duplicate ADD COLUMN fails silently in SQLite and is ignored here, the
-	// same convention migrate() uses throughout. Defaults are only needed to
-	// satisfy NOT NULL on a populated table — the rebuild's own CREATE is what
-	// decides the final shape.
-	for _, ddl := range styleNodeClaimsColumnGuards {
-		db.Exec(ddl)
-	}
+	// The columns the INSERT ... SELECT below names are made to exist by the
+	// ALTER pass in migrate(), which has already run by the time this is called.
+	// There is no column-adding step here any more, and there must never be one
+	// again: this function returns early on any database that has already been
+	// rebuilt, so a column added on this side of that return reaches fresh
+	// installs and no plant. That is exactly what happened to six of them —
+	// see the block above the call site in migrations.go.
 
 	if _, err := db.Exec(`PRAGMA legacy_alter_table = ON`); err != nil {
 		return fmt.Errorf("style_node_claims rebuild: enable legacy_alter_table: %w", err)
@@ -224,50 +213,6 @@ func (db *DB) assertNoStrandedRebuild() error {
 			"The data is intact in style_node_claims_legacy. To recover, copy the missing rows back "+
 			"and drop the scratch table, or restore the pre-deploy database backup.",
 		liveRows, legacyRows)
-}
-
-// styleNodeClaimsColumnGuards makes the copy's column list safe to name on a
-// database of any age. One entry per column the rebuild copies, except id /
-// style_id / core_node_name, which every version of this table has had.
-var styleNodeClaimsColumnGuards = []string{
-	`ALTER TABLE style_node_claims ADD COLUMN role TEXT NOT NULL DEFAULT 'consume'`,
-	`ALTER TABLE style_node_claims ADD COLUMN swap_mode TEXT NOT NULL DEFAULT 'simple'`,
-	`ALTER TABLE style_node_claims ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN uop_capacity INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN reorder_point INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN auto_reorder INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN inbound_staging TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN outbound_staging TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN inbound_source TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN outbound_destination TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN allowed_payload_codes TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN auto_request_payload TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN keep_staged INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN evacuate_on_changeover INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN paired_core_node TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN auto_confirm INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN lineside_soft_threshold INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN reuse_compatible_bins INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN auto_push INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN reorder_point_source TEXT NOT NULL DEFAULT 'legacy'`,
-	`ALTER TABLE style_node_claims ADD COLUMN below_reorder_since TEXT`,
-	`ALTER TABLE style_node_claims ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))`,
-	`ALTER TABLE style_node_claims ADD COLUMN staging_node TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN release_node TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN inbound_source_node TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN inbound_source_node_group TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN outbound_source_node TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN outbound_source_node_group TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN outbound_source TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN mode TEXT NOT NULL DEFAULT 'loader'`,
-	`ALTER TABLE style_node_claims ADD COLUMN second_paired_core_node TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN changeover_evac_seats TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN changeover_evac_destination TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN changeover_load_directive INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN index_robot_supplies INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE style_node_claims ADD COLUMN key_route TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE style_node_claims ADD COLUMN key_task TEXT NOT NULL DEFAULT ''`,
 }
 
 // styleNodeClaimsRebuildSQL must produce the SAME shape as sqlite_ddl.go's
