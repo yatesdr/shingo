@@ -431,11 +431,6 @@ linters:
         text: "Function 'apiDashboardNodeReport' has too many statements"
         linters:
           - funlen
-      # runCarriers: transitional
-      - path: "shingo-core/cmd/simcalc/carriers\\.go"
-        text: "Function 'runCarriers' has too many statements"
-        linters:
-          - funlen
       # computeCarriers: transitional
       - path: "shingo-core/cmd/simcalc/carriers\\.go"
         text: "Function 'computeCarriers' has too many statements"

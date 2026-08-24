@@ -125,91 +125,14 @@ func runCarriers(plant *plantspec.Plant, rate map[string]float64, transit, plant
 		plan.seededEmpty, plan.seededFull, plan.slotsUsed, plan.totalSlots,
 		plan.totalSlots-plan.slotsUsed)
 
-	// ── 2. the empty-bin balance ─────────────────────────────────────────────
-	fmt.Printf("\nEMPTY-BIN BALANCE (an empty is made by a consume swap, spent by a produce swap)\n")
-	fmt.Printf("%-26s %-12s %s\n", "SIDE", "BINS/min", "FROM")
-	fmt.Println(strings.Repeat("─", 84))
-	fmt.Printf("%-26s %-12.2f %s\n", "freed (bins emptied)", plan.emptySupply, topContributors(plan.supplyBy))
-	fmt.Printf("%-26s %-12.2f %s\n", "spent (bins filled)", plan.emptyDemand, topContributors(plan.demandBy))
-
-	net := plan.emptySupply - plan.emptyDemand
-	ok := true
-	switch {
-	case plan.emptyDemand == 0 && plan.emptySupply == 0:
-		fmt.Printf("\n  no tick-driven swap points — nothing to balance\n")
-	case net < -0.001:
-		ok = false
-		fmt.Printf("\n  DEFICIT %.2f bins/min: the carrier pool drains no matter how large it starts.\n", -net)
-		fmt.Printf("  Every empty is spent %.0f%% faster than one is freed, so the plant deadlocks\n",
-			100*(plan.emptyDemand/math.Max(plan.emptySupply, 0.0001)-1))
-		fmt.Printf("  once the seeded pool is gone. Fix the RATES, not the bin count.\n")
-	default:
-		fmt.Printf("\n  balanced (+%.2f bins/min headroom)\n", net)
-	}
-
-	// ── 3. the stock floor, PER POOL ─────────────────────────────────────────
-	//
-	// The plant-wide figure is printed first and labelled as what it is: context,
-	// and the number that passed lane-stress while SYN_STAMP sat at zero empties.
-	// The VERDICT is per pool.
-	inFlight := plan.emptyDemand * mins
-	floor := int(math.Ceil(inFlight)) + plan.producePoint
-	fmt.Printf("\nEMPTY-BIN STOCK FLOOR\n")
-	fmt.Println(strings.Repeat("─", 84))
-	fmt.Printf("  plant-wide (CONTEXT ONLY — a carrier is not fungible across pools):\n")
-	fmt.Printf("    %-44s %.2f × %.0fm = %.1f\n", "in flight (demand × transit)", plan.emptyDemand, mins, inFlight)
-	fmt.Printf("    %-44s %d\n", "one per produce station", plan.producePoint)
-	fmt.Printf("    %-44s %d, seeded %d\n", "REQUIRED ≥", floor, plan.seededEmpty)
-
-	fmt.Printf("\n  PER POOL — a produce station draws its empty from ONE named pool\n")
-	fmt.Printf("  %-14s %-9s %-9s %-9s %-9s %s\n", "POOL", "SPENDS", "FREES", "REQUIRED", "SEEDED", "VERDICT")
-	fmt.Println(strings.Repeat("─", 84))
-	for _, q := range sortedPools(plan.pools) {
-		pInFlight := q.emptyDemand * mins
-		pFloor := int(math.Ceil(pInFlight)) + q.producePoint
-		verdict := "ok"
-		switch {
-		case !q.isZone:
-			// The pool names something that is not a seeded zone (a concrete node,
-			// a dedicated home). We cannot count its stock, so we do not judge it —
-			// and we say so rather than scoring it 0 and crying wolf.
-			verdict = "not a seeded zone — stock not judged"
-		case q.emptySupply-q.emptyDemand < -0.001:
-			ok = false
-			verdict = fmt.Sprintf("RATE DEFICIT %.2f/min — drains regardless of size",
-				q.emptyDemand-q.emptySupply)
-		case q.seededEmpty < pFloor:
-			ok = false
-			verdict = fmt.Sprintf("SHORT BY %d", pFloor-q.seededEmpty)
-		}
-		fmt.Printf("  %-14s %-9.2f %-9.2f %-9d %-9d %s\n",
-			q.name, q.emptyDemand, q.emptySupply, pFloor, q.seededEmpty, verdict)
-	}
-	if len(plan.unpooled) > 0 {
-		fmt.Printf("\n  NOT ATTRIBUTED: %s — these payloads' claims name no inbound_source /\n",
-			strings.Join(plan.unpooled, ", "))
-		fmt.Printf("  outbound_destination, so their carriers belong to no pool this can check.\n")
-	}
-	fmt.Printf("\n  A pool short here deadlocks EVEN IF the plant total is comfortable: the\n")
-	fmt.Printf("  empties exist, in the wrong zone, and nothing routes them back. That is how\n")
-	fmt.Printf("  lane-stress passed at 24/22 and wedged with 15 empties in SYN_COMP and 0 in\n")
-	fmt.Printf("  SYN_STAMP, three presses queued on \"waiting for an empty bin\".\n")
-
-	// ── 4. shuffle headroom ──────────────────────────────────────────────────
-	fmt.Printf("\nSHUFFLE HEADROOM (a dig on a depth-N lane relocates N-1 blockers)\n")
-	fmt.Printf("%-14s %-7s %-8s %-9s %-9s %s\n", "ZONE", "SLOTS", "SEEDED", "FREE-UNG", "DEEPEST", "VERDICT")
-	fmt.Println(strings.Repeat("─", 84))
-	for _, z := range zones {
-		verdict := "ok"
-		if z.deepestDig > z.freeUngated {
-			ok = false
-			verdict = fmt.Sprintf("SHORT — %s needs %d, has %d", z.deepestLane, z.deepestDig, z.freeUngated)
-		}
-		fmt.Printf("%-14s %-7d %-8d %-9d %-9d %s\n",
-			z.name, z.slots, z.seeded, z.freeUngated, z.deepestDig, verdict)
-	}
-	fmt.Printf("\n  FREE-UNG counts only slots in UNMARKED lanes: a dig cannot park a blocker in\n")
-	fmt.Printf("  a gated lane it is not allowed to enter, so gated free space does not count.\n")
+	// Three separate calls then one AND, deliberately: short-circuiting with
+	// `reportBalance(plan) && reportStockFloor(...)` would stop printing the
+	// moment a section failed, and the sections an operator most needs are the
+	// ones after the first failure.
+	balanceOK := reportBalance(plan)
+	floorOK := reportStockFloor(plan, mins)
+	headroomOK := reportHeadroom(zones)
+	ok := balanceOK && floorOK && headroomOK
 
 	fmt.Printf("\n%s\n", headline(ok))
 	if !ok {
@@ -455,4 +378,115 @@ func topContributors(m map[string]float64) string {
 		parts = append(parts, fmt.Sprintf("%s %.2f", e.k, e.v))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// reportBalance reports the empty-bin balance: whether empties are freed as fast as they are
+// consumed, plant-wide.
+//
+// Returns false when the section found a problem; the caller ANDs the three.
+func reportBalance(plan carrierPlan) bool {
+	ok := true
+	// ── 2. the empty-bin balance ─────────────────────────────────────────────
+	fmt.Printf("\nEMPTY-BIN BALANCE (an empty is made by a consume swap, spent by a produce swap)\n")
+	fmt.Printf("%-26s %-12s %s\n", "SIDE", "BINS/min", "FROM")
+	fmt.Println(strings.Repeat("─", 84))
+	fmt.Printf("%-26s %-12.2f %s\n", "freed (bins emptied)", plan.emptySupply, topContributors(plan.supplyBy))
+	fmt.Printf("%-26s %-12.2f %s\n", "spent (bins filled)", plan.emptyDemand, topContributors(plan.demandBy))
+
+	net := plan.emptySupply - plan.emptyDemand
+	switch {
+	case plan.emptyDemand == 0 && plan.emptySupply == 0:
+		fmt.Printf("\n  no tick-driven swap points — nothing to balance\n")
+	case net < -0.001:
+		ok = false
+		fmt.Printf("\n  DEFICIT %.2f bins/min: the carrier pool drains no matter how large it starts.\n", -net)
+		fmt.Printf("  Every empty is spent %.0f%% faster than one is freed, so the plant deadlocks\n",
+			100*(plan.emptyDemand/math.Max(plan.emptySupply, 0.0001)-1))
+		fmt.Printf("  once the seeded pool is gone. Fix the RATES, not the bin count.\n")
+	default:
+		fmt.Printf("\n  balanced (+%.2f bins/min headroom)\n", net)
+	}
+
+	return ok
+}
+
+// reportStockFloor reports the stock floor per pool -- the seeded empties each pool needs to
+// cover one transit window.
+//
+// Returns false when the section found a problem; the caller ANDs the three.
+func reportStockFloor(plan carrierPlan, mins float64) bool {
+	ok := true
+	// ── 3. the stock floor, PER POOL ─────────────────────────────────────────
+	//
+	// The plant-wide figure is printed first and labelled as what it is: context,
+	// and the number that passed lane-stress while SYN_STAMP sat at zero empties.
+	// The VERDICT is per pool.
+	inFlight := plan.emptyDemand * mins
+	floor := int(math.Ceil(inFlight)) + plan.producePoint
+	fmt.Printf("\nEMPTY-BIN STOCK FLOOR\n")
+	fmt.Println(strings.Repeat("─", 84))
+	fmt.Printf("  plant-wide (CONTEXT ONLY — a carrier is not fungible across pools):\n")
+	fmt.Printf("    %-44s %.2f × %.0fm = %.1f\n", "in flight (demand × transit)", plan.emptyDemand, mins, inFlight)
+	fmt.Printf("    %-44s %d\n", "one per produce station", plan.producePoint)
+	fmt.Printf("    %-44s %d, seeded %d\n", "REQUIRED ≥", floor, plan.seededEmpty)
+
+	fmt.Printf("\n  PER POOL — a produce station draws its empty from ONE named pool\n")
+	fmt.Printf("  %-14s %-9s %-9s %-9s %-9s %s\n", "POOL", "SPENDS", "FREES", "REQUIRED", "SEEDED", "VERDICT")
+	fmt.Println(strings.Repeat("─", 84))
+	for _, q := range sortedPools(plan.pools) {
+		pInFlight := q.emptyDemand * mins
+		pFloor := int(math.Ceil(pInFlight)) + q.producePoint
+		verdict := "ok"
+		switch {
+		case !q.isZone:
+			// The pool names something that is not a seeded zone (a concrete node,
+			// a dedicated home). We cannot count its stock, so we do not judge it —
+			// and we say so rather than scoring it 0 and crying wolf.
+			verdict = "not a seeded zone — stock not judged"
+		case q.emptySupply-q.emptyDemand < -0.001:
+			ok = false
+			verdict = fmt.Sprintf("RATE DEFICIT %.2f/min — drains regardless of size",
+				q.emptyDemand-q.emptySupply)
+		case q.seededEmpty < pFloor:
+			ok = false
+			verdict = fmt.Sprintf("SHORT BY %d", pFloor-q.seededEmpty)
+		}
+		fmt.Printf("  %-14s %-9.2f %-9.2f %-9d %-9d %s\n",
+			q.name, q.emptyDemand, q.emptySupply, pFloor, q.seededEmpty, verdict)
+	}
+	if len(plan.unpooled) > 0 {
+		fmt.Printf("\n  NOT ATTRIBUTED: %s — these payloads' claims name no inbound_source /\n",
+			strings.Join(plan.unpooled, ", "))
+		fmt.Printf("  outbound_destination, so their carriers belong to no pool this can check.\n")
+	}
+	fmt.Printf("\n  A pool short here deadlocks EVEN IF the plant total is comfortable: the\n")
+	fmt.Printf("  empties exist, in the wrong zone, and nothing routes them back. That is how\n")
+	fmt.Printf("  lane-stress passed at 24/22 and wedged with 15 empties in SYN_COMP and 0 in\n")
+	fmt.Printf("  SYN_STAMP, three presses queued on \"waiting for an empty bin\".\n")
+
+	return ok
+}
+
+// reportHeadroom reports shuffle headroom: whether each zone has enough free ungated slots for
+// its deepest dig.
+//
+// Returns false when the section found a problem; the caller ANDs the three.
+func reportHeadroom(zones []zoneHeadroom) bool {
+	ok := true
+	// ── 4. shuffle headroom ──────────────────────────────────────────────────
+	fmt.Printf("\nSHUFFLE HEADROOM (a dig on a depth-N lane relocates N-1 blockers)\n")
+	fmt.Printf("%-14s %-7s %-8s %-9s %-9s %s\n", "ZONE", "SLOTS", "SEEDED", "FREE-UNG", "DEEPEST", "VERDICT")
+	fmt.Println(strings.Repeat("─", 84))
+	for _, z := range zones {
+		verdict := "ok"
+		if z.deepestDig > z.freeUngated {
+			ok = false
+			verdict = fmt.Sprintf("SHORT — %s needs %d, has %d", z.deepestLane, z.deepestDig, z.freeUngated)
+		}
+		fmt.Printf("%-14s %-7d %-8d %-9d %-9d %s\n",
+			z.name, z.slots, z.seeded, z.freeUngated, z.deepestDig, verdict)
+	}
+	fmt.Printf("\n  FREE-UNG counts only slots in UNMARKED lanes: a dig cannot park a blocker in\n")
+	fmt.Printf("  a gated lane it is not allowed to enter, so gated free space does not count.\n")
+	return ok
 }
