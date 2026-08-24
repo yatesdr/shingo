@@ -1012,9 +1012,24 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 	// child has actually confirmed — and CompleteCompound then races
 	// ahead of the still-in-flight legs, leaving the lifecycle gate to
 	// reject a later child failure with `confirmed -> failed`.
+	// FAIL CLOSED, for the same reason GetNextChildOrder does one read earlier.
+	// An unreadable child list is not an empty one, and every gate below reads
+	// as "nothing left to do" when `children` is nil: digWasDissolved(nil) is
+	// false, hasFailedOrCancelled stays false over an empty set, and allTerminal
+	// keeps its `true` initialiser because the loop never runs. Execution then
+	// falls past the stopped-short arm and the in-flight guard straight to the
+	// completion fork, which confirms or resumes the parent and releases its
+	// held lanes — with legs potentially still flying. That is the
+	// 2026-05-27 three-robots-in-one-corridor failure class, which the sibling
+	// read at the top of AdvanceCompoundOrder already refuses to allow.
+	//
+	// Returning the error re-drives this parent on the next completion or
+	// failure event rather than deciding its fate from a read that did not
+	// happen.
 	children, listErr := d.db.ListChildOrders(parentOrderID)
 	if listErr != nil {
 		log.Printf("dispatch: list children for compound %d: %v", parentOrderID, listErr)
+		return listErr
 	}
 	// A child that FAILED or was CANCELLED means the reshuffle's housekeeping did
 	// NOT complete, so the parent must fail — NOT take the success branch below.
