@@ -258,6 +258,26 @@ func (p *Plant) Validate() error {
 			if c.OutboundDestination == "" {
 				add("%s: two_robot_press_index requires outbound_destination", where)
 			}
+			// The third position must exist and must be its own node. Both are
+			// checked here rather than left to the runtime because a
+			// second_paired_core_node that names nothing produces a step aimed
+			// at a place the fleet cannot resolve, and one that repeats another
+			// position produces a robot asked to move a bin to where it is.
+			if c.SecondPairedCoreNode != "" {
+				if !ref(c.SecondPairedCoreNode) {
+					add("%s: unknown second_paired_core_node %q", where, c.SecondPairedCoreNode)
+				}
+				if c.SecondPairedCoreNode == c.CoreNode || c.SecondPairedCoreNode == c.PairedCoreNode {
+					add("%s: second_paired_core_node %q must differ from the front and back positions", where, c.SecondPairedCoreNode)
+				}
+			}
+		default:
+			// The flip is press-index choreography; nothing else has two robots
+			// to swap between, and a spec that sets it on another mode is
+			// describing a cell that cannot exist.
+			if c.IndexRobotSupplies {
+				add("%s: index_robot_supplies applies to two_robot_press_index only", where)
+			}
 		}
 		// Any staging node that IS set must exist.
 		if c.InboundStaging != "" && !ref(c.InboundStaging) {

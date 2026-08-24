@@ -166,6 +166,28 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		//     there is no episode; blank would land it in the bucket that means
 		//     "we lost a demand link".
 		{"bin move", "engine/bin_move.go", "a person moving one bin from where it is to somewhere else — the operator names the bin, the engineer names the node"},
+		// The one door that is about a ROBOT rather than about material. A bin
+		// riding a deck has nothing coming to fetch it — the order that was
+		// carrying it is terminal — so this asks that robot, and only that
+		// robot, to set the bin down somewhere.
+		//
+		// The three questions:
+		//  1. Projects to the Edge? No. It writes the row itself, like the bin-move
+		//     door beside it, so it is outside the projection scope. That is the
+		//     right answer here for a second reason as well: no Edge station asked
+		//     for this order and none of them owns the bin. It is Core reconciling
+		//     its own bookkeeping with the floor.
+		//  2. Needs the dropoff-capacity gate? Yes, and it takes the real slot
+		//     reservation: ReserveStorageDropoff before ConfirmForDispatch, which
+		//     also settles a group destination to a concrete child. Its own
+		//     three-tier destination search additionally refuses any node that is
+		//     occupied or claimed before it gets that far.
+		//  3. What origin_class? no_demand, by omission — and deliberately. No
+		//     place asked for material; a bin is in the wrong state and Core is
+		//     putting it right. An episode here would count a recovery as demand
+		//     and read every plant's demand history high by however many bins got
+		//     dropped that month.
+		{"carried-bin recovery", "engine/carried_bin_recovery.go", "nobody — Core asks the robot holding a stranded bin to put it down"},
 		// THE LANE SELF-HEAL DOOR IS DELETED (§R.104), and it is not merely moved:
 		// nothing takes its place, because the order it used to create does not
 		// exist. Its entry read "nobody — the lane gate finds a robot dwelling

@@ -204,12 +204,14 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			  (style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
 			   reorder_point, auto_reorder, inbound_staging, outbound_staging,
 			   inbound_source, outbound_destination, allowed_payload_codes,
-			   paired_core_node, auto_push, auto_confirm)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			   paired_core_node, second_paired_core_node, index_robot_supplies,
+			   auto_push, auto_confirm)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			sid, c.CoreNode, c.Role, c.SwapMode, c.Payload, c.UOPCapacity,
 			c.ReorderPoint, b2i(c.AutoReorder), c.InboundStaging, c.OutboundStaging,
 			c.InboundSource, c.OutboundDestination, strings.Join(c.AllowedPayloads, ","),
-			c.PairedCoreNode, b2i(c.AutoPush), b2i(c.AutoConfirm)); err != nil {
+			c.PairedCoreNode, c.SecondPairedCoreNode, b2i(c.IndexRobotSupplies),
+			b2i(c.AutoPush), b2i(c.AutoConfirm)); err != nil {
 			return fmt.Errorf("claim %s/%s: %w", c.CoreNode, c.Style, err)
 		}
 		var claimID int64

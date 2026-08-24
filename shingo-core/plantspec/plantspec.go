@@ -260,14 +260,26 @@ type Claim struct {
 	// screen) — not in a group named by this claim. The two were once documented
 	// as one field doing two jobs; they were always two representations, and the
 	// group-naming half is retired.
-	InboundSource       string   `yaml:"inbound_source,omitempty"`
-	OutboundDestination string   `yaml:"outbound_destination,omitempty"`
-	InboundStaging      string   `yaml:"inbound_staging,omitempty"`
-	OutboundStaging     string   `yaml:"outbound_staging,omitempty"`
-	AutoPush            bool     `yaml:"auto_push"`
-	AutoConfirm         bool     `yaml:"auto_confirm"`
-	PairedCoreNode      string   `yaml:"paired_core_node,omitempty"`
-	AllowedPayloads     []string `yaml:"allowed_payloads,omitempty"`
+	InboundSource       string `yaml:"inbound_source,omitempty"`
+	OutboundDestination string `yaml:"outbound_destination,omitempty"`
+	InboundStaging      string `yaml:"inbound_staging,omitempty"`
+	OutboundStaging     string `yaml:"outbound_staging,omitempty"`
+	AutoPush            bool   `yaml:"auto_push"`
+	AutoConfirm         bool   `yaml:"auto_confirm"`
+	PairedCoreNode      string `yaml:"paired_core_node,omitempty"`
+	// SecondPairedCoreNode is the THIRD position of a press-index cell (bins
+	// index C → B → A). Empty is the ordinary 2-position layout.
+	SecondPairedCoreNode string `yaml:"second_paired_core_node,omitempty"`
+	// IndexRobotSupplies flips a press-index cell's choreography: R1 clears the
+	// press and leaves, R2 indexes forward AND fetches the replacement, instead
+	// of R1 backfilling on its way out.
+	//
+	// SEEDABLE BECAUSE THE SIM IS WHERE IT GETS PROVEN. It describes the cell's
+	// hardware — which robot can reach the supermarket from that press — so a
+	// plant either has it or does not, and a scenario that cannot express it
+	// can only test the shape half the presses run.
+	IndexRobotSupplies bool     `yaml:"index_robot_supplies,omitempty"`
+	AllowedPayloads    []string `yaml:"allowed_payloads,omitempty"`
 	// WindowOf, when set on a manual_swap loader claim, makes this node a WINDOW
 	// of the named shared loader rather than its own loader: the seed groups it as
 	// a window home of that loader (the multi-window model the grid editor authors

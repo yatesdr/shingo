@@ -124,9 +124,6 @@ type EngineOrchestration interface {
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error
 	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error
-	ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
-	// ReleaseChangeoverWaitForNode scopes the same release to one node's task.
-	ReleaseChangeoverWaitForNode(processID, processNodeID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
 	// AbandonChangeoverSupply is the operator exit from awaiting_material:
 	// cancel the parked supply half (both halves unless acceptHalf) and land
 	// the node task abandoned-terminal.

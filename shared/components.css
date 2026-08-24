@@ -116,9 +116,15 @@
  * space than the information is worth on most visits. The summary carries a
  * hint of the current value so collapsing does not hide state, only detail.
  *
- * There are two older ad-hoc spellings of this on Core (nodes.html
- * .dev-menu, sourcing.html .src-collapse) that could fold into this class;
- * they are left alone here rather than widen this round into Core. */
+ * Core's .dev-menu and .src-collapse are NOT this class and were not folded
+ * into it. They are both <details>, and that is where the resemblance ends:
+ * .dev-menu is an absolutely-positioned dropdown hanging off a toolbar button
+ * and .src-collapse is a full-bleed row in a rail with a top border and no
+ * card padding. Making either of them a bordered card would be a visible
+ * change to a working page for the sake of a shared name.
+ *
+ * What the three DID duplicate is the marker reset, and that is now
+ * .disclosure-bare below. */
 .collapse-card {
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -709,3 +715,164 @@
 .util-bar__busy { background: var(--info); height: 100%; transition: width 0.25s ease; }
 .util-val { font-variant-numeric: tabular-nums; color: var(--text-muted); min-width: 3ch; text-align: right; }
 .robot-pill { font-size: 0.72rem; }
+
+/* ── The rules both apps had, written twice ──────────────────────────
+ *
+ * Each of these was defined byte-identically in shingoedge.css AND in
+ * Core's style.css. Two copies of one design is not a style choice, it is
+ * a drift hazard: a fix to one app's copy silently leaves the other's
+ * behind, and nothing anywhere says the two are supposed to agree.
+ *
+ * ONLY THE IDENTICAL ONES MOVED. Fourteen more selectors are defined in
+ * both sheets with DIFFERENT bodies — .btn, .card, .modal, .alert and
+ * friends — where Core carries hard-coded radii and sizes and Edge carries
+ * the tokens. Those are two designs, not one written twice; folding them
+ * would change how Core looks, which is a decision to take deliberately
+ * rather than as a side effect of removing duplication.
+ *
+ * Both app sheets load AFTER this file, so anything either app wants to
+ * override still can.
+ */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.flex {
+  display: flex;
+}
+
+.gap-1 {
+  gap: 0.5rem;
+}
+
+.gap-2 {
+  gap: 1rem;
+}
+
+.ml-auto {
+  margin-left: auto;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+/* ── The utilities both apps had, written twice ──────────────────────────
+ *
+ * Each of these was defined byte-identically in shingoedge.css AND in Core's
+ * style.css. Two copies of one rule is a drift hazard: a fix to one app's copy
+ * silently leaves the other's behind, and nothing anywhere says the two are
+ * supposed to agree.
+ *
+ * ── AND ONLY THESE EIGHT, WHICH IS THE FINDING ──────────────────────────
+ *
+ * The scan turned up TWENTY-THREE byte-identical duplicate selectors, and
+ * moving all of them was wrong. Most were one HALF of a component whose other
+ * half differs between the apps: .btn-danger:hover is identical, .btn-danger is
+ * not; .modal-overlay.active is identical, .modal-overlay is not;
+ * .nav-dropdown-menu a is identical, .nav-dropdown-menu is not. Moving the
+ * identical half leaves the component split across two sheets, which is worse
+ * than the duplication — Core's css_collision_drift_test caught exactly that
+ * and names it the `.chip` shape: the later declaration wins silently and
+ * neither side knows the other exists.
+ *
+ * So the unit of unification is the COMPONENT, not the rule. What is left here
+ * is the set that is whole: pure utilities with no per-app base to be split
+ * from. Unifying the rest means reconciling Core's hard-coded radii and sizes
+ * with Edge's tokens — --radius is 6px where Core's buttons are 0.3rem — which
+ * changes how Core looks and is a decision to take deliberately.
+ *
+ * Both app sheets load AFTER this file, so either app can still override.
+ */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.flex {
+  display: flex;
+}
+
+.gap-1 {
+  gap: 0.5rem;
+}
+
+.gap-2 {
+  gap: 1rem;
+}
+
+.ml-auto {
+  margin-left: auto;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+/* ── .is-hidden ──────────────────────────────────────────────────────────
+ *
+ * Hide an element from a script without knowing what its display value was.
+ *
+ * THE HTML `hidden` ATTRIBUTE IS NOT ENOUGH ON ITS OWN, which is the whole
+ * reason this exists. `[hidden] { display: none }` lives in the UA sheet and
+ * has class-level specificity, so ANY author rule that sets display on the
+ * same element beats it — `.check-row { display: flex }` above is exactly
+ * that shape, and a row hidden only by the attribute stays on screen. The
+ * usual workaround is to write `style.display = 'none'` alongside, which then
+ * has to remember the original value to restore, and restoring "" only works
+ * because a stylesheet happened to supply the right one.
+ *
+ * `!important` on a single-purpose utility rather than on a component rule:
+ * the class means "not on screen, whatever else says", and there is nothing
+ * for it to be in tension with. Keep the `hidden` attribute too — it is what
+ * assistive technology and find-in-page read.
+ *
+ * Was Core-only. Edge's claim editor toggled inline display instead and
+ * carried two special cases to restore `display: flex` on the rows the
+ * attribute could not hide; both are gone with the conversion.
+ */
+.is-hidden {
+  display: none !important;
+}
+
+/* ── .disclosure-bare ────────────────────────────────────────────────────
+ *
+ * A <details> with no triangle. Three places had written this same three-line
+ * reset independently — Core's .dev-menu and .src-collapse, and every
+ * hand-rolled disclosure before them — because the marker cannot be removed
+ * with one property: `list-style: none` handles standards-mode browsers and
+ * `::-webkit-details-marker` handles the WebKit/Blink pseudo-element, and
+ * missing either leaves the triangle on half the plant's screens.
+ *
+ * NOT part of .collapse-card, which deliberately KEEPS its marker
+ * (`list-style: revert`) — a card the operator opens and closes should look
+ * like one. This is for the disclosures that are dressed as something else: a
+ * toolbar button, a table row.
+ */
+.disclosure-bare > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.disclosure-bare > summary::-webkit-details-marker {
+  display: none;
+}

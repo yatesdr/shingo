@@ -197,80 +197,25 @@ func (h *Handlers) apiConfirmPostCutoverFlag(w http.ResponseWriter, r *http.Requ
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
-// apiReleaseChangeoverWait gates the changeover wait-points (ready / tooling done).
+// apiReleaseChangeoverWait WAS HERE, and is gone.
 //
-// HMI ORPHAN as of 2026-05-10 (HMI Tier 2). The operator-station
-// changeover-wide RELEASE header button was removed and per-node release
-// (apiReleaseOrder on the evac order, with HandleBinPickedUp auto-firing
-// the supply on pickup-confirm) became the only operator-driven release
-// path during changeover. No HMI surface currently posts to this
-// endpoint. Two reasons it's intentionally kept rather than deleted:
+// It documented itself as an HMI orphan on 2026-05-10 and said the endpoint,
+// handler and router registration were safe to remove together if neither of
+// its two reasons for existing panned out "within a reasonable window". Three
+// months on, neither did: no HMI surface posts to it, and the per-node scope it
+// grew in the meantime was never wired to a button either. The operator board
+// releases per node through /process-nodes/{id}/release-staged.
 //
-//  1. Future bulk shortcut. If floor pushes back on per-node click count
-//     for happy-path multi-node changeovers, a "Release All Ready Nodes"
-//     button can repurpose this endpoint with a single confirmation
-//     modal upfront (vs the toast-after-batch pattern we removed).
+// A registered route with no caller is a door nobody checks. It still parses a
+// body, still builds a disposition, and still fires the SSE broadcast — so it
+// is reachable by anything that can reach the API, and it is the one release
+// path no operator flow exercises.
 //
-//  2. ReleaseChangeoverWait still has an audit-driven contract worth
-//     preserving — Phase 2's evac-first sequencing + pending-supply
-//     counter — so the engine method stays as a future composition
-//     target. Deleting the HTTP wrapper would force a re-derivation if
-//     either need surfaces.
-//
-// If neither condition pans out within a reasonable window, this
-// endpoint + handler + the router registration are safe to remove
-// together. Until then: marked dead so a reader doesn't waste time
-// chasing why the HMI doesn't hit it.
-//
-// Body shape (when present) matches apiReleaseOrder /
-// apiReleaseNodeStagedOrders — disposition string + qty_by_part / partial
-// count + called_by. The disposition the operator chose at the modal
-// applies to the EVAC leg of each task; the supply leg is always released
-// with no manifest action regardless of body content (see
-// ReleaseChangeoverWait godoc for the asymmetry rationale).
-//
-// Body / called_by are OPTIONAL on this endpoint. A bare-body POST is
-// accepted and operates with default disposition — evac legs default to
-// capture_lineside (release_empty on the wire), supply legs always no-op.
-// Empty called_by is logged and replaced with "operator_station" so
-// audit trails remain populated if a future caller posts without it.
-func (h *Handlers) apiReleaseChangeoverWait(w http.ResponseWriter, r *http.Request) {
-	processID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid process id")
-		return
-	}
-	var req releaseRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-	if strings.TrimSpace(req.CalledBy) == "" {
-		req.CalledBy = "operator_station"
-	}
-	disp := buildReleaseDisposition(req)
-	// Optional per-node scope. Absent = every task (the changeover-wide
-	// release this endpoint has always done); present = just that node's task,
-	// which is the affordance the operator board actually uses.
-	var result engine.ReleaseChangeoverWaitResult
-	if req.NodeID != 0 {
-		result, err = h.orchestration.ReleaseChangeoverWaitForNode(processID, req.NodeID, disp)
-	} else {
-		result, err = h.orchestration.ReleaseChangeoverWait(processID, disp)
-	}
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "wait-released"}})
-	writeJSONWithTrigger(w, r, map[string]any{
-		"status":   "ok",
-		"released": result.Released,
-		"pending":  result.Pending,
-	}, "refreshChangeover")
-}
+// The ENGINE side stays: Engine.ReleaseChangeoverWait and
+// ReleaseChangeoverWaitForNode keep Phase 2's evac-first sequencing and its
+// pending-supply counter, and both are covered by tests. What is gone is the
+// HTTP wrapper. A future "Release All Ready Nodes" button composes them again
+// in a handler written for the button it serves.
 
 // apiChangeoverGateStatus is the read-only "what is the changeover waiting
 // on" endpoint behind the live panel. GET, no mutation, safe to poll.

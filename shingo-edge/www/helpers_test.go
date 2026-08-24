@@ -83,8 +83,7 @@ type stubEngine struct {
 	// the values that flowed through. Add new fields here as needed; keep
 	// them named after the method that writes to them so the assertion
 	// site is easy to find.
-	lastReleaseChangeoverWaitDisp *engine.ReleaseDisposition
-	lastReleaseOrderDisposition   *engine.ReleaseDisposition
+	lastReleaseOrderDisposition *engine.ReleaseDisposition
 
 	// ChangeoverGateStatus canned response — the gate-status endpoint is a
 	// pure read, so the stub just replays whatever the test set.
@@ -223,19 +222,8 @@ func (s *stubEngine) CancelProcessChangeover(int64) error                   { re
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error   { return nil }
 func (s *stubEngine) PostCutoverFlag(int64) (*engine.PostCutoverFlag, bool) { return nil, false }
 func (s *stubEngine) ClearPostCutoverFlag(int64) error                      { return nil }
-func (s *stubEngine) ReleaseChangeoverWait(_ int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
-	d := disp
-	s.lastReleaseChangeoverWaitDisp = &d
-	return engine.ReleaseChangeoverWaitResult{}, nil
-}
 func (s *stubEngine) ChangeoverGateStatus(int64) (bool, []domain.Blocker, error) {
 	return s.gateCanComplete, s.gateBlockers, s.gateErr
-}
-func (s *stubEngine) ReleaseChangeoverWaitForNode(_, nodeID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
-	d := disp
-	s.lastReleaseChangeoverWaitDisp = &d
-	s.lastReleaseNodeID = nodeID
-	return engine.ReleaseChangeoverWaitResult{}, nil
 }
 func (s *stubEngine) AbandonChangeoverSupply(_, nodeID int64, acceptHalf bool, _ string) error {
 	s.lastAbandonNodeID = nodeID

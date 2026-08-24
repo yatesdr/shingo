@@ -133,8 +133,6 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ReconnectKafka",
 		"RecordBinCount",
 		"RefuseSupply",
-		"ReleaseChangeoverWait",
-		"ReleaseChangeoverWaitForNode",
 		"ReleaseNodeEmpty",
 		"ReleaseNodePartial",
 		"ReleaseNodeWithRemainingUOP",

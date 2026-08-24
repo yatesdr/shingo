@@ -724,6 +724,10 @@ function claimFieldVisibility(role, swap) {
         // Auto-push is only meaningful for a consume manual_swap
         // (unloader pulling parts from a bin).
         'claims-add-auto-push-row':           isManual && role === 'consume',
+        // The load directive is a LOADER's card behaviour, so it follows the
+        // manual_swap fieldset. Role-neutral: a loader and an unloader both
+        // have a card, and both can be told to name what the changeover needs.
+        'claims-add-load-directive-row':      isManual,
         // Round 4 — Routing, a new fieldset. Key routes are the named paths a
         // leg may take; meaningless for a loader, which does not drive.
         'claims-routing-fieldset':            ROUND4_ROUTING && !isManual,
@@ -914,6 +918,7 @@ function readClaimStateFromForm() {
         indexRobotSupplies: get('claims-add-index-robot-supplies').checked,
         keyRoute: readKeyRoute(),
         keyTask: get('claims-add-key-task').value,
+        changeoverLoadDirective: get('claims-add-load-directive').checked,
         changeoverEvacSeats: readEvacSeats(),
         changeoverEvacDestination: get('claims-add-evac-destination').value,
         autoConfirm: get('claims-add-auto-confirm').checked,
@@ -949,6 +954,7 @@ function writeClaimStateToForm(state) {
     get('claims-add-index-robot-supplies').checked = !!state.indexRobotSupplies;
     writeKeyRoute(state.keyRoute || []);
     get('claims-add-key-task').value = state.keyTask || '';
+    get('claims-add-load-directive').checked = !!state.changeoverLoadDirective;
     writeEvacSeats(state.changeoverEvacSeats || []);
     get('claims-add-evac-destination').value = state.changeoverEvacDestination || '';
     get('claims-add-auto-confirm').checked = !!state.autoConfirm;
@@ -1509,6 +1515,9 @@ function claimForbiddenFields(role, swap, state) {
         forbid('pairedCoreNode', 'Paired Node');
     }
     var seats = state.changeoverEvacSeats || [];
+    if (!isManual && state.changeoverLoadDirective) {
+        out.push({ key: 'changeoverLoadDirective', label: 'Changeover loading instruction', value: false });
+    }
     if (isManual && (state.keyRoute || []).length > 0) {
         out.push({ key: 'keyRoute', label: 'Key route', value: [] });
     }
@@ -1560,21 +1569,28 @@ function claimForbiddenFields(role, swap, state) {
 // fieldset hid, so the operator's only signal was noticing later that a value
 // had gone. Naming them up front makes the drop a decision rather than a
 // discovery.
+// setHidden sets both halves of hiding an element: the `hidden` attribute for
+// meaning, and `.is-hidden` for effect. See that class in shared/components.css
+// for why the attribute is not enough by itself.
+function setHidden(el, hide) {
+    if (!el) return;
+    el.hidden = !!hide;
+    el.classList.toggle('is-hidden', !!hide);
+}
+
 function renderModeDropNote(role, swap, state) {
     var el = document.getElementById('claims-mode-drop-note');
     if (!el) return;
     var dropped = claimForbiddenFields(role, swap, state);
     if (dropped.length === 0) {
         el.textContent = '';
-        el.hidden = true;
-        el.style.display = 'none';
+        setHidden(el, true);
         return;
     }
     var names = dropped.map(function(d) { return d.label; }).join(', ');
     el.textContent = (SWAP_MODE_LABELS[swap] || swap) +
         ' does not use: ' + names + ' — cleared when you save.';
-    el.hidden = false;
-    el.style.display = '';
+    setHidden(el, false);
 }
 
 // renderClaimForm: drives the editor DOM from current role/swap mode.
@@ -1589,26 +1605,23 @@ function renderClaimForm() {
     var isTwoRobot = swap === 'two_robot';
     var visibility = claimFieldVisibility(role, swap);
 
-    // Apply visibility map. Both `hidden` and inline `display` are toggled:
-    // several template elements use the HTML `hidden` attribute as their
-    // initial state, and clearing inline `display` alone leaves the UA
-    // `[hidden]{display:none}` rule in force.
+    // Apply the visibility map. The `hidden` ATTRIBUTE carries the meaning —
+    // it is what assistive technology and find-in-page read — and `.is-hidden`
+    // does the hiding, because the attribute alone cannot: `[hidden]` has
+    // class-level specificity, so `.check-row { display: flex }` beats it and
+    // a row hidden only by the attribute stays on screen.
+    //
+    // This replaces a paired inline `style.display` write plus two special
+    // cases that re-set `display: flex` on the rows the attribute could not
+    // hide. Nothing here needs to know what an element's display value is
+    // supposed to be when it comes back, which is what made those cases
+    // necessary and what made them easy to forget for a third row.
     for (var id in visibility) {
         var el = document.getElementById(id);
         if (el) {
             el.hidden = !visibility[id];
-            el.style.display = visibility[id] ? '' : 'none';
+            el.classList.toggle('is-hidden', !visibility[id]);
         }
-    }
-    // The reuse-bins row uses display:flex when visible (not block).
-    var reuseRow = document.getElementById('claims-add-reuse-bins-row');
-    if (reuseRow && visibility['claims-add-reuse-bins-row']) {
-        reuseRow.style.display = 'flex';
-    }
-    // auto-push uses flex too.
-    var autoPushRow = document.getElementById('claims-add-auto-push-row');
-    if (autoPushRow && visibility['claims-add-auto-push-row']) {
-        autoPushRow.style.display = 'flex';
     }
 
     // Disable outbound staging for two_robot (data: ignored anyway).
@@ -1730,6 +1743,7 @@ function defaultClaimState() {
         indexRobotSupplies: false,
         keyRoute: [],
         keyTask: '',
+        changeoverLoadDirective: false,
         autoConfirm: false,
     };
 }
@@ -1790,6 +1804,7 @@ function editClaim(claim) {
         indexRobotSupplies: !!claim.index_robot_supplies,
         keyRoute: (claim.key_route || []).slice(),
         keyTask: claim.key_task || '',
+        changeoverLoadDirective: !!claim.changeover_load_directive,
         changeoverEvacSeats: claim.changeover_evac_seats || [],
         changeoverEvacDestination: claim.changeover_evac_destination || '',
         autoConfirm: !!claim.auto_confirm,
@@ -1890,6 +1905,7 @@ async function saveClaim() {
         index_robot_supplies: state.indexRobotSupplies,
         key_route: state.keyRoute,
         key_task: state.keyTask,
+        changeover_load_directive: state.changeoverLoadDirective,
         changeover_evac_seats: state.changeoverEvacSeats,
         changeover_evac_destination: state.changeoverEvacDestination,
         auto_confirm: state.autoConfirm,

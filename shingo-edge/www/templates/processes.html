@@ -621,6 +621,10 @@ window.processNodeNames = {{json .ProcessNodeNames}};
                         <input type="checkbox" id="claims-add-auto-push">
                         <span>Auto-push full bins from inbound source whenever the unloader window is free (continuous drain — no kanban demand needed)</span>
                     </label>
+                    <label id="claims-add-load-directive-row" class="check-row mt-3" hidden>
+                        <input type="checkbox" id="claims-add-load-directive">
+                        <span>Card becomes a loading instruction during a changeover <span class="label-aside">Instead of offering this loader's whole payload list, the card names the empty bin type the changing-over cells are waiting for.</span></span>
+                    </label>
                 </div>
                 <div id="claims-auto-request-standard" hidden>
                     <div class="field-help">When the node becomes vacant after a loaded bin is moved out, automatically request a new empty bin for this payload.</div>

@@ -42,6 +42,11 @@ CREATE TABLE process_nodes (
   sequence INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(process_id, code));
+-- HAND-COPIED FROM THE EDGE SCHEMA, and it drifts. seeddev cannot import the
+-- edge module, so this DDL is maintained by hand against
+-- shingo-edge/store/schema/schema.snapshot.sql; a column the seeder learns to
+-- write fails here with "no such column" until it is added in both places.
+-- That failure is the only thing keeping the two in step.
 CREATE TABLE style_node_claims (
   id INTEGER PRIMARY KEY AUTOINCREMENT, style_id INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
   core_node_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'consume', swap_mode TEXT NOT NULL,
@@ -52,6 +57,7 @@ CREATE TABLE style_node_claims (
   allowed_payload_codes TEXT NOT NULL DEFAULT '', auto_request_payload TEXT NOT NULL DEFAULT '',
   keep_staged INTEGER NOT NULL DEFAULT 0, evacuate_on_changeover INTEGER NOT NULL DEFAULT 0,
   paired_core_node TEXT NOT NULL DEFAULT '', auto_confirm INTEGER NOT NULL DEFAULT 0,
+  second_paired_core_node TEXT NOT NULL DEFAULT '', index_robot_supplies INTEGER NOT NULL DEFAULT 0,
   sequence INTEGER NOT NULL DEFAULT 0, lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
   reuse_compatible_bins INTEGER NOT NULL DEFAULT 0, auto_push INTEGER NOT NULL DEFAULT 0,
   reorder_point_source TEXT NOT NULL DEFAULT 'legacy', created_at TEXT NOT NULL DEFAULT (datetime('now')),

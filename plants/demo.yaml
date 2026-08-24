@@ -340,6 +340,17 @@ claims:
     uop_capacity: 30
     auto_reorder: true
     paired_core_node: PLN_002
+    # THE FLIP, ON THE ALTERNATE STYLE ONLY, and that is deliberate on two
+    # counts. It gives a scenario both choreographies on one press — run
+    # PRESS-1-RUN for the unflipped shape, changeover to PRESS-1-ALT for the
+    # flipped one, no second cell to configure — and it is the exact
+    # cross-style disagreement UpsertClaim WARNS about, so a sim run also
+    # exercises the warning on a press that really does have two styles.
+    #
+    # It is a warning and not a refusal because the flag describes hardware:
+    # a real plant sets it the same on every style of a press. A sim is the
+    # one place setting it differently is useful.
+    index_robot_supplies: true
     inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
 

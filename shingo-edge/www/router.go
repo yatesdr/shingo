@@ -271,7 +271,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/processes/{id}/changeover/switch-station/{stationID}", h.apiSwitchOperatorStationToTarget)
 			r.Post("/processes/{id}/changeover/switch-node/{nodeID}", h.apiSwitchNodeToTarget)
 			r.Post("/processes/{id}/changeover/abandon-node/{nodeID}", h.apiAbandonChangeoverNode)
-			r.Post("/processes/{id}/changeover/release-wait", h.apiReleaseChangeoverWait)
+			// /changeover/release-wait is RETIRED. Nothing called it: the
+			// operator board releases per node through
+			// /process-nodes/{id}/release-staged, and the per-node scope this
+			// endpoint grew (a node_id in the body) was never wired to a
+			// button. A registered route with no caller is a door nobody
+			// checks — see apiReleaseChangeoverWait's removal for what came
+			// with it.
 			r.Post("/processes/{id}/changeover/sequential-cutover/{nodeID}", h.apiSequentialChangeoverCutover)
 
 			// Orders — LIFECYCLE ONLY here. These act on an order that already

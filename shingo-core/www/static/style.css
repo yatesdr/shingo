@@ -7,7 +7,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 a { color: var(--primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-.container { max-width: 1200px; margin: 0 auto; padding: 0 1rem; }
 
 /* Nav */
 nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.75rem 0; }
@@ -132,11 +131,6 @@ textarea { resize: vertical; min-height: 60px; }
 }
 .check-list-item input[type="checkbox"] { width: auto; margin: 0; flex: none; }
 .check-list-item:hover { color: var(--primary); }
-/* The visibility utility the form-state convention is written against: a form
-   renders from its state and toggles this class, instead of event handlers
-   reaching for element.style.display. !important because it lands on elements
-   that also carry a display-setting layout class (.flex, .form-group). */
-.is-hidden { display: none !important; }
 
 /* Buttons */
 .btn { display: inline-block; padding: 0.4rem 1rem; border: none; border-radius: 0.3rem; font-size: 0.9rem; cursor: pointer; text-align: center; }
@@ -198,9 +192,10 @@ textarea { resize: vertical; min-height: 60px; }
 
 /* Nodes toolbar "Dev tools" disclosure — holds the test-node generate/delete
  * actions that used to be hidden behind Ctrl/Shift-click on Sync from Fleet. */
+/* The marker reset is .disclosure-bare (shared/components.css); this carries
+   only what makes it a dropdown rather than a plain disclosure. */
 .dev-menu { position: relative; display: inline-block; }
-.dev-menu > summary { list-style: none; display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
-.dev-menu > summary::-webkit-details-marker { display: none; }
+.dev-menu > summary { display: inline-flex; align-items: center; gap: 0.3rem; }
 .dev-menu-items {
   position: absolute;
   right: 0;
@@ -592,19 +587,14 @@ textarea { resize: vertical; min-height: 60px; }
 .mb-1 { margin-bottom: 0.5rem; }
 .mb-2 { margin-bottom: 1rem; }
 .mt-2 { margin-top: 1rem; }
-.text-muted { color: var(--text-muted); }
 .text-right { text-align: right; }
-.flex { display: flex; }
 .flex-between { justify-content: space-between; align-items: center; }
-.gap-1 { gap: 0.5rem; }
 .gap-05 { gap: 0.25rem; }
-.gap-2 { gap: 1rem; }
 .flex-col { display: flex; flex-direction: column; }
 .flex-center { display: flex; align-items: center; }
 .flex-wrap { flex-wrap: wrap; }
 .items-center { align-items: center; }
 .ml-05 { margin-left: 0.5rem; }
-.ml-auto { margin-left: auto; }
 .mt-0 { margin-top: 0; }
 .mt-05 { margin-top: 0.5rem; }
 .mt-1 { margin-top: 0.5rem; }
@@ -613,10 +603,8 @@ textarea { resize: vertical; min-height: 60px; }
 .p-2 { padding: 1rem; }
 .text-sm { font-size: 0.85rem; }
 .text-xs { font-size: 0.75rem; }
-.text-center { text-align: center; }
 .font-semibold { font-weight: 600; }
 .w-full { width: 100%; }
-.nowrap { white-space: nowrap; }
 .overflow-y-auto { overflow-y: auto; }
 .hide { display: none; }
 

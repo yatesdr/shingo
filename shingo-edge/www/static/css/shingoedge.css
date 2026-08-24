@@ -180,12 +180,6 @@ body {
     color: var(--text);
 }
 
-/* === Container === */
-.container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 1rem;
-}
 
 main.container {
     padding-top: 1.5rem;
@@ -555,36 +549,6 @@ textarea.form-input {
     flex-direction: column;
 }
 
-/* A modal carrying a real form rather than a confirmation. 500px forces
- * every paired field onto its own row, which is most of why the claim editor
- * grew past the viewport in the first place. */
-/* ─── Utility classes the style guide documents (Edge copies) ────────────
- *
- * § "Utility classes" of the style guide names these as available and only
- * the margin steps and .mono existed. `.text-muted` was the expensive gap:
- * 22 elements across these templates ask for it, and measured in Chrome they
- * rendered rgb(33,37,41) — identical to plain body text — while the .text-
- * muted-sm variant beside them correctly rendered rgb(104,113,122). Text
- * somebody deliberately quietened had been shouting.
- *
- * HERE RATHER THAN shared/components.css, because Core's style.css already
- * declares this set and is co-loaded with components.css on every Core page.
- * A shared copy is a silent double declaration — the failure the CSS
- * collision guard exists to catch — and .mt-1 genuinely disagrees across the
- * surfaces (0.5rem on Core, 0.25rem here, where components.css already spends
- * 0.5rem on .mt-2). Unifying them belongs to a pass that owns both surfaces.
- *
- * Values match Core's where Core has one, so a later hoist is a move rather
- * than a renegotiation. .mt-1/.mb-1 are the exception and are deliberately
- * absent: adopting Core's 0.5rem would duplicate .mt-2, and adopting 0.25rem
- * would silently reshape Core. */
-.flex { display: flex; }
-.gap-1 { gap: 0.5rem; }
-.gap-2 { gap: 1rem; }
-.text-muted { color: var(--text-muted); }
-.text-center { text-align: center; }
-.nowrap { white-space: nowrap; }
-.ml-auto { margin-left: auto; }
 
 /* A readonly input that is derived rather than entered (UoP per bin comes
  * from the payload catalog). Reads as a value, not a field you failed to

@@ -20,8 +20,15 @@ const vm = require('vm');
 // DOM stub
 // -----------------------------------------------------------------------
 
+// `{ display: 'none' }` in a specimen means "this element starts hidden", which
+// in the real template is the `hidden` ATTRIBUTE and in the page is the
+// `.is-hidden` class. It is seeded as both here rather than as inline display:
+// the claim editor no longer writes inline display at all, so a fixture that
+// started an element at display:none would keep it hidden forever and every
+// assertion about it showing would fail for a fixture reason.
 function makeElement(id, opts = {}) {
     const tagName = (opts.tag || 'div').toUpperCase();
+    const startsHidden = opts.display === 'none';
     const el = {
         id,
         tagName,
@@ -33,7 +40,8 @@ function makeElement(id, opts = {}) {
         innerHTML: '',
         disabled: false,
         selectedIndex: 0,
-        style: { display: opts.display !== undefined ? opts.display : '', cssText: '' },
+        style: { display: startsHidden ? '' : (opts.display !== undefined ? opts.display : ''), cssText: '' },
+        hidden: startsHidden,
         dataset: Object.assign({}, opts.dataset || {}),
         classList: makeClassList(),
         options: opts.options || [],
@@ -82,6 +90,9 @@ function makeElement(id, opts = {}) {
     el.addEventListener = (ev, fn) => {
         (el._listeners[ev] = el._listeners[ev] || []).push(fn);
     };
+    if (startsHidden) {
+        el.classList.add('is-hidden');
+    }
     el.remove = () => {};
     el.insertAdjacentHTML = (_pos, html) => { el.innerHTML = String(el.innerHTML) + String(html); };
     return el;
@@ -273,6 +284,8 @@ function buildDOM() {
     add('claims-auto-request-manual-swap', { display: 'none' });
     add('claims-add-auto-push-row', { display: 'none' });
     add('claims-add-auto-push', { tag: 'input', type: 'checkbox' });
+    add('claims-add-load-directive-row', { display: 'none' });
+    add('claims-add-load-directive', { tag: 'input', type: 'checkbox' });
     add('claims-auto-request-standard', { display: 'none' });
     add('claims-add-auto-request', { tag: 'select', value: '' });
     add('claims-add-auto-confirm', { tag: 'input', type: 'checkbox' });
@@ -498,6 +511,9 @@ function expectedVisibility(role, swap) {
         'claims-auto-request-manual-swap': false,
         'claims-auto-request-standard': !isManual,
         'claims-add-auto-push-row': isManual && role === 'consume',
+        // Round 4 shipped the card directive. Role-neutral: a loader and an
+        // unloader both have a card.
+        'claims-add-load-directive-row': isManual,
         // Round 4 shipped key routes; round 2's registered slots are real now.
         // A manual_swap loader does not drive, so it has no route to configure.
         'claims-routing-fieldset': !isManual,
@@ -514,7 +530,12 @@ function setRoleAndSwap(elements, role, swap) {
     elements['claims-add-swap'].value = swap;
 }
 
+// Visibility is now the `.is-hidden` class OR an inline display:none — the
+// claim editor moved to the class, and the rest of the page still writes
+// inline display in a few places. Reading both means a case that switches
+// mechanism does not silently start passing.
 function isVisible(el) {
+    if (el.classList && el.classList._has('is-hidden')) return false;
     return el.style.display !== 'none';
 }
 
@@ -1082,6 +1103,32 @@ function runNoDropNoteWhenNothingToDropCase() {
     const ctx = createContext(elements, []);
     loadProcessesJS(ctx);
 
+    // editClaim early-returns with no style selected, so the form would never
+    // be populated and every assertion below would be about a blank form.
+    elements['claims-style-selector'].value = '9';
+    ctx.onClaimsStyleChanged();
+
+    // SHOW IT FIRST. The note starts hidden, so a case that only ever asked a
+    // hidden note to hide would pass with the hiding removed entirely — the
+    // vacuous shape this file exists to avoid. Load a claim whose mode DOES
+    // discard something, confirm the note is on screen, then switch.
+    ctx.editClaim({
+        id: 43,
+        core_node_name: 'N1',
+        role: 'consume',
+        swap_mode: 'manual_swap',
+        payload_code: 'PL1',
+        inbound_staging: 'IN1',
+        outbound_staging: 'OUT1',
+        paired_core_node: 'N2',
+    });
+    ctx.renderClaimForm();
+    const note = elements['claims-mode-drop-note'];
+    if (!isVisible(note)) {
+        reportFailure('dropNote: shown when the mode discards something',
+            'visible', 'hidden — the rest of this case then proves nothing');
+    } else { passed++; }
+
     ctx.editClaim({
         id: 44,
         core_node_name: 'N1',
@@ -1091,9 +1138,15 @@ function runNoDropNoteWhenNothingToDropCase() {
         inbound_staging: 'IN1',
     });
     ctx.renderClaimForm();
-    const note = elements['claims-mode-drop-note'];
-    if (note.hidden === false && note.style.display !== 'none') {
-        reportFailure('dropNote: silent when the mode discards nothing', 'hidden', note.textContent);
+    // BOTH HALVES. `hidden` carries the meaning and `.is-hidden` does the
+    // hiding; the attribute on its own does not reliably hide anything, so a
+    // check that accepted it alone would pass while the note stayed on screen.
+    if (note.hidden !== true) {
+        reportFailure('dropNote: marked hidden when the mode discards nothing', true, note.hidden);
+    } else { passed++; }
+    if (isVisible(note)) {
+        reportFailure('dropNote: actually off-screen when the mode discards nothing',
+            'hidden', 'visible — the hidden attribute alone does not hide it');
     } else { passed++; }
 }
 
@@ -1414,6 +1467,7 @@ const ROUND_3_4_SLOTS = [];
 // so.
 const ROUND_4_SHIPPED_SLOTS = [
     'claims-add-index-robot-supplies-row',
+    'claims-add-load-directive-row',
     'claims-routing-fieldset',
     'claims-add-key-routes-group',
 ];
@@ -1821,6 +1875,56 @@ function runKeyRouteKeepsUnknownPointCase() {
     } else { passed++; }
 }
 
+// THE CARD DIRECTIVE ROUND-TRIPS. It has existed in the domain, the store and
+// the DDL since round 3 with NO control anywhere, which is the round-1 trap the
+// visibility table exists to close: a field with full backend support and no
+// way to set it. This is the control, so this is the assertion that it saves.
+async function runLoadDirectiveCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+    elements['claims-style-selector'].value = '42';
+    ctx.onClaimsStyleChanged();
+
+    ctx.editClaim({
+        id: 200,
+        core_node_name: 'LOADER_A',
+        role: 'produce',
+        swap_mode: 'manual_swap',
+        payload_code: 'PL1',
+        changeover_load_directive: true,
+    });
+    if (!elements['claims-add-load-directive'].checked) {
+        reportFailure('loadDirective: the stored flag loads into its checkbox', true, false);
+    } else { passed++; }
+
+    elements['claims-add-load-directive'].checked = false;
+    await ctx.saveClaim();
+    if (apiRecorder.length !== 1) {
+        reportFailure('loadDirective: expected 1 POST', 1, apiRecorder.length);
+        return;
+    }
+    if (apiRecorder[0].body.changeover_load_directive !== false) {
+        reportFailure('loadDirective: the modal owns the control, so it sends it',
+            false, apiRecorder[0].body.changeover_load_directive);
+    } else { passed++; }
+}
+
+// ...and a mode with no card cannot keep a card directive. Named in the drop
+// note rather than silently cleared at save — the round-2 rule.
+function runLoadDirectiveDroppedOffLoaderCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+    const dropped = ctx.claimForbiddenFields('produce', 'two_robot',
+        Object.assign(ctx.defaultClaimState(), { changeoverLoadDirective: true }));
+    if (!dropped.some(d => d.key === 'changeoverLoadDirective')) {
+        reportFailure('loadDirective: dropped for a mode with no card',
+            'named in the drop list', dropped.map(d => d.key));
+    } else { passed++; }
+}
+
 // The compare grid must stay silent about it — absent means "leave the
 // hardware alone".
 function runIndexRobotSuppliesNotInCompareGridCase() {
@@ -1860,6 +1964,8 @@ function runIndexRobotSuppliesNotInCompareGridCase() {
     runIndexRobotSuppliesNotInCompareGridCase();
     await runKeyRouteSaveCase();
     runKeyRouteKeepsUnknownPointCase();
+    await runLoadDirectiveCase();
+    runLoadDirectiveDroppedOffLoaderCase();
     runServerFieldErrorCase();
     runOrphanFieldErrorCase();
     await runSaveClaimSchemaCase();
