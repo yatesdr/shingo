@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sort"
+	"sync"
 	"time"
 
 	"shingo/protocol/clock"
@@ -92,6 +94,35 @@ type Driver struct {
 	robotBusy  time.Duration // ∫ robotsInUse dt
 	queueWait  time.Duration // ∫ queuedCount dt
 	elapsed    time.Duration // ∫ dt since the first step
+
+	// ── THE FLEET, PUBLISHED FOR READERS ON OTHER GOROUTINES ─────────────
+	//
+	// Everything above is touched only by step(), which runs on one
+	// goroutine — that is why none of it is locked, and the metric readout
+	// says so explicitly. GetRobotsStatus is called from HTTP handlers and
+	// from the confidence collector, so it cannot read freeRobots or
+	// progress directly without a race.
+	//
+	// So step() PUBLISHES a snapshot at the end of each tick and readers take
+	// a copy under this lock. One writer, many readers, and the driver stays
+	// single-threaded.
+	fleetMu   sync.RWMutex
+	fleetSnap []FleetRobot
+}
+
+// FleetRobot is one member of the simulated fleet as the driver knows it:
+// a durable name from the pool, whether it is currently holding an order, and
+// a rough idea of where that order started.
+type FleetRobot struct {
+	ID   string
+	Busy bool
+	// At is the first block location of the order this robot is running, or ""
+	// when it is free. AN APPROXIMATION, and the only one available: the
+	// simulator has no position model, so this is where the work is, not where
+	// the robot is. It exists so a board renders somewhere rather than nowhere.
+	// Nothing that decides anything may read it — see the note on
+	// GetRobotsStatus about recovery tier 3.
+	At string
 }
 
 // NewDriver builds a Driver from sim config. Exported so callers can construct
@@ -189,6 +220,7 @@ func (d *Driver) run(ctx context.Context) {
 // future DST suite depends on.
 func (d *Driver) step(now time.Time) {
 	d.accrue(now)
+	defer d.publishFleet()
 	for _, vid := range d.sim.VendorOrderIDs() {
 		ov := d.sim.GetOrder(vid)
 		if ov == nil {
@@ -348,6 +380,43 @@ func (d *Driver) dequeue(p *orderProgress) {
 		p.queuedSince = time.Time{}
 		d.queuedCount--
 	}
+}
+
+// publishFleet copies the pool into the snapshot readers see.
+//
+// BOTH HALVES, and that is the point. The free robots are as much a part of
+// the fleet as the busy ones — a board that shows only robots currently
+// holding an order shows a fleet that shrinks to nothing when the plant goes
+// quiet, and every gate that asks "is there a robot that could take this"
+// answers no.
+func (d *Driver) publishFleet() {
+	snap := make([]FleetRobot, 0, len(d.freeRobots)+len(d.progress))
+	for vid, p := range d.progress {
+		if p.robotID == "" {
+			continue
+		}
+		at := ""
+		if ov := d.sim.GetOrder(vid); ov != nil && len(ov.Blocks) > 0 {
+			at = ov.Blocks[0].Location
+		}
+		snap = append(snap, FleetRobot{ID: p.robotID, Busy: true, At: at})
+	}
+	for _, id := range d.freeRobots {
+		snap = append(snap, FleetRobot{ID: id, Busy: false})
+	}
+	sort.Slice(snap, func(i, j int) bool { return snap[i].ID < snap[j].ID })
+
+	d.fleetMu.Lock()
+	d.fleetSnap = snap
+	d.fleetMu.Unlock()
+}
+
+// Fleet returns the simulated fleet as of the last tick. Safe from any
+// goroutine; nil before the driver's first step.
+func (d *Driver) Fleet() []FleetRobot {
+	d.fleetMu.RLock()
+	defer d.fleetMu.RUnlock()
+	return append([]FleetRobot(nil), d.fleetSnap...)
 }
 
 // acquireRobot takes a robot from the pool and records its ID on the order.

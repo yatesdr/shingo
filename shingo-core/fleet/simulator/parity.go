@@ -3,8 +3,6 @@
 package simulator
 
 import (
-	"fmt"
-
 	"shingocore/fleet"
 )
 
@@ -32,31 +30,50 @@ func isActiveRobotState(state string) bool {
 	return state == "RUNNING" || state == "WAITING"
 }
 
-// GetRobotsStatus synthesizes one robot per active order, with a stable
-// SIM-ROBOT-N id (N = position among active orders in creation order) so the
-// robots board renders something coherent in sim mode. Position is approximated
-// by the order's first block location — the simulator itself doesn't track
-// which block a robot is on (that's the driver's private bookkeeping).
+// GetRobotsStatus reports THE DRIVER'S FLEET — the durable, named pool the
+// simulator actually assigns work from.
+//
+// IT USED TO MINT ONE ROBOT PER ACTIVE ORDER, named SIM-ROBOT-N by position in
+// creation order, with Available:false and Busy:true on every row. That was
+// wrong in three ways at once, and each one broke something:
+//
+//   - THE NAMES DID NOT MATCH. The driver has kept a durable named pool
+//     (AMR-01..NN, exclusive FIFO) since G16, and that is what lands in
+//     orders.robot_id and on every waybill. A board keyed on SIM-ROBOT-1 and a
+//     database keyed on AMR-03 describe two different fleets, so anything that
+//     joins them — the carried-bin recovery's robot lookup above all — found
+//     nothing.
+//   - ROBOTS VANISHED. A robot existed only while its order was active, so the
+//     moment an order went terminal its robot left the fleet. A bin left riding
+//     that robot's deck belongs to a robot the board says does not exist.
+//   - NOTHING WAS EVER DISPATCHABLE. Available:false on every row fails the
+//     recovery gate unconditionally: robotCanTakeARecoveryOrder refuses a robot
+//     the plant has taken out of the dispatch pool, and every simulated robot
+//     looked taken out.
+//
+// So the pool is the answer: in-use robots by their real name and Busy, free
+// robots Available. The driver publishes it once per tick (see Driver.Fleet).
+//
+// TIER 3 OF THE RECOVERY DESTINATION FALLBACK STAYS UNREACHABLE IN SIM, and
+// that is not fixed here. It resolves "the node the robot is parked at", and
+// the driver has no position model — CurrentStation below is the order's first
+// block location for a busy robot and empty for a free one, neither of which is
+// where the robot is. A sim run exercises tiers 1 and 2; tier 3 needs a
+// position model that does not exist.
 func (s *SimulatorBackend) GetRobotsStatus() ([]fleet.RobotStatus, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	d := s.typedDriver()
+	if d == nil {
+		// No driver: nothing is assigning work, so there is no fleet. Honest,
+		// and it keeps the non-driver test backends from inventing robots.
+		return []fleet.RobotStatus{}, nil
+	}
 	robots := make([]fleet.RobotStatus, 0)
-	n := 0
-	for _, id := range s.orderSeq {
-		o, ok := s.orders[id]
-		if !ok || !isActiveRobotState(o.state) {
-			continue
-		}
-		n++
-		loc := ""
-		if len(o.blocks) > 0 {
-			loc = o.blocks[0].location
-		}
+	for _, r := range d.Fleet() {
 		robots = append(robots, fleet.RobotStatus{
-			VehicleID:    fmt.Sprintf("SIM-ROBOT-%d", n),
+			VehicleID:    r.ID,
 			Connected:    true,
-			Available:    false,
-			Busy:         true,
+			Available:    !r.Busy,
+			Busy:         r.Busy,
 			BatteryLevel: 100,
 			Model:        "SimBot",
 			CurrentMap:   "sim",
@@ -86,7 +103,7 @@ func (s *SimulatorBackend) GetRobotsStatus() ([]fleet.RobotStatus, error) {
 			// which is the correct sim behaviour and is now asserted rather
 			// than arrived at by every robot sharing the empty string.
 			MapMD5:         "sim-map-md5",
-			CurrentStation: loc,
+			CurrentStation: r.At,
 		})
 	}
 	return robots, nil
