@@ -93,7 +93,10 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 		var p struct {
 			Uptime int64 `json:"uptime"`
 		}
-		json.Unmarshal(req.Payload, &p)
+		if e := json.Unmarshal(req.Payload, &p); e != nil {
+			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
+			return
+		}
 		env, err = protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat, src, dst, &protocol.EdgeHeartbeat{
 			StationID: stationID,
 			Uptime:    p.Uptime,

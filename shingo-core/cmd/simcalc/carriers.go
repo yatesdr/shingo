@@ -73,10 +73,8 @@ type poolPlan struct {
 	seededEmpty  int
 	emptyDemand  float64 // empties consumed per minute (produce swaps drawing here)
 	emptySupply  float64 // empties freed per minute (consume swaps returning here)
-	demandBy     map[string]float64
-	supplyBy     map[string]float64
-	producePoint int  // stations drawing from this pool that need one to wait on
-	isZone       bool // false = the pool names something that is not a seeded zone
+	producePoint int     // stations drawing from this pool that need one to wait on
+	isZone       bool    // false = the pool names something that is not a seeded zone
 }
 
 // carrierPlan is the computed carrier picture for one plant.
@@ -96,14 +94,13 @@ type carrierPlan struct {
 
 // zoneHeadroom is the shuffle picture for one zone.
 type zoneHeadroom struct {
-	name         string
-	slots        int
-	seeded       int
-	freeUngated  int
-	freeGated    int
-	deepestDig   int // blockers a dig must relocate (max depth-1)
-	deepestLane  string
-	digIsUngated bool
+	name        string
+	slots       int
+	seeded      int
+	freeUngated int
+	freeGated   int
+	deepestDig  int // blockers a dig must relocate (max depth-1)
+	deepestLane string
 }
 
 func runCarriers(plant *plantspec.Plant, rate map[string]float64, transit, plantPath string, loaderCap, unloaderCap float64) {
@@ -231,7 +228,7 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	pool := func(name string) *poolPlan {
 		q := p.pools[name]
 		if q == nil {
-			q = &poolPlan{name: name, demandBy: map[string]float64{}, supplyBy: map[string]float64{}}
+			q = &poolPlan{name: name}
 			p.pools[name] = q
 		}
 		return q
@@ -276,10 +273,6 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 			}
 		}
 	}
-	for name := range p.pools {
-		p.pools[name].isZone = isZone[name]
-	}
-
 	// Which pool each payload's two sides act on. A produce claim spends an empty
 	// from its inbound_source; a consume claim frees one into its
 	// outbound_destination. Collected per payload because the rates below are per
@@ -364,7 +357,6 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 				each := filled / float64(len(pools))
 				for _, q := range pools {
 					pool(q).emptyDemand += each
-					pool(q).demandBy[name] += each
 				}
 			} else {
 				p.unpooled = appendUniq(p.unpooled, name+" (spends)")
@@ -375,7 +367,6 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 				each := emptied / float64(len(pools))
 				for _, q := range pools {
 					pool(q).emptySupply += each
-					pool(q).supplyBy[name] += each
 				}
 			} else {
 				p.unpooled = appendUniq(p.unpooled, name+" (frees)")
@@ -428,7 +419,6 @@ func computeHeadroom(plant *plantspec.Plant) []zoneHeadroom {
 			if blockers := len(l.Slots) - 1; blockers > zh.deepestDig {
 				zh.deepestDig = blockers
 				zh.deepestLane = l.Name
-				zh.digIsUngated = !gated
 			}
 		}
 		out = append(out, zh)
