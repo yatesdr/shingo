@@ -428,11 +428,6 @@ linters:
         text: "Function 'computeCarriers' has too many statements"
         linters:
           - funlen
-      # checkInvariants: transitional
-      - path: "shingo-core/cmd/soakstat/main\\.go"
-        text: "Function 'checkInvariants' has too many statements"
-        linters:
-          - funlen
       # shuffleSlotsFrom: transitional
       - path: "shingo-core/dispatch/reshuffle\\.go"
         text: "Function 'shuffleSlotsFrom' has too many statements"
