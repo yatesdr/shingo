@@ -6,6 +6,8 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
+	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // ---------------------------------------------------------------------------
@@ -42,6 +44,14 @@ func (r *recordingLoaderStore) LoaderForPayload(payload domain.PayloadCode, role
 	return r.unloader, nil
 }
 
+// mustNode reads a process node or fails the test.
+func mustNode(t *testing.T, db *store.DB, nodeID int64) *processes.Node {
+	t.Helper()
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "get process node")
+	return node
+}
+
 // seedStagedPressIndexPair builds a press-index produce pair from the REAL step
 // builder and stages both legs, with the runtime slots pointed at them.
 //
@@ -74,23 +84,9 @@ func seedStagedPressIndexPair(t *testing.T, uuidPrefix string) (*Engine, int64, 
 // release, and it fires after the release envelope is queued.
 func TestReleaseOrderWithLineside_U1FiresAfterTheRelease(t *testing.T) {
 	t.Parallel()
-	db := testEngineDB(t)
-	nodeID, node, claim := seedSwapClaim(t, db, protocol.SwapModeTwoRobotPressIndex, "")
-	disp, err := BuildSwapDispatch(node, claim)
-	testutil.MustNoErr(t, err, "build swap dispatch")
+	eng, nodeID, _, _ := seedStagedPressIndexPair(t, "uuid-u1")
+	claim := findActiveClaim(eng.db, mustNode(t, eng.db, nodeID))
 
-	legA := mkSwapLeg(t, db, nodeID, "uuid-u1-a", disp.StepsA, "")
-	legB := mkSwapLeg(t, db, nodeID, "uuid-u1-b", disp.StepsB, "")
-	testutil.MustNoErr(t, db.LinkOrderSiblings(legA.ID, legB.ID), "link siblings")
-	for _, id := range []int64{legA.ID, legB.ID} {
-		testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(protocol.StatusStaged)), "stage leg")
-	}
-	_, err = db.EnsureProcessNodeRuntime(nodeID)
-	testutil.MustNoErr(t, err, "ensure runtime")
-	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &legA.ID, &legB.ID), "runtime slots")
-	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claim.ID, 0), "bind claim")
-
-	eng := testEngine(t, db)
 	rec := &recordingLoaderStore{}
 	eng.loaderStore = rec
 
@@ -113,7 +109,7 @@ func TestReleaseOrderWithLineside_U1FiresAfterTheRelease(t *testing.T) {
 
 	// AND IT FIRED AFTER THE RELEASE. The outbox drains by id, so the release
 	// envelope must already be sitting there when the trigger runs.
-	msgs, err := db.ListPendingOutbox(200)
+	msgs, err := eng.db.ListPendingOutbox(200)
 	testutil.MustNoErr(t, err, "ListPendingOutbox")
 	sawRelease := false
 	for _, m := range msgs {
