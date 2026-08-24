@@ -66,6 +66,20 @@ type CreateOrderRequest struct {
 	Blocks     []OrderBlock
 	Priority   int
 	RobotGroup string // SEER robot-dispatch group (→ rds.SetOrderRequest.Group); "" = vendor default
+	// Vehicle PINS the order to one robot (→ rds.SetOrderRequest.vehicle).
+	// Empty is the normal case and means the fleet assigns — every order in the
+	// plant, because which robot does a job is the fleet's decision and taking
+	// it away costs throughput.
+	//
+	// The exception is an order about a SPECIFIC robot: a carried-bin recovery
+	// asks the robot that is holding a bin to set it down, and no other robot
+	// can carry that job out. Pinning is not a preference there, it is the
+	// entire content of the request.
+	//
+	// A pin to a robot the fleet will not dispatch (undispatchable, offline,
+	// charging) is an order that sits forever rather than one that goes to
+	// somebody else, so the caller checks dispatchability before pinning.
+	Vehicle string
 	// KeyRoute carries optional via-waypoints for a specific order (→
 	// rds.SetOrderRequest.KeyRoute): extra map points the job should pass through on
 	// the way to its action points. Per the vendor manual (RDSCore HTTP API

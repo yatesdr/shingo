@@ -412,6 +412,23 @@ func (d *Dispatcher) payloadForDispatch(order *orders.Order) string {
 	return bin.PayloadCode
 }
 
+// pinnedVehicleFor returns the robot an order must go to, or "" when the fleet
+// is free to choose — which is every order in the plant except a carried-bin
+// recovery.
+//
+// KEYED ON THE INTENT, NOT ON robot_id BEING SET. orders.robot_id is written
+// when the fleet ASSIGNS a robot, so it is populated on most live orders; using
+// it as the pin would re-pin every redispatch to whichever robot happened to
+// take the job last time, quietly turning fleet assignment off across the
+// plant. On an on-deck order robot_id is written by the CREATOR and means the
+// opposite thing: this robot and no other.
+func pinnedVehicleFor(order *orders.Order) string {
+	if order == nil || order.SourceIntent != SourceIntentOnDeck {
+		return ""
+	}
+	return order.RobotID
+}
+
 // robotGroupForPayload resolves the SEER robot-dispatch group configured on the
 // order's payload template (→ rds.SetOrderRequest.Group). An empty code, an
 // unknown payload, or a lookup error degrades to "" (the vendor's default robot
@@ -510,7 +527,15 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		return "", err
 	}
 	if !dwelling {
-		plan = buildTransportPlan(sourceNode.Name, destNode.Name, order.SourceIntent == SourceIntentEmpty)
+		if order.SourceIntent == SourceIntentOnDeck {
+			// The bin is already on the pinned robot. See buildUnloadOnlyPlan
+			// for why this cannot be a two-step transport plan — and note that
+			// a pickup here would also name the SYNTHETIC carrier node, which
+			// assertDeclaredEveryLaneItEnters refuses on the wire.
+			plan = buildUnloadOnlyPlan(destNode.Name)
+		} else {
+			plan = buildTransportPlan(sourceNode.Name, destNode.Name, order.SourceIntent == SourceIntentEmpty)
+		}
 	}
 	spliced, target, gated, err := d.spliceLaneWait(plan)
 	if err != nil {
@@ -559,6 +584,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		Blocks:     blocks,
 		Priority:   priority,
 		RobotGroup: d.robotGroupForPayload(payloadCode),
+		Vehicle:    pinnedVehicleFor(order),
 		// The claim's routing hints, if it configured any. Nil/empty is SEER
 		// auto-pick, which is every order in the plant until one does.
 		KeyRoute: order.KeyRoute,

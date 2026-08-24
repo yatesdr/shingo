@@ -577,6 +577,7 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 		Blocks:     blocks,
 		Priority:   order.Priority,
 		RobotGroup: d.robotGroupForPayload(payloadCode),
+		Vehicle:    pinnedVehicleFor(order),
 		// The claim's routing hints, if it configured any. Nil/empty is SEER
 		// auto-pick, which is every order in the plant until one does.
 		KeyRoute: order.KeyRoute,

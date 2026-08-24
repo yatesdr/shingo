@@ -221,6 +221,20 @@ func (e *Engine) carrierNode(robotID string) (*nodes.Node, error) {
 // RDS traffic. There is no jack-unload EVENT to subscribe to — the jack is
 // sampled state — which is why this is a watch and not a notification.
 func (e *Engine) sweepCarriedBins() {
+	// Retire carrier nodes nothing is riding any more, BEFORE the walk so a
+	// node emptied by a recovery order does not linger a whole tick.
+	//
+	// By shape, not by name. The per-name retire at the bottom of this loop
+	// only covers bins this watch placed itself; a recovery order's unload ends
+	// in the ordinary arrival handling, which knows nothing about carrier
+	// nodes, and would otherwise leave permanent furniture on a table operators
+	// read.
+	if n, err := e.db.RetireEmptyCarrierNodes(bins.CarrierNodePrefix); err != nil {
+		e.dbg("engine: carried bins: retire empty carrier nodes: %v", err)
+	} else if n > 0 {
+		e.dbg("engine: carried bins: retired %d empty carrier node(s)", n)
+	}
+
 	carried, err := e.db.ListBinsOnCarrierNodes()
 	if err != nil {
 		e.logFn("engine: carried bins: %v", err)
@@ -239,6 +253,32 @@ func (e *Engine) sweepCarriedBins() {
 		if !certain || carrying {
 			// Still loaded, or the deck is mid-travel. Leave it riding; the
 			// next poll asks again.
+			continue
+		}
+		// ── THE CARRIER-NODE GUARD, AND WHY IT IS HERE AND NOT ON THE MOVE ──
+		//
+		// A recovery order (carried_bin_recovery.go) asks this robot to unload
+		// at a chosen destination. While that order is running the deck will
+		// report empty the instant the bin is set down — and this watch would
+		// then place the bin at whatever station ResolveRobotStation returns
+		// for the tick, racing the order's own arrival handling. Two
+		// placements, and the second one wins by accident.
+		//
+		// The order is the better answer whenever there is one: it has a
+		// destination somebody chose, a slot reservation behind it, and the
+		// ordinary arrival path to record where the bin actually landed. So
+		// this watch stands down for the duration.
+		//
+		// Deliberately NOT done by widening BinService's actor guard on
+		// RecoverTransitAnomaly. That guard stops a HUMAN asserting a location
+		// for a bin that is riding a robot, and the jack watch is its
+		// sanctioned exception; adding a third actor would re-open the same
+		// question a fourth time. What is needed here is not "who may move
+		// this bin" but "is something already moving it", and that is a
+		// liveness question, answered where the race is.
+		if live, err := e.liveRecoveryOrderForBin(bin.ID); err == nil && live != nil {
+			e.dbg("engine: carried bins: bin %d left to recovery order %d (%s)",
+				bin.ID, live.ID, live.Status)
 			continue
 		}
 		// The deck is empty. Apply branch A at this tick's station — but only

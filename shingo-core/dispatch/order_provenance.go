@@ -18,6 +18,11 @@ const (
 	SourceIntentFull  = ""      // retrieve: a payload-matched FULL bin (the default)
 	SourceIntentEmpty = "empty" // retrieve_empty: an empty compatible carrier
 	SourceIntentLocal = "local" // move: the bin AT a concrete source node (node-local)
+	// SourceIntentOnDeck is the carried-bin recovery: the bin is already on the
+	// pinned robot's deck, so there is nothing to source and nothing to pick
+	// up. It is the one intent that changes the PLAN rather than the search —
+	// the order is a single unload — and the one that pins a vehicle.
+	SourceIntentOnDeck = "on_deck"
 )
 
 // SourceIntentForType maps an order's type to its sourcing intent. It is called

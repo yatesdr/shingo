@@ -127,3 +127,9 @@ func (db *DB) ReorderLaneSlots(laneID int64, orderedNodeIDs []int64) error {
 func (db *DB) DeleteCarrierNodeIfEmpty(name string) error {
 	return nodes.DeleteCarrierNodeIfEmpty(db.DB, name)
 }
+
+// RetireEmptyCarrierNodes removes every carrier node with no bin on it — see
+// nodes.RetireEmptyCarrierNodes.
+func (db *DB) RetireEmptyCarrierNodes(prefix string) (int64, error) {
+	return nodes.RetireEmptyCarrierNodes(db.DB, prefix)
+}
