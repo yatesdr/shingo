@@ -506,6 +506,11 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	if err != nil {
 		boardOrders = nil
 	}
+	// Pending release-time errors, ONE READ FOR THE WHOLE BOARD, indexed by
+	// process node. This used to be up to two ListOrderHistory queries per tile
+	// inside the loop below -- the last per-tile read on this path, and the same
+	// shape every batch above it exists to remove.
+	releaseErrors := store.LastReleaseErrorsForRuntimes(s.db, runtimes)
 	// Standing supply refusals, ONE READ FOR THE WHOLE BOARD, indexed
 	// loader_node → payload → refusal. The table holds only what is open — one
 	// row per card actually refused right now — so the whole-table read is
@@ -630,8 +635,14 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		nodeView.LinesideActive = activeBuckets[node.ID]
 		nodeView.LinesideInactive = inactiveBuckets[node.ID]
 		// Surface any pending release-time error that's been rolled back to
-		// Staged for the operator to retry.
-		nodeView.LastReleaseError = store.LookupLastReleaseError(s.db, runtime)
+		// Staged for the operator to retry. Prefetched for the board above; a
+		// node whose runtime the batch read missed falls back to the per-node
+		// form, so a freshly Ensured runtime still gets its chip.
+		if e, ok := releaseErrors[node.ID]; ok {
+			nodeView.LastReleaseError = e
+		} else if runtimes[node.ID] == nil {
+			nodeView.LastReleaseError = store.LookupLastReleaseError(s.db, runtime)
+		}
 		// Surface any active parked-ticks alarm (P2-C7/C8): consume ticks piling
 		// up on this node while no bin is bound. Rendered as an amber chip.
 		if s.stranded != nil {
