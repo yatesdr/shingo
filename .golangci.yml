@@ -461,11 +461,6 @@ linters:
         text: "Function 'shuffleSlotsFrom' has too many statements"
         linters:
           - funlen
-      # Start: transitional
-      - path: "shingo-core/engine/engine_lifecycle\\.go"
-        text: "Function 'Start' has too many statements"
-        linters:
-          - funlen
       # SourceabilityPage: transitional
       - path: "shingo-core/engine/sourceability_page\\.go"
         text: "Function 'SourceabilityPage' has too many statements"
@@ -539,11 +534,6 @@ linters:
       # planNodeAction: transitional
       - path: "shingo-edge/engine/changeover_planner\\.go"
         text: "Function 'planNodeAction' has too many statements"
-        linters:
-          - funlen
-      # RequestEmptyBin: transitional
-      - path: "shingo-edge/engine/operator_bin_ops\\.go"
-        text: "Function 'RequestEmptyBin' has too many statements"
         linters:
           - funlen
       # warlinkSync: transitional
