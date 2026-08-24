@@ -262,13 +262,20 @@ func (s *NodeService) RecentSceneDiffsWithLanes(limit int) ([]SceneDiff, error) 
 	if err != nil {
 		return nil, err
 	}
+	ids := make([]int64, 0, len(diffs))
+	for _, d := range diffs {
+		ids = append(ids, d.ID)
+	}
+	// One query for the page, not one per row. At the limit of 50 this read used
+	// to cost 51 round trips, and the localization board's compare mode fetches
+	// two boards, so 102.
+	lanesByDiff, err := s.db.LanesChangedByDiffs(ids)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]SceneDiff, 0, len(diffs))
 	for _, d := range diffs {
-		lanes, err := s.db.LanesChangedByDiff(d.ID)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, SceneDiff{DiffView: d, Lanes: lanes})
+		out = append(out, SceneDiff{DiffView: d, Lanes: lanesByDiff[d.ID]})
 	}
 	return out, nil
 }

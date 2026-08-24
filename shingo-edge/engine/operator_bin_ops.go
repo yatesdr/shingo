@@ -641,6 +641,13 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		n, rerr := e.withLoaderBudget(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), true, func(deliveryNodes []string) (int, error) {
 			made := 0
 			for _, deliveryNode := range deliveryNodes {
+				// autoConfirm=false, skipAutoConfirm=true: a manual_swap loader needs the
+				// OPERATOR to confirm after physically loading the bin. claim.AutoConfirm is
+				// true on these claims (mandatory for the robot-drop signal), but that flag
+				// means "robot confirms it dropped the bin", not "operator confirmed they
+				// loaded parts". Auto-confirming here fires L2/U2 (move back to supermarket)
+				// before the operator has finished. Matches the automatic side-cycle paths
+				// (MaybeCreateUnloaderFullIn and the loader push).
 				order, cerr := e.orderMgr.CreateRetrieveOrder(
 					&nodeID, true, 1, deliveryNode, dl.InboundSource(), "",
 					"standard", payloadCode, false, true, reqOrigin,
@@ -684,68 +691,53 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 
 	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
 
-	// manual_swap claims (bin loaders/unloaders) require operator confirmation
-	// after physically loading/unloading the bin. Auto-confirming here would
-	// immediately fire L2/U2 (move back to supermarket) before the operator
-	// has finished. claim.AutoConfirm is true on these claims (mandatory for
-	// the robot-drop signal), but that flag means "robot confirms it dropped
-	// the bin", not "operator confirmed they loaded parts". Override both
-	// flags for manual_swap to match the automatic side-cycle paths (MaybeCreateUnloaderFullIn and the loader push).
-	skipAutoConfirm := false
-	if claim.SwapMode == protocol.SwapModeManualSwap {
-		autoConfirm = false
-		skipAutoConfirm = true
-	}
-
 	// Multi-step swap modes reuse the same dispatch the consume side uses on
 	// RequestNodeMaterial / produce uses on Finalize. Robots execute the same
 	// choreography for empty and full bins; the order shape doesn't depend
 	// on contents.
-	if claim.SwapMode != protocol.SwapModeManualSwap {
-		dispatch, err := BuildSwapDispatch(node, claim)
+	dispatch, err := BuildSwapDispatch(node, claim)
+	if err != nil {
+		return nil, err
+	}
+	if dispatch != nil {
+		if dispatch.RequiresActiveSwapGuard {
+			if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+				return nil, err
+			}
+		}
+		// reqOrigin, not Origin{}. The episode was opened at the top of this
+		// method precisely so the orders it creates could name what caused
+		// them, and then the multi-step arm dropped it on the floor while the
+		// manual_swap arm four screens up carried it. Both legs of one swap
+		// belong to the operator's one request: an R2 that names no demand is
+		// an orphan by construction, and a service dig raised for it cannot
+		// look up who is collecting its target.
+		orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", reqOrigin)
 		if err != nil {
 			return nil, err
 		}
-		if dispatch != nil {
-			if dispatch.RequiresActiveSwapGuard {
-				if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
-					return nil, err
-				}
-			}
-			// reqOrigin, not Origin{}. The episode was opened at the top of this
-			// method precisely so the orders it creates could name what caused
-			// them, and then the multi-step arm dropped it on the floor while the
-			// manual_swap arm four screens up carried it. Both legs of one swap
-			// belong to the operator's one request: an R2 that names no demand is
-			// an orphan by construction, and a service dig raised for it cannot
-			// look up who is collecting its target.
-			orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", reqOrigin)
+		var orderB *orders.Order
+		if dispatch.StepsB != nil {
+			orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, reqOrigin)
 			if err != nil {
 				return nil, err
 			}
-			var orderB *orders.Order
-			if dispatch.StepsB != nil {
-				orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, reqOrigin)
-				if err != nil {
-					return nil, err
-				}
-			}
-			var orderBID *int64
-			if orderB != nil {
-				orderBID = &orderB.ID
-			}
-			if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, orderBID); err != nil {
-				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
-			}
-			if orderB != nil {
-				// Return-error on failure: see comment in
-				// operator_stations.go:LinkOrderSiblings call site.
-				if err := e.db.LinkOrderSiblings(orderA.ID, orderB.ID); err != nil {
-					return nil, fmt.Errorf("link order siblings %d↔%d: %w", orderA.ID, orderB.ID, err)
-				}
-			}
-			return orderA, nil
 		}
+		var orderBID *int64
+		if orderB != nil {
+			orderBID = &orderB.ID
+		}
+		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, orderBID); err != nil {
+			log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
+		}
+		if orderB != nil {
+			// Return-error on failure: see comment in
+			// operator_stations.go:LinkOrderSiblings call site.
+			if err := e.db.LinkOrderSiblings(orderA.ID, orderB.ID); err != nil {
+				return nil, fmt.Errorf("link order siblings %d↔%d: %w", orderA.ID, orderB.ID, err)
+			}
+		}
+		return orderA, nil
 	}
 
 	// Simple mode: single retrieve (manual_swap returned above via the seam; the
@@ -760,7 +752,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// instead of from Supermarket Area).
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, true, 1, node.CoreNodeName, claim.InboundSource, "",
-		"standard", payloadCode, autoConfirm, skipAutoConfirm, reqOrigin,
+		"standard", payloadCode, autoConfirm, false, reqOrigin,
 	)
 	if err != nil {
 		return nil, err

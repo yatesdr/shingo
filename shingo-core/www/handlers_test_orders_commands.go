@@ -86,7 +86,11 @@ func (h *Handlers) apiTestCommandSubmit(w http.ResponseWriter, r *http.Request) 
 		}
 		fallthrough
 	default:
-		if req.RobotID == "" && req.CommandType != "terminate" {
+		// No CommandType test here: "terminate" has its own case above and
+		// returns from it, and the only fallthrough into this arm comes from
+		// jack/unjack -- so the conjunct that used to exclude "terminate" was
+		// always true wherever it was evaluated.
+		if req.RobotID == "" {
 			h.jsonError(w, "robot_id is required", http.StatusBadRequest)
 			return
 		}

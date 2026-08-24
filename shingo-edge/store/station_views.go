@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -74,6 +75,94 @@ func LookupLastReleaseError(db *DB, runtime *processes.RuntimeState) string {
 		}
 	}
 	return ""
+}
+
+// LastReleaseErrorsForRuntimes is LookupLastReleaseError for a whole board in
+// one query.
+//
+// The per-runtime form ran inside the tile loop and issued up to two
+// ListOrderHistory queries per tile — up to 44 on the 22-tile Springfield
+// bin-loader board, on every poll, serialized on a connection with
+// SetMaxOpenConns(1), to fill a chip that is almost always empty. Every other
+// per-tile read on this path was hoisted to a board-wide batch; this one was
+// missed.
+//
+// Returns the release error per PROCESS NODE id, empty entries omitted, so the
+// tile loop is a map lookup.
+func LastReleaseErrorsForRuntimes(db *DB, runtimes map[int64]*processes.RuntimeState) map[int64]string {
+	// Collect the orders any tile might ask about. Both slots, because the
+	// rollback lands on whichever order was being released.
+	var ids []int64
+	seen := map[int64]bool{}
+	for _, rt := range runtimes {
+		if rt == nil {
+			continue
+		}
+		for _, oid := range []*int64{rt.ActiveOrderID, rt.StagedOrderID} {
+			if oid != nil && !seen[*oid] {
+				seen[*oid] = true
+				ids = append(ids, *oid)
+			}
+		}
+	}
+	out := map[int64]string{}
+	if len(ids) == 0 {
+		return out
+	}
+
+	// The most recent NON-EMPTY detail per order, which is the only row
+	// LookupLastReleaseError ever looked at: it walks history backwards, skips
+	// empty details, and stops at the first non-empty one — so a non-error
+	// transition above the rollback means no chip. Ordering by (created_at, id)
+	// rather than created_at alone because SQLite's datetime('now') has
+	// one-second granularity and a rollback lands in the same second as the
+	// transition it follows; id breaks that tie by insertion order, which is
+	// what walking the slice backwards effectively did.
+	ph := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		ph[i] = "?"
+		args[i] = id
+	}
+	lastDetail := map[int64]string{}
+	rows, err := db.Query(
+		`SELECT order_id, detail FROM order_history
+		 WHERE order_id IN (`+strings.Join(ph, ",")+`) AND detail <> ''
+		 ORDER BY order_id, created_at, id`, args...)
+	if err != nil {
+		// Best-effort, exactly as the per-tile form was: a history read failure
+		// leaves the chip absent rather than blocking the board.
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var oid int64
+		var detail string
+		if err := rows.Scan(&oid, &detail); err != nil {
+			return out
+		}
+		lastDetail[oid] = detail // ascending order, so the last write wins
+	}
+	if rows.Err() != nil {
+		return out
+	}
+
+	for nodeID, rt := range runtimes {
+		if rt == nil {
+			continue
+		}
+		// Active before staged, the same precedence the per-runtime form used.
+		for _, oid := range []*int64{rt.ActiveOrderID, rt.StagedOrderID} {
+			if oid == nil {
+				continue
+			}
+			if d := lastDetail[*oid]; strings.HasPrefix(d, releaseErrorPrefix) {
+				out[nodeID] = d
+				break
+			}
+		}
+	}
+	return out
 }
 
 // ComputeSwapReady returns true when a two-robot swap can be released via

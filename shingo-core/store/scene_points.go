@@ -105,6 +105,8 @@ func (db *DB) RecentSceneDiffs(limit int) ([]sceneversion.DiffView, error) {
 	return sceneversion.RecentDiffs(db.DB, limit)
 }
 
-func (db *DB) LanesChangedByDiff(diffID int64) ([]string, error) {
-	return sceneversion.LanesChangedByDiff(db.DB, diffID)
+// LanesChangedByDiffs names the lanes each of these edits touched, one query for
+// the whole page.
+func (db *DB) LanesChangedByDiffs(diffIDs []int64) (map[int64][]string, error) {
+	return sceneversion.LanesChangedByDiffs(db.DB, diffIDs)
 }

@@ -1012,9 +1012,24 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 	// child has actually confirmed — and CompleteCompound then races
 	// ahead of the still-in-flight legs, leaving the lifecycle gate to
 	// reject a later child failure with `confirmed -> failed`.
+	// FAIL CLOSED, for the same reason GetNextChildOrder does one read earlier.
+	// An unreadable child list is not an empty one, and every gate below reads
+	// as "nothing left to do" when `children` is nil: digWasDissolved(nil) is
+	// false, hasFailedOrCancelled stays false over an empty set, and allTerminal
+	// keeps its `true` initialiser because the loop never runs. Execution then
+	// falls past the stopped-short arm and the in-flight guard straight to the
+	// completion fork, which confirms or resumes the parent and releases its
+	// held lanes — with legs potentially still flying. That is the
+	// 2026-05-27 three-robots-in-one-corridor failure class, which the sibling
+	// read at the top of AdvanceCompoundOrder already refuses to allow.
+	//
+	// Returning the error re-drives this parent on the next completion or
+	// failure event rather than deciding its fate from a read that did not
+	// happen.
 	children, listErr := d.db.ListChildOrders(parentOrderID)
 	if listErr != nil {
 		log.Printf("dispatch: list children for compound %d: %v", parentOrderID, listErr)
+		return listErr
 	}
 	// A child that FAILED or was CANCELLED means the reshuffle's housekeeping did
 	// NOT complete, so the parent must fail — NOT take the success branch below.
@@ -1047,9 +1062,26 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 	}
 
 	// Load parent for both branches.
+	//
+	// A REAL DB ERROR AND A MISSING ROW ARE DIFFERENT ANSWERS, exactly as they
+	// are for GetNextChildOrder at the top of AdvanceCompoundOrder.
+	//
+	// Unreadable: bail. A nil parent does not stop this function — the
+	// "parent has already left" guard below requires `parent != nil` to fire,
+	// so execution falls THROUGH it, skips every disposition (each is nil-
+	// guarded), and still reaches the lane release at the tail. That frees a
+	// compound's lanes on the strength of a read that did not happen, which is
+	// the same class as the child-list swallow above.
+	//
+	// sql.ErrNoRows: proceed. The parent row is genuinely gone, and returning
+	// an error for that would wedge the compound forever — every later event
+	// re-reads the same absent row, so the lanes it held would never be
+	// released by anyone. A nil parent IS the right reading here, and the
+	// nil-guarded dispositions plus the lane release are the right response.
 	parent, pErr := d.db.GetOrder(parentOrderID)
-	if pErr != nil {
+	if pErr != nil && !errors.Is(pErr, sql.ErrNoRows) {
 		log.Printf("dispatch: load parent compound order %d: %v", parentOrderID, pErr)
+		return pErr
 	}
 
 	// SNAPSHOT THE LANES BEFORE ANY DISPOSITION RUNS. Two of the three below

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"shingocore/scenemap"
@@ -195,23 +196,45 @@ func LatestMapVersion(db *sql.DB, mapName string) (MapVersionState, bool, error)
 	return st, true, nil
 }
 
-// LanesChangedByDiff names the lanes one edit touched, which is the part of a
+// LanesChangedByDiffs names the lanes each edit touched, which is the part of a
 // diff row that does real work — an engineer reads "what did I touch", not a
 // count.
-func LanesChangedByDiff(db *sql.DB, diffID int64) ([]string, error) {
+//
+// It answers for a whole page of diffs in one query. The per-diff form this
+// replaced was called in a loop by RecentSceneDiffsWithLanes, so rendering the
+// localization board's 50-row change log cost 51 round trips — 102 with the
+// board's compare mode, which fetches two boards.
+//
+// Every requested id gets an entry, and a diff that changed no lanes gets an
+// EMPTY slice rather than a nil one. The difference is visible: nil marshals to
+// `null` and empty to `[]`, and the board reads this straight out of JSON.
+func LanesChangedByDiffs(db *sql.DB, diffIDs []int64) (map[int64][]string, error) {
+	out := make(map[int64][]string, len(diffIDs))
+	if len(diffIDs) == 0 {
+		return out, nil
+	}
+	ph := make([]string, len(diffIDs))
+	args := make([]any, len(diffIDs))
+	for i, id := range diffIDs {
+		ph[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+		out[id] = []string{}
+	}
 	rows, err := db.Query(
-		`SELECT DISTINCT lane FROM scene_lane_versions WHERE diff_id=$1 ORDER BY lane`, diffID)
+		`SELECT DISTINCT diff_id, lane FROM scene_lane_versions
+		 WHERE diff_id IN (`+strings.Join(ph, ",")+`)
+		 ORDER BY diff_id, lane`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("sceneversion: lanes by diff: %w", err)
+		return nil, fmt.Errorf("sceneversion: lanes by diffs: %w", err)
 	}
 	defer rows.Close()
-	out := []string{}
 	for rows.Next() {
-		var l string
-		if err := rows.Scan(&l); err != nil {
+		var id int64
+		var lane string
+		if err := rows.Scan(&id, &lane); err != nil {
 			return nil, err
 		}
-		out = append(out, l)
+		out[id] = append(out[id], lane)
 	}
 	return out, rows.Err()
 }

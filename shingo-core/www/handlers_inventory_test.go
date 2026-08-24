@@ -272,3 +272,40 @@ func TestCellHelper(t *testing.T) {
 		}
 	}
 }
+
+// The export's SECOND sheet had no assertion anywhere, which meant the whole
+// lineside-bucket block could be moved, reordered or dropped without a test
+// noticing. It ships in the same workbook operators open, so it gets the same
+// header pinning the first sheet has.
+func TestApiInventoryExport_LinesideBucketSheet(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	testdb.SetupStandardData(t, db)
+
+	rec := getPlain(t, h.apiInventoryExport, "/api/inventory/export")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rec.Code)
+	}
+	f, err := excelize.OpenReader(bytes.NewReader(rec.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("open xlsx: %v", err)
+	}
+	defer f.Close()
+
+	rows, err := f.GetRows("Lineside Buckets")
+	if err != nil {
+		t.Fatalf("the workbook has no \"Lineside Buckets\" sheet: %v", err)
+	}
+	if len(rows) < 1 {
+		t.Fatal("lineside sheet has no header row")
+	}
+	want := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Part", "Payload Code", "State", "Qty"}
+	if len(rows[0]) != len(want) {
+		t.Fatalf("lineside header has %d columns, want %d: %v", len(rows[0]), len(want), rows[0])
+	}
+	for i, w := range want {
+		if rows[0][i] != w {
+			t.Errorf("lineside header[%d]: got %q, want %q", i, rows[0][i], w)
+		}
+	}
+}

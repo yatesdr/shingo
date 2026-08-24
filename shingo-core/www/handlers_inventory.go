@@ -363,34 +363,47 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 	// Second sheet: lineside buckets. Same workbook so operators can
 	// review both inventory views in one download. Read failures
 	// degrade gracefully — the bins sheet still ships.
-	if bucketRows, err := h.engine.InventoryService().ListLinesideBuckets(); err == nil {
-		bucketSheet := "Lineside Buckets"
-		if _, err := f.NewSheet(bucketSheet); err == nil {
-			bucketHeaders := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Part", "Payload Code", "State", "Qty"}
-			for i, hdr := range bucketHeaders {
-				c, _ := excelize.CoordinatesToCellName(i+1, 1)
-				f.SetCellValue(bucketSheet, c, hdr)
-			}
-			f.SetRowStyle(bucketSheet, 1, 1, style)
-			for i, br := range bucketRows {
-				rn := i + 2
-				f.SetCellValue(bucketSheet, cell("A", rn), br.GroupName)
-				f.SetCellValue(bucketSheet, cell("B", rn), br.LaneName)
-				f.SetCellValue(bucketSheet, cell("C", rn), br.Station)
-				f.SetCellValue(bucketSheet, cell("D", rn), br.NodeName)
-				f.SetCellValue(bucketSheet, cell("E", rn), br.Zone)
-				f.SetCellValue(bucketSheet, cell("F", rn), br.StyleID)
-				f.SetCellValue(bucketSheet, cell("G", rn), br.PartNumber)
-				f.SetCellValue(bucketSheet, cell("H", rn), br.PayloadCode)
-				f.SetCellValue(bucketSheet, cell("I", rn), br.State)
-				f.SetCellValue(bucketSheet, cell("J", rn), br.Qty)
-			}
-		}
-	}
+	h.appendLinesideBucketSheet(f, style)
 
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", `attachment; filename="inventory.xlsx"`)
 	f.Write(w)
+}
+
+// appendLinesideBucketSheet adds the second sheet of the inventory export, one
+// row per lineside bucket.
+//
+// Read failures degrade gracefully and deliberately: the bins sheet still ships,
+// which is the sheet the export is actually for. Same for a NewSheet failure --
+// a workbook with one good sheet beats a 500.
+func (h *Handlers) appendLinesideBucketSheet(f *excelize.File, headerStyle int) {
+	bucketRows, err := h.engine.InventoryService().ListLinesideBuckets()
+	if err != nil {
+		return
+	}
+	const bucketSheet = "Lineside Buckets"
+	if _, err := f.NewSheet(bucketSheet); err != nil {
+		return
+	}
+	bucketHeaders := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Part", "Payload Code", "State", "Qty"}
+	for i, hdr := range bucketHeaders {
+		c, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(bucketSheet, c, hdr)
+	}
+	f.SetRowStyle(bucketSheet, 1, 1, headerStyle)
+	for i, br := range bucketRows {
+		rn := i + 2
+		f.SetCellValue(bucketSheet, cell("A", rn), br.GroupName)
+		f.SetCellValue(bucketSheet, cell("B", rn), br.LaneName)
+		f.SetCellValue(bucketSheet, cell("C", rn), br.Station)
+		f.SetCellValue(bucketSheet, cell("D", rn), br.NodeName)
+		f.SetCellValue(bucketSheet, cell("E", rn), br.Zone)
+		f.SetCellValue(bucketSheet, cell("F", rn), br.StyleID)
+		f.SetCellValue(bucketSheet, cell("G", rn), br.PartNumber)
+		f.SetCellValue(bucketSheet, cell("H", rn), br.PayloadCode)
+		f.SetCellValue(bucketSheet, cell("I", rn), br.State)
+		f.SetCellValue(bucketSheet, cell("J", rn), br.Qty)
+	}
 }
 
 // cell builds a cell reference like "A2" from a column letter and row number.

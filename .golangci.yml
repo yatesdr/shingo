@@ -431,11 +431,6 @@ linters:
         text: "Function 'apiDashboardNodeReport' has too many statements"
         linters:
           - funlen
-      # runCarriers: transitional
-      - path: "shingo-core/cmd/simcalc/carriers\\.go"
-        text: "Function 'runCarriers' has too many statements"
-        linters:
-          - funlen
       # computeCarriers: transitional
       - path: "shingo-core/cmd/simcalc/carriers\\.go"
         text: "Function 'computeCarriers' has too many statements"
@@ -459,11 +454,6 @@ linters:
       # shuffleSlotsFrom: transitional
       - path: "shingo-core/dispatch/reshuffle\\.go"
         text: "Function 'shuffleSlotsFrom' has too many statements"
-        linters:
-          - funlen
-      # Start: transitional
-      - path: "shingo-core/engine/engine_lifecycle\\.go"
-        text: "Function 'Start' has too many statements"
         linters:
           - funlen
       # SourceabilityPage: transitional
@@ -491,34 +481,14 @@ linters:
         text: "Function 'LocalizationBoardAt' has too many statements"
         linters:
           - funlen
-      # ListAnomalies: transitional
-      - path: "shingo-core/store/reconciliation/reconciliation\\.go"
-        text: "Function 'ListAnomalies' has too many statements"
-        linters:
-          - funlen
       # ApplyBinUOPDelta: transitional
       - path: "shingo-core/uop/applier\\.go"
         text: "Function 'ApplyBinUOPDelta' has too many statements"
         linters:
           - funlen
-      # handleConfigSave: transitional
-      - path: "shingo-core/www/handlers_config\\.go"
-        text: "Function 'handleConfigSave' has too many statements"
-        linters:
-          - funlen
-      # apiInventoryExport: transitional
-      - path: "shingo-core/www/handlers_inventory\\.go"
-        text: "Function 'apiInventoryExport' has too many statements"
-        linters:
-          - funlen
       # apiReparentNode: transitional
       - path: "shingo-core/www/handlers_nodegroup\\.go"
         text: "Function 'apiReparentNode' has too many statements"
-        linters:
-          - funlen
-      # buildNodePickerOptions: transitional
-      - path: "shingo-core/www/handlers_test_orders\\.go"
-        text: "Function 'buildNodePickerOptions' has too many statements"
         linters:
           - funlen
       # apiTestCommandSubmit: transitional
@@ -529,31 +499,6 @@ linters:
       # createSnapshotArchive: transitional
       - path: "shingo-edge/backup/snapshot\\.go"
         text: "Function 'createSnapshotArchive' has too many statements"
-        linters:
-          - funlen
-      # runInteractiveRestore: transitional
-      - path: "shingo-edge/cmd/shingoedge/main\\.go"
-        text: "Function 'runInteractiveRestore' has too many statements"
-        linters:
-          - funlen
-      # planNodeAction: transitional
-      - path: "shingo-edge/engine/changeover_planner\\.go"
-        text: "Function 'planNodeAction' has too many statements"
-        linters:
-          - funlen
-      # RequestEmptyBin: transitional
-      - path: "shingo-edge/engine/operator_bin_ops\\.go"
-        text: "Function 'RequestEmptyBin' has too many statements"
-        linters:
-          - funlen
-      # warlinkSync: transitional
-      - path: "shingo-edge/plc/manager\\.go"
-        text: "Function 'warlinkSync' has too many statements"
-        linters:
-          - funlen
-      # apiSendManualMessage: transitional
-      - path: "shingo-edge/www/handlers_manual_message\\.go"
-        text: "Function 'apiSendManualMessage' has too many statements"
         linters:
           - funlen
 

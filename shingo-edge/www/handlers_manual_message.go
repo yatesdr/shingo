@@ -51,6 +51,19 @@ func (h *Handlers) handleManualMessage(w http.ResponseWriter, r *http.Request) {
 	h.renderTemplate(w, r, "manual-message.html", data)
 }
 
+// orderEnvelopeSpecs maps a debug-page order message type to its wire type and
+// a fresh payload value to decode into. protocol.NewEnvelope takes `any`, so the
+// pointer from new() goes straight through.
+var orderEnvelopeSpecs = map[string]struct {
+	typ     string
+	payload func() any
+}{
+	"order.request":  {protocol.TypeOrderRequest, func() any { return new(protocol.OrderRequest) }},
+	"order.cancel":   {protocol.TypeOrderCancel, func() any { return new(protocol.OrderCancel) }},
+	"order.receipt":  {protocol.TypeOrderReceipt, func() any { return new(protocol.OrderReceipt) }},
+	"order.redirect": {protocol.TypeOrderRedirect, func() any { return new(protocol.OrderRedirect) }},
+}
+
 func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Type    string          `json:"type"`
@@ -93,7 +106,10 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 		var p struct {
 			Uptime int64 `json:"uptime"`
 		}
-		json.Unmarshal(req.Payload, &p)
+		if e := json.Unmarshal(req.Payload, &p); e != nil {
+			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
+			return
+		}
 		env, err = protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat, src, dst, &protocol.EdgeHeartbeat{
 			StationID: stationID,
 			Uptime:    p.Uptime,
@@ -116,41 +132,23 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 		env, err = protocol.NewDataEnvelope(protocol.SubjectNodeListRequest, src, dst, &protocol.NodeListRequest{})
 
 	// --- Order messages ---
-	case "order.request":
-		var p protocol.OrderRequest
-		if e := json.Unmarshal(req.Payload, &p); e != nil {
-			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
-			return
-		}
-		env, err = protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, &p)
-
-	case "order.cancel":
-		var p protocol.OrderCancel
-		if e := json.Unmarshal(req.Payload, &p); e != nil {
-			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
-			return
-		}
-		env, err = protocol.NewEnvelope(protocol.TypeOrderCancel, src, dst, &p)
-
-	case "order.receipt":
-		var p protocol.OrderReceipt
-		if e := json.Unmarshal(req.Payload, &p); e != nil {
-			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
-			return
-		}
-		env, err = protocol.NewEnvelope(protocol.TypeOrderReceipt, src, dst, &p)
-
-	case "order.redirect":
-		var p protocol.OrderRedirect
-		if e := json.Unmarshal(req.Payload, &p); e != nil {
-			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
-			return
-		}
-		env, err = protocol.NewEnvelope(protocol.TypeOrderRedirect, src, dst, &p)
-
+	//
+	// All four are the same three steps over a different payload type, so they
+	// are a table rather than four copies. The data-channel cases above are not:
+	// each builds its envelope from something other than the posted payload
+	// (a hostname, a station id), which is why they stay written out.
 	default:
-		writeError(w, http.StatusBadRequest, "unknown message type: "+req.Type)
-		return
+		spec, ok := orderEnvelopeSpecs[req.Type]
+		if !ok {
+			writeError(w, http.StatusBadRequest, "unknown message type: "+req.Type)
+			return
+		}
+		p := spec.payload()
+		if e := json.Unmarshal(req.Payload, p); e != nil {
+			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
+			return
+		}
+		env, err = protocol.NewEnvelope(spec.typ, src, dst, p)
 	}
 
 	if err != nil {
