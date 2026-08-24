@@ -340,6 +340,30 @@ type SimOperatorsConfig struct {
 	UnloaderAutoClear     time.Duration `yaml:"unloader_auto_clear"`     // default 8s
 	ChangeoverAutoCutover bool          `yaml:"changeover_auto_cutover"` // default true (T3.2)
 	CutoverDelay          time.Duration `yaml:"cutover_delay"`           // default 10s
+	// SwapRelease is the simulated reaction time between a swap reaching its
+	// wait (status "staged") and the operator pushing Release. Default 3s.
+	//
+	// CONFIGURABLE BECAUSE THE DEFAULT CLOSES THE WINDOW UNDER TEST. Three
+	// seconds is a good imitation of a person, and it means a scenario built to
+	// observe a HELD release — one leg staged, its sibling still coming — has
+	// three seconds to look before the operator releases anyway. A sim run
+	// against the round-4 collision gate lost that window 480 times to this
+	// timer and reported the gate as never firing.
+	SwapRelease time.Duration `yaml:"swap_release"`
+	// PairRelease routes a staged swap through ReleaseStagedOrders — the
+	// operator's RELEASE button — instead of releasing each leg on its own.
+	//
+	// DEFAULT OFF, and it is a different code path rather than a faster one.
+	// The per-leg auto-release calls ReleaseOrderWithLineside once per order,
+	// which is the API door; the button releases the PAIR, and everything the
+	// pair path owns — the collision gate, the produce paperwork ordering, the
+	// deferred-sibling re-fire, the disposition split across the two legs — has
+	// no sim coverage at all while the per-leg path is the only one that runs.
+	//
+	// The two must not both run: the per-leg release would win the race and the
+	// pair path would find nothing to release, which reads as the pair path
+	// being broken.
+	PairRelease bool `yaml:"pair_release"`
 }
 
 // Defaults returns a Config with sane defaults.
@@ -399,6 +423,7 @@ func Defaults() *Config {
 				UnloaderAutoClear:     8 * time.Second,
 				ChangeoverAutoCutover: true,
 				CutoverDelay:          10 * time.Second,
+				SwapRelease:           3 * time.Second,
 			},
 		},
 	}

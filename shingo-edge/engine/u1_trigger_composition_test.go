@@ -42,6 +42,33 @@ func (r *recordingLoaderStore) LoaderForPayload(payload domain.PayloadCode, role
 	return r.unloader, nil
 }
 
+// seedStagedPressIndexPair builds a press-index produce pair from the REAL step
+// builder and stages both legs, with the runtime slots pointed at them.
+//
+// Steps matter: isSupplyOrderInTwoRobotSwap refuses a release it cannot
+// classify, and a leg with no steps cannot be classified — so a stepless
+// fixture exercises the refusal rather than the path.
+func seedStagedPressIndexPair(t *testing.T, uuidPrefix string) (*Engine, int64, int64, int64) {
+	t.Helper()
+	db := testEngineDB(t)
+	nodeID, node, claim := seedSwapClaim(t, db, protocol.SwapModeTwoRobotPressIndex, "")
+	disp, err := BuildSwapDispatch(node, claim)
+	testutil.MustNoErr(t, err, "build swap dispatch")
+
+	legA := mkSwapLeg(t, db, nodeID, uuidPrefix+"-a", disp.StepsA, "")
+	legB := mkSwapLeg(t, db, nodeID, uuidPrefix+"-b", disp.StepsB, "")
+	testutil.MustNoErr(t, db.LinkOrderSiblings(legA.ID, legB.ID), "link siblings")
+	for _, id := range []int64{legA.ID, legB.ID} {
+		testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(protocol.StatusStaged)), "stage leg")
+	}
+	_, err = db.EnsureProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "ensure runtime")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &legA.ID, &legB.ID), "runtime slots")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claim.ID, 0), "bind claim")
+
+	return testEngine(t, db), nodeID, legA.ID, legB.ID
+}
+
 // TestReleaseOrderWithLineside_U1FiresAfterTheRelease is named by the release
 // census. It pins both halves: the trigger fires for a press-index produce
 // release, and it fires after the release envelope is queued.
