@@ -334,16 +334,24 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	// Produce always has a swap mode now (BuildProducePlan errors otherwise), so
 	// Dispatch is always set.
 	dispatch := plan.Dispatch
-	orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", origin)
+	// BOTH UUIDs BEFORE EITHER CREATE. Each leg goes in already naming its
+	// partner, so neither is ever unpaired and creation order stops being a
+	// correctness input — see CreateComplexOrderPaired.
+	//
+	// Creation ORDER is unchanged and still deliberate: the outbox drains
+	// strictly ORDER BY id, so A is the leg Core is asked for first.
+	uuidA, uuidB := ordermgr.NewOrderUUID(), ""
+	if dispatch.StepsB != nil {
+		uuidB = ordermgr.NewOrderUUID()
+	}
+	orderA, err := e.dispatchPairedLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, uuidB, uuidA, origin)
 	if err != nil {
 		return nil, err
 	}
 
 	var orderB *orders.Order
 	if dispatch.StepsB != nil {
-		// Removal/evac leg carries the supply leg's UUID so Core can pair
-		// them at intake (before this leg's dispatch claims the line bin).
-		orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, origin)
+		orderB, err = e.dispatchPairedLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, uuidA, uuidB, origin)
 		if err != nil {
 			return nil, err
 		}
@@ -480,6 +488,17 @@ func runtimeRemaining(runtime *processes.RuntimeState) int {
 //
 // Both legs of a pair are given the SAME origin: one fire of the plan is one
 // demand served by two rows.
+// dispatchPairedLeg is dispatchComplexLeg for a leg whose uuid was minted with
+// its partner's. Same wiring; the only difference is that the uuid arrives
+// rather than being invented inside the create.
+func (e *Engine) dispatchPairedLeg(nodeID int64, quantity int64, steps []protocol.ComplexOrderStep, deliveryNode, processNodeName string, autoConfirm bool, siblingUUID, orderUUID string, origin ordermgr.Origin) (*orders.Order, error) {
+	dn := deliveryNode
+	if autoConfirm {
+		dn = ""
+	}
+	return e.orderMgr.CreateComplexOrderPaired(&nodeID, quantity, dn, processNodeName, steps, autoConfirm, "", siblingUUID, orderUUID, origin)
+}
+
 func (e *Engine) dispatchComplexLeg(nodeID int64, quantity int64, steps []protocol.ComplexOrderStep, deliveryNode, processNodeName string, autoConfirm bool, siblingUUID string, origin ordermgr.Origin) (*orders.Order, error) {
 	dn := deliveryNode
 	if autoConfirm {

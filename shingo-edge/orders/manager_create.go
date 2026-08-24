@@ -155,7 +155,7 @@ func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 // behavior.
 // origin is REQUIRED; see the Origin type.
 func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, origin Origin) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, false, "", "", origin)
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, false, "", "", "", origin)
 }
 
 // CreateComplexOrderWithAutoConfirm creates an auto-confirm complex order.
@@ -167,12 +167,12 @@ func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliv
 // (the SMN_001 / SMN_002 teleport bug, plant-test 2026-04-27).
 // origin is REQUIRED; see the Origin type.
 func (m *Manager) CreateComplexOrderWithAutoConfirm(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, origin Origin) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, true, "", "", origin)
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, true, "", "", "", origin)
 }
 
 // origin is REQUIRED; see the Origin type.
 func (m *Manager) CreateComplexOrderWithPayload(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode string, origin Origin) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, "", origin)
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, "", "", origin)
 }
 
 // CreateComplexOrderSibling creates a complex order and records the
@@ -182,11 +182,46 @@ func (m *Manager) CreateComplexOrderWithPayload(processNodeID *int64, quantity i
 // or "" for non-swap / first-created legs.
 // origin is REQUIRED; see the Origin type.
 func (m *Manager) CreateComplexOrderSibling(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode, siblingUUID string, origin Origin) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, siblingUUID, origin)
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, siblingUUID, "", origin)
 }
 
-func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadOverride, siblingUUID string, origin Origin) (*orders.Order, error) {
-	orderUUID := uuid.New().String()
+// CreateComplexOrderPaired creates one leg of a swap whose BOTH uuids were
+// minted before either create, so each leg can name its partner.
+//
+// ── WHY THE UUID COMES FROM THE CALLER ────────────────────────────────────
+//
+// createComplexOrder used to mint the uuid itself, which made the first leg
+// created structurally unable to name a sibling that did not exist yet: it
+// went in with siblingUUID == "", and everything downstream that pairs legs
+// had to cope with a half-linked pair. swap_hold's fail-open at sibUUID == ""
+// is one such coping mechanism, and SYNTH-round2's finding is that it makes
+// CREATION ORDER a correctness input — the changeover path creates the filler
+// first, the produce path the supply, and no single ordering is safe once both
+// legs are held.
+//
+// Minting both up front removes the window entirely: neither leg is ever
+// unpaired, and creation order stops mattering. Core's intake back-link
+// becomes redundant-but-harmless rather than load-bearing.
+//
+// ORDERING STILL MATTERS FOR THE OUTBOX, and differently: the outbox drains
+// strictly ORDER BY id, so the leg created first is the leg Core sees first.
+// That is about which robot is asked for first, not about pairing, and the
+// callers keep their existing order for that reason.
+func (m *Manager) CreateComplexOrderPaired(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode, siblingUUID, orderUUID string, origin Origin) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, siblingUUID, orderUUID, origin)
+}
+
+// NewOrderUUID mints an order uuid. Exported so a caller creating a PAIR can
+// mint both before either create — see CreateComplexOrderPaired.
+func NewOrderUUID() string { return uuid.New().String() }
+
+func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadOverride, siblingUUID, presetUUID string, origin Origin) (*orders.Order, error) {
+	// Caller-supplied when this leg is half of a pre-minted pair; minted here
+	// for every single-order path, which is most of them.
+	orderUUID := presetUUID
+	if orderUUID == "" {
+		orderUUID = uuid.New().String()
+	}
 
 	stepsJSON, err := json.Marshal(steps)
 	if err != nil {
