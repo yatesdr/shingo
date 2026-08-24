@@ -411,12 +411,6 @@ linters:
         text: "Function 'RollUp' has too many statements"
         linters:
           - funlen
-      # BuildView: transitional
-      # Explicitly out of scope for the 2026-08-19 easy-wins wave.
-      - path: "shingo-edge/service/station_service\\.go"
-        text: "Function 'BuildView' has too many statements"
-        linters:
-          - funlen
       # computeCarriers: transitional
       - path: "shingo-core/cmd/simcalc/carriers\\.go"
         text: "Function 'computeCarriers' has too many statements"
