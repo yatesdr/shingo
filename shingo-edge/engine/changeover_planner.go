@@ -436,8 +436,10 @@ func planEvacuateAction(action changeover.NodeAction, diff ChangeoverNodeDiff, n
 	}
 	// A staged seat is one synthesized position with its own routing; the
 	// per-mode staging fallbacks below are about whole cells and would
-	// send it down the wrong branch.
-	if diff.FromClaim.SwapMode == pressPositionSwapMode && diff.ToClaim.InboundStaging != "" {
+	// send it down the wrong branch. Same predicate the step builder uses —
+	// see domain.StagedSeatEvacuation for why the staging node is what tells
+	// this apart, and why the two callers must not answer it separately.
+	if domain.StagedSeatEvacuation(diff.FromClaim, diff.ToClaim) {
 		disp := buildPressIndexSeatEvacuate(diff.FromClaim, diff.ToClaim)
 		if disp.rejected() {
 			action.Err = fmt.Errorf("node %s: staged tooling evacuation needs an evac destination, "+

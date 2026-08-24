@@ -543,12 +543,10 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inact
 	case protocol.SwapModeSequential:
 		return buildSequentialChangeoverEvacuate(fromClaim, toClaim)
 	case pressPositionSwapMode:
-		// A STAGED seat is told apart by its staging node, and that is not a
-		// guess: SynthesizePressPositionClaim zeroes InboundStaging, so the
-		// only producer that puts one back on a per-position claim is
-		// FanOutStagedToolingEvacuation. A different-bin-type per-position
-		// claim therefore never carries one and never takes this branch.
-		if toClaim != nil && toClaim.InboundStaging != "" {
+		// Same predicate the planner uses to choose this seat's action — see
+		// domain.StagedSeatEvacuation. Answering it separately here is how the
+		// action and its steps come to disagree about which plan this is.
+		if domain.StagedSeatEvacuation(fromClaim, toClaim) {
 			return buildPressIndexSeatEvacuate(fromClaim, toClaim)
 		}
 		// Per-position dispatch: the parent evacuate situation drives the
