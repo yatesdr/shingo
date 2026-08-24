@@ -405,12 +405,6 @@ linters:
         text: "Function 'AdvanceCompoundOrder' has too many statements"
         linters:
           - funlen
-      # RollUp: transitional
-      # Explicitly out of scope for the 2026-08-19 easy-wins wave.
-      - path: "shingo-core/store/robotconfidence/rollup\\.go"
-        text: "Function 'RollUp' has too many statements"
-        linters:
-          - funlen
       # computeCarriers: transitional
       - path: "shingo-core/cmd/simcalc/carriers\\.go"
         text: "Function 'computeCarriers' has too many statements"
