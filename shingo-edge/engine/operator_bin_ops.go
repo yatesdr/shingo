@@ -89,6 +89,28 @@ func (e *Engine) changeoverLoadOrigin(node *processes.Node, claim *processes.Nod
 	return e.changeoverOrigin(co.ID)
 }
 
+// requestEmptyOrigin answers who asked for this empty.
+//
+// The operator asking for an empty IS the demand, so the cell episode opens (or
+// is joined) before anything is created and the order can name what caused it.
+//
+// UNLESS A CHANGEOVER ASKED. A load the operator makes off the changeover
+// directive is that changeover's demand, not this cell's steady-state pull:
+// attributed to the cell it reads in demand-origin reporting as an orphan
+// replenishment nobody can tie to the changeover it served, and the
+// changeover's own ratio under-counts by exactly the bins it caused.
+//
+// One function rather than two calls and an if at the call site, because
+// RequestEmptyBin is at its statement budget: main extracted it down to the
+// limit and retired its funlen exclusion in the same commit that this addition
+// met at the merge. The two lookups were always one question.
+func (e *Engine) requestEmptyOrigin(node *processes.Node, claim *processes.NodeClaim, cachedUOP int) ordermgr.Origin {
+	if o := e.changeoverLoadOrigin(node, claim); o.ID != "" {
+		return o
+	}
+	return e.operatorRequestOrigin(node, claim, cachedUOP)
+}
+
 // loadablePayloads returns the payload codes an operator may load or request at
 // this manual_swap loader node. Post-cutover the loader's payload set is
 // Core-owned, so this resolves it from the aggregate — the SAME resolver the
@@ -569,18 +591,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
 	}
 
-	// The operator asking for an empty IS the demand. Open (or join) the cell
-	// episode before creating anything so the order can name what caused it.
-	//
-	// UNLESS A CHANGEOVER ASKED. A load the operator makes off the changeover
-	// directive is that changeover's demand, not this cell's steady-state
-	// pull: attributed to the cell it reads in demand-origin reporting as an
-	// orphan replenishment nobody can tie to the changeover it served, and the
-	// changeover's own ratio under-counts by exactly the bins it caused.
-	reqOrigin := e.changeoverLoadOrigin(node, claim)
-	if reqOrigin.ID == "" {
-		reqOrigin = e.operatorRequestOrigin(node, claim, runtime.RemainingUOPCached)
-	}
+	reqOrigin := e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached)
 
 	// Payload handling splits by mode:
 	//
