@@ -405,50 +405,9 @@ linters:
         text: "Function 'AdvanceCompoundOrder' has too many statements"
         linters:
           - funlen
-      # advanceCompoundChapterEnd: transitional
-      # The half extracted from AdvanceCompoundOrder by D6, 63 statements as
-      # moved. It was moved verbatim rather than reshaped, deliberately, so it
-      # arrives on this list rather than under it.
-      - path: "shingo-core/dispatch/compound\\.go"
-        text: "Function 'advanceCompoundChapterEnd' has too many statements"
-        linters:
-          - funlen
-      # RollUp: transitional
-      # Explicitly out of scope for the 2026-08-19 easy-wins wave.
-      - path: "shingo-core/store/robotconfidence/rollup\\.go"
-        text: "Function 'RollUp' has too many statements"
-        linters:
-          - funlen
-      # BuildView: transitional
-      # Explicitly out of scope for the 2026-08-19 easy-wins wave.
-      - path: "shingo-edge/service/station_service\\.go"
-        text: "Function 'BuildView' has too many statements"
-        linters:
-          - funlen
-      # apiDashboardNodeReport: transitional
-      # Explicitly out of scope for the 2026-08-19 easy-wins wave.
-      - path: "shingo-core/www/handlers_dashboards\\.go"
-        text: "Function 'apiDashboardNodeReport' has too many statements"
-        linters:
-          - funlen
       # computeCarriers: transitional
       - path: "shingo-core/cmd/simcalc/carriers\\.go"
         text: "Function 'computeCarriers' has too many statements"
-        linters:
-          - funlen
-      # checkInvariants: transitional
-      - path: "shingo-core/cmd/soakstat/main\\.go"
-        text: "Function 'checkInvariants' has too many statements"
-        linters:
-          - funlen
-      # prepareComplexSteps: transitional
-      - path: "shingo-core/dispatch/complex_dispatch\\.go"
-        text: "Function 'prepareComplexSteps' has too many statements"
-        linters:
-          - funlen
-      # evaluateLaneReleasesPass: transitional
-      - path: "shingo-core/dispatch/lane_gate_release\\.go"
-        text: "Function 'evaluateLaneReleasesPass' has too many statements"
         linters:
           - funlen
       # shuffleSlotsFrom: transitional
@@ -494,11 +453,6 @@ linters:
       # apiTestCommandSubmit: transitional
       - path: "shingo-core/www/handlers_test_orders_commands\\.go"
         text: "Function 'apiTestCommandSubmit' has too many statements"
-        linters:
-          - funlen
-      # createSnapshotArchive: transitional
-      - path: "shingo-edge/backup/snapshot\\.go"
-        text: "Function 'createSnapshotArchive' has too many statements"
         linters:
           - funlen
 

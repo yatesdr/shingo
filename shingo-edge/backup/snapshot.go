@@ -69,41 +69,12 @@ func createSnapshotArchive(db *store.DB, cfg *config.Config, configPath, appVers
 		return "", nil, 0, nil, fmt.Errorf("marshal manifest: %w", err)
 	}
 
-	f, err := os.Create(archivePath)
+	size, err := packArchive(archivePath, tmpDir, manifestBytes, createdAt)
 	if err != nil {
-		cleanup()
-		return "", nil, 0, nil, fmt.Errorf("create archive: %w", err)
-	}
-	defer f.Close()
-	gz := gzip.NewWriter(f)
-	defer gz.Close()
-	tw := tar.NewWriter(gz)
-	defer tw.Close()
-
-	if err := writeTarEntry(tw, ManifestName, manifestBytes, createdAt); err != nil {
 		cleanup()
 		return "", nil, 0, nil, err
 	}
-	for _, name := range []string{ConfigEntryName, DBEntryName} {
-		if err := writeTarFile(tw, filepath.Join(tmpDir, name), name, createdAt); err != nil {
-			cleanup()
-			return "", nil, 0, nil, err
-		}
-	}
-	if err := tw.Close(); err != nil {
-		cleanup()
-		return "", nil, 0, nil, fmt.Errorf("close tar: %w", err)
-	}
-	if err := gz.Close(); err != nil {
-		cleanup()
-		return "", nil, 0, nil, fmt.Errorf("close gzip: %w", err)
-	}
-	info, err := os.Stat(archivePath)
-	if err != nil {
-		cleanup()
-		return "", nil, 0, nil, fmt.Errorf("stat archive: %w", err)
-	}
-	return archivePath, manifest, info.Size(), cleanup, nil
+	return archivePath, manifest, size, cleanup, nil
 }
 
 func archiveFileName(ts time.Time) string {
@@ -205,4 +176,48 @@ func writeTarFile(tw *tar.Writer, srcPath, entryName string, modTime time.Time) 
 		return fmt.Errorf("write tar file %s: %w", entryName, err)
 	}
 	return nil
+}
+
+// packArchive writes manifest + config + database into a gzipped tar at
+// archivePath and returns its size.
+//
+// It is a separate function for a reason beyond length: the writer stack has to
+// be CLOSED before the caller's cleanup runs, and a deferred Close inside
+// createSnapshotArchive does not run until that whole function returns. The
+// archive lives inside the temp dir cleanup deletes, so on an error path the
+// old code called os.RemoveAll on a directory holding an open handle. Linux
+// unlinks an open file happily, so the Pi and CI never saw it; Windows refuses,
+// RemoveAll gives up rather than retrying, and cleanup discards its error --
+// leaking the config and a full copy of the database, silently. Closing here
+// fixes it structurally rather than as a special case.
+func packArchive(archivePath, tmpDir string, manifestBytes []byte, createdAt time.Time) (int64, error) {
+	f, err := os.Create(archivePath)
+	if err != nil {
+		return 0, fmt.Errorf("create archive: %w", err)
+	}
+	defer f.Close()
+	gz := gzip.NewWriter(f)
+	defer gz.Close()
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+
+	if err := writeTarEntry(tw, ManifestName, manifestBytes, createdAt); err != nil {
+		return 0, err
+	}
+	for _, name := range []string{ConfigEntryName, DBEntryName} {
+		if err := writeTarFile(tw, filepath.Join(tmpDir, name), name, createdAt); err != nil {
+			return 0, err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return 0, fmt.Errorf("close tar: %w", err)
+	}
+	if err := gz.Close(); err != nil {
+		return 0, fmt.Errorf("close gzip: %w", err)
+	}
+	info, err := os.Stat(archivePath)
+	if err != nil {
+		return 0, fmt.Errorf("stat archive: %w", err)
+	}
+	return info.Size(), nil
 }
