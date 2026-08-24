@@ -280,6 +280,28 @@ type Claim struct {
 	// can only test the shape half the presses run.
 	IndexRobotSupplies bool     `yaml:"index_robot_supplies,omitempty"`
 	AllowedPayloads    []string `yaml:"allowed_payloads,omitempty"`
+	// ── THE ROUND-3/4 CLAIM CONFIG, SEEDABLE FOR THE SAME REASON THE FLIP IS ──
+	//
+	// These five were added to style_node_claims and to the claim editor, and
+	// left out of here — so staged tooling evacuation, evacuation destination
+	// precedence, the loader card and key routes could not be expressed by any
+	// scenario. Not "were not covered by a test": could not be SET, anywhere but
+	// by hand in a browser, which means those features have never executed on a
+	// sim and there was no way to make them.
+	//
+	// ChangeoverEvacSeats names which press-index seats hold bins that block the
+	// tooling change: "front", "paired", "second". ChangeoverEvacDestination is
+	// where those bins go (blank falls back to outbound_destination).
+	ChangeoverEvacSeats       []string `yaml:"changeover_evac_seats,omitempty"`
+	ChangeoverEvacDestination string   `yaml:"changeover_evac_destination,omitempty"`
+	// ChangeoverLoadDirective turns a LOADER's card into a loading instruction
+	// during a changeover — which empty carrier the changing-over cells want.
+	ChangeoverLoadDirective bool `yaml:"changeover_load_directive,omitempty"`
+	// KeyRoute is the ordered list of map points a leg from this claim should be
+	// routed through; KeyTask is SEER's sibling-selection hint ("load"/"unload").
+	// ORDER IS MEANINGFUL in KeyRoute, so it is a list and not a set.
+	KeyRoute []string `yaml:"key_route,omitempty"`
+	KeyTask  string   `yaml:"key_task,omitempty"`
 	// WindowOf, when set on a manual_swap loader claim, makes this node a WINDOW
 	// of the named shared loader rather than its own loader: the seed groups it as
 	// a window home of that loader (the multi-window model the grid editor authors

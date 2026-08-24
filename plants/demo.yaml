@@ -202,8 +202,21 @@ stations:
   # single-node shape). CLIP and STUD each flow through one.
   - {name: PLK_X1, kind: loader}     # single-window CLIP loader
   - {name: PLK_X2, kind: loader}     # single-window STUD loader
-  # ── Unloader ──
+  # ── Unloaders ──
   - {name: FGN_001, kind: unloader}  # drains ASSY finished goods
+  # FGN_002 drains PANEL-A — PRESS-1's OWN payload, and that is the point.
+  # The U1 side-cycle trigger fires when an operator declares a produce-side bin
+  # full (capture_lineside) and asks the unloader that consumes THAT payload for
+  # a replacement. Every unloader in this scenario consumed ASSY, so a press-index
+  # release had no unloader to ask and the trigger was unobservable on any sim run.
+  - {name: FGN_002, kind: unloader}  # drains PANEL-A (the U1 trigger's target)
+  # ── PRESS-1 staged tooling changeover ──
+  # A tooling change needs somewhere to put the bins it lifts off the press
+  # (TBN_001) and somewhere for the incoming style's bins to WAIT while the tool
+  # is swapped (SLN_014). Without both, the round-3 staged evacuation cannot be
+  # expressed by any scenario — which is why it had never executed anywhere.
+  - {name: TBN_001, kind: staging}   # PRESS-1 tooling bay (evacuated bins park here)
+  - {name: SLN_014, kind: staging}   # PRESS-1 inbound stage (incoming style waits here)
 
 # Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
 # (incl. A/B parked side + press-index back) seeded with EMPTY active carriers. Consume
@@ -278,6 +291,7 @@ processes:
   - {name: LOADER-CLIP, active_style: LOADER-CLIP-RUN}   # manual_swap single-window CLIP
   - {name: LOADER-STUD, active_style: LOADER-STUD-RUN}   # manual_swap single-window STUD
   - {name: UNLOADER-A, active_style: UNLOADER-A-RUN}  # drains ASSY (main circle)
+  - {name: UNLOADER-B, active_style: UNLOADER-B-RUN}  # drains PANEL-A (the U1 trigger's target)
   # Loaders have no single station — their windows/positions are per-node operator stations
   # (PLK_W1/2-OPS, PLK_X1-OPS, PLK_X2-OPS), declared via operator_station on the claims below.
 
@@ -309,8 +323,9 @@ styles:
   - {name: LOADER-CLIP-RUN, process: LOADER-CLIP, payload: CLIP}
   - {name: LOADER-STUD-RUN, process: LOADER-STUD, payload: STUD}
   - {name: UNLOADER-A-RUN, process: UNLOADER-A, payload: ASSY}
+  - {name: UNLOADER-B-RUN, process: UNLOADER-B, payload: PANEL-A}
 
-operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, WELD-4-OPS, PLK_W1-OPS, PLK_W2-OPS, PLK_X1-OPS, PLK_X2-OPS, UNLOADER-A-OPS]
+operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, WELD-4-OPS, PLK_W1-OPS, PLK_W2-OPS, PLK_X1-OPS, PLK_X2-OPS, UNLOADER-A-OPS, UNLOADER-B-OPS]
 
 claims:
   # ── PRESS-1 (two_robot_press_index): one claim on the front node, paired back ──
@@ -328,6 +343,18 @@ claims:
     paired_core_node: PLN_002
     inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
+    # ── STAGED TOOLING EVACUATION, ON THE OUTGOING CLAIM ─────────────────
+    #
+    # BOTH seats marked, because a two-seat press whose front is evacuated and
+    # whose back is not is the case that reads as working right up until the
+    # index motion tries to move a bin that is still there. Two marks also make
+    # the fan-out produce two diffs, which is the shape a single mark cannot
+    # distinguish from no fan-out at all.
+    #
+    # The OUTGOING claim owns the decision — ChangeoverNeedsEvacuation reads the
+    # from-side — so these live here and not on -ALT.
+    changeover_evac_seats: [front, paired]
+    changeover_evac_destination: TBN_001
 
   # PRESS-1's ALTERNATE style, same node, same swap mode, OTHER carrier type.
   # A changeover to this claim makes the identical press ask the identical group
@@ -353,6 +380,11 @@ claims:
     index_robot_supplies: true
     inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
+    # The incoming style's bins WAIT here while the tool is changed.
+    # refuseStagedChangeoverWithoutStaging refuses to arm a staged tooling
+    # changeover without one, by name — so this is what makes the -RUN → -ALT
+    # changeover armable at all now that -RUN marks seats.
+    inbound_staging: SLN_014
 
   # ── PRESS-2 (A/B sequential): two paired claims, A active / B parked ──
   - core_node: PLN_003
@@ -534,6 +566,30 @@ claims:
     outbound_destination: SYN_PRESS_EMPTIES
     auto_push: true
 
+  # ── UNLOADER-B: drains PANEL-A, so the U1 trigger has somewhere to go ──
+  #
+  # MaybeCreateUnloaderFullIn resolves a CONSUME loader for the payload the
+  # operator just declared full. PRESS-1 produces PANEL-A; with only the ASSY
+  # unloader above, that lookup returned nothing and the one live behaviour
+  # change on the branch could not be observed on a sim at all — it looked
+  # identical to the trigger not firing.
+  #
+  # changeover_load_directive is set here rather than on a press: the directive
+  # is an instruction to a LOADER's card ("go and fetch these carriers"), and a
+  # sim that never sets it cannot render the round-3 card.
+  - core_node: FGN_002
+    style: UNLOADER-B-RUN
+    role: consume
+    swap_mode: manual_swap
+    payload: PANEL-A
+    uop_capacity: 30
+    reorder_point: 0
+    auto_reorder: false
+    inbound_source: SYN_MARKET
+    outbound_destination: SYN_PRESS_EMPTIES
+    changeover_load_directive: true
+    auto_push: true
+
 demands:
   # Loader demands key on the loader identity (synthetic PLK_LOADER, or the single-window
   # anchor node). The seed derives demand_registry from the loader aggregate; these
@@ -543,6 +599,7 @@ demands:
   - {payload: STUD, node: PLK_X2, replenish_uop_threshold: 40}
   # Unloader is event/auto-push driven (informational threshold 0).
   - {payload: ASSY, node: FGN_001, replenish_uop_threshold: 0}
+  - {payload: PANEL-A, node: FGN_002, replenish_uop_threshold: 0}
 
 # Reporting points: one PLC counter per counting process (manual_swap excluded).
 # plc_name/tag_name MUST match sim.processes in shingoedge.dev.yaml. The tick fans

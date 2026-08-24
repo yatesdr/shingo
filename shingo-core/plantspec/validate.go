@@ -274,10 +274,75 @@ func (p *Plant) Validate() error {
 		default:
 			// The flip is press-index choreography; nothing else has two robots
 			// to swap between, and a spec that sets it on another mode is
-			// describing a cell that cannot exist.
+			// describing a cell that cannot exist. Marked evacuation seats are
+			// the same argument: a seat is a press position.
 			if c.IndexRobotSupplies {
 				add("%s: index_robot_supplies applies to two_robot_press_index only", where)
 			}
+			if len(c.ChangeoverEvacSeats) > 0 {
+				add("%s: changeover_evac_seats applies to two_robot_press_index only", where)
+			}
+		}
+		// ── MARKED SEATS MUST BE SEATS THIS PRESS HAS ───────────────────────
+		//
+		// A seat the layout does not have is not an unlikely configuration, it
+		// is a reference to nothing — and the evacuation it asks for silently
+		// never happens, which is the failure mode hardest to notice on a sim.
+		// Same rule the Edge's ValidateNodeClaim applies; stated here too
+		// because a spec is written long before an Edge sees it.
+		seenSeat := map[string]bool{}
+		for _, seat := range c.ChangeoverEvacSeats {
+			switch seat {
+			case "front":
+			case "paired":
+				if c.PairedCoreNode == "" {
+					add("%s: changeover_evac_seats marks the back seat, but this press has no paired_core_node", where)
+				}
+			case "second":
+				if c.SecondPairedCoreNode == "" {
+					add("%s: changeover_evac_seats marks the third seat, but this press has no second_paired_core_node", where)
+				}
+			default:
+				add("%s: unknown changeover_evac_seat %q (want front, paired or second)", where, seat)
+			}
+			if seenSeat[seat] {
+				add("%s: changeover_evac_seats lists %q more than once", where, seat)
+			}
+			seenSeat[seat] = true
+		}
+		// An evacuation destination that names nothing sends the bins nowhere.
+		if c.ChangeoverEvacDestination != "" && !ref(c.ChangeoverEvacDestination) {
+			add("%s: unknown changeover_evac_destination %q", where, c.ChangeoverEvacDestination)
+		}
+		// ── KEY ROUTE ───────────────────────────────────────────────────────
+		//
+		// Shape only. The POINTS are deliberately not resolved against the
+		// scenario's nodes: a key route names points in the vendor's MAP, which
+		// is a superset of the nodes Shingo gave jobs to, and a corridor
+		// waypoint is the feature's primary use. Refusing a spec because a
+		// waypoint is not a node is the exact mistake the Edge validator was
+		// just corrected for; the sim has no map to check against at all.
+		seenPoint := map[string]bool{}
+		for _, pt := range c.KeyRoute {
+			switch {
+			case strings.TrimSpace(pt) == "":
+				add("%s: key_route contains a blank point", where)
+			case pt == "SELF_POSITION":
+				add("%s: SELF_POSITION is never valid in a key route", where)
+			case seenPoint[pt]:
+				add("%s: key_route lists %q more than once", where, pt)
+			}
+			seenPoint[pt] = true
+		}
+		if len(c.KeyRoute) > 0 && protocol.SwapMode(c.SwapMode) == protocol.SwapModeManualSwap {
+			add("%s: key_route applies to robot-served claims; a manual_swap loader does not drive", where)
+		}
+		if c.KeyTask != "" && c.KeyTask != "load" && c.KeyTask != "unload" {
+			add("%s: key_task must be \"load\", \"unload\", or empty; got %q", where, c.KeyTask)
+		}
+		// The directive is an instruction to a LOADER's card.
+		if c.ChangeoverLoadDirective && protocol.SwapMode(c.SwapMode) != protocol.SwapModeManualSwap {
+			add("%s: changeover_load_directive is a loader's card instruction (manual_swap)", where)
 		}
 		// Any staging node that IS set must exist.
 		if c.InboundStaging != "" && !ref(c.InboundStaging) {

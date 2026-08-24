@@ -433,6 +433,15 @@ claims:
     paired_core_node: PLN_002
     inbound_source: SYN_MT_Return
     outbound_destination: SYN_SM_Stamp
+    # The round-3/4 claim config, present so the seeder round-trip asserts it
+    # lands. Distinctive on every axis a wrong encoding would flatten: TWO seats
+    # (not one, not all), a destination that is NOT outbound_destination, and a
+    # two-point route in an order that is not sorted.
+    changeover_evac_seats: [front, paired]
+    changeover_evac_destination: SYN_MT_Return
+    key_route: [WP_AISLE_S, WP_AISLE_N]
+    key_task: unload
+    allowed_payloads: [PANEL-LH, PANEL-RH]
 
   # ── PRESS-2 (A/B sequential): two paired claims, A active / B parked ──
   - core_node: PLN_003
