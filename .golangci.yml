@@ -506,26 +506,6 @@ linters:
         text: "Function 'createSnapshotArchive' has too many statements"
         linters:
           - funlen
-      # runInteractiveRestore: transitional
-      - path: "shingo-edge/cmd/shingoedge/main\\.go"
-        text: "Function 'runInteractiveRestore' has too many statements"
-        linters:
-          - funlen
-      # planNodeAction: transitional
-      - path: "shingo-edge/engine/changeover_planner\\.go"
-        text: "Function 'planNodeAction' has too many statements"
-        linters:
-          - funlen
-      # warlinkSync: transitional
-      - path: "shingo-edge/plc/manager\\.go"
-        text: "Function 'warlinkSync' has too many statements"
-        linters:
-          - funlen
-      # apiSendManualMessage: transitional
-      - path: "shingo-edge/www/handlers_manual_message\\.go"
-        text: "Function 'apiSendManualMessage' has too many statements"
-        linters:
-          - funlen
 
       # ---- Structural exemptions (permanent) --------------------------------
       # engine_iface.go is the service-interface definition itself; it must
