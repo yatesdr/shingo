@@ -768,7 +768,15 @@ func (m *Manager) reconcilePLC(ctx context.Context, p WarlinkPLC) {
 	var tags map[string]WarlinkTag
 
 	if p.Status == "Connected" {
-		tags, err := m.fetchTags(ctx, p.Name)
+		// `var err` + plain `=`, NOT `tags, err := ...`. The := form declares a
+		// SECOND tags inside this block, shadowing the one above, so every
+		// fetched tag is discarded when the block ends and applyTags below is
+		// handed a nil map — which empties mp.Values and makes every tag read
+		// fail "tag X not found on Y". Before the extraction this block lived
+		// in warlinkSync where err was already in scope and the assignment was
+		// a plain `=`; adding the declaration is what introduced the shadow.
+		var err error
+		tags, err = m.fetchTags(ctx, p.Name)
 		if err != nil {
 			log.Printf("WarLink fetch tags %s: %v", p.Name, err)
 			effectiveStatus = "Disconnected"
