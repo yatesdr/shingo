@@ -127,3 +127,27 @@ func TestAdvanceCompoundChapterEnd_UnreadableChildListDoesNotComplete(t *testing
 		t.Fatalf("parent status = %q, want %q: an unreadable child list decided the compound's fate", got.Status, StatusReshuffling)
 	}
 }
+
+// The other half of the parent-load contract. advanceCompoundChapterEnd now
+// bails on an unreadable parent, and the risk that creates is the opposite
+// failure: a parent row that is genuinely GONE must not wedge the compound.
+//
+// GetOrder passes sql.ErrNoRows straight through (ScanOrder returns the Scan
+// error verbatim), so a missing parent and a broken connection arrive as the
+// same non-nil error. If both bailed, every later event would re-read the same
+// absent row and the lanes that compound held would never be released by
+// anyone. ErrNoRows therefore has to keep flowing to the nil-guarded
+// dispositions and the lane release, which is what a nil parent means.
+func TestAdvanceCompoundChapterEnd_MissingParentDoesNotWedge(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
+
+	// No parent row, no children: ListChildOrders succeeds and returns empty,
+	// GetOrder returns sql.ErrNoRows. The DB is healthy throughout, so anything
+	// non-nil coming back is the ErrNoRows arm being treated as a real fault.
+	if err := d.advanceCompoundChapterEnd(999999); err != nil {
+		t.Fatalf("advanceCompoundChapterEnd on an absent parent = %v, want nil: a deleted parent must not wedge the compound", err)
+	}
+}

@@ -1062,9 +1062,26 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 	}
 
 	// Load parent for both branches.
+	//
+	// A REAL DB ERROR AND A MISSING ROW ARE DIFFERENT ANSWERS, exactly as they
+	// are for GetNextChildOrder at the top of AdvanceCompoundOrder.
+	//
+	// Unreadable: bail. A nil parent does not stop this function — the
+	// "parent has already left" guard below requires `parent != nil` to fire,
+	// so execution falls THROUGH it, skips every disposition (each is nil-
+	// guarded), and still reaches the lane release at the tail. That frees a
+	// compound's lanes on the strength of a read that did not happen, which is
+	// the same class as the child-list swallow above.
+	//
+	// sql.ErrNoRows: proceed. The parent row is genuinely gone, and returning
+	// an error for that would wedge the compound forever — every later event
+	// re-reads the same absent row, so the lanes it held would never be
+	// released by anyone. A nil parent IS the right reading here, and the
+	// nil-guarded dispositions plus the lane release are the right response.
 	parent, pErr := d.db.GetOrder(parentOrderID)
-	if pErr != nil {
+	if pErr != nil && !errors.Is(pErr, sql.ErrNoRows) {
 		log.Printf("dispatch: load parent compound order %d: %v", parentOrderID, pErr)
+		return pErr
 	}
 
 	// SNAPSHOT THE LANES BEFORE ANY DISPOSITION RUNS. Two of the three below
