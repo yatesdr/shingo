@@ -455,11 +455,6 @@ linters:
         text: "Function 'apiTestCommandSubmit' has too many statements"
         linters:
           - funlen
-      # createSnapshotArchive: transitional
-      - path: "shingo-edge/backup/snapshot\\.go"
-        text: "Function 'createSnapshotArchive' has too many statements"
-        linters:
-          - funlen
 
       # ---- Structural exemptions (permanent) --------------------------------
       # engine_iface.go is the service-interface definition itself; it must
