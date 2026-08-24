@@ -64,8 +64,14 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, er
 		return nil, fmt.Errorf("actor is required for a recovery order")
 	}
 	bin, err := e.BinService().GetBin(binID)
-	if err != nil || bin == nil {
+	if err != nil {
 		return nil, fmt.Errorf("read bin %d: %w", binID, err)
+	}
+	// A nil bin with a nil error is "no such row", not a failure to read. The
+	// combined branch formatted the nil through %w and put "%!w(<nil>)" on an
+	// operator-facing door.
+	if bin == nil {
+		return nil, fmt.Errorf("bin %d does not exist", binID)
 	}
 	// ONLY A BIN ON A DECK. A bin at _TRANSIT is a bin nobody knows the location
 	// of, and pinning an unload to the robot that last carried it would be a
@@ -110,8 +116,11 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, er
 	}
 
 	carrier, err := e.db.GetNodeByName(bin.NodeName)
-	if err != nil || carrier == nil {
+	if err != nil {
 		return nil, fmt.Errorf("read carrier node %s: %w", bin.NodeName, err)
+	}
+	if carrier == nil {
+		return nil, fmt.Errorf("carrier node %s does not exist", bin.NodeName)
 	}
 
 	order := &orders.Order{
@@ -134,6 +143,32 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, er
 		SourceIntent: dispatch.SourceIntentOnDeck,
 		RobotID:      robotID,
 		EdgeUUID:     recoveryEdgeUUID(binID, robotID),
+	}
+	// FREE THE UUID A DEAD ATTEMPT IS HOLDING.
+	//
+	// recoveryEdgeUUID is deterministic per (bin, robot), which is what makes a
+	// racing double-create collide on idx_orders_uuid rather than put two robots
+	// on one bin. The cost is that there is exactly ONE such uuid per pair, so a
+	// terminal order still holding it makes this bin unrecoverable-by-order
+	// forever — and the refusals that terminalize one (slot_unavailable,
+	// lane_held, fleet_failed) are the ordinary "not now" path this function's
+	// own doc comment promises the caller can retry after.
+	//
+	// Only TERMINAL rows are cleared. A live order holding the uuid is the
+	// in-flight case, and it was already refused above with a better sentence;
+	// clearing it would be minting a second order for a bin somebody is already
+	// moving. The dead row itself is kept — status, error_detail and history are
+	// the record of the failed attempt — and only its index entry is released.
+	if freed, cerr := e.db.ReleaseTerminalEdgeUUID(order.EdgeUUID); cerr != nil {
+		// Not fatal on its own: the create below either succeeds (nothing was
+		// holding the uuid) or fails with the constraint error, which is the
+		// same outcome as before and still names the problem.
+		e.dbg("engine: carried bin recovery: release terminal uuid %q for bin %d: %v",
+			order.EdgeUUID, binID, cerr)
+	} else if freed > 0 {
+		e.logFn("engine: carried bin recovery: bin %d — freed %d terminal order(s) holding %q "+
+			"so this attempt can be created; the earlier attempt(s) failed and their rows are kept",
+			binID, freed, order.EdgeUUID)
 	}
 	if err := e.db.CreateOrder(order); err != nil {
 		return nil, fmt.Errorf("create recovery order for bin %d: %w", binID, err)

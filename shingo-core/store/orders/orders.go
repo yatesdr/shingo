@@ -406,6 +406,40 @@ func LinkSiblingsByEdgeUUID(db *sql.DB, uuidA, uuidB string) (int64, error) {
 	return res.RowsAffected()
 }
 
+// ReleaseTerminalEdgeUUID blanks edge_uuid on TERMINAL orders holding it, so a
+// deterministic uuid can be minted again. Returns how many rows were cleared.
+//
+// WHY THIS EXISTS. idx_orders_uuid is UNIQUE over edge_uuid WHERE edge_uuid
+// <> ”, and some orders derive their uuid from what they are ABOUT rather than
+// from a counter — carried-bin recovery mints "recovery-bin-{id}-{robot}" so a
+// racing double-create collides on the index instead of putting two robots on
+// one bin. A deterministic uuid is therefore a finite resource: there is
+// exactly one per subject, and a dead order holding it makes the subject
+// unactionable forever.
+//
+// TERMINAL ONLY, and that is the whole safety argument. A live order holding
+// the uuid is doing the work, and clearing it would let a second order be
+// minted for the same subject — the two-orders-one-bin shape the uniqueness is
+// there to prevent. A terminal order is finished; its uuid is a headstone, and
+// the row itself is preserved (status, error_detail, history) so the record of
+// the attempt survives. Only the index entry is given up.
+func ReleaseTerminalEdgeUUID(db *sql.DB, uuid string) (int64, error) {
+	if uuid == "" {
+		return 0, nil
+	}
+	terminals := protocol.TerminalStatuses()
+	names := make([]string, len(terminals))
+	for i, t := range terminals {
+		names[i] = string(t)
+	}
+	res, err := db.Exec(`UPDATE orders SET edge_uuid='', updated_at=$3
+		WHERE edge_uuid=$1 AND status = ANY($2)`, uuid, names, clock.Now().UTC())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // SiblingUUID returns the order's two-robot swap sibling edge UUID, or "".
 func SiblingUUID(db *sql.DB, id int64) (string, error) {
 	var s string
