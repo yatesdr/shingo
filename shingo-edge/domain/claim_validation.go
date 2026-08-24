@@ -63,6 +63,61 @@ type ClaimNodeContext struct {
 // Group children arrive as "Group.CHILD" and the rest of Edge keys on the bare
 // child name, so a bare name that matches a child's suffix resolves — the same
 // fallback the process-node guard uses.
+
+// validateKeyRoute is the Routing fieldset's half of ValidateNodeClaim, lifted
+// out because it is a self-contained set of rules about one field pair and the
+// parent had grown past the length the linter allows. It returns findings
+// rather than appending, so the caller keeps the field order it controls.
+//
+// See NodeClaim.KeyRoute for the vendor semantics. The short version, because it
+// is why these are ERRORS and not warnings: a point that does not exist or
+// cannot be reached terminates the robot's waybill the moment the order is
+// issued, so an unresolvable point stored quietly is an order that dies at
+// dispatch with nothing on this side to explain it.
+func validateKeyRoute(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError {
+	var out []FieldError
+	add := func(field, msg string) {
+		out = append(out, FieldError{Field: field, Message: msg, Severity: SeverityError})
+	}
+	if len(in.KeyRoute) > 0 && in.SwapMode == protocol.SwapModeManualSwap {
+		add("key_route", "Key route applies to robot-served claims; a manual_swap loader does not drive")
+	}
+	seenPoint := map[string]bool{}
+	for i, pt := range in.KeyRoute {
+		if strings.TrimSpace(pt) == "" {
+			add("key_route", fmt.Sprintf("Key route point %d is blank", i+1))
+			continue
+		}
+		if seenPoint[pt] {
+			// Not a vendor rule — a repeat is how a mis-click renders, and a
+			// route that visits one point twice is never what was meant.
+			add("key_route", fmt.Sprintf("Key route lists %q more than once", pt))
+			continue
+		}
+		seenPoint[pt] = true
+		// SELF_POSITION is the robot's own current location. The vendor
+		// forbids it in keyRoute specifically, and it is the one value an
+		// operator might reasonably type expecting "start where you are".
+		if pt == "SELF_POSITION" {
+			add("key_route", "SELF_POSITION is never valid in a key route")
+			continue
+		}
+		if len(nodeCtx.KnownCoreNodes) > 0 && !coreNodeResolves(nodeCtx.KnownCoreNodes, pt) {
+			add("key_route", fmt.Sprintf(
+				"Key route point %q does not exist on Core (%d nodes known). A point that does not "+
+					"resolve terminates the robot's waybill the moment it is issued.",
+				pt, len(nodeCtx.KnownCoreNodes)))
+		}
+	}
+	// The vendor's literal values; anything else is silently ignored by SEER,
+	// which is worse than being told.
+	if in.KeyTask != "" && in.KeyTask != "load" && in.KeyTask != "unload" {
+		add("key_task", fmt.Sprintf("Key task must be \"load\", \"unload\", or empty; got %q", in.KeyTask))
+	}
+
+	return out
+}
+
 func coreNodeResolves(known map[string]bool, name string) bool {
 	if known[name] {
 		return true
@@ -198,48 +253,7 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 			"Index robot fetches the replacement applies to 2-Robot Press Index only")
 	}
 
-	// ── KEY ROUTE ───────────────────────────────────────────────────────
-	//
-	// keyRoute is a robot-SELECTION assist, but a bad point is not a soft
-	// failure: per the vendor manual a point that does not exist or is
-	// unreachable TERMINATES THE WAYBILL IMMEDIATELY ON ISSUE. So an
-	// unresolvable point stored quietly becomes an order that dies at dispatch
-	// with nothing on the Edge side to explain it. These are errors.
-	if len(in.KeyRoute) > 0 && in.SwapMode == protocol.SwapModeManualSwap {
-		add("key_route", "Key route applies to robot-served claims; a manual_swap loader does not drive")
-	}
-	seenPoint := map[string]bool{}
-	for i, pt := range in.KeyRoute {
-		if strings.TrimSpace(pt) == "" {
-			add("key_route", fmt.Sprintf("Key route point %d is blank", i+1))
-			continue
-		}
-		if seenPoint[pt] {
-			// Not a vendor rule — a repeat is how a mis-click renders, and a
-			// route that visits one point twice is never what was meant.
-			add("key_route", fmt.Sprintf("Key route lists %q more than once", pt))
-			continue
-		}
-		seenPoint[pt] = true
-		// SELF_POSITION is the robot's own current location. The vendor
-		// forbids it in keyRoute specifically, and it is the one value an
-		// operator might reasonably type expecting "start where you are".
-		if pt == "SELF_POSITION" {
-			add("key_route", "SELF_POSITION is never valid in a key route")
-			continue
-		}
-		if len(nodeCtx.KnownCoreNodes) > 0 && !coreNodeResolves(nodeCtx.KnownCoreNodes, pt) {
-			add("key_route", fmt.Sprintf(
-				"Key route point %q does not exist on Core (%d nodes known). A point that does not "+
-					"resolve terminates the robot's waybill the moment it is issued.",
-				pt, len(nodeCtx.KnownCoreNodes)))
-		}
-	}
-	// The vendor's literal values; anything else is silently ignored by SEER,
-	// which is worse than being told.
-	if in.KeyTask != "" && in.KeyTask != "load" && in.KeyTask != "unload" {
-		add("key_task", fmt.Sprintf("Key task must be \"load\", \"unload\", or empty; got %q", in.KeyTask))
-	}
+	out = append(out, validateKeyRoute(in, nodeCtx)...)
 
 	// Positions must be distinct, whatever the mode names them. Any two the
 	// same is a step whose pickup and dropoff are one node — a robot asked to

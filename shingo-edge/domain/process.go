@@ -335,9 +335,9 @@ type NodeClaim struct {
 	// manual's literal values), preferring a robot already carrying out that
 	// kind of task. Empty = auto-pick, which is every order in the plant
 	// today.
-	KeyTask string `json:"key_task,omitempty"`
-	AutoConfirm             bool `json:"auto_confirm"`
-	Sequence                int  `json:"sequence"`
+	KeyTask     string `json:"key_task,omitempty"`
+	AutoConfirm bool   `json:"auto_confirm"`
+	Sequence    int    `json:"sequence"`
 	// LinesideSoftThreshold is the per-claim soft cap for the release
 	// qty-override prompt. Zero means "off" (default). When >0, the HMI
 	// warns — but doesn't block — if the operator enters a qty greater
@@ -611,12 +611,12 @@ type NodeClaimInput struct {
 	// KeyRoute/KeyTask are plain values: the Routing fieldset owns controls for
 	// both, so the claim editor always has an opinion. See the same-named
 	// fields on NodeClaim.
-	KeyRoute []string `json:"key_route"`
-	KeyTask  string   `json:"key_task"`
-	AutoConfirm               bool     `json:"auto_confirm"`
-	LinesideSoftThreshold     int      `json:"lineside_soft_threshold"`
-	ReuseCompatibleBins       bool     `json:"reuse_compatible_bins"`
-	AutoPush                  bool     `json:"auto_push"`
+	KeyRoute              []string `json:"key_route"`
+	KeyTask               string   `json:"key_task"`
+	AutoConfirm           bool     `json:"auto_confirm"`
+	LinesideSoftThreshold int      `json:"lineside_soft_threshold"`
+	ReuseCompatibleBins   bool     `json:"reuse_compatible_bins"`
+	AutoPush              bool     `json:"auto_push"`
 	// ── ABSENT MEANS LEAVE UNTOUCHED ────────────────────────────────────
 	//
 	// These are columns no single writer owns. updateClaim writes every

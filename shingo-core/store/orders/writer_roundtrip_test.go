@@ -79,10 +79,16 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"PayloadCode":      std.Payload.Code,
 		"SkipAutoConfirm":  true,
 		"SiblingOrderUUID": "roundtrip-sibling-uuid",
-		"SourceIntent":     "empty",
-		"Coordinated":      true,
-		"OriginID":         "6f1c8b2e-4a9d-4c3f-8e5b-7d2a1f0c9b34",
-		"OriginClass":      "demand",
+		// TWO POINTS, NOT ONE, AND IN AN UNSORTED ORDER. key_route is a list in
+		// one TEXT column: a writer that round-tripped it as a set would return
+		// the same two strings and pass a one-element or sorted probe. SEER
+		// walks the points in the order given, so the order IS the route.
+		"KeyRoute":     []string{"ROUNDTRIP-AISLE-B", "ROUNDTRIP-AISLE-A"},
+		"KeyTask":      "unload",
+		"SourceIntent": "empty",
+		"Coordinated":  true,
+		"OriginID":     "6f1c8b2e-4a9d-4c3f-8e5b-7d2a1f0c9b34",
+		"OriginClass":  "demand",
 		// A birth fact, so unlike OpenForChildren it round-trips through Create.
 		// That is the property worth pinning: if this ever stops surviving the
 		// INSERT, a service dig's lane releases on the last blocker and the bin

@@ -87,7 +87,6 @@ type stubEngine struct {
 
 	// ChangeoverGateStatus canned response — the gate-status endpoint is a
 	// pure read, so the stub just replays whatever the test set.
-	lastReleaseNodeID int64
 
 	lastAbandonNodeID     int64
 	lastAbandonAcceptHalf bool
