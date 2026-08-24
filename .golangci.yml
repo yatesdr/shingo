@@ -322,11 +322,43 @@ linters:
       # oversized function appearing in an excluded file is still caught.
       #
       # Two classes:
-      #   permanent    — the shape is correct and a split would make it worse
-      #                  (composition roots, flat registries, fixture builders).
-      #   transitional — should come off this list. Remove the entry in the
-      #                  same commit that shrinks the function; do not raise
-      #                  the threshold and do not delete comments to fit.
+      #   permanent — the shape is correct and a split would make it worse
+      #               (composition roots, flat registries, fixture builders), or
+      #               an owner decision fences the function. Names the decision.
+      #   pinnable  — should come off this list, and NAMES THE TEST that is its
+      #               exit condition. Remove the entry in the same commit that
+      #               shrinks the function; do not raise the threshold and do not
+      #               delete comments to fit.
+      #
+      # "pinnable", not "transitional". Transitional read as a todo list and was
+      # treated as one — an invitation to extract on judgement, with the pin
+      # left implicit. An entry now says what evidence its extraction has to be
+      # done behind, and an entry whose pin DOES NOT EXIST says that too, which
+      # is the honest form of "not yet".
+      #
+      # ── THE THREE RATCHET RULES ──────────────────────────────────────────
+      #
+      # 1. An extraction that MOVES A FUNCTION BODY requires a behaviour-pinning
+      #    test in the SAME commit. BuildView got a golden and reconcilePLC got
+      #    nothing, and that is the entire difference between the two outcomes:
+      #    one refactor was safe and the other silently killed PLC counting at
+      #    every plant. A body move with no pin is not a refactor, it is a
+      #    rewrite nobody checked.
+      #
+      # 2. A BEHAVIOUR CHANGE inside a funlen-extraction commit must be called
+      #    out in the commit SUBJECT, not only in the body. A reviewer scanning
+      #    subjects for "what changed behaviour this round" must not have to
+      #    read every extraction commit to find one.
+      #
+      # 3. An entry may be retired only by a behaviour-preserving diff that does
+      #    not push ANY OTHER function in the same file over budget. Extracting
+      #    from one function and spending the slack on its neighbour leaves the
+      #    file no better and the next toucher with a red gate they did not
+      #    cause.
+      #
+      # The NAME pinning below stays: the exclusion names the function, so a
+      # rename or a move fails the gate rather than silently transferring the
+      # exemption to whatever now sits at that path.
       # main: permanent
       # Composition root. The wiring order IS the program; splitting it into
       # helpers moves the order somewhere you have to reassemble by hand.
@@ -387,7 +419,7 @@ linters:
         text: "Function 'Validate' has too many statements"
         linters:
           - funlen
-      # FindSourceForNeed: transitional
+      # FindSourceForNeed: permanent (owner decision D7)
       # Owner decision D7: whether tier extraction reduces or CONCENTRATES the
       # fall-through risk is a study question, and no code moves before it
       # reports. Do not clear this entry by refactoring on your own judgement.
@@ -395,7 +427,7 @@ linters:
         text: "Function 'FindSourceForNeed' has too many statements"
         linters:
           - funlen
-      # AdvanceCompoundOrder: transitional
+      # AdvanceCompoundOrder: permanent until the north-star unification (owner decision D6)
       # Owner decision D6 funds the chapter-close extraction only; the dispatch
       # half waits for the north-star unification. That cut landed on
       # 2026-08-19 and took this function from 136 statements to 74. The rest
@@ -405,52 +437,72 @@ linters:
         text: "Function 'AdvanceCompoundOrder' has too many statements"
         linters:
           - funlen
-      # computeCarriers: transitional
+      # computeCarriers: pinnable
+      # Exit condition: cmd/simcalc/carriers_test.go — TestCarriers_APoolCanStarve...
+      # and TestCarriers_PoolsAreKeyedOnTheSourceNotTheZoneOfTheBin pin the pool
+      # arithmetic. Extract behind those.
       - path: "shingo-core/cmd/simcalc/carriers\\.go"
         text: "Function 'computeCarriers' has too many statements"
         linters:
           - funlen
-      # shuffleSlotsFrom: transitional
+      # shuffleSlotsFrom: pinnable
+      # Exit condition: dispatch/bubble_and_standoff_docker_test.go and
+      # dig_dwell_docker_test.go drive this through the reshuffle it decides.
+      # Both are docker-tagged, so run `gate.sh docker` before and after.
       - path: "shingo-core/dispatch/reshuffle\\.go"
         text: "Function 'shuffleSlotsFrom' has too many statements"
         linters:
           - funlen
-      # SourceabilityPage: transitional
+      # SourceabilityPage: pinnable
+      # Exit condition: TestSourceabilityPage_GridClaimsAndQueue.
       - path: "shingo-core/engine/sourceability_page\\.go"
         text: "Function 'SourceabilityPage' has too many statements"
         linters:
           - funlen
-      # handleVendorStatusChange: transitional
+      # handleVendorStatusChange: pinnable
+      # Exit condition: engine/wiring_vendor_robot_test.go — the TestVendorStatus_*
+      # family pins the robot-id assignment cases this function decides.
       - path: "shingo-core/engine/wiring_vendor_status\\.go"
         text: "Function 'handleVendorStatusChange' has too many statements"
         linters:
           - funlen
-      # tryFulfill: transitional
+      # tryFulfill: pinnable
+      # Exit condition: TestScanner_TryFulfill_* in fulfillment/.
       - path: "shingo-core/fulfillment/scanner\\.go"
         text: "Function 'tryFulfill' has too many statements"
         linters:
           - funlen
-      # syncOrClearForReleased: transitional
+      # syncOrClearForReleased: pinnable
+      # Exit condition: TestBinManifestService_SyncOrClearForReleased_*.
       - path: "shingo-core/service/bin_manifest\\.go"
         text: "Function 'syncOrClearForReleased' has too many statements"
         linters:
           - funlen
-      # LocalizationBoardAt: transitional
+      # LocalizationBoardAt: pinnable — NO PIN EXISTS YET, and writing one IS the
+      # exit condition. Nothing in service/ characterizes this function's output;
+      # extracting from it today would be a body move with no behavioural
+      # evidence, which ratchet rule 1 forbids.
       - path: "shingo-core/service/localization_board\\.go"
         text: "Function 'LocalizationBoardAt' has too many statements"
         linters:
           - funlen
-      # ApplyBinUOPDelta: transitional
+      # ApplyBinUOPDelta: pinnable
+      # Exit condition: TestApplyBinUOPDelta_* — the capture-reduction and
+      # clear-for-reuse cases.
       - path: "shingo-core/uop/applier\\.go"
         text: "Function 'ApplyBinUOPDelta' has too many statements"
         linters:
           - funlen
-      # apiReparentNode: transitional
+      # apiReparentNode: pinnable
+      # Exit condition: TestApiReparentNode_NonForceBlocked and its siblings.
       - path: "shingo-core/www/handlers_nodegroup\\.go"
         text: "Function 'apiReparentNode' has too many statements"
         linters:
           - funlen
-      # apiTestCommandSubmit: transitional
+      # apiTestCommandSubmit: pinnable — NO PIN EXISTS YET, and writing one IS
+      # the exit condition. This is an operator-facing submit path with no
+      # characterization test; see LocalizationBoardAt above for why that blocks
+      # the extraction rather than merely making it riskier.
       - path: "shingo-core/www/handlers_test_orders_commands\\.go"
         text: "Function 'apiTestCommandSubmit' has too many statements"
         linters:
