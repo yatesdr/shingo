@@ -54,7 +54,7 @@ func assertInterfaceWidth(t *testing.T, name string, rt reflect.Type, want []str
 	}
 }
 
-// TestServiceAccessWidth pins Edge's narrow surface at 19 methods. The
+// TestServiceAccessWidth pins Edge's narrow surface at 20 methods. The
 // interface's own doc comment states the same number; keep them together.
 func TestServiceAccessWidth(t *testing.T) {
 	t.Parallel()
@@ -73,6 +73,7 @@ func TestServiceAccessWidth(t *testing.T) {
 		"PLCManager",
 		"PayloadBinTypes",
 		"ProcessService",
+		"ScenePointNames",
 		"Reconciliation",
 		"ShiftService",
 		"SourcingStateForProcess",
@@ -83,8 +84,8 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Edge's wide surface at 71 methods —
-// ServiceAccess's 19 embedded, plus 52 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Edge's wide surface at 72 methods —
+// ServiceAccess's 20 embedded, plus 52 orchestration verbs of its own.
 func TestEngineOrchestrationWidth(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -144,6 +145,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"RequestNodeMaterial",
 		"RequestNodeSync",
 		"RequestProduceSwap",
+		"ScenePointNames",
 		"SendEnvelope",
 		"SequentialChangeoverCutover",
 		"ShiftService",

@@ -570,12 +570,47 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 	for _, p := range pbtPairs {
 		payloadBinTypes = append(payloadBinTypes, protocol.PayloadBinTypeInfo{PayloadCode: p[0], BinTypeCode: p[1]})
 	}
+	// The vendor map's own universe of locations, and what leads to what.
+	//
+	// Shingo works in APs, so the node list above is only the subset of map
+	// points Shingo gave a job to. A key route is expressed in the VENDOR's
+	// universe — a plain waypoint is its primary use — so an Edge validating a
+	// route against the node list refuses correct routes. Core has mirrored the
+	// whole scene graph since the SEER adapter was written and simply never
+	// sent it down.
+	//
+	// Read failures do NOT return, for the same reason as payload_bin_types
+	// and NOT the loader slice: this is memory-only on the Edge and re-derived
+	// from the next sync, while the loader slice backs a durable cache a wrong
+	// read destroys. An Edge that receives no scene points degrades to allowing
+	// a key route with a warning, which is the documented CheckLocationTasks
+	// posture — it must not start refusing routes because one query failed.
+	scenePointPairs, spErr := s.db.ListScenePointNames()
+	if spErr != nil {
+		log.Printf("core_handler: list scene points for %s: %v", env.Src.Station, spErr)
+	}
+	var scenePoints []protocol.ScenePointInfo
+	for _, p := range scenePointPairs {
+		scenePoints = append(scenePoints, protocol.ScenePointInfo{InstanceName: p[0], ClassName: p[1]})
+	}
+	sceneEdgePairs, seErr := s.db.ListSceneEdgeEndpoints()
+	if seErr != nil {
+		log.Printf("core_handler: list scene edges for %s: %v", env.Src.Station, seErr)
+	}
+	var sceneEdges []protocol.SceneEdgeInfo
+	for _, e := range sceneEdgePairs {
+		sceneEdges = append(sceneEdges, protocol.SceneEdgeInfo{From: e[0], To: e[1]})
+	}
+
 	s.resp.replyData(env, protocol.SubjectNodeListResponse, &protocol.NodeListResponse{
 		Nodes:           infos,
 		Loaders:         loaderInfos,
 		PayloadBinTypes: payloadBinTypes,
+		ScenePoints:     scenePoints,
+		SceneEdges:      sceneEdges,
 	})
-	log.Printf("core_handler: sent node list (%d nodes, %d loaders) to %s", len(infos), len(loaderInfos), env.Src.Station)
+	log.Printf("core_handler: sent node list (%d nodes, %d loaders, %d scene points, %d scene edges) to %s",
+		len(infos), len(loaderInfos), len(scenePoints), len(sceneEdges), env.Src.Station)
 }
 
 func (s *CoreDataService) HandleProductionReport(env *protocol.Envelope, rpt *protocol.ProductionReport) {

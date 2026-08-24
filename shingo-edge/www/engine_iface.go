@@ -21,7 +21,7 @@ import (
 // captures the architectural role distinction surfaced in three
 // independent dev reviews: most edge handlers do pure CRUD through
 // services and have no business reaching engine-level orchestration.
-// ServiceAccess gives those handlers a 19-method surface; orchestration
+// ServiceAccess gives those handlers a 20-method surface; orchestration
 // handlers take EngineOrchestration explicitly via h.orchestration.
 // The count is asserted by a test in this package — change it there when
 // you change it here.
@@ -52,6 +52,17 @@ type ServiceAccess interface {
 	// by Core on each NodeListResponse. Used by the operator-station view
 	// handler to populate the dunnage picker without a per-node query.
 	PayloadBinTypes() []protocol.PayloadBinTypeInfo
+	// ScenePointNames is the vendor map's point set, delivered on the same
+	// sync. The universe a key route is expressed in — CoreNodes is only the
+	// subset Shingo gave a job to. Empty means "not received", never "the map
+	// is empty"; the key-route validator degrades to a warning on it.
+	//
+	// The scene's ADJACENCY rides the same sync and is cached beside this
+	// (engine.SceneAdjacency), but is deliberately not exposed here yet: its
+	// only consumer is the connectivity-filtered key-route picker, which is a
+	// named follow-up. An interface method with no caller is what this
+	// interface's width guard exists to prevent.
+	ScenePointNames() map[string]bool
 
 	// ── Service accessors ──────────────────────────────────────────
 	// Phase 6.2′: per-domain services. Handlers reach single-aggregate

@@ -383,19 +383,26 @@ func (h *Handlers) claimNodeContext(in domain.NodeClaimInput) domain.ClaimNodeCo
 		return domain.ClaimNodeContext{}
 	}
 	ctx := domain.ClaimNodeContext{Checked: true, StyleProcessID: style.ProcessID}
-	// Core's synced node set, for the key-route resolution check. Empty is
-	// carried through as empty ON PURPOSE — the validator reads that as
-	// "could not look" and skips, rather than refusing every point because
-	// Core has not been heard from.
+	// Core's synced node set. Empty is carried through as empty ON PURPOSE —
+	// the validator reads that as "could not look" and skips, rather than
+	// refusing because Core has not been heard from.
 	if known := h.engine.CoreNodes(); len(known) > 0 {
 		ctx.KnownCoreNodes = make(map[string]bool, len(known))
 		for name := range known {
 			ctx.KnownCoreNodes[name] = true
 		}
-	} else if route := domain.OptValue(in.KeyRoute); len(route) > 0 {
-		log.Printf("claim %s: core node list is EMPTY, so %d key-route point(s) could not be checked "+
-			"against Core's plant — allowing. This is not a pass: Core has not been heard from.",
-			in.CoreNodeName, len(route))
+	}
+	// The plant MAP, which is the universe a key route is expressed in — see
+	// ClaimNodeContext.KnownScenePoints. Same could-not-look rule; the
+	// validator degrades to a warning rather than refusing.
+	ctx.KnownScenePoints = h.engine.ScenePointNames()
+	if len(ctx.KnownScenePoints) == 0 {
+		if route := domain.OptValue(in.KeyRoute); len(route) > 0 {
+			log.Printf("claim %s: the plant map is EMPTY, so %d key-route point(s) could not be "+
+				"checked — saving unverified. This is not a pass: Core has not sent a scene graph, "+
+				"either because it has not been heard from or because it predates the scene sync.",
+				in.CoreNodeName, len(route))
+		}
 	}
 	for i := range nodes {
 		if nodes[i].CoreNodeName == in.CoreNodeName {

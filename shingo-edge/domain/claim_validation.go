@@ -52,17 +52,19 @@ type ClaimNodeContext struct {
 	// arrives on the wire every couple of minutes and a fresh Edge, a restart
 	// or a Kafka gap all leave it empty — refusing a configuration write on
 	// that basis would brick setup exactly when someone is most likely to be
-	// doing it. So an empty set SKIPS the key-route resolution check. This is
-	// the same rule, and the same reasoning, as coreNodeNameIsUnknown at the
-	// process-node write; the two should stay in step.
+	// doing it. This is the same rule, and the same reasoning, as
+	// coreNodeNameIsUnknown at the process-node write; the two should stay in
+	// step.
 	KnownCoreNodes map[string]bool
+	// KnownScenePoints is the VENDOR MAP's point set — every location the
+	// fleet knows, not just the ones Shingo gave a job to.
+	//
+	// This is the universe a key route is expressed in, and it is why the node
+	// list is the wrong thing to validate one against: Shingo works in APs, so
+	// KnownCoreNodes is a subset, and a plain waypoint — the feature's primary
+	// use — is absent from it. Same nil-means-could-not-look rule as above.
+	KnownScenePoints map[string]bool
 }
-
-// coreNodeResolves answers whether a name names something Core knows.
-//
-// Group children arrive as "Group.CHILD" and the rest of Edge keys on the bare
-// child name, so a bare name that matches a child's suffix resolves — the same
-// fallback the process-node guard uses.
 
 // validateKeyRoute is the Routing fieldset's half of ValidateNodeClaim, lifted
 // out because it is a self-contained set of rules about one field pair and the
@@ -103,12 +105,41 @@ func validateKeyRoute(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError 
 			add("key_route", "SELF_POSITION is never valid in a key route")
 			continue
 		}
-		if len(nodeCtx.KnownCoreNodes) > 0 && !coreNodeResolves(nodeCtx.KnownCoreNodes, pt) {
-			add("key_route", fmt.Sprintf(
-				"Key route point %q does not exist on Core (%d nodes known). A point that does not "+
-					"resolve terminates the robot's waybill the moment it is issued.",
-				pt, len(nodeCtx.KnownCoreNodes)))
+		// THE UNIVERSE IS THE MAP, NOT THE NODE LIST.
+		//
+		// A key route names points in the vendor's scene. Shingo works in APs,
+		// so its node list is the subset it gave a job to, and a corridor
+		// waypoint — the feature's primary use — is not in it. Validating
+		// against the node list refused correct routes, confidently.
+		//
+		// EXACT MATCH. The node-list check used coreNodeResolves, which also
+		// matches after the last dot so a bare child name resolves against
+		// "Group.CHILD". That fallback belongs to node names; applied to map
+		// points it makes "001" match "SMN.001", which is loose and narrow at
+		// once. The scene stores instance names as SEER holds them and that is
+		// what the fleet is handed.
+		if len(nodeCtx.KnownScenePoints) > 0 {
+			if !nodeCtx.KnownScenePoints[pt] {
+				add("key_route", fmt.Sprintf(
+					"Key route point %q is not on the plant map (%d points known). A point that does "+
+						"not resolve terminates the robot's waybill the moment it is issued.",
+					pt, len(nodeCtx.KnownScenePoints)))
+			}
+			continue
 		}
+		// NO MAP, NO REFUSAL — the CheckLocationTasks posture. An Edge that has
+		// not heard from Core, or one whose Core predates the scene sync, knows
+		// nothing about the map; saying so is honest and refusing on it would
+		// make the field unusable exactly where it is most needed. The write
+		// lands carrying a note that nobody checked it.
+		out = append(out, FieldError{
+			Field:    "key_route",
+			Severity: SeverityWarning,
+			Message: fmt.Sprintf(
+				"Key route point %q could not be checked: the plant map has not been received from "+
+					"Core. Saved unverified — a point that does not exist will terminate the robot's "+
+					"waybill when the order is issued.", pt),
+		})
 	}
 	// The vendor's literal values; anything else is silently ignored by SEER,
 	// which is worse than being told.
@@ -117,18 +148,6 @@ func validateKeyRoute(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError 
 	}
 
 	return out
-}
-
-func coreNodeResolves(known map[string]bool, name string) bool {
-	if known[name] {
-		return true
-	}
-	for full := range known {
-		if i := strings.LastIndex(full, "."); i >= 0 && full[i+1:] == name {
-			return true
-		}
-	}
-	return false
 }
 
 // ValidateNodeClaim is the one server-side statement of what a claim must look

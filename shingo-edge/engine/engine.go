@@ -110,10 +110,15 @@ type Engine struct {
 	coreNodesMu       sync.RWMutex
 	payloadBinTypes   []protocol.PayloadBinTypeInfo
 	payloadBinTypesMu sync.RWMutex
-	nodeSyncFn        func()
-	catalogSyncFn     func()
-	sendFn            func(*protocol.Envelope) error
-	kafkaReconnFn     func() error
+	// The vendor map's own universe — see scene_graph.go. In-memory only and
+	// re-delivered on every node-list sync, like the catalog above.
+	scenePoints   []protocol.ScenePointInfo
+	sceneEdges    []protocol.SceneEdgeInfo
+	sceneGraphMu  sync.RWMutex
+	nodeSyncFn    func()
+	catalogSyncFn func()
+	sendFn        func(*protocol.Envelope) error
+	kafkaReconnFn func() error
 
 	// inventoryDelta is the Phase 1 delta sink. Set by the composition
 	// root via SetInventoryDeltaSink. Nil in test contexts that don't

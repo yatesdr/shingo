@@ -137,6 +137,8 @@ func (s *stubEngine) ReconnectKafka() error                                     
 func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error                           { return nil }
 func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo                             { return s.core }
 func (s *stubEngine) PayloadBinTypes() []protocol.PayloadBinTypeInfo                      { return nil }
+func (s *stubEngine) ScenePointNames() map[string]bool                                    { return nil }
+func (s *stubEngine) SceneAdjacency() map[string][]string                                 { return nil }
 func (s *stubEngine) RequestNodeSync()                                                    {}
 func (s *stubEngine) RequestCatalogSync()                                                 {}
 func (s *stubEngine) SyncProcessCounter(int64) error                                      { return nil }

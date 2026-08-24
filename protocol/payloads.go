@@ -699,6 +699,41 @@ type NodeListResponse struct {
 	Nodes           []NodeInfo           `json:"nodes"`
 	Loaders         []LoaderInfo         `json:"loaders,omitempty"`
 	PayloadBinTypes []PayloadBinTypeInfo `json:"payload_bin_types,omitempty"`
+	// ScenePoints and SceneEdges are the vendor map's own universe of
+	// locations and the drivable segments between them. Sibling slices for the
+	// same reason as the two above, and additive in the same way.
+	//
+	// SHINGO WORKS IN APs and always has, so the node list is only the subset
+	// of map points that Shingo gave a job to. A key route is expressed in the
+	// VENDOR's universe — a plain waypoint (class LM) is its primary use — so
+	// validating one against the node list refuses a correct route confidently.
+	// Core has mirrored the whole scene graph since the SEER adapter was
+	// written; it simply never sent it down.
+	//
+	// NO COORDINATES. Validation needs names and the picker needs adjacency;
+	// neither needs geometry, and the scene's point set is large enough that
+	// sending x/y on every sync would be paying for a map nobody draws here.
+	ScenePoints []ScenePointInfo `json:"scene_points,omitempty"`
+	SceneEdges  []SceneEdgeInfo  `json:"scene_edges,omitempty"`
+}
+
+// ScenePointInfo is one location in the vendor's map.
+//
+// ClassName is carried because the DISTINCTION matters to the consumer: "LM"
+// is a plain waypoint, "AP" an action point Shingo may also know as a node.
+// A picker that cannot tell them apart cannot offer "the waypoints that lead
+// to this action point", which is the whole reason a route is typed by hand
+// today.
+type ScenePointInfo struct {
+	InstanceName string `json:"instance_name"`
+	ClassName    string `json:"class_name"`
+}
+
+// SceneEdgeInfo is one drivable segment, by endpoint name. The scene's real
+// connectivity — what leads to what — with the geometry left behind.
+type SceneEdgeInfo struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // LoaderInfo describes one Core-owned bin loader (produce) or unloader (consume)
