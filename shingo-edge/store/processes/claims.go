@@ -284,6 +284,7 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	autoReorder := in.AutoReorder != nil && *in.AutoReorder
 	indexRobotSupplies := in.IndexRobotSupplies != nil && *in.IndexRobotSupplies
 	keepStaged := in.KeepStaged != nil && *in.KeepStaged
+	loadDirective := in.ChangeoverLoadDirective != nil && *in.ChangeoverLoadDirective
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 	// INSERT OR IGNORE: if a concurrent writer inserted the same
 	// (style_id, core_node_name) between our SELECT above and this
@@ -307,8 +308,10 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
-		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination, in.ChangeoverLoadDirective,
-		indexRobotSupplies, marshalKeyRoute(in.KeyRoute), in.KeyTask)
+		marshalEvacSeats(domain.OptValue(in.ChangeoverEvacSeats)),
+		domain.OptValue(in.ChangeoverEvacDestination), loadDirective,
+		indexRobotSupplies, marshalKeyRoute(domain.OptValue(in.KeyRoute)),
+		domain.OptValue(in.KeyTask))
 	if err != nil {
 		return 0, err
 	}
@@ -324,12 +327,18 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 
 // updateClaim writes the columns the caller expressed an opinion about.
 //
-// The always-written set is every column the claims editor owns a control for.
-// The four below it are pointer-typed on NodeClaimInput precisely so a writer
-// can decline to speak about them (see the contract on that struct): this used
-// to be one unconditional UPDATE of all 22 columns, which meant a caller
-// sending 18 of them silently reset the other four to their zero values on
-// every save.
+// The always-written set is every column with exactly one writer. The
+// pointer-typed ones below it are the columns a writer can decline to speak
+// about (see the contract on NodeClaimInput): this used to be one
+// unconditional UPDATE of every column, which meant a caller sending a subset
+// silently reset the rest to their zero values on every save.
+//
+// The set grew from four to nine because the second half of the disease was
+// found the same way as the first: five columns added later were put in the
+// unconditional list on the argument that the claims editor always fills them
+// in. The replenishment admin page is also a writer, and a reorder-point edit
+// wiped a press's evacuation seats, its evacuation destination, the loader
+// card and the key route.
 // warnIndexRobotSuppliesDrift logs when this save would leave two styles on the
 // same press disagreeing about which robot fetches the replacement.
 //
@@ -389,8 +398,6 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 		`allowed_payload_codes=?`, `auto_request_payload=?`, `evacuate_on_changeover=?`,
 		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
 		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
-		`changeover_evac_seats=?`, `changeover_evac_destination=?`, `changeover_load_directive=?`,
-		`key_route=?`, `key_task=?`,
 	}
 	args := []any{
 		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint,
@@ -398,8 +405,6 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 		allowedJSON, in.AutoRequestPayload, in.EvacuateOnChangeover,
 		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
 		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
-		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination, in.ChangeoverLoadDirective,
-		marshalKeyRoute(in.KeyRoute), in.KeyTask,
 	}
 
 	if in.ReorderPointSource != nil {
@@ -422,6 +427,21 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	}
 	if in.IndexRobotSupplies != nil {
 		sets, args = append(sets, `index_robot_supplies=?`), append(args, *in.IndexRobotSupplies)
+	}
+	if in.ChangeoverEvacSeats != nil {
+		sets, args = append(sets, `changeover_evac_seats=?`), append(args, marshalEvacSeats(*in.ChangeoverEvacSeats))
+	}
+	if in.ChangeoverEvacDestination != nil {
+		sets, args = append(sets, `changeover_evac_destination=?`), append(args, *in.ChangeoverEvacDestination)
+	}
+	if in.ChangeoverLoadDirective != nil {
+		sets, args = append(sets, `changeover_load_directive=?`), append(args, *in.ChangeoverLoadDirective)
+	}
+	if in.KeyRoute != nil {
+		sets, args = append(sets, `key_route=?`), append(args, marshalKeyRoute(*in.KeyRoute))
+	}
+	if in.KeyTask != nil {
+		sets, args = append(sets, `key_task=?`), append(args, *in.KeyTask)
 	}
 
 	args = append(args, id)

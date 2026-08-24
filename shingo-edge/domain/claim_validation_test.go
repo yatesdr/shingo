@@ -67,19 +67,19 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 		// evacuation it asks for silently never happens.
 		{"third seat marked on a 2-position press", func(c *NodeClaimInput) {
 			c.SecondPairedCoreNode = ""
-			c.ChangeoverEvacSeats = []string{EvacSeatSecond}
+			c.ChangeoverEvacSeats = Ptr([]string{EvacSeatSecond})
 		}, "changeover_evac_seats"},
 		{"back seat marked with no back node", func(c *NodeClaimInput) {
 			c.PairedCoreNode = ""
-			c.ChangeoverEvacSeats = []string{EvacSeatPaired}
+			c.ChangeoverEvacSeats = Ptr([]string{EvacSeatPaired})
 		}, "changeover_evac_seats"},
 		{"seats marked on a non-press-index mode", func(c *NodeClaimInput) {
 			c.SwapMode = SwapModeForTest
 			c.InboundStaging = "IN"
-			c.ChangeoverEvacSeats = []string{EvacSeatFront}
+			c.ChangeoverEvacSeats = Ptr([]string{EvacSeatFront})
 		}, "changeover_evac_seats"},
 		{"an unknown seat name", func(c *NodeClaimInput) {
-			c.ChangeoverEvacSeats = []string{"middle-ish"}
+			c.ChangeoverEvacSeats = Ptr([]string{"middle-ish"})
 		}, "changeover_evac_seats"},
 
 		{"press-index without back position", func(c *NodeClaimInput) { c.PairedCoreNode = "" }, "paired_core_node"},
@@ -162,7 +162,7 @@ func TestValidateNodeClaim_ValidSeatSelectionsAccepted(t *testing.T) {
 	} {
 		c := validClaim()
 		c.SecondPairedCoreNode = "INDEX-C"
-		c.ChangeoverEvacSeats = seats
+		c.ChangeoverEvacSeats = &seats
 		if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
 			t.Errorf("seats %v must be accepted on a 3-position press; findings = %+v", seats, got)
 		}
@@ -175,7 +175,7 @@ func TestValidateNodeClaim_EvacDestinationIsFreeForm(t *testing.T) {
 	t.Parallel()
 	for _, dest := range []string{"", "TOOLING-BAY", "SMG_01", "some.group.name"} {
 		c := validClaim()
-		c.ChangeoverEvacDestination = dest
+		c.ChangeoverEvacDestination = &dest
 		if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
 			t.Errorf("evac destination %q must be accepted; findings = %+v", dest, got)
 		}

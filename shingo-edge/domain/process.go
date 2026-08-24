@@ -623,6 +623,20 @@ func EvacDestinationFor(c *NodeClaim) string {
 	return c.OutboundDestination
 }
 
+// OptValue reads an absent-means-untouched field as the value its caller
+// expressed, or the zero value when the caller said nothing.
+//
+// For VALIDATION and for reading intent. Writers must not use it: the whole
+// point of the pointer is that "said nothing" and "said empty" are different
+// instructions to updateClaim, and this collapses them.
+func OptValue[T any](p *T) T {
+	var zero T
+	if p == nil {
+		return zero
+	}
+	return *p
+}
+
 // NodeClaimInput is the request shape for creating or updating a
 // NodeClaim — the persisted NodeClaim fields minus ID and CreatedAt.
 type NodeClaimInput struct {
@@ -642,32 +656,35 @@ type NodeClaimInput struct {
 	EvacuateOnChangeover bool               `json:"evacuate_on_changeover"`
 	PairedCoreNode       string             `json:"paired_core_node"`
 	SecondPairedCoreNode string             `json:"second_paired_core_node"`
-	// See the same-named fields on NodeClaim. Plain values rather than the
-	// pointer contract below: the claim editor owns controls for both, so it
-	// always has an opinion.
-	ChangeoverEvacSeats       []string `json:"changeover_evac_seats"`
-	ChangeoverEvacDestination string   `json:"changeover_evac_destination"`
-	ChangeoverLoadDirective   bool     `json:"changeover_load_directive"`
-	// IndexRobotSupplies is POINTER-typed: absent means leave the stored value
-	// alone. It describes hardware, so a caller that has no opinion — an
-	// import, the compare grid — must not be able to flip a press's
-	// choreography by omitting a field.
-	IndexRobotSupplies *bool `json:"index_robot_supplies,omitempty"`
-	// KeyRoute/KeyTask are plain values: the Routing fieldset owns controls for
-	// both, so the claim editor always has an opinion. See the same-named
-	// fields on NodeClaim.
-	KeyRoute              []string `json:"key_route"`
-	KeyTask               string   `json:"key_task"`
-	AutoConfirm           bool     `json:"auto_confirm"`
-	LinesideSoftThreshold int      `json:"lineside_soft_threshold"`
-	ReuseCompatibleBins   bool     `json:"reuse_compatible_bins"`
-	AutoPush              bool     `json:"auto_push"`
+	// ALL SIX ARE POINTER-TYPED — absent means leave the stored value alone.
+	// See the contract block below, and the same-named fields on NodeClaim for
+	// what each one means.
+	//
+	// The first version of this shipped only IndexRobotSupplies as a pointer,
+	// on the argument that the claim editor owns controls for the other five
+	// and therefore always has an opinion. The editor does. It is not the only
+	// writer: the replenishment admin page reads a claim, re-sends a subset,
+	// and changing a reorder point wiped the press's evacuation seats, its
+	// evacuation destination, the loader card and the key route. "The one UI I
+	// am thinking of always fills this in" is not a property of a struct, and
+	// the pointer is what makes the class unrepresentable rather than fixing
+	// each caller as it is discovered.
+	ChangeoverEvacSeats       *[]string `json:"changeover_evac_seats,omitempty"`
+	ChangeoverEvacDestination *string   `json:"changeover_evac_destination,omitempty"`
+	ChangeoverLoadDirective   *bool     `json:"changeover_load_directive,omitempty"`
+	IndexRobotSupplies        *bool     `json:"index_robot_supplies,omitempty"`
+	KeyRoute                  *[]string `json:"key_route,omitempty"`
+	KeyTask                   *string   `json:"key_task,omitempty"`
+	AutoConfirm               bool      `json:"auto_confirm"`
+	LinesideSoftThreshold     int       `json:"lineside_soft_threshold"`
+	ReuseCompatibleBins       bool      `json:"reuse_compatible_bins"`
+	AutoPush                  bool      `json:"auto_push"`
 	// ── ABSENT MEANS LEAVE UNTOUCHED ────────────────────────────────────
 	//
 	// These are columns no single writer owns. updateClaim writes every
 	// column it is given, and a value type cannot say "I have no opinion" —
 	// it says 0, "" or false. So the claims editor, which has controls for
-	// none of these four, reset board order to 0, the reorder point's
+	// none of these, reset board order to 0, the reorder point's
 	// provenance to "legacy", and both flags to false on EVERY save of an
 	// unrelated field. The auto_reorder case had already been patched by
 	// hand in the UI (read the claim back, echo the value); that is the same

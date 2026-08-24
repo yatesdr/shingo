@@ -41,11 +41,11 @@ func claimEditorBody(c *processes.NodeClaim) processes.NodeClaimInput {
 		SecondPairedCoreNode:  c.SecondPairedCoreNode,
 		AutoConfirm:           c.AutoConfirm,
 		// Round 3: the editor owns controls for both, so the body carries them.
-		ChangeoverEvacSeats:       c.ChangeoverEvacSeats,
-		ChangeoverEvacDestination: c.ChangeoverEvacDestination,
+		ChangeoverEvacSeats:       &c.ChangeoverEvacSeats,
+		ChangeoverEvacDestination: &c.ChangeoverEvacDestination,
 		// Round 4: the Routing fieldset owns both, so the body carries them.
-		KeyRoute: c.KeyRoute,
-		KeyTask:  c.KeyTask,
+		KeyRoute: &c.KeyRoute,
+		KeyTask:  &c.KeyTask,
 	}
 }
 
@@ -95,16 +95,16 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		// the value. Distinctive on both: a two-seat selection (not one, not
 		// all three) and a destination that is NOT outbound_destination, so a
 		// fallback silently standing in for the real column would show.
-		ChangeoverEvacSeats:       []string{"front", "second"},
-		ChangeoverEvacDestination: "RT-TOOLING-EVAC",
+		ChangeoverEvacSeats:       domain.Ptr([]string{"front", "second"}),
+		ChangeoverEvacDestination: domain.Ptr("RT-TOOLING-EVAC"),
 		// Pointer-typed and NOT sent by the editor body below, so an editor
 		// save must leave it alone: it describes the press's hardware.
 		IndexRobotSupplies: domain.Ptr(true),
 		// Round 4: distinctive on both counts — a TWO-point route so a
 		// truncation shows, and in an order that is not sorted, so a store
 		// that treated the route as a set would say so.
-		KeyRoute: []string{"RT-AISLE-B", "RT-AISLE-A"},
-		KeyTask:  "unload",
+		KeyRoute: domain.Ptr([]string{"RT-AISLE-B", "RT-AISLE-A"}),
+		KeyTask:  domain.Ptr("unload"),
 		// The four the editor never sends, seeded to values that are NOT the
 		// zero value, so a stomp is visible.
 		Sequence:           domain.Ptr(7),
@@ -278,15 +278,15 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 		OutboundDestination:       "EV-MARKET",
 		PairedCoreNode:            "EV-PRESS-B",
 		SecondPairedCoreNode:      "EV-PRESS-C",
-		ChangeoverEvacSeats:       []string{"front"},
-		ChangeoverEvacDestination: "EV-BAY-1",
+		ChangeoverEvacSeats:       domain.Ptr([]string{"front"}),
+		ChangeoverEvacDestination: domain.Ptr("EV-BAY-1"),
 	}
 	claimID, err := db.UpsertStyleNodeClaim(base)
 	testutil.MustNoErr(t, err, "seed claim")
 
 	upd := base
-	upd.ChangeoverEvacSeats = []string{"paired", "second"}
-	upd.ChangeoverEvacDestination = "EV-BAY-2"
+	upd.ChangeoverEvacSeats = domain.Ptr([]string{"paired", "second"})
+	upd.ChangeoverEvacDestination = domain.Ptr("EV-BAY-2")
 	if _, err := db.UpsertStyleNodeClaim(upd); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -301,10 +301,13 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 	}
 
 	// Clearing the selection has to persist too — an empty set is a real
-	// answer ("no seat blocks the tool"), not an absent one.
+	// answer ("no seat blocks the tool"), not an absent one. Under the pointer
+	// contract that distinction is expressible: a non-nil pointer to an empty
+	// value CLEARS, while nil leaves the stored value alone. Sending nil here
+	// would be the writer saying nothing, and would correctly change nothing.
 	clr := base
-	clr.ChangeoverEvacSeats = nil
-	clr.ChangeoverEvacDestination = ""
+	clr.ChangeoverEvacSeats = domain.Ptr([]string{})
+	clr.ChangeoverEvacDestination = domain.Ptr("")
 	if _, err := db.UpsertStyleNodeClaim(clr); err != nil {
 		t.Fatalf("clear: %v", err)
 	}

@@ -18,8 +18,8 @@ func keyRouteClaim(route []string, task string) NodeClaimInput {
 		OutboundStaging:     "STG_B",
 		InboundSource:       "MARKET",
 		OutboundDestination: "MARKET",
-		KeyRoute:            route,
-		KeyTask:             task,
+		KeyRoute:            &route,
+		KeyTask:             &task,
 	}
 }
 

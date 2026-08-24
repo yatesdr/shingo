@@ -31,11 +31,18 @@ import (
 // shape — needed because the admin replenishment edits touch only a subset of
 // claim fields but UpsertStyleNodeClaim writes every column the editor owns.
 //
-// It echoes the four absent-means-untouched columns explicitly rather than
-// leaving them nil. This path reads the whole claim, so it HAS an opinion about
-// all four and passing it on is a no-op write; leaving them nil would be
-// equally correct today and would quietly stop being so if this ever became a
-// partial read.
+// The absent-means-untouched columns are left NIL rather than echoed.
+//
+// This used to echo the four that existed at the time, on the argument that the
+// path reads the whole claim and therefore has an opinion. The argument is
+// sound and the practice is not: five more such columns arrived, nobody added
+// them here, and a reorder-point edit wiped a press's evacuation seats, its
+// evacuation destination, its loader card and its key route. An echo is correct
+// only for the fields someone remembered, and it fails silently for the rest.
+//
+// Saying nothing is correct for all of them, including any added tomorrow: this
+// path edits reorder_point, reorder_point_source and auto_reorder, and has no
+// opinion about anything else.
 func processClaimToInput(c *processes.NodeClaim) domain.NodeClaimInput {
 	return domain.NodeClaimInput{
 		StyleID:               c.StyleID,

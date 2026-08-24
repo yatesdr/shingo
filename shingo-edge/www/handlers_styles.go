@@ -269,14 +269,29 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// Key-route points are node names typed or picked by hand; trim them the
 	// same way, and drop entries that were only whitespace so an empty picker
 	// row does not become a blank point the validator then complains about.
-	trimmedRoute := make([]string, 0, len(in.KeyRoute))
-	for _, pt := range in.KeyRoute {
-		if t := strings.TrimSpace(pt); t != "" {
-			trimmedRoute = append(trimmedRoute, t)
+	//
+	// NIL IS PRESERVED. These fields are absent-means-untouched, so a request
+	// that did not mention key_route must reach updateClaim still not
+	// mentioning it — normalising nil into an empty slice here would turn every
+	// silent caller into one that clears the column, which is the defect the
+	// pointer contract exists to prevent.
+	if in.KeyRoute != nil {
+		trimmedRoute := make([]string, 0, len(*in.KeyRoute))
+		for _, pt := range *in.KeyRoute {
+			if t := strings.TrimSpace(pt); t != "" {
+				trimmedRoute = append(trimmedRoute, t)
+			}
 		}
+		in.KeyRoute = &trimmedRoute
 	}
-	in.KeyRoute = trimmedRoute
-	in.KeyTask = strings.TrimSpace(in.KeyTask)
+	if in.KeyTask != nil {
+		trimmedTask := strings.TrimSpace(*in.KeyTask)
+		in.KeyTask = &trimmedTask
+	}
+	if in.ChangeoverEvacDestination != nil {
+		trimmedDest := strings.TrimSpace(*in.ChangeoverEvacDestination)
+		in.ChangeoverEvacDestination = &trimmedDest
+	}
 
 	// One server-side statement of what a claim must look like, run BEFORE any
 	// side effect (the back-node provisioning below writes rows). Two of these
@@ -377,10 +392,10 @@ func (h *Handlers) claimNodeContext(in domain.NodeClaimInput) domain.ClaimNodeCo
 		for name := range known {
 			ctx.KnownCoreNodes[name] = true
 		}
-	} else if len(in.KeyRoute) > 0 {
+	} else if route := domain.OptValue(in.KeyRoute); len(route) > 0 {
 		log.Printf("claim %s: core node list is EMPTY, so %d key-route point(s) could not be checked "+
 			"against Core's plant — allowing. This is not a pass: Core has not been heard from.",
-			in.CoreNodeName, len(in.KeyRoute))
+			in.CoreNodeName, len(route))
 	}
 	for i := range nodes {
 		if nodes[i].CoreNodeName == in.CoreNodeName {

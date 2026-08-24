@@ -79,11 +79,12 @@ func validateKeyRoute(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError 
 	add := func(field, msg string) {
 		out = append(out, FieldError{Field: field, Message: msg, Severity: SeverityError})
 	}
-	if len(in.KeyRoute) > 0 && in.SwapMode == protocol.SwapModeManualSwap {
+	route := OptValue(in.KeyRoute)
+	if len(route) > 0 && in.SwapMode == protocol.SwapModeManualSwap {
 		add("key_route", "Key route applies to robot-served claims; a manual_swap loader does not drive")
 	}
 	seenPoint := map[string]bool{}
-	for i, pt := range in.KeyRoute {
+	for i, pt := range route {
 		if strings.TrimSpace(pt) == "" {
 			add("key_route", fmt.Sprintf("Key route point %d is blank", i+1))
 			continue
@@ -111,8 +112,8 @@ func validateKeyRoute(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError 
 	}
 	// The vendor's literal values; anything else is silently ignored by SEER,
 	// which is worse than being told.
-	if in.KeyTask != "" && in.KeyTask != "load" && in.KeyTask != "unload" {
-		add("key_task", fmt.Sprintf("Key task must be \"load\", \"unload\", or empty; got %q", in.KeyTask))
+	if task := OptValue(in.KeyTask); task != "" && task != "load" && task != "unload" {
+		add("key_task", fmt.Sprintf("Key task must be \"load\", \"unload\", or empty; got %q", task))
 	}
 
 	return out
@@ -221,12 +222,13 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	// is not an unlikely configuration, it is a reference to a seat that does
 	// not exist — and the evacuation it asks for can never happen, silently,
 	// because MarkedEvacSeatNodes correctly drops it.
-	if len(in.ChangeoverEvacSeats) > 0 {
+	seats := OptValue(in.ChangeoverEvacSeats)
+	if len(seats) > 0 {
 		if in.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 			add("changeover_evac_seats",
 				"Per-seat tooling evacuation applies to 2-Robot Press Index only; use Evacuate on changeover for a single-position node")
 		} else {
-			for _, seat := range in.ChangeoverEvacSeats {
+			for _, seat := range seats {
 				switch seat {
 				case EvacSeatFront:
 					// The front seat is CoreNodeName, always present.

@@ -26,8 +26,8 @@ func setClaimRouting(t *testing.T, db *store.DB, claim *processes.NodeClaim, rou
 		OutboundStaging:     claim.OutboundStaging,
 		OutboundDestination: claim.OutboundDestination,
 		PairedCoreNode:      claim.PairedCoreNode,
-		KeyRoute:            route,
-		KeyTask:             task,
+		KeyRoute:            &route,
+		KeyTask:             &task,
 	}
 	_, err := db.UpsertStyleNodeClaim(in)
 	testutil.MustNoErr(t, err, "set claim routing")

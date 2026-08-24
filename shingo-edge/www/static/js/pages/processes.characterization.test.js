@@ -1711,10 +1711,16 @@ async function runSeatsDroppedOnModeChangeCase() {
     } else { passed++; }
 }
 
-// The compare grid ECHOES these two rather than omitting them: they are plain
-// values on NodeClaimInput, so an absent key decodes to the zero value and
-// would clear the selection on every cell edit.
-function runCompareGridEchoesEvacFieldsCase() {
+// The compare grid OMITS every claim column it owns no control for.
+//
+// These two used to be echoed — read the claim, send its own value — because
+// they were plain values on NodeClaimInput and an absent key decoded to the
+// zero value. The echo was deleted when all six optional columns became
+// pointer-typed, and it should not come back: an echo protects only the fields
+// somebody remembered to add, and this one covered two of the six while
+// changeover_load_directive, key_route and key_task went unprotected the whole
+// time. Absent now means "no opinion" all the way to the UPDATE.
+function runCompareGridOmitsUnownedClaimFieldsCase() {
     const elements = buildDOM();
     const ctx = createContext(elements, []);
     loadProcessesJS(ctx);
@@ -1723,13 +1729,24 @@ function runCompareGridEchoesEvacFieldsCase() {
         swap_mode: 'two_robot_press_index', payload_code: 'PL1',
         changeover_evac_seats: ['front', 'paired'],
         changeover_evac_destination: 'TOOLING-BAY',
+        changeover_load_directive: true,
+        key_route: ['WP_AISLE_N'],
+        key_task: 'load',
+        index_robot_supplies: true,
     });
-    if (JSON.stringify(body.changeover_evac_seats) !== JSON.stringify(['front', 'paired'])) {
-        reportFailure('compareGrid: seats are echoed, not dropped', ['front', 'paired'], body.changeover_evac_seats);
-    } else { passed++; }
-    if (body.changeover_evac_destination !== 'TOOLING-BAY') {
-        reportFailure('compareGrid: destination is echoed', 'TOOLING-BAY', body.changeover_evac_destination);
-    } else { passed++; }
+    const unowned = [
+        'changeover_evac_seats',
+        'changeover_evac_destination',
+        'changeover_load_directive',
+        'key_route',
+        'key_task',
+        'index_robot_supplies',
+    ];
+    for (const key of unowned) {
+        if (Object.prototype.hasOwnProperty.call(body, key)) {
+            reportFailure('compareGrid: ' + key + ' must be omitted, not sent', undefined, body[key]);
+        } else { passed++; }
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -1959,7 +1976,7 @@ function runIndexRobotSuppliesNotInCompareGridCase() {
     await runHiddenSeatIsNotSentCase();
     runEvacSeatsCollapseHintCase();
     await runSeatsDroppedOnModeChangeCase();
-    runCompareGridEchoesEvacFieldsCase();
+    runCompareGridOmitsUnownedClaimFieldsCase();
     await runIndexRobotSuppliesCase();
     runIndexRobotSuppliesNotInCompareGridCase();
     await runKeyRouteSaveCase();

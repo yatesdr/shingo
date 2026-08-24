@@ -517,14 +517,21 @@ function ensureCompareDelegation(wrap) {
 // payload must not be able to flip a cell's choreography by omitting a field.
 //
 // SEND ONLY WHAT THIS EDITOR OWNS. The compare grid edits one field per cell,
-// so sequence, reorder_point_source, keep_staged and auto_reorder are all
-// omitted here — it has a control for none of them. (The claim MODAL now has
-// controls for three and sends those; this grid is a different surface with a
-// different answer, which is the point of absent-means-untouched.) auto_reorder used to be echoed back by hand here — read
-// the claim, send its own value — which was the same problem patched one
-// field at a time, and only after a hard-coded `true` had spent a while
-// re-arming cell auto-reorder on every claim an engineer touched. The store
-// contract handles all four now; do not reintroduce an echo.
+// so sequence, reorder_point_source, keep_staged, auto_reorder, the two
+// changeover-evacuation fields, the loader-card flag and the key route are all
+// omitted here — it has a control for none of them. (The claim MODAL has
+// controls for them and sends those; this grid is a different surface with a
+// different answer, which is the point of absent-means-untouched.)
+//
+// auto_reorder used to be echoed back by hand here — read the claim, send its
+// own value — which was the same problem patched one field at a time, and only
+// after a hard-coded `true` had spent a while re-arming cell auto-reorder on
+// every claim an engineer touched. changeover_evac_seats and
+// changeover_evac_destination were echoed for exactly the same reason, and were
+// deleted when the store contract was extended to cover them. The echo is never
+// the fix: it is correct only for the surfaces someone remembered, and the two
+// it covered here still left changeover_load_directive, key_route and key_task
+// unprotected. Do not reintroduce one.
 function claimToBody(c) {
     return {
         style_id: c.style_id,
@@ -546,11 +553,6 @@ function claimToBody(c) {
         auto_push: !!c.auto_push,
         paired_core_node: c.paired_core_node || '',
         second_paired_core_node: c.second_paired_core_node || '',
-        // Echoed, not omitted: unlike the four pointer columns these are plain
-        // values on NodeClaimInput, so an absent key decodes to the zero value
-        // and would CLEAR the selection on every compare-grid edit.
-        changeover_evac_seats: c.changeover_evac_seats || [],
-        changeover_evac_destination: c.changeover_evac_destination || '',
         auto_confirm: !!c.auto_confirm
     };
 }

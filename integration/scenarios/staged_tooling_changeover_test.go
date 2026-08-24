@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
@@ -109,8 +110,8 @@ func seedStagedPress(t *testing.T, seats []string, toStaging string) stagedSeed 
 		PayloadCode: "ST-OLD", UOPCapacity: 100,
 		PairedCoreNode: "PLN-ST-B", SecondPairedCoreNode: "PLN-ST-C",
 		InboundSource: "ST-SRC", OutboundDestination: "ST-MARKET",
-		ChangeoverEvacSeats:       seats,
-		ChangeoverEvacDestination: "ST-TOOLING-BAY",
+		ChangeoverEvacSeats:       domain.Ptr(seats),
+		ChangeoverEvacDestination: domain.Ptr("ST-TOOLING-BAY"),
 	}
 	to := processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "PLN-ST-A",
