@@ -491,24 +491,9 @@ linters:
         text: "Function 'ApplyBinUOPDelta' has too many statements"
         linters:
           - funlen
-      # handleConfigSave: transitional
-      - path: "shingo-core/www/handlers_config\\.go"
-        text: "Function 'handleConfigSave' has too many statements"
-        linters:
-          - funlen
-      # apiInventoryExport: transitional
-      - path: "shingo-core/www/handlers_inventory\\.go"
-        text: "Function 'apiInventoryExport' has too many statements"
-        linters:
-          - funlen
       # apiReparentNode: transitional
       - path: "shingo-core/www/handlers_nodegroup\\.go"
         text: "Function 'apiReparentNode' has too many statements"
-        linters:
-          - funlen
-      # buildNodePickerOptions: transitional
-      - path: "shingo-core/www/handlers_test_orders\\.go"
-        text: "Function 'buildNodePickerOptions' has too many statements"
         linters:
           - funlen
       # apiTestCommandSubmit: transitional
