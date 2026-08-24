@@ -574,7 +574,24 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 // whole pair, but a leg Core cannot yet accept is deferred, not desynced.
 // See shingo_todo.md and the 2026-04-27 retrospective for the interim
 // fan-out-regardless design this supersedes.
+// ── THE ORDER INSIDE THIS FUNCTION IS PART OF ITS CONTRACT ────────────────
+//
+// EVERY GATE AND VALIDATION FIRST — anything that can refuse — AND ONLY THEN
+// THE SIDE EFFECTS: manifests, count changes, state clears. The two halves are
+// separated by a marked line below, and a refusal must be reachable without
+// having changed anything.
+//
+// This is written down because it was got wrong in exactly the way that is
+// hard to see: the produce paperwork sat 26 lines above the collision gate, so
+// an ADVISORY "not yet, click again" had already shipped the departing bin's
+// manifest and zeroed the press's count. Every gate here is advisory by
+// design — the operator repeats the click — which is precisely why none of them
+// may leave a trace.
+//
+// Read alongside FinalizeProduceNode and the consume release path, which are
+// held to the same order by TestReleasePathsGateBeforeSideEffects.
 func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
+	// ── GATES AND VALIDATION. Nothing below may mutate anything. ─────────
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return fmt.Errorf("get runtime for node %d: %w", nodeID, err)
@@ -660,17 +677,6 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	e.logFn("release-staged node=%s resolved evac=%s supply=%s",
 		node.Name, orderIDStr(evacOrderID), orderIDStr(supplyOrderID))
 
-	// Fix D: the deferred produce paperwork fires HERE, before either release
-	// envelope, so Core applies the manifest first (outbox drains by id).
-	// Changeover-owned pairs are excluded — their manifests belong to the
-	// changeover release dispositions, and this pair resolution can be
-	// serving a changeover task's legs (the task fallback above).
-	if task == nil {
-		if err := e.produceIngestAtRelease(node, runtime, claim); err != nil {
-			return err
-		}
-	}
-
 	// ── v1'S SAFETY: NEVER PLACE ONTO A PRESS THAT IS NOT CLEAR YET ──────
 	//
 	// The supply leg puts a bin ON the process node; the evac leg takes the
@@ -694,6 +700,28 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// to a mode nobody is working on.
 	if err := e.refusePlacingLegWhileSiblingPending(node, claim, evacOrderID, supplyOrderID); err != nil {
 		return err
+	}
+
+	// ── FROM HERE ON, SIDE EFFECTS. Nothing above this line has changed
+	// anything; nothing below it may refuse.
+	//
+	// The produce paperwork fires FIRST among them, before either release
+	// envelope, so Core applies the manifest first (the outbox drains by id).
+	// It used to fire above the gate, which meant an ADVISORY refusal —
+	// "the other robot has not cleared the press yet, click again" — had
+	// already shipped the departing bin's manifest, cleared active_bin_id and
+	// zeroed remaining_uop_cached, starting the hold-and-replay window for a
+	// bin still sitting on a press that was still making parts into it.
+	// Nothing in the gate reads anything the paperwork produces, so the two
+	// were only in that order by accident.
+	//
+	// Changeover-owned pairs are excluded — their manifests belong to the
+	// changeover release dispositions, and this pair resolution can be
+	// serving a changeover task's legs (the task fallback above).
+	if task == nil {
+		if err := e.produceIngestAtRelease(node, runtime, claim); err != nil {
+			return err
+		}
 	}
 
 	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
@@ -761,10 +789,29 @@ func (e *SwapPairNotReadyError) Advisory() bool { return true }
 // refusePlacingLegWhileSiblingPending is v1's collision guard. See the call
 // site for why it lives at RELEASE and not at dispatch.
 //
-// A TERMINAL EVAC IS NOT PENDING. If the evac already ran — or was cancelled,
-// or skipped because the press was found empty — nothing is coming to collide
-// with, and refusing then would strand a supply leg forever with no sibling
-// that can ever stage.
+// A TERMINAL SIBLING IS NOT PENDING. If it already ran — or was cancelled, or
+// was skipped because the press was found empty — nothing is coming to collide
+// with, and refusing then would strand the other leg forever with no sibling
+// that can ever stage. Same for a sibling that is itself releasable: both legs
+// go on this click, in the safe order.
+//
+// BOTH SEATS, NOT JUST THE HEAD. The guard used to ask only "does this leg
+// place a bin at CoreNodeName", which is the front seat, and that is only half
+// of an unflipped press-index swap:
+//
+//	R1  wait@front, pickup front, dropoff outbound, pickup inbound, dropoff BACKFILL
+//	R2  wait@paired, pickup paired, dropoff FRONT [, pickup second, dropoff paired]
+//
+// R2 places at the front and R1 places at the backfill seat — and it is R2 that
+// lifts the on-deck carrier OFF that seat. So releasing R1 while R2 was still
+// queued sent a robot to set a bin down on a seat nothing had cleared, and the
+// front-seat-only question could not see it. Under the IndexRobotSupplies flip
+// R1 places nowhere on the press, which is why the flipped case was never the
+// one at risk and why widening the question rather than adding a second guard
+// is what keeps the two cases answered the same way.
+//
+// The seats come from the claim's own geometry, so a 3-position press is
+// covered by the same walk.
 func (e *Engine) refusePlacingLegWhileSiblingPending(
 	node *processes.Node, claim *processes.NodeClaim, evacOrderID, supplyOrderID *int64,
 ) error {
@@ -775,26 +822,100 @@ func (e *Engine) refusePlacingLegWhileSiblingPending(
 		// One-legged: there is no sibling to wait for.
 		return nil
 	}
-	supply, err := e.db.GetOrder(*supplyOrderID)
+	seats := pressSeatNodes(claim)
+	// TWO ARMS, AND THEY ARE NOT SYMMETRIC.
+	//
+	// The supply leg is the placing leg BY THE CALLER'S OWN CLASSIFICATION —
+	// classifySwapLegsBySteps labelled it that because it sets a bin down on
+	// the front seat — so that arm needs no further evidence and asks for none.
+	// It is the original guard, unchanged.
+	//
+	// The evac arm is the addition, and it must prove itself from the steps:
+	// unflipped it also places, at the backfill seat, and flipped it places
+	// nowhere on the press. Requiring the evidence is what keeps the flipped
+	// case releasable. A leg whose steps cannot be read simply does not earn a
+	// refusal on this arm — which cannot re-open the original hole, because the
+	// supply arm above never depended on steps in the first place.
+	for i, arm := range [][2]int64{
+		{*supplyOrderID, *evacOrderID},
+		{*evacOrderID, *supplyOrderID},
+	} {
+		legID, siblingID := arm[0], arm[1]
+		leg, err := e.db.GetOrder(legID)
+		if err != nil {
+			// REFUSE, do not wave through. This is a collision guard: a read it
+			// cannot complete is a question it cannot answer, and the two
+			// answers do not cost the same. A wrong refusal is an operator
+			// clicking again in a minute; a wrong pass is two bins on one seat.
+			e.logFn("release-staged HELD node=%s: cannot read leg %d to check for a collision: %v",
+				node.Name, legID, err)
+			return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: "unreadable"}
+		}
+		if !orders.ReleasableAtCore(leg.Status) {
+			// Not going anywhere on this click anyway; the per-leg gate handles
+			// it and the deferral remembers it.
+			continue
+		}
+		sibling, err := e.db.GetOrder(siblingID)
+		if err != nil {
+			e.logFn("release-staged HELD node=%s: cannot read sibling %d to check for a collision: %v",
+				node.Name, siblingID, err)
+			return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: "unreadable"}
+		}
+		if orders.IsTerminal(sibling.Status) || orders.ReleasableAtCore(sibling.Status) {
+			continue
+		}
+		seat := claim.CoreNodeName
+		if i == 1 {
+			if seat = e.legPlacesAtAnySeat(legID, seats); seat == "" {
+				continue // sets nothing down on the press — the flipped R1
+			}
+		}
+		e.logFn("release-staged HELD node=%s: leg %d is staged and would place a bin at %s, "+
+			"but leg %d is %q and has not cleared it",
+			node.Name, leg.ID, seat, sibling.ID, sibling.Status)
+		return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: string(sibling.Status)}
+	}
+	return nil
+}
+
+// pressSeatNodes lists the physical positions of a press-index cell, front
+// first. Empty names are dropped, so a 2-position press yields two.
+func pressSeatNodes(claim *processes.NodeClaim) []string {
+	out := make([]string, 0, 3)
+	for _, n := range []string{claim.CoreNodeName, claim.PairedCoreNode, claim.SecondPairedCoreNode} {
+		if n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// legPlacesAtAnySeat returns the first seat this order sets a bin down on, or
+// "" if it sets one down on none of them.
+//
+// Steps are the only truth for a complex order — delivery_node is a display
+// value on these. An unreadable or undecodable list answers "no seat", which is
+// deliberately NOT the fail-closed direction of the status reads in the caller:
+// this only ever decides the EVAC arm, the arm that did not exist before, and
+// the supply arm's guarantee never depended on steps. So a missing steps list
+// costs exactly the coverage that was never there, rather than stranding a
+// release the previous guard would have allowed.
+func (e *Engine) legPlacesAtAnySeat(orderID int64, seats []string) string {
+	stepsJSON, err := e.db.GetOrderStepsJSON(orderID)
 	if err != nil {
-		return nil // resolution problems are the caller's to report, not this guard's
+		return ""
 	}
-	if !orders.ReleasableAtCore(supply.Status) {
-		// The placing leg is not going anywhere on this click anyway; the
-		// existing per-leg gate handles it and the deferral remembers it.
-		return nil
-	}
-	evac, err := e.db.GetOrder(*evacOrderID)
+	steps, err := decodeSteps(stepsJSON)
 	if err != nil {
-		return nil
+		return ""
 	}
-	if orders.IsTerminal(evac.Status) || orders.ReleasableAtCore(evac.Status) {
-		return nil
+	for _, seat := range seats {
+		if legPlacesBinAt(steps, seat) {
+			return seat
+		}
 	}
-	e.logFn("release-staged HELD node=%s: supply leg %d is staged but evac leg %d is %q — "+
-		"releasing now would place a bin on a press the other robot has not cleared",
-		node.Name, supply.ID, evac.ID, evac.Status)
-	return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: string(evac.Status)}
+	return ""
 }
 
 // rememberDeferredSiblingRelease records a two-robot leg whose consolidated
