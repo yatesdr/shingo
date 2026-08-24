@@ -424,6 +424,19 @@ func buildParticipants(diffs []ChangeoverNodeDiff) []domain.ParticipantInput {
 // Advisory by construction: it returns a list, it does not refuse. See
 // domain.Changeover.UnresolvedParticipants for why hardening is gated.
 //
+// TASK-ROLE PARTICIPANTS ARE NOT REPORTED, because their rows are not missing
+// for long: ChangeoverService.Create auto-creates a process_nodes row for every
+// node task whose name does not resolve, in the same transaction, moments after
+// this runs. Reporting them told the engineer to go and add a node the system
+// had already added itself — a no-op errand attached to the one message the
+// floor reads during a changeover. Every fanned-out press seat is a task-role
+// participant, so this was the common case, not the rare one.
+//
+// What is left is the population the advisory is actually about: indexed_over
+// seats. Those own no task, Create does not create rows for them (it looks the
+// id up and stores NULL when there is none), and without a row they cannot be
+// rendered or gated. For those the advice is real.
+//
 // Scope note: this checks row EXISTENCE only. The companion check — that every
 // task-role participant resolves a release station — needs stationForRelease,
 // which ships with the affordance widening; without the affordance a named
@@ -438,6 +451,9 @@ func assertParticipantsResolve(participants []domain.ParticipantInput, nodes []p
 	}
 	var unresolved []string
 	for _, p := range participants {
+		if p.Role == domain.ParticipantRoleTask {
+			continue
+		}
 		if p.CoreNodeName != "" && !known[p.CoreNodeName] {
 			unresolved = append(unresolved, p.CoreNodeName)
 		}

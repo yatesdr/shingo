@@ -388,7 +388,12 @@ const SwapModePressPosition protocol.SwapMode = "press_position"
 //
 // The synthesized claim keeps the PARENT's ID: per-position node tasks
 // reference that ID so wiring lookups resolve back to the real persisted
-// parent row.
+// parent row. That is LOAD-BEARING and it is the OPPOSITE of the other
+// synthesized claim in this package — Loader.SynthClaim leaves ID at 0 because
+// a Core-owned loader window has no persisted row at all, and its callers must
+// guard on that zero. A press seat does have a row: its parent's. Zeroing this
+// ID would strand every seat task, because the task's FromClaimID/ToClaimID is
+// how the seat is resolved back. See the note at Loader.SynthClaim.
 //
 // Lives in domain, not engine, because BOTH the planner and the station view
 // must derive this claim the same way. The planner synthesizes it to build
@@ -416,6 +421,46 @@ func SynthesizePressPositionClaim(parent *NodeClaim, coreNodeName string) *NodeC
 	// KeepStaged shouldn't trigger inside per-position routing.
 	c.KeepStaged = false
 	return &c
+}
+
+// SeatClaimFromParent resolves the claim for a press seat that owns changeover
+// work but has no style_node_claims row of its own, given the PARENT claim the
+// seat's node task was planned against.
+//
+// This is the ONE derivation. Three consumers need it and they must agree:
+//
+//   - the planner, which synthesizes the seat claims to build the per-seat
+//     orders (FanOutPressIndexDifferentBinType),
+//   - the station view, which re-derives them so a fanned-out seat renders as
+//     claimed rather than as an unclaimed node with no buttons,
+//   - the per-node changeover actions and the cutover gate, which have to be
+//     able to ADVANCE that seat's task — the front seat resolves by node name
+//     and the back seats cannot, so before this they refused "target style
+//     claim not found for node" and the task never left its live state. The
+//     cutover gate blocks on any live task, so the whole changeover deadlocked
+//     with cancel as the only exit.
+//
+// Returns nil for anything that is not a seat of a press-index parent. A wrong
+// claim is worse than none: the caller then reports its own honest refusal
+// rather than acting on an invented configuration.
+//
+// The parent is found through the node task's FromClaimID / ToClaimID, which
+// point at the real persisted parent row precisely because
+// SynthesizePressPositionClaim keeps the parent's ID. See the contract note
+// there.
+func SeatClaimFromParent(parent *NodeClaim, coreNodeName string) *NodeClaim {
+	if parent == nil || coreNodeName == "" {
+		return nil
+	}
+	if parent.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		return nil
+	}
+	// The seat must be one this parent actually names. Any other claimless node
+	// holding a task is a different problem and stays claimless.
+	if parent.PairedCoreNode != coreNodeName && parent.SecondPairedCoreNode != coreNodeName {
+		return nil
+	}
+	return SynthesizePressPositionClaim(parent, coreNodeName)
 }
 
 // AllowedPayloads returns the effective set of payload codes this claim

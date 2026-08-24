@@ -355,12 +355,32 @@ func (e *Engine) ReleaseNodeWithRemainingUOP(nodeID int64, qty int64, remainingU
 }
 
 func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingUOP *int) (*storeorders.Order, error) {
+	return e.releaseNodeWithClaim(nodeID, qty, overrideRemainingUOP, nil)
+}
+
+// releaseNodeWithClaim is releaseNodeInternal with the acting claim supplied by
+// the caller, used when the node cannot resolve one by name.
+//
+// The only such caller is the changeover evacuation of a fanned-out press seat.
+// A seat owns changeover work but has no style_node_claims row under its own
+// name, so the by-name resolution here returns nothing and the release refuses
+// "no active claim for release" — the same refusal, from a different function,
+// that stalls every other action on that seat.
+//
+// fallback is used ONLY when the node resolves no claim of its own; a node that
+// has one is unaffected, so no existing path changes. It is safe to write
+// through: a seat claim carries its PARENT's row id, unlike the loader synth
+// whose ID is 0 (see domain.SynthesizePressPositionClaim and Loader.SynthClaim).
+func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemainingUOP *int, fallback *processes.NodeClaim) (*storeorders.Order, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
 	}
 	if qty < 1 {
 		return nil, fmt.Errorf("qty must be at least 1")
+	}
+	if claim == nil {
+		claim = fallback
 	}
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim for release", node.Name)

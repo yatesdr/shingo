@@ -141,6 +141,19 @@ func TestAssertParticipantsResolve_NamesMissingRows(t *testing.T) {
 		t.Fatalf("unresolved = %v, want [PLN_03]", got)
 	}
 
+	// A TASK-role participant with no row is NOT advice. ChangeoverService.Create
+	// auto-creates a process_nodes row for every node task whose name does not
+	// resolve, so telling the engineer to add it by hand sends them to do a no-op
+	// — and every fanned-out press seat is a task-role participant, so this was
+	// the common case.
+	withMissingTask := append(participants, domain.ParticipantInput{
+		CoreNodeName: "PLN_04", Role: domain.ParticipantRoleTask, // no row, auto-created at Create
+	})
+	if got := assertParticipantsResolve(withMissingTask, nodes); len(got) != 1 || got[0] != "PLN_03" {
+		t.Fatalf("unresolved = %v, want [PLN_03] — a task-role participant's row is auto-created "+
+			"and must not be reported as something the engineer has to add", got)
+	}
+
 	// Fully resolved plans report nothing.
 	if got := assertParticipantsResolve(participants[:2], nodes); got != nil {
 		t.Errorf("fully-resolved plan reported %v, want nil", got)

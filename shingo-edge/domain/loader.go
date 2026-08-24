@@ -526,6 +526,23 @@ func (l *Loader) LoadablePayloadCodesAt(coreNode NodeID) []string {
 // is scoped to THIS node (LoadablePayloadCodesAt): a dedicated home carries only
 // its own pinned payload, a shared window the whole set — so loadablePayloads
 // resolves the same per-node truth off the claim that the gate does.
+//
+// TWO SYNTHESIZED CLAIMS EXIST IN THIS PACKAGE AND THEIR ID RULES ARE OPPOSITE.
+//
+//	Loader.SynthClaim (here)        ID == 0.       There is no persisted row
+//	                                               anywhere. Guard ID == 0 before
+//	                                               using it as a foreign key.
+//	SynthesizePressPositionClaim    ID == parent's. A press seat's claim IS a
+//	                                               view of the parent press-index
+//	                                               row, and node tasks store that
+//	                                               id so FromClaimID/ToClaimID
+//	                                               resolve back to it.
+//
+// Neither is ever written back. The difference is whether the thing being
+// stood in for exists: a Core-owned loader window has no claim at all, while a
+// press seat has one — its parent's. Reading a seat's ID as "synthetic, so
+// zero" would break the seat resolver; writing a loader's ID anywhere would
+// dangle. See SeatClaimFromParent in process.go for the seat side.
 func (l *Loader) SynthClaim(coreNode NodeID) *NodeClaim {
 	return &NodeClaim{
 		CoreNodeName:        string(coreNode),

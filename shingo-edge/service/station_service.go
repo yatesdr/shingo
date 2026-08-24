@@ -100,17 +100,17 @@ func pressPositionClaimsForBoard(
 			continue
 		}
 		// Only a press-index parent fans out into per-position seats, and the
-		// seat must be one this parent actually names. Together these keep the
-		// fallback to exactly the shape the planner produced: any other
-		// claimless node owning a task is a different problem and stays
-		// claimless.
-		if parent.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		// seat must be one this parent actually names. Both checks live in
+		// domain.SeatClaimFromParent, which is the same derivation the per-node
+		// changeover actions and the cutover gate use — the view and the actions
+		// have to agree about which seats are resolvable, or a seat renders with
+		// buttons that refuse. Anything that is not a seat of a press-index
+		// parent comes back nil and is left claimless.
+		seat := domain.SeatClaimFromParent(parent, node.CoreNodeName)
+		if seat == nil {
 			continue
 		}
-		if parent.PairedCoreNode != node.CoreNodeName && parent.SecondPairedCoreNode != node.CoreNodeName {
-			continue
-		}
-		out[node.ID] = domain.SynthesizePressPositionClaim(parent, node.CoreNodeName)
+		out[node.ID] = seat
 	}
 	return out
 }

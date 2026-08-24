@@ -121,9 +121,17 @@ function closeChangeoverPreview() {
 }
 
 // renderUnresolvedParticipants shows the start response's advisory: participant
-// nodes whose core_node_name resolves to no process_nodes row. Almost always
-// press-index extension seats — physically traversed by the index motion,
-// owning no task and no order, and invisible to every consumer without a row.
+// nodes whose core_node_name resolves to no process_nodes row. These are
+// press-index extension seats that own NO task — physically traversed by the
+// index motion, carrying no order of their own, and invisible to every consumer
+// without a row.
+//
+// SEATS THAT OWN A TASK ARE NOT IN THIS LIST and the wording must not imply
+// they are. Their rows are auto-created at changeover start, and since the
+// per-node actions resolve a seat's claim through its task's parent claim, a
+// fanned-out seat is fully driveable with no configuration at all. The advisory
+// used to name those too, which sent the engineer to add a node the system had
+// just added itself.
 //
 // A BANNER, NOT A TOAST, and never blocking. The changeover has already
 // started; this is a config gap the engineer fixes on the process-nodes page,
@@ -147,7 +155,11 @@ function renderUnresolvedParticipants(nodes) {
         '<strong>Changeover started.</strong> ' + nodes.length +
         (one ? ' participant node has' : ' participant nodes have') +
         ' no process node configured: ' + names +
-        '. These positions cannot be gated, rendered or released until they are added on the ' +
+        '. ' + (one ? 'This seat is' : 'These seats are') +
+        ' indexed over by the press rather than handled directly, so ' +
+        (one ? 'it owns' : 'they own') + ' no changeover task and no order. Without a row ' +
+        (one ? 'it cannot' : 'they cannot') + ' be rendered on the board or protected from ' +
+        'unrelated robot traffic — add ' + (one ? 'it' : 'them') + ' on the ' +
         '<a href="/processes">process nodes</a> page. The changeover is running regardless.';
     el.hidden = false;
 }
