@@ -607,6 +607,36 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 			node.Name, err, orderIDStr(stagedPtr), orderIDStr(activePtr), task != nil)
 		return fmt.Errorf("node %s: %w", node.Name, err)
 	}
+	// -- THE LABELS ARE POSITIONAL; THE DISPOSITION IS NOT ---------------
+	//
+	// ResolveSwapPair maps staged->evac and active->supply, which is a
+	// two_robot assumption and is INVERTED for press-index (R1 clears the
+	// press, R2 supplies it - the flip does not change that). The label chosen
+	// here decides which leg carries the operator's disposition, and the
+	// disposition sets remaining_uop: which bin's manifest Core clears.
+	//
+	// It does NOT wipe the wrong bin -- the steps-based supply-bin guard
+	// downstream suppresses the sync on the real supply leg. It loses the
+	// other half: the real EVAC gets the bare disposition, so the bin leaving
+	// the press is released with remaining_uop=nil and its manifest is never
+	// cleared. Latent while every live press-index claim is produce-role
+	// (produce discards remaining_uop for both legs); live the day a consume
+	// one exists. See classifySwapLegsBySteps for the full accounting,
+	// including the produce-side trigger the inversion silently withholds.
+	//
+	// So re-derive from the legs' STEPS, using the same discriminator the Edge
+	// classifier and Core's dispatch predicates use. ComputeSwapReady keeps
+	// the positional resolver: it accepts EITHER staged leg for press-index,
+	// so the inversion never reached the button.
+	if evacOrderID != nil && supplyOrderID != nil {
+		if e2, s2, ok := e.classifySwapLegsBySteps(claim.CoreNodeName, *evacOrderID, *supplyOrderID); ok {
+			if e2 != *evacOrderID {
+				e.logFn("release-staged node=%s: steps say the pair is inverted relative to the runtime slots - evac=%d supply=%d (slots said evac=%d supply=%d)",
+					node.Name, e2, s2, *evacOrderID, *supplyOrderID)
+			}
+			evacOrderID, supplyOrderID = &e2, &s2
+		}
+	}
 	e.logFn("release-staged node=%s resolved evac=%s supply=%s",
 		node.Name, orderIDStr(evacOrderID), orderIDStr(supplyOrderID))
 
@@ -648,21 +678,23 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 
 	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
 
-	// Order B (evacuation) — full disposition. Gated per-leg on
+	// The EVACUATION leg - full disposition. "evac"/"supply" here are the
+	// step-derived roles above, not the A/B creation order they used to name:
+	// under press-index the evac IS leg A. Gated per-leg on
 	// ReleasableAtCore (hop A4-i): a leg still queued/sourcing/dispatched/
 	// acknowledged is skipped, not force-flipped to in_transit.
 	evacReleased := false
 	if evacOrderID != nil {
-		released, err := e.releaseIfReleasable(*evacOrderID, "B", disp)
+		released, err := e.releaseIfReleasable(*evacOrderID, "evac", disp)
 		if err != nil {
 			return err
 		}
 		evacReleased = released
 	}
-	// Order A (supply) — zero disposition (preserve supply bin manifest).
+	// The SUPPLY leg - zero disposition (preserve the supply bin's manifest).
 	supplyReleased := false
 	if supplyOrderID != nil {
-		released, err := e.releaseIfReleasable(*supplyOrderID, "A", supplyDisp)
+		released, err := e.releaseIfReleasable(*supplyOrderID, "supply", supplyDisp)
 		if err != nil {
 			return err
 		}
