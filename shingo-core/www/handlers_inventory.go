@@ -2,6 +2,7 @@ package www
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -310,6 +311,14 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	f := excelize.NewFile()
+	// excelize.File holds a temp-file backing store; not closing it leaks one
+	// per export for the life of the process. Deferred rather than closed after
+	// the write, so an early return added later cannot skip it.
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			log.Printf("inventory export: close workbook: %v", cerr)
+		}
+	}()
 	sheet := "Inventory"
 	f.SetSheetName("Sheet1", sheet)
 
@@ -367,7 +376,13 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", `attachment; filename="inventory.xlsx"`)
-	f.Write(w)
+	// THE HEADERS ARE ALREADY SENT, so there is no status code left to change:
+	// http.Error here would append its message to a half-written .xlsx and the
+	// browser would save a corrupt file with a 200. Log it instead — a
+	// truncated download the operator can see and retry, and a line naming why.
+	if err := f.Write(w); err != nil {
+		log.Printf("inventory export: write workbook to response: %v — the download is truncated", err)
+	}
 }
 
 // appendLinesideBucketSheet adds the second sheet of the inventory export, one

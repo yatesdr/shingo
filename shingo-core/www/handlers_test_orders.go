@@ -32,6 +32,21 @@ type nodePickerOption struct {
 	Label string
 }
 
+// nodeTypeLabel is the container badge a node carries in the picker: "group",
+// "lane", or none. A synthetic node is a group by construction.
+func nodeTypeLabel(n *domain.Node) string {
+	switch strings.ToUpper(n.NodeTypeCode) {
+	case protocol.NodeClassNGRP:
+		return "group"
+	case protocol.NodeClassLANE:
+		return "lane"
+	}
+	if n.IsSynthetic {
+		return "group"
+	}
+	return ""
+}
+
 // buildNodePickerOptions turns the node table into something safe to pick from.
 //
 // This page's fifteen node dropdowns were the raw node list, in table order,
@@ -52,21 +67,6 @@ type nodePickerOption struct {
 // knowing about — the shapes are deliberately the same so they read alike.
 // This one nests to any depth (group → lane → slot); the JS one stops at one
 // level.
-// nodeTypeLabel is the container badge a node carries in the picker: "group",
-// "lane", or none. A synthetic node is a group by construction.
-func nodeTypeLabel(n *domain.Node) string {
-	switch strings.ToUpper(n.NodeTypeCode) {
-	case protocol.NodeClassNGRP:
-		return "group"
-	case protocol.NodeClassLANE:
-		return "lane"
-	}
-	if n.IsSynthetic {
-		return "group"
-	}
-	return ""
-}
-
 func buildNodePickerOptions(all []*domain.Node) []nodePickerOption {
 	live := make([]*domain.Node, 0, len(all))
 	byID := make(map[int64]*domain.Node, len(all))

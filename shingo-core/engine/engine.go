@@ -51,16 +51,23 @@ type Config struct {
 }
 
 type Engine struct {
-	cfg                   *config.Config
-	configPath            string
-	db                    *store.DB
-	fleet                 fleet.Backend
-	msgClient             *messaging.Client
-	dispatcher            *dispatch.Dispatcher
-	tracker               fleet.OrderTracker
-	Events                *EventBus
-	logFn                 LogFunc
-	debugLog              types.DebugLogFunc
+	cfg        *config.Config
+	configPath string
+	db         *store.DB
+	fleet      fleet.Backend
+	msgClient  *messaging.Client
+	dispatcher *dispatch.Dispatcher
+	tracker    fleet.OrderTracker
+	Events     *EventBus
+	logFn      LogFunc
+	debugLog   types.DebugLogFunc
+	// strandedNotes is the last anomaly note LOGGED per bin, so the two-second
+	// sweep re-marks every stranded bin (which it must — the note carries the
+	// robot's latest position) without re-printing an identical line forever.
+	// See strandedAnomaly. Bounded by the bins that have been stranded and
+	// pruned on placement.
+	strandedNotes         map[int64]string
+	strandedNotesMu       sync.Mutex
 	reconciliation        *ReconciliationService
 	recovery              *RecoveryService
 	fulfillment           *fulfillment.Scanner

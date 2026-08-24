@@ -61,6 +61,14 @@ CREATE TABLE style_node_claims (
   sequence INTEGER NOT NULL DEFAULT 0, lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
   reuse_compatible_bins INTEGER NOT NULL DEFAULT 0, auto_push INTEGER NOT NULL DEFAULT 0,
   reorder_point_source TEXT NOT NULL DEFAULT 'legacy', created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  below_reorder_since TEXT,
+  changeover_evac_seats TEXT NOT NULL DEFAULT '', changeover_evac_destination TEXT NOT NULL DEFAULT '',
+  changeover_load_directive INTEGER NOT NULL DEFAULT 0,
+  key_route TEXT NOT NULL DEFAULT '', key_task TEXT NOT NULL DEFAULT '',
+  staging_node TEXT NOT NULL DEFAULT '', release_node TEXT NOT NULL DEFAULT '',
+  inbound_source_node TEXT NOT NULL DEFAULT '', inbound_source_node_group TEXT NOT NULL DEFAULT '',
+  outbound_source_node TEXT NOT NULL DEFAULT '', outbound_source_node_group TEXT NOT NULL DEFAULT '',
+  outbound_source TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'loader',
   UNIQUE(style_id, core_node_name));
 CREATE TABLE reporting_points (
   id INTEGER PRIMARY KEY AUTOINCREMENT, style_id INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,

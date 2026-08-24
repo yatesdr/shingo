@@ -312,6 +312,7 @@ func (e *Engine) sweepCarriedBins() {
 				fmt.Sprintf("deck emptied but could not place at %s: %v", node.Name, err))
 			continue
 		}
+		e.forgetStrandedNote(bin.ID)
 		e.logFn("engine: carried bin %d placed at %s after %s unloaded", bin.ID, node.Name, robotID)
 		// The bin has left the deck; if it was the last one, the carrier node
 		// has served its purpose. Removed here rather than left to accumulate —
@@ -450,7 +451,41 @@ func (e *Engine) strandedAnomaly(binID int64, robotID string, robot fleet.RobotS
 		e.logFn("engine: stranded transit: mark bin %d anomalous: %v", binID, err)
 		return
 	}
+	// THE WRITE REPEATS; THE LOG LINE MUST NOT.
+	//
+	// The sweep runs every two seconds and re-marks every stranded bin on every
+	// tick — which is right, because the note carries the robot's LATEST
+	// position and the DB write is idempotent (anomaly_at is COALESCEd, so the
+	// original instant survives). The log line was not: one line per stranded
+	// bin per two seconds, forever, which is a bin nobody has walked out to
+	// find yet burying every other line in the file.
+	//
+	// Keyed on the NOTE, not on the bin, so a bin that moves — a different
+	// station, a different jack state, a different reason — still says so. What
+	// is suppressed is the identical line, repeated.
+	e.strandedNotesMu.Lock()
+	if e.strandedNotes == nil {
+		e.strandedNotes = map[int64]string{}
+	}
+	unchanged := e.strandedNotes[binID] == note
+	e.strandedNotes[binID] = note
+	e.strandedNotesMu.Unlock()
+	if unchanged {
+		return
+	}
 	e.logFn("engine: stranded transit: bin %d left at _TRANSIT — %s", binID, note)
+}
+
+// forgetStrandedNote drops a bin's last-logged anomaly note, so the next
+// stranding of that bin logs again rather than being suppressed as a repeat.
+//
+// Called when the bin is placed. Without it the map is a slow leak AND a
+// silencer: a bin recovered and later stranded again in the same way would
+// match its own stale note and say nothing.
+func (e *Engine) forgetStrandedNote(binID int64) {
+	e.strandedNotesMu.Lock()
+	delete(e.strandedNotes, binID)
+	e.strandedNotesMu.Unlock()
 }
 
 // strandedNote renders the robot's last known position as one line an operator
