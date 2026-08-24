@@ -1154,149 +1154,7 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 	// rather than beside it, so a reader cannot find the failure path without
 	// also finding why it is the only one left.
 	if digWasDissolved(children) || hasFailedOrCancelled {
-		// A CONFIG FAULT STILL FAILS THE DEMAND (§R.45). endsItsChapter leaves
-		// such a leg in the open set precisely so it arrives here: there is no
-		// next chapter to open, because nothing a re-plan can do invents a node
-		// somebody did not configure. The message is already an instruction —
-		// "config failure: source node X does not exist" — and it travels up so
-		// the demand's own detail says what to go and add.
-		if broken := configFailedLeg(openChildren); broken != nil {
-			log.Printf("dispatch: compound order %d has a leg that cannot be built (%s) — failing "+
-				"the demand; this is a person's to fix, not congestion", parentOrderID, broken.ErrorDetail)
-			if parent != nil {
-				if err := d.lifecycle.Fail(parent, parent.StationID, "reshuffle_error", broken.ErrorDetail); err != nil {
-					log.Printf("dispatch: fail compound order %d: %v", parentOrderID, err)
-				}
-			}
-			d.unlockLaneForCompound(parentOrderID, heldLanes)
-			return nil
-		}
-
-		// CLOSE THE REST OF THE CHAPTER. A dissolve has already cancelled its
-		// legs and this loop finds nothing; a leg that died mid-chapter leaves
-		// siblings still moving, and they are what this cancels. The marker is
-		// what re-drives us when they land (IsChapterEndCancel).
-		//
-		// THE PARTNER IS NOT TOUCHED, and that is a consequence rather than a
-		// clause. A two-robot swap leg unwinds its sibling when it goes
-		// TERMINAL; the demand no longer does, so nothing reaches across. The
-		// old arm failed the parent and the unwind went with it — one dig leg
-		// breaking down took the other robot's order out too.
-		if parent != nil && hasFailedOrCancelled {
-			log.Printf("dispatch: compound order %d lost a leg — closing the rest of the chapter; "+
-				"the demand re-plans (gate 1: a dig failure is congestion)", parentOrderID)
-			for _, c := range openChildren {
-				if protocol.IsTerminal(c.Status) {
-					continue
-				}
-				d.lifecycle.CancelOrder(c, parent.StationID, reshuffleLegFailedDetail)
-			}
-		}
-
-		// WAIT FOR THE LEGS THAT ARE STILL MOVING. A dissolve cancels every
-		// non-terminal leg, so all-terminal is the ordinary case here — but a
-		// cancel can be refused (an illegal transition from some state), and
-		// returning the parent while a robot is still executing an old leg would
-		// have it re-plan a lane a stale leg is still changing. The next
-		// terminal event brings us back. Nothing is unlocked on this path: a
-		// corridor with a cancelled-but-still-moving leg inside it is not free.
-		if !allTerminal {
-			d.dbg("dispatch: compound %d has stopped short but still has a leg in flight — "+
-				"waiting for it to land", parentOrderID)
-			return nil
-		}
-		// SEALEDNESS IS NOT CONSULTED, and that is a statement rather than an
-		// omission: OpenForChildren asks "are more legs coming", and for a
-		// dissolved dig the answer is no by construction — the dissolve cancelled
-		// the set and no writer adds to it. (Nothing opens a compound today; when
-		// the fold makes that real, a dissolve must also seal the parent, or the
-		// re-plan inherits an open marker and this arm stops being reachable.)
-		if parent != nil {
-			// THE WORDS COME FROM HOW THE CHAPTER ENDED, not from which arm
-			// reached this line. Under gate 1 a failed leg lands here too, and
-			// telling a demand its "plan went stale" when a robot broke down
-			// would put the wrong sentence in front of the operator reading the
-			// board. One path, one disposition, two vocabularies.
-			demandDetail := reshuffleDissolveDetail
-			if chapterEndedInFailure(children) {
-				demandDetail = reshuffleLegFailedDetail
-			}
-			// ── A STAGED PARENT HAS NO DISPOSITION TO TAKE (§R.104/§R.104a) ──
-			//
-			// The arms above write transitions OUT of `reshuffling`, and the
-			// old code below offered this parent two: Queue and Cancel. BOTH
-			// ARE ILLEGAL HERE, and for different reasons.
-			//
-			// Queue is refused by the state machine: `{staged → queued}` is
-			// not among staged's successors (protocol/types.go), so the old
-			// arm's every run on this shape logged "could not return its
-			// parent to the acquiring set" and stranded the demand at the
-			// mark. Cancel is worse than illegal — it is wrong: the demand's
-			// own work did not fail, its dig did (§R.91), and the robot is
-			// standing at the mark with a plan that is still the plan (the
-			// splice-append resume, §R.104a).
-			//
-			// SO THE DISPOSITION IS NO TRANSITION, AND THE PARENT PARKS WITH
-			// A CAUSE. Its successors are all transitions, so `staged` is the
-			// truth about it; it keeps the status it never left and waits for
-			// the machinery that re-asks the lane. That machinery is live on
-			// both halves: the evaluator re-asks on every lane event and the
-			// 60s lane floor (PopGateStaged's floor), and the all-terminal
-			// half is additionally covered by the widened chapter watchdog.
-			//
-			// TERMINAL STAGED PARENTS EXCLUDED, and that exclusion is
-			// load-bearing: IsGateStaged does not test status, so an
-			// operator-cancelled staged dweller reaches this fork through the
-			// :740 carve-out above, and parking it would immortalize a wait
-			// whose row a human already ended. Those fall through to the
-			// existing arms, whose guards (the state machine) already refuse
-			// them harmlessly.
-			if IsGateStaged(parent) && !protocol.IsTerminal(parent.Status) {
-				// Lane only, deliberately: the sentence's dig clause reads
-				// "dig N is WORKING this lane", which is what this cause
-				// exists to say is no longer true. The cause column carries
-				// the exact fact; the sentence stays at the lane.
-				d.setQueueReason(parent, protocol.QueueStorageRearranging, CauseStagedDigFailed,
-					QueueParams{Lane: d.firstLaneName(heldLanes)})
-				log.Printf("dispatch: compound %d lost a dig leg while staged at its mark — "+
-					"no transition (staged has no path to queued; the demand is not what failed, "+
-					"§R.91); the lane is re-asked on the next pass and the resume stays the "+
-					"splice-append", parentOrderID)
-			} else if err := d.lifecycle.Queue(parent, "dispatcher", demandDetail); err != nil {
-				log.Printf("dispatch: dissolved compound %d could not return its parent to the "+
-					"acquiring set: %v (the demand is stranded in reshuffling; the reconciliation "+
-					"sweep is the backstop)", parentOrderID, err)
-			}
-		}
-		// Idempotent — the dissolve released it already. Repeated because this
-		// arm is also reachable when a leg that was already in flight terminates
-		// after the dissolve, and a lane held past a re-plan is a wedge.
-		//
-		// ── EXCEPT A STAGED PARENT, WHICH KEEPS ITS LANE WHEN IT STILL OWES IT
-		// ONE (§R.105 item 7) ──
-		//
-		// The order-wide release below is the re-plan path's, and it is
-		// owner-blind: the planner whose next question is "may I take this
-		// lane" must not find it locked by a demand that just re-queued. A
-		// staged parent is not re-queueing — the robot is at the mark and the
-		// resume is the splice-append — so dropping its corridor here would
-		// readmit traffic into the lane mid-story, the exact window §R.104a's
-		// ordering (lock → dig → append) exists to close.
-		//
-		// The per-lane decider is already the right answer and needs no new
-		// predicate: holderStillOwesTheLane keeps the lane for a store whose
-		// destination sits in it ("still owes this lane a drop"), and
-		// legStillNeedsLane keeps it for a retrieve whose bin has not left.
-		// When the parent no longer owes the lane anything, the decider
-		// releases and wakes it — same call, same fork as the success path
-		// a hundred lines below ("AFTER the disposition, necessarily").
-		if IsGateStaged(parent) && !protocol.IsTerminal(parent.Status) {
-			for _, laneID := range heldLanes {
-				d.maybeReleaseDigOnLastBlockerOut(laneID)
-			}
-			return nil
-		}
-		d.unlockLaneForCompound(parentOrderID, heldLanes)
+		d.chapterStoppedShort(parentOrderID, parent, children, openChildren, hasFailedOrCancelled, allTerminal, heldLanes)
 		return nil
 	}
 
@@ -2248,4 +2106,164 @@ func (d *Dispatcher) digLanesHeld(parentOrderID int64) []int64 {
 		return nil
 	}
 	return d.laneLock.LanesHeldBy(parentOrderID)
+}
+
+// chapterStoppedShort disposes of a dig chapter that did not get through --
+// dissolved, or a leg failed or was cancelled. One arm for every way a chapter
+// stops short, and every one of them is terminal for this compound, which is
+// why the caller returns unconditionally after it.
+//
+// openChildren and allTerminal are passed rather than recomputed: the caller
+// splits the generation exactly once and four readers share it, which is what
+// stops a re-planned dig reading as a failed one.
+func (d *Dispatcher) chapterStoppedShort(
+	parentOrderID int64,
+	parent *orders.Order,
+	children, openChildren []*orders.Order,
+	hasFailedOrCancelled, allTerminal bool,
+	heldLanes []int64,
+) {
+	// A CONFIG FAULT STILL FAILS THE DEMAND (§R.45). endsItsChapter leaves
+	// such a leg in the open set precisely so it arrives here: there is no
+	// next chapter to open, because nothing a re-plan can do invents a node
+	// somebody did not configure. The message is already an instruction —
+	// "config failure: source node X does not exist" — and it travels up so
+	// the demand's own detail says what to go and add.
+	if broken := configFailedLeg(openChildren); broken != nil {
+		log.Printf("dispatch: compound order %d has a leg that cannot be built (%s) — failing "+
+			"the demand; this is a person's to fix, not congestion", parentOrderID, broken.ErrorDetail)
+		if parent != nil {
+			if err := d.lifecycle.Fail(parent, parent.StationID, "reshuffle_error", broken.ErrorDetail); err != nil {
+				log.Printf("dispatch: fail compound order %d: %v", parentOrderID, err)
+			}
+		}
+		d.unlockLaneForCompound(parentOrderID, heldLanes)
+		return
+	}
+
+	// CLOSE THE REST OF THE CHAPTER. A dissolve has already cancelled its
+	// legs and this loop finds nothing; a leg that died mid-chapter leaves
+	// siblings still moving, and they are what this cancels. The marker is
+	// what re-drives us when they land (IsChapterEndCancel).
+	//
+	// THE PARTNER IS NOT TOUCHED, and that is a consequence rather than a
+	// clause. A two-robot swap leg unwinds its sibling when it goes
+	// TERMINAL; the demand no longer does, so nothing reaches across. The
+	// old arm failed the parent and the unwind went with it — one dig leg
+	// breaking down took the other robot's order out too.
+	if parent != nil && hasFailedOrCancelled {
+		log.Printf("dispatch: compound order %d lost a leg — closing the rest of the chapter; "+
+			"the demand re-plans (gate 1: a dig failure is congestion)", parentOrderID)
+		for _, c := range openChildren {
+			if protocol.IsTerminal(c.Status) {
+				continue
+			}
+			d.lifecycle.CancelOrder(c, parent.StationID, reshuffleLegFailedDetail)
+		}
+	}
+
+	// WAIT FOR THE LEGS THAT ARE STILL MOVING. A dissolve cancels every
+	// non-terminal leg, so all-terminal is the ordinary case here — but a
+	// cancel can be refused (an illegal transition from some state), and
+	// returning the parent while a robot is still executing an old leg would
+	// have it re-plan a lane a stale leg is still changing. The next
+	// terminal event brings us back. Nothing is unlocked on this path: a
+	// corridor with a cancelled-but-still-moving leg inside it is not free.
+	if !allTerminal {
+		d.dbg("dispatch: compound %d has stopped short but still has a leg in flight — "+
+			"waiting for it to land", parentOrderID)
+		return
+	}
+	// SEALEDNESS IS NOT CONSULTED, and that is a statement rather than an
+	// omission: OpenForChildren asks "are more legs coming", and for a
+	// dissolved dig the answer is no by construction — the dissolve cancelled
+	// the set and no writer adds to it. (Nothing opens a compound today; when
+	// the fold makes that real, a dissolve must also seal the parent, or the
+	// re-plan inherits an open marker and this arm stops being reachable.)
+	if parent != nil {
+		// THE WORDS COME FROM HOW THE CHAPTER ENDED, not from which arm
+		// reached this line. Under gate 1 a failed leg lands here too, and
+		// telling a demand its "plan went stale" when a robot broke down
+		// would put the wrong sentence in front of the operator reading the
+		// board. One path, one disposition, two vocabularies.
+		demandDetail := reshuffleDissolveDetail
+		if chapterEndedInFailure(children) {
+			demandDetail = reshuffleLegFailedDetail
+		}
+		// ── A STAGED PARENT HAS NO DISPOSITION TO TAKE (§R.104/§R.104a) ──
+		//
+		// The arms above write transitions OUT of `reshuffling`, and the
+		// old code below offered this parent two: Queue and Cancel. BOTH
+		// ARE ILLEGAL HERE, and for different reasons.
+		//
+		// Queue is refused by the state machine: `{staged → queued}` is
+		// not among staged's successors (protocol/types.go), so the old
+		// arm's every run on this shape logged "could not return its
+		// parent to the acquiring set" and stranded the demand at the
+		// mark. Cancel is worse than illegal — it is wrong: the demand's
+		// own work did not fail, its dig did (§R.91), and the robot is
+		// standing at the mark with a plan that is still the plan (the
+		// splice-append resume, §R.104a).
+		//
+		// SO THE DISPOSITION IS NO TRANSITION, AND THE PARENT PARKS WITH
+		// A CAUSE. Its successors are all transitions, so `staged` is the
+		// truth about it; it keeps the status it never left and waits for
+		// the machinery that re-asks the lane. That machinery is live on
+		// both halves: the evaluator re-asks on every lane event and the
+		// 60s lane floor (PopGateStaged's floor), and the all-terminal
+		// half is additionally covered by the widened chapter watchdog.
+		//
+		// TERMINAL STAGED PARENTS EXCLUDED, and that exclusion is
+		// load-bearing: IsGateStaged does not test status, so an
+		// operator-cancelled staged dweller reaches this fork through the
+		// :740 carve-out above, and parking it would immortalize a wait
+		// whose row a human already ended. Those fall through to the
+		// existing arms, whose guards (the state machine) already refuse
+		// them harmlessly.
+		if IsGateStaged(parent) && !protocol.IsTerminal(parent.Status) {
+			// Lane only, deliberately: the sentence's dig clause reads
+			// "dig N is WORKING this lane", which is what this cause
+			// exists to say is no longer true. The cause column carries
+			// the exact fact; the sentence stays at the lane.
+			d.setQueueReason(parent, protocol.QueueStorageRearranging, CauseStagedDigFailed,
+				QueueParams{Lane: d.firstLaneName(heldLanes)})
+			log.Printf("dispatch: compound %d lost a dig leg while staged at its mark — "+
+				"no transition (staged has no path to queued; the demand is not what failed, "+
+				"§R.91); the lane is re-asked on the next pass and the resume stays the "+
+				"splice-append", parentOrderID)
+		} else if err := d.lifecycle.Queue(parent, "dispatcher", demandDetail); err != nil {
+			log.Printf("dispatch: dissolved compound %d could not return its parent to the "+
+				"acquiring set: %v (the demand is stranded in reshuffling; the reconciliation "+
+				"sweep is the backstop)", parentOrderID, err)
+		}
+	}
+	// Idempotent — the dissolve released it already. Repeated because this
+	// arm is also reachable when a leg that was already in flight terminates
+	// after the dissolve, and a lane held past a re-plan is a wedge.
+	//
+	// ── EXCEPT A STAGED PARENT, WHICH KEEPS ITS LANE WHEN IT STILL OWES IT
+	// ONE (§R.105 item 7) ──
+	//
+	// The order-wide release below is the re-plan path's, and it is
+	// owner-blind: the planner whose next question is "may I take this
+	// lane" must not find it locked by a demand that just re-queued. A
+	// staged parent is not re-queueing — the robot is at the mark and the
+	// resume is the splice-append — so dropping its corridor here would
+	// readmit traffic into the lane mid-story, the exact window §R.104a's
+	// ordering (lock → dig → append) exists to close.
+	//
+	// The per-lane decider is already the right answer and needs no new
+	// predicate: holderStillOwesTheLane keeps the lane for a store whose
+	// destination sits in it ("still owes this lane a drop"), and
+	// legStillNeedsLane keeps it for a retrieve whose bin has not left.
+	// When the parent no longer owes the lane anything, the decider
+	// releases and wakes it — same call, same fork as the success path
+	// a hundred lines below ("AFTER the disposition, necessarily").
+	if IsGateStaged(parent) && !protocol.IsTerminal(parent.Status) {
+		for _, laneID := range heldLanes {
+			d.maybeReleaseDigOnLastBlockerOut(laneID)
+		}
+		return
+	}
+	d.unlockLaneForCompound(parentOrderID, heldLanes)
 }

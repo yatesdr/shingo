@@ -360,47 +360,7 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 			continue
 		}
 		if c.dwell {
-			// A DWELLER ASKS A DIFFERENT QUESTION, SO IT DOES NOT GO THROUGH THE
-			// ENTRY CLASSIFIER.
-			//
-			// gateEntryVerdict answers "may this robot come INTO this lane". The
-			// dweller is already in it — Core sent it there and it is standing in a
-			// slot the dig itself emptied — so every arm of that verdict is either
-			// vacuously true or actively wrong for it (its own parent's dig holds the
-			// lane; its own occupancy row is the one inside it). The question it is
-			// actually waiting on is "where does this blocker go", and the resolver
-			// both answers it and acts on the answer.
-			//
-			// AND IT PROPOSES NO HEAL. acceptanceDigNeeded proposes an excavation of THIS
-			// lane's mouth, which is the wall a refused ENTRANT is sitting behind. A
-			// dweller is behind no wall here: its lane is already being dug, by the
-			// very parent this leg belongs to. What it lacks is somewhere in the
-			// GROUP to put a bin, and no dig on this lane produces one.
-			v, rErr := d.releaseDwellingDigLeg(c.order, lane)
-			switch {
-			case rErr != nil:
-				log.Printf("lane gate: release dwelling leg %d in lane %s: %v", c.order.ID, lane.Name, rErr)
-				d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed,
-					QueueParams{Lane: lane.Name})
-			case !v.Admitted():
-				// THE LANE THAT HAS TO FREE, NOT THE ONE THE ROBOT IS IN. This passed
-				// QueueParams{Lane: lane.Name}, which is wrong twice: QueueWaitingForSlot
-				// does not render Lane at all (QueueParams' own header calls that the F1
-				// defect — populated and ignored), and the dug lane is not the answer
-				// anyway. A dweller is refused ABOUT SOMEWHERE ELSE: the slot it wanted
-				// is in a lane another dig holds, or one a robot is standing in. The
-				// verdict carries that lane, so the operator gets "Waiting for a slot at
-				// <the lane that must free>" instead of a bare "Waiting for a slot".
-				where := v.Lane()
-				if where == "" {
-					where = lane.Name
-				}
-				d.setQueueReason(c.order, protocol.QueueWaitingForSlot, v.Cause(),
-					QueueParams{Destination: where})
-				d.dbg("lane gate: dwelling leg %d still holding its blocker in %s (%s at %s)",
-					c.order.ID, lane.Name, v.Cause(), where)
-			default:
-				d.setQueueReason(c.order, "", "", QueueParams{})
+			if d.releaseDweller(c, lane) {
 				released++
 				freedLane = true
 			}
@@ -1299,4 +1259,58 @@ func (d *Dispatcher) GateStagedCount(laneID int64) (int, error) {
 		return 0, err
 	}
 	return len(staged), nil
+}
+
+// releaseDweller resolves where a dwelling dig leg's blocker goes and releases
+// it, or records why it is still holding. Reports whether it drove out.
+//
+// A dweller asks a different question from an entrant -- it is already inside
+// the lane -- so it takes neither release path and proposes no heal. That rule
+// is why this is a function and not an arm of the entry classifier, and why it
+// touches neither the pass's acceptance nor its dig proposal.
+func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bool) {
+	// A DWELLER ASKS A DIFFERENT QUESTION, SO IT DOES NOT GO THROUGH THE
+	// ENTRY CLASSIFIER.
+	//
+	// gateEntryVerdict answers "may this robot come INTO this lane". The
+	// dweller is already in it — Core sent it there and it is standing in a
+	// slot the dig itself emptied — so every arm of that verdict is either
+	// vacuously true or actively wrong for it (its own parent's dig holds the
+	// lane; its own occupancy row is the one inside it). The question it is
+	// actually waiting on is "where does this blocker go", and the resolver
+	// both answers it and acts on the answer.
+	//
+	// AND IT PROPOSES NO HEAL. acceptanceDigNeeded proposes an excavation of THIS
+	// lane's mouth, which is the wall a refused ENTRANT is sitting behind. A
+	// dweller is behind no wall here: its lane is already being dug, by the
+	// very parent this leg belongs to. What it lacks is somewhere in the
+	// GROUP to put a bin, and no dig on this lane produces one.
+	v, rErr := d.releaseDwellingDigLeg(c.order, lane)
+	switch {
+	case rErr != nil:
+		log.Printf("lane gate: release dwelling leg %d in lane %s: %v", c.order.ID, lane.Name, rErr)
+		d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed,
+			QueueParams{Lane: lane.Name})
+	case !v.Admitted():
+		// THE LANE THAT HAS TO FREE, NOT THE ONE THE ROBOT IS IN. This passed
+		// QueueParams{Lane: lane.Name}, which is wrong twice: QueueWaitingForSlot
+		// does not render Lane at all (QueueParams' own header calls that the F1
+		// defect — populated and ignored), and the dug lane is not the answer
+		// anyway. A dweller is refused ABOUT SOMEWHERE ELSE: the slot it wanted
+		// is in a lane another dig holds, or one a robot is standing in. The
+		// verdict carries that lane, so the operator gets "Waiting for a slot at
+		// <the lane that must free>" instead of a bare "Waiting for a slot".
+		where := v.Lane()
+		if where == "" {
+			where = lane.Name
+		}
+		d.setQueueReason(c.order, protocol.QueueWaitingForSlot, v.Cause(),
+			QueueParams{Destination: where})
+		d.dbg("lane gate: dwelling leg %d still holding its blocker in %s (%s at %s)",
+			c.order.ID, lane.Name, v.Cause(), where)
+	default:
+		d.setQueueReason(c.order, "", "", QueueParams{})
+		freed = true
+	}
+	return freed
 }

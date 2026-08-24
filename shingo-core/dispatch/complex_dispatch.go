@@ -316,32 +316,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 	changed = changed || wchanged
 
 	if changed {
-		stepsJSON, mErr := json.Marshal(newSteps)
-		if mErr == nil {
-			if uErr := d.db.UpdateOrderStepsJSON(order.ID, string(stepsJSON)); uErr != nil {
-				log.Printf("dispatch: update steps_json for complex order %d: %v", order.ID, uErr)
-			} else {
-				order.StepsJSON = string(stepsJSON)
-			}
-		}
-		// Endpoints may have shifted (NGRP→child). Re-extract and persist
-		// so handler-side lookups (process_node lookup, source/delivery
-		// rendering) reflect the resolved choice.
-		newSource, newDelivery := extractEndpoints(newSteps)
-		if newSource != order.SourceNode {
-			if err := d.db.UpdateOrderSourceNode(order.ID, newSource); err != nil {
-				log.Printf("dispatch: update source_node for complex order %d: %v", order.ID, err)
-			} else {
-				order.SourceNode = newSource
-			}
-		}
-		if newDelivery != order.DeliveryNode {
-			if err := d.db.UpdateOrderDeliveryNode(order.ID, newDelivery); err != nil {
-				log.Printf("dispatch: update delivery_node for complex order %d: %v", order.ID, err)
-			} else {
-				order.DeliveryNode = newDelivery
-			}
-		}
+		d.persistWidenedPlan(order, newSteps)
 	}
 	resolvedSteps = newSteps
 
@@ -966,5 +941,46 @@ func (d *Dispatcher) proposeDigForBuriedPickup(order *orders.Order, laneName str
 		log.Printf("dispatch: complex order %d is walled in %s and no dig can be planned there (%v) — "+
 			"the demand is waiting on a corridor nothing is going to open",
 			order.ID, lane.Name, res.err)
+	}
+}
+
+// persistWidenedPlan writes a rewritten step plan back to the order and
+// re-extracts its endpoints, which may have shifted when an NGRP step resolved
+// to a concrete child. Handler-side lookups (process_node resolution,
+// source/delivery rendering) read those columns, so they have to follow the
+// steps.
+//
+// Every write logs and continues rather than failing the dispatch: the plan is
+// re-derived from the persisted Group stamp next tick, so a failed write costs a
+// re-widen, not the order.
+//
+// The marshal failure is logged, which it was not before. Discarding the
+// widening silently means re-deriving it forever if the plan ever contains
+// something unmarshalable, with no cause on the row and no line in the log --
+// and every neighbouring write in this block already logs its failure.
+func (d *Dispatcher) persistWidenedPlan(order *orders.Order, newSteps []resolvedStep) {
+	stepsJSON, mErr := json.Marshal(newSteps)
+	if mErr != nil {
+		log.Printf("dispatch: marshal widened steps for complex order %d: %v", order.ID, mErr)
+	} else if uErr := d.db.UpdateOrderStepsJSON(order.ID, string(stepsJSON)); uErr != nil {
+		log.Printf("dispatch: update steps_json for complex order %d: %v", order.ID, uErr)
+	} else {
+		order.StepsJSON = string(stepsJSON)
+	}
+
+	newSource, newDelivery := extractEndpoints(newSteps)
+	if newSource != order.SourceNode {
+		if err := d.db.UpdateOrderSourceNode(order.ID, newSource); err != nil {
+			log.Printf("dispatch: update source_node for complex order %d: %v", order.ID, err)
+		} else {
+			order.SourceNode = newSource
+		}
+	}
+	if newDelivery != order.DeliveryNode {
+		if err := d.db.UpdateOrderDeliveryNode(order.ID, newDelivery); err != nil {
+			log.Printf("dispatch: update delivery_node for complex order %d: %v", order.ID, err)
+		} else {
+			order.DeliveryNode = newDelivery
+		}
 	}
 }

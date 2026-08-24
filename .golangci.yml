@@ -405,14 +405,6 @@ linters:
         text: "Function 'AdvanceCompoundOrder' has too many statements"
         linters:
           - funlen
-      # advanceCompoundChapterEnd: transitional
-      # The half extracted from AdvanceCompoundOrder by D6, 63 statements as
-      # moved. It was moved verbatim rather than reshaped, deliberately, so it
-      # arrives on this list rather than under it.
-      - path: "shingo-core/dispatch/compound\\.go"
-        text: "Function 'advanceCompoundChapterEnd' has too many statements"
-        linters:
-          - funlen
       # RollUp: transitional
       # Explicitly out of scope for the 2026-08-19 easy-wins wave.
       - path: "shingo-core/store/robotconfidence/rollup\\.go"
@@ -439,16 +431,6 @@ linters:
       # checkInvariants: transitional
       - path: "shingo-core/cmd/soakstat/main\\.go"
         text: "Function 'checkInvariants' has too many statements"
-        linters:
-          - funlen
-      # prepareComplexSteps: transitional
-      - path: "shingo-core/dispatch/complex_dispatch\\.go"
-        text: "Function 'prepareComplexSteps' has too many statements"
-        linters:
-          - funlen
-      # evaluateLaneReleasesPass: transitional
-      - path: "shingo-core/dispatch/lane_gate_release\\.go"
-        text: "Function 'evaluateLaneReleasesPass' has too many statements"
         linters:
           - funlen
       # shuffleSlotsFrom: transitional
