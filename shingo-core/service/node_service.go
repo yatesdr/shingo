@@ -301,6 +301,13 @@ func (s *NodeService) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) {
 	return s.db.ListBinsByNode(nodeID)
 }
 
+// ListBinsByNodes is ListBinsByNode over a set of nodes in one query. Same
+// filter and same ORDER BY, so grouping the result by node id gives each node
+// exactly what the per-node call would have returned.
+func (s *NodeService) ListBinsByNodes(nodeIDs []int64) ([]*bins.Bin, error) {
+	return s.db.ListBinsByNodes(nodeIDs)
+}
+
 // ListStationsForNode returns the explicit station assignments for a
 // node. Absorbed from engine_db_methods.go as part of the www-handler
 // service migration (PR 3a.1b).

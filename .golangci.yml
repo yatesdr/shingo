@@ -417,12 +417,6 @@ linters:
         text: "Function 'BuildView' has too many statements"
         linters:
           - funlen
-      # apiDashboardNodeReport: transitional
-      # Explicitly out of scope for the 2026-08-19 easy-wins wave.
-      - path: "shingo-core/www/handlers_dashboards\\.go"
-        text: "Function 'apiDashboardNodeReport' has too many statements"
-        linters:
-          - funlen
       # computeCarriers: transitional
       - path: "shingo-core/cmd/simcalc/carriers\\.go"
         text: "Function 'computeCarriers' has too many statements"
