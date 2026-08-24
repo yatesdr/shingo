@@ -486,11 +486,6 @@ linters:
         text: "Function 'LocalizationBoardAt' has too many statements"
         linters:
           - funlen
-      # ListAnomalies: transitional
-      - path: "shingo-core/store/reconciliation/reconciliation\\.go"
-        text: "Function 'ListAnomalies' has too many statements"
-        linters:
-          - funlen
       # ApplyBinUOPDelta: transitional
       - path: "shingo-core/uop/applier\\.go"
         text: "Function 'ApplyBinUOPDelta' has too many statements"
