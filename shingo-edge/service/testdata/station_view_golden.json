@@ -1,0 +1,170 @@
+{
+  "station": {
+    "id": 1,
+    "process_id": 1,
+    "code": "GOLD-ST",
+    "name": "Golden Station",
+    "note": "",
+    "area_label": "",
+    "sequence": 1,
+    "controller_node_id": "",
+    "device_mode": "fixed_hmi",
+    "enabled": true,
+    "health_status": "offline",
+    "created_at": "<ts>",
+    "updated_at": "<ts>",
+    "process_name": "GOLD-PROC"
+  },
+  "process": {
+    "id": 1,
+    "name": "GOLD-PROC",
+    "description": "golden",
+    "active_style_id": null,
+    "production_state": "active_production",
+    "counter_plc_name": "",
+    "counter_tag_name": "",
+    "counter_enabled": false,
+    "changeover_auto_arm": "auto",
+    "created_at": "<ts>"
+  },
+  "active_changeover": {
+    "id": 1,
+    "process_id": 1,
+    "to_style_id": 1,
+    "state": "active",
+    "called_by": "golden",
+    "notes": "",
+    "started_at": "<ts>",
+    "updated_at": "<ts>",
+    "process_name": "GOLD-PROC",
+    "from_style_name": "",
+    "to_style_name": ""
+  },
+  "nodes": [
+    {
+      "node": {
+        "id": 1,
+        "process_id": 1,
+        "operator_station_id": 1,
+        "core_node_name": "PLN_G1",
+        "code": "PLNG1",
+        "name": "Press G1",
+        "sequence": 1,
+        "enabled": true,
+        "created_at": "<ts>",
+        "updated_at": "<ts>",
+        "station_name": "Golden Station",
+        "process_name": "GOLD-PROC"
+      },
+      "runtime": {
+        "id": 1,
+        "process_node_id": 1,
+        "active_bin_epoch": 0,
+        "remaining_uop_cached": 0,
+        "pending_uop_delta": 0,
+        "staged_order_id": 1,
+        "active_pull": true,
+        "updated_at": "<ts>"
+      },
+      "changeover_task": {
+        "id": 1,
+        "process_changeover_id": 1,
+        "process_node_id": 1,
+        "situation": "swap",
+        "state": "swap_required",
+        "updated_at": "<ts>",
+        "node_name": "Press G1"
+      },
+      "orders": [
+        {
+          "id": 1,
+          "uuid": "gold-order-1",
+          "order_type": "retrieve",
+          "status": "pending",
+          "process_node_id": 1,
+          "retrieve_empty": false,
+          "quantity": 1,
+          "delivery_node": "PLN_G1",
+          "staging_node": "",
+          "source_node": "SMN_01",
+          "load_type": "standard",
+          "waybill_id": null,
+          "external_ref": null,
+          "final_count": null,
+          "count_confirmed": false,
+          "eta": null,
+          "auto_confirm": false,
+          "payload_code": "PAY-1",
+          "payload_desc": "",
+          "queue_reason": "",
+          "queue_code": "",
+          "authored_by": "edge",
+          "origin_id": "",
+          "origin_class": "",
+          "lane_held": false,
+          "created_at": "<ts>",
+          "updated_at": "<ts>",
+          "process_name": "GOLD-PROC",
+          "process_node_name": "Press G1",
+          "station_name": "Golden Station"
+        }
+      ],
+      "swap_ready": false,
+      "last_release_error": "Manifest sync failed at Core: bin 42 is claimed by another order"
+    },
+    {
+      "node": {
+        "id": 3,
+        "process_id": 1,
+        "operator_station_id": 1,
+        "core_node_name": "WLN_G3",
+        "code": "WLNG3",
+        "name": "Weld G3",
+        "sequence": 3,
+        "enabled": true,
+        "created_at": "<ts>",
+        "updated_at": "<ts>",
+        "station_name": "Golden Station",
+        "process_name": "GOLD-PROC"
+      },
+      "runtime": {
+        "id": 2,
+        "process_node_id": 3,
+        "active_bin_epoch": 0,
+        "remaining_uop_cached": 0,
+        "pending_uop_delta": 0,
+        "active_pull": true,
+        "updated_at": "<ts>"
+      },
+      "orders": null,
+      "swap_ready": false
+    },
+    {
+      "node": {
+        "id": 2,
+        "process_id": 1,
+        "core_node_name": "PLN_G2",
+        "code": "PLNG2",
+        "name": "Press G2 Seat",
+        "sequence": 2,
+        "enabled": true,
+        "created_at": "<ts>",
+        "updated_at": "<ts>",
+        "station_name": "",
+        "process_name": "GOLD-PROC"
+      },
+      "runtime": {
+        "id": 3,
+        "process_node_id": 2,
+        "active_bin_epoch": 0,
+        "remaining_uop_cached": 0,
+        "pending_uop_delta": 0,
+        "active_pull": true,
+        "updated_at": "<ts>"
+      },
+      "orders": null,
+      "swap_ready": false,
+      "child_of_node": "Press G1"
+    }
+  ]
+}
