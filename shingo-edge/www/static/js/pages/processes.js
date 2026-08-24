@@ -632,7 +632,7 @@ function jumpToStyleEditor(styleID) {
 // evaluates false, no DOM exists for them, and renderClaimForm skips an id it
 // cannot resolve.
 const ROUND3_CHANGEOVER = true; // per-seat tooling relevance + evac destination (round 3)
-const ROUND4_ROUTING = false;    // IndexRobotSupplies + key routes
+const ROUND4_ROUTING = true;     // IndexRobotSupplies + key routes — round 4 shipped both
 
 // hasThirdPosition is read from the form rather than passed, because the
 // visibility table's (role, swap) signature is load-bearing: every caller and
@@ -912,6 +912,8 @@ function readClaimStateFromForm() {
         pairedCoreNode: get('claims-add-paired-node').value,
         secondPairedCoreNode: get('claims-add-second-paired-node').value,
         indexRobotSupplies: get('claims-add-index-robot-supplies').checked,
+        keyRoute: readKeyRoute(),
+        keyTask: get('claims-add-key-task').value,
         changeoverEvacSeats: readEvacSeats(),
         changeoverEvacDestination: get('claims-add-evac-destination').value,
         autoConfirm: get('claims-add-auto-confirm').checked,
@@ -945,6 +947,8 @@ function writeClaimStateToForm(state) {
     get('claims-add-paired-node').value = state.pairedCoreNode || '';
     get('claims-add-second-paired-node').value = state.secondPairedCoreNode || '';
     get('claims-add-index-robot-supplies').checked = !!state.indexRobotSupplies;
+    writeKeyRoute(state.keyRoute || []);
+    get('claims-add-key-task').value = state.keyTask || '';
     writeEvacSeats(state.changeoverEvacSeats || []);
     get('claims-add-evac-destination').value = state.changeoverEvacDestination || '';
     get('claims-add-auto-confirm').checked = !!state.autoConfirm;
@@ -1013,6 +1017,10 @@ const CLAIM_ERROR_SLOTS = {
     outbound_destination:    { slot: 'claims-err-outbound-destination',    input: 'claims-add-outbound-destination' },
     paired_core_node:        { slot: 'claims-err-paired-core-node',        input: 'claims-add-paired-node' },
     second_paired_core_node: { slot: 'claims-err-second-paired-core-node', input: 'claims-add-second-paired-node' },
+    // key_route has no single input to outline — it is a list, and the row at
+    // fault is named in the message. The slot sits under the whole group.
+    key_route:               { slot: 'claims-err-key-route' },
+    key_task:                { slot: 'claims-err-key-task',                input: 'claims-add-key-task' },
 };
 
 // The browser validator's own key spellings, normalised to wire names.
@@ -1029,6 +1037,8 @@ const CLAIM_ERROR_KEY_ALIASES = {
     outboundDestination:  'outbound_destination',
     pairedCoreNode:       'paired_core_node',
     secondPairedCoreNode: 'second_paired_core_node',
+    keyRoute:             'key_route',
+    keyTask:              'key_task',
 };
 
 function normalizeClaimErrorField(field) {
@@ -1369,6 +1379,77 @@ function renderCollapseHints(state) {
 // A seat the mode or the layout cannot use is dropped at SAVE by
 // claimForbiddenFields, which is where every other such value is dropped, and
 // named in the note first.
+// ── KEY ROUTE LIST CONTROL ───────────────────────────────────────────────
+//
+// A repeatable list rather than the single <select> every other node field
+// uses, because a key route is ORDERED and arbitrary-length. DOM order IS the
+// route order — there is no separate index to keep in step, which is the way
+// this kind of control usually rots.
+//
+// Each row is a node picker rather than a text box: the points must resolve
+// against Core's node list or the robot's job dies on issue, and a picker is
+// the difference between finding that out here and finding it out at 2am. The
+// server checks anyway (ValidateNodeClaim) — a picker is a convenience, not
+// the guard.
+function keyRouteList() {
+    return document.getElementById('claims-key-route-list');
+}
+
+function keyRouteOptionsHTML(selected) {
+    var html = '<option value="">-- Choose a point --</option>';
+    var found = false;
+    nodeCatalog().forEach(function(node) {
+        var sel = node.name === selected ? ' selected' : '';
+        if (sel) found = true;
+        html += '<option value="' + escapeHtml(node.name) + '"' + sel + '>' +
+            escapeHtml(node.name) + (node.type === 'NGRP' ? ' (group)' : '') + '</option>';
+    });
+    // A stored point Core no longer offers stays visible and stays SELECTED.
+    // Dropping it would silently rewrite a saved route on the next save of an
+    // unrelated field — the save-stomp shape round 2 spent a unit on.
+    if (selected && !found) {
+        html += '<option value="' + escapeHtml(selected) + '" selected>' +
+            escapeHtml(selected) + ' (not offered by Core)</option>';
+    }
+    return html;
+}
+
+function keyRouteRowHTML(point) {
+    return '<div class="key-route-row">' +
+        '<select class="form-input claims-key-route-point">' + keyRouteOptionsHTML(point) + '</select>' +
+        '<button type="button" class="btn btn-sm btn-danger" data-action="removeKeyRoutePoint">&times;</button>' +
+        '</div>';
+}
+
+function writeKeyRoute(points) {
+    var list = keyRouteList();
+    if (!list) return;
+    list.innerHTML = (points || []).map(keyRouteRowHTML).join('');
+}
+
+function readKeyRoute() {
+    var out = [];
+    document.querySelectorAll('.claims-key-route-point').forEach(function(sel) {
+        // Blank rows are dropped here rather than sent and refused. An empty
+        // row is an operator mid-edit, not a configuration error.
+        if (sel.value) out.push(sel.value);
+    });
+    return out;
+}
+
+function addKeyRoutePoint() {
+    var list = keyRouteList();
+    if (!list) return;
+    list.insertAdjacentHTML('beforeend', keyRouteRowHTML(''));
+}
+
+// delegateActions calls a pure verb as fn(el, evt) — the clicked element is
+// the first argument, not an encoded arg.
+function removeKeyRoutePoint(el) {
+    var row = el && el.closest && el.closest('.key-route-row');
+    if (row) row.remove();
+}
+
 function readEvacSeats() {
     var out = [];
     document.querySelectorAll('.claims-evac-seat').forEach(function(cb) {
@@ -1428,6 +1509,12 @@ function claimForbiddenFields(role, swap, state) {
         forbid('pairedCoreNode', 'Paired Node');
     }
     var seats = state.changeoverEvacSeats || [];
+    if (isManual && (state.keyRoute || []).length > 0) {
+        out.push({ key: 'keyRoute', label: 'Key route', value: [] });
+    }
+    if (isManual && state.keyTask) {
+        out.push({ key: 'keyTask', label: 'Key task', value: '' });
+    }
     if (!isPressIndex && state.indexRobotSupplies) {
         out.push({ key: 'indexRobotSupplies', label: 'Index robot fetches the replacement', value: false });
     }
@@ -1641,6 +1728,8 @@ function defaultClaimState() {
         changeoverEvacSeats: [],
         changeoverEvacDestination: '',
         indexRobotSupplies: false,
+        keyRoute: [],
+        keyTask: '',
         autoConfirm: false,
     };
 }
@@ -1699,6 +1788,8 @@ function editClaim(claim) {
         pairedCoreNode: claim.paired_core_node || '',
         secondPairedCoreNode: claim.second_paired_core_node || '',
         indexRobotSupplies: !!claim.index_robot_supplies,
+        keyRoute: (claim.key_route || []).slice(),
+        keyTask: claim.key_task || '',
         changeoverEvacSeats: claim.changeover_evac_seats || [],
         changeoverEvacDestination: claim.changeover_evac_destination || '',
         autoConfirm: !!claim.auto_confirm,
@@ -1797,6 +1888,8 @@ async function saveClaim() {
         paired_core_node: state.pairedCoreNode,
         second_paired_core_node: state.secondPairedCoreNode,
         index_robot_supplies: state.indexRobotSupplies,
+        key_route: state.keyRoute,
+        key_task: state.keyTask,
         changeover_evac_seats: state.changeoverEvacSeats,
         changeover_evac_destination: state.changeoverEvacDestination,
         auto_confirm: state.autoConfirm,
@@ -2091,6 +2184,11 @@ if (activeProcessID) initClaimsTab();
 // single-source.
 delegateActions(document.body, {
     addGenerateRow,
+    addKeyRoutePoint,
+    removeKeyRoutePoint,
+    keyRouteRowHTML,
+    readKeyRoute,
+    writeKeyRoute,
     autoFillClaimsCapacity,
     buildAllowedPayloadPicker,
     claimFieldVisibility,

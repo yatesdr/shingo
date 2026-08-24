@@ -218,7 +218,7 @@ const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 	changeover_evac_seats, changeover_evac_destination, changeover_load_directive,
-	index_robot_supplies`
+	index_robot_supplies, key_route, key_task`
 
 // cloneStyleTx inserts a new style in src's process and copies every one of
 // src's style_node_claims verbatim, within the caller's transaction. Returns

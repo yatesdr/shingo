@@ -314,6 +314,28 @@ type NodeClaim struct {
 	// one press disagreeing about it is operator confusion rather than
 	// configuration — UpsertClaim warns on the drift.
 	IndexRobotSupplies bool `json:"index_robot_supplies"`
+	// KeyRoute names map points a leg from this claim should be routed
+	// through, in order. It is SEER's keyRoute: per the vendor manual
+	// (RDSCore HTTP API 2026-04-30, setOrder field table) a robot-SELECTION
+	// assist, not a route constraint — the fleet still plans its own path, it
+	// just prefers a robot for which these points are convenient.
+	//
+	// Empty is today's behaviour on every order in the plant and stays the
+	// default: an unset keyRoute means SEER auto-picks. That matters more than
+	// usual here, because a point that does not exist or is unreachable does
+	// not degrade — it TERMINATES THE WAYBILL IMMEDIATELY ON ISSUE. Hence the
+	// save-time resolution check in the handler: an unresolvable point stored
+	// quietly is an order that dies at dispatch with no obvious cause.
+	//
+	// Per CLAIM rather than per order because the reason to want one is
+	// geometry — a cell reached through a particular aisle — and geometry is
+	// what a claim already describes.
+	KeyRoute []string `json:"key_route,omitempty"`
+	// KeyTask is SEER's sibling selection hint: "load" or "unload" (the
+	// manual's literal values), preferring a robot already carrying out that
+	// kind of task. Empty = auto-pick, which is every order in the plant
+	// today.
+	KeyTask string `json:"key_task,omitempty"`
 	AutoConfirm             bool `json:"auto_confirm"`
 	Sequence                int  `json:"sequence"`
 	// LinesideSoftThreshold is the per-claim soft cap for the release
@@ -586,6 +608,11 @@ type NodeClaimInput struct {
 	// import, the compare grid — must not be able to flip a press's
 	// choreography by omitting a field.
 	IndexRobotSupplies *bool `json:"index_robot_supplies,omitempty"`
+	// KeyRoute/KeyTask are plain values: the Routing fieldset owns controls for
+	// both, so the claim editor always has an opinion. See the same-named
+	// fields on NodeClaim.
+	KeyRoute []string `json:"key_route"`
+	KeyTask  string   `json:"key_task"`
 	AutoConfirm               bool     `json:"auto_confirm"`
 	LinesideSoftThreshold     int      `json:"lineside_soft_threshold"`
 	ReuseCompatibleBins       bool     `json:"reuse_compatible_bins"`

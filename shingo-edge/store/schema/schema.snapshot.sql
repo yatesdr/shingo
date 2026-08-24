@@ -519,6 +519,14 @@ CREATE TABLE style_node_claims (
     -- only, R2 indexes and refills). Describes the cell's hardware, so
     -- UpsertClaim warns when two styles on one press disagree.
     index_robot_supplies    INTEGER NOT NULL DEFAULT 0,
+    -- SEER robot-SELECTION hints, carried through to the fleet request.
+    -- key_route is a JSON array of map points to prefer passing through, IN
+    -- ORDER; key_task is 'load'/'unload'. Both empty on every claim until one
+    -- is configured, and empty means the fleet picks freely. A point that does
+    -- not resolve terminates the robot's waybill on issue, which is why
+    -- ValidateNodeClaim checks each one against Core's synced node list.
+    key_route               TEXT NOT NULL DEFAULT '',
+    key_task                TEXT NOT NULL DEFAULT '',
     auto_push               INTEGER NOT NULL DEFAULT 0,
     -- UOP-threshold replenishment: tracks how reorder_point was set.
     -- 'legacy' = default, never edited (silent-inert when 0).

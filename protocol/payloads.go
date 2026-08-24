@@ -498,8 +498,16 @@ type ComplexOrderRequest struct {
 	ProcessNode string             `json:"process_node,omitempty"`
 	Steps       []ComplexOrderStep `json:"steps"`
 	// SiblingOrderUUID is the edge UUID of the paired leg in a two-robot swap.
-	// It rides the SECOND-created leg — the only one that can know the other's
-	// UUID — and is empty for non-swap orders and for the first-created leg.
+	// BOTH legs carry it: Edge mints both uuids before it creates either, so
+	// each leg names its partner and neither goes out unpaired. Empty for
+	// non-swap orders.
+	//
+	// It did once ride only the second-created leg, because a leg could not
+	// name a sibling that did not exist yet. That made CREATION ORDER a
+	// correctness input, and Core reads a one-way link as no link at all
+	// (swap_hold checks sib.SiblingOrderUUID == order.EdgeUUID). A Core
+	// talking to an older Edge still sees the one-way shape, which is why the
+	// intake back-link stays.
 	//
 	// Which ROLE the pointer-carrying (second-created) leg is is NOT fixed —
 	// it varies by mode and by the creating path, so do not read a role into
@@ -515,6 +523,15 @@ type ComplexOrderRequest struct {
 	// dispatch hold can see the pairing at intake, before a removal leg's
 	// synchronous dispatch claims the line bin.
 	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
+	// KeyRoute / KeyTask are SEER robot-SELECTION hints carried from the
+	// claim's Routing configuration through to fleet.CreateOrderRequest. See
+	// that type for the vendor semantics. Both empty on every order until a
+	// claim configures them, which is the pre-existing behaviour exactly.
+	//
+	// Additive and omitempty: an older Core ignores them, and an older Edge
+	// simply never sends them.
+	KeyRoute []string `json:"key_route,omitempty"`
+	KeyTask  string   `json:"key_task,omitempty"`
 	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
 	RemainingUOP *int `json:"remaining_uop,omitempty"`
 	// OriginID / OriginClass attribute this order to the demand episode that

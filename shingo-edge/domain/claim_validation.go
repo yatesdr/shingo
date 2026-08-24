@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"shingo/protocol"
 )
@@ -45,6 +46,33 @@ type ClaimNodeContext struct {
 	// several processes routinely — a shared loader window is the ordinary
 	// case — which is exactly why this is a warning and not a refusal.
 	NodeProcessIDs []int64
+	// KnownCoreNodes is Core's synced node set, as a name set.
+	//
+	// NIL/EMPTY MEANS "COULD NOT LOOK", not "Core has no nodes". Core's list
+	// arrives on the wire every couple of minutes and a fresh Edge, a restart
+	// or a Kafka gap all leave it empty — refusing a configuration write on
+	// that basis would brick setup exactly when someone is most likely to be
+	// doing it. So an empty set SKIPS the key-route resolution check. This is
+	// the same rule, and the same reasoning, as coreNodeNameIsUnknown at the
+	// process-node write; the two should stay in step.
+	KnownCoreNodes map[string]bool
+}
+
+// coreNodeResolves answers whether a name names something Core knows.
+//
+// Group children arrive as "Group.CHILD" and the rest of Edge keys on the bare
+// child name, so a bare name that matches a child's suffix resolves — the same
+// fallback the process-node guard uses.
+func coreNodeResolves(known map[string]bool, name string) bool {
+	if known[name] {
+		return true
+	}
+	for full := range known {
+		if i := strings.LastIndex(full, "."); i >= 0 && full[i+1:] == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateNodeClaim is the one server-side statement of what a claim must look
@@ -168,6 +196,49 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		in.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		add("index_robot_supplies",
 			"Index robot fetches the replacement applies to 2-Robot Press Index only")
+	}
+
+	// ── KEY ROUTE ───────────────────────────────────────────────────────
+	//
+	// keyRoute is a robot-SELECTION assist, but a bad point is not a soft
+	// failure: per the vendor manual a point that does not exist or is
+	// unreachable TERMINATES THE WAYBILL IMMEDIATELY ON ISSUE. So an
+	// unresolvable point stored quietly becomes an order that dies at dispatch
+	// with nothing on the Edge side to explain it. These are errors.
+	if len(in.KeyRoute) > 0 && in.SwapMode == protocol.SwapModeManualSwap {
+		add("key_route", "Key route applies to robot-served claims; a manual_swap loader does not drive")
+	}
+	seenPoint := map[string]bool{}
+	for i, pt := range in.KeyRoute {
+		if strings.TrimSpace(pt) == "" {
+			add("key_route", fmt.Sprintf("Key route point %d is blank", i+1))
+			continue
+		}
+		if seenPoint[pt] {
+			// Not a vendor rule — a repeat is how a mis-click renders, and a
+			// route that visits one point twice is never what was meant.
+			add("key_route", fmt.Sprintf("Key route lists %q more than once", pt))
+			continue
+		}
+		seenPoint[pt] = true
+		// SELF_POSITION is the robot's own current location. The vendor
+		// forbids it in keyRoute specifically, and it is the one value an
+		// operator might reasonably type expecting "start where you are".
+		if pt == "SELF_POSITION" {
+			add("key_route", "SELF_POSITION is never valid in a key route")
+			continue
+		}
+		if len(nodeCtx.KnownCoreNodes) > 0 && !coreNodeResolves(nodeCtx.KnownCoreNodes, pt) {
+			add("key_route", fmt.Sprintf(
+				"Key route point %q does not exist on Core (%d nodes known). A point that does not "+
+					"resolve terminates the robot's waybill the moment it is issued.",
+				pt, len(nodeCtx.KnownCoreNodes)))
+		}
+	}
+	// The vendor's literal values; anything else is silently ignored by SEER,
+	// which is worse than being told.
+	if in.KeyTask != "" && in.KeyTask != "load" && in.KeyTask != "unload" {
+		add("key_task", fmt.Sprintf("Key task must be \"load\", \"unload\", or empty; got %q", in.KeyTask))
 	}
 
 	// Positions must be distinct, whatever the mode names them. Any two the

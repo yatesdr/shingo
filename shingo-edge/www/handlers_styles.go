@@ -266,6 +266,18 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		log.Printf("WARNING api apiUpsertStyleNodeClaim: trimmed whitespace from SecondPairedCoreNode %q", in.SecondPairedCoreNode)
 		in.SecondPairedCoreNode = trimmed
 	}
+	// Key-route points are node names typed or picked by hand; trim them the
+	// same way, and drop entries that were only whitespace so an empty picker
+	// row does not become a blank point the validator then complains about.
+	trimmedRoute := make([]string, 0, len(in.KeyRoute))
+	for _, pt := range in.KeyRoute {
+		if t := strings.TrimSpace(pt); t != "" {
+			trimmedRoute = append(trimmedRoute, t)
+		}
+	}
+	in.KeyRoute = trimmedRoute
+	in.KeyTask = strings.TrimSpace(in.KeyTask)
+
 	// One server-side statement of what a claim must look like, run BEFORE any
 	// side effect (the back-node provisioning below writes rows). Two of these
 	// checks used to live ONLY in the browser, which means they were not checks:
@@ -356,6 +368,20 @@ func (h *Handlers) claimNodeContext(in domain.NodeClaimInput) domain.ClaimNodeCo
 		return domain.ClaimNodeContext{}
 	}
 	ctx := domain.ClaimNodeContext{Checked: true, StyleProcessID: style.ProcessID}
+	// Core's synced node set, for the key-route resolution check. Empty is
+	// carried through as empty ON PURPOSE — the validator reads that as
+	// "could not look" and skips, rather than refusing every point because
+	// Core has not been heard from.
+	if known := h.engine.CoreNodes(); len(known) > 0 {
+		ctx.KnownCoreNodes = make(map[string]bool, len(known))
+		for name := range known {
+			ctx.KnownCoreNodes[name] = true
+		}
+	} else if len(in.KeyRoute) > 0 {
+		log.Printf("claim %s: core node list is EMPTY, so %d key-route point(s) could not be checked "+
+			"against Core's plant — allowing. This is not a pass: Core has not been heard from.",
+			in.CoreNodeName, len(in.KeyRoute))
+	}
 	for i := range nodes {
 		if nodes[i].CoreNodeName == in.CoreNodeName {
 			ctx.NodeProcessIDs = append(ctx.NodeProcessIDs, nodes[i].ProcessID)

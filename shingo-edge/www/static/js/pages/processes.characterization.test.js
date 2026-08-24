@@ -83,6 +83,7 @@ function makeElement(id, opts = {}) {
         (el._listeners[ev] = el._listeners[ev] || []).push(fn);
     };
     el.remove = () => {};
+    el.insertAdjacentHTML = (_pos, html) => { el.innerHTML = String(el.innerHTML) + String(html); };
     return el;
 }
 
@@ -256,6 +257,18 @@ function buildDOM() {
     add('claims-add-index-robot-supplies', { tag: 'input', type: 'checkbox' });
     add('claims-add-reuse-bins-row', { display: 'none' });
     add('claims-add-reuse-bins', { tag: 'input', type: 'checkbox' });
+    add('claims-routing-fieldset', { display: 'none' });
+    add('claims-add-key-routes-group', { display: 'none' });
+    const krList = add('claims-key-route-list');
+    // Two route rows, registered directly — see runKeyRouteSaveCase for why
+    // they are not rendered. Ids are arbitrary; the class is what the code
+    // reads them by, and DOM order here is walkAll's insertion order.
+    ['claims-key-route-point-1', 'claims-key-route-point-2'].forEach(function(rid) {
+        const row = add(rid, { tag: 'select', value: '' });
+        row.classList.add('claims-key-route-point');
+        krList.appendChild(row);
+    });
+    add('claims-add-key-task', { tag: 'select', value: '' });
     add('claims-auto-request-fieldset', { display: 'none' });
     add('claims-auto-request-manual-swap', { display: 'none' });
     add('claims-add-auto-push-row', { display: 'none' });
@@ -485,6 +498,10 @@ function expectedVisibility(role, swap) {
         'claims-auto-request-manual-swap': false,
         'claims-auto-request-standard': !isManual,
         'claims-add-auto-push-row': isManual && role === 'consume',
+        // Round 4 shipped key routes; round 2's registered slots are real now.
+        // A manual_swap loader does not drive, so it has no route to configure.
+        'claims-routing-fieldset': !isManual,
+        'claims-add-key-routes-group': !isManual,
     };
 }
 
@@ -1380,12 +1397,23 @@ function runCompareGridStillOmitsCase() {
 // identically whether or not the key had ever been added. That is the vacuous
 // test this file exists to avoid.
 
-// Round 3 activated the first two of round 2's prepared slots, so they are no
-// longer inert and have moved into the visibility matrix proper. What remains
-// here is round 4's, still registered and still false.
-// Round 4 activated the flip's slot, so it has moved into the visibility
-// matrix proper. What remains inert is the Routing fieldset, until Unit 4.
-const ROUND_3_4_SLOTS = [
+// EVERY PREPARED SLOT HAS NOW SHIPPED. Round 3 activated the changeover ones,
+// round 4 the flip and the Routing fieldset, so each has moved into the
+// visibility matrix proper above and there is nothing left to hold inert.
+//
+// The list stays, empty, and so does the presence loop below: the next round
+// that prepares a slot adds it here and gets the check for free. An empty list
+// is not a passing check, though — the loop over it does nothing — so the
+// registration rule is asserted directly underneath instead, against the
+// fields that DID ship.
+const ROUND_3_4_SLOTS = [];
+
+// Every key the table must carry. The round-4 additions are named explicitly
+// because their whole failure mode is silent absence: a field with backend
+// support and no table entry is unenterable, and nothing else here would say
+// so.
+const ROUND_4_SHIPPED_SLOTS = [
+    'claims-add-index-robot-supplies-row',
     'claims-routing-fieldset',
     'claims-add-key-routes-group',
 ];
@@ -1408,6 +1436,14 @@ function runRound34SlotCases() {
                     reportFailure(
                         `round3/4 slots: ${key} must be inert until its round ships`,
                         false, vis[key]);
+                } else { passed++; }
+            }
+            for (const key of ROUND_4_SHIPPED_SLOTS) {
+                if (!(key in vis)) {
+                    reportFailure(
+                        `round4 slots: ${key} missing from claimFieldVisibility(${role}, ${swap}) — ` +
+                        `it has backend support and no table entry, so it is unenterable`,
+                        'present', 'absent');
                 } else { passed++; }
             }
         }
@@ -1686,6 +1722,105 @@ async function runIndexRobotSuppliesCase() {
     } else { passed++; }
 }
 
+// -----------------------------------------------------------------------
+// Round 4 unit 4 — key routes
+// -----------------------------------------------------------------------
+//
+// SCOPE OF THIS CASE. It covers the READ side and the payload: what the rows
+// currently hold becomes state.keyRoute, in DOM order, and that is what the
+// POST carries. The rows are registered directly rather than rendered, because
+// the stub does not parse innerHTML into children for a plain div — a case
+// that rendered them and then read them back would be asserting against an
+// empty list and passing for it, which is the vacuous shape this file exists
+// to avoid. The renderer is covered separately, as a string, below.
+async function runKeyRouteSaveCase() {
+    const elements = buildDOM();
+    const apiRecorder = [];
+    const ctx = createContext(elements, apiRecorder);
+    loadProcessesJS(ctx);
+    elements['claims-style-selector'].value = '41';
+    ctx.onClaimsStyleChanged();
+
+    const p1 = elements['claims-key-route-point-1'];
+    const p2 = elements['claims-key-route-point-2'];
+
+    ctx.editClaim({
+        id: 101,
+        core_node_name: 'PRESS_A',
+        role: 'produce',
+        swap_mode: 'two_robot',
+        payload_code: 'PL1',
+        inbound_staging: 'STG_A',
+        outbound_staging: 'STG_B',
+        key_route: ['PRESS_C', 'STAGE_01'],
+        key_task: 'load',
+    });
+    if (elements['claims-add-key-task'].value !== 'load') {
+        reportFailure('keyRoute: the stored key task loads into its control',
+            'load', elements['claims-add-key-task'].value);
+    } else { passed++; }
+
+    // ORDER IS THE ROUTE. Reversed rows must produce a reversed route, not a
+    // set — this is the one property a key route has that the other list
+    // fields (allowed payloads, evac seats) do not.
+    p1.value = 'STAGE_01';
+    p2.value = 'PRESS_C';
+    await ctx.saveClaim();
+    if (apiRecorder.length !== 1) {
+        reportFailure('keyRoute: expected 1 POST', 1, apiRecorder.length);
+        return;
+    }
+    const body = apiRecorder[0].body;
+    if (JSON.stringify(body.key_route) !== JSON.stringify(['STAGE_01', 'PRESS_C'])) {
+        reportFailure('keyRoute: the POST carries the rows in DOM order',
+            ['STAGE_01', 'PRESS_C'], body.key_route);
+    } else { passed++; }
+    if (body.key_task !== 'load') {
+        reportFailure('keyRoute: the POST carries the key task', 'load', body.key_task);
+    } else { passed++; }
+
+    // A blank row is an operator mid-edit, not a configuration error: it is
+    // dropped here rather than sent and refused.
+    p2.value = '';
+    apiRecorder.length = 0;
+    await ctx.saveClaim();
+    if (JSON.stringify(apiRecorder[0].body.key_route) !== JSON.stringify(['STAGE_01'])) {
+        reportFailure('keyRoute: a blank row is dropped, not sent',
+            ['STAGE_01'], apiRecorder[0].body.key_route);
+    } else { passed++; }
+}
+
+// A stored point Core no longer offers must stay SELECTED in its row. Dropping
+// it would silently rewrite a saved route on the next save of an unrelated
+// field — the save-stomp shape round 2 spent a unit on, in a new place.
+function runKeyRouteKeepsUnknownPointCase() {
+    const elements = buildDOM();
+    const ctx = createContext(elements, []);
+    loadProcessesJS(ctx);
+    const html = ctx.keyRouteRowHTML('RETIRED_AISLE');
+    if (!/value="RETIRED_AISLE" selected/.test(html)) {
+        reportFailure('keyRoute: a point Core no longer offers stays selected',
+            'value="RETIRED_AISLE" selected', html);
+    } else { passed++; }
+    if (/not offered by Core/.test(ctx.keyRouteRowHTML('RETIRED_AISLE')) !== true) {
+        reportFailure('keyRoute: an unknown point says so', 'labelled', 'unlabelled');
+    } else { passed++; }
+    // ...and a point Core DOES offer is selected in place, not duplicated as
+    // an unknown one. SMN_014 is in the stub's catalog; RETIRED_AISLE is not,
+    // which is the only reason the two branches are distinguishable here.
+    const known = ctx.keyRouteRowHTML('SMN_014');
+    if ((known.match(/value="SMN_014"/g) || []).length !== 1) {
+        reportFailure('keyRoute: a known point appears once', 1,
+            (known.match(/value="SMN_014"/g) || []).length);
+    } else { passed++; }
+    if (!/value="SMN_014" selected/.test(known)) {
+        reportFailure('keyRoute: a known point is selected', 'selected', known);
+    } else { passed++; }
+    if (/not offered by Core/.test(known)) {
+        reportFailure('keyRoute: a known point is not labelled unknown', 'plain', known);
+    } else { passed++; }
+}
+
 // The compare grid must stay silent about it — absent means "leave the
 // hardware alone".
 function runIndexRobotSuppliesNotInCompareGridCase() {
@@ -1723,6 +1858,8 @@ function runIndexRobotSuppliesNotInCompareGridCase() {
     runCompareGridEchoesEvacFieldsCase();
     await runIndexRobotSuppliesCase();
     runIndexRobotSuppliesNotInCompareGridCase();
+    await runKeyRouteSaveCase();
+    runKeyRouteKeepsUnknownPointCase();
     runServerFieldErrorCase();
     runOrphanFieldErrorCase();
     await runSaveClaimSchemaCase();

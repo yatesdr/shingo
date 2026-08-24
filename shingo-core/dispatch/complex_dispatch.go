@@ -585,7 +585,11 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 		Blocks:     blocks,
 		Priority:   order.Priority,
 		RobotGroup: d.robotGroupForPayload(order.PayloadCode),
-		Complete:   false, // staged: a multi-wait complex order dwells (Complete=false) until its final segment is released
+		// The claim's routing hints, if it configured any. Nil/empty is SEER
+		// auto-pick, which is every order in the plant until one does.
+		KeyRoute: order.KeyRoute,
+		KeyTask:  order.KeyTask,
+		Complete: false, // staged: a multi-wait complex order dwells (Complete=false) until its final segment is released
 	}
 	d.dbg("complex: creating staged order %s with %d initial blocks (hasWait=%v)", vendorOrderID, len(blocks), hasWait)
 	// RECORD THE PRESENCE, then claim, commit and name it — commitToFleet

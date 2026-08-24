@@ -14,8 +14,12 @@ import (
 // TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty proves
 // the two F4c features compose on one real dispatched order: the LOAD leg expands
 // to the four same-location named blocks (the evidence-doc Postman shape) AND
-// keyRoute stays empty — shingo never populates it, so the two top-level concerns
-// don't interact. Complete stays true (single-shot).
+// keyRoute stays empty. Complete stays true (single-shot).
+//
+// "Empty" here is about THIS order, which configures no route — it is no
+// longer true that shingo never populates keyRoute (a claim's Routing
+// fieldset does, see key_route_dispatch_test.go). What this pins is that
+// load-sequence expansion does not invent one.
 func TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
@@ -52,7 +56,7 @@ func TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty(t *te
 	req := reqs[0]
 
 	if len(req.KeyRoute) != 0 {
-		t.Errorf("KeyRoute = %v, want empty (shingo leaves it unset)", req.KeyRoute)
+		t.Errorf("KeyRoute = %v, want empty (this order configures no route)", req.KeyRoute)
 	}
 	if !req.Complete {
 		t.Error("Complete = false, want true (single-shot)")

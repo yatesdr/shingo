@@ -63,6 +63,19 @@ type Order struct {
 	// step; the swapLegHeld starvation gate depends on it to avoid
 	// the ALN_003 line-strand. "" for every non-swap order.
 	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
+	// KeyRoute / KeyTask are the SEER robot-selection hints this order's Edge
+	// claim asked for, carried through to fleet.CreateOrderRequest — see that
+	// type for the vendor semantics and for why an unresolvable keyRoute point
+	// is not a soft failure.
+	//
+	// Columns rather than request-scoped values because intake and dispatch
+	// are separated by time: a complex order can sit queued for a sibling, a
+	// lane or a slot long after the request that named its route is gone.
+	//
+	// Empty on every order until a claim configures one, which is exactly the
+	// behaviour before they existed.
+	KeyRoute []string `json:"key_route,omitempty"`
+	KeyTask  string   `json:"key_task,omitempty"`
 	// SourceIntent classifies how a plain order sources its bin (full / empty /
 	// node-local) — the Stage-4 data home replacing the OrderType reads in the
 	// source finder + scanner. Set once at intake; "" (full) for retrieves and

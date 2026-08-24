@@ -559,7 +559,11 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		Blocks:     blocks,
 		Priority:   priority,
 		RobotGroup: d.robotGroupForPayload(payloadCode),
-		Complete:   true, // no-wait: the fleet completes the order once its 2 blocks finish
+		// The claim's routing hints, if it configured any. Nil/empty is SEER
+		// auto-pick, which is every order in the plant until one does.
+		KeyRoute: order.KeyRoute,
+		KeyTask:  order.KeyTask,
+		Complete: true, // no-wait: the fleet completes the order once its 2 blocks finish
 	}
 
 	// payload= and robot_group= are on this line because together they are the

@@ -43,6 +43,9 @@ func claimEditorBody(c *processes.NodeClaim) processes.NodeClaimInput {
 		// Round 3: the editor owns controls for both, so the body carries them.
 		ChangeoverEvacSeats:       c.ChangeoverEvacSeats,
 		ChangeoverEvacDestination: c.ChangeoverEvacDestination,
+		// Round 4: the Routing fieldset owns both, so the body carries them.
+		KeyRoute: c.KeyRoute,
+		KeyTask:  c.KeyTask,
 	}
 }
 
@@ -97,6 +100,11 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		// Pointer-typed and NOT sent by the editor body below, so an editor
 		// save must leave it alone: it describes the press's hardware.
 		IndexRobotSupplies: domain.Ptr(true),
+		// Round 4: distinctive on both counts — a TWO-point route so a
+		// truncation shows, and in an order that is not sorted, so a store
+		// that treated the route as a set would say so.
+		KeyRoute: []string{"RT-AISLE-B", "RT-AISLE-A"},
+		KeyTask:  "unload",
 		// The four the editor never sends, seeded to values that are NOT the
 		// zero value, so a stomp is visible.
 		Sequence:           domain.Ptr(7),
@@ -170,6 +178,16 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 	}
 	if !before.IndexRobotSupplies {
 		t.Fatal("round-4 seed did not take: index_robot_supplies is false, so its no-op assertion proves nothing")
+	}
+	if strings.Join(before.KeyRoute, ",") != "RT-AISLE-B,RT-AISLE-A" || before.KeyTask != "unload" {
+		t.Fatalf("round-4 key-route seed did not take (order included): route=%v task=%q",
+			before.KeyRoute, before.KeyTask)
+	}
+	if strings.Join(after.KeyRoute, ",") != strings.Join(before.KeyRoute, ",") {
+		t.Errorf("key_route changed across an editor save: %v -> %v", before.KeyRoute, after.KeyRoute)
+	}
+	if after.KeyTask != before.KeyTask {
+		t.Errorf("key_task changed across an editor save: %q -> %q", before.KeyTask, after.KeyTask)
 	}
 	if before.Sequence != 7 || before.ReorderPointSource != "calculated" || !before.AutoReorder || !before.KeepStaged {
 		t.Fatalf("seed did not take, so this test proves nothing: seq=%d source=%q autoReorder=%v keepStaged=%v",

@@ -591,6 +591,27 @@ window.processNodeNames = {{json .ProcessNodeNames}};
                 </label>
             </fieldset>
 
+            <fieldset id="claims-routing-fieldset" class="fieldset-card--stacked" hidden>
+                <legend class="fieldset-legend">Routing</legend>
+                <div class="field-help">Optional hints passed to the fleet when an order for this claim is issued. Leave empty unless a cell needs them &mdash; empty means the fleet picks freely, which is how every node runs today.</div>
+                <div class="form-group form-group--nogap mt-3" id="claims-add-key-routes-group">
+                    <label>Key Route <span class="label-aside">(ordered via-points)</span></label>
+                    <div id="claims-key-route-list"></div>
+                    <button type="button" class="btn btn-sm mt-2" data-action="addKeyRoutePoint">Add Point</button>
+                    <div class="field-error-msg" id="claims-err-key-route" hidden></div>
+                    <div class="field-help--inline">Map points a robot should pass through, in order. This is a robot-<em>selection</em> assist, not a path constraint &mdash; the fleet still plans its own route. A point that does not exist or cannot be reached ends the robot's job the moment it is issued, so every point is checked against Core's node list when you save.</div>
+                </div>
+                <div class="form-group form-group--nogap mt-3">
+                    <label>Key Task <span class="label-aside">(robot preference)</span></label>
+                    <select id="claims-add-key-task" class="form-input">
+                        <option value="">-- Any robot --</option>
+                        <option value="load">Prefer a robot loading</option>
+                        <option value="unload">Prefer a robot unloading</option>
+                    </select>
+                    <div class="field-error-msg" id="claims-err-key-task" hidden></div>
+                </div>
+            </fieldset>
+
             <details id="claims-auto-request-fieldset" class="collapse-card" hidden>
                 <summary>Auto-Request <span class="collapse-hint" id="claims-auto-request-hint"></span></summary>
                 <div id="claims-auto-request-manual-swap" hidden>

@@ -159,6 +159,23 @@
   gap: 0.5rem;
 }
 
+/* One point of a claim's key route: a node picker that takes the width, plus
+ * its remove button. Rows stack, and DOM order is the route order. */
+.key-route-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.key-route-row + .key-route-row {
+  margin-top: 0.375rem;
+}
+
+.key-route-row > select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* ─── Layout ─────────────────────────────────────────────────────────── */
 
 /* Processes-page two-column layout: ~300px sidebar + flex content. */

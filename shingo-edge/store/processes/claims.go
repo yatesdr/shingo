@@ -65,11 +65,11 @@ const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
 	changeover_evac_seats, changeover_evac_destination, changeover_load_directive,
-	index_robot_supplies`
+	index_robot_supplies, key_route, key_task`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
-	var createdAt, allowedJSON, evacSeatsJSON string
+	var createdAt, allowedJSON, evacSeatsJSON, keyRouteJSON string
 	var belowSince sql.NullString
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&c.UOPCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
@@ -78,7 +78,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
 		&evacSeatsJSON, &c.ChangeoverEvacDestination, &c.ChangeoverLoadDirective,
-		&c.IndexRobotSupplies); err != nil {
+		&c.IndexRobotSupplies, &keyRouteJSON, &c.KeyTask); err != nil {
 		return c, err
 	}
 	// NULL means "not below", which is the ordinary state — a zero time would
@@ -94,6 +94,9 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	}
 	if evacSeatsJSON != "" {
 		_ = json.Unmarshal([]byte(evacSeatsJSON), &c.ChangeoverEvacSeats)
+	}
+	if keyRouteJSON != "" {
+		_ = json.Unmarshal([]byte(keyRouteJSON), &c.KeyRoute)
 	}
 	return c, nil
 }
@@ -297,15 +300,15 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 		changeover_evac_seats, changeover_evac_destination, changeover_load_directive,
-		index_robot_supplies)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		index_robot_supplies, key_route, key_task)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination, in.ChangeoverLoadDirective,
-		indexRobotSupplies)
+		indexRobotSupplies, marshalKeyRoute(in.KeyRoute), in.KeyTask)
 	if err != nil {
 		return 0, err
 	}
@@ -387,6 +390,7 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
 		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
 		`changeover_evac_seats=?`, `changeover_evac_destination=?`, `changeover_load_directive=?`,
+		`key_route=?`, `key_task=?`,
 	}
 	args := []any{
 		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint,
@@ -395,6 +399,7 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
 		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacSeats(in.ChangeoverEvacSeats), in.ChangeoverEvacDestination, in.ChangeoverLoadDirective,
+		marshalKeyRoute(in.KeyRoute), in.KeyTask,
 	}
 
 	if in.ReorderPointSource != nil {
@@ -428,6 +433,14 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 // allowed_payload_codes is stored: a JSON array, and the EMPTY STRING for an
 // empty set rather than "[]", so "no seat marked" reads identically on a row
 // written today and a row that predates the column.
+// marshalKeyRoute stores the ordered via-point list. ORDER IS MEANINGFUL to
+// SEER, so this is a JSON array and not a set — the same encoding as the
+// allowed-payload and evac-seat lists, for the same reason: one TEXT column,
+// no join table, and nothing here is ever queried by element.
+func marshalKeyRoute(points []string) string {
+	return marshalAllowedPayloads(points)
+}
+
 func marshalEvacSeats(seats []string) string {
 	return marshalAllowedPayloads(seats)
 }
