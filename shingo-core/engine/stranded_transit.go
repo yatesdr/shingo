@@ -276,7 +276,19 @@ func (e *Engine) sweepCarriedBins() {
 		// question a fourth time. What is needed here is not "who may move
 		// this bin" but "is something already moving it", and that is a
 		// liveness question, answered where the race is.
-		if live, err := e.liveRecoveryOrderForBin(bin.ID); err == nil && live != nil {
+		// A FAILED READ STANDS DOWN TOO. The error used to be discarded, so a
+		// list that could not be read meant "no live order" and this watch went
+		// on to place the bin — racing the arrival of the very order it was
+		// written to yield to. The two answers do not cost the same: standing
+		// down wrongly costs one tick, and the next poll asks again, while
+		// proceeding wrongly is the double placement.
+		live, err := e.liveRecoveryOrderForBin(bin.ID)
+		if err != nil {
+			e.logFn("engine: carried bins: bin %d — cannot tell whether a recovery order is live (%v); "+
+				"standing down this tick rather than racing one", bin.ID, err)
+			continue
+		}
+		if live != nil {
 			e.dbg("engine: carried bins: bin %d left to recovery order %d (%s)",
 				bin.ID, live.ID, live.Status)
 			continue

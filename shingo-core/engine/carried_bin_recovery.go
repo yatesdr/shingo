@@ -348,7 +348,18 @@ func (e *Engine) resolveCarriedBinDestination(bin *bins.Bin, robot fleet.RobotSt
 	if node := e.tierOriginalDestination(bin); node != nil {
 		return node, "tier 1: the destination its order was carrying it to", nil
 	}
-	if node, err := e.db.FindEmptyStorageNodeForPayload(bin.PayloadCode); err == nil && node != nil {
+	node, err := e.db.FindEmptyStorageNodeForPayload(bin.PayloadCode)
+	if err != nil {
+		// Still falls through to tier 3 — a recovery that refuses outright
+		// leaves the bin on the deck, which is the state this whole path exists
+		// to end. But the fall-through is now SAID: without it, a database that
+		// could not answer looked exactly like a plant with no storage node
+		// linked to this payload, and the refusal at the bottom would name a
+		// configuration problem that does not exist.
+		e.logFn("engine: carried bin recovery: tier 2 storage-slot lookup for %q failed: %v — "+
+			"falling through to tier 3, which is NOT the same as there being no slot",
+			bin.PayloadCode, err)
+	} else if node != nil {
 		return node, "tier 2: a free storage slot for " + bin.PayloadCode, nil
 	}
 	if node := e.tierRobotsCurrentStation(robot); node != nil {

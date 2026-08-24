@@ -1,6 +1,10 @@
 package store
 
 import (
+	"database/sql"
+	"errors"
+	"fmt"
+
 	"shingo/protocol"
 	"shingocore/store/nodes"
 )
@@ -43,7 +47,18 @@ func (db *DB) FindEmptyStorageNodeForPayload(payloadCode string) (*nodes.Node, e
 		LIMIT 1`, protocol.NodeClassSTOR, payloadCode)
 	var n nodes.Node
 	if err := row.Scan(&n.ID, &n.Name, &n.IsSynthetic, &n.Zone, &n.Enabled); err != nil {
-		return nil, nil // no row, or an unreadable one: the caller falls to the next tier
+		// NO ROW AND A FAILED READ ARE DIFFERENT ANSWERS. Both used to return
+		// (nil, nil), so the error return was dead and a database that could not
+		// answer was indistinguishable from a plant with no linked storage node
+		// for this payload. The caller falls to the next destination tier either
+		// way — that behaviour is deliberate and unchanged, because a recovery
+		// that refuses outright leaves the bin on the deck — but an outage now
+		// reaches the log and the returned error instead of reading as
+		// configuration.
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find empty storage node for payload %q: %w", payloadCode, err)
 	}
 	return &n, nil
 }
