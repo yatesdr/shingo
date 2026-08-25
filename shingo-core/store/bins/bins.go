@@ -817,6 +817,25 @@ func NodeTileStates(db *sql.DB) (map[int64]NodeTileState, error) {
 // staged after relocating to a storage slot. Callers pass clearStaging=true
 // only when the bin was staged and the destination is a storage slot.
 func MoveAndClearStaging(db *sql.DB, binID, toNodeID int64, clearStaging bool) error {
+	return move(db, binID, toNodeID, clearStaging, false)
+}
+
+// MoveOffTransit is MoveAndClearStaging for a bin coming off `_TRANSIT` or a
+// robot's carrier node, and it clears the transit anomaly in the same
+// transaction.
+//
+// A SEPARATE DOOR RATHER THAN A SECOND BOOLEAN, because the situation is what
+// decides, not a flag: `anomaly_at` and `anomaly_note` describe a bin nobody
+// could locate, and the moment somebody puts it at a real node both are false.
+// The operator's manual move was the path that did NOT clear them — bin 5 sat
+// at its correct home on 2026-08-24 still carrying a 2026-05-12 stamp and a
+// note naming a park point, because RecoverToNode clears the stamp and this
+// path never did.
+func MoveOffTransit(db *sql.DB, binID, toNodeID int64, clearStaging bool) error {
+	return move(db, binID, toNodeID, clearStaging, true)
+}
+
+func move(db *sql.DB, binID, toNodeID int64, clearStaging, clearAnomaly bool) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -833,6 +852,11 @@ func MoveAndClearStaging(db *sql.DB, binID, toNodeID int64, clearStaging bool) e
 
 	if clearStaging {
 		if _, err := tx.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=$2 WHERE id=$1 AND status='staged'`, binID, clock.Now().UTC()); err != nil {
+			return err
+		}
+	}
+	if clearAnomaly {
+		if _, err := tx.Exec(`UPDATE bins SET anomaly_at=NULL, anomaly_note='', updated_at=$2 WHERE id=$1`, binID, clock.Now().UTC()); err != nil {
 			return err
 		}
 	}

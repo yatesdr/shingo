@@ -329,10 +329,32 @@ func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 	// after relocating to storage. Mirror the arrival behavior: clear staging
 	// in the same tx when a staged bin lands on a storage slot.
 	clearStaging := b.Status == domain.BinStatusStaged && s.destIsStorageSlot(destNode)
-	if err := s.db.MoveBinClearingStaging(b.ID, toNodeID, clearStaging); err != nil {
+	// A BIN COMING OFF _TRANSIT OR A DECK IS NO LONGER LOST, so the anomaly
+	// goes with it. `anomaly_at` and `anomaly_note` say "nobody knows where
+	// this bin is", and the note names a robot's coordinates; both are false
+	// the moment an operator puts the bin at a real node. RecoverToNode clears
+	// the stamp and this path never did, which is why bin 5 sat at its correct
+	// home on 2026-08-24 still carrying a 2026-05-12 stamp and a park-point
+	// note.
+	//
+	// SCOPED TO THAT SOURCE. An ordinary node-to-node move says nothing about
+	// an anomaly and must not clear one — a count-refusal stamp on a bin being
+	// shuffled between slots is still live.
+	move := s.db.MoveBinClearingStaging
+	if wasUnlocated(b.NodeName) && !destNode.IsSynthetic {
+		move = s.db.MoveBinOffTransit
+	}
+	if err := move(b.ID, toNodeID, clearStaging); err != nil {
 		return nil, err
 	}
 	return &MoveResult{DestNode: destNode}, nil
+}
+
+// wasUnlocated reports whether a bin's source node is one of the two that mean
+// "not on the floor": `_TRANSIT` (picked up, location unknown) and a per-robot
+// carrier node (riding a deck).
+func wasUnlocated(nodeName string) bool {
+	return nodeName == domain.TransitNodeName || strings.HasPrefix(nodeName, bins.CarrierNodePrefix)
 }
 
 // destIsStorageSlot reports whether a node is a storage slot — a LANE/NGRP

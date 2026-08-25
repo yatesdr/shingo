@@ -54,6 +54,12 @@ func (db *DB) MoveBinClearingStaging(binID, toNodeID int64, clearStaging bool) e
 	return bins.MoveAndClearStaging(db.DB, binID, toNodeID, clearStaging)
 }
 
+// MoveBinOffTransit moves a bin off `_TRANSIT` or a carrier node and clears the
+// transit anomaly with it. See bins.MoveOffTransit.
+func (db *DB) MoveBinOffTransit(binID, toNodeID int64, clearStaging bool) error {
+	return bins.MoveOffTransit(db.DB, binID, toNodeID, clearStaging)
+}
+
 // ClaimBin marks a bin as claimed by an order.
 func (db *DB) ClaimBin(binID, orderID int64) error { return bins.Claim(db.DB, binID, orderID) }
 
