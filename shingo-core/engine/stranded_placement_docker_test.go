@@ -239,11 +239,32 @@ func TestCarriedBin_UnwitnessedUnloadAfterARestartIsNeverPlaced(t *testing.T) {
 	if note := binNote(t, db, bin.ID); !strings.Contains(note, "restarted") {
 		t.Errorf("note = %q, want the honest restart reason", note)
 	}
-	// And it stays declined, however many ticks pass.
-	eng.sweepCarriedBins()
-	eng.sweepCarriedBins()
+	// And it stays declined, however many ticks pass — with a note that does
+	// NOT move as the robot drives on. This decline repeats every two seconds
+	// for as long as the bin sits there, so a note carrying live coordinates
+	// would be a log line every two seconds forever AND a pin an operator is
+	// invited to walk to while the sentence tells them it means nothing.
+	before, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "get bin")
+	for _, point := range []string{"LM7", "LM8", "PP95"} {
+		cacheRobot(eng, atPoint("AMR-RESTART", point, 40, 40))
+		eng.sweepCarriedBins()
+	}
+	after, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "get bin again")
 	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-RESTART" {
 		t.Errorf("a later tick placed it at %q — the reason it declined does not expire", got)
+	}
+	if after.AnomalyNote != before.AnomalyNote {
+		t.Errorf("the note moved with the robot: %q then %q",
+			before.AnomalyNote, after.AnomalyNote)
+	}
+	if strings.Contains(after.AnomalyNote, "x=") {
+		t.Errorf("note %q offers coordinates the same sentence says are meaningless",
+			after.AnomalyNote)
+	}
+	if !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Error("an unchanged decline still bumped bins.updated_at")
 	}
 }
 
@@ -520,8 +541,14 @@ func TestBranchA_DeclinesAStalePickupThatTheTerminalWindowWouldHaveAllowed(t *te
 		t.Errorf("bin was placed at %q from a pickup 21 h old — the robot has run other "+
 			"jobs since and where it stands now is unrelated to where that bin went", got)
 	}
-	if note := binNote(t, db, bin.ID); !strings.Contains(note, "picked up longer ago") {
+	note := binNote(t, db, bin.ID)
+	if !strings.Contains(note, "picked up longer ago") {
 		t.Errorf("note = %q, want the pickup age named", note)
+	}
+	if strings.Contains(note, "x=") {
+		t.Errorf("note %q carries the robot's coordinates — the sentence beside them says "+
+			"that position no longer describes this bin, and a pin nobody should walk to "+
+			"is worse than no pin", note)
 	}
 }
 

@@ -134,7 +134,13 @@ func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.Robot
 	// Branch B and the carried-bin watch stay exempt: the jack is the jack.
 	ord, _, haveOrder := e.lastClaimingOrder(binID)
 	if !haveOrder || !e.pickupWithin(ord, e.strandedSweepWindow()) {
-		e.strandedAnomaly(binID, robotID, robot, true,
+		// NO POSITION ON THIS NOTE, and the reason is the note's own sentence:
+		// the robot's coordinates do not describe this bin any more, so
+		// printing them would be handing an operator a pin to walk to while
+		// telling them the pin means nothing. It also keeps the note CONSTANT,
+		// which is what lets the log dedup suppress a decline the sweep repeats
+		// every two seconds for as long as the terminal window lasts.
+		e.strandedAnomaly(binID, robotID, fleet.RobotStatus{}, false,
 			"the bin was picked up longer ago than "+e.strandedSweepWindow().String()+
 				", so where this robot is standing now says nothing about where it left the bin")
 		return
@@ -500,7 +506,12 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 		// See freezeDrop: an already-empty deck this process never saw loaded is
 		// a Core that restarted after the unload, and it is not evidence of
 		// anything. The honest answer is the anomaly and the operator button.
-		e.strandedAnomaly(bin.ID, robotID, robot, true,
+		//
+		// NO POSITION, for the same reason the sentence gives: the reading does
+		// not describe this bin. It also keeps the note constant, so a decline
+		// the sweep repeats every two seconds forever prints one line and not
+		// 43,200 a day.
+		e.strandedAnomaly(bin.ID, robotID, fleet.RobotStatus{}, false,
 			"the deck was already empty when Core first looked — Core restarted after the "+
 				"unload, so the drop was not observed and this robot's position does not "+
 				"describe where the bin is")
