@@ -48,43 +48,49 @@ func (e *CarriedBinNotRecoverable) Error() string {
 // RecoverCarriedBin is the operator-triggered surface, alongside the other
 // recovery actions. The body lives on Engine because it needs the bin service,
 // the node service and the robot cache; this is the door.
-func (s *RecoveryService) RecoverCarriedBin(binID int64, actor string) (*orders.Order, error) {
+func (s *RecoveryService) RecoverCarriedBin(binID int64, actor string) (*orders.Order, string, error) {
 	return s.engine.RecoverCarriedBin(binID, actor)
 }
 
 // RecoverCarriedBin creates a vehicle-pinned unload-only order for a bin riding
-// a robot's deck, and returns it.
+// a robot's deck, and returns it with the sentence describing what it will do.
+//
+// The DETAIL is returned and not only recorded, because the operator pressing
+// the button is owed the same sentence the audit row gets: which robot, which
+// destination, and WHICH TIER chose it. "Why did it go there" is the question a
+// misplaced bin raises, and the tier is the whole answer — a person who is told
+// only "ok" has to go and read the diagnostics page to learn it.
 //
 // Every refusal is a *CarriedBinNotRecoverable naming the reason. None of them
 // are failures of this function — a robot that is charging, or a plant with no
 // free slot, is a legitimate "not now", and the caller retries later or shows
 // the sentence to the operator.
-func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, error) {
+func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, string, error) {
 	if actor == "" {
-		return nil, fmt.Errorf("actor is required for a recovery order")
+		return nil, "", fmt.Errorf("actor is required for a recovery order")
 	}
 	bin, err := e.BinService().GetBin(binID)
 	if err != nil {
-		return nil, fmt.Errorf("read bin %d: %w", binID, err)
+		return nil, "", fmt.Errorf("read bin %d: %w", binID, err)
 	}
 	// A nil bin with a nil error is "no such row", not a failure to read. The
 	// combined branch formatted the nil through %w and put "%!w(<nil>)" on an
 	// operator-facing door.
 	if bin == nil {
-		return nil, fmt.Errorf("bin %d does not exist", binID)
+		return nil, "", fmt.Errorf("bin %d does not exist", binID)
 	}
 	// ONLY A BIN ON A DECK. A bin at _TRANSIT is a bin nobody knows the location
 	// of, and pinning an unload to the robot that last carried it would be a
 	// guess wearing an order's clothes — the robot may have set it down hours
 	// ago. That population is the A/B/C inference's, and it stays there.
 	if !strings.HasPrefix(bin.NodeName, bins.CarrierNodePrefix) {
-		return nil, &CarriedBinNotRecoverable{BinID: binID,
+		return nil, "", &CarriedBinNotRecoverable{BinID: binID,
 			Reason: fmt.Sprintf("it is at %s, not on a robot's deck — a recovery order can only "+
 				"ask a robot to put down what it is holding", bin.NodeName)}
 	}
 	robotID := strings.TrimPrefix(bin.NodeName, bins.CarrierNodePrefix)
 	if robotID == "" || robotID == bin.NodeName {
-		return nil, &CarriedBinNotRecoverable{BinID: binID,
+		return nil, "", &CarriedBinNotRecoverable{BinID: binID,
 			Reason: fmt.Sprintf("carrier node %q names no robot", bin.NodeName)}
 	}
 	// IDEMPOTENCE FIRST, because it is the more useful sentence. A dispatched
@@ -94,33 +100,33 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, er
 	// order the operator is told the truth: the thing they are trying to do is
 	// already happening.
 	if live, lerr := e.liveRecoveryOrderForBin(binID); lerr == nil && live != nil {
-		return nil, &CarriedBinNotRecoverable{BinID: binID,
+		return nil, "", &CarriedBinNotRecoverable{BinID: binID,
 			Reason: fmt.Sprintf("recovery order %d is already in flight (%s)", live.ID, live.Status)}
 	}
 	if bin.ClaimedBy != nil {
 		// Something else owns this bin. Two orders moving one bin is the shape
 		// that produces a phantom, and the live order is the one with a robot
 		// actually en route.
-		return nil, &CarriedBinNotRecoverable{BinID: binID,
+		return nil, "", &CarriedBinNotRecoverable{BinID: binID,
 			Reason: fmt.Sprintf("order %d already holds it", *bin.ClaimedBy)}
 	}
 
 	robot, haveRobot := e.GetCachedRobotStatus(robotID)
 	if err := robotCanTakeARecoveryOrder(robotID, robot, haveRobot); err != nil {
-		return nil, &CarriedBinNotRecoverable{BinID: binID, Reason: err.Error()}
+		return nil, "", &CarriedBinNotRecoverable{BinID: binID, Reason: err.Error()}
 	}
 
 	dest, tier, err := e.resolveCarriedBinDestination(bin, robot)
 	if err != nil {
-		return nil, &CarriedBinNotRecoverable{BinID: binID, Reason: err.Error()}
+		return nil, "", &CarriedBinNotRecoverable{BinID: binID, Reason: err.Error()}
 	}
 
 	carrier, err := e.db.GetNodeByName(bin.NodeName)
 	if err != nil {
-		return nil, fmt.Errorf("read carrier node %s: %w", bin.NodeName, err)
+		return nil, "", fmt.Errorf("read carrier node %s: %w", bin.NodeName, err)
 	}
 	if carrier == nil {
-		return nil, fmt.Errorf("carrier node %s does not exist", bin.NodeName)
+		return nil, "", fmt.Errorf("carrier node %s does not exist", bin.NodeName)
 	}
 
 	order := &orders.Order{
@@ -171,7 +177,7 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, er
 			binID, freed, order.EdgeUUID)
 	}
 	if err := e.db.CreateOrder(order); err != nil {
-		return nil, fmt.Errorf("create recovery order for bin %d: %w", binID, err)
+		return nil, "", fmt.Errorf("create recovery order for bin %d: %w", binID, err)
 	}
 
 	// ── DISPATCHED HERE, NOT LEFT FOR THE SCANNER ───────────────────────
@@ -187,8 +193,14 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, er
 	// ask the lanes, confirm, hand over — with the same rollback on refusal,
 	// because there is a person waiting on the answer either way.
 	if derr := e.dispatchRecoveryOrder(order, bin.ID, carrier, dest); derr != nil {
-		return nil, derr
+		return nil, "", derr
 	}
+	// A REAL ORDER NOW OWNS THE QUESTION. Whatever the jack watch had frozen
+	// about where this bin might have been set down is superseded: this order
+	// names a destination somebody chose, and the ordinary arrival path will
+	// record where the bin actually landed. Leaving the older sample in place
+	// would let it compete with that answer if the order later fails.
+	e.forgetDrop(binID)
 
 	// THE AUDIT ROW IS PART OF THE UNIT, not decoration. Its ACTION NAME is
 	// what distinguishes this from the inference beside it: transit_bin_on_robot
@@ -212,7 +224,7 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, er
 		e.logFn("engine: carried bin recovery: audit row for bin %d: %v", binID, aerr)
 	}
 	e.logFn("engine: carried bin recovery: %s", detail)
-	return order, nil
+	return order, detail, nil
 }
 
 // dispatchRecoveryOrder hands one recovery order to the fleet, and cleans up

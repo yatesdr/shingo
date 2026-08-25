@@ -46,13 +46,13 @@ func TestRecoverCarriedBin_RetryAfterAFleetRefusal(t *testing.T) {
 
 	// The fleet is not taking orders right now.
 	backend.SetFail(true)
-	if _, err := eng.RecoverCarriedBin(bin.ID, "operator:test"); err == nil {
+	if _, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test"); err == nil {
 		t.Fatal("want a refusal while the fleet is refusing")
 	}
 
 	// The fleet comes back, and the operator presses again.
 	backend.SetFail(false)
-	order, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
+	order, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
 	if err != nil {
 		t.Fatalf("retry after a refusal failed: %v\n"+
 			"The refusal terminalized an order holding this (bin, robot) pair's only deterministic "+
@@ -89,10 +89,10 @@ func TestRecoverCarriedBin_LiveOrderStillBlocksARetry(t *testing.T) {
 	bin := seedCarried(t, db, "AMR-LIVE", "DEST-LIVE")
 	cacheRobot(eng, dispatchableRobot("AMR-LIVE"))
 
-	first, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
+	first, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
 	testutil.MustNoErr(t, err, "first recovery")
 
-	_, err = eng.RecoverCarriedBin(bin.ID, "operator:test")
+	_, _, err = eng.RecoverCarriedBin(bin.ID, "operator:test")
 	if err == nil {
 		t.Fatal("a live recovery order must still refuse a second press")
 	}

@@ -400,6 +400,29 @@ function requestTransport() {
     .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
+// askRobotToSetDown is the bins page's door to the recover_carried_bin recovery
+// action: it asks the robot holding this bin to put it down somewhere Core can
+// name.
+//
+// THE ONLY ACTION ON THIS PAGE THAT PUTS A ROBOT IN MOTION, which is why the
+// answer is shown rather than swallowed. On success the detail names the
+// destination and which tier chose it; on refusal the sentence the server
+// returns is shown UNCHANGED — "AMR-09 is not dispatchable, the plant has
+// taken it out of the pool" is already written for a person, and flattening it
+// to "could not recover" would throw away the only useful part.
+//
+// It POSTs the existing /api/recovery/repair action rather than a new route:
+// the diagnostics Recovery tab is the receipt for these, and there is one
+// handler behind both.
+async function askRobotToSetDown(binId) {
+  var id = parseInt(binId, 10) || 0;
+  if (!id) return;
+  if (!await uiConfirm('Ask the robot to set this bin down? It will drive to a free node and unload.')) return;
+  apiPost('/api/recovery/repair', { action: 'recover_carried_bin', order_id: 0, bin_id: id })
+    .then(function(data) { toast(data.detail || 'Recovery order created', 'info'); refreshBinRow(id); })
+    .catch(function(e) { toast(e.error || e, 'error'); });
+}
+
 function recordCount() {
   var uop = parseInt(document.getElementById('bd-count-uop').value) || 0;
   var actor = document.getElementById('bd-count-actor').value.trim();
@@ -834,6 +857,7 @@ function toggleBinTypesAccordion() {
 // single-source.
 delegateActions(document.body, {
     addNote,
+    askRobotToSetDown,
     bdField,
     bulkAction,
     ccAdvance,

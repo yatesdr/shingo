@@ -66,7 +66,7 @@ func TestRecoverCarriedBin_Tier1_UsesTheOriginalDestination(t *testing.T) {
 	bin := seedCarried(t, db, "AMR-R1", "WAS-GOING-HERE")
 	cacheRobot(eng, dispatchableRobot("AMR-R1"))
 
-	order, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
+	order, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
 	testutil.MustNoErr(t, err, "recover carried bin")
 
 	if order.DeliveryNode != "WAS-GOING-HERE" {
@@ -139,7 +139,7 @@ func TestRecoverCarriedBin_Tier2_FallsToAFreeStorageSlot(t *testing.T) {
 	testutil.MustNoErr(t, perr, "stamp payload on carried bin")
 	cacheRobot(eng, dispatchableRobot("AMR-R2"))
 
-	order, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
+	order, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
 	testutil.MustNoErr(t, err, "recover carried bin")
 	if order.DeliveryNode != slot.Name {
 		t.Errorf("destination = %q, want %s — tier 1's node is occupied, so a free storage slot for the payload",
@@ -171,7 +171,7 @@ func TestRecoverCarriedBin_Tier3_FallsToTheRobotsStation(t *testing.T) {
 	robot.CurrentStation = "PARKED-HERE-3"
 	cacheRobot(eng, robot)
 
-	order, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
+	order, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
 	testutil.MustNoErr(t, err, "recover carried bin")
 	if order.DeliveryNode != "PARKED-HERE-3" {
 		t.Errorf("destination = %q, want PARKED-HERE-3 (tier 3)", order.DeliveryNode)
@@ -195,7 +195,7 @@ func TestRecoverCarriedBin_Tier3_DeclinesForAMovingRobot(t *testing.T) {
 	robot.LastStation = "PASSED-BY-3B"
 	cacheRobot(eng, robot)
 
-	if _, err := eng.RecoverCarriedBin(bin.ID, "operator:test"); err == nil {
+	if _, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test"); err == nil {
 		t.Fatal("want a refusal: a moving robot's last station is somewhere it drove past")
 	} else if !strings.Contains(err.Error(), "nowhere to put it") {
 		t.Errorf("refusal = %q, want the no-destination reason", err.Error())
@@ -230,7 +230,7 @@ func TestRecoverCarriedBin_RefusesUndispatchableRobots(t *testing.T) {
 			tc.mutate(&robot)
 			cacheRobot(eng, robot)
 
-			_, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
+			_, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
 			if err == nil {
 				t.Fatal("want a refusal — the order would sit in the fleet queue forever")
 			}
@@ -253,7 +253,7 @@ func TestRecoverCarriedBin_RefusesWithNoTelemetry(t *testing.T) {
 	bin := seedCarried(t, db, "AMR-NOTEL", "DEST-NOTEL")
 	// deliberately not cached
 
-	if _, err := eng.RecoverCarriedBin(bin.ID, "operator:test"); err == nil ||
+	if _, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test"); err == nil ||
 		!strings.Contains(err.Error(), "no telemetry") {
 		t.Fatalf("want a no-telemetry refusal, got %v", err)
 	}
@@ -271,7 +271,7 @@ func TestRecoverCarriedBin_RefusesABinNotOnADeck(t *testing.T) {
 	bin, _ := seedStranded(t, db, "AMR-TRANS")
 	cacheRobot(eng, dispatchableRobot("AMR-TRANS"))
 
-	if _, err := eng.RecoverCarriedBin(bin.ID, "operator:test"); err == nil ||
+	if _, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test"); err == nil ||
 		!strings.Contains(err.Error(), "not on a robot's deck") {
 		t.Fatalf("want a not-on-a-deck refusal, got %v", err)
 	}
@@ -288,9 +288,9 @@ func TestRecoverCarriedBin_SecondCallIsRefused(t *testing.T) {
 	bin := seedCarried(t, db, "AMR-TWICE", "DEST-TWICE")
 	cacheRobot(eng, dispatchableRobot("AMR-TWICE"))
 
-	first, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
+	first, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
 	testutil.MustNoErr(t, err, "first recovery")
-	_, err = eng.RecoverCarriedBin(bin.ID, "operator:test")
+	_, _, err = eng.RecoverCarriedBin(bin.ID, "operator:test")
 	if err == nil {
 		t.Fatal("want a refusal on the second call")
 	}
@@ -315,7 +315,7 @@ func TestSweepCarriedBins_StandsDownForALiveRecoveryOrder(t *testing.T) {
 
 	bin := seedCarried(t, db, "AMR-GUARD", "DEST-GUARD")
 	cacheRobot(eng, dispatchableRobot("AMR-GUARD"))
-	if _, err := eng.RecoverCarriedBin(bin.ID, "operator:test"); err != nil {
+	if _, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test"); err != nil {
 		t.Fatalf("recover carried bin: %v", err)
 	}
 
