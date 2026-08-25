@@ -184,8 +184,25 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 		return nil, fmt.Errorf("no claim for target style on node %s", ctx.node.Name)
 	}
 
-	if toClaim.InboundStaging != "" {
-		steps := BuildStagedDeliverSteps(toClaim)
+	// THE STAGING NODE IS A PROPERTY OF THE CELL, NOT OF ONE POSITION IN IT.
+	//
+	// A fanned-out press seat has no claim row, so toClaim here is synthesized —
+	// and SynthesizePressPositionClaim clears InboundStaging on purpose, because
+	// the diff pipeline needs a synthesized Add to fall through to a direct
+	// retrieve that the tooling decorator then adds the hold to. Reading that
+	// cleared field here as "this node does not stage" is what made this button
+	// return 200, mark the seat released, and deliver nothing (N1-a, sim
+	// 2026-08-24). The seat's answer is its parent's answer.
+	staging := toClaim.InboundStaging
+	if staging == "" {
+		if parent := e.parentClaimOf(ctx.nodeTask.ToClaimID); parent != nil {
+			staging = parent.InboundStaging
+		}
+	}
+	if staging != "" {
+		stagedClaim := *toClaim
+		stagedClaim.InboundStaging = staging
+		steps := BuildStagedDeliverSteps(&stagedClaim)
 		if steps != nil {
 			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, toClaim.CoreNodeName, steps,
 				e.changeoverOrigin(ctx.changeover.ID))
@@ -195,11 +212,31 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 			e.recordChangeoverOrder(ctx, false, &order.ID, ctx.nodeTask.OldMaterialReleaseOrderID, domain.NodeTaskReleaseRequested)
 			return order, nil
 		}
+		// The cell stages but no steps could be built, so nothing is coming.
+		// Refuse rather than mark released: "released" on a node whose material
+		// never moved is the lie this whole round has been removing.
+		return nil, fmt.Errorf("node %s stages its inbound material at %s but no delivery could be "+
+			"built for it — the seat's material has not moved", ctx.node.Name, staging)
 	}
 
-	// No staging — mark as released directly
+	// No staging anywhere in the cell — the material goes straight to the node,
+	// so there is nothing to release from and the task is done.
 	e.recordChangeoverOrder(ctx, false, ctx.nodeTask.NextMaterialOrderID, ctx.nodeTask.OldMaterialReleaseOrderID, domain.NodeTaskReleased)
 	return nil, nil
+}
+
+// parentClaimOf loads the persisted claim a synthesized seat claim was derived
+// from. The id is the parent's precisely because SynthesizePressPositionClaim
+// keeps it — see the contract note there.
+func (e *Engine) parentClaimOf(claimID *int64) *processes.NodeClaim {
+	if claimID == nil {
+		return nil
+	}
+	claim, err := e.db.GetStyleNodeClaim(*claimID)
+	if err != nil {
+		return nil
+	}
+	return claim
 }
 
 func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {

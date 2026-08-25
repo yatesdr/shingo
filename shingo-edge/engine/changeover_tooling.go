@@ -210,6 +210,149 @@ func planToolingChangeover(fromClaims, toClaims []processes.NodeClaim) toolingCh
 	return t
 }
 
+// resolveToolingSeatNodes makes sure every marked seat is a node this plan can
+// name, and it is the fix for N1-a.
+//
+// A marked seat owns no claim row, so nothing had ever created its
+// process_nodes row except ChangeoverService.Create — which runs after the plan
+// is built. The first changeover of a press therefore planned around a seat
+// that did not exist yet, and the second one worked because the first had left
+// the row behind.
+//
+// materialize splits the two callers. Start writes the rows here, BEFORE
+// planning, and re-reads so the ids are real. Preview must not write, so it
+// carries the same seats as unsaved nodes and shows the operator the work the
+// changeover will actually do.
+//
+// The refusal is LOUD, and deliberately so: a marked seat this cannot resolve
+// is a seat whose bin stays in the way of people setting up a press, and the
+// silent version of that sentence is the whole reason N1 existed.
+func (e *Engine) resolveToolingSeatNodes(processID int64, t toolingChangeover,
+	nodes []processes.Node, materialize bool) ([]processes.Node, error) {
+
+	seats := toolingSeatNodes(t)
+	if len(seats) == 0 {
+		return nodes, nil
+	}
+	have := make(map[string]bool, len(nodes))
+	for i := range nodes {
+		have[nodes[i].CoreNodeName] = true
+	}
+	created := false
+	for _, seat := range seats {
+		if have[seat] {
+			continue
+		}
+		have[seat] = true
+		if !materialize {
+			nodes = append(nodes, processes.Node{
+				ProcessID:    processID,
+				CoreNodeName: seat,
+				Code:         seat,
+				Name:         seat,
+				Enabled:      true,
+			})
+			continue
+		}
+		if _, err := e.db.CreateProcessNode(processes.NodeInput{
+			ProcessID:    processID,
+			CoreNodeName: seat,
+			Code:         seat,
+			Name:         seat,
+			Enabled:      true,
+		}); err != nil {
+			return nil, fmt.Errorf("cannot start changeover: seat %s is marked for changeover "+
+				"clearance but has no node on this process, and one could not be created: %w", seat, err)
+		}
+		created = true
+	}
+	if created {
+		// Re-read rather than patch the slice: the ids have to be the real ones
+		// or the node tasks below point at rows that do not exist.
+		return e.db.ListProcessNodesByProcess(processID)
+	}
+	return nodes, nil
+}
+
+// expandsSeats reports whether this press's marked seats need actions built for
+// them — the same question expandMarkedPress answers, asked before the plan
+// exists so the seats can be given node rows and node tasks to hang off.
+//
+// A press with no incoming claim on its own node is a teardown: there is
+// nothing to refill with, expandMarkedPress declines to touch it, and inventing
+// tasks for seats that will get no orders would block the cutover on work
+// nobody planned.
+func (p toolingPress) expandsSeats() bool { return p.to != nil }
+
+// toolingSeatNodes is every marked seat of the changeover, deduped, in press
+// order. These are the nodes the changeover physically acts on and the ones the
+// plan must be able to name.
+func toolingSeatNodes(t toolingChangeover) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, press := range t.presses {
+		for _, seat := range press.seats {
+			if seen[seat] {
+				continue
+			}
+			seen[seat] = true
+			out = append(out, seat)
+		}
+	}
+	return out
+}
+
+// appendToolingSeatTasks gives every marked seat that the diffs did not already
+// cover a node task of its own.
+//
+// WITHOUT THIS THE PLAN IS DISCARDED WHERE IT MATTERS MOST. applyChangeoverPlan
+// finds a node task by node id and skips the action when there is none, and the
+// task list is built from the DIFFS — which never mention a seat the tooling
+// pass expanded. So on a same-bin-type marked press the paired seat's leg was
+// planned correctly, logged as "cannot find node task", and dropped.
+//
+// The seats the diffs DID cover (the bin-type fan-out split them, or they are
+// per-node Drops) already have tasks and are left alone, which is the same
+// idempotence rule expandMarkedPress follows.
+func appendToolingSeatTasks(processID int64, t toolingChangeover, nodeTasks []processes.NodeTaskInput) []processes.NodeTaskInput {
+	if !t.active() {
+		return nodeTasks
+	}
+	have := make(map[string]bool, len(nodeTasks))
+	for _, nt := range nodeTasks {
+		have[nt.CoreNodeName] = true
+	}
+	for _, press := range t.presses {
+		if !press.expandsSeats() {
+			continue
+		}
+		for _, seat := range press.seats {
+			if have[seat] {
+				continue
+			}
+			have[seat] = true
+			var fromClaimID, toClaimID *int64
+			if press.from != nil {
+				id := press.from.ID
+				fromClaimID = &id
+			}
+			if press.to != nil {
+				id := press.to.ID
+				toClaimID = &id
+			}
+			nodeTasks = append(nodeTasks, processes.NodeTaskInput{
+				ProcessID:    processID,
+				CoreNodeName: seat,
+				FromClaimID:  fromClaimID,
+				ToClaimID:    toClaimID,
+				Situation:    string(SituationEvacuate),
+				State:        "swap_required",
+			})
+		}
+	}
+	return nodeTasks
+}
+
 // refuseToolingChangeoverWithoutStaging is the arm-time gate: a press marked
 // for tooling evacuation stages its incoming bins, so the incoming style has to
 // say where.

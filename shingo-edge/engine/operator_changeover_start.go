@@ -325,7 +325,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 				processID, toStyleID, len(missing), missing)
 		}
 	}
-	plan, err := e.planChangeover(processID, toStyleID)
+	plan, err := e.planChangeover(processID, toStyleID, true)
 	if err != nil {
 		return nil, err
 	}

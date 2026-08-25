@@ -69,7 +69,22 @@ func (e *Engine) logEvacConfigOnWrongSide(fromClaims, toClaims []processes.NodeC
 	}
 }
 
-func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, error) {
+// planChangeover builds everything a changeover needs before anything is
+// written: the diffs, the node tasks, the participants and the tooling
+// decoration.
+//
+// materializeSeats is the difference between the two callers. A marked press
+// seat owns no style_node_claims row and therefore no process_nodes row until
+// something creates one, and the thing that used to create one was
+// ChangeoverService.Create — which runs AFTER this. So the FIRST changeover of
+// any marked press planned one seat fewer than the second, silently: no
+// clearance, no hold, no order (N1-a, sim-proven on a pristine seed 2026-08-24).
+//
+// Start passes true and the rows are written here, before planning, so the
+// first changeover plans exactly like the second. Preview passes false and gets
+// the same seats as UNSAVED nodes — the operator must see the work the
+// changeover will do, and a preview that writes rows is not a preview.
+func (e *Engine) planChangeover(processID, toStyleID int64, materializeSeats bool) (*changeoverPlan, error) {
 	process, err := e.db.GetProcess(processID)
 	if err != nil {
 		return nil, err
@@ -129,14 +144,18 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 	if err != nil {
 		return nil, err
 	}
+	nodes, err = e.resolveToolingSeatNodes(processID, tooling, nodes, materializeSeats)
+	if err != nil {
+		return nil, err
+	}
 
 	stationIDs := make([]int64, len(stations))
 	for i := range stations {
 		stationIDs[i] = stations[i].ID
 	}
 
-	nodeTasks := make([]processes.NodeTaskInput, len(diffs))
-	for i, diff := range diffs {
+	nodeTasks := make([]processes.NodeTaskInput, 0, len(diffs))
+	for _, diff := range diffs {
 		state := "unchanged"
 		switch diff.Situation {
 		case SituationSwap, SituationEvacuate, SituationDrop, SituationAdd:
@@ -151,15 +170,16 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 			id := diff.ToClaim.ID
 			toClaimID = &id
 		}
-		nodeTasks[i] = processes.NodeTaskInput{
+		nodeTasks = append(nodeTasks, processes.NodeTaskInput{
 			ProcessID:    processID,
 			CoreNodeName: diff.CoreNodeName,
 			FromClaimID:  fromClaimID,
 			ToClaimID:    toClaimID,
 			Situation:    string(diff.Situation),
 			State:        state,
-		}
+		})
 	}
+	nodeTasks = appendToolingSeatTasks(processID, tooling, nodeTasks)
 
 	participants := buildParticipants(diffs)
 	unresolved := assertParticipantsResolve(participants, nodes)
@@ -274,7 +294,7 @@ func isPressIndexClaim(c *processes.NodeClaim) bool {
 // returned verbatim — the operator should see the same gating reason a Start
 // would surface.
 func (e *Engine) PreviewChangeoverPlan(processID, toStyleID int64) (changeover.Plan, error) {
-	plan, err := e.planChangeover(processID, toStyleID)
+	plan, err := e.planChangeover(processID, toStyleID, false)
 	if err != nil {
 		return changeover.Plan{}, err
 	}

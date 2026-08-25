@@ -219,7 +219,7 @@ func TestChangeoverStart_CancelReportsWhatItCancelled(t *testing.T) {
 
 	orderID := seedOrderAt(t, db, nodeID, "CO-NODE", "uuid-reported", "PART-OLD", orders.StatusQueued)
 
-	plan, err := eng.planChangeover(processID, toStyleID)
+	plan, err := eng.planChangeover(processID, toStyleID, false)
 	testutil.MustNoErr(t, err, "plan changeover")
 	cancelled, cerr := eng.cancelPreDispatchAtParticipants(plan)
 	testutil.MustNoErr(t, cerr, "cancel")
@@ -316,7 +316,7 @@ func TestChangeoverPlan_ParticipantsNeverContainALoaderNode(t *testing.T) {
 	db.EnsureProcessNodeRuntime(loaderNodeID)
 
 	eng := testEngine(t, db)
-	plan, err := eng.planChangeover(processID, toStyleID)
+	plan, err := eng.planChangeover(processID, toStyleID, false)
 	testutil.MustNoErr(t, err, "plan changeover")
 
 	for _, p := range plan.participants {
