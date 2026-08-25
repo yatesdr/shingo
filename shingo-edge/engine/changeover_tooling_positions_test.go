@@ -271,3 +271,99 @@ func keysOf[V any](m map[string]V) string {
 	}
 	return strings.Join(out, ",")
 }
+
+// seedDisjointPressScenario is the shape the sim caught: the incoming style
+// runs the same press on DIFFERENT nodes, and neither of the new nodes has a
+// process_nodes row yet.
+//
+// PLN_006 is the one that matters. It is an ADD — synthesized by the cross-mode
+// fan-out, named by no mark — so a fix that materialises only MARKED nodes
+// leaves it exactly where N1-a left the paired node: a task, no order, and a
+// hard cutover blocker.
+func seedDisjointPressScenario(t *testing.T, db *store.DB) (processID, toStyleID int64) {
+	t.Helper()
+	processID, err := db.CreateProcess("DISJOINT-PRESS", "moves nodes", "active_production", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	if _, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "OLD-A", Code: "OLD-A", Name: "OLD-A",
+		Sequence: 1, Enabled: true,
+	}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	fromStyleID, err := db.CreateStyle("DJ-FROM", "outgoing", processID)
+	if err != nil {
+		t.Fatalf("create from style: %v", err)
+	}
+	toStyleID, err = db.CreateStyle("DJ-TO", "incoming, elsewhere", processID)
+	if err != nil {
+		t.Fatalf("create to style: %v", err)
+	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
+
+	base := processes.NodeClaimInput{
+		Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeTwoRobotPressIndex,
+		PayloadCode: "PART-OLD", UOPCapacity: 30,
+		InboundSource: "EMPTIES", OutboundDestination: "MARKET",
+	}
+	from := base
+	from.StyleID, from.CoreNodeName, from.PairedCoreNode = fromStyleID, "OLD-A", "OLD-B"
+	from.ChangeoverEvacNodes = &[]string{"OLD-A", "OLD-B"}
+	if _, err := db.UpsertStyleNodeClaim(from); err != nil {
+		t.Fatalf("upsert from claim: %v", err)
+	}
+	to := base
+	to.StyleID, to.CoreNodeName, to.PairedCoreNode = toStyleID, "NEW-A", "NEW-B"
+	to.InboundStaging = "IN-STAGE"
+	if _, err := db.UpsertStyleNodeClaim(to); err != nil {
+		t.Fatalf("upsert to claim: %v", err)
+	}
+	return processID, toStyleID
+}
+
+// TestDisjointChangeoverGivesEveryTouchedNodeAnOrder is the second half of
+// N1-a, found by the spot-check rather than by the round-3 report: the fix
+// covered the nodes a MARK names, and the plan touches more nodes than that.
+//
+// An Add exists because the cross-mode pass synthesized it, so nothing about it
+// is marked — but it still has to be planned, and a node with no row at plan
+// time gets no action, then a task with no order, then a cutover it blocks.
+func TestDisjointChangeoverGivesEveryTouchedNodeAnOrder(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, toStyleID := seedDisjointPressScenario(t, db)
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+	eng.coreClient = NewCoreClient("http://test-core")
+
+	co, err := eng.StartProcessChangeover(processID, toStyleID, "test", "disjoint")
+	if err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+	tasks, err := db.ListChangeoverNodeTasks(co.ID)
+	if err != nil {
+		t.Fatalf("list tasks: %v", err)
+	}
+	got := map[string]processes.NodeTask{}
+	for _, task := range tasks {
+		node, err := db.GetProcessNode(task.ProcessNodeID)
+		if err != nil {
+			t.Fatalf("get node: %v", err)
+		}
+		got[node.CoreNodeName] = task
+	}
+	for _, node := range []string{"OLD-A", "OLD-B", "NEW-A", "NEW-B"} {
+		task, ok := got[node]
+		if !ok {
+			t.Errorf("no task for %s (tasks: %v)", node, keysOf(got))
+			continue
+		}
+		if task.NextMaterialOrderID == nil && task.OldMaterialReleaseOrderID == nil {
+			t.Errorf("%s got a task in state %q and no order at all.\n"+
+				"Every node this changeover touches must be planned on the FIRST arm — an Add is "+
+				"named by no mark, so a fix scoped to marked nodes leaves it blocking the cutover "+
+				"with nothing to do.", node, task.State)
+		}
+	}
+}

@@ -257,13 +257,14 @@ func planToolingChangeover(fromClaims, toClaims []processes.NodeClaim) toolingCh
 // carries the same positions as unsaved nodes and shows the operator the work the
 // changeover will actually do.
 //
-// The refusal is LOUD, and deliberately so: a marked position this cannot resolve
-// is a position whose bin stays in the way of people setting up a press, and the
-// silent version of that sentence is the whole reason N1 existed.
+// The refusal is LOUD, and deliberately so: a node this cannot resolve is a node
+// whose work silently does not happen, and the silent version of that sentence
+// is the whole reason N1 existed.
 func (e *Engine) resolveToolingNodes(processID int64, t toolingChangeover,
-	nodes []processes.Node, materialize bool) ([]processes.Node, error) {
+	participants []domain.ParticipantInput, nodes []processes.Node,
+	materialize bool) ([]processes.Node, error) {
 
-	positions := toolingClearanceNodes(t)
+	positions := changeoverTouchedNodes(t, participants)
 	if len(positions) == 0 {
 		return nodes, nil
 	}
@@ -294,8 +295,8 @@ func (e *Engine) resolveToolingNodes(processID int64, t toolingChangeover,
 			Name:         position,
 			Enabled:      true,
 		}); err != nil {
-			return nil, fmt.Errorf("cannot start changeover: position %s is marked for changeover "+
-				"clearance but has no node on this process, and one could not be created: %w", position, err)
+			return nil, fmt.Errorf("cannot start changeover: this changeover acts on node %s, "+
+				"which this process does not have and which could not be created: %w", position, err)
 		}
 		created = true
 	}
@@ -317,19 +318,35 @@ func (e *Engine) resolveToolingNodes(processID int64, t toolingChangeover,
 // nobody planned.
 func (p toolingPress) expandsPositions() bool { return p.to != nil }
 
-// toolingClearanceNodes is every marked position of the changeover, deduped, in press
-// order. These are the nodes the changeover physically acts on and the ones the
-// plan must be able to name.
-func toolingClearanceNodes(t toolingChangeover) []string {
+// changeoverTouchedNodes is every node this changeover acts on, deduped: the
+// PARTICIPANTS the diffs produced, plus the marked nodes.
+//
+// BOTH HALVES, AND THE SECOND ONE WAS FOUND THE HARD WAY. Scoping this to the
+// marked nodes fixed the paired node and left the Adds exactly where they were:
+// an Add exists because the cross-mode pass synthesized it, so no mark names it,
+// and on a disjoint changeover its node has no row either. It got a task, no
+// order, and blocked the cutover — the same defect as N1-a, one branch over,
+// caught by the spot-check that was meant to confirm the fix.
+//
+// The marks are still added explicitly rather than trusted to appear among the
+// participants: a marked node is a node this pass may expand an action for
+// whatever the diffs did with it.
+func changeoverTouchedNodes(t toolingChangeover, participants []domain.ParticipantInput) []string {
 	var out []string
 	seen := make(map[string]bool)
+	add := func(n string) {
+		if n == "" || seen[n] {
+			return
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	for _, p := range participants {
+		add(p.CoreNodeName)
+	}
 	for _, press := range t.presses {
 		for _, position := range press.positions {
-			if seen[position] {
-				continue
-			}
-			seen[position] = true
-			out = append(out, position)
+			add(position)
 		}
 	}
 	return out

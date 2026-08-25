@@ -144,7 +144,10 @@ func (e *Engine) planChangeover(processID, toStyleID int64, materializePositions
 	if err != nil {
 		return nil, err
 	}
-	nodes, err = e.resolveToolingNodes(processID, tooling, nodes, materializePositions)
+	// Participants first: they name every node the diffs touch, and resolving
+	// the plan's nodes needs that whole set — not just the ones a mark names.
+	participants := buildParticipants(diffs)
+	nodes, err = e.resolveToolingNodes(processID, tooling, participants, nodes, materializePositions)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +184,6 @@ func (e *Engine) planChangeover(processID, toStyleID int64, materializePositions
 	}
 	nodeTasks = appendToolingClearanceTasks(processID, tooling, nodeTasks)
 
-	participants := buildParticipants(diffs)
 	unresolved := assertParticipantsResolve(participants, nodes)
 
 	return &changeoverPlan{
