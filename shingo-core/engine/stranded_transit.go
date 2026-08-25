@@ -215,11 +215,12 @@ func (e *Engine) placeInferred(binID int64, robotID string, obs dropObservation,
 			lead = "deck emptied somewhere we cannot name"
 		}
 		e.declineInferred(binID, robotID, obs, intent, lead+": "+
-			service.DescribeUnresolvedPoints(e.NodeService(), obs.CurrentStation, obs.LastStation))
+			service.DescribeUnresolvedPoints(e.NodeService(), obs.CurrentStation, obs.LastStation),
+			watchedUnload)
 		return false
 	}
 	if why := e.binTypeRefusal(node, bin); why != "" {
-		e.declineInferred(binID, robotID, obs, intent, why)
+		e.declineInferred(binID, robotID, obs, intent, why, watchedUnload)
 		return false
 	}
 
@@ -232,7 +233,7 @@ func (e *Engine) placeInferred(binID int64, robotID string, obs dropObservation,
 		// unattended at all. The frozen sample SURVIVES this: the next tick
 		// retries the same observation against a slot that may since have freed.
 		e.declineInferred(binID, robotID, obs, intent,
-			fmt.Sprintf("could not place at %s: %v", node.Name, err))
+			fmt.Sprintf("could not place at %s: %v", node.Name, err), watchedUnload)
 		return false
 	}
 	// FORGET THE NOTE ON EVERY PLACEMENT, not just the sweep's. The map that
@@ -252,9 +253,22 @@ func (e *Engine) placeInferred(binID int64, robotID string, obs dropObservation,
 // The frozen coordinates come from the sample rather than from the robot, which
 // is the whole of the pin-drift fix: the note now describes the moment the deck
 // emptied and stops moving as the robot drives on.
-func (e *Engine) declineInferred(binID int64, robotID string, obs dropObservation, intent, why string) {
-	e.strandedAnomaly(binID, robotID, obs.status(), true,
-		fmt.Sprintf("%s; %s; deck read empty %s", why, intentPhrase(intent), obs.At.Format(time.RFC3339)))
+//
+// THE DROP INSTANT IS PRINTED ONLY WHERE THERE WAS A DROP TO INSTANT. On the
+// carried path the sample is frozen, so "deck read empty 21:02:23Z" is both true
+// and the same bytes on the next pass. On the `_TRANSIT` path there is no
+// freeze — the reading is taken fresh every pass — so the same field would carry
+// clock.Now(), and a note that changes every pass is a note NEITHER dedup can
+// suppress: not the log's, which is keyed on the text (strandedAnomaly), and not
+// the write's (`anomaly_note IS DISTINCT FROM`, bins.MarkAnomalyWithNote). One
+// field guaranteed to differ would have defeated the write-dedup shipping in
+// this same change, on the whole population that dedup was written for.
+func (e *Engine) declineInferred(binID int64, robotID string, obs dropObservation, intent, why string, watchedUnload bool) {
+	parts := []string{why, intentPhrase(intent)}
+	if watchedUnload {
+		parts = append(parts, "deck read empty "+obs.At.Format(time.RFC3339))
+	}
+	e.strandedAnomaly(binID, robotID, obs.status(), true, strings.Join(parts, "; "))
 }
 
 // placementIntent is where the last order that owned this bin was taking it.
