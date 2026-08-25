@@ -206,15 +206,17 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			   reorder_point, auto_reorder, inbound_staging, outbound_staging,
 			   inbound_source, outbound_destination, allowed_payload_codes,
 			   paired_core_node, second_paired_core_node, index_robot_supplies,
-			   changeover_evac_seats, changeover_evac_destination,
+			   changeover_evac_positions, changeover_evac_destination,
+			   changeover_carryover_disposition,
 			   changeover_load_directive, key_route, key_task,
 			   auto_push, auto_confirm)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			sid, c.CoreNode, c.Role, c.SwapMode, c.Payload, c.UOPCapacity,
 			c.ReorderPoint, b2i(c.AutoReorder), c.InboundStaging, c.OutboundStaging,
 			c.InboundSource, c.OutboundDestination, jsonList(c.AllowedPayloads),
 			c.PairedCoreNode, c.SecondPairedCoreNode, b2i(c.IndexRobotSupplies),
-			jsonList(c.ChangeoverEvacSeats), c.ChangeoverEvacDestination,
+			jsonList(c.ChangeoverEvacPositions), c.ChangeoverEvacDestination,
+			carryoverOrReplace(c.ChangeoverCarryoverDisposition),
 			b2i(c.ChangeoverLoadDirective), jsonList(c.KeyRoute), c.KeyTask,
 			b2i(c.AutoPush), b2i(c.AutoConfirm)); err != nil {
 			return fmt.Errorf("claim %s/%s: %w", c.CoreNode, c.Style, err)
@@ -400,4 +402,14 @@ func crossValidate(coreDB coreNodeChecker, edgeDBPath string) error {
 // pass a fake).
 type coreNodeChecker interface {
 	GetNodeByName(name string) (*nodes.Node, error)
+}
+
+// carryoverOrReplace writes the column's default when the plant file says
+// nothing, so a seeded row and a UI-created row agree. An empty string in this
+// column would read as unset to anything checking it literally.
+func carryoverOrReplace(d string) string {
+	if d == "" {
+		return "replace"
+	}
+	return d
 }

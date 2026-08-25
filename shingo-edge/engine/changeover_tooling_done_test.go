@@ -21,7 +21,7 @@ import (
 //     reachable only from Go;
 //   - the operator board's per-node RELEASE refused these legs, because
 //     ResolveSwapPair requires a coordinated two-robot pair and a cleared
-//     seat's clear-and-refill is ONE order on ONE robot ("order 58 has no
+//     position's clear-and-refill is ONE order on ONE robot ("order 58 has no
 //     sibling — not a coordinated pair");
 //   - only per-order release worked, one click per leg, from a screen the
 //     operator is not standing at. On the disjoint shape that is four clicks.
@@ -67,7 +67,7 @@ func TestToolingDoneReleasesEveryStagedLeg(t *testing.T) {
 	}
 	staged := stageEveryLeg(t, db, co.ID)
 	if len(staged) < 2 {
-		t.Fatalf("expected a leg per marked seat, got %d", len(staged))
+		t.Fatalf("expected a leg per marked position, got %d", len(staged))
 	}
 
 	res, err := eng.ReleaseChangeoverWait(processID, ReleaseDisposition{CalledBy: "operator"})
@@ -91,11 +91,11 @@ func TestToolingDoneReleasesEveryStagedLeg(t *testing.T) {
 	}
 }
 
-// TestReleaseStagedOrdersAcceptsASingleLegSeat is the operator board's own
-// button. A cleared seat's leg is one order on one robot — legitimately single
+// TestReleaseStagedOrdersAcceptsASingleLegPosition is the operator board's own
+// button. A cleared position's leg is one order on one robot — legitimately single
 // — and "not a coordinated pair" is a refusal about SWAP pairs that
 // over-matched onto it.
-func TestReleaseStagedOrdersAcceptsASingleLegSeat(t *testing.T) {
+func TestReleaseStagedOrdersAcceptsASingleLegPosition(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, toStyleID := seedMarkedPressScenario(t, db)
@@ -109,31 +109,31 @@ func TestReleaseStagedOrdersAcceptsASingleLegSeat(t *testing.T) {
 	}
 	stageEveryLeg(t, db, co.ID)
 
-	seat, err := db.GetProcessNodeByCoreNodeName("PRESS-B")
-	if err != nil || seat == nil {
-		t.Fatalf("no node for the paired seat: %v", err)
+	position, err := db.GetProcessNodeByCoreNodeName("PRESS-B")
+	if err != nil || position == nil {
+		t.Fatalf("no node for the paired position: %v", err)
 	}
-	task, err := db.GetChangeoverNodeTaskByNode(co.ID, seat.ID)
+	task, err := db.GetChangeoverNodeTaskByNode(co.ID, position.ID)
 	if err != nil {
-		t.Fatalf("get seat task: %v", err)
+		t.Fatalf("get position task: %v", err)
 	}
 	if task.NextMaterialOrderID == nil {
-		t.Fatal("seat task has no leg to release")
+		t.Fatal("position task has no leg to release")
 	}
 
-	if err := eng.ReleaseStagedOrders(seat.ID, ReleaseDisposition{CalledBy: "operator"}); err != nil {
-		t.Fatalf("per-node RELEASE on a cleared seat: %v\n"+
-			"This is the button on the tile the operator is standing at. A seat's leg is a "+
+	if err := eng.ReleaseStagedOrders(position.ID, ReleaseDisposition{CalledBy: "operator"}); err != nil {
+		t.Fatalf("per-node RELEASE on a cleared position: %v\n"+
+			"This is the button on the tile the operator is standing at. A position's leg is a "+
 			"single-leg flow by construction — one robot lifts the bin, fetches the "+
 			"replacement and holds it — so refusing it for having no sibling refuses the "+
 			"only release path that is in front of them.", err)
 	}
 	order, err := db.GetOrder(*task.NextMaterialOrderID)
 	if err != nil {
-		t.Fatalf("get seat leg: %v", err)
+		t.Fatalf("get position leg: %v", err)
 	}
 	if order.Status == orders.StatusStaged {
-		t.Errorf("seat leg %d is still staged after the operator released it", order.ID)
+		t.Errorf("position leg %d is still staged after the operator released it", order.ID)
 	}
 }
 

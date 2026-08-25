@@ -57,7 +57,7 @@ var rfc3339 = regexp.MustCompile(`"(\d{4}-\d{2}-\d{2}T[^"]*)"`)
 //
 //   - a press node whose runtime carries a STAGED order with a rolled-back
 //     release error -> LastReleaseError, which is read per tile
-//   - a stationless press-index seat adopted onto this station through its
+//   - a stationless press-index position adopted onto this station through its
 //     owning task -> the child-tile wiring, on the shape that used to render
 //     nowhere
 //   - an active changeover -> the header fields and the task map
@@ -86,13 +86,13 @@ func goldenScenario(t *testing.T) (db *store.DB, stationID int64) {
 		t.Fatalf("create press node: %v", err)
 	}
 	// No station: adopted onto this board via its owning task, the press-index
-	// extension-seat shape.
-	seatNodeID, err := db.CreateProcessNode(processes.NodeInput{
+	// extension-position shape.
+	positionNodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
-		CoreNodeName: "PLN_G2", Code: "PLNG2", Name: "Press G2 Seat", Sequence: 2, Enabled: true,
+		CoreNodeName: "PLN_G2", Code: "PLNG2", Name: "Press G2 Position", Sequence: 2, Enabled: true,
 	})
 	if err != nil {
-		t.Fatalf("create seat node: %v", err)
+		t.Fatalf("create position node: %v", err)
 	}
 	if _, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, OperatorStationID: &stationID,
@@ -156,7 +156,7 @@ func goldenScenario(t *testing.T) (db *store.DB, stationID int64) {
 		owner *int64
 	}{
 		{"PLN_G1", pressNodeID, domain.ParticipantRoleTask, &taskID},
-		{"PLN_G2", seatNodeID, domain.ParticipantRoleIndexedOver, &taskID},
+		{"PLN_G2", positionNodeID, domain.ParticipantRoleIndexedOver, &taskID},
 	} {
 		if _, err := db.Exec(`INSERT INTO changeover_participants
 			(process_changeover_id, core_node_name, process_node_id, role, owning_task_id)

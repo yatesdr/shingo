@@ -434,10 +434,10 @@ claims:
     inbound_source: SYN_MT_Return
     outbound_destination: SYN_SM_Stamp
     # The round-3/4 claim config, present so the seeder round-trip asserts it
-    # lands. Distinctive on every axis a wrong encoding would flatten: TWO seats
+    # lands. Distinctive on every axis a wrong encoding would flatten: TWO positions
     # (not one, not all), a destination that is NOT outbound_destination, and a
     # two-point route in an order that is not sorted.
-    changeover_evac_seats: [front, paired]
+    changeover_evac_positions: [front, paired]
     changeover_evac_destination: SYN_MT_Return
     key_route: [WP_AISLE_S, WP_AISLE_N]
     key_task: unload

@@ -14,55 +14,55 @@ func pressClaim() *NodeClaim {
 	}
 }
 
-// Seats are positional, not names: a selection has to survive a press being
+// Positions are positional, not names: a selection has to survive a press being
 // re-cabled or a style re-pairing it, and a stored node name would not.
-func TestSeatCoreNode_ResolvesByPosition(t *testing.T) {
+func TestPositionCoreNode_ResolvesByPosition(t *testing.T) {
 	t.Parallel()
 	c := pressClaim()
-	for _, tc := range []struct{ seat, want string }{
-		{EvacSeatFront, "PRESS_A"},
-		{EvacSeatPaired, "PRESS_B"},
-		{EvacSeatSecond, "PRESS_C"},
-		{"not-a-seat", ""},
+	for _, tc := range []struct{ position, want string }{
+		{EvacPositionFront, "PRESS_A"},
+		{EvacPositionPaired, "PRESS_B"},
+		{EvacPositionSecond, "PRESS_C"},
+		{"not-a-position", ""},
 	} {
-		if got := SeatCoreNode(c, tc.seat); got != tc.want {
-			t.Errorf("SeatCoreNode(%q) = %q, want %q", tc.seat, got, tc.want)
+		if got := PositionCoreNode(c, tc.position); got != tc.want {
+			t.Errorf("PositionCoreNode(%q) = %q, want %q", tc.position, got, tc.want)
 		}
 	}
-	if got := SeatCoreNode(nil, EvacSeatFront); got != "" {
-		t.Errorf("SeatCoreNode(nil) = %q, want empty", got)
+	if got := PositionCoreNode(nil, EvacPositionFront); got != "" {
+		t.Errorf("PositionCoreNode(nil) = %q, want empty", got)
 	}
 }
 
-func TestMarkedEvacSeatNodes(t *testing.T) {
+func TestMarkedEvacPositionNodes(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name   string
-		seats  []string
-		second string
-		want   string
+		name      string
+		positions []string
+		second    string
+		want      string
 	}{
 		{"none marked is the standing default", nil, "PRESS_C", ""},
-		{"one seat", []string{EvacSeatPaired}, "PRESS_C", "PRESS_B"},
-		{"all three", []string{EvacSeatFront, EvacSeatPaired, EvacSeatSecond}, "PRESS_C", "PRESS_A,PRESS_B,PRESS_C"},
+		{"one position", []string{EvacPositionPaired}, "PRESS_C", "PRESS_B"},
+		{"all three", []string{EvacPositionFront, EvacPositionPaired, EvacPositionSecond}, "PRESS_C", "PRESS_A,PRESS_B,PRESS_C"},
 		// Front to back, whatever order the selection was stored in: the plan
 		// the builder emits has to be deterministic.
 		{"order is front-to-back, not selection order",
-			[]string{EvacSeatSecond, EvacSeatFront}, "PRESS_C", "PRESS_A,PRESS_C"},
+			[]string{EvacPositionSecond, EvacPositionFront}, "PRESS_C", "PRESS_A,PRESS_C"},
 		// A 2-position press whose claim still carries "second" from a
 		// 3-position past must plan ONE evacuation, not one and a phantom at
 		// the empty string.
-		{"a marked seat the layout does not have contributes nothing",
-			[]string{EvacSeatFront, EvacSeatSecond}, "", "PRESS_A"},
+		{"a marked position the layout does not have contributes nothing",
+			[]string{EvacPositionFront, EvacPositionSecond}, "", "PRESS_A"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := pressClaim()
 			c.SecondPairedCoreNode = tc.second
-			c.ChangeoverEvacSeats = tc.seats
-			got := strings.Join(MarkedEvacSeatNodes(c), ",")
+			c.ChangeoverEvacPositions = tc.positions
+			got := strings.Join(MarkedEvacPositionNodes(c), ",")
 			if got != tc.want {
-				t.Errorf("MarkedEvacSeatNodes = %q, want %q", got, tc.want)
+				t.Errorf("MarkedEvacPositionNodes = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -85,12 +85,12 @@ func TestEvacDestinationFor_FallsBackToOutbound(t *testing.T) {
 	}
 }
 
-// The seat vocabulary is front-to-back, the direction bins index. Rendering
+// The position vocabulary is front-to-back, the direction bins index. Rendering
 // and the builder both depend on it.
-func TestChangeoverEvacSeatKeys_IsFrontToBack(t *testing.T) {
+func TestChangeoverEvacPositionKeys_IsFrontToBack(t *testing.T) {
 	t.Parallel()
-	got := strings.Join(ChangeoverEvacSeatKeys(), ",")
+	got := strings.Join(ChangeoverEvacPositionKeys(), ",")
 	if got != "front,paired,second" {
-		t.Errorf("seat keys = %q, want front,paired,second", got)
+		t.Errorf("position keys = %q, want front,paired,second", got)
 	}
 }

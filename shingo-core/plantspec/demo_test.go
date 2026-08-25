@@ -76,7 +76,7 @@ func TestShippedDemoPlantLoaderTypes(t *testing.T) {
 //     to be unreachable, so equalizing them to "make it work" would delete the
 //     coverage.
 //   - PRESS-1-RUN -> PRESS-1-MOVED: same press, DISJOINT nodes. The marked
-//     seats leave the style entirely and the new seats arrive empty.
+//     positions leave the style entirely and the new positions arrive empty.
 //
 // Shape-based, not value-based: it does not care WHICH bin types or WHICH
 // nodes, only that the relationships hold.
@@ -103,8 +103,8 @@ func TestShippedDemoPlantKeepsBothToolingShapesReachable(t *testing.T) {
 	if run == nil {
 		t.Fatal("no PRESS-1-RUN claim")
 	}
-	if len(run.ChangeoverEvacSeats) == 0 {
-		t.Error("PRESS-1-RUN marks no seats — the outgoing claim owns the tooling decision, " +
+	if len(run.ChangeoverEvacPositions) == 0 {
+		t.Error("PRESS-1-RUN marks no positions — the outgoing claim owns the tooling decision, " +
 			"and with no marks NEITHER shape is a tooling changeover any more")
 	}
 	// THE DEFAULT PATH IS THE ONE THAT MUST SHIP EXERCISED. Clearance is normal
@@ -113,14 +113,14 @@ func TestShippedDemoPlantKeepsBothToolingShapesReachable(t *testing.T) {
 	// the exception and nothing would exercise what a plant actually gets.
 	if run.ChangeoverEvacDestination != "" {
 		t.Errorf("PRESS-1-RUN sets changeover_evac_destination=%q.\n"+
-			"Leave it empty: the marked seats are cleared by NORMAL ROUTING, and this is the "+
+			"Leave it empty: the marked positions are cleared by NORMAL ROUTING, and this is the "+
 			"scenario that covers the default. The override has its own claim — see the "+
 			"single-override assertion below.", run.ChangeoverEvacDestination)
 	}
 
 	// ...and the override must ship exercised too, by exactly one claim, and it
 	// must name a node GROUP. A one-slot station is what the old "tooling bay"
-	// was, and a two-seat press sends two bins at it.
+	// was, and a two-position press sends two bins at it.
 	var overriding []*Claim
 	for i := range p.Claims {
 		if p.Claims[i].ChangeoverEvacDestination != "" {
@@ -146,9 +146,9 @@ func TestShippedDemoPlantKeepsBothToolingShapesReachable(t *testing.T) {
 			"capacity behaviour. The single-station version of this is what left robots dwelling "+
 			"on an occupied bay holding bins nothing would take away.", dest)
 	}
-	if len(overriding[0].ChangeoverEvacSeats) == 0 {
-		t.Errorf("claim on %s names a clearance override but marks no seats — the override is "+
-			"only ever read for a marked seat, so nothing would exercise it",
+	if len(overriding[0].ChangeoverEvacPositions) == 0 {
+		t.Errorf("claim on %s names a clearance override but marks no positions — the override is "+
+			"only ever read for a marked position, so nothing would exercise it",
 			overriding[0].CoreNode)
 	}
 

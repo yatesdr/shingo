@@ -654,7 +654,7 @@ func (db *DB) migrate() error {
 	// was a SECOND road for adding a column, and it is a road that closes: the
 	// rebuild is self-disarming (it reads the live table's defaults to decide
 	// whether to run), so on every database that has already crossed it the list
-	// stops executing. Six columns — changeover_evac_seats,
+	// stops executing. Six columns — changeover_evac_positions,
 	// changeover_evac_destination, changeover_load_directive,
 	// index_robot_supplies, key_route, key_task — reached fresh installs through
 	// the baseline CREATE and reached no upgraded plant at all, because their only
@@ -701,12 +701,18 @@ func (db *DB) migrate() error {
 
 	// v37 (2026-08-24, B1): the six the private list was swallowing. Same
 	// definitions as the baseline CREATE.
-	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_evac_seats TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_evac_positions TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_evac_destination TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_load_directive INTEGER NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN index_robot_supplies INTEGER NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN key_route TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN key_task TEXT NOT NULL DEFAULT ''")
+
+	// v38 (2026-08-25, carry-over parts): what happens to a marked position's bin
+	// when the part is common to both styles. Same definition as the baseline
+	// CREATE; 'replace' is today's behaviour, so every existing mark is
+	// unchanged by the column arriving.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace'")
 
 	if err := db.rebuildStyleNodeClaims(); err != nil {
 		return err

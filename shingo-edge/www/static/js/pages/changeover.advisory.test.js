@@ -78,13 +78,13 @@ function makeContext() {
         /running regardless/i.test(advisory.innerHTML), 'says it is not blocking', advisory.innerHTML);
     check('advisory points at where to fix it',
         advisory.innerHTML.includes('/processes'), 'links to the process nodes page', advisory.innerHTML);
-    // The list is indexed-over seats only — ones that own no changeover task.
-    // Seats that DO own a task have their rows auto-created at start and are
+    // The list is indexed-over positions only — ones that own no changeover task.
+    // Positions that DO own a task have their rows auto-created at start and are
     // driveable without configuration, so the advisory must not describe the
     // listed nodes as work the changeover is waiting on.
-    check('advisory says these seats own no task',
+    check('advisory says these positions own no task',
         /owns? no changeover task/i.test(advisory.innerHTML),
-        'explains the seats own no task', advisory.innerHTML);
+        'explains the positions own no task', advisory.innerHTML);
     check('advisory pluralises noun AND verb for two',
         advisory.innerHTML.includes('2 participant nodes have'), '2 participant nodes have', advisory.innerHTML);
 }

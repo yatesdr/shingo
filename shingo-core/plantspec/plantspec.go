@@ -289,11 +289,19 @@ type Claim struct {
 	// by hand in a browser, which means those features have never executed on a
 	// sim and there was no way to make them.
 	//
-	// ChangeoverEvacSeats names which press-index seats hold bins that block the
+	// ChangeoverEvacPositions names which press-index positions hold bins that block the
 	// tooling change: "front", "paired", "second". ChangeoverEvacDestination is
 	// where those bins go (blank falls back to outbound_destination).
-	ChangeoverEvacSeats       []string `yaml:"changeover_evac_seats,omitempty"`
+	ChangeoverEvacPositions   []string `yaml:"changeover_evac_positions,omitempty"`
 	ChangeoverEvacDestination string   `yaml:"changeover_evac_destination,omitempty"`
+	// ChangeoverCarryoverDisposition decides what happens to a marked position's bin
+	// when the SAME part runs on that position in both styles: "replace" (default —
+	// clear it and bring a fresh carrier through staging), "keep_lineside" (the
+	// bin does not move), or "outbound_staging" (the same bin hops to
+	// outbound_staging and returns on the tooling-done release). Ignored when
+	// the payloads differ. Seedable from day one, deliberately: a feature that
+	// cannot be put in a plant file cannot be exercised on a sim.
+	ChangeoverCarryoverDisposition string `yaml:"changeover_carryover_disposition,omitempty"`
 	// ChangeoverLoadDirective turns a LOADER's card into a loading instruction
 	// during a changeover — which empty carrier the changing-over cells want.
 	ChangeoverLoadDirective bool `yaml:"changeover_load_directive,omitempty"`

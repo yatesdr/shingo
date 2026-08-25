@@ -23,7 +23,7 @@ import (
 // The reachable caller is the replenishment admin page: PUT
 // /api/replenishment/cell-reorder → UpdateCellReorder → processClaimToInput,
 // which reads the whole claim and re-sends a subset. Changing a reorder point
-// wiped the press's evacuation seats, its evacuation destination, the loader
+// wiped the press's evacuation positions, its evacuation destination, the loader
 // card flag and the key route.
 // ---------------------------------------------------------------------------
 
@@ -49,7 +49,7 @@ func fullyConfiguredClaim(t *testing.T, db *store.DB) (claimID int64, styleID in
 		PayloadCode:    "PART-X", UOPCapacity: 100, ReorderPoint: 10,
 		InboundSource: "MARKET", OutboundDestination: "MARKET",
 
-		ChangeoverEvacSeats:       &[]string{"front", "paired"},
+		ChangeoverEvacPositions:   &[]string{"front", "paired"},
 		ChangeoverEvacDestination: strPtr("TOOLING-BAY"),
 		ChangeoverLoadDirective:   &yes,
 		IndexRobotSupplies:        &yes,
@@ -69,8 +69,8 @@ func assertSixSurvive(t *testing.T, db *store.DB, claimID int64, after string) {
 	got, err := db.GetStyleNodeClaim(claimID)
 	testutil.MustNoErr(t, err, "read claim back")
 
-	if !slices.Equal(got.ChangeoverEvacSeats, []string{"front", "paired"}) {
-		t.Errorf("%s: changeover_evac_seats = %v, want [front paired]", after, got.ChangeoverEvacSeats)
+	if !slices.Equal(got.ChangeoverEvacPositions, []string{"front", "paired"}) {
+		t.Errorf("%s: changeover_evac_positions = %v, want [front paired]", after, got.ChangeoverEvacPositions)
 	}
 	if got.ChangeoverEvacDestination != "TOOLING-BAY" {
 		t.Errorf("%s: changeover_evac_destination = %q, want TOOLING-BAY", after, got.ChangeoverEvacDestination)
@@ -154,7 +154,7 @@ func TestClaimUpdate_ExplicitEmptyStillClears(t *testing.T) {
 		PayloadCode:    "PART-X", UOPCapacity: 100, ReorderPoint: 10,
 		InboundSource: "MARKET", OutboundDestination: "MARKET",
 
-		ChangeoverEvacSeats:       &[]string{},
+		ChangeoverEvacPositions:   &[]string{},
 		ChangeoverEvacDestination: strPtr(""),
 		ChangeoverLoadDirective:   &no,
 		IndexRobotSupplies:        &no,
@@ -165,8 +165,8 @@ func TestClaimUpdate_ExplicitEmptyStillClears(t *testing.T) {
 
 	got, err := db.GetStyleNodeClaim(claimID)
 	testutil.MustNoErr(t, err, "read claim back")
-	if len(got.ChangeoverEvacSeats) != 0 {
-		t.Errorf("changeover_evac_seats = %v, want empty", got.ChangeoverEvacSeats)
+	if len(got.ChangeoverEvacPositions) != 0 {
+		t.Errorf("changeover_evac_positions = %v, want empty", got.ChangeoverEvacPositions)
 	}
 	if got.ChangeoverEvacDestination != "" {
 		t.Errorf("changeover_evac_destination = %q, want empty", got.ChangeoverEvacDestination)

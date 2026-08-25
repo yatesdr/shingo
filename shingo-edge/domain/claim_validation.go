@@ -236,33 +236,56 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		}
 	}
 
-	// Seats can only be marked on a cell that HAS seats, and only seats the
+	// Positions can only be marked on a cell that HAS positions, and only positions the
 	// layout actually holds. Marking the third position of a 2-position press
-	// is not an unlikely configuration, it is a reference to a seat that does
+	// is not an unlikely configuration, it is a reference to a position that does
 	// not exist — and the evacuation it asks for can never happen, silently,
-	// because MarkedEvacSeatNodes correctly drops it.
-	seats := OptValue(in.ChangeoverEvacSeats)
-	if len(seats) > 0 {
+	// because MarkedEvacPositionNodes correctly drops it.
+	positions := OptValue(in.ChangeoverEvacPositions)
+	if len(positions) > 0 {
 		if in.SwapMode != protocol.SwapModeTwoRobotPressIndex {
-			add("changeover_evac_seats",
-				"Per-seat tooling evacuation applies to 2-Robot Press Index only; use Evacuate on changeover for a single-position node")
+			add("changeover_evac_positions",
+				"Per-position tooling evacuation applies to 2-Robot Press Index only; use Evacuate on changeover for a single-position node")
 		} else {
-			for _, seat := range seats {
-				switch seat {
-				case EvacSeatFront:
-					// The front seat is CoreNodeName, always present.
-				case EvacSeatPaired:
+			for _, position := range positions {
+				switch position {
+				case EvacPositionFront:
+					// The front position is CoreNodeName, always present.
+				case EvacPositionPaired:
 					if in.PairedCoreNode == "" {
-						add("changeover_evac_seats", "The back press position is marked for tooling evacuation but no Back Press Node is set")
+						add("changeover_evac_positions", "The back press position is marked for tooling evacuation but no Back Press Node is set")
 					}
-				case EvacSeatSecond:
+				case EvacPositionSecond:
 					if in.SecondPairedCoreNode == "" {
-						add("changeover_evac_seats", "The third press position is marked for tooling evacuation but this claim has no third position")
+						add("changeover_evac_positions", "The third press position is marked for tooling evacuation but this claim has no third position")
 					}
 				default:
-					add("changeover_evac_seats", fmt.Sprintf("%q is not a press seat", seat))
+					add("changeover_evac_positions", fmt.Sprintf("%q is not a press position", position))
 				}
 			}
+		}
+	}
+
+	// CARRY-OVER: refuse a disposition the cell cannot carry out, at SAVE time
+	// and by name.
+	//
+	// "outbound_staging" walks the kept bin to the cell's outbound staging spot
+	// and back. With no such spot configured there is nowhere to walk it, and
+	// the alternatives are both bad: silently falling back to clearing means an
+	// operator who asked for a short hop gets a supermarket round-trip and is
+	// never told, and refusing at CHANGEOVER time means finding out with a
+	// press down and people waiting. The arm gate's doctrine is that a
+	// configuration which cannot work is refused where it is written.
+	if disp := OptValue(in.ChangeoverCarryoverDisposition); disp != "" {
+		if !disp.Valid() {
+			add("changeover_carryover_disposition", fmt.Sprintf("%q is not a carry-over disposition", disp))
+		} else if disp == CarryoverOutboundStaging && in.OutboundStaging == "" {
+			add("changeover_carryover_disposition",
+				"Keeping a carried-over part at outbound staging requires an Outbound Staging node on this claim")
+		}
+		if disp != CarryoverReplace && len(positions) == 0 {
+			add("changeover_carryover_disposition",
+				"A carry-over disposition only applies to positions marked for changeover clearance; this claim marks none")
 		}
 	}
 

@@ -42,9 +42,9 @@ func changeoverBlockerFor(nodeName string, orderID int64, status protocol.Status
 }
 
 // blockNodeSet is every node the changeover physically ACTS ON: the CHANGED diff
-// nodes, plus the indexed_over press-index seats.
+// nodes, plus the indexed_over press-index positions.
 //
-// The seats are the Hopkinsville blind spot — the removed AbortNodeOrders sweep
+// The positions are the Hopkinsville blind spot — the removed AbortNodeOrders sweep
 // missed orders 1249/1251 "only because it walks plan.diffs (the task nodes)"
 // while they were delivering to PLN_02 and PLN_05, and the gate that replaced it
 // inherited the same walk. A robot is physically traversing those positions, so
@@ -64,8 +64,8 @@ func changeoverBlockerFor(nodeName string, orderID int64, status protocol.Status
 // product requirement rather than a test artefact: an operator changing over
 // node A must not be blocked by a normal order in flight to node B.
 //
-// This makes the set equal to cancelNodeSet plus the seats — but they stay two
-// functions, because the seats are exactly what must never be cancelled.
+// This makes the set equal to cancelNodeSet plus the positions — but they stay two
+// functions, because the positions are exactly what must never be cancelled.
 //
 // plan.participants, not ListChangeoverParticipants: the changeover row does not
 // exist yet when the gate runs (Create is below, the gate above it), so there is
@@ -93,7 +93,7 @@ func blockNodeSet(plan *changeoverPlan) []string {
 // cancelNodeSet is the CHANGED diff nodes only — deliberately narrower than
 // blockNodeSet, and they must stay two separately named functions.
 //
-// Widening the BLOCK to a seat is safe: it says "not yet", the operator presses
+// Widening the BLOCK to a position is safe: it says "not yet", the operator presses
 // again. Widening the CANCEL to one is the Hopkinsville deadlock — and widening
 // it to a SituationUnchanged node is a second, quieter bug: the incoming style
 // still claims that payload at that node, so the order is still wanted and
@@ -279,7 +279,7 @@ func (e *Engine) nodesWithOrdersInFlight(plan *changeoverPlan) []string {
 		// surface matches on core node names, but those are wiring identifiers —
 		// resolve back to the process node's display name when we have one, and
 		// fall back to the raw name for a node this process does not own (an
-		// indexed_over seat on another station, say).
+		// indexed_over position on another station, say).
 		where := o.DeliveryNode
 		if node := findNodeByCoreName(plan.nodes, o.DeliveryNode); node != nil && node.Name != "" {
 			where = node.Name

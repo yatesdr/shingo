@@ -34,11 +34,11 @@ func claimsByCoreNode(db *sql.DB, styleID int64) (map[string]processes.NodeClaim
 }
 
 // pressPositionClaimsForBoard derives the per-position claim for every press
-// seat that a fanned-out changeover gave its OWN task, keyed by process node
+// position that a fanned-out changeover gave its OWN task, keyed by process node
 // ID. Returns nil when the board has no changeover tasks, which is the steady
 // state — this costs nothing on an ordinary poll.
 //
-// The seats it covers have no style_node_claims row by design: the planner
+// The positions it covers have no style_node_claims row by design: the planner
 // synthesizes their claims in memory and UpsertClaim refuses to persist the
 // press_position marker. Before Hopkinsville 2026-08-05 the view simply had no
 // route to them, so they rendered as unclaimed nodes with no actions — see the
@@ -60,8 +60,8 @@ func pressPositionClaimsForBoard(
 		return nil
 	}
 	out := map[int64]*processes.NodeClaim{}
-	// Parent claims are shared by the seats of one press, so read each at most
-	// once. A failed read caches nil and is not retried per seat.
+	// Parent claims are shared by the positions of one press, so read each at most
+	// once. A failed read caches nil and is not retried per position.
 	parents := map[int64]*processes.NodeClaim{}
 	for _, node := range nodes {
 		if node.CoreNodeName == "" {
@@ -77,9 +77,9 @@ func pressPositionClaimsForBoard(
 		if !ok {
 			continue
 		}
-		// Drop and Swap carry the seat's current material on FromClaimID; Add
+		// Drop and Swap carry the position's current material on FromClaimID; Add
 		// only ever has ToClaimID. Prefer From — it names the payload physically
-		// sitting on the seat, which is what an evac release acts on.
+		// sitting on the position, which is what an evac release acts on.
 		claimID := task.FromClaimID
 		if claimID == nil {
 			claimID = task.ToClaimID
@@ -99,18 +99,18 @@ func pressPositionClaimsForBoard(
 		if parent == nil {
 			continue
 		}
-		// Only a press-index parent fans out into per-position seats, and the
-		// seat must be one this parent actually names. Both checks live in
-		// domain.SeatClaimFromParent, which is the same derivation the per-node
+		// Only a press-index parent fans out into per-position positions, and the
+		// position must be one this parent actually names. Both checks live in
+		// domain.PositionClaimFromParent, which is the same derivation the per-node
 		// changeover actions and the cutover gate use — the view and the actions
-		// have to agree about which seats are resolvable, or a seat renders with
-		// buttons that refuse. Anything that is not a seat of a press-index
+		// have to agree about which positions are resolvable, or a position renders with
+		// buttons that refuse. Anything that is not a position of a press-index
 		// parent comes back nil and is left claimless.
-		seat := domain.SeatClaimFromParent(parent, node.CoreNodeName)
-		if seat == nil {
+		position := domain.PositionClaimFromParent(parent, node.CoreNodeName)
+		if position == nil {
 			continue
 		}
-		out[node.ID] = seat
+		out[node.ID] = position
 	}
 	return out
 }
@@ -846,10 +846,10 @@ func (s *StationService) applyLoaderLineside(view *store.OperatorStationView) {
 }
 
 // adoptChangeoverParticipants returns the tiles this station's board shows,
-// which is NOT simply the nodes assigned to it: a press-index extension seat is
+// which is NOT simply the nodes assigned to it: a press-index extension position is
 // auto-created with no operator_station_id, so it belongs on the board of the
 // press it extends. It also returns the per-node task map and, for an adopted
-// seat, the name of the node it hangs under.
+// position, the name of the node it hangs under.
 func (s *StationService) adoptChangeoverParticipants(
 	stationID int64, changeover *processes.Changeover,
 ) ([]processes.Node, map[int64]processes.NodeTask, map[int64]string, error) {
@@ -861,7 +861,7 @@ func (s *StationService) adoptChangeoverParticipants(
 	childOf := map[int64]string{}
 
 	// THREE narrowings used to hide a changeover node from its own station, and
-	// all three are relaxed here. A press-index extension seat is auto-created
+	// all three are relaxed here. A press-index extension position is auto-created
 	// with no operator_station_id (changeover_service.go inserts only
 	// process_id/core_node_name/code/name), so it fell through every one:
 	//
@@ -913,20 +913,20 @@ func (s *StationService) adoptChangeoverParticipants(
 			//
 			//  - OWNER: it has no station of its own but the task that owns it
 			//    does, and that station is us. The press-index case — PLN_02 is
-			//    an `indexed_over` seat of PLN_01's task, so it rides along.
+			//    an `indexed_over` position of PLN_01's task, so it rides along.
 			//
 			//  - ORPHAN: it resolves to NO station at all. That happens when a
-			//    changeover FANS OUT and gives the seat its OWN task: station
+			//    changeover FANS OUT and gives the position its OWN task: station
 			//    resolution walks own -> owning-task's-node, and for a
 			//    self-owning task both are the same stationless row, so it
-			//    lands nil and the seat renders NOWHERE. Hopkinsville
+			//    lands nil and the position renders NOWHERE. Hopkinsville
 			//    2026-07-28: a tote->bin changeover dropped all four press
 			//    positions independently, PLN_02/PLN_05 vanished from the
 			//    board, and the two robots parked at them could not be
 			//    released — there was no tile to press. Adopt onto the board
 			//    already running this changeover.
 			//
-			// Adoption stays inside the ActiveChangeover guard, so these seats
+			// Adoption stays inside the ActiveChangeover guard, so these positions
 			// appear only while they have work and disappear afterwards. That
 			// matters: a paired on-deck position must NOT be a permanent tile —
 			// LoadBin refuses to stamp a part there precisely because doing so
@@ -941,7 +941,7 @@ func (s *StationService) adoptChangeoverParticipants(
 				continue
 			}
 			// Render as a child of the node whose task owns it — but never of
-			// itself. A fanned-out seat owns its own task, so naming it its own
+			// itself. A fanned-out position owns its own task, so naming it its own
 			// parent would be meaningless; it stands as its own tile instead.
 			if p.OwningTaskID != nil {
 				if owner, ok := taskByID[*p.OwningTaskID]; ok && owner.ProcessNodeID != child.ID {
@@ -1001,7 +1001,7 @@ func (s *StationService) buildNodeTile(
 	// above, for the other node kind that owns work but no claim row. When a
 	// changeover FANS OUT (different bin types across the index, e.g. tote →
 	// bin) each press position gets its OWN task and order instead of riding
-	// along on the front position's. Those seats have no style_node_claims
+	// along on the front position's. Those positions have no style_node_claims
 	// row — press_position claims are in-memory only — so the view saw a
 	// claimless node and every claim-keyed gate failed closed.
 	//

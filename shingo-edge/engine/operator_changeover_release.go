@@ -119,13 +119,13 @@ func (e *Engine) ReleaseChangeoverWaitForNode(processID, processNodeID int64, di
 // releaseSingleLegChangeoverNode handles the per-node RELEASE click for a node
 // whose changeover work is NOT a coordinated swap pair.
 //
-// A cleared seat's leg is one order on one robot: lift the bin off the seat,
+// A cleared position's leg is one order on one robot: lift the bin off the position,
 // take it wherever this cell's bins go, fetch the replacement, hold it at
 // staging, set it down when the operator says the setup is finished. There is
 // no sibling because there is no second robot, and ResolveSwapPair — which
 // exists to keep a two-robot swap's two legs together — refused it for that:
 // "order 58 has no sibling — not a coordinated pair (single-leg flow should use
-// per-order release)". A seat node has no claim row either, so the same click
+// per-order release)". A position node has no claim row either, so the same click
 // could equally bounce on "no active claim for release". Both were the operator
 // pressing the only release button in front of them and getting nothing (N1-d,
 // sim 2026-08-24).

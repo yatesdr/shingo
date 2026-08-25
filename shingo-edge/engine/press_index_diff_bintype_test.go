@@ -21,13 +21,13 @@ import (
 // The same-bin-type case rides the press's index motion: one claim, one node,
 // one pair of orders. When the bin geometry changes the index cannot shift the
 // bins, so FanOutPressIndexDifferentBinType rewrites the parent diff into one
-// diff PER SEAT — and the back seats have no style_node_claims row. They never
+// diff PER POSITION — and the back positions have no style_node_claims row. They never
 // have: UpsertClaim refuses the press_position marker, the planner synthesizes
-// their claims in memory, and the seat is a physical position of a press rather
+// their claims in memory, and the position is a physical position of a press rather
 // than a cell anyone configures.
 //
-// Every one of those seats gets its own changeover_node_task in swap_required,
-// and the cutover gate blocks until every task is terminal. So the seat tasks
+// Every one of those positions gets its own changeover_node_task in swap_required,
+// and the cutover gate blocks until every task is terminal. So the position tasks
 // have to be driveable, which is what this file pins.
 // ---------------------------------------------------------------------------
 
@@ -58,11 +58,11 @@ func binTypeCoreServer(t *testing.T, binTypeByPayload map[string]string) *httpte
 	return srv
 }
 
-// seedDiffBinTypePressIndex builds a two-seat press whose styles use different
+// seedDiffBinTypePressIndex builds a two-position press whose styles use different
 // bin types.
 //
-// Both seats get a process_nodes row. That is the configuration the start
-// advisory asks for, and it is deliberately present here: without it the seats
+// Both positions get a process_nodes row. That is the configuration the start
+// advisory asks for, and it is deliberately present here: without it the positions
 // have no row to gate, render or release, and this test would be measuring the
 // missing row rather than the missing claim.
 func seedDiffBinTypePressIndex(t *testing.T, db *store.DB) (processID, frontID, backID, fromStyleID, toStyleID int64) {
@@ -104,7 +104,7 @@ func seedDiffBinTypePressIndex(t *testing.T, db *store.DB) (processID, frontID, 
 	})
 	testutil.MustNoErr(t, err, "upsert to claim")
 
-	// Both seats are physically occupied by the outgoing style.
+	// Both positions are physically occupied by the outgoing style.
 	_, err = db.EnsureProcessNodeRuntime(frontID)
 	testutil.MustNoErr(t, err, "ensure front runtime")
 	_, err = db.EnsureProcessNodeRuntime(backID)
@@ -115,7 +115,7 @@ func seedDiffBinTypePressIndex(t *testing.T, db *store.DB) (processID, frontID, 
 }
 
 // startDiffBinTypeChangeover seeds the scenario, starts the changeover, and
-// returns the engine plus the two seat node ids.
+// returns the engine plus the two position node ids.
 func startDiffBinTypeChangeover(t *testing.T, db *store.DB) (eng *Engine, processID, frontID, backID int64) {
 	t.Helper()
 	processID, frontID, backID, _, toStyleID := seedDiffBinTypePressIndex(t, db)
@@ -131,10 +131,10 @@ func startDiffBinTypeChangeover(t *testing.T, db *store.DB) (eng *Engine, proces
 	return eng, processID, frontID, backID
 }
 
-// TestDiffBinTypePressIndex_FansOutOneTaskPerSeat is the precondition the
-// deadlock test depends on: the fan-out really does give the back seat its own
+// TestDiffBinTypePressIndex_FansOutOneTaskPerPosition is the precondition the
+// deadlock test depends on: the fan-out really does give the back position its own
 // task, and that task really does gate the cutover.
-func TestDiffBinTypePressIndex_FansOutOneTaskPerSeat(t *testing.T) {
+func TestDiffBinTypePressIndex_FansOutOneTaskPerPosition(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng, processID, _, _ := startDiffBinTypeChangeover(t, db)
@@ -150,19 +150,19 @@ func TestDiffBinTypePressIndex_FansOutOneTaskPerSeat(t *testing.T) {
 		byNode[task.NodeName] = task
 	}
 	if len(byNode) != 2 {
-		t.Fatalf("different bin types must fan out to one task per seat, got %d task(s): %v", len(byNode), byNode)
+		t.Fatalf("different bin types must fan out to one task per position, got %d task(s): %v", len(byNode), byNode)
 	}
 	for _, name := range []string{"Press Front", "Press Back"} {
 		task, ok := byNode[name]
 		if !ok {
-			t.Fatalf("no changeover task for seat %q — got %v", name, byNode)
+			t.Fatalf("no changeover task for position %q — got %v", name, byNode)
 		}
 		// Non-terminal is the property that matters: a task in any live state
 		// gates the cutover, and only the per-node actions can advance it.
 		// (The applier creates the supply legs at start, so the state here is
 		// staging_requested rather than the swap_required it was born in.)
 		if domain.IsNodeTaskStateTerminal(task.State, task.Situation) {
-			t.Errorf("seat %q task is already terminal (%q) — this scenario is meant to leave real work to do",
+			t.Errorf("position %q task is already terminal (%q) — this scenario is meant to leave real work to do",
 				name, task.State)
 		}
 	}
@@ -170,24 +170,24 @@ func TestDiffBinTypePressIndex_FansOutOneTaskPerSeat(t *testing.T) {
 	ok, blockers, err := eng.canCompleteChangeover(changeover.ID)
 	testutil.MustNoErr(t, err, "canCompleteChangeover")
 	if ok {
-		t.Fatal("cutover must be blocked while both seat tasks are in swap_required")
+		t.Fatal("cutover must be blocked while both position tasks are in swap_required")
 	}
 	if len(blockers) < 2 {
-		t.Errorf("want a blocker per unfinished seat, got %d: %v", len(blockers), blockers)
+		t.Errorf("want a blocker per unfinished position, got %d: %v", len(blockers), blockers)
 	}
 }
 
-// TestDiffBinTypePressIndex_BackSeatDrivesToCompletion is the deadlock.
+// TestDiffBinTypePressIndex_BackPositionDrivesToCompletion is the deadlock.
 //
-// The back seat owns a task keyed to its own node name, and the per-node
+// The back position owns a task keyed to its own node name, and the per-node
 // actions resolve their claim with GetStyleNodeClaimByNode(styleID, nodeName).
-// A back seat has no persisted row under its own name — by design — so every
+// A back position has no persisted row under its own name — by design — so every
 // action refuses and the task can never leave swap_required. The cutover gate
 // then blocks forever and cancel is the only exit.
 //
-// RED before the seat resolver: SwitchNodeToTarget on the back seat returns
+// RED before the position resolver: SwitchNodeToTarget on the back position returns
 // "target style claim not found for node".
-func TestDiffBinTypePressIndex_BackSeatDrivesToCompletion(t *testing.T) {
+func TestDiffBinTypePressIndex_BackPositionDrivesToCompletion(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng, processID, frontID, backID := startDiffBinTypeChangeover(t, db)
@@ -195,20 +195,20 @@ func TestDiffBinTypePressIndex_BackSeatDrivesToCompletion(t *testing.T) {
 	changeover, err := db.GetActiveProcessChangeover(processID)
 	testutil.MustNoErr(t, err, "get active changeover")
 
-	// The whole point: the seat with no row of its own must be actionable.
+	// The whole point: the position with no row of its own must be actionable.
 	if err := eng.SwitchNodeToTarget(processID, backID); err != nil {
-		t.Fatalf("back seat PI-BACK could not be switched to the target style: %v\n"+
-			"The fan-out gave this seat its own changeover task, so the cutover gate waits on it, "+
-			"but the seat has no style_node_claims row under its own name and the action resolves "+
+		t.Fatalf("back position PI-BACK could not be switched to the target style: %v\n"+
+			"The fan-out gave this position its own changeover task, so the cutover gate waits on it, "+
+			"but the position has no style_node_claims row under its own name and the action resolves "+
 			"claims by node name only. Nothing can advance the task and cancel is the only exit.", err)
 	}
 	if err := eng.SwitchNodeToTarget(processID, frontID); err != nil {
-		t.Fatalf("front seat PI-FRONT could not be switched to the target style: %v", err)
+		t.Fatalf("front position PI-FRONT could not be switched to the target style: %v", err)
 	}
 
 	// The supply legs the applier created at start still gate the cutover —
 	// correctly, they place bins at participant nodes. Land them, as the robots
-	// would, so what remains under test is the seat tasks.
+	// would, so what remains under test is the position tasks.
 	tasks, err := db.ListChangeoverNodeTasks(changeover.ID)
 	testutil.MustNoErr(t, err, "list node tasks")
 	for _, task := range tasks {
@@ -223,21 +223,21 @@ func TestDiffBinTypePressIndex_BackSeatDrivesToCompletion(t *testing.T) {
 	ok, blockers, err := eng.canCompleteChangeover(changeover.ID)
 	testutil.MustNoErr(t, err, "canCompleteChangeover")
 	if !ok {
-		t.Fatalf("every seat task is done, so cutover must be allowed; still blocked by: %v", blockers)
+		t.Fatalf("every position task is done, so cutover must be allowed; still blocked by: %v", blockers)
 	}
 }
 
-// TestDiffBinTypePressIndex_BackSeatEvacuates pins the evacuation leg of the
+// TestDiffBinTypePressIndex_BackPositionEvacuates pins the evacuation leg of the
 // same seam. EvacuateNode resolves the FROM claim rather than the TO claim, so
-// it fails in its own way — the seat is not claimed under its own name on
+// it fails in its own way — the position is not claimed under its own name on
 // either side.
-func TestDiffBinTypePressIndex_BackSeatEvacuates(t *testing.T) {
+func TestDiffBinTypePressIndex_BackPositionEvacuates(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng, processID, _, backID := startDiffBinTypeChangeover(t, db)
 
 	if _, err := eng.EvacuateNode(processID, backID, 0); err != nil {
-		t.Fatalf("back seat PI-BACK could not be evacuated: %v\n"+
-			"An evac on a fanned-out seat is the release leg the changeover planned for it.", err)
+		t.Fatalf("back position PI-BACK could not be evacuated: %v\n"+
+			"An evac on a fanned-out position is the release leg the changeover planned for it.", err)
 	}
 }

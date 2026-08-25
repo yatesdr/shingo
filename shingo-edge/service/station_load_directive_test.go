@@ -24,8 +24,8 @@ import (
 // ---------------------------------------------------------------------------
 
 // loadDirectiveScenario builds a station with a produce LOADER carrying the
-// directive flag, plus a press-index press whose extension seat is adopted onto
-// the board through its owning task — the shape that renders a claimless seat.
+// directive flag, plus a press-index press whose extension position is adopted onto
+// the board through its owning task — the shape that renders a claimless position.
 func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 	t.Helper()
 	db := testdb.Open(t)
@@ -48,10 +48,10 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 	})
 	mustNoErr(t, err, "create press node")
 	// Stationless: adopted onto this board through its owning task.
-	seatNodeID, err := db.CreateProcessNode(processes.NodeInput{
-		ProcessID: processID, CoreNodeName: "PLN_2", Code: "PLN2", Name: "Press 1 Seat", Sequence: 3, Enabled: true,
+	positionNodeID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "PLN_2", Code: "PLN2", Name: "Press 1 Position", Sequence: 3, Enabled: true,
 	})
-	mustNoErr(t, err, "create seat node")
+	mustNoErr(t, err, "create position node")
 
 	fromStyleID, err := db.CreateStyle("LD-FROM", "from", processID)
 	mustNoErr(t, err, "create from style")
@@ -74,19 +74,19 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 	mustNoErr(t, err, "upsert loader claim")
 
 	// The press-index parent, ALSO carrying the flag — the case A8 is about.
-	// Its seat inherits the whole struct, so if nothing clears the flag the
-	// seat renders an instruction meant for a loader's card.
+	// Its position inherits the whole struct, so if nothing clears the flag the
+	// position renders an instruction meant for a loader's card.
 	pressClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "PLN_1", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PLN_2",
 		PayloadCode: "PART-OLD", UOPCapacity: 100,
 		InboundSource: "MARKET", OutboundDestination: "MARKET",
 		// Serves both payloads, so the directive builder's "can this node serve
-		// the incoming payload" filter does NOT incidentally hide the seat. That
+		// the incoming payload" filter does NOT incidentally hide the position. That
 		// filter is why a first version of this test passed while the flag was
-		// still reaching seats: the seat inherited PART-OLD and the incoming
+		// still reaching positions: the position inherited PART-OLD and the incoming
 		// payload was PART-NEW, so it was excluded for a reason that has nothing
-		// to do with it being a seat.
+		// to do with it being a position.
 		AllowedPayloadCodes:     []string{"PART-OLD", "PART-NEW"},
 		ChangeoverLoadDirective: domain.Ptr(loaderFlag),
 	})
@@ -115,20 +115,20 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 	mustNoErr(t, err, "set target style")
 
 	// The press owns a task, which is what makes this station the one running
-	// the changeover — the anchor the stationless seat is adopted against.
+	// the changeover — the anchor the stationless position is adopted against.
 	pres, err := db.Exec(`INSERT INTO changeover_node_tasks
 		(process_changeover_id, process_node_id, from_claim_id, to_claim_id, situation, state)
 		VALUES (?, ?, ?, ?, 'swap', 'swap_required')`, changeoverID, pressNodeID, pressClaimID, pressClaimID)
 	mustNoErr(t, err, "insert press task")
 	pressTaskID, _ := pres.LastInsertId()
 
-	// The seat owns its OWN task, keyed to the PARENT claim — the fanned-out
+	// The position owns its OWN task, keyed to the PARENT claim — the fanned-out
 	// shape pressPositionClaimsForBoard resolves through.
 	sres, err := db.Exec(`INSERT INTO changeover_node_tasks
 		(process_changeover_id, process_node_id, from_claim_id, to_claim_id, situation, state)
-		VALUES (?, ?, ?, ?, 'swap', 'swap_required')`, changeoverID, seatNodeID, pressClaimID, pressClaimID)
-	mustNoErr(t, err, "insert seat task")
-	seatTaskID, _ := sres.LastInsertId()
+		VALUES (?, ?, ?, ?, 'swap', 'swap_required')`, changeoverID, positionNodeID, pressClaimID, pressClaimID)
+	mustNoErr(t, err, "insert position task")
+	positionTaskID, _ := sres.LastInsertId()
 
 	for _, p := range []struct {
 		name  string
@@ -137,7 +137,7 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 		owner int64
 	}{
 		{"PLN_1", pressNodeID, domain.ParticipantRoleTask, pressTaskID},
-		{"PLN_2", seatNodeID, domain.ParticipantRoleTask, seatTaskID},
+		{"PLN_2", positionNodeID, domain.ParticipantRoleTask, positionTaskID},
 	} {
 		_, err = db.Exec(`INSERT INTO changeover_participants
 			(process_changeover_id, core_node_name, process_node_id, role, owning_task_id)
@@ -220,14 +220,14 @@ func TestBuildView_NoDirectiveWithoutTheFlag(t *testing.T) {
 	}
 }
 
-// TestBuildView_BackSeatRendersNoDirective is A8, settled by test.
+// TestBuildView_BackPositionRendersNoDirective is A8, settled by test.
 //
-// SynthesizePressPositionClaim is a whole-struct copy of the parent, so a seat
+// SynthesizePressPositionClaim is a whole-struct copy of the parent, so a position
 // inherits ChangeoverLoadDirective, and the press-index parent is produce-role —
 // which is the only other condition BuildChangeoverLoadDirective checks. Nothing
-// else stood between a flagged press and every one of its seats showing a
+// else stood between a flagged press and every one of its positions showing a
 // loading instruction on a tile that loads nothing.
-func TestBuildView_BackSeatRendersNoDirective(t *testing.T) {
+func TestBuildView_BackPositionRendersNoDirective(t *testing.T) {
 	t.Parallel()
 	db, stationID := loadDirectiveScenario(t, true)
 	svc := NewStationService(db)
@@ -236,15 +236,15 @@ func TestBuildView_BackSeatRendersNoDirective(t *testing.T) {
 	view, err := svc.BuildView(context.Background(), stationID)
 	mustNoErr(t, err, "BuildView")
 
-	seat := tileFor(t, view, "PLN_2")
-	if seat.ActiveClaim == nil {
-		t.Fatal("the seat rendered claimless — this fixture exists to exercise the synthesized " +
-			"seat claim, so the scenario is not set up as intended")
+	position := tileFor(t, view, "PLN_2")
+	if position.ActiveClaim == nil {
+		t.Fatal("the position rendered claimless — this fixture exists to exercise the synthesized " +
+			"position claim, so the scenario is not set up as intended")
 	}
-	if d := seat.ChangeoverLoadDirective; d != nil {
-		t.Errorf("a press seat rendered a load directive: %+v\n"+
+	if d := position.ChangeoverLoadDirective; d != nil {
+		t.Errorf("a press position rendered a load directive: %+v\n"+
 			"The directive is an instruction to a LOADER — go and fetch these carriers. A press "+
-			"seat loads nothing, and it only has the flag because the synth copies the parent "+
+			"position loads nothing, and it only has the flag because the synth copies the parent "+
 			"struct wholesale.", d)
 	}
 }

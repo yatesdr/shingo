@@ -106,19 +106,19 @@ func findActiveClaim(db *store.DB, node *processes.Node) *processes.NodeClaim {
 	return nil
 }
 
-// seatClaimForTask derives the per-position claim for a press seat that owns
+// positionClaimForTask derives the per-position claim for a press position that owns
 // changeover work but has no style_node_claims row under its own name.
 //
 // parentClaimID selects the side, and it is the node task's own record of what
-// the seat was planned from: ToClaimID for the material arriving,
-// FromClaimID for the material physically on the seat. Both point at the real
+// the position was planned from: ToClaimID for the material arriving,
+// FromClaimID for the material physically on the position. Both point at the real
 // persisted parent press-index row, because the synthesized claim the planner
 // built kept the parent's ID.
 //
-// Returns nil for anything domain.SeatClaimFromParent does not recognise as a
-// seat of a press-index parent, so a caller that gets nil reports its own
+// Returns nil for anything domain.PositionClaimFromParent does not recognise as a
+// position of a press-index parent, so a caller that gets nil reports its own
 // refusal rather than acting on an invented claim.
-func (e *Engine) seatClaimForTask(parentClaimID *int64, coreNodeName string) *processes.NodeClaim {
+func (e *Engine) positionClaimForTask(parentClaimID *int64, coreNodeName string) *processes.NodeClaim {
 	if parentClaimID == nil {
 		return nil
 	}
@@ -126,11 +126,11 @@ func (e *Engine) seatClaimForTask(parentClaimID *int64, coreNodeName string) *pr
 	if err != nil {
 		return nil
 	}
-	return domain.SeatClaimFromParent(parent, coreNodeName)
+	return domain.PositionClaimFromParent(parent, coreNodeName)
 }
 
 // changeoverToClaim resolves the TARGET-style claim a per-node changeover
-// action acts on: the persisted row when the node has one, otherwise the seat
+// action acts on: the persisted row when the node has one, otherwise the position
 // derivation for a fanned-out press position.
 func (e *Engine) changeoverToClaim(toStyleID int64, node *processes.Node, task *processes.NodeTask) *processes.NodeClaim {
 	if claim, err := e.db.GetStyleNodeClaimByNode(toStyleID, node.CoreNodeName); err == nil && claim != nil {
@@ -139,11 +139,11 @@ func (e *Engine) changeoverToClaim(toStyleID int64, node *processes.Node, task *
 	if task == nil {
 		return nil
 	}
-	return e.seatClaimForTask(task.ToClaimID, node.CoreNodeName)
+	return e.positionClaimForTask(task.ToClaimID, node.CoreNodeName)
 }
 
 // changeoverFromClaim resolves the OUTGOING claim — what is physically on the
-// node — with the same seat fallback.
+// node — with the same position fallback.
 func (e *Engine) changeoverFromClaim(node *processes.Node, task *processes.NodeTask) *processes.NodeClaim {
 	if claim := findActiveClaim(e.db, node); claim != nil {
 		return claim
@@ -151,7 +151,7 @@ func (e *Engine) changeoverFromClaim(node *processes.Node, task *processes.NodeT
 	if task == nil {
 		return nil
 	}
-	return e.seatClaimForTask(task.FromClaimID, node.CoreNodeName)
+	return e.positionClaimForTask(task.FromClaimID, node.CoreNodeName)
 }
 
 // loadChangeoverNodeTask loads the changeover station task and node task for a given changeover and node.

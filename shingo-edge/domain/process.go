@@ -259,23 +259,23 @@ type NodeClaim struct {
 	// two_robot_press_index. When set, the layout is C → B → A and R1's
 	// final dropoff goes to C instead of B. Empty = legacy 2-position.
 	SecondPairedCoreNode string `json:"second_paired_core_node"`
-	// ChangeoverEvacSeats names which of a press-index cell's seats hold bins
+	// ChangeoverEvacPositions names which of a press-index cell's positions hold bins
 	// that BLOCK THE TOOLING CHANGE and must therefore leave the press before
-	// the tool can be swapped. Values are ChangeoverEvacSeat constants.
+	// the tool can be swapped. Values are ChangeoverEvacPosition constants.
 	//
-	// A SET ON THE FRONT CLAIM, not a flag per seat, because the back seats
+	// A SET ON THE FRONT CLAIM, not a flag per position, because the back positions
 	// have no claim rows to carry one: only the front position of a
 	// press-index cell is a style_node_claims row, and UpsertClaim rejects
-	// SwapModePressPosition outright so per-seat rows cannot be created.
+	// SwapModePressPosition outright so per-position rows cannot be created.
 	//
 	// Empty is the standing default and means what it has always meant: no
-	// seat is marked, so nothing is evacuated for tooling and the cell takes
-	// the ordinary index choreography. Unmarked seats stay put.
+	// position is marked, so nothing is evacuated for tooling and the cell takes
+	// the ordinary index choreography. Unmarked positions stay put.
 	//
 	// The scalar EvacuateOnChangeover above remains the whole answer for
-	// single-seat consume/process nodes; this is the press-index shape of the
+	// single-position consume/process nodes; this is the press-index shape of the
 	// same question, which is why it lives beside it and not in a new struct.
-	ChangeoverEvacSeats []string `json:"changeover_evac_seats,omitempty"`
+	ChangeoverEvacPositions []string `json:"changeover_evac_positions,omitempty"`
 	// ChangeoverEvacDestination is where a tooling evacuation sends the bins
 	// it lifts off the press. Free-form: a node name or a group name, exactly
 	// like InboundSource — Core resolves either.
@@ -285,6 +285,23 @@ type NodeClaim struct {
 	// special case; an unloader is reached by naming a group it projects over,
 	// which keeps this field ignorant of what is on the other end.
 	ChangeoverEvacDestination string `json:"changeover_evac_destination"`
+	// ChangeoverCarryoverDisposition decides what happens to a marked position's
+	// bin when its part CARRIES OVER — the same payload on that position in both
+	// styles.
+	//
+	// The default clears it like any other marked position and brings a fresh
+	// carrier back through staging, which round-trips a bin the cell is about
+	// to want again. For a part that does not have to move for the setup, that
+	// is waste; for one that only has to be out of the way, a short hop is
+	// enough. So: CarryoverReplace (default), CarryoverKeepLineside,
+	// CarryoverOutboundStaging.
+	//
+	// NEVER CONSULTED WHEN THE PAYLOADS DIFFER. A position whose part is being
+	// changed has to give its bin up whatever this says — the disposition is
+	// about a bin the cell keeps, and there is no such bin in that case.
+	// Blank reads as CarryoverReplace, so a row that predates the field
+	// behaves exactly as it did.
+	ChangeoverCarryoverDisposition CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
 	// ChangeoverLoadDirective turns this loader's card into a LOADING
 	// INSTRUCTION during a changeover: instead of the operator choosing from
 	// the loader's whole payload list, the card names the empty bin type the
@@ -367,7 +384,7 @@ type NodeClaim struct {
 }
 
 // SwapModePressPosition marks a per-position claim synthesized from a
-// press-index parent — one physical seat of the press (front, paired, or
+// press-index parent — one physical position of the press (front, paired, or
 // second-paired) treated as an independent slot. The parent's SwapMode
 // (two_robot_press_index) is replaced with this value so the planner routes
 // it to the simple per-position builder rather than back into the press-index
@@ -375,7 +392,7 @@ type NodeClaim struct {
 //
 // NEVER PERSISTED. store/processes.UpsertClaim rejects it (it is absent from
 // protocol.ConfigurableSwapModes), so style_node_claims never holds this
-// value. A seat carrying it exists only for the life of one changeover.
+// value. A position carrying it exists only for the life of one changeover.
 const SwapModePressPosition protocol.SwapMode = "press_position"
 
 // SynthesizePressPositionClaim builds a per-position claim from a parent
@@ -391,13 +408,13 @@ const SwapModePressPosition protocol.SwapMode = "press_position"
 // parent row. That is LOAD-BEARING and it is the OPPOSITE of the other
 // synthesized claim in this package — Loader.SynthClaim leaves ID at 0 because
 // a Core-owned loader window has no persisted row at all, and its callers must
-// guard on that zero. A press seat does have a row: its parent's. Zeroing this
-// ID would strand every seat task, because the task's FromClaimID/ToClaimID is
-// how the seat is resolved back. See the note at Loader.SynthClaim.
+// guard on that zero. A press position does have a row: its parent's. Zeroing this
+// ID would strand every position task, because the task's FromClaimID/ToClaimID is
+// how the position is resolved back. See the note at Loader.SynthClaim.
 //
 // Lives in domain, not engine, because BOTH the planner and the station view
 // must derive this claim the same way. The planner synthesizes it to build
-// the per-position orders; the view re-synthesizes it so a fanned-out seat
+// the per-position orders; the view re-synthesizes it so a fanned-out position
 // renders as a claimed node. Hopkinsville 2026-08-05 (P400, changeover 51,
 // tote → bin): the planner had it, the view did not, and every claim-keyed UI
 // gate failed closed on PLN_02/PLN_05 — the tile lit up release-ready while
@@ -421,35 +438,35 @@ func SynthesizePressPositionClaim(parent *NodeClaim, coreNodeName string) *NodeC
 	// KeepStaged shouldn't trigger inside per-position routing.
 	c.KeepStaged = false
 	// ChangeoverLoadDirective is an instruction to a LOADER — "go and fetch
-	// these carriers for the cells that are changing over". A press seat loads
+	// these carriers for the cells that are changing over". A press position loads
 	// nothing, so the instruction is not its to give, and it only ever had the
-	// flag because this is a whole-struct copy. Left set, every seat of a
+	// flag because this is a whole-struct copy. Left set, every position of a
 	// flagged press rendered the loader's card on a tile that cannot act on it.
 	//
-	// Safe to clear, unlike the ID above: nothing resolves a seat back to its
+	// Safe to clear, unlike the ID above: nothing resolves a position back to its
 	// parent through this field.
 	c.ChangeoverLoadDirective = false
 	return &c
 }
 
-// SeatClaimFromParent resolves the claim for a press seat that owns changeover
+// PositionClaimFromParent resolves the claim for a press position that owns changeover
 // work but has no style_node_claims row of its own, given the PARENT claim the
-// seat's node task was planned against.
+// position's node task was planned against.
 //
 // This is the ONE derivation. Three consumers need it and they must agree:
 //
-//   - the planner, which synthesizes the seat claims to build the per-seat
+//   - the planner, which synthesizes the position claims to build the per-position
 //     orders (FanOutPressIndexDifferentBinType),
-//   - the station view, which re-derives them so a fanned-out seat renders as
+//   - the station view, which re-derives them so a fanned-out position renders as
 //     claimed rather than as an unclaimed node with no buttons,
 //   - the per-node changeover actions and the cutover gate, which have to be
-//     able to ADVANCE that seat's task — the front seat resolves by node name
-//     and the back seats cannot, so before this they refused "target style
+//     able to ADVANCE that position's task — the front position resolves by node name
+//     and the back positions cannot, so before this they refused "target style
 //     claim not found for node" and the task never left its live state. The
 //     cutover gate blocks on any live task, so the whole changeover deadlocked
 //     with cancel as the only exit.
 //
-// Returns nil for anything that is not a seat of a press-index parent. A wrong
+// Returns nil for anything that is not a position of a press-index parent. A wrong
 // claim is worse than none: the caller then reports its own honest refusal
 // rather than acting on an invented configuration.
 //
@@ -457,14 +474,14 @@ func SynthesizePressPositionClaim(parent *NodeClaim, coreNodeName string) *NodeC
 // point at the real persisted parent row precisely because
 // SynthesizePressPositionClaim keeps the parent's ID. See the contract note
 // there.
-func SeatClaimFromParent(parent *NodeClaim, coreNodeName string) *NodeClaim {
+func PositionClaimFromParent(parent *NodeClaim, coreNodeName string) *NodeClaim {
 	if parent == nil || coreNodeName == "" {
 		return nil
 	}
 	if parent.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		return nil
 	}
-	// The seat must be one this parent actually names. Any other claimless node
+	// The position must be one this parent actually names. Any other claimless node
 	// holding a task is a different problem and stays claimless.
 	if parent.PairedCoreNode != coreNodeName && parent.SecondPairedCoreNode != coreNodeName {
 		return nil
@@ -493,72 +510,229 @@ func (c *NodeClaim) AllowedPayloads() []string {
 // on NodeClaimInput below, which cannot be written as &true / &1 inline.
 func Ptr[T any](v T) *T { return &v }
 
-// ChangeoverEvacSeat identifies one seat of a press-index cell in the per-seat
+// ChangeoverEvacPosition identifies one position of a press-index cell in the per-position
 // tooling-relevance selection.
 //
-// POSITIONAL, NOT BY NODE NAME. A seat is "the front position", not
+// POSITIONAL, NOT BY NODE NAME. A position is "the front position", not
 // "PLN_002_B" — the names live on PairedCoreNode / SecondPairedCoreNode and
 // change when a press is re-cabled or a style re-pairs it. Storing the
 // position means a selection survives a rename; storing the name would leave
-// a set pointing at a seat that is no longer part of the cell.
+// a set pointing at a position that is no longer part of the cell.
 const (
-	EvacSeatFront  = "front"  // CoreNodeName
-	EvacSeatPaired = "paired" // PairedCoreNode
-	EvacSeatSecond = "second" // SecondPairedCoreNode
+	EvacPositionFront  = "front"  // CoreNodeName
+	EvacPositionPaired = "paired" // PairedCoreNode
+	EvacPositionSecond = "second" // SecondPairedCoreNode
 )
 
-// ChangeoverEvacSeats is the ordered, canonical seat vocabulary — front to
+// ChangeoverEvacPositions is the ordered, canonical position vocabulary — front to
 // back, the direction bins index. Order matters for rendering and for the
 // deterministic plan the builder emits.
-func ChangeoverEvacSeatKeys() []string {
-	return []string{EvacSeatFront, EvacSeatPaired, EvacSeatSecond}
+func ChangeoverEvacPositionKeys() []string {
+	return []string{EvacPositionFront, EvacPositionPaired, EvacPositionSecond}
 }
 
-// SeatCoreNode resolves a seat key to the core node holding it on this claim.
-// Returns "" for a seat the claim's layout does not have — a 2-position press
-// asked for its third seat.
-func SeatCoreNode(c *NodeClaim, seat string) string {
-	if c == nil {
-		return ""
-	}
-	switch seat {
-	case EvacSeatFront:
-		return c.CoreNodeName
-	case EvacSeatPaired:
-		return c.PairedCoreNode
-	case EvacSeatSecond:
-		return c.SecondPairedCoreNode
-	}
-	return ""
+// ── CARRY-OVER PARTS ────────────────────────────────────────────────────────
+//
+// A changeover where a marked position's part is COMMON to both styles: style A
+// runs part 123 on that position and so does style B. The position is still marked,
+// because the tool change still needs the floor space — but the bin it holds is
+// one the cell will want back, and the default treatment sends it away and
+// fetches an identical empty to replace it.
+//
+// Three answers, and which one is right is a property of the part and the cell,
+// not something the planner can derive:
+//
+//	replace          — today's behaviour. The bin goes wherever this cell's
+//	                   bins go and a fresh carrier arrives through staging.
+//	keep_lineside    — the bin does not move at all. This part does not affect
+//	                   the tool change, so the position is simply not marked for
+//	                   THIS changeover.
+//	outbound_staging — the SAME bin makes a short hop to the cell's outbound
+//	                   staging spot, waits out the setup there, and comes back
+//	                   on the tooling-done release. Floor space cleared, no
+//	                   carrier round-trip through the supermarket.
+type CarryoverDisposition string
+
+const (
+	// CarryoverReplace is the default and is what blank means.
+	CarryoverReplace CarryoverDisposition = "replace"
+	// CarryoverKeepLineside leaves the bin on the position.
+	CarryoverKeepLineside CarryoverDisposition = "keep_lineside"
+	// CarryoverOutboundStaging walks the same bin out and back.
+	CarryoverOutboundStaging CarryoverDisposition = "outbound_staging"
+)
+
+// CarryoverDispositions is the canonical list, for validation and for the
+// editor's control.
+func CarryoverDispositions() []CarryoverDisposition {
+	return []CarryoverDisposition{CarryoverReplace, CarryoverKeepLineside, CarryoverOutboundStaging}
 }
 
-// EvacSeatMarked reports whether this claim marks the given seat as holding
-// bins that block the tooling change.
-func EvacSeatMarked(c *NodeClaim, seat string) bool {
-	if c == nil {
-		return false
+// Valid reports whether d is one this system knows. Blank is valid and means
+// replace.
+func (d CarryoverDisposition) Valid() bool {
+	if d == "" {
+		return true
 	}
-	for _, s := range c.ChangeoverEvacSeats {
-		if s == seat {
+	for _, k := range CarryoverDispositions() {
+		if d == k {
 			return true
 		}
 	}
 	return false
 }
 
-// MarkedEvacSeatNodes returns the core nodes of every marked seat that this
+// CarryoverFor is the claim's disposition, normalised: blank reads as replace,
+// so a row written before the column existed behaves as it always did.
+func CarryoverFor(c *NodeClaim) CarryoverDisposition {
+	if c == nil || c.ChangeoverCarryoverDisposition == "" {
+		return CarryoverReplace
+	}
+	return c.ChangeoverCarryoverDisposition
+}
+
+// PartCarriesOverAtNode reports whether the part on this position is common to both
+// styles — the only condition under which a disposition is consulted at all.
+//
+// BOTH CLAIMS MUST NAME THE POSITION. On a disjoint changeover the incoming style
+// runs on different nodes, so the position is being vacated: its bin has to leave
+// whatever the part is, there is nowhere to "keep it lineside", and nothing to
+// bring it back to. A carry-over question about a position only one style has is
+// not a question.
+func PartCarriesOverAtNode(from, to *NodeClaim, position string) bool {
+	if from == nil || to == nil || position == "" {
+		return false
+	}
+	if from.PayloadCode == "" || from.PayloadCode != to.PayloadCode {
+		return false
+	}
+	return claimOccupies(from, position) && claimOccupies(to, position)
+}
+
+// ClearanceTreatment is what this changeover does with one marked position's
+// bin. It is the disposition ANSWERED for a position rather than the disposition
+// itself: a position whose part does not carry over is cleared however the cell
+// configured carry-over, because the question is only about a bin the cell
+// keeps.
+type ClearanceTreatment string
+
+const (
+	// ClearanceClear takes the bin off the position — the default, and what every position
+	// whose part is changing gets.
+	ClearanceClear ClearanceTreatment = "clear"
+	// ClearanceKeep leaves the bin where it is.
+	ClearanceKeep ClearanceTreatment = "keep"
+	// ClearanceRoundTrip walks the same bin to outbound staging and back.
+	ClearanceRoundTrip ClearanceTreatment = "round_trip"
+)
+
+// ClearanceTreatmentAtNode decides one marked position's treatment from the cell's carry-over
+// disposition and whether that position's part actually carries over.
+func ClearanceTreatmentAtNode(from, to *NodeClaim, position string) ClearanceTreatment {
+	if !PartCarriesOverAtNode(from, to, position) {
+		return ClearanceClear
+	}
+	switch CarryoverFor(from) {
+	case CarryoverKeepLineside:
+		return ClearanceKeep
+	case CarryoverOutboundStaging:
+		// Falls back to clearing when the cell has nowhere to park it. The
+		// SAVE refuses this combination by name (see claim validation), so
+		// reaching here means a row written before that gate existed — and
+		// clearing is the safe direction: the floor space is freed either way,
+		// and the bin comes back through the supermarket instead of from a
+		// staging spot that does not exist.
+		if from == nil || from.OutboundStaging == "" {
+			return ClearanceClear
+		}
+		return ClearanceRoundTrip
+	default:
+		return ClearanceClear
+	}
+}
+
+// ToolingClearanceApplies reports whether a marked press actually clears
+// anything in this changeover.
+//
+// A press every one of whose marked positions is keeping its part lineside is not
+// doing a clearance at all — the tool change still happens, but no bin moves
+// and no material arrives, which is exactly what the diff engine already
+// answers for an unmarked position with a common part. So the marked-position arm
+// stands down and lets it, rather than inventing an evacuation that this
+// pass would then have to un-plan.
+//
+// ONE position that must be cleared is enough to keep the press in scope.
+func ToolingClearanceApplies(from, to *NodeClaim) bool {
+	if !StagedToolingChangeover(from) {
+		return false
+	}
+	for _, position := range MarkedEvacPositionNodes(from) {
+		if ClearanceTreatmentAtNode(from, to, position) != ClearanceKeep {
+			return true
+		}
+	}
+	return false
+}
+
+// claimOccupies reports whether this claim's layout occupies the named core
+// node — its own, or either index position behind it.
+func claimOccupies(c *NodeClaim, coreNode string) bool {
+	if c == nil {
+		return false
+	}
+	for _, n := range []string{c.CoreNodeName, c.PairedCoreNode, c.SecondPairedCoreNode} {
+		if n != "" && n == coreNode {
+			return true
+		}
+	}
+	return false
+}
+
+// PositionCoreNode resolves a position key to the core node holding it on this claim.
+// Returns "" for a position the claim's layout does not have — a 2-position press
+// asked for its third position.
+func PositionCoreNode(c *NodeClaim, position string) string {
+	if c == nil {
+		return ""
+	}
+	switch position {
+	case EvacPositionFront:
+		return c.CoreNodeName
+	case EvacPositionPaired:
+		return c.PairedCoreNode
+	case EvacPositionSecond:
+		return c.SecondPairedCoreNode
+	}
+	return ""
+}
+
+// EvacPositionMarked reports whether this claim marks the given position as holding
+// bins that block the tooling change.
+func EvacPositionMarked(c *NodeClaim, position string) bool {
+	if c == nil {
+		return false
+	}
+	for _, s := range c.ChangeoverEvacPositions {
+		if s == position {
+			return true
+		}
+	}
+	return false
+}
+
+// MarkedEvacPositionNodes returns the core nodes of every marked position that this
 // claim's layout actually has, front to back.
 //
-// A marked seat the layout does not have contributes nothing rather than an
+// A marked position the layout does not have contributes nothing rather than an
 // empty string: a 2-position press whose claim still carries "second" from a
 // 3-position past must plan two evacuations, not two and a phantom.
-func MarkedEvacSeatNodes(c *NodeClaim) []string {
+func MarkedEvacPositionNodes(c *NodeClaim) []string {
 	var out []string
-	for _, seat := range ChangeoverEvacSeatKeys() {
-		if !EvacSeatMarked(c, seat) {
+	for _, position := range ChangeoverEvacPositionKeys() {
+		if !EvacPositionMarked(c, position) {
 			continue
 		}
-		if node := SeatCoreNode(c, seat); node != "" {
+		if node := PositionCoreNode(c, position); node != "" {
 			out = append(out, node)
 		}
 	}
@@ -567,7 +741,7 @@ func MarkedEvacSeatNodes(c *NodeClaim) []string {
 
 // StagedToolingChangeover reports whether this OUTGOING claim puts the cell
 // into the staged tooling-evacuation mode: a press-index cell with at least
-// one seat marked as holding bins that block the tool change.
+// one position marked as holding bins that block the tool change.
 //
 // ── THE OUTGOING CLAIM OWNS THE ANSWER ────────────────────────────────────
 //
@@ -590,12 +764,12 @@ func StagedToolingChangeover(from *NodeClaim) bool {
 	if from == nil || from.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		return false
 	}
-	return len(MarkedEvacSeatNodes(from)) > 0
+	return len(MarkedEvacPositionNodes(from)) > 0
 }
 
 // ChangeoverNeedsEvacuation reports whether this transition has to take bins
 // off the line before the tool can change, reading the OUTGOING claim per the
-// rule above. Either the whole-node scalar or a per-seat selection says yes.
+// rule above. Either the whole-node scalar or a per-position selection says yes.
 func ChangeoverNeedsEvacuation(from *NodeClaim) bool {
 	if from == nil {
 		return false
@@ -673,21 +847,26 @@ type NodeClaimInput struct {
 	// on the argument that the claim editor owns controls for the other five
 	// and therefore always has an opinion. The editor does. It is not the only
 	// writer: the replenishment admin page reads a claim, re-sends a subset,
-	// and changing a reorder point wiped the press's evacuation seats, its
+	// and changing a reorder point wiped the press's evacuation positions, its
 	// evacuation destination, the loader card and the key route. "The one UI I
 	// am thinking of always fills this in" is not a property of a struct, and
 	// the pointer is what makes the class unrepresentable rather than fixing
 	// each caller as it is discovered.
-	ChangeoverEvacSeats       *[]string `json:"changeover_evac_seats,omitempty"`
+	ChangeoverEvacPositions   *[]string `json:"changeover_evac_positions,omitempty"`
 	ChangeoverEvacDestination *string   `json:"changeover_evac_destination,omitempty"`
-	ChangeoverLoadDirective   *bool     `json:"changeover_load_directive,omitempty"`
-	IndexRobotSupplies        *bool     `json:"index_robot_supplies,omitempty"`
-	KeyRoute                  *[]string `json:"key_route,omitempty"`
-	KeyTask                   *string   `json:"key_task,omitempty"`
-	AutoConfirm               bool      `json:"auto_confirm"`
-	LinesideSoftThreshold     int       `json:"lineside_soft_threshold"`
-	ReuseCompatibleBins       bool      `json:"reuse_compatible_bins"`
-	AutoPush                  bool      `json:"auto_push"`
+	// ChangeoverCarryoverDisposition follows the same absent-means-untouched
+	// contract as every field here: nil leaves the stored value alone, which is
+	// what stops a partial update from silently resetting a cell's answer to
+	// the default.
+	ChangeoverCarryoverDisposition *CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
+	ChangeoverLoadDirective        *bool                 `json:"changeover_load_directive,omitempty"`
+	IndexRobotSupplies             *bool                 `json:"index_robot_supplies,omitempty"`
+	KeyRoute                       *[]string             `json:"key_route,omitempty"`
+	KeyTask                        *string               `json:"key_task,omitempty"`
+	AutoConfirm                    bool                  `json:"auto_confirm"`
+	LinesideSoftThreshold          int                   `json:"lineside_soft_threshold"`
+	ReuseCompatibleBins            bool                  `json:"reuse_compatible_bins"`
+	AutoPush                       bool                  `json:"auto_push"`
 	// ── ABSENT MEANS LEAVE UNTOUCHED ────────────────────────────────────
 	//
 	// These are columns no single writer owns. updateClaim writes every

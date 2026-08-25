@@ -532,7 +532,7 @@ func (l *Loader) LoadablePayloadCodesAt(coreNode NodeID) []string {
 //	Loader.SynthClaim (here)        ID == 0.       There is no persisted row
 //	                                               anywhere. Guard ID == 0 before
 //	                                               using it as a foreign key.
-//	SynthesizePressPositionClaim    ID == parent's. A press seat's claim IS a
+//	SynthesizePressPositionClaim    ID == parent's. A press position's claim IS a
 //	                                               view of the parent press-index
 //	                                               row, and node tasks store that
 //	                                               id so FromClaimID/ToClaimID
@@ -540,9 +540,9 @@ func (l *Loader) LoadablePayloadCodesAt(coreNode NodeID) []string {
 //
 // Neither is ever written back. The difference is whether the thing being
 // stood in for exists: a Core-owned loader window has no claim at all, while a
-// press seat has one — its parent's. Reading a seat's ID as "synthetic, so
-// zero" would break the seat resolver; writing a loader's ID anywhere would
-// dangle. See SeatClaimFromParent in process.go for the seat side.
+// press position has one — its parent's. Reading a position's ID as "synthetic, so
+// zero" would break the position resolver; writing a loader's ID anywhere would
+// dangle. See PositionClaimFromParent in process.go for the position side.
 func (l *Loader) SynthClaim(coreNode NodeID) *NodeClaim {
 	return &NodeClaim{
 		CoreNodeName:        string(coreNode),

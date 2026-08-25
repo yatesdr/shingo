@@ -40,12 +40,12 @@ type StationNodeView struct {
 	// shows a directive is a card whose directive nobody reads.
 	ChangeoverLoadDirective *ChangeoverLoadDirective `json:"changeover_load_directive,omitempty"`
 	// ChildOfNode is set when this tile is rendered on a station only because
-	// the node it EXTENDS lives here — a press-index seat with no
+	// the node it EXTENDS lives here — a press-index position with no
 	// operator_station_id of its own, shown under its press. Carries the
 	// owning node's display name.
 	//
 	// Load-bearing for the UI, not decoration: a child tile must NOT offer a
-	// release button. The seat owns no task and no order, so there is nothing
+	// release button. The position owns no task and no order, so there is nothing
 	// to release; a button there would either no-op or, worse, release the
 	// parent's work from a tile that does not represent it. Empty on ordinary
 	// tiles.

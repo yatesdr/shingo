@@ -8,7 +8,7 @@ import (
 // ---------------------------------------------------------------------------
 // The round-3/4 claim config must survive the seeder.
 //
-// changeover_evac_seats, changeover_evac_destination,
+// changeover_evac_positions, changeover_evac_destination,
 // changeover_load_directive, key_route and key_task were added to
 // style_node_claims and to the claim editor, and left out of plantspec and out
 // of this seeder — so staged tooling evacuation, evacuation-destination
@@ -27,15 +27,15 @@ func TestSeedEdge_ClaimConfigRoundTrips(t *testing.T) {
 	t.Parallel()
 	db, _, _ := openSeededEdge(t)
 
-	var seats, dest, route, task, allowed string
+	var positions, dest, route, task, allowed string
 	var directive int
 	err := db.QueryRow(`
-		SELECT changeover_evac_seats, changeover_evac_destination,
+		SELECT changeover_evac_positions, changeover_evac_destination,
 		       changeover_load_directive, key_route, key_task, allowed_payload_codes
 		  FROM style_node_claims c
 		  JOIN styles s ON s.id = c.style_id
 		 WHERE c.core_node_name = 'PLN_001' AND s.name = 'PRESS-1-RUN'`).
-		Scan(&seats, &dest, &directive, &route, &task, &allowed)
+		Scan(&positions, &dest, &directive, &route, &task, &allowed)
 	if err == sql.ErrNoRows {
 		t.Fatal("the press-index claim was not seeded at all")
 	}
@@ -45,9 +45,9 @@ func TestSeedEdge_ClaimConfigRoundTrips(t *testing.T) {
 
 	// JSON ARRAYS, because that is what the edge store reads back. A comma join
 	// decodes to nothing and reads as "not configured".
-	if want := `["front","paired"]`; seats != want {
-		t.Errorf("changeover_evac_seats = %q, want %q — the store reads this with "+
-			"json.Unmarshal and discards the error, so a wrong encoding is silent", seats, want)
+	if want := `["front","paired"]`; positions != want {
+		t.Errorf("changeover_evac_positions = %q, want %q — the store reads this with "+
+			"json.Unmarshal and discards the error, so a wrong encoding is silent", positions, want)
 	}
 	if want := `["WP_AISLE_S","WP_AISLE_N"]`; route != want {
 		t.Errorf("key_route = %q, want %q — ORDER IS MEANINGFUL to the fleet, so a "+

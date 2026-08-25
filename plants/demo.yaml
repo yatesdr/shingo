@@ -186,7 +186,7 @@ stations:
   # ── PRESS-2: A/B sequential (two bins rotate, no staging) ──
   # PRESS-1's RELOCATED placement — the DISJOINT-NODE tooling changeover. The
   # incoming style runs the same press on different nodes, so no node appears in
-  # both styles: the marked seats become Drops and the new seats become Adds.
+  # both styles: the marked positions become Drops and the new positions become Adds.
   # Round 3's staged fan-out required both claims on one diff and so contributed
   # nothing to this shape at all; the tooling decorator is what makes it work.
   - {name: PLN_005, kind: press}     # PRESS-1-MOVED front
@@ -236,14 +236,14 @@ stations:
   - {name: FGN_002, kind: unloader}  # drains PANEL-A (the U1 trigger's target)
   # ── PRESS-1 changeover clearance ──
   # SHINGO DOES NOT TOUCH TOOLING. The tool change is human work at the press;
-  # what the changeover owes it is floor space and timing. So a marked seat is
+  # what the changeover owes it is floor space and timing. So a marked position is
   # CLEARED BY NORMAL ROUTING — its bin goes to SYN_MARKET like any other press
   # bin — and the only station the feature needs is somewhere for the INCOMING
   # style's bins to wait while the humans work (SLN_014).
   #
   # There used to be a `TBN_001` "tooling bay" here, a single staging station
-  # every marked seat was routed to. It was built on the wrong premise, and the
-  # sim showed what that costs: a two-seat press sends TWO bins, the bay holds
+  # every marked position was routed to. It was built on the wrong premise, and the
+  # sim showed what that costs: a two-position press sends TWO bins, the bay holds
   # one, nothing ever empties it, and robots dwell on it holding bins
   # ("HOLDING at TBN_001 — a robot cannot place onto an occupied position").
   # The clearance OVERRIDE demo is now SYN_CLEAR, a node group — see
@@ -379,7 +379,7 @@ claims:
     outbound_destination: SYN_MARKET
     # ── STAGED TOOLING EVACUATION, ON THE OUTGOING CLAIM ─────────────────
     #
-    # BOTH seats marked, because a two-seat press whose front is evacuated and
+    # BOTH positions marked, because a two-position press whose front is evacuated and
     # whose back is not is the case that reads as working right up until the
     # index motion tries to move a bin that is still there. Two marks also make
     # the fan-out produce two diffs, which is the shape a single mark cannot
@@ -387,8 +387,8 @@ claims:
     #
     # The OUTGOING claim owns the decision — ChangeoverNeedsEvacuation reads the
     # from-side — so these live here and not on -ALT.
-    changeover_evac_seats: [front, paired]
-    # NO changeover_evac_destination, and that is the scenario: the marked seats
+    changeover_evac_positions: [front, paired]
+    # NO changeover_evac_destination, and that is the scenario: the marked positions
     # are cleared BY NORMAL ROUTING, to outbound_destination like any other
     # press bin. This is the default path and the one every plant gets unless it
     # says otherwise, so it is the one the fixture must exercise.
@@ -424,7 +424,7 @@ claims:
     # The incoming style's bins WAIT here while the tool is changed.
     # refuseStagedChangeoverWithoutStaging refuses to arm a staged tooling
     # changeover without one, by name — so this is what makes the -RUN → -ALT
-    # changeover armable at all now that -RUN marks seats.
+    # changeover armable at all now that -RUN marks positions.
     inbound_staging: SLN_014
 
   # PRESS-1 MOVED TO ANOTHER PLACEMENT. Same press, same payload, same carrier —
@@ -452,7 +452,7 @@ claims:
     inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
     inbound_staging: SLN_014
-    changeover_evac_seats: [front, paired]
+    changeover_evac_positions: [front, paired]
     # THE OVERRIDE, and the only one in this plant. A node group, not a station:
     # whatever an override names is an ordinary destination and gets ordinary
     # capacity behaviour.

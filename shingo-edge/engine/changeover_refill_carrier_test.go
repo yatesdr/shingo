@@ -60,16 +60,16 @@ func TestPerPositionSwapRefillNamesTheIncomingPayload(t *testing.T) {
 	// wart to clean up later: the opening pickup depends on it.
 	if !disp.CarriesFromPayloadA {
 		t.Error("the order stopped carrying the from-style payload — its first pickup will now " +
-			"filter for the incoming payload and find nothing at the seat")
+			"filter for the incoming payload and find nothing at the position")
 	}
 }
 
-// TestToolingSeatRefillNamesTheIncomingPayload is the same contract on the leg
-// this round built: a marked seat's clearance-and-refill.
-func TestToolingSeatRefillNamesTheIncomingPayload(t *testing.T) {
+// TestToolingPositionRefillNamesTheIncomingPayload is the same contract on the leg
+// this round built: a marked position's clearance-and-refill.
+func TestToolingPositionRefillNamesTheIncomingPayload(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacSeats = []string{domain.EvacSeatFront, domain.EvacSeatPaired}
+	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront, domain.EvacPositionPaired}
 	to := pressClaim("PRESS", "PRESS_B", "PART-C")
 	to.InboundStaging = "IN-STAGE"
 
@@ -78,18 +78,18 @@ func TestToolingSeatRefillNamesTheIncomingPayload(t *testing.T) {
 		t.Fatalf("expected one marked press, got %d", len(tc.presses))
 	}
 	node := &processes.Node{ID: 1, CoreNodeName: "PRESS", Name: "PRESS"}
-	action := toolingSeatAction(tc.presses[0], "PRESS", node)
+	action := toolingPositionAction(tc.presses[0], "PRESS", node)
 	if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil {
-		t.Fatal("seat action has no complex supply order")
+		t.Fatal("position action has no complex supply order")
 	}
 	pickup := inboundPickup(t, action.SupplyOrder.Complex.Steps, "EMPTIES")
 	if pickup.PayloadCode != "PART-C" {
-		t.Errorf("marked seat's refill resolves against %q, want the INCOMING PART-C.\n"+
+		t.Errorf("marked position's refill resolves against %q, want the INCOMING PART-C.\n"+
 			"A tool change is the moment the carrier type most often changes — it is the "+
 			"reason the change is happening.", pickup.PayloadCode)
 	}
 	if action.SupplyOrder.Complex.PayloadCode != "PART-A" {
-		t.Errorf("seat order carries %q, want the FROM-style PART-A for its opening pickup",
+		t.Errorf("position order carries %q, want the FROM-style PART-A for its opening pickup",
 			action.SupplyOrder.Complex.PayloadCode)
 	}
 }

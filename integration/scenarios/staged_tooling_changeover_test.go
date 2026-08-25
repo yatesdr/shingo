@@ -1,16 +1,16 @@
-// Staged per-seat tooling changeover, end to end.
+// Staged per-position tooling changeover, end to end.
 //
-// The round-3 case: a press-index cell whose OUTGOING claim marks which seats
-// hold bins that block the tooling change. Marked seats are evacuated to the
+// The round-3 case: a press-index cell whose OUTGOING claim marks which positions
+// hold bins that block the tooling change. Marked positions are evacuated to the
 // tooling destination; the incoming style's bins travel to the staging node
 // and WAIT there; tooling-done is an ordinary production release that moves
 // them into the line positions.
 //
 // Pass conditions:
-//  1. every MARKED seat gets its own task and order — one robot per seat,
+//  1. every MARKED position gets its own task and order — one robot per position,
 //     because six orders cannot live on one NodeAction;
-//  2. an UNMARKED seat gets nothing — the stated default is that it stays put;
-//  3. each seat's steps evacuate to ChangeoverEvacDestination, not to
+//  2. an UNMARKED position gets nothing — the stated default is that it stays put;
+//  3. each position's steps evacuate to ChangeoverEvacDestination, not to
 //     OutboundDestination;
 //  4. the incoming bin waits AT the staging node, not on the press apron;
 //  5. tooling-done releases them exactly like a production release;
@@ -52,7 +52,7 @@ func stagedStubCore(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// stagedSeed builds a 3-position press-index cell on both styles. seats is the
+// stagedSeed builds a 3-position press-index cell on both styles. positions is the
 // OUTGOING claim's marked selection; toStaging is the incoming claim's staging
 // node (blank exercises the arm refusal).
 type stagedSeed struct {
@@ -61,7 +61,7 @@ type stagedSeed struct {
 	edge                              *edgeharness.Edge
 }
 
-func seedStagedPress(t *testing.T, seats []string, toStaging string) stagedSeed {
+func seedStagedPress(t *testing.T, positions []string, toStaging string) stagedSeed {
 	t.Helper()
 	core := stagedStubCore(t)
 	edge := edgeharness.NewEdgeWithCoreAPI(t, "edge.test", core.URL)
@@ -102,7 +102,7 @@ func seedStagedPress(t *testing.T, seats []string, toStaging string) stagedSeed 
 		t.Fatalf("set active style: %v", err)
 	}
 
-	// The OUTGOING claim carries the seat selection and the tooling
+	// The OUTGOING claim carries the position selection and the tooling
 	// destination — the outgoing setup put the blocking bins there.
 	from := processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "PLN-ST-A",
@@ -110,7 +110,7 @@ func seedStagedPress(t *testing.T, seats []string, toStaging string) stagedSeed 
 		PayloadCode: "ST-OLD", UOPCapacity: 100,
 		PairedCoreNode: "PLN-ST-B", SecondPairedCoreNode: "PLN-ST-C",
 		InboundSource: "ST-SRC", OutboundDestination: "ST-MARKET",
-		ChangeoverEvacSeats:       domain.Ptr(seats),
+		ChangeoverEvacPositions:       domain.Ptr(positions),
 		ChangeoverEvacDestination: domain.Ptr("ST-TOOLING-BAY"),
 	}
 	to := processes.NodeClaimInput{
@@ -131,7 +131,7 @@ func seedStagedPress(t *testing.T, seats []string, toStaging string) stagedSeed 
 }
 
 func TestScenario_StagedToolingChangeover_EndToEnd(t *testing.T) {
-	// Front and third marked; the BACK seat deliberately unmarked.
+	// Front and third marked; the BACK position deliberately unmarked.
 	s := seedStagedPress(t, []string{"front", "second"}, "ST-STAGE")
 
 	changeover, err := s.edge.Engine.StartProcessChangeover(s.processID, s.toStyleID, "test", "staged scenario")
@@ -148,21 +148,21 @@ func TestScenario_StagedToolingChangeover_EndToEnd(t *testing.T) {
 		byNode[task.NodeName] = task
 	}
 
-	// (1) one task per MARKED seat, (2) nothing for the unmarked one.
+	// (1) one task per MARKED position, (2) nothing for the unmarked one.
 	for _, marked := range []string{"PLN-ST-A", "PLN-ST-C"} {
 		task, ok := byNode[marked]
 		if !ok {
-			t.Fatalf("marked seat %s has no task; tasks = %+v", marked, byNode)
+			t.Fatalf("marked position %s has no task; tasks = %+v", marked, byNode)
 		}
 		if task.Situation != "evacuate" {
 			t.Errorf("%s: situation = %q, want evacuate", marked, task.Situation)
 		}
 		if task.NextMaterialOrderID == nil {
-			t.Fatalf("%s: no order created for a marked seat", marked)
+			t.Fatalf("%s: no order created for a marked position", marked)
 		}
 	}
 	if task, ok := byNode["PLN-ST-B"]; ok && task.Situation == "evacuate" {
-		t.Errorf("UNMARKED seat PLN-ST-B got an evacuation; its bins do not block the tool")
+		t.Errorf("UNMARKED position PLN-ST-B got an evacuation; its bins do not block the tool")
 	}
 
 	// (3) + (4): the choreography. Evac to the TOOLING destination, and the

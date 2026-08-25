@@ -96,7 +96,7 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 	}
 
 	// Look up the to-claim from the changeover's target style. A fanned-out
-	// press seat has no row under its own name and resolves through the parent
+	// press position has no row under its own name and resolves through the parent
 	// its task was planned from — see changeoverToClaim.
 	toClaim := e.changeoverToClaim(ctx.changeover.ToStyleID, ctx.node, ctx.nodeTask)
 	if toClaim == nil {
@@ -138,8 +138,8 @@ func (e *Engine) EvacuateNode(processID, nodeID int64, partialQty int64) (*order
 		return nil, err
 	}
 
-	// Use claim-based release. A fanned-out press seat has no row under its own
-	// name; changeoverFromClaim resolves it through the parent the seat's task
+	// Use claim-based release. A fanned-out press position has no row under its own
+	// name; changeoverFromClaim resolves it through the parent the position's task
 	// was planned from.
 	fromClaim := e.changeoverFromClaim(ctx.node, ctx.nodeTask)
 	if fromClaim != nil && fromClaim.OutboundStaging != "" {
@@ -153,9 +153,9 @@ func (e *Engine) EvacuateNode(processID, nodeID int64, partialQty int64) (*order
 		return order, nil
 	}
 
-	// Fallback: simple release via move order. The seat claim is passed through
+	// Fallback: simple release via move order. The position claim is passed through
 	// because the release path resolves claims by node name too, and would
-	// otherwise refuse the same seat for the same reason.
+	// otherwise refuse the same position for the same reason.
 	var order *orders.Order
 	qty := partialQty
 	if qty <= 0 {
@@ -186,13 +186,13 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 
 	// THE STAGING NODE IS A PROPERTY OF THE CELL, NOT OF ONE POSITION IN IT.
 	//
-	// A fanned-out press seat has no claim row, so toClaim here is synthesized —
+	// A fanned-out press position has no claim row, so toClaim here is synthesized —
 	// and SynthesizePressPositionClaim clears InboundStaging on purpose, because
 	// the diff pipeline needs a synthesized Add to fall through to a direct
 	// retrieve that the tooling decorator then adds the hold to. Reading that
 	// cleared field here as "this node does not stage" is what made this button
-	// return 200, mark the seat released, and deliver nothing (N1-a, sim
-	// 2026-08-24). The seat's answer is its parent's answer.
+	// return 200, mark the position released, and deliver nothing (N1-a, sim
+	// 2026-08-24). The position's answer is its parent's answer.
 	staging := toClaim.InboundStaging
 	if staging == "" {
 		if parent := e.parentClaimOf(ctx.nodeTask.ToClaimID); parent != nil {
@@ -216,7 +216,7 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 		// Refuse rather than mark released: "released" on a node whose material
 		// never moved is the lie this whole round has been removing.
 		return nil, fmt.Errorf("node %s stages its inbound material at %s but no delivery could be "+
-			"built for it — the seat's material has not moved", ctx.node.Name, staging)
+			"built for it — the position's material has not moved", ctx.node.Name, staging)
 	}
 
 	// No staging anywhere in the cell — the material goes straight to the node,
@@ -225,7 +225,7 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 	return nil, nil
 }
 
-// parentClaimOf loads the persisted claim a synthesized seat claim was derived
+// parentClaimOf loads the persisted claim a synthesized position claim was derived
 // from. The id is the parent's precisely because SynthesizePressPositionClaim
 // keeps it — see the contract note there.
 func (e *Engine) parentClaimOf(claimID *int64) *processes.NodeClaim {
@@ -280,8 +280,8 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 		}
 	}
 
-	// A fanned-out press seat has no claim under its own name and resolves
-	// through the parent its task was planned from. Without this the seat's
+	// A fanned-out press position has no claim under its own name and resolves
+	// through the parent its task was planned from. Without this the position's
 	// task can never reach `switched`, and because the cutover gate blocks on
 	// any live task the whole changeover deadlocks with cancel as the only exit.
 	claim := e.changeoverToClaim(*process.TargetStyleID, node, nodeTask)

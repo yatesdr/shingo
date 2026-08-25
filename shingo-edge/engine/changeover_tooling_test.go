@@ -16,19 +16,19 @@ import (
 //
 // AND SHINGO NEVER TOUCHES TOOLING. The tool change is human work done at the
 // asset — press, weld cell, whatever it is. What shingo owes it is FLOOR SPACE
-// and TIMING: get the material off the marked seats quickly so the people have
+// and TIMING: get the material off the marked positions quickly so the people have
 // room to set up, and hold the incoming material somewhere out of the cell
 // until they say they are done, instead of delivering it to line nodes a human
 // is standing in. Some cells change over without evacuating at all, because
 // their tool change happens internally.
 //
 // So a marked press ALWAYS gets tooling treatment, and treatment means exactly
-// two things: its marked seats are CLEARED, and every bin coming back to the
+// two things: its marked positions are CLEARED, and every bin coming back to the
 // press waits at inbound staging until the operator marks the change done.
 // Bin type never disqualifies it, and neither does the incoming style running
 // on different nodes.
 //
-// CLEARED MEANS NORMAL ROUTING. A marked seat's bin goes wherever that cell's
+// CLEARED MEANS NORMAL ROUTING. A marked position's bin goes wherever that cell's
 // bins ordinarily go — its unloader, its buffer, its market — and the leg the
 // pipeline already planned is left alone. `changeover_evac_destination` is an
 // OPTIONAL OVERRIDE for a cell that wants its clearance somewhere else, like a
@@ -93,11 +93,11 @@ func allSteps(a changeover.NodeAction) string {
 }
 
 // outboundOf is where this action disposes of the bin it lifts off its own
-// seat: the first dropoff after the pickup at the seat, across both orders.
+// position: the first dropoff after the pickup at the position, across both orders.
 //
 // It exists because "did the decorator steer the outbound leg" is now a
 // question about ONE step, and comparing whole shapes cannot answer it — a
-// marked and an unmarked seat differ on the inbound half by design.
+// marked and an unmarked position differ on the inbound half by design.
 func outboundOf(t *testing.T, a changeover.NodeAction) string {
 	t.Helper()
 	for _, spec := range []*changeover.OrderSpec{a.SupplyOrder, a.EvacOrder} {
@@ -135,7 +135,7 @@ func toolingTestPlan(t *testing.T, from, to []processes.NodeClaim, binTypes map[
 	return BuildChangeoverPlan(diffs, nodes, false, nil, planToolingChangeover(from, to))
 }
 
-// pressClaim builds a press-index claim. seats/evacDest belong on the OUTGOING
+// pressClaim builds a press-index claim. positions/evacDest belong on the OUTGOING
 // claim; inboundStaging on the INCOMING one.
 func pressClaim(node, paired, payload string) processes.NodeClaim {
 	return processes.NodeClaim{
@@ -153,7 +153,7 @@ func pressClaim(node, paired, payload string) processes.NodeClaim {
 // SHAPE 1 — marked + same node + different bin type. THE N1 CASE.
 // ---------------------------------------------------------------------------
 
-// TestToolingBeatsRelabel is the contract in one sentence: a marked seat gets
+// TestToolingBeatsRelabel is the contract in one sentence: a marked position gets
 // tooling treatment even when the changeover also changes bin type.
 //
 // The bin-type fan-out rewrites the diff's SwapMode to press_position, and the
@@ -163,7 +163,7 @@ func pressClaim(node, paired, payload string) processes.NodeClaim {
 func TestToolingBeatsRelabel(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacSeats = []string{domain.EvacSeatFront}
+	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront}
 
 	to := pressClaim("PRESS", "PRESS_B", "PART-B")
 	to.InboundStaging = "IN-STAGE"
@@ -172,60 +172,60 @@ func TestToolingBeatsRelabel(t *testing.T) {
 	plan := toolingTestPlan(t, []processes.NodeClaim{from}, []processes.NodeClaim{to},
 		binTypes, "PRESS", "PRESS_B")
 
-	// The MARKED seat: cleared by NORMAL ROUTING, and its replacement holds at
+	// The MARKED position: cleared by NORMAL ROUTING, and its replacement holds at
 	// staging until the operator marks the change done.
 	marked := actionFor(t, plan, "PRESS")
 	got := allSteps(marked)
 	if !strings.Contains(got, "wait@IN-STAGE") {
-		t.Errorf("marked seat PRESS does not hold its incoming bin at inbound staging.\n"+
+		t.Errorf("marked position PRESS does not hold its incoming bin at inbound staging.\n"+
 			"steps = %s\n"+
 			"Tooling is literally just adding a staging step for inbound: the new bin waits "+
 			"out of the cell while a human is inside it.", got)
 	}
 	if !strings.Contains(got, "dropoff@MARKET") {
-		t.Errorf("marked seat PRESS lost its ordinary clearance destination.\n"+
+		t.Errorf("marked position PRESS lost its ordinary clearance destination.\n"+
 			"steps = %s\n"+
-			"With no changeover_evac_destination set, a marked seat is cleared by NORMAL "+
+			"With no changeover_evac_destination set, a marked position is cleared by NORMAL "+
 			"ROUTING — wherever this cell's bins ordinarily go. The decorator does not own "+
 			"the outbound side unless an override says so.", got)
 	}
 
-	// THE POINT OF THE SHAPE: bin type does not disqualify the seat from the
+	// THE POINT OF THE SHAPE: bin type does not disqualify the position from the
 	// HOLD. That is what "marked beats relabel" means now that clearance is
 	// normal routing — the bin-type fan-out relabels the diff, and the hold
 	// survives it.
 	unmarked := actionFor(t, plan, "PRESS_B")
 	ugot := allSteps(unmarked)
 	if !strings.Contains(ugot, "wait@IN-STAGE") {
-		t.Errorf("unmarked seat PRESS_B delivers into a press mid tool-change.\n"+
+		t.Errorf("unmarked position PRESS_B delivers into a press mid tool-change.\n"+
 			"steps = %s\n"+
-			"EVERY inbound leg to the press holds — the press is down, marked seat or not.", ugot)
+			"EVERY inbound leg to the press holds — the press is down, marked position or not.", ugot)
 	}
 
-	// And with no override, the OUTBOUND half of a marked seat is
+	// And with no override, the OUTBOUND half of a marked position is
 	// indistinguishable from an unmarked one. That is by design: clearing a
-	// seat is not a different journey, it is the same journey done now.
+	// position is not a different journey, it is the same journey done now.
 	if outboundOf(t, marked) != outboundOf(t, unmarked) {
-		t.Errorf("marked seat PRESS clears to %q but unmarked PRESS_B to %q.\n"+
+		t.Errorf("marked position PRESS clears to %q but unmarked PRESS_B to %q.\n"+
 			"With no override both are ordinary evacuations to the same place; a difference "+
 			"here means the decorator is still steering the outbound leg.",
 			outboundOf(t, marked), outboundOf(t, unmarked))
 	}
 }
 
-// TestToolingClearanceOverrideRedirectsOnlyMarkedSeats is the OTHER half of the
+// TestToolingClearanceOverrideRedirectsOnlyMarkedPositions is the OTHER half of the
 // same rule, and it is the half a fixture must keep exercising: when a cell
-// names a clearance destination, its MARKED seats go there and nothing else
+// names a clearance destination, its MARKED positions go there and nothing else
 // does.
 //
 // The override exists for a cell whose ordinary outbound is the wrong place to
 // put bins during a setup — "somewhere new, like a different node group". It is
 // not a bay, it is not special, and whatever it names gets ordinary capacity
 // behaviour, which is why the fixture points it at a group.
-func TestToolingClearanceOverrideRedirectsOnlyMarkedSeats(t *testing.T) {
+func TestToolingClearanceOverrideRedirectsOnlyMarkedPositions(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacSeats = []string{domain.EvacSeatFront}
+	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront}
 	from.ChangeoverEvacDestination = "CLEARANCE-GROUP"
 
 	to := pressClaim("PRESS", "PRESS_B", "PART-B")
@@ -237,13 +237,13 @@ func TestToolingClearanceOverrideRedirectsOnlyMarkedSeats(t *testing.T) {
 
 	marked := actionFor(t, plan, "PRESS")
 	if got := allSteps(marked); !strings.Contains(got, "dropoff@CLEARANCE-GROUP") {
-		t.Errorf("marked seat PRESS ignored changeover_evac_destination.\nsteps = %s\n"+
+		t.Errorf("marked position PRESS ignored changeover_evac_destination.\nsteps = %s\n"+
 			"An override that does not redirect is an override that ships unexercised.", got)
 	}
 	unmarked := actionFor(t, plan, "PRESS_B")
 	if got := allSteps(unmarked); strings.Contains(got, "CLEARANCE-GROUP") {
-		t.Errorf("unmarked seat PRESS_B was redirected to the clearance destination.\n"+
-			"steps = %s\nOnly MARKED seats are cleared; an unmarked seat keeps whatever the "+
+		t.Errorf("unmarked position PRESS_B was redirected to the clearance destination.\n"+
+			"steps = %s\nOnly MARKED positions are cleared; an unmarked position keeps whatever the "+
 			"normal machinery gives it.", got)
 	}
 }
@@ -251,12 +251,12 @@ func TestToolingClearanceOverrideRedirectsOnlyMarkedSeats(t *testing.T) {
 // TestToolingWithoutOverridePlansNoOutboundEdit pins the contract at the seam
 // rather than through a shape: with no override there is nothing for the
 // decorator to do on the outbound side, so it must not have an edit queued at
-// all. A pass that "redirects" every marked seat to the destination the leg
+// all. A pass that "redirects" every marked position to the destination the leg
 // already had is one config change away from redirecting it somewhere else.
 func TestToolingWithoutOverridePlansNoOutboundEdit(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacSeats = []string{domain.EvacSeatFront, domain.EvacSeatPaired}
+	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront, domain.EvacPositionPaired}
 	to := pressClaim("PRESS", "PRESS_B", "PART-A")
 	to.InboundStaging = "IN-STAGE"
 
@@ -280,13 +280,13 @@ func TestToolingWithoutOverridePlansNoOutboundEdit(t *testing.T) {
 
 // TestToolingAcrossDisjointNodes pins the owner's second shape: style 1 on
 // PLN_001/PLN_002, style 2 on PLN_005/PLN_006. No node is in both styles, so
-// the marked seats are Drops and the new seats are Adds, and the old staged
+// the marked positions are Drops and the new positions are Adds, and the old staged
 // fan-out — which required FromClaim AND ToClaim on one diff — contributed
 // nothing at all: the tooling bins went to the ordinary evac destination and
 // the new material was delivered straight to lineside with no hold.
 //
 // THIS IS ALSO THE CROSS-MODE PIN. DiffStyleClaims produces only PLN_001(drop)
-// and PLN_005(add) — the two claim ROWS. The extension seats PLN_002(drop) and
+// and PLN_005(add) — the two claim ROWS. The extension positions PLN_002(drop) and
 // PLN_006(add) exist solely because FanOutPressIndexCrossMode synthesizes them,
 // verified by tracing the passes. So the assertions below on PLN_002 and
 // PLN_006 are assertions that the decorator correctly edits legs planned from
@@ -296,7 +296,7 @@ func TestToolingWithoutOverridePlansNoOutboundEdit(t *testing.T) {
 func TestToolingAcrossDisjointNodes(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PLN_001", "PLN_002", "PART-A")
-	from.ChangeoverEvacSeats = []string{domain.EvacSeatFront, domain.EvacSeatPaired}
+	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront, domain.EvacPositionPaired}
 
 	to := pressClaim("PLN_005", "PLN_006", "PART-A")
 	to.InboundStaging = "IN-STAGE"
@@ -305,33 +305,33 @@ func TestToolingAcrossDisjointNodes(t *testing.T) {
 	plan := toolingTestPlan(t, []processes.NodeClaim{from}, []processes.NodeClaim{to},
 		binTypes, "PLN_001", "PLN_002", "PLN_005", "PLN_006")
 
-	// Both marked seats are CLEARED, by normal routing. The point of the shape
+	// Both marked positions are CLEARED, by normal routing. The point of the shape
 	// is that they are cleared AT ALL: the old fan-out required FromClaim AND
 	// ToClaim on one diff, so on disjoint nodes it contributed nothing — no
 	// clearance guarantee on this side and no hold on the other.
-	for _, seat := range []string{"PLN_001", "PLN_002"} {
-		a := actionFor(t, plan, seat)
+	for _, position := range []string{"PLN_001", "PLN_002"} {
+		a := actionFor(t, plan, position)
 		got := allSteps(a)
-		if !strings.Contains(got, "pickup@"+seat) {
-			t.Errorf("marked seat %s is never cleared.\nsteps = %s\n"+
+		if !strings.Contains(got, "pickup@"+position) {
+			t.Errorf("marked position %s is never cleared.\nsteps = %s\n"+
 				"The rule holds across every changeover shape — the incoming style running on "+
 				"different nodes does not make these bins any less in the way of the setup.",
-				seat, got)
+				position, got)
 		}
 		if dest := outboundOf(t, a); dest != "MARKET" {
-			t.Errorf("marked seat %s clears to %q, not to its ordinary destination.\nsteps = %s\n"+
-				"With no override, clearance is normal routing.", seat, dest, got)
+			t.Errorf("marked position %s clears to %q, not to its ordinary destination.\nsteps = %s\n"+
+				"With no override, clearance is normal routing.", position, dest, got)
 		}
 	}
 
-	// Every new seat stages and holds behind tooling-done.
-	for _, seat := range []string{"PLN_005", "PLN_006"} {
-		a := actionFor(t, plan, seat)
+	// Every new position stages and holds behind tooling-done.
+	for _, position := range []string{"PLN_005", "PLN_006"} {
+		a := actionFor(t, plan, position)
 		got := allSteps(a)
 		if !strings.Contains(got, "wait@IN-STAGE") {
-			t.Errorf("new seat %s takes delivery with no tooling hold.\nsteps = %s\n"+
+			t.Errorf("new position %s takes delivery with no tooling hold.\nsteps = %s\n"+
 				"A human is inside the cell. Material must wait at inbound staging and move in "+
-				"on the operator's release, not drive straight to lineside.", seat, got)
+				"on the operator's release, not drive straight to lineside.", position, got)
 		}
 	}
 }
@@ -343,17 +343,17 @@ func TestToolingAcrossDisjointNodes(t *testing.T) {
 // TestToolingSameBinTypeKeepsTheProvenShape is the pin on the one shape that
 // already worked. The sim proved it end to end on 2026-08-24:
 //
-//	pickup@SEAT -> dropoff@EVAC-DEST -> pickup@SRC -> wait@STAGE -> dropoff@SEAT
+//	pickup@POSITION -> dropoff@EVAC-DEST -> pickup@SRC -> wait@STAGE -> dropoff@POSITION
 //
 // The decorator refactor must not change it. This is also the case that proves
-// per-seat granularity is not optional: the whole-cell press-index builder
+// per-position granularity is not optional: the whole-cell press-index builder
 // evacuates only the FRONT position and INDEXES the paired bin forward onto it,
 // which is exactly the motion a tool change forbids. So a marked press has to
-// reach one action per marked seat however it got here.
+// reach one action per marked position however it got here.
 func TestToolingSameBinTypeKeepsTheProvenShape(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacSeats = []string{domain.EvacSeatFront, domain.EvacSeatPaired}
+	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront, domain.EvacPositionPaired}
 
 	to := pressClaim("PRESS", "PRESS_B", "PART-A")
 	to.InboundStaging = "IN-STAGE"
@@ -366,30 +366,30 @@ func TestToolingSameBinTypeKeepsTheProvenShape(t *testing.T) {
 		"PRESS":   "pickup@PRESS,dropoff@MARKET,pickup@EMPTIES(empty),wait@IN-STAGE,dropoff@PRESS",
 		"PRESS_B": "pickup@PRESS_B,dropoff@MARKET,pickup@EMPTIES(empty),wait@IN-STAGE,dropoff@PRESS_B",
 	}
-	for seat, wantSteps := range want {
-		a := actionFor(t, plan, seat)
+	for position, wantSteps := range want {
+		a := actionFor(t, plan, position)
 		if a.Err != nil {
-			t.Fatalf("%s: planning failed: %v", seat, a.Err)
+			t.Fatalf("%s: planning failed: %v", position, a.Err)
 		}
 		if got := stepString(a.SupplyOrder); got != wantSteps {
 			t.Errorf("%s supply steps =\n  %s\nwant\n  %s\n"+
 				"This is the shape the sim proved on the floor; the refactor must reproduce it "+
 				"exactly, and it must come out of the decorator rather than a second mechanism.",
-				seat, got, wantSteps)
+				position, got, wantSteps)
 		}
 		if a.EvacOrder != nil {
-			t.Errorf("%s: a staged seat evacuation is ONE robot's order; got a second: %s",
-				seat, stepString(a.EvacOrder))
+			t.Errorf("%s: a staged position evacuation is ONE robot's order; got a second: %s",
+				position, stepString(a.EvacOrder))
 		}
 	}
-	// Exactly two actions — one per marked seat, and no leftover whole-cell
+	// Exactly two actions — one per marked position, and no leftover whole-cell
 	// action for the press itself.
 	if n := len(plan.Actions); n != 2 {
 		var have []string
 		for _, a := range plan.Actions {
 			have = append(have, a.CoreNodeName+"("+a.LogTag+")")
 		}
-		t.Errorf("plan has %d actions (%s), want exactly 2 — one per marked seat.\n"+
+		t.Errorf("plan has %d actions (%s), want exactly 2 — one per marked position.\n"+
 			"A leftover whole-cell action means the press is being evacuated twice, once with "+
 			"the index motion a tool change forbids.", n, strings.Join(have, ","))
 	}
@@ -405,7 +405,7 @@ func TestToolingSameBinTypeKeepsTheProvenShape(t *testing.T) {
 func TestRefuseToolingChangeoverWithoutStaging(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PLN_002", "PLN_003", "PART-A")
-	from.ChangeoverEvacSeats = []string{domain.EvacSeatFront}
+	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront}
 
 	// Disjoint incoming press, and it names no staging node.
 	to := pressClaim("PLN_007", "PLN_008", "PART-A")
@@ -423,7 +423,7 @@ func TestRefuseToolingChangeoverWithoutStaging(t *testing.T) {
 	}
 }
 
-// A changeover with no marked seat is not a tooling changeover and is none of
+// A changeover with no marked position is not a tooling changeover and is none of
 // this pass's business.
 func TestRefuseToolingChangeoverWithoutStaging_IgnoresUnmarkedPresses(t *testing.T) {
 	t.Parallel()

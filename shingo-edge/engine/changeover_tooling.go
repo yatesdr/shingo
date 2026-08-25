@@ -13,28 +13,28 @@ import (
 
 // ── TOOLING IS A DECORATOR, NOT A COMPETITOR ────────────────────────────────
 //
-// A press whose outgoing claim marks seats is going down for a tool change.
-// The rule the floor gave us is one sentence: the marked seats are cleared, the
+// A press whose outgoing claim marks positions is going down for a tool change.
+// The rule the floor gave us is one sentence: the marked positions are cleared, the
 // new material waits at inbound staging, the operator does the tool change and
 // marks it done, and the material moves in.
 //
 // ── SHINGO DOES NOT TOUCH TOOLING, AND THERE IS NO BAY ──────────────────────
 //
 // The tool change is human work done at the asset. What shingo owes it is FLOOR
-// SPACE and TIMING: get the material off the marked seats quickly so the people
+// SPACE and TIMING: get the material off the marked positions quickly so the people
 // have room to set up the next run, and hold the incoming material out of the
 // cell until they say they are done, rather than delivering it to line nodes a
 // human is standing in. Some cells change over without evacuating anything at
 // all, because their tool change happens internally.
 //
-// So CLEARANCE IS NORMAL ROUTING. A marked seat's bin goes wherever that cell's
+// So CLEARANCE IS NORMAL ROUTING. A marked position's bin goes wherever that cell's
 // bins ordinarily go — its unloader, its buffer, its market — and this pass
 // leaves that leg alone. ChangeoverEvacDestination is an OPTIONAL OVERRIDE for
 // a cell that wants clearance somewhere else, like a different node group;
 // empty is the default and empty means untouched. Whatever it names is an
 // ordinary destination with ordinary capacity behaviour. An earlier round read
 // this field as a dedicated "tooling bay" and the demo fixture grew a one-slot
-// station to match: the second bin of a two-seat press had nowhere to go, and
+// station to match: the second bin of a two-position press had nowhere to go, and
 // robots dwelt on it holding bins that nothing would ever take away.
 //
 // WHY THIS IS A PASS OVER THE FINISHED PLAN AND NOT A FIFTH FAN-OUT.
@@ -44,7 +44,7 @@ import (
 // bin-type pass ran first and rewrote the diff's SwapMode to press_position;
 // the tooling pass's predicate required two_robot_press_index; so on a press
 // that was BOTH marked and changing bin type, tooling silently did nothing.
-// Marked seats were never cleared and new material drove into a cell with a
+// Marked positions were never cleared and new material drove into a cell with a
 // human in it. No error, no advisory. That is N1, proven on the sim
 // 2026-08-24, and the shape it broke is the common one: a press changing
 // carrier type is a press changing tooling.
@@ -56,8 +56,8 @@ import (
 //
 // ── THE ONE THING IT DOES CREATE, AND WHY ───────────────────────────────────
 //
-// For a marked press whose seats did NOT already get one action each, this pass
-// expands the press into one action per marked seat (expandMarkedPress). That
+// For a marked press whose positions did NOT already get one action each, this pass
+// expands the press into one action per marked position (expandMarkedPress). That
 // is not a second mechanism sneaking back in — it is the same rule, and it has
 // to happen HERE because only this pass knows the press is marked:
 //
@@ -68,41 +68,50 @@ import (
 //	because the leg that would have to change is a supply leg doing a
 //	different job.
 //
-// So a marked press must reach per-seat granularity however it got here. When
+// So a marked press must reach per-position granularity however it got here. When
 // the bin-type fan-out already split it (different bin type) or the nodes are
-// disjoint (Drops and Adds are per-node by construction), the seats already
+// disjoint (Drops and Adds are per-node by construction), the positions already
 // have their own actions and this step does nothing.
 
 // toolingPress is one marked press in a changeover.
 type toolingPress struct {
-	from *processes.NodeClaim // the OUTGOING claim — it owns the seat marks
+	from *processes.NodeClaim // the OUTGOING claim — it owns the position marks
 	to   *processes.NodeClaim // the incoming claim on the SAME node, if any
-	// seats are the core nodes of every marked seat the layout actually has.
-	seats    []string
-	evacDest string
-	staging  string
+	// positions are the core nodes of every marked position the layout actually has.
+	positions []string
+	evacDest  string
+	staging   string
+	// roundTrip is the subset of positions whose part carries over and whose cell
+	// chose outbound_staging, mapped to the spot their bin waits at.
+	roundTrip map[string]string
 }
 
 // toolingChangeover is the tooling decoration for ONE changeover. The zero
 // value is "not a tooling changeover" and decorates nothing.
 type toolingChangeover struct {
 	presses []toolingPress
-	// evacDest maps a MARKED seat's core node to the OVERRIDE destination its
-	// bin is redirected to. Only marked seats of a cell that set the override
+	// evacDest maps a MARKED position's core node to the OVERRIDE destination its
+	// bin is redirected to. Only marked positions of a cell that set the override
 	// appear at all: with no override there is nothing to redirect, and an
-	// unmarked seat keeps whatever the normal machinery gave it either way.
+	// unmarked position keeps whatever the normal machinery gave it either way.
 	evacDest map[string]string
-	// stageAt maps a press seat's core node to the staging node its INCOMING
-	// bin waits at. Every seat of the cell appears, marked or not — the press
+	// stageAt maps a press position's core node to the staging node its INCOMING
+	// bin waits at. Every position of the cell appears, marked or not — the press
 	// is down and a human is inside it, so nothing may drive to lineside.
 	stageAt map[string]string
+	// roundTrip maps a marked position whose part CARRIES OVER, and whose cell
+	// chose outbound_staging, to the staging spot its bin waits at. That bin
+	// does not go to the supermarket and no replacement is fetched: the same
+	// carrier hops out to clear the floor and returns on the tooling-done
+	// release. Empty for every other position.
+	roundTrip map[string]string
 }
 
 func (t toolingChangeover) active() bool { return len(t.presses) > 0 }
 
-// pressIndexSeats is every core node a press-index claim occupies, front to
+// pressIndexPositions is every core node a press-index claim occupies, front to
 // back. Empty for a claim that is not press-index.
-func pressIndexSeats(c *processes.NodeClaim) []string {
+func pressIndexPositions(c *processes.NodeClaim) []string {
 	if c == nil || c.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		return nil
 	}
@@ -116,15 +125,15 @@ func pressIndexSeats(c *processes.NodeClaim) []string {
 }
 
 // planToolingChangeover reads the ORIGINAL claim lists — not the diffs — and
-// answers two questions: which seats have their clearance redirected by an
-// override, and which seats hold their incoming material at staging.
+// answers two questions: which positions have their clearance redirected by an
+// override, and which positions hold their incoming material at staging.
 //
 // Reading the originals is the whole point. The diffs are what the earlier
 // passes rewrote, and the field the old predicate keyed on (SwapMode) is one of
 // the fields they rewrite.
 //
 // SCOPE IS THE CHANGEOVER, which is the cell. A changeover belongs to one
-// process; if that process's outgoing style marks seats, the cell is down. The
+// process; if that process's outgoing style marks positions, the cell is down. The
 // staging set is therefore drawn from every INCOMING press-index claim, which
 // is what makes the disjoint-node shape work at all: when style 1 runs on
 // PLN_001-002 and style 2 on PLN_005-006, nothing pairs the two sides, and the
@@ -138,29 +147,53 @@ func planToolingChangeover(fromClaims, toClaims []processes.NodeClaim) toolingCh
 	var t toolingChangeover
 	for i := range fromClaims {
 		fc := &fromClaims[i]
-		seats := domain.MarkedEvacSeatNodes(fc)
-		if len(seats) == 0 {
+		marked := domain.MarkedEvacPositionNodes(fc)
+		if len(marked) == 0 {
 			continue
 		}
+		// CARRY-OVER SPLITS THE MARKED POSITIONS THREE WAYS. A position whose part the
+		// cell keeps may not need clearing at all (keep_lineside — it never
+		// appears below, so nothing in this pass touches its leg or builds one)
+		// or may only need to be out of the way (outbound_staging — the same
+		// bin walks out and comes back). Everything else is cleared, which
+		// includes every position whose part is changing: the disposition is about
+		// a bin the cell keeps and there is no such bin there.
+		var positions []string
+		for _, position := range marked {
+			switch domain.ClearanceTreatmentAtNode(fc, toByNode[fc.CoreNodeName], position) {
+			case domain.ClearanceKeep:
+				continue
+			case domain.ClearanceRoundTrip:
+				if t.roundTrip == nil {
+					t.roundTrip = make(map[string]string)
+				}
+				t.roundTrip[position] = fc.OutboundStaging
+			}
+			positions = append(positions, position)
+		}
+		if len(positions) == 0 {
+			continue // every marked position keeps its part; nothing to decorate
+		}
 		// THE OVERRIDE IS THE ONLY REASON TO TOUCH AN OUTBOUND LEG, and it is
-		// empty by default. Clearing a seat is not a different journey from
+		// empty by default. Clearing a position is not a different journey from
 		// evacuating it — it is the same journey, made to happen now — so with
 		// no override the leg the pipeline planned is exactly right and this
-		// pass leaves it alone. Mapping every marked seat to the destination it
+		// pass leaves it alone. Mapping every marked position to the destination it
 		// already had would read as harmless and be one config change away from
 		// steering legs nobody asked it to steer.
 		if override := fc.ChangeoverEvacDestination; override != "" {
 			if t.evacDest == nil {
 				t.evacDest = make(map[string]string)
 			}
-			for _, seat := range seats {
-				t.evacDest[seat] = override
+			for _, position := range positions {
+				t.evacDest[position] = override
 			}
 		}
 		t.presses = append(t.presses, toolingPress{
-			from:  fc,
-			to:    toByNode[fc.CoreNodeName],
-			seats: seats,
+			from:      fc,
+			to:        toByNode[fc.CoreNodeName],
+			positions: positions,
+			roundTrip: pressRoundTrips(t.roundTrip, positions),
 			// The EXPANSION builds a leg from nothing, so it has to name a
 			// destination: the override when set, this cell's ordinary outbound
 			// otherwise. That is EvacDestinationFor's whole job, and it is the
@@ -172,7 +205,7 @@ func planToolingChangeover(fromClaims, toClaims []processes.NodeClaim) toolingCh
 		return toolingChangeover{}
 	}
 
-	// The staging set: every seat of every incoming press-index claim that
+	// The staging set: every position of every incoming press-index claim that
 	// names a staging node. The arm gate has already refused a marked press
 	// whose incoming claims name none, so an empty set here means the incoming
 	// style has no press at all — a cell being emptied, with nothing to hold.
@@ -181,14 +214,14 @@ func planToolingChangeover(fromClaims, toClaims []processes.NodeClaim) toolingCh
 		if tc.InboundStaging == "" {
 			continue
 		}
-		for _, seat := range pressIndexSeats(tc) {
+		for _, position := range pressIndexPositions(tc) {
 			if t.stageAt == nil {
 				t.stageAt = make(map[string]string)
 			}
-			t.stageAt[seat] = tc.InboundStaging
+			t.stageAt[position] = tc.InboundStaging
 		}
 	}
-	// Each marked press remembers a staging node for the seats it expands. Its
+	// Each marked press remembers a staging node for the positions it expands. Its
 	// own node first; otherwise any the changeover declared, taken in sorted
 	// order so a multi-press cell plans the same way twice.
 	fallback := ""
@@ -210,28 +243,28 @@ func planToolingChangeover(fromClaims, toClaims []processes.NodeClaim) toolingCh
 	return t
 }
 
-// resolveToolingSeatNodes makes sure every marked seat is a node this plan can
+// resolveToolingNodes makes sure every marked position is a node this plan can
 // name, and it is the fix for N1-a.
 //
-// A marked seat owns no claim row, so nothing had ever created its
+// A marked position owns no claim row, so nothing had ever created its
 // process_nodes row except ChangeoverService.Create — which runs after the plan
-// is built. The first changeover of a press therefore planned around a seat
+// is built. The first changeover of a press therefore planned around a position
 // that did not exist yet, and the second one worked because the first had left
 // the row behind.
 //
 // materialize splits the two callers. Start writes the rows here, BEFORE
 // planning, and re-reads so the ids are real. Preview must not write, so it
-// carries the same seats as unsaved nodes and shows the operator the work the
+// carries the same positions as unsaved nodes and shows the operator the work the
 // changeover will actually do.
 //
-// The refusal is LOUD, and deliberately so: a marked seat this cannot resolve
-// is a seat whose bin stays in the way of people setting up a press, and the
+// The refusal is LOUD, and deliberately so: a marked position this cannot resolve
+// is a position whose bin stays in the way of people setting up a press, and the
 // silent version of that sentence is the whole reason N1 existed.
-func (e *Engine) resolveToolingSeatNodes(processID int64, t toolingChangeover,
+func (e *Engine) resolveToolingNodes(processID int64, t toolingChangeover,
 	nodes []processes.Node, materialize bool) ([]processes.Node, error) {
 
-	seats := toolingSeatNodes(t)
-	if len(seats) == 0 {
+	positions := toolingClearanceNodes(t)
+	if len(positions) == 0 {
 		return nodes, nil
 	}
 	have := make(map[string]bool, len(nodes))
@@ -239,30 +272,30 @@ func (e *Engine) resolveToolingSeatNodes(processID int64, t toolingChangeover,
 		have[nodes[i].CoreNodeName] = true
 	}
 	created := false
-	for _, seat := range seats {
-		if have[seat] {
+	for _, position := range positions {
+		if have[position] {
 			continue
 		}
-		have[seat] = true
+		have[position] = true
 		if !materialize {
 			nodes = append(nodes, processes.Node{
 				ProcessID:    processID,
-				CoreNodeName: seat,
-				Code:         seat,
-				Name:         seat,
+				CoreNodeName: position,
+				Code:         position,
+				Name:         position,
 				Enabled:      true,
 			})
 			continue
 		}
 		if _, err := e.db.CreateProcessNode(processes.NodeInput{
 			ProcessID:    processID,
-			CoreNodeName: seat,
-			Code:         seat,
-			Name:         seat,
+			CoreNodeName: position,
+			Code:         position,
+			Name:         position,
 			Enabled:      true,
 		}); err != nil {
-			return nil, fmt.Errorf("cannot start changeover: seat %s is marked for changeover "+
-				"clearance but has no node on this process, and one could not be created: %w", seat, err)
+			return nil, fmt.Errorf("cannot start changeover: position %s is marked for changeover "+
+				"clearance but has no node on this process, and one could not be created: %w", position, err)
 		}
 		created = true
 	}
@@ -274,47 +307,47 @@ func (e *Engine) resolveToolingSeatNodes(processID int64, t toolingChangeover,
 	return nodes, nil
 }
 
-// expandsSeats reports whether this press's marked seats need actions built for
+// expandsPositions reports whether this press's marked positions need actions built for
 // them — the same question expandMarkedPress answers, asked before the plan
-// exists so the seats can be given node rows and node tasks to hang off.
+// exists so the positions can be given node rows and node tasks to hang off.
 //
 // A press with no incoming claim on its own node is a teardown: there is
 // nothing to refill with, expandMarkedPress declines to touch it, and inventing
-// tasks for seats that will get no orders would block the cutover on work
+// tasks for positions that will get no orders would block the cutover on work
 // nobody planned.
-func (p toolingPress) expandsSeats() bool { return p.to != nil }
+func (p toolingPress) expandsPositions() bool { return p.to != nil }
 
-// toolingSeatNodes is every marked seat of the changeover, deduped, in press
+// toolingClearanceNodes is every marked position of the changeover, deduped, in press
 // order. These are the nodes the changeover physically acts on and the ones the
 // plan must be able to name.
-func toolingSeatNodes(t toolingChangeover) []string {
+func toolingClearanceNodes(t toolingChangeover) []string {
 	var out []string
 	seen := make(map[string]bool)
 	for _, press := range t.presses {
-		for _, seat := range press.seats {
-			if seen[seat] {
+		for _, position := range press.positions {
+			if seen[position] {
 				continue
 			}
-			seen[seat] = true
-			out = append(out, seat)
+			seen[position] = true
+			out = append(out, position)
 		}
 	}
 	return out
 }
 
-// appendToolingSeatTasks gives every marked seat that the diffs did not already
+// appendToolingClearanceTasks gives every marked position that the diffs did not already
 // cover a node task of its own.
 //
 // WITHOUT THIS THE PLAN IS DISCARDED WHERE IT MATTERS MOST. applyChangeoverPlan
 // finds a node task by node id and skips the action when there is none, and the
-// task list is built from the DIFFS — which never mention a seat the tooling
-// pass expanded. So on a same-bin-type marked press the paired seat's leg was
+// task list is built from the DIFFS — which never mention a position the tooling
+// pass expanded. So on a same-bin-type marked press the paired position's leg was
 // planned correctly, logged as "cannot find node task", and dropped.
 //
-// The seats the diffs DID cover (the bin-type fan-out split them, or they are
+// The positions the diffs DID cover (the bin-type fan-out split them, or they are
 // per-node Drops) already have tasks and are left alone, which is the same
 // idempotence rule expandMarkedPress follows.
-func appendToolingSeatTasks(processID int64, t toolingChangeover, nodeTasks []processes.NodeTaskInput) []processes.NodeTaskInput {
+func appendToolingClearanceTasks(processID int64, t toolingChangeover, nodeTasks []processes.NodeTaskInput) []processes.NodeTaskInput {
 	if !t.active() {
 		return nodeTasks
 	}
@@ -323,14 +356,14 @@ func appendToolingSeatTasks(processID int64, t toolingChangeover, nodeTasks []pr
 		have[nt.CoreNodeName] = true
 	}
 	for _, press := range t.presses {
-		if !press.expandsSeats() {
+		if !press.expandsPositions() {
 			continue
 		}
-		for _, seat := range press.seats {
-			if have[seat] {
+		for _, position := range press.positions {
+			if have[position] {
 				continue
 			}
-			have[seat] = true
+			have[position] = true
 			var fromClaimID, toClaimID *int64
 			if press.from != nil {
 				id := press.from.ID
@@ -342,7 +375,7 @@ func appendToolingSeatTasks(processID int64, t toolingChangeover, nodeTasks []pr
 			}
 			nodeTasks = append(nodeTasks, processes.NodeTaskInput{
 				ProcessID:    processID,
-				CoreNodeName: seat,
+				CoreNodeName: position,
 				FromClaimID:  fromClaimID,
 				ToClaimID:    toClaimID,
 				Situation:    string(SituationEvacuate),
@@ -368,7 +401,7 @@ func appendToolingSeatTasks(processID int64, t toolingChangeover, nodeTasks []pr
 func refuseToolingChangeoverWithoutStaging(fromClaims, toClaims []processes.NodeClaim) error {
 	var marked []string
 	for i := range fromClaims {
-		if len(domain.MarkedEvacSeatNodes(&fromClaims[i])) > 0 {
+		if len(domain.MarkedEvacPositionNodes(&fromClaims[i])) > 0 {
 			marked = append(marked, fromClaims[i].CoreNodeName)
 		}
 	}
@@ -379,7 +412,7 @@ func refuseToolingChangeoverWithoutStaging(fromClaims, toClaims []processes.Node
 	var incoming, missing []string
 	for i := range toClaims {
 		tc := &toClaims[i]
-		if len(pressIndexSeats(tc)) == 0 {
+		if len(pressIndexPositions(tc)) == 0 {
 			continue
 		}
 		incoming = append(incoming, tc.CoreNodeName)
@@ -395,7 +428,7 @@ func refuseToolingChangeoverWithoutStaging(fromClaims, toClaims []processes.Node
 	if len(missing) == 0 {
 		return nil
 	}
-	return fmt.Errorf("cannot start changeover: %s marks press seats for tooling evacuation, "+
+	return fmt.Errorf("cannot start changeover: %s marks press positions for tooling evacuation, "+
 		"which stages the incoming bins — set Inbound Staging on the incoming style's claim for %s",
 		strings.Join(marked, ", "), strings.Join(missing, ", "))
 }
@@ -403,13 +436,13 @@ func refuseToolingChangeoverWithoutStaging(fromClaims, toClaims []processes.Node
 // applyToolingChangeover is the decorator. It runs LAST, over the finished
 // plan, and makes two edits:
 //
-//   - the OUTBOUND leg of a marked seat is redirected, but ONLY when the cell
+//   - the OUTBOUND leg of a marked position is redirected, but ONLY when the cell
 //     set ChangeoverEvacDestination — otherwise clearance is normal routing and
 //     the leg is left exactly as the pipeline planned it;
-//   - every INBOUND leg to a press seat gains a wait at inbound staging, so the
+//   - every INBOUND leg to a press position gains a wait at inbound staging, so the
 //     bin holds out of the cell until the operator releases it.
 //
-// Plus the per-seat expansion described at the top of this file, for a marked
+// Plus the per-position expansion described at the top of this file, for a marked
 // press the pipeline planned as one whole cell.
 func applyToolingChangeover(p changeover.Plan, nodes []processes.Node, t toolingChangeover, fallbackAutoConfirm bool) changeover.Plan {
 	if !t.active() {
@@ -421,6 +454,14 @@ func applyToolingChangeover(p changeover.Plan, nodes []processes.Node, t tooling
 	}
 	for i := range actions {
 		a := &actions[i]
+		// A CARRIED-OVER BIN IS NOT CLEARED AND REFILLED, so its leg is
+		// replaced rather than edited: there is no outbound destination to
+		// retarget and no inbound leg to hold, because the bin that comes back
+		// is the bin that left.
+		if staging := t.roundTrip[a.CoreNodeName]; staging != "" {
+			setCarryoverRoundTrip(a, staging)
+			continue
+		}
 		if dest := t.evacDest[a.CoreNodeName]; dest != "" {
 			retargetOutbound(a.SupplyOrder, a.CoreNodeName, dest)
 			retargetOutbound(a.EvacOrder, a.CoreNodeName, dest)
@@ -432,12 +473,12 @@ func applyToolingChangeover(p changeover.Plan, nodes []processes.Node, t tooling
 	return changeover.Plan{Actions: actions}
 }
 
-// expandMarkedPress gives a marked press one action per marked seat when the
+// expandMarkedPress gives a marked press one action per marked position when the
 // pipeline left it as a single whole-cell action. See the file header for why
 // this cannot be decoration.
 //
-// Idempotent by construction: if every marked seat already has an action — the
-// different-bin-type fan-out split it, or the seats are per-node Drops — there
+// Idempotent by construction: if every marked position already has an action — the
+// different-bin-type fan-out split it, or the positions are per-node Drops — there
 // is nothing missing and the plan is returned untouched.
 func expandMarkedPress(actions []changeover.NodeAction, nodes []processes.Node, press toolingPress) []changeover.NodeAction {
 	covered := make(map[string]bool, len(actions))
@@ -445,8 +486,8 @@ func expandMarkedPress(actions []changeover.NodeAction, nodes []processes.Node, 
 		covered[a.CoreNodeName] = true
 	}
 	missing := false
-	for _, seat := range press.seats {
-		if !covered[seat] {
+	for _, position := range press.positions {
+		if !covered[position] {
 			missing = true
 			break
 		}
@@ -461,57 +502,117 @@ func expandMarkedPress(actions []changeover.NodeAction, nodes []processes.Node, 
 		return actions
 	}
 
-	out := make([]changeover.NodeAction, 0, len(actions)+len(press.seats))
+	out := make([]changeover.NodeAction, 0, len(actions)+len(press.positions))
 	for _, a := range actions {
-		// Drop the whole-cell action; its seats are about to replace it.
+		// Drop the whole-cell action; its positions are about to replace it.
 		if a.CoreNodeName == press.from.CoreNodeName {
 			continue
 		}
 		out = append(out, a)
 	}
-	for _, seat := range press.seats {
-		if covered[seat] && seat != press.from.CoreNodeName {
+	for _, position := range press.positions {
+		if covered[position] && position != press.from.CoreNodeName {
 			continue // already has its own action
 		}
-		node := findNodeByCoreName(nodes, seat)
+		node := findNodeByCoreName(nodes, position)
 		if node == nil {
-			continue // the process does not have this seat as a node
+			continue // the process does not have this position as a node
 		}
-		out = append(out, toolingSeatAction(press, seat, node))
+		out = append(out, toolingPositionAction(press, position, node))
+		if staging := press.roundTrip[position]; staging != "" {
+			setCarryoverRoundTrip(&out[len(out)-1], staging)
+		}
 	}
 	return out
 }
 
-// toolingSeatAction is ONE marked seat's clearance: one robot lifts the bin off
-// the seat, takes it wherever this cell's bins go (or to the override, if the
+// toolingPositionAction is ONE marked position's clearance: one robot lifts the bin off
+// the position, takes it wherever this cell's bins go (or to the override, if the
 // cell named one), fetches the replacement, holds it at staging until the
-// operator marks the change done, and sets it down on the seat.
+// operator marks the change done, and sets it down on the position.
 //
 // This is the shape the sim proved on the floor (2026-08-24), and it is now
 // produced HERE rather than by a builder a separate predicate selected.
-func toolingSeatAction(press toolingPress, seat string, node *processes.Node) changeover.NodeAction {
-	fromSeat := domain.SynthesizePressPositionClaim(press.from, seat)
-	toSeat := domain.SynthesizePressPositionClaim(press.to, seat)
+func toolingPositionAction(press toolingPress, position string, node *processes.Node) changeover.NodeAction {
+	fromPosition := domain.SynthesizePressPositionClaim(press.from, position)
+	toPosition := domain.SynthesizePressPositionClaim(press.to, position)
 
-	steps := buildToolingEvacSteps(seat, press.evacDest, toSeat.InboundSource, press.staging)
-	// A produce seat's replacement is a fresh EMPTY carrier, not a full
+	steps := buildToolingEvacSteps(position, press.evacDest, toPosition.InboundSource, press.staging)
+	// A produce position's replacement is a fresh EMPTY carrier, not a full
 	// payload-matched bin; without this the pickup hunts a full bin in the
 	// empty pool and the dispatch fails ("no bin of requested payload").
-	if toSeat.Role == protocol.ClaimRoleProduce && toSeat.InboundSource != "" {
-		markInboundEmpty(steps, toSeat.InboundSource, refillCarrierPayload(fromSeat, toSeat))
+	if toPosition.Role == protocol.ClaimRoleProduce && toPosition.InboundSource != "" {
+		markInboundEmpty(steps, toPosition.InboundSource, refillCarrierPayload(fromPosition, toPosition))
 	}
 	return changeover.NodeAction{
 		NodeID:       node.ID,
 		NodeName:     node.Name,
-		CoreNodeName: seat,
+		CoreNodeName: position,
 		Situation:    string(SituationEvacuate),
-		// The order OPENS by lifting the old bin off the seat, so it carries the
+		// The order OPENS by lifting the old bin off the position, so it carries the
 		// from-style payload; without it the pickup filters for the new payload
 		// and finds no bin (the ALN_001 shape).
-		SupplyOrder: complexSpecWithPayload(seat, seat, steps, true, fromSeat.PayloadCode),
+		SupplyOrder: complexSpecWithPayload(position, position, steps, true, fromPosition.PayloadCode),
 		NextState:   domain.NodeTaskStagingRequested,
-		LogTag:      "evacuate_staged_seat",
+		LogTag:      "evacuate_staged_position",
 	}
+}
+
+// pressRoundTrips narrows the changeover-wide round-trip map to one press's
+// positions, so the expansion does not have to reach back out to the changeover.
+func pressRoundTrips(all map[string]string, positions []string) map[string]string {
+	if len(all) == 0 {
+		return nil
+	}
+	var out map[string]string
+	for _, position := range positions {
+		if staging, ok := all[position]; ok {
+			if out == nil {
+				out = make(map[string]string, len(positions))
+			}
+			out[position] = staging
+		}
+	}
+	return out
+}
+
+// setCarryoverRoundTrip rewrites one position's action into the carry-over shape: the
+// SAME bin out to staging, held there through the setup, and back on the
+// tooling-done release.
+//
+//	pickup(position) -> dropoff(staging) -> wait(staging) -> pickup(staging) -> dropoff(position)
+//
+// It REPLACES the action's orders rather than editing them, because there is
+// nothing here to edit: no outbound destination (the bin is not leaving the
+// cell), no refill leg (the bin that comes back is the bin that left), and no
+// inbound hold to add (the wait is already the same gate). An evac order, if
+// the pipeline planned one, is dropped for the same reason — one robot makes
+// this whole trip.
+//
+// The wait is a station wait at the staging spot, which is what puts this leg
+// on the same release as every inbound leg of the press: one tooling-done, and
+// the kept bin walks back in beside the new material.
+func setCarryoverRoundTrip(a *changeover.NodeAction, staging string) {
+	if a == nil || staging == "" {
+		return
+	}
+	position := a.CoreNodeName
+	steps := []protocol.ComplexOrderStep{
+		{Action: protocol.ActionPickup, Node: position},
+		{Action: protocol.ActionDropoff, Node: staging},
+		stationWait(staging),
+		{Action: protocol.ActionPickup, Node: staging},
+		{Action: protocol.ActionDropoff, Node: position},
+	}
+	payload := ""
+	if a.SupplyOrder != nil && a.SupplyOrder.Complex != nil {
+		payload = a.SupplyOrder.Complex.PayloadCode
+	}
+	a.SupplyOrder = complexSpecWithPayload(position, position, steps, true, payload)
+	a.EvacOrder = nil
+	a.Situation = string(SituationEvacuate)
+	a.NextState = domain.NodeTaskStagingRequested
+	a.LogTag = "carryover_outbound_staging"
 }
 
 // retargetOutbound rewrites the dropoff that disposes of the bin lifted off
@@ -519,7 +620,7 @@ func toolingSeatAction(press toolingPress, seat string, node *processes.Node) ch
 //
 // "The dropoff after the pickup at my own node" is the definition of an
 // outbound leg here, and it is deliberately positional rather than a match on
-// the old destination: an overriding cell sends its marked seats' bins to the
+// the old destination: an overriding cell sends its marked positions' bins to the
 // override whatever the normal machinery had chosen, including a destination
 // this pass has already set (which makes it idempotent).
 func retargetOutbound(spec *changeover.OrderSpec, node, dest string) {
@@ -541,7 +642,7 @@ func retargetOutbound(spec *changeover.OrderSpec, node, dest string) {
 	}
 }
 
-// holdInbound makes the leg that delivers to this seat wait at `staging` first.
+// holdInbound makes the leg that delivers to this position wait at `staging` first.
 //
 // The bin is HELD, not parked: the robot keeps it on the deck at the staging
 // node and moves in on release, so the release is a short move rather than a
@@ -572,10 +673,10 @@ func holdInbound(a *changeover.NodeAction, staging string, fallbackAutoConfirm b
 }
 
 // holdComplexInbound inserts the staging wait immediately before the LAST
-// dropoff at this seat — the step that actually sets the new bin down on it.
+// dropoff at this position — the step that actually sets the new bin down on it.
 //
 // A leg that already waits there is retargeted rather than given a second wait:
-// the fused seat shape this pass produces itself arrives already correct, and a
+// the fused position shape this pass produces itself arrives already correct, and a
 // pass that is not idempotent is one nobody can re-run.
 func holdComplexInbound(spec *changeover.OrderSpec, node, staging string) {
 	if spec == nil || spec.Complex == nil || staging == "" {
@@ -589,7 +690,7 @@ func holdComplexInbound(spec *changeover.OrderSpec, node, staging string) {
 		}
 	}
 	if last < 0 {
-		return // this leg does not deliver to the seat; nothing inbound to hold
+		return // this leg does not deliver to the position; nothing inbound to hold
 	}
 	if last > 0 && steps[last-1].Action == protocol.ActionWait {
 		steps[last-1] = stationWait(staging)

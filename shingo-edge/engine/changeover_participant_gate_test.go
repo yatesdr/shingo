@@ -76,7 +76,7 @@ func TestCanAcceptOrders_NonParticipantStaysOpen(t *testing.T) {
 }
 
 // TestCanAcceptOrders_IndexedOverIsGatedWithItsOwnReason covers the catastrophic
-// family the participant set exists for: a press-index seat that owns NO task
+// family the participant set exists for: a press-index position that owns NO task
 // must still refuse intake, and must say why in terms an operator can act on —
 // there is no task on that tile to explain the refusal.
 func TestCanAcceptOrders_IndexedOverIsGatedWithItsOwnReason(t *testing.T) {
@@ -85,19 +85,19 @@ func TestCanAcceptOrders_IndexedOverIsGatedWithItsOwnReason(t *testing.T) {
 	processID, _, _, _ := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
 
-	seatID, err := db.CreateProcessNode(processes.NodeInput{
+	positionID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
-		CoreNodeName: "PLN_SEAT",
-		Code:         "SEAT",
-		Name:         "Press Back Seat",
+		CoreNodeName: "PLN_POSITION",
+		Code:         "POSITION",
+		Name:         "Press Back Position",
 		Sequence:     8,
 		Enabled:      true,
 	})
 	if err != nil {
-		t.Fatalf("create seat node: %v", err)
+		t.Fatalf("create position node: %v", err)
 	}
 
-	// Write the changeover + an indexed_over participant directly: the seat owns
+	// Write the changeover + an indexed_over participant directly: the position owns
 	// no task, which is precisely the state a task-keyed gate cannot see.
 	res, err := db.Exec(`INSERT INTO process_changeovers (process_id, to_style_id, state, called_by)
 		VALUES (?, ?, 'active', 'test')`, processID, 1)
@@ -107,16 +107,16 @@ func TestCanAcceptOrders_IndexedOverIsGatedWithItsOwnReason(t *testing.T) {
 	coID, _ := res.LastInsertId()
 	if _, err := db.Exec(`INSERT INTO changeover_participants
 		(process_changeover_id, core_node_name, process_node_id, role)
-		VALUES (?, 'PLN_SEAT', ?, ?)`, coID, seatID, domain.ParticipantRoleIndexedOver); err != nil {
+		VALUES (?, 'PLN_POSITION', ?, ?)`, coID, positionID, domain.ParticipantRoleIndexedOver); err != nil {
 		t.Fatalf("insert participant: %v", err)
 	}
 
-	ok, reason := eng.CanAcceptOrders(seatID)
+	ok, reason := eng.CanAcceptOrders(positionID)
 	if ok {
-		t.Fatal("indexed-over seat accepted intake — this is the two-bins-on-one-node case")
+		t.Fatal("indexed-over position accepted intake — this is the two-bins-on-one-node case")
 	}
 	if !strings.Contains(reason, "indexed-over") {
-		t.Errorf("reason = %q; an indexed-over seat owns no task, so the refusal must say so", reason)
+		t.Errorf("reason = %q; an indexed-over position owns no task, so the refusal must say so", reason)
 	}
 }
 
@@ -144,7 +144,7 @@ func TestAssertParticipantsResolve_NamesMissingRows(t *testing.T) {
 	// A TASK-role participant with no row is NOT advice. ChangeoverService.Create
 	// auto-creates a process_nodes row for every node task whose name does not
 	// resolve, so telling the engineer to add it by hand sends them to do a no-op
-	// — and every fanned-out press seat is a task-role participant, so this was
+	// — and every fanned-out press position is a task-role participant, so this was
 	// the common case.
 	withMissingTask := append(participants, domain.ParticipantInput{
 		CoreNodeName: "PLN_04", Role: domain.ParticipantRoleTask, // no row, auto-created at Create
@@ -164,7 +164,7 @@ func TestAssertParticipantsResolve_NamesMissingRows(t *testing.T) {
 }
 
 // TestStartChangeover_UnresolvedParticipantsAreAdvisoryOnly pins that the
-// assertion never refuses. A plant whose press seats have never had
+// assertion never refuses. A plant whose press positions have never had
 // process_nodes rows must still be able to run a changeover — a guard the floor
 // cannot work around gets disabled rather than fixed (Springfield, 2026-06-03).
 func TestStartChangeover_UnresolvedParticipantsAreAdvisoryOnly(t *testing.T) {

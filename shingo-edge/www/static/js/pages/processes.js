@@ -526,7 +526,7 @@ function ensureCompareDelegation(wrap) {
 // auto_reorder used to be echoed back by hand here — read the claim, send its
 // own value — which was the same problem patched one field at a time, and only
 // after a hard-coded `true` had spent a while re-arming cell auto-reorder on
-// every claim an engineer touched. changeover_evac_seats and
+// every claim an engineer touched. changeover_evac_positions and
 // changeover_evac_destination were echoed for exactly the same reason, and were
 // deleted when the store contract was extended to cover them. The echo is never
 // the fix: it is correct only for the surfaces someone remembered, and the two
@@ -633,7 +633,7 @@ function jumpToStyleEditor(styleID) {
 // group on, and nothing else here has to change. Until then every entry
 // evaluates false, no DOM exists for them, and renderClaimForm skips an id it
 // cannot resolve.
-const ROUND3_CHANGEOVER = true; // per-seat tooling relevance + evac destination (round 3)
+const ROUND3_CHANGEOVER = true; // per-position tooling relevance + evac destination (round 3)
 const ROUND4_ROUTING = true;     // IndexRobotSupplies + key routes — round 4 shipped both
 
 // hasThirdPosition is read from the form rather than passed, because the
@@ -688,21 +688,21 @@ function claimFieldVisibility(role, swap) {
         // two_robot (the old bin still goes somewhere).
         'claims-outbound-destination-group':  !isManual,
         'claims-changeover-fieldset':         !isManual,
-        // Round 3 — Changeover fieldset. Per-seat tooling relevance applies to
+        // Round 3 — Changeover fieldset. Per-position tooling relevance applies to
         // any consume or process node, not only presses, so it is not
         // press-index scoped. The evac destination is free-form: a node or a
         // group.
-        // Per-seat relevance is a press-index question — a single-position node
+        // Per-position relevance is a press-index question — a single-position node
         // answers it with the Evacuate checkbox above.
         'claims-add-tooling-relevance-row':   ROUND3_CHANGEOVER && isPressIndex,
-        // The individual seats follow the LAYOUT, not the mode: a 2-position
-        // press has no third seat, and offering one is how a selection that
+        // The individual positions follow the LAYOUT, not the mode: a 2-position
+        // press has no third position, and offering one is how a selection that
         // can never fire gets made.
-        'claims-seat-front-row':              ROUND3_CHANGEOVER && isPressIndex,
-        'claims-seat-paired-row':             ROUND3_CHANGEOVER && isPressIndex,
-        'claims-seat-second-row':             ROUND3_CHANGEOVER && isPressIndex && hasThirdPosition,
+        'claims-position-front-row':              ROUND3_CHANGEOVER && isPressIndex,
+        'claims-position-paired-row':             ROUND3_CHANGEOVER && isPressIndex,
+        'claims-position-second-row':             ROUND3_CHANGEOVER && isPressIndex && hasThirdPosition,
         'claims-add-evac-destination-group':  ROUND3_CHANGEOVER && !isManual,
-        'claims-err-changeover-evac-seats':   false,
+        'claims-err-changeover-evac-positions':   false,
         'claims-ab-fieldset':                 showPair,
         'claims-add-second-paired-group':     showPair && isPressIndex,
         'claims-third-position-help':         showPair && isPressIndex,
@@ -921,7 +921,7 @@ function readClaimStateFromForm() {
         keyRoute: readKeyRoute(),
         keyTask: get('claims-add-key-task').value,
         changeoverLoadDirective: get('claims-add-load-directive').checked,
-        changeoverEvacSeats: readEvacSeats(),
+        changeoverEvacPositions: readEvacPositions(),
         changeoverEvacDestination: get('claims-add-evac-destination').value,
         autoConfirm: get('claims-add-auto-confirm').checked,
     };
@@ -957,7 +957,7 @@ function writeClaimStateToForm(state) {
     writeKeyRoute(state.keyRoute || []);
     get('claims-add-key-task').value = state.keyTask || '';
     get('claims-add-load-directive').checked = !!state.changeoverLoadDirective;
-    writeEvacSeats(state.changeoverEvacSeats || []);
+    writeEvacPositions(state.changeoverEvacPositions || []);
     get('claims-add-evac-destination').value = state.changeoverEvacDestination || '';
     get('claims-add-auto-confirm').checked = !!state.autoConfirm;
 }
@@ -1364,27 +1364,27 @@ function renderCollapseHints(state) {
         // operator who had just opened it to look.
         if (card && !isDefault) card.open = true;
     };
-    var seats = state.changeoverEvacSeats || [];
+    var positions = state.changeoverEvacPositions || [];
     var coHint = state.evacuateOnChangeover ? 'evacuate: on' : 'evacuate: off';
-    if (seats.length > 0) coHint += ' · tooling seats: ' + seats.join(', ');
+    if (positions.length > 0) coHint += ' · tooling positions: ' + positions.join(', ');
     setHint('claims-changeover-fieldset', 'claims-changeover-hint', coHint,
-        !state.evacuateOnChangeover && seats.length === 0);
+        !state.evacuateOnChangeover && positions.length === 0);
     setHint('claims-auto-request-fieldset', 'claims-auto-request-hint',
         state.autoRequestPayload ? ('payload: ' + state.autoRequestPayload)
                                  : (state.autoConfirm ? 'auto-confirm: on' : 'disabled'),
         !state.autoRequestPayload && !state.autoConfirm);
 }
 
-// readEvacSeats snapshots the per-seat tooling-relevance selection.
+// readEvacPositions snapshots the per-position tooling-relevance selection.
 //
 // IT DOES NOT FILTER BY VISIBILITY, and that is deliberate. Filtering here
 // looked right and made the drop note impossible: renderClaimForm hides the
-// seat rows the moment the mode changes, so by the time anything asked "what
+// position rows the moment the mode changes, so by the time anything asked "what
 // will this mode discard" the answer was already gone and the operator was
 // told nothing. Same shape as the value-eating bug of round 2 — a view
 // decision reaching back into the model.
 //
-// A seat the mode or the layout cannot use is dropped at SAVE by
+// A position the mode or the layout cannot use is dropped at SAVE by
 // claimForbiddenFields, which is where every other such value is dropped, and
 // named in the note first.
 // ── KEY ROUTE LIST CONTROL ───────────────────────────────────────────────
@@ -1458,33 +1458,33 @@ function removeKeyRoutePoint(el) {
     if (row) row.remove();
 }
 
-function readEvacSeats() {
+function readEvacPositions() {
     var out = [];
-    document.querySelectorAll('.claims-evac-seat').forEach(function(cb) {
+    document.querySelectorAll('.claims-evac-position').forEach(function(cb) {
         if (cb.checked) out.push(cb.value);
     });
     return out;
 }
 
-function writeEvacSeats(seats) {
+function writeEvacPositions(positions) {
     var want = {};
-    (seats || []).forEach(function(s) { want[s] = true; });
-    document.querySelectorAll('.claims-evac-seat').forEach(function(cb) {
+    (positions || []).forEach(function(s) { want[s] = true; });
+    document.querySelectorAll('.claims-evac-position').forEach(function(cb) {
         cb.checked = !!want[cb.value];
     });
 }
 
-// renderEvacSeatLabels puts the node each seat resolves to beside its
+// renderEvacPositionLabels puts the node each position resolves to beside its
 // checkbox. "Back position" is the same words on every press on the line;
 // "Back position (PLN_002_B)" is the one the operator is standing at.
-function renderEvacSeatLabels(state) {
+function renderEvacPositionLabels(state) {
     var pairs = [
         ['front', state.coreNodeName],
         ['paired', state.pairedCoreNode],
         ['second', state.secondPairedCoreNode],
     ];
     pairs.forEach(function(p) {
-        var el = document.getElementById('claims-seat-' + p[0] + '-node');
+        var el = document.getElementById('claims-position-' + p[0] + '-node');
         if (el) el.textContent = p[1] ? '(' + p[1] + ')' : '(not set)';
     });
 }
@@ -1516,7 +1516,7 @@ function claimForbiddenFields(role, swap, state) {
     if (!showPair) {
         forbid('pairedCoreNode', 'Paired Node');
     }
-    var seats = state.changeoverEvacSeats || [];
+    var positions = state.changeoverEvacPositions || [];
     if (!isManual && state.changeoverLoadDirective) {
         out.push({ key: 'changeoverLoadDirective', label: 'Changeover loading instruction', value: false });
     }
@@ -1530,19 +1530,19 @@ function claimForbiddenFields(role, swap, state) {
         out.push({ key: 'indexRobotSupplies', label: 'Index robot fetches the replacement', value: false });
     }
     if (!isPressIndex) {
-        // Per-seat relevance is a press-index concept; a single-position node
+        // Per-position relevance is a press-index concept; a single-position node
         // answers the same question with Evacuate on changeover.
-        if (seats.length > 0) {
-            out.push({ key: 'changeoverEvacSeats', label: 'Per-position tooling evacuation', value: [] });
+        if (positions.length > 0) {
+            out.push({ key: 'changeoverEvacPositions', label: 'Per-position tooling evacuation', value: [] });
         }
-    } else if (!state.secondPairedCoreNode && seats.indexOf('second') >= 0) {
-        // A PARTIAL drop: the third seat is marked on a 2-position layout. The
+    } else if (!state.secondPairedCoreNode && positions.indexOf('second') >= 0) {
+        // A PARTIAL drop: the third position is marked on a 2-position layout. The
         // rest of the selection is fine and must survive — dropping the whole
         // set would take the front and back marks with it.
         out.push({
-            key: 'changeoverEvacSeats',
+            key: 'changeoverEvacPositions',
             label: 'Third press position (this press has two)',
-            value: seats.filter(function(x) { return x !== 'second'; }),
+            value: positions.filter(function(x) { return x !== 'second'; }),
         });
     }
     if (!(showPair && isPressIndex)) {
@@ -1705,7 +1705,7 @@ function renderClaimForm() {
         warn.style.display = missing ? '' : 'none';
     }
     renderModeDropNote(role, swap, state);
-    renderEvacSeatLabels(state);
+    renderEvacPositionLabels(state);
     renderCollapseHints(state);
 }
 
@@ -1740,7 +1740,7 @@ function defaultClaimState() {
         autoPush: false,
         pairedCoreNode: '',
         secondPairedCoreNode: '',
-        changeoverEvacSeats: [],
+        changeoverEvacPositions: [],
         changeoverEvacDestination: '',
         indexRobotSupplies: false,
         keyRoute: [],
@@ -1807,7 +1807,7 @@ function editClaim(claim) {
         keyRoute: (claim.key_route || []).slice(),
         keyTask: claim.key_task || '',
         changeoverLoadDirective: !!claim.changeover_load_directive,
-        changeoverEvacSeats: claim.changeover_evac_seats || [],
+        changeoverEvacPositions: claim.changeover_evac_positions || [],
         changeoverEvacDestination: claim.changeover_evac_destination || '',
         autoConfirm: !!claim.auto_confirm,
     });
@@ -1908,7 +1908,7 @@ async function saveClaim() {
         key_route: state.keyRoute,
         key_task: state.keyTask,
         changeover_load_directive: state.changeoverLoadDirective,
-        changeover_evac_seats: state.changeoverEvacSeats,
+        changeover_evac_positions: state.changeoverEvacPositions,
         changeover_evac_destination: state.changeoverEvacDestination,
         auto_confirm: state.autoConfirm,
         auto_reorder: state.autoReorder,

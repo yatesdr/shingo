@@ -73,18 +73,18 @@ func (e *Engine) logEvacConfigOnWrongSide(fromClaims, toClaims []processes.NodeC
 // written: the diffs, the node tasks, the participants and the tooling
 // decoration.
 //
-// materializeSeats is the difference between the two callers. A marked press
-// seat owns no style_node_claims row and therefore no process_nodes row until
+// materializePositions is the difference between the two callers. A marked press
+// position owns no style_node_claims row and therefore no process_nodes row until
 // something creates one, and the thing that used to create one was
 // ChangeoverService.Create — which runs AFTER this. So the FIRST changeover of
-// any marked press planned one seat fewer than the second, silently: no
+// any marked press planned one position fewer than the second, silently: no
 // clearance, no hold, no order (N1-a, sim-proven on a pristine seed 2026-08-24).
 //
 // Start passes true and the rows are written here, before planning, so the
 // first changeover plans exactly like the second. Preview passes false and gets
-// the same seats as UNSAVED nodes — the operator must see the work the
+// the same positions as UNSAVED nodes — the operator must see the work the
 // changeover will do, and a preview that writes rows is not a preview.
-func (e *Engine) planChangeover(processID, toStyleID int64, materializeSeats bool) (*changeoverPlan, error) {
+func (e *Engine) planChangeover(processID, toStyleID int64, materializePositions bool) (*changeoverPlan, error) {
 	process, err := e.db.GetProcess(processID)
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func (e *Engine) planChangeover(processID, toStyleID int64, materializeSeats boo
 	if err != nil {
 		return nil, err
 	}
-	nodes, err = e.resolveToolingSeatNodes(processID, tooling, nodes, materializeSeats)
+	nodes, err = e.resolveToolingNodes(processID, tooling, nodes, materializePositions)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func (e *Engine) planChangeover(processID, toStyleID int64, materializeSeats boo
 			State:        state,
 		})
 	}
-	nodeTasks = appendToolingSeatTasks(processID, tooling, nodeTasks)
+	nodeTasks = appendToolingClearanceTasks(processID, tooling, nodeTasks)
 
 	participants := buildParticipants(diffs)
 	unresolved := assertParticipantsResolve(participants, nodes)
@@ -361,7 +361,7 @@ func (e *Engine) activePullSnapshot(nodes []processes.Node) map[string]bool {
 
 // buildParticipants derives the changeover's participant set from the
 // POST-FAN-OUT diffs: every diff node as a task-role participant, plus every
-// press-index extension seat that no diff already covers as indexed_over.
+// press-index extension position that no diff already covers as indexed_over.
 //
 // TASK ROLE IS THE FULL DIFF SLICE, including SituationUnchanged. That is a
 // strict widening and it is deliberate: unchanged diffs mint task rows today,
@@ -371,14 +371,14 @@ func (e *Engine) activePullSnapshot(nodes []processes.Node) map[string]bool {
 // never gets gated (that regression is what forced the gate to be scoped in the
 // first place).
 //
-// INDEXED_OVER is the set this table exists for: a press-index extension seat
+// INDEXED_OVER is the set this table exists for: a press-index extension position
 // is physically traversed by the index motion but mints no order and owns no
 // task, so a task-keyed view cannot see it. Same-bin-type press-index
-// changeovers never fan out (binTypesDiffer is false), so those seats appear
+// changeovers never fan out (binTypesDiffer is false), so those positions appear
 // ONLY here — and without them, intake gating leaves a position open to
 // unrelated dispatch while a bin is about to be placed on it.
 //
-// Seats already covered by a diff (the different-bin-type case, where fan-out
+// Positions already covered by a diff (the different-bin-type case, where fan-out
 // gave each position its own task) stay task-role; the UNIQUE constraint would
 // reject the duplicate anyway, but skipping it keeps the roles honest rather
 // than order-dependent.
@@ -402,13 +402,13 @@ func buildParticipants(diffs []ChangeoverNodeDiff) []domain.ParticipantInput {
 			if claim == nil || claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 				continue
 			}
-			for _, seat := range pressIndexExtensionPositions(claim) {
-				if taskNodes[seat] || seen[seat] {
+			for _, position := range pressIndexExtensionPositions(claim) {
+				if taskNodes[position] || seen[position] {
 					continue
 				}
-				seen[seat] = true
+				seen[position] = true
 				out = append(out, domain.ParticipantInput{
-					CoreNodeName:       seat,
+					CoreNodeName:       position,
 					Role:               domain.ParticipantRoleIndexedOver,
 					OwningTaskCoreNode: d.CoreNodeName,
 				})
@@ -436,11 +436,11 @@ func buildParticipants(diffs []ChangeoverNodeDiff) []domain.ParticipantInput {
 // node task whose name does not resolve, in the same transaction, moments after
 // this runs. Reporting them told the engineer to go and add a node the system
 // had already added itself — a no-op errand attached to the one message the
-// floor reads during a changeover. Every fanned-out press seat is a task-role
+// floor reads during a changeover. Every fanned-out press position is a task-role
 // participant, so this was the common case, not the rare one.
 //
 // What is left is the population the advisory is actually about: indexed_over
-// seats. Those own no task, Create does not create rows for them (it looks the
+// positions. Those own no task, Create does not create rows for them (it looks the
 // id up and stores NULL when there is none), and without a row they cannot be
 // rendered or gated. For those the advice is real.
 //

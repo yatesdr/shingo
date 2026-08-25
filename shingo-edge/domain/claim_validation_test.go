@@ -62,25 +62,25 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 		{"missing payload", func(c *NodeClaimInput) { c.PayloadCode = "" }, "payload_code"},
 		{"negative board order", func(c *NodeClaimInput) { c.Sequence = Ptr(-1) }, "sequence"},
 
-		// Per-seat tooling evacuation. A marked seat the layout does not have
+		// Per-position tooling evacuation. A marked position the layout does not have
 		// is not an unlikely config — it is a reference to nothing, and the
 		// evacuation it asks for silently never happens.
-		{"third seat marked on a 2-position press", func(c *NodeClaimInput) {
+		{"third position marked on a 2-position press", func(c *NodeClaimInput) {
 			c.SecondPairedCoreNode = ""
-			c.ChangeoverEvacSeats = Ptr([]string{EvacSeatSecond})
-		}, "changeover_evac_seats"},
-		{"back seat marked with no back node", func(c *NodeClaimInput) {
+			c.ChangeoverEvacPositions = Ptr([]string{EvacPositionSecond})
+		}, "changeover_evac_positions"},
+		{"back position marked with no back node", func(c *NodeClaimInput) {
 			c.PairedCoreNode = ""
-			c.ChangeoverEvacSeats = Ptr([]string{EvacSeatPaired})
-		}, "changeover_evac_seats"},
-		{"seats marked on a non-press-index mode", func(c *NodeClaimInput) {
+			c.ChangeoverEvacPositions = Ptr([]string{EvacPositionPaired})
+		}, "changeover_evac_positions"},
+		{"positions marked on a non-press-index mode", func(c *NodeClaimInput) {
 			c.SwapMode = SwapModeForTest
 			c.InboundStaging = "IN"
-			c.ChangeoverEvacSeats = Ptr([]string{EvacSeatFront})
-		}, "changeover_evac_seats"},
-		{"an unknown seat name", func(c *NodeClaimInput) {
-			c.ChangeoverEvacSeats = Ptr([]string{"middle-ish"})
-		}, "changeover_evac_seats"},
+			c.ChangeoverEvacPositions = Ptr([]string{EvacPositionFront})
+		}, "changeover_evac_positions"},
+		{"an unknown position name", func(c *NodeClaimInput) {
+			c.ChangeoverEvacPositions = Ptr([]string{"middle-ish"})
+		}, "changeover_evac_positions"},
 
 		{"press-index without back position", func(c *NodeClaimInput) { c.PairedCoreNode = "" }, "paired_core_node"},
 		{"press-index without outbound", func(c *NodeClaimInput) { c.OutboundDestination = "" }, "outbound_destination"},
@@ -143,28 +143,28 @@ func TestValidateNodeClaim_SequenceAbsentOrZeroIsFine(t *testing.T) {
 	}
 }
 
-// SwapModeForTest is two_robot — a mode with no seats, used to pin that seats
+// SwapModeForTest is two_robot — a mode with no positions, used to pin that positions
 // are press-index-only. Named rather than inlined so the intent survives
 // someone changing which mode the row uses.
 var SwapModeForTest = protocol.SwapModeTwoRobot
 
-// A seat selection the layout DOES have is accepted, including the whole set
+// A position selection the layout DOES have is accepted, including the whole set
 // on a 3-position press. Without this the rows above would pass with the check
-// written as "any seat selection is an error".
-func TestValidateNodeClaim_ValidSeatSelectionsAccepted(t *testing.T) {
+// written as "any position selection is an error".
+func TestValidateNodeClaim_ValidPositionSelectionsAccepted(t *testing.T) {
 	t.Parallel()
-	for _, seats := range [][]string{
+	for _, positions := range [][]string{
 		nil,
-		{EvacSeatFront},
-		{EvacSeatPaired},
-		{EvacSeatFront, EvacSeatPaired},
-		{EvacSeatFront, EvacSeatPaired, EvacSeatSecond},
+		{EvacPositionFront},
+		{EvacPositionPaired},
+		{EvacPositionFront, EvacPositionPaired},
+		{EvacPositionFront, EvacPositionPaired, EvacPositionSecond},
 	} {
 		c := validClaim()
 		c.SecondPairedCoreNode = "INDEX-C"
-		c.ChangeoverEvacSeats = &seats
+		c.ChangeoverEvacPositions = &positions
 		if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
-			t.Errorf("seats %v must be accepted on a 3-position press; findings = %+v", seats, got)
+			t.Errorf("positions %v must be accepted on a 3-position press; findings = %+v", positions, got)
 		}
 	}
 }
@@ -270,4 +270,92 @@ func TestHasErrors_WarningsAloneAreNotErrors(t *testing.T) {
 	if !HasErrors([]FieldError{{Field: "x", Severity: SeverityWarning}, {Field: "y", Severity: SeverityError}}) {
 		t.Error("an error mixed in with warnings must still read as an error")
 	}
+}
+
+// ── carry-over dispositions ─────────────────────────────────────────────
+
+// A cell that asks to park a carried-over part at outbound staging and has no
+// outbound staging node is refused AT SAVE TIME, by name.
+//
+// The two alternatives are both worse. Falling back to clearing means the
+// operator asked for a short hop, got a supermarket round-trip, and was never
+// told. Refusing at changeover time means finding out with the press down and
+// people standing around. The arm-gate doctrine says a configuration that
+// cannot work is refused where it is written.
+func TestValidateNodeClaim_OutboundStagingCarryoverNeedsAStagingNode(t *testing.T) {
+	t.Parallel()
+	disp := CarryoverOutboundStaging
+	positions := []string{EvacPositionFront}
+
+	c := validClaim()
+	c.SwapMode = protocol.SwapModeTwoRobotPressIndex
+	c.PairedCoreNode = "INDEX-B"
+	c.ChangeoverEvacPositions = &positions
+	c.ChangeoverCarryoverDisposition = &disp
+	c.OutboundStaging = ""
+	findings := ValidateNodeClaim(c, ClaimNodeContext{})
+	if !HasErrors(findings) {
+		t.Fatal("outbound_staging carry-over accepted with no outbound staging node")
+	}
+	if !findingOnField(findings, "changeover_carryover_disposition") {
+		t.Errorf("the refusal does not name the field the operator has to fix: %+v", findings)
+	}
+
+	// With a staging node it is accepted.
+	c.OutboundStaging = "OUT-STAGE"
+	if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
+		t.Errorf("outbound_staging carry-over refused despite a staging node; findings = %+v", got)
+	}
+}
+
+// A disposition on a claim that marks no positions is configuration that can never
+// be read — the disposition is only ever consulted for a marked position.
+func TestValidateNodeClaim_CarryoverNeedsAMarkedPosition(t *testing.T) {
+	t.Parallel()
+	disp := CarryoverKeepLineside
+	c := validClaim()
+	c.ChangeoverCarryoverDisposition = &disp
+	if got := ValidateNodeClaim(c, ClaimNodeContext{}); !HasErrors(got) {
+		t.Error("a carry-over disposition was accepted on a claim that marks no positions — " +
+			"nothing would ever read it, which is a setting the operator believes is doing something")
+	}
+}
+
+// replace is the default and must be accepted anywhere, including on a claim
+// with no marks: it is what every row says after the column arrives.
+func TestValidateNodeClaim_ReplaceIsAlwaysAccepted(t *testing.T) {
+	t.Parallel()
+	disp := CarryoverReplace
+	c := validClaim()
+	c.ChangeoverCarryoverDisposition = &disp
+	if got := ValidateNodeClaim(c, ClaimNodeContext{}); HasErrors(got) {
+		t.Errorf("the default disposition was refused; findings = %+v", got)
+	}
+}
+
+// An unknown value is refused rather than silently read as replace.
+func TestValidateNodeClaim_UnknownCarryoverRefused(t *testing.T) {
+	t.Parallel()
+	disp := CarryoverDisposition("send_to_mars")
+	positions := []string{EvacPositionFront}
+	c := validClaim()
+	c.SwapMode = protocol.SwapModeTwoRobotPressIndex
+	c.PairedCoreNode = "INDEX-B"
+	c.ChangeoverEvacPositions = &positions
+	c.ChangeoverCarryoverDisposition = &disp
+	if got := ValidateNodeClaim(c, ClaimNodeContext{}); !HasErrors(got) {
+		t.Error("an unknown carry-over disposition was accepted")
+	}
+}
+
+// findingOnField reports whether any finding names this wire field — the thing
+// an operator's form highlights, so a refusal that names the wrong field sends
+// them to the wrong control.
+func findingOnField(findings []FieldError, field string) bool {
+	for _, f := range findings {
+		if f.Field == field {
+			return true
+		}
+	}
+	return false
 }

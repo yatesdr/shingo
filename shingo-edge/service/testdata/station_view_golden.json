@@ -145,7 +145,7 @@
         "process_id": 1,
         "core_node_name": "PLN_G2",
         "code": "PLNG2",
-        "name": "Press G2 Seat",
+        "name": "Press G2 Position",
         "sequence": 2,
         "enabled": true,
         "created_at": "<ts>",

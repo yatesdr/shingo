@@ -657,7 +657,7 @@ function buildLoaderCard(entry, code, counters, opts) {
     // ACTIVE badge on EVERY board. It used to be operator_driven-only, reasoning that a
     // normal board renders only active-style payloads so the label adds nothing — but
     // redundant to the code is not redundant to a driver reading a wall of part numbers
-    // from a forklift seat, who otherwise has to KNOW that rule to trust the board. Say
+    // from a forklift position, who otherwise has to KNOW that rule to trust the board. Say
     // it on the card. PRELOAD stays transitional-only: a normal board has no preload
     // cards to contrast against, so an unpaired PRELOAD badge would be noise.
     if (isActiveStylePayload || entry.operator_driven) {

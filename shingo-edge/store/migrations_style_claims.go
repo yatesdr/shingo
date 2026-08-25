@@ -256,12 +256,13 @@ CREATE TABLE style_node_claims (
     outbound_source         TEXT NOT NULL DEFAULT '',
     mode                    TEXT NOT NULL DEFAULT 'loader',
     second_paired_core_node TEXT NOT NULL DEFAULT '',
-    changeover_evac_seats   TEXT NOT NULL DEFAULT '',
+    changeover_evac_positions   TEXT NOT NULL DEFAULT '',
     changeover_evac_destination TEXT NOT NULL DEFAULT '',
     changeover_load_directive INTEGER NOT NULL DEFAULT 0,
     index_robot_supplies    INTEGER NOT NULL DEFAULT 0,
     key_route               TEXT NOT NULL DEFAULT '',
     key_task                TEXT NOT NULL DEFAULT '',
+    changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
     UNIQUE(style_id, core_node_name)
 );
 INSERT INTO style_node_claims (
@@ -273,8 +274,8 @@ INSERT INTO style_node_claims (
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,
     inbound_source_node_group, outbound_source_node, outbound_source_node_group,
     outbound_source, mode, second_paired_core_node,
-    changeover_evac_seats, changeover_evac_destination, changeover_load_directive, index_robot_supplies,
-    key_route, key_task
+    changeover_evac_positions, changeover_evac_destination, changeover_load_directive, index_robot_supplies,
+    key_route, key_task, changeover_carryover_disposition
 )
 SELECT
     id, style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
@@ -285,8 +286,8 @@ SELECT
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,
     inbound_source_node_group, outbound_source_node, outbound_source_node_group,
     outbound_source, mode, second_paired_core_node,
-    changeover_evac_seats, changeover_evac_destination, changeover_load_directive, index_robot_supplies,
-    key_route, key_task
+    changeover_evac_positions, changeover_evac_destination, changeover_load_directive, index_robot_supplies,
+    key_route, key_task, changeover_carryover_disposition
 FROM style_node_claims_legacy;
 DROP TABLE style_node_claims_legacy;
 `

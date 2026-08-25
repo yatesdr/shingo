@@ -11,7 +11,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// The collision guard has to cover the BACKFILL seat, not just the front one.
+// The collision guard has to cover the BACKFILL position, not just the front one.
 //
 // An unflipped press-index swap is:
 //
@@ -19,9 +19,9 @@ import (
 //	R2  wait@paired, pickup paired, dropoff FRONT [, pickup second, dropoff paired]
 //
 // Both legs place a bin on the press. classifySwapLegsBySteps asks only about
-// the FRONT seat, so it correctly labels R2 the supply leg — and the guard,
-// asking the same front-seat question, protected only R2. Releasing R1 while R2
-// was still queued sent a robot to set a bin down on the backfill seat that
+// the FRONT position, so it correctly labels R2 the supply leg — and the guard,
+// asking the same front-position question, protected only R2. Releasing R1 while R2
+// was still queued sent a robot to set a bin down on the backfill position that
 // nothing had lifted the on-deck carrier off.
 //
 // Under the IndexRobotSupplies flip R1 stops at the destination and places
@@ -82,10 +82,10 @@ func claimInputFrom(c *processes.NodeClaim, indexRobotSupplies *bool) processes.
 	}
 }
 
-// TestPlacingLegGate_UnflippedEvacAtBackfillSeatIsHeld is the F6 regression: R1
-// is staged and would set a bin down on the backfill seat; R2, the leg that
-// lifts the on-deck carrier off that seat, has not run.
-func TestPlacingLegGate_UnflippedEvacAtBackfillSeatIsHeld(t *testing.T) {
+// TestPlacingLegGate_UnflippedEvacAtBackfillPositionIsHeld is the F6 regression: R1
+// is staged and would set a bin down on the backfill position; R2, the leg that
+// lifts the on-deck carrier off that position, has not run.
+func TestPlacingLegGate_UnflippedEvacAtBackfillPositionIsHeld(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, r1ID, r2ID := seedUnflippedPressIndexPair(t, false)
 
@@ -96,7 +96,7 @@ func TestPlacingLegGate_UnflippedEvacAtBackfillSeatIsHeld(t *testing.T) {
 
 	err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{CalledBy: "operator:test"})
 	if err == nil {
-		t.Fatal("want a hold: R1 would place a bin on the backfill seat that R2 has not cleared")
+		t.Fatal("want a hold: R1 would place a bin on the backfill position that R2 has not cleared")
 	}
 	var notReady *SwapPairNotReadyError
 	if !errors.As(err, &notReady) {

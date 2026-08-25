@@ -133,7 +133,7 @@ function matchesSelector(node, sel) {
     //
     // This was six hard-coded equality checks with a `return false` after
     // them, which meant a selector nobody had listed matched NOTHING and said
-    // nothing about it: round 3's `.claims-evac-seat` read as "no seats are
+    // nothing about it: round 3's `.claims-evac-position` read as "no positions are
     // checked" and every assertion about them was quietly about an empty list.
     // A stub that answers "no" to a question it does not understand is the
     // vacuous-test shape this file exists to avoid, so it answers properly.
@@ -241,19 +241,19 @@ function buildDOM() {
     add('claims-add-outbound-destination', { tag: 'select', value: 'DST1' });
     add('claims-changeover-fieldset');
     add('claims-add-evacuate', { tag: 'input', type: 'checkbox' });
-    // Round 3: per-seat tooling relevance + the evac destination.
+    // Round 3: per-position tooling relevance + the evac destination.
     add('claims-add-tooling-relevance-row');
     add('claims-add-evac-destination-group');
     add('claims-add-evac-destination', { tag: 'select', value: '' });
-    add('claims-err-changeover-evac-seats', { display: 'none' });
-    ['front', 'paired', 'second'].forEach(function(seat) {
-        const row = add('claims-seat-' + seat + '-row');
-        add('claims-seat-' + seat + '-node');
-        const cb = makeElement('claims-evac-seat-' + seat, { tag: 'input', type: 'checkbox' });
-        cb.value = seat;
-        cb.classList.add('claims-evac-seat');
+    add('claims-err-changeover-evac-positions', { display: 'none' });
+    ['front', 'paired', 'second'].forEach(function(position) {
+        const row = add('claims-position-' + position + '-row');
+        add('claims-position-' + position + '-node');
+        const cb = makeElement('claims-evac-position-' + position, { tag: 'input', type: 'checkbox' });
+        cb.value = position;
+        cb.classList.add('claims-evac-position');
         row.appendChild(cb);
-        elements['claims-evac-seat-' + seat] = cb;
+        elements['claims-evac-position-' + position] = cb;
     });
     add('claims-ab-fieldset', { display: 'none' });
     add('claims-ab-legend');
@@ -479,7 +479,7 @@ function expectedVisibility(role, swap) {
         // Round 3: the staged tooling mode stages the incoming style at
         // InboundStaging, so press-index shows these too. VISIBLE, not
         // required — requiring it is an arm-time gate scoped to cells with
-        // marked seats, so plain press-index production is untouched.
+        // marked positions, so plain press-index production is untouched.
         'claims-staging-fieldset': !isManual && (usesStaging || isPressIndex),
         'claims-add-keep-staged-row': !isManual && (usesStaging || isPressIndex),
         'claims-add-swap-group': true,
@@ -487,15 +487,15 @@ function expectedVisibility(role, swap) {
         'claims-inbound-source-group': !isManual,
         'claims-outbound-destination-group': !isManual,
         'claims-changeover-fieldset': !isManual,
-        // Round 3. The seat rows follow the LAYOUT: the harness's fixture
-        // leaves claims-add-second-paired-node empty, so the third seat is
+        // Round 3. The position rows follow the LAYOUT: the harness's fixture
+        // leaves claims-add-second-paired-node empty, so the third position is
         // hidden even on press-index — which is the case that matters, since
-        // offering a seat the press does not have is how an unfireable
+        // offering a position the press does not have is how an unfireable
         // selection gets made.
         'claims-add-tooling-relevance-row': isPressIndex,
-        'claims-seat-front-row': isPressIndex,
-        'claims-seat-paired-row': isPressIndex,
-        'claims-seat-second-row': false,
+        'claims-position-front-row': isPressIndex,
+        'claims-position-paired-row': isPressIndex,
+        'claims-position-second-row': false,
         'claims-add-evac-destination-group': !isManual,
         'claims-ab-fieldset': showPair,
         'claims-add-second-paired-group': showPair && isPressIndex,
@@ -1505,7 +1505,7 @@ function runRound34SlotCases() {
 
     // Round 3 shipped: the staged tooling mode stages the incoming style, so
     // press-index now SHOWS the staging fieldset. It is still not REQUIRED —
-    // that is an arm-time gate scoped to cells with marked seats
+    // that is an arm-time gate scoped to cells with marked positions
     // (refuseStagedChangeoverWithoutStaging), not a form rule, so plain
     // press-index production is untouched.
     const pressIndex = ctx.claimFieldVisibility('produce', 'two_robot_press_index');
@@ -1523,10 +1523,10 @@ function runRound34SlotCases() {
 }
 
 // -----------------------------------------------------------------------
-// Round 3 unit 1 — per-seat tooling relevance in the editor
+// Round 3 unit 1 — per-position tooling relevance in the editor
 // -----------------------------------------------------------------------
 
-async function runEvacSeatsSaveCase() {
+async function runEvacPositionsSaveCase() {
     const elements = buildDOM();
     const apiRecorder = [];
     const ctx = createContext(elements, apiRecorder);
@@ -1543,59 +1543,59 @@ async function runEvacSeatsSaveCase() {
         paired_core_node: 'PRESS_B',
         second_paired_core_node: 'PRESS_C',
         outbound_destination: 'MARKET',
-        changeover_evac_seats: ['front', 'second'],
+        changeover_evac_positions: ['front', 'second'],
         changeover_evac_destination: 'CLEARANCE-GROUP',
     });
 
     // The stored selection reaches the boxes.
-    if (!elements['claims-evac-seat-front'].checked) {
-        reportFailure('evacSeats: front loads checked', true, false);
+    if (!elements['claims-evac-position-front'].checked) {
+        reportFailure('evacPositions: front loads checked', true, false);
     } else { passed++; }
-    if (elements['claims-evac-seat-paired'].checked) {
-        reportFailure('evacSeats: an unmarked seat loads unchecked', false, true);
+    if (elements['claims-evac-position-paired'].checked) {
+        reportFailure('evacPositions: an unmarked position loads unchecked', false, true);
     } else { passed++; }
-    if (!elements['claims-evac-seat-second'].checked) {
-        reportFailure('evacSeats: second loads checked', true, false);
+    if (!elements['claims-evac-position-second'].checked) {
+        reportFailure('evacPositions: second loads checked', true, false);
     } else { passed++; }
     if (elements['claims-add-evac-destination'].value !== 'CLEARANCE-GROUP') {
-        reportFailure('evacSeats: destination loads', 'CLEARANCE-GROUP', elements['claims-add-evac-destination'].value);
+        reportFailure('evacPositions: destination loads', 'CLEARANCE-GROUP', elements['claims-add-evac-destination'].value);
     } else { passed++; }
 
-    // Each seat says WHICH node it is. "Back position" is the same words on
+    // Each position says WHICH node it is. "Back position" is the same words on
     // every press on the line.
-    if (elements['claims-seat-paired-node'].textContent !== '(PRESS_B)') {
-        reportFailure('evacSeats: the seat label names its node', '(PRESS_B)',
-            elements['claims-seat-paired-node'].textContent);
+    if (elements['claims-position-paired-node'].textContent !== '(PRESS_B)') {
+        reportFailure('evacPositions: the position label names its node', '(PRESS_B)',
+            elements['claims-position-paired-node'].textContent);
     } else { passed++; }
 
     // The operator changes the selection.
-    elements['claims-evac-seat-front'].checked = false;
-    elements['claims-evac-seat-paired'].checked = true;
+    elements['claims-evac-position-front'].checked = false;
+    elements['claims-evac-position-paired'].checked = true;
     await ctx.saveClaim();
 
     if (apiRecorder.length !== 1) {
-        reportFailure('evacSeats: expected 1 POST', 1, apiRecorder.length);
+        reportFailure('evacPositions: expected 1 POST', 1, apiRecorder.length);
         return;
     }
     const body = apiRecorder[0].body;
-    if (JSON.stringify(body.changeover_evac_seats) !== JSON.stringify(['paired', 'second'])) {
-        reportFailure('evacSeats: the edited selection is sent, front to back',
-            ['paired', 'second'], body.changeover_evac_seats);
+    if (JSON.stringify(body.changeover_evac_positions) !== JSON.stringify(['paired', 'second'])) {
+        reportFailure('evacPositions: the edited selection is sent, front to back',
+            ['paired', 'second'], body.changeover_evac_positions);
     } else { passed++; }
     if (body.changeover_evac_destination !== 'CLEARANCE-GROUP') {
-        reportFailure('evacSeats: destination is sent', 'CLEARANCE-GROUP', body.changeover_evac_destination);
+        reportFailure('evacPositions: destination is sent', 'CLEARANCE-GROUP', body.changeover_evac_destination);
     } else { passed++; }
 }
 
-// A SEAT THE LAYOUT DOES NOT HAVE IS A PARTIAL DROP. A 2-position press
+// A POSITION THE LAYOUT DOES NOT HAVE IS A PARTIAL DROP. A 2-position press
 // carrying "second" from a 3-position past would otherwise have the store take
 // it and ValidateNodeClaim refuse the save, telling the operator about a box
 // they cannot see.
 //
-// Only that seat goes. Dropping the whole set would take the front and back
+// Only that position goes. Dropping the whole set would take the front and back
 // marks with it, which is a config change nobody asked for — so the assertion
 // is on what SURVIVES, not just on what leaves.
-async function runHiddenSeatIsNotSentCase() {
+async function runHiddenPositionIsNotSentCase() {
     const elements = buildDOM();
     const apiRecorder = [];
     const ctx = createContext(elements, apiRecorder);
@@ -1612,35 +1612,35 @@ async function runHiddenSeatIsNotSentCase() {
         paired_core_node: 'PRESS_B',
         second_paired_core_node: '',           // 2-position layout
         outbound_destination: 'MARKET',
-        changeover_evac_seats: ['front', 'second'],
+        changeover_evac_positions: ['front', 'second'],
     });
     ctx.renderClaimForm();
 
-    if (elements['claims-seat-second-row'].hidden !== true) {
-        reportFailure('hiddenSeat: the third seat is not offered on a 2-position press', 'hidden', 'visible');
+    if (elements['claims-position-second-row'].hidden !== true) {
+        reportFailure('hiddenPosition: the third position is not offered on a 2-position press', 'hidden', 'visible');
     } else { passed++; }
 
     // Named before it happens, like every other mode drop.
     const note = elements['claims-mode-drop-note'];
     if (note.textContent.indexOf('Third press position') < 0) {
-        reportFailure('hiddenSeat: the note names the seat that will be cleared',
+        reportFailure('hiddenPosition: the note names the position that will be cleared',
             'mentions Third press position', note.textContent);
     } else { passed++; }
 
     await ctx.saveClaim();
     if (apiRecorder.length !== 1) {
-        reportFailure('hiddenSeat: expected 1 POST', 1, apiRecorder.length);
+        reportFailure('hiddenPosition: expected 1 POST', 1, apiRecorder.length);
         return;
     }
-    const seats = apiRecorder[0].body.changeover_evac_seats;
-    if (JSON.stringify(seats) !== JSON.stringify(['front'])) {
-        reportFailure('hiddenSeat: only the impossible seat is dropped; front survives', ['front'], seats);
+    const positions = apiRecorder[0].body.changeover_evac_positions;
+    if (JSON.stringify(positions) !== JSON.stringify(['front'])) {
+        reportFailure('hiddenPosition: only the impossible position is dropped; front survives', ['front'], positions);
     } else { passed++; }
 }
 
 // Collapsing hides detail, not state: a marked selection shows in the summary
 // and opens the card, so nobody has to open it to find out whether it matters.
-function runEvacSeatsCollapseHintCase() {
+function runEvacPositionsCollapseHintCase() {
     const elements = buildDOM();
     const ctx = createContext(elements, []);
     loadProcessesJS(ctx);
@@ -1655,23 +1655,23 @@ function runEvacSeatsCollapseHintCase() {
         payload_code: 'PL1',
         paired_core_node: 'PRESS_B',
         outbound_destination: 'MARKET',
-        changeover_evac_seats: ['paired'],
+        changeover_evac_positions: ['paired'],
     });
     ctx.renderClaimForm();
     const hint = elements['claims-changeover-hint'].textContent;
     if (hint.indexOf('paired') < 0) {
-        reportFailure('evacSeatsHint: a marked selection shows in the collapsed summary',
+        reportFailure('evacPositionsHint: a marked selection shows in the collapsed summary',
             'mentions paired', hint);
     } else { passed++; }
     if (elements['claims-changeover-fieldset'].open !== true) {
-        reportFailure('evacSeatsHint: a non-default selection opens the card', true,
+        reportFailure('evacPositionsHint: a non-default selection opens the card', true,
             elements['claims-changeover-fieldset'].open);
     } else { passed++; }
 }
 
-// Switching a press-index claim to a mode with no seats drops the selection —
+// Switching a press-index claim to a mode with no positions drops the selection —
 // once, at save, with the operator told first.
-async function runSeatsDroppedOnModeChangeCase() {
+async function runPositionsDroppedOnModeChangeCase() {
     const elements = buildDOM();
     const apiRecorder = [];
     const ctx = createContext(elements, apiRecorder);
@@ -1688,26 +1688,26 @@ async function runSeatsDroppedOnModeChangeCase() {
         paired_core_node: 'PRESS_B',
         outbound_destination: 'MARKET',
         inbound_staging: 'IN1',
-        changeover_evac_seats: ['front'],
+        changeover_evac_positions: ['front'],
     });
     elements['claims-add-swap'].value = 'two_robot';
     ctx.renderClaimForm();
 
     const note = elements['claims-mode-drop-note'];
     if (note.textContent.indexOf('Per-position tooling evacuation') < 0) {
-        reportFailure('seatsDropped: the note names what will be cleared',
+        reportFailure('positionsDropped: the note names what will be cleared',
             'mentions Per-position tooling evacuation', note.textContent);
     } else { passed++; }
 
     await ctx.saveClaim();
     if (apiRecorder.length !== 1) {
-        reportFailure('seatsDropped: expected 1 POST', 1, apiRecorder.length);
+        reportFailure('positionsDropped: expected 1 POST', 1, apiRecorder.length);
         return;
     }
     // An ARRAY must clear to [], not to '' — the store would store the string.
-    const seats = apiRecorder[0].body.changeover_evac_seats;
-    if (JSON.stringify(seats) !== JSON.stringify([])) {
-        reportFailure('seatsDropped: an array field clears to [], not to a string', [], seats);
+    const positions = apiRecorder[0].body.changeover_evac_positions;
+    if (JSON.stringify(positions) !== JSON.stringify([])) {
+        reportFailure('positionsDropped: an array field clears to [], not to a string', [], positions);
     } else { passed++; }
 }
 
@@ -1727,7 +1727,7 @@ function runCompareGridOmitsUnownedClaimFieldsCase() {
     const body = ctx.claimToBody({
         style_id: 1, core_node_name: 'PRESS_A', role: 'produce',
         swap_mode: 'two_robot_press_index', payload_code: 'PL1',
-        changeover_evac_seats: ['front', 'paired'],
+        changeover_evac_positions: ['front', 'paired'],
         changeover_evac_destination: 'CLEARANCE-GROUP',
         changeover_load_directive: true,
         key_route: ['WP_AISLE_N'],
@@ -1735,7 +1735,7 @@ function runCompareGridOmitsUnownedClaimFieldsCase() {
         index_robot_supplies: true,
     });
     const unowned = [
-        'changeover_evac_seats',
+        'changeover_evac_positions',
         'changeover_evac_destination',
         'changeover_load_directive',
         'key_route',
@@ -1833,7 +1833,7 @@ async function runKeyRouteSaveCase() {
 
     // ORDER IS THE ROUTE. Reversed rows must produce a reversed route, not a
     // set — this is the one property a key route has that the other list
-    // fields (allowed payloads, evac seats) do not.
+    // fields (allowed payloads, evac positions) do not.
     p1.value = 'STAGE_01';
     p2.value = 'PRESS_C';
     await ctx.saveClaim();
@@ -1972,10 +1972,10 @@ function runIndexRobotSuppliesNotInCompareGridCase() {
     await runSequenceZeroStaysAbsentCase();
     runCompareGridStillOmitsCase();
     runRound34SlotCases();
-    await runEvacSeatsSaveCase();
-    await runHiddenSeatIsNotSentCase();
-    runEvacSeatsCollapseHintCase();
-    await runSeatsDroppedOnModeChangeCase();
+    await runEvacPositionsSaveCase();
+    await runHiddenPositionIsNotSentCase();
+    runEvacPositionsCollapseHintCase();
+    await runPositionsDroppedOnModeChangeCase();
     runCompareGridOmitsUnownedClaimFieldsCase();
     await runIndexRobotSuppliesCase();
     runIndexRobotSuppliesNotInCompareGridCase();

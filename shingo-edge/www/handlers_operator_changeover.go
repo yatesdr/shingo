@@ -218,7 +218,7 @@ func (h *Handlers) apiConfirmPostCutoverFlag(w http.ResponseWriter, r *http.Requ
 // so this endpoint inherits the same audit guard as every other release. The
 // engine's per-slot rules are untouched: an evac leg carries the operator's
 // disposition, a supply leg paired with one defers to its pickup, and a lone
-// supply leg — which is what a cleared seat's single order is — fires now.
+// supply leg — which is what a cleared position's single order is — fires now.
 func (h *Handlers) apiReleaseChangeoverProcess(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {

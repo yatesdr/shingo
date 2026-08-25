@@ -36,7 +36,7 @@ import (
 // This used to echo the four that existed at the time, on the argument that the
 // path reads the whole claim and therefore has an opinion. The argument is
 // sound and the practice is not: five more such columns arrived, nobody added
-// them here, and a reorder-point edit wiped a press's evacuation seats, its
+// them here, and a reorder-point edit wiped a press's evacuation positions, its
 // evacuation destination, its loader card and its key route. An echo is correct
 // only for the fields someone remembered, and it fails silently for the rest.
 //

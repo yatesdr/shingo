@@ -361,15 +361,15 @@ func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingU
 // releaseNodeWithClaim is releaseNodeInternal with the acting claim supplied by
 // the caller, used when the node cannot resolve one by name.
 //
-// The only such caller is the changeover evacuation of a fanned-out press seat.
-// A seat owns changeover work but has no style_node_claims row under its own
+// The only such caller is the changeover evacuation of a fanned-out press position.
+// A position owns changeover work but has no style_node_claims row under its own
 // name, so the by-name resolution here returns nothing and the release refuses
 // "no active claim for release" — the same refusal, from a different function,
-// that stalls every other action on that seat.
+// that stalls every other action on that position.
 //
 // fallback is used ONLY when the node resolves no claim of its own; a node that
 // has one is unaffected, so no existing path changes. It is safe to write
-// through: a seat claim carries its PARENT's row id, unlike the loader synth
+// through: a position claim carries its PARENT's row id, unlike the loader synth
 // whose ID is 0 (see domain.SynthesizePressPositionClaim and Loader.SynthClaim).
 func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemainingUOP *int, fallback *processes.NodeClaim) (*storeorders.Order, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
@@ -455,7 +455,7 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	// press sharing its process (the Springfield field report).
 	//
 	// PARTICIPANTS, not tasks. The task set is too narrow: a same-bin-type
-	// press-index changeover never fans out, so its indexed-over seats own no
+	// press-index changeover never fans out, so its indexed-over positions own no
 	// task at all and were left OPEN to unrelated dispatch while the index
 	// motion was about to place a bin on them. Two bins on one node — the
 	// catastrophic family. Participants are the superset that includes them.
@@ -591,7 +591,7 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 // Read alongside FinalizeProduceNode and the consume release path, which are
 // held to the same order by TestReleasePathsGateBeforeSideEffects.
 func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
-	// A changeover node whose work is a SINGLE leg — a cleared seat's
+	// A changeover node whose work is a SINGLE leg — a cleared position's
 	// clear-and-refill, one order on one robot — is released through the
 	// changeover path. It is not a swap pair and must not be judged as one; the
 	// gates below would refuse it for having no sibling, or for having no claim
@@ -804,22 +804,22 @@ func (e *SwapPairNotReadyError) Advisory() bool { return true }
 // that can ever stage. Same for a sibling that is itself releasable: both legs
 // go on this click, in the safe order.
 //
-// BOTH SEATS, NOT JUST THE HEAD. The guard used to ask only "does this leg
-// place a bin at CoreNodeName", which is the front seat, and that is only half
+// BOTH POSITIONS, NOT JUST THE HEAD. The guard used to ask only "does this leg
+// place a bin at CoreNodeName", which is the front position, and that is only half
 // of an unflipped press-index swap:
 //
 //	R1  wait@front, pickup front, dropoff outbound, pickup inbound, dropoff BACKFILL
 //	R2  wait@paired, pickup paired, dropoff FRONT [, pickup second, dropoff paired]
 //
-// R2 places at the front and R1 places at the backfill seat — and it is R2 that
-// lifts the on-deck carrier OFF that seat. So releasing R1 while R2 was still
-// queued sent a robot to set a bin down on a seat nothing had cleared, and the
-// front-seat-only question could not see it. Under the IndexRobotSupplies flip
+// R2 places at the front and R1 places at the backfill position — and it is R2 that
+// lifts the on-deck carrier OFF that position. So releasing R1 while R2 was still
+// queued sent a robot to set a bin down on a position nothing had cleared, and the
+// front-position-only question could not see it. Under the IndexRobotSupplies flip
 // R1 places nowhere on the press, which is why the flipped case was never the
 // one at risk and why widening the question rather than adding a second guard
 // is what keeps the two cases answered the same way.
 //
-// The seats come from the claim's own geometry, so a 3-position press is
+// The positions come from the claim's own geometry, so a 3-position press is
 // covered by the same walk.
 func (e *Engine) refusePlacingLegWhileSiblingPending(
 	node *processes.Node, claim *processes.NodeClaim, evacOrderID, supplyOrderID *int64,
@@ -831,16 +831,16 @@ func (e *Engine) refusePlacingLegWhileSiblingPending(
 		// One-legged: there is no sibling to wait for.
 		return nil
 	}
-	seats := pressSeatNodes(claim)
+	positions := pressPositionNodes(claim)
 	// TWO ARMS, AND THEY ARE NOT SYMMETRIC.
 	//
 	// The supply leg is the placing leg BY THE CALLER'S OWN CLASSIFICATION —
 	// classifySwapLegsBySteps labelled it that because it sets a bin down on
-	// the front seat — so that arm needs no further evidence and asks for none.
+	// the front position — so that arm needs no further evidence and asks for none.
 	// It is the original guard, unchanged.
 	//
 	// The evac arm is the addition, and it must prove itself from the steps:
-	// unflipped it also places, at the backfill seat, and flipped it places
+	// unflipped it also places, at the backfill position, and flipped it places
 	// nowhere on the press. Requiring the evidence is what keeps the flipped
 	// case releasable. A leg whose steps cannot be read simply does not earn a
 	// refusal on this arm — which cannot re-open the original hole, because the
@@ -855,7 +855,7 @@ func (e *Engine) refusePlacingLegWhileSiblingPending(
 			// REFUSE, do not wave through. This is a collision guard: a read it
 			// cannot complete is a question it cannot answer, and the two
 			// answers do not cost the same. A wrong refusal is an operator
-			// clicking again in a minute; a wrong pass is two bins on one seat.
+			// clicking again in a minute; a wrong pass is two bins on one position.
 			e.logFn("release-staged HELD node=%s: cannot read leg %d to check for a collision: %v",
 				node.Name, legID, err)
 			return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: "unreadable"}
@@ -874,23 +874,23 @@ func (e *Engine) refusePlacingLegWhileSiblingPending(
 		if orders.IsTerminal(sibling.Status) || orders.ReleasableAtCore(sibling.Status) {
 			continue
 		}
-		seat := claim.CoreNodeName
+		position := claim.CoreNodeName
 		if i == 1 {
-			if seat = e.legPlacesAtAnySeat(legID, seats); seat == "" {
+			if position = e.legPlacesAtAnyPosition(legID, positions); position == "" {
 				continue // sets nothing down on the press — the flipped R1
 			}
 		}
 		e.logFn("release-staged HELD node=%s: leg %d is staged and would place a bin at %s, "+
 			"but leg %d is %q and has not cleared it",
-			node.Name, leg.ID, seat, sibling.ID, sibling.Status)
+			node.Name, leg.ID, position, sibling.ID, sibling.Status)
 		return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: string(sibling.Status)}
 	}
 	return nil
 }
 
-// pressSeatNodes lists the physical positions of a press-index cell, front
+// pressPositionNodes lists the physical positions of a press-index cell, front
 // first. Empty names are dropped, so a 2-position press yields two.
-func pressSeatNodes(claim *processes.NodeClaim) []string {
+func pressPositionNodes(claim *processes.NodeClaim) []string {
 	out := make([]string, 0, 3)
 	for _, n := range []string{claim.CoreNodeName, claim.PairedCoreNode, claim.SecondPairedCoreNode} {
 		if n != "" {
@@ -900,17 +900,17 @@ func pressSeatNodes(claim *processes.NodeClaim) []string {
 	return out
 }
 
-// legPlacesAtAnySeat returns the first seat this order sets a bin down on, or
+// legPlacesAtAnyPosition returns the first position this order sets a bin down on, or
 // "" if it sets one down on none of them.
 //
 // Steps are the only truth for a complex order — delivery_node is a display
-// value on these. An unreadable or undecodable list answers "no seat", which is
+// value on these. An unreadable or undecodable list answers "no position", which is
 // deliberately NOT the fail-closed direction of the status reads in the caller:
 // this only ever decides the EVAC arm, the arm that did not exist before, and
 // the supply arm's guarantee never depended on steps. So a missing steps list
 // costs exactly the coverage that was never there, rather than stranding a
 // release the previous guard would have allowed.
-func (e *Engine) legPlacesAtAnySeat(orderID int64, seats []string) string {
+func (e *Engine) legPlacesAtAnyPosition(orderID int64, positions []string) string {
 	stepsJSON, err := e.db.GetOrderStepsJSON(orderID)
 	if err != nil {
 		return ""
@@ -919,9 +919,9 @@ func (e *Engine) legPlacesAtAnySeat(orderID int64, seats []string) string {
 	if err != nil {
 		return ""
 	}
-	for _, seat := range seats {
-		if legPlacesBinAt(steps, seat) {
-			return seat
+	for _, position := range positions {
+		if legPlacesBinAt(steps, position) {
+			return position
 		}
 	}
 	return ""

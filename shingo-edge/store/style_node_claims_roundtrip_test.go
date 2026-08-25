@@ -41,7 +41,7 @@ func claimEditorBody(c *processes.NodeClaim) processes.NodeClaimInput {
 		SecondPairedCoreNode:  c.SecondPairedCoreNode,
 		AutoConfirm:           c.AutoConfirm,
 		// Round 3: the editor owns controls for both, so the body carries them.
-		ChangeoverEvacSeats:       &c.ChangeoverEvacSeats,
+		ChangeoverEvacPositions:   &c.ChangeoverEvacPositions,
 		ChangeoverEvacDestination: &c.ChangeoverEvacDestination,
 		// Round 4: the Routing fieldset owns both, so the body carries them.
 		KeyRoute: &c.KeyRoute,
@@ -92,10 +92,10 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		SecondPairedCoreNode:  "RT-NODE-C",
 		AutoConfirm:           true,
 		// A new column is not done until something reads it back and asserts on
-		// the value. Distinctive on both: a two-seat selection (not one, not
+		// the value. Distinctive on both: a two-position selection (not one, not
 		// all three) and a destination that is NOT outbound_destination, so a
 		// fallback silently standing in for the real column would show.
-		ChangeoverEvacSeats:       domain.Ptr([]string{"front", "second"}),
+		ChangeoverEvacPositions:   domain.Ptr([]string{"front", "second"}),
 		ChangeoverEvacDestination: domain.Ptr("RT-TOOLING-EVAC"),
 		// Pointer-typed and NOT sent by the editor body below, so an editor
 		// save must leave it alone: it describes the press's hardware.
@@ -163,18 +163,18 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 	if len(after.AllowedPayloadCodes) != len(before.AllowedPayloadCodes) {
 		t.Errorf("allowed_payload_codes changed: %v -> %v", before.AllowedPayloadCodes, after.AllowedPayloadCodes)
 	}
-	if strings.Join(after.ChangeoverEvacSeats, ",") != strings.Join(before.ChangeoverEvacSeats, ",") {
-		t.Errorf("changeover_evac_seats changed across an editor save: %v -> %v",
-			before.ChangeoverEvacSeats, after.ChangeoverEvacSeats)
+	if strings.Join(after.ChangeoverEvacPositions, ",") != strings.Join(before.ChangeoverEvacPositions, ",") {
+		t.Errorf("changeover_evac_positions changed across an editor save: %v -> %v",
+			before.ChangeoverEvacPositions, after.ChangeoverEvacPositions)
 	}
 
 	// And the seeded values really were distinctive — a test that seeded zeros
 	// would pass no matter what updateClaim did.
 	// The round-3 columns must have taken too, or their assertions above are
 	// comparing two blanks and proving nothing.
-	if len(before.ChangeoverEvacSeats) != 2 || before.ChangeoverEvacDestination != "RT-TOOLING-EVAC" {
-		t.Fatalf("round-3 seed did not take: seats=%v dest=%q",
-			before.ChangeoverEvacSeats, before.ChangeoverEvacDestination)
+	if len(before.ChangeoverEvacPositions) != 2 || before.ChangeoverEvacDestination != "RT-TOOLING-EVAC" {
+		t.Fatalf("round-3 seed did not take: positions=%v dest=%q",
+			before.ChangeoverEvacPositions, before.ChangeoverEvacDestination)
 	}
 	if !before.IndexRobotSupplies {
 		t.Fatal("round-4 seed did not take: index_robot_supplies is false, so its no-op assertion proves nothing")
@@ -278,14 +278,14 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 		OutboundDestination:       "EV-MARKET",
 		PairedCoreNode:            "EV-PRESS-B",
 		SecondPairedCoreNode:      "EV-PRESS-C",
-		ChangeoverEvacSeats:       domain.Ptr([]string{"front"}),
+		ChangeoverEvacPositions:   domain.Ptr([]string{"front"}),
 		ChangeoverEvacDestination: domain.Ptr("EV-BAY-1"),
 	}
 	claimID, err := db.UpsertStyleNodeClaim(base)
 	testutil.MustNoErr(t, err, "seed claim")
 
 	upd := base
-	upd.ChangeoverEvacSeats = domain.Ptr([]string{"paired", "second"})
+	upd.ChangeoverEvacPositions = domain.Ptr([]string{"paired", "second"})
 	upd.ChangeoverEvacDestination = domain.Ptr("EV-BAY-2")
 	if _, err := db.UpsertStyleNodeClaim(upd); err != nil {
 		t.Fatalf("update: %v", err)
@@ -293,28 +293,28 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 
 	after, err := db.GetStyleNodeClaim(claimID)
 	testutil.MustNoErr(t, err, "fetch after")
-	if got := strings.Join(after.ChangeoverEvacSeats, ","); got != "paired,second" {
-		t.Errorf("changeover_evac_seats = %q, want paired,second", got)
+	if got := strings.Join(after.ChangeoverEvacPositions, ","); got != "paired,second" {
+		t.Errorf("changeover_evac_positions = %q, want paired,second", got)
 	}
 	if after.ChangeoverEvacDestination != "EV-BAY-2" {
 		t.Errorf("changeover_evac_destination = %q, want EV-BAY-2", after.ChangeoverEvacDestination)
 	}
 
 	// Clearing the selection has to persist too — an empty set is a real
-	// answer ("no seat blocks the tool"), not an absent one. Under the pointer
+	// answer ("no position blocks the tool"), not an absent one. Under the pointer
 	// contract that distinction is expressible: a non-nil pointer to an empty
 	// value CLEARS, while nil leaves the stored value alone. Sending nil here
 	// would be the writer saying nothing, and would correctly change nothing.
 	clr := base
-	clr.ChangeoverEvacSeats = domain.Ptr([]string{})
+	clr.ChangeoverEvacPositions = domain.Ptr([]string{})
 	clr.ChangeoverEvacDestination = domain.Ptr("")
 	if _, err := db.UpsertStyleNodeClaim(clr); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 	cleared, err := db.GetStyleNodeClaim(claimID)
 	testutil.MustNoErr(t, err, "fetch cleared")
-	if len(cleared.ChangeoverEvacSeats) != 0 {
-		t.Errorf("cleared seats = %v, want none", cleared.ChangeoverEvacSeats)
+	if len(cleared.ChangeoverEvacPositions) != 0 {
+		t.Errorf("cleared positions = %v, want none", cleared.ChangeoverEvacPositions)
 	}
 	if cleared.ChangeoverEvacDestination != "" {
 		t.Errorf("cleared destination = %q, want empty", cleared.ChangeoverEvacDestination)

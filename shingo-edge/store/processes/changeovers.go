@@ -589,7 +589,7 @@ type ParticipantWithStation struct {
 //
 //  1. OWN — the participant's own process_nodes.operator_station_id.
 //  2. OWNER — its owning task's node's station. This is the case that matters:
-//     a press-index extension seat auto-created with no station (see
+//     a press-index extension position auto-created with no station (see
 //     changeover_service.go's INSERT, which sets only process_id/name/code)
 //     renders as a CHILD of the press it extends, instead of being invisible.
 //

@@ -274,41 +274,41 @@ func (p *Plant) Validate() error {
 		default:
 			// The flip is press-index choreography; nothing else has two robots
 			// to swap between, and a spec that sets it on another mode is
-			// describing a cell that cannot exist. Marked evacuation seats are
-			// the same argument: a seat is a press position.
+			// describing a cell that cannot exist. Marked evacuation positions are
+			// the same argument: a position is a press position.
 			if c.IndexRobotSupplies {
 				add("%s: index_robot_supplies applies to two_robot_press_index only", where)
 			}
-			if len(c.ChangeoverEvacSeats) > 0 {
-				add("%s: changeover_evac_seats applies to two_robot_press_index only", where)
+			if len(c.ChangeoverEvacPositions) > 0 {
+				add("%s: changeover_evac_positions applies to two_robot_press_index only", where)
 			}
 		}
-		// ── MARKED SEATS MUST BE SEATS THIS PRESS HAS ───────────────────────
+		// ── MARKED POSITIONS MUST BE POSITIONS THIS PRESS HAS ───────────────────────
 		//
-		// A seat the layout does not have is not an unlikely configuration, it
+		// A position the layout does not have is not an unlikely configuration, it
 		// is a reference to nothing — and the evacuation it asks for silently
 		// never happens, which is the failure mode hardest to notice on a sim.
 		// Same rule the Edge's ValidateNodeClaim applies; stated here too
 		// because a spec is written long before an Edge sees it.
-		seenSeat := map[string]bool{}
-		for _, seat := range c.ChangeoverEvacSeats {
-			switch seat {
+		seenPosition := map[string]bool{}
+		for _, position := range c.ChangeoverEvacPositions {
+			switch position {
 			case "front":
 			case "paired":
 				if c.PairedCoreNode == "" {
-					add("%s: changeover_evac_seats marks the back seat, but this press has no paired_core_node", where)
+					add("%s: changeover_evac_positions marks the back position, but this press has no paired_core_node", where)
 				}
 			case "second":
 				if c.SecondPairedCoreNode == "" {
-					add("%s: changeover_evac_seats marks the third seat, but this press has no second_paired_core_node", where)
+					add("%s: changeover_evac_positions marks the third position, but this press has no second_paired_core_node", where)
 				}
 			default:
-				add("%s: unknown changeover_evac_seat %q (want front, paired or second)", where, seat)
+				add("%s: unknown changeover_evac_position %q (want front, paired or second)", where, position)
 			}
-			if seenSeat[seat] {
-				add("%s: changeover_evac_seats lists %q more than once", where, seat)
+			if seenPosition[position] {
+				add("%s: changeover_evac_positions lists %q more than once", where, position)
 			}
-			seenSeat[seat] = true
+			seenPosition[position] = true
 		}
 		// An evacuation destination that names nothing sends the bins nowhere.
 		if c.ChangeoverEvacDestination != "" && !ref(c.ChangeoverEvacDestination) {

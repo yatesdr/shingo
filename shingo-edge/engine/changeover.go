@@ -79,13 +79,19 @@ func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNod
 		// it unreachable on the common case it exists for: a press whose
 		// tooling changes almost always changes what it makes, so the payloads
 		// differ, the switch fell to Swap, and the flag was inert. Marked
-		// seats now select it whatever the payloads do — the staged
+		// positions now select it whatever the payloads do — the staged
 		// choreography subsumes the swap, since the incoming bins arrive
 		// through staging either way.
 		//
 		// Read off the OUTGOING claim; see domain.StagedToolingChangeover for
 		// why the outgoing setup owns the answer.
-		case domain.StagedToolingChangeover(from):
+		// ...unless every marked position is KEEPING its part. A press whose parts
+		// all carry over and whose cell said keep_lineside clears nothing: the
+		// tool change happens around bins that never move, which is precisely
+		// what the same-payload arm below already answers. Standing down here
+		// is cheaper and truer than planning an evacuation for a later pass to
+		// un-plan.
+		case domain.ToolingClearanceApplies(from, to):
 			situation = SituationEvacuate
 		case from.PayloadCode == to.PayloadCode && from.Role == to.Role:
 			// Same-payload, whole-node evacuation — the single-position shape.
@@ -116,7 +122,7 @@ func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNod
 // builder rather than back into the press-index branch.
 //
 // The definition moved to domain (2026-08-05) because the station view has
-// to derive the same claim: a fanned-out seat owns a task and an order but
+// to derive the same claim: a fanned-out position owns a task and an order but
 // has no style_node_claims row, so the view must synthesize one to render it
 // as claimed. See domain.SynthesizePressPositionClaim for that scar.
 //
@@ -211,12 +217,12 @@ func shouldFanOutPressIndex(d ChangeoverNodeDiff, binTypes map[string]string) bo
 }
 
 // pressIndexExtensionPositions returns the EXTENSION positions of a
-// press-index claim — the paired seat and, on a 3-position press, the second
-// paired seat — with empties dropped.
+// press-index claim — the paired position and, on a 3-position press, the second
+// paired position — with empties dropped.
 //
 // SCOPE, deliberately narrow. It returns ONLY the extensions:
 //
-//   - It does NOT include CoreNodeName (the front seat). fanOutPositions wants
+//   - It does NOT include CoreNodeName (the front position). fanOutPositions wants
 //     the front as slot 0; FanOutPressIndexCrossMode must NOT include it,
 //     because the front is already the diff's own node. Folding that difference
 //     in here would silently change one of the two callers.
@@ -225,7 +231,7 @@ func shouldFanOutPressIndex(d ChangeoverNodeDiff, binTypes map[string]string) bo
 //     independently. Folding the guard in here would likewise change a caller.
 //
 // So callers keep their own front-node and swap-mode handling and share only
-// the part that was genuinely duplicated: which extension seats exist. That
+// the part that was genuinely duplicated: which extension positions exist. That
 // duplication is what let the fan-out and the participant builder disagree
 // about a press's geometry.
 func pressIndexExtensionPositions(claim *processes.NodeClaim) []string {
@@ -341,7 +347,7 @@ func synthesizePressPositionClaim(parent *processes.NodeClaim, coreNodeName stri
 //     position.
 //   - Shared extension position across a FRONT-NODE MOVE, different bin
 //     types: both styles are press-index and both name the same back
-//     seat, but their front nodes differ (PLN_01 → PLN_03, both paired
+//     position, but their front nodes differ (PLN_01 → PLN_03, both paired
 //     to PLN_02). No CoreNodeName is shared, so DiffStyleClaims emits
 //     Drop + Add and the same-mode fan-out — which needs Swap/Evacuate
 //     and both claims on ONE diff — never fires. posMap is the only
@@ -444,7 +450,7 @@ func FanOutPressIndexCrossMode(diffs []ChangeoverNodeDiff, binTypes map[string]s
 			// as Drop + Add, so no single diff ever holds both sides of this
 			// position. THIS pass is the only place the two sides meet, via
 			// posMap. Hopkinsville 2026-07-16 (changeover #27, tote →
-			// knockdown) stranded both back seats on exactly that assumption.
+			// knockdown) stranded both back positions on exactly that assumption.
 			if !binTypesDiffer(s.fromClaim, s.toClaim, binTypes) {
 				continue
 			}

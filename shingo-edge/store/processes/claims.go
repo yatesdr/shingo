@@ -64,12 +64,12 @@ const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
-	changeover_evac_seats, changeover_evac_destination, changeover_load_directive,
-	index_robot_supplies, key_route, key_task`
+	changeover_evac_positions, changeover_evac_destination, changeover_load_directive,
+	index_robot_supplies, key_route, key_task, changeover_carryover_disposition`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
-	var createdAt, allowedJSON, evacSeatsJSON, keyRouteJSON string
+	var createdAt, allowedJSON, evacPositionsJSON, keyRouteJSON string
 	var belowSince sql.NullString
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&c.UOPCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
@@ -77,8 +77,8 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
-		&evacSeatsJSON, &c.ChangeoverEvacDestination, &c.ChangeoverLoadDirective,
-		&c.IndexRobotSupplies, &keyRouteJSON, &c.KeyTask); err != nil {
+		&evacPositionsJSON, &c.ChangeoverEvacDestination, &c.ChangeoverLoadDirective,
+		&c.IndexRobotSupplies, &keyRouteJSON, &c.KeyTask, &c.ChangeoverCarryoverDisposition); err != nil {
 		return c, err
 	}
 	// NULL means "not below", which is the ordinary state — a zero time would
@@ -92,8 +92,8 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	if allowedJSON != "" {
 		_ = json.Unmarshal([]byte(allowedJSON), &c.AllowedPayloadCodes)
 	}
-	if evacSeatsJSON != "" {
-		_ = json.Unmarshal([]byte(evacSeatsJSON), &c.ChangeoverEvacSeats)
+	if evacPositionsJSON != "" {
+		_ = json.Unmarshal([]byte(evacPositionsJSON), &c.ChangeoverEvacPositions)
 	}
 	if keyRouteJSON != "" {
 		_ = json.Unmarshal([]byte(keyRouteJSON), &c.KeyRoute)
@@ -300,18 +300,18 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
-		changeover_evac_seats, changeover_evac_destination, changeover_load_directive,
-		index_robot_supplies, key_route, key_task)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		changeover_evac_positions, changeover_evac_destination, changeover_load_directive,
+		index_robot_supplies, key_route, key_task, changeover_carryover_disposition)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
-		marshalEvacSeats(domain.OptValue(in.ChangeoverEvacSeats)),
+		marshalEvacPositions(domain.OptValue(in.ChangeoverEvacPositions)),
 		domain.OptValue(in.ChangeoverEvacDestination), loadDirective,
 		indexRobotSupplies, marshalKeyRoute(domain.OptValue(in.KeyRoute)),
-		domain.OptValue(in.KeyTask))
+		domain.OptValue(in.KeyTask), carryoverOrDefault(in.ChangeoverCarryoverDisposition))
 	if err != nil {
 		return 0, err
 	}
@@ -337,7 +337,7 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 // found the same way as the first: five columns added later were put in the
 // unconditional list on the argument that the claims editor always fills them
 // in. The replenishment admin page is also a writer, and a reorder-point edit
-// wiped a press's evacuation seats, its evacuation destination, the loader
+// wiped a press's evacuation positions, its evacuation destination, the loader
 // card and the key route.
 // warnIndexRobotSuppliesDrift logs when this save would leave two styles on the
 // same press disagreeing about which robot fetches the replacement.
@@ -428,11 +428,14 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	if in.IndexRobotSupplies != nil {
 		sets, args = append(sets, `index_robot_supplies=?`), append(args, *in.IndexRobotSupplies)
 	}
-	if in.ChangeoverEvacSeats != nil {
-		sets, args = append(sets, `changeover_evac_seats=?`), append(args, marshalEvacSeats(*in.ChangeoverEvacSeats))
+	if in.ChangeoverEvacPositions != nil {
+		sets, args = append(sets, `changeover_evac_positions=?`), append(args, marshalEvacPositions(*in.ChangeoverEvacPositions))
 	}
 	if in.ChangeoverEvacDestination != nil {
 		sets, args = append(sets, `changeover_evac_destination=?`), append(args, *in.ChangeoverEvacDestination)
+	}
+	if in.ChangeoverCarryoverDisposition != nil {
+		sets, args = append(sets, `changeover_carryover_disposition=?`), append(args, string(*in.ChangeoverCarryoverDisposition))
 	}
 	if in.ChangeoverLoadDirective != nil {
 		sets, args = append(sets, `changeover_load_directive=?`), append(args, *in.ChangeoverLoadDirective)
@@ -449,20 +452,20 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	return err
 }
 
-// marshalEvacSeats stores the per-seat tooling-relevance set the same way
+// marshalEvacPositions stores the per-position tooling-relevance set the same way
 // allowed_payload_codes is stored: a JSON array, and the EMPTY STRING for an
-// empty set rather than "[]", so "no seat marked" reads identically on a row
+// empty set rather than "[]", so "no position marked" reads identically on a row
 // written today and a row that predates the column.
 // marshalKeyRoute stores the ordered via-point list. ORDER IS MEANINGFUL to
 // SEER, so this is a JSON array and not a set — the same encoding as the
-// allowed-payload and evac-seat lists, for the same reason: one TEXT column,
+// allowed-payload and evac-position lists, for the same reason: one TEXT column,
 // no join table, and nothing here is ever queried by element.
 func marshalKeyRoute(points []string) string {
 	return marshalAllowedPayloads(points)
 }
 
-func marshalEvacSeats(seats []string) string {
-	return marshalAllowedPayloads(seats)
+func marshalEvacPositions(positions []string) string {
+	return marshalAllowedPayloads(positions)
 }
 
 func marshalAllowedPayloads(codes []string) string {
@@ -477,4 +480,15 @@ func marshalAllowedPayloads(codes []string) string {
 func DeleteClaim(db *sql.DB, id int64) error {
 	_, err := db.Exec(`DELETE FROM style_node_claims WHERE id=?`, id)
 	return err
+}
+
+// carryoverOrDefault writes 'replace' when the caller said nothing, matching
+// the column default. The zero value of the type is the empty string, and an
+// empty string in this column would read as "unset" to anything that checks it
+// literally rather than through domain.CarryoverFor.
+func carryoverOrDefault(d *domain.CarryoverDisposition) string {
+	if d == nil || *d == "" {
+		return string(domain.CarryoverReplace)
+	}
+	return string(*d)
 }

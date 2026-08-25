@@ -12,32 +12,32 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// N1-a — THE FIRST CHANGEOVER MUST SEE EVERY SEAT.
+// N1-a — THE FIRST CHANGEOVER MUST SEE EVERY POSITION.
 //
-// A press seat that owns no style_node_claims row of its own also owns no
+// A press position that owns no style_node_claims row of its own also owns no
 // process_nodes row until something creates one, and the thing that creates one
 // is ChangeoverService.Create — which runs AFTER the plan is built. So on the
-// FIRST changeover of any marked press, the paired seat was invisible to
+// FIRST changeover of any marked press, the paired position was invisible to
 // planning: no clearance, no hold, no order, no warning. On the second it
 // worked, because the first had left the row behind.
 //
 // The sim proved it twice on a pristine seed (SIM-REPORT-n1-2026-08-24, N1-a):
 // two previews minutes apart, one action then two, with nothing changed but the
-// existence of the row. It is the same disease N1 itself was — a marked seat
+// existence of the row. It is the same disease N1 itself was — a marked position
 // silently getting no treatment — one layer down.
 // ---------------------------------------------------------------------------
 
-// seedMarkedPressScenario builds a press-index cell whose PAIRED seat has no
+// seedMarkedPressScenario builds a press-index cell whose PAIRED position has no
 // process_nodes row, which is the shipped state of every press before its first
 // changeover: demo.yaml declares the station, the Edge row is created on demand.
 func seedMarkedPressScenario(t *testing.T, db *store.DB) (processID, fromStyleID, toStyleID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("SEAT-PRESS", "marked press", "active_production", "", "", false)
+	processID, err := db.CreateProcess("POSITION-PRESS", "marked press", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	// ONLY the front seat gets a row. PRESS-B is named by the claims and by
+	// ONLY the front position gets a row. PRESS-B is named by the claims and by
 	// nothing else — exactly the shipped condition.
 	if _, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "PRESS-A", Code: "PRESS-A", Name: "PRESS-A",
@@ -46,27 +46,27 @@ func seedMarkedPressScenario(t *testing.T, db *store.DB) (processID, fromStyleID
 		t.Fatalf("create front node: %v", err)
 	}
 
-	fromStyleID, err = db.CreateStyle("SEAT-FROM", "outgoing, marks both seats", processID)
+	fromStyleID, err = db.CreateStyle("POSITION-FROM", "outgoing, marks both positions", processID)
 	if err != nil {
 		t.Fatalf("create from style: %v", err)
 	}
-	toStyleID, err = db.CreateStyle("SEAT-TO", "incoming, stages", processID)
+	toStyleID, err = db.CreateStyle("POSITION-TO", "incoming, stages", processID)
 	if err != nil {
 		t.Fatalf("create to style: %v", err)
 	}
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID:             fromStyleID,
-		CoreNodeName:        "PRESS-A",
-		Role:                protocol.ClaimRoleProduce,
-		SwapMode:            protocol.SwapModeTwoRobotPressIndex,
-		PayloadCode:         "PART-OLD",
-		UOPCapacity:         30,
-		PairedCoreNode:      "PRESS-B",
-		InboundSource:       "EMPTIES",
-		OutboundDestination: "MARKET",
-		ChangeoverEvacSeats: &[]string{domain.EvacSeatFront, domain.EvacSeatPaired},
+		StyleID:                 fromStyleID,
+		CoreNodeName:            "PRESS-A",
+		Role:                    protocol.ClaimRoleProduce,
+		SwapMode:                protocol.SwapModeTwoRobotPressIndex,
+		PayloadCode:             "PART-OLD",
+		UOPCapacity:             30,
+		PairedCoreNode:          "PRESS-B",
+		InboundSource:           "EMPTIES",
+		OutboundDestination:     "MARKET",
+		ChangeoverEvacPositions: &[]string{domain.EvacPositionFront, domain.EvacPositionPaired},
 	}); err != nil {
 		t.Fatalf("upsert from claim: %v", err)
 	}
@@ -87,10 +87,10 @@ func seedMarkedPressScenario(t *testing.T, db *store.DB) (processID, fromStyleID
 	return processID, fromStyleID, toStyleID
 }
 
-// TestToolingFirstChangeoverPreviewsEverySeat is the two-previews evidence as an
+// TestToolingFirstChangeoverPreviewsEveryPosition is the two-previews evidence as an
 // assertion: the operator's preview must show the work the changeover will
 // actually do, on the first arm as on the second.
-func TestToolingFirstChangeoverPreviewsEverySeat(t *testing.T) {
+func TestToolingFirstChangeoverPreviewsEveryPosition(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, toStyleID := seedMarkedPressScenario(t, db)
@@ -105,23 +105,23 @@ func TestToolingFirstChangeoverPreviewsEverySeat(t *testing.T) {
 	for _, a := range plan.Actions {
 		covered[a.CoreNodeName] = true
 	}
-	for _, seat := range []string{"PRESS-A", "PRESS-B"} {
-		if !covered[seat] {
-			t.Errorf("preview does not cover marked seat %s (covers %v).\n"+
-				"A seat with no process_nodes row is still a seat with a bin on it. The row is "+
+	for _, position := range []string{"PRESS-A", "PRESS-B"} {
+		if !covered[position] {
+			t.Errorf("preview does not cover marked position %s (covers %v).\n"+
+				"A position with no process_nodes row is still a position with a bin on it. The row is "+
 				"created by ChangeoverService.Create, which runs after planning — so on the "+
-				"FIRST changeover of a press the paired seat was silently skipped.",
-				seat, keysOf(covered))
+				"FIRST changeover of a press the paired position was silently skipped.",
+				position, keysOf(covered))
 		}
 	}
 }
 
-// TestToolingFirstChangeoverGivesEverySeatAnOrder is the same defect one layer
+// TestToolingFirstChangeoverGivesEveryPositionAnOrder is the same defect one layer
 // further down, and it is the one that costs material: even where the plan
-// covers a seat, the applier drops its action unless the seat also has a node
+// covers a position, the applier drops its action unless the position also has a node
 // TASK — and tasks are built from the diffs, which never mention an expanded
-// seat.
-func TestToolingFirstChangeoverGivesEverySeatAnOrder(t *testing.T) {
+// position.
+func TestToolingFirstChangeoverGivesEveryPositionAnOrder(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, toStyleID := seedMarkedPressScenario(t, db)
@@ -145,28 +145,28 @@ func TestToolingFirstChangeoverGivesEverySeatAnOrder(t *testing.T) {
 		}
 		byNode[node.CoreNodeName] = task
 	}
-	for _, seat := range []string{"PRESS-A", "PRESS-B"} {
-		task, ok := byNode[seat]
+	for _, position := range []string{"PRESS-A", "PRESS-B"} {
+		task, ok := byNode[position]
 		if !ok {
-			t.Errorf("marked seat %s has no changeover node task (tasks exist for %v).\n"+
+			t.Errorf("marked position %s has no changeover node task (tasks exist for %v).\n"+
 				"applyChangeoverPlan finds a task by node id and skips the action when there is "+
-				"none, so a seat with no task gets no order however well it was planned.",
-				seat, keysOf(byNode))
+				"none, so a position with no task gets no order however well it was planned.",
+				position, keysOf(byNode))
 			continue
 		}
 		if task.NextMaterialOrderID == nil {
-			t.Errorf("marked seat %s got a task in state %q but no order.\n"+
+			t.Errorf("marked position %s got a task in state %q but no order.\n"+
 				"Its bin is in the way of the setup and its replacement must hold at staging; "+
-				"neither happens without a leg.", seat, task.State)
+				"neither happens without a leg.", position, task.State)
 		}
 	}
 }
 
-// TestToolingSeatsMaterializeOnceIsIdempotent guards the obvious way to get the
+// TestToolingPositionsMaterializeOnceIsIdempotent guards the obvious way to get the
 // fix wrong: creating the row on every plan would duplicate process_nodes, and
 // this schema has been through one duplicate-node cleanup already
 // (collapseDuplicateProcessNodes) after PLC ticks were counted three times.
-func TestToolingSeatsMaterializeOnceIsIdempotent(t *testing.T) {
+func TestToolingPositionsMaterializeOnceIsIdempotent(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, toStyleID := seedMarkedPressScenario(t, db)
@@ -192,9 +192,9 @@ func TestToolingSeatsMaterializeOnceIsIdempotent(t *testing.T) {
 	for _, n := range nodes {
 		count[n.CoreNodeName]++
 	}
-	for seat, n := range count {
+	for position, n := range count {
 		if n != 1 {
-			t.Errorf("process node %s exists %d times — seat materialization must be idempotent", seat, n)
+			t.Errorf("process node %s exists %d times — position materialization must be idempotent", position, n)
 		}
 	}
 	if count["PRESS-B"] != 1 {
@@ -203,20 +203,20 @@ func TestToolingSeatsMaterializeOnceIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestDeliverMaterialForSeatDeliversSomething is the remedy hole: the button an
-// operator presses to unblock a seat returned 200, marked the task released,
+// TestDeliverMaterialForPositionDeliversSomething is the remedy hole: the button an
+// operator presses to unblock a position returned 200, marked the task released,
 // and delivered NOTHING.
 //
 // SynthesizePressPositionClaim clears InboundStaging — deliberately, because the
 // diff pipeline relies on a synthesized Add falling through to a direct retrieve
 // that the tooling decorator then adds the hold to. But
 // DeliverNewMaterialForChangeover read that same cleared field as "this node
-// does not stage", took the no-staging branch, and marked the seat released
+// does not stage", took the no-staging branch, and marked the position released
 // while its bin never moved. Observed twice on the sim, both shapes.
 //
 // The staging node is a property of the CELL, not of one position in it, so the
-// seat's answer is its parent's answer.
-func TestDeliverMaterialForSeatDeliversSomething(t *testing.T) {
+// position's answer is its parent's answer.
+func TestDeliverMaterialForPositionDeliversSomething(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, toStyleID := seedMarkedPressScenario(t, db)
@@ -228,30 +228,30 @@ func TestDeliverMaterialForSeatDeliversSomething(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start changeover: %v", err)
 	}
-	seatNode, err := db.GetProcessNodeByCoreNodeName("PRESS-B")
-	if err != nil || seatNode == nil {
-		t.Fatalf("paired seat has no node after start: %v", err)
+	positionNode, err := db.GetProcessNodeByCoreNodeName("PRESS-B")
+	if err != nil || positionNode == nil {
+		t.Fatalf("paired position has no node after start: %v", err)
 	}
-	// Stand in for the seat's leg being gone — cancelled, abandoned, or never
+	// Stand in for the position's leg being gone — cancelled, abandoned, or never
 	// created — which is the only reason an operator reaches for this button.
 	if _, err := db.DB.Exec(
 		`UPDATE changeover_node_tasks SET next_material_order_id=NULL WHERE process_changeover_id=? AND process_node_id=?`,
-		co.ID, seatNode.ID); err != nil {
-		t.Fatalf("clear seat leg: %v", err)
+		co.ID, positionNode.ID); err != nil {
+		t.Fatalf("clear position leg: %v", err)
 	}
 
-	order, err := eng.DeliverNewMaterialForChangeover(processID, seatNode.ID)
+	order, err := eng.DeliverNewMaterialForChangeover(processID, positionNode.ID)
 	if err != nil {
-		t.Fatalf("deliver-material on a marked seat: %v", err)
+		t.Fatalf("deliver-material on a marked position: %v", err)
 	}
 	if order == nil {
-		task, terr := db.GetChangeoverNodeTaskByNode(co.ID, seatNode.ID)
+		task, terr := db.GetChangeoverNodeTaskByNode(co.ID, positionNode.ID)
 		state := "?"
 		if terr == nil && task != nil {
 			state = string(task.State)
 		}
-		t.Fatalf("deliver-material created no order for seat PRESS-B and left the task %q.\n"+
-			"The cell stages its inbound material, so a seat of that cell stages too — reporting "+
+		t.Fatalf("deliver-material created no order for position PRESS-B and left the task %q.\n"+
+			"The cell stages its inbound material, so a position of that cell stages too — reporting "+
 			"success while delivering nothing is how the operator's one remedy became a no-op.",
 			state)
 	}
@@ -260,7 +260,7 @@ func TestDeliverMaterialForSeatDeliversSomething(t *testing.T) {
 		t.Fatalf("read steps for order %d: %v", order.ID, err)
 	}
 	if !strings.Contains(steps, "IN-STAGE") {
-		t.Errorf("seat delivery does not come from the staging node: steps = %q", steps)
+		t.Errorf("position delivery does not come from the staging node: steps = %q", steps)
 	}
 }
 

@@ -379,15 +379,26 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     sequence                INTEGER NOT NULL DEFAULT 0,
     lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
     reuse_compatible_bins   INTEGER NOT NULL DEFAULT 0,
-    -- Which press-index seats hold bins that block the tooling change, as a
-    -- JSON array of seat keys ("front"/"paired"/"second"). Same shape and same
+    -- Which press-index positions hold bins that block the tooling change, as a
+    -- JSON array of position keys ("front"/"paired"/"second"). Same shape and same
     -- reasoning as allowed_payload_codes: a small set on one row rather than a
-    -- child table, because the back seats have no claim rows of their own.
-    -- Empty = no seat marked = today's behaviour.
-    changeover_evac_seats   TEXT NOT NULL DEFAULT '',
-    -- Where a tooling evacuation sends the bins it lifts off the press. A node
-    -- OR a group name; blank falls back to outbound_destination.
+    -- child table, because the back positions have no claim rows of their own.
+    -- Empty = no position marked = today's behaviour.
+    changeover_evac_positions   TEXT NOT NULL DEFAULT '',
+    -- Where a marked position's bin is CLEARED to, when this cell wants it
+    -- somewhere other than its ordinary outbound destination. A node OR a group
+    -- name; blank means normal routing, which is the default and the common
+    -- case. There is no bay: see engine/changeover_tooling.go.
     changeover_evac_destination TEXT NOT NULL DEFAULT '',
+    -- What happens to a marked position's bin when its part CARRIES OVER — the same
+    -- payload on that position in both styles. "replace" (the default) clears it
+    -- like any other marked position and brings a fresh carrier through staging;
+    -- "keep_lineside" leaves the bin where it is, because that part does not
+    -- have to move for the setup; "outbound_staging" walks the SAME bin to the
+    -- cell's outbound staging spot to clear the floor and brings it back on the
+    -- tooling-done release. Never consulted when the payloads differ — the bin
+    -- has to change anyway.
+    changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
     -- Turns a loader's card into a loading instruction during a changeover:
     -- which empty bin type the changing-over cells are waiting for. Off by
     -- default; see NodeClaim.ChangeoverLoadDirective for why it lives here

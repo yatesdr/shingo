@@ -106,7 +106,7 @@ async function completeCutover() {
 // releaseChangeoverMaterial is the operator saying the setup is finished: ONE
 // click that releases every leg of this changeover that is holding.
 //
-// A tool change is human work at the asset. While it runs, the marked seats'
+// A tool change is human work at the asset. While it runs, the marked positions'
 // bins are already gone and the incoming material is parked at inbound staging
 // with robots holding it — deliberately, so nothing drives into a cell someone
 // is standing in. This is the button that ends that hold.
@@ -153,14 +153,14 @@ function closeChangeoverPreview() {
 
 // renderUnresolvedParticipants shows the start response's advisory: participant
 // nodes whose core_node_name resolves to no process_nodes row. These are
-// press-index extension seats that own NO task — physically traversed by the
+// press-index extension positions that own NO task — physically traversed by the
 // index motion, carrying no order of their own, and invisible to every consumer
 // without a row.
 //
-// SEATS THAT OWN A TASK ARE NOT IN THIS LIST and the wording must not imply
+// POSITIONS THAT OWN A TASK ARE NOT IN THIS LIST and the wording must not imply
 // they are. Their rows are auto-created at changeover start, and since the
-// per-node actions resolve a seat's claim through its task's parent claim, a
-// fanned-out seat is fully driveable with no configuration at all. The advisory
+// per-node actions resolve a position's claim through its task's parent claim, a
+// fanned-out position is fully driveable with no configuration at all. The advisory
 // used to name those too, which sent the engineer to add a node the system had
 // just added itself.
 //
@@ -186,7 +186,7 @@ function renderUnresolvedParticipants(nodes) {
         '<strong>Changeover started.</strong> ' + nodes.length +
         (one ? ' participant node has' : ' participant nodes have') +
         ' no process node configured: ' + names +
-        '. ' + (one ? 'This seat is' : 'These seats are') +
+        '. ' + (one ? 'This position is' : 'These positions are') +
         ' indexed over by the press rather than handled directly, so ' +
         (one ? 'it owns' : 'they own') + ' no changeover task and no order. Without a row ' +
         (one ? 'it cannot' : 'they cannot') + ' be rendered on the board or protected from ' +

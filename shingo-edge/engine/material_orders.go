@@ -546,7 +546,7 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inact
 		// "evacuate" semantics, but at the per-position level the robot
 		// work is identical to Swap (evac old, fetch new, deliver new).
 		//
-		// A MARKED seat's tooling treatment is NOT decided here. The tooling
+		// A MARKED position's tooling treatment is NOT decided here. The tooling
 		// decorator edits this leg afterwards — the staging hold always, and a
 		// redirected destination only if the cell named an override — precisely
 		// so that no builder has to know whether the press is marked. That
@@ -783,7 +783,7 @@ func buildPressIndexPerPositionSwap(fromClaim, toClaim *processes.NodeClaim) Cha
 // works because a sequential cell is two positions beside each other and the
 // robot has nowhere better to be.
 //
-// The staged press-index seats pass InboundStaging — a wait AT A NODE, so the
+// The staged press-index positions pass InboundStaging — a wait AT A NODE, so the
 // robot drives there holding the bin and parks. That difference is DELIBERATE
 // and owner-chosen, not an accident of two builders growing apart: a press
 // tooling change can take a shift, and robots idling on the press apron for
@@ -839,7 +839,7 @@ func buildSequentialChangeoverEvacuate(fromClaim, toClaim *processes.NodeClaim) 
 	posA := fromClaim.CoreNodeName
 	posB := fromClaim.PairedCoreNode
 	// The bare wait is sequential's own choice — see buildToolingEvacSteps for
-	// why the staged press seats pass a node instead.
+	// why the staged press positions pass a node instead.
 	stepsA := buildToolingEvacSteps(posA, fromClaim.OutboundDestination, toClaim.InboundSource, "")
 	stepsB := buildToolingEvacSteps(posB, fromClaim.OutboundDestination, toClaim.InboundSource, "")
 	return ChangeoverDispatch{
