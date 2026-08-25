@@ -67,7 +67,7 @@ func (h *Handlers) apiClearTransitAnomaly(w http.ResponseWriter, r *http.Request
 		return
 	}
 	actor := h.getUsername(r)
-	if err := h.engine.BinService().RecoverTransitAnomaly(req.BinID, req.ToNodeID, actor); err != nil {
+	if err := h.engine.BinService().RecoverTransitAnomaly(req.BinID, req.ToNodeID, actor, ""); err != nil {
 		h.jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}

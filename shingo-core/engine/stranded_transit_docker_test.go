@@ -54,8 +54,14 @@ func seedStranded(t *testing.T, db *store.DB, robotID string) (*bins.Bin, *order
 	testutil.MustNoErr(t, err, "set robot, bin and terminal status on order")
 	// The TERMINAL HISTORY ROW, because the sweep dates the bin from it. Written
 	// at "now" so the default fixture is a freshly stranded bin — the case the
-	// inference is for. ageStrandedOrder backdates it for the cases it is not.
+	// inference is for. strandOrderAt backdates it for the cases it is not.
 	strandOrderAt(t, db, ord, clock.Now().UTC())
+	// AND THE PICKUP ROW. A bin at _TRANSIT got there by being picked up, so an
+	// order without an `in_transit` row is not a state the plant can produce —
+	// and branch A now measures from it (Engine.pickupWithin), failing closed
+	// when it is absent. A fixture missing it would make every branch-A test
+	// pass or fail for the wrong reason.
+	pickupOrderAt(t, db, ord, clock.Now().UTC())
 	return bin, ord
 }
 
@@ -71,6 +77,20 @@ func strandOrderAt(t *testing.T, db *store.DB, ord *orders.Order, at time.Time) 
 		`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1,$2,$3,$4)`,
 		ord.ID, string(ord.Status), "test terminalisation", at)
 	testutil.MustNoErr(t, err, "write terminal history")
+}
+
+// pickupOrderAt sets when the bin left its source, by writing (or moving) the
+// order's `in_transit` history row. Branch A reads that row and nothing else —
+// see Engine.pickupWithin for why the terminal row cannot bound the same thing.
+func pickupOrderAt(t *testing.T, db *store.DB, ord *orders.Order, at time.Time) {
+	t.Helper()
+	_, err := db.DB.Exec(`DELETE FROM order_history WHERE order_id=$1 AND status=$2`,
+		ord.ID, string(protocol.StatusInTransit))
+	testutil.MustNoErr(t, err, "clear pickup history")
+	_, err = db.DB.Exec(
+		`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1,$2,$3,$4)`,
+		ord.ID, string(protocol.StatusInTransit), "test pickup", at)
+	testutil.MustNoErr(t, err, "write pickup history")
 }
 
 // cacheRobot writes a robot into the engine's cache, which is what the

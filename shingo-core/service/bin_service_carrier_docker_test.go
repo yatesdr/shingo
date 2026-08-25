@@ -65,7 +65,7 @@ func TestRecoverTransitAnomaly_RefusesABinOnACarrierNode(t *testing.T) {
 	dest := &nodes.Node{Name: "REAL-SLOT-1", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create dest node")
 
-	err := svc.RecoverTransitAnomaly(riding.ID, dest.ID, "operator.test")
+	err := svc.RecoverTransitAnomaly(riding.ID, dest.ID, "operator.test", "")
 	if err == nil {
 		t.Fatal("recovery was allowed on a bin riding a robot — that records the bin at a node " +
 			"the floor would be sent to, and leaves the real one to be placed again on unload")

@@ -66,8 +66,25 @@ type Engine struct {
 	// robot's latest position) without re-printing an identical line forever.
 	// See strandedAnomaly. Bounded by the bins that have been stranded and
 	// pruned on placement.
-	strandedNotes         map[int64]string
-	strandedNotesMu       sync.Mutex
+	strandedNotes   map[int64]string
+	strandedNotesMu sync.Mutex
+	// dropObs is the FIRST at-rest, empty-deck sample per carried bin — the
+	// one reading that describes where the bin was actually set down.
+	// Everything after it describes where the robot went NEXT: on 2026-08-24
+	// the correct reading (AP102 -> SMN_007) was present on tick 1 and gone by
+	// tick 20, after which 50 more ticks reported a park point 12.3 m away.
+	//
+	// deckSeenLoaded is the other half: it records that THIS PROCESS watched
+	// the deck loaded before it read empty. An empty deck with no such record
+	// is a Core that restarted after the unload, and it is not an observation
+	// of anything — see freezeDrop.
+	//
+	// Both are bounded by the bins on carrier nodes and pruned against that
+	// list on every sweep. Neither is persisted: they describe what this
+	// process witnessed, and a restart genuinely did not witness it.
+	dropObs               map[int64]dropObservation
+	deckSeenLoaded        map[int64]bool
+	dropObsMu             sync.Mutex
 	reconciliation        *ReconciliationService
 	recovery              *RecoveryService
 	fulfillment           *fulfillment.Scanner

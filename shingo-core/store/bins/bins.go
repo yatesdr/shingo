@@ -1259,12 +1259,24 @@ func ListOnCarrierNodes(db *sql.DB) ([]*Bin, error) {
 //
 // COALESCE on anomaly_at preserves an earlier stamp — the anomaly state is
 // "still unresolved", not "happened at exactly this moment" — but the NOTE is
-// overwritten, because a later sweep has newer robot telemetry than the first
+// overwritten, because a later sweep may have a better answer than the first
 // one did and stale coordinates are worse than none.
+//
+// AN UNCHANGED NOTE WRITES NOTHING. The stranded sweep calls this every two
+// seconds for every stranded bin, and it used to rewrite identical bytes each
+// time and bump `updated_at` with them — 43,200 no-op writes a day per bin, on
+// the column that is otherwise the obvious "when did this bin last do
+// something" proxy.
+//
+// The `anomaly_at IS NULL` half of the guard is not decoration: a bin recovered
+// by RecoverToNode keeps its note (only the stamp is cleared), so a bin
+// stranded again in exactly the same way would match its own leftover text and
+// the guard alone would skip the re-stamp. The bin would then be lost and not
+// flagged.
 func MarkAnomalyWithNote(db *sql.DB, binID int64, note string) error {
 	now := clock.Now().UTC()
 	_, err := db.Exec(`UPDATE bins SET anomaly_at=COALESCE(anomaly_at, $2), anomaly_note=$3, updated_at=$2
-		WHERE id=$1`, binID, now, note)
+		WHERE id=$1 AND (anomaly_note IS DISTINCT FROM $3 OR anomaly_at IS NULL)`, binID, now, note)
 	return err
 }
 

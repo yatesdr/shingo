@@ -825,11 +825,18 @@ const InferredActor = "system:inferred"
 //
 // actor identifies the operator for the recovery_actions audit row.
 //
+// evidence is what the caller knew when it decided, appended to that row's
+// detail. The operator's door passes "" because the operator IS the evidence;
+// the inference passes the point it resolved, when the deck read empty, and
+// where the cancelled order had been taking the bin — because "why did it go
+// there" is the question a misplaced bin raises and the audit row is where the
+// rest of this subsystem answers it.
+//
 // Sequencing matches sibling RecoveryService recovery actions: mutate
 // first, then record the recovery_actions row. If the audit write fails
 // the bin move is durable but the error is returned so the operator sees
 // the failure.
-func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) error {
+func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor, evidence string) error {
 	if actor == "" {
 		return fmt.Errorf("actor is required for recovery")
 	}
@@ -875,9 +882,12 @@ func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) 
 	if err := s.db.RecoverBinToNode(binID, toNodeID); err != nil {
 		return fmt.Errorf("move bin to recovery node: %w", err)
 	}
+	detail := fmt.Sprintf("recovered to node %s", dest.Name)
+	if evidence != "" {
+		detail += " — " + evidence
+	}
 	if err := s.db.RecordRecoveryAction(
-		"transit_anomaly_recover", "bin", binID,
-		fmt.Sprintf("recovered to node %s", dest.Name), actor); err != nil {
+		"transit_anomaly_recover", "bin", binID, detail, actor); err != nil {
 		return fmt.Errorf("record recovery action: %w", err)
 	}
 	return nil
