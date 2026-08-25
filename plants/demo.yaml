@@ -167,6 +167,13 @@ stations:
   - {name: PLN_001, kind: press}     # PRESS-1 front (produce PANEL-A)
   - {name: PLN_002, kind: press}     # PRESS-1 back / paired index position (no own claim)
   # ── PRESS-2: A/B sequential (two bins rotate, no staging) ──
+  # PRESS-1's RELOCATED placement — the DISJOINT-NODE tooling changeover. The
+  # incoming style runs the same press on different nodes, so no node appears in
+  # both styles: the marked seats become Drops and the new seats become Adds.
+  # Round 3's staged fan-out required both claims on one diff and so contributed
+  # nothing to this shape at all; the tooling decorator is what makes it work.
+  - {name: PLN_005, kind: press}     # PRESS-1-MOVED front
+  - {name: PLN_006, kind: press}     # PRESS-1-MOVED back / paired index position
   - {name: PLN_003, kind: press}     # PRESS-2 A (active)  produce PANEL-B
   - {name: PLN_004, kind: press}     # PRESS-2 B (parked)  produce PANEL-B
   # ── WELD-1: two_robot (inbound + outbound staging) ──
@@ -313,6 +320,7 @@ processes:
 styles:
   - {name: PRESS-1-RUN,    process: PRESS-1,    payload: PANEL-A}
   - {name: PRESS-1-ALT,    process: PRESS-1,    payload: PANEL-C}
+  - {name: PRESS-1-MOVED,  process: PRESS-1,    payload: PANEL-A}
   - {name: PRESS-2-RUN,    process: PRESS-2,    payload: PANEL-B}
   - {name: WELD-1-RUN,     process: WELD-1,     payload: ASSY}
   - {name: WELD-1-ALT,     process: WELD-1,     payload: ASSY}
@@ -384,6 +392,27 @@ claims:
     # refuseStagedChangeoverWithoutStaging refuses to arm a staged tooling
     # changeover without one, by name — so this is what makes the -RUN → -ALT
     # changeover armable at all now that -RUN marks seats.
+    inbound_staging: SLN_014
+
+  # PRESS-1 MOVED TO ANOTHER PLACEMENT. Same press, same payload, same carrier —
+  # the only thing that changes is WHICH NODES it occupies. That makes
+  # PRESS-1-RUN -> PRESS-1-MOVED the disjoint-node shape: PLN_001/PLN_002 are
+  # marked for tooling and leave the style entirely (Drops), PLN_005/PLN_006
+  # arrive with no outgoing bin to remove (Adds).
+  #
+  # Nothing here marks seats or names an evac destination: the OUTGOING claim
+  # owns both, and PRESS-1-RUN above already carries them. What this claim owes
+  # the changeover is the staging node its incoming bins wait at.
+  - core_node: PLN_005
+    style: PRESS-1-MOVED
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-A
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_006
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
     inbound_staging: SLN_014
 
   # ── PRESS-2 (A/B sequential): two paired claims, A active / B parked ──

@@ -58,3 +58,93 @@ func TestShippedDemoPlantLoaderTypes(t *testing.T) {
 		t.Fatalf("single-window loaders: want ≥1 (a manual_swap produce loader with no window_of/home_of), got %d", len(singles))
 	}
 }
+
+// THE FIXTURE MUST KEEP BOTH TOOLING SHAPES REACHABLE.
+//
+// This is the guard the N1 defect went uncaught for want of. The staged tooling
+// evacuation shipped, was configured on the demo press, and never executed —
+// because the only marked press's changeover was ALSO a different-bin-type one,
+// and the bin-type fan-out disqualified the tooling pass before it ran. The
+// feature looked configured and did nothing, on the fixture written to exercise
+// it, and no test could tell.
+//
+// So the demo now pins the two shapes deliberately, and this asserts the
+// CONFIGURATION that makes each reachable:
+//
+//   - PRESS-1-RUN -> PRESS-1-ALT: same nodes, DIFFERENT bin type. Keeping the
+//     bin types different is the point — that combination is exactly what used
+//     to be unreachable, so equalizing them to "make it work" would delete the
+//     coverage.
+//   - PRESS-1-RUN -> PRESS-1-MOVED: same press, DISJOINT nodes. The marked
+//     seats leave the style entirely and the new seats arrive empty.
+//
+// Shape-based, not value-based: it does not care WHICH bin types or WHICH
+// nodes, only that the relationships hold.
+func TestShippedDemoPlantKeepsBothToolingShapesReachable(t *testing.T) {
+	p, err := Load("../../plants/demo.yaml")
+	if err != nil {
+		t.Fatalf("load plants/demo.yaml: %v", err)
+	}
+
+	binTypeOf := map[string]string{}
+	for _, pl := range p.Payloads {
+		binTypeOf[pl.Code] = pl.BinType
+	}
+	claimFor := func(style string) *Claim {
+		for i := range p.Claims {
+			if p.Claims[i].Style == style {
+				return &p.Claims[i]
+			}
+		}
+		return nil
+	}
+
+	run := claimFor("PRESS-1-RUN")
+	if run == nil {
+		t.Fatal("no PRESS-1-RUN claim")
+	}
+	if len(run.ChangeoverEvacSeats) == 0 {
+		t.Error("PRESS-1-RUN marks no seats — the outgoing claim owns the tooling decision, " +
+			"and with no marks NEITHER shape is a tooling changeover any more")
+	}
+	if run.ChangeoverEvacDestination == "" {
+		t.Error("PRESS-1-RUN names no changeover_evac_destination — the marked bins would go " +
+			"to the ordinary outbound destination and the tooling bay would never be exercised")
+	}
+
+	// Shape 1: same node, different bin type.
+	alt := claimFor("PRESS-1-ALT")
+	if alt == nil {
+		t.Fatal("no PRESS-1-ALT claim")
+	}
+	if alt.InboundStaging == "" {
+		t.Error("PRESS-1-ALT names no inbound_staging — the changeover cannot even arm")
+	}
+	if alt.CoreNode != run.CoreNode {
+		t.Errorf("PRESS-1-ALT is on %s and PRESS-1-RUN on %s — shape 1 is the SAME-node case",
+			alt.CoreNode, run.CoreNode)
+	}
+	if a, b := binTypeOf[run.Payload], binTypeOf[alt.Payload]; a == b {
+		t.Errorf("PRESS-1-RUN (%s) and PRESS-1-ALT (%s) now ride the SAME bin type %q.\n"+
+			"Do not equalize them. Marked-AND-different-bin-type is the combination that was "+
+			"silently unreachable (N1); making the bin types match is how you delete the only "+
+			"organic coverage of it.", run.Payload, alt.Payload, a)
+	}
+
+	// Shape 2: same press, disjoint nodes.
+	moved := claimFor("PRESS-1-MOVED")
+	if moved == nil {
+		t.Fatal("no PRESS-1-MOVED claim — the disjoint-node tooling shape has no fixture")
+	}
+	if moved.InboundStaging == "" {
+		t.Error("PRESS-1-MOVED names no inbound_staging — its Adds would deliver into a cell " +
+			"mid tool-change with no hold")
+	}
+	outgoing := map[string]bool{run.CoreNode: true, run.PairedCoreNode: true}
+	for _, n := range []string{moved.CoreNode, moved.PairedCoreNode} {
+		if n != "" && outgoing[n] {
+			t.Errorf("PRESS-1-MOVED shares node %s with PRESS-1-RUN — shape 2 is the DISJOINT "+
+				"case, and a shared node turns it back into one the old fan-out could already see", n)
+		}
+	}
+}

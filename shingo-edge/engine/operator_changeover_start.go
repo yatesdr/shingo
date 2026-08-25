@@ -391,7 +391,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 
 	// Create ALL robot orders up front with embedded wait steps.
 	// Operator controls flow by releasing waits, not by triggering individual orders.
-	orderPlan := BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes))
+	orderPlan := BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes), plan.tooling)
 	// The changeover's demand episode, opened once the sourcing plan exists —
 	// its order count IS expected_orders — and before any order does. Unlike
 	// the cell kinds this is an EVENT trigger: the changeover arming is the

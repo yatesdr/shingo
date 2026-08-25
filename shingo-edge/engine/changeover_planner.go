@@ -31,7 +31,7 @@ import (
 // BuildChangeoverPlan sees the diffs; per-position diffs reach the
 // planner with SwapMode = "press_position" and route through the
 // dedicated case in BuildSwapChangeoverSteps / BuildEvacuateChangeoverSteps.
-func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool) changeover.Plan {
+func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool, tooling toolingChangeover) changeover.Plan {
 	var actions []changeover.NodeAction
 	for _, diff := range diffs {
 		if diff.Situation == SituationUnchanged {
@@ -44,7 +44,11 @@ func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fal
 		action := planNodeAction(diff, node, fallbackAutoConfirm, activePullByCoreNode)
 		actions = append(actions, action)
 	}
-	return changeover.Plan{Actions: actions}
+	// TOOLING RUNS LAST, over the finished plan. It is a decorator, not a
+	// planner: it edits legs the passes above produced rather than competing
+	// with them for the press. See changeover_tooling.go for why that placement
+	// is the fix and not merely a tidier arrangement.
+	return applyToolingChangeover(changeover.Plan{Actions: actions}, nodes, tooling, fallbackAutoConfirm)
 }
 
 // directTripChangeoverMode reports whether a SwapMode dispatches a
@@ -89,9 +93,10 @@ func resolveSequentialActivePull(claim *processes.NodeClaim, activePull map[stri
 
 func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool) changeover.NodeAction {
 	action := changeover.NodeAction{
-		NodeID:    node.ID,
-		NodeName:  node.Name,
-		Situation: string(diff.Situation),
+		NodeID:       node.ID,
+		NodeName:     node.Name,
+		CoreNodeName: diff.CoreNodeName,
+		Situation:    string(diff.Situation),
 	}
 
 	switch diff.Situation {
@@ -432,23 +437,6 @@ func planSwapAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node 
 func planEvacuateAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool) changeover.NodeAction {
 	if diff.FromClaim == nil || diff.ToClaim == nil {
 		action.Err = fmt.Errorf("evacuate requires both from and to claims")
-		return action
-	}
-	// A staged seat is one synthesized position with its own routing; the
-	// per-mode staging fallbacks below are about whole cells and would
-	// send it down the wrong branch. Same predicate the step builder uses —
-	// see domain.StagedSeatEvacuation for why the staging node is what tells
-	// this apart, and why the two callers must not answer it separately.
-	if domain.StagedSeatEvacuation(diff.FromClaim, diff.ToClaim) {
-		disp := buildPressIndexSeatEvacuate(diff.FromClaim, diff.ToClaim)
-		if disp.rejected() {
-			action.Err = fmt.Errorf("node %s: staged tooling evacuation needs an evac destination, "+
-				"an inbound source and an inbound staging node", node.Name)
-			return action
-		}
-		assignDispatch(&action, diff.CoreNodeName, diff.FromClaim.PayloadCode, disp)
-		action.NextState = domain.NodeTaskStagingRequested
-		action.LogTag = "evacuate_staged_seat"
 		return action
 	}
 	if !directTripChangeoverMode(diff.FromClaim.SwapMode) {

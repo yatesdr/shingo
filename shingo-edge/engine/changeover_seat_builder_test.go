@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"shingo/protocol"
-	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -23,86 +22,95 @@ func stepTrace(steps []protocol.ComplexOrderStep) string {
 	return strings.Join(out, " ")
 }
 
-func seatClaims() (*processes.NodeClaim, *processes.NodeClaim) {
+// seatPress builds the marked press whose seat the decorator expands. These
+// used to be two synthesized per-position claims handed to a builder; the
+// decorator synthesizes them itself from the PARENT claims, which is what makes
+// the marks reachable no matter what the earlier passes did to the diffs.
+func seatPress() toolingPress {
 	from := &processes.NodeClaim{
-		CoreNodeName:              "PRESS_B",
+		CoreNodeName:              "PRESS",
 		Role:                      protocol.ClaimRoleProduce,
-		SwapMode:                  domain.SwapModePressPosition,
+		SwapMode:                  protocol.SwapModeTwoRobotPressIndex,
 		PayloadCode:               "PART-A",
+		PairedCoreNode:            "PRESS_B",
 		OutboundDestination:       "MARKET",
 		ChangeoverEvacDestination: "TOOLING-BAY",
+		ChangeoverEvacSeats:       []string{"paired"},
 	}
 	to := &processes.NodeClaim{
-		CoreNodeName:   "PRESS_B",
+		CoreNodeName:   "PRESS",
 		Role:           protocol.ClaimRoleProduce,
-		SwapMode:       domain.SwapModePressPosition,
+		SwapMode:       protocol.SwapModeTwoRobotPressIndex,
 		PayloadCode:    "PART-B",
+		PairedCoreNode: "PRESS_B",
 		InboundSource:  "EMPTIES",
 		InboundStaging: "IN-STAGE",
 	}
-	return from, to
+	return toolingPress{
+		from: from, to: to,
+		seats:    []string{"PRESS_B"},
+		evacDest: "TOOLING-BAY",
+		staging:  "IN-STAGE",
+	}
+}
+
+func seatSteps(t *testing.T, press toolingPress, seat string) []protocol.ComplexOrderStep {
+	t.Helper()
+	a := toolingSeatAction(press, seat, &processes.Node{ID: 1, CoreNodeName: seat, Name: seat})
+	if a.SupplyOrder == nil || a.SupplyOrder.Complex == nil {
+		t.Fatalf("seat %s got no complex supply order", seat)
+	}
+	return a.SupplyOrder.Complex.Steps
 }
 
 // The staged shape: lift the blocking bin off the seat, get it off the line,
 // fetch the replacement, PARK AT STAGING holding it, and deliver on release.
-func TestBuildPressIndexSeatEvacuate_Shape(t *testing.T) {
+func TestToolingSeatAction_Shape(t *testing.T) {
 	t.Parallel()
-	from, to := seatClaims()
-	d := buildPressIndexSeatEvacuate(from, to)
+	press := seatPress()
+	a := toolingSeatAction(press, "PRESS_B", &processes.Node{ID: 1, CoreNodeName: "PRESS_B", Name: "PRESS_B"})
 
 	want := "pickup@PRESS_B dropoff@TOOLING-BAY pickup@EMPTIES wait@IN-STAGE dropoff@PRESS_B"
-	if got := stepTrace(d.StepsA); got != want {
+	if got := stepTrace(a.SupplyOrder.Complex.Steps); got != want {
 		t.Errorf("steps =\n  %s\nwant\n  %s", got, want)
 	}
-	if d.StepsB != nil {
-		t.Error("a seat is one robot; the fan-out already split the cell")
+	if a.EvacOrder != nil {
+		t.Error("a seat is one robot; the decorator already split the cell")
 	}
 	// The order opens by lifting the OLD bin, so it must carry the from-style
-	// payload or the pickup filters for the new one and finds no bin (ALN_001).
-	if !d.CarriesFromPayloadA {
-		t.Error("CarriesFromPayloadA = false; the opening pickup lifts an old-style bin")
+	// payload — otherwise the pickup filters for the new payload and finds
+	// nothing at the seat (the ALN_001 shape).
+	if got := a.SupplyOrder.Complex.PayloadCode; got != "PART-A" {
+		t.Errorf("PayloadCode = %q, want the FROM-style PART-A", got)
 	}
-
-	// THE WAIT IS AT THE STAGING NODE, not bare. That is what gets the robot
-	// out of the press cell while it holds the incoming bin — a tooling change
-	// can take a shift, and a robot parked on the apron blocks the millwrights.
-	var waits int
-	for _, s := range d.StepsA {
-		if s.Action == protocol.ActionWait {
-			waits++
-			if s.Node != "IN-STAGE" {
-				t.Errorf("wait node = %q, want IN-STAGE", s.Node)
-			}
-			if s.WaitKind != waitKindStation {
-				t.Errorf("wait kind = %q, want %q", s.WaitKind, waitKindStation)
-			}
-		}
-	}
-	if waits != 1 {
-		t.Errorf("waits = %d, want exactly 1 (the tooling-done gate)", waits)
+	if a.LogTag != "evacuate_staged_seat" {
+		t.Errorf("LogTag = %q, want evacuate_staged_seat", a.LogTag)
 	}
 }
 
-// Blank ChangeoverEvacDestination falls back to OutboundDestination — the
-// whole compatibility story for the field, asserted where it is consumed.
-func TestBuildPressIndexSeatEvacuate_DestinationFallback(t *testing.T) {
+// Blank ChangeoverEvacDestination falls back to OutboundDestination — the whole
+// compatibility story for the field. It is resolved once, in
+// planToolingChangeover, so this asserts it where the decoration is decided.
+func TestToolingChangeover_DestinationFallback(t *testing.T) {
 	t.Parallel()
-	from, to := seatClaims()
+	press := seatPress()
+	from := *press.from
 	from.ChangeoverEvacDestination = ""
-	d := buildPressIndexSeatEvacuate(from, to)
-	if !strings.Contains(stepTrace(d.StepsA), "dropoff@MARKET") {
-		t.Errorf("blank evac destination must fall back to OutboundDestination; got %s", stepTrace(d.StepsA))
+	to := *press.to
+
+	tc := planToolingChangeover([]processes.NodeClaim{from}, []processes.NodeClaim{to})
+	if got := tc.evacDest["PRESS_B"]; got != "MARKET" {
+		t.Errorf("blank evac destination must fall back to OutboundDestination; got %q", got)
 	}
 }
 
 // A produce seat's replacement is a fresh EMPTY carrier. Without the flag the
 // dispatch hunts a full payload-matched bin in the empties pool and fails.
-func TestBuildPressIndexSeatEvacuate_ProduceFetchesAnEmpty(t *testing.T) {
+func TestToolingSeatAction_ProduceFetchesAnEmpty(t *testing.T) {
 	t.Parallel()
-	from, to := seatClaims()
-	d := buildPressIndexSeatEvacuate(from, to)
+	press := seatPress()
 	var found bool
-	for _, s := range d.StepsA {
+	for _, s := range seatSteps(t, press, "PRESS_B") {
 		if s.Action == protocol.ActionPickup && s.Node == "EMPTIES" {
 			found = true
 			if !s.Empty {
@@ -116,39 +124,18 @@ func TestBuildPressIndexSeatEvacuate_ProduceFetchesAnEmpty(t *testing.T) {
 
 	// A consume seat pulls a full bin, so the flag must NOT be set — otherwise
 	// it fetches an empty carrier onto a line that needs parts.
-	to.Role = protocol.ClaimRoleConsume
-	for _, s := range buildPressIndexSeatEvacuate(from, to).StepsA {
+	consume := seatPress()
+	toConsume := *consume.to
+	toConsume.Role = protocol.ClaimRoleConsume
+	consume.to = &toConsume
+	for _, s := range seatSteps(t, consume, "PRESS_B") {
 		if s.Action == protocol.ActionPickup && s.Node == "EMPTIES" && s.Empty {
 			t.Error("a consume seat must fetch a FULL bin, not an empty carrier")
 		}
 	}
 }
 
-// An empty dispatch is the planner's "I rejected this" signal.
-func TestBuildPressIndexSeatEvacuate_RejectsMissingRouting(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name string
-		mut  func(f, t *processes.NodeClaim)
-	}{
-		{"no evac destination and no outbound", func(f, _ *processes.NodeClaim) {
-			f.ChangeoverEvacDestination, f.OutboundDestination = "", ""
-		}},
-		{"no inbound source", func(_, t *processes.NodeClaim) { t.InboundSource = "" }},
-		{"no staging node", func(_, t *processes.NodeClaim) { t.InboundStaging = "" }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			from, to := seatClaims()
-			tc.mut(from, to)
-			if d := buildPressIndexSeatEvacuate(from, to); !d.rejected() {
-				t.Errorf("want a rejected dispatch; got %s", stepTrace(d.StepsA))
-			}
-		})
-	}
-}
-
-// SEQUENTIAL IS UNCHANGED BY THE EXTRACTION. Both builders now share
+// SEQUENTIAL IS UNCHANGED BY THE DECORATOR. Both shapes still share
 // buildToolingEvacSteps, and sequential's bare wait is its own deliberate
 // choice — a regression here would be a shared helper quietly changing a mode
 // nobody was working on.

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"shingo/protocol"
-	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -543,15 +542,15 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inact
 	case protocol.SwapModeSequential:
 		return buildSequentialChangeoverEvacuate(fromClaim, toClaim)
 	case pressPositionSwapMode:
-		// Same predicate the planner uses to choose this seat's action — see
-		// domain.StagedSeatEvacuation. Answering it separately here is how the
-		// action and its steps come to disagree about which plan this is.
-		if domain.StagedSeatEvacuation(fromClaim, toClaim) {
-			return buildPressIndexSeatEvacuate(fromClaim, toClaim)
-		}
 		// Per-position dispatch: the parent evacuate situation drives the
 		// "evacuate" semantics, but at the per-position level the robot
 		// work is identical to Swap (evac old, fetch new, deliver new).
+		//
+		// A MARKED seat's tooling routing is NOT decided here. The tooling
+		// decorator edits this leg afterwards — bay instead of market, plus the
+		// staging hold — precisely so that no builder has to know whether the
+		// press is marked. That knowledge lived in a predicate here once, and
+		// an earlier pass rewriting SwapMode is what made it unreachable.
 		return buildPressIndexPerPositionSwap(fromClaim, toClaim)
 	default:
 		return buildSingleRobotChangeoverSwap(fromClaim, toClaim, true)
@@ -790,41 +789,6 @@ func buildToolingEvacSteps(position, evacDest, inboundSource, waitNode string) [
 		buildStep("pickup", inboundSource),
 		stationWait(waitNode),
 		{Action: "dropoff", Node: position},
-	}
-}
-
-// buildPressIndexSeatEvacuate is the STAGED tooling evacuation for ONE press
-// seat. The per-seat fan-out (FanOutStagedToolingEvacuation) has already split
-// the cell into one synthesized position claim per marked seat, so this builds
-// a single robot's order and the fan-out's count is the robot count.
-//
-// Evac destination is the claim's ChangeoverEvacDestination, falling back to
-// OutboundDestination — blank means "unchanged from today".
-//
-// Empty dispatch is the planner's "I rejected this" signal; the arm gate has
-// already refused a staged changeover with no staging node, so reaching here
-// without one is a programming error rather than a configuration one.
-func buildPressIndexSeatEvacuate(fromClaim, toClaim *processes.NodeClaim) ChangeoverDispatch {
-	evacDest := domain.EvacDestinationFor(fromClaim)
-	if evacDest == "" || toClaim.InboundSource == "" || toClaim.InboundStaging == "" {
-		return ChangeoverDispatch{}
-	}
-	steps := buildToolingEvacSteps(
-		fromClaim.CoreNodeName, evacDest, toClaim.InboundSource, toClaim.InboundStaging)
-	// A produce seat's replacement is a fresh EMPTY carrier, not a full
-	// payload-matched bin — same reason as the press-index changeover builder
-	// above, and the same failure without it ("no bin of requested payload").
-	if toClaim.Role == protocol.ClaimRoleProduce {
-		markInboundEmpty(steps, toClaim.InboundSource)
-	}
-	return ChangeoverDispatch{
-		StepsA:        steps,
-		DeliveryNodeA: fromClaim.CoreNodeName,
-		AutoConfirmA:  true,
-		// The order OPENS by lifting the old bin off the seat, so it carries
-		// the from-style payload; without it the pickup filters for the new
-		// payload and finds no bin (the ALN_001 shape).
-		CarriesFromPayloadA: true,
 	}
 }
 

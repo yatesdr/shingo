@@ -432,29 +432,6 @@ func SynthesizePressPositionClaim(parent *NodeClaim, coreNodeName string) *NodeC
 	return &c
 }
 
-// StagedSeatEvacuation reports whether this pair of synthesized per-position
-// claims is a STAGED tooling evacuation — the shape whose incoming bin waits at
-// a staging node until tooling-done, rather than going straight onto the seat.
-//
-// THE STAGING NODE IS THE DISCRIMINATOR, and that is not a guess.
-// SynthesizePressPositionClaim zeroes InboundStaging, so the only producer that
-// puts one back on a per-position claim is FanOutStagedToolingEvacuation. A
-// different-bin-type per-position claim therefore never carries one and can
-// never be mistaken for this.
-//
-// ONE PREDICATE, TWO CALLERS. The planner picks the seat's action from it and
-// the step builder picks the seat's choreography from it, and they have to
-// agree: a planner that says "staged seat" while the builder builds a plain
-// per-position swap produces an action whose steps are for a different plan.
-// They were separate expressions of the same question, each carrying half of
-// the reasoning above.
-func StagedSeatEvacuation(from, to *NodeClaim) bool {
-	if from == nil || to == nil {
-		return false
-	}
-	return from.SwapMode == SwapModePressPosition && to.InboundStaging != ""
-}
-
 // SeatClaimFromParent resolves the claim for a press seat that owns changeover
 // work but has no style_node_claims row of its own, given the PARENT claim the
 // seat's node task was planned against.

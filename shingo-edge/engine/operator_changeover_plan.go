@@ -9,7 +9,6 @@ package engine
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -34,6 +33,9 @@ type changeoverPlan struct {
 	// unresolvedParticipants names participants with no process_nodes row.
 	// Advisory; see domain.Changeover.UnresolvedParticipants.
 	unresolvedParticipants []string
+	// tooling is the marked-press decoration, computed from the ORIGINAL claim
+	// lists rather than from the diffs. See changeover_tooling.go.
+	tooling toolingChangeover
 }
 
 // planChangeover assembles all data needed for a changeover without writing anything.
@@ -65,31 +67,6 @@ func (e *Engine) logEvacConfigOnWrongSide(fromClaims, toClaims []processes.NodeC
 				from.CoreNodeName)
 		}
 	}
-}
-
-// refuseStagedChangeoverWithoutStaging is the arm-time gate for the staged
-// tooling mode: every cell whose outgoing claim marks seats needs the incoming
-// claim to name a staging node for the new bins to wait at.
-//
-// Named fields, named nodes. "changeover requires inbound staging" sends an
-// engineer to the wrong page on a line with six presses; this says which cell
-// and which field, which is the round-1 runbook lesson.
-func refuseStagedChangeoverWithoutStaging(diffs []ChangeoverNodeDiff) error {
-	var missing []string
-	for _, d := range diffs {
-		if !domain.StagedToolingChangeover(d.FromClaim) || d.ToClaim == nil {
-			continue
-		}
-		if d.ToClaim.InboundStaging == "" {
-			missing = append(missing, d.CoreNodeName)
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-	return fmt.Errorf("cannot start changeover: %s marks press seats for tooling evacuation, "+
-		"which stages the incoming bins — set Inbound Staging on the incoming style's claim for %s",
-		strings.Join(missing, ", "), strings.Join(missing, ", "))
 }
 
 func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, error) {
@@ -129,24 +106,24 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 	if err != nil {
 		return nil, fmt.Errorf("list to-style claims: %w", err)
 	}
+	// The tooling changeover parks the incoming style's bins at InboundStaging
+	// until tooling-done. Refuse to arm without one, LOUDLY and by name: the
+	// alternative is a plan whose supply legs have nowhere to go, discovered as
+	// robots idling mid-changeover — or worse, material driving into a cell a
+	// human is standing in.
+	//
+	// Reads the CLAIMS, not the diffs, and so runs before them: the question is
+	// about the operator's configuration, which no diff pass can change.
+	if err := refuseToolingChangeoverWithoutStaging(fromClaims, toClaims); err != nil {
+		return nil, err
+	}
+	// The tooling decoration, also from the original claims. Applied last, by
+	// BuildChangeoverPlan, over the finished plan.
+	tooling := planToolingChangeover(fromClaims, toClaims)
 	diffs, err := e.applyChangeoverDiffPostProcessors(processID, DiffStyleClaims(fromClaims, toClaims))
 	if err != nil {
 		return nil, err
 	}
-	// The staged tooling changeover parks the incoming style's bins at
-	// InboundStaging until tooling-done. Refuse to arm without one, LOUDLY and
-	// by name: the alternative is a plan whose supply legs have nowhere to go,
-	// discovered as robots idling mid-changeover.
-	//
-	// Scoped to this mode alone. Plain press-index production neither uses nor
-	// requires staging, and swap_dispatch.go's per-mode checks are untouched.
-	if err := refuseStagedChangeoverWithoutStaging(diffs); err != nil {
-		return nil, err
-	}
-	// One diff per marked seat, AFTER the arm gate — the gate speaks about the
-	// cell the operator configured, not about three synthesized positions
-	// carrying the same message.
-	diffs = FanOutStagedToolingEvacuation(diffs)
 	e.logEvacConfigOnWrongSide(fromClaims, toClaims)
 	nodes, err := e.db.ListProcessNodesByProcess(processID)
 	if err != nil {
@@ -199,6 +176,7 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 		participants: participants,
 
 		unresolvedParticipants: unresolved,
+		tooling:                tooling,
 	}, nil
 }
 
@@ -234,6 +212,15 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 // Add new diff post-processors to this function so the ordering
 // invariants stay in one place. Any new processor needs to declare
 // where it sits in the pipeline relative to the existing four.
+//
+// TOOLING IS NOT IN THIS LIST, and that is its declaration: it is not a
+// diff post-processor at all. It runs LAST, over the FINISHED PLAN, and
+// edits the legs these four produced (see changeover_tooling.go). It was
+// a fifth entry here once — FanOutStagedToolingEvacuation — and step 3
+// silently disqualified it by rewriting the SwapMode its predicate read,
+// so a press that was both marked for tooling and changing bin type got
+// no tooling at all. A pass that cannot be reached by another pass's
+// output does not need a slot in this ordering.
 func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []ChangeoverNodeDiff) ([]ChangeoverNodeDiff, error) {
 	diffs = ApplyReuseCompatibleBinsShortcut(diffs, e.binEmptyAtCoreNode(processID))
 	if err := e.refusePressIndexWhenCoreUnavailable(diffs); err != nil {
@@ -291,7 +278,7 @@ func (e *Engine) PreviewChangeoverPlan(processID, toStyleID int64) (changeover.P
 	if err != nil {
 		return changeover.Plan{}, err
 	}
-	return BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes)), nil
+	return BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes), plan.tooling), nil
 }
 
 // binTypeSnapshot pre-resolves canonical bin type codes for every
