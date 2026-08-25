@@ -157,6 +157,14 @@ func TestRecoverCarriedBin_Tier2_FallsToAFreeStorageSlot(t *testing.T) {
 // TIER 3 — where the robot already is. No original destination and no storage
 // slot; unloading where the robot is parked is the weakest answer and still far
 // better than a bin nothing can reach.
+//
+// THE SAME SIMULATOR CAVEAT AS BRANCH A'S. Tier 3 asks ResolveRobotStation
+// where the robot is parked, and this fixture answers with a Core node name —
+// the simulator's publishing, not the plant's. At Springfield the point a
+// parked robot reports never resolved, so tier 3 has been unreachable there for
+// its whole life and this test could not have told anyone. The scene alias
+// makes it reachable; what that changes on the floor is untested here because
+// nothing in this package can produce a plant's telemetry.
 func TestRecoverCarriedBin_Tier3_FallsToTheRobotsStation(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

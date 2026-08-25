@@ -111,6 +111,14 @@ func binNodeName(t *testing.T, db *store.DB, binID int64) string {
 
 // Branch A: the robot is parked with an empty deck at a station that resolves
 // to a node. That is where it put the bin, and the operator has nothing to do.
+//
+// IT PASSES VIA THE SIMULATOR, AND PROVES NOTHING ABOUT THE PLANT. The fixture
+// publishes a Core node name as the robot's station, which is what
+// fleet/simulator does (parity.go) and what the resolver's IDENTITY path reads.
+// No live Springfield `robot_station` value has ever been a node name — nine
+// distinct values on 2026-08-24, all map furniture — so this test was green
+// through every month the plant's branch A resolved nothing at all. The plant's
+// case is the SCENE ALIAS, pinned in stranded_placement_docker_test.go.
 func TestStrandedTransit_BranchA_PlacesTheBinAtTheRobotsStation(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
