@@ -3,6 +3,132 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-08-25 — Cancelled-order bin placement, changeover tooling, claim routing
+
+**Where a cancelled order's bin went.** The deployed build could not name the
+place a robot set a bin down: the point a robot reports is map furniture
+(`AP102`, `CP37`, `PP95`) and never a Core node name, so the lookup missed every
+time at Springfield, and the operator got a note pointing at wherever the robot
+had driven to next. This corrects the 2026-08-22 entry's claim that the
+RDS-point-to-node mapping is IDENTITY — that is the simulator's case, not the
+plant's; at a plant the scene's own bin locations carry the translation. See
+`FINDING-cancelled-order-bin-placement-2026-08-24.md`.
+
+- Map a robot's reported point to the station it serves
+- Resolve a reported point, and name every refusal
+- Freeze the reading that says where a bin was set down
+- Both placement paths re-arm the anomaly-note log
+- A move off _TRANSIT clears the anomaly it was carrying
+- Scene-sync failures back off instead of logging each tick
+- Name the nodes whose bin-type config accepts nothing
+- Ask the robot holding a bin to set it down
+- Pin the cancelled-order incident and the placement rules
+- A decline that says the position means nothing prints none
+- A repeated decline writes the same bytes every pass
+- Stamp the witness, and never re-take an expired reading
+- Show why a carried bin has not settled; clear it on recovery
+- Pickup age is the first in_transit row, not the last
+- The tier-3 comment claimed more than the field can do
+- Pin the freeze lifecycle's four failure modes
+- The witness only advances from a live reading
+- Describe a point once, not once per name that reported it
+
+**Changeover and tooling.** A note on terminology, because these entries
+straddle a rename: what the earlier ones call a *seat* is now a *position*,
+and the marks name nodes rather than a position layer of their own. Both
+renames land in this same range, at the end of the group.
+
+- Validate the staged tooling mode and its owner
+- Reach SituationEvacuate, fan out per marked seat
+- The staged per-seat tooling evacuation
+- The loader card becomes a loading directive
+- A fanned-out press seat can be driven to completion
+- The load-directive seam, and a seat without it
+- Tooling decorates the finished plan, not a fan-out
+- Both tooling shapes stay reachable on the fixture
+- Clearance is normal routing — there is no tooling bay
+- The first changeover sees every marked seat
+- One "setup done" releases the whole press
+- Build UNLOADER-B's station; refuse one nothing builds
+- Marks name nodes; the position layer is gone
+- Carried-over parts get a disposition
+- Resolve every node it touches, not just marked ones
+- A press-index slot is a position, not a seat
+
+**Claims, routing and the claim editor.**
+
+- Absent means untouched for the four unowned columns
+- One server-side statement of what a claim must look like
+- Show the unresolved-participants advisory on changeover
+- Parked orders say why, not just their status
+- Claim validation renders on the field, not in a toast
+- Hiding a claim field no longer eats its value
+- Filter and rank the claim editor's six node pickers
+- A modal must fit the screen it opens on
+- Density pass on the claim editor
+- Controls for the hidden claim fields; un-hide Auto-Request
+- Styling written but never applied — dup attrs, dead utils
+- Register the new claim fields in the visibility table
+- A primes-only swap tells the operator to press again
+- Per-seat tooling relevance and an evac destination
+- Controls for per-seat tooling and the evac destination
+- Seven operator actions acknowledge, not ship an order
+- Mint both swap-leg UUIDs before either is created
+- An unreadable child list decides no compound's fate
+- Carry SEER key routes from the claim to the fleet
+- An unreadable parent releases no compound's lanes
+- Route the disposition by the leg's steps, not its slot
+- Unify duplicated CSS by component, and retire one route
+- All six optional claim columns are absent-means-untouched
+- Gates run before side effects, on both release paths
+- Validate against the plant map, not Core's node list
+- A refill leg names the style its carrier is for
+- A leg's payload survives the replay
+
+**Function-size ceiling.** Long functions are split where the ceiling caught
+them; each exclusion retired names the condition that let it go.
+
+- Retire two cleared funlen exclusions
+- Four dead or unchecked branches found in the funlen audit
+- Answer the gate — funlen extraction, gofmt, one unused field
+- Three funlen extractions, and a pin for one sheet
+- Four funlen extractions, and a restore-prompt test
+- Three funlen extractions on the hot path
+- Entries name their exit condition, and the three rules
+
+**Everything else.**
+
+- Prime a bare press-index position, not a dead swap
+- No alarm when the leg was never leaving a bin here
+- The documented utilities belong to Edge, not to shared
+- The staged tooling changeover end to end
+- Flip which robot fetches the replacement carrier
+- Never place onto a press that is not clear
+- Drop the auto-confirm override left unreachable
+- One completion read, rows.Err, split detectors
+- The change rail reads its lanes in one query
+- A pinned order that asks a robot to set its bin down
+- Press-index pair liveness and the release paths, end to end
+- A golden pin for the whole BuildView payload
+- The station board reads release errors once per tile
+- RunCarriers prints three named sections
+- CheckInvariants becomes a registry
+- The node-report kiosk batches, and shows read errors
+- Unshadow tags in reconcilePLC — counting was dead
+- BuildView becomes five named passes over one boardData
+- RollUp gets one accumulator
+- Close the archive's writers before deleting the temp dir
+- One road for adding a claim column, not two
+- Pin that fetched tags reach mp.Values
+- A refused carried-bin recovery no longer burns its uuid
+- Two carried-bin guards fail closed on a read error
+- Small riders — a leak, a log storm, two censuses, three docs
+- The simulated fleet is the driver's pool
+- Seed the new claim config, and give the trigger a target
+- The operator can push RELEASE, and the window is a knob
+- The release tests share one real-step fixture
+- The settled-order release test stops contradicting its pin
+
 ## 2026-08-22 — Faults: the reason on the row, the clock on the screen
 
 - A faulted order recorded the word and nothing else. All 730 faulted history rows in a 30-day Springfield window carry the identical detail `fleet state: FAILED`, `code` NULL, and a `ref` that says where and had nowhere to say why — while the fleet's own reason rode `ev.Snapshot.Errors` through five layers to the one line that never looked at it. `TermRef` gains `vendor_code` / `vendor_desc` and `MarkFaulted` takes the ref.

@@ -31,11 +31,27 @@ and it is never offered as a destination. It is deliberately NOT `_TRANSIT`,
 because `_TRANSIT` plus no claim is the anomaly definition below, and a bin
 whose location is known exactly is not an anomaly.
 
-A bin leaves a carrier node when that robot's jack reports unloaded: the robot
-poll places it at whatever station the robot is standing at, or files it as an
-anomaly if that point is not a Core node. There is no jack-unload event to
-subscribe to — the jack is sampled state — so this is a watch on the poll Core
-already makes every two seconds.
+A bin leaves a carrier node when that robot's jack reports unloaded. There is no
+jack-unload event to subscribe to — the jack is sampled state — so this is a
+watch on the poll Core already makes every two seconds.
+
+The reading that matters is the FIRST one after the deck empties, and it is
+frozen: a robot drives on within seconds, and the station it reports decays as
+it goes, so a later reading names wherever the robot went next rather than where
+it set the bin down. The frozen reading is then resolved — first as a Core node
+name, then through the scene's `GeneralLocation` rows, which carry the mapping
+from the point a robot reports (`AP102`) to the station it serves (`SMN_007`).
+At Springfield no reported point has ever been a node name, so the scene lookup
+is the one that answers.
+
+Anything the watch will not place files an anomaly that says WHY, because the
+reasons need different responses: the point is not a station (and the note names
+what it is — a charge point, a park point); the destination will not take this
+bin's type; Core restarted after the unload, so nobody watched it; Core was
+running but heard nothing from that robot across the drop; or the drop was
+watched but could not be placed before the observation aged out. The last three
+never place, by design — the operator's "ask the robot to set it down" button on
+the bins page is the exit.
 
 ### Anomaly
 
