@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -42,7 +43,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children`
 
 // Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
 // CountActive) return EVERY order type. They used to exclude reshuffle_restore —
@@ -63,16 +64,29 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	// origin_id is a nullable UUID — NULL is the honest reading for an order
 	// nothing asked for, and it is what the partial index on the column keys off.
 	var originID sql.NullString
+	// key_route is a JSON array in one TEXT column; '' is the ordinary state.
+	var keyRouteJSON string
 
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
-		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &o.SourceIntent, &o.Coordinated, &remainingUOP,
+		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
+		&o.SourceIntent, &o.Coordinated, &remainingUOP,
 		&originID, &o.OriginClass, &o.OpenForChildren)
 	if err != nil {
 		return nil, err
+	}
+	if keyRouteJSON != "" {
+		// A malformed route reads as none. It cannot be repaired here and a
+		// scan error would take out every query that touches orders; the
+		// dispatch-time effect of no route is SEER auto-picking, which is the
+		// same thing the plant does today.
+		if err := json.Unmarshal([]byte(keyRouteJSON), &o.KeyRoute); err != nil {
+			log.Printf("orders: order %d has unparseable key_route %q: %v — dispatching with no route", o.ID, keyRouteJSON, err)
+			o.KeyRoute = nil
+		}
 	}
 	if originID.Valid {
 		o.OriginID = originID.String
@@ -127,12 +141,13 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 // life and has exactly one writer for that reason.
 func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
-	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, origin_id, origin_class, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $22) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $24) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
 		helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
-		helpers.NullableInt64(o.BinID), o.PayloadCode, o.SkipAutoConfirm, o.SiblingOrderUUID, o.SourceIntent, o.Coordinated,
+		helpers.NullableInt64(o.BinID), o.PayloadCode, o.SkipAutoConfirm, o.SiblingOrderUUID,
+		marshalKeyRoute(o.KeyRoute), o.KeyTask, o.SourceIntent, o.Coordinated,
 		helpers.NullableText(o.OriginID), o.OriginClass,
 		now)
 	if err != nil {
@@ -140,6 +155,20 @@ func Create(db helpers.QueryRower, o *Order) error {
 	}
 	o.ID = id
 	return nil
+}
+
+// marshalKeyRoute stores the ordered via-point list. Empty stays ” rather
+// than 'null' so the column reads the same whether an order predates the
+// feature or simply has no route.
+func marshalKeyRoute(points []string) string {
+	if len(points) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(points)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // ListChildren returns all child orders for a parent order.
@@ -371,6 +400,40 @@ func LinkSiblingsByEdgeUUID(db *sql.DB, uuidA, uuidB string) (int64, error) {
 		sibling_order_uuid = CASE edge_uuid WHEN $1 THEN $2 WHEN $2 THEN $1 END,
 		updated_at = $3
 		WHERE edge_uuid IN ($1, $2)`, uuidA, uuidB, clock.Now().UTC())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// ReleaseTerminalEdgeUUID blanks edge_uuid on TERMINAL orders holding it, so a
+// deterministic uuid can be minted again. Returns how many rows were cleared.
+//
+// WHY THIS EXISTS. idx_orders_uuid is UNIQUE over edge_uuid WHERE edge_uuid
+// <> ”, and some orders derive their uuid from what they are ABOUT rather than
+// from a counter — carried-bin recovery mints "recovery-bin-{id}-{robot}" so a
+// racing double-create collides on the index instead of putting two robots on
+// one bin. A deterministic uuid is therefore a finite resource: there is
+// exactly one per subject, and a dead order holding it makes the subject
+// unactionable forever.
+//
+// TERMINAL ONLY, and that is the whole safety argument. A live order holding
+// the uuid is doing the work, and clearing it would let a second order be
+// minted for the same subject — the two-orders-one-bin shape the uniqueness is
+// there to prevent. A terminal order is finished; its uuid is a headstone, and
+// the row itself is preserved (status, error_detail, history) so the record of
+// the attempt survives. Only the index entry is given up.
+func ReleaseTerminalEdgeUUID(db *sql.DB, uuid string) (int64, error) {
+	if uuid == "" {
+		return 0, nil
+	}
+	terminals := protocol.TerminalStatuses()
+	names := make([]string, len(terminals))
+	for i, t := range terminals {
+		names[i] = string(t)
+	}
+	res, err := db.Exec(`UPDATE orders SET edge_uuid='', updated_at=$3
+		WHERE edge_uuid=$1 AND status = ANY($2)`, uuid, names, clock.Now().UTC())
 	if err != nil {
 		return 0, err
 	}

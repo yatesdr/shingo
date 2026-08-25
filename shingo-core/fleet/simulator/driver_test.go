@@ -116,19 +116,23 @@ func TestDriverStagedOrderWaitsForRelease(t *testing.T) {
 	}
 }
 
-// A release for an order the fleet no longer holds (evicted after settling) or one that
-// already reached a terminal state is idempotent — ReleaseOrder returns nil, not a hard
-// error. This stops a late/duplicate release (e.g. Core's complex auto-release racing a
-// downtime FAILED) from cascading a spurious fleet_failed that fails the order twice on
-// the Edge — the "simulator: order ... not found for release" noise.
+// A release for an order that already reached a terminal state is idempotent —
+// ReleaseOrder returns nil, not a hard error. This stops a late/duplicate release
+// (e.g. Core's complex auto-release racing a downtime FAILED) from cascading a
+// spurious fleet_failed that fails the order twice on the Edge — the
+// "simulator: order ... not found for release" noise.
+//
+// SCOPED TO SETTLED ORDERS, which is what the name says. A release for an ID this
+// backend NEVER issued is the opposite case and is deliberately an ERROR — the
+// tombstone set exists precisely so a map miss can tell "settled and reaped (moot)"
+// from "never issued (a lie somewhere upstream)"; see SimulatorBackend.settled and
+// ReleaseOrder. That case is owned by TestReleaseOrderNeverIssuedIsAnError in
+// release_honesty_test.go, and this test asserted the reverse of it until 2026-08-24:
+// both live in this package, so the pair contradicted each other and only the
+// sim-tagged one ran — in neither gate.
 func TestReleaseOrderIdempotentForSettledOrder(t *testing.T) {
 	cfg := config.SimConfig{TransitTime: 5 * time.Second, JitterPct: 0, FailRate: 0}
 	_, s, _, _ := newTestDriver(t, cfg, 7)
-
-	// Unknown / already-evicted order → no-op, not an error.
-	if err := s.ReleaseOrder("sg-never-existed", nil, true); err != nil {
-		t.Errorf("release of unknown/evicted order should be a no-op, got %v", err)
-	}
 
 	// Settled (terminal) order still in the map → no-op. Create, cancel (→ STOPPED),
 	// then release.

@@ -398,6 +398,12 @@ func (db *DB) LinkOrderSiblingsByEdgeUUID(uuidA, uuidB string) (int64, error) {
 }
 
 // OrderSiblingUUID returns the order's two-robot swap sibling edge UUID, or "".
+// ReleaseTerminalEdgeUUID frees a deterministic edge_uuid held by a terminal
+// order so it can be minted again. See orders.ReleaseTerminalEdgeUUID.
+func (db *DB) ReleaseTerminalEdgeUUID(uuid string) (int64, error) {
+	return orders.ReleaseTerminalEdgeUUID(db.DB, uuid)
+}
+
 func (db *DB) OrderSiblingUUID(id int64) (string, error) {
 	return orders.SiblingUUID(db.DB, id)
 }

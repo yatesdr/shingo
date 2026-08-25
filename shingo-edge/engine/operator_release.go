@@ -185,9 +185,6 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// because it's genuinely tied to the release event ("operator just
 	// finished a full bin"); the trigger isn't a count threshold, it's
 	// the act of finishing.
-	if !isSupply && disp.Mode == DispositionCaptureLineside && toClaim.Role == protocol.ClaimRoleProduce {
-		e.MaybeCreateUnloaderFullIn(toClaim.PayloadCode)
-	}
 
 	// Produce nodes don't use lineside buckets — skip capture, skip UOP
 	// reset (produce resets on ingest completion, not release). Pass
@@ -198,7 +195,19 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	if toClaim.Role == protocol.ClaimRoleProduce {
 		e.logRelease("order=%d node=%s disposition=%q — skipping manifest sync: produce_role",
 			orderID, node.Name, string(disp.Mode))
-		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
+		if err := e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy); err != nil {
+			return err
+		}
+		// U1 AFTER THE RELEASE, NOT BEFORE IT. The side-cycle trigger creates a
+		// real order at the unloader, and its premise is "the operator just
+		// finished a full bin" — so it must not fire for a release that then
+		// failed to go out. It used to sit above the produce-role branch, which
+		// is the same gates-before-side-effects slip the swap release had, in a
+		// narrower place: the only step between them is this enqueue.
+		if !isSupply && disp.Mode == DispositionCaptureLineside {
+			e.MaybeCreateUnloaderFullIn(toClaim.PayloadCode)
+		}
+		return nil
 	}
 
 	return e.releaseOrderWithFullLineside(order, node, runtime, toClaim, nodeTask, disp, isSupply)

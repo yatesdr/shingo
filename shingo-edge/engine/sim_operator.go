@@ -4,6 +4,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -81,7 +82,7 @@ func (e *Engine) StartSimOperator(ctx context.Context, simCfg config.SimConfig, 
 	e.Events.SubscribeTypes(op.onStatusChanged, EventOrderStatusChanged)
 	e.Events.SubscribeTypes(op.onOrderCreated, EventOrderCreated)
 	e.logFn("[sim] sim operator started (loader_auto_load=%s unloader_auto_clear=%s swap_release=%s)",
-		op.loaderDelay(), op.unloaderDelay(), swapReleaseDelay)
+		op.loaderDelay(), op.unloaderDelay(), op.swapReleaseDelay())
 
 	// Reconciliation sweep (restart-safety). The SubscribeTypes handlers above
 	// only fire on LIVE transitions, so any order already mid-choreography when
@@ -316,10 +317,25 @@ func (op *simOperator) run(nodeID int64) {
 	}
 }
 
-// swapReleaseDelay is the simulated operator reaction time between a swap
-// reaching its swap-ready wait (status "staged") and the operator pushing
+// defaultSwapReleaseDelay is the simulated operator reaction time between a
+// swap reaching its swap-ready wait (status "staged") and the operator pushing
 // Release. The sim clock's After scales it by live speed.
-const swapReleaseDelay = 3 * time.Second
+const defaultSwapReleaseDelay = 3 * time.Second
+
+// swapReleaseDelay is the configured reaction time, or the default.
+//
+// A KNOB BECAUSE THE DEFAULT CLOSES THE WINDOW UNDER TEST. Three seconds is a
+// good imitation of a person and a poor instrument: a scenario built to observe
+// a HELD release — one leg staged, its sibling still coming — has three seconds
+// to look before the operator releases anyway. A run against the round-4
+// collision gate lost that window 480 times to this timer and reported the gate
+// as never firing.
+func (op *simOperator) swapReleaseDelay() time.Duration {
+	if op.ops.SwapRelease > 0 {
+		return op.ops.SwapRelease
+	}
+	return defaultSwapReleaseDelay
+}
 
 // onStatusChanged is the swap-ready auto-release trigger. Produce and consume
 // single/two-robot swaps share one choreography (BuildSwapDispatch): both dwell
@@ -755,7 +771,11 @@ func (op *simOperator) runRelease(orderID int64) {
 	select {
 	case <-op.ctx.Done():
 		return
-	case <-op.clk.After(swapReleaseDelay):
+	case <-op.clk.After(op.swapReleaseDelay()):
+	}
+	if op.ops.PairRelease {
+		op.releaseAsPair(orderID)
+		return
 	}
 	// Empty disposition: release the swap without touching the bin manifest. The
 	// sim isn't modeling SEND PARTIAL / RELEASE EMPTY accounting — just the
@@ -766,6 +786,53 @@ func (op *simOperator) runRelease(orderID int64) {
 		return
 	}
 	op.e.logFn("[sim] operator auto-release order %d (swap-ready)", orderID)
+}
+
+// releaseAsPair pushes the operator's RELEASE BUTTON for the node this order
+// belongs to, rather than releasing this one leg.
+//
+// ── WHY THIS IS A SEPARATE PATH AND NOT A TIDIER SPELLING ────────────────
+//
+// ReleaseOrderWithLineside is the per-ORDER API door; ReleaseStagedOrders is
+// the per-NODE one, and it is the only thing an operator can actually press.
+// Everything the pair path owns has no sim coverage while the per-leg path is
+// the only one that runs: the collision gate that holds a placing leg while its
+// sibling is still coming, the produce paperwork and its ordering against that
+// gate, the deferred-sibling re-fire when only one leg was releasable, and the
+// disposition split that gives the evac leg the operator's choice and the
+// supply leg a bare one.
+//
+// THE DISPOSITION IS COMPUTED, not blank. A blank disposition is what the
+// per-leg path sends, and it is exactly what makes the U1 side-cycle trigger
+// dormant — the trigger fires on capture_lineside, so a sim that always sends
+// "" can never observe it. A produce node's operator is declaring a full bin,
+// which is capture_lineside; anything else releases without saying what
+// happened to the material.
+func (op *simOperator) releaseAsPair(orderID int64) {
+	order, err := op.e.db.GetOrder(orderID)
+	if err != nil || order == nil || order.ProcessNodeID == nil {
+		op.e.debugFn("[sim] operator pair-release: order %d has no process node: %v", orderID, err)
+		return
+	}
+	nodeID := *order.ProcessNodeID
+	disp := ReleaseDisposition{CalledBy: "sim-operator"}
+	if _, _, claim, lerr := loadActiveNode(op.e.db, nodeID); lerr == nil && claim != nil &&
+		claim.Role == protocol.ClaimRoleProduce {
+		disp.Mode = DispositionCaptureLineside
+	}
+	if err := op.e.ReleaseStagedOrders(nodeID, disp); err != nil {
+		// A HELD release is the gate working, not a failure, and it must read
+		// that way in the log — a sim run that reports every hold as a rejection
+		// is a run nobody can tell a wedge from.
+		var notReady *SwapPairNotReadyError
+		if errors.As(err, &notReady) {
+			op.e.logFn("[sim] operator pair-release node %d HELD: %v — will retry", nodeID, err)
+			return
+		}
+		op.e.debugFn("[sim] operator pair-release node %d rejected: %v", nodeID, err)
+		return
+	}
+	op.e.logFn("[sim] operator pair-release node %d (order %d was swap-ready)", nodeID, orderID)
 }
 
 // onOrderCreated is the A/B cutover trigger — the headless stand-in for the PLC

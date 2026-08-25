@@ -41,7 +41,7 @@ type APIRetrieveRequest struct {
 // aggregate whether some loader or unloader owns that node, in either role. If
 // one does, the order goes through withLoaderBudget on that loader's key, so
 // this door contends on the same mutex as every other door onto the same
-// windows. If no loader owns the node — a press seat, a supermarket slot, a
+// windows. If no loader owns the node — a press position, a supermarket slot, a
 // quality-hold spot — nothing changes: those have no budget to belong to, and
 // inventing one for them is what the RequestEmptyBin simple-mode guard comment
 // already explains is wrong.

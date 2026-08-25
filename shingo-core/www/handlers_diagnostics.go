@@ -166,6 +166,20 @@ func (h *Handlers) apiRepairAnomaly(w http.ResponseWriter, r *http.Request) {
 			h.jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+	case "recover_carried_bin":
+		// Ask the robot holding this bin to set it down. The only recovery
+		// action here that DISPATCHES rather than repairing a record — every
+		// other case above rewrites Core's bookkeeping, this one puts a robot
+		// on the floor in motion, which is why the refusals are surfaced
+		// verbatim rather than flattened to "could not repair".
+		if req.BinID == 0 {
+			h.jsonError(w, "bin_id is required", http.StatusBadRequest)
+			return
+		}
+		if _, err := h.engine.Recovery().RecoverCarriedBin(req.BinID, actor); err != nil {
+			h.jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	default:
 		h.jsonError(w, "unknown recovery action", http.StatusBadRequest)
 		return

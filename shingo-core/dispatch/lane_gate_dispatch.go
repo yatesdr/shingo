@@ -577,7 +577,12 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 		Blocks:     blocks,
 		Priority:   order.Priority,
 		RobotGroup: d.robotGroupForPayload(payloadCode),
-		Complete:   false, // unsealed: the tail is appended when the lane is safe
+		Vehicle:    pinnedVehicleFor(order),
+		// The claim's routing hints, if it configured any. Nil/empty is SEER
+		// auto-pick, which is every order in the plant until one does.
+		KeyRoute: order.KeyRoute,
+		KeyTask:  order.KeyTask,
+		Complete: false, // unsealed: the tail is appended when the lane is safe
 	}
 	d.dbg("lane gate: order=%d vendor=%s creating unsealed %d block(s) -> wait@%s (lane %s)",
 		order.ID, vendorOrderID, len(blocks), target.gatePoint, target.lane.Name)

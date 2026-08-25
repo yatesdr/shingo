@@ -24,6 +24,15 @@ type resolvedStep struct {
 	// payload-matching full. Threaded through resolution + claim so the
 	// distinction survives steps_json persistence and scanner replay.
 	Empty bool `json:"empty,omitempty"`
+	// PayloadCode mirrors protocol.ComplexOrderStep.PayloadCode: the payload
+	// THIS leg's bin selection resolves against, when it must differ from the
+	// order's. Threaded through resolution + claim + steps_json for exactly the
+	// reason Empty is, and the sim proved the reason on 2026-08-25: without it
+	// the FIRST resolution honoured the incoming style's carrier type and parked
+	// correctly when none was free, and the REPLAY rebuilt the step without the
+	// payload, fell back to the order's — the outgoing style's — and delivered
+	// the carrier the press was leaving. Right until it retried.
+	PayloadCode string `json:"payload_code,omitempty"`
 	// ExclusiveSlot mirrors protocol.ComplexOrderStep.ExclusiveSlot: this dropoff
 	// lands on a node holding one bin at a time (a staging node), which Core's
 	// role test cannot recognise on its own. Threaded through resolution for the

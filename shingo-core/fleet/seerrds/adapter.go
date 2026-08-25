@@ -82,6 +82,7 @@ func (a *Adapter) CreateOrder(req fleet.CreateOrderRequest) (fleet.TransportOrde
 	rdsReq := &rds.SetOrderRequest{
 		ID:         req.OrderID,
 		ExternalID: req.ExternalID,
+		Vehicle:    req.Vehicle,    // pinned robot; "" omitted → the fleet assigns (every order but a recovery)
 		Group:      req.RobotGroup, // SEER robot-dispatch group; "" omitted → vendor default assignment
 		KeyRoute:   req.KeyRoute,   // robot-selection hint; nil omitted → SEER auto-picks
 		KeyTask:    req.KeyTask,    // robot-selection hint ("load"/"unload"); "" omitted → SEER auto-picks

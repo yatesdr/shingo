@@ -84,8 +84,9 @@ func TestIsSupplyOrderInTwoRobotSwap_ClassifiesByPlacedBin(t *testing.T) {
 	cases := []struct {
 		name         string
 		mode         protocol.SwapMode
-		secondPaired string // "" = 2-position press-index
-		legB         bool   // false = leg A (two_robot supply / press-index R1)
+		secondPaired string
+		flipped      bool // "" = 2-position press-index
+		legB         bool // false = leg A (two_robot supply / press-index R1)
 		wantSupply   bool
 		why          string
 	}{
@@ -130,12 +131,46 @@ func TestIsSupplyOrderInTwoRobotSwap_ClassifiesByPlacedBin(t *testing.T) {
 			wantSupply:   true,
 			why:          "R2's dropoff(PRESS) has no later pickup(PRESS) — the bin stays. Its FINAL dropoff is the index node, which is why a where-does-it-end test called this an evac and let Core wipe the manifest of the bin it just supplied",
 		},
+		// ── THE FLIP DOES NOT MOVE THE ROLES ──────────────────────────────
+		//
+		// R1 still lifts the bin off the press and R2 still puts one on it;
+		// what changes is which of them fetches the replacement. If the flip
+		// ever DID move the roles, Core would wipe the manifest of the bin it
+		// had just supplied — the ALN_002 shape — so the classifier's answer
+		// under the flip is pinned rather than assumed to follow.
+		{
+			name:       "press-index FLIPPED 2-pos R1 clears the press and stops",
+			mode:       protocol.SwapModeTwoRobotPressIndex,
+			flipped:    true,
+			wantSupply: false,
+			why:        "R1 is evac-only under the flip — no supermarket trip, still the evac",
+		},
+		{
+			name:       "press-index FLIPPED 2-pos R2 sets a bin on the press, then refills the index",
+			mode:       protocol.SwapModeTwoRobotPressIndex,
+			legB:       true,
+			flipped:    true,
+			wantSupply: true,
+			why:        "R2 indexes onto the press AND fetches the replacement; its dropoff(PRESS) has no later pickup(PRESS), so the press bin stays — supply",
+		},
+		{
+			name:         "press-index FLIPPED 3-pos R2 indexes, re-indexes, then refills C",
+			mode:         protocol.SwapModeTwoRobotPressIndex,
+			secondPaired: "INDEX-C",
+			legB:         true,
+			flipped:      true,
+			wantSupply:   true,
+			why:          "the longest leg in the system — three dropoffs, and only the PRESS one is never picked back up",
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			db := testEngineDB(t)
 			nodeID, node, claim := seedSwapClaim(t, db, tc.mode, tc.secondPaired)
+			if tc.flipped {
+				claim.IndexRobotSupplies = true
+			}
 			eng := testEngine(t, db)
 
 			// The steps a real dispatch would issue, for this exact claim.

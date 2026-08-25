@@ -110,10 +110,15 @@ type Engine struct {
 	coreNodesMu       sync.RWMutex
 	payloadBinTypes   []protocol.PayloadBinTypeInfo
 	payloadBinTypesMu sync.RWMutex
-	nodeSyncFn        func()
-	catalogSyncFn     func()
-	sendFn            func(*protocol.Envelope) error
-	kafkaReconnFn     func() error
+	// The vendor map's own universe — see scene_graph.go. In-memory only and
+	// re-delivered on every node-list sync, like the catalog above.
+	scenePoints   []protocol.ScenePointInfo
+	sceneEdges    []protocol.SceneEdgeInfo
+	sceneGraphMu  sync.RWMutex
+	nodeSyncFn    func()
+	catalogSyncFn func()
+	sendFn        func(*protocol.Envelope) error
+	kafkaReconnFn func() error
 
 	// inventoryDelta is the Phase 1 delta sink. Set by the composition
 	// root via SetInventoryDeltaSink. Nil in test contexts that don't
@@ -149,6 +154,15 @@ type Engine struct {
 	// FINAL-ADJUDICATION Q1 (monotonicity + non-tx-pure CreateRetrieveOrder) —
 	// shingo-library/archive/bin-loader-multiwindow-reviews-2026-06-12/FINAL-ADJUDICATION.md.
 	loaderResv sync.Map
+
+	// primeResv serializes the count->decide->create sequence for the
+	// press-index partial-empty prime, so two concurrent produce requests on
+	// one cell cannot both read "nothing inbound" and both fire an empty at
+	// the same bare paired position. Keyed by the claim's CORE node name, not
+	// its process_node id: a shared core node carries many process_node rows
+	// for one physical cell, and the in-flight count that the lock protects is
+	// itself scoped by delivery node. map[coreNodeName]*sync.Mutex.
+	primeResv sync.Map
 
 	// loaderStore is the consumer-defined resolver for loaders, backed by the
 	// Core-owned aggregate (the synced core_loaders cache), refreshed on each
@@ -249,6 +263,9 @@ func New(c Config) *Engine {
 	// Wire the parked-ticks alarm (P2-C7) onto the operator tile: BuildView reads
 	// the live alarm map so the chip renders on load and on every refresh.
 	e.stationService.SetStrandedResolver(e.StrandedAlarmDetail)
+	// The changeover load directive names a BIN TYPE, so it needs the payload
+	// -> dunnage catalog Core delivers with every node-list sync.
+	e.stationService.SetBinTypeResolver(e.BinTypeForPayload)
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)

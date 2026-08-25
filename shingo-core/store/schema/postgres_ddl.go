@@ -121,6 +121,8 @@ CREATE TABLE IF NOT EXISTS orders (
     queue_cause     TEXT,
     skip_auto_confirm BOOLEAN NOT NULL DEFAULT false,
     sibling_order_uuid TEXT NOT NULL DEFAULT '',
+    key_route          TEXT NOT NULL DEFAULT '',
+    key_task           TEXT NOT NULL DEFAULT '',
     source_intent   TEXT NOT NULL DEFAULT '',
     coordinated     BOOLEAN NOT NULL DEFAULT false,
     remaining_uop   INTEGER,

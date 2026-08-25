@@ -13,7 +13,7 @@ import (
 // the amber chip) and leaves non-matching nodes blank. Unset resolver stays a
 // clean no-op (the lighter constructors don't wire it).
 func TestBuildView_StrandedResolverPopulatesChip(t *testing.T) {
-	db, stationID, pressNodeID, seatNodeID, _ := seatScenario(t)
+	db, stationID, pressNodeID, positionNodeID, _ := positionScenario(t)
 	svc := NewStationService(db)
 
 	const detail = "CARRIER-9 staged 3h at PLN_A1, not bound — Record Count on the bin tab."
@@ -29,13 +29,13 @@ func TestBuildView_StrandedResolverPopulatesChip(t *testing.T) {
 		t.Fatalf("BuildView: %v", err)
 	}
 
-	var press, seat *domain.StationNodeView
+	var press, position *domain.StationNodeView
 	for i := range view.Nodes {
 		switch view.Nodes[i].Node.ID {
 		case pressNodeID:
 			press = &view.Nodes[i]
-		case seatNodeID:
-			seat = &view.Nodes[i]
+		case positionNodeID:
+			position = &view.Nodes[i]
 		}
 	}
 	if press == nil {
@@ -44,7 +44,7 @@ func TestBuildView_StrandedResolverPopulatesChip(t *testing.T) {
 	if press.StrandedAlarm != detail {
 		t.Errorf("press StrandedAlarm = %q, want the resolver detail %q", press.StrandedAlarm, detail)
 	}
-	if seat != nil && seat.StrandedAlarm != "" {
-		t.Errorf("seat StrandedAlarm = %q, want empty (resolver returned \"\" for it)", seat.StrandedAlarm)
+	if position != nil && position.StrandedAlarm != "" {
+		t.Errorf("position StrandedAlarm = %q, want empty (resolver returned \"\" for it)", position.StrandedAlarm)
 	}
 }

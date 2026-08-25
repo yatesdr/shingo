@@ -546,429 +546,35 @@ func waitCauses(db *store.DB) []causeCount {
 // These are the campaign doc's §4 list, expressed as queries. Each one is a
 // statement the soak claims; a non-empty result means the claim is false, and a
 // non-zero exit is how an unattended run says so without anyone reading it.
+// invariantChecks is the flat registry checkInvariants runs, in report order.
+// It matches the shape `collect` already uses for the measures half of this
+// file: one named function per question, listed once.
+//
+// Named rather than inlined so each can be seeded and asserted on its own. The
+// docker test currently drives the whole function and greps twelve checks'
+// worth of output for the two it cares about.
+var invariantChecks = []struct {
+	name string
+	run  func(*store.DB) []string
+}{
+	{"a terminal order carrying a congestion-shaped queue cause", checkTerminalWithCongestionCause},
+	{"a lane with two occupancy owners", checkDoubleOccupancy},
+	{"an entrant the lane never saw arrive", checkPhantomEntrants},
+	{"a leg that reached the destination end unjudged", checkNotJudgedAtDestEnd},
+	{"a leg judged with no bin to judge", checkNotJudgedNoBin},
+	{"two legs traversing one lane at once", checkTraversalOverlap},
+	{"a reservation still held by a terminal order", checkTerminalOrderReservations},
+	{"an order queued five minutes with no cause on the row", checkQueuedWithoutCause},
+	{"how orders were freed by the periodic floor release", checkFloorReleaseHistogram},
+	{"orders waiting under a cause nothing declares", checkUndeclaredWaits},
+	{"orders that have not moved for their population's budget", checkStalledOrders},
+	{"a negative total UOP across bins", checkNegativeTotalUOP},
+}
+
 func checkInvariants(db *store.DB) []string {
 	var v []string
-
-	// "Terminating demand is a no-no", executable. A congestion-shaped cause on
-	// a terminal order means something waited and then died anyway.
-	if n := scalar(db, `
-		SELECT COUNT(*) FROM orders
-		WHERE status = $1
-		  AND queue_cause IS NOT NULL AND queue_cause <> ''
-		  AND queue_cause NOT IN ('config-failure', 'fleet-error')`,
-		string(protocol.StatusFailed)); n > 0 {
-		v = append(v, fmt.Sprintf("%d order(s) FAILED carrying a congestion-shaped queue cause", n))
-	}
-
-	// Two occupants in one lane. Hold B admits the asker and refuses everyone
-	// else, so two distinct owners on one lane is the hold not holding.
-	//
-	// STILL A HARD VIOLATION, AND NO LONGER THE WHOLE COLLISION CHECK. Since the
-	// exit release (9f74ad6a) an order drops its row the moment it LIFTS its bin,
-	// while the robot is still driving out of the corridor. So the two robots this
-	// check was built to catch can now be in one lane with only ONE row between
-	// them, and this count stays at zero through exactly the scenario the release
-	// was warned about. The traversal-window check below is the other half; read
-	// them together or neither means what it says.
-	if n := scalar(db, `
-		SELECT COUNT(*) FROM (
-			SELECT node_id FROM reservations
-			WHERE resource_kind = 'occupancy' AND state <> 'released'
-			GROUP BY node_id HAVING COUNT(DISTINCT order_id) > 1
-		) x`); n > 0 {
-		v = append(v, fmt.Sprintf("%d lane(s) with TWO occupancy owners", n))
-	}
-
-	// THE PHANTOM ENTRANT — the dual of the check above, and the one whose
-	// absence made this tool's "0 violations" meaningless for F-12.
-	//
-	// Every occupancy assertion in this repo hunts rows that should not exist.
-	// Not one asked whether a row that SHOULD exist does. So an order that
-	// dispatched into a lane and wrote nothing was arithmetically incapable of
-	// raising the two-occupants count above 1, and the soak reported clean over a
-	// population that had largely been deleted from the ledger. The zero was not
-	// evidence; it was a corollary of the defect.
-	//
-	// `staged` is excluded and that is not a fudge: a gate-staged order dwells
-	// OUTSIDE the corridor and correctly holds no row, which is pinned by
-	// TestCharSeam_GatedCreate_TakesNoOccupancyUntilTheTail. So are the
-	// pre-dispatch statuses, which have no robot yet.
-	//
-	// ── REDEFINED AFTER THE EXIT RELEASE, BECAUSE IT STOPPED MEANING THIS ──
-	//
-	// "Executing in a lane and holding no occupancy row" was a defect when the
-	// only release was the DROPOFF. Since 9f74ad6a it is also the INTENDED state
-	// of every order that has picked its bin and is driving out — so the raw
-	// count began mixing a real defect with the design, and grew with throughput
-	// because the design does. It was reported as five phantom entrants and read
-	// as evidence for building the exit marker; most of it was the marker's own
-	// premise being measured back.
-	//
-	// The discriminator is WHERE THE BIN IS, which is the one fact that says
-	// whether the robot has crossed the lane boundary yet — and it is asked of
-	// the SOURCE end only:
-	//
-	//	SOURCE lane — the order was sent to take a bin OUT. While that bin is
-	//	              still in the lane it has not lifted, so the robot is inbound
-	//	              or inside and MUST be declared. Once the bin has left, the
-	//	              release was correct and the order is in the traversal window.
-	//
-	// THE DEST END IS NOT JUDGEABLE FROM THESE COLUMNS, and trying cost this
-	// checker its meaning once already. A multi-segment order takes occupancy for
-	// its PRE-WAIT nodes only — commitToFleet over planNodes(preWait), and
-	// complex_dispatch.go says why in as many words: a row for a lane the robot
-	// may reach in ten minutes would wall that lane for the whole dwell. So an
-	// order in_transit toward a delivery node in a lane it has not been dispatched
-	// into yet CORRECTLY holds no row, and no column here can separate that from a
-	// real omission — it needs steps_json and wait_index. Measured, not assumed:
-	// on the dev stack seven of the eight rows a dest-end test flagged were this
-	// exact by-design case (order 47's UTN_014 sits after its wait).
-	//
-	// Reported with lane and status rather than as a bare count, because the
-	// judgement is the reader's — unchanged from the original, and the reason the
-	// original was salvageable at all.
-	phantomQ := fmt.Sprintf(`
-		SELECT o.id, o.status, l.name
-		FROM orders o
-		JOIN nodes s ON s.name = o.source_node
-		JOIN nodes l ON l.id = s.parent_id
-		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
-		LEFT JOIN reservations r
-		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
-		      AND r.node_id = l.id AND r.state <> 'released'
-		JOIN bins b   ON b.id = o.bin_id
-		LEFT JOIN nodes bn ON bn.id = b.node_id
-		WHERE o.vendor_order_id <> ''
-		  AND o.status NOT IN (%s)
-		  AND o.status NOT IN (%s)
-		  AND o.status <> '%s'
-		  AND r.id IS NULL
-		  AND bn.parent_id IS NOT DISTINCT FROM l.id
-		ORDER BY o.id LIMIT 12`,
-		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
-		protocol.StatusStaged)
-	if rows, err := db.DB.Query(phantomQ); err == nil {
-		for rows.Next() {
-			var id int
-			var status, lane string
-			if err := rows.Scan(&id, &status, &lane); err != nil {
-				continue
-			}
-			v = append(v, fmt.Sprintf(
-				"PHANTOM ENTRANT: order %d (%s) was sent to pick in lane %s, its bin is still in "+
-					"that lane so it has not lifted, and it holds no occupancy row — it is invisible "+
-					"to everyone else's admission", id, status, lane))
-		}
-		rows.Close()
-	}
-
-	// WHAT THE DISCRIMINATOR REFUSES TO JUDGE, COUNTED RATHER THAN DROPPED — a
-	// filter that silently removes its hard cases reads as "covered everything".
-	//
-	// Two populations: the dest-end rows above (correct-by-design or not, this
-	// tool cannot tell without parsing the plan), and executing orders carrying no
-	// bin_id at all, which have no bin to locate. The second is its own finding —
-	// it is the nil-BinID family the round left open.
-	if n := scalar(db, fmt.Sprintf(`
-		SELECT COUNT(DISTINCT o.id)
-		FROM orders o
-		JOIN nodes s ON s.name = o.delivery_node
-		JOIN nodes l ON l.id = s.parent_id
-		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
-		LEFT JOIN reservations r
-		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
-		      AND r.node_id = l.id AND r.state <> 'released'
-		WHERE o.vendor_order_id <> ''
-		  AND o.status NOT IN (%s)
-		  AND o.status NOT IN (%s)
-		  AND o.status <> '%s'
-		  AND r.id IS NULL`,
-		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
-		protocol.StatusStaged)); n > 0 {
-		v = append(v, fmt.Sprintf(
-			"NOT JUDGED (dest end): %d executing order(s) name a delivery node in a lane and hold no "+
-				"occupancy row. Expected whenever that dropoff is in a post-wait segment the robot "+
-				"has not been sent on — deciding needs steps_json, which this tool does not parse. "+
-				"Neither a violation nor a clean bill", n))
-	}
-	if n := scalar(db, fmt.Sprintf(`
-		SELECT COUNT(DISTINCT o.id)
-		FROM orders o
-		JOIN nodes s ON s.name IN (o.source_node, o.delivery_node)
-		JOIN nodes l ON l.id = s.parent_id
-		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
-		LEFT JOIN reservations r
-		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
-		      AND r.node_id = l.id AND r.state <> 'released'
-		WHERE o.vendor_order_id <> ''
-		  AND o.status NOT IN (%s)
-		  AND o.status NOT IN (%s)
-		  AND o.status <> '%s'
-		  AND r.id IS NULL
-		  AND o.bin_id IS NULL`,
-		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
-		protocol.StatusStaged)); n > 0 {
-		v = append(v, fmt.Sprintf(
-			"NOT JUDGED (no bin): %d executing order(s) in a lane hold no occupancy row AND carry no "+
-				"bin_id, so there is no bin to locate against the mouth. An executing order with no "+
-				"bin_id is its own finding", n))
-	}
-
-	// ── THE COLLISION CHECK THE EARLY RELEASE ACTUALLY NEEDS ──────────────
-	//
-	// The two-owners count above cannot see the risk 9f74ad6a took, because that
-	// risk is precisely ONE row and one un-rowed robot: the first order lifted,
-	// dropped its row, and is driving out; the second was admitted into the lane
-	// it is still inside. Two robots, one corridor, one occupancy row, and every
-	// existing assertion silent.
-	//
-	// So this counts the overlap directly: a lane where somebody HOLDS occupancy
-	// while somebody else is in the traversal window on the same lane. That is
-	// the measurement the exit-marker decision turns on — not the phantom count,
-	// which is now (correctly) dominated by orders behaving as designed.
-	//
-	// It is a WATCH, not a violation: the window is an owner ruling taken
-	// deliberately, and a non-zero count here is the evidence that it bites, not
-	// proof that something is broken. Named so the reader can tell those apart.
-	if rows, err := db.DB.Query(fmt.Sprintf(`
-		SELECT l.name, COUNT(DISTINCT o.id)
-		FROM orders o
-		JOIN nodes s  ON s.name = o.source_node
-		JOIN nodes l  ON l.id = s.parent_id
-		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
-		LEFT JOIN reservations r
-		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
-		      AND r.node_id = l.id AND r.state <> 'released'
-		JOIN bins b   ON b.id = o.bin_id
-		LEFT JOIN nodes bn ON bn.id = b.node_id
-		WHERE o.vendor_order_id <> ''
-		  AND o.status NOT IN (%s)
-		  AND o.status NOT IN (%s)
-		  AND o.status <> '%s'
-		  AND r.id IS NULL
-		  AND bn.parent_id IS DISTINCT FROM l.id
-		  AND EXISTS (
-		    SELECT 1 FROM reservations h
-		    WHERE h.resource_kind = 'occupancy' AND h.state <> 'released'
-		      AND h.node_id = l.id AND h.order_id <> o.id
-		  )
-		GROUP BY l.name ORDER BY l.name LIMIT 12`,
-		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
-		protocol.StatusStaged)); err == nil {
-		for rows.Next() {
-			var lane string
-			var n int
-			if err := rows.Scan(&lane, &n); err != nil {
-				continue
-			}
-			v = append(v, fmt.Sprintf(
-				"TRAVERSAL OVERLAP (watch, not a violation): lane %s has an occupancy holder AND %d "+
-					"order(s) still driving out of it having already released. This is the window the "+
-					"exit release opened by owner ruling — it is what the EXIT MARKER decision waits "+
-					"on, and the phantom count is not", lane, n))
-		}
-		rows.Close()
-	}
-
-	// A hold outliving its order. Terminalization releases by order, so a live
-	// reservation owned by a terminal order is an orphan nothing will clear.
-	//
-	// BROKEN OUT BY KIND, because the kinds fail differently and one of them is
-	// what this soak was specifically asked to watch. A leaked `occupancy` row is
-	// a lane that reads OCCUPIED FOREVER to every future entrant — the F-12 fix's
-	// exact failure mode, and the one that silently removes a corridor from the
-	// plant. A leaked `slot` or `mouth` row is narrower. A bare total cannot tell
-	// them apart, and "N reservations leaked" is not an answer to "did complex
-	// occupancy release on every path".
-	if rows, err := db.DB.Query(fmt.Sprintf(`
-		SELECT r.resource_kind, COUNT(*) FROM reservations r
-		JOIN orders o ON o.id = r.order_id
-		WHERE r.state <> 'released'
-		  AND o.status IN (%s)
-		GROUP BY 1 ORDER BY 1`, protocol.TerminalStatusSQLList())); err == nil {
-		for rows.Next() {
-			var kind string
-			var n int
-			if err := rows.Scan(&kind, &n); err != nil {
-				continue
-			}
-			detail := ""
-			if kind == "occupancy" {
-				detail = " — that lane reads OCCUPIED to every future entrant, permanently"
-			}
-			v = append(v, fmt.Sprintf("%d %s reservation(s) held by a TERMINAL order%s", n, kind, detail))
-		}
-		rows.Close()
-	}
-
-	// A wait with no cause on the row. The operator sentence is the whole point
-	// of parking rather than failing; a parked order nobody can explain is the
-	// shape this stream exists to refuse.
-	if n := scalar(db, `
-		SELECT COUNT(*) FROM orders
-		WHERE status = 'queued'
-		  AND (queue_cause IS NULL OR queue_cause = '')
-		  AND created_at < now() - interval '5 minutes'`); n > 0 {
-		v = append(v, fmt.Sprintf("%d order(s) queued 5min+ with NO cause on the row", n))
-	}
-
-	// ── THE FLOOR TRIPWIRE ─────────────────────────────────────────────────
-	//
-	// Every release the lane liveness floor made is a recovery_actions row, and
-	// this is the histogram BY CAUSE. It is the batch's deliverable, not a
-	// health check: each cause with a non-zero count is a wait whose event
-	// releaser did not fire, ranked by how often, which is the worklist an
-	// emitter hunt runs on instead of a hunch.
-	//
-	// EXPECTED TO TREND TO ZERO as the emitters are found — except for
-	// fleet-error, which is absence-class. Nothing emits "the fleet became
-	// willing", so floor releases under it are the DESIGN and a fleet-health
-	// signal rather than a missing subscription. It is separated here rather
-	// than suppressed, for the same reason the burial shadow counts its known
-	// gap apart instead of hiding it.
-	if rows, err := db.DB.Query(`
-		SELECT COALESCE(NULLIF(split_part(split_part(detail, 'cause "', 2), '"', 1), ''), '(none)'),
-		       COUNT(*)
-		FROM recovery_actions
-		WHERE action = $1
-		GROUP BY 1 ORDER BY 2 DESC`, dispatch.FloorReleaseAction); err == nil {
-		for rows.Next() {
-			var cause string
-			var n int
-			if err := rows.Scan(&cause, &n); err != nil {
-				continue
-			}
-			switch cause {
-			case string(dispatch.CauseFleetRefusedCreate):
-				v = append(v, fmt.Sprintf("FLOOR-RELEASE (expected, absence-class): %d under %s — "+
-					"no event exists for this; read it as fleet health, not a missing emitter", n, cause))
-			case "(none)", "(no cause on the row)":
-				// A BLANK IS NOT A MISSING EMITTER — causeReleasers is not the file to
-				// open — and it is not ONE defect either. It is two, and they want
-				// opposite investigations: an arm that refused without recording, or
-				// nothing having evaluated the order at all. §12.49 traced a specimen
-				// of the second kind (order 56: freed 17s after staging, with zero
-				// refusals logged against it while the same line fired 77 times for
-				// others), and the old wording sent the reader hunting an arm that did
-				// not exist. Same split the floor's own record now makes.
-				v = append(v, fmt.Sprintf("FLOOR-RELEASE (blank cause): %d order(s) freed by the "+
-					"floor with NO cause on the row. TWO possible defects: an arm refused them "+
-					"without calling setQueueReason, OR nothing ever evaluated them and the missing "+
-					"EVENT is the defect. Check the log for a refusal naming the order — no refusal "+
-					"means the second. Not an inventory gap either way", n))
-			default:
-				v = append(v, fmt.Sprintf("FLOOR-RELEASE: %d order(s) freed by the periodic floor "+
-					"under cause %s — an event should have done this; see causeReleasers for which",
-					n, cause))
-			}
-		}
-		rows.Close()
-	}
-
-	// ── OBSERVED VS DECLARED ───────────────────────────────────────────────
-	//
-	// The plant's own rows, grouped by what they are waiting under, minus the
-	// declared inventory. A (status, cause) pair the plant produces and the table
-	// does not describe is a hold class nobody designed a way out of — the exact
-	// shape of F-22, found from the other end.
-	//
-	// It reads the DECLARED set from dispatch rather than a copy, so this cannot
-	// drift into checking a stale list: totality guarantees those keys are the
-	// whole cause vocabulary.
-	declared := map[string]bool{}
-	for _, c := range dispatch.DeclaredQueueCauses() {
-		declared[c] = true
-	}
-	if rows, err := db.DB.Query(`
-		SELECT DISTINCT status, COALESCE(queue_cause, '')
-		FROM orders
-		WHERE COALESCE(queue_cause, '') <> ''`); err == nil {
-		for rows.Next() {
-			var status, cause string
-			if err := rows.Scan(&status, &cause); err != nil {
-				continue
-			}
-			if !declared[cause] {
-				v = append(v, fmt.Sprintf("UNDECLARED WAIT: orders sit at status=%s under cause %q, "+
-					"which has no causeReleasers row — nothing on record says what ends it, and no "+
-					"floor claims it", status, cause))
-			}
-		}
-		rows.Close()
-	}
-
-	// ── THE STALL CHECKER ──────────────────────────────────────────────────
-	//
-	// "0 failures, 0 violations" was TRUE and INSUFFICIENT. Every checker above
-	// this line watches an INVARIANT — is the ledger consistent, did anything die
-	// wrongly — and an order that simply stops making progress violates none of
-	// them. The owner found four such rows on the live board by eye, after a run
-	// this tool had called clean. Nothing was watching PROGRESS.
-	//
-	// A stalled order is not a broken invariant, so it is reported with its CAUSE
-	// rather than as a bare count: the cause is the whole difference between a
-	// legitimate long wait (the loop consumed faster than it produced) and a wedge
-	// (a lane wait nothing can release). It flags both, because at soak scale the
-	// distinction is a judgement and the tool's job is to put the row in front of
-	// someone rather than to make it.
-	//
-	// T IS PER KIND, and the numbers come from what the rig actually does rather
-	// than from taste:
-	//
-	//   staged  90s — a dwell at a mark is meant to be the length of somebody
-	//                 else's lane transit. The rig's mean cycle is ~120s, so a
-	//                 robot parked longer than that is not waiting for a lane, it
-	//                 is waiting for something that is not coming.
-	//   queued  15m — a park is expected to be long. Material waits legitimately
-	//                 run to the next production tick, and the loop's slowest
-	//                 replenishment cycle is minutes. Below this it would cry
-	//                 wolf every tick.
-	//   in-flight 20m — a robot executing one leg. The sim's longest transit is
-	//                 well under this; a leg older than it is not moving.
-	//
-	// Deliberately NOT one number: 90s would flag every honest material wait and
-	// 15m would have missed all three staged rows, which are the ones that
-	// mattered. If a kind ever needs a fourth threshold, add it here rather than
-	// widening one of these.
-	//
-	// THE POPULATIONS ARE DERIVED FROM THE STATUS ENUM, NOT HAND-LISTED, and that
-	// is a fix rather than tidying. The "parked" kind used to be `status='queued'`
-	// alone while "in flight" excluded queued, staged, pending AND sourcing — so
-	// `pending` and `sourcing` matched NONE of the three and were watched by
-	// nothing. Those are the pre-dispatch statuses where a held compound leg and a
-	// rolled-back fleet refusal both wait, which is to say the checker was blind
-	// in exactly the place a stall is cheapest to miss.
-	//
-	// stallPopulations carries a Go predicate per kind and renders its own SQL, so
-	// the set the checker queries and the set the drift test reasons about are one
-	// thing. TestStallPopulationsPartitionTheNonTerminalStatuses fails if a new
-	// status lands in none of them or in two.
-	for _, s := range stallPopulations {
-		rows, err := db.DB.Query(fmt.Sprintf(`
-			SELECT id, status, COALESCE(NULLIF(queue_cause,''), '(no cause on the row)'),
-			       EXTRACT(EPOCH FROM (now() - updated_at))::int
-			FROM orders
-			WHERE %s AND updated_at < now() - interval '%s'
-			ORDER BY updated_at LIMIT 12`, s.clause(), s.after))
-		if err != nil {
-			continue
-		}
-		for rows.Next() {
-			var id, age int
-			var status, cause string
-			if err := rows.Scan(&id, &status, &cause, &age); err != nil {
-				continue
-			}
-			v = append(v, fmt.Sprintf("STALLED: order %d %s (%s) for %dm — cause: %s",
-				id, s.label, status, age/60, cause))
-		}
-		rows.Close()
-	}
-
-	// The inventory invariant, the same one /api/inventory/invariant serves.
-	total := scalar(db, `SELECT COALESCE(SUM(uop_count), 0) FROM bins`)
-	if total < 0 {
-		v = append(v, "negative total UOP across bins")
+	for _, c := range invariantChecks {
+		v = append(v, c.run(db)...)
 	}
 	return v
 }
@@ -1242,4 +848,497 @@ func tallyValue(line, prefix string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// checkTerminalWithCongestionCause reports a terminal order carrying a congestion-shaped queue cause.
+func checkTerminalWithCongestionCause(db *store.DB) []string {
+	var out []string
+	// "Terminating demand is a no-no", executable. A congestion-shaped cause on
+	// a terminal order means something waited and then died anyway.
+	if n := scalar(db, `
+		SELECT COUNT(*) FROM orders
+		WHERE status = $1
+		  AND queue_cause IS NOT NULL AND queue_cause <> ''
+		  AND queue_cause NOT IN ('config-failure', 'fleet-error')`,
+		string(protocol.StatusFailed)); n > 0 {
+		out = append(out, fmt.Sprintf("%d order(s) FAILED carrying a congestion-shaped queue cause", n))
+	}
+	return out
+}
+
+// checkDoubleOccupancy reports a lane with two occupancy owners.
+func checkDoubleOccupancy(db *store.DB) []string {
+	var out []string
+
+	// Two occupants in one lane. Hold B admits the asker and refuses everyone
+	// else, so two distinct owners on one lane is the hold not holding.
+	//
+	// STILL A HARD VIOLATION, AND NO LONGER THE WHOLE COLLISION CHECK. Since the
+	// exit release (9f74ad6a) an order drops its row the moment it LIFTS its bin,
+	// while the robot is still driving out of the corridor. So the two robots this
+	// check was built to catch can now be in one lane with only ONE row between
+	// them, and this count stays at zero through exactly the scenario the release
+	// was warned about. The traversal-window check below is the other half; read
+	// them together or neither means what it says.
+	if n := scalar(db, `
+		SELECT COUNT(*) FROM (
+			SELECT node_id FROM reservations
+			WHERE resource_kind = 'occupancy' AND state <> 'released'
+			GROUP BY node_id HAVING COUNT(DISTINCT order_id) > 1
+		) x`); n > 0 {
+		out = append(out, fmt.Sprintf("%d lane(s) with TWO occupancy owners", n))
+	}
+	return out
+}
+
+// checkPhantomEntrants reports an entrant the lane never saw arrive.
+func checkPhantomEntrants(db *store.DB) []string {
+	var out []string
+
+	// THE PHANTOM ENTRANT — the dual of the check above, and the one whose
+	// absence made this tool's "0 violations" meaningless for F-12.
+	//
+	// Every occupancy assertion in this repo hunts rows that should not exist.
+	// Not one asked whether a row that SHOULD exist does. So an order that
+	// dispatched into a lane and wrote nothing was arithmetically incapable of
+	// raising the two-occupants count above 1, and the soak reported clean over a
+	// population that had largely been deleted from the ledger. The zero was not
+	// evidence; it was a corollary of the defect.
+	//
+	// `staged` is excluded and that is not a fudge: a gate-staged order dwells
+	// OUTSIDE the corridor and correctly holds no row, which is pinned by
+	// TestCharSeam_GatedCreate_TakesNoOccupancyUntilTheTail. So are the
+	// pre-dispatch statuses, which have no robot yet.
+	//
+	// ── REDEFINED AFTER THE EXIT RELEASE, BECAUSE IT STOPPED MEANING THIS ──
+	//
+	// "Executing in a lane and holding no occupancy row" was a defect when the
+	// only release was the DROPOFF. Since 9f74ad6a it is also the INTENDED state
+	// of every order that has picked its bin and is driving out — so the raw
+	// count began mixing a real defect with the design, and grew with throughput
+	// because the design does. It was reported as five phantom entrants and read
+	// as evidence for building the exit marker; most of it was the marker's own
+	// premise being measured back.
+	//
+	// The discriminator is WHERE THE BIN IS, which is the one fact that says
+	// whether the robot has crossed the lane boundary yet — and it is asked of
+	// the SOURCE end only:
+	//
+	//	SOURCE lane — the order was sent to take a bin OUT. While that bin is
+	//	              still in the lane it has not lifted, so the robot is inbound
+	//	              or inside and MUST be declared. Once the bin has left, the
+	//	              release was correct and the order is in the traversal window.
+	//
+	// THE DEST END IS NOT JUDGEABLE FROM THESE COLUMNS, and trying cost this
+	// checker its meaning once already. A multi-segment order takes occupancy for
+	// its PRE-WAIT nodes only — commitToFleet over planNodes(preWait), and
+	// complex_dispatch.go says why in as many words: a row for a lane the robot
+	// may reach in ten minutes would wall that lane for the whole dwell. So an
+	// order in_transit toward a delivery node in a lane it has not been dispatched
+	// into yet CORRECTLY holds no row, and no column here can separate that from a
+	// real omission — it needs steps_json and wait_index. Measured, not assumed:
+	// on the dev stack seven of the eight rows a dest-end test flagged were this
+	// exact by-design case (order 47's UTN_014 sits after its wait).
+	//
+	// Reported with lane and status rather than as a bare count, because the
+	// judgement is the reader's — unchanged from the original, and the reason the
+	// original was salvageable at all.
+	phantomQ := fmt.Sprintf(`
+		SELECT o.id, o.status, l.name
+		FROM orders o
+		JOIN nodes s ON s.name = o.source_node
+		JOIN nodes l ON l.id = s.parent_id
+		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
+		LEFT JOIN reservations r
+		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
+		      AND r.node_id = l.id AND r.state <> 'released'
+		JOIN bins b   ON b.id = o.bin_id
+		LEFT JOIN nodes bn ON bn.id = b.node_id
+		WHERE o.vendor_order_id <> ''
+		  AND o.status NOT IN (%s)
+		  AND o.status NOT IN (%s)
+		  AND o.status <> '%s'
+		  AND r.id IS NULL
+		  AND bn.parent_id IS NOT DISTINCT FROM l.id
+		ORDER BY o.id LIMIT 12`,
+		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.StatusStaged)
+	if rows, err := db.DB.Query(phantomQ); err == nil {
+		for rows.Next() {
+			var id int
+			var status, lane string
+			if err := rows.Scan(&id, &status, &lane); err != nil {
+				continue
+			}
+			out = append(out, fmt.Sprintf(
+				"PHANTOM ENTRANT: order %d (%s) was sent to pick in lane %s, its bin is still in "+
+					"that lane so it has not lifted, and it holds no occupancy row — it is invisible "+
+					"to everyone else's admission", id, status, lane))
+		}
+		rows.Close()
+	}
+	return out
+}
+
+// checkNotJudgedAtDestEnd reports a leg that reached the destination end unjudged.
+func checkNotJudgedAtDestEnd(db *store.DB) []string {
+	var out []string
+
+	// WHAT THE DISCRIMINATOR REFUSES TO JUDGE, COUNTED RATHER THAN DROPPED — a
+	// filter that silently removes its hard cases reads as "covered everything".
+	//
+	// Two populations: the dest-end rows above (correct-by-design or not, this
+	// tool cannot tell without parsing the plan), and executing orders carrying no
+	// bin_id at all, which have no bin to locate. The second is its own finding —
+	// it is the nil-BinID family the round left open.
+	if n := scalar(db, fmt.Sprintf(`
+		SELECT COUNT(DISTINCT o.id)
+		FROM orders o
+		JOIN nodes s ON s.name = o.delivery_node
+		JOIN nodes l ON l.id = s.parent_id
+		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
+		LEFT JOIN reservations r
+		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
+		      AND r.node_id = l.id AND r.state <> 'released'
+		WHERE o.vendor_order_id <> ''
+		  AND o.status NOT IN (%s)
+		  AND o.status NOT IN (%s)
+		  AND o.status <> '%s'
+		  AND r.id IS NULL`,
+		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.StatusStaged)); n > 0 {
+		out = append(out, fmt.Sprintf(
+			"NOT JUDGED (dest end): %d executing order(s) name a delivery node in a lane and hold no "+
+				"occupancy row. Expected whenever that dropoff is in a post-wait segment the robot "+
+				"has not been sent on — deciding needs steps_json, which this tool does not parse. "+
+				"Neither a violation nor a clean bill", n))
+	}
+	return out
+}
+
+// checkNotJudgedNoBin reports a leg judged with no bin to judge.
+func checkNotJudgedNoBin(db *store.DB) []string {
+	var out []string
+	if n := scalar(db, fmt.Sprintf(`
+		SELECT COUNT(DISTINCT o.id)
+		FROM orders o
+		JOIN nodes s ON s.name IN (o.source_node, o.delivery_node)
+		JOIN nodes l ON l.id = s.parent_id
+		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
+		LEFT JOIN reservations r
+		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
+		      AND r.node_id = l.id AND r.state <> 'released'
+		WHERE o.vendor_order_id <> ''
+		  AND o.status NOT IN (%s)
+		  AND o.status NOT IN (%s)
+		  AND o.status <> '%s'
+		  AND r.id IS NULL
+		  AND o.bin_id IS NULL`,
+		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.StatusStaged)); n > 0 {
+		out = append(out, fmt.Sprintf(
+			"NOT JUDGED (no bin): %d executing order(s) in a lane hold no occupancy row AND carry no "+
+				"bin_id, so there is no bin to locate against the mouth. An executing order with no "+
+				"bin_id is its own finding", n))
+	}
+	return out
+}
+
+// checkTraversalOverlap reports two legs traversing one lane at once.
+func checkTraversalOverlap(db *store.DB) []string {
+	var out []string
+
+	// ── THE COLLISION CHECK THE EARLY RELEASE ACTUALLY NEEDS ──────────────
+	//
+	// The two-owners count above cannot see the risk 9f74ad6a took, because that
+	// risk is precisely ONE row and one un-rowed robot: the first order lifted,
+	// dropped its row, and is driving out; the second was admitted into the lane
+	// it is still inside. Two robots, one corridor, one occupancy row, and every
+	// existing assertion silent.
+	//
+	// So this counts the overlap directly: a lane where somebody HOLDS occupancy
+	// while somebody else is in the traversal window on the same lane. That is
+	// the measurement the exit-marker decision turns on — not the phantom count,
+	// which is now (correctly) dominated by orders behaving as designed.
+	//
+	// It is a WATCH, not a violation: the window is an owner ruling taken
+	// deliberately, and a non-zero count here is the evidence that it bites, not
+	// proof that something is broken. Named so the reader can tell those apart.
+	if rows, err := db.DB.Query(fmt.Sprintf(`
+		SELECT l.name, COUNT(DISTINCT o.id)
+		FROM orders o
+		JOIN nodes s  ON s.name = o.source_node
+		JOIN nodes l  ON l.id = s.parent_id
+		JOIN node_types lt ON lt.id = l.node_type_id AND lt.code = 'LANE'
+		LEFT JOIN reservations r
+		       ON r.order_id = o.id AND r.resource_kind = 'occupancy'
+		      AND r.node_id = l.id AND r.state <> 'released'
+		JOIN bins b   ON b.id = o.bin_id
+		LEFT JOIN nodes bn ON bn.id = b.node_id
+		WHERE o.vendor_order_id <> ''
+		  AND o.status NOT IN (%s)
+		  AND o.status NOT IN (%s)
+		  AND o.status <> '%s'
+		  AND r.id IS NULL
+		  AND bn.parent_id IS DISTINCT FROM l.id
+		  AND EXISTS (
+		    SELECT 1 FROM reservations h
+		    WHERE h.resource_kind = 'occupancy' AND h.state <> 'released'
+		      AND h.node_id = l.id AND h.order_id <> o.id
+		  )
+		GROUP BY l.name ORDER BY l.name LIMIT 12`,
+		protocol.TerminalStatusSQLList(), protocol.PreDispatchStatusSQLList(),
+		protocol.StatusStaged)); err == nil {
+		for rows.Next() {
+			var lane string
+			var n int
+			if err := rows.Scan(&lane, &n); err != nil {
+				continue
+			}
+			out = append(out, fmt.Sprintf(
+				"TRAVERSAL OVERLAP (watch, not a violation): lane %s has an occupancy holder AND %d "+
+					"order(s) still driving out of it having already released. This is the window the "+
+					"exit release opened by owner ruling — it is what the EXIT MARKER decision waits "+
+					"on, and the phantom count is not", lane, n))
+		}
+		rows.Close()
+	}
+	return out
+}
+
+// checkTerminalOrderReservations reports a reservation still held by a terminal order.
+func checkTerminalOrderReservations(db *store.DB) []string {
+	var out []string
+
+	// A hold outliving its order. Terminalization releases by order, so a live
+	// reservation owned by a terminal order is an orphan nothing will clear.
+	//
+	// BROKEN OUT BY KIND, because the kinds fail differently and one of them is
+	// what this soak was specifically asked to watch. A leaked `occupancy` row is
+	// a lane that reads OCCUPIED FOREVER to every future entrant — the F-12 fix's
+	// exact failure mode, and the one that silently removes a corridor from the
+	// plant. A leaked `slot` or `mouth` row is narrower. A bare total cannot tell
+	// them apart, and "N reservations leaked" is not an answer to "did complex
+	// occupancy release on every path".
+	if rows, err := db.DB.Query(fmt.Sprintf(`
+		SELECT r.resource_kind, COUNT(*) FROM reservations r
+		JOIN orders o ON o.id = r.order_id
+		WHERE r.state <> 'released'
+		  AND o.status IN (%s)
+		GROUP BY 1 ORDER BY 1`, protocol.TerminalStatusSQLList())); err == nil {
+		for rows.Next() {
+			var kind string
+			var n int
+			if err := rows.Scan(&kind, &n); err != nil {
+				continue
+			}
+			detail := ""
+			if kind == "occupancy" {
+				detail = " — that lane reads OCCUPIED to every future entrant, permanently"
+			}
+			out = append(out, fmt.Sprintf("%d %s reservation(s) held by a TERMINAL order%s", n, kind, detail))
+		}
+		rows.Close()
+	}
+	return out
+}
+
+// checkQueuedWithoutCause reports an order queued five minutes with no cause on the row.
+func checkQueuedWithoutCause(db *store.DB) []string {
+	var out []string
+
+	// A wait with no cause on the row. The operator sentence is the whole point
+	// of parking rather than failing; a parked order nobody can explain is the
+	// shape this stream exists to refuse.
+	if n := scalar(db, `
+		SELECT COUNT(*) FROM orders
+		WHERE status = 'queued'
+		  AND (queue_cause IS NULL OR queue_cause = '')
+		  AND created_at < now() - interval '5 minutes'`); n > 0 {
+		out = append(out, fmt.Sprintf("%d order(s) queued 5min+ with NO cause on the row", n))
+	}
+	return out
+}
+
+// checkFloorReleaseHistogram reports how orders were freed by the periodic floor release.
+func checkFloorReleaseHistogram(db *store.DB) []string {
+	var out []string
+
+	// ── THE FLOOR TRIPWIRE ─────────────────────────────────────────────────
+	//
+	// Every release the lane liveness floor made is a recovery_actions row, and
+	// this is the histogram BY CAUSE. It is the batch's deliverable, not a
+	// health check: each cause with a non-zero count is a wait whose event
+	// releaser did not fire, ranked by how often, which is the worklist an
+	// emitter hunt runs on instead of a hunch.
+	//
+	// EXPECTED TO TREND TO ZERO as the emitters are found — except for
+	// fleet-error, which is absence-class. Nothing emits "the fleet became
+	// willing", so floor releases under it are the DESIGN and a fleet-health
+	// signal rather than a missing subscription. It is separated here rather
+	// than suppressed, for the same reason the burial shadow counts its known
+	// gap apart instead of hiding it.
+	if rows, err := db.DB.Query(`
+		SELECT COALESCE(NULLIF(split_part(split_part(detail, 'cause "', 2), '"', 1), ''), '(none)'),
+		       COUNT(*)
+		FROM recovery_actions
+		WHERE action = $1
+		GROUP BY 1 ORDER BY 2 DESC`, dispatch.FloorReleaseAction); err == nil {
+		for rows.Next() {
+			var cause string
+			var n int
+			if err := rows.Scan(&cause, &n); err != nil {
+				continue
+			}
+			switch cause {
+			case string(dispatch.CauseFleetRefusedCreate):
+				out = append(out, fmt.Sprintf("FLOOR-RELEASE (expected, absence-class): %d under %s — "+
+					"no event exists for this; read it as fleet health, not a missing emitter", n, cause))
+			case "(none)", "(no cause on the row)":
+				// A BLANK IS NOT A MISSING EMITTER — causeReleasers is not the file to
+				// open — and it is not ONE defect either. It is two, and they want
+				// opposite investigations: an arm that refused without recording, or
+				// nothing having evaluated the order at all. §12.49 traced a specimen
+				// of the second kind (order 56: freed 17s after staging, with zero
+				// refusals logged against it while the same line fired 77 times for
+				// others), and the old wording sent the reader hunting an arm that did
+				// not exist. Same split the floor's own record now makes.
+				out = append(out, fmt.Sprintf("FLOOR-RELEASE (blank cause): %d order(s) freed by the "+
+					"floor with NO cause on the row. TWO possible defects: an arm refused them "+
+					"without calling setQueueReason, OR nothing ever evaluated them and the missing "+
+					"EVENT is the defect. Check the log for a refusal naming the order — no refusal "+
+					"means the second. Not an inventory gap either way", n))
+			default:
+				out = append(out, fmt.Sprintf("FLOOR-RELEASE: %d order(s) freed by the periodic floor "+
+					"under cause %s — an event should have done this; see causeReleasers for which",
+					n, cause))
+			}
+		}
+		rows.Close()
+	}
+	return out
+}
+
+// checkUndeclaredWaits reports orders waiting under a cause nothing declares.
+func checkUndeclaredWaits(db *store.DB) []string {
+	var out []string
+
+	// ── OBSERVED VS DECLARED ───────────────────────────────────────────────
+	//
+	// The plant's own rows, grouped by what they are waiting under, minus the
+	// declared inventory. A (status, cause) pair the plant produces and the table
+	// does not describe is a hold class nobody designed a way out of — the exact
+	// shape of F-22, found from the other end.
+	//
+	// It reads the DECLARED set from dispatch rather than a copy, so this cannot
+	// drift into checking a stale list: totality guarantees those keys are the
+	// whole cause vocabulary.
+	declared := map[string]bool{}
+	for _, c := range dispatch.DeclaredQueueCauses() {
+		declared[c] = true
+	}
+	if rows, err := db.DB.Query(`
+		SELECT DISTINCT status, COALESCE(queue_cause, '')
+		FROM orders
+		WHERE COALESCE(queue_cause, '') <> ''`); err == nil {
+		for rows.Next() {
+			var status, cause string
+			if err := rows.Scan(&status, &cause); err != nil {
+				continue
+			}
+			if !declared[cause] {
+				out = append(out, fmt.Sprintf("UNDECLARED WAIT: orders sit at status=%s under cause %q, "+
+					"which has no causeReleasers row — nothing on record says what ends it, and no "+
+					"floor claims it", status, cause))
+			}
+		}
+		rows.Close()
+	}
+	return out
+}
+
+// checkStalledOrders reports orders that have not moved for their population's budget.
+func checkStalledOrders(db *store.DB) []string {
+	var out []string
+
+	// ── THE STALL CHECKER ──────────────────────────────────────────────────
+	//
+	// "0 failures, 0 violations" was TRUE and INSUFFICIENT. Every checker above
+	// this line watches an INVARIANT — is the ledger consistent, did anything die
+	// wrongly — and an order that simply stops making progress violates none of
+	// them. The owner found four such rows on the live board by eye, after a run
+	// this tool had called clean. Nothing was watching PROGRESS.
+	//
+	// A stalled order is not a broken invariant, so it is reported with its CAUSE
+	// rather than as a bare count: the cause is the whole difference between a
+	// legitimate long wait (the loop consumed faster than it produced) and a wedge
+	// (a lane wait nothing can release). It flags both, because at soak scale the
+	// distinction is a judgement and the tool's job is to put the row in front of
+	// someone rather than to make it.
+	//
+	// T IS PER KIND, and the numbers come from what the rig actually does rather
+	// than from taste:
+	//
+	//   staged  90s — a dwell at a mark is meant to be the length of somebody
+	//                 else's lane transit. The rig's mean cycle is ~120s, so a
+	//                 robot parked longer than that is not waiting for a lane, it
+	//                 is waiting for something that is not coming.
+	//   queued  15m — a park is expected to be long. Material waits legitimately
+	//                 run to the next production tick, and the loop's slowest
+	//                 replenishment cycle is minutes. Below this it would cry
+	//                 wolf every tick.
+	//   in-flight 20m — a robot executing one leg. The sim's longest transit is
+	//                 well under this; a leg older than it is not moving.
+	//
+	// Deliberately NOT one number: 90s would flag every honest material wait and
+	// 15m would have missed all three staged rows, which are the ones that
+	// mattered. If a kind ever needs a fourth threshold, add it here rather than
+	// widening one of these.
+	//
+	// THE POPULATIONS ARE DERIVED FROM THE STATUS ENUM, NOT HAND-LISTED, and that
+	// is a fix rather than tidying. The "parked" kind used to be `status='queued'`
+	// alone while "in flight" excluded queued, staged, pending AND sourcing — so
+	// `pending` and `sourcing` matched NONE of the three and were watched by
+	// nothing. Those are the pre-dispatch statuses where a held compound leg and a
+	// rolled-back fleet refusal both wait, which is to say the checker was blind
+	// in exactly the place a stall is cheapest to miss.
+	//
+	// stallPopulations carries a Go predicate per kind and renders its own SQL, so
+	// the set the checker queries and the set the drift test reasons about are one
+	// thing. TestStallPopulationsPartitionTheNonTerminalStatuses fails if a new
+	// status lands in none of them or in two.
+	for _, s := range stallPopulations {
+		rows, err := db.DB.Query(fmt.Sprintf(`
+			SELECT id, status, COALESCE(NULLIF(queue_cause,''), '(no cause on the row)'),
+			       EXTRACT(EPOCH FROM (now() - updated_at))::int
+			FROM orders
+			WHERE %s AND updated_at < now() - interval '%s'
+			ORDER BY updated_at LIMIT 12`, s.clause(), s.after))
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var id, age int
+			var status, cause string
+			if err := rows.Scan(&id, &status, &cause, &age); err != nil {
+				continue
+			}
+			out = append(out, fmt.Sprintf("STALLED: order %d %s (%s) for %dm — cause: %s",
+				id, s.label, status, age/60, cause))
+		}
+		rows.Close()
+	}
+	return out
+}
+
+// checkNegativeTotalUOP reports a negative total UOP across bins.
+func checkNegativeTotalUOP(db *store.DB) []string {
+	var out []string
+
+	// The inventory invariant, the same one /api/inventory/invariant serves.
+	total := scalar(db, `SELECT COALESCE(SUM(uop_count), 0) FROM bins`)
+	if total < 0 {
+		out = append(out, "negative total UOP across bins")
+	}
+	return out
 }

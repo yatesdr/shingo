@@ -646,7 +646,7 @@ func (s Status) IsOperatorVisible() bool { return IsOperatorVisible(s) }
 // The set is IsVendorActive (dispatched / in_transit / staged) PLUS faulted.
 //
 // WHY THIS NAME EXISTS RATHER THAN THE EXPRESSION. Hopkinsville, 2026-07-28:
-// orders 1249/1251 held bins bound for the indexed_over seats PLN_02/PLN_05
+// orders 1249/1251 held bins bound for the indexed_over positions PLN_02/PLN_05
 // while a changeover armed. Its index legs could not reserve because those
 // carriers were still in transit; they landed minutes later and each leg
 // claimed its bin one second after. The reserve loop did its job. Had the

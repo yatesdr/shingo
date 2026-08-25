@@ -82,7 +82,7 @@ function refusalURL(nodeID) {
 // THE CONFIRM IS NOT CEREMONY. Reporting no parts tells another operator their
 // material is not coming and may end with them abandoning a run; withdrawing
 // surprises a cell that has already acted on being told. Either one is a single
-// tap on a screen being read from a forklift seat.
+// tap on a screen being read from a forklift position.
 export function confirmRefuseSupply(nodeID, code, onDone) {
     if (!code) { showToast('Pick a part first', 'error'); return; }
     askConfirm(

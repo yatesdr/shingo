@@ -13,7 +13,7 @@ import (
 // Participants are the nodes a changeover PHYSICALLY TOUCHES, frozen at plan
 // time. They exist because "which nodes is this changeover about" was being
 // re-derived independently by three consumers that disagreed, and because a
-// press-index extension seat — traversed by the index motion, owning no task
+// press-index extension position — traversed by the index motion, owning no task
 // and no order — is invisible to a task-keyed answer.
 
 func pressIndexClaim(front, paired, second string) *processes.NodeClaim {
@@ -27,7 +27,7 @@ func pressIndexClaim(front, paired, second string) *processes.NodeClaim {
 
 // TestPressIndexExtensionPositions_ScopeIsExtensionsOnly is the guard on the
 // shared helper's deliberately narrow contract. It must return ONLY the
-// extension seats — no front node, no swap-mode filtering — because its two
+// extension positions — no front node, no swap-mode filtering — because its two
 // callers differ on exactly those two points and folding either in would
 // silently change one of them.
 func TestPressIndexExtensionPositions_ScopeIsExtensionsOnly(t *testing.T) {
@@ -40,20 +40,20 @@ func TestPressIndexExtensionPositions_ScopeIsExtensionsOnly(t *testing.T) {
 	}
 	for _, g := range got {
 		if g == "PLN_01" {
-			t.Error("helper returned the FRONT seat; callers own that difference (fanOutPositions prepends it, the cross-mode walk must not)")
+			t.Error("helper returned the FRONT position; callers own that difference (fanOutPositions prepends it, the cross-mode walk must not)")
 		}
 	}
 
 	two := pressIndexClaim("PLN_04", "PLN_05", "")
 	if got := pressIndexExtensionPositions(two); len(got) != 1 || got[0] != "PLN_05" {
-		t.Errorf("2-position = %v, want [PLN_05] (empty second seat dropped)", got)
+		t.Errorf("2-position = %v, want [PLN_05] (empty second position dropped)", got)
 	}
 
 	if got := pressIndexExtensionPositions(nil); got != nil {
 		t.Errorf("nil claim = %v, want nil", got)
 	}
 
-	// No swap-mode filtering: the helper answers "which seats does this claim
+	// No swap-mode filtering: the helper answers "which positions does this claim
 	// name", and each caller applies its own guard.
 	notPressIndex := &processes.NodeClaim{
 		CoreNodeName:   "ALN_001",
@@ -87,11 +87,11 @@ func TestBuildParticipants_TaskRoleIsTheFullDiffSlice(t *testing.T) {
 	}
 }
 
-// TestBuildParticipants_PressIndexSeatsBecomeIndexedOver is the case the table
+// TestBuildParticipants_PressIndexPositionsBecomeIndexedOver is the case the table
 // exists for: a same-bin-type press-index changeover never fans out, so the
-// paired seats appear ONLY as indexed_over participants. Without them, intake
-// gating leaves a seat open while the index motion is about to fill it.
-func TestBuildParticipants_PressIndexSeatsBecomeIndexedOver(t *testing.T) {
+// paired positions appear ONLY as indexed_over participants. Without them, intake
+// gating leaves a position open while the index motion is about to fill it.
+func TestBuildParticipants_PressIndexPositionsBecomeIndexedOver(t *testing.T) {
 	t.Parallel()
 
 	diffs := []ChangeoverNodeDiff{{
@@ -111,26 +111,26 @@ func TestBuildParticipants_PressIndexSeatsBecomeIndexedOver(t *testing.T) {
 	if byNode["PLN_01"].Role != domain.ParticipantRoleTask {
 		t.Errorf("PLN_01 role = %q, want task", byNode["PLN_01"].Role)
 	}
-	for _, seat := range []string{"PLN_02", "PLN_03"} {
-		if byNode[seat].Role != domain.ParticipantRoleIndexedOver {
-			t.Errorf("%s role = %q, want indexed_over", seat, byNode[seat].Role)
+	for _, position := range []string{"PLN_02", "PLN_03"} {
+		if byNode[position].Role != domain.ParticipantRoleIndexedOver {
+			t.Errorf("%s role = %q, want indexed_over", position, byNode[position].Role)
 		}
-		if byNode[seat].OwningTaskCoreNode != "PLN_01" {
-			t.Errorf("%s owner = %q, want PLN_01", seat, byNode[seat].OwningTaskCoreNode)
+		if byNode[position].OwningTaskCoreNode != "PLN_01" {
+			t.Errorf("%s owner = %q, want PLN_01", position, byNode[position].OwningTaskCoreNode)
 		}
 	}
 }
 
-// TestBuildParticipants_FannedOutSeatsStayTaskRole covers the different-bin-type
-// case: fan-out already gave each seat its own diff and task, so those seats
+// TestBuildParticipants_FannedOutPositionsStayTaskRole covers the different-bin-type
+// case: fan-out already gave each position its own diff and task, so those positions
 // must NOT be downgraded to indexed_over by the geometry pass.
-func TestBuildParticipants_FannedOutSeatsStayTaskRole(t *testing.T) {
+func TestBuildParticipants_FannedOutPositionsStayTaskRole(t *testing.T) {
 	t.Parallel()
 
 	claim := pressIndexClaim("PLN_01", "PLN_02", "")
 	diffs := []ChangeoverNodeDiff{
 		{CoreNodeName: "PLN_01", Situation: SituationSwap, FromClaim: claim, ToClaim: claim},
-		{CoreNodeName: "PLN_02", Situation: SituationSwap}, // fan-out gave the seat its own diff
+		{CoreNodeName: "PLN_02", Situation: SituationSwap}, // fan-out gave the position its own diff
 	}
 	for _, p := range buildParticipants(diffs) {
 		if p.CoreNodeName == "PLN_02" && p.Role != domain.ParticipantRoleTask {

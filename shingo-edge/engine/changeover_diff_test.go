@@ -39,7 +39,31 @@ func TestDiffStyleClaims_Swap(t *testing.T) {
 	}
 }
 
+// THE OUTGOING CLAIM OWNS THE FLAG. This test used to set it on the INCOMING
+// claim, matching a read that disagreed with the planner's Drop branch three
+// files away (which has always read fromClaim.EvacuateOnChangeover). One flag,
+// one owner: the bins in the way of the tool change are the ones the outgoing
+// setup put there.
 func TestDiffStyleClaims_Evacuate(t *testing.T) {
+	t.Parallel()
+	diffs := DiffStyleClaims(
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", EvacuateOnChangeover: true}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+	)
+	d := findDiff(diffs, "N1")
+	if d == nil {
+		t.Fatal("missing diff for N1")
+	}
+	if d.Situation != SituationEvacuate {
+		t.Errorf("situation = %q, want %q", d.Situation, SituationEvacuate)
+	}
+}
+
+// The other side of the same decision, and the one with a live consequence: a
+// plant that set the flag on the INCOMING style will stop evacuating. Pinned
+// so the change is a decision on the record rather than a surprise, and so
+// anyone who "fixes" it by reading both sides has to argue with a test.
+func TestDiffStyleClaims_EvacuateOnIncomingClaimIsNotHonoured(t *testing.T) {
 	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
@@ -49,8 +73,43 @@ func TestDiffStyleClaims_Evacuate(t *testing.T) {
 	if d == nil {
 		t.Fatal("missing diff for N1")
 	}
+	if d.Situation != SituationUnchanged {
+		t.Errorf("situation = %q, want %q — the incoming claim does not decide", d.Situation, SituationUnchanged)
+	}
+}
+
+// A TOOLING EVACUATION IS NOT A PAYLOAD QUESTION.
+//
+// SituationEvacuate used to hang off the same-payload arm, which made it
+// unreachable on the case it exists for: a press whose tooling changes almost
+// always changes what it makes, so the payloads differ, the switch fell
+// through to Swap, and the flag was inert. Marked positions select it either way.
+func TestDiffStyleClaims_MarkedPositionsEvacuateAcrossAPayloadChange(t *testing.T) {
+	t.Parallel()
+	from := processes.NodeClaim{
+		CoreNodeName: "PRESS", PayloadCode: "PART-A", Role: "produce",
+		SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PRESS_B",
+		ChangeoverEvacNodes: []string{"PRESS"},
+	}
+	to := processes.NodeClaim{
+		CoreNodeName: "PRESS", PayloadCode: "PART-B", Role: "produce",
+		SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PRESS_B",
+	}
+	d := findDiff(DiffStyleClaims([]processes.NodeClaim{from}, []processes.NodeClaim{to}), "PRESS")
+	if d == nil {
+		t.Fatal("missing diff for PRESS")
+	}
 	if d.Situation != SituationEvacuate {
-		t.Errorf("situation = %q, want %q", d.Situation, SituationEvacuate)
+		t.Errorf("situation = %q, want %q — marked positions evacuate whatever the payloads do",
+			d.Situation, SituationEvacuate)
+	}
+
+	// And with no positions marked it is an ordinary swap, so the new arm has not
+	// swallowed the default.
+	from.ChangeoverEvacNodes = nil
+	d2 := findDiff(DiffStyleClaims([]processes.NodeClaim{from}, []processes.NodeClaim{to}), "PRESS")
+	if d2.Situation != SituationSwap {
+		t.Errorf("no positions marked: situation = %q, want %q", d2.Situation, SituationSwap)
 	}
 }
 
@@ -194,7 +253,7 @@ func TestDiffStyleClaims_MultiNode(t *testing.T) {
 	from := []processes.NodeClaim{
 		{CoreNodeName: "SWAP-NODE", PayloadCode: "OLD", Role: "consume"},
 		{CoreNodeName: "UNCHANGED-NODE", PayloadCode: "SAME", Role: "consume"},
-		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume"},
+		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume", EvacuateOnChangeover: true},
 		{CoreNodeName: "DROP-NODE", PayloadCode: "DROP-PART", Role: "consume"},
 	}
 	to := []processes.NodeClaim{
@@ -955,7 +1014,7 @@ func TestFanOutCrossMode_SynthesizedClaimRetainsParentID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Front-node move with a shared back seat (Hopkinsville #27, 2026-07-16)
+// Front-node move with a shared back position (Hopkinsville #27, 2026-07-16)
 // ---------------------------------------------------------------------------
 
 // hkFrontMoveDiffs reproduces HK changeover #27: style 8 (totes) claims PLN_01
@@ -974,15 +1033,15 @@ func hkFrontMoveDiffs(fromPayload, toPayload string) ([]ChangeoverNodeDiff, *pro
 }
 
 // The regression. Before the fix PLN_02 got no diff, no order, and no error —
-// the empty totes sat on both back seats until operators fork-trucked them.
-func TestFanOutCrossMode_FrontNodeMoves_SharedBackSeat_DifferentBinType_SynthesizesSwap(t *testing.T) {
+// the empty totes sat on both back positions until operators fork-trucked them.
+func TestFanOutCrossMode_FrontNodeMoves_SharedBackPosition_DifferentBinType_SynthesizesSwap(t *testing.T) {
 	t.Parallel()
 	diffs, _, _ := hkFrontMoveDiffs("LK41", "PC3C")
 	binTypes := map[string]string{"LK41": "TOTE-2415", "PC3C": "45x48 KD"}
 
 	got := findDiff(FanOutPressIndexCrossMode(diffs, binTypes), "PLN_02")
 	if got == nil {
-		t.Fatal("PLN_02 got no diff — the back seat strands with no order and no error (HK #27)")
+		t.Fatal("PLN_02 got no diff — the back position strands with no order and no error (HK #27)")
 	}
 	if got.Situation != SituationSwap {
 		t.Errorf("PLN_02 Situation = %q, want SituationSwap (evac the tote, refill a knockdown)", got.Situation)
@@ -1010,29 +1069,29 @@ func TestFanOutCrossMode_FrontNodeMoves_SharedBackSeat_DifferentBinType_Synthesi
 	}
 }
 
-// Same front-node move, same bin type: the back seat keeps its bin — the new
+// Same front-node move, same bin type: the back position keeps its bin — the new
 // style's press indexes the same geometry. Fanning out here would send a
 // perfectly good staged empty to the market.
-func TestFanOutCrossMode_FrontNodeMoves_SharedBackSeat_SameBinType_NoFanOut(t *testing.T) {
+func TestFanOutCrossMode_FrontNodeMoves_SharedBackPosition_SameBinType_NoFanOut(t *testing.T) {
 	t.Parallel()
 	diffs, _, _ := hkFrontMoveDiffs("LK41", "LK42")
 	binTypes := map[string]string{"LK41": "TOTE-2415", "LK42": "TOTE-2415"}
 
 	if d := findDiff(FanOutPressIndexCrossMode(diffs, binTypes), "PLN_02"); d != nil {
-		t.Fatalf("same bin type must not fan out the shared back seat, got %+v", d)
+		t.Fatalf("same bin type must not fan out the shared back position, got %+v", d)
 	}
 }
 
 // An unresolved bin type is an UNKNOWN signal, not a mismatch — leave the
 // position alone rather than route a same-bin-type press through evac+refill.
 // refusePressIndexWhenCoreUnavailable is what keeps this unreachable in prod.
-func TestFanOutCrossMode_FrontNodeMoves_SharedBackSeat_UnknownBinType_NoFanOut(t *testing.T) {
+func TestFanOutCrossMode_FrontNodeMoves_SharedBackPosition_UnknownBinType_NoFanOut(t *testing.T) {
 	t.Parallel()
 	diffs, _, _ := hkFrontMoveDiffs("LK41", "PC3C")
 	binTypes := map[string]string{"LK41": "TOTE-2415"} // PC3C unresolved
 
 	if d := findDiff(FanOutPressIndexCrossMode(diffs, binTypes), "PLN_02"); d != nil {
-		t.Fatalf("unknown bin type must not fan out the shared back seat, got %+v", d)
+		t.Fatalf("unknown bin type must not fan out the shared back position, got %+v", d)
 	}
 }
 

@@ -70,6 +70,47 @@ func (e *Engine) operatorRequestOrigin(node *processes.Node, claim *processes.No
 	return ordermgr.Attached(originID)
 }
 
+// changeoverLoadOrigin returns the active changeover's episode when THIS load
+// is one the changeover asked for, and a zero Origin otherwise.
+//
+// Gated on the claim's directive flag, not merely on a changeover existing. A
+// loader that was never opted in serves its ordinary steady-state demand right
+// through a changeover — attributing those to the changeover would inflate its
+// ratio with bins it did not cause, which is the mirror of the under-count this
+// exists to fix.
+func (e *Engine) changeoverLoadOrigin(node *processes.Node, claim *processes.NodeClaim) ordermgr.Origin {
+	if claim == nil || !claim.ChangeoverLoadDirective {
+		return ordermgr.Origin{}
+	}
+	co, err := e.db.GetActiveProcessChangeover(node.ProcessID)
+	if err != nil || co == nil {
+		return ordermgr.Origin{}
+	}
+	return e.changeoverOrigin(co.ID)
+}
+
+// requestEmptyOrigin answers who asked for this empty.
+//
+// The operator asking for an empty IS the demand, so the cell episode opens (or
+// is joined) before anything is created and the order can name what caused it.
+//
+// UNLESS A CHANGEOVER ASKED. A load the operator makes off the changeover
+// directive is that changeover's demand, not this cell's steady-state pull:
+// attributed to the cell it reads in demand-origin reporting as an orphan
+// replenishment nobody can tie to the changeover it served, and the
+// changeover's own ratio under-counts by exactly the bins it caused.
+//
+// One function rather than two calls and an if at the call site, because
+// RequestEmptyBin is at its statement budget: main extracted it down to the
+// limit and retired its funlen exclusion in the same commit that this addition
+// met at the merge. The two lookups were always one question.
+func (e *Engine) requestEmptyOrigin(node *processes.Node, claim *processes.NodeClaim, cachedUOP int) ordermgr.Origin {
+	if o := e.changeoverLoadOrigin(node, claim); o.ID != "" {
+		return o
+	}
+	return e.operatorRequestOrigin(node, claim, cachedUOP)
+}
+
 // loadablePayloads returns the payload codes an operator may load or request at
 // this manual_swap loader node. Post-cutover the loader's payload set is
 // Core-owned, so this resolves it from the aggregate — the SAME resolver the
@@ -550,9 +591,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
 	}
 
-	// The operator asking for an empty IS the demand. Open (or join) the cell
-	// episode before creating anything so the order can name what caused it.
-	reqOrigin := e.operatorRequestOrigin(node, claim, runtime.RemainingUOPCached)
+	reqOrigin := e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached)
 
 	// Payload handling splits by mode:
 	//
@@ -613,6 +652,13 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		n, rerr := e.withLoaderBudget(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), true, func(deliveryNodes []string) (int, error) {
 			made := 0
 			for _, deliveryNode := range deliveryNodes {
+				// autoConfirm=false, skipAutoConfirm=true: a manual_swap loader needs the
+				// OPERATOR to confirm after physically loading the bin. claim.AutoConfirm is
+				// true on these claims (mandatory for the robot-drop signal), but that flag
+				// means "robot confirms it dropped the bin", not "operator confirmed they
+				// loaded parts". Auto-confirming here fires L2/U2 (move back to supermarket)
+				// before the operator has finished. Matches the automatic side-cycle paths
+				// (MaybeCreateUnloaderFullIn and the loader push).
 				order, cerr := e.orderMgr.CreateRetrieveOrder(
 					&nodeID, true, 1, deliveryNode, dl.InboundSource(), "",
 					"standard", payloadCode, false, true, reqOrigin,
@@ -656,68 +702,53 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 
 	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
 
-	// manual_swap claims (bin loaders/unloaders) require operator confirmation
-	// after physically loading/unloading the bin. Auto-confirming here would
-	// immediately fire L2/U2 (move back to supermarket) before the operator
-	// has finished. claim.AutoConfirm is true on these claims (mandatory for
-	// the robot-drop signal), but that flag means "robot confirms it dropped
-	// the bin", not "operator confirmed they loaded parts". Override both
-	// flags for manual_swap to match the automatic side-cycle paths (MaybeCreateUnloaderFullIn and the loader push).
-	skipAutoConfirm := false
-	if claim.SwapMode == protocol.SwapModeManualSwap {
-		autoConfirm = false
-		skipAutoConfirm = true
-	}
-
 	// Multi-step swap modes reuse the same dispatch the consume side uses on
 	// RequestNodeMaterial / produce uses on Finalize. Robots execute the same
 	// choreography for empty and full bins; the order shape doesn't depend
 	// on contents.
-	if claim.SwapMode != protocol.SwapModeManualSwap {
-		dispatch, err := BuildSwapDispatch(node, claim)
+	dispatch, err := BuildSwapDispatch(node, claim)
+	if err != nil {
+		return nil, err
+	}
+	if dispatch != nil {
+		if dispatch.RequiresActiveSwapGuard {
+			if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+				return nil, err
+			}
+		}
+		// reqOrigin, not Origin{}. The episode was opened at the top of this
+		// method precisely so the orders it creates could name what caused
+		// them, and then the multi-step arm dropped it on the floor while the
+		// manual_swap arm four screens up carried it. Both legs of one swap
+		// belong to the operator's one request: an R2 that names no demand is
+		// an orphan by construction, and a service dig raised for it cannot
+		// look up who is collecting its target.
+		orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", reqOrigin)
 		if err != nil {
 			return nil, err
 		}
-		if dispatch != nil {
-			if dispatch.RequiresActiveSwapGuard {
-				if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
-					return nil, err
-				}
-			}
-			// reqOrigin, not Origin{}. The episode was opened at the top of this
-			// method precisely so the orders it creates could name what caused
-			// them, and then the multi-step arm dropped it on the floor while the
-			// manual_swap arm four screens up carried it. Both legs of one swap
-			// belong to the operator's one request: an R2 that names no demand is
-			// an orphan by construction, and a service dig raised for it cannot
-			// look up who is collecting its target.
-			orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, "", reqOrigin)
+		var orderB *orders.Order
+		if dispatch.StepsB != nil {
+			orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, reqOrigin)
 			if err != nil {
 				return nil, err
 			}
-			var orderB *orders.Order
-			if dispatch.StepsB != nil {
-				orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB, orderA.UUID, reqOrigin)
-				if err != nil {
-					return nil, err
-				}
-			}
-			var orderBID *int64
-			if orderB != nil {
-				orderBID = &orderB.ID
-			}
-			if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, orderBID); err != nil {
-				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
-			}
-			if orderB != nil {
-				// Return-error on failure: see comment in
-				// operator_stations.go:LinkOrderSiblings call site.
-				if err := e.db.LinkOrderSiblings(orderA.ID, orderB.ID); err != nil {
-					return nil, fmt.Errorf("link order siblings %d↔%d: %w", orderA.ID, orderB.ID, err)
-				}
-			}
-			return orderA, nil
 		}
+		var orderBID *int64
+		if orderB != nil {
+			orderBID = &orderB.ID
+		}
+		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, orderBID); err != nil {
+			log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
+		}
+		if orderB != nil {
+			// Return-error on failure: see comment in
+			// operator_stations.go:LinkOrderSiblings call site.
+			if err := e.db.LinkOrderSiblings(orderA.ID, orderB.ID); err != nil {
+				return nil, fmt.Errorf("link order siblings %d↔%d: %w", orderA.ID, orderB.ID, err)
+			}
+		}
+		return orderA, nil
 	}
 
 	// Simple mode: single retrieve (manual_swap returned above via the seam; the
@@ -732,7 +763,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// instead of from Supermarket Area).
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, true, 1, node.CoreNodeName, claim.InboundSource, "",
-		"standard", payloadCode, autoConfirm, skipAutoConfirm, reqOrigin,
+		"standard", payloadCode, autoConfirm, false, reqOrigin,
 	)
 	if err != nil {
 		return nil, err

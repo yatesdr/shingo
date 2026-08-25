@@ -171,7 +171,7 @@ func TestReconciler_KeepsEpisodeOpenWhileAnyClaimBelow(t *testing.T) {
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: claimA.StyleID, CoreNodeName: "ALN_024", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PANEL-B",
-		UOPCapacity: 300, ReorderPoint: 50, AutoReorder: true,
+		UOPCapacity: 300, ReorderPoint: 50, AutoReorder: domain.Ptr(true),
 		InboundSource: "SYN_MARKET", OutboundDestination: "SYN_MARKET",
 		InboundStaging: "SLN_001", OutboundStaging: "SLN_011",
 	}); err != nil {

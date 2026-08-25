@@ -105,6 +105,66 @@ func (db *DB) RecentSceneDiffs(limit int) ([]sceneversion.DiffView, error) {
 	return sceneversion.RecentDiffs(db.DB, limit)
 }
 
-func (db *DB) LanesChangedByDiff(diffID int64) ([]string, error) {
-	return sceneversion.LanesChangedByDiff(db.DB, diffID)
+// LanesChangedByDiffs names the lanes each of these edits touched, one query for
+// the whole page.
+func (db *DB) LanesChangedByDiffs(diffIDs []int64) (map[int64][]string, error) {
+	return sceneversion.LanesChangedByDiffs(db.DB, diffIDs)
+}
+
+// ListScenePointNames returns every scene point as (instance_name, class_name).
+//
+// NARROW ON PURPOSE. ListScenePoints reads the whole row — coordinates,
+// properties JSON, the lot — and this feeds the per-station node-list sync,
+// which runs on a timer for every Edge. The two things a downstream consumer
+// needs are the name to match against and the class to tell a waypoint from an
+// action point; the geometry stays here.
+//
+// DISTINCT, because instance names are unique per AREA and a plant with two
+// mapped areas can legitimately name the same point in both. The consumer is
+// asking "is this a real map point", which is an area-independent question.
+func (db *DB) ListScenePointNames() ([][2]string, error) {
+	rows, err := db.DB.Query(`
+		SELECT DISTINCT instance_name, class_name
+		FROM scene_points
+		WHERE instance_name <> ''
+		ORDER BY instance_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][2]string
+	for rows.Next() {
+		var pair [2]string
+		if err := rows.Scan(&pair[0], &pair[1]); err != nil {
+			return nil, err
+		}
+		out = append(out, pair)
+	}
+	return out, rows.Err()
+}
+
+// ListSceneEdgeEndpoints returns every drivable segment as (from_name, to_name).
+//
+// Segments with a blank endpoint are dropped: an edge that names only one end
+// joins nothing, and the adapter already skips the fully-degenerate ones. Same
+// narrowness argument as ListScenePointNames — this is adjacency, not geometry.
+func (db *DB) ListSceneEdgeEndpoints() ([][2]string, error) {
+	rows, err := db.DB.Query(`
+		SELECT DISTINCT from_name, to_name
+		FROM scene_edges
+		WHERE from_name <> '' AND to_name <> ''
+		ORDER BY from_name, to_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][2]string
+	for rows.Next() {
+		var pair [2]string
+		if err := rows.Scan(&pair[0], &pair[1]); err != nil {
+			return nil, err
+		}
+		out = append(out, pair)
+	}
+	return out, rows.Err()
 }

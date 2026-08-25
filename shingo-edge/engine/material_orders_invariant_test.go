@@ -43,6 +43,17 @@ func TestSwapBuilders_EveryLegEndsOnADropoff(t *testing.T) {
 	twoRobotA, twoRobotB := BuildTwoRobotSwapSteps(claim(""))
 	pi2R1, pi2R2 := BuildTwoRobotPressIndexSwapSteps(claim(""))
 	pi3R1, pi3R2 := BuildTwoRobotPressIndexSwapSteps(claim("INDEX-C"))
+	// Flipped (IndexRobotSupplies): R1 evac-only, R2 indexes AND refills.
+	// Every leg invariant applies to the new shapes unchanged — that is the
+	// point of running them through the same table rather than asserting the
+	// step lists somewhere else.
+	flipped := func(secondPaired string) *processes.NodeClaim {
+		c := claim(secondPaired)
+		c.IndexRobotSupplies = true
+		return c
+	}
+	fl2R1, fl2R2 := BuildTwoRobotPressIndexSwapSteps(flipped(""))
+	fl3R1, fl3R2 := BuildTwoRobotPressIndexSwapSteps(flipped("INDEX-C"))
 
 	legs := []struct {
 		name  string
@@ -57,6 +68,10 @@ func TestSwapBuilders_EveryLegEndsOnADropoff(t *testing.T) {
 		{"press_index 2-pos R2", pi2R2},
 		{"press_index 3-pos R1", pi3R1},
 		{"press_index 3-pos R2", pi3R2},
+		{"press_index FLIPPED 2-pos R1", fl2R1},
+		{"press_index FLIPPED 2-pos R2", fl2R2},
+		{"press_index FLIPPED 3-pos R1", fl3R1},
+		{"press_index FLIPPED 3-pos R2", fl3R2},
 	}
 
 	for _, leg := range legs {
@@ -107,6 +122,16 @@ func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
 			SecondPairedCoreNode: secondPaired,
 		}
 	}
+	// Flipped press-index shapes go through the same wait-stamp check: the
+	// flip moves steps between legs, and an unstamped wait is exactly the kind
+	// of thing that rides along in a move.
+	flipped2 := func(secondPaired string) *processes.NodeClaim {
+		c := claim(secondPaired)
+		c.IndexRobotSupplies = true
+		return c
+	}
+	fl2R1b, fl2R2b := BuildTwoRobotPressIndexSwapSteps(flipped2(""))
+	fl3R1b, fl3R2b := BuildTwoRobotPressIndexSwapSteps(flipped2("INDEX-C"))
 	from, to := claim(""), claim("")
 	to.CoreNodeName = "PRESS-B"
 
@@ -117,26 +142,30 @@ func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
 	evacCO := BuildEvacuateChangeoverSteps(from, to, "PRESS-B", "PRESS")
 
 	legs := map[string][]protocol.ComplexOrderStep{
-		"release":               BuildReleaseSteps(claim("")),
-		"staged release":        BuildStagedReleaseSteps(claim("")),
-		"stage":                 BuildStageSteps(claim("")),
-		"staged deliver":        BuildStagedDeliverSteps(claim("")),
-		"single_robot":          BuildSingleSwapSteps(claim("")),
-		"sequential removal":    BuildSequentialRemovalSteps(claim("")),
-		"sequential backfill":   BuildSequentialBackfillSteps(claim("")),
-		"two_robot A":           twoRobotA,
-		"two_robot B":           twoRobotB,
-		"press_index 2-pos R1":  pi2R1,
-		"press_index 2-pos R2":  pi2R2,
-		"press_index 3-pos R1":  pi3R1,
-		"press_index 3-pos R2":  pi3R2,
-		"keep-staged evac":      BuildKeepStagedEvacSteps(from),
-		"keep-staged deliver":   BuildKeepStagedDeliverSteps(to),
-		"keep-staged combined":  BuildKeepStagedCombinedSteps(from, to),
-		"changeover swap A":     swapCO.StepsA,
-		"changeover swap B":     swapCO.StepsB,
-		"changeover evacuate A": evacCO.StepsA,
-		"changeover evacuate B": evacCO.StepsB,
+		"release":                      BuildReleaseSteps(claim("")),
+		"staged release":               BuildStagedReleaseSteps(claim("")),
+		"stage":                        BuildStageSteps(claim("")),
+		"staged deliver":               BuildStagedDeliverSteps(claim("")),
+		"single_robot":                 BuildSingleSwapSteps(claim("")),
+		"sequential removal":           BuildSequentialRemovalSteps(claim("")),
+		"sequential backfill":          BuildSequentialBackfillSteps(claim("")),
+		"two_robot A":                  twoRobotA,
+		"two_robot B":                  twoRobotB,
+		"press_index FLIPPED 2-pos R1": fl2R1b,
+		"press_index FLIPPED 2-pos R2": fl2R2b,
+		"press_index FLIPPED 3-pos R1": fl3R1b,
+		"press_index FLIPPED 3-pos R2": fl3R2b,
+		"press_index 2-pos R1":         pi2R1,
+		"press_index 2-pos R2":         pi2R2,
+		"press_index 3-pos R1":         pi3R1,
+		"press_index 3-pos R2":         pi3R2,
+		"keep-staged evac":             BuildKeepStagedEvacSteps(from),
+		"keep-staged deliver":          BuildKeepStagedDeliverSteps(to),
+		"keep-staged combined":         BuildKeepStagedCombinedSteps(from, to),
+		"changeover swap A":            swapCO.StepsA,
+		"changeover swap B":            swapCO.StepsB,
+		"changeover evacuate A":        evacCO.StepsA,
+		"changeover evacuate B":        evacCO.StepsB,
 	}
 
 	seen := 0

@@ -221,6 +221,20 @@ func (e *Engine) carrierNode(robotID string) (*nodes.Node, error) {
 // RDS traffic. There is no jack-unload EVENT to subscribe to — the jack is
 // sampled state — which is why this is a watch and not a notification.
 func (e *Engine) sweepCarriedBins() {
+	// Retire carrier nodes nothing is riding any more, BEFORE the walk so a
+	// node emptied by a recovery order does not linger a whole tick.
+	//
+	// By shape, not by name. The per-name retire at the bottom of this loop
+	// only covers bins this watch placed itself; a recovery order's unload ends
+	// in the ordinary arrival handling, which knows nothing about carrier
+	// nodes, and would otherwise leave permanent furniture on a table operators
+	// read.
+	if n, err := e.db.RetireEmptyCarrierNodes(bins.CarrierNodePrefix); err != nil {
+		e.dbg("engine: carried bins: retire empty carrier nodes: %v", err)
+	} else if n > 0 {
+		e.dbg("engine: carried bins: retired %d empty carrier node(s)", n)
+	}
+
 	carried, err := e.db.ListBinsOnCarrierNodes()
 	if err != nil {
 		e.logFn("engine: carried bins: %v", err)
@@ -239,6 +253,44 @@ func (e *Engine) sweepCarriedBins() {
 		if !certain || carrying {
 			// Still loaded, or the deck is mid-travel. Leave it riding; the
 			// next poll asks again.
+			continue
+		}
+		// ── THE CARRIER-NODE GUARD, AND WHY IT IS HERE AND NOT ON THE MOVE ──
+		//
+		// A recovery order (carried_bin_recovery.go) asks this robot to unload
+		// at a chosen destination. While that order is running the deck will
+		// report empty the instant the bin is set down — and this watch would
+		// then place the bin at whatever station ResolveRobotStation returns
+		// for the tick, racing the order's own arrival handling. Two
+		// placements, and the second one wins by accident.
+		//
+		// The order is the better answer whenever there is one: it has a
+		// destination somebody chose, a slot reservation behind it, and the
+		// ordinary arrival path to record where the bin actually landed. So
+		// this watch stands down for the duration.
+		//
+		// Deliberately NOT done by widening BinService's actor guard on
+		// RecoverTransitAnomaly. That guard stops a HUMAN asserting a location
+		// for a bin that is riding a robot, and the jack watch is its
+		// sanctioned exception; adding a third actor would re-open the same
+		// question a fourth time. What is needed here is not "who may move
+		// this bin" but "is something already moving it", and that is a
+		// liveness question, answered where the race is.
+		// A FAILED READ STANDS DOWN TOO. The error used to be discarded, so a
+		// list that could not be read meant "no live order" and this watch went
+		// on to place the bin — racing the arrival of the very order it was
+		// written to yield to. The two answers do not cost the same: standing
+		// down wrongly costs one tick, and the next poll asks again, while
+		// proceeding wrongly is the double placement.
+		live, err := e.liveRecoveryOrderForBin(bin.ID)
+		if err != nil {
+			e.logFn("engine: carried bins: bin %d — cannot tell whether a recovery order is live (%v); "+
+				"standing down this tick rather than racing one", bin.ID, err)
+			continue
+		}
+		if live != nil {
+			e.dbg("engine: carried bins: bin %d left to recovery order %d (%s)",
+				bin.ID, live.ID, live.Status)
 			continue
 		}
 		// The deck is empty. Apply branch A at this tick's station — but only
@@ -260,6 +312,7 @@ func (e *Engine) sweepCarriedBins() {
 				fmt.Sprintf("deck emptied but could not place at %s: %v", node.Name, err))
 			continue
 		}
+		e.forgetStrandedNote(bin.ID)
 		e.logFn("engine: carried bin %d placed at %s after %s unloaded", bin.ID, node.Name, robotID)
 		// The bin has left the deck; if it was the last one, the carrier node
 		// has served its purpose. Removed here rather than left to accumulate —
@@ -398,7 +451,41 @@ func (e *Engine) strandedAnomaly(binID int64, robotID string, robot fleet.RobotS
 		e.logFn("engine: stranded transit: mark bin %d anomalous: %v", binID, err)
 		return
 	}
+	// THE WRITE REPEATS; THE LOG LINE MUST NOT.
+	//
+	// The sweep runs every two seconds and re-marks every stranded bin on every
+	// tick — which is right, because the note carries the robot's LATEST
+	// position and the DB write is idempotent (anomaly_at is COALESCEd, so the
+	// original instant survives). The log line was not: one line per stranded
+	// bin per two seconds, forever, which is a bin nobody has walked out to
+	// find yet burying every other line in the file.
+	//
+	// Keyed on the NOTE, not on the bin, so a bin that moves — a different
+	// station, a different jack state, a different reason — still says so. What
+	// is suppressed is the identical line, repeated.
+	e.strandedNotesMu.Lock()
+	if e.strandedNotes == nil {
+		e.strandedNotes = map[int64]string{}
+	}
+	unchanged := e.strandedNotes[binID] == note
+	e.strandedNotes[binID] = note
+	e.strandedNotesMu.Unlock()
+	if unchanged {
+		return
+	}
 	e.logFn("engine: stranded transit: bin %d left at _TRANSIT — %s", binID, note)
+}
+
+// forgetStrandedNote drops a bin's last-logged anomaly note, so the next
+// stranding of that bin logs again rather than being suppressed as a repeat.
+//
+// Called when the bin is placed. Without it the map is a slow leak AND a
+// silencer: a bin recovered and later stranded again in the same way would
+// match its own stale note and say nothing.
+func (e *Engine) forgetStrandedNote(binID int64) {
+	e.strandedNotesMu.Lock()
+	delete(e.strandedNotes, binID)
+	e.strandedNotesMu.Unlock()
 }
 
 // strandedNote renders the robot's last known position as one line an operator

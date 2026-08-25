@@ -83,12 +83,10 @@ type stubEngine struct {
 	// the values that flowed through. Add new fields here as needed; keep
 	// them named after the method that writes to them so the assertion
 	// site is easy to find.
-	lastReleaseChangeoverWaitDisp *engine.ReleaseDisposition
-	lastReleaseOrderDisposition   *engine.ReleaseDisposition
+	lastReleaseOrderDisposition *engine.ReleaseDisposition
 
 	// ChangeoverGateStatus canned response — the gate-status endpoint is a
 	// pure read, so the stub just replays whatever the test set.
-	lastReleaseNodeID int64
 
 	lastAbandonNodeID     int64
 	lastAbandonAcceptHalf bool
@@ -119,6 +117,10 @@ type stubEngine struct {
 	backfillForce       bool
 
 	lastReleaseStagedOrdersDisposition *engine.ReleaseDisposition
+	lastChangeoverReleaseDisposition   *engine.ReleaseDisposition
+	lastChangeoverReleaseProcessID     int64
+	changeoverReleaseResult            engine.ReleaseChangeoverWaitResult
+	changeoverReleaseErr               error
 }
 
 func (s *stubEngine) AppConfig() *config.Config     { return s.cfg }
@@ -139,6 +141,8 @@ func (s *stubEngine) ReconnectKafka() error                                     
 func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error                           { return nil }
 func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo                             { return s.core }
 func (s *stubEngine) PayloadBinTypes() []protocol.PayloadBinTypeInfo                      { return nil }
+func (s *stubEngine) ScenePointNames() map[string]bool                                    { return nil }
+func (s *stubEngine) SceneAdjacency() map[string][]string                                 { return nil }
 func (s *stubEngine) RequestNodeSync()                                                    {}
 func (s *stubEngine) RequestCatalogSync()                                                 {}
 func (s *stubEngine) SyncProcessCounter(int64) error                                      { return nil }
@@ -173,6 +177,12 @@ func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition
 	d := disp
 	s.lastReleaseStagedOrdersDisposition = &d
 	return nil
+}
+func (s *stubEngine) ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
+	d := disp
+	s.lastChangeoverReleaseDisposition = &d
+	s.lastChangeoverReleaseProcessID = processID
+	return s.changeoverReleaseResult, s.changeoverReleaseErr
 }
 func (s *stubEngine) RequestProduceSwap(int64) (*engine.NodeOrderResult, error) {
 	return nil, s.requestProduceSwapErr
@@ -223,19 +233,8 @@ func (s *stubEngine) CancelProcessChangeover(int64) error                   { re
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error   { return nil }
 func (s *stubEngine) PostCutoverFlag(int64) (*engine.PostCutoverFlag, bool) { return nil, false }
 func (s *stubEngine) ClearPostCutoverFlag(int64) error                      { return nil }
-func (s *stubEngine) ReleaseChangeoverWait(_ int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
-	d := disp
-	s.lastReleaseChangeoverWaitDisp = &d
-	return engine.ReleaseChangeoverWaitResult{}, nil
-}
 func (s *stubEngine) ChangeoverGateStatus(int64) (bool, []domain.Blocker, error) {
 	return s.gateCanComplete, s.gateBlockers, s.gateErr
-}
-func (s *stubEngine) ReleaseChangeoverWaitForNode(_, nodeID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
-	d := disp
-	s.lastReleaseChangeoverWaitDisp = &d
-	s.lastReleaseNodeID = nodeID
-	return engine.ReleaseChangeoverWaitResult{}, nil
 }
 func (s *stubEngine) AbandonChangeoverSupply(_, nodeID int64, acceptHalf bool, _ string) error {
 	s.lastAbandonNodeID = nodeID

@@ -230,6 +230,28 @@ func DeleteCarrierNodeIfEmpty(db *sql.DB, name string) error {
 	return err
 }
 
+// RetireEmptyCarrierNodes removes every carrier node that no longer holds a
+// bin, and reports how many went.
+//
+// The per-name call above only fires on the ONE path that places a carried bin
+// itself — the jack watch. A bin can also leave a deck because a recovery order
+// unloaded it, and that path ends in the ordinary arrival handling, which knows
+// nothing about carrier nodes. Sweeping by shape rather than by name covers
+// both, and any third way that appears later.
+//
+// Cheap and idempotent: carrier nodes number at most one per robot, and the
+// predicate is the same NOT EXISTS. Nothing else can match — the LIKE is
+// anchored on the carrier prefix and combined with is_synthetic.
+func RetireEmptyCarrierNodes(db *sql.DB, prefix string) (int64, error) {
+	res, err := db.Exec(`DELETE FROM nodes n WHERE n.is_synthetic AND n.name LIKE $1 || '%'
+		AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)`, prefix)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 func List(db *sql.DB) ([]*Node, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s %s ORDER BY n.name`, SelectCols, FromClause))
 	if err != nil {

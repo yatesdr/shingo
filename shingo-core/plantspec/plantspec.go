@@ -260,14 +260,56 @@ type Claim struct {
 	// screen) — not in a group named by this claim. The two were once documented
 	// as one field doing two jobs; they were always two representations, and the
 	// group-naming half is retired.
-	InboundSource       string   `yaml:"inbound_source,omitempty"`
-	OutboundDestination string   `yaml:"outbound_destination,omitempty"`
-	InboundStaging      string   `yaml:"inbound_staging,omitempty"`
-	OutboundStaging     string   `yaml:"outbound_staging,omitempty"`
-	AutoPush            bool     `yaml:"auto_push"`
-	AutoConfirm         bool     `yaml:"auto_confirm"`
-	PairedCoreNode      string   `yaml:"paired_core_node,omitempty"`
-	AllowedPayloads     []string `yaml:"allowed_payloads,omitempty"`
+	InboundSource       string `yaml:"inbound_source,omitempty"`
+	OutboundDestination string `yaml:"outbound_destination,omitempty"`
+	InboundStaging      string `yaml:"inbound_staging,omitempty"`
+	OutboundStaging     string `yaml:"outbound_staging,omitempty"`
+	AutoPush            bool   `yaml:"auto_push"`
+	AutoConfirm         bool   `yaml:"auto_confirm"`
+	PairedCoreNode      string `yaml:"paired_core_node,omitempty"`
+	// SecondPairedCoreNode is the THIRD position of a press-index cell (bins
+	// index C → B → A). Empty is the ordinary 2-position layout.
+	SecondPairedCoreNode string `yaml:"second_paired_core_node,omitempty"`
+	// IndexRobotSupplies flips a press-index cell's choreography: R1 clears the
+	// press and leaves, R2 indexes forward AND fetches the replacement, instead
+	// of R1 backfilling on its way out.
+	//
+	// SEEDABLE BECAUSE THE SIM IS WHERE IT GETS PROVEN. It describes the cell's
+	// hardware — which robot can reach the supermarket from that press — so a
+	// plant either has it or does not, and a scenario that cannot express it
+	// can only test the shape half the presses run.
+	IndexRobotSupplies bool     `yaml:"index_robot_supplies,omitempty"`
+	AllowedPayloads    []string `yaml:"allowed_payloads,omitempty"`
+	// ── THE ROUND-3/4 CLAIM CONFIG, SEEDABLE FOR THE SAME REASON THE FLIP IS ──
+	//
+	// These five were added to style_node_claims and to the claim editor, and
+	// left out of here — so staged tooling evacuation, evacuation destination
+	// precedence, the loader card and key routes could not be expressed by any
+	// scenario. Not "were not covered by a test": could not be SET, anywhere but
+	// by hand in a browser, which means those features have never executed on a
+	// sim and there was no way to make them.
+	//
+	// ChangeoverEvacNodes names which press-index positions hold bins that block the
+	// tooling change: "front", "paired", "second". ChangeoverEvacDestination is
+	// where those bins go (blank falls back to outbound_destination).
+	ChangeoverEvacNodes       []string `yaml:"changeover_evac_nodes,omitempty"`
+	ChangeoverEvacDestination string   `yaml:"changeover_evac_destination,omitempty"`
+	// ChangeoverCarryoverDisposition decides what happens to a marked position's bin
+	// when the SAME part runs on that position in both styles: "replace" (default —
+	// clear it and bring a fresh carrier through staging), "keep_lineside" (the
+	// bin does not move), or "outbound_staging" (the same bin hops to
+	// outbound_staging and returns on the tooling-done release). Ignored when
+	// the payloads differ. Seedable from day one, deliberately: a feature that
+	// cannot be put in a plant file cannot be exercised on a sim.
+	ChangeoverCarryoverDisposition string `yaml:"changeover_carryover_disposition,omitempty"`
+	// ChangeoverLoadDirective turns a LOADER's card into a loading instruction
+	// during a changeover — which empty carrier the changing-over cells want.
+	ChangeoverLoadDirective bool `yaml:"changeover_load_directive,omitempty"`
+	// KeyRoute is the ordered list of map points a leg from this claim should be
+	// routed through; KeyTask is SEER's sibling-selection hint ("load"/"unload").
+	// ORDER IS MEANINGFUL in KeyRoute, so it is a list and not a set.
+	KeyRoute []string `yaml:"key_route,omitempty"`
+	KeyTask  string   `yaml:"key_task,omitempty"`
 	// WindowOf, when set on a manual_swap loader claim, makes this node a WINDOW
 	// of the named shared loader rather than its own loader: the seed groups it as
 	// a window home of that loader (the multi-window model the grid editor authors

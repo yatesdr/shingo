@@ -271,7 +271,15 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/processes/{id}/changeover/switch-station/{stationID}", h.apiSwitchOperatorStationToTarget)
 			r.Post("/processes/{id}/changeover/switch-node/{nodeID}", h.apiSwitchNodeToTarget)
 			r.Post("/processes/{id}/changeover/abandon-node/{nodeID}", h.apiAbandonChangeoverNode)
-			r.Post("/processes/{id}/changeover/release-wait", h.apiReleaseChangeoverWait)
+			// The changeover-wide release, wired to a button this time. Its
+			// ancestor /changeover/release-wait was retired in 2026-08 for
+			// having no caller — "a registered route with no caller is a door
+			// nobody checks" — with the note that a future release-everything
+			// button would compose the engine methods again in a handler
+			// written for it. That button is the operator marking the setup
+			// finished, and it is the only door that expresses what the floor
+			// actually does: one click, every leg of the press moves in.
+			r.Post("/processes/{id}/changeover/release", h.apiReleaseChangeoverProcess)
 			r.Post("/processes/{id}/changeover/sequential-cutover/{nodeID}", h.apiSequentialChangeoverCutover)
 
 			// Orders — LIFECYCLE ONLY here. These act on an order that already

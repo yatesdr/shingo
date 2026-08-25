@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"slices"
@@ -204,12 +205,20 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			  (style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
 			   reorder_point, auto_reorder, inbound_staging, outbound_staging,
 			   inbound_source, outbound_destination, allowed_payload_codes,
-			   paired_core_node, auto_push, auto_confirm)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			   paired_core_node, second_paired_core_node, index_robot_supplies,
+			   changeover_evac_nodes, changeover_evac_destination,
+			   changeover_carryover_disposition,
+			   changeover_load_directive, key_route, key_task,
+			   auto_push, auto_confirm)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			sid, c.CoreNode, c.Role, c.SwapMode, c.Payload, c.UOPCapacity,
 			c.ReorderPoint, b2i(c.AutoReorder), c.InboundStaging, c.OutboundStaging,
-			c.InboundSource, c.OutboundDestination, strings.Join(c.AllowedPayloads, ","),
-			c.PairedCoreNode, b2i(c.AutoPush), b2i(c.AutoConfirm)); err != nil {
+			c.InboundSource, c.OutboundDestination, jsonList(c.AllowedPayloads),
+			c.PairedCoreNode, c.SecondPairedCoreNode, b2i(c.IndexRobotSupplies),
+			jsonList(c.ChangeoverEvacNodes), c.ChangeoverEvacDestination,
+			carryoverOrReplace(c.ChangeoverCarryoverDisposition),
+			b2i(c.ChangeoverLoadDirective), jsonList(c.KeyRoute), c.KeyTask,
+			b2i(c.AutoPush), b2i(c.AutoConfirm)); err != nil {
 			return fmt.Errorf("claim %s/%s: %w", c.CoreNode, c.Style, err)
 		}
 		var claimID int64
@@ -286,6 +295,26 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 	log.Printf("edge: %d processes, %d styles, %d operator stations, %d claims, %d reporting points, %d catalog payloads, %d runtime states",
 		len(procIDs), len(styleIDs), len(stationIDs), len(p.Claims), len(p.ReportingPoints), len(p.Payloads), runtimeSeeded)
 	return nil
+}
+
+// jsonList encodes a string list the way the edge store reads it back: a JSON
+// array, and the EMPTY STRING for an empty list rather than "[]".
+//
+// THIS WAS A COMMA JOIN, and the read is json.Unmarshal with the error
+// discarded — so every allowed_payloads list a scenario declared decoded to
+// nothing and the claim came up with no restriction at all. Silent, because a
+// failed unmarshal leaves the slice nil and nil is a legal value meaning "no
+// list". The three list columns share this encoder now so the next one cannot
+// pick a different format.
+func jsonList(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(items)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // edgeUpsert runs an INSERT-OR-IGNORE then selects the natural-key row's id.
@@ -373,4 +402,14 @@ func crossValidate(coreDB coreNodeChecker, edgeDBPath string) error {
 // pass a fake).
 type coreNodeChecker interface {
 	GetNodeByName(name string) (*nodes.Node, error)
+}
+
+// carryoverOrReplace writes the column's default when the plant file says
+// nothing, so a seeded row and a UI-created row agree. An empty string in this
+// column would read as unset to anything checking it literally.
+func carryoverOrReplace(d string) string {
+	if d == "" {
+		return "replace"
+	}
+	return d
 }

@@ -1,4 +1,4 @@
-import { esc, fillColor, postAction, formatETA } from './operator-util.js';
+import { esc, fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, primeNoticeText, showToast } from './operator-util.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, REFUSE_LABEL, UNDO_LABEL,
 } from './operator-supply-refusal.js';
@@ -172,8 +172,11 @@ export function renderModal(entry) {
 
     if (isReplenishing(entry)) {
         const activeOrders = (entry.orders || []).filter(o => isActive(o.status));
+        // The status word stays and the cause is appended to it: an operator
+        // reading "retrieve: queued" cannot tell a capacity gate from a missing
+        // bin, and Core already generated the sentence that distinguishes them.
         const statusText = activeOrders.length > 0
-            ? activeOrders.map(o => o.order_type + ': ' + o.status).join(', ')
+            ? activeOrders.map(o => withQueueCause(o.order_type + ': ' + o.status, o)).join(', ')
             : 'Order in progress';
         html += '<div class="modal-status">[REP] ' + esc(statusText) + '</div>';
     } else {
@@ -249,17 +252,17 @@ export function renderModal(entry) {
     html += '<div class="modal-actions">';
 
     // CHILD TILE — this node is shown here only because the node it extends
-    // lives on this station (a press-index seat with no station of its own).
+    // lives on this station (a press-index position with no station of its own).
     // It owns no changeover task and no orders, so there is NOTHING to release
     // from here. Offering a release button would either no-op or, worse, act on
     // the parent's work from a tile that does not represent it. Render the
-    // relationship and stop; the seat is visible (which is the point — it used
+    // relationship and stop; the position is visible (which is the point — it used
     // to be invisible and got fork-trucked) but not actionable.
     if (entry.child_of_node) {
         html += '<div style="padding:12px 16px;border-radius:8px;background:#1a1a1a;border:1px solid #444;color:#aab;font-size:14px;line-height:1.5">' +
             'Indexed-over position of <strong>' + esc(entry.child_of_node) + '</strong>.' +
             '<div style="color:#888;font-size:12px;margin-top:4px">' +
-            'The changeover moves a bin through this seat. There is nothing to release here — ' +
+            'The changeover moves a bin through this position. There is nothing to release here — ' +
             'work it from ' + esc(entry.child_of_node) + '.</div></div>';
     } else if (claim) {
         if (claim.swap_mode === 'manual_swap') {
@@ -321,7 +324,15 @@ export function renderModal(entry) {
                 html += '</div>';
             }
             if (queued.length > 0) {
+                // "2 orders queued" tells the loader operator nothing they can
+                // act on. Core's cause sentence does — and it is already on the
+                // row. One line per distinct cause so a pair parked for the
+                // same reason does not print it twice.
+                var causes = distinctQueueCauses(queued);
                 html += '<div style="color:#999;font-size:12px;margin-bottom:10px">' + queued.length + ' order' + (queued.length > 1 ? 's' : '') + ' queued</div>';
+                causes.forEach(function(c) {
+                    html += '<div style="color:#999;font-size:12px;margin-bottom:10px;padding-left:8px;border-left:2px solid #444">' + esc(c) + '</div>';
+                });
             }
 
             var queuePos = 1;
@@ -753,7 +764,7 @@ function isStationReleasable(o) {
 function waitingLabel(blocker) {
     const base = 'WAITING FOR OTHER ROBOT';
     if (!blocker) return base;
-    if (blocker.queue_reason) return base + ' — ' + blocker.queue_reason;
+    if (blocker.queue_reason) return withQueueCause(base, blocker);
     switch (blocker.status) {
         case 'faulted':
             return base + ' — faulted, recovering';
@@ -860,7 +871,15 @@ export async function handleModalAction(evt) {
         url = parts[0];
         body = { payload_code: parts[1] };
     }
-    const ok = await postAction(url, body, loadViewRef);
+    // onResult is where a primes-only round becomes visible. Every station
+    // action funnels through this branch, so the produce swap and the consume
+    // downgrade are both covered by one hook rather than one per verb.
+    const ok = await postAction(url, body, loadViewRef, {
+        onResult: (result) => {
+            const notice = primeNoticeText(result);
+            if (notice) showToast(notice, 'info');
+        },
+    });
     if (ok) closeModal();
 }
 

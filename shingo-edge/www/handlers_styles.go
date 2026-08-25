@@ -266,14 +266,43 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		log.Printf("WARNING api apiUpsertStyleNodeClaim: trimmed whitespace from SecondPairedCoreNode %q", in.SecondPairedCoreNode)
 		in.SecondPairedCoreNode = trimmed
 	}
-	if in.StyleID == 0 {
-		writeError(w, http.StatusBadRequest, "style_id is required")
+	// Key-route points are node names typed or picked by hand; trim them the
+	// same way, and drop entries that were only whitespace so an empty picker
+	// row does not become a blank point the validator then complains about.
+	//
+	// NIL IS PRESERVED. These fields are absent-means-untouched, so a request
+	// that did not mention key_route must reach updateClaim still not
+	// mentioning it — normalising nil into an empty slice here would turn every
+	// silent caller into one that clears the column, which is the defect the
+	// pointer contract exists to prevent.
+	if in.KeyRoute != nil {
+		trimmedRoute := make([]string, 0, len(*in.KeyRoute))
+		for _, pt := range *in.KeyRoute {
+			if t := strings.TrimSpace(pt); t != "" {
+				trimmedRoute = append(trimmedRoute, t)
+			}
+		}
+		in.KeyRoute = &trimmedRoute
+	}
+	if in.KeyTask != nil {
+		trimmedTask := strings.TrimSpace(*in.KeyTask)
+		in.KeyTask = &trimmedTask
+	}
+	if in.ChangeoverEvacDestination != nil {
+		trimmedDest := strings.TrimSpace(*in.ChangeoverEvacDestination)
+		in.ChangeoverEvacDestination = &trimmedDest
+	}
+
+	// One server-side statement of what a claim must look like, run BEFORE any
+	// side effect (the back-node provisioning below writes rows). Two of these
+	// checks used to live ONLY in the browser, which means they were not checks:
+	// the same write arrives from the HTTP API, an import and a stale tab.
+	findings := domain.ValidateNodeClaim(in, h.claimNodeContext(in))
+	if domain.HasErrors(findings) {
+		writeFieldErrors(w, http.StatusBadRequest, findings)
 		return
 	}
-	if in.CoreNodeName == "" {
-		writeError(w, http.StatusBadRequest, "core_node_name is required")
-		return
-	}
+
 	// Press-index pairing requires the back position(s) to exist as
 	// process_nodes so the fleet manager has wait/pickup/dropoff
 	// coordinates for R2's leg. The back nodes hold no claim of their
@@ -324,7 +353,67 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// with what the operator just edited. Fire-and-forget — SendClaimSync
 	// logs its own failures and the outbox will retry transient send errors.
 	h.requestSpecChangePublish()
-	writeJSON(w, map[string]int64{"id": id})
+	// `id` is unchanged for every existing consumer; `warnings` is additive and
+	// only present when there is something advisory to say.
+	resp := map[string]any{"id": id}
+	if len(findings) > 0 {
+		resp["warnings"] = findings
+	}
+	writeJSON(w, resp)
+}
+
+// claimNodeContext resolves what ValidateNodeClaim's membership warning needs:
+// the process the claim's style belongs to, and the processes that actually
+// have a process_node row for the named core node.
+//
+// Checked stays FALSE on any lookup failure. A check that could not read its
+// inputs must not report a finding — "this node is not on your process" and "I
+// could not find out" are different sentences, and only one of them belongs in
+// front of an engineer.
+func (h *Handlers) claimNodeContext(in domain.NodeClaimInput) domain.ClaimNodeContext {
+	if in.StyleID == 0 || in.CoreNodeName == "" {
+		return domain.ClaimNodeContext{}
+	}
+	style, err := h.engine.StyleService().Get(in.StyleID)
+	if err != nil || style == nil {
+		return domain.ClaimNodeContext{}
+	}
+	nodes, err := h.engine.ProcessService().ListNodes()
+	if err != nil {
+		return domain.ClaimNodeContext{}
+	}
+	ctx := domain.ClaimNodeContext{Checked: true, StyleProcessID: style.ProcessID}
+	// Core's synced node set. Empty is carried through as empty ON PURPOSE —
+	// the validator reads that as "could not look" and skips, rather than
+	// refusing because Core has not been heard from.
+	if known := h.engine.CoreNodes(); len(known) > 0 {
+		ctx.KnownCoreNodes = make(map[string]bool, len(known))
+		for name := range known {
+			ctx.KnownCoreNodes[name] = true
+		}
+	}
+	// The plant MAP, which is the universe a key route is expressed in — see
+	// ClaimNodeContext.KnownScenePoints. Same could-not-look rule; the
+	// validator degrades to a warning rather than refusing.
+	ctx.KnownScenePoints = h.engine.ScenePointNames()
+	if len(ctx.KnownScenePoints) == 0 {
+		if route := domain.OptValue(in.KeyRoute); len(route) > 0 {
+			log.Printf("claim %s: the plant map is EMPTY, so %d key-route point(s) could not be "+
+				"checked — saving unverified. This is not a pass: Core has not sent a scene graph, "+
+				"either because it has not been heard from or because it predates the scene sync.",
+				in.CoreNodeName, len(route))
+		}
+	}
+	for i := range nodes {
+		if nodes[i].CoreNodeName == in.CoreNodeName {
+			ctx.NodeProcessIDs = append(ctx.NodeProcessIDs, nodes[i].ProcessID)
+		}
+	}
+	// No process_node anywhere for this name is a DIFFERENT condition — a name
+	// Core may know and Edge has not been configured for — and it already has
+	// its own guard at the process-node write. Emit nothing here rather than
+	// claiming it belongs to the wrong process.
+	return ctx
 }
 
 // ensurePressIndexBackNode creates a process_node row for the given back

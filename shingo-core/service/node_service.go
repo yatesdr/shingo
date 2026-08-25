@@ -262,13 +262,20 @@ func (s *NodeService) RecentSceneDiffsWithLanes(limit int) ([]SceneDiff, error) 
 	if err != nil {
 		return nil, err
 	}
+	ids := make([]int64, 0, len(diffs))
+	for _, d := range diffs {
+		ids = append(ids, d.ID)
+	}
+	// One query for the page, not one per row. At the limit of 50 this read used
+	// to cost 51 round trips, and the localization board's compare mode fetches
+	// two boards, so 102.
+	lanesByDiff, err := s.db.LanesChangedByDiffs(ids)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]SceneDiff, 0, len(diffs))
 	for _, d := range diffs {
-		lanes, err := s.db.LanesChangedByDiff(d.ID)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, SceneDiff{DiffView: d, Lanes: lanes})
+		out = append(out, SceneDiff{DiffView: d, Lanes: lanesByDiff[d.ID]})
 	}
 	return out, nil
 }
@@ -292,6 +299,13 @@ func (s *NodeService) ListNodeStates() (map[int64]*store.NodeState, error) {
 // (PR 3a.1b).
 func (s *NodeService) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) {
 	return s.db.ListBinsByNode(nodeID)
+}
+
+// ListBinsByNodes is ListBinsByNode over a set of nodes in one query. Same
+// filter and same ORDER BY, so grouping the result by node id gives each node
+// exactly what the per-node call would have returned.
+func (s *NodeService) ListBinsByNodes(nodeIDs []int64) ([]*bins.Bin, error) {
+	return s.db.ListBinsByNodes(nodeIDs)
 }
 
 // ListStationsForNode returns the explicit station assignments for a

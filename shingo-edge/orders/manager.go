@@ -7,6 +7,7 @@ import (
 	"shingo/protocol/types"
 	"shingoedge/store"
 	"shingoedge/store/catalog"
+	"shingoedge/store/processes"
 )
 
 // DebugLogFunc is a nil-safe debug logging function.
@@ -43,21 +44,30 @@ func (m *Manager) enqueueEnvelope(env *protocol.Envelope) error {
 // fails, returns empty strings. If payloadCode is already set, it is preserved.
 // During changeover, prefers the target style over the active style so that
 // newly created orders resolve the correct (new) payload.
-func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (desc, code string) {
+// resolveClaimForNode returns the claim that governs orders for a process node
+// right now: the active style's, or the target style's during a changeover
+// where the target has a claim for this node (orders created mid-changeover
+// are for the new style's material).
+//
+// Extracted from lookupPayloadMeta so the routing lookup below reads from the
+// SAME claim the payload does — two "what does this node's claim say" answers
+// that disagree would be a very quiet bug.
+//
+// nil for every reason a lookup can fail: no node id, no node, no active
+// style, no claim. Callers treat nil as "no opinion", never as a default.
+func (m *Manager) resolveClaimForNode(processNodeID *int64) *processes.NodeClaim {
 	if processNodeID == nil {
-		return "", payloadCode
+		return nil
 	}
 	node, err := m.db.GetProcessNode(*processNodeID)
 	if err != nil {
 		m.DebugLog.Log("process-node lookup failed: id=%d err=%v", *processNodeID, err)
-		return "", payloadCode
+		return nil
 	}
 	process, err := m.db.GetProcess(node.ProcessID)
 	if err != nil || process.ActiveStyleID == nil {
-		return "", payloadCode
+		return nil
 	}
-	// During changeover, prefer the target style for payload resolution.
-	// Orders created during changeover are typically for the new style's material.
 	styleID := *process.ActiveStyleID
 	if process.TargetStyleID != nil {
 		if _, err := m.db.GetStyleNodeClaimByNode(*process.TargetStyleID, node.CoreNodeName); err == nil {
@@ -67,6 +77,36 @@ func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (d
 	claim, err := m.db.GetStyleNodeClaimByNode(styleID, node.CoreNodeName)
 	if err != nil {
 		m.DebugLog.Log("style-node-claim lookup failed: node=%s err=%v", node.CoreNodeName, err)
+		return nil
+	}
+	return claim
+}
+
+// lookupRouting returns the claim's SEER routing hints for an order at this
+// node: keyRoute (ordered via-points) and keyTask ("load"/"unload").
+//
+// THE CLAIM IS THE SEAM, NOT A PARAMETER. Routing is a per-claim geometry
+// fact, and the create constructors already take ten positional arguments;
+// threading two more through every one of them (and through SwapDispatch, and
+// through the changeover OrderSpec) would spread one fact across a dozen
+// signatures. The manager already derives per-claim facts from processNodeID
+// — that is exactly what lookupPayloadMeta does — so routing is read the same
+// way, from the same claim, at the same moment.
+//
+// Consequence worth knowing: an order with no processNodeID (a manual API
+// order) carries no routing, which is correct — there is no claim to speak
+// for it, and empty means SEER auto-picks, today's behaviour everywhere.
+func (m *Manager) lookupRouting(processNodeID *int64) (keyRoute []string, keyTask string) {
+	claim := m.resolveClaimForNode(processNodeID)
+	if claim == nil {
+		return nil, ""
+	}
+	return claim.KeyRoute, claim.KeyTask
+}
+
+func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (desc, code string) {
+	claim := m.resolveClaimForNode(processNodeID)
+	if claim == nil {
 		return "", payloadCode
 	}
 	// Backfill the payload from the claim only for serial consume/produce

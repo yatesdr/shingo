@@ -21,7 +21,7 @@ import (
 // captures the architectural role distinction surfaced in three
 // independent dev reviews: most edge handlers do pure CRUD through
 // services and have no business reaching engine-level orchestration.
-// ServiceAccess gives those handlers a 19-method surface; orchestration
+// ServiceAccess gives those handlers a 20-method surface; orchestration
 // handlers take EngineOrchestration explicitly via h.orchestration.
 // The count is asserted by a test in this package — change it there when
 // you change it here.
@@ -52,6 +52,17 @@ type ServiceAccess interface {
 	// by Core on each NodeListResponse. Used by the operator-station view
 	// handler to populate the dunnage picker without a per-node query.
 	PayloadBinTypes() []protocol.PayloadBinTypeInfo
+	// ScenePointNames is the vendor map's point set, delivered on the same
+	// sync. The universe a key route is expressed in — CoreNodes is only the
+	// subset Shingo gave a job to. Empty means "not received", never "the map
+	// is empty"; the key-route validator degrades to a warning on it.
+	//
+	// The scene's ADJACENCY rides the same sync and is cached beside this
+	// (engine.SceneAdjacency), but is deliberately not exposed here yet: its
+	// only consumer is the connectivity-filtered key-route picker, which is a
+	// named follow-up. An interface method with no caller is what this
+	// interface's width guard exists to prevent.
+	ScenePointNames() map[string]bool
 
 	// ── Service accessors ──────────────────────────────────────────
 	// Phase 6.2′: per-domain services. Handlers reach single-aggregate
@@ -102,6 +113,7 @@ type EngineOrchestration interface {
 	ReleaseNodeWithRemainingUOP(nodeID int64, qty int64, remainingUOP int) (*domain.Order, error)
 	ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
+	ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
 	RequestProduceSwap(nodeID int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
 	ClearBin(nodeID int64, binTypeCode string) error
@@ -124,9 +136,6 @@ type EngineOrchestration interface {
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error
 	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error
-	ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
-	// ReleaseChangeoverWaitForNode scopes the same release to one node's task.
-	ReleaseChangeoverWaitForNode(processID, processNodeID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
 	// AbandonChangeoverSupply is the operator exit from awaiting_material:
 	// cancel the parked supply half (both halves unless acceptHalf) and land
 	// the node task abandoned-terminal.

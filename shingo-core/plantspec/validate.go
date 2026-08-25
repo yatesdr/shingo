@@ -258,6 +258,88 @@ func (p *Plant) Validate() error {
 			if c.OutboundDestination == "" {
 				add("%s: two_robot_press_index requires outbound_destination", where)
 			}
+			// The third position must exist and must be its own node. Both are
+			// checked here rather than left to the runtime because a
+			// second_paired_core_node that names nothing produces a step aimed
+			// at a place the fleet cannot resolve, and one that repeats another
+			// position produces a robot asked to move a bin to where it is.
+			if c.SecondPairedCoreNode != "" {
+				if !ref(c.SecondPairedCoreNode) {
+					add("%s: unknown second_paired_core_node %q", where, c.SecondPairedCoreNode)
+				}
+				if c.SecondPairedCoreNode == c.CoreNode || c.SecondPairedCoreNode == c.PairedCoreNode {
+					add("%s: second_paired_core_node %q must differ from the front and back positions", where, c.SecondPairedCoreNode)
+				}
+			}
+		default:
+			// The flip is press-index choreography; nothing else has two robots
+			// to swap between, and a spec that sets it on another mode is
+			// describing a cell that cannot exist. Marked evacuation positions are
+			// the same argument: a position is a press position.
+			if c.IndexRobotSupplies {
+				add("%s: index_robot_supplies applies to two_robot_press_index only", where)
+			}
+			if len(c.ChangeoverEvacNodes) > 0 {
+				add("%s: changeover_evac_nodes applies to two_robot_press_index only", where)
+			}
+		}
+		// ── A MARKED NODE MUST BE ONE THIS CLAIM HOLDS ─────────────────────
+		//
+		// The marks name core nodes. A node the claim does not hold is not an
+		// unlikely configuration, it is a reference to nothing — and the
+		// clearance it asks for silently never happens, which is the failure
+		// mode hardest to notice on a sim. Same rule the Edge's
+		// ValidateNodeClaim applies; stated here too because a spec is written
+		// long before an Edge sees it.
+		held := map[string]bool{}
+		for _, n := range []string{c.CoreNode, c.PairedCoreNode, c.SecondPairedCoreNode} {
+			if n != "" {
+				held[n] = true
+			}
+		}
+		seenMark := map[string]bool{}
+		for _, node := range c.ChangeoverEvacNodes {
+			if !held[node] {
+				add("%s: changeover_evac_nodes marks %q, which is not one of this claim's nodes", where, node)
+			}
+			if seenMark[node] {
+				add("%s: changeover_evac_nodes lists %q more than once", where, node)
+			}
+			seenMark[node] = true
+		}
+		// An evacuation destination that names nothing sends the bins nowhere.
+		if c.ChangeoverEvacDestination != "" && !ref(c.ChangeoverEvacDestination) {
+			add("%s: unknown changeover_evac_destination %q", where, c.ChangeoverEvacDestination)
+		}
+		// ── KEY ROUTE ───────────────────────────────────────────────────────
+		//
+		// Shape only. The POINTS are deliberately not resolved against the
+		// scenario's nodes: a key route names points in the vendor's MAP, which
+		// is a superset of the nodes Shingo gave jobs to, and a corridor
+		// waypoint is the feature's primary use. Refusing a spec because a
+		// waypoint is not a node is the exact mistake the Edge validator was
+		// just corrected for; the sim has no map to check against at all.
+		seenPoint := map[string]bool{}
+		for _, pt := range c.KeyRoute {
+			switch {
+			case strings.TrimSpace(pt) == "":
+				add("%s: key_route contains a blank point", where)
+			case pt == "SELF_POSITION":
+				add("%s: SELF_POSITION is never valid in a key route", where)
+			case seenPoint[pt]:
+				add("%s: key_route lists %q more than once", where, pt)
+			}
+			seenPoint[pt] = true
+		}
+		if len(c.KeyRoute) > 0 && protocol.SwapMode(c.SwapMode) == protocol.SwapModeManualSwap {
+			add("%s: key_route applies to robot-served claims; a manual_swap loader does not drive", where)
+		}
+		if c.KeyTask != "" && c.KeyTask != "load" && c.KeyTask != "unload" {
+			add("%s: key_task must be \"load\", \"unload\", or empty; got %q", where, c.KeyTask)
+		}
+		// The directive is an instruction to a LOADER's card.
+		if c.ChangeoverLoadDirective && protocol.SwapMode(c.SwapMode) != protocol.SwapModeManualSwap {
+			add("%s: changeover_load_directive is a loader's card instruction (manual_swap)", where)
 		}
 		// Any staging node that IS set must exist.
 		if c.InboundStaging != "" && !ref(c.InboundStaging) {
@@ -292,12 +374,37 @@ func (p *Plant) Validate() error {
 			add("reporting point %s/%s references unknown style %q", rp.PLCName, rp.TagName, rp.Style)
 		}
 	}
+	builtStations := map[string]bool{}
 	for _, cc := range p.CellConfigs {
 		if !processes[cc.Process] {
 			add("cell_config references unknown process %q", cc.Process)
 		}
 		if len(opStations) > 0 && !opStations[cc.Station] {
 			add("cell_config references unknown operator station %q", cc.Station)
+		}
+		builtStations[cc.Station] = true
+	}
+	for _, c := range p.Claims {
+		if c.OperatorStation != "" {
+			builtStations[c.OperatorStation] = true
+		}
+	}
+	// EVERY DECLARED STATION MUST BE BUILDABLE, and this is the reverse of the
+	// check above rather than a restatement of it.
+	//
+	// seed_edge creates operator_stations from cell_configs and from claims that
+	// pin their own window. A name that appears in `operator_stations` and in
+	// neither of those is declared and never created: the node that would render
+	// on it keeps operator_station_id NULL and every surface bound to that
+	// station is unreachable, silently. UNLOADER-B-OPS was in exactly that state
+	// while FGN_002 carried the plant's only changeover_load_directive, so the
+	// LOAD directive card could not be rendered at all and the feature shipped
+	// unobserved (N3, sim 2026-08-24).
+	for _, s := range p.OperatorStations {
+		if !builtStations[s] {
+			add("operator station %q is declared but nothing builds it — add a cell_config for "+
+				"its process, or pin a claim to it with operator_station; a station that is not "+
+				"created binds no node and renders nothing", s)
 		}
 	}
 	for _, lb := range p.LinesideBuckets {

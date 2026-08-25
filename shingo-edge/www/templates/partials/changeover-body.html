@@ -43,6 +43,20 @@
     <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
         <div><strong>{{.ActiveChangeover.FromStyleName}}</strong> &rarr; <strong>{{.ActiveChangeover.ToStyleName}}</strong></div>
         <span class="badge">{{.ActiveChangeover.State}}</span>
+        {{/*
+            SETUP DONE — the operator's one click when the humans are finished
+            at the asset. Every leg of this changeover that is holding at
+            inbound staging moves in together.
+
+            It is one button because that is what the floor does: the material
+            was pulled off the marked positions to clear space, the incoming
+            material is parked out of the cell on purpose, and when the setup
+            is done it is done for the whole press. Before it existed the only
+            working release was per ORDER, from the orders page — four clicks
+            for a four-node changeover, none of them on this screen.
+        */}}
+        <button class="btn btn-sm" data-action="releaseChangeoverMaterial"
+                title="Release every leg that is holding at inbound staging">Setup Done — Release Material</button>
         {{if .ActiveProcess.TargetStyleID}}
             {{if .AllNodesComplete}}
                 <button class="btn btn-sm btn-primary" data-action="completeCutover">Complete Cutover</button>

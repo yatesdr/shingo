@@ -69,8 +69,8 @@ func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		return disp, err
 	}
 	if claim.Role == protocol.ClaimRoleProduce && claim.InboundSource != "" {
-		markInboundEmpty(disp.StepsA, claim.InboundSource)
-		markInboundEmpty(disp.StepsB, claim.InboundSource)
+		markInboundEmpty(disp.StepsA, claim.InboundSource, "")
+		markInboundEmpty(disp.StepsB, claim.InboundSource, "")
 	}
 	// Derive Leg A's delivery node from its own steps rather than asserting it is
 	// the process node. The per-mode builders are the single source of truth for
@@ -98,12 +98,44 @@ func finalDropoff(steps []protocol.ComplexOrderStep) string {
 // inbound-source pickup is the only leg that fetches a fresh carrier from the
 // supermarket; the other pickups move bins already in the swap, so they keep
 // their contents and must not be flagged.
-func markInboundEmpty(steps []protocol.ComplexOrderStep, inboundSource string) {
+//
+// carrierFor is what this leg SAYS about the carrier it fetches, and it is
+// blank for almost every caller. Empty drops the full-bin content match, so
+// this leg no longer hunts a full bin in the empty pool — but Core still
+// resolves bin-type compatibility against a payload, and a silent step resolves
+// against the ORDER's. That is the right answer everywhere except one place: a
+// changeover swap carries the OUTGOING style's payload by necessity (its
+// opening pickup has to find the bin on the line), so its refill leg was
+// fetching a carrier of the type the cell was leaving (N1-c, sim 2026-08-24).
+//
+// Blank where the order already answers, so the wire is unchanged for every leg
+// that does not need to disagree with it. refillCarrierPayload is the one
+// function that decides.
+func markInboundEmpty(steps []protocol.ComplexOrderStep, inboundSource, carrierFor string) {
 	for i := range steps {
 		if steps[i].Action == protocol.ActionPickup && steps[i].Node == inboundSource {
 			steps[i].Empty = true
+			steps[i].PayloadCode = carrierFor
 		}
 	}
+}
+
+// refillCarrierPayload is what a CHANGEOVER's refill leg should say about the
+// carrier it fetches: nothing when the order's own payload already answers, the
+// incoming style's payload when it does not.
+//
+// Saying nothing is not a micro-optimisation. It keeps the wire byte-identical
+// for every changeover that does not change carrier type, which is most of
+// them, so a Core that predates the field behaves exactly as before except in
+// the one case where its answer was wrong anyway.
+func refillCarrierPayload(fromClaim, toClaim *processes.NodeClaim) string {
+	if toClaim == nil {
+		return ""
+	}
+	if fromClaim != nil && fromClaim.PayloadCode == toClaim.PayloadCode {
+		return ""
+	}
+	return toClaim.PayloadCode
 }
 
 func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapDispatch, error) {

@@ -50,12 +50,12 @@ func (h *Handlers) apiRequestEmptyBin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	order, err := h.orchestration.RequestEmptyBin(id, req.PayloadCode)
+	_, err = h.orchestration.RequestEmptyBin(id, req.PayloadCode)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSONWithTrigger(w, r, order, "refreshMaterial")
+	writeActionOK(w, r, "refreshMaterial")
 }
 
 func (h *Handlers) apiRequestFullBin(w http.ResponseWriter, r *http.Request) {
@@ -71,12 +71,12 @@ func (h *Handlers) apiRequestFullBin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	order, err := h.orchestration.RequestFullBin(id, req.PayloadCode)
+	_, err = h.orchestration.RequestFullBin(id, req.PayloadCode)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSONWithTrigger(w, r, order, "refreshMaterial")
+	writeActionOK(w, r, "refreshMaterial")
 }
 
 func (h *Handlers) apiClearLoaderHome(w http.ResponseWriter, r *http.Request) {

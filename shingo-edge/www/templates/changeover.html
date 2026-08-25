@@ -11,6 +11,12 @@
 </div>
 
 {{if .ActiveProcessID}}
+<!-- Advisory banner for participant nodes with no process_nodes row. Lives
+     OUTSIDE #changeover-content on purpose: that div is swapped wholesale by
+     htmx on every SSE tick, and the advisory arrives once, on the start
+     response, and is not persisted anywhere to re-render from. -->
+<div id="changeover-advisory" class="alert alert-warning" hidden></div>
+
 <div class="card" id="changeover-content"
      hx-ext="sse"
      sse-connect="/events"

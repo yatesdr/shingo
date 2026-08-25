@@ -379,6 +379,44 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     sequence                INTEGER NOT NULL DEFAULT 0,
     lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
     reuse_compatible_bins   INTEGER NOT NULL DEFAULT 0,
+    -- Which press-index positions hold bins that block the tooling change, as a
+    -- JSON array of position keys ("front"/"paired"/"second"). Same shape and same
+    -- reasoning as allowed_payload_codes: a small set on one row rather than a
+    -- child table, because the back positions have no claim rows of their own.
+    -- Empty = no position marked = today's behaviour.
+    changeover_evac_nodes   TEXT NOT NULL DEFAULT '',
+    -- Where a marked position's bin is CLEARED to, when this cell wants it
+    -- somewhere other than its ordinary outbound destination. A node OR a group
+    -- name; blank means normal routing, which is the default and the common
+    -- case. There is no bay: see engine/changeover_tooling.go.
+    changeover_evac_destination TEXT NOT NULL DEFAULT '',
+    -- What happens to a marked position's bin when its part CARRIES OVER — the same
+    -- payload on that position in both styles. "replace" (the default) clears it
+    -- like any other marked position and brings a fresh carrier through staging;
+    -- "keep_lineside" leaves the bin where it is, because that part does not
+    -- have to move for the setup; "outbound_staging" walks the SAME bin to the
+    -- cell's outbound staging spot to clear the floor and brings it back on the
+    -- tooling-done release. Never consulted when the payloads differ — the bin
+    -- has to change anyway.
+    changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
+    -- Turns a loader's card into a loading instruction during a changeover:
+    -- which empty bin type the changing-over cells are waiting for. Off by
+    -- default; see NodeClaim.ChangeoverLoadDirective for why it lives here
+    -- rather than on the Core loader aggregate.
+    changeover_load_directive INTEGER NOT NULL DEFAULT 0,
+    -- Which robot of a press-index pair fetches the replacement carrier.
+    -- 0 = today's shape (R1 evacuates and refills); 1 = flipped (R1 evacuates
+    -- only, R2 indexes and refills). Describes the cell's hardware, so
+    -- UpsertClaim warns when two styles on one press disagree.
+    index_robot_supplies    INTEGER NOT NULL DEFAULT 0,
+    -- SEER robot-SELECTION hints, carried through to the fleet request.
+    -- key_route is a JSON array of map points to prefer passing through, IN
+    -- ORDER; key_task is 'load'/'unload'. Both empty on every claim until one
+    -- is configured, and empty means the fleet picks freely. A point that does
+    -- not resolve terminates the robot's waybill on issue, which is why
+    -- ValidateNodeClaim checks each one against Core's synced node list.
+    key_route               TEXT NOT NULL DEFAULT '',
+    key_task                TEXT NOT NULL DEFAULT '',
     auto_push               INTEGER NOT NULL DEFAULT 0,
     -- UOP-threshold replenishment: tracks how reorder_point was set.
     -- 'legacy' = default, never edited (silent-inert when 0).

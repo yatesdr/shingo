@@ -392,6 +392,38 @@ type ComplexOrderStep struct {
 	// preserves the prior always-full behavior, so an older Core that ignores
 	// the field behaves exactly as today.
 	Empty bool `json:"empty,omitempty"`
+	// PayloadCode is the payload THIS STEP's bin selection resolves against,
+	// overriding the order's payload for this leg only. Empty means "use the
+	// order's", which is every leg of every order that does not need to say
+	// otherwise.
+	//
+	// ── WHY A LEG NEEDS ITS OWN ANSWER ────────────────────────────────────
+	//
+	// A changeover swap is ONE order doing two jobs: it lifts the outgoing
+	// style's bin off the line and brings the incoming style's carrier back.
+	// The order carries the FROM-style payload, because its opening pickup has
+	// to find the bin that is actually there. Marking the refill leg Empty
+	// drops the full-bin content match — but NOT bin-type compatibility, which
+	// resolves against the order's payload through PayloadBinTypeAdvisoryClause.
+	// So a press changing from a payload on one carrier type to a payload on
+	// another was handed a carrier of the type it was LEAVING: wrong carrier one
+	// direction, and an unsatisfiable wait for a type the plant had none of in
+	// the other, which parked two supply legs until an operator abandoned them
+	// (sim 2026-08-24, N1-c).
+	//
+	// Setting it here is the smallest true statement: this leg is for that
+	// payload. The alternative was splitting the order in two, which doubles the
+	// robot trips for the common same-node case the single trip was chosen for.
+	//
+	// ── MIXED VERSIONS: CORE FIRST ────────────────────────────────────────
+	//
+	// Additive and omitempty, like every other field added to this wire — but
+	// unlike the Core→Edge additions, an old receiver ignoring THIS one is not
+	// cosmetic: it silently reverts to the wrong-carrier behaviour above. Core
+	// and Edge deploy separately, so DEPLOY CORE FIRST. Pinned by
+	// TestComplexOrderStep_PayloadCode_MixedVersion, which asserts what an old
+	// Core does rather than leaving it to be discovered on a floor.
+	PayloadCode string `json:"payload_code,omitempty"`
 	// WaitKind declares WHO MAY ADVANCE a wait step, carried across the wire so
 	// the far side does not have to guess.
 	//
@@ -498,8 +530,16 @@ type ComplexOrderRequest struct {
 	ProcessNode string             `json:"process_node,omitempty"`
 	Steps       []ComplexOrderStep `json:"steps"`
 	// SiblingOrderUUID is the edge UUID of the paired leg in a two-robot swap.
-	// It rides the SECOND-created leg — the only one that can know the other's
-	// UUID — and is empty for non-swap orders and for the first-created leg.
+	// BOTH legs carry it: Edge mints both uuids before it creates either, so
+	// each leg names its partner and neither goes out unpaired. Empty for
+	// non-swap orders.
+	//
+	// It did once ride only the second-created leg, because a leg could not
+	// name a sibling that did not exist yet. That made CREATION ORDER a
+	// correctness input, and Core reads a one-way link as no link at all
+	// (swap_hold checks sib.SiblingOrderUUID == order.EdgeUUID). A Core
+	// talking to an older Edge still sees the one-way shape, which is why the
+	// intake back-link stays.
 	//
 	// Which ROLE the pointer-carrying (second-created) leg is is NOT fixed —
 	// it varies by mode and by the creating path, so do not read a role into
@@ -515,6 +555,15 @@ type ComplexOrderRequest struct {
 	// dispatch hold can see the pairing at intake, before a removal leg's
 	// synchronous dispatch claims the line bin.
 	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
+	// KeyRoute / KeyTask are SEER robot-SELECTION hints carried from the
+	// claim's Routing configuration through to fleet.CreateOrderRequest. See
+	// that type for the vendor semantics. Both empty on every order until a
+	// claim configures them, which is the pre-existing behaviour exactly.
+	//
+	// Additive and omitempty: an older Core ignores them, and an older Edge
+	// simply never sends them.
+	KeyRoute []string `json:"key_route,omitempty"`
+	KeyTask  string   `json:"key_task,omitempty"`
 	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
 	RemainingUOP *int `json:"remaining_uop,omitempty"`
 	// OriginID / OriginClass attribute this order to the demand episode that
@@ -682,6 +731,41 @@ type NodeListResponse struct {
 	Nodes           []NodeInfo           `json:"nodes"`
 	Loaders         []LoaderInfo         `json:"loaders,omitempty"`
 	PayloadBinTypes []PayloadBinTypeInfo `json:"payload_bin_types,omitempty"`
+	// ScenePoints and SceneEdges are the vendor map's own universe of
+	// locations and the drivable segments between them. Sibling slices for the
+	// same reason as the two above, and additive in the same way.
+	//
+	// SHINGO WORKS IN APs and always has, so the node list is only the subset
+	// of map points that Shingo gave a job to. A key route is expressed in the
+	// VENDOR's universe — a plain waypoint (class LM) is its primary use — so
+	// validating one against the node list refuses a correct route confidently.
+	// Core has mirrored the whole scene graph since the SEER adapter was
+	// written; it simply never sent it down.
+	//
+	// NO COORDINATES. Validation needs names and the picker needs adjacency;
+	// neither needs geometry, and the scene's point set is large enough that
+	// sending x/y on every sync would be paying for a map nobody draws here.
+	ScenePoints []ScenePointInfo `json:"scene_points,omitempty"`
+	SceneEdges  []SceneEdgeInfo  `json:"scene_edges,omitempty"`
+}
+
+// ScenePointInfo is one location in the vendor's map.
+//
+// ClassName is carried because the DISTINCTION matters to the consumer: "LM"
+// is a plain waypoint, "AP" an action point Shingo may also know as a node.
+// A picker that cannot tell them apart cannot offer "the waypoints that lead
+// to this action point", which is the whole reason a route is typed by hand
+// today.
+type ScenePointInfo struct {
+	InstanceName string `json:"instance_name"`
+	ClassName    string `json:"class_name"`
+}
+
+// SceneEdgeInfo is one drivable segment, by endpoint name. The scene's real
+// connectivity — what leads to what — with the geometry left behind.
+type SceneEdgeInfo struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // LoaderInfo describes one Core-owned bin loader (produce) or unloader (consume)

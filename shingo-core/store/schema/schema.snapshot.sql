@@ -800,6 +800,8 @@ CREATE TABLE public.orders (
     queue_cause text,
     skip_auto_confirm boolean DEFAULT false NOT NULL,
     sibling_order_uuid text DEFAULT ''::text NOT NULL,
+    key_route text DEFAULT ''::text NOT NULL,
+    key_task text DEFAULT ''::text NOT NULL,
     source_intent text DEFAULT ''::text NOT NULL,
     coordinated boolean DEFAULT false NOT NULL,
     remaining_uop integer,

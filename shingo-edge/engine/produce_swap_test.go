@@ -7,6 +7,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/config"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	ordertestutil "shingoedge/orders/testutil"
 	"shingoedge/service"
@@ -54,7 +55,7 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (pr
 		SwapMode:            swapMode,
 		PayloadCode:         "WIDGET-A",
 		UOPCapacity:         100,
-		AutoReorder:         true,
+		AutoReorder:         domain.Ptr(true),
 		InboundSource:       "EMPTY-STORAGE",
 		InboundStaging:      "PRODUCE-IN-STAGING",
 		OutboundStaging:     "PRODUCE-OUT-STAGING",
@@ -238,9 +239,6 @@ func TestProduceSequential_RemovalThenBackfill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
-	if result.CycleMode != "sequential" {
-		t.Errorf("CycleMode = %q, want %q", result.CycleMode, "sequential")
-	}
 	if result.Order == nil {
 		t.Fatal("expected a complex removal order")
 	}
@@ -285,9 +283,6 @@ func TestProduceSingleRobot_TenStepSwap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
-	if result.CycleMode != "single_robot" {
-		t.Errorf("CycleMode = %q, want %q", result.CycleMode, "single_robot")
-	}
 	if result.Order == nil {
 		t.Fatal("expected a complex swap order")
 	}
@@ -311,9 +306,6 @@ func TestProduceTwoRobot_BothOrdersCreated(t *testing.T) {
 	result, err := eng.RequestProduceSwap(nodeID)
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
-	}
-	if result.CycleMode != "two_robot" {
-		t.Errorf("CycleMode = %q, want %q", result.CycleMode, "two_robot")
 	}
 	if result.OrderA == nil {
 		t.Fatal("expected OrderA (fetch-and-stage)")

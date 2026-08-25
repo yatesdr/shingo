@@ -149,8 +149,13 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		// "" for non-swap orders. The bidirectional back-link (supply→evac) is
 		// still reconciled below / on-read.
 		SiblingOrderUUID: p.SiblingOrderUUID,
-		OriginID:         originID,
-		OriginClass:      originClass,
+		// The claim's SEER routing hints, persisted with the order because
+		// dispatch happens later — see domain.Order.KeyRoute. Empty on every
+		// order until an Edge claim configures one.
+		KeyRoute:    p.KeyRoute,
+		KeyTask:     p.KeyTask,
+		OriginID:    originID,
+		OriginClass: originClass,
 	}
 
 	// Do the things this order names exist? The wire door has always asked; this

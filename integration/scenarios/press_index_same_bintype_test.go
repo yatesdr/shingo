@@ -2,19 +2,19 @@
 //
 // The case Fix A exists for: a press-index changeover where from- and to-style
 // share a bin type NEVER fans out (binTypesDiffer false → the per-position
-// diff pass skips), so the paired seat owns no task, no order, and — before
+// diff pass skips), so the paired position owns no task, no order, and — before
 // participants — appeared nowhere and was gated by nothing. The index motion
-// then places a bin on a seat that unrelated dispatch could also fill: the
-// two-bins-on-one-node family, and the reason HK operators fork-trucked seats.
+// then places a bin on a position that unrelated dispatch could also fill: the
+// two-bins-on-one-node family, and the reason HK operators fork-trucked positions.
 //
 // Pass conditions (SYNTH-plan §2 mapping, V2):
-//  1. indexed_over participant rows exist for the paired seat;
-//  2. intake is REFUSED at the paired seat for the whole changeover window;
+//  1. indexed_over participant rows exist for the paired position;
+//  2. intake is REFUSED at the paired position for the whole changeover window;
 //  3. an unrelated node on the same process still accepts orders — the
 //     Springfield non-regression;
-//  4. the seat renders as a CHILD tile (child_of_node set) — the mechanism by
+//  4. the position renders as a CHILD tile (child_of_node set) — the mechanism by
 //     which the board suppresses its release button;
-//  5. cutover completes, and the seat's gate REOPENS after it.
+//  5. cutover completes, and the position's gate REOPENS after it.
 //
 //go:build docker
 
@@ -66,7 +66,7 @@ func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
 	core := stubCore(t)
 	edge := edgeharness.NewEdgeWithCoreAPI(t, stationID, core.URL)
 
-	// ── Seed: press (stationed) + paired seat (row, NO station) + bystander ──
+	// ── Seed: press (stationed) + paired position (row, NO station) + bystander ──
 	processID, err := edge.DB.CreateProcess("V2-PROC", "same-bin-type press-index", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
@@ -84,14 +84,14 @@ func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create press node: %v", err)
 	}
-	// The paired seat: a process_nodes row exists (the HK shape after
+	// The paired position: a process_nodes row exists (the HK shape after
 	// ensurePressIndexBackNode) but carries NO station of its own.
-	seatID, err := edge.DB.CreateProcessNode(processes.NodeInput{
+	positionID, err := edge.DB.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
-		CoreNodeName: "PLN-V2-B", Code: "V2B", Name: "V2 Press Seat", Sequence: 2, Enabled: true,
+		CoreNodeName: "PLN-V2-B", Code: "V2B", Name: "V2 Press Position", Sequence: 2, Enabled: true,
 	})
 	if err != nil {
-		t.Fatalf("create seat node: %v", err)
+		t.Fatalf("create position node: %v", err)
 	}
 	// The bystander: same process, not in the changeover — the loader class
 	// the Springfield field report is about.
@@ -139,7 +139,7 @@ func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
 			t.Fatalf("upsert claim style=%d: %v", c.StyleID, err)
 		}
 	}
-	for _, id := range []int64{pressID, seatID, bystanderID} {
+	for _, id := range []int64{pressID, positionID, bystanderID} {
 		if _, err := edge.DB.EnsureProcessNodeRuntime(id); err != nil {
 			t.Fatalf("ensure runtime %d: %v", id, err)
 		}
@@ -151,32 +151,32 @@ func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
 		t.Fatalf("start press-index changeover: %v", err)
 	}
 
-	// (1) indexed_over rows exist, seat owned by the press's task.
+	// (1) indexed_over rows exist, position owned by the press's task.
 	parts, err := edge.DB.ListChangeoverParticipants(changeover.ID)
 	if err != nil {
 		t.Fatalf("list participants: %v", err)
 	}
-	var seatPart *domain.Participant
+	var positionPart *domain.Participant
 	for i := range parts {
 		if parts[i].CoreNodeName == "PLN-V2-B" {
-			seatPart = &parts[i]
+			positionPart = &parts[i]
 		}
 	}
-	if seatPart == nil {
-		t.Fatalf("paired seat has no participant row; participants = %+v", parts)
+	if positionPart == nil {
+		t.Fatalf("paired position has no participant row; participants = %+v", parts)
 	}
-	if seatPart.Role != domain.ParticipantRoleIndexedOver {
-		t.Errorf("seat role = %q, want indexed_over (same-bin-type never fans out, so it must not be task-role)", seatPart.Role)
+	if positionPart.Role != domain.ParticipantRoleIndexedOver {
+		t.Errorf("position role = %q, want indexed_over (same-bin-type never fans out, so it must not be task-role)", positionPart.Role)
 	}
-	if seatPart.OwningTaskID == nil {
-		t.Error("seat participant has no owning task — the child-tile render and station resolution both hang off it")
+	if positionPart.OwningTaskID == nil {
+		t.Error("position participant has no owning task — the child-tile render and station resolution both hang off it")
 	}
 
-	// (2) intake refused at the seat, with the indexed-over reason.
-	if ok, reason := edge.Engine.CanAcceptOrders(seatID); ok {
-		t.Error("paired seat accepts orders mid-changeover — the two-bins-on-one-node window is open")
+	// (2) intake refused at the position, with the indexed-over reason.
+	if ok, reason := edge.Engine.CanAcceptOrders(positionID); ok {
+		t.Error("paired position accepts orders mid-changeover — the two-bins-on-one-node window is open")
 	} else if reason == "" {
-		t.Error("seat refusal carries no reason")
+		t.Error("position refusal carries no reason")
 	}
 
 	// (3) Springfield non-regression: the bystander keeps working.
@@ -184,25 +184,25 @@ func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
 		t.Errorf("unrelated node refused intake (%q) during a changeover it is not part of", reason)
 	}
 
-	// (4) the seat renders as a CHILD tile on the press's station.
+	// (4) the position renders as a CHILD tile on the press's station.
 	view, err := service.NewStationService(edge.DB).BuildView(context.Background(), opStationID)
 	if err != nil {
 		t.Fatalf("BuildView: %v", err)
 	}
-	var seatView *domain.StationNodeView
+	var positionView *domain.StationNodeView
 	for i := range view.Nodes {
-		if view.Nodes[i].Node.ID == seatID {
-			seatView = &view.Nodes[i]
+		if view.Nodes[i].Node.ID == positionID {
+			positionView = &view.Nodes[i]
 		}
 	}
-	if seatView == nil {
-		t.Fatal("seat absent from the press's station view — the pre-fix invisibility")
+	if positionView == nil {
+		t.Fatal("position absent from the press's station view — the pre-fix invisibility")
 	} else {
-		if seatView.ChildOfNode == "" {
-			t.Error("seat is not marked child_of_node; the board cannot suppress its release button")
+		if positionView.ChildOfNode == "" {
+			t.Error("position is not marked child_of_node; the board cannot suppress its release button")
 		}
-		if seatView.ChangeoverTask != nil {
-			t.Error("seat owns a task in the same-bin-type case; it must not")
+		if positionView.ChangeoverTask != nil {
+			t.Error("position owns a task in the same-bin-type case; it must not")
 		}
 	}
 
@@ -238,9 +238,9 @@ func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
 		t.Errorf("changeover %d still active after cutover (state %q)", still.ID, still.State)
 	}
 
-	// …and the seat's gate REOPENS — the block is the changeover window, not a
+	// …and the position's gate REOPENS — the block is the changeover window, not a
 	// permanent property of the node.
-	if ok, reason := edge.Engine.CanAcceptOrders(seatID); !ok {
-		t.Errorf("seat still refuses intake after cutover (%q); the gate must release with the window", reason)
+	if ok, reason := edge.Engine.CanAcceptOrders(positionID); !ok {
+		t.Errorf("position still refuses intake after cutover (%q); the gate must release with the window", reason)
 	}
 }

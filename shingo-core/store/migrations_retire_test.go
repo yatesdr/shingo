@@ -83,6 +83,11 @@ import (
 // trade: after they exist, deleting raw deltas at 90 days (P4) destroys
 // nothing the owner named durable.
 //
+// v97 ADDS orders.key_route / key_task — the SEER routing hints an Edge claim
+// configures, carried on the order because intake and dispatch are separated by
+// time. Additive columns with ” defaults: inert to a pre-v97 binary, which
+// simply never reads them, and there is no backfill to lose.
+//
 // THIS NUMBER IS MEANT TO BE EDITED, once, by whoever adds a migration. It is
 // not a value to sync -- it is the second person confirming the head moved on
 // purpose, which is the only thing that distinguishes "a migration was added"
@@ -94,8 +99,8 @@ func TestMigrate_PendingRestocksRetired(t *testing.T) {
 	if schema.TableExists(db.DB, "pending_restocks") {
 		t.Error("pending_restocks must be dropped by v70")
 	}
-	if got := store.LatestMigrationVersion(); got != 96 {
-		t.Errorf("head migration = %d, want 96", got)
+	if got := store.LatestMigrationVersion(); got != 97 {
+		t.Errorf("head migration = %d, want 97", got)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"shingo/protocol/auth"
+	"shingocore/config"
 	"shingocore/notify"
 )
 
@@ -31,86 +32,22 @@ func (h *Handlers) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 	section := r.FormValue("section")
 	cfg := h.engine.AppConfig()
 
+	// NOT `defer cfg.Unlock()`, however much the two Unlock calls below invite
+	// it: config.Config.Save takes the same non-reentrant mutex, so a deferred
+	// unlock would still be holding it at the Save call and deadlock the write.
+	// The lock covers the mutation and nothing else.
 	cfg.Lock()
 	switch section {
 	case "database":
-		cfg.Database.Postgres.Host = r.FormValue("pg_host")
-		if p, err := strconv.Atoi(r.FormValue("pg_port")); err == nil {
-			cfg.Database.Postgres.Port = p
-		}
-		cfg.Database.Postgres.Database = r.FormValue("pg_database")
-		cfg.Database.Postgres.User = r.FormValue("pg_user")
-		if v := r.FormValue("pg_password"); v != "" {
-			cfg.Database.Postgres.Password = v
-		}
-		cfg.Database.Postgres.SSLMode = r.FormValue("pg_sslmode")
-		if v, err := strconv.Atoi(r.FormValue("pg_max_open_conns")); err == nil && v > 0 {
-			cfg.Database.Postgres.MaxOpenConns = v
-		}
-		if v, err := strconv.Atoi(r.FormValue("pg_max_idle_conns")); err == nil && v > 0 {
-			cfg.Database.Postgres.MaxIdleConns = v
-		}
-		if d, err := time.ParseDuration(r.FormValue("pg_conn_max_lifetime")); err == nil && d > 0 {
-			cfg.Database.Postgres.ConnMaxLifetime = d
-		}
+		applyDatabaseSection(cfg, r)
 	case "general", "fleet":
-		if v := r.FormValue("fleet_base_url"); v != "" || r.Form.Has("fleet_base_url") {
-			cfg.RDS.BaseURL = v
-			if d, err := time.ParseDuration(r.FormValue("fleet_poll_interval")); err == nil {
-				cfg.RDS.PollInterval = d
-			}
-			if d, err := time.ParseDuration(r.FormValue("fleet_timeout")); err == nil {
-				cfg.RDS.Timeout = d
-			}
-			// Guard the zero: an empty or unparseable field must not silently
-			// drop the grace period to 0, which would fail every faulted
-			// order on the next poll instead of giving the floor time.
-			if d, err := time.ParseDuration(r.FormValue("fleet_fault_grace")); err == nil && d > 0 {
-				cfg.RDS.FaultGrace = d
-			}
-		}
+		applyFleetSection(cfg, r)
 	case "services", "messaging":
-		var brokers []string
-		for i := 0; ; i++ {
-			host := r.FormValue(fmt.Sprintf("kafka_host_%d", i))
-			if host == "" {
-				break
-			}
-			port := r.FormValue(fmt.Sprintf("kafka_port_%d", i))
-			if port == "" {
-				port = "9093"
-			}
-			brokers = append(brokers, host+":"+port)
-		}
-		cfg.Messaging.Kafka.Brokers = brokers
-		cfg.Messaging.Kafka.GroupID = r.FormValue("group_id")
-		cfg.Messaging.OrdersTopic = r.FormValue("orders_topic")
-		cfg.Messaging.DispatchTopic = r.FormValue("dispatch_topic")
+		applyMessagingSection(cfg, r)
 	case "fire_alarm":
-		cfg.FireAlarm.Enabled = r.FormValue("fa_enabled") == "on"
-		cfg.FireAlarm.AutoResumeDefault = r.FormValue("fa_auto_resume") == "on"
+		applyFireAlarmSection(cfg, r)
 	case "notifications":
-		cfg.Notifications.Enabled = r.FormValue("notif_enabled") == "on"
-		cfg.Notifications.SMTPHost = r.FormValue("notif_smtp_host")
-		if p, err := strconv.Atoi(r.FormValue("notif_smtp_port")); err == nil && p > 0 {
-			cfg.Notifications.SMTPPort = p
-		}
-		cfg.Notifications.SMTPTLS = r.FormValue("notif_smtp_tls") == "on"
-		cfg.Notifications.SMTPUser = r.FormValue("notif_smtp_user")
-		cfg.Notifications.SMTPPassword = r.FormValue("notif_smtp_password")
-		cfg.Notifications.FromAddress = r.FormValue("notif_from_address")
-		if v, err := strconv.Atoi(r.FormValue("notif_throttle_minutes")); err == nil && v > 0 {
-			cfg.Notifications.ThrottleMinutes = v
-		}
-		var recipients []string
-		for i := 0; ; i++ {
-			addr := r.FormValue(fmt.Sprintf("notif_recipient_%d", i))
-			if addr == "" {
-				break
-			}
-			recipients = append(recipients, addr)
-		}
-		cfg.Notifications.Recipients = recipients
+		applyNotificationsSection(cfg, r)
 	default:
 		cfg.Unlock()
 		http.Error(w, "unknown section", http.StatusBadRequest)
@@ -332,4 +269,117 @@ func (h *Handlers) handleConfigPassword(w http.ResponseWriter, r *http.Request) 
 	}
 
 	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// applyDatabaseSection writes the Postgres connection settings from the posted form.
+//
+// Takes the request rather than r.Form so the body is the posted one verbatim:
+// r.FormValue and r.Form.Has are both used across these sections, and rewriting
+// the calls would turn a move into forty small substitutions.
+func applyDatabaseSection(cfg *config.Config, r *http.Request) {
+	cfg.Database.Postgres.Host = r.FormValue("pg_host")
+	if p, err := strconv.Atoi(r.FormValue("pg_port")); err == nil {
+		cfg.Database.Postgres.Port = p
+	}
+	cfg.Database.Postgres.Database = r.FormValue("pg_database")
+	cfg.Database.Postgres.User = r.FormValue("pg_user")
+	if v := r.FormValue("pg_password"); v != "" {
+		cfg.Database.Postgres.Password = v
+	}
+	cfg.Database.Postgres.SSLMode = r.FormValue("pg_sslmode")
+	if v, err := strconv.Atoi(r.FormValue("pg_max_open_conns")); err == nil && v > 0 {
+		cfg.Database.Postgres.MaxOpenConns = v
+	}
+	if v, err := strconv.Atoi(r.FormValue("pg_max_idle_conns")); err == nil && v > 0 {
+		cfg.Database.Postgres.MaxIdleConns = v
+	}
+	if d, err := time.ParseDuration(r.FormValue("pg_conn_max_lifetime")); err == nil && d > 0 {
+		cfg.Database.Postgres.ConnMaxLifetime = d
+	}
+}
+
+// applyFleetSection writes the fleet/general settings from the posted form.
+//
+// Takes the request rather than r.Form so the body is the posted one verbatim:
+// r.FormValue and r.Form.Has are both used across these sections, and rewriting
+// the calls would turn a move into forty small substitutions.
+func applyFleetSection(cfg *config.Config, r *http.Request) {
+	if v := r.FormValue("fleet_base_url"); v != "" || r.Form.Has("fleet_base_url") {
+		cfg.RDS.BaseURL = v
+		if d, err := time.ParseDuration(r.FormValue("fleet_poll_interval")); err == nil {
+			cfg.RDS.PollInterval = d
+		}
+		if d, err := time.ParseDuration(r.FormValue("fleet_timeout")); err == nil {
+			cfg.RDS.Timeout = d
+		}
+		// Guard the zero: an empty or unparseable field must not silently
+		// drop the grace period to 0, which would fail every faulted
+		// order on the next poll instead of giving the floor time.
+		if d, err := time.ParseDuration(r.FormValue("fleet_fault_grace")); err == nil && d > 0 {
+			cfg.RDS.FaultGrace = d
+		}
+	}
+}
+
+// applyMessagingSection writes the Kafka/messaging settings from the posted form.
+//
+// Takes the request rather than r.Form so the body is the posted one verbatim:
+// r.FormValue and r.Form.Has are both used across these sections, and rewriting
+// the calls would turn a move into forty small substitutions.
+func applyMessagingSection(cfg *config.Config, r *http.Request) {
+	var brokers []string
+	for i := 0; ; i++ {
+		host := r.FormValue(fmt.Sprintf("kafka_host_%d", i))
+		if host == "" {
+			break
+		}
+		port := r.FormValue(fmt.Sprintf("kafka_port_%d", i))
+		if port == "" {
+			port = "9093"
+		}
+		brokers = append(brokers, host+":"+port)
+	}
+	cfg.Messaging.Kafka.Brokers = brokers
+	cfg.Messaging.Kafka.GroupID = r.FormValue("group_id")
+	cfg.Messaging.OrdersTopic = r.FormValue("orders_topic")
+	cfg.Messaging.DispatchTopic = r.FormValue("dispatch_topic")
+}
+
+// applyFireAlarmSection writes the fire-alarm settings from the posted form.
+//
+// Takes the request rather than r.Form so the body is the posted one verbatim:
+// r.FormValue and r.Form.Has are both used across these sections, and rewriting
+// the calls would turn a move into forty small substitutions.
+func applyFireAlarmSection(cfg *config.Config, r *http.Request) {
+	cfg.FireAlarm.Enabled = r.FormValue("fa_enabled") == "on"
+	cfg.FireAlarm.AutoResumeDefault = r.FormValue("fa_auto_resume") == "on"
+}
+
+// applyNotificationsSection writes the notification settings and recipient list from the posted form.
+//
+// Takes the request rather than r.Form so the body is the posted one verbatim:
+// r.FormValue and r.Form.Has are both used across these sections, and rewriting
+// the calls would turn a move into forty small substitutions.
+func applyNotificationsSection(cfg *config.Config, r *http.Request) {
+	cfg.Notifications.Enabled = r.FormValue("notif_enabled") == "on"
+	cfg.Notifications.SMTPHost = r.FormValue("notif_smtp_host")
+	if p, err := strconv.Atoi(r.FormValue("notif_smtp_port")); err == nil && p > 0 {
+		cfg.Notifications.SMTPPort = p
+	}
+	cfg.Notifications.SMTPTLS = r.FormValue("notif_smtp_tls") == "on"
+	cfg.Notifications.SMTPUser = r.FormValue("notif_smtp_user")
+	cfg.Notifications.SMTPPassword = r.FormValue("notif_smtp_password")
+	cfg.Notifications.FromAddress = r.FormValue("notif_from_address")
+	if v, err := strconv.Atoi(r.FormValue("notif_throttle_minutes")); err == nil && v > 0 {
+		cfg.Notifications.ThrottleMinutes = v
+	}
+	var recipients []string
+	for i := 0; ; i++ {
+		addr := r.FormValue(fmt.Sprintf("notif_recipient_%d", i))
+		if addr == "" {
+			break
+		}
+		recipients = append(recipients, addr)
+	}
+	cfg.Notifications.Recipients = recipients
 }

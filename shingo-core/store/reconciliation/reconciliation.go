@@ -203,7 +203,15 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	if err != nil {
 		return nil, err
 	}
+	return listAnomaliesWith(db, completion)
+}
 
+// listAnomaliesWith is ListAnomalies over completion rows the caller already
+// holds. GetSummary needs those rows themselves — countRecent reads their
+// timestamps, which the mapped Anomaly does not carry — so without this seam it
+// ran the completion query, then called ListAnomalies, which ran it again. Two
+// round trips per health hit, and nothing tied the two results together.
+func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly, error) {
 	var anomalies []*Anomaly
 	for _, a := range completion {
 		issue := a.Issue
@@ -358,7 +366,31 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 		return nil, err
 	}
 
-	rows, err = db.Query(`
+	staleEdgeAnomalies, err := listStaleEdgeAnomalies(db)
+	if err != nil {
+		return nil, err
+	}
+	anomalies = append(anomalies, staleEdgeAnomalies...)
+
+	stackedBinAnomalies, err := listStackedBinAnomalies(db)
+	if err != nil {
+		return nil, err
+	}
+	anomalies = append(anomalies, stackedBinAnomalies...)
+
+	orphanManifestAnomalies, err := listOrphanManifestAnomalies(db)
+	if err != nil {
+		return nil, err
+	}
+	anomalies = append(anomalies, orphanManifestAnomalies...)
+
+	return anomalies, nil
+}
+
+// listStaleEdgeAnomalies reports Edge stations the registry has marked stale.
+func listStaleEdgeAnomalies(db *sql.DB) ([]*Anomaly, error) {
+	var anomalies []*Anomaly
+	rows, err := db.Query(`
 		SELECT station_id, last_heartbeat
 		FROM edge_registry
 		WHERE status='stale'
@@ -382,37 +414,49 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 			ObservedAt:        observedAt,
 		})
 	}
+	// The other four detectors in this function check rows.Err(); this one did
+	// not, so a mid-iteration driver error silently truncated the list instead
+	// of reporting it -- on the detector that says Edge stations have gone dark.
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return anomalies, nil
+}
 
-	// Detect bins stacked at a concrete node that is not a storage
-	// container — i.e., more than one bin physically present at a process
-	// node (line node, dropoff target, etc.). This indicates a prior
-	// cycle's evac order failed to complete the bin handoff (e.g., Robot B
-	// faulted en route from core to AMR group, operator took manual
-	// control, transaction never finalized) while subsequent cycles
-	// continued to deliver new bins to the same node.
-	// See bug-fix-review-plan.md item 3.1.
-	//
-	// Excluded by type — containers whose bin_count legitimately rolls up
-	// across child slots, so >1 bin is normal, not stacked:
-	//   NGRP — synthetic parent for lanes / direct nodes
-	//   LANE — depth-ordered slot group (children are the actual slots)
-	//   STOR — a single physical supermarket position that holds many bins
-	//          (dispatch/store_slot.go treats STOR as one addressable slot
-	//          with multi-bin capacity — it is NOT an aggregate of children)
-	// The join is LEFT so an untyped node still gets checked (node_type_id
-	// NULL); only the three named codes are excluded. TRANSIT is not listed:
-	// no node_type with that code exists — the in-flight model is the
-	// synthetic _TRANSIT node, already excluded by is_synthetic.
-	//
-	// Retired bins are excluded (status <> 'retired'), matching
-	// CountByNode/ListByNode in store/bins: a retired bin parked on a node
-	// is inventory bookkeeping, not a physical stack, and counting it
-	// fires a false critical on the first live delivery to that node.
-	//
-	// Scope: root-level nodes only (parent_id IS NULL) — roughly two-thirds
-	// of slots. Group-parented slots are not watched by this check; a clean
-	// board is not proof that no group-parented slot is stacked.
-	rows, err = db.Query(`
+// Detect bins stacked at a concrete node that is not a storage
+// container — i.e., more than one bin physically present at a process
+// node (line node, dropoff target, etc.). This indicates a prior
+// cycle's evac order failed to complete the bin handoff (e.g., Robot B
+// faulted en route from core to AMR group, operator took manual
+// control, transaction never finalized) while subsequent cycles
+// continued to deliver new bins to the same node.
+// See bug-fix-review-plan.md item 3.1.
+//
+// Excluded by type — containers whose bin_count legitimately rolls up
+// across child slots, so >1 bin is normal, not stacked:
+//
+//	NGRP — synthetic parent for lanes / direct nodes
+//	LANE — depth-ordered slot group (children are the actual slots)
+//	STOR — a single physical supermarket position that holds many bins
+//	       (dispatch/store_slot.go treats STOR as one addressable slot
+//	       with multi-bin capacity — it is NOT an aggregate of children)
+//
+// The join is LEFT so an untyped node still gets checked (node_type_id
+// NULL); only the three named codes are excluded. TRANSIT is not listed:
+// no node_type with that code exists — the in-flight model is the
+// synthetic _TRANSIT node, already excluded by is_synthetic.
+//
+// Retired bins are excluded (status <> 'retired'), matching
+// CountByNode/ListByNode in store/bins: a retired bin parked on a node
+// is inventory bookkeeping, not a physical stack, and counting it
+// fires a false critical on the first live delivery to that node.
+//
+// Scope: root-level nodes only (parent_id IS NULL) — roughly two-thirds
+// of slots. Group-parented slots are not watched by this check; a clean
+// board is not proof that no group-parented slot is stacked.
+func listStackedBinAnomalies(db *sql.DB) ([]*Anomaly, error) {
+	var anomalies []*Anomaly
+	rows, err := db.Query(`
 		SELECT n.id, n.name, COUNT(b.id) AS bin_count
 		FROM bins b
 		JOIN nodes n ON n.id = b.node_id
@@ -447,11 +491,15 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	return anomalies, nil
+}
 
-	// Detect bins with speculative manifest but no active claiming order.
-	// This is informational only — manifest represents physical reality and
-	// should NOT be cleared. The detection surfaces these bins for review.
-	rows, err = db.Query(fmt.Sprintf(`
+// Detect bins with speculative manifest but no active claiming order.
+// This is informational only — manifest represents physical reality and
+// should NOT be cleared. The detection surfaces these bins for review.
+func listOrphanManifestAnomalies(db *sql.DB) ([]*Anomaly, error) {
+	var anomalies []*Anomaly
+	rows, err := db.Query(fmt.Sprintf(`
 		SELECT b.id, b.label, b.status, b.claimed_by,
 		       COALESCE(o.status, 'no_order') AS order_status
 		FROM bins b
@@ -487,7 +535,6 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
 	return anomalies, nil
 }
 
@@ -498,7 +545,7 @@ func GetSummary(db *sql.DB) (*Summary, error) {
 	if err != nil {
 		return nil, err
 	}
-	anomalies, err := ListAnomalies(db)
+	anomalies, err := listAnomaliesWith(db, completion)
 	if err != nil {
 		return nil, err
 	}

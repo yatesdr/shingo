@@ -4074,7 +4074,33 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "bins", "anomaly_note")
 			}},
+		{97, "orders.key_route / key_task — the claim's SEER routing hints, carried to dispatch",
+			v97OrderKeyRoute,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "orders", "key_route")
+			}},
 	}
+}
+
+// v97OrderKeyRoute adds the two SEER robot-selection hints an order carries
+// from its Edge claim to the moment it is handed to the fleet.
+//
+// PERSISTED RATHER THAN PASSED because intake and dispatch are separated by
+// time: a complex order can sit queued for a starving sibling, a lane, or a
+// slot, and the request that named its route is long gone by the time
+// stepsToBlocks runs. Every other create-time fact the fleet request needs
+// (priority, payload, steps) is a column for the same reason.
+//
+// key_route is a JSON array because ORDER IS MEANINGFUL to SEER; ” and 'null'
+// both read back as no route.
+func v97OrderKeyRoute(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS key_route TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v97 orders.key_route: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS key_task TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v97 orders.key_task: %w", err)
+	}
+	return nil
 }
 
 // v96BinAnomalyNote adds the free-text note that travels with a transit anomaly.

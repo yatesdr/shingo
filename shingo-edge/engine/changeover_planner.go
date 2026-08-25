@@ -31,7 +31,7 @@ import (
 // BuildChangeoverPlan sees the diffs; per-position diffs reach the
 // planner with SwapMode = "press_position" and route through the
 // dedicated case in BuildSwapChangeoverSteps / BuildEvacuateChangeoverSteps.
-func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool) changeover.Plan {
+func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool, tooling toolingChangeover) changeover.Plan {
 	var actions []changeover.NodeAction
 	for _, diff := range diffs {
 		if diff.Situation == SituationUnchanged {
@@ -44,7 +44,11 @@ func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fal
 		action := planNodeAction(diff, node, fallbackAutoConfirm, activePullByCoreNode)
 		actions = append(actions, action)
 	}
-	return changeover.Plan{Actions: actions}
+	// TOOLING RUNS LAST, over the finished plan. It is a decorator, not a
+	// planner: it edits legs the passes above produced rather than competing
+	// with them for the press. See changeover_tooling.go for why that placement
+	// is the fix and not merely a tidier arrangement.
+	return applyToolingChangeover(changeover.Plan{Actions: actions}, nodes, tooling, fallbackAutoConfirm)
 }
 
 // directTripChangeoverMode reports whether a SwapMode dispatches a
@@ -89,177 +93,21 @@ func resolveSequentialActivePull(claim *processes.NodeClaim, activePull map[stri
 
 func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool) changeover.NodeAction {
 	action := changeover.NodeAction{
-		NodeID:    node.ID,
-		NodeName:  node.Name,
-		Situation: string(diff.Situation),
+		NodeID:       node.ID,
+		NodeName:     node.Name,
+		CoreNodeName: diff.CoreNodeName,
+		Situation:    string(diff.Situation),
 	}
 
 	switch diff.Situation {
 	case SituationSwap:
-		if diff.FromClaim == nil || diff.ToClaim == nil {
-			action.Err = fmt.Errorf("swap requires both from and to claims")
-			return action
-		}
-		// Direct-trip modes (sequential, per-position press-index, and
-		// same-bin-type two_robot_press_index) don't use a staging hop, so
-		// they bypass this gate entirely via directTripChangeoverMode above.
-		// two_robot still stages its supply leg's new bin, so it requires
-		// InboundStaging (but not OutboundStaging — its evac goes straight to
-		// OutboundDestination); single_robot (and the default fallthrough)
-		// require both. KeepStaged is a single_robot/two_robot concept;
-		// direct-trip modes skip it too.
-		if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
-			switch diff.FromClaim.SwapMode {
-			case protocol.SwapModeTwoRobot:
-				if diff.ToClaim.InboundStaging == "" {
-					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
-				}
-			default:
-				if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
-					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
-				}
-			}
-			if diff.FromClaim.KeepStaged {
-				return planKeepStagedAction(action, diff.FromClaim, diff.ToClaim)
-			}
-		}
-		// Per-mode field validation runs BEFORE the builder so missing
-		// fields surface as a clear, mode-specific diagnostic instead
-		// of falling out of the builder's empty-dispatch path with a
-		// generic "cannot build steps" message.
-		if missing := requiredChangeoverFields(diff.FromClaim, diff.ToClaim); len(missing) > 0 {
-			action.Err = fmt.Errorf("node %s: %s changeover requires %s",
-				node.Name, diff.FromClaim.SwapMode, formatMissingFields(missing))
-			return action
-		}
-		// For sequential, resolve inactive/active node names from the
-		// active-pull snapshot. Other modes ignore them.
-		var inactive, active string
-		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
-			inactive, active = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
-		}
-		disp := BuildSwapChangeoverSteps(diff.FromClaim, diff.ToClaim, inactive, active)
-		// An empty dispatch (no StepsA and no Roles) is the builder's "I
-		// rejected this claim" signal. Per-mode field validation above already
-		// catches the known rejection cases with operator-readable diagnostics;
-		// this is the last-resort message for an unanticipated rejection.
-		if disp.rejected() {
-			action.Err = fmt.Errorf("cannot build swap steps for node %s (mode %q)", node.Name, diff.FromClaim.SwapMode)
-			return action
-		}
-		assignDispatch(&action, diff.CoreNodeName, diff.FromClaim.PayloadCode, disp)
-		action.NextState = domain.NodeTaskStagingRequested
-		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
-			action.LogTag = "swap_sequential"
-		} else {
-			action.LogTag = "swap"
-		}
-
+		return planSwapAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
 	case SituationEvacuate:
-		if diff.FromClaim == nil || diff.ToClaim == nil {
-			action.Err = fmt.Errorf("evacuate requires both from and to claims")
-			return action
-		}
-		if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
-			switch diff.FromClaim.SwapMode {
-			case protocol.SwapModeTwoRobot:
-				if diff.ToClaim.InboundStaging == "" {
-					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
-				}
-			default:
-				if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
-					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
-				}
-			}
-			if diff.FromClaim.KeepStaged {
-				return planKeepStagedAction(action, diff.FromClaim, diff.ToClaim)
-			}
-		}
-		// Per-mode field validation for evacuate.
-		if missing := requiredChangeoverFields(diff.FromClaim, diff.ToClaim); len(missing) > 0 {
-			action.Err = fmt.Errorf("node %s: %s evacuate-changeover requires %s",
-				node.Name, diff.FromClaim.SwapMode, formatMissingFields(missing))
-			return action
-		}
-		var einactive, eactive string
-		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
-			einactive, eactive = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
-		}
-		disp := BuildEvacuateChangeoverSteps(diff.FromClaim, diff.ToClaim, einactive, eactive)
-		if disp.rejected() {
-			action.Err = fmt.Errorf("cannot build evacuate steps for node %s (mode %q)", node.Name, diff.FromClaim.SwapMode)
-			return action
-		}
-		assignDispatch(&action, diff.CoreNodeName, diff.FromClaim.PayloadCode, disp)
-		action.NextState = domain.NodeTaskStagingRequested
-		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
-			action.LogTag = "evacuate_sequential"
-		} else {
-			action.LogTag = "evacuate"
-		}
-
+		return planEvacuateAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
 	case SituationAdd:
-		if diff.ToClaim == nil {
-			action.Err = fmt.Errorf("add requires to claim")
-			return action
-		}
-		// SituationAdd: the node is empty (new in this style). No swap
-		// choreography needed — just deliver a bin directly to the node.
-		// Ignore InboundStaging / swap mode entirely; those are for swap
-		// coordination where a resident bin must be evacuated first.
-		action.SupplyOrder = &changeover.OrderSpec{
-			Retrieve: &changeover.RetrieveOrderSpec{
-				RetrieveEmpty: diff.ToClaim.Role == protocol.ClaimRoleProduce,
-				DeliveryNode:  diff.ToClaim.CoreNodeName,
-				SourceNode:    diff.ToClaim.InboundSource,
-				StagingNode:   "",
-				LoadType:      "standard",
-				PayloadCode:   diff.ToClaim.PayloadCode,
-				AutoConfirm:   fallbackAutoConfirm,
-			},
-		}
-		action.NextState = domain.NodeTaskStagingRequested
-		action.LogTag = "add"
-		return action
-
+		return planAddAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
 	case SituationDrop:
-		if diff.FromClaim == nil {
-			action.Err = fmt.Errorf("drop requires from claim")
-			return action
-		}
-		if diff.FromClaim.OutboundDestination == "" {
-			// Drop must check OutboundDestination — that's what
-			// BuildReleaseSteps actually consumes. The previous gate
-			// keyed on OutboundStaging, which silently skipped real
-			// misconfigured nodes (the ALN_002 silent-skip incident).
-			// Fail loudly so the operator sees the misconfig and the
-			// apply layer refuses the whole plan.
-			action.Err = fmt.Errorf("node %s has no outbound destination configured for evacuate; cannot proceed", node.Name)
-			return action
-		}
-		releaseSteps := BuildStagedReleaseSteps(diff.FromClaim)
-		if releaseSteps == nil {
-			return action
-		}
-		// AutoConfirm=false so the staged-release flow gates on the operator's
-		// release click at the lineside. The operator confirms partial count
-		// via the standard release-prompt dialog before the robot picks up.
-		action.EvacOrder = complexSpecWithPayload("", diff.CoreNodeName, releaseSteps, false, diff.FromClaim.PayloadCode)
-		action.LogTag = "drop"
-		// EvacuateOnChangeover gates whether cutover waits for this drop.
-		// When false, the bin can be retrieved at leisure; cutover does
-		// not depend on it, so the task is terminal from plan time. The
-		// drop order still runs (operator confirms partial count at the
-		// lineside release prompt and the robot returns the bin), it just
-		// isn't on the cutover critical path. When true, the operator
-		// marked this node as needing tool-change-style evacuation before
-		// cutover; the task stays at empty_requested until the bin
-		// physically leaves the line (handled in the pickup hook).
-		if diff.FromClaim.EvacuateOnChangeover {
-			action.NextState = domain.NodeTaskEmptyRequested
-		} else {
-			action.NextState = domain.NodeTaskLineCleared
-		}
+		return planDropAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
 	}
 
 	return action
@@ -518,4 +366,184 @@ func requiredChangeoverFields(fromClaim, toClaim *processes.NodeClaim) []missing
 		}
 	}
 	return missing
+}
+
+// planSwapAction plans a swap: both slots change, so the node needs the two-robot choreography
+// or the sequential fallback.
+func planSwapAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool) changeover.NodeAction {
+	if diff.FromClaim == nil || diff.ToClaim == nil {
+		action.Err = fmt.Errorf("swap requires both from and to claims")
+		return action
+	}
+	// Direct-trip modes (sequential, per-position press-index, and
+	// same-bin-type two_robot_press_index) don't use a staging hop, so
+	// they bypass this gate entirely via directTripChangeoverMode above.
+	// two_robot still stages its supply leg's new bin, so it requires
+	// InboundStaging (but not OutboundStaging — its evac goes straight to
+	// OutboundDestination); single_robot (and the default fallthrough)
+	// require both. KeepStaged is a single_robot/two_robot concept;
+	// direct-trip modes skip it too.
+	if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
+		switch diff.FromClaim.SwapMode {
+		case protocol.SwapModeTwoRobot:
+			if diff.ToClaim.InboundStaging == "" {
+				return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
+			}
+		default:
+			if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
+				return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
+			}
+		}
+		if diff.FromClaim.KeepStaged {
+			return planKeepStagedAction(action, diff.FromClaim, diff.ToClaim)
+		}
+	}
+	// Per-mode field validation runs BEFORE the builder so missing
+	// fields surface as a clear, mode-specific diagnostic instead
+	// of falling out of the builder's empty-dispatch path with a
+	// generic "cannot build steps" message.
+	if missing := requiredChangeoverFields(diff.FromClaim, diff.ToClaim); len(missing) > 0 {
+		action.Err = fmt.Errorf("node %s: %s changeover requires %s",
+			node.Name, diff.FromClaim.SwapMode, formatMissingFields(missing))
+		return action
+	}
+	// For sequential, resolve inactive/active node names from the
+	// active-pull snapshot. Other modes ignore them.
+	var inactive, active string
+	if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
+		inactive, active = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
+	}
+	disp := BuildSwapChangeoverSteps(diff.FromClaim, diff.ToClaim, inactive, active)
+	// An empty dispatch (no StepsA and no Roles) is the builder's "I
+	// rejected this claim" signal. Per-mode field validation above already
+	// catches the known rejection cases with operator-readable diagnostics;
+	// this is the last-resort message for an unanticipated rejection.
+	if disp.rejected() {
+		action.Err = fmt.Errorf("cannot build swap steps for node %s (mode %q)", node.Name, diff.FromClaim.SwapMode)
+		return action
+	}
+	assignDispatch(&action, diff.CoreNodeName, diff.FromClaim.PayloadCode, disp)
+	action.NextState = domain.NodeTaskStagingRequested
+	if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
+		action.LogTag = "swap_sequential"
+	} else {
+		action.LogTag = "swap"
+	}
+
+	return action
+}
+
+// planEvacuateAction plans an evacuate-swap: the outgoing bin leaves before the incoming one lands.
+func planEvacuateAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool) changeover.NodeAction {
+	if diff.FromClaim == nil || diff.ToClaim == nil {
+		action.Err = fmt.Errorf("evacuate requires both from and to claims")
+		return action
+	}
+	if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
+		switch diff.FromClaim.SwapMode {
+		case protocol.SwapModeTwoRobot:
+			if diff.ToClaim.InboundStaging == "" {
+				return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
+			}
+		default:
+			if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
+				return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
+			}
+		}
+		if diff.FromClaim.KeepStaged {
+			return planKeepStagedAction(action, diff.FromClaim, diff.ToClaim)
+		}
+	}
+	// Per-mode field validation for evacuate.
+	if missing := requiredChangeoverFields(diff.FromClaim, diff.ToClaim); len(missing) > 0 {
+		action.Err = fmt.Errorf("node %s: %s evacuate-changeover requires %s",
+			node.Name, diff.FromClaim.SwapMode, formatMissingFields(missing))
+		return action
+	}
+	var einactive, eactive string
+	if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
+		einactive, eactive = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
+	}
+	disp := BuildEvacuateChangeoverSteps(diff.FromClaim, diff.ToClaim, einactive, eactive)
+	if disp.rejected() {
+		action.Err = fmt.Errorf("cannot build evacuate steps for node %s (mode %q)", node.Name, diff.FromClaim.SwapMode)
+		return action
+	}
+	assignDispatch(&action, diff.CoreNodeName, diff.FromClaim.PayloadCode, disp)
+	action.NextState = domain.NodeTaskStagingRequested
+	if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
+		action.LogTag = "evacuate_sequential"
+	} else {
+		action.LogTag = "evacuate"
+	}
+
+	return action
+}
+
+// planAddAction plans a bare add: nothing to take away, so this is a staging or retrieve order.
+func planAddAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool) changeover.NodeAction {
+	if diff.ToClaim == nil {
+		action.Err = fmt.Errorf("add requires to claim")
+		return action
+	}
+	// SituationAdd: the node is empty (new in this style). No swap
+	// choreography needed — just deliver a bin directly to the node.
+	// Ignore InboundStaging / swap mode entirely; those are for swap
+	// coordination where a resident bin must be evacuated first.
+	action.SupplyOrder = &changeover.OrderSpec{
+		Retrieve: &changeover.RetrieveOrderSpec{
+			RetrieveEmpty: diff.ToClaim.Role == protocol.ClaimRoleProduce,
+			DeliveryNode:  diff.ToClaim.CoreNodeName,
+			SourceNode:    diff.ToClaim.InboundSource,
+			StagingNode:   "",
+			LoadType:      "standard",
+			PayloadCode:   diff.ToClaim.PayloadCode,
+			AutoConfirm:   fallbackAutoConfirm,
+		},
+	}
+	action.NextState = domain.NodeTaskStagingRequested
+	action.LogTag = "add"
+	return action
+}
+
+// planDropAction plans a drop: the node leaves the style and its bin goes, with no replacement.
+func planDropAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoConfirm bool, activePullByCoreNode map[string]bool) changeover.NodeAction {
+	if diff.FromClaim == nil {
+		action.Err = fmt.Errorf("drop requires from claim")
+		return action
+	}
+	if diff.FromClaim.OutboundDestination == "" {
+		// Drop must check OutboundDestination — that's what
+		// BuildReleaseSteps actually consumes. The previous gate
+		// keyed on OutboundStaging, which silently skipped real
+		// misconfigured nodes (the ALN_002 silent-skip incident).
+		// Fail loudly so the operator sees the misconfig and the
+		// apply layer refuses the whole plan.
+		action.Err = fmt.Errorf("node %s has no outbound destination configured for evacuate; cannot proceed", node.Name)
+		return action
+	}
+	releaseSteps := BuildStagedReleaseSteps(diff.FromClaim)
+	if releaseSteps == nil {
+		return action
+	}
+	// AutoConfirm=false so the staged-release flow gates on the operator's
+	// release click at the lineside. The operator confirms partial count
+	// via the standard release-prompt dialog before the robot picks up.
+	action.EvacOrder = complexSpecWithPayload("", diff.CoreNodeName, releaseSteps, false, diff.FromClaim.PayloadCode)
+	action.LogTag = "drop"
+	// EvacuateOnChangeover gates whether cutover waits for this drop.
+	// When false, the bin can be retrieved at leisure; cutover does
+	// not depend on it, so the task is terminal from plan time. The
+	// drop order still runs (operator confirms partial count at the
+	// lineside release prompt and the robot returns the bin), it just
+	// isn't on the cutover critical path. When true, the operator
+	// marked this node as needing tool-change-style evacuation before
+	// cutover; the task stays at empty_requested until the bin
+	// physically leaves the line (handled in the pickup hook).
+	if diff.FromClaim.EvacuateOnChangeover {
+		action.NextState = domain.NodeTaskEmptyRequested
+	} else {
+		action.NextState = domain.NodeTaskLineCleared
+	}
+	return action
 }

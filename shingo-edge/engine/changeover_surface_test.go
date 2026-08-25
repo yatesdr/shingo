@@ -21,7 +21,7 @@ import (
 //   - **UnchangedParticipant — FAILS against commit 4.** The real proof. The node
 //     is in plan.diffs but the old gate skipped SituationUnchanged, so a carrier
 //     moving to a node this changeover touches was invisible.
-//   - **IndexedOverSeat — passed against commit 4, for the wrong reason**, so it
+//   - **IndexedOverPosition — passed against commit 4, for the wrong reason**, so it
 //     is asserted on the BLOCKER TEXT now, not merely on "an error happened".
 //     Press-index config has its own refusal paths and one of them was firing.
 //     It is the Hopkinsville shape (the removed sweep missed orders 1249/1251
@@ -57,7 +57,7 @@ func seedOrderTo(t *testing.T, db *store.DB, uuid, deliveryNode string, complex 
 	return id
 }
 
-// TestBlockNodeSet_IncludesSeatsButNotUnchangedNodes is the node-set half of the
+// TestBlockNodeSet_IncludesPositionsButNotUnchangedNodes is the node-set half of the
 // Hopkinsville fix, tested directly, and it now also pins the boundary that fix
 // overshot.
 //
@@ -68,11 +68,11 @@ func seedOrderTo(t *testing.T, db *store.DB, uuid, deliveryNode string, complex 
 // this test passed for the wrong reason. The node set is the thing the fix
 // changed; test that, not a refusal that happens to arrive from elsewhere.
 //
-// The seats are the Hopkinsville blind spot: the removed AbortNodeOrders sweep
+// The positions are the Hopkinsville blind spot: the removed AbortNodeOrders sweep
 // missed orders 1249/1251 "only because it walks plan.diffs (the task nodes)"
 // while they were delivering to PLN_02/PLN_05, and the gate that replaced it
 // inherited the same walk.
-func TestBlockNodeSet_IncludesSeatsButNotUnchangedNodes(t *testing.T) {
+func TestBlockNodeSet_IncludesPositionsButNotUnchangedNodes(t *testing.T) {
 	t.Parallel()
 	plan := &changeoverPlan{
 		diffs: []ChangeoverNodeDiff{
@@ -88,8 +88,8 @@ func TestBlockNodeSet_IncludesSeatsButNotUnchangedNodes(t *testing.T) {
 	}
 
 	block := blockNodeSet(plan)
-	// The changed node and BOTH seats block: a robot is physically traversing a
-	// seat, which is the Hopkinsville shape the sweep's diff-walk missed.
+	// The changed node and BOTH positions block: a robot is physically traversing a
+	// position, which is the Hopkinsville shape the sweep's diff-walk missed.
 	for _, want := range []string{"PLN_01", "PLN_02", "PLN_05"} {
 		if !containsStr(block, want) {
 			t.Errorf("blockNodeSet missing %s — a carrier moving there collides with this "+
@@ -113,8 +113,8 @@ func TestBlockNodeSet_IncludesSeatsButNotUnchangedNodes(t *testing.T) {
 	// The cancel set is deliberately narrower and must stay a separate function.
 	cancel := cancelNodeSet(plan)
 	if containsStr(cancel, "PLN_02") || containsStr(cancel, "PLN_05") {
-		t.Error("cancelNodeSet contains an indexed_over seat — cancelling a carrier bound for a " +
-			"seat is the HK 2026-07-28 deadlock the removed sweep would have caused")
+		t.Error("cancelNodeSet contains an indexed_over position — cancelling a carrier bound for a " +
+			"position is the HK 2026-07-28 deadlock the removed sweep would have caused")
 	}
 	if containsStr(cancel, "PLN_04") {
 		t.Error("cancelNodeSet contains a SituationUnchanged node — the incoming style still " +

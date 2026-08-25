@@ -325,10 +325,12 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
-		log.Printf("edge_handler: received node list (%d nodes, %d loaders, %d payload-bin-types)", len(resp.Nodes), len(resp.Loaders), len(resp.PayloadBinTypes))
+		log.Printf("edge_handler: received node list (%d nodes, %d loaders, %d payload-bin-types, %d scene points, %d scene edges)",
+			len(resp.Nodes), len(resp.Loaders), len(resp.PayloadBinTypes), len(resp.ScenePoints), len(resp.SceneEdges))
 		eng.SetCoreNodes(resp.Nodes)
 		eng.SetCoreLoaders(resp.Loaders)
 		eng.SetPayloadBinTypes(resp.PayloadBinTypes)
+		eng.SetSceneGraph(resp.ScenePoints, resp.SceneEdges)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectProductionReportAck, func(_ *protocol.Envelope, ack *protocol.ProductionReportAck) {
 		log.Printf("edge_handler: production report ack: station=%s accepted=%d", ack.StationID, ack.Accepted)
@@ -948,49 +950,10 @@ func runInteractiveRestore(configPath string) error {
 	fmt.Println("ShinGo Edge interactive restore")
 	fmt.Println("Provide minimal backup storage settings to restore this machine before startup.")
 
-	stationID, err := promptNonEmpty(reader, "Station ID")
+	stationID, s3cfg, err := promptS3Settings(reader)
 	if err != nil {
 		return err
 	}
-	endpoint, err := promptNonEmpty(reader, "S3 Endpoint URL")
-	if err != nil {
-		return err
-	}
-	bucket, err := promptNonEmpty(reader, "Bucket")
-	if err != nil {
-		return err
-	}
-	region, err := promptWithDefault(reader, "Region", "us-east-1")
-	if err != nil {
-		return err
-	}
-	accessKey, err := promptNonEmpty(reader, "Access Key")
-	if err != nil {
-		return err
-	}
-	secretKey, err := promptNonEmpty(reader, "Secret Key")
-	if err != nil {
-		return err
-	}
-	usePathStyle, err := promptYesNo(reader, "Use path-style S3", true)
-	if err != nil {
-		return err
-	}
-	insecureSkip, err := promptYesNo(reader, "Skip TLS verification", false)
-	if err != nil {
-		return err
-	}
-
-	s3cfg := config.BackupS3Config{
-		Endpoint:              endpoint,
-		Bucket:                bucket,
-		Region:                region,
-		AccessKey:             accessKey,
-		SecretKey:             secretKey,
-		UsePathStyle:          usePathStyle,
-		InsecureSkipTLSVerify: insecureSkip,
-	}
-
 	storage, err := backup.NewS3Storage(s3cfg)
 	if err != nil {
 		return err
@@ -1116,4 +1079,57 @@ func humanBytes(v int64) string {
 		return fmt.Sprintf("%d %s", v, units[idx])
 	}
 	return fmt.Sprintf("%.1f %s", size, units[idx])
+}
+
+// promptS3Settings collects the station id and the backup-storage settings the
+// restore needs before anything else can run.
+//
+// Split out for the reason the rest of this function cannot be tested: it takes
+// the reader rather than reaching for os.Stdin, so the prompt sequence, the
+// us-east-1 region default and the two yes/no defaults are drivable from a
+// strings.Reader.
+func promptS3Settings(reader *bufio.Reader) (string, config.BackupS3Config, error) {
+	stationID, err := promptNonEmpty(reader, "Station ID")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	endpoint, err := promptNonEmpty(reader, "S3 Endpoint URL")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	bucket, err := promptNonEmpty(reader, "Bucket")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	region, err := promptWithDefault(reader, "Region", "us-east-1")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	accessKey, err := promptNonEmpty(reader, "Access Key")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	secretKey, err := promptNonEmpty(reader, "Secret Key")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	usePathStyle, err := promptYesNo(reader, "Use path-style S3", true)
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	insecureSkip, err := promptYesNo(reader, "Skip TLS verification", false)
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+
+	s3cfg := config.BackupS3Config{
+		Endpoint:              endpoint,
+		Bucket:                bucket,
+		Region:                region,
+		AccessKey:             accessKey,
+		SecretKey:             secretKey,
+		UsePathStyle:          usePathStyle,
+		InsecureSkipTLSVerify: insecureSkip,
+	}
+	return stationID, s3cfg, nil
 }

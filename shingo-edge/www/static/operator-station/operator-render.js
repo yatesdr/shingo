@@ -657,7 +657,7 @@ function buildLoaderCard(entry, code, counters, opts) {
     // ACTIVE badge on EVERY board. It used to be operator_driven-only, reasoning that a
     // normal board renders only active-style payloads so the label adds nothing — but
     // redundant to the code is not redundant to a driver reading a wall of part numbers
-    // from a forklift seat, who otherwise has to KNOW that rule to trust the board. Say
+    // from a forklift position, who otherwise has to KNOW that rule to trust the board. Say
     // it on the card. PRELOAD stays transitional-only: a normal board has no preload
     // cards to contrast against, so an unpaired PRELOAD badge would be noise.
     if (isActiveStylePayload || entry.operator_driven) {
@@ -816,6 +816,25 @@ function allowedPayloadsFor(entry) {
     return allowed;
 }
 
+// buildChangeoverLoadDirective renders the "load this" banner.
+//
+// THE BIN TYPE IS THE INSTRUCTION and gets the size to match — it is what the
+// operator physically walks off to fetch. The payloads and the waiting cells
+// are context underneath: they answer "why" and "for whom", which is what
+// stops the directive reading as an arbitrary order from the system.
+function buildChangeoverLoadDirective(d) {
+    var wrap = el('div', { className: 'os-changeover-load-directive' });
+    var types = (d.bin_type_codes || []).map(esc).join(' + ');
+    var payloads = (d.payload_codes || []).map(esc).join(', ');
+    var nodes = (d.for_nodes || []).map(esc).join(', ');
+    wrap.innerHTML =
+        '<div class="os-cld-label">CHANGEOVER — LOAD</div>' +
+        '<div class="os-cld-bintype">' + types + '</div>' +
+        (payloads ? '<div class="os-cld-why">for ' + payloads + '</div>' : '') +
+        (nodes ? '<div class="os-cld-who">waiting: ' + nodes + '</div>' : '');
+    return wrap;
+}
+
 function renderPayloadBoard(entry) {
     const claim = entry.active_claim;
     const runtime = entry.runtime || {};
@@ -845,6 +864,20 @@ function renderPayloadBoard(entry) {
             '</div>' +
         '</div>';
     grid.appendChild(infoBar);
+
+    // CHANGEOVER LOADING DIRECTIVE. During a changeover the loader's ordinary
+    // question — "which of my payloads would you like to load" — is the wrong
+    // one: the changing-over cells are waiting for one specific empty carrier,
+    // and any other choice puts a bin nobody asked for on the window and
+    // blocks the one that is needed.
+    //
+    // Server-computed (domain.BuildChangeoverLoadDirective) rather than
+    // derived here, so the board and the engine cannot disagree about what is
+    // being asked for, and so it is testable without a browser.
+    var directive = entry.changeover_load_directive;
+    if (directive && directive.bin_type_codes && directive.bin_type_codes.length) {
+        grid.appendChild(buildChangeoverLoadDirective(directive));
+    }
 
     // Payload cards come from the active/all union (transitional shows all, a
     // normal loader shows active), falling back to the claim list — see
