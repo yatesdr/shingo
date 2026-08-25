@@ -76,6 +76,24 @@ func newLoggingEngine(t *testing.T, db *store.DB, sink *logSink) *Engine {
 	})
 }
 
+// newEngineWithSweepInterval builds an engine whose reconciliation cadence — and
+// therefore whose witness-recency bound, which is twice it — is small enough to
+// cross inside a test.
+//
+// THE CLOCK IS COMPRESSED, NOT THE MECHANISM. Nothing in the test that uses this
+// touches the freeze maps: the mark stops advancing because the robot stops being
+// connected, and the bound is crossed because real time passes. That is the whole
+// point — a test that ages the map by hand cannot tell whether anything in
+// production would ever age it.
+func newEngineWithSweepInterval(t *testing.T, db *store.DB, d time.Duration) *Engine {
+	t.Helper()
+	cfg := config.Defaults()
+	cfg.Messaging.StationID = "test-core"
+	cfg.Messaging.DispatchTopic = "shingo.dispatch"
+	cfg.Staging.SweepInterval = d
+	return New(Config{AppConfig: cfg, DB: db, Fleet: simulator.New(), MsgClient: nil, LogFunc: t.Logf})
+}
+
 // appendOrderHistory adds a history row WITHOUT removing the ones already
 // there — pickupOrderAt replaces, and a replan is a second arrival at the same
 // status rather than a correction of the first.
@@ -402,5 +420,83 @@ func TestBranchA_AReplanDoesNotLaunderAStalePickup(t *testing.T) {
 	}
 	if note := binNote(t, db, bin.ID); !strings.Contains(note, "picked up longer ago") {
 		t.Errorf("note = %q, want the pickup age named", note)
+	}
+}
+
+// ── The witness only advances from a live reading ──────────────────────────
+
+// A DECK READ FROM A ROBOT THAT IS NOT THERE IS NOT A READING.
+//
+// robotsCache is never pruned, and RDS goes on listing a robot it has lost with
+// ConnectionStatus 0 — so a deck last seen loaded sits in the cache being re-read
+// by every sweep for as long as the dropout lasts. Stamping the witness from that
+// records when Core last looked at its own memory, not when it last heard from
+// the robot, and a mark that is refreshed by Core looking at itself can never go
+// stale: the gap decline becomes unreachable in production while still passing a
+// test that ages the map by hand.
+//
+// Nothing here touches the maps except to READ the mark and assert it held still.
+func TestCarriedBin_ADisconnectedRobotDoesNotRefreshTheWitness(t *testing.T) {
+	db := testdb.Open(t)
+	// Bound = 2 x this. Everything below happens in real elapsed time.
+	eng := newEngineWithSweepInterval(t, db, 50*time.Millisecond)
+
+	dest := &nodes.Node{Name: "SMN_101", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(dest), "create dest")
+	seedScenePoint(t, db, "Area-01", "SMN_101", "GeneralLocation", "AP301")
+
+	bin, ord := seedStranded(t, db, "AMR-OFFLINE")
+	cacheRobot(eng, loadedDeck("AMR-OFFLINE"))
+	eng.inferStrandedTransitBin(ord.ID)
+	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-OFFLINE" {
+		t.Fatalf("setup: bin is at %q, want the carrier node", got)
+	}
+	eng.dropObsMu.Lock()
+	marked := eng.deckSeenLoaded[bin.ID]
+	eng.dropObsMu.Unlock()
+	if marked.IsZero() {
+		t.Fatal("setup: a connected robot with a loaded deck left no witness")
+	}
+
+	// THE DROPOUT. The robot stops answering; RDS keeps listing it, with the same
+	// loaded deck it had, and Connected false. The sweep goes on running — the
+	// reconciliation loop is not gated on fleet health, and a single robot
+	// dropping out does not take fleetConnected down with it.
+	down := loadedDeck("AMR-OFFLINE")
+	down.Connected = false
+	cacheRobot(eng, down)
+	for i := 0; i < 5; i++ {
+		time.Sleep(60 * time.Millisecond)
+		eng.sweepCarriedBins()
+	}
+
+	eng.dropObsMu.Lock()
+	after := eng.deckSeenLoaded[bin.ID]
+	eng.dropObsMu.Unlock()
+	if after.After(marked) {
+		t.Errorf("the witness advanced %v while the robot was disconnected — no telemetry "+
+			"arrived in that time, so the mark is recording when Core last read its own "+
+			"cache. A mark refreshed that way can never age, and the gap decline below can "+
+			"never fire on a real plant", after.Sub(marked))
+	}
+
+	// It comes back, connected, deck empty, somewhere Core CAN name. Everything
+	// that could have happened to the bin happened inside the silence.
+	cacheRobot(eng, atPoint("AMR-OFFLINE", "AP301", 4.4, -5.5))
+	eng.sweepCarriedBins()
+
+	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-OFFLINE" {
+		t.Errorf("bin was placed at %q from a drop nobody watched", got)
+	}
+	note := binNote(t, db, bin.ID)
+	if !strings.Contains(note, "last read loaded") {
+		t.Errorf("note = %q, want the gap named", note)
+	}
+	if strings.Contains(note, "restarted") {
+		t.Errorf("note = %q reuses the restart sentence — Core did not restart, it went "+
+			"deaf, and those send an operator to check different things", note)
+	}
+	if strings.Contains(note, "x=") {
+		t.Errorf("note %q offers coordinates the same sentence says are meaningless", note)
 	}
 }

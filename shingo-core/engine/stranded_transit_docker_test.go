@@ -129,7 +129,7 @@ func TestStrandedTransit_BranchA_PlacesTheBinAtTheRobotsStation(t *testing.T) {
 
 	bin, ord := seedStranded(t, db, "AMR-A")
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-A", JackState: 3, LiftHeight: -0.0001,
+		VehicleID: "AMR-A", Connected: true, JackState: 3, LiftHeight: -0.0001,
 		CurrentStation: "DROP-A", LastStation: "DROP-A", X: 12.5, Y: 3.25,
 	})
 
@@ -169,7 +169,7 @@ func TestStrandedTransit_OccupiedNodeFallsToAnomaly(t *testing.T) {
 	resident := &bins.Bin{BinTypeID: bin.BinTypeID, Label: "resident", NodeID: &dest.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(resident), "create resident bin")
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-C", JackState: 3, LiftHeight: -0.0001,
+		VehicleID: "AMR-C", Connected: true, JackState: 3, LiftHeight: -0.0001,
 		CurrentStation: "DROP-FULL", LastStation: "DROP-FULL",
 	})
 
@@ -197,7 +197,7 @@ func TestStrandedTransit_MovingDeckIsNotAnAnswer(t *testing.T) {
 
 	bin, ord := seedStranded(t, db, "AMR-D")
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-D", JackState: 2, LiftHeight: 0.03,
+		VehicleID: "AMR-D", Connected: true, JackState: 2, LiftHeight: 0.03,
 		CurrentStation: "DROP-MID", LastStation: "DROP-MID",
 	})
 
@@ -226,7 +226,7 @@ func TestStrandedTransit_IgnoresABinThatIsNotStranded(t *testing.T) {
 	_, err := db.DB.Exec(`UPDATE bins SET node_id=$1 WHERE id=$2`, dest.ID, bin.ID)
 	testutil.MustNoErr(t, err, "move bin to destination")
 
-	cacheRobot(eng, fleet.RobotStatus{VehicleID: "AMR-E", JackState: 3})
+	cacheRobot(eng, fleet.RobotStatus{VehicleID: "AMR-E", Connected: true, JackState: 3})
 	eng.inferStrandedTransitBin(ord.ID)
 
 	b, err := db.GetBin(bin.ID)
@@ -248,7 +248,7 @@ func TestStrandedTransit_BranchB_LoadedDeckParksTheBinOnTheRobot(t *testing.T) {
 
 	bin, ord := seedStranded(t, db, "AMR-03")
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-03", JackState: 1, JackIsFull: true, IsLoaded: true,
+		VehicleID: "AMR-03", Connected: true, JackState: 1, JackIsFull: true, IsLoaded: true,
 		LiftHeight: 0.0601, LastStation: "SMN_024",
 	})
 
@@ -293,7 +293,7 @@ func TestStrandedTransit_CarriedBinIsPlacedWhenTheJackUnloads(t *testing.T) {
 
 	bin, ord := seedStranded(t, db, "AMR-13")
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-13", JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
+		VehicleID: "AMR-13", Connected: true, JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
 	})
 	eng.inferStrandedTransitBin(ord.ID)
 	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-13" {
@@ -308,7 +308,7 @@ func TestStrandedTransit_CarriedBinIsPlacedWhenTheJackUnloads(t *testing.T) {
 
 	// The robot drives to DROP-B and sets the bin down.
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-13", JackState: 3, LiftHeight: -0.0001,
+		VehicleID: "AMR-13", Connected: true, JackState: 3, LiftHeight: -0.0001,
 		CurrentStation: "DROP-B", LastStation: "DROP-B",
 	})
 	eng.sweepCarriedBins()
@@ -327,12 +327,12 @@ func TestStrandedTransit_CarriedBinUnloadedNowhereKnownBecomesAnAnomaly(t *testi
 
 	bin, ord := seedStranded(t, db, "AMR-14")
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-14", JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
+		VehicleID: "AMR-14", Connected: true, JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
 	})
 	eng.inferStrandedTransitBin(ord.ID)
 
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-14", JackState: 3, LiftHeight: -0.0001,
+		VehicleID: "AMR-14", Connected: true, JackState: 3, LiftHeight: -0.0001,
 		CurrentStation: "CHARGER-2", LastStation: "CHARGER-2", X: 55.5, Y: 2.5,
 	})
 	eng.sweepCarriedBins()
@@ -369,11 +369,11 @@ func TestStrandedSweep_PlacesRecentWork(t *testing.T) {
 	lost, _ := seedStranded(t, db, "AMR-S2")
 
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-S1", JackState: 3, LiftHeight: -0.0001,
+		VehicleID: "AMR-S1", Connected: true, JackState: 3, LiftHeight: -0.0001,
 		CurrentStation: "DROP-SWEEP", LastStation: "DROP-SWEEP",
 	})
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-S2", JackState: 3, LiftHeight: -0.0001,
+		VehicleID: "AMR-S2", Connected: true, JackState: 3, LiftHeight: -0.0001,
 		CurrentStation: "NOWHERE-WE-KNOW", LastStation: "NOWHERE-WE-KNOW", X: 71.25, Y: 4.5,
 	})
 
@@ -413,7 +413,7 @@ func TestStrandedSweep_DoesNotTreatACarriedBinAsLost(t *testing.T) {
 
 	bin, ord := seedStranded(t, db, "AMR-S3")
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-S3", JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
+		VehicleID: "AMR-S3", Connected: true, JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
 	})
 	eng.inferStrandedTransitBin(ord.ID)
 	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-S3" {
@@ -451,7 +451,7 @@ func TestStrandedSweep_DeclinesABinOlderThanTheWindow(t *testing.T) {
 
 	// Everything the inference wants, so only the AGE can be what stops it.
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-OLD", JackState: 3, LiftHeight: -0.0001,
+		VehicleID: "AMR-OLD", Connected: true, JackState: 3, LiftHeight: -0.0001,
 		CurrentStation: "DROP-STALE", LastStation: "DROP-STALE",
 	})
 
@@ -477,7 +477,7 @@ func TestStrandedSweep_CarrierBinIsRecheckedDespiteAStaleOrder(t *testing.T) {
 	bin, ord := seedStranded(t, db, "AMR-RIDE")
 	// Park it on the deck first, while the order is still fresh.
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-RIDE", JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
+		VehicleID: "AMR-RIDE", Connected: true, JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
 	})
 	eng.inferStrandedTransitBin(ord.ID)
 	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-RIDE" {
@@ -487,7 +487,7 @@ func TestStrandedSweep_CarrierBinIsRecheckedDespiteAStaleOrder(t *testing.T) {
 	// Now age the order well past the window and unload the deck.
 	strandOrderAt(t, db, ord, clock.Now().UTC().Add(-6*time.Hour))
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-RIDE", JackState: 3, LiftHeight: -0.0001,
+		VehicleID: "AMR-RIDE", Connected: true, JackState: 3, LiftHeight: -0.0001,
 		CurrentStation: "DROP-CARRIED", LastStation: "DROP-CARRIED",
 	})
 
@@ -519,7 +519,7 @@ func TestStrandedTransit_MovingRobotIsNotAPlacement(t *testing.T) {
 
 	bin, ord := seedStranded(t, db, "AMR-MOVING")
 	cacheRobot(eng, fleet.RobotStatus{
-		VehicleID: "AMR-MOVING", JackState: 3, LiftHeight: -0.0001,
+		VehicleID: "AMR-MOVING", Connected: true, JackState: 3, LiftHeight: -0.0001,
 		Busy:        true, // under way
 		LastStation: "DROP-PASSED", X: 44.5, Y: 9.75,
 	})

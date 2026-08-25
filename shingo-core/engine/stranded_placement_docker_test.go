@@ -42,9 +42,13 @@ func seedScenePoint(t *testing.T, db *store.DB, area, instance, class, point str
 }
 
 // atPoint is a parked robot with an empty deck, reporting one point.
+//
+// Connected, because a robot in a test that does not say so is claiming to be a
+// robot Core has lost — and the witness now refuses a reading from one of those.
+// A fixture that leaves it false is under-specified, not a disconnected robot.
 func atPoint(vehicle, point string, x, y float64) fleet.RobotStatus {
 	return fleet.RobotStatus{
-		VehicleID: vehicle, JackState: 3, LiftHeight: -0.0002,
+		VehicleID: vehicle, Connected: true, JackState: 3, LiftHeight: -0.0002,
 		CurrentStation: point, LastStation: point, X: x, Y: y,
 	}
 }
@@ -52,7 +56,8 @@ func atPoint(vehicle, point string, x, y float64) fleet.RobotStatus {
 // loadedDeck is the same robot with a bin on it.
 func loadedDeck(vehicle string) fleet.RobotStatus {
 	return fleet.RobotStatus{
-		VehicleID: vehicle, JackState: 1, JackIsFull: true, IsLoaded: true, LiftHeight: 0.0601,
+		VehicleID: vehicle, Connected: true, JackState: 1, JackIsFull: true,
+		IsLoaded: true, LiftHeight: 0.0601,
 	}
 }
 

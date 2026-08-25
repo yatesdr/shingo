@@ -401,7 +401,12 @@ func (e *Engine) parkOnCarrier(binID int64, robotID string, robot fleet.RobotSta
 	// THE WITNESS STARTS HERE. This process has just read the deck LOADED, so
 	// the next empty reading is a transition it watched — which is the whole
 	// difference between an observation and a state Core woke up to.
-	e.markDeckLoaded(binID)
+	//
+	// Gated on the same liveness as the sweep's: a loaded deck read from a robot
+	// that is not answering is a memory, not an observation.
+	if robot.Connected {
+		e.markDeckLoaded(binID)
+	}
 	e.logFn("engine: stranded transit: bin %d rides %s (deck loaded)", binID, robotID)
 }
 
@@ -513,7 +518,18 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 		// poll asks again — and record that this process has now SEEN the deck
 		// loaded, which is what makes the eventual empty reading an observation
 		// of a transition rather than a state Core woke up to.
-		e.markDeckLoaded(bin.ID)
+		//
+		// ONLY FROM A LIVE READING, and this is the difference between a witness
+		// and a memory. robotsCache is never pruned and RDS goes on listing a
+		// robot it has lost (ConnectionStatus 0), so a deck last seen loaded sits
+		// in the cache being re-read by every sweep for as long as the dropout
+		// lasts. Stamping from that would record when Core last looked at ITSELF,
+		// which can never go stale — and the gap decline in freezeDrop would be
+		// unreachable on a real plant while still passing a test that ages the
+		// mark by hand.
+		if robot.Connected {
+			e.markDeckLoaded(bin.ID)
+		}
 		return
 	}
 
@@ -550,7 +566,7 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 		// Positionless for the same reason as the restart case, and constant for
 		// the same reason.
 		e.strandedAnomaly(bin.ID, robotID, fleet.RobotStatus{}, false,
-			"the deck last read loaded more than "+deckWitnessRecency.String()+
+			"the deck last read loaded more than "+e.deckWitnessRecency().String()+
 				" before it read empty — Core heard nothing about this robot in between, so "+
 				"the drop was not observed and this robot's position does not describe "+
 				"where the bin is")

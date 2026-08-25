@@ -85,21 +85,45 @@ func (d dropObservation) status() fleet.RobotStatus {
 //
 // THE RESTART RULE'S PREMISE, MADE TRUE. That rule refuses a drop Core did not
 // see because it was down — but Core staying UP is not the same as Core
-// watching. The fleet can go unreachable (robotRefreshLoop stops sweeping while
-// !fleetConnected), or one AMR can roam off the WiFi, and robotsCache is never
-// pruned — so a deck last read loaded goes on re-arming the witness from a
-// stale cache entry while the robot is somewhere Core cannot see. An unbounded
-// mark says "at some point", and "at some point" is not a witness.
+// watching. The fleet can go unreachable, or one AMR can roam off the WiFi, and
+// robotsCache is never pruned, so a deck last read loaded sits there being
+// re-read while the robot is somewhere Core cannot see. An unbounded mark says
+// "at some point", and "at some point" is not a witness. (The mark only
+// advances from a reading of a CONNECTED robot — see markDeckLoaded — which is
+// what lets it age at all.)
 //
-// TWO MINUTES, taken from the cadence that actually refreshes the mark. The
-// watch rides the 2-second robot poll, but that poll short-circuits on an
-// unchanged fleet hash (engine_background.go), so on an idle plant the
-// GUARANTEED refresh is the reconciliation sweep — 60 s by default
-// (config.ReconcileInterval). Doubling it is deliberate: a bound equal to the
-// cadence that feeds it declines on ordinary scheduling jitter, and the
-// failures this exists to catch are minutes to hours long. Nothing legitimate
-// sits between two minutes and an hour.
-const deckWitnessRecency = 2 * time.Minute
+// TWO TIMES THE CADENCE THAT ACTUALLY REFRESHES IT, and that cadence is
+// `staging.sweep_interval`. sweepCarriedBins has two callers: the 2-second
+// robot poll (engine_background.go:81) and the reconciliation loop
+// (stranded_transit.go:664, driven from engine_lifecycle.go:165 by
+// cfg.Staging.SweepInterval, 5m shipped). The poll is the fast one but it is
+// not guaranteed — it sits behind a fleet-hash short-circuit
+// (engine_background.go:65), so on a plant where nothing is moving the
+// reconciliation loop is the only thing that refreshes the mark. The bound has
+// to clear the SLOW one.
+//
+// The margin rule, both ways round. A bound at or below its own feeding cadence
+// declines on ordinary scheduling jitter — the mark would routinely be older
+// than the bound with nothing wrong — and every such decline costs an operator a
+// button press on a bin the system actually knew about. A bound far above it
+// widens the window in which an unwitnessed drop still reads as witnessed.
+// Twice the cadence is the balance: one whole missed tick of headroom, and
+// nothing legitimate sits between two ticks and the minutes-to-hours outages
+// this exists to catch.
+//
+// DERIVED, NOT PINNED, because the cadence is configuration and the shipped
+// values differ by an order of magnitude: 5m in production, 2s in
+// shingocore.dev.yaml. A constant correct for one is wrong for the other.
+func (e *Engine) deckWitnessRecency() time.Duration {
+	if e.cfg == nil || e.cfg.Staging.SweepInterval <= 0 {
+		return defaultDeckWitnessRecency
+	}
+	return 2 * e.cfg.Staging.SweepInterval
+}
+
+// defaultDeckWitnessRecency is twice config's shipped staging.sweep_interval,
+// for the nil-config path (tests construct an Engine without one).
+const defaultDeckWitnessRecency = 10 * time.Minute
 
 // markDeckLoaded records WHEN this process last saw this bin's deck loaded.
 //
@@ -181,7 +205,7 @@ func (e *Engine) freezeDrop(binID int64, obs dropObservation, window time.Durati
 	switch {
 	case !ok:
 		return dropObservation{}, dropUnwitnessed
-	case obs.At.Sub(seen) > deckWitnessRecency:
+	case obs.At.Sub(seen) > e.deckWitnessRecency():
 		return dropObservation{}, dropGapped
 	}
 	if e.dropObs == nil {
