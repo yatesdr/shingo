@@ -498,7 +498,7 @@ func toolingSeatAction(press toolingPress, seat string, node *processes.Node) ch
 	// payload-matched bin; without this the pickup hunts a full bin in the
 	// empty pool and the dispatch fails ("no bin of requested payload").
 	if toSeat.Role == protocol.ClaimRoleProduce && toSeat.InboundSource != "" {
-		markInboundEmpty(steps, toSeat.InboundSource)
+		markInboundEmpty(steps, toSeat.InboundSource, refillCarrierPayload(fromSeat, toSeat))
 	}
 	return changeover.NodeAction{
 		NodeID:       node.ID,
@@ -560,7 +560,7 @@ func holdInbound(a *changeover.NodeAction, staging string, fallbackAutoConfirm b
 			{Action: protocol.ActionDropoff, Node: r.DeliveryNode},
 		}
 		if r.RetrieveEmpty && r.SourceNode != "" {
-			markInboundEmpty(steps, r.SourceNode)
+			markInboundEmpty(steps, r.SourceNode, "")
 		}
 		a.SupplyOrder = complexSpecWithPayload(
 			r.DeliveryNode, a.CoreNodeName, steps, r.AutoConfirm, r.PayloadCode)

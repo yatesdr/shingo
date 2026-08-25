@@ -175,7 +175,7 @@ func BuildSingleSwapSteps(claim *processes.NodeClaim) []protocol.ComplexOrderSte
 	// the dispatch fails ("no bin of..."), and the node is left with no carrier to
 	// fill — the cell stalls. Mirrors BuildSequentialBackfillSteps.
 	if claim.Role == protocol.ClaimRoleProduce && claim.InboundSource != "" {
-		markInboundEmpty(steps, claim.InboundSource)
+		markInboundEmpty(steps, claim.InboundSource, "")
 	}
 	return steps
 }
@@ -328,7 +328,7 @@ func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orde
 		// rewritten to assign rather than set would silently unflag the other's
 		// pickup and reopen the Hopkinsville waiting_for_material hang.
 		if claim.IndexRobotSupplies {
-			markInboundEmpty(orderR2, claim.InboundSource)
+			markInboundEmpty(orderR2, claim.InboundSource, "")
 		}
 	} else if claim.IndexRobotSupplies {
 		// Consume never flags Empty (it indexes FULL bins forward), so the
@@ -388,7 +388,7 @@ func BuildSequentialBackfillSteps(claim *processes.NodeClaim) []protocol.Complex
 	// This leg is auto-created by the wiring (handleSequentialBackfill) and never passes
 	// through BuildSwapDispatch, so it's flagged here at the source instead.
 	if claim.Role == protocol.ClaimRoleProduce && claim.InboundSource != "" {
-		markInboundEmpty(steps, claim.InboundSource)
+		markInboundEmpty(steps, claim.InboundSource, "")
 	}
 	return steps
 }
@@ -670,11 +670,15 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 	// payload-matched bin. R1's pickup at InboundSource defaults to a full
 	// retrieve, so without this a produce press-index changeover hunts a full
 	// bin in the empty pool and the dispatch fails ("no bin of requested
-	// payload"). Flag only the InboundSource pickup Empty (its payload filter
-	// is dropped); R1's other pickup — the old front tote — keeps the from-style
-	// payload it needs (§ carriesFromPayload below). Mirrors swap_dispatch.go:71.
+	// payload"). Flag only the InboundSource pickup Empty; R1's other pickup —
+	// the old front tote — keeps the from-style payload it needs
+	// (§ carriesFromPayload below). Mirrors swap_dispatch.go:71.
+	//
+	// The refill also NAMES the incoming style's payload when it differs, because
+	// Empty drops the full-bin content match but not bin-type compatibility —
+	// see markInboundEmpty and refillCarrierPayload.
 	if toClaim.Role == protocol.ClaimRoleProduce && toClaim.InboundSource != "" {
-		markInboundEmpty(r1, toClaim.InboundSource)
+		markInboundEmpty(r1, toClaim.InboundSource, refillCarrierPayload(fromClaim, toClaim))
 	}
 	return ChangeoverDispatch{
 		Roles: &changeoverSwapLegs{
@@ -736,12 +740,18 @@ func buildPressIndexPerPositionSwap(fromClaim, toClaim *processes.NodeClaim) Cha
 	// A produce node's refill fetches a fresh EMPTY carrier, not a full
 	// payload-matched bin. Without this the InboundSource pickup defaults to a
 	// full retrieve and hunts a full bin in the empty pool ("no bin of requested
-	// payload"). Marking it Empty also drops that leg's payload filter, which is
-	// what lets this single order carry the from-style payload for the evac
-	// pickup above and still fetch a to-style carrier here. Mirrors
-	// buildPressIndexChangeoverSwap's R1.
+	// payload"). Mirrors buildPressIndexChangeoverSwap's R1.
+	//
+	// AND IT NAMES THE STYLE THE CARRIER IS FOR. This comment used to claim that
+	// marking the leg Empty "drops that leg's payload filter", so one order could
+	// carry the from-style payload for the evac pickup above and still fetch a
+	// to-style carrier here. The first half is true and the second was not: Empty
+	// drops the full-bin content match, while bin-type compatibility still
+	// resolves against the ORDER's payload (PayloadBinTypeAdvisoryClause). So
+	// this leg fetched a carrier of the type the press was LEAVING, in both
+	// directions, until the step could say otherwise (N1-c, sim 2026-08-24).
 	if toClaim.Role == protocol.ClaimRoleProduce && toClaim.InboundSource != "" {
-		markInboundEmpty(steps, toClaim.InboundSource)
+		markInboundEmpty(steps, toClaim.InboundSource, refillCarrierPayload(fromClaim, toClaim))
 	}
 	return ChangeoverDispatch{
 		StepsA:        steps,

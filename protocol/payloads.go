@@ -392,6 +392,38 @@ type ComplexOrderStep struct {
 	// preserves the prior always-full behavior, so an older Core that ignores
 	// the field behaves exactly as today.
 	Empty bool `json:"empty,omitempty"`
+	// PayloadCode is the payload THIS STEP's bin selection resolves against,
+	// overriding the order's payload for this leg only. Empty means "use the
+	// order's", which is every leg of every order that does not need to say
+	// otherwise.
+	//
+	// ── WHY A LEG NEEDS ITS OWN ANSWER ────────────────────────────────────
+	//
+	// A changeover swap is ONE order doing two jobs: it lifts the outgoing
+	// style's bin off the line and brings the incoming style's carrier back.
+	// The order carries the FROM-style payload, because its opening pickup has
+	// to find the bin that is actually there. Marking the refill leg Empty
+	// drops the full-bin content match — but NOT bin-type compatibility, which
+	// resolves against the order's payload through PayloadBinTypeAdvisoryClause.
+	// So a press changing from a payload on one carrier type to a payload on
+	// another was handed a carrier of the type it was LEAVING: wrong carrier one
+	// direction, and an unsatisfiable wait for a type the plant had none of in
+	// the other, which parked two supply legs until an operator abandoned them
+	// (sim 2026-08-24, N1-c).
+	//
+	// Setting it here is the smallest true statement: this leg is for that
+	// payload. The alternative was splitting the order in two, which doubles the
+	// robot trips for the common same-node case the single trip was chosen for.
+	//
+	// ── MIXED VERSIONS: CORE FIRST ────────────────────────────────────────
+	//
+	// Additive and omitempty, like every other field added to this wire — but
+	// unlike the Core→Edge additions, an old receiver ignoring THIS one is not
+	// cosmetic: it silently reverts to the wrong-carrier behaviour above. Core
+	// and Edge deploy separately, so DEPLOY CORE FIRST. Pinned by
+	// TestComplexOrderStep_PayloadCode_MixedVersion, which asserts what an old
+	// Core does rather than leaving it to be discovered on a floor.
+	PayloadCode string `json:"payload_code,omitempty"`
 	// WaitKind declares WHO MAY ADVANCE a wait step, carried across the wire so
 	// the far side does not have to guess.
 	//

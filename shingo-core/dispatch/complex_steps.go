@@ -170,8 +170,29 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 // (exclusions rule #7, complex_steps.go arm) is deleted with them. The
 // Reshuffle→blind-dispatch mappings below preserve pre-fold behaviour
 // byte-for-byte; surfacing the burial is a C(ii) decision.
-func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode string,
+// stepPayload is the payload THIS step's bin selection resolves against.
+//
+// A leg may name its own, and exactly one kind does: the refill leg of a
+// changeover swap. That order carries the FROM-style payload because its
+// opening pickup has to find the bin physically on the line, while the carrier
+// it fetches has to suit the style arriving. Marking the leg Empty drops the
+// full-bin content match but not bin-type compatibility, which resolves against
+// whatever payload reaches PayloadBinTypeAdvisoryClause — so before the step
+// could say, the press was handed a carrier of the type it was leaving
+// (sim 2026-08-24, N1-c).
+//
+// Everything else says nothing and gets the order's payload, which is what it
+// has always got.
+func stepPayload(step protocol.ComplexOrderStep, orderPayload string) string {
+	if step.PayloadCode != "" {
+		return step.PayloadCode
+	}
+	return orderPayload
+}
+
+func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, orderPayload string,
 	asker reservations.DigAsker, nextDropoff string) (string, string, error) {
+	payloadCode := stepPayload(step, orderPayload)
 	if step.Node != "" {
 		node, err := d.db.GetNodeByDotName(step.Node)
 		if err != nil {
