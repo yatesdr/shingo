@@ -14,9 +14,28 @@ import (
 // ── TOOLING IS A DECORATOR, NOT A COMPETITOR ────────────────────────────────
 //
 // A press whose outgoing claim marks seats is going down for a tool change.
-// The rule the floor gave us is one sentence: the marked seats' bins come off
-// to the tooling bay, the new material waits at inbound staging, the operator
-// does the tool change and hits release, and the material moves in.
+// The rule the floor gave us is one sentence: the marked seats are cleared, the
+// new material waits at inbound staging, the operator does the tool change and
+// marks it done, and the material moves in.
+//
+// ── SHINGO DOES NOT TOUCH TOOLING, AND THERE IS NO BAY ──────────────────────
+//
+// The tool change is human work done at the asset. What shingo owes it is FLOOR
+// SPACE and TIMING: get the material off the marked seats quickly so the people
+// have room to set up the next run, and hold the incoming material out of the
+// cell until they say they are done, rather than delivering it to line nodes a
+// human is standing in. Some cells change over without evacuating anything at
+// all, because their tool change happens internally.
+//
+// So CLEARANCE IS NORMAL ROUTING. A marked seat's bin goes wherever that cell's
+// bins ordinarily go — its unloader, its buffer, its market — and this pass
+// leaves that leg alone. ChangeoverEvacDestination is an OPTIONAL OVERRIDE for
+// a cell that wants clearance somewhere else, like a different node group;
+// empty is the default and empty means untouched. Whatever it names is an
+// ordinary destination with ordinary capacity behaviour. An earlier round read
+// this field as a dedicated "tooling bay" and the demo fixture grew a one-slot
+// station to match: the second bin of a two-seat press had nowhere to go, and
+// robots dwelt on it holding bins that nothing would ever take away.
 //
 // WHY THIS IS A PASS OVER THE FINISHED PLAN AND NOT A FIFTH FAN-OUT.
 //
@@ -25,8 +44,8 @@ import (
 // bin-type pass ran first and rewrote the diff's SwapMode to press_position;
 // the tooling pass's predicate required two_robot_press_index; so on a press
 // that was BOTH marked and changing bin type, tooling silently did nothing.
-// Bins went to the market instead of the bay and new material drove into a cell
-// with a human in it. No error, no advisory. That is N1, proven on the sim
+// Marked seats were never cleared and new material drove into a cell with a
+// human in it. No error, no advisory. That is N1, proven on the sim
 // 2026-08-24, and the shape it broke is the common one: a press changing
 // carrier type is a press changing tooling.
 //
@@ -68,9 +87,10 @@ type toolingPress struct {
 // value is "not a tooling changeover" and decorates nothing.
 type toolingChangeover struct {
 	presses []toolingPress
-	// evacDest maps a MARKED seat's core node to the tooling bay its bin goes
-	// to. Only marked seats appear: an unmarked seat's bin is not in the way,
-	// so it keeps whatever destination the normal machinery gave it.
+	// evacDest maps a MARKED seat's core node to the OVERRIDE destination its
+	// bin is redirected to. Only marked seats of a cell that set the override
+	// appear at all: with no override there is nothing to redirect, and an
+	// unmarked seat keeps whatever the normal machinery gave it either way.
 	evacDest map[string]string
 	// stageAt maps a press seat's core node to the staging node its INCOMING
 	// bin waits at. Every seat of the cell appears, marked or not — the press
@@ -96,8 +116,8 @@ func pressIndexSeats(c *processes.NodeClaim) []string {
 }
 
 // planToolingChangeover reads the ORIGINAL claim lists — not the diffs — and
-// answers two questions: which seats evacuate to a tooling bay, and which seats
-// hold their incoming material at staging.
+// answers two questions: which seats have their clearance redirected by an
+// override, and which seats hold their incoming material at staging.
 //
 // Reading the originals is the whole point. The diffs are what the earlier
 // passes rewrote, and the field the old predicate keyed on (SwapMode) is one of
@@ -122,18 +142,30 @@ func planToolingChangeover(fromClaims, toClaims []processes.NodeClaim) toolingCh
 		if len(seats) == 0 {
 			continue
 		}
-		if t.evacDest == nil {
-			t.evacDest = make(map[string]string)
-		}
-		dest := domain.EvacDestinationFor(fc)
-		for _, seat := range seats {
-			t.evacDest[seat] = dest
+		// THE OVERRIDE IS THE ONLY REASON TO TOUCH AN OUTBOUND LEG, and it is
+		// empty by default. Clearing a seat is not a different journey from
+		// evacuating it — it is the same journey, made to happen now — so with
+		// no override the leg the pipeline planned is exactly right and this
+		// pass leaves it alone. Mapping every marked seat to the destination it
+		// already had would read as harmless and be one config change away from
+		// steering legs nobody asked it to steer.
+		if override := fc.ChangeoverEvacDestination; override != "" {
+			if t.evacDest == nil {
+				t.evacDest = make(map[string]string)
+			}
+			for _, seat := range seats {
+				t.evacDest[seat] = override
+			}
 		}
 		t.presses = append(t.presses, toolingPress{
-			from:     fc,
-			to:       toByNode[fc.CoreNodeName],
-			seats:    seats,
-			evacDest: dest,
+			from:  fc,
+			to:    toByNode[fc.CoreNodeName],
+			seats: seats,
+			// The EXPANSION builds a leg from nothing, so it has to name a
+			// destination: the override when set, this cell's ordinary outbound
+			// otherwise. That is EvacDestinationFor's whole job, and it is the
+			// one caller that still wants the fallback.
+			evacDest: domain.EvacDestinationFor(fc),
 		})
 	}
 	if !t.active() {
@@ -228,8 +260,9 @@ func refuseToolingChangeoverWithoutStaging(fromClaims, toClaims []processes.Node
 // applyToolingChangeover is the decorator. It runs LAST, over the finished
 // plan, and makes two edits:
 //
-//   - the OUTBOUND leg of a marked seat drops at the tooling bay instead of
-//     wherever the normal machinery was sending it;
+//   - the OUTBOUND leg of a marked seat is redirected, but ONLY when the cell
+//     set ChangeoverEvacDestination — otherwise clearance is normal routing and
+//     the leg is left exactly as the pipeline planned it;
 //   - every INBOUND leg to a press seat gains a wait at inbound staging, so the
 //     bin holds out of the cell until the operator releases it.
 //
@@ -306,9 +339,10 @@ func expandMarkedPress(actions []changeover.NodeAction, nodes []processes.Node, 
 	return out
 }
 
-// toolingSeatAction is ONE marked seat's evacuation: one robot lifts the bin
-// off the seat, drops it at the tooling bay, fetches the replacement, holds it
-// at staging until tooling-done, and sets it down on the seat.
+// toolingSeatAction is ONE marked seat's clearance: one robot lifts the bin off
+// the seat, takes it wherever this cell's bins go (or to the override, if the
+// cell named one), fetches the replacement, holds it at staging until the
+// operator marks the change done, and sets it down on the seat.
 //
 // This is the shape the sim proved on the floor (2026-08-24), and it is now
 // produced HERE rather than by a builder a separate predicate selected.
@@ -342,9 +376,9 @@ func toolingSeatAction(press toolingPress, seat string, node *processes.Node) ch
 //
 // "The dropoff after the pickup at my own node" is the definition of an
 // outbound leg here, and it is deliberately positional rather than a match on
-// the old destination: a marked seat's bin goes to the bay whatever the normal
-// machinery had chosen, including a destination this pass has already set
-// (which makes it idempotent).
+// the old destination: an overriding cell sends its marked seats' bins to the
+// override whatever the normal machinery had chosen, including a destination
+// this pass has already set (which makes it idempotent).
 func retargetOutbound(spec *changeover.OrderSpec, node, dest string) {
 	if spec == nil || spec.Complex == nil || dest == "" {
 		return

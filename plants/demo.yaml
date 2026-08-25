@@ -162,6 +162,23 @@ zones:
       - {name: PEB_007, depth: 1}
       - {name: PEB_008, depth: 1}
 
+  # ── Changeover clearance bank — the OPTIONAL OVERRIDE, demonstrated honestly ──
+  #
+  # A cell whose ordinary outbound is the wrong place to put material during a
+  # setup can name somewhere else in changeover_evac_destination. It is a
+  # DESTINATION like any other, so this is a node group with lanes, not a
+  # dedicated station: if it fills, ordinary store-slot behaviour applies and
+  # the order waits for a slot instead of a robot parking on an occupied spot.
+  #
+  # PRESS-1-MOVED points at it (see claims). PRESS-1-RUN deliberately does NOT —
+  # the default path is normal routing, and the fixture has to exercise the
+  # default, or the thing everyone actually gets is the thing nothing covers.
+  - name: SYN_CLEAR
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      - {name: Lane_20, slots: [{name: CLR_001, depth: 1}, {name: CLR_002, depth: 2}]}
+
 stations:
   # ── PRESS-1: two_robot_press_index (front + paired back, no staging) ──
   - {name: PLN_001, kind: press}     # PRESS-1 front (produce PANEL-A)
@@ -217,12 +234,21 @@ stations:
   # a replacement. Every unloader in this scenario consumed ASSY, so a press-index
   # release had no unloader to ask and the trigger was unobservable on any sim run.
   - {name: FGN_002, kind: unloader}  # drains PANEL-A (the U1 trigger's target)
-  # ── PRESS-1 staged tooling changeover ──
-  # A tooling change needs somewhere to put the bins it lifts off the press
-  # (TBN_001) and somewhere for the incoming style's bins to WAIT while the tool
-  # is swapped (SLN_014). Without both, the round-3 staged evacuation cannot be
-  # expressed by any scenario — which is why it had never executed anywhere.
-  - {name: TBN_001, kind: staging}   # PRESS-1 tooling bay (evacuated bins park here)
+  # ── PRESS-1 changeover clearance ──
+  # SHINGO DOES NOT TOUCH TOOLING. The tool change is human work at the press;
+  # what the changeover owes it is floor space and timing. So a marked seat is
+  # CLEARED BY NORMAL ROUTING — its bin goes to SYN_MARKET like any other press
+  # bin — and the only station the feature needs is somewhere for the INCOMING
+  # style's bins to wait while the humans work (SLN_014).
+  #
+  # There used to be a `TBN_001` "tooling bay" here, a single staging station
+  # every marked seat was routed to. It was built on the wrong premise, and the
+  # sim showed what that costs: a two-seat press sends TWO bins, the bay holds
+  # one, nothing ever empties it, and robots dwell on it holding bins
+  # ("HOLDING at TBN_001 — a robot cannot place onto an occupied position").
+  # The clearance OVERRIDE demo is now SYN_CLEAR, a node group — see
+  # PRESS-1-MOVED's claim — so what an override names gets ordinary capacity
+  # behaviour instead of being a special place with special rules.
   - {name: SLN_014, kind: staging}   # PRESS-1 inbound stage (incoming style waits here)
 
 # Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
@@ -362,7 +388,14 @@ claims:
     # The OUTGOING claim owns the decision — ChangeoverNeedsEvacuation reads the
     # from-side — so these live here and not on -ALT.
     changeover_evac_seats: [front, paired]
-    changeover_evac_destination: TBN_001
+    # NO changeover_evac_destination, and that is the scenario: the marked seats
+    # are cleared BY NORMAL ROUTING, to outbound_destination like any other
+    # press bin. This is the default path and the one every plant gets unless it
+    # says otherwise, so it is the one the fixture must exercise.
+    #
+    # It is also an INCOMING style — PRESS-1-MOVED changes over back to it — so
+    # it names the stage its own returning bins wait at.
+    inbound_staging: SLN_014
 
   # PRESS-1's ALTERNATE style, same node, same swap mode, OTHER carrier type.
   # A changeover to this claim makes the identical press ask the identical group
@@ -397,12 +430,17 @@ claims:
   # PRESS-1 MOVED TO ANOTHER PLACEMENT. Same press, same payload, same carrier —
   # the only thing that changes is WHICH NODES it occupies. That makes
   # PRESS-1-RUN -> PRESS-1-MOVED the disjoint-node shape: PLN_001/PLN_002 are
-  # marked for tooling and leave the style entirely (Drops), PLN_005/PLN_006
+  # marked for clearance and leave the style entirely (Drops), PLN_005/PLN_006
   # arrive with no outgoing bin to remove (Adds).
   #
-  # Nothing here marks seats or names an evac destination: the OUTGOING claim
-  # owns both, and PRESS-1-RUN above already carries them. What this claim owes
-  # the changeover is the staging node its incoming bins wait at.
+  # In THAT direction the outgoing claim (PRESS-1-RUN) owns the marks and names
+  # no override, so the disjoint shape runs on normal routing.
+  #
+  # AND THIS CLAIM IS THE OVERRIDE DEMO, in the other direction. Changing back
+  # (PRESS-1-MOVED -> PRESS-1-RUN) makes THIS the outgoing claim, so its marks
+  # and its changeover_evac_destination are the ones that count — and it sends
+  # its cleared bins to SYN_CLEAR instead of to the market. One fixture, both
+  # halves of the rule: default routing one way, override the other.
   - core_node: PLN_005
     style: PRESS-1-MOVED
     role: produce
@@ -414,6 +452,11 @@ claims:
     inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
     inbound_staging: SLN_014
+    changeover_evac_seats: [front, paired]
+    # THE OVERRIDE, and the only one in this plant. A node group, not a station:
+    # whatever an override names is an ordinary destination and gets ordinary
+    # capacity behaviour.
+    changeover_evac_destination: SYN_CLEAR
 
   # ── PRESS-2 (A/B sequential): two paired claims, A active / B parked ──
   - core_node: PLN_003

@@ -1544,7 +1544,7 @@ async function runEvacSeatsSaveCase() {
         second_paired_core_node: 'PRESS_C',
         outbound_destination: 'MARKET',
         changeover_evac_seats: ['front', 'second'],
-        changeover_evac_destination: 'TOOLING-BAY',
+        changeover_evac_destination: 'CLEARANCE-GROUP',
     });
 
     // The stored selection reaches the boxes.
@@ -1557,8 +1557,8 @@ async function runEvacSeatsSaveCase() {
     if (!elements['claims-evac-seat-second'].checked) {
         reportFailure('evacSeats: second loads checked', true, false);
     } else { passed++; }
-    if (elements['claims-add-evac-destination'].value !== 'TOOLING-BAY') {
-        reportFailure('evacSeats: destination loads', 'TOOLING-BAY', elements['claims-add-evac-destination'].value);
+    if (elements['claims-add-evac-destination'].value !== 'CLEARANCE-GROUP') {
+        reportFailure('evacSeats: destination loads', 'CLEARANCE-GROUP', elements['claims-add-evac-destination'].value);
     } else { passed++; }
 
     // Each seat says WHICH node it is. "Back position" is the same words on
@@ -1582,8 +1582,8 @@ async function runEvacSeatsSaveCase() {
         reportFailure('evacSeats: the edited selection is sent, front to back',
             ['paired', 'second'], body.changeover_evac_seats);
     } else { passed++; }
-    if (body.changeover_evac_destination !== 'TOOLING-BAY') {
-        reportFailure('evacSeats: destination is sent', 'TOOLING-BAY', body.changeover_evac_destination);
+    if (body.changeover_evac_destination !== 'CLEARANCE-GROUP') {
+        reportFailure('evacSeats: destination is sent', 'CLEARANCE-GROUP', body.changeover_evac_destination);
     } else { passed++; }
 }
 
@@ -1728,7 +1728,7 @@ function runCompareGridOmitsUnownedClaimFieldsCase() {
         style_id: 1, core_node_name: 'PRESS_A', role: 'produce',
         swap_mode: 'two_robot_press_index', payload_code: 'PL1',
         changeover_evac_seats: ['front', 'paired'],
-        changeover_evac_destination: 'TOOLING-BAY',
+        changeover_evac_destination: 'CLEARANCE-GROUP',
         changeover_load_directive: true,
         key_route: ['WP_AISLE_N'],
         key_task: 'load',

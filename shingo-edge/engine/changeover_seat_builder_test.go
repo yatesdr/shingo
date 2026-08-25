@@ -88,10 +88,15 @@ func TestToolingSeatAction_Shape(t *testing.T) {
 	}
 }
 
-// Blank ChangeoverEvacDestination falls back to OutboundDestination — the whole
-// compatibility story for the field. It is resolved once, in
-// planToolingChangeover, so this asserts it where the decoration is decided.
-func TestToolingChangeover_DestinationFallback(t *testing.T) {
+// Blank ChangeoverEvacDestination means NORMAL ROUTING, and the two halves of
+// the pass want that answered differently.
+//
+// A leg the pipeline already planned is left alone — nothing to redirect, so
+// nothing queued. A seat this pass EXPANDS has no leg yet, so it still has to
+// name somewhere for the bin to go, and normal routing for a press is its own
+// outbound destination. One field, two readings, and the reason they differ is
+// that only one of them is an edit.
+func TestToolingChangeover_BlankDestinationMeansNormalRouting(t *testing.T) {
 	t.Parallel()
 	press := seatPress()
 	from := *press.from
@@ -99,8 +104,15 @@ func TestToolingChangeover_DestinationFallback(t *testing.T) {
 	to := *press.to
 
 	tc := planToolingChangeover([]processes.NodeClaim{from}, []processes.NodeClaim{to})
-	if got := tc.evacDest["PRESS_B"]; got != "MARKET" {
-		t.Errorf("blank evac destination must fall back to OutboundDestination; got %q", got)
+	if got, ok := tc.evacDest["PRESS_B"]; ok {
+		t.Errorf("blank evac destination queued a redirect to %q; it must queue nothing", got)
+	}
+	if len(tc.presses) != 1 {
+		t.Fatalf("expected one marked press, got %d", len(tc.presses))
+	}
+	if got := tc.presses[0].evacDest; got != "MARKET" {
+		t.Errorf("an expanded seat has no leg to leave alone, so it must be built against "+
+			"OutboundDestination; got %q", got)
 	}
 }
 

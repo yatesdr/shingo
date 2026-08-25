@@ -107,9 +107,49 @@ func TestShippedDemoPlantKeepsBothToolingShapesReachable(t *testing.T) {
 		t.Error("PRESS-1-RUN marks no seats — the outgoing claim owns the tooling decision, " +
 			"and with no marks NEITHER shape is a tooling changeover any more")
 	}
-	if run.ChangeoverEvacDestination == "" {
-		t.Error("PRESS-1-RUN names no changeover_evac_destination — the marked bins would go " +
-			"to the ordinary outbound destination and the tooling bay would never be exercised")
+	// THE DEFAULT PATH IS THE ONE THAT MUST SHIP EXERCISED. Clearance is normal
+	// routing; changeover_evac_destination is an optional override. If the only
+	// marked press in the fixture set the override, every sim run would exercise
+	// the exception and nothing would exercise what a plant actually gets.
+	if run.ChangeoverEvacDestination != "" {
+		t.Errorf("PRESS-1-RUN sets changeover_evac_destination=%q.\n"+
+			"Leave it empty: the marked seats are cleared by NORMAL ROUTING, and this is the "+
+			"scenario that covers the default. The override has its own claim — see the "+
+			"single-override assertion below.", run.ChangeoverEvacDestination)
+	}
+
+	// ...and the override must ship exercised too, by exactly one claim, and it
+	// must name a node GROUP. A one-slot station is what the old "tooling bay"
+	// was, and a two-seat press sends two bins at it.
+	var overriding []*Claim
+	for i := range p.Claims {
+		if p.Claims[i].ChangeoverEvacDestination != "" {
+			overriding = append(overriding, &p.Claims[i])
+		}
+	}
+	if len(overriding) != 1 {
+		t.Fatalf("want exactly one claim demonstrating the clearance override, found %d.\n"+
+			"None means the override ships unexercised — which is how N1 hid in the first "+
+			"place; more than one and the default path starts losing coverage.", len(overriding))
+	}
+	dest := overriding[0].ChangeoverEvacDestination
+	isGroup := false
+	for _, z := range p.Zones {
+		if z.Name == dest {
+			isGroup = true
+			break
+		}
+	}
+	if !isGroup {
+		t.Errorf("the clearance override names %q, which is not a node group in this plant.\n"+
+			"Point it at a group: an override is an ordinary destination and must get ordinary "+
+			"capacity behaviour. The single-station version of this is what left robots dwelling "+
+			"on an occupied bay holding bins nothing would take away.", dest)
+	}
+	if len(overriding[0].ChangeoverEvacSeats) == 0 {
+		t.Errorf("claim on %s names a clearance override but marks no seats — the override is "+
+			"only ever read for a marked seat, so nothing would exercise it",
+			overriding[0].CoreNode)
 	}
 
 	// Shape 1: same node, different bin type.

@@ -546,11 +546,12 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inact
 		// "evacuate" semantics, but at the per-position level the robot
 		// work is identical to Swap (evac old, fetch new, deliver new).
 		//
-		// A MARKED seat's tooling routing is NOT decided here. The tooling
-		// decorator edits this leg afterwards — bay instead of market, plus the
-		// staging hold — precisely so that no builder has to know whether the
-		// press is marked. That knowledge lived in a predicate here once, and
-		// an earlier pass rewriting SwapMode is what made it unreachable.
+		// A MARKED seat's tooling treatment is NOT decided here. The tooling
+		// decorator edits this leg afterwards — the staging hold always, and a
+		// redirected destination only if the cell named an override — precisely
+		// so that no builder has to know whether the press is marked. That
+		// knowledge lived in a predicate here once, and an earlier pass
+		// rewriting SwapMode is what made it unreachable.
 		return buildPressIndexPerPositionSwap(fromClaim, toClaim)
 	default:
 		return buildSingleRobotChangeoverSwap(fromClaim, toClaim, true)
