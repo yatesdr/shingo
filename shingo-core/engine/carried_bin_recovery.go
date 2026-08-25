@@ -396,9 +396,23 @@ func (e *Engine) tierOriginalDestination(bin *bins.Bin) *nodes.Node {
 	return e.usableDropPoint(node)
 }
 
-// tierRobotsCurrentStation is tier 3. It requires the robot to be PARKED, for
-// the same reason branch A does: ResolveRobotStation falls back to LastStation,
-// and a robot under way resolves to a node it merely passed.
+// tierRobotsCurrentStation is tier 3: unload where the robot already is.
+//
+// THE `Busy` CHECK IS WEAK, AND THIS COMMENT USED TO CLAIM IT WAS NOT — it said
+// the tier "requires the robot to be PARKED". It cannot. `Busy` is the vendor's
+// `procBusiness` (fleet/seerrds/mappers.go), a TASK flag rather than a motion
+// one: on 2026-08-24 it read false for the whole of AMR-09's 2 m 18 s drive-off,
+// because the order had already been cancelled. What it does exclude is a robot
+// the fleet is actively driving under an order, which is worth the one field
+// read; what it does not do is detect a parked robot.
+//
+// The consequence is bounded here in a way it is not on branch A. This tier
+// COMMANDS a destination — the order drives the robot there and the ordinary
+// arrival path records where the bin landed — where branch A ASSERTS a location
+// nobody visits. So a station resolved from a LastStation the robot merely
+// drove past costs a short trip, not a phantom bin. It is also the reason this
+// tier matters now at all: the scene alias makes it reachable at the plant for
+// the first time, where the point a parked robot reports never resolved before.
 func (e *Engine) tierRobotsCurrentStation(robot fleet.RobotStatus) *nodes.Node {
 	if robot.Busy {
 		return nil
