@@ -91,6 +91,79 @@ func ListByClass(db *sql.DB, className string) ([]*Point, error) {
 	return scanPoints(rows)
 }
 
+// ── The station alias: what a robot calls a place, and what Core calls it ──
+//
+// A robot reports the point it is standing at (`rbk_report.current_station`),
+// and at Springfield that value has NEVER been a Core node name — it is map
+// furniture: `AP102`, `CP37`, `PP95`, `LM9`. The bin locations carry the
+// mapping already: a `GeneralLocation` row's `instance_name` is the station
+// (`SMN_007`) and its `point_name` is the action point the robot reports
+// (`AP102`). These two queries are that translation, and nothing more.
+//
+// KEYED ON CLASS MEMBERSHIP, NEVER ON THE `AP` PREFIX. Eight of Springfield's
+// sixty `AP` points (AP350–AP357) are plain `ActionPoint` rows with no station
+// bound to them, and the sync only writes `point_name` for bin locations
+// (scenesync writes it from `area.BinLocations` and leaves it empty for
+// advanced points). A prefix rule would place a bin at a station that does not
+// exist.
+
+// StationsForPointName returns the station names whose action point is this
+// point — one per area.
+//
+// A SLICE, not a single value, because `point_name` carries no unique
+// constraint: the only unique key on this table is (area_name, instance_name),
+// so two mapped areas may each name an `AP102`. More than one row is the
+// ambiguity the caller must decline on rather than pick from.
+func StationsForPointName(db *sql.DB, pointName string) ([]string, error) {
+	rows, err := db.Query(`SELECT DISTINCT instance_name FROM scene_points
+		WHERE class_name='GeneralLocation' AND point_name=$1 AND instance_name<>''
+		ORDER BY instance_name`, pointName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
+// ClassOfPoint reports the class the scene holds for an instance name, so a
+// refusal can say that CP37 is a charge point rather than that it is unknown.
+// "" when no row names it.
+//
+// DISTINCT and LIMIT 1 for the same reason StationsForPointName returns a
+// slice: instance names are unique per AREA, not globally. A point mapped in
+// two areas is the same physical class in both, so one row answers the
+// question this is asked for.
+func ClassOfPoint(db *sql.DB, instanceName string) (string, error) {
+	var class string
+	err := db.QueryRow(`SELECT class_name FROM scene_points
+		WHERE instance_name=$1 ORDER BY area_name LIMIT 1`, instanceName).Scan(&class)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return class, err
+}
+
+// CountStationPoints reports how many bin locations the scene holds at all.
+//
+// Only ever asked on a REFUSAL, to tell two very different situations apart: a
+// point that is not a station on a map Core has synced, and a Core that has
+// never synced a scene, where no point could resolve. The first is a fact about
+// the floor; the second is a fact about Core, and an operator sent to look for
+// a bin deserves to know which one they are being told.
+func CountStationPoints(db *sql.DB) (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT count(*) FROM scene_points WHERE class_name='GeneralLocation'`).Scan(&n)
+	return n, err
+}
+
 // ListByArea returns all scene points in a given area.
 func ListByArea(db *sql.DB, areaName string) ([]*Point, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM scene_points WHERE area_name=$1 ORDER BY class_name, instance_name`, selectCols), areaName)
