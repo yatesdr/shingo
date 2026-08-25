@@ -78,24 +78,75 @@ func (d dropObservation) status() fleet.RobotStatus {
 	}
 }
 
-// markDeckLoaded records that this process has seen this bin's deck loaded.
+// deckWitnessRecency bounds the gap between the reading that last showed this
+// bin's deck LOADED and the reading that shows it empty. Inside that bound the
+// two are a transition this process watched; outside it they are two snapshots
+// with a hole between them, and a bin can leave a deck through a hole.
+//
+// THE RESTART RULE'S PREMISE, MADE TRUE. That rule refuses a drop Core did not
+// see because it was down — but Core staying UP is not the same as Core
+// watching. The fleet can go unreachable (robotRefreshLoop stops sweeping while
+// !fleetConnected), or one AMR can roam off the WiFi, and robotsCache is never
+// pruned — so a deck last read loaded goes on re-arming the witness from a
+// stale cache entry while the robot is somewhere Core cannot see. An unbounded
+// mark says "at some point", and "at some point" is not a witness.
+//
+// TWO MINUTES, taken from the cadence that actually refreshes the mark. The
+// watch rides the 2-second robot poll, but that poll short-circuits on an
+// unchanged fleet hash (engine_background.go), so on an idle plant the
+// GUARANTEED refresh is the reconciliation sweep — 60 s by default
+// (config.ReconcileInterval). Doubling it is deliberate: a bound equal to the
+// cadence that feeds it declines on ordinary scheduling jitter, and the
+// failures this exists to catch are minutes to hours long. Nothing legitimate
+// sits between two minutes and an hour.
+const deckWitnessRecency = 2 * time.Minute
+
+// markDeckLoaded records WHEN this process last saw this bin's deck loaded.
 //
 // THIS IS THE WITNESS, and it is why no `Witnessed` bool is needed on the
 // observation itself: the freeze only ever forms on a loaded→empty transition
-// this process watched, so a carried bin whose deck reads empty with no mark is
-// the unwitnessed case by construction.
+// this process watched, so a carried bin whose deck reads empty with no recent
+// mark is the unwitnessed case by construction.
+//
+// AN INSTANT AND NOT A BOOL. A bool answers "did this process ever see this
+// deck loaded", and every wrong placement the rule exists to prevent can answer
+// yes — Core saw the deck loaded an hour ago and has heard nothing since. The
+// question worth asking is whether it saw it loaded JUST NOW, and only a
+// timestamp can be asked that.
 func (e *Engine) markDeckLoaded(binID int64) {
 	e.dropObsMu.Lock()
 	defer e.dropObsMu.Unlock()
 	if e.deckSeenLoaded == nil {
-		e.deckSeenLoaded = map[int64]bool{}
+		e.deckSeenLoaded = map[int64]time.Time{}
 	}
-	e.deckSeenLoaded[binID] = true
+	e.deckSeenLoaded[binID] = clock.Now().UTC()
 }
 
-// freezeDrop returns the frozen sample for a bin, taking it now if this is the
-// first at-rest empty tick. ok is false when the transition was never
-// witnessed.
+// dropVerdict is what the watch is entitled to do with a bin whose deck reads
+// empty.
+//
+// Four answers and not two, because the three refusals are three different
+// things to tell an operator: Core was not running, Core was running but deaf,
+// and Core watched the drop but never got to act on it in time. Collapsing them
+// would hand the floor one sentence for three situations whose next actions
+// differ.
+type dropVerdict int
+
+const (
+	// dropUsable: a sample this process took, still inside the window.
+	dropUsable dropVerdict = iota
+	// dropUnwitnessed: no mark at all — Core restarted after the unload.
+	dropUnwitnessed
+	// dropGapped: a mark, but older than deckWitnessRecency — Core was up and
+	// heard nothing about this robot in between.
+	dropGapped
+	// dropExpired: a witnessed sample that outlived the inference window
+	// without a placement ever becoming possible.
+	dropExpired
+)
+
+// freezeDrop returns what the watch may act on for this bin, taking the sample
+// now if this is the first at-rest empty tick after a recent loaded reading.
 //
 // UNWITNESSED MEANS ANOMALY — there is no agreement-with-intent fallback, and
 // that is a decision rather than an omission. The freeze is in-memory and dies
@@ -109,20 +160,35 @@ func (e *Engine) markDeckLoaded(binID int64) {
 // agreement then reads as corroboration. The operator button (the bins page's
 // "Ask AMR-09 to set it down", and RecoverTransitAnomaly for a bin already off
 // the deck) is the designed exit.
-func (e *Engine) freezeDrop(binID int64, obs dropObservation) (dropObservation, bool) {
+//
+// AN EXPIRED SAMPLE IS RETURNED, NOT DROPPED. The alternative — delete it and
+// let the next tick decide afresh — is how a live reading gets promoted into an
+// answer: the robot has gone back to work by then, so a re-taken sample
+// resolves to whatever station it happens to be standing at and places the bin
+// somewhere it was never set down. Keeping it lets the sentence say how old the
+// observation is, and means the recency-bounded witness above is never asked to
+// authorise a second freeze for a bin that already had one.
+func (e *Engine) freezeDrop(binID int64, obs dropObservation, window time.Duration) (dropObservation, dropVerdict) {
 	e.dropObsMu.Lock()
 	defer e.dropObsMu.Unlock()
 	if frozen, ok := e.dropObs[binID]; ok {
-		return frozen, true
+		if clock.Now().UTC().Sub(frozen.At) > window {
+			return frozen, dropExpired
+		}
+		return frozen, dropUsable
 	}
-	if !e.deckSeenLoaded[binID] {
-		return dropObservation{}, false
+	seen, ok := e.deckSeenLoaded[binID]
+	switch {
+	case !ok:
+		return dropObservation{}, dropUnwitnessed
+	case obs.At.Sub(seen) > deckWitnessRecency:
+		return dropObservation{}, dropGapped
 	}
 	if e.dropObs == nil {
 		e.dropObs = map[int64]dropObservation{}
 	}
 	e.dropObs[binID] = obs
-	return obs, true
+	return obs, dropUsable
 }
 
 // forgetDrop discards a bin's frozen sample.
@@ -135,7 +201,7 @@ func (e *Engine) freezeDrop(binID int64, obs dropObservation) (dropObservation, 
 // The seen-loaded mark is deliberately NOT dropped here: a recovery order that
 // fails leaves the bin riding the same deck, and clearing the witness would
 // make the next empty-deck tick look like a restart and decline with a reason
-// that is not true.
+// that is not true. It ages out on its own if nothing refreshes it.
 func (e *Engine) forgetDrop(binID int64) {
 	e.dropObsMu.Lock()
 	delete(e.dropObs, binID)
@@ -145,21 +211,27 @@ func (e *Engine) forgetDrop(binID int64) {
 // pruneDropObservations drops what no bin on a carrier node is entitled to any
 // more.
 //
-// Against the CARRIED LIST rather than by expiry alone, because that list is
-// the population both maps describe: a bin that left a deck by any route — this
-// watch, a recovery order, an operator — is gone from it, and self-healing
-// against the real population needs no other bookkeeping. Expiry still applies
-// on top for a bin that rides a deck longer than the inference window.
-func (e *Engine) pruneDropObservations(carried []*bins.Bin, window time.Duration) {
+// AGAINST THE CARRIED LIST, AND ONLY THAT. That list is the population both
+// maps describe: a bin that left a deck by any route — this watch, a recovery
+// order, an operator — is gone from it, so self-healing against the real
+// population needs no other bookkeeping, and both maps stay bounded by the
+// handful of bins riding decks.
+//
+// AGE IS DELIBERATELY NOT A REASON TO DELETE, and it used to be. Dropping a
+// still-carried bin's sample because it was old left the WITNESS behind to
+// authorise a fresh one, so the expiry did not stop the inference — it re-armed
+// it with a reading taken hours after the drop, at a station the robot had
+// since driven to. Age is now decided where the answer is used (freezeDrop),
+// where it can be SAID instead of silently acted on.
+func (e *Engine) pruneDropObservations(carried []*bins.Bin) {
 	live := make(map[int64]bool, len(carried))
 	for _, bin := range carried {
 		live[bin.ID] = true
 	}
-	now := clock.Now().UTC()
 	e.dropObsMu.Lock()
 	defer e.dropObsMu.Unlock()
-	for id, obs := range e.dropObs {
-		if !live[id] || now.Sub(obs.At) > window {
+	for id := range e.dropObs {
+		if !live[id] {
 			delete(e.dropObs, id)
 		}
 	}

@@ -689,7 +689,7 @@ func TestCarriedBin_PlacementDiscardsTheFrozenSampleAndTheCarrierNode(t *testing
 	eng.sweepCarriedBins()
 	eng.dropObsMu.Lock()
 	_, frozen := eng.dropObs[bin.ID]
-	seen := eng.deckSeenLoaded[bin.ID]
+	_, seen := eng.deckSeenLoaded[bin.ID]
 	eng.dropObsMu.Unlock()
 	if frozen {
 		t.Error("the frozen sample outlived the placement it produced")

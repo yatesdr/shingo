@@ -254,15 +254,14 @@ func (e *Engine) placeInferred(binID int64, robotID string, obs dropObservation,
 // is the whole of the pin-drift fix: the note now describes the moment the deck
 // emptied and stops moving as the robot drives on.
 //
-// THE DROP INSTANT IS PRINTED ONLY WHERE THERE WAS A DROP TO INSTANT. On the
-// carried path the sample is frozen, so "deck read empty 21:02:23Z" is both true
-// and the same bytes on the next pass. On the `_TRANSIT` path there is no
-// freeze — the reading is taken fresh every pass — so the same field would carry
-// clock.Now(), and a note that changes every pass is a note NEITHER dedup can
-// suppress: not the log's, which is keyed on the text (strandedAnomaly), and not
-// the write's (`anomaly_note IS DISTINCT FROM`, bins.MarkAnomalyWithNote). One
-// field guaranteed to differ would have defeated the write-dedup shipping in
-// this same change, on the whole population that dedup was written for.
+// THE DROP INSTANT IS PRINTED ONLY WHEN THERE WAS A DROP TO INSTANT. On the
+// sweep path the sample is frozen, so "deck read empty 21:02:23Z" is both true
+// and the same bytes next pass. On the `_TRANSIT` path there is no freeze —
+// the reading is taken fresh on every pass — so the same field would carry
+// clock.Now(), and a note that changes every pass is a note neither dedup can
+// suppress: not the log's (keyed on the text) and not MarkAnomalyWithNote's
+// (`anomaly_note IS DISTINCT FROM`). The one field guaranteed to differ would
+// have defeated the write-dedup that ships in this same change.
 func (e *Engine) declineInferred(binID int64, robotID string, obs dropObservation, intent, why string, watchedUnload bool) {
 	parts := []string{why, intentPhrase(intent)}
 	if watchedUnload {
@@ -451,7 +450,7 @@ func (e *Engine) sweepCarriedBins() {
 		}
 		e.placeCarriedBinIfSettled(bin, robotID, robot)
 	}
-	e.pruneDropObservations(carried, e.strandedSweepWindow())
+	e.pruneDropObservations(carried)
 }
 
 // retireEmptyCarrierNodes removes carrier nodes nothing is riding any more,
@@ -515,8 +514,10 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 	// the gates are what may need another tick. A freeze taken after the
 	// stand-down check or the Busy check would be a freeze the robot had already
 	// driven away from.
-	obs, witnessed := e.freezeDrop(bin.ID, observeDrop(robotID, robot, clock.Now().UTC()))
-	if !witnessed {
+	window := e.strandedSweepWindow()
+	obs, verdict := e.freezeDrop(bin.ID, observeDrop(robotID, robot, clock.Now().UTC()), window)
+	switch verdict {
+	case dropUnwitnessed:
 		// See freezeDrop: an already-empty deck this process never saw loaded is
 		// a Core that restarted after the unload, and it is not evidence of
 		// anything. The honest answer is the anomaly and the operator button.
@@ -529,6 +530,34 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 			"the deck was already empty when Core first looked — Core restarted after the "+
 				"unload, so the drop was not observed and this robot's position does not "+
 				"describe where the bin is")
+		return
+	case dropGapped:
+		// A DIFFERENT SENTENCE, because it is a different fact. Core did not
+		// restart: it was running and heard nothing about this robot for longer
+		// than a deck reading stays worth anything — the fleet went unreachable,
+		// or this AMR dropped off the network. The unload happened somewhere
+		// inside that silence, and so could a person lifting the bin off by
+		// hand. Telling an operator Core restarted when it did not would send
+		// them to check the wrong thing.
+		//
+		// Positionless for the same reason as the restart case, and constant for
+		// the same reason.
+		e.strandedAnomaly(bin.ID, robotID, fleet.RobotStatus{}, false,
+			"the deck last read loaded more than "+deckWitnessRecency.String()+
+				" before it read empty — Core heard nothing about this robot in between, so "+
+				"the drop was not observed and this robot's position does not describe "+
+				"where the bin is")
+		return
+	case dropExpired:
+		// The drop WAS watched, and the sentence says so — this is the only one
+		// of the three that keeps its coordinates, because they are a true
+		// record of where the deck emptied. What has run out is the right to act
+		// on them: every retry since has failed, and hours later an operator may
+		// have moved the bin themselves. The sample is kept rather than dropped
+		// so that this stays the answer instead of a fresh reading becoming one.
+		e.declineInferred(bin.ID, robotID, obs, e.placementIntent(bin.ID),
+			"the drop was observed more than "+window.String()+" ago and could not be placed "+
+				"in that time, so it is no longer safe to record it from that reading", true)
 		return
 	}
 

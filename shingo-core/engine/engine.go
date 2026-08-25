@@ -74,16 +74,17 @@ type Engine struct {
 	// the correct reading (AP102 -> SMN_007) was present on tick 1 and gone by
 	// tick 20, after which 50 more ticks reported a park point 12.3 m away.
 	//
-	// deckSeenLoaded is the other half: it records that THIS PROCESS watched
-	// the deck loaded before it read empty. An empty deck with no such record
-	// is a Core that restarted after the unload, and it is not an observation
-	// of anything — see freezeDrop.
+	// deckSeenLoaded is the other half: it records WHEN this process last
+	// watched the deck loaded. An empty deck with no such record is a Core
+	// that restarted after the unload; one whose record is older than
+	// deckWitnessRecency is a Core that was up but heard nothing about this
+	// robot in between. Neither is an observation of anything — see freezeDrop.
 	//
 	// Both are bounded by the bins on carrier nodes and pruned against that
 	// list on every sweep. Neither is persisted: they describe what this
 	// process witnessed, and a restart genuinely did not witness it.
 	dropObs               map[int64]dropObservation
-	deckSeenLoaded        map[int64]bool
+	deckSeenLoaded        map[int64]time.Time
 	dropObsMu             sync.Mutex
 	reconciliation        *ReconciliationService
 	recovery              *RecoveryService
