@@ -279,36 +279,33 @@ func (p *Plant) Validate() error {
 			if c.IndexRobotSupplies {
 				add("%s: index_robot_supplies applies to two_robot_press_index only", where)
 			}
-			if len(c.ChangeoverEvacPositions) > 0 {
-				add("%s: changeover_evac_positions applies to two_robot_press_index only", where)
+			if len(c.ChangeoverEvacNodes) > 0 {
+				add("%s: changeover_evac_nodes applies to two_robot_press_index only", where)
 			}
 		}
-		// ── MARKED POSITIONS MUST BE POSITIONS THIS PRESS HAS ───────────────────────
+		// ── A MARKED NODE MUST BE ONE THIS CLAIM HOLDS ─────────────────────
 		//
-		// A position the layout does not have is not an unlikely configuration, it
-		// is a reference to nothing — and the evacuation it asks for silently
-		// never happens, which is the failure mode hardest to notice on a sim.
-		// Same rule the Edge's ValidateNodeClaim applies; stated here too
-		// because a spec is written long before an Edge sees it.
-		seenPosition := map[string]bool{}
-		for _, position := range c.ChangeoverEvacPositions {
-			switch position {
-			case "front":
-			case "paired":
-				if c.PairedCoreNode == "" {
-					add("%s: changeover_evac_positions marks the back position, but this press has no paired_core_node", where)
-				}
-			case "second":
-				if c.SecondPairedCoreNode == "" {
-					add("%s: changeover_evac_positions marks the third position, but this press has no second_paired_core_node", where)
-				}
-			default:
-				add("%s: unknown changeover_evac_position %q (want front, paired or second)", where, position)
+		// The marks name core nodes. A node the claim does not hold is not an
+		// unlikely configuration, it is a reference to nothing — and the
+		// clearance it asks for silently never happens, which is the failure
+		// mode hardest to notice on a sim. Same rule the Edge's
+		// ValidateNodeClaim applies; stated here too because a spec is written
+		// long before an Edge sees it.
+		held := map[string]bool{}
+		for _, n := range []string{c.CoreNode, c.PairedCoreNode, c.SecondPairedCoreNode} {
+			if n != "" {
+				held[n] = true
 			}
-			if seenPosition[position] {
-				add("%s: changeover_evac_positions lists %q more than once", where, position)
+		}
+		seenMark := map[string]bool{}
+		for _, node := range c.ChangeoverEvacNodes {
+			if !held[node] {
+				add("%s: changeover_evac_nodes marks %q, which is not one of this claim's nodes", where, node)
 			}
-			seenPosition[position] = true
+			if seenMark[node] {
+				add("%s: changeover_evac_nodes lists %q more than once", where, node)
+			}
+			seenMark[node] = true
 		}
 		// An evacuation destination that names nothing sends the bins nowhere.
 		if c.ChangeoverEvacDestination != "" && !ref(c.ChangeoverEvacDestination) {

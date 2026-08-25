@@ -532,7 +532,7 @@ func (l *Loader) LoadablePayloadCodesAt(coreNode NodeID) []string {
 //	Loader.SynthClaim (here)        ID == 0.       There is no persisted row
 //	                                               anywhere. Guard ID == 0 before
 //	                                               using it as a foreign key.
-//	SynthesizePressPositionClaim    ID == parent's. A press position's claim IS a
+//	SynthesizePositionClaim    ID == parent's. A press position's claim IS a
 //	                                               view of the parent press-index
 //	                                               row, and node tasks store that
 //	                                               id so FromClaimID/ToClaimID

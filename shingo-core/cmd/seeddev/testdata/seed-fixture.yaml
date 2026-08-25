@@ -437,7 +437,7 @@ claims:
     # lands. Distinctive on every axis a wrong encoding would flatten: TWO positions
     # (not one, not all), a destination that is NOT outbound_destination, and a
     # two-point route in an order that is not sorted.
-    changeover_evac_positions: [front, paired]
+    changeover_evac_nodes: [PLN_001, PLN_002]
     changeover_evac_destination: SYN_MT_Return
     key_route: [WP_AISLE_S, WP_AISLE_N]
     key_task: unload

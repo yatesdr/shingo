@@ -110,7 +110,7 @@ func seedStagedPress(t *testing.T, positions []string, toStaging string) stagedS
 		PayloadCode: "ST-OLD", UOPCapacity: 100,
 		PairedCoreNode: "PLN-ST-B", SecondPairedCoreNode: "PLN-ST-C",
 		InboundSource: "ST-SRC", OutboundDestination: "ST-MARKET",
-		ChangeoverEvacPositions:       domain.Ptr(positions),
+		ChangeoverEvacNodes:       domain.Ptr(positions),
 		ChangeoverEvacDestination: domain.Ptr("ST-TOOLING-BAY"),
 	}
 	to := processes.NodeClaimInput{

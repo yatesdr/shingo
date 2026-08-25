@@ -245,12 +245,21 @@ function buildDOM() {
     add('claims-add-tooling-relevance-row');
     add('claims-add-evac-destination-group');
     add('claims-add-evac-destination', { tag: 'select', value: '' });
-    add('claims-err-changeover-evac-positions', { display: 'none' });
+    // Carry-over parts: what happens to a marked node whose part is common
+    // to both styles. Defaults to replace, which is today's behaviour.
+    add('claims-add-carryover-group');
+    add('claims-add-carryover', { tag: 'select', value: 'replace' });
+    add('claims-err-changeover-carryover-disposition', { display: 'none' });
+    add('claims-err-changeover-evac-nodes', { display: 'none' });
     ['front', 'paired', 'second'].forEach(function(position) {
         const row = add('claims-position-' + position + '-row');
         add('claims-position-' + position + '-node');
         const cb = makeElement('claims-evac-position-' + position, { tag: 'input', type: 'checkbox' });
-        cb.value = position;
+        // The VALUE is the node this slot holds, filled in by
+        // renderEvacNodeLabels; data-slot says which layout field fills it.
+        cb.value = '';
+        cb.dataset = { slot: position };
+        cb.setAttribute('data-slot', position);
         cb.classList.add('claims-evac-position');
         row.appendChild(cb);
         elements['claims-evac-position-' + position] = cb;
@@ -1543,7 +1552,7 @@ async function runEvacPositionsSaveCase() {
         paired_core_node: 'PRESS_B',
         second_paired_core_node: 'PRESS_C',
         outbound_destination: 'MARKET',
-        changeover_evac_positions: ['front', 'second'],
+        changeover_evac_nodes: ['PRESS_A', 'PRESS_C'],
         changeover_evac_destination: 'CLEARANCE-GROUP',
     });
 
@@ -1578,9 +1587,9 @@ async function runEvacPositionsSaveCase() {
         return;
     }
     const body = apiRecorder[0].body;
-    if (JSON.stringify(body.changeover_evac_positions) !== JSON.stringify(['paired', 'second'])) {
-        reportFailure('evacPositions: the edited selection is sent, front to back',
-            ['paired', 'second'], body.changeover_evac_positions);
+    if (JSON.stringify(body.changeover_evac_nodes) !== JSON.stringify(['PRESS_B', 'PRESS_C'])) {
+        reportFailure('evacNodes: the edited selection is sent as node names',
+            ['PRESS_B', 'PRESS_C'], body.changeover_evac_nodes);
     } else { passed++; }
     if (body.changeover_evac_destination !== 'CLEARANCE-GROUP') {
         reportFailure('evacPositions: destination is sent', 'CLEARANCE-GROUP', body.changeover_evac_destination);
@@ -1612,7 +1621,7 @@ async function runHiddenPositionIsNotSentCase() {
         paired_core_node: 'PRESS_B',
         second_paired_core_node: '',           // 2-position layout
         outbound_destination: 'MARKET',
-        changeover_evac_positions: ['front', 'second'],
+        changeover_evac_nodes: ['PRESS_A', 'PRESS_C'],
     });
     ctx.renderClaimForm();
 
@@ -1622,9 +1631,9 @@ async function runHiddenPositionIsNotSentCase() {
 
     // Named before it happens, like every other mode drop.
     const note = elements['claims-mode-drop-note'];
-    if (note.textContent.indexOf('Third press position') < 0) {
-        reportFailure('hiddenPosition: the note names the position that will be cleared',
-            'mentions Third press position', note.textContent);
+    if (note.textContent.indexOf('PRESS_C') < 0) {
+        reportFailure('hiddenPosition: the note names the NODE that will be dropped',
+            'mentions PRESS_C', note.textContent);
     } else { passed++; }
 
     await ctx.saveClaim();
@@ -1632,9 +1641,9 @@ async function runHiddenPositionIsNotSentCase() {
         reportFailure('hiddenPosition: expected 1 POST', 1, apiRecorder.length);
         return;
     }
-    const positions = apiRecorder[0].body.changeover_evac_positions;
-    if (JSON.stringify(positions) !== JSON.stringify(['front'])) {
-        reportFailure('hiddenPosition: only the impossible position is dropped; front survives', ['front'], positions);
+    const markedNodes = apiRecorder[0].body.changeover_evac_nodes;
+    if (JSON.stringify(markedNodes) !== JSON.stringify(['PRESS_A'])) {
+        reportFailure('hiddenPosition: only the node this claim no longer holds is dropped', ['PRESS_A'], markedNodes);
     } else { passed++; }
 }
 
@@ -1655,13 +1664,13 @@ function runEvacPositionsCollapseHintCase() {
         payload_code: 'PL1',
         paired_core_node: 'PRESS_B',
         outbound_destination: 'MARKET',
-        changeover_evac_positions: ['paired'],
+        changeover_evac_nodes: ['PRESS_B'],
     });
     ctx.renderClaimForm();
     const hint = elements['claims-changeover-hint'].textContent;
-    if (hint.indexOf('paired') < 0) {
-        reportFailure('evacPositionsHint: a marked selection shows in the collapsed summary',
-            'mentions paired', hint);
+    if (hint.indexOf('PRESS_B') < 0) {
+        reportFailure('evacNodesHint: a marked selection shows in the collapsed summary',
+            'mentions PRESS_B', hint);
     } else { passed++; }
     if (elements['claims-changeover-fieldset'].open !== true) {
         reportFailure('evacPositionsHint: a non-default selection opens the card', true,
@@ -1688,15 +1697,15 @@ async function runPositionsDroppedOnModeChangeCase() {
         paired_core_node: 'PRESS_B',
         outbound_destination: 'MARKET',
         inbound_staging: 'IN1',
-        changeover_evac_positions: ['front'],
+        changeover_evac_nodes: ['PRESS_A'],
     });
     elements['claims-add-swap'].value = 'two_robot';
     ctx.renderClaimForm();
 
     const note = elements['claims-mode-drop-note'];
-    if (note.textContent.indexOf('Per-position tooling evacuation') < 0) {
+    if (note.textContent.indexOf('Per-node changeover clearance') < 0) {
         reportFailure('positionsDropped: the note names what will be cleared',
-            'mentions Per-position tooling evacuation', note.textContent);
+            'mentions Per-node changeover clearance', note.textContent);
     } else { passed++; }
 
     await ctx.saveClaim();
@@ -1705,7 +1714,7 @@ async function runPositionsDroppedOnModeChangeCase() {
         return;
     }
     // An ARRAY must clear to [], not to '' — the store would store the string.
-    const positions = apiRecorder[0].body.changeover_evac_positions;
+    const positions = apiRecorder[0].body.changeover_evac_nodes;
     if (JSON.stringify(positions) !== JSON.stringify([])) {
         reportFailure('positionsDropped: an array field clears to [], not to a string', [], positions);
     } else { passed++; }
@@ -1727,7 +1736,7 @@ function runCompareGridOmitsUnownedClaimFieldsCase() {
     const body = ctx.claimToBody({
         style_id: 1, core_node_name: 'PRESS_A', role: 'produce',
         swap_mode: 'two_robot_press_index', payload_code: 'PL1',
-        changeover_evac_positions: ['front', 'paired'],
+        changeover_evac_nodes: ['PRESS_A', 'PRESS_B'],
         changeover_evac_destination: 'CLEARANCE-GROUP',
         changeover_load_directive: true,
         key_route: ['WP_AISLE_N'],
@@ -1735,7 +1744,7 @@ function runCompareGridOmitsUnownedClaimFieldsCase() {
         index_robot_supplies: true,
     });
     const unowned = [
-        'changeover_evac_positions',
+        'changeover_evac_nodes',
         'changeover_evac_destination',
         'changeover_load_directive',
         'key_route',

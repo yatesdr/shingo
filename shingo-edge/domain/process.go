@@ -259,23 +259,30 @@ type NodeClaim struct {
 	// two_robot_press_index. When set, the layout is C → B → A and R1's
 	// final dropoff goes to C instead of B. Empty = legacy 2-position.
 	SecondPairedCoreNode string `json:"second_paired_core_node"`
-	// ChangeoverEvacPositions names which of a press-index cell's positions hold bins
-	// that BLOCK THE TOOLING CHANGE and must therefore leave the press before
-	// the tool can be swapped. Values are ChangeoverEvacPosition constants.
+	// ChangeoverEvacNodes names which of this cell's NODES hold bins that are in
+	// the way of a setup and must therefore be cleared before the humans can
+	// work. Core node names — the same names the claim's own layout fields use.
 	//
-	// A SET ON THE FRONT CLAIM, not a flag per position, because the back positions
-	// have no claim rows to carry one: only the front position of a
-	// press-index cell is a style_node_claims row, and UpsertClaim rejects
-	// SwapModePressPosition outright so per-position rows cannot be created.
+	// A SET ON ONE CLAIM, not a flag per node, because an index-paired node has
+	// no style_node_claims row to carry one: only the front node of a press-index
+	// cell is a row, and UpsertClaim rejects SwapModePressPosition outright so
+	// per-node rows cannot be created. That is a schema fact, and it is the only
+	// reason this is a list rather than a boolean — it is NOT a reason to invent
+	// a vocabulary of positions, which is what an earlier round did.
 	//
-	// Empty is the standing default and means what it has always meant: no
-	// position is marked, so nothing is evacuated for tooling and the cell takes
-	// the ordinary index choreography. Unmarked positions stay put.
+	// GENERAL BY CONSTRUCTION. A press is the first cell implemented this way,
+	// not the only one it can describe: any cell whose claim names several nodes
+	// can mark any subset of them. Nothing here counts to three or assumes an
+	// index.
 	//
-	// The scalar EvacuateOnChangeover above remains the whole answer for
-	// single-position consume/process nodes; this is the press-index shape of the
-	// same question, which is why it lives beside it and not in a new struct.
-	ChangeoverEvacPositions []string `json:"changeover_evac_positions,omitempty"`
+	// Empty is the standing default and means what it has always meant: no node
+	// is marked, so nothing is cleared for a setup and the cell takes the
+	// ordinary choreography. Unmarked nodes stay put.
+	//
+	// The scalar EvacuateOnChangeover above remains the whole answer for a
+	// single-node consume/process node; this is the multi-node shape of the same
+	// question, which is why it lives beside it and not in a new struct.
+	ChangeoverEvacNodes []string `json:"changeover_evac_nodes,omitempty"`
 	// ChangeoverEvacDestination is where a tooling evacuation sends the bins
 	// it lifts off the press. Free-form: a node name or a group name, exactly
 	// like InboundSource — Core resolves either.
@@ -395,7 +402,7 @@ type NodeClaim struct {
 // value. A position carrying it exists only for the life of one changeover.
 const SwapModePressPosition protocol.SwapMode = "press_position"
 
-// SynthesizePressPositionClaim builds a per-position claim from a parent
+// SynthesizePositionClaim builds a per-position claim from a parent
 // press-index claim. CoreNodeName becomes the position's own name; SwapMode
 // becomes the press_position marker; the press-index-only geometry fields
 // (PairedCoreNode, SecondPairedCoreNode) and the staging fields are zeroed
@@ -421,7 +428,7 @@ const SwapModePressPosition protocol.SwapMode = "press_position"
 // its modal rendered no buttons at all. Two robots sat at a staged wait for
 // 19 minutes and the operator cancelled both orders to free them. One
 // definition, two callers, so the two can never drift again.
-func SynthesizePressPositionClaim(parent *NodeClaim, coreNodeName string) *NodeClaim {
+func SynthesizePositionClaim(parent *NodeClaim, coreNodeName string) *NodeClaim {
 	if parent == nil {
 		return nil
 	}
@@ -472,7 +479,7 @@ func SynthesizePressPositionClaim(parent *NodeClaim, coreNodeName string) *NodeC
 //
 // The parent is found through the node task's FromClaimID / ToClaimID, which
 // point at the real persisted parent row precisely because
-// SynthesizePressPositionClaim keeps the parent's ID. See the contract note
+// SynthesizePositionClaim keeps the parent's ID. See the contract note
 // there.
 func PositionClaimFromParent(parent *NodeClaim, coreNodeName string) *NodeClaim {
 	if parent == nil || coreNodeName == "" {
@@ -486,7 +493,7 @@ func PositionClaimFromParent(parent *NodeClaim, coreNodeName string) *NodeClaim 
 	if parent.PairedCoreNode != coreNodeName && parent.SecondPairedCoreNode != coreNodeName {
 		return nil
 	}
-	return SynthesizePressPositionClaim(parent, coreNodeName)
+	return SynthesizePositionClaim(parent, coreNodeName)
 }
 
 // AllowedPayloads returns the effective set of payload codes this claim
@@ -509,27 +516,6 @@ func (c *NodeClaim) AllowedPayloads() []string {
 // Ptr returns a pointer to v. It exists for the absent-means-untouched fields
 // on NodeClaimInput below, which cannot be written as &true / &1 inline.
 func Ptr[T any](v T) *T { return &v }
-
-// ChangeoverEvacPosition identifies one position of a press-index cell in the per-position
-// tooling-relevance selection.
-//
-// POSITIONAL, NOT BY NODE NAME. A position is "the front position", not
-// "PLN_002_B" — the names live on PairedCoreNode / SecondPairedCoreNode and
-// change when a press is re-cabled or a style re-pairs it. Storing the
-// position means a selection survives a rename; storing the name would leave
-// a set pointing at a position that is no longer part of the cell.
-const (
-	EvacPositionFront  = "front"  // CoreNodeName
-	EvacPositionPaired = "paired" // PairedCoreNode
-	EvacPositionSecond = "second" // SecondPairedCoreNode
-)
-
-// ChangeoverEvacPositions is the ordered, canonical position vocabulary — front to
-// back, the direction bins index. Order matters for rendering and for the
-// deterministic plan the builder emits.
-func ChangeoverEvacPositionKeys() []string {
-	return []string{EvacPositionFront, EvacPositionPaired, EvacPositionSecond}
-}
 
 // ── CARRY-OVER PARTS ────────────────────────────────────────────────────────
 //
@@ -666,7 +652,7 @@ func ToolingClearanceApplies(from, to *NodeClaim) bool {
 	if !StagedToolingChangeover(from) {
 		return false
 	}
-	for _, position := range MarkedEvacPositionNodes(from) {
+	for _, position := range MarkedEvacNodes(from) {
 		if ClearanceTreatmentAtNode(from, to, position) != ClearanceKeep {
 			return true
 		}
@@ -688,55 +674,55 @@ func claimOccupies(c *NodeClaim, coreNode string) bool {
 	return false
 }
 
-// PositionCoreNode resolves a position key to the core node holding it on this claim.
-// Returns "" for a position the claim's layout does not have — a 2-position press
-// asked for its third position.
-func PositionCoreNode(c *NodeClaim, position string) string {
-	if c == nil {
-		return ""
-	}
-	switch position {
-	case EvacPositionFront:
-		return c.CoreNodeName
-	case EvacPositionPaired:
-		return c.PairedCoreNode
-	case EvacPositionSecond:
-		return c.SecondPairedCoreNode
-	}
-	return ""
-}
-
-// EvacPositionMarked reports whether this claim marks the given position as holding
-// bins that block the tooling change.
-func EvacPositionMarked(c *NodeClaim, position string) bool {
-	if c == nil {
-		return false
-	}
-	for _, s := range c.ChangeoverEvacPositions {
-		if s == position {
-			return true
-		}
-	}
-	return false
-}
-
-// MarkedEvacPositionNodes returns the core nodes of every marked position that this
-// claim's layout actually has, front to back.
+// MarkedEvacNodes is every node this claim marks for changeover clearance, in
+// the order the operator selected them.
 //
-// A marked position the layout does not have contributes nothing rather than an
-// empty string: a 2-position press whose claim still carries "second" from a
-// 3-position past must plan two evacuations, not two and a phantom.
-func MarkedEvacPositionNodes(c *NodeClaim) []string {
+// ── THE MARKS NAME NODES, AND THAT IS THE WHOLE MODEL ──────────────────────
+//
+// They used to name POSITIONS — "front"/"paired"/"second" — resolved against
+// CoreNodeName / PairedCoreNode / SecondPairedCoreNode. That was never a domain
+// concept; it was an accommodation for a schema fact, that an index-paired node
+// has no style_node_claims row of its own and so nowhere to carry a flag. The
+// accommodation leaked into the plant file, the API and the UI, and it carried
+// a press-shaped enumeration with it: exactly three slots, named for a press,
+// on a feature that applies to any cell a human has to set up.
+//
+// Clearing a node is a NODE operation. Everything downstream already worked
+// that way — the plan, the tasks, the orders and every map in the tooling pass
+// are keyed by core node — so the position vocabulary survived exactly one hop,
+// at config-read, and buying nothing.
+//
+// The one thing the indirection did buy was that marks followed a re-pairing.
+// That is a liability, not a feature: it silently re-targets a physical
+// clearance onto a different node. Validation refuses a marked node this claim
+// does not occupy, so the same edit is now a save-time refusal instead.
+//
+// A mark the layout no longer holds is dropped here rather than returned as a
+// phantom, which keeps a stale row planning the evacuations it can actually do.
+func MarkedEvacNodes(c *NodeClaim) []string {
+	if c == nil {
+		return nil
+	}
 	var out []string
-	for _, position := range ChangeoverEvacPositionKeys() {
-		if !EvacPositionMarked(c, position) {
-			continue
-		}
-		if node := PositionCoreNode(c, position); node != "" {
+	for _, node := range c.ChangeoverEvacNodes {
+		if claimOccupies(c, node) {
 			out = append(out, node)
 		}
 	}
 	return out
+}
+
+// EvacNodeMarked reports whether this claim marks the given core node.
+func EvacNodeMarked(c *NodeClaim, coreNode string) bool {
+	if c == nil || coreNode == "" {
+		return false
+	}
+	for _, n := range c.ChangeoverEvacNodes {
+		if n == coreNode {
+			return true
+		}
+	}
+	return false
 }
 
 // StagedToolingChangeover reports whether this OUTGOING claim puts the cell
@@ -764,7 +750,7 @@ func StagedToolingChangeover(from *NodeClaim) bool {
 	if from == nil || from.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		return false
 	}
-	return len(MarkedEvacPositionNodes(from)) > 0
+	return len(MarkedEvacNodes(from)) > 0
 }
 
 // ChangeoverNeedsEvacuation reports whether this transition has to take bins
@@ -852,7 +838,7 @@ type NodeClaimInput struct {
 	// am thinking of always fills this in" is not a property of a struct, and
 	// the pointer is what makes the class unrepresentable rather than fixing
 	// each caller as it is discovered.
-	ChangeoverEvacPositions   *[]string `json:"changeover_evac_positions,omitempty"`
+	ChangeoverEvacNodes       *[]string `json:"changeover_evac_nodes,omitempty"`
 	ChangeoverEvacDestination *string   `json:"changeover_evac_destination,omitempty"`
 	// ChangeoverCarryoverDisposition follows the same absent-means-untouched
 	// contract as every field here: nil leaves the stored value alone, which is

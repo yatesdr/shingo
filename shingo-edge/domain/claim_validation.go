@@ -236,31 +236,34 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		}
 	}
 
-	// Positions can only be marked on a cell that HAS positions, and only positions the
-	// layout actually holds. Marking the third position of a 2-position press
-	// is not an unlikely configuration, it is a reference to a position that does
-	// not exist — and the evacuation it asks for can never happen, silently,
-	// because MarkedEvacPositionNodes correctly drops it.
-	positions := OptValue(in.ChangeoverEvacPositions)
-	if len(positions) > 0 {
+	// A MARKED NODE MUST BE ONE THIS CLAIM OCCUPIES.
+	//
+	// The marks name core nodes, so the only way to get them wrong is to name a
+	// node this claim does not hold — a leftover from a re-pairing, or a typo.
+	// Either way the clearance it asks for can never happen, because
+	// MarkedEvacNodes correctly drops it, and the operator is never told.
+	//
+	// This is also what replaces the old indirection. When the marks named
+	// positions ("front"/"paired"/"second") a re-pairing silently re-targeted
+	// the clearance onto whatever node the claim now paired to. Refusing here
+	// turns that same edit into a save-time message naming the node, which is
+	// the direction every other gate in this file goes.
+	marked := OptValue(in.ChangeoverEvacNodes)
+	if len(marked) > 0 {
 		if in.SwapMode != protocol.SwapModeTwoRobotPressIndex {
-			add("changeover_evac_positions",
-				"Per-position tooling evacuation applies to 2-Robot Press Index only; use Evacuate on changeover for a single-position node")
+			add("changeover_evac_nodes",
+				"Per-node changeover clearance applies to a cell whose claim names several nodes; use Evacuate on changeover for a single-node claim")
 		} else {
-			for _, position := range positions {
-				switch position {
-				case EvacPositionFront:
-					// The front position is CoreNodeName, always present.
-				case EvacPositionPaired:
-					if in.PairedCoreNode == "" {
-						add("changeover_evac_positions", "The back press position is marked for tooling evacuation but no Back Press Node is set")
-					}
-				case EvacPositionSecond:
-					if in.SecondPairedCoreNode == "" {
-						add("changeover_evac_positions", "The third press position is marked for tooling evacuation but this claim has no third position")
-					}
-				default:
-					add("changeover_evac_positions", fmt.Sprintf("%q is not a press position", position))
+			held := map[string]bool{}
+			for _, n := range []string{in.CoreNodeName, in.PairedCoreNode, in.SecondPairedCoreNode} {
+				if n != "" {
+					held[n] = true
+				}
+			}
+			for _, node := range marked {
+				if !held[node] {
+					add("changeover_evac_nodes", fmt.Sprintf(
+						"%q is marked for changeover clearance but is not one of this claim's nodes", node))
 				}
 			}
 		}
@@ -283,7 +286,7 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 			add("changeover_carryover_disposition",
 				"Keeping a carried-over part at outbound staging requires an Outbound Staging node on this claim")
 		}
-		if disp != CarryoverReplace && len(positions) == 0 {
+		if disp != CarryoverReplace && len(marked) == 0 {
 			add("changeover_carryover_disposition",
 				"A carry-over disposition only applies to positions marked for changeover clearance; this claim marks none")
 		}

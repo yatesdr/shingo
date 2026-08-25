@@ -387,7 +387,7 @@ claims:
     #
     # The OUTGOING claim owns the decision — ChangeoverNeedsEvacuation reads the
     # from-side — so these live here and not on -ALT.
-    changeover_evac_positions: [front, paired]
+    changeover_evac_nodes: [PLN_001, PLN_002]
     # NO changeover_evac_destination, and that is the scenario: the marked positions
     # are cleared BY NORMAL ROUTING, to outbound_destination like any other
     # press bin. This is the default path and the one every plant gets unless it
@@ -452,7 +452,7 @@ claims:
     inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
     inbound_staging: SLN_014
-    changeover_evac_positions: [front, paired]
+    changeover_evac_nodes: [PLN_005, PLN_006]
     # THE OVERRIDE, and the only one in this plant. A node group, not a station:
     # whatever an override names is an ordinary destination and gets ordinary
     # capacity behaviour.

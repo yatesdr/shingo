@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"shingo/protocol"
-	"shingoedge/domain"
 	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 )
@@ -163,7 +162,7 @@ func pressClaim(node, paired, payload string) processes.NodeClaim {
 func TestToolingBeatsRelabel(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront}
+	from.ChangeoverEvacNodes = []string{"PRESS"}
 
 	to := pressClaim("PRESS", "PRESS_B", "PART-B")
 	to.InboundStaging = "IN-STAGE"
@@ -225,7 +224,7 @@ func TestToolingBeatsRelabel(t *testing.T) {
 func TestToolingClearanceOverrideRedirectsOnlyMarkedPositions(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront}
+	from.ChangeoverEvacNodes = []string{"PRESS"}
 	from.ChangeoverEvacDestination = "CLEARANCE-GROUP"
 
 	to := pressClaim("PRESS", "PRESS_B", "PART-B")
@@ -256,7 +255,7 @@ func TestToolingClearanceOverrideRedirectsOnlyMarkedPositions(t *testing.T) {
 func TestToolingWithoutOverridePlansNoOutboundEdit(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront, domain.EvacPositionPaired}
+	from.ChangeoverEvacNodes = []string{"PRESS", "PRESS_B"}
 	to := pressClaim("PRESS", "PRESS_B", "PART-A")
 	to.InboundStaging = "IN-STAGE"
 
@@ -296,7 +295,7 @@ func TestToolingWithoutOverridePlansNoOutboundEdit(t *testing.T) {
 func TestToolingAcrossDisjointNodes(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PLN_001", "PLN_002", "PART-A")
-	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront, domain.EvacPositionPaired}
+	from.ChangeoverEvacNodes = []string{"PLN_001", "PLN_002"}
 
 	to := pressClaim("PLN_005", "PLN_006", "PART-A")
 	to.InboundStaging = "IN-STAGE"
@@ -353,7 +352,7 @@ func TestToolingAcrossDisjointNodes(t *testing.T) {
 func TestToolingSameBinTypeKeepsTheProvenShape(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront, domain.EvacPositionPaired}
+	from.ChangeoverEvacNodes = []string{"PRESS", "PRESS_B"}
 
 	to := pressClaim("PRESS", "PRESS_B", "PART-A")
 	to.InboundStaging = "IN-STAGE"
@@ -405,7 +404,7 @@ func TestToolingSameBinTypeKeepsTheProvenShape(t *testing.T) {
 func TestRefuseToolingChangeoverWithoutStaging(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PLN_002", "PLN_003", "PART-A")
-	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront}
+	from.ChangeoverEvacNodes = []string{"PLN_002"}
 
 	// Disjoint incoming press, and it names no staging node.
 	to := pressClaim("PLN_007", "PLN_008", "PART-A")

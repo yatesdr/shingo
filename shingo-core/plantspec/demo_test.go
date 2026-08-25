@@ -103,7 +103,7 @@ func TestShippedDemoPlantKeepsBothToolingShapesReachable(t *testing.T) {
 	if run == nil {
 		t.Fatal("no PRESS-1-RUN claim")
 	}
-	if len(run.ChangeoverEvacPositions) == 0 {
+	if len(run.ChangeoverEvacNodes) == 0 {
 		t.Error("PRESS-1-RUN marks no positions — the outgoing claim owns the tooling decision, " +
 			"and with no marks NEITHER shape is a tooling changeover any more")
 	}
@@ -146,7 +146,7 @@ func TestShippedDemoPlantKeepsBothToolingShapesReachable(t *testing.T) {
 			"capacity behaviour. The single-station version of this is what left robots dwelling "+
 			"on an occupied bay holding bins nothing would take away.", dest)
 	}
-	if len(overriding[0].ChangeoverEvacPositions) == 0 {
+	if len(overriding[0].ChangeoverEvacNodes) == 0 {
 		t.Errorf("claim on %s names a clearance override but marks no positions — the override is "+
 			"only ever read for a marked position, so nothing would exercise it",
 			overriding[0].CoreNode)

@@ -147,7 +147,7 @@ func planToolingChangeover(fromClaims, toClaims []processes.NodeClaim) toolingCh
 	var t toolingChangeover
 	for i := range fromClaims {
 		fc := &fromClaims[i]
-		marked := domain.MarkedEvacPositionNodes(fc)
+		marked := domain.MarkedEvacNodes(fc)
 		if len(marked) == 0 {
 			continue
 		}
@@ -401,7 +401,7 @@ func appendToolingClearanceTasks(processID int64, t toolingChangeover, nodeTasks
 func refuseToolingChangeoverWithoutStaging(fromClaims, toClaims []processes.NodeClaim) error {
 	var marked []string
 	for i := range fromClaims {
-		if len(domain.MarkedEvacPositionNodes(&fromClaims[i])) > 0 {
+		if len(domain.MarkedEvacNodes(&fromClaims[i])) > 0 {
 			marked = append(marked, fromClaims[i].CoreNodeName)
 		}
 	}
@@ -534,8 +534,8 @@ func expandMarkedPress(actions []changeover.NodeAction, nodes []processes.Node, 
 // This is the shape the sim proved on the floor (2026-08-24), and it is now
 // produced HERE rather than by a builder a separate predicate selected.
 func toolingPositionAction(press toolingPress, position string, node *processes.Node) changeover.NodeAction {
-	fromPosition := domain.SynthesizePressPositionClaim(press.from, position)
-	toPosition := domain.SynthesizePressPositionClaim(press.to, position)
+	fromPosition := domain.SynthesizePositionClaim(press.from, position)
+	toPosition := domain.SynthesizePositionClaim(press.to, position)
 
 	steps := buildToolingEvacSteps(position, press.evacDest, toPosition.InboundSource, press.staging)
 	// A produce position's replacement is a fresh EMPTY carrier, not a full

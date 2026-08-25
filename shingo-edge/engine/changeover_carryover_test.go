@@ -28,7 +28,7 @@ import (
 // unless the caller changes one, so the default is a carry-over.
 func carryoverPress(disp domain.CarryoverDisposition) (from, to processes.NodeClaim) {
 	from = pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront, domain.EvacPositionPaired}
+	from.ChangeoverEvacNodes = []string{"PRESS", "PRESS_B"}
 	from.OutboundStaging = "OUT-STAGE"
 	from.ChangeoverCarryoverDisposition = disp
 
@@ -133,7 +133,7 @@ func TestCarryover_DifferingPartIgnoresTheDisposition(t *testing.T) {
 func TestCarryover_DisjointPositionIsNotACarryover(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PLN_001", "PLN_002", "PART-A")
-	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront, domain.EvacPositionPaired}
+	from.ChangeoverEvacNodes = []string{"PLN_001", "PLN_002"}
 	from.OutboundStaging = "OUT-STAGE"
 	from.ChangeoverCarryoverDisposition = domain.CarryoverKeepLineside
 	to := pressClaim("PLN_005", "PLN_006", "PART-A")

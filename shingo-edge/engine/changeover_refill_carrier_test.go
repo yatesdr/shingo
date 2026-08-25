@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"shingo/protocol"
-	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -69,7 +68,7 @@ func TestPerPositionSwapRefillNamesTheIncomingPayload(t *testing.T) {
 func TestToolingPositionRefillNamesTheIncomingPayload(t *testing.T) {
 	t.Parallel()
 	from := pressClaim("PRESS", "PRESS_B", "PART-A")
-	from.ChangeoverEvacPositions = []string{domain.EvacPositionFront, domain.EvacPositionPaired}
+	from.ChangeoverEvacNodes = []string{"PRESS", "PRESS_B"}
 	to := pressClaim("PRESS", "PRESS_B", "PART-C")
 	to.InboundStaging = "IN-STAGE"
 

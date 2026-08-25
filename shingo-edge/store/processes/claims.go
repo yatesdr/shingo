@@ -64,12 +64,12 @@ const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
-	changeover_evac_positions, changeover_evac_destination, changeover_load_directive,
+	changeover_evac_nodes, changeover_evac_destination, changeover_load_directive,
 	index_robot_supplies, key_route, key_task, changeover_carryover_disposition`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
-	var createdAt, allowedJSON, evacPositionsJSON, keyRouteJSON string
+	var createdAt, allowedJSON, evacNodesJSON, keyRouteJSON string
 	var belowSince sql.NullString
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&c.UOPCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
@@ -77,7 +77,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
-		&evacPositionsJSON, &c.ChangeoverEvacDestination, &c.ChangeoverLoadDirective,
+		&evacNodesJSON, &c.ChangeoverEvacDestination, &c.ChangeoverLoadDirective,
 		&c.IndexRobotSupplies, &keyRouteJSON, &c.KeyTask, &c.ChangeoverCarryoverDisposition); err != nil {
 		return c, err
 	}
@@ -92,8 +92,8 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	if allowedJSON != "" {
 		_ = json.Unmarshal([]byte(allowedJSON), &c.AllowedPayloadCodes)
 	}
-	if evacPositionsJSON != "" {
-		_ = json.Unmarshal([]byte(evacPositionsJSON), &c.ChangeoverEvacPositions)
+	if evacNodesJSON != "" {
+		_ = json.Unmarshal([]byte(evacNodesJSON), &c.ChangeoverEvacNodes)
 	}
 	if keyRouteJSON != "" {
 		_ = json.Unmarshal([]byte(keyRouteJSON), &c.KeyRoute)
@@ -300,7 +300,7 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
-		changeover_evac_positions, changeover_evac_destination, changeover_load_directive,
+		changeover_evac_nodes, changeover_evac_destination, changeover_load_directive,
 		index_robot_supplies, key_route, key_task, changeover_carryover_disposition)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
@@ -308,7 +308,7 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
-		marshalEvacPositions(domain.OptValue(in.ChangeoverEvacPositions)),
+		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
 		domain.OptValue(in.ChangeoverEvacDestination), loadDirective,
 		indexRobotSupplies, marshalKeyRoute(domain.OptValue(in.KeyRoute)),
 		domain.OptValue(in.KeyTask), carryoverOrDefault(in.ChangeoverCarryoverDisposition))
@@ -428,8 +428,8 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	if in.IndexRobotSupplies != nil {
 		sets, args = append(sets, `index_robot_supplies=?`), append(args, *in.IndexRobotSupplies)
 	}
-	if in.ChangeoverEvacPositions != nil {
-		sets, args = append(sets, `changeover_evac_positions=?`), append(args, marshalEvacPositions(*in.ChangeoverEvacPositions))
+	if in.ChangeoverEvacNodes != nil {
+		sets, args = append(sets, `changeover_evac_nodes=?`), append(args, marshalEvacNodes(*in.ChangeoverEvacNodes))
 	}
 	if in.ChangeoverEvacDestination != nil {
 		sets, args = append(sets, `changeover_evac_destination=?`), append(args, *in.ChangeoverEvacDestination)
@@ -452,7 +452,7 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	return err
 }
 
-// marshalEvacPositions stores the per-position tooling-relevance set the same way
+// marshalEvacNodes stores the per-position tooling-relevance set the same way
 // allowed_payload_codes is stored: a JSON array, and the EMPTY STRING for an
 // empty set rather than "[]", so "no position marked" reads identically on a row
 // written today and a row that predates the column.
@@ -464,7 +464,7 @@ func marshalKeyRoute(points []string) string {
 	return marshalAllowedPayloads(points)
 }
 
-func marshalEvacPositions(positions []string) string {
+func marshalEvacNodes(positions []string) string {
 	return marshalAllowedPayloads(positions)
 }
 

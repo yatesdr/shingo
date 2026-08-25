@@ -187,7 +187,7 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 	// THE STAGING NODE IS A PROPERTY OF THE CELL, NOT OF ONE POSITION IN IT.
 	//
 	// A fanned-out press position has no claim row, so toClaim here is synthesized —
-	// and SynthesizePressPositionClaim clears InboundStaging on purpose, because
+	// and SynthesizePositionClaim clears InboundStaging on purpose, because
 	// the diff pipeline needs a synthesized Add to fall through to a direct
 	// retrieve that the tooling decorator then adds the hold to. Reading that
 	// cleared field here as "this node does not stage" is what made this button
@@ -226,7 +226,7 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 }
 
 // parentClaimOf loads the persisted claim a synthesized position claim was derived
-// from. The id is the parent's precisely because SynthesizePressPositionClaim
+// from. The id is the parent's precisely because SynthesizePositionClaim
 // keeps it — see the contract note there.
 func (e *Engine) parentClaimOf(claimID *int64) *processes.NodeClaim {
 	if claimID == nil {

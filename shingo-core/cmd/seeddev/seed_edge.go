@@ -206,7 +206,7 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			   reorder_point, auto_reorder, inbound_staging, outbound_staging,
 			   inbound_source, outbound_destination, allowed_payload_codes,
 			   paired_core_node, second_paired_core_node, index_robot_supplies,
-			   changeover_evac_positions, changeover_evac_destination,
+			   changeover_evac_nodes, changeover_evac_destination,
 			   changeover_carryover_disposition,
 			   changeover_load_directive, key_route, key_task,
 			   auto_push, auto_confirm)
@@ -215,7 +215,7 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			c.ReorderPoint, b2i(c.AutoReorder), c.InboundStaging, c.OutboundStaging,
 			c.InboundSource, c.OutboundDestination, jsonList(c.AllowedPayloads),
 			c.PairedCoreNode, c.SecondPairedCoreNode, b2i(c.IndexRobotSupplies),
-			jsonList(c.ChangeoverEvacPositions), c.ChangeoverEvacDestination,
+			jsonList(c.ChangeoverEvacNodes), c.ChangeoverEvacDestination,
 			carryoverOrReplace(c.ChangeoverCarryoverDisposition),
 			b2i(c.ChangeoverLoadDirective), jsonList(c.KeyRoute), c.KeyTask,
 			b2i(c.AutoPush), b2i(c.AutoConfirm)); err != nil {

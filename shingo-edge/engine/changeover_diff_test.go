@@ -89,7 +89,7 @@ func TestDiffStyleClaims_MarkedPositionsEvacuateAcrossAPayloadChange(t *testing.
 	from := processes.NodeClaim{
 		CoreNodeName: "PRESS", PayloadCode: "PART-A", Role: "produce",
 		SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PRESS_B",
-		ChangeoverEvacPositions: []string{"front"},
+		ChangeoverEvacNodes: []string{"PRESS"},
 	}
 	to := processes.NodeClaim{
 		CoreNodeName: "PRESS", PayloadCode: "PART-B", Role: "produce",
@@ -106,7 +106,7 @@ func TestDiffStyleClaims_MarkedPositionsEvacuateAcrossAPayloadChange(t *testing.
 
 	// And with no positions marked it is an ordinary swap, so the new arm has not
 	// swallowed the default.
-	from.ChangeoverEvacPositions = nil
+	from.ChangeoverEvacNodes = nil
 	d2 := findDiff(DiffStyleClaims([]processes.NodeClaim{from}, []processes.NodeClaim{to}), "PRESS")
 	if d2.Situation != SituationSwap {
 		t.Errorf("no positions marked: situation = %q, want %q", d2.Situation, SituationSwap)

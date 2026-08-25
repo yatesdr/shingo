@@ -526,7 +526,7 @@ function ensureCompareDelegation(wrap) {
 // auto_reorder used to be echoed back by hand here — read the claim, send its
 // own value — which was the same problem patched one field at a time, and only
 // after a hard-coded `true` had spent a while re-arming cell auto-reorder on
-// every claim an engineer touched. changeover_evac_positions and
+// every claim an engineer touched. changeover_evac_nodes and
 // changeover_evac_destination were echoed for exactly the same reason, and were
 // deleted when the store contract was extended to cover them. The echo is never
 // the fix: it is correct only for the surfaces someone remembered, and the two
@@ -702,6 +702,9 @@ function claimFieldVisibility(role, swap) {
         'claims-position-paired-row':             ROUND3_CHANGEOVER && isPressIndex,
         'claims-position-second-row':             ROUND3_CHANGEOVER && isPressIndex && hasThirdPosition,
         'claims-add-evac-destination-group':  ROUND3_CHANGEOVER && !isManual,
+        // Carry-over only means anything for a marked position, and only a
+        // press-index cell has positions to mark.
+        'claims-add-carryover-group':         ROUND3_CHANGEOVER && isPressIndex,
         'claims-err-changeover-evac-positions':   false,
         'claims-ab-fieldset':                 showPair,
         'claims-add-second-paired-group':     showPair && isPressIndex,
@@ -921,8 +924,9 @@ function readClaimStateFromForm() {
         keyRoute: readKeyRoute(),
         keyTask: get('claims-add-key-task').value,
         changeoverLoadDirective: get('claims-add-load-directive').checked,
-        changeoverEvacPositions: readEvacPositions(),
+        changeoverEvacNodes: readEvacNodes(),
         changeoverEvacDestination: get('claims-add-evac-destination').value,
+        changeoverCarryoverDisposition: get('claims-add-carryover').value,
         autoConfirm: get('claims-add-auto-confirm').checked,
     };
 }
@@ -957,8 +961,15 @@ function writeClaimStateToForm(state) {
     writeKeyRoute(state.keyRoute || []);
     get('claims-add-key-task').value = state.keyTask || '';
     get('claims-add-load-directive').checked = !!state.changeoverLoadDirective;
-    writeEvacPositions(state.changeoverEvacPositions || []);
+    // ORDER MATTERS: the checkboxes carry NODE names, and the values are filled
+    // from the claim's layout. Match the stored marks only after the values
+    // exist, or every box is empty-valued and nothing is ever checked.
+    renderEvacNodeLabels(state);
+    claimLoadedEvacNodes = (state.changeoverEvacNodes || []).slice();
+    writeEvacNodes(state.changeoverEvacNodes || []);
     get('claims-add-evac-destination').value = state.changeoverEvacDestination || '';
+    // Blank reads as replace everywhere else, so the control shows replace.
+    get('claims-add-carryover').value = state.changeoverCarryoverDisposition || 'replace';
     get('claims-add-auto-confirm').checked = !!state.autoConfirm;
 }
 
@@ -1364,22 +1375,22 @@ function renderCollapseHints(state) {
         // operator who had just opened it to look.
         if (card && !isDefault) card.open = true;
     };
-    var positions = state.changeoverEvacPositions || [];
+    var markedNodes = state.changeoverEvacNodes || [];
     var coHint = state.evacuateOnChangeover ? 'evacuate: on' : 'evacuate: off';
-    if (positions.length > 0) coHint += ' · tooling positions: ' + positions.join(', ');
+    if (markedNodes.length > 0) coHint += ' · cleared for setup: ' + markedNodes.join(', ');
     setHint('claims-changeover-fieldset', 'claims-changeover-hint', coHint,
-        !state.evacuateOnChangeover && positions.length === 0);
+        !state.evacuateOnChangeover && markedNodes.length === 0);
     setHint('claims-auto-request-fieldset', 'claims-auto-request-hint',
         state.autoRequestPayload ? ('payload: ' + state.autoRequestPayload)
                                  : (state.autoConfirm ? 'auto-confirm: on' : 'disabled'),
         !state.autoRequestPayload && !state.autoConfirm);
 }
 
-// readEvacPositions snapshots the per-position tooling-relevance selection.
+// readEvacNodes snapshots which of this claim's nodes are marked for clearance.
 //
 // IT DOES NOT FILTER BY VISIBILITY, and that is deliberate. Filtering here
 // looked right and made the drop note impossible: renderClaimForm hides the
-// position rows the moment the mode changes, so by the time anything asked "what
+// clearance rows the moment the mode changes, so by the time anything asked "what
 // will this mode discard" the answer was already gone and the operator was
 // told nothing. Same shape as the value-eating bug of round 2 — a view
 // decision reaching back into the model.
@@ -1458,26 +1469,52 @@ function removeKeyRoutePoint(el) {
     if (row) row.remove();
 }
 
-function readEvacPositions() {
+// THE CHECKBOXES CARRY NODE NAMES. Each row is a slot in the claim's layout —
+// front / back / third — but what it stores is the node that slot currently
+// holds, because clearing a node is a node operation and the marks name nodes.
+// The slot is presentation; data-slot says which layout field fills the value.
+// claimLoadedEvacNodes remembers the marks the claim was LOADED with, because
+// the form cannot always represent them.
+//
+// A mark naming a node this claim no longer holds — the third node was unset,
+// or a slot re-pointed — has no checkbox to live in: the row is hidden and its
+// value is empty. Reading only the boxes would make that mark vanish from the
+// state, and the drop note would have nothing to name. That is the same
+// value-eating shape the visibility filter caused in round 3, arriving by a
+// different route, so the answer is the same: keep it in the state, name it,
+// and let the save drop it deliberately.
+var claimLoadedEvacNodes = [];
+
+function readEvacNodes() {
     var out = [];
+    var representable = {};
     document.querySelectorAll('.claims-evac-position').forEach(function(cb) {
-        if (cb.checked) out.push(cb.value);
+        if (cb.value) representable[cb.value] = true;
+        if (cb.checked && cb.value) out.push(cb.value);
+    });
+    // Marks no box can hold ride along so the drop note can name them.
+    claimLoadedEvacNodes.forEach(function(n) {
+        if (!representable[n] && out.indexOf(n) < 0) out.push(n);
     });
     return out;
 }
 
-function writeEvacPositions(positions) {
+function writeEvacNodes(nodes) {
     var want = {};
-    (positions || []).forEach(function(s) { want[s] = true; });
+    (nodes || []).forEach(function(n) { want[n] = true; });
     document.querySelectorAll('.claims-evac-position').forEach(function(cb) {
-        cb.checked = !!want[cb.value];
+        cb.checked = !!(cb.value && want[cb.value]);
     });
 }
 
-// renderEvacPositionLabels puts the node each position resolves to beside its
-// checkbox. "Back position" is the same words on every press on the line;
-// "Back position (PLN_002_B)" is the one the operator is standing at.
-function renderEvacPositionLabels(state) {
+// renderEvacNodeLabels fills each row's VALUE with the node that slot holds and
+// shows it beside the label. "Back position" is the same words on every press on
+// the line; "Back position (PLN_002_B)" is the one the operator is standing at —
+// and now it is also what gets saved.
+//
+// A slot with no node gets an empty value, so it can never contribute a mark;
+// the row is hidden for that case anyway (claimFieldVisibility).
+function renderEvacNodeLabels(state) {
     var pairs = [
         ['front', state.coreNodeName],
         ['paired', state.pairedCoreNode],
@@ -1486,6 +1523,13 @@ function renderEvacPositionLabels(state) {
     pairs.forEach(function(p) {
         var el = document.getElementById('claims-position-' + p[0] + '-node');
         if (el) el.textContent = p[1] ? '(' + p[1] + ')' : '(not set)';
+        document.querySelectorAll('.claims-evac-position').forEach(function(cb) {
+            if (cb.getAttribute('data-slot') !== p[0]) return;
+            var was = cb.checked && cb.value;
+            cb.value = p[1] || '';
+            // Re-pairing a slot must not silently move a mark to the new node.
+            if (was && was !== cb.value) cb.checked = false;
+        });
     });
 }
 
@@ -1516,7 +1560,7 @@ function claimForbiddenFields(role, swap, state) {
     if (!showPair) {
         forbid('pairedCoreNode', 'Paired Node');
     }
-    var positions = state.changeoverEvacPositions || [];
+    var markedNodes = state.changeoverEvacNodes || [];
     if (!isManual && state.changeoverLoadDirective) {
         out.push({ key: 'changeoverLoadDirective', label: 'Changeover loading instruction', value: false });
     }
@@ -1530,20 +1574,26 @@ function claimForbiddenFields(role, swap, state) {
         out.push({ key: 'indexRobotSupplies', label: 'Index robot fetches the replacement', value: false });
     }
     if (!isPressIndex) {
-        // Per-position relevance is a press-index concept; a single-position node
-        // answers the same question with Evacuate on changeover.
-        if (positions.length > 0) {
-            out.push({ key: 'changeoverEvacPositions', label: 'Per-position tooling evacuation', value: [] });
+        // Per-node clearance needs a claim that names several nodes; a
+        // single-node claim answers the same question with Evacuate on changeover.
+        if (markedNodes.length > 0) {
+            out.push({ key: 'changeoverEvacNodes', label: 'Per-node changeover clearance', value: [] });
         }
-    } else if (!state.secondPairedCoreNode && positions.indexOf('second') >= 0) {
-        // A PARTIAL drop: the third position is marked on a 2-position layout. The
-        // rest of the selection is fine and must survive — dropping the whole
-        // set would take the front and back marks with it.
-        out.push({
-            key: 'changeoverEvacPositions',
-            label: 'Third press position (this press has two)',
-            value: positions.filter(function(x) { return x !== 'second'; }),
-        });
+    } else {
+        // A PARTIAL drop: a mark naming a node this claim no longer holds — the
+        // third node was unset, or a slot was re-pointed. The rest of the
+        // selection is fine and must survive; dropping the whole set would take
+        // the good marks with it.
+        var held = [state.coreNodeName, state.pairedCoreNode, state.secondPairedCoreNode]
+            .filter(function(n) { return !!n; });
+        var stale = markedNodes.filter(function(n) { return held.indexOf(n) < 0; });
+        if (stale.length > 0) {
+            out.push({
+                key: 'changeoverEvacNodes',
+                label: 'Nodes marked for clearance that this claim no longer holds (' + stale.join(', ') + ')',
+                value: markedNodes.filter(function(n) { return held.indexOf(n) >= 0; }),
+            });
+        }
     }
     if (!(showPair && isPressIndex)) {
         forbid('secondPairedCoreNode', 'Third Press Position');
@@ -1705,7 +1755,7 @@ function renderClaimForm() {
         warn.style.display = missing ? '' : 'none';
     }
     renderModeDropNote(role, swap, state);
-    renderEvacPositionLabels(state);
+    renderEvacNodeLabels(state);
     renderCollapseHints(state);
 }
 
@@ -1740,7 +1790,7 @@ function defaultClaimState() {
         autoPush: false,
         pairedCoreNode: '',
         secondPairedCoreNode: '',
-        changeoverEvacPositions: [],
+        changeoverEvacNodes: [],
         changeoverEvacDestination: '',
         indexRobotSupplies: false,
         keyRoute: [],
@@ -1807,8 +1857,9 @@ function editClaim(claim) {
         keyRoute: (claim.key_route || []).slice(),
         keyTask: claim.key_task || '',
         changeoverLoadDirective: !!claim.changeover_load_directive,
-        changeoverEvacPositions: claim.changeover_evac_positions || [],
+        changeoverEvacNodes: claim.changeover_evac_nodes || [],
         changeoverEvacDestination: claim.changeover_evac_destination || '',
+        changeoverCarryoverDisposition: claim.changeover_carryover_disposition || 'replace',
         autoConfirm: !!claim.auto_confirm,
     });
     document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
@@ -1908,8 +1959,9 @@ async function saveClaim() {
         key_route: state.keyRoute,
         key_task: state.keyTask,
         changeover_load_directive: state.changeoverLoadDirective,
-        changeover_evac_positions: state.changeoverEvacPositions,
+        changeover_evac_nodes: state.changeoverEvacNodes,
         changeover_evac_destination: state.changeoverEvacDestination,
+        changeover_carryover_disposition: state.changeoverCarryoverDisposition,
         auto_confirm: state.autoConfirm,
         auto_reorder: state.autoReorder,
         keep_staged: state.keepStaged,

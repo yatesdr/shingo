@@ -47,7 +47,7 @@ func claimsByCoreNode(db *sql.DB, styleID int64) (map[string]processes.NodeClaim
 // Derivation is deliberately the planner's own: the node task records the
 // claim it was planned from (FromClaimID/ToClaimID → the PARENT press-index
 // row, since a synthesized claim carries its parent's ID), and
-// domain.SynthesizePressPositionClaim is the same function the planner used.
+// domain.SynthesizePositionClaim is the same function the planner used.
 // Anything that fails a check is left claimless rather than given an invented
 // claim — a wrong claim is worse than none.
 func pressPositionClaimsForBoard(

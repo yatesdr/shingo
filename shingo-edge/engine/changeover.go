@@ -124,7 +124,7 @@ func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNod
 // The definition moved to domain (2026-08-05) because the station view has
 // to derive the same claim: a fanned-out position owns a task and an order but
 // has no style_node_claims row, so the view must synthesize one to render it
-// as claimed. See domain.SynthesizePressPositionClaim for that scar.
+// as claimed. See domain.SynthesizePositionClaim for that scar.
 //
 // Still never persisted — UpsertClaim rejects it — so steady-state DB rows
 // never carry this value. What changed is that VIEW code now does need to
@@ -319,11 +319,11 @@ func fanOutPositions(parent ChangeoverNodeDiff) []ChangeoverNodeDiff {
 }
 
 // synthesizePressPositionClaim is the planner's local name for
-// domain.SynthesizePressPositionClaim. The body moved to domain so the
+// domain.SynthesizePositionClaim. The body moved to domain so the
 // station view derives per-position claims through the SAME function —
 // see that doc comment for why (Hopkinsville 2026-08-05).
 func synthesizePressPositionClaim(parent *processes.NodeClaim, coreNodeName string) *processes.NodeClaim {
-	return domain.SynthesizePressPositionClaim(parent, coreNodeName)
+	return domain.SynthesizePositionClaim(parent, coreNodeName)
 }
 
 // FanOutPressIndexCrossMode emits per-position Drop or Add diffs for

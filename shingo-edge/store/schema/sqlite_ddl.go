@@ -384,7 +384,7 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- reasoning as allowed_payload_codes: a small set on one row rather than a
     -- child table, because the back positions have no claim rows of their own.
     -- Empty = no position marked = today's behaviour.
-    changeover_evac_positions   TEXT NOT NULL DEFAULT '',
+    changeover_evac_nodes   TEXT NOT NULL DEFAULT '',
     -- Where a marked position's bin is CLEARED to, when this cell wants it
     -- somewhere other than its ordinary outbound destination. A node OR a group
     -- name; blank means normal routing, which is the default and the common

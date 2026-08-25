@@ -534,20 +534,20 @@ window.processNodeNames = {{json .ProcessNodeNames}};
                     <span>Evacuate on changeover (even if same payload)</span>
                 </label>
                 <div id="claims-add-tooling-relevance-row" class="mt-3">
-                    <div class="field-help">Which press positions hold bins that block the tooling change. Marked positions are evacuated before the tool can be swapped; unmarked positions stay put.</div>
+                    <div class="field-help">Which of this cell's nodes hold bins that are in the way of a setup. Marked nodes are cleared before the humans can work; unmarked nodes stay put — the stored value is the node name itself.</div>
                     <label class="check-row" id="claims-position-front-row">
-                        <input type="checkbox" class="claims-evac-position" value="front">
+                        <input type="checkbox" class="claims-evac-position" data-slot="front" value="">
                         <span>Front position <span class="label-aside" id="claims-position-front-node"></span></span>
                     </label>
                     <label class="check-row" id="claims-position-paired-row">
-                        <input type="checkbox" class="claims-evac-position" value="paired">
+                        <input type="checkbox" class="claims-evac-position" data-slot="paired" value="">
                         <span>Back position <span class="label-aside" id="claims-position-paired-node"></span></span>
                     </label>
                     <label class="check-row" id="claims-position-second-row">
-                        <input type="checkbox" class="claims-evac-position" value="second">
+                        <input type="checkbox" class="claims-evac-position" data-slot="second" value="">
                         <span>Third position <span class="label-aside" id="claims-position-second-node"></span></span>
                     </label>
-                    <div class="field-error-msg" id="claims-err-changeover-evac-positions" hidden></div>
+                    <div class="field-error-msg" id="claims-err-changeover-evac-nodes" hidden></div>
                 </div>
                 <div class="form-group form-group--nogap mt-3" id="claims-add-evac-destination-group">
                     <label>Tooling Evac Destination <span class="label-aside">(blank = Outbound Destination)</span></label>

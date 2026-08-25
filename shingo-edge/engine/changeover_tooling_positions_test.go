@@ -6,7 +6,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
-	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -57,16 +56,16 @@ func seedMarkedPressScenario(t *testing.T, db *store.DB) (processID, fromStyleID
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID:                 fromStyleID,
-		CoreNodeName:            "PRESS-A",
-		Role:                    protocol.ClaimRoleProduce,
-		SwapMode:                protocol.SwapModeTwoRobotPressIndex,
-		PayloadCode:             "PART-OLD",
-		UOPCapacity:             30,
-		PairedCoreNode:          "PRESS-B",
-		InboundSource:           "EMPTIES",
-		OutboundDestination:     "MARKET",
-		ChangeoverEvacPositions: &[]string{domain.EvacPositionFront, domain.EvacPositionPaired},
+		StyleID:             fromStyleID,
+		CoreNodeName:        "PRESS-A",
+		Role:                protocol.ClaimRoleProduce,
+		SwapMode:            protocol.SwapModeTwoRobotPressIndex,
+		PayloadCode:         "PART-OLD",
+		UOPCapacity:         30,
+		PairedCoreNode:      "PRESS-B",
+		InboundSource:       "EMPTIES",
+		OutboundDestination: "MARKET",
+		ChangeoverEvacNodes: &[]string{"PRESS-A", "PRESS-B"},
 	}); err != nil {
 		t.Fatalf("upsert from claim: %v", err)
 	}
@@ -207,7 +206,7 @@ func TestToolingPositionsMaterializeOnceIsIdempotent(t *testing.T) {
 // operator presses to unblock a position returned 200, marked the task released,
 // and delivered NOTHING.
 //
-// SynthesizePressPositionClaim clears InboundStaging — deliberately, because the
+// SynthesizePositionClaim clears InboundStaging — deliberately, because the
 // diff pipeline relies on a synthesized Add falling through to a direct retrieve
 // that the tooling decorator then adds the hold to. But
 // DeliverNewMaterialForChangeover read that same cleared field as "this node

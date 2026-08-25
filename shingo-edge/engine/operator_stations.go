@@ -370,7 +370,7 @@ func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingU
 // fallback is used ONLY when the node resolves no claim of its own; a node that
 // has one is unaffected, so no existing path changes. It is safe to write
 // through: a position claim carries its PARENT's row id, unlike the loader synth
-// whose ID is 0 (see domain.SynthesizePressPositionClaim and Loader.SynthClaim).
+// whose ID is 0 (see domain.SynthesizePositionClaim and Loader.SynthClaim).
 func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemainingUOP *int, fallback *processes.NodeClaim) (*storeorders.Order, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {

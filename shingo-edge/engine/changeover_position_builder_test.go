@@ -35,7 +35,7 @@ func positionPress() toolingPress {
 		PairedCoreNode:            "PRESS_B",
 		OutboundDestination:       "MARKET",
 		ChangeoverEvacDestination: "TOOLING-BAY",
-		ChangeoverEvacPositions:   []string{"paired"},
+		ChangeoverEvacNodes:       []string{"PRESS_B"},
 	}
 	to := &processes.NodeClaim{
 		CoreNodeName:   "PRESS",

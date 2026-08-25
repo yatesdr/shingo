@@ -222,7 +222,7 @@ func TestBuildView_NoDirectiveWithoutTheFlag(t *testing.T) {
 
 // TestBuildView_BackPositionRendersNoDirective is A8, settled by test.
 //
-// SynthesizePressPositionClaim is a whole-struct copy of the parent, so a position
+// SynthesizePositionClaim is a whole-struct copy of the parent, so a position
 // inherits ChangeoverLoadDirective, and the press-index parent is produce-role —
 // which is the only other condition BuildChangeoverLoadDirective checks. Nothing
 // else stood between a flagged press and every one of its positions showing a
