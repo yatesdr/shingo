@@ -411,6 +411,12 @@ func TestCarriedBin_ChargePointDeclinesWithItsClassAndNoGeometry(t *testing.T) {
 			t.Errorf("note %q is missing %q", note, want)
 		}
 	}
+	// ONCE. A parked robot reports the same point as CurrentStation and
+	// LastStation, so describing every reported name unconditionally said it
+	// twice — and this note renders on the bins page now.
+	if n := strings.Count(note, "is a charge point"); n != 1 {
+		t.Errorf("note says the point is a charge point %d times, want 1: %q", n, note)
+	}
 	for _, banned := range []string{" m from", "metres", "meters", "nearest"} {
 		if strings.Contains(strings.ToLower(note), banned) {
 			t.Errorf("note %q carries %q — no nearest-station math, anywhere: the drop was "+

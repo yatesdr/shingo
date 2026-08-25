@@ -223,12 +223,20 @@ func placeableNode(s *NodeService, name string) (*nodes.Node, pointRefusal) {
 // confident-looking figure for a completely unrelated station. A number that
 // looks like evidence and is not is worse than no number.
 func DescribeUnresolvedPoints(s *NodeService, names ...string) string {
+	// ONE CLAUSE PER DISTINCT POINT. A PARKED robot reports the same value in
+	// CurrentStation and LastStation — which is most of the population this
+	// sentence is written for — and describing both produced "PP41 is a park
+	// point, not a station; PP41 is a park point, not a station". strandedNote
+	// has always deduped the same pair; this did not, and since the note now
+	// renders on the bins page it was a stutter on the row an operator reads.
 	var refusals []pointRefusal
+	seen := make(map[string]bool, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
-		if name == "" {
+		if name == "" || seen[name] {
 			continue
 		}
+		seen[name] = true
 		if _, why := resolvePoint(s, name); why.Kind != refusalNone {
 			refusals = append(refusals, why)
 		}
