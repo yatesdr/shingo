@@ -197,6 +197,51 @@ func (h *Handlers) apiConfirmPostCutoverFlag(w http.ResponseWriter, r *http.Requ
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
+// apiReleaseChangeoverProcess is the operator's "the setup is finished" click:
+// ONE call that releases every staged leg of this changeover.
+//
+// ── IT WAS DELETED, AND THAT WAS RIGHT AT THE TIME ─────────────────────────
+//
+// Its ancestor, apiReleaseChangeoverWait, was removed in 2026-08 as an HMI
+// orphan — a registered route with no caller is a door nobody checks, and the
+// note left behind said a future "Release All Ready Nodes" button would compose
+// the engine methods again in a handler written for the button it serves. This
+// is that handler, and the button is the one the floor described: a tool change
+// is human work at the asset, and when the humans are done they say so ONCE.
+//
+// The alternative is what the sim measured on 2026-08-24: four legs staged, the
+// per-node RELEASE refusing them, and the only working door being per-order
+// release from a screen the operator is not standing at — four clicks, none of
+// them in front of them.
+//
+// Body is the shared release shape (called_by required, optional disposition),
+// so this endpoint inherits the same audit guard as every other release. The
+// engine's per-slot rules are untouched: an evac leg carries the operator's
+// disposition, a supply leg paired with one defers to its pickup, and a lone
+// supply leg — which is what a cleared seat's single order is — fires now.
+func (h *Handlers) apiReleaseChangeoverProcess(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	req, err := parseReleaseRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	res, err := h.orchestration.ReleaseChangeoverWait(processID, buildReleaseDisposition(req))
+	if err != nil {
+		// Partial failure surfaces as an error with the failing nodes named —
+		// the engine joins them rather than reporting a success that left one
+		// cell's material where it was.
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "release"}})
+	writeJSONWithTrigger(w, r, res, "refreshChangeover")
+}
+
 // apiReleaseChangeoverWait WAS HERE, and is gone.
 //
 // It documented itself as an HMI orphan on 2026-05-10 and said the endpoint,

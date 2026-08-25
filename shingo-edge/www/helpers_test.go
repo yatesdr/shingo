@@ -117,6 +117,10 @@ type stubEngine struct {
 	backfillForce       bool
 
 	lastReleaseStagedOrdersDisposition *engine.ReleaseDisposition
+	lastChangeoverReleaseDisposition   *engine.ReleaseDisposition
+	lastChangeoverReleaseProcessID     int64
+	changeoverReleaseResult            engine.ReleaseChangeoverWaitResult
+	changeoverReleaseErr               error
 }
 
 func (s *stubEngine) AppConfig() *config.Config     { return s.cfg }
@@ -173,6 +177,12 @@ func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition
 	d := disp
 	s.lastReleaseStagedOrdersDisposition = &d
 	return nil
+}
+func (s *stubEngine) ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
+	d := disp
+	s.lastChangeoverReleaseDisposition = &d
+	s.lastChangeoverReleaseProcessID = processID
+	return s.changeoverReleaseResult, s.changeoverReleaseErr
 }
 func (s *stubEngine) RequestProduceSwap(int64) (*engine.NodeOrderResult, error) {
 	return nil, s.requestProduceSwapErr

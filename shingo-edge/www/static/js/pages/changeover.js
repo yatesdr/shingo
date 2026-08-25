@@ -103,6 +103,37 @@ async function completeCutover() {
     }
 }
 
+// releaseChangeoverMaterial is the operator saying the setup is finished: ONE
+// click that releases every leg of this changeover that is holding.
+//
+// A tool change is human work at the asset. While it runs, the marked seats'
+// bins are already gone and the incoming material is parked at inbound staging
+// with robots holding it — deliberately, so nothing drives into a cell someone
+// is standing in. This is the button that ends that hold.
+//
+// It reports counts because the honest answer is sometimes partial: a leg that
+// has not reached its wait yet cannot be released, and the operator needs to
+// know there is one to come back for rather than assuming the cell is fed.
+async function releaseChangeoverMaterial() {
+    try {
+        var res = await api.post('/api/processes/' + processID + '/changeover/release', {
+            called_by: 'operator_station'
+        });
+        var released = (res && res.released) || 0;
+        var pending = (res && res.pending) || 0;
+        if (released === 0 && pending === 0) {
+            toast('Nothing is waiting to be released', 'info');
+        } else if (pending > 0) {
+            toast('Released ' + released + '; ' + pending + ' not ready yet — click again when they stage', 'warning');
+        } else {
+            toast('Released ' + released + ' — material moving in', 'success');
+        }
+        htmx.trigger(document.body, 'refreshChangeover');
+    } catch (e) {
+        toast('Release failed: ' + e, 'error');
+    }
+}
+
 async function switchStation(stationID) {
     try {
         await api.post('/api/processes/' + processID + '/changeover/switch-station/' + stationID, {});
@@ -177,6 +208,7 @@ delegateActions(document.body, {
     completeCutover,
     navigateToProcess,
     previewProcessChangeover,
+    releaseChangeoverMaterial,
     renderChangeoverPreview,
     startProcessChangeover,
     switchStation

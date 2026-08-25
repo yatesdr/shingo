@@ -139,6 +139,10 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ReleaseNodeWithRemainingUOP",
 		"ReleaseOrderWithLineside",
 		"ReleaseStagedOrders",
+		// Added 2026-08-25 with the changeover-wide release BUTTON, which is the
+		// condition its predecessor was retired for failing: the route exists
+		// because the operator UI calls it. See apiReleaseChangeoverProcess.
+		"ReleaseChangeoverWait",
 		"RequestCatalogSync",
 		"RequestEmptyBin",
 		"RequestFullBin",

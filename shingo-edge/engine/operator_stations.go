@@ -591,6 +591,15 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 // Read alongside FinalizeProduceNode and the consume release path, which are
 // held to the same order by TestReleasePathsGateBeforeSideEffects.
 func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
+	// A changeover node whose work is a SINGLE leg — a cleared seat's
+	// clear-and-refill, one order on one robot — is released through the
+	// changeover path. It is not a swap pair and must not be judged as one; the
+	// gates below would refuse it for having no sibling, or for having no claim
+	// row of its own. See releaseSingleLegChangeoverNode.
+	if handled, err := e.releaseSingleLegChangeoverNode(nodeID, disp); handled {
+		return err
+	}
+
 	// ── GATES AND VALIDATION. Nothing below may mutate anything. ─────────
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
