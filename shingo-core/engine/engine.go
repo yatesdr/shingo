@@ -183,6 +183,12 @@ type Engine struct {
 	// these sit beside. See noteMapSyncFailure.
 	mapSyncFailKey string
 	mapSyncFailN   int
+	// sceneSyncFailKey/N are the same throttle for the SCENE half. Separate
+	// counters because the two syncs fail independently — different transport,
+	// different gate hash — and a shared counter would let one failure's
+	// backoff hide the other's first occurrence.
+	sceneSyncFailKey string
+	sceneSyncFailN   int
 }
 
 func New(c Config) *Engine {
