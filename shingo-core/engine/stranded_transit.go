@@ -229,6 +229,12 @@ func (e *Engine) placeInferred(binID int64, robotID string, obs dropObservation,
 			fmt.Sprintf("could not place at %s: %v", node.Name, err))
 		return false
 	}
+	// FORGET THE NOTE ON EVERY PLACEMENT, not just the sweep's. The map that
+	// suppresses a repeated log line is also a SILENCER when it outlives the
+	// episode it describes: a bin placed by the fast path and later stranded
+	// again in the same way would match its own stale note and say nothing at
+	// all. Only the sweep used to forget, so only the sweep re-armed it.
+	e.forgetStrandedNote(binID)
 	e.logFn("engine: stranded transit: bin %d placed at %s (point %s; robot %s; deck read empty %s; %s)",
 		binID, node.Name, point, robotID, obs.At.Format(time.RFC3339), intentPhrase(intent))
 	return true
@@ -550,7 +556,6 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 	if !e.placeInferred(bin.ID, robotID, obs, true) {
 		return
 	}
-	e.forgetStrandedNote(bin.ID)
 	e.forgetDrop(bin.ID)
 	// The bin has left the deck; if it was the last one, the carrier node has
 	// served its purpose. Removed here rather than left to accumulate — a
