@@ -699,6 +699,12 @@ cell_configs:
   - {process: WELD-3,  station: WELD-3-OPS}
   - {process: WELD-4,  station: WELD-4-OPS}
   - {process: UNLOADER-A, station: UNLOADER-A-OPS}
+  # UNLOADER-B was declared in operator_stations and never built here, so the
+  # station did not exist: seed_edge creates operator_stations from cell_configs,
+  # FGN_002's process node had operator_station_id NULL, and FGN_002 carries the
+  # plant's ONLY changeover_load_directive — so the LOAD directive card had
+  # nowhere to render and the surface shipped unobservable (N3, sim 2026-08-24).
+  - {process: UNLOADER-B, station: UNLOADER-B-OPS}
   # Loaders have no single cell station — their windows are per-node operator stations
   # (PLK_W1/2-OPS, PLK_X1-OPS, PLK_X2-OPS), declared via operator_station above.
 

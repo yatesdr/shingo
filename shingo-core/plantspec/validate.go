@@ -377,12 +377,37 @@ func (p *Plant) Validate() error {
 			add("reporting point %s/%s references unknown style %q", rp.PLCName, rp.TagName, rp.Style)
 		}
 	}
+	builtStations := map[string]bool{}
 	for _, cc := range p.CellConfigs {
 		if !processes[cc.Process] {
 			add("cell_config references unknown process %q", cc.Process)
 		}
 		if len(opStations) > 0 && !opStations[cc.Station] {
 			add("cell_config references unknown operator station %q", cc.Station)
+		}
+		builtStations[cc.Station] = true
+	}
+	for _, c := range p.Claims {
+		if c.OperatorStation != "" {
+			builtStations[c.OperatorStation] = true
+		}
+	}
+	// EVERY DECLARED STATION MUST BE BUILDABLE, and this is the reverse of the
+	// check above rather than a restatement of it.
+	//
+	// seed_edge creates operator_stations from cell_configs and from claims that
+	// pin their own window. A name that appears in `operator_stations` and in
+	// neither of those is declared and never created: the node that would render
+	// on it keeps operator_station_id NULL and every surface bound to that
+	// station is unreachable, silently. UNLOADER-B-OPS was in exactly that state
+	// while FGN_002 carried the plant's only changeover_load_directive, so the
+	// LOAD directive card could not be rendered at all and the feature shipped
+	// unobserved (N3, sim 2026-08-24).
+	for _, s := range p.OperatorStations {
+		if !builtStations[s] {
+			add("operator station %q is declared but nothing builds it — add a cell_config for "+
+				"its process, or pin a claim to it with operator_station; a station that is not "+
+				"created binds no node and renders nothing", s)
 		}
 	}
 	for _, lb := range p.LinesideBuckets {
