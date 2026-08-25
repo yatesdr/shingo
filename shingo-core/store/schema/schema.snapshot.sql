@@ -92,6 +92,7 @@ CREATE TABLE public.bin_loaders (
     replenishment text NOT NULL,
     outbound_dest text DEFAULT ''::text NOT NULL,
     inbound_source text DEFAULT ''::text NOT NULL,
+    changeover_load_directive boolean DEFAULT false NOT NULL,
     config_gen bigint DEFAULT 1 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
