@@ -156,11 +156,18 @@ func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.Robot
 // the bin left the floor. FAIL CLOSED for the same reason terminalWithin does —
 // an unreadable row, a missing one, or an order that never reached in_transit
 // all report false, because this gates a write that moves a bin.
+//
+// THE FIRST SUCH ROW, NOT THE LAST. `faulted -> in_transit` is a legal
+// transition (dispatch/lifecycle.go), so a replanned order carries several —
+// and the bin was picked up once, at the first. Reading the latest let a
+// twenty-hour-old pickup wear a five-minute-old timestamp and walk straight
+// through the one gate written to stop it, which is the opposite of failing
+// closed. The robot does not re-collect a bin it is already carrying.
 func (e *Engine) pickupWithin(ord *orders.Order, window time.Duration) bool {
 	if ord == nil {
 		return false
 	}
-	h, err := e.db.LatestOrderHistoryForStatus(ord.ID, protocol.StatusInTransit)
+	h, err := e.db.EarliestOrderHistoryForStatus(ord.ID, protocol.StatusInTransit)
 	if err != nil {
 		e.logFn("engine: stranded transit: pickup row for order %d: %v", ord.ID, err)
 		return false

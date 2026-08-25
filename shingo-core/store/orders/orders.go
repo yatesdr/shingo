@@ -963,6 +963,39 @@ func LatestHistoryForStatus(db *sql.DB, orderID int64, status protocol.Status) (
 	return &h, nil
 }
 
+// EarliestHistoryForStatus is LatestHistoryForStatus from the other end: the
+// FIRST time the order reached a status.
+//
+// The two are different questions and an order can answer both. `in_transit`
+// is reachable twice — `faulted -> in_transit` is a legal transition
+// (dispatch/lifecycle.go, fireFaultedRecovered) — and the two rows mean
+// different things: the first is when the bin left the floor, the last is when
+// a replan started. Anything dating the BIN wants the first; anything dating
+// the current attempt wants the last.
+func EarliestHistoryForStatus(db *sql.DB, orderID int64, status protocol.Status) (*History, error) {
+	var h History
+	var code, actor sql.NullString
+	var ref []byte
+	err := db.QueryRow(`SELECT id, order_id, status, detail, code, actor, ref, created_at
+		FROM order_history WHERE order_id=$1 AND status=$2 ORDER BY id ASC LIMIT 1`,
+		orderID, string(status)).
+		Scan(&h.ID, &h.OrderID, &h.Status, &h.Detail, &code, &actor, &ref, &h.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("order %d earliest %s history: %w", orderID, status, err)
+	}
+	h.Code, h.Actor = code.String, actor.String
+	if len(ref) > 0 {
+		var r protocol.TermRef
+		if err := json.Unmarshal(ref, &r); err == nil {
+			h.Ref = &r
+		}
+	}
+	return &h, nil
+}
+
 // EverReachedStatus reports whether the order ever recorded the given status.
 //
 // Asked of order_history rather than of the order's current status, because
