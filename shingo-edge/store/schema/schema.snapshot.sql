@@ -500,11 +500,11 @@ CREATE TABLE style_node_claims (
     sequence                INTEGER NOT NULL DEFAULT 0,
     lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
     reuse_compatible_bins   INTEGER NOT NULL DEFAULT 0,
-    -- Which press-index positions hold bins that block the tooling change, as a
-    -- JSON array of position keys ("front"/"paired"/"second"). Same shape and same
-    -- reasoning as allowed_payload_codes: a small set on one row rather than a
-    -- child table, because the back positions have no claim rows of their own.
-    -- Empty = no position marked = today's behaviour.
+    -- Which core NODES hold bins that block the tooling change, as a JSON array
+    -- of node names ("PLN_001"/"PLN_002"). Same shape and same reasoning as
+    -- allowed_payload_codes: a small set on one row rather than a child table,
+    -- because an index-paired node has no claim row of its own to hang it on.
+    -- Empty = nothing marked = today's behaviour.
     changeover_evac_nodes   TEXT NOT NULL DEFAULT '',
     -- Where a marked position's bin is CLEARED to, when this cell wants it
     -- somewhere other than its ordinary outbound destination. A node OR a group

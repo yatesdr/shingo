@@ -95,7 +95,7 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		// the value. Distinctive on both: a two-position selection (not one, not
 		// all three) and a destination that is NOT outbound_destination, so a
 		// fallback silently standing in for the real column would show.
-		ChangeoverEvacNodes:       domain.Ptr([]string{"front", "second"}),
+		ChangeoverEvacNodes:       domain.Ptr([]string{"RT-NODE", "RT-NODE-C"}),
 		ChangeoverEvacDestination: domain.Ptr("RT-TOOLING-EVAC"),
 		// Pointer-typed and NOT sent by the editor body below, so an editor
 		// save must leave it alone: it describes the press's hardware.
@@ -278,14 +278,14 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 		OutboundDestination:       "EV-MARKET",
 		PairedCoreNode:            "EV-PRESS-B",
 		SecondPairedCoreNode:      "EV-PRESS-C",
-		ChangeoverEvacNodes:       domain.Ptr([]string{"front"}),
+		ChangeoverEvacNodes:       domain.Ptr([]string{"EV-PRESS"}),
 		ChangeoverEvacDestination: domain.Ptr("EV-BAY-1"),
 	}
 	claimID, err := db.UpsertStyleNodeClaim(base)
 	testutil.MustNoErr(t, err, "seed claim")
 
 	upd := base
-	upd.ChangeoverEvacNodes = domain.Ptr([]string{"paired", "second"})
+	upd.ChangeoverEvacNodes = domain.Ptr([]string{"EV-PRESS-B", "EV-PRESS-C"})
 	upd.ChangeoverEvacDestination = domain.Ptr("EV-BAY-2")
 	if _, err := db.UpsertStyleNodeClaim(upd); err != nil {
 		t.Fatalf("update: %v", err)
@@ -293,8 +293,8 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 
 	after, err := db.GetStyleNodeClaim(claimID)
 	testutil.MustNoErr(t, err, "fetch after")
-	if got := strings.Join(after.ChangeoverEvacNodes, ","); got != "paired,second" {
-		t.Errorf("changeover_evac_nodes = %q, want paired,second", got)
+	if got := strings.Join(after.ChangeoverEvacNodes, ","); got != "EV-PRESS-B,EV-PRESS-C" {
+		t.Errorf("changeover_evac_nodes = %q, want EV-PRESS-B,EV-PRESS-C", got)
 	}
 	if after.ChangeoverEvacDestination != "EV-BAY-2" {
 		t.Errorf("changeover_evac_destination = %q, want EV-BAY-2", after.ChangeoverEvacDestination)
@@ -314,7 +314,7 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 	cleared, err := db.GetStyleNodeClaim(claimID)
 	testutil.MustNoErr(t, err, "fetch cleared")
 	if len(cleared.ChangeoverEvacNodes) != 0 {
-		t.Errorf("cleared positions = %v, want none", cleared.ChangeoverEvacNodes)
+		t.Errorf("cleared marks = %v, want none", cleared.ChangeoverEvacNodes)
 	}
 	if cleared.ChangeoverEvacDestination != "" {
 		t.Errorf("cleared destination = %q, want empty", cleared.ChangeoverEvacDestination)

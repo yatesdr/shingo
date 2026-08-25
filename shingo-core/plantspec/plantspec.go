@@ -289,9 +289,11 @@ type Claim struct {
 	// by hand in a browser, which means those features have never executed on a
 	// sim and there was no way to make them.
 	//
-	// ChangeoverEvacNodes names which press-index positions hold bins that block the
-	// tooling change: "front", "paired", "second". ChangeoverEvacDestination is
-	// where those bins go (blank falls back to outbound_destination).
+	// ChangeoverEvacNodes names the CORE NODES whose bins block the tooling
+	// change — e.g. ["PLN_001", "PLN_002"]. Validation refuses a node the claim
+	// does not hold, so a re-pairing cannot silently re-target a clearance.
+	// ChangeoverEvacDestination is where those bins go (blank falls back to
+	// outbound_destination).
 	ChangeoverEvacNodes       []string `yaml:"changeover_evac_nodes,omitempty"`
 	ChangeoverEvacDestination string   `yaml:"changeover_evac_destination,omitempty"`
 	// ChangeoverCarryoverDisposition decides what happens to a marked position's bin

@@ -1,7 +1,7 @@
-// Staged per-position tooling changeover, end to end.
+// Staged tooling changeover, end to end.
 //
-// The round-3 case: a press-index cell whose OUTGOING claim marks which positions
-// hold bins that block the tooling change. Marked positions are evacuated to the
+// A press-index cell whose OUTGOING claim marks which NODES hold bins that block
+// the tooling change. Marked nodes are evacuated to the
 // tooling destination; the incoming style's bins travel to the staging node
 // and WAIT there; tooling-done is an ordinary production release that moves
 // them into the line positions.
@@ -52,16 +52,16 @@ func stagedStubCore(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// stagedSeed builds a 3-position press-index cell on both styles. positions is the
-// OUTGOING claim's marked selection; toStaging is the incoming claim's staging
-// node (blank exercises the arm refusal).
+// stagedSeed builds a 3-node press-index cell on both styles. markedNodes is the
+// OUTGOING claim's marked selection, by CORE NODE NAME; toStaging is the incoming
+// claim's staging node (blank exercises the arm refusal).
 type stagedSeed struct {
 	processID, fromStyleID, toStyleID int64
 	nodeIDs                           map[string]int64
 	edge                              *edgeharness.Edge
 }
 
-func seedStagedPress(t *testing.T, positions []string, toStaging string) stagedSeed {
+func seedStagedPress(t *testing.T, markedNodes []string, toStaging string) stagedSeed {
 	t.Helper()
 	core := stagedStubCore(t)
 	edge := edgeharness.NewEdgeWithCoreAPI(t, "edge.test", core.URL)
@@ -110,7 +110,7 @@ func seedStagedPress(t *testing.T, positions []string, toStaging string) stagedS
 		PayloadCode: "ST-OLD", UOPCapacity: 100,
 		PairedCoreNode: "PLN-ST-B", SecondPairedCoreNode: "PLN-ST-C",
 		InboundSource: "ST-SRC", OutboundDestination: "ST-MARKET",
-		ChangeoverEvacNodes:       domain.Ptr(positions),
+		ChangeoverEvacNodes:       domain.Ptr(markedNodes),
 		ChangeoverEvacDestination: domain.Ptr("ST-TOOLING-BAY"),
 	}
 	to := processes.NodeClaimInput{
@@ -132,7 +132,7 @@ func seedStagedPress(t *testing.T, positions []string, toStaging string) stagedS
 
 func TestScenario_StagedToolingChangeover_EndToEnd(t *testing.T) {
 	// Front and third marked; the BACK position deliberately unmarked.
-	s := seedStagedPress(t, []string{"front", "second"}, "ST-STAGE")
+	s := seedStagedPress(t, []string{"PLN-ST-A", "PLN-ST-C"}, "ST-STAGE")
 
 	changeover, err := s.edge.Engine.StartProcessChangeover(s.processID, s.toStyleID, "test", "staged scenario")
 	if err != nil {
@@ -216,7 +216,7 @@ func TestScenario_StagedToolingChangeover_EndToEnd(t *testing.T) {
 // exists — the alternative is a plan whose supply legs have nowhere to go,
 // discovered as robots idling mid-changeover.
 func TestScenario_StagedToolingChangeover_RefusesWithoutStaging(t *testing.T) {
-	s := seedStagedPress(t, []string{"front"}, "")
+	s := seedStagedPress(t, []string{"PLN-ST-A"}, "")
 
 	_, err := s.edge.Engine.StartProcessChangeover(s.processID, s.toStyleID, "test", "no staging")
 	if err == nil {

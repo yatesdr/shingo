@@ -49,7 +49,7 @@ func fullyConfiguredClaim(t *testing.T, db *store.DB) (claimID int64, styleID in
 		PayloadCode:    "PART-X", UOPCapacity: 100, ReorderPoint: 10,
 		InboundSource: "MARKET", OutboundDestination: "MARKET",
 
-		ChangeoverEvacNodes:       &[]string{"front", "paired"},
+		ChangeoverEvacNodes:       &[]string{"PU-FRONT", "PU-BACK"},
 		ChangeoverEvacDestination: strPtr("TOOLING-BAY"),
 		ChangeoverLoadDirective:   &yes,
 		IndexRobotSupplies:        &yes,
@@ -69,8 +69,8 @@ func assertSixSurvive(t *testing.T, db *store.DB, claimID int64, after string) {
 	got, err := db.GetStyleNodeClaim(claimID)
 	testutil.MustNoErr(t, err, "read claim back")
 
-	if !slices.Equal(got.ChangeoverEvacNodes, []string{"front", "paired"}) {
-		t.Errorf("%s: changeover_evac_nodes = %v, want [front paired]", after, got.ChangeoverEvacNodes)
+	if !slices.Equal(got.ChangeoverEvacNodes, []string{"PU-FRONT", "PU-BACK"}) {
+		t.Errorf("%s: changeover_evac_nodes = %v, want [PU-FRONT PU-BACK]", after, got.ChangeoverEvacNodes)
 	}
 	if got.ChangeoverEvacDestination != "TOOLING-BAY" {
 		t.Errorf("%s: changeover_evac_destination = %q, want TOOLING-BAY", after, got.ChangeoverEvacDestination)
