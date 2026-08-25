@@ -81,6 +81,7 @@ function blankForm() {
     name: '',
     role: 'produce',       // produce | consume
     kind: 'multi_window',  // multi_window | single_window | dedicated
+    changeoverLoadDirective: false,
     replenishment: 'operator',
     fedByHand: false,
     inbound: '',
@@ -98,6 +99,7 @@ function readForm() {
     kind: val('loader-kind') || 'multi_window',
     replenishment: val('loader-replenishment') || 'operator',
     fedByHand: checked('loader-fed-by-hand'),
+    changeoverLoadDirective: checked('loader-changeover-directive'),
     inbound: val('loader-inbound'),
     outbound: val('loader-outbound'),
   };
@@ -163,6 +165,7 @@ function renderForm(state) {
   setVal('loader-role', state.role);
   setVal('loader-kind', state.kind);
   setChecked('loader-fed-by-hand', state.fedByHand);
+  setChecked('loader-changeover-directive', state.changeoverLoadDirective);
   setVal('loader-inbound', state.inbound);
   setVal('loader-outbound', state.outbound);
   setReplenishmentOptions(state);
@@ -417,6 +420,7 @@ function formStateFromLoader(l) {
     name: l.name || '',
     role: l.role || 'produce',
     kind: kindFromLoader(l),
+    changeoverLoadDirective: !!l.changeover_load_directive,
     replenishment: l.replenishment || 'operator',
     // No source IS the fed-by-hand choice; that is what the stored blank means.
     fedByHand: !(l.inbound_source || ''),
@@ -472,6 +476,10 @@ function loaderPayload(state) {
     layout: kindToLayout(state.kind),
     replenishment: state.replenishment,
     funnel_windows: state.kind === 'single_window',
+    // Commandeer this station's card during a changeover: instead of offering
+    // every payload it serves, the card names the carrier the incoming style
+    // needs. Set here because it describes the station, not a style.
+    changeover_load_directive: !!state.changeoverLoadDirective,
     inbound_source: state.inbound,
     outbound_dest: state.outbound,
   };

@@ -990,6 +990,10 @@ func v34BinLoaderAggregate(tx *sql.Tx) error {
 			outbound_dest   TEXT        NOT NULL DEFAULT '',
 			inbound_source  TEXT        NOT NULL DEFAULT '',
 			buffer_dest     TEXT        NOT NULL DEFAULT '',
+			-- Whether a changeover commandeers this loader's card: "load THIS
+			-- carrier, these cells are waiting for it". A property of the
+			-- station, not of a style — see v98.
+			changeover_load_directive BOOLEAN NOT NULL DEFAULT FALSE,
 			config_gen      BIGINT      NOT NULL DEFAULT 1,
 			created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -4079,7 +4083,33 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "orders", "key_route")
 			}},
+		{98, "bin_loaders.changeover_load_directive — whose card a changeover commandeers",
+			v98LoaderChangeoverLoadDirective,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "bin_loaders", "changeover_load_directive")
+			}},
 	}
+}
+
+// v98LoaderChangeoverLoadDirective moves the changeover load directive onto the
+// loader, which is the thing it describes.
+//
+// It lived on style_node_claims, keyed (style, node) — so a loader serving six
+// styles carried six copies of one policy and they had to be kept in step by
+// hand. Whether a station's card is commandeered during a changeover is a fact
+// about that station and how it is run, not about which style happens to be
+// active. bin_loaders is UNIQUE (core_node_name, role), which is the cardinality
+// the flag always wanted, and it is where the rest of a loader's setup already
+// lives — including set-window-bin-types, the neighbouring decision.
+//
+// Default false: a loader that has not been told to take a directive behaves
+// exactly as it does today.
+func v98LoaderChangeoverLoadDirective(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bin_loaders
+		ADD COLUMN IF NOT EXISTS changeover_load_directive BOOLEAN NOT NULL DEFAULT FALSE`); err != nil {
+		return fmt.Errorf("v98 bin_loaders.changeover_load_directive: %w", err)
+	}
+	return nil
 }
 
 // v97OrderKeyRoute adds the two SEER robot-selection hints an order carries

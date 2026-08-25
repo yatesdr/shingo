@@ -32,8 +32,12 @@ type CoreLoader struct {
 	// on a row written by a Core that predates the field, which is the behaviour
 	// every loader had when it was a plant-wide config key.
 	FunnelWindows bool
-	Positions     []CoreLoaderPosition
-	Payloads      []CoreLoaderPayload
+	// ChangeoverLoadDirective: a changeover commandeers this station's card,
+	// naming the carrier the incoming style needs rather than offering the
+	// whole board. Core owns it; this is the mirror.
+	ChangeoverLoadDirective bool
+	Positions               []CoreLoaderPosition
+	Payloads                []CoreLoaderPayload
 	// Quota is the declared carrier mix. Empty means none declared, which is
 	// today's behaviour: the loader takes whatever compatible carrier it finds.
 	Quota []CoreLoaderQuota
@@ -94,9 +98,9 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 	for _, l := range loaders {
 		if _, err := tx.Exec(
-			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, synced_at)
-			 VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))`,
-			l.LoaderKey, l.Role, l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.ConfigGen, l.FunnelWindows,
+			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, synced_at)
+			 VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+			l.LoaderKey, l.Role, l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.ConfigGen, l.FunnelWindows, l.ChangeoverLoadDirective,
 		); err != nil {
 			return fmt.Errorf("insert core_loader %s/%s: %w", l.LoaderKey, l.Role, err)
 		}
@@ -139,7 +143,7 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 // ListCoreLoaders returns every cached loader assembled with positions+payloads.
 func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows FROM core_loaders ORDER BY loader_key`)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive FROM core_loaders ORDER BY loader_key`)
 	if err != nil {
 		return nil, fmt.Errorf("list core_loaders: %w", err)
 	}
@@ -157,7 +161,7 @@ func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
 
 // GetCoreLoader returns the cached loader with loaderKey, or nil.
 func (db *DB) GetCoreLoader(loaderKey string) (*CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows FROM core_loaders WHERE loader_key=?`, loaderKey)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive FROM core_loaders WHERE loader_key=?`, loaderKey)
 	if err != nil {
 		return nil, fmt.Errorf("get core_loader %s: %w", loaderKey, err)
 	}
@@ -180,7 +184,8 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 	for rows.Next() {
 		var l CoreLoader
 		if err := rows.Scan(&l.LoaderKey, &l.Role, &l.Name, &l.Layout, &l.Replenishment,
-			&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &l.FunnelWindows); err != nil {
+			&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &l.FunnelWindows,
+			&l.ChangeoverLoadDirective); err != nil {
 			return nil, fmt.Errorf("scan core_loader: %w", err)
 		}
 		out = append(out, l)

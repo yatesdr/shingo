@@ -313,6 +313,9 @@ func (db *DB) migrate() error {
 	// column existed reads as today's behaviour. Repopulated full-state on the
 	// next node-list sync regardless.
 	db.Exec("ALTER TABLE core_loaders ADD COLUMN funnel_windows INTEGER NOT NULL DEFAULT 0")
+	// Core owns it (bin_loaders); this is the mirror. Default 0 = the ordinary
+	// board, which is what every station does until one is opted in.
+	db.Exec("ALTER TABLE core_loaders ADD COLUMN changeover_load_directive INTEGER NOT NULL DEFAULT 0")
 
 	// Where the operator dragged this window. Core has always stored the
 	// arrangement and sent it down; there was nowhere here to put it, so the
@@ -654,9 +657,9 @@ func (db *DB) migrate() error {
 	// was a SECOND road for adding a column, and it is a road that closes: the
 	// rebuild is self-disarming (it reads the live table's defaults to decide
 	// whether to run), so on every database that has already crossed it the list
-	// stops executing. Six columns — changeover_evac_nodes,
-	// changeover_evac_destination, changeover_load_directive,
-	// index_robot_supplies, key_route, key_task — reached fresh installs through
+	// stops executing. Five columns — changeover_evac_nodes,
+	// changeover_evac_destination, index_robot_supplies, key_route, key_task —
+	// reached fresh installs through
 	// the baseline CREATE and reached no upgraded plant at all, because their only
 	// ALTER was behind that early return. A fresh database had 41 columns and an
 	// upgraded one 35.
@@ -703,7 +706,6 @@ func (db *DB) migrate() error {
 	// definitions as the baseline CREATE.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_evac_nodes TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_evac_destination TEXT NOT NULL DEFAULT ''")
-	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_load_directive INTEGER NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN index_robot_supplies INTEGER NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN key_route TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN key_task TEXT NOT NULL DEFAULT ''")

@@ -64,7 +64,7 @@ const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
-	changeover_evac_nodes, changeover_evac_destination, changeover_load_directive,
+	changeover_evac_nodes, changeover_evac_destination,
 	index_robot_supplies, key_route, key_task, changeover_carryover_disposition`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
@@ -77,7 +77,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
-		&evacNodesJSON, &c.ChangeoverEvacDestination, &c.ChangeoverLoadDirective,
+		&evacNodesJSON, &c.ChangeoverEvacDestination,
 		&c.IndexRobotSupplies, &keyRouteJSON, &c.KeyTask, &c.ChangeoverCarryoverDisposition); err != nil {
 		return c, err
 	}
@@ -284,7 +284,6 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	autoReorder := in.AutoReorder != nil && *in.AutoReorder
 	indexRobotSupplies := in.IndexRobotSupplies != nil && *in.IndexRobotSupplies
 	keepStaged := in.KeepStaged != nil && *in.KeepStaged
-	loadDirective := in.ChangeoverLoadDirective != nil && *in.ChangeoverLoadDirective
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 	// INSERT OR IGNORE: if a concurrent writer inserted the same
 	// (style_id, core_node_name) between our SELECT above and this
@@ -300,16 +299,16 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
-		changeover_evac_nodes, changeover_evac_destination, changeover_load_directive,
+		changeover_evac_nodes, changeover_evac_destination,
 		index_robot_supplies, key_route, key_task, changeover_carryover_disposition)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
-		domain.OptValue(in.ChangeoverEvacDestination), loadDirective,
+		domain.OptValue(in.ChangeoverEvacDestination),
 		indexRobotSupplies, marshalKeyRoute(domain.OptValue(in.KeyRoute)),
 		domain.OptValue(in.KeyTask), carryoverOrDefault(in.ChangeoverCarryoverDisposition))
 	if err != nil {
@@ -436,9 +435,6 @@ func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	}
 	if in.ChangeoverCarryoverDisposition != nil {
 		sets, args = append(sets, `changeover_carryover_disposition=?`), append(args, string(*in.ChangeoverCarryoverDisposition))
-	}
-	if in.ChangeoverLoadDirective != nil {
-		sets, args = append(sets, `changeover_load_directive=?`), append(args, *in.ChangeoverLoadDirective)
 	}
 	if in.KeyRoute != nil {
 		sets, args = append(sets, `key_route=?`), append(args, marshalKeyRoute(*in.KeyRoute))

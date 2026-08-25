@@ -50,8 +50,8 @@ func TestLoaderService_RejectsConsumeThreshold(t *testing.T) {
 
 	// Update: the same pair refused when editing an existing unloader. Role is
 	// not a parameter here, which is exactly why this needs its own check.
-	err = svc.Update(consumeID, "CT-DRAIN", loaders.LayoutSharedWindow,
-		loaders.ReplenishmentThreshold, "", "", false)
+	err = svc.Update(LoaderUpdate{ID: consumeID, Name: "CT-DRAIN", Layout: loaders.LayoutSharedWindow,
+		Replenishment: loaders.ReplenishmentThreshold})
 	if err == nil {
 		t.Fatal("Update edited an unloader into threshold mode; want refusal")
 	}
@@ -68,8 +68,9 @@ func TestLoaderService_RejectsConsumeThreshold(t *testing.T) {
 
 	// Editing the produce loader's other fields still works with threshold mode
 	// intact; the guard must not have caught the whole threshold vocabulary.
-	testutil.MustNoErr(t, svc.Update(produceID, "CT-LOADER-2", loaders.LayoutSharedWindow,
-		loaders.ReplenishmentThreshold, "", "", false), "update produce threshold loader")
+	testutil.MustNoErr(t, svc.Update(LoaderUpdate{ID: produceID, Name: "CT-LOADER-2",
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentThreshold}),
+		"update produce threshold loader")
 }
 
 // TestLoaderService_ConsumeDefaultsToDrain pins that the role-aware default is

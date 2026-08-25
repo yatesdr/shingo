@@ -73,13 +73,16 @@ func (e *Engine) operatorRequestOrigin(node *processes.Node, claim *processes.No
 // changeoverLoadOrigin returns the active changeover's episode when THIS load
 // is one the changeover asked for, and a zero Origin otherwise.
 //
-// Gated on the claim's directive flag, not merely on a changeover existing. A
-// loader that was never opted in serves its ordinary steady-state demand right
-// through a changeover — attributing those to the changeover would inflate its
-// ratio with bins it did not cause, which is the mirror of the under-count this
-// exists to fix.
+// Gated on the STATION's directive setting, not merely on a changeover
+// existing. A station that was never opted in serves its ordinary steady-state
+// demand right through a changeover — attributing those to the changeover would
+// inflate its ratio with bins it did not cause, which is the mirror of the
+// under-count this exists to fix.
+//
+// The setting is Core's (bin_loaders), read through the same loader resolver the
+// card uses, so the two cannot disagree about whether this station is opted in.
 func (e *Engine) changeoverLoadOrigin(node *processes.Node, claim *processes.NodeClaim) ordermgr.Origin {
-	if claim == nil || !claim.ChangeoverLoadDirective {
+	if claim == nil || !e.stationTakesLoadDirective(node.CoreNodeName) {
 		return ordermgr.Origin{}
 	}
 	co, err := e.db.GetActiveProcessChangeover(node.ProcessID)
@@ -865,4 +868,17 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 		return nil, fmt.Errorf("node %s: a full bin is already inbound", node.Name)
 	}
 	return created, nil
+}
+
+// stationTakesLoadDirective asks the Core-owned loader a node belongs to whether
+// a changeover commandeers its card. A clean miss is false.
+func (e *Engine) stationTakesLoadDirective(coreNodeName string) bool {
+	if coreNodeName == "" {
+		return false
+	}
+	l, err := e.loaders().LoaderForNode(domain.NodeID(coreNodeName))
+	if err != nil || l == nil {
+		return false
+	}
+	return l.ChangeoverLoadDirective()
 }

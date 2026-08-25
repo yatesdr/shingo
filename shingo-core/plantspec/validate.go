@@ -337,10 +337,6 @@ func (p *Plant) Validate() error {
 		if c.KeyTask != "" && c.KeyTask != "load" && c.KeyTask != "unload" {
 			add("%s: key_task must be \"load\", \"unload\", or empty; got %q", where, c.KeyTask)
 		}
-		// The directive is an instruction to a LOADER's card.
-		if c.ChangeoverLoadDirective && protocol.SwapMode(c.SwapMode) != protocol.SwapModeManualSwap {
-			add("%s: changeover_load_directive is a loader's card instruction (manual_swap)", where)
-		}
 		// Any staging node that IS set must exist.
 		if c.InboundStaging != "" && !ref(c.InboundStaging) {
 			add("%s: unknown inbound_staging %q", where, c.InboundStaging)

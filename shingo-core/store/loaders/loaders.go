@@ -71,6 +71,15 @@ type Loader struct {
 	InboundSource string     `json:"inbound_source"`
 	ConfigGen     int64      `json:"config_gen"`
 	ArchivedAt    *time.Time `json:"archived_at,omitempty"` // soft-delete marker; nil = active (step 7)
+	// ChangeoverLoadDirective commandeers this loader's card during a
+	// changeover: rather than offering every payload it serves, the card names
+	// the carrier the incoming style needs and who is waiting for it.
+	//
+	// ON THE LOADER, because that is what it describes. It began life on
+	// style_node_claims — keyed (style, node) — where a loader serving six
+	// styles carried six copies of one policy that had to agree. Whether a
+	// station's card is commandeered is a fact about the station.
+	ChangeoverLoadDirective bool `json:"changeover_load_directive"`
 
 	// FunnelWindows restricts a shared-window loader to ONE window at a time:
 	// inbound empties all go to its first window on a budget of 1, instead of
@@ -135,7 +144,7 @@ type Config struct {
 	Payloads []Payload `json:"payloads"`
 }
 
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows`
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive`
 
 type scanner interface{ Scan(...any) error }
 
@@ -143,7 +152,8 @@ func scanLoader(s scanner) (Loader, error) {
 	var l Loader
 	var archivedAt sql.NullTime
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
-		&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &archivedAt, &l.FunnelWindows)
+		&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &archivedAt, &l.FunnelWindows,
+		&l.ChangeoverLoadDirective)
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
 	}
@@ -156,9 +166,11 @@ func scanLoader(s scanner) (Loader, error) {
 func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	var id int64
 	err := db.QueryRow(`
-		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source, funnel_windows)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source,
+			funnel_windows, changeover_load_directive)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
 		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
+		l.ChangeoverLoadDirective,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
@@ -221,9 +233,11 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 	res, err := db.Exec(`
 		UPDATE bin_loaders SET name=$1, layout=$2, replenishment=$3,
 			outbound_dest=$4, inbound_source=$5, funnel_windows=$6,
+			changeover_load_directive=$7,
 			config_gen=config_gen+1, updated_at=NOW()
-		WHERE id=$7`,
-		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows, l.ID)
+		WHERE id=$8`,
+		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
+		l.ChangeoverLoadDirective, l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}

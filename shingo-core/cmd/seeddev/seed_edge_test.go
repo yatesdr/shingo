@@ -64,7 +64,6 @@ CREATE TABLE style_node_claims (
   below_reorder_since TEXT,
   changeover_evac_nodes TEXT NOT NULL DEFAULT '', changeover_evac_destination TEXT NOT NULL DEFAULT '',
   changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
-  changeover_load_directive INTEGER NOT NULL DEFAULT 0,
   key_route TEXT NOT NULL DEFAULT '', key_task TEXT NOT NULL DEFAULT '',
   staging_node TEXT NOT NULL DEFAULT '', release_node TEXT NOT NULL DEFAULT '',
   inbound_source_node TEXT NOT NULL DEFAULT '', inbound_source_node_group TEXT NOT NULL DEFAULT '',

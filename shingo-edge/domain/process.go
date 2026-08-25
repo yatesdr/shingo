@@ -309,19 +309,6 @@ type NodeClaim struct {
 	// Blank reads as CarryoverReplace, so a row that predates the field
 	// behaves exactly as it did.
 	ChangeoverCarryoverDisposition CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
-	// ChangeoverLoadDirective turns this loader's card into a LOADING
-	// INSTRUCTION during a changeover: instead of the operator choosing from
-	// the loader's whole payload list, the card names the empty bin type the
-	// changing-over cells are actually waiting for.
-	//
-	// ON THE CLAIM, not on the Core loader aggregate. The behaviour is an Edge
-	// station's rendering of Edge's own changeover state — Core has no
-	// changeover concept for loaders and could only be told about this, never
-	// decide it. It also follows where every other per-station behaviour fact
-	// already lives; domain.Loader carries no config at all.
-	//
-	// Off by default: a plant that has never wanted this sees no change.
-	ChangeoverLoadDirective bool `json:"changeover_load_directive"`
 	// IndexRobotSupplies flips which robot of a press-index pair fetches the
 	// replacement carrier.
 	//
@@ -444,15 +431,6 @@ func SynthesizePositionClaim(parent *NodeClaim, coreNodeName string) *NodeClaim 
 	c.ReuseCompatibleBins = false
 	// KeepStaged shouldn't trigger inside per-position routing.
 	c.KeepStaged = false
-	// ChangeoverLoadDirective is an instruction to a LOADER — "go and fetch
-	// these carriers for the cells that are changing over". A press position loads
-	// nothing, so the instruction is not its to give, and it only ever had the
-	// flag because this is a whole-struct copy. Left set, every position of a
-	// flagged press rendered the loader's card on a tile that cannot act on it.
-	//
-	// Safe to clear, unlike the ID above: nothing resolves a position back to its
-	// parent through this field.
-	c.ChangeoverLoadDirective = false
 	return &c
 }
 
@@ -845,7 +823,6 @@ type NodeClaimInput struct {
 	// what stops a partial update from silently resetting a cell's answer to
 	// the default.
 	ChangeoverCarryoverDisposition *CarryoverDisposition `json:"changeover_carryover_disposition,omitempty"`
-	ChangeoverLoadDirective        *bool                 `json:"changeover_load_directive,omitempty"`
 	IndexRobotSupplies             *bool                 `json:"index_robot_supplies,omitempty"`
 	KeyRoute                       *[]string             `json:"key_route,omitempty"`
 	KeyTask                        *string               `json:"key_task,omitempty"`

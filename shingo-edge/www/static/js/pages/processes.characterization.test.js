@@ -293,8 +293,6 @@ function buildDOM() {
     add('claims-auto-request-manual-swap', { display: 'none' });
     add('claims-add-auto-push-row', { display: 'none' });
     add('claims-add-auto-push', { tag: 'input', type: 'checkbox' });
-    add('claims-add-load-directive-row', { display: 'none' });
-    add('claims-add-load-directive', { tag: 'input', type: 'checkbox' });
     add('claims-auto-request-standard', { display: 'none' });
     add('claims-add-auto-request', { tag: 'select', value: '' });
     add('claims-add-auto-confirm', { tag: 'input', type: 'checkbox' });
@@ -522,7 +520,6 @@ function expectedVisibility(role, swap) {
         'claims-add-auto-push-row': isManual && role === 'consume',
         // Round 4 shipped the card directive. Role-neutral: a loader and an
         // unloader both have a card.
-        'claims-add-load-directive-row': isManual,
         // Round 4 shipped key routes; round 2's registered slots are real now.
         // A manual_swap loader does not drive, so it has no route to configure.
         'claims-routing-fieldset': !isManual,
@@ -1476,7 +1473,6 @@ const ROUND_3_4_SLOTS = [];
 // so.
 const ROUND_4_SHIPPED_SLOTS = [
     'claims-add-index-robot-supplies-row',
-    'claims-add-load-directive-row',
     'claims-routing-fieldset',
     'claims-add-key-routes-group',
 ];
@@ -1724,11 +1720,11 @@ async function runPositionsDroppedOnModeChangeCase() {
 //
 // These two used to be echoed — read the claim, send its own value — because
 // they were plain values on NodeClaimInput and an absent key decoded to the
-// zero value. The echo was deleted when all six optional columns became
+// zero value. The echo was deleted when all five optional columns became
 // pointer-typed, and it should not come back: an echo protects only the fields
-// somebody remembered to add, and this one covered two of the six while
-// changeover_load_directive, key_route and key_task went unprotected the whole
-// time. Absent now means "no opinion" all the way to the UPDATE.
+// somebody remembered to add, and this one covered two of the five while
+// key_route and key_task went unprotected the whole time. Absent now means
+// "no opinion" all the way to the UPDATE.
 function runCompareGridOmitsUnownedClaimFieldsCase() {
     const elements = buildDOM();
     const ctx = createContext(elements, []);
@@ -1738,7 +1734,6 @@ function runCompareGridOmitsUnownedClaimFieldsCase() {
         swap_mode: 'two_robot_press_index', payload_code: 'PL1',
         changeover_evac_nodes: ['PRESS_A', 'PRESS_B'],
         changeover_evac_destination: 'CLEARANCE-GROUP',
-        changeover_load_directive: true,
         key_route: ['WP_AISLE_N'],
         key_task: 'load',
         index_robot_supplies: true,
@@ -1746,7 +1741,6 @@ function runCompareGridOmitsUnownedClaimFieldsCase() {
     const unowned = [
         'changeover_evac_nodes',
         'changeover_evac_destination',
-        'changeover_load_directive',
         'key_route',
         'key_task',
         'index_robot_supplies',
@@ -1904,53 +1898,6 @@ function runKeyRouteKeepsUnknownPointCase() {
 // THE CARD DIRECTIVE ROUND-TRIPS. It has existed in the domain, the store and
 // the DDL since round 3 with NO control anywhere, which is the round-1 trap the
 // visibility table exists to close: a field with full backend support and no
-// way to set it. This is the control, so this is the assertion that it saves.
-async function runLoadDirectiveCase() {
-    const elements = buildDOM();
-    const apiRecorder = [];
-    const ctx = createContext(elements, apiRecorder);
-    loadProcessesJS(ctx);
-    elements['claims-style-selector'].value = '42';
-    ctx.onClaimsStyleChanged();
-
-    ctx.editClaim({
-        id: 200,
-        core_node_name: 'LOADER_A',
-        role: 'produce',
-        swap_mode: 'manual_swap',
-        payload_code: 'PL1',
-        changeover_load_directive: true,
-    });
-    if (!elements['claims-add-load-directive'].checked) {
-        reportFailure('loadDirective: the stored flag loads into its checkbox', true, false);
-    } else { passed++; }
-
-    elements['claims-add-load-directive'].checked = false;
-    await ctx.saveClaim();
-    if (apiRecorder.length !== 1) {
-        reportFailure('loadDirective: expected 1 POST', 1, apiRecorder.length);
-        return;
-    }
-    if (apiRecorder[0].body.changeover_load_directive !== false) {
-        reportFailure('loadDirective: the modal owns the control, so it sends it',
-            false, apiRecorder[0].body.changeover_load_directive);
-    } else { passed++; }
-}
-
-// ...and a mode with no card cannot keep a card directive. Named in the drop
-// note rather than silently cleared at save — the round-2 rule.
-function runLoadDirectiveDroppedOffLoaderCase() {
-    const elements = buildDOM();
-    const ctx = createContext(elements, []);
-    loadProcessesJS(ctx);
-    const dropped = ctx.claimForbiddenFields('produce', 'two_robot',
-        Object.assign(ctx.defaultClaimState(), { changeoverLoadDirective: true }));
-    if (!dropped.some(d => d.key === 'changeoverLoadDirective')) {
-        reportFailure('loadDirective: dropped for a mode with no card',
-            'named in the drop list', dropped.map(d => d.key));
-    } else { passed++; }
-}
-
 // The compare grid must stay silent about it — absent means "leave the
 // hardware alone".
 function runIndexRobotSuppliesNotInCompareGridCase() {
@@ -1990,8 +1937,6 @@ function runIndexRobotSuppliesNotInCompareGridCase() {
     runIndexRobotSuppliesNotInCompareGridCase();
     await runKeyRouteSaveCase();
     runKeyRouteKeepsUnknownPointCase();
-    await runLoadDirectiveCase();
-    runLoadDirectiveDroppedOffLoaderCase();
     runServerFieldErrorCase();
     runOrphanFieldErrorCase();
     await runSaveClaimSchemaCase();

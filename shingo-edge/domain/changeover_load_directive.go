@@ -46,20 +46,25 @@ type ChangeoverLoadDirective struct {
 // Returns nil when there is nothing to say: no changeover, the flag off, no
 // resolvable bin type. A card that always shows a directive is a card whose
 // directive nobody reads.
+// directiveOn is the STATION's setting, read from the Core-owned loader
+// (bin_loaders.changeover_load_directive) rather than from the claim. It used to
+// be a claim column, which made a per-station policy per-(style, station): a
+// loader serving six styles carried six copies that had to agree.
+//
+// NO ROLE GUARD. This used to refuse anything that was not a produce claim, on
+// the reasoning that an unloader's directive would be about fulls. It is not a
+// different instruction — it is the same one: "for the payloads this station
+// serves, here is the carrier the incoming style needs". Whether a given station
+// wants to be told that is the question the setting answers, and the answer is
+// now the operator's to give where they set the station up.
 func BuildChangeoverLoadDirective(
 	changeoverID int64,
+	directiveOn bool,
 	loaderClaim *NodeClaim,
 	toClaims []NodeClaim,
 	binTypeFor func(payloadCode string) string,
 ) *ChangeoverLoadDirective {
-	if changeoverID == 0 || loaderClaim == nil || !loaderClaim.ChangeoverLoadDirective {
-		return nil
-	}
-	// A loader supplies EMPTIES, so only the cells that consume empties — the
-	// produce cells — are waiting on it. An unloader's directive would be
-	// about fulls and is a different instruction; it is not built here rather
-	// than built wrong.
-	if loaderClaim.Role != protocol.ClaimRoleProduce {
+	if changeoverID == 0 || !directiveOn || loaderClaim == nil {
 		return nil
 	}
 

@@ -90,6 +90,7 @@ func projectCoreLoader(l store.CoreLoader) (*domain.Loader, error) {
 			domain.WithInboundSource(l.InboundSource),
 			domain.WithUOPThreshold(uopThreshold),
 			domain.WithFunnelWindows(l.FunnelWindows),
+			domain.WithChangeoverLoadDirective(l.ChangeoverLoadDirective),
 			domain.WithOutboundDest(l.OutboundDest))
 
 	case string(domain.LayoutDedicatedPositions):

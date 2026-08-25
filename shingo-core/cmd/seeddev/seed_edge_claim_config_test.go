@@ -9,7 +9,7 @@ import (
 // The round-3/4 claim config must survive the seeder.
 //
 // changeover_evac_nodes, changeover_evac_destination,
-// changeover_load_directive, key_route and key_task were added to
+// key_route and key_task were added to
 // style_node_claims and to the claim editor, and left out of plantspec and out
 // of this seeder — so staged tooling evacuation, evacuation-destination
 // precedence, the loader card and key routes could not be SET by any scenario.
@@ -28,14 +28,13 @@ func TestSeedEdge_ClaimConfigRoundTrips(t *testing.T) {
 	db, _, _ := openSeededEdge(t)
 
 	var positions, dest, route, task, allowed string
-	var directive int
 	err := db.QueryRow(`
 		SELECT changeover_evac_nodes, changeover_evac_destination,
-		       changeover_load_directive, key_route, key_task, allowed_payload_codes
+		       key_route, key_task, allowed_payload_codes
 		  FROM style_node_claims c
 		  JOIN styles s ON s.id = c.style_id
 		 WHERE c.core_node_name = 'PLN_001' AND s.name = 'PRESS-1-RUN'`).
-		Scan(&positions, &dest, &directive, &route, &task, &allowed)
+		Scan(&positions, &dest, &route, &task, &allowed)
 	if err == sql.ErrNoRows {
 		t.Fatal("the press-index claim was not seeded at all")
 	}
@@ -63,8 +62,5 @@ func TestSeedEdge_ClaimConfigRoundTrips(t *testing.T) {
 	}
 	if task != "unload" {
 		t.Errorf("key_task = %q, want unload", task)
-	}
-	if directive != 0 {
-		t.Errorf("changeover_load_directive = %d on a press claim, want 0", directive)
 	}
 }

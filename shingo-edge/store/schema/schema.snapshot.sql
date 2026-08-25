@@ -129,6 +129,9 @@ CREATE TABLE core_loaders (
     inbound_source TEXT    NOT NULL DEFAULT '',
     config_gen     INTEGER NOT NULL DEFAULT 0,
     funnel_windows INTEGER NOT NULL DEFAULT 0,  -- 1 = one window at a time; 0 = spread across windows (the default everywhere)
+    -- 1 = a changeover commandeers this station's card and names the carrier the
+    -- incoming style needs. Core owns it (bin_loaders); this is the mirror.
+    changeover_load_directive INTEGER NOT NULL DEFAULT 0,
     synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (loader_key)
 );
@@ -520,11 +523,6 @@ CREATE TABLE style_node_claims (
     -- tooling-done release. Never consulted when the payloads differ — the bin
     -- has to change anyway.
     changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
-    -- Turns a loader's card into a loading instruction during a changeover:
-    -- which empty bin type the changing-over cells are waiting for. Off by
-    -- default; see NodeClaim.ChangeoverLoadDirective for why it lives here
-    -- rather than on the Core loader aggregate.
-    changeover_load_directive INTEGER NOT NULL DEFAULT 0,
     -- Which robot of a press-index pair fetches the replacement carrier.
     -- 0 = today's shape (R1 evacuates and refills); 1 = flipped (R1 evacuates
     -- only, R2 indexes and refills). Describes the cell's hardware, so

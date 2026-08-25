@@ -208,16 +208,16 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			   paired_core_node, second_paired_core_node, index_robot_supplies,
 			   changeover_evac_nodes, changeover_evac_destination,
 			   changeover_carryover_disposition,
-			   changeover_load_directive, key_route, key_task,
+			   key_route, key_task,
 			   auto_push, auto_confirm)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			sid, c.CoreNode, c.Role, c.SwapMode, c.Payload, c.UOPCapacity,
 			c.ReorderPoint, b2i(c.AutoReorder), c.InboundStaging, c.OutboundStaging,
 			c.InboundSource, c.OutboundDestination, jsonList(c.AllowedPayloads),
 			c.PairedCoreNode, c.SecondPairedCoreNode, b2i(c.IndexRobotSupplies),
 			jsonList(c.ChangeoverEvacNodes), c.ChangeoverEvacDestination,
 			carryoverOrReplace(c.ChangeoverCarryoverDisposition),
-			b2i(c.ChangeoverLoadDirective), jsonList(c.KeyRoute), c.KeyTask,
+			jsonList(c.KeyRoute), c.KeyTask,
 			b2i(c.AutoPush), b2i(c.AutoConfirm)); err != nil {
 			return fmt.Errorf("claim %s/%s: %w", c.CoreNode, c.Style, err)
 		}

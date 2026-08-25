@@ -26,6 +26,23 @@ import (
 // loadDirectiveScenario builds a station with a produce LOADER carrying the
 // directive flag, plus a press-index press whose extension position is adopted onto
 // the board through its owning task — the shape that renders a claimless position.
+// directiveLoaders answers the one question the view now asks: does the station
+// this node belongs to take a changeover directive? Only LDR_1 is a loader here.
+type directiveLoaders struct{ on bool }
+
+func (d directiveLoaders) LoaderAt(domain.NodeID, domain.LoaderRole) (*domain.Loader, error) {
+	return nil, nil
+}
+func (d directiveLoaders) LoaderForNode(n domain.NodeID) (*domain.Loader, error) {
+	if n != "LDR_1" {
+		return nil, nil
+	}
+	return domain.NewSharedWindowLoader("loader:1", "LDR_1", domain.RoleProduce,
+		domain.ReplenishmentOperator,
+		[]domain.Window{{Node: "LDR_1"}}, []domain.PayloadCode{"PART-OLD", "PART-NEW"},
+		domain.WithChangeoverLoadDirective(d.on))
+}
+
 func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 	t.Helper()
 	db := testdb.Open(t)
@@ -68,8 +85,7 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 		// incoming one in its allowed set, loaderServes filters it out and the
 		// directive is correctly empty — this loader would not be the one going
 		// to fetch those carriers.
-		AllowedPayloadCodes:     []string{"PART-OLD", "PART-NEW"},
-		ChangeoverLoadDirective: domain.Ptr(loaderFlag),
+		AllowedPayloadCodes: []string{"PART-OLD", "PART-NEW"},
 	})
 	mustNoErr(t, err, "upsert loader claim")
 
@@ -87,8 +103,7 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 		// still reaching positions: the position inherited PART-OLD and the incoming
 		// payload was PART-NEW, so it was excluded for a reason that has nothing
 		// to do with it being a position.
-		AllowedPayloadCodes:     []string{"PART-OLD", "PART-NEW"},
-		ChangeoverLoadDirective: domain.Ptr(loaderFlag),
+		AllowedPayloadCodes: []string{"PART-OLD", "PART-NEW"},
 	})
 	mustNoErr(t, err, "upsert press claim")
 
@@ -175,6 +190,7 @@ func TestBuildView_LoadDirectiveReachesTheLoaderTile(t *testing.T) {
 	t.Parallel()
 	db, stationID := loadDirectiveScenario(t, true)
 	svc := NewStationService(db)
+	svc.SetLoaderResolver(directiveLoaders{on: true})
 	svc.SetBinTypeResolver(func(payloadCode string) string {
 		if payloadCode == "PART-NEW" {
 			return "TOTE-BIG"
@@ -210,13 +226,15 @@ func TestBuildView_NoDirectiveWithoutTheFlag(t *testing.T) {
 	t.Parallel()
 	db, stationID := loadDirectiveScenario(t, false)
 	svc := NewStationService(db)
+	// The STATION is not opted in — which is now the only place that answer lives.
+	svc.SetLoaderResolver(directiveLoaders{on: false})
 	svc.SetBinTypeResolver(func(string) string { return "TOTE-BIG" })
 
 	view, err := svc.BuildView(context.Background(), stationID)
 	mustNoErr(t, err, "BuildView")
 
 	if d := tileFor(t, view, "LDR_1").ChangeoverLoadDirective; d != nil {
-		t.Errorf("a loader without the flag rendered a directive: %+v", d)
+		t.Errorf("a station that is not opted in rendered a directive: %+v", d)
 	}
 }
 
@@ -231,6 +249,7 @@ func TestBuildView_BackPositionRendersNoDirective(t *testing.T) {
 	t.Parallel()
 	db, stationID := loadDirectiveScenario(t, true)
 	svc := NewStationService(db)
+	svc.SetLoaderResolver(directiveLoaders{on: true})
 	svc.SetBinTypeResolver(func(string) string { return "TOTE-BIG" })
 
 	view, err := svc.BuildView(context.Background(), stationID)

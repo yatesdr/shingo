@@ -192,6 +192,22 @@ func (s *StationService) SetBinTypeResolver(r func(payloadCode string) string) {
 // binTypeForPayload is the nil-safe read. An unwired resolver answers "unknown"
 // for every payload, and BuildChangeoverLoadDirective drops an unknown rather
 // than naming a carrier it cannot identify.
+// stationTakesLoadDirective asks the Core-owned loader this node belongs to
+// whether a changeover should commandeer its card.
+//
+// A clean miss (no loader, or no resolver wired) is false: a node Core does not
+// know as a loader has no station setup to have opted in.
+func (s *StationService) stationTakesLoadDirective(coreNodeName string) bool {
+	if s.loaders == nil || coreNodeName == "" {
+		return false
+	}
+	l, err := s.loaders.LoaderForNode(domain.NodeID(coreNodeName))
+	if err != nil || l == nil {
+		return false
+	}
+	return l.ChangeoverLoadDirective()
+}
+
 func (s *StationService) binTypeForPayload(payloadCode string) string {
 	if s.binTypes == nil {
 		return ""
@@ -377,7 +393,8 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 		// view's active changeover, which the tile builder is not given.
 		if view.ActiveChangeover != nil && tile.ActiveClaim != nil {
 			tile.ChangeoverLoadDirective = domain.BuildChangeoverLoadDirective(
-				view.ActiveChangeover.ID, tile.ActiveClaim, b.targetClaimList, s.binTypeForPayload)
+				view.ActiveChangeover.ID, s.stationTakesLoadDirective(node.CoreNodeName),
+				tile.ActiveClaim, b.targetClaimList, s.binTypeForPayload)
 		}
 		view.Nodes = append(view.Nodes, tile)
 	}

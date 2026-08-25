@@ -51,7 +51,6 @@ func fullyConfiguredClaim(t *testing.T, db *store.DB) (claimID int64, styleID in
 
 		ChangeoverEvacNodes:       &[]string{"PU-FRONT", "PU-BACK"},
 		ChangeoverEvacDestination: strPtr("TOOLING-BAY"),
-		ChangeoverLoadDirective:   &yes,
 		IndexRobotSupplies:        &yes,
 		KeyRoute:                  &[]string{"WP_AISLE_N", "WP_AISLE_S"},
 		KeyTask:                   strPtr("load"),
@@ -74,9 +73,6 @@ func assertSixSurvive(t *testing.T, db *store.DB, claimID int64, after string) {
 	}
 	if got.ChangeoverEvacDestination != "TOOLING-BAY" {
 		t.Errorf("%s: changeover_evac_destination = %q, want TOOLING-BAY", after, got.ChangeoverEvacDestination)
-	}
-	if !got.ChangeoverLoadDirective {
-		t.Errorf("%s: changeover_load_directive = false, want true", after)
 	}
 	if !got.IndexRobotSupplies {
 		t.Errorf("%s: index_robot_supplies = false, want true", after)
@@ -156,7 +152,6 @@ func TestClaimUpdate_ExplicitEmptyStillClears(t *testing.T) {
 
 		ChangeoverEvacNodes:       &[]string{},
 		ChangeoverEvacDestination: strPtr(""),
-		ChangeoverLoadDirective:   &no,
 		IndexRobotSupplies:        &no,
 		KeyRoute:                  &[]string{},
 		KeyTask:                   strPtr(""),
@@ -170,9 +165,6 @@ func TestClaimUpdate_ExplicitEmptyStillClears(t *testing.T) {
 	}
 	if got.ChangeoverEvacDestination != "" {
 		t.Errorf("changeover_evac_destination = %q, want empty", got.ChangeoverEvacDestination)
-	}
-	if got.ChangeoverLoadDirective {
-		t.Error("changeover_load_directive = true, want false")
 	}
 	if got.IndexRobotSupplies {
 		t.Error("index_robot_supplies = true, want false")

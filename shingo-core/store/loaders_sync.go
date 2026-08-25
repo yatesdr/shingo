@@ -101,6 +101,8 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			InboundSource: l.InboundSource,
 			ConfigGen:     l.ConfigGen,
 			FunnelWindows: l.FunnelWindows,
+
+			ChangeoverLoadDirective: l.ChangeoverLoadDirective,
 		}
 
 		// A home's kind is fully determined by the parent loader's layout: a

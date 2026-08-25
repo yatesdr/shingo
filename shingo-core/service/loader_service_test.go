@@ -95,8 +95,9 @@ func TestLoaderService_InboundSourceIsResolveChecked(t *testing.T) {
 		id, err := svc.Create("MG33-UPD", "produce", "dedicated_positions",
 			loaders.ReplenishmentThreshold, "", "", false)
 		testutil.MustNoErr(t, err, "create")
-		if err := svc.Update(id, "MG33-UPD", "dedicated_positions",
-			loaders.ReplenishmentThreshold, "", "MG33-STILL-NO-SUCH-GROUP", false); err == nil {
+		if err := svc.Update(LoaderUpdate{ID: id, Name: "MG33-UPD", Layout: "dedicated_positions",
+			Replenishment: loaders.ReplenishmentThreshold,
+			InboundSource: "MG33-STILL-NO-SUCH-GROUP"}); err == nil {
 			t.Error("Update accepted an unresolvable inbound source. A field guarded only on " +
 				"create is guarded on the path nobody uses twice")
 		}

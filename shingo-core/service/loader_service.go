@@ -146,7 +146,23 @@ func (s *LoaderService) Create(name, role, layout, replenishment, outboundDest, 
 // when the kind became the form's first question — the operator now answers it
 // before anything else, and a create that ignored the answer silently produced
 // a spread loader and then re-rendered the form showing it.
-func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDest, inboundSource string, funnelWindows bool) error {
+// LoaderUpdate is Update's argument. A struct rather than a parameter list
+// because the list had reached two trailing booleans, where a call site says
+// `..., true, false)` and only the signature knows which is which.
+type LoaderUpdate struct {
+	ID                      int64
+	Name                    string
+	Layout                  string
+	Replenishment           string
+	OutboundDest            string
+	InboundSource           string
+	FunnelWindows           bool
+	ChangeoverLoadDirective bool
+}
+
+func (s *LoaderService) Update(in LoaderUpdate) error {
+	id, name, layout, replenishment := in.ID, in.Name, in.Layout, in.Replenishment
+	outboundDest, inboundSource, funnelWindows := in.OutboundDest, in.InboundSource, in.FunnelWindows
 	cur, err := s.db.GetLoader(id)
 	if err != nil {
 		return err
@@ -174,6 +190,7 @@ func (s *LoaderService) Update(id int64, name, layout, replenishment, outboundDe
 	}
 	cur.InboundSource = inboundSource
 	cur.FunnelWindows = funnelWindows
+	cur.ChangeoverLoadDirective = in.ChangeoverLoadDirective
 	if err := s.db.UpdateLoader(*cur); err != nil {
 		return err
 	}

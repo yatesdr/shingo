@@ -344,6 +344,14 @@ func boolProp(b bool) string {
 // demand spec). Replenishment: consume → auto when auto_push else operator;
 // produce → auto. Idempotent — skips a (core_node, role) that already exists.
 func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
+	// The station's own setting, by node name: whether a changeover commandeers
+	// its card. It lives on the station because it describes the station.
+	directive := map[string]bool{}
+	for _, s := range p.Stations {
+		if s.ChangeoverLoadDirective {
+			directive[s.Name] = true
+		}
+	}
 	threshold := map[string]int{}
 	for _, d := range p.Demands {
 		if d.ReplenishUOPThreshold != nil {
@@ -444,6 +452,8 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			Replenishment: repl,
 			OutboundDest:  c.OutboundDestination,
 			InboundSource: c.InboundSource,
+
+			ChangeoverLoadDirective: directive[k.node],
 		})
 		if err != nil {
 			return fmt.Errorf("create loader %s/%s: %w", k.node, k.role, err)
@@ -520,6 +530,8 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			Replenishment: repl,
 			OutboundDest:  lead.OutboundDestination,
 			InboundSource: lead.InboundSource,
+
+			ChangeoverLoadDirective: directive[id],
 		})
 		if err != nil {
 			return fmt.Errorf("create synthetic loader %s/%s: %w", id, lead.Role, err)
@@ -575,6 +587,8 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			Replenishment: repl,
 			OutboundDest:  lead.OutboundDestination,
 			InboundSource: lead.InboundSource,
+
+			ChangeoverLoadDirective: directive[id],
 		})
 		if err != nil {
 			return fmt.Errorf("create dedicated loader %s/%s: %w", id, lead.Role, err)

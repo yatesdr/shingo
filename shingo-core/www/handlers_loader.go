@@ -67,6 +67,10 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		OutboundDest  string `json:"outbound_dest"`
 		InboundSource string `json:"inbound_source"`
 		FunnelWindows bool   `json:"funnel_windows"`
+		// ChangeoverLoadDirective: commandeer this loader's card during a
+		// changeover. Set up where the loader is set up, rather than on each
+		// style's claim.
+		ChangeoverLoadDirective bool `json:"changeover_load_directive"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -75,8 +79,11 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "id and name are required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.LoaderService().Update(req.ID, req.Name, req.Layout, req.Replenishment,
-		req.OutboundDest, req.InboundSource, req.FunnelWindows); err != nil {
+	if err := h.engine.LoaderService().Update(service.LoaderUpdate{
+		ID: req.ID, Name: req.Name, Layout: req.Layout, Replenishment: req.Replenishment,
+		OutboundDest: req.OutboundDest, InboundSource: req.InboundSource,
+		FunnelWindows: req.FunnelWindows, ChangeoverLoadDirective: req.ChangeoverLoadDirective,
+	}); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
 		return
 	}

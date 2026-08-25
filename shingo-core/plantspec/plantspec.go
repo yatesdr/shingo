@@ -163,6 +163,12 @@ type Station struct {
 	Name string `yaml:"name"`
 	Kind string `yaml:"kind"` // line_in|line_out|press|weld|loader|unloader|staging|dest
 	Zone string `yaml:"zone,omitempty"`
+	// ChangeoverLoadDirective commandeers this station's card during a
+	// changeover: rather than offering every payload it serves, the card names
+	// the carrier the incoming style needs. loader/unloader only — it is a
+	// property of the station, which is why it sits here and not on each
+	// style's claim.
+	ChangeoverLoadDirective bool `yaml:"changeover_load_directive,omitempty"`
 }
 
 // Bin is an initial bin placement. Empty Payload = an empty bin.
@@ -304,9 +310,6 @@ type Claim struct {
 	// the payloads differ. Seedable from day one, deliberately: a feature that
 	// cannot be put in a plant file cannot be exercised on a sim.
 	ChangeoverCarryoverDisposition string `yaml:"changeover_carryover_disposition,omitempty"`
-	// ChangeoverLoadDirective turns a LOADER's card into a loading instruction
-	// during a changeover — which empty carrier the changing-over cells want.
-	ChangeoverLoadDirective bool `yaml:"changeover_load_directive,omitempty"`
 	// KeyRoute is the ordered list of map points a leg from this claim should be
 	// routed through; KeyTask is SEER's sibling-selection hint ("load"/"unload").
 	// ORDER IS MEANINGFUL in KeyRoute, so it is a list and not a set.

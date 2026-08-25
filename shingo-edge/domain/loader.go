@@ -193,10 +193,11 @@ type Loader struct {
 
 	// Optional runtime config carried so the empty-in / completion paths need
 	// neither the legacy claim nor a second lookup. Set via LoaderOption.
-	inboundSource string              // the empty market L1s source from
-	outboundDest  string              // the market filled (L2) / emptied (U2) bins go to on completion
-	uopThreshold  map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in, display-read only on Edge); dedicated carries it on Position
-	funnelWindows bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
+	inboundSource           string              // the empty market L1s source from
+	outboundDest            string              // the market filled (L2) / emptied (U2) bins go to on completion
+	uopThreshold            map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in, display-read only on Edge); dedicated carries it on Position
+	funnelWindows           bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
+	changeoverLoadDirective bool                // a changeover commandeers this station's card (see ChangeoverLoadDirective)
 }
 
 // LoaderOption sets optional runtime config on a constructed Loader. Variadic, so
@@ -450,6 +451,20 @@ func (l *Loader) IsDedicated() bool { return l.layout == LayoutDedicatedPosition
 // restriction. Meaningless for a dedicated loader, whose positions never shared
 // a budget.
 func (l *Loader) FunnelWindows() bool { return l.funnelWindows }
+
+// WithChangeoverLoadDirective opts this station into having its card
+// commandeered during a changeover.
+func WithChangeoverLoadDirective(on bool) LoaderOption {
+	return func(l *Loader) { l.changeoverLoadDirective = on }
+}
+
+// ChangeoverLoadDirective reports whether a changeover replaces this station's
+// board with an instruction naming the carrier the incoming style needs.
+//
+// Core owns the setting — it is a fact about the station and how it is run, so
+// it lives beside the rest of the station's setup in bin_loaders rather than on
+// each style's claim, where it used to be duplicated per style.
+func (l *Loader) ChangeoverLoadDirective() bool { return l.changeoverLoadDirective }
 
 // IsOperatorDriven reports whether the loader's replenishment is operator-driven
 // (replenishment = operator) — the operator stages/clears at the board rather than

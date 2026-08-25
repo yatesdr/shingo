@@ -530,7 +530,7 @@ function ensureCompareDelegation(wrap) {
 // changeover_evac_destination were echoed for exactly the same reason, and were
 // deleted when the store contract was extended to cover them. The echo is never
 // the fix: it is correct only for the surfaces someone remembered, and the two
-// it covered here still left changeover_load_directive, key_route and key_task
+// it covered here still left key_route and key_task
 // unprotected. Do not reintroduce one.
 function claimToBody(c) {
     return {
@@ -732,7 +732,6 @@ function claimFieldVisibility(role, swap) {
         // The load directive is a LOADER's card behaviour, so it follows the
         // manual_swap fieldset. Role-neutral: a loader and an unloader both
         // have a card, and both can be told to name what the changeover needs.
-        'claims-add-load-directive-row':      isManual,
         // Round 4 — Routing, a new fieldset. Key routes are the named paths a
         // leg may take; meaningless for a loader, which does not drive.
         'claims-routing-fieldset':            ROUND4_ROUTING && !isManual,
@@ -923,7 +922,6 @@ function readClaimStateFromForm() {
         indexRobotSupplies: get('claims-add-index-robot-supplies').checked,
         keyRoute: readKeyRoute(),
         keyTask: get('claims-add-key-task').value,
-        changeoverLoadDirective: get('claims-add-load-directive').checked,
         changeoverEvacNodes: readEvacNodes(),
         changeoverEvacDestination: get('claims-add-evac-destination').value,
         changeoverCarryoverDisposition: get('claims-add-carryover').value,
@@ -960,7 +958,6 @@ function writeClaimStateToForm(state) {
     get('claims-add-index-robot-supplies').checked = !!state.indexRobotSupplies;
     writeKeyRoute(state.keyRoute || []);
     get('claims-add-key-task').value = state.keyTask || '';
-    get('claims-add-load-directive').checked = !!state.changeoverLoadDirective;
     // ORDER MATTERS: the checkboxes carry NODE names, and the values are filled
     // from the claim's layout. Match the stored marks only after the values
     // exist, or every box is empty-valued and nothing is ever checked.
@@ -1561,9 +1558,6 @@ function claimForbiddenFields(role, swap, state) {
         forbid('pairedCoreNode', 'Paired Node');
     }
     var markedNodes = state.changeoverEvacNodes || [];
-    if (!isManual && state.changeoverLoadDirective) {
-        out.push({ key: 'changeoverLoadDirective', label: 'Changeover loading instruction', value: false });
-    }
     if (isManual && (state.keyRoute || []).length > 0) {
         out.push({ key: 'keyRoute', label: 'Key route', value: [] });
     }
@@ -1795,7 +1789,6 @@ function defaultClaimState() {
         indexRobotSupplies: false,
         keyRoute: [],
         keyTask: '',
-        changeoverLoadDirective: false,
         autoConfirm: false,
     };
 }
@@ -1856,7 +1849,6 @@ function editClaim(claim) {
         indexRobotSupplies: !!claim.index_robot_supplies,
         keyRoute: (claim.key_route || []).slice(),
         keyTask: claim.key_task || '',
-        changeoverLoadDirective: !!claim.changeover_load_directive,
         changeoverEvacNodes: claim.changeover_evac_nodes || [],
         changeoverEvacDestination: claim.changeover_evac_destination || '',
         changeoverCarryoverDisposition: claim.changeover_carryover_disposition || 'replace',
@@ -1958,7 +1950,6 @@ async function saveClaim() {
         index_robot_supplies: state.indexRobotSupplies,
         key_route: state.keyRoute,
         key_task: state.keyTask,
-        changeover_load_directive: state.changeoverLoadDirective,
         changeover_evac_nodes: state.changeoverEvacNodes,
         changeover_evac_destination: state.changeoverEvacDestination,
         changeover_carryover_disposition: state.changeoverCarryoverDisposition,
