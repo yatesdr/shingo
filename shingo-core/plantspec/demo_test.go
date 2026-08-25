@@ -188,3 +188,59 @@ func TestShippedDemoPlantKeepsBothToolingShapesReachable(t *testing.T) {
 		}
 	}
 }
+
+// THE CARRY-OVER DISPOSITIONS MUST BE DRIVEABLE ON THE SHIPPED PLANT.
+//
+// This is the N1 lesson applied to the newest option. A disposition is
+// consulted only when a MARKED node's part is common to both styles, so
+// without a style pair that shares a part, the whole feature is configuration
+// nothing can reach — configured, validated, seeded, and inert, which is
+// exactly the state the staged tooling evacuation shipped in.
+//
+// Two preconditions, and both were missing when this was written:
+//   - a style pair on the marked cell running the SAME payload on the SAME
+//     nodes (PRESS-1-RUN -> PRESS-1-RETOOL), so the carry-over branch is
+//     reachable at all;
+//   - an outbound_staging node on the marked claim, because the
+//     outbound_staging disposition is REFUSED at save time without one — so a
+//     fixture that names the disposition and omits the node ships a plant that
+//     its own editor would reject.
+func TestShippedDemoPlantKeepsCarryoverDriveable(t *testing.T) {
+	p, err := Load("../../plants/demo.yaml")
+	if err != nil {
+		t.Fatalf("load plants/demo.yaml: %v", err)
+	}
+	claimFor := func(style string) *Claim {
+		for i := range p.Claims {
+			if p.Claims[i].Style == style {
+				return &p.Claims[i]
+			}
+		}
+		return nil
+	}
+
+	run := claimFor("PRESS-1-RUN")
+	retool := claimFor("PRESS-1-RETOOL")
+	if run == nil || retool == nil {
+		t.Fatal("the carry-over pair needs both PRESS-1-RUN and a same-part style on the same nodes")
+	}
+	if run.Payload != retool.Payload {
+		t.Errorf("PRESS-1-RUN runs %q and PRESS-1-RETOOL %q — a carry-over is the SAME part on "+
+			"both sides, and with different payloads the disposition is never consulted",
+			run.Payload, retool.Payload)
+	}
+	if run.CoreNode != retool.CoreNode || run.PairedCoreNode != retool.PairedCoreNode {
+		t.Errorf("PRESS-1-RETOOL is on %s/%s and PRESS-1-RUN on %s/%s — a carry-over needs the "+
+			"node in BOTH styles, or it is a node being vacated and its bin has to leave",
+			retool.CoreNode, retool.PairedCoreNode, run.CoreNode, run.PairedCoreNode)
+	}
+	if len(run.ChangeoverEvacNodes) == 0 {
+		t.Error("PRESS-1-RUN marks no nodes — a disposition is only ever read for a marked node")
+	}
+	// The disposition that has a precondition must have it met.
+	if run.ChangeoverCarryoverDisposition == "outbound_staging" && run.OutboundStaging == "" {
+		t.Error("PRESS-1-RUN asks to park carried-over parts at outbound staging and names no " +
+			"outbound_staging node — the claims editor refuses that combination at save time, so " +
+			"this plant could not be created through the UI that maintains it")
+	}
+}

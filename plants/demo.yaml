@@ -250,6 +250,11 @@ stations:
   # PRESS-1-MOVED's claim — so what an override names gets ordinary capacity
   # behaviour instead of being a special place with special rules.
   - {name: SLN_014, kind: staging}   # PRESS-1 inbound stage (incoming style waits here)
+  # Where a CARRIED-OVER bin waits out the setup. A part common to both styles
+  # does not have to make a round trip through the supermarket to get out of the
+  # way — the same bin hops here, holds, and comes back on the tooling-done
+  # release. See changeover_carryover_disposition on PRESS-1-RUN.
+  - {name: SLN_015, kind: staging}   # PRESS-1 outbound stage (carried-over bins wait here)
 
 # Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
 # (incl. A/B parked side + press-index back) seeded with EMPTY active carriers. Consume
@@ -347,6 +352,11 @@ styles:
   - {name: PRESS-1-RUN,    process: PRESS-1,    payload: PANEL-A}
   - {name: PRESS-1-ALT,    process: PRESS-1,    payload: PANEL-C}
   - {name: PRESS-1-MOVED,  process: PRESS-1,    payload: PANEL-A}
+  # SAME PART, NEW TOOLING. PRESS-1-RUN → PRESS-1-RETOOL is the carry-over
+  # shape: identical payload on identical nodes, so every marked node's part is
+  # common to both styles and the carry-over disposition is the only thing that
+  # decides what happens to those bins.
+  - {name: PRESS-1-RETOOL, process: PRESS-1,    payload: PANEL-A}
   - {name: PRESS-2-RUN,    process: PRESS-2,    payload: PANEL-B}
   - {name: WELD-1-RUN,     process: WELD-1,     payload: ASSY}
   - {name: WELD-1-ALT,     process: WELD-1,     payload: ASSY}
@@ -396,6 +406,24 @@ claims:
     # It is also an INCOMING style — PRESS-1-MOVED changes over back to it — so
     # it names the stage its own returning bins wait at.
     inbound_staging: SLN_014
+    # ── CARRIED-OVER PARTS ───────────────────────────────────────────────
+    #
+    # PRESS-1-RETOOL runs the SAME part on the same nodes: a tool change that
+    # does not change what the press makes. The marked nodes still have to be
+    # cleared — the humans need the floor space either way — but sending those
+    # bins to the market and fetching identical empties back is a round trip
+    # the cell did not need.
+    #
+    # outbound_staging says: walk the SAME bin to SLN_015, hold it there through
+    # the setup, bring it back on the tooling-done release. It is refused at
+    # save time without an outbound_staging node, which is why one is set here.
+    #
+    # It is consulted ONLY when the part carries over, so it changes nothing
+    # about RUN → ALT (different payload) or RUN → MOVED (disjoint nodes). The
+    # other two answers — replace, keep_lineside — are one edit away on this
+    # same claim, which is how a sim drives all three.
+    outbound_staging: SLN_015
+    changeover_carryover_disposition: outbound_staging
 
   # PRESS-1's ALTERNATE style, same node, same swap mode, OTHER carrier type.
   # A changeover to this claim makes the identical press ask the identical group
@@ -425,6 +453,24 @@ claims:
     # refuseStagedChangeoverWithoutStaging refuses to arm a staged tooling
     # changeover without one, by name — so this is what makes the -RUN → -ALT
     # changeover armable at all now that -RUN marks positions.
+    inbound_staging: SLN_014
+
+  # PRESS-1 RE-TOOLED IN PLACE. Same nodes, same part, new tooling — the
+  # carry-over shape. Every marked node's part is common to both styles, so
+  # PRESS-1-RUN's changeover_carryover_disposition is the only thing deciding
+  # what happens to those bins, and all three answers are reachable by editing
+  # that one field.
+  - core_node: PLN_001
+    style: PRESS-1-RETOOL
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-A
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_002
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+    outbound_staging: SLN_015
     inbound_staging: SLN_014
 
   # PRESS-1 MOVED TO ANOTHER PLACEMENT. Same press, same payload, same carrier —
