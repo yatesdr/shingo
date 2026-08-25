@@ -788,6 +788,26 @@ func (e *Engine) strandedAnomaly(binID int64, robotID string, robot fleet.RobotS
 	e.logFn("engine: stranded transit: bin %d left at _TRANSIT — %s", binID, note)
 }
 
+// ForgetStrandedNote re-arms the log for a bin an OPERATOR has just resolved.
+//
+// For the two doors in www — "I found it, it's at X" (apiClearTransitAnomaly)
+// and the manual bin move. Both clear the anomaly in the database and neither
+// could reach this map, so a bin recovered by hand and later stranded again in
+// exactly the same way was re-flagged correctly and announced not at all:
+// strandedAnomaly saw its own stale entry and suppressed the line. For a bin
+// that strands the same way twice, "until the note changes" is never.
+//
+// THE HANDLER CALLS IT, NOT BinService. RecoverTransitAnomaly is the shared
+// door — the inference goes through it too — and it holds no Engine and should
+// not grow one for a log silencer.
+//
+// ON RecoveryService, WHICH THE HANDLERS ALREADY REACH, so the narrow
+// ServiceAccess interface does not have to widen to carry it. That width is a
+// tripwire (www/engine_iface_width_test.go) and this is not the change that
+// should trip it: re-arming a log after an operator recovery is the same kind
+// of thing as the other verbs on this service, and it belongs beside them.
+func (s *RecoveryService) ForgetStrandedNote(binID int64) { s.engine.forgetStrandedNote(binID) }
+
 // forgetStrandedNote drops a bin's last-logged anomaly note, so the next
 // stranding of that bin logs again rather than being suppressed as a repeat.
 //

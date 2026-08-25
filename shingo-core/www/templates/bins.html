@@ -142,6 +142,10 @@
                is already visible, so this is where the door goes. Diagnostics
                stays the read-only receipt. */}}
           {{if .CarriedBy}}<div class="text-muted-xs">on {{.CarriedBy}}</div>
+            {{/* And why it has not settled. The diagnostics anomalies table
+                 excludes carrier nodes, so this row is the only place the jack
+                 watch's reason is ever shown. */}}
+            {{if .AnomalyNote}}<div class="text-muted-xs">{{.AnomalyNote}}</div>{{end}}
             {{if $.Authenticated}}<div data-action="stopPropagation">
               <button class="btn btn-sm" data-action="askRobotToSetDown:{{.ID}}"
                       title="Creates an order pinned to {{.CarriedBy}} whose only step is to put this bin down">Ask {{.CarriedBy}} to set it down</button>

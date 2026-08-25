@@ -1322,9 +1322,22 @@ func ClearAnomaly(db *sql.DB, binID int64) error {
 // single UPDATE — the persistence side of the operator's transit-anomaly
 // recovery action. Caller validates that the destination is physical and
 // empty.
+//
+// THE NOTE GOES WITH THE STAMP. It used to clear only anomaly_at, so a bin an
+// operator had just walked out and found kept a sentence saying nobody knew
+// where it was, naming a robot's coordinates from the episode that had just
+// ended. Invisible while the page rendered the note only for `_TRANSIT` rows —
+// and this change makes it visible on a carried row, which is what turns a
+// stale note from unnoticed into wrong on screen.
+//
+// This does NOT retire MarkAnomalyWithNote's `OR anomaly_at IS NULL` guard.
+// ClearAnomaly and RecordCount both clear the stamp and keep the note — a
+// cycle count is the live path — so a bin stranded again in exactly the same
+// way can still match its own leftover text, and without that half of the
+// guard the re-stamp would be skipped and the bin would be lost and unflagged.
 func RecoverToNode(db *sql.DB, binID, toNodeID int64) error {
 	_, err := db.Exec(
-		`UPDATE bins SET node_id=$1, anomaly_at=NULL, updated_at=$3 WHERE id=$2`,
+		`UPDATE bins SET node_id=$1, anomaly_at=NULL, anomaly_note='', updated_at=$3 WHERE id=$2`,
 		toNodeID, binID, clock.Now().UTC())
 	return err
 }
