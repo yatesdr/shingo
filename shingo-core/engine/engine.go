@@ -66,8 +66,26 @@ type Engine struct {
 	// robot's latest position) without re-printing an identical line forever.
 	// See strandedAnomaly. Bounded by the bins that have been stranded and
 	// pruned on placement.
-	strandedNotes         map[int64]string
-	strandedNotesMu       sync.Mutex
+	strandedNotes   map[int64]string
+	strandedNotesMu sync.Mutex
+	// dropObs is the FIRST at-rest, empty-deck sample per carried bin — the
+	// one reading that describes where the bin was actually set down.
+	// Everything after it describes where the robot went NEXT: on 2026-08-24
+	// the correct reading (AP102 -> SMN_007) was present on tick 1 and gone by
+	// tick 20, after which 50 more ticks reported a park point 12.3 m away.
+	//
+	// deckSeenLoaded is the other half: it records WHEN this process last
+	// watched the deck loaded. An empty deck with no such record is a Core
+	// that restarted after the unload; one whose record is older than
+	// deckWitnessRecency is a Core that was up but heard nothing about this
+	// robot in between. Neither is an observation of anything — see freezeDrop.
+	//
+	// Both are bounded by the bins on carrier nodes and pruned against that
+	// list on every sweep. Neither is persisted: they describe what this
+	// process witnessed, and a restart genuinely did not witness it.
+	dropObs               map[int64]dropObservation
+	deckSeenLoaded        map[int64]time.Time
+	dropObsMu             sync.Mutex
 	reconciliation        *ReconciliationService
 	recovery              *RecoveryService
 	fulfillment           *fulfillment.Scanner
@@ -166,6 +184,12 @@ type Engine struct {
 	// these sit beside. See noteMapSyncFailure.
 	mapSyncFailKey string
 	mapSyncFailN   int
+	// sceneSyncFailKey/N are the same throttle for the SCENE half. Separate
+	// counters because the two syncs fail independently — different transport,
+	// different gate hash — and a shared counter would let one failure's
+	// backoff hide the other's first occurrence.
+	sceneSyncFailKey string
+	sceneSyncFailN   int
 }
 
 func New(c Config) *Engine {

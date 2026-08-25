@@ -1,9 +1,11 @@
 package www
 
 import (
+	"errors"
 	"net/http"
 
 	"shingo/protocol"
+	"shingocore/engine"
 )
 
 func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -176,10 +178,32 @@ func (h *Handlers) apiRepairAnomaly(w http.ResponseWriter, r *http.Request) {
 			h.jsonError(w, "bin_id is required", http.StatusBadRequest)
 			return
 		}
-		if _, err := h.engine.Recovery().RecoverCarriedBin(req.BinID, actor); err != nil {
+		order, detail, err := h.engine.Recovery().RecoverCarriedBin(req.BinID, actor)
+		if err != nil {
+			// THE REASON, VERBATIM. Every refusal from this door is a sentence
+			// somebody wrote for a person — "AMR-09 is not dispatchable, the
+			// plant has taken it out of the pool" — and the caller is a button
+			// on the bins page that shows what it is given. Error() would wrap
+			// it in "bin 5 cannot be recovered by order right now:", which the
+			// row the operator is looking at already says.
+			var refused *engine.CarriedBinNotRecoverable
+			if errors.As(err, &refused) {
+				h.jsonError(w, refused.Reason, http.StatusBadRequest)
+				return
+			}
 			h.jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// THE ONLY CASE THAT ANSWERS WITH MORE THAN "ok", because it is the only
+		// one that put a robot in motion. The detail names the destination and
+		// which tier chose it, and the person who pressed the button is owed
+		// both — "why did it go there" is the question a misplaced bin raises.
+		h.jsonOK(w, map[string]any{
+			"status":   "ok",
+			"order_id": order.ID,
+			"detail":   detail,
+		})
+		return
 	default:
 		h.jsonError(w, "unknown recovery action", http.StatusBadRequest)
 		return

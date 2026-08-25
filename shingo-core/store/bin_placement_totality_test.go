@@ -68,7 +68,7 @@ var placementWritersAllowed = map[string]string{
 
 	// bins-package primitives. These are not arrivals: nothing has been
 	// delivered, no claim is ending, no slot is being freed.
-	"bins/bins.go": "the bins aggregate's own movers — Retire (node_id=NULL), MoveAndClearStaging (operator manual move), MoveToTransit (vendor pickup), RecoverToNode (operator anomaly recovery), Update (admin full-row write). None is a delivery; see the note in this test about Update.",
+	"bins/bins.go": "the bins aggregate's own movers — Retire (node_id=NULL), MoveAndClearStaging / MoveOffTransit (operator manual move, the second clearing the anomaly a bin coming off _TRANSIT or a deck carried), MoveToTransit (vendor pickup), RecoverToNode (operator anomaly recovery), Update (admin full-row write). None is a delivery; see the note in this test about Update.",
 }
 
 // TestPlacement_HasOneWriter is the census.

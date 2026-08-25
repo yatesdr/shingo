@@ -817,6 +817,25 @@ func NodeTileStates(db *sql.DB) (map[int64]NodeTileState, error) {
 // staged after relocating to a storage slot. Callers pass clearStaging=true
 // only when the bin was staged and the destination is a storage slot.
 func MoveAndClearStaging(db *sql.DB, binID, toNodeID int64, clearStaging bool) error {
+	return move(db, binID, toNodeID, clearStaging, false)
+}
+
+// MoveOffTransit is MoveAndClearStaging for a bin coming off `_TRANSIT` or a
+// robot's carrier node, and it clears the transit anomaly in the same
+// transaction.
+//
+// A SEPARATE DOOR RATHER THAN A SECOND BOOLEAN, because the situation is what
+// decides, not a flag: `anomaly_at` and `anomaly_note` describe a bin nobody
+// could locate, and the moment somebody puts it at a real node both are false.
+// The operator's manual move was the path that did NOT clear them — bin 5 sat
+// at its correct home on 2026-08-24 still carrying a 2026-05-12 stamp and a
+// note naming a park point, because RecoverToNode clears the stamp and this
+// path never did.
+func MoveOffTransit(db *sql.DB, binID, toNodeID int64, clearStaging bool) error {
+	return move(db, binID, toNodeID, clearStaging, true)
+}
+
+func move(db *sql.DB, binID, toNodeID int64, clearStaging, clearAnomaly bool) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -833,6 +852,11 @@ func MoveAndClearStaging(db *sql.DB, binID, toNodeID int64, clearStaging bool) e
 
 	if clearStaging {
 		if _, err := tx.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=$2 WHERE id=$1 AND status='staged'`, binID, clock.Now().UTC()); err != nil {
+			return err
+		}
+	}
+	if clearAnomaly {
+		if _, err := tx.Exec(`UPDATE bins SET anomaly_at=NULL, anomaly_note='', updated_at=$2 WHERE id=$1`, binID, clock.Now().UTC()); err != nil {
 			return err
 		}
 	}
@@ -1259,12 +1283,24 @@ func ListOnCarrierNodes(db *sql.DB) ([]*Bin, error) {
 //
 // COALESCE on anomaly_at preserves an earlier stamp — the anomaly state is
 // "still unresolved", not "happened at exactly this moment" — but the NOTE is
-// overwritten, because a later sweep has newer robot telemetry than the first
+// overwritten, because a later sweep may have a better answer than the first
 // one did and stale coordinates are worse than none.
+//
+// AN UNCHANGED NOTE WRITES NOTHING. The stranded sweep calls this every two
+// seconds for every stranded bin, and it used to rewrite identical bytes each
+// time and bump `updated_at` with them — 43,200 no-op writes a day per bin, on
+// the column that is otherwise the obvious "when did this bin last do
+// something" proxy.
+//
+// The `anomaly_at IS NULL` half of the guard is not decoration: a bin recovered
+// by RecoverToNode keeps its note (only the stamp is cleared), so a bin
+// stranded again in exactly the same way would match its own leftover text and
+// the guard alone would skip the re-stamp. The bin would then be lost and not
+// flagged.
 func MarkAnomalyWithNote(db *sql.DB, binID int64, note string) error {
 	now := clock.Now().UTC()
 	_, err := db.Exec(`UPDATE bins SET anomaly_at=COALESCE(anomaly_at, $2), anomaly_note=$3, updated_at=$2
-		WHERE id=$1`, binID, now, note)
+		WHERE id=$1 AND (anomaly_note IS DISTINCT FROM $3 OR anomaly_at IS NULL)`, binID, now, note)
 	return err
 }
 
@@ -1286,9 +1322,22 @@ func ClearAnomaly(db *sql.DB, binID int64) error {
 // single UPDATE — the persistence side of the operator's transit-anomaly
 // recovery action. Caller validates that the destination is physical and
 // empty.
+//
+// THE NOTE GOES WITH THE STAMP. It used to clear only anomaly_at, so a bin an
+// operator had just walked out and found kept a sentence saying nobody knew
+// where it was, naming a robot's coordinates from the episode that had just
+// ended. Invisible while the page rendered the note only for `_TRANSIT` rows —
+// and this change makes it visible on a carried row, which is what turns a
+// stale note from unnoticed into wrong on screen.
+//
+// This does NOT retire MarkAnomalyWithNote's `OR anomaly_at IS NULL` guard.
+// ClearAnomaly and RecordCount both clear the stamp and keep the note — a
+// cycle count is the live path — so a bin stranded again in exactly the same
+// way can still match its own leftover text, and without that half of the
+// guard the re-stamp would be skipped and the bin would be lost and unflagged.
 func RecoverToNode(db *sql.DB, binID, toNodeID int64) error {
 	_, err := db.Exec(
-		`UPDATE bins SET node_id=$1, anomaly_at=NULL, updated_at=$3 WHERE id=$2`,
+		`UPDATE bins SET node_id=$1, anomaly_at=NULL, anomaly_note='', updated_at=$3 WHERE id=$2`,
 		toNodeID, binID, clock.Now().UTC())
 	return err
 }

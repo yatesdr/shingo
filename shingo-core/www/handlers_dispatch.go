@@ -67,9 +67,16 @@ func (h *Handlers) apiClearTransitAnomaly(w http.ResponseWriter, r *http.Request
 		return
 	}
 	actor := h.getUsername(r)
-	if err := h.engine.BinService().RecoverTransitAnomaly(req.BinID, req.ToNodeID, actor); err != nil {
+	if err := h.engine.BinService().RecoverTransitAnomaly(req.BinID, req.ToNodeID, actor, ""); err != nil {
 		h.jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// RE-ARM THE LOG. The engine keeps the last note it PRINTED per bin so a
+	// sweep repeating one sentence every pass says it once; that map has no way
+	// to know an operator just ended the episode, so without this a bin lost
+	// again in exactly the same way is re-flagged in the database and never
+	// mentioned. Here rather than in the service: RecoverTransitAnomaly is
+	// shared with the inference and holds no engine.
+	h.engine.Recovery().ForgetStrandedNote(req.BinID)
 	h.jsonSuccess(w)
 }

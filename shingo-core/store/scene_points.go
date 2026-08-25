@@ -23,6 +23,24 @@ func (db *DB) ListScenePointsByClass(className string) ([]*scene.Point, error) {
 	return scene.ListByClass(db.DB, className)
 }
 
+// StationsForPointName resolves a robot-reported point name to the station(s)
+// bound to it — see scene.StationsForPointName for why it is a slice.
+func (db *DB) StationsForPointName(pointName string) ([]string, error) {
+	return scene.StationsForPointName(db.DB, pointName)
+}
+
+// ClassOfPoint reports what class the scene holds for an instance name.
+// See scene.ClassOfPoint.
+func (db *DB) ClassOfPoint(instanceName string) (string, error) {
+	return scene.ClassOfPoint(db.DB, instanceName)
+}
+
+// CountStationPoints reports how many bin locations the scene holds — the
+// refusal path's way of telling "not a station" from "never synced".
+func (db *DB) CountStationPoints() (int, error) {
+	return scene.CountStationPoints(db.DB)
+}
+
 func (db *DB) ListScenePointsByArea(areaName string) ([]*scene.Point, error) {
 	return scene.ListByArea(db.DB, areaName)
 }

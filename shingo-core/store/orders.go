@@ -469,6 +469,13 @@ func (db *DB) LatestOrderHistoryForStatus(orderID int64, status protocol.Status)
 	return orders.LatestHistoryForStatus(db.DB, orderID, status)
 }
 
+// EarliestOrderHistoryForStatus is the same read from the other end — the FIRST
+// time the order reached the status. See orders.EarliestHistoryForStatus for
+// why `in_transit` needs both.
+func (db *DB) EarliestOrderHistoryForStatus(orderID int64, status protocol.Status) (*orders.History, error) {
+	return orders.EarliestHistoryForStatus(db.DB, orderID, status)
+}
+
 // LatestOrderHistoryTimesForStatus is the batch form: order id -> when each of
 // those orders most recently reached the status, in one round trip. See
 // orders.LatestHistoryTimesForStatus.

@@ -371,6 +371,19 @@ type RDSConfig struct {
 	// StrandedSweepWindow is how recently a `_TRANSIT` bin's order must have
 	// ended for the reconciliation sweep to infer where that bin was set down.
 	//
+	// ONE NUMBER, THREE INTERVALS, and they are three readings of the same
+	// sentence — "telemetry stops describing a bin this long after the fact":
+	//
+	//	1  the terminal window: how long after the order ended the sweep will
+	//	   still run the inference at all (engine.terminalWithin);
+	//	2  the pickup window: how long after the bin LEFT THE FLOOR branch A
+	//	   will believe the robot's current position (engine.pickupWithin) —
+	//	   the terminal row cannot bound this, because on the event path it is
+	//	   milliseconds old by construction;
+	//	3  the observation window: how long a FROZEN drop reading stays worth
+	//	   acting on when the placement it wants keeps being refused
+	//	   (engine.freezeDrop).
+	//
 	// THE SWEEP IS A BACKSTOP FOR THE FAST PATH, NOT A BACKFILL OF HISTORY, and
 	// this number is what makes that true. The inference reads the robot's
 	// CURRENT telemetry: where it is standing now, and whether its deck is
@@ -388,9 +401,16 @@ type RDSConfig struct {
 	// still inside it — that is the case the sweep exists to catch when the
 	// terminal-event hook is missed.
 	//
-	// Carrier (`_ROBOT:*`) bins are NOT subject to this window: the jack is the
-	// jack, and a deck that reports empty has set its bin down regardless of how
-	// long the bin has been riding.
+	// THE JACK IS STILL THE JACK for a carrier (`_ROBOT:*`) bin: how long that
+	// bin has been RIDING is not gated, and a deck that reports empty after a
+	// week has still set its bin down, so the freeze forms on that tick and the
+	// placement follows from it. What reading 3 bounds is the age of the
+	// OBSERVATION afterwards — a drop that was watched but could not be placed
+	// (an occupied slot, a point the scene cannot name) stops being safe to act
+	// on once enough time has passed for somebody to have moved the bin by hand.
+	// Past that the watch declines and says how old the reading is; it does not
+	// take a fresh one, because by then the robot is standing somewhere else
+	// entirely and a fresh reading would place the bin there.
 	StrandedSweepWindow time.Duration `yaml:"stranded_sweep_window"`
 }
 

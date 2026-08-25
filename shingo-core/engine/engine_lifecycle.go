@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -102,6 +103,18 @@ func (e *Engine) Start() {
 		e.logFn("engine: seed default dashboards: %v", err)
 	} else if n > 0 {
 		e.logFn("engine: seeded %d default full-plant dashboard(s)", n)
+	}
+
+	// Name the nodes whose bin-type config says "accepts nothing" — mode
+	// `specific` with no types assigned. Every reader in dispatch treats an
+	// empty list as unrestricted, so this shape is silently permissive
+	// everywhere except the stranded-bin placement gate, which refuses it. One
+	// line at boot is how a half-finished config gets finished.
+	if names, err := e.db.NodesAcceptingNothing(); err != nil {
+		e.dbg("engine: audit nodes accepting no bin type: %v", err)
+	} else if len(names) > 0 {
+		e.logFn("engine: %d node(s) are set to accept specific bin types but have none "+
+			"assigned, so their config accepts nothing: %s", len(names), strings.Join(names, ", "))
 	}
 
 	// Scan for any orders queued before restart

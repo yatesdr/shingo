@@ -303,9 +303,10 @@ func (e *Engine) sceneSyncPass(now time.Time) {
 	// decides whether to call it. Recording the hash we acted on is what stops
 	// the next tick firing on the same edit.
 	if _, _, _, err := e.SceneSync(); err != nil {
-		e.logFn("engine: scene sync (%s): %v", reason, err)
+		e.noteSceneSyncFailure(reason, err)
 		return
 	}
+	e.clearSceneSyncFailure()
 	e.sceneGateMu.Lock()
 	e.lastSceneHash = state.SceneMD5
 	e.sceneGateMu.Unlock()
@@ -362,5 +363,43 @@ func (e *Engine) clearMapSyncFailure() {
 	e.sceneGateMu.Unlock()
 	if wasFailing {
 		e.logFn("engine: map sync: recovered")
+	}
+}
+
+// noteSceneSyncFailure / clearSceneSyncFailure are the same throttle for the
+// SCENE half, which had none: sceneSyncPass logged one unthrottled line per
+// five-minute tick, 288 a day, for a failure that does not change.
+//
+// It matters more here than it looks. scene_points is where the station alias
+// lives, so this log line is the freshness signal for the table a bin placement
+// now resolves through — and a signal printed 288 times a day is one nobody
+// reads on the day it starts meaning something.
+func (e *Engine) noteSceneSyncFailure(reason string, err error) {
+	key := err.Error()
+	e.sceneGateMu.Lock()
+	if key != e.sceneSyncFailKey {
+		e.sceneSyncFailKey, e.sceneSyncFailN = key, 0
+	}
+	e.sceneSyncFailN++
+	n := e.sceneSyncFailN
+	e.sceneGateMu.Unlock()
+
+	if n > 1 && n%mapSyncFailureFirstQuiet != 0 {
+		return
+	}
+	if n == 1 {
+		e.logFn("engine: scene sync (%s): %v", reason, err)
+		return
+	}
+	e.logFn("engine: scene sync STILL failing after %d attempts (%s): %v", n, reason, err)
+}
+
+func (e *Engine) clearSceneSyncFailure() {
+	e.sceneGateMu.Lock()
+	wasFailing := e.sceneSyncFailN > 0
+	e.sceneSyncFailKey, e.sceneSyncFailN = "", 0
+	e.sceneGateMu.Unlock()
+	if wasFailing {
+		e.logFn("engine: scene sync: recovered")
 	}
 }

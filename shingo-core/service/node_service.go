@@ -202,6 +202,28 @@ func (s *NodeService) ListScenePointsByArea(areaName string) ([]*scene.Point, er
 	return s.db.ListScenePointsByArea(areaName)
 }
 
+// StationsForPointName resolves a point name a robot reports
+// (`rbk_report.current_station`, e.g. "AP102") to the station(s) the
+// scene binds to it. See scene.StationsForPointName for why the answer
+// is a slice and why more than one row is a refusal, not a choice.
+func (s *NodeService) StationsForPointName(pointName string) ([]string, error) {
+	return s.db.StationsForPointName(pointName)
+}
+
+// ClassOfPoint reports what the scene calls a point — ChargePoint,
+// ParkPoint, LocationMark, ActionPoint — so a refusal can say what the
+// robot was standing at instead of only that it was not a station.
+func (s *NodeService) ClassOfPoint(instanceName string) (string, error) {
+	return s.db.ClassOfPoint(instanceName)
+}
+
+// CountStationPoints reports how many bin locations the scene holds at
+// all. Asked only on the refusal path, to tell "not a station" from
+// "Core has never synced a scene".
+func (s *NodeService) CountStationPoints() (int, error) {
+	return s.db.CountStationPoints()
+}
+
 // ListScenePointsByClass returns the scene points whose class name
 // matches the filter. Absorbed from engine_db_methods.go as part of
 // the Phase 3a closeout (PR 3a.6).
