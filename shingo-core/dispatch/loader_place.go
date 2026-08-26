@@ -107,8 +107,17 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		// home. Everything else — a supply leg, an unreadable shape, or a home
 		// holding a carrier nobody is coming for — takes the full gate, which
 		// is the physical question.
-		if d.legReturnsToHome(order, steps) && d.homeClearForReturn(order, homeName) {
+		// SAY WHICH ARM, ALWAYS. setParkDestination is idempotent and silent when the
+		// destination is already right — and a return leg arrives already pointed at its
+		// home, so "held the home" wrote NOTHING while "yielded to buffer" wrote a line.
+		// Reading the outcome therefore only ever showed the yields, which is how a sim
+		// A/B of this decision came out unreadable: both arms looked like buffer.
+		isReturn := d.legReturnsToHome(order, steps)
+		clear := isReturn && d.homeClearForReturn(order, homeName)
+		if isReturn && clear {
 			inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
+			d.dbg("place: order %d return leg, home %s clear (occupant is this swap's own or none) — in-flight %d, err %v",
+				order.ID, homeName, inFlight, ierr)
 			if ierr == nil && inFlight == 0 {
 				d.setParkDestination(order, homeName, "home")
 				return
@@ -116,7 +125,10 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 			d.placeForLoader(order, home.LoaderID, homeName)
 			return
 		}
-		if blocked, _ := CheckDropoffCapacity(d.db, homeName, order.ID); blocked {
+		blocked, block := CheckDropoffCapacity(d.db, homeName, order.ID)
+		d.dbg("place: order %d takes the physical gate on home %s (return=%v, clear=%v) — blocked=%v cause=%s",
+			order.ID, homeName, isReturn, clear, blocked, block.Cause)
+		if blocked {
 			d.placeForLoader(order, home.LoaderID, homeName)
 		} else {
 			d.setParkDestination(order, homeName, "home")
@@ -300,8 +312,15 @@ func (d *Dispatcher) homeClearForReturn(order *orders.Order, homeName string) bo
 		return false
 	}
 	if len(occupants) == 0 {
+		// EMPTY IS NOT THE INTERESTING CASE. The physical gate would also pass an
+		// empty home, so this arm and the old behaviour agree here. The arm that
+		// only this predicate reaches is the one below: a home standing occupied by
+		// the carrier this swap is itself lifting.
+		d.dbg("place: order %d home %s stands empty — both paths would hold it", order.ID, homeName)
 		return true
 	}
+	d.dbg("place: order %d home %s holds %d carrier(s) — checking whether this swap lifts it",
+		order.ID, homeName, len(occupants))
 	// Occupied — acceptable only if this swap's own supply sibling lifts from
 	// here. A sibling that has already gone terminal vouches for nothing: if it
 	// had lifted the carrier the node would read empty above.

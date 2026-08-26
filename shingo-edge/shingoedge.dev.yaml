@@ -65,9 +65,23 @@ sim:
       tag_name: PRESS-2_COUNTER
       tick_interval: 10s
       uop_per_tick: 1
+    # PANEL-A is consumed by TWO drains against ONE press: WELD-1 (this PLC) and
+    # the FGN_002 unloader, which pulls PANEL-A straight to the market (demo.yaml
+    # line ~231: "FGN_002 drains PANEL-A -- PRESS-1's OWN payload, and that is the
+    # point"). Live run 2026-08-25: FGN_002 drew 15 PANEL-A bins, WELD-1 drew 12 --
+    # so the unloader alone out-drew the welder, and together they pull ~2x the
+    # 6/min the press makes (minus 15% downtime). That empties the market and
+    # wedges every PANEL-A order (193, 194, 200 all queued).
+    #
+    # Halving WELD-1 (10s -> 20s, 6/min -> 3/min) per the "slow the consumers so
+    # the press keeps up" decision: 3 (WELD-1) + ~3 (FGN_002) ~= 6 ~= effective
+    # press output. The unloader_auto_clear knob is GLOBAL (config.go:340), so it
+    # cannot selectively slow FGN_002 without also starving ASSY's already-piled
+    # unloader -- the per-PLC tick is the only clean lever. Same reasoning as the
+    # WELD-3/4 slowdown below, just larger because PANEL-A has two consumers.
     - plc_name: WELD-1
       tag_name: WELD-1_COUNTER
-      tick_interval: 10s
+      tick_interval: 20s
       uop_per_tick: 1
     - plc_name: WELD-2
       tag_name: WELD-2_COUNTER
@@ -91,6 +105,14 @@ sim:
     - plc_name: WELD-4
       tag_name: WELD-4_COUNTER
       tick_interval: 12s
+      uop_per_tick: 1
+    # WELD-5 is the home-return rig's drain (see plants/demo.yaml, PLK_HOMES).
+    # Faster than the other component legs on purpose: the rig is here to turn
+    # swap cycles over quickly so the park decision is observed many times in a
+    # short run, not to be rate-balanced against anything.
+    - plc_name: WELD-5
+      tag_name: WELD-5_COUNTER
+      tick_interval: 6s
       uop_per_tick: 1
   operators:
     enabled: true
