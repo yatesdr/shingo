@@ -190,6 +190,52 @@
 
             <div class="card-body process-tab-panel" id="process-tab-stations" hidden>
 
+                {{if .LoaderBoardGaps}}
+                {{/* A Core loader with no screen ANYWHERE on this edge. Partial
+                     binding is normal (buffer slots nobody works), so only a
+                     loader with zero bound windows appears here. */}}
+                <div class="alert alert-warn mb-3">
+                    <div><strong>Core loaders with no operator screen on this edge</strong></div>
+                    <div class="text-muted-sm mb-2">
+                        Core knows these loaders; this edge draws no screen for their windows, so the
+                        operator has nothing to work. Creating one here binds the windows to this
+                        process — which is also how the edge claims the loader.
+                    </div>
+                    <table class="table">
+                        <thead>
+                            <tr><th>Loader</th><th>Windows</th><th>Process</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            {{range .LoaderBoardGaps}}
+                            <tr>
+                                <td>
+                                    <div>{{.Name}}</div>
+                                    <div class="text-muted-sm">{{.Role}} · {{.Layout}}</div>
+                                </td>
+                                <td class="mono text-muted-sm">{{join .Windows ", "}}</td>
+                                {{/* The process already holding these windows as
+                                     process_nodes, when exactly one does. Otherwise
+                                     the screen lands on the process being viewed —
+                                     stated here rather than assumed, because which
+                                     process owns a loader is the decision this
+                                     panel is careful not to make on its own. */}}
+                                <td>
+                                    {{if .ProcessName}}<span class="text-muted-sm">{{.ProcessName}}</span>
+                                    {{else}}<span class="text-muted-sm">this process</span>{{end}}
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary"
+                                            data-action="createLoaderBoard:{{.LoaderKey}}:{{.ProcessID}}">
+                                        Create screen
+                                    </button>
+                                </td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+                {{end}}
+
                 <div class="card-header-row">
                     <div class="text-muted">Each operator screen claims the physical core nodes in its area. Nodes are auto-managed when you save the screen configuration.</div>
                     <button class="btn btn-primary" data-action="openCreateStationModal">Add Operator Screen</button>
