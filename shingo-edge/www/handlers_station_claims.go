@@ -8,8 +8,42 @@ package www
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+
+	"shingoedge/service"
 )
+
+// apiCreateLoaderBoard makes the operator screen for a Core loader that has
+// none, and binds the loader's windows to it in one action.
+//
+// process_id is required and is NOT inferred here even when the service could
+// guess: Core sends every loader to every edge, so which edge and which process
+// owns a loader's windows is a human decision, and the screen that offers the
+// button is where it gets made.
+func (h *Handlers) apiCreateLoaderBoard(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LoaderKey string `json:"loader_key"`
+		ProcessID int64  `json:"process_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id, err := h.engine.StationService().CreateLoaderBoard(req.LoaderKey, req.ProcessID)
+	if err != nil {
+		// An unknown window name is bad config, not a server fault, and the
+		// message names which one.
+		if errors.Is(err, service.ErrUnknownCoreNodes) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "station-nodes-updated"}})
+	writeJSON(w, map[string]any{"status": "ok", "station_id": id})
+}
 
 func (h *Handlers) apiGetStationClaimedNodes(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
@@ -39,6 +73,13 @@ func (h *Handlers) apiSetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := h.engine.StationService().SetNodes(id, req.Nodes); err != nil {
+		// A name Core does not have is bad input, not a server fault — and the
+		// message names which one, so a 400 puts it in front of whoever typed it
+		// instead of in a log.
+		if errors.Is(err, service.ErrUnknownCoreNodes) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
