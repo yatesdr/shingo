@@ -777,8 +777,28 @@ func (op *simOperator) runRelease(orderID int64) {
 		op.releaseAsPair(orderID)
 		return
 	}
+	// Two-robot swaps (two_robot, two_robot_press_index) go through the
+	// per-NODE release (releaseAsPair -> ReleaseStagedOrders), the same door a
+	// real operator's RELEASE BUTTON uses. That path runs the deferred produce
+	// paperwork (produceIngestAtRelease) that stamps + confirms the departing
+	// bin's manifest. The per-LEG release below sends a blank disposition and
+	// the produce-role branch skips manifest sync, so a two-robot press bin
+	// would land in the supermarket manifest_confirmed=false -- invisible to
+	// the retrieve resolver's manifest_confirmed gate -- and the downstream
+	// consumer starves once the seeded stock drains (observed: PRESS-1 PANEL-A
+	// -> SYN_MARKET, WELD-1 queued forever on "no bin of requested payload").
+	// Sequential / single-robot modes stay on the per-leg path: ReleaseStagedOrders
+	// rejects non-two-robot modes, and forcing it would wedge A/B nodes (the
+	// pair_release trap documented in the sim-traps memory).
+	if order, err := op.e.db.GetOrder(orderID); err == nil && order != nil && order.ProcessNodeID != nil {
+		if _, _, claim, lerr := loadActiveNode(op.e.db, *order.ProcessNodeID); lerr == nil && claim != nil &&
+			claim.SwapMode.IsTwoRobot() {
+			op.releaseAsPair(orderID)
+			return
+		}
+	}
 	// Empty disposition: release the swap without touching the bin manifest. The
-	// sim isn't modeling SEND PARTIAL / RELEASE EMPTY accounting — just the
+	// sim isn't modeling SEND PARTIAL / RELEASE EMPTY accounting -- just the
 	// "operator pushed Release" transition that lets the staged swap finish.
 	// Tolerated failure (order already advanced/cancelled): log at debug.
 	if err := op.e.ReleaseOrderWithLineside(orderID, ReleaseDisposition{}); err != nil {
@@ -816,9 +836,38 @@ func (op *simOperator) releaseAsPair(orderID int64) {
 	}
 	nodeID := *order.ProcessNodeID
 	disp := ReleaseDisposition{CalledBy: "sim-operator"}
-	if _, _, claim, lerr := loadActiveNode(op.e.db, nodeID); lerr == nil && claim != nil &&
-		claim.Role == protocol.ClaimRoleProduce {
-		disp.Mode = DispositionCaptureLineside
+	if node, _, claim, lerr := loadActiveNode(op.e.db, nodeID); lerr == nil && claim != nil {
+		switch claim.Role {
+		case protocol.ClaimRoleProduce:
+			disp.Mode = DispositionCaptureLineside
+		case protocol.ClaimRoleConsume:
+			// THE CONSUME MIRROR, and it was missing. A consume claim fell through
+			// to the zero value, which means "release the swap without touching the
+			// bin manifest" — so the departing carrier's count was never settled and
+			// rode into the pool as-is. A carrier over-consumed to -6 stayed at -6 in
+			// a buffer, and nothing downstream would ever zero it: Core settles a
+			// count at RELEASE (SyncOrClearForReleased writes uop 0 and the
+			// released_empty / released_underpack audit row), and release is the only
+			// place it does.
+			//
+			// A real operator declares what is PHYSICALLY there, so the sim reads the
+			// carrier and declares the same thing:
+			//
+			//   tracked <= 0  -> RELEASE UNDERPACK. The carrier is empty; the tracked
+			//                    count disagreeing (negative, from an over-count) is
+			//                    exactly what this disposition is for — same wire
+			//                    shape as release-empty, and the tag carries the
+			//                    "physical inventory was less than tracked" signal so
+			//                    Core records released_underpack.
+			//   tracked >  0  -> SEND PARTIAL BACK. Stock is left; the bin returns to
+			//                    the pool with its count and manifest intact, which is
+			//                    what makes it re-sourceable oldest-first.
+			disp.Mode = DispositionSendPartialBack
+			if bins, _, ferr := op.e.coreClient.FetchNodeBins([]string{node.CoreNodeName}); ferr == nil &&
+				len(bins) > 0 && bins[0].Occupied && bins[0].UOPRemaining <= 0 {
+				disp.Mode = DispositionReleaseUnderpack
+			}
+		}
 	}
 	if err := op.e.ReleaseStagedOrders(nodeID, disp); err != nil {
 		// A HELD release is the gate working, not a failure, and it must read

@@ -606,9 +606,23 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			if thr == 0 {
 				thr = threshold[id+"|"+code] // loader-id-keyed demand fallback
 			}
+			// KIND, not just position. This used to be omitted, so every seeded
+			// position came out `home` (the column default) and no plant spec in
+			// the repo could produce a buffer — which made placeForLoader's buffer
+			// arm unreachable in the sim, and a busy home drain instead of falling
+			// back. A buffer carries no payload and no threshold: it takes whatever
+			// comes back, and InSourcePool() admits it on kind alone.
+			kind := protocol.LoaderHomeKindHome
+			payload := code
+			effThr := thr
+			if hc.HomeKind == string(protocol.LoaderHomeKindBuffer) {
+				kind = protocol.LoaderHomeKindBuffer
+				payload = ""
+				effThr = 0
+			}
 			if err := db.UpsertLoaderHome(store.LoaderHome{
-				LoaderID: lid, PositionNodeID: node.ID, PayloadCode: code,
-				UOPThreshold: thr, SortOrder: i,
+				LoaderID: lid, PositionNodeID: node.ID, PayloadCode: payload,
+				UOPThreshold: effThr, SortOrder: i, Kind: kind,
 			}); err != nil {
 				return fmt.Errorf("seed dedicated loader %s position home %s: %w", id, hc.CoreNode, err)
 			}

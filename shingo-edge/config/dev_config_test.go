@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestDevYAMLParses verifies shingoedge.dev.yaml parses with the expected sim
@@ -29,24 +28,41 @@ func TestDevYAMLParses(t *testing.T) {
 	if cfg.WarLink.Mode != "poll" {
 		t.Errorf("warlink.mode = %q, want poll", cfg.WarLink.Mode)
 	}
-	// 6 sim processes (PRESS-1/2, WELD-1/2/3/4). The SYN_MARKET combine collapsed the
-	// separate per-type markets into one mixed-fill market, which retired the extra
-	// component lines (and their PRESS-3/4 + WELD-5). Manual_swap loaders/unloaders
-	// don't tick.
-	if len(cfg.Sim.Processes) != 6 {
-		t.Fatalf("sim.processes = %d, want 6", len(cfg.Sim.Processes))
+	// SHAPE, NOT CENSUS. This used to assert the exact process count and that
+	// process[0] was PRESS-1 ticking at 10s/1. Both are fixture values, not
+	// invariants: shingoedge.dev.yaml is the mutable dev config for a mutable dev
+	// plant, and its rates get retuned on every rebalance. Adding one leg to
+	// plants/demo.yaml failed this test with no signal about the config loader —
+	// the same busywork the seeddev tests were decoupled from demo.yaml to end.
+	// TestHysteresisMargin below already states the rule this now follows.
+	//
+	// The stated purpose — "unknown keys are silently ignored, so assert values,
+	// which catches a mistyped key" — is served BETTER this way. A typo'd
+	// `tick_intervall` leaves TickInterval zero on EVERY process, and this checks
+	// every process; pinning process[0] only ever caught it in the first one.
+	if len(cfg.Sim.Processes) == 0 {
+		t.Fatal("sim.processes is empty — the sim has nothing to tick")
 	}
-	p0 := cfg.Sim.Processes[0]
-	if p0.PLCName != "PRESS-1" || p0.TagName != "PRESS-1_COUNTER" {
-		t.Errorf("process[0] = %s/%s, want PRESS-1/PRESS-1_COUNTER", p0.PLCName, p0.TagName)
+	for i, pr := range cfg.Sim.Processes {
+		if pr.PLCName == "" || pr.TagName == "" {
+			t.Errorf("process[%d] = %q/%q, want both plc_name and tag_name set", i, pr.PLCName, pr.TagName)
+		}
+		if pr.TickInterval <= 0 {
+			t.Errorf("process[%d] (%s) tick_interval = %v, want positive — a zero here is a mistyped key, not a paused line",
+				i, pr.PLCName, pr.TickInterval)
+		}
+		if pr.UOPPerTick <= 0 {
+			t.Errorf("process[%d] (%s) uop_per_tick = %d, want positive", i, pr.PLCName, pr.UOPPerTick)
+		}
 	}
-	// Every process now ticks at the flat 10s line rate (6/min) — the rate retune that
-	// came with the market combine. Verify via `make dev-rates`.
-	if p0.TickInterval != 10*time.Second || p0.UOPPerTick != 1 {
-		t.Errorf("process[0] timing = %v/%d, want 10s/1", p0.TickInterval, p0.UOPPerTick)
+	// The headless operator must be ON — a sim with no operator loads nothing and
+	// clears nothing, and every loop in the plant stalls. The DELAY is a knob and is
+	// only checked for being set: 5s was a tuning choice, not a contract.
+	if !cfg.Sim.Operators.Enabled {
+		t.Error("sim.operators.enabled must be true — nothing loads or clears without it")
 	}
-	if !cfg.Sim.Operators.Enabled || cfg.Sim.Operators.LoaderAutoLoad != 5*time.Second {
-		t.Errorf("operators = %+v, want enabled + 5s load", cfg.Sim.Operators)
+	if cfg.Sim.Operators.LoaderAutoLoad <= 0 {
+		t.Errorf("operators.loader_auto_load = %v, want positive", cfg.Sim.Operators.LoaderAutoLoad)
 	}
 }
 
