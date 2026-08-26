@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"shingo/protocol"
@@ -14,9 +15,16 @@ import (
 // source side (loader_source.go). When a dedicated-loader changeover returns a bin
 // from a home position, Core decides where it lands: its HOME if provably free,
 // else a free buffer slot (home_kind='buffer', the M1 representation the source side
-// already pools), else drain (the configured outbound — unchanged). Source and park
-// use the SAME Core representation, so a parked partial is re-sourced by the same
-// pool and the loop closes end-to-end.
+// already pools). Source and park use the SAME Core representation, so a parked
+// partial is re-sourced by the same pool and the loop closes end-to-end.
+//
+// THERE IS NO THIRD BRANCH, and this header used to promise one — "else drain (the
+// configured outbound)". No code in dispatch/ reads bin_loaders.outbound_dest, and
+// a produce loader has none to read: fulls leave by order, not to a configured
+// pool. When neither home nor buffer is free, placeForLoader writes nothing and the
+// order keeps the delivery node it arrived with, which for these legs is the home
+// that was just found occupied. "Draining" is a no-op with a log line, and on
+// 2026-08-26 it delivered two carriers onto occupied homes at SMN_016 and SMN_035.
 //
 // LOCUS — Core is the single authority. The Edge ships the evac order with
 // DeliveryNode="" and holds no authoritative bin-landing record; Core resolves the
@@ -32,16 +40,21 @@ import (
 // every dropoff has. Do NOT route through the Edge withLoaderBudget seam (wrong
 // store, re-introduces divergence) and do NOT add ClaimSlot here.
 //
-// The home occupancy check is split by order shape:
+// The home occupancy check is split by LEG ROLE, read from the leg's own steps
+// (legReturnsToHome). It used to be split on "does the plan contain a wait step",
+// which is a proxy, and at Springfield the proxy is simply wrong — every return leg
+// carries a station wait, so every return read as a supply leg. See
+// legReturnsToHome for what that cost.
 //
-//   - Evac/return legs (no wait step): in-flight orders only. The physical bin at
-//     the home is the one being evac'd (it is leaving), so CountBins would always
-//     read as occupied and force buffer incorrectly.
+//   - Return legs whose home holds nothing, or holds only the carrier this swap is
+//     itself lifting (homeClearForReturn): in-flight orders only. The bin standing
+//     there is the one leaving, so counting it would force buffer incorrectly and
+//     hand the home to the replenishment loop the moment it clears.
 //
-//   - Supply legs (wait step embedded): full CheckDropoffCapacity — both physical
-//     bins and in-flight orders. A supply leg may target a home that already holds
-//     a real bin (e.g. leftover from a prior manual move); routing it there without
-//     the physical check causes a robot fault on arrival.
+//   - Everything else — supply legs, unreadable shapes, and return legs whose home
+//     holds a carrier nobody is coming for: full CheckDropoffCapacity, both physical
+//     bins and in-flight orders. A leg routed onto a home that really is occupied
+//     faults the robot on arrival.
 //
 // The buffer read is always full CheckDropoffCapacity — a buffer legitimately holds
 // a parked partial, so its physical occupancy is real and must block.
@@ -69,11 +82,12 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 
 	if order.DeliveryNode != "" {
 		// Pattern B: explicit DeliveryNode is a home position. Two shapes land here:
-		//   - Evac/return (no wait step): the removal robot returning an evac bin to
-		//     the home after changeover. In-flight check only — see header comment.
-		//   - Supply leg (wait step): a fresh bin sourced from a staging/supermarket
-		//     node delivering to the home. Use the full capacity gate so a physically-
-		//     occupied home routes to buffer instead of faulting on arrival.
+		//   - Return leg: the robot bringing the line's spent bin back to the home.
+		//     In-flight check only, but ONLY once homeClearForReturn has established
+		//     that anything standing on the home is this swap's own — see header.
+		//   - Supply leg: a fresh bin sourced from a staging/supermarket node
+		//     delivering to the home. Full capacity gate, so a physically-occupied
+		//     home routes to buffer instead of faulting on arrival.
 		destNode, err := d.db.GetNodeByDotName(order.DeliveryNode)
 		if err != nil || destNode == nil {
 			return
@@ -87,22 +101,26 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 			return
 		}
 		homeName := destNode.Name
-		if hasWaitStep(steps) {
-			// Supply leg: full capacity gate (physical bins + in-flight).
-			if blocked, _ := CheckDropoffCapacity(d.db, homeName, order.ID); blocked {
-				d.placeForLoader(order, home.LoaderID, homeName)
-			} else {
+		// A RETURN leg landing on a home whose only occupant this swap is
+		// already lifting takes the in-flight check alone: the bin standing
+		// there is the one leaving, so reading it as a blocker surrenders the
+		// home. Everything else — a supply leg, an unreadable shape, or a home
+		// holding a carrier nobody is coming for — takes the full gate, which
+		// is the physical question.
+		if d.legReturnsToHome(order, steps) && d.homeClearForReturn(order, homeName) {
+			inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
+			if ierr == nil && inFlight == 0 {
 				d.setParkDestination(order, homeName, "home")
+				return
 			}
+			d.placeForLoader(order, home.LoaderID, homeName)
 			return
 		}
-		// Evac/return: in-flight only.
-		inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
-		if ierr == nil && inFlight == 0 {
+		if blocked, _ := CheckDropoffCapacity(d.db, homeName, order.ID); blocked {
+			d.placeForLoader(order, home.LoaderID, homeName)
+		} else {
 			d.setParkDestination(order, homeName, "home")
-			return
 		}
-		d.placeForLoader(order, home.LoaderID, homeName)
 	}
 }
 
@@ -166,7 +184,28 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 		d.setParkDestination(order, bn.Name, "buffer")
 		return
 	}
-	d.dbg("place: loader home %s not free and no free buffer — draining order %d", homeName, order.ID)
+	// NOT A GATE, DELIBERATELY. The placeForDedicatedLoader call site in
+	// complex_dispatch.go is a resolution-time read precisely so the swap supply
+	// leg is never gated, and a hold on this path gates claiming rather than
+	// fleet-create — c43ecf38's reasoning, which 5/5 reviewers reached
+	// independently. Queueing the order here would make this a gate. So the bin
+	// still goes where it was already pointed, which is the home just found
+	// occupied, and what changes is only that somebody can find out.
+	//
+	// LOUD, because dbg is debug-only. Without --log-debug this branch said
+	// nothing at all, and the arrival that follows evicts whatever the home was
+	// holding: on 2026-08-26 that deleted the records for CARRIER-0003 and
+	// CARRIER-0052, and the only trace was a debug line nobody reads.
+	log.Printf("WARN: loader %d home %s is occupied and no buffer is free — order %d keeps %s as its "+
+		"destination and will be delivered onto an occupied position; the record already there is "+
+		"evicted to _TRANSIT on arrival. The pool is out of room, or a return leg yielded a home it "+
+		"should have held (see legReturnsToHome).",
+		loaderID, homeName, order.ID, order.DeliveryNode)
+	if err := d.db.RecordRecoveryAction("loader_park_no_slot", "order", order.ID,
+		fmt.Sprintf("home %s occupied and every buffer full — delivering onto an occupied position", homeName),
+		"system"); err != nil {
+		log.Printf("dispatch: record loader_park_no_slot for order %d: %v", order.ID, err)
+	}
 }
 
 // orderDeliversTo reports whether any dropoff step in this order targets node. Used
@@ -205,6 +244,81 @@ func orderDeliversTo(steps []resolvedStep, node string) bool {
 func hasWaitStep(steps []resolvedStep) bool {
 	for _, s := range steps {
 		if s.Action == protocol.ActionWait {
+			return true
+		}
+	}
+	return false
+}
+
+// legReturnsToHome reports whether this leg is the RETURN half of a swap — the
+// one bringing the line's spent carrier back to a dedicated home.
+//
+// Role comes from the leg's own steps, not from whether the plan contains a
+// wait. The wait was a proxy and it is wrong here: every Springfield return leg
+// carries a station wait (the robot dwells at the line until the operator
+// releases it), so the proxy read every return as a supply leg. Consequence,
+// SMN_016 and SMN_035 on 2026-08-26: the return ran the physical gate against
+// its own home, saw the carrier its sibling was 83s from lifting, yielded to a
+// buffer, and left the home unclaimed — so the replenishment loop filled it 3.8s
+// after it cleared, and the returning carrier had nowhere to land five hours
+// later. Its record was then evicted as a ghost by the delivery that landed on
+// top of it.
+//
+// UNKNOWN IS NOT SUPPLY. legTakesLineBin answers false both for "this is a
+// supply leg" and for "I cannot tell" (empty ProcessNode); collapsing those is
+// the trap SHINGO_TODO records against the naive swap. The unreadable case is
+// separated out first and keeps the previous behaviour verbatim, so those orders
+// move exactly as they do today. It is unreachable in live traffic: every
+// complex order since 2026-05-04 carries a ProcessNode, and the 193 that do not
+// all predate it.
+func (d *Dispatcher) legReturnsToHome(order *orders.Order, steps []resolvedStep) bool {
+	if order.ProcessNode == "" {
+		return !hasWaitStep(steps)
+	}
+	return legTakesLineBin(steps, order.ProcessNode)
+}
+
+// homeClearForReturn reports whether a return leg may take its home as the
+// landing slot: the home is empty, or its occupant is the carrier this swap is
+// already lifting.
+//
+// This is the distinction the old evac branch did not draw. It skipped the
+// physical check outright, on the stated ground that "the physical bin at the
+// home is the one being evac'd" — true of the carrier the sibling lifts, false
+// of one some other order parked there, and the second case drives a robot at an
+// occupied position. Ask which it is rather than assuming either.
+//
+// FAILS CLOSED: every unreadable answer returns false, routing the leg to the
+// full capacity gate, which is the more conservative of the two paths.
+func (d *Dispatcher) homeClearForReturn(order *orders.Order, homeName string) bool {
+	node, err := d.db.GetNodeByDotName(homeName)
+	if err != nil || node == nil {
+		return false
+	}
+	occupants, err := d.db.ListBinsByNode(node.ID)
+	if err != nil {
+		return false
+	}
+	if len(occupants) == 0 {
+		return true
+	}
+	// Occupied — acceptable only if this swap's own supply sibling lifts from
+	// here. A sibling that has already gone terminal vouches for nothing: if it
+	// had lifted the carrier the node would read empty above.
+	sibUUID, err := d.db.OrderSiblingUUID(order.ID)
+	if err != nil || sibUUID == "" {
+		return false
+	}
+	sib, err := d.db.GetOrderByUUID(sibUUID)
+	if err != nil || sib == nil || protocol.IsTerminal(sib.Status) {
+		return false
+	}
+	sibSteps, ok := decodeSteps(sib.StepsJSON)
+	if !ok {
+		return false
+	}
+	for _, s := range sibSteps {
+		if s.Action == protocol.ActionPickup && s.Node == homeName {
 			return true
 		}
 	}

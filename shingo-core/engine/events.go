@@ -161,7 +161,7 @@ type BinUpdatedEvent struct {
 	eventbus.PayloadBase
 	NodeID      int64
 	NodeName    string
-	Action      string // "added", "removed", "moved", "claimed", "unclaimed", "locked", "unlocked", "loaded", "cleared", "counted", "status_changed"
+	Action      string // "added", "removed", "moved", "evicted", "claimed", "unclaimed", "locked", "unlocked", "loaded", "cleared", "counted", "status_changed"
 	BinID       int64
 	PayloadCode string
 	FromNodeID  int64
