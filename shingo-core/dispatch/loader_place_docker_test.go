@@ -546,3 +546,31 @@ func TestPlaceForDedicatedLoader_ReturnWithWait_UnknownRole_KeepsProxyBehaviour(
 			"the wait-step proxy moved it, not be reclassified", ret.DeliveryNode, buffer.Name)
 	}
 }
+
+// The drain is not a gate and does not become one — the bin still goes where it
+// was already pointed. What it must not be is SILENT: the branch used to log
+// through d.dbg, which is off unless the plant runs --log-debug, so the arrival
+// that evicts the home's occupant had no antecedent anyone could find. The
+// recovery_actions row is the durable trace.
+func TestPlaceForDedicatedLoader_BufferFull_RecordsNoSlotAction(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, outbound, _ := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	makeInFlightTo(t, db, "restock-noslot", home.Name)
+	makeLoaderBin(t, db, "PART-X", buffer.ID, "buf-occupied-noslot", 4, time.Now().UTC())
+	evac := makeEvacOrder(t, db, "park-noslot-1", home.Name, outbound.Name)
+	d.placeForDedicatedLoader(evac, simpleEvacSteps(home.Name, outbound.Name))
+
+	actions, err := db.ListRecoveryActions(50)
+	if err != nil {
+		t.Fatalf("list recovery actions: %v", err)
+	}
+	for _, a := range actions {
+		if a.Action == "loader_park_no_slot" && a.TargetType == "order" && a.TargetID == evac.ID {
+			return
+		}
+	}
+	t.Fatalf("no loader_park_no_slot recovery action for order %d — the drain left no durable trace", evac.ID)
+}

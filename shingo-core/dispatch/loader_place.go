@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"shingo/protocol"
@@ -183,7 +184,28 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 		d.setParkDestination(order, bn.Name, "buffer")
 		return
 	}
-	d.dbg("place: loader home %s not free and no free buffer — draining order %d", homeName, order.ID)
+	// NOT A GATE, DELIBERATELY. The placeForDedicatedLoader call site in
+	// complex_dispatch.go is a resolution-time read precisely so the swap supply
+	// leg is never gated, and a hold on this path gates claiming rather than
+	// fleet-create — c43ecf38's reasoning, which 5/5 reviewers reached
+	// independently. Queueing the order here would make this a gate. So the bin
+	// still goes where it was already pointed, which is the home just found
+	// occupied, and what changes is only that somebody can find out.
+	//
+	// LOUD, because dbg is debug-only. Without --log-debug this branch said
+	// nothing at all, and the arrival that follows evicts whatever the home was
+	// holding: on 2026-08-26 that deleted the records for CARRIER-0003 and
+	// CARRIER-0052, and the only trace was a debug line nobody reads.
+	log.Printf("WARN: loader %d home %s is occupied and no buffer is free — order %d keeps %s as its "+
+		"destination and will be delivered onto an occupied position; the record already there is "+
+		"evicted to _TRANSIT on arrival. The pool is out of room, or a return leg yielded a home it "+
+		"should have held (see legReturnsToHome).",
+		loaderID, homeName, order.ID, order.DeliveryNode)
+	if err := d.db.RecordRecoveryAction("loader_park_no_slot", "order", order.ID,
+		fmt.Sprintf("home %s occupied and every buffer full — delivering onto an occupied position", homeName),
+		"system"); err != nil {
+		log.Printf("dispatch: record loader_park_no_slot for order %d: %v", order.ID, err)
+	}
 }
 
 // orderDeliversTo reports whether any dropoff step in this order targets node. Used
