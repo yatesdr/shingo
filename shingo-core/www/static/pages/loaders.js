@@ -708,6 +708,55 @@ function thresholdGapHtml(item) {
     + escapeHtml(label) + '</a>';
 }
 
+// configGapHtml surfaces a loader the EDGE WILL REFUSE — on the screen where it
+// was configured, which is the only screen that can say so.
+//
+// A loader is created bare and its members are dragged in afterwards. That is
+// deliberate and stays. What was missing is that NOTHING EVER RE-CHECKED that
+// the dragging happened. The Edge checks, in projectCoreLoader → the C0
+// constructors, and a loader that fails projection is SKIPPED — logged once and
+// left out of the snapshot entirely. Every lookup downstream then resolves nil:
+// no loader for the node, no synthesized claim, no operator board. Springfield
+// 2026-08-26 lost 70 minutes to a shared_window unloader that had its windows
+// but no payload. The box looked finished; the only witness was a journald line
+// on a Pi.
+//
+// THE EDGE CANNOT WARN ABOUT THIS. It discarded the loader, so it has nothing
+// left to warn about — the one process that detects the fault is the one that
+// then destroys the evidence. That is what makes this screen the only place the
+// state can surface, and also the right one: the invalid config is Core-owned.
+//
+// The conditions mirror shingo-edge/domain/loader.go NewSharedWindowLoader and
+// NewDedicatedPositionsLoader exactly. Keep them in step — a refusal added there
+// and not here goes straight back to being invisible.
+//
+// Unlike thresholdGapHtml this is NOT a link: the fix is on this screen (drag a
+// window in, tick a payload), so there is nowhere to send anyone.
+function configGapHtml(item) {
+  const l = item.loader;
+  const homes = item.homes || [];
+  const payloads = item.payloads || [];
+  const missing = [];
+  if (l.layout === 'dedicated_positions') {
+    // A dedicated position with no payload yet is LEGAL — the constructor says
+    // so, and an unpinned home is inert rather than invalid. Only the count is
+    // a refusal.
+    if (homes.length === 0) missing.push('no positions');
+  } else {
+    if (homes.length === 0) missing.push('no windows');
+    if (payloads.length === 0) missing.push('no payloads');
+    if (payloads.some(function (p) { return !p.payload_code; })) missing.push('a blank payload');
+  }
+  if (homes.some(function (h) { return !h.position_node_id; })) missing.push('a position with no node');
+  if (missing.length === 0) return '';
+  const fix = l.layout === 'dedicated_positions'
+    ? 'Drag node tiles into the box below to give it positions.'
+    : 'Drag node tiles in as windows, and set at least one payload.';
+  return '<span class="loader-config-gap" title="'
+    + escapeHtml('The Edge refuses a loader in this shape and renders no operator board for it. ' + fix)
+    + '">' + escapeHtml('incomplete — ' + missing.join(', ')) + '</span>';
+}
+
 function boxHtml(item) {
   const l = item.loader;
   const dedicated = l.layout === 'dedicated_positions';
@@ -743,6 +792,10 @@ function boxHtml(item) {
     + '<div class="loader-box-header">'
     + '<span class="loader-box-name">' + escapeHtml(l.name || '(unnamed)') + '</span>'
     + '<span class="loader-box-meta">' + meta + '</span>'
+    // configGap first: "the Edge will not load this at all" outranks "some of
+    // its payloads are ordered by nobody", and a loader that is skipped never
+    // reaches the threshold path to begin with.
+    + configGapHtml(item)
     + thresholdGapHtml(item)
     + (isAuth ? '<button class="loader-box-edit" title="Edit loader">Edit</button>' : '')
     + (isAuth ? '<button class="loader-box-del" title="Delete loader">Delete</button>' : '')

@@ -1390,6 +1390,19 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   color: var(--danger-text, #b3453f);
   background: var(--danger-bg, rgba(179, 69, 63, 0.12));
 }
+/* A loader the Edge refuses outright — missing windows, positions or payloads.
+   Always red, never a link: unlike the threshold gap the fix is on THIS screen,
+   and there is no partial version of "not loaded at all". */
+.loader-config-gap {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  border: 1px solid var(--danger-border, #b3453f);
+  color: var(--danger-text, #b3453f);
+  background: var(--danger-bg, rgba(179, 69, 63, 0.12));
+  white-space: nowrap;
+  cursor: help;
+}
 .loader-box-edit, .loader-box-del {
   font-size: 0.72rem;
   padding: 0.15rem 0.5rem;

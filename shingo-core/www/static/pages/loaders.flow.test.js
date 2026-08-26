@@ -339,8 +339,108 @@ function box(loader) {
         'html did not contain the two-ended flow line');
 })();
 
+// --- box config gap ------------------------------------------------------
+//
+// The Edge SKIPS a loader that fails projection (projectCoreLoader → the C0
+// constructors) and logs one line to journald. Nothing else says so: the loader
+// box looked finished, and the operator board simply never appeared. These
+// assertions pin the box to the SAME refusals the constructors make, because a
+// warning that drifts from them is worse than none — it would say "fine" about
+// a loader the plant is quietly ignoring.
+
+console.log('boxHtml config gap — the refusals the Edge makes');
+
+function boxWith(loader, homes, payloads) {
+    const h = load();
+    return h.ctx.boxHtml({ loader: loader, homes: homes || [], payloads: payloads || [] });
+}
+
+const sharedLoader = {
+    id: 20, name: 'Unloader', role: 'consume',
+    layout: 'shared_window', replenishment: 'operator',
+    inbound_source: '', outbound_dest: 'SMN_BUF_100',
+};
+const dedicatedLoader = {
+    id: 21, name: 'SMN Loader', role: 'produce',
+    layout: 'dedicated_positions', replenishment: 'threshold',
+    inbound_source: 'AMR Supermarket', outbound_dest: '',
+};
+
+(function sharedBareWarnsAboutBoth() {
+    const html = boxWith(sharedLoader, [], []);
+    check('shared, bare: names both missing halves',
+        html.indexOf('no windows') >= 0 && html.indexOf('no payloads') >= 0,
+        html);
+})();
+
+(function sharedWindowsButNoPayloadWarns() {
+    // THE SPRINGFIELD CASE, exactly: windows dragged in, payload never set. The
+    // Edge logged `shared_window needs at least one payload` four times and the
+    // board stayed dark.
+    const html = boxWith(sharedLoader, [{ position_node_id: 99 }, { position_node_id: 102 }], []);
+    check('shared, windows but no payload: warns', html.indexOf('no payloads') >= 0);
+    check('shared, windows but no payload: does NOT claim the windows are missing',
+        html.indexOf('no windows') < 0);
+})();
+
+(function sharedCompleteIsSilent() {
+    const html = boxWith(sharedLoader,
+        [{ position_node_id: 99 }, { position_node_id: 102 }],
+        [{ payload_code: 'testpayload' }]);
+    check('shared, complete: no warning at all',
+        html.indexOf('loader-config-gap') < 0, html);
+})();
+
+(function sharedBlankPayloadWarns() {
+    const html = boxWith(sharedLoader, [{ position_node_id: 99 }], [{ payload_code: '' }]);
+    check('shared: a blank payload code is a refusal too',
+        html.indexOf('a blank payload') >= 0);
+})();
+
+(function dedicatedBareWarns() {
+    const html = boxWith(dedicatedLoader, [], []);
+    check('dedicated, no positions: warns', html.indexOf('no positions') >= 0);
+})();
+
+(function dedicatedUnpinnedPositionIsLegal() {
+    // NewDedicatedPositionsLoader accepts a position with no payload — the
+    // operator has not assigned one yet. Flagging it would put a permanent
+    // complaint on a loader that works.
+    const html = boxWith(dedicatedLoader,
+        [{ position_node_id: 62, payload_code: '' }], []);
+    check('dedicated, position with no payload: legal, stays silent',
+        html.indexOf('loader-config-gap') < 0, html);
+})();
+
+(function positionWithNoNodeWarns() {
+    const html = boxWith(sharedLoader, [{ position_node_id: 0 }], [{ payload_code: 'p' }]);
+    check('a position with no node is a refusal',
+        html.indexOf('a position with no node') >= 0);
+})();
+
+(function gapIsNotALink() {
+    // thresholdGapHtml is an <a> because its fix lives on /inventory. This one
+    // is fixed on this screen, so there is nowhere to send anyone.
+    const html = boxWith(sharedLoader, [], []);
+    const i = html.indexOf('loader-config-gap');
+    check('config gap is not a link', html.lastIndexOf('<a', i) < html.lastIndexOf('<span', i));
+})();
+
+(function gapOutranksThresholdGap() {
+    // A skipped loader never reaches the threshold path, so "the Edge will not
+    // load this" has to read before "some payloads are ordered by nobody".
+    const html = boxWith(
+        Object.assign({}, sharedLoader, { replenishment: 'threshold', role: 'produce' }),
+        [], [{ payload_code: 'X', uop_threshold: 0 }]);
+    const gap = html.indexOf('loader-config-gap');
+    const thr = html.indexOf('loader-threshold-gap');
+    check('both warnings render when both apply', gap >= 0 && thr >= 0,
+        'gap=' + gap + ' thr=' + thr);
+    check('config gap reads first', gap < thr);
+})();
+
 if (failures > 0) {
     console.log('\nFAILED: ' + failures + ' assertion(s)');
     process.exit(1);
 }
-console.log('\nPASS: loaders flow gating + box flow line');
+console.log('\nPASS: loaders flow gating + box flow line + config gap');
