@@ -43,7 +43,15 @@ func (s *ProcessService) Update(id int64, name, description, productionState, co
 	return s.db.UpdateProcess(id, name, description, productionState, counterPLC, counterTag, counterEnabled)
 }
 
-// Delete removes a process row by id.
+// ErrProcessHasStock re-exports the store's refusal so www can classify it
+// without importing the store package directly — the `www-no-direct-store`
+// depguard rule. The sentinel is the store's; this is a name, not a copy, so
+// errors.Is matches either spelling.
+var ErrProcessHasStock = processes.ErrProcessHasStock
+
+// Delete removes a process row by id, retiring the rows that are meaningless
+// without it. Returns ErrProcessHasStock when lineside stock is still booked at
+// the process's nodes — a precondition the operator can clear, not a fault.
 func (s *ProcessService) Delete(id int64) error {
 	return s.db.DeleteProcess(id)
 }

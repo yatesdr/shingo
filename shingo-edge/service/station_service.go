@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -155,6 +157,11 @@ type StationService struct {
 	// no bin type resolves, which means no directive — a card that cannot
 	// name the carrier says nothing rather than guessing one.
 	binTypes func(payloadCode string) string
+	// coreNodes reports the Core node names this edge currently knows, as a set.
+	// Optional, and the nil-safety is load-bearing rather than incidental — see
+	// unknownCoreNodes for why an unwired or empty resolver must accept
+	// everything.
+	coreNodes func() map[string]bool
 
 	// touched throttles the liveness write — see Touch.
 	touchMu sync.Mutex
@@ -188,6 +195,52 @@ func (s *StationService) SetLoaderResolver(r LoaderResolver) { s.loaders = r }
 // SetBinTypeResolver injects the payload -> dunnage lookup the changeover load
 // directive needs. Optional; unset leaves every directive nil.
 func (s *StationService) SetBinTypeResolver(r func(payloadCode string) string) { s.binTypes = r }
+
+// SetCoreNodeResolver injects the set of Core node names this edge knows, used
+// to refuse a station node list that names something Core does not have.
+func (s *StationService) SetCoreNodeResolver(r func() map[string]bool) { s.coreNodes = r }
+
+// ErrUnknownCoreNodes rejects a station node list naming something that is not a
+// Core node.
+var ErrUnknownCoreNodes = errors.New("not a Core node")
+
+// unknownCoreNodes returns the names Core does not know, or nil when the check
+// cannot be made.
+//
+// The edge `claimed-nodes` API did no validation at all, and process_nodes are
+// matched by core_node_name everywhere, so a typo or — the real case — a node
+// GROUP label pasted where a node name belongs produced a row that resolves to
+// nothing on Core and renders on no board. Springfield carried three of them
+// (`Unloader Pull From`, `Unloader Send To`, `SNF2 Loader`), and because SetNodes
+// ADOPTS by name they stayed adoptable onto live stations long after the process
+// that made them was deleted.
+//
+// FAIL OPEN, in two distinct cases, and both matter:
+//
+//   - NO RESOLVER WIRED. Test constructors and any caller that does not need the
+//     check must behave exactly as before.
+//   - AN EMPTY SET. An edge that has booted but not yet received its first node
+//     list knows no names. Refusing on that would lock config out during exactly
+//     the window somebody is most likely to be fixing something.
+//
+// Names are compared bare: engine.SetCoreNodes normalizes Core's display-only
+// "Group.Child" form at ingestion, and the runtime keys on the bare child name.
+func (s *StationService) unknownCoreNodes(names []string) []string {
+	if s.coreNodes == nil {
+		return nil
+	}
+	known := s.coreNodes()
+	if len(known) == 0 {
+		return nil
+	}
+	var bad []string
+	for _, n := range names {
+		if !known[n] {
+			bad = append(bad, n)
+		}
+	}
+	return bad
+}
 
 // binTypeForPayload is the nil-safe read. An unwired resolver answers "unknown"
 // for every payload, and BuildChangeoverLoadDirective drops an unknown rather
@@ -274,6 +327,16 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 			desired[name] = true
 			clean = append(clean, name)
 		}
+	}
+
+	// REFUSE THE WHOLE SAVE, rather than dropping the bad names and writing the
+	// rest. This endpoint is a wholesale REPLACE of the station's node list, so a
+	// partial write would report success for a list the caller never asked for —
+	// the operator adds three nodes, two land, and nothing says which. That is the
+	// same silent-partial-success shape this validation exists to remove.
+	if bad := s.unknownCoreNodes(clean); len(bad) > 0 {
+		return fmt.Errorf("%w: %s — if it was just created on Core, sync nodes and try again",
+			ErrUnknownCoreNodes, strings.Join(bad, ", "))
 	}
 
 	for i, name := range clean {

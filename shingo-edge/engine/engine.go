@@ -266,6 +266,10 @@ func New(c Config) *Engine {
 	// The changeover load directive names a BIN TYPE, so it needs the payload
 	// -> dunnage catalog Core delivers with every node-list sync.
 	e.stationService.SetBinTypeResolver(e.BinTypeForPayload)
+	// A station's node list is matched by core_node_name everywhere, so a name
+	// Core does not have configures a row that resolves to nothing. Give the
+	// service the live name set to check against.
+	e.stationService.SetCoreNodeResolver(e.coreNodeNameSet)
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)
@@ -564,6 +568,22 @@ func bareNodeName(name string) string {
 		return name[i+1:]
 	}
 	return name
+}
+
+// coreNodeNameSet is the bare Core node names this edge currently knows, as a
+// set — the cheap form of CoreNodes for callers that only need membership.
+//
+// An empty result is meaningful to its caller rather than merely empty: before
+// the first node list lands there is nothing to validate against, and
+// StationService.unknownCoreNodes reads that as "accept everything".
+func (e *Engine) coreNodeNameSet() map[string]bool {
+	e.coreNodesMu.RLock()
+	defer e.coreNodesMu.RUnlock()
+	out := make(map[string]bool, len(e.coreNodes))
+	for name := range e.coreNodes {
+		out[name] = true
+	}
+	return out
 }
 
 // CoreNodes returns a copy of the core node set.

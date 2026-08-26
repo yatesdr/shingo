@@ -102,10 +102,97 @@ func Update(db *sql.DB, id int64, name, description, productionState string, cou
 	return err
 }
 
-// Delete removes a process row.
+// ErrProcessHasStock refuses a process delete while lineside stock is still
+// booked against its nodes.
+//
+// A node_lineside_bucket row is an INVENTORY RECORD — it says how many parts
+// are at a node right now — and a routine config action must not be able to
+// destroy one quietly. Refusing is also the more useful answer: "you still have
+// parts booked here" is a sentence somebody can act on, where a vanished count
+// is not.
+var ErrProcessHasStock = errors.New("process still has lineside stock booked at its nodes: clear or consume it first")
+
+// Delete removes a process and retires the rows that are meaningless without it.
+//
+// It used to be one statement — `DELETE FROM processes WHERE id=?` — with the
+// children left to ON DELETE CASCADE. THAT CASCADE NEVER FIRES: edge SQLite runs
+// with foreign keys OFF, so every process ever deleted left its styles, nodes and
+// stations behind. The live Springfield edge carries five orphaned styles, two
+// stale sourcing_state rows, and — until 2026-08-26 — an orphaned process_node
+// from a process deleted an hour earlier, which SetNodes was still willing to
+// ADOPT by core_node_name onto a live station.
+//
+// Each child is retired exactly the way deleting it on its own would, rather than
+// uniformly hard-deleted, because both soft deletes exist for reasons that do not
+// stop applying just because the parent is going:
+//
+//   - STYLES are soft-deleted and their reporting points disabled, mirroring
+//     DeleteStyle. hourly_counts and daily_counts key on style_id, so hard-deleting
+//     a style strands the production record it counted — the exact defect soft
+//     delete was introduced to fix.
+//   - PROCESS_NODES are soft-deleted and their runtime states dropped, mirroring
+//     DeleteNode. changeover_node_tasks.process_node_id is NOT NULL ON DELETE
+//     CASCADE, so a hard delete destroys per-node changeover detail rather than
+//     detaching it. Soft delete is also what closes the adoption hole:
+//     ListNodesByProcess filters on liveNodes, so a retired row can no longer be
+//     adopted by name.
+//
+// DELIBERATELY NOT TOUCHED: hourly_counts and daily_counts (the permanent
+// production record — they carry no FK precisely so a config action cannot reach
+// them, see store/schema/sqlite_ddl.go), process_changeovers and orders (history
+// that stays readable), and style_node_claims (owned by their now-retired style,
+// and kept so that restoring the style is still a restore).
 func Delete(db *sql.DB, id int64) error {
-	_, err := db.Exec(`DELETE FROM processes WHERE id=?`, id)
-	return err
+	var booked int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket b
+		JOIN process_nodes n ON n.id = b.node_id
+		WHERE n.process_id = ? AND b.qty > 0`, id).Scan(&booked); err != nil {
+		return fmt.Errorf("process %d: check lineside stock: %w", id, err)
+	}
+	if booked > 0 {
+		return fmt.Errorf("%w (%d bucket(s) still hold parts)", ErrProcessHasStock, booked)
+	}
+
+	// sourcing_state and demand_origins_open key on the process NAME, not its id,
+	// so the name must be read before the row goes. Leaving them is not merely
+	// untidy — a later process created with the same name inherits the stale state.
+	var name string
+	switch err := db.QueryRow(`SELECT name FROM processes WHERE id=?`, id).Scan(&name); {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil // already gone; deleting twice is not an error
+	case err != nil:
+		return fmt.Errorf("process %d: %w", id, err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	steps := []struct {
+		q   string
+		arg any
+	}{
+		{`UPDATE styles SET deleted_at = datetime('now') WHERE process_id=? AND` + liveStyles, id},
+		{`UPDATE reporting_points SET enabled = 0 WHERE style_id IN (SELECT id FROM styles WHERE process_id=?)`, id},
+		{`DELETE FROM process_node_runtime_states WHERE process_node_id IN (SELECT id FROM process_nodes WHERE process_id=?)`, id},
+		// operator_station_id is cleared because the station row itself goes in
+		// the next statement: a retired node pointing at a deleted station is a
+		// dangling id that RestoreNode would hand back.
+		{`UPDATE process_nodes SET deleted_at = datetime('now'), updated_at = datetime('now'), operator_station_id = NULL
+			WHERE process_id=? AND deleted_at IS NULL`, id},
+		{`DELETE FROM operator_stations WHERE process_id=?`, id},
+		{`DELETE FROM sourcing_state WHERE process_id=?`, name},
+		{`DELETE FROM demand_origins_open WHERE process_id=?`, name},
+		{`DELETE FROM processes WHERE id=?`, id},
+	}
+	for _, s := range steps {
+		if _, err := tx.Exec(s.q, s.arg); err != nil {
+			return fmt.Errorf("process %d delete: %w", id, err)
+		}
+	}
+	return tx.Commit()
 }
 
 // SetActiveStyle changes the active_style_id on a process.

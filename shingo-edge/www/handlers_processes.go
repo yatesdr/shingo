@@ -6,8 +6,11 @@ package www
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+
+	"shingoedge/service"
 )
 
 // --- Processes Admin ---
@@ -102,6 +105,12 @@ func (h *Handlers) apiDeleteProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.engine.ProcessService().Delete(id); err != nil {
+		// Stock still booked is a precondition the operator can clear, not a
+		// fault. A 500 would read as "shingo broke" and send them to a log.
+		if errors.Is(err, service.ErrProcessHasStock) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

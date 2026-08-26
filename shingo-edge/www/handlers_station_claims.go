@@ -8,7 +8,10 @@ package www
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+
+	"shingoedge/service"
 )
 
 func (h *Handlers) apiGetStationClaimedNodes(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +42,13 @@ func (h *Handlers) apiSetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := h.engine.StationService().SetNodes(id, req.Nodes); err != nil {
+		// A name Core does not have is bad input, not a server fault — and the
+		// message names which one, so a 400 puts it in front of whoever typed it
+		// instead of in a log.
+		if errors.Is(err, service.ErrUnknownCoreNodes) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
