@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -416,5 +417,132 @@ func TestPlaceForDedicatedLoader_HomeSource_PatternAStillShortCircuits(t *testin
 	if evac.DeliveryNode != home.Name {
 		t.Fatalf("DeliveryNode = %q, want HOME %q — Pattern A owned this and the home is free",
 			evac.DeliveryNode, home.Name)
+	}
+}
+
+// ── The SMN_016 / SMN_035 regression (Springfield, 2026-08-26) ───────────────
+//
+// A swap RETURN leg carries a station wait — the robot dwells at the line until
+// the operator releases it — so the old hasWaitStep proxy read it as a supply
+// leg, ran the physical gate against its own home, saw the carrier its sibling
+// was about to lift, and yielded to a buffer. The home was then unclaimed, the
+// replenishment loop filled it seconds after the supply leg cleared it, and the
+// returning carrier had nowhere to land. Its record was evicted as a ghost.
+//
+// parkSwapPair builds that exact shape: a supply leg lifting from the home to
+// the line, and its return sibling coming back to the home, both with the line
+// as ProcessNode.
+func parkSwapPair(t *testing.T, db *store.DB, home, line string, linkSibling bool) (ret *orders.Order, retSteps []resolvedStep) {
+	t.Helper()
+	supplySteps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: home},
+		{Action: protocol.ActionDropoff, Node: line},
+	}
+	raw, err := json.Marshal(supplySteps)
+	if err != nil {
+		t.Fatalf("marshal supply steps: %v", err)
+	}
+	supply := &orders.Order{
+		EdgeUUID: "park-swap-supply", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		Quantity: 1, SourceNode: home, DeliveryNode: line, ProcessNode: line,
+		PayloadCode: "PART-X", StepsJSON: string(raw),
+	}
+	if err := db.CreateOrder(supply); err != nil {
+		t.Fatalf("create supply leg: %v", err)
+	}
+	retSteps = []resolvedStep{
+		{Action: protocol.ActionWait, Node: line},
+		{Action: protocol.ActionPickup, Node: line},
+		{Action: protocol.ActionDropoff, Node: home},
+	}
+	ret = &orders.Order{
+		EdgeUUID: "park-swap-return", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		Quantity: 1, SourceNode: line, DeliveryNode: home, ProcessNode: line, PayloadCode: "PART-X",
+	}
+	if linkSibling {
+		ret.SiblingOrderUUID = supply.EdgeUUID
+	}
+	if err := db.CreateOrder(ret); err != nil {
+		t.Fatalf("create return leg: %v", err)
+	}
+	return ret, retSteps
+}
+
+// The regression itself: the carrier standing on the home is the one the supply
+// sibling lifts, so the return must HOLD the home. Holding it is what makes the
+// order in-flight to the home, which is what makes loader_replenish's gate yield
+// — the whole mechanism that failed on 2026-08-26.
+func TestPlaceForDedicatedLoader_ReturnWithWait_SiblingLifting_HoldsHome(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, _, _ := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	line := &nodes.Node{Name: "LX-LINE", Enabled: true}
+	if err := db.CreateNode(line); err != nil {
+		t.Fatalf("create line node: %v", err)
+	}
+	// The carrier the supply sibling is about to lift off the home.
+	makeLoaderBin(t, db, "PART-X", home.ID, "sibling-lifts-this", 100, time.Now().UTC())
+
+	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
+	d.placeForDedicatedLoader(ret, retSteps)
+
+	if ret.DeliveryNode != home.Name {
+		t.Fatalf("DeliveryNode = %q, want HOME %q — the bin on the home is the one the sibling lifts, "+
+			"so the return must hold the home rather than yield it to the replenishment loop (buffer was %q)",
+			ret.DeliveryNode, home.Name, buffer.Name)
+	}
+}
+
+// The other half of the distinction the old evac branch could not draw: a home
+// holding a carrier NOBODY is coming for is genuinely occupied, and routing a
+// robot at it faults on arrival. That one still goes to buffer.
+func TestPlaceForDedicatedLoader_ReturnWithWait_ForeignCarrier_RoutesBuffer(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, _, _ := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	line := &nodes.Node{Name: "LX-LINE2", Enabled: true}
+	if err := db.CreateNode(line); err != nil {
+		t.Fatalf("create line node: %v", err)
+	}
+	makeLoaderBin(t, db, "PART-X", home.ID, "foreign-carrier", 100, time.Now().UTC())
+
+	// No sibling link: nothing vouches for the carrier standing on the home.
+	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, false)
+	d.placeForDedicatedLoader(ret, retSteps)
+
+	if ret.DeliveryNode != buffer.Name {
+		t.Fatalf("DeliveryNode = %q, want BUFFER %q — no sibling lifts the carrier on the home, "+
+			"so it is a real occupant and the return must not be driven at it",
+			ret.DeliveryNode, buffer.Name)
+	}
+}
+
+// An unreadable role (no ProcessNode) must keep the previous behaviour verbatim
+// rather than collapsing into "supply". Live traffic has carried a ProcessNode on
+// every complex order since 2026-05-04, so this covers the 193 historical rows and
+// any future regression that stops stamping it.
+func TestPlaceForDedicatedLoader_ReturnWithWait_UnknownRole_KeepsProxyBehaviour(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, _, _ := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	line := &nodes.Node{Name: "LX-LINE3", Enabled: true}
+	if err := db.CreateNode(line); err != nil {
+		t.Fatalf("create line node: %v", err)
+	}
+	makeLoaderBin(t, db, "PART-X", home.ID, "unknown-role-occupant", 100, time.Now().UTC())
+
+	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
+	ret.ProcessNode = "" // role unreadable — falls back to the wait-step proxy
+	d.placeForDedicatedLoader(ret, retSteps)
+
+	if ret.DeliveryNode != buffer.Name {
+		t.Fatalf("DeliveryNode = %q, want BUFFER %q — with no ProcessNode the leg must move exactly as "+
+			"the wait-step proxy moved it, not be reclassified", ret.DeliveryNode, buffer.Name)
 	}
 }
