@@ -31,6 +31,74 @@ function allowedPayloadsForEntry(entry) {
     return [];
 }
 
+// calledBy is the station name, trimmed. A whitespace-only station name (a
+// row created with " ") is truthy in JS, would ship as called_by=" ", and the
+// backend's TrimSpace check rejects it as "release requires called_by" — so
+// trim BEFORE falling back and the fallback always wins.
+function calledByFromView() {
+    const view = getView();
+    const stationName = (view && view.station && view.station.name)
+        ? String(view.station.name).trim() : '';
+    return stationName || 'operator';
+}
+
+// capture_lineside with nothing pulled — the body every no-choice release
+// posts. Produce and consume-at-zero build the SAME request, which is why
+// one helper serves both: the disposition names what was pulled to lineside,
+// and in both shapes the answer is "nothing".
+function releasedNothingBody(calledBy) {
+    return {
+        disposition: 'capture_lineside',
+        qty_by_part: {},
+        qty_by_part_suggested: {},
+        called_by: calledBy,
+    };
+}
+
+// ── A RELEASE WITH ONE OUTCOME DOES NOT ASK ─────────────────────────────
+//
+// The prompt exists to collect a DISPOSITION. In two shapes there is none to
+// collect and it renders a single actionable button, so the operator taps
+// RELEASE and is asked to tap RELEASE again — the "click a similar button
+// twice for one action" the plants report:
+//
+//   produce role           the engine discards the disposition entirely for
+//                          produce (operator_release.go ~189). The modal's
+//                          lone RELEASE FULL posts a fixed body and the whole
+//                          consume framing — "anything pulled to lineside?",
+//                          "bin returning to supermarket" — is backwards for a
+//                          node pushing a full bin OUT.
+//   consume, no payloads,  no chip grid to pick from, and the PARTIAL and
+//   remaining_uop == 0     UNDER COUNT arms are both remaining_uop > 0 only,
+//                          leaving RELEASE EMPTY + CANCEL.
+//
+// Returns the body that single button would have posted, or null when the
+// modal holds a real choice. remaining_uop > 0 ALWAYS renders: that is the
+// operator picking between PULL PARTS / RELEASE PARTIAL / BIN EMPTY (UNDER
+// COUNT), and the last two disagree about whether inventory went missing.
+//
+// Deliberately NOT collapsed: consume at zero WITH payload chips. Both its
+// buttons post an identical body while every chip reads 0, but a chip is
+// keypad-editable, so an operator can still declare a lineside pull the count
+// never knew about. Collapsing that would silently delete the only path for
+// "the bin said zero but I took parts off it".
+function singleOutcomeReleaseBody(entry, payloads) {
+    const claim = entry && entry.active_claim;
+    if (!claim) return null;
+    if (claim.role === 'produce') return releasedNothingBody(calledByFromView());
+    if (payloads.length > 0) return null;
+    // STRICTER THAN THE RENDERER, DELIBERATELY. renderReleasePromptStep1 reads
+    // a missing remaining_uop_cached as 0 because it is only choosing a label
+    // and "RELEASE EMPTY" is the safe caption for an unknown count. Here the
+    // same default would auto-post a manifest-clearing disposition for a bin
+    // whose count never loaded. Unknown is not zero: fall through to the modal
+    // and let the operator look at the bin.
+    const rt = entry && entry.runtime;
+    if (!rt || rt.remaining_uop_cached == null) return null;
+    if (rt.remaining_uop_cached > 0) return null;
+    return releasedNothingBody(calledByFromView());
+}
+
 // Pulled-to-lineside qty is a property of the running style, so read the
 // active claim first; fall back to target claim on cold-start.
 function linesideSoftThresholdForEntry(entry) {
@@ -41,8 +109,20 @@ function linesideSoftThresholdForEntry(entry) {
     return isNaN(v) || v < 0 ? 0 : v;
 }
 
-export function openReleasePrompt(url, entry) {
+export async function openReleasePrompt(url, entry) {
     const payloads = allowedPayloadsForEntry(entry);
+
+    // Nothing to ask → don't ask. Posts the body the modal's single button
+    // would have posted, so the wire shape is unchanged and the engine cannot
+    // tell the difference. releasePromptState is never set, so the modal never
+    // opens and isReleasePromptOpen() stays false for the SSE re-render guard.
+    const direct = singleOutcomeReleaseBody(entry, payloads);
+    if (direct) {
+        const ok = await postAction(url, direct, loadViewRef);
+        if (ok && closeModalRef) closeModalRef();
+        return;
+    }
+
     const selected = {};
     // Pre-populate every allowed-payload chip so the operator sees a qty
     // on each one and the PULL PARTS button is always enabled. Common case
@@ -396,15 +476,11 @@ async function handleReleasePromptAction(evt) {
     // discards the disposition for produce role but uses capture_lineside to
     // fire the downstream unloader full-in side-cycle.
     if (action === 'release-submit-produce') {
-        const view = getView();
-        const stationName = (view && view.station && view.station.name) ? String(view.station.name).trim() : '';
-        const calledBy = stationName || 'operator';
-        const body = {
-            disposition: 'capture_lineside',
-            qty_by_part: {},
-            qty_by_part_suggested: {},
-            called_by: calledBy,
-        };
+        // Same body singleOutcomeReleaseBody posts when it skips this modal —
+        // one builder, so the two paths cannot drift apart. Still reachable:
+        // a produce entry whose active_claim has not loaded yet renders the
+        // prompt, and this submits it.
+        const body = releasedNothingBody(calledByFromView());
         closeReleasePrompt();
         evt.currentTarget.disabled = true;
         const ok = await postAction(state.url, body, loadViewRef);
@@ -414,14 +490,7 @@ async function handleReleasePromptAction(evt) {
 
     if (action === 'release-submit' || action === 'release-submit-parts' || action === 'release-submit-underpack') {
         const url = state.url;
-        const view = getView();
-        // Trim before falling back: a whitespace-only station name (e.g. a
-        // station row created with " ") is truthy in JS, would be sent as
-        // called_by=" ", and rejected by the backend's TrimSpace check —
-        // surfacing as "release requires called_by". Match the server's
-        // TrimSpace semantics here so the fallback always wins.
-        const stationName = (view && view.station && view.station.name) ? String(view.station.name).trim() : '';
-        const calledBy = stationName || 'operator';
+        const calledBy = calledByFromView();
         const rt = state.entry && state.entry.runtime;
         const remainingUOP = rt && rt.remaining_uop_cached != null ? rt.remaining_uop_cached : 0;
         let body;
