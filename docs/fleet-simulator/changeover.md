@@ -62,7 +62,7 @@ go test -v -run "TestChangeover|TestWiring_ABCycling|TestWiring_FlipABNode|TestC
 | TC-87h | DiffStyleClaims — new node with `__empty__` (stays unchanged) | PASS |
 | TC-87i | DiffStyleClaims — both `__empty__` (nothing to do) | PASS |
 | TC-87j | DiffStyleClaims — evacuate via EvacuateOnChangeover flag, from-side | PASS |
-| TC-87k | DiffStyleClaims — evacuate via EvacuateOnChangeover flag, to-side | PASS |
+| TC-87k | DiffStyleClaims — evacuate flag on the TO-side alone does NOT evacuate (the OUTGOING claim owns the decision; EvacConfigOnWrongSide logs it) | PASS |
 | TC-87l | DiffStyleClaims — evacuate via EvacuateOnChangeover flag, both sides | PASS |
 | TC-87m | DiffStyleClaims — role change with same payload → swap | PASS |
 | TC-87n | DiffStyleClaims — evacuate flag ignored when payload differs | PASS |

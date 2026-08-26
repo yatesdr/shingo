@@ -22,14 +22,18 @@ import (
 // of different interface types so that compile-time enforcement
 // constrains where orchestration verbs can be reached:
 //
-//   - h.engine (ServiceAccess) — narrow surface, ~25 methods. CRUD-only
+//   - h.engine (ServiceAccess) — narrow surface, 49 methods. CRUD-only
 //     handlers and read-only state queries use this. Calling
 //     orchestration verbs through h.engine fails to compile because
 //     those methods are not on ServiceAccess.
-//   - h.orchestration (EngineOrchestration) — wide surface adding 12
+//   - h.orchestration (EngineOrchestration) — wide surface adding 13
 //     verbs (corrections, direct orders, scene sync, cross-edge
 //     messaging, live reconfig). Embeds ServiceAccess so it can also
 //     reach service accessors and state queries.
+//
+// Both counts measured 2026-08-19; they read "~25" and "12" from the
+// 6.5 split onwards and were never re-measured. engine_iface_width_test.go
+// asserts them now.
 //
 // In production both fields point to the same *engine.Engine. In tests
 // they may differ (a service-only test fixture can leave orchestration
@@ -117,12 +121,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		// from the shingo/shared module. Registered BEFORE /static/* so
 		// the more specific prefix wins.
 		r.Handle("/static/shared/*", http.StripPrefix("/static/shared/",
-			http.FileServer(http.FS(shared.Files)),
+			staticCache(http.FileServer(http.FS(shared.Files))),
 		))
 
 		// Static files
 		staticSub, _ := fs.Sub(staticFS, "static")
-		r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+		r.Handle("/static/*", http.StripPrefix("/static/", staticCache(http.FileServer(http.FS(staticSub)))))
 
 		// ── Public pages ───────────────────────────────────────
 		// Wave 2 (Q-035): "/" is now the Operations Overview (the snapshot page).
@@ -136,6 +140,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Get("/logout", h.handleLogout)
 		r.Get("/nodes", h.handleNodes)
 		r.Get("/orders", h.handleOrders)
+		// The board's row fragment. Same filter params as /orders; used by the
+		// SSE handler to refresh rows instead of reloading the page.
+		r.Get("/orders/rows", h.handleOrdersRows)
 		r.Get("/orders/detail", h.handleOrderDetail)
 		r.Get("/robots", h.handleRobots)
 		r.Get("/inventory", h.handleInventory)
@@ -161,7 +168,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		r.Get("/material-flags", h.handleMaterialFlags)
 		r.Get("/missions", h.handleMissions)
 		r.Get("/missions/{orderID}", h.handleMissionDetail)
-		r.Get("/traffic", h.handleTraffic)
 		// Wall displays: the per-instance display for a floor monitor
 		// (public, no nav). Framed by default so a person clicking from the
 		// hub keeps Core's chrome; ?kiosk=1 is the chromeless page a monitor
@@ -219,6 +225,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/nodes/occupancy", h.apiNodeOccupancy)
 			r.Get("/nodes/detail", h.apiNodeDetail)
 			r.Get("/nodes/bin-types", h.apiGetNodeBinTypes)
+			// Maintained-group config: read beside the other node reads, written
+			// under auth below. The section is admin-only on screen; the read is
+			// public for the same reason /nodes/detail is — it is what the node
+			// IS, and the shop floor gets to look at that.
+			r.Get("/nodes/maintained-group", h.apiMaintainedGroup)
+			r.Get("/nodes/process-options", h.apiMaintainedGroupProcessOptions)
 			r.Get("/nodestate", h.apiNodeState)
 			// Loaders are part of the node layout (shop-floor read access) — the
 			// box render reads this; all loader WRITES stay auth-gated below.
@@ -226,6 +238,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/bin-types", h.apiListBinTypes)
 			r.Get("/fleet/robot-groups", h.apiRobotGroups)
 			r.Get("/map/points", h.apiScenePoints)
+			// The waiting-point picker's view of the same data: slim and searchable.
+			r.Get("/map/marks", h.apiSceneMarks)
+			r.Get("/nodes/lane-waiting", h.apiLaneWaiting)
+			r.Get("/nodes/lane-gate-points", h.apiLaneGatePoints)
 			r.Get("/map/edges", h.apiSceneEdges)
 			// Structure lives beside structure. Areas and reflectors are not
 			// owned by the page that first needed them.
@@ -249,6 +265,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/missions/timeseries", h.apiMissionTimeseries)
 			r.Get("/missions/breakdown", h.apiMissionBreakdown)
 			r.Get("/missions/dwell", h.apiMissionDwell)
+			r.Get("/missions/faults", h.apiMissionFaults)
 			r.Get("/missions/failures", h.apiMissionFailures)
 			r.Get("/missions/{orderID}", h.apiGetMission)
 
@@ -324,9 +341,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/bins/available", h.apiListAvailableBins)
 			r.Get("/bins/detail", h.apiBinDetail)
 
-			// Traffic (count groups)
-			r.Get("/traffic/groups", h.apiTrafficGroups)
-
 			// Telemetry
 			r.Get("/telemetry/node-bins", h.apiTelemetryNodeBins)
 			r.Get("/telemetry/uop-state", h.apiTelemetryUOPState)
@@ -343,6 +357,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/inventory/monitor-totals", h.apiInventoryMonitorTotals)
 			r.Get("/inventory/anomaly-summary", h.apiInventoryAnomalySummary)
 			r.Get("/inventory/ledger-exceptions", h.apiInventoryLedgerExceptions)
+			r.Get("/inventory/maintained-groups", h.apiInventoryMaintainedGroups)
 			r.Get("/sourceability/events", h.apiSourceabilityEvents)
 			r.Get("/core/health", h.apiCoreHealth)
 			r.Get("/inventory/rejected-deltas", h.apiInventoryRejectedDeltas)
@@ -352,10 +367,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/buckets", h.apiBuckets)
 			r.Post("/buckets/delete", h.apiBucketDelete)
 
-			// Audit (Item 10) — bin_uop_audit read endpoints
+			// Audit (Item 10) — bin_uop_ledger read endpoints
 			r.Get("/audit/bin/{id}", h.apiAuditBinTimeline)
-			r.Get("/audit/operator/{name}", h.apiAuditOperatorActivity)
-			r.Get("/audit/station/{station}", h.apiAuditStationOverrides)
 			r.Get("/audit/discrepancies", h.apiAuditDiscrepancies)
 			r.Get("/corrections", h.apiListNodeCorrections)
 			r.Get("/cms-transactions", h.apiListCMSTransactions)
@@ -366,7 +379,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 			// Demands
 			r.Get("/demands", h.apiListDemands)
-			r.Get("/demands/{id}/log", h.apiDemandLog)
 
 			// ── Protected API (auth required) ──────────────────
 			r.Group(func(r chi.Router) {
@@ -398,6 +410,16 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/nodes/delete-test", h.apiDeleteTestNodes)
 				r.Post("/nodes/bin-types", h.apiSetNodeBinTypes)
 				r.Post("/nodes/properties/set", h.apiNodePropertySet)
+				// Maintained groups: one endpoint per thing an operator edits.
+				// A single save-everything call would have to decide what an
+				// omitted field means, and both answers are wrong — one deletes
+				// a level when the form fails to populate, the other makes
+				// clearing impossible.
+				r.Post("/nodes/maintained-group/check-types", h.apiMaintainedGroupCheckTypes)
+				r.Post("/nodes/maintained-group/settings", h.apiMaintainedGroupSettingsSet)
+				r.Post("/nodes/maintained-group/level", h.apiMaintainedGroupLevelSet)
+				r.Post("/nodes/maintained-group/level/remove", h.apiMaintainedGroupLevelRemove)
+				r.Post("/nodes/maintained-group/supports", h.apiMaintainedGroupSupportsSet)
 				r.Post("/nodes/properties/delete", h.apiNodePropertyDelete)
 				r.Post("/nodes/reparent", h.apiReparentNode)
 
@@ -482,6 +504,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 
 				// Orders
 				r.Post("/orders/terminate", h.apiTerminateOrder)
+				r.Post("/orders/hard-release", h.apiHardReleaseOrder)
 				r.Post("/orders/priority", h.apiSetOrderPriority)
 				r.Post("/orders/spot", h.apiManualOrderSubmit)
 				r.Post("/dispatch/clear-anomaly", h.apiClearTransitAnomaly)
@@ -526,16 +549,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Post("/config/save", h.handleConfigSave)
 			r.Post("/config/test-email", h.handleConfigTestEmail)
 			r.Post("/config/test-alert", h.handleConfigTestAlert)
+			r.Post("/config/password", h.handleConfigPassword)
 			r.Get("/fleet-explorer", h.handleFleetExplorer)
 			r.Get("/admin/cells", h.handleCellsAdmin)
 			// Stations — enrolled edges and the display-name rename. Auth-gated
 			// to match POST /api/edges/rename, which the page calls.
 			r.Get("/edges", h.handleEdgesAdmin)
-
-			// Traffic (count group CRUD)
-			r.Post("/traffic/save", h.handleTrafficSave)
-			r.Post("/traffic/add", h.handleTrafficAdd)
-			r.Post("/traffic/delete", h.handleTrafficDelete)
 
 			// Node CRUD
 			r.Post("/nodes/create", h.handleNodeCreate)
@@ -580,6 +599,9 @@ func (h *Handlers) render(w http.ResponseWriter, r *http.Request, name string, d
 	// service worker) serves a stale page after a rebuild — e.g. a new toolbar
 	// button that's deployed but invisible until the user clears cache.
 	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+	// Before the first write: the compression middleware reads Content-Type at
+	// WriteHeader and skips compression when it is empty. See shared.SetHTMLContentType.
+	shared.SetHTMLContentType(w)
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		log.Printf("render %s: %v", name, err)
 		http.Error(w, "template error", http.StatusInternalServerError)
@@ -598,6 +620,7 @@ func (h *Handlers) renderBare(w http.ResponseWriter, name string, data map[strin
 		http.Error(w, "template not found", http.StatusInternalServerError)
 		return
 	}
+	shared.SetHTMLContentType(w)
 	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
 		log.Printf("renderBare %s: %v", name, err)
 		http.Error(w, "template error", http.StatusInternalServerError)

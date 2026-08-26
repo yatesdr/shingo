@@ -455,7 +455,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 		PayloadCode:    "PART-AB",
 		UOPCapacity:    100,
 		ReorderPoint:   10,
-		AutoReorder:    true,
+		AutoReorder:    domain.Ptr(true),
 		PairedCoreNode: "AB-NODE-B",
 	})
 	if err != nil {
@@ -469,7 +469,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 		PayloadCode:    "PART-AB",
 		UOPCapacity:    100,
 		ReorderPoint:   10,
-		AutoReorder:    true,
+		AutoReorder:    domain.Ptr(true),
 		PairedCoreNode: "AB-NODE-A",
 	})
 	if err != nil {

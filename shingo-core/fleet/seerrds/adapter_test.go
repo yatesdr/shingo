@@ -72,13 +72,22 @@ func TestReleaseOrder_PinsVehicle(t *testing.T) {
 	}
 }
 
-// TestReleaseOrder_NoVehicleFallback verifies that if the order details
-// lookup fails (e.g., order not found), the release still succeeds
-// without pinning a vehicle — RDS picks freely.
-func TestReleaseOrder_NoVehicleFallback(t *testing.T) {
+// TestReleaseOrder_UnknownOrderRefuses — RE-POINTED by §R.98 stage A2.
+//
+// It read, in full: "verifies that if the order details lookup fails (e.g.,
+// order not found), the release still succeeds without pinning a vehicle — RDS
+// picks freely", and it asserted `err == nil` with `addBlocksReq.Vehicle == ""`.
+//
+// That is the fail-open the round convicted, pinned as a requirement. "RDS picks
+// freely" is the benign reading of a read that never answered; the other reading
+// is that RDS has no such order and picks nobody, which is the same wire response
+// and is what a Core restart produces. The adapter cannot tell them apart from
+// here, so it refuses and the append does not go out. The scenario is unchanged —
+// only the verdict on it is.
+func TestReleaseOrder_UnknownOrderRefuses(t *testing.T) {
 	t.Parallel()
 	var mu sync.Mutex
-	var addBlocksReq rds.AddBlocksRequest
+	addBlocksCalled := false
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -88,7 +97,7 @@ func TestReleaseOrder_NoVehicleFallback(t *testing.T) {
 
 		case "/addBlocks":
 			mu.Lock()
-			json.NewDecoder(r.Body).Decode(&addBlocksReq)
+			addBlocksCalled = true
 			mu.Unlock()
 			w.Write([]byte(`{"code":0,"msg":"ok"}`))
 		}
@@ -104,14 +113,13 @@ func TestReleaseOrder_NoVehicleFallback(t *testing.T) {
 	err := adapter.ReleaseOrder("sg-99-missing", []fleet.OrderBlock{
 		{BlockID: "sg-99-missing-b2", Location: "DEST", BinTask: "JackUnload"},
 	}, true)
-	if err != nil {
-		t.Fatalf("ReleaseOrder: %v", err)
+	if err == nil {
+		t.Fatal("ReleaseOrder against an order RDS does not hold must refuse")
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
-
-	if addBlocksReq.Vehicle != "" {
-		t.Errorf("addBlocks vehicle = %q, want empty (no vehicle to pin)", addBlocksReq.Vehicle)
+	if addBlocksCalled {
+		t.Error("addBlocks was called after a refusal; the append must not go out")
 	}
 }

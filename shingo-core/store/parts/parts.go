@@ -33,7 +33,7 @@ type Produced struct {
 // This type was `Cycle`, behind /api/parts/cycle-time, and the word was doing
 // two jobs. A cycle time is the interval between consecutive units at a station
 // — /cycle-time (5.10) measures exactly that, off consecutive PLC ticks in
-// bin_uop_audit. This measures mission_telemetry.duration_ms: how long a ROBOT
+// bin_uop_ledger. This measures mission_telemetry.duration_ms: how long a ROBOT
 // took to carry a payload, attributed to every part in that payload's manifest.
 // One order's journey, not one part crossing a station. Different table,
 // different grain, different key, and only one of the two is a cycle time.

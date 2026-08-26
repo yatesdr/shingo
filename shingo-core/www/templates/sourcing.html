@@ -94,9 +94,10 @@
   .src-dot-unset  { background:var(--status-pending-dot); }
 
   /* Collapsed not-set-up tail: one row that expands the rest of the rail. */
+  /* The marker reset is .disclosure-bare (shared/components.css); this carries
+     only what makes it a rail row rather than a plain disclosure. */
   .src-collapse { border-top:1px solid var(--border); }
-  .src-collapse > summary { padding:0.7rem 0.85rem; cursor:pointer; font-size:0.8rem; color:var(--text-muted); list-style:none; }
-  .src-collapse > summary::-webkit-details-marker { display:none; }
+  .src-collapse > summary { padding:0.7rem 0.85rem; font-size:0.8rem; color:var(--text-muted); }
   .src-collapse > summary:hover { background:var(--elev-raised); }
 
   /* No-JS: every pane is visible and stacked. JS adds .src-js to switch to
@@ -204,7 +205,7 @@
          it is noise most of the time (a plant with many unconfigured processes
          should not bury its blocked ones under them). */}}
     {{if .View.NotConfiguredCount}}
-    <details class="src-collapse">
+    <details class="src-collapse disclosure-bare">
       <summary>{{.View.NotConfiguredCount}} not set up &mdash; show</summary>
       {{range $p := .View.Processes}}
       {{if eq $p.Status "not_configured"}}

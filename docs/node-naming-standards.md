@@ -152,6 +152,31 @@ Core's `GetNodeByDotName()` function (`store/nodes.go`) handles dot notation by 
 
 Individual slot nodes within a Lane are not directly addressable. Addressing a Lane slot directly would bypass the packing algorithm and is not permitted. Lane slot nodes do not appear in the node selection list.
 
+## Staging is declared, not inferred
+
+A **staging node** is a destination where both destination gates deliberately
+stand down: reserved by nothing, capacity-checked by nothing, and free for a
+second order to take while the first robot is still on its way.
+
+Core cannot infer which nodes those are, and the naming does not tell it. Every
+station carries the one `STATION` node type, and the plantspec's `Kind` is
+advisory and never persisted. The rule that actually decides it:
+
+> **A staging node is a station with NO PARENT.** The role test rejects it before
+> it ever reaches the LANE/NGRP question.
+
+The designation lives in the **Edge's cell config** — the sender declares it, and
+a fence walks every author on both sides to keep that true.
+
+> **Do not trust a name or a comment for this.** Five comments once promised
+> coverage that did not exist: the predicate's own name, its comment, and its
+> caller's comment all said staging was gated, so a reviewer checking got three
+> confirmations and no gate. Check the parent.
+
+Note that `SLN` (Staging Lane Node, above) is a *naming* convention for
+hot-swap lanes and is a different thing from this gate-standing-down sense. A
+node can be named `SLN` without being a declared staging node, and vice versa.
+
 ## Notes
 
 | # | Note |

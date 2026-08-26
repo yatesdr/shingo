@@ -21,15 +21,13 @@ func (db *DB) GetNodeByName(name string) (*nodes.Node, error) {
 func (db *DB) GetNodeByDotName(name string) (*nodes.Node, error) {
 	return nodes.GetByDotName(db.DB, name)
 }
-func (db *DB) GetRootNode(nodeID int64) (*nodes.Node, error) { return nodes.GetRoot(db.DB, nodeID) }
-func (db *DB) ListNodes() ([]*nodes.Node, error)             { return nodes.List(db.DB) }
+func (db *DB) ListNodes() ([]*nodes.Node, error) { return nodes.List(db.DB) }
 func (db *DB) ListChildNodes(parentID int64) ([]*nodes.Node, error) {
 	return nodes.ListChildren(db.DB, parentID)
 }
 func (db *DB) SetNodeParent(nodeID, parentID int64) error {
 	return nodes.SetParent(db.DB, nodeID, parentID)
 }
-func (db *DB) ClearNodeParent(nodeID int64) error { return nodes.ClearParent(db.DB, nodeID) }
 
 // db.ClaimSlot deleted with nodes.ClaimSlot — the live slot-claim path is
 // ConfirmSlotClaim below (reserve → guarded claim → confirm, one tx).
@@ -122,4 +120,16 @@ func (db *DB) ReparentNode(nodeID int64, parentID *int64, position int) error {
 // provided ordered list of node IDs.
 func (db *DB) ReorderLaneSlots(laneID int64, orderedNodeIDs []int64) error {
 	return nodes.ReorderLaneSlots(db.DB, laneID, orderedNodeIDs)
+}
+
+// DeleteCarrierNodeIfEmpty removes an empty per-robot carrier node — see
+// nodes.DeleteCarrierNodeIfEmpty.
+func (db *DB) DeleteCarrierNodeIfEmpty(name string) error {
+	return nodes.DeleteCarrierNodeIfEmpty(db.DB, name)
+}
+
+// RetireEmptyCarrierNodes removes every carrier node with no bin on it — see
+// nodes.RetireEmptyCarrierNodes.
+func (db *DB) RetireEmptyCarrierNodes(prefix string) (int64, error) {
+	return nodes.RetireEmptyCarrierNodes(db.DB, prefix)
 }

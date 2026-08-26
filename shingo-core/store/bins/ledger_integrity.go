@@ -34,7 +34,7 @@
 // it are two different decisions — keep the first, and the second is
 // "keep ordering, and tell someone".
 //
-// Everything here is computable TODAY, retroactively, from bin_uop_audit —
+// Everything here is computable TODAY, retroactively, from bin_uop_ledger —
 // which records before_uop and after_uop on every delta (~4k rows/day, 234k
 // on disk). No new table, no migration, no new write path.
 
@@ -122,7 +122,7 @@ func CarrierBindings(db *sql.DB, boundaryOps []string) ([]CarrierBinding, error)
 SELECT b.id, COALESCE(b.label,''), COALESCE(b.payload_code,''), COALESCE(n.name,''),
        b.uop_remaining,
        p.uop_capacity,
-       (SELECT MAX(a.applied_at) FROM bin_uop_audit a
+       (SELECT MAX(a.applied_at) FROM bin_uop_ledger a
          WHERE a.bin_id = b.id AND a.op IN (` + strings.Join(ph, ",") + `)) AS bound_at,
        b.last_counted_at,
        b.anomaly_at
@@ -173,7 +173,7 @@ ORDER BY b.id`
 
 // NegativeExcursions finds every crossing of zero since `since`, newest first.
 //
-// A crossing is a bin_uop_audit row where before_uop >= 0 AND after_uop < 0.
+// A crossing is a bin_uop_ledger row where before_uop >= 0 AND after_uop < 0.
 // Continuations (already negative, going further negative) are not crossings —
 // they are the same excursion, and Deepest folds them in.
 //
@@ -201,7 +201,7 @@ WITH crossings AS (
     SELECT a.id, a.bin_id, a.applied_at, a.before_uop, a.after_uop,
            a.op, a.source, a.actor, COALESCE(a.metadata::text,'') AS metadata,
            a.payload_code
-    FROM bin_uop_audit a
+    FROM bin_uop_ledger a
     WHERE a.applied_at >= $1
       AND a.before_uop IS NOT NULL
       AND a.before_uop >= 0
@@ -212,16 +212,16 @@ SELECT c.bin_id,
        COALESCE(b.label,''), COALESCE(n.name,''),
        c.applied_at, c.before_uop, c.after_uop,
        -- Deepest: the floor reached before the bin next read >= 0.
-       COALESCE((SELECT MIN(d.after_uop) FROM bin_uop_audit d
+       COALESCE((SELECT MIN(d.after_uop) FROM bin_uop_ledger d
                  WHERE d.bin_id = c.bin_id AND d.applied_at >= c.applied_at
-                   AND d.applied_at < COALESCE((SELECT MIN(r.applied_at) FROM bin_uop_audit r
+                   AND d.applied_at < COALESCE((SELECT MIN(r.applied_at) FROM bin_uop_ledger r
                                                 WHERE r.bin_id = c.bin_id
                                                   AND r.applied_at > c.applied_at
                                                   AND r.after_uop >= 0), 'infinity')), c.after_uop) AS deepest,
-       (SELECT MIN(r.applied_at) FROM bin_uop_audit r
+       (SELECT MIN(r.applied_at) FROM bin_uop_ledger r
         WHERE r.bin_id = c.bin_id AND r.applied_at > c.applied_at AND r.after_uop >= 0) AS recovered_at,
        c.op, c.source, c.actor, c.metadata,
-       EXISTS (SELECT 1 FROM bin_uop_audit p
+       EXISTS (SELECT 1 FROM bin_uop_ledger p
                WHERE p.bin_id = c.bin_id
                  AND p.applied_at < c.applied_at
                  AND p.applied_at >= c.applied_at - $2::interval
@@ -263,15 +263,18 @@ LIMIT $3`
 // reads -443 for 74577-6SA0A.06 and has done since 09:14" — the difference
 // between a log line nobody joins and a supervisor-actionable sentence.
 //
-// Reads bins directly (the live truth) and dates the crossing from the audit
-// trail. A bin whose crossing predates the audit retention shows a nil
-// NegativeSince rather than being hidden.
+// Reads bins directly (the live truth) and dates the crossing from the
+// PERMANENT exceptions ledger (bin_uop_exception, v93) rather than the raw
+// audit stream — one of the two reads the retention DELETE would otherwise
+// destroy (the 90-day window is shorter than some real excursions have lasted).
+// A bin whose crossing predates the backfill shows a nil NegativeSince rather
+// than being hidden.
 func OpenNegativeBins(db *sql.DB) ([]OpenNegativeBin, error) {
 	const q = `
 SELECT b.id, COALESCE(b.label,''), COALESCE(b.payload_code,''), COALESCE(n.name,''),
        b.uop_remaining,
-       (SELECT MAX(a.applied_at) FROM bin_uop_audit a
-        WHERE a.bin_id = b.id AND a.before_uop >= 0 AND a.after_uop < 0) AS negative_since,
+       (SELECT MAX(e.occurred_at) FROM bin_uop_exception e
+        WHERE e.bin_id = b.id AND e.kind = 'negative_crossing') AS negative_since,
        b.last_counted_at
 FROM bins b
 LEFT JOIN nodes n ON n.id = b.node_id
@@ -341,7 +344,7 @@ func NegativePayloads(db *sql.DB) (map[string]int, error) {
 
 // GetRecordAccuracy computes inventory-record accuracy over the window.
 //
-// Corrections are read from bin_uop_audit rather than a bespoke table: a
+// Corrections are read from bin_uop_ledger rather than a bespoke table: a
 // recount lands as a delta like any other, and its op/source identify it.
 func GetRecordAccuracy(db *sql.DB, since time.Time, staleAfter time.Duration) (*RecordAccuracy, error) {
 	var r RecordAccuracy
@@ -362,7 +365,7 @@ func GetRecordAccuracy(db *sql.DB, since time.Time, staleAfter time.Duration) (*
 		SELECT COUNT(*),
 		       COALESCE(AVG(ABS(after_uop - before_uop)), 0)::float8,
 		       COALESCE(MAX(ABS(after_uop - before_uop)), 0)
-		FROM bin_uop_audit
+		FROM bin_uop_ledger
 		WHERE applied_at >= $1
 		  AND before_uop IS NOT NULL
 		  AND (op LIKE '%correction%' OR op LIKE '%count%' OR op LIKE '%recount%')`,

@@ -14,7 +14,6 @@ import (
 	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
-	"shingocore/store/reservations"
 )
 
 // BinService centralizes bin validation and mutation. Handlers call BinService
@@ -29,6 +28,11 @@ import (
 type BinService struct {
 	db       *store.DB
 	manifest *BinManifestService
+	// burials is the burial shadow instrument's since-boot tally
+	// (burial_shadow.go). It rides on BinService because ApplyArrival is the
+	// order-driven arrival funnel and therefore the seam; it observes and never
+	// gates.
+	burials burialShadow
 }
 
 func NewBinService(db *store.DB, manifest *BinManifestService) *BinService {
@@ -241,7 +245,7 @@ func (s *BinService) Unlock(binID int64) error {
 // UOP capacity; non-nil is the operator's declared count — explicit zero
 // included ("labeled but empty"). Item 19: routes through
 // BinManifestService.SetFromTemplate so the operator load-payload action
-// audits via bin_uop_audit.
+// audits via bin_uop_ledger.
 //
 // Compat semantics mirror PayloadBinTypeAdvisoryClause used by FindSourceFIFO
 // / FindEmptyCompatible: payload_bin_types is treated as an allow-list when
@@ -325,10 +329,32 @@ func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 	// after relocating to storage. Mirror the arrival behavior: clear staging
 	// in the same tx when a staged bin lands on a storage slot.
 	clearStaging := b.Status == domain.BinStatusStaged && s.destIsStorageSlot(destNode)
-	if err := s.db.MoveBinClearingStaging(b.ID, toNodeID, clearStaging); err != nil {
+	// A BIN COMING OFF _TRANSIT OR A DECK IS NO LONGER LOST, so the anomaly
+	// goes with it. `anomaly_at` and `anomaly_note` say "nobody knows where
+	// this bin is", and the note names a robot's coordinates; both are false
+	// the moment an operator puts the bin at a real node. RecoverToNode clears
+	// the stamp and this path never did, which is why bin 5 sat at its correct
+	// home on 2026-08-24 still carrying a 2026-05-12 stamp and a park-point
+	// note.
+	//
+	// SCOPED TO THAT SOURCE. An ordinary node-to-node move says nothing about
+	// an anomaly and must not clear one — a count-refusal stamp on a bin being
+	// shuffled between slots is still live.
+	move := s.db.MoveBinClearingStaging
+	if wasUnlocated(b.NodeName) && !destNode.IsSynthetic {
+		move = s.db.MoveBinOffTransit
+	}
+	if err := move(b.ID, toNodeID, clearStaging); err != nil {
 		return nil, err
 	}
 	return &MoveResult{DestNode: destNode}, nil
+}
+
+// wasUnlocated reports whether a bin's source node is one of the two that mean
+// "not on the floor": `_TRANSIT` (picked up, location unknown) and a per-robot
+// carrier node (riding a deck).
+func wasUnlocated(nodeName string) bool {
+	return nodeName == domain.TransitNodeName || strings.HasPrefix(nodeName, bins.CarrierNodePrefix)
 }
 
 // destIsStorageSlot reports whether a node is a storage slot — a LANE/NGRP
@@ -367,7 +393,7 @@ type CountResult struct {
 // actual counts. Discrepancy notes are written by the caller so the note's
 // actor matches the audit actor convention already used by handlers.
 //
-// Item 19 of the bin-as-truth refactor: the count + bin_uop_audit
+// Item 19 of the bin-as-truth refactor: the count + bin_uop_ledger
 // insert run in one transaction with op=OpCycleCount, before/suggested
 // = the pre-count uop_remaining (system's expected), after =
 // actualUOP. Without this row the Item 10 audit timeline UI would be
@@ -637,6 +663,10 @@ func (s *BinService) GetManifest(binID int64) (*bins.Manifest, error) {
 // and updates its staging state inside a single transaction. Owns the
 // transaction directly; *store.DB is just the connection holder.
 //
+// This is the HANDOFF arrival: the order is done with the bin and gives it
+// up. For a set-down the order will come back for, use ApplyIntermediateStore
+// — same placement, claim retained.
+//
 // Phase 6.1 introduced this method as a thin delegate; Phase 6.4a
 // moved the orchestration body in from the (now-deleted) outer
 // store/completion.go::ApplyBinArrival.
@@ -644,73 +674,84 @@ func (s *BinService) GetManifest(binID int64) (*bins.Manifest, error) {
 // non-retired bin and that stale ghost was evicted to _TRANSIT (see below);
 // callers surface that as an operator alert. A normal arrival onto an empty
 // slot returns evicted=false and does no extra node lookup.
-func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time) (bool, error) {
+// placedByOrder is the order whose placement this is. The burial instrument uses
+// it, and only it, to tell a guarded placement from a dig leg's — see applyArrival
+// for why it cannot be inferred from the bin's claim.
+func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time, placedByOrder int64) (bool, error) {
+	return s.applyArrival(binID, toNodeID, staged, expiresAt, true, placedByOrder)
+}
+
+// ApplyIntermediateStore places a bin mid-plan and KEEPS the order's claim on
+// it. Identical to ApplyArrival in every other respect.
+//
+// A store is not a handoff. When a multi-leg plan sets its carrier down at a
+// staging slot and picks it up again later, the order stays responsible for
+// that bin the whole time — so the claim, and the bin reservation that lives
+// exactly as long as it, must survive the set-down.
+//
+// Splitting the two is what closes the fe252c57 regression. That commit made
+// intermediate stores actually record (they had been silently no-op'ing), and
+// because the only placement primitive available unclaimed unconditionally,
+// every stored bin came back unclaimed — which the delivery path's teleport
+// guard then refused, stranding the bin at _TRANSIT with a carrier inside it
+// while the cell it belonged to read empty. On the lane-stress rig that was 13
+// stranded bins against 1 before the change.
+//
+// The teleport guard is right to refuse an unclaimed bin: unclaimed means no
+// order vouches for where it is, and delivering it anyway is how the SMN_001
+// and SMN_002 teleports happened. The bug was never the guard. It was calling
+// a handoff primitive for something that is not a handoff.
+func (s *BinService) ApplyIntermediateStore(binID, toNodeID int64, staged bool, expiresAt *time.Time, placedByOrder int64) (bool, error) {
+	return s.applyArrival(binID, toNodeID, staged, expiresAt, false, placedByOrder)
+}
+
+// applyArrival is the shared placement body. releaseClaim distinguishes a
+// handoff (true) from a mid-plan set-down (false); everything else — ghost
+// eviction, the move, the destination slot's claim and reservation release,
+// staging state, the burial instrument — is identical, and deliberately so:
+// two copies of this would drift the way the arrival paths drifted before
+// EvictStaleGhostBinsTx pulled their ghost handling together.
+func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time, releaseClaim bool, placedByOrder int64) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Stale-ghost reconciliation, shared with ApplyMultiBinArrival via
-	// EvictStaleGhostsTx so the single-bin and multi-bin arrival paths cannot
-	// drift. A completed delivery is physical proof the slot was empty, so a
-	// different bin still recorded at this destination is a stale ghost — evicted
-	// to _TRANSIT (unclaimed + anomaly_at) so it surfaces in ListAnomalies and is
-	// recoverable via RecoverTransitAnomaly; the newcomer is never rejected.
-	// Synthetic nodes are exempt (handled inside the helper).
-	evictedGhosts, err := s.db.EvictStaleGhostsTx(tx, toNodeID, binID)
+	// ONE PLACEMENT, shared with store.ApplyMultiBinArrival and
+	// recovery.RepairConfirmedOrderCompletion. Everything that used to be spelled
+	// out here — the ghost eviction, the node_id write, the owner-scoped unclaim,
+	// the coupled bin reservation, the destination slot's claim and reservation,
+	// the staging state — is helpers.PlaceBinTx now, so the three writers cannot
+	// drift. Reached through the *store.DB delegate because service/ cannot import
+	// store/internal.
+	//
+	// releaseClaim is the ONE thing this file still decides, and it is the
+	// handoff-versus-set-down distinction the two exported methods above exist to
+	// express. See ApplyIntermediateStore for what conflating them cost.
+	evictedGhosts, err := s.db.PlaceBinTx(tx, store.BinPlacement{
+		BinID:                  binID,
+		ToNodeID:               toNodeID,
+		PlacedByOrder:          placedByOrder,
+		ReleaseClaim:           releaseClaim,
+		ReleaseDestinationSlot: true,
+		Staged:                 staged,
+		ExpiresAt:              expiresAt,
+	})
 	if err != nil {
 		return false, err
 	}
 	evicted := len(evictedGhosts) > 0
 
-	if _, err := tx.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2`, toNodeID, binID); err != nil {
-		return false, fmt.Errorf("move bin: %w", err)
-	}
-	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
-		return false, fmt.Errorf("unclaim bin: %w", err)
-	}
-	// A bin's reservation lives exactly as long as its claim: release it in the
-	// same tx that clears claimed_by, so the delivered bin frees for
-	// re-reservation now rather than lingering (blocked) until the owning order's
-	// terminal transition.
-	if err := reservations.ReleaseByBin(tx, binID); err != nil {
-		return false, fmt.Errorf("release reservation on arrival bin %d: %w", binID, err)
-	}
-	// Release the destination slot's dispatch-time claim (the store dual of the
-	// bin claim): the bin has arrived, so the dropoff claim is fulfilled. Atomic
-	// with the arrival; a no-op for LINE deliveries (never slot-claimed).
-	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, toNodeID); err != nil {
-		return false, fmt.Errorf("release destination slot claim node %d: %w", toNodeID, err)
-	}
-	// ...and its slot RESERVATION, in the SAME tx (the slot dual of the bin
-	// ReleaseByBin above): a slot's reservation lives exactly as long as its
-	// hard claim, so the slot frees for re-reservation at delivery. No-op for a
-	// LINE delivery (never slot-reserved).
-	if err := reservations.ReleaseByNode(tx, toNodeID); err != nil {
-		return false, fmt.Errorf("release slot reservation on arrival node %d: %w", toNodeID, err)
-	}
-	if staged {
-		// nullableTime: pass UTC time or nil, mirroring helpers.NullableTime
-		// from the (internal) store helpers package — inlined here because
-		// internal/ blocks cross-package imports.
-		var expiresVal any
-		if expiresAt != nil {
-			expiresVal = expiresAt.UTC()
-		}
-		if _, err := tx.Exec(`UPDATE bins SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW() WHERE id=$2`,
-			expiresVal, binID); err != nil {
-			return false, fmt.Errorf("stage bin: %w", err)
-		}
-	} else {
-		if _, err := tx.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
-			return false, fmt.Errorf("set available bin: %w", err)
-		}
-	}
-
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit arrival bin %d: %w", binID, err)
 	}
+
+	// The burial shadow instrument, AFTER the commit and with its result
+	// discarded — the placement is already durable, so there is nothing here
+	// that could refuse it. It observes; see burial_shadow.go for why arrival is
+	// the seam and why this returns nothing.
+	s.NoteBurialShadow(binID, toNodeID, placedByOrder)
 	return evicted, nil
 }
 
@@ -743,13 +784,32 @@ func (s *BinService) MoveToTransit(binID int64) error {
 	return nil
 }
 
-// MarkAnomaly stamps `bins.anomaly_at = NOW()` for the given bin. Called
-// by the failure-completion path when an order terminates while one of
-// its bins is still at `_TRANSIT`. Idempotent — repeated calls update
-// the timestamp; that's fine because the anomaly state is "still
-// unresolved" rather than "happened at exactly this moment."
+// MarkAnomaly stamps `bins.anomaly_at = NOW()` for the given bin. Idempotent —
+// repeated calls update the timestamp; that's fine because the anomaly state is
+// "still unresolved" rather than "happened at exactly this moment."
+//
+// ITS COMMENT USED TO SAY the failure-completion path called it, and no such
+// call existed. The BEHAVIOUR was real — TerminalizeOrderWithReason stamps
+// anomaly_at inline in SQL for a still-claimed _TRANSIT bin — so the comment
+// described a real effect through a call site that was not there, which reads
+// as live code and is worse than a stale note. Prefer MarkAnomalyWithPosition
+// below: an anomaly with no position is the "lost bin" an operator then has to
+// go and find.
 func (s *BinService) MarkAnomaly(binID int64) error {
 	if err := s.db.MarkBinAnomaly(binID); err != nil {
+		return fmt.Errorf("mark bin %d anomaly: %w", binID, err)
+	}
+	return nil
+}
+
+// MarkAnomalyWithPosition stamps the anomaly and records where the robot
+// carrying the bin last was, so the operator gets a map pin instead of a search.
+//
+// This is the stranded-transit inference's branch C. The note is free text for a
+// human — coordinates, station names, what the deck reported — and nothing
+// queries it.
+func (s *BinService) MarkAnomalyWithPosition(binID int64, note string) error {
+	if err := s.db.MarkBinAnomalyWithNote(binID, note); err != nil {
 		return fmt.Errorf("mark bin %d anomaly: %w", binID, err)
 	}
 	return nil
@@ -771,6 +831,15 @@ func (s *BinService) ClearAnomaly(binID int64) error {
 	return nil
 }
 
+// InferredActor is the actor the stranded-bin inference records on a placement
+// it made without a human walking out to confirm it.
+//
+// It lives HERE, not in engine, because this is where it is ENFORCED: it is the
+// one actor allowed to move a bin off a carrier node, on the grounds that the
+// jack watch has verified what an operator cannot — deck at rest, deck empty,
+// robot parked. engine spells its placements with this constant.
+const InferredActor = "system:inferred"
+
 // RecoverTransitAnomaly is the operator's "I found this bin and put it
 // at node X" action: moves the bin out of _TRANSIT to the chosen real
 // node and clears the anomaly flag. Validates that the destination is
@@ -778,13 +847,45 @@ func (s *BinService) ClearAnomaly(binID int64) error {
 //
 // actor identifies the operator for the recovery_actions audit row.
 //
+// evidence is what the caller knew when it decided, appended to that row's
+// detail. The operator's door passes "" because the operator IS the evidence;
+// the inference passes the point it resolved, when the deck read empty, and
+// where the cancelled order had been taking the bin — because "why did it go
+// there" is the question a misplaced bin raises and the audit row is where the
+// rest of this subsystem answers it.
+//
 // Sequencing matches sibling RecoveryService recovery actions: mutate
 // first, then record the recovery_actions row. If the audit write fails
 // the bin move is durable but the error is returned so the operator sees
 // the failure.
-func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) error {
+func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor, evidence string) error {
 	if actor == "" {
 		return fmt.Errorf("actor is required for recovery")
+	}
+	// THE SOURCE IS GUARDED TOO, not just the destination — but only against a
+	// HUMAN.
+	//
+	// A bin on a carrier node is riding a robot's deck: its location is known
+	// exactly, and the honest way for it to move is for the robot to set it
+	// down. "I found it, it's at X" about a bin on a moving robot would record
+	// the bin at a node the floor is then sent to fetch, and leave the real one
+	// to be placed a second time when the deck reports empty. The listing no
+	// longer offers these (ListAnomalousTransitBins), so a human reaching here
+	// means a stale page or a hand-made request.
+	//
+	// The jack watch is the EXCEPTION, and it is the whole reason this is keyed
+	// on the actor rather than on the source alone: sweepCarriedBins places a
+	// carried bin through this very method the moment the deck reports empty at
+	// a station it can name, and that is the sanctioned way off a carrier node.
+	// It has verified what the operator cannot — that the deck is at rest, empty,
+	// and the robot parked. A flat refusal broke that path and stranded every
+	// carried bin on its robot forever, which the docker suite caught.
+	if actor != InferredActor {
+		if src, err := s.db.GetBin(binID); err == nil && src != nil &&
+			strings.HasPrefix(src.NodeName, bins.CarrierNodePrefix) {
+			return fmt.Errorf("bin %d is on %s — it is riding a robot, not lost; "+
+				"it is placed automatically when the deck reports empty", binID, src.NodeName)
+		}
 	}
 	dest, err := s.db.GetNode(toNodeID)
 	if err != nil {
@@ -803,9 +904,12 @@ func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) 
 	if err := s.db.RecoverBinToNode(binID, toNodeID); err != nil {
 		return fmt.Errorf("move bin to recovery node: %w", err)
 	}
+	detail := fmt.Sprintf("recovered to node %s", dest.Name)
+	if evidence != "" {
+		detail += " — " + evidence
+	}
 	if err := s.db.RecordRecoveryAction(
-		"transit_anomaly_recover", "bin", binID,
-		fmt.Sprintf("recovered to node %s", dest.Name), actor); err != nil {
+		"transit_anomaly_recover", "bin", binID, detail, actor); err != nil {
 		return fmt.Errorf("record recovery action: %w", err)
 	}
 	return nil

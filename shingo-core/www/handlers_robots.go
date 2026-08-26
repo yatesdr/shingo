@@ -16,6 +16,9 @@ func (h *Handlers) handleRobots(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Page":   "robots",
 		"Robots": robots,
+		// The order each robot is on, so a tile names it. Keyed by vehicle id;
+		// the template looks its own robot up.
+		"OrderLines": robotOrderLines(h.engine.OrderService(), h.engine.AppConfig()),
 	}
 	h.render(w, r, "robots.html", data)
 }
@@ -120,6 +123,38 @@ func (h *Handlers) apiRobotMoveTo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// LANES ARE OFF-LIMITS TO THIS DOOR, and the refusal is STATIC — never, not
+	// not-right-now.
+	//
+	// Every other way a robot enters a lane goes through admission, which can
+	// answer "not yet" because there is an order to park and something to wake it
+	// when the lane clears. This command has neither: no order row, no queue, no
+	// releaser. An admission ask here could only refuse-and-forget, which asks an
+	// operator to guess when to retry, and an admission PASS would put an
+	// unrecorded robot in a corridor that the next order's occupancy read cannot
+	// see — the collision the unification exists to prevent, arriving through the
+	// one door that keeps no record.
+	//
+	// So the rule is geometry, not state: if the destination resolves into a lane,
+	// this door says no. It costs nothing to maintain — no hold, no cause, no
+	// event to wire — and it does not remove a capability, because the two things
+	// an operator actually wants a robot in a lane FOR are both still there. Move
+	// a bin: use a bin move, which is an order and goes through the gate. Drive a
+	// robot for maintenance: use the vendor's own console, which is outside Core,
+	// which is honestly where an ungoverned move belongs.
+	lane, err := h.engine.Dispatcher().LaneForNode(destNode.ID)
+	if err != nil {
+		h.jsonError(w, "could not tell whether "+destNode.Name+" is in a lane: "+err.Error(),
+			http.StatusInternalServerError)
+		return
+	}
+	if lane != nil {
+		h.jsonError(w, "manual robot moves cannot target lane slots ("+destNode.Name+" is in lane "+
+			lane.Name+"); use a bin move, or the fleet console for maintenance",
+			http.StatusBadRequest)
+		return
+	}
+
 	// NO OCCUPANCY GATE, AND THAT IS THE POINT OF THIS ENDPOINT.
 	//
 	// This used to call rejectIfOccupied and refuse the move with 409 and
@@ -171,19 +206,29 @@ func (h *Handlers) apiRobotMoveTo(w http.ResponseWriter, r *http.Request) {
 
 // ── The localization board ─────────────────────────────────────────────────
 
-// boardWindows are the windows the page may ask for.
+// boardWindows are the preset windows the page may ask for.
 //
 // AN ALLOW-LIST, NOT A FREE PARAMETER, and the reason is the one the whole
 // design keeps returning to: a window is only offerable if the record can
-// answer it. These four can, because the daily histograms sum — before that
-// column existed, 30 d could not be served at all against fourteen days of raw
-// and a control offering it would have returned a shorter answer than its own
-// label.
+// answer it. These two can, because the daily histograms sum.
+//
+// "24h" IS DELIBERATELY ABSENT, and its absence is a fix rather than a
+// limitation. The roll-up only ever closes COMPLETE days — today's rows are
+// written tomorrow — so a one-day window ending now asks for exactly the one
+// day that never exists yet, and returned data_days: 0 with a straight face
+// every single day. A "yesterday" preset would work but answers nobody's
+// actual question; the date-range params below are how a short span is asked
+// for now.
 var boardWindows = map[string]int{
-	"24h": 1,
 	"7d":  7,
 	"30d": 30,
 }
+
+// boardMaxSpanDays bounds a from/to range. The windowed read is a grouped
+// query over lanes x days — ~6,400 rows at Springfield's 212 lanes, ~31,800
+// at the 5x map — so a year is a real answer and an unbounded one is a
+// page load wearing a scan's clothes.
+const boardMaxSpanDays = 366
 
 // apiLocalizationBoard serves the robots page's map overlay.
 //
@@ -192,25 +237,95 @@ var boardWindows = map[string]int{
 // the .smap's curves unparsed, and it does not stop applying because the second
 // copy would be convenient.
 //
+// TWO WAYS TO NAME A WINDOW. ?window= is a preset (7d, 30d) ending today;
+// ?from=&to= names an explicit day range, INCLUSIVE on the wire — the
+// roll-up's exclusive day-grain boundary is this handler's business, not the
+// caller's. A range is the answer to "compare before and after the 13th",
+// which a trailing preset cannot ask. Giving both is a 400 rather than a
+// precedence rule: which one the server picked would be invisible to the
+// reader who sent both.
+//
 // ?robot= is the per-AMR filter. Absent or empty is the fleet view. A value that
 // is not a known vehicle is a 400 rather than a silent fall-through to fleet: a
 // page that asked for AMR-99 and got the whole fleet would show the user the
 // answer to a question they did not ask, exactly the window-label failure.
 func (h *Handlers) apiLocalizationBoard(w http.ResponseWriter, r *http.Request) {
-	label := r.URL.Query().Get("window")
-	if label == "" {
-		label = "7d"
-	}
-	days, ok := boardWindows[label]
-	if !ok {
-		// A window this cannot serve is a 400, never a silent fallback to one
-		// it can. Quietly answering a different question than the one asked is
-		// how a reader compares last week's numbers against this week's label.
-		h.jsonError(w, fmt.Sprintf("window: %q is not one of 24h, 7d, 30d", label),
+	q := r.URL.Query()
+	label := q.Get("window")
+	fromStr, toStr := q.Get("from"), q.Get("to")
+
+	var days int
+	var to time.Time
+	now := time.Now()
+	switch {
+	case label != "" && (fromStr != "" || toStr != ""):
+		h.jsonError(w, "window and from/to are mutually exclusive; send one or the other",
 			http.StatusBadRequest)
 		return
+	case label != "":
+		var ok bool
+		days, ok = boardWindows[label]
+		if !ok {
+			// A window this cannot serve is a 400, never a silent fallback to one
+			// it can. Quietly answering a different question than the one asked is
+			// how a reader compares last week's numbers against this week's label.
+			h.jsonError(w, fmt.Sprintf("window: %q is not one of 7d, 30d", label),
+				http.StatusBadRequest)
+			return
+		}
+		to = now
+	case fromStr != "" || toStr != "":
+		if fromStr == "" || toStr == "" {
+			// A half-range is not the default window wearing a date — it is a
+			// caller who thinks they asked for a range and would read whatever
+			// came back as their range's answer.
+			h.jsonError(w, "from and to must be sent together",
+				http.StatusBadRequest)
+			return
+		}
+		from, err := time.ParseInLocation("2006-01-02", fromStr, time.UTC)
+		if err != nil {
+			h.jsonError(w, fmt.Sprintf("from: %q is not a YYYY-MM-DD date", fromStr),
+				http.StatusBadRequest)
+			return
+		}
+		toIncl, err := time.ParseInLocation("2006-01-02", toStr, time.UTC)
+		if err != nil {
+			h.jsonError(w, fmt.Sprintf("to: %q is not a YYYY-MM-DD date", toStr),
+				http.StatusBadRequest)
+			return
+		}
+		if from.After(toIncl) {
+			h.jsonError(w, fmt.Sprintf("from %s is after to %s", fromStr, toStr),
+				http.StatusBadRequest)
+			return
+		}
+		// days and to in the board's own convention: to is the inclusive last
+		// day (LocalizationBoardAt applies the exclusive +1 itself), and days
+		// is the inclusive span — Aug 1 to Aug 13 is 13 days, not 12.
+		to = toIncl
+		days = int(toIncl.Sub(from).Hours()/24) + 1
+		if days > boardMaxSpanDays {
+			h.jsonError(w, fmt.Sprintf("range %s to %s is %d days; the maximum is %d",
+				fromStr, toStr, days, boardMaxSpanDays), http.StatusBadRequest)
+			return
+		}
+		if toIncl.After(now.UTC().Truncate(24 * time.Hour)) {
+			// A to in the future would silently serve a shorter answer than
+			// the label claims — the window-label failure again, from the
+			// other side. today is allowed: it is a legitimate inclusive end
+			// that simply has no rolled-up rows yet, and data_days says so.
+			h.jsonError(w, fmt.Sprintf("to %s is in the future", toStr),
+				http.StatusBadRequest)
+			return
+		}
+		label = fromStr + " → " + toStr
+	default:
+		label, days = "7d", boardWindows["7d"]
+		to = now
 	}
-	robot := r.URL.Query().Get("robot")
+
+	robot := q.Get("robot")
 	if robot != "" {
 		known := false
 		for _, rb := range h.engine.GetAllCachedRobots() {
@@ -225,7 +340,7 @@ func (h *Handlers) apiLocalizationBoard(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	board, err := h.engine.NodeService().LocalizationBoardAt(label, days, time.Now(), robot)
+	board, err := h.engine.NodeService().LocalizationBoardAt(label, days, to, robot)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

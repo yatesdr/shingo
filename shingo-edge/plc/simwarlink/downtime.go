@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingoedge/config"
 )
 

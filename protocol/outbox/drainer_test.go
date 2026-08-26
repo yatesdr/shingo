@@ -18,6 +18,13 @@ type mockStore struct {
 	exhausted []exhaustedRow
 	purged    bool
 	listErr   error
+	listCalls int // drain passes observed; a drain always lists first
+
+	// The cutoffs the last purge was called with. Delivered rows and dead
+	// letters have different retentions, and passing one value for both is
+	// exactly the bug this records.
+	purgeDelivered  time.Duration
+	purgeDeadLetter time.Duration
 }
 
 type exhaustedRow struct {
@@ -28,6 +35,7 @@ type exhaustedRow struct {
 func (m *mockStore) ListPendingOutbox(limit int) ([]Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.listCalls++
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -61,10 +69,11 @@ func (m *mockStore) MarkOutboxExhausted(id int64, reason string) error {
 	return nil
 }
 
-func (m *mockStore) PurgeOldOutbox(olderThan time.Duration) (int, error) {
+func (m *mockStore) PurgeOldOutbox(delivered, deadLetter time.Duration) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.purged = true
+	m.purgeDelivered, m.purgeDeadLetter = delivered, deadLetter
 	return 5, nil
 }
 

@@ -171,30 +171,6 @@ async function clearAllProduced() {
   } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
-async function viewLog(id) {
-  var tr = document.querySelector('tr[data-id="' + id + '"]');
-  var catId = tr ? tr.dataset.cat : '';
-  document.getElementById('log-cat-id').textContent = catId;
-  document.getElementById('log-body').innerHTML = '<p style="color:#888;">Loading...</p>';
-  showModal('log-modal');
-  try {
-    var res = await fetch('/api/demands/' + id + '/log');
-    if (!res.ok) { document.getElementById('log-body').innerHTML = '<p style="color:red;">Error loading log (HTTP ' + res.status + ')</p>'; return; }
-    var entries = await res.json();
-    if (!entries || entries.length === 0) {
-      document.getElementById('log-body').innerHTML = '<p style="color:#888;">No production reports yet.</p>';
-      return;
-    }
-    var html = '<table class="table"><thead><tr><th>Station</th><th>Quantity</th><th>Reported At</th></tr></thead><tbody>';
-    for (var i = 0; i < entries.length; i++) {
-      var e = entries[i];
-      html += '<tr><td>' + escapeHtml(e.station_id) + '</td><td>' + e.quantity + '</td><td>' + escapeHtml(e.reported_at) + '</td></tr>';
-    }
-    html += '</tbody></table>';
-    document.getElementById('log-body').innerHTML = html;
-  } catch(e) { document.getElementById('log-body').innerHTML = '<p style="color:red;">Error: ' + escapeHtml(String(e)) + '</p>'; }
-}
-
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions
 // on document.body. Multiple event types share the same handler
@@ -216,6 +192,5 @@ delegateActions(document.body, {
     showAddRow,
     startEdit,
     stopEdit,
-    stopEditProduced,
-    viewLog
+    stopEditProduced
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

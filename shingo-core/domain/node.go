@@ -17,7 +17,7 @@ const TransitNodeName = "_TRANSIT"
 // tree depth from the nearest root and is maintained by the store
 // layer.
 //
-// The three Joined fields (NodeTypeCode, NodeTypeName, ParentName)
+// The two Joined fields (NodeTypeCode, ParentName)
 // are populated by every SELECT in store/nodes via LEFT JOINs on
 // node_types and a self-join on nodes. They live here because every
 // rendering path uses at least one of them and materialising them into
@@ -41,6 +41,5 @@ type Node struct {
 	ClaimedBy *int64 `json:"claimed_by,omitempty"`
 	// Joined fields
 	NodeTypeCode string `json:"node_type_code,omitempty"`
-	NodeTypeName string `json:"node_type_name,omitempty"`
 	ParentName   string `json:"parent_name,omitempty"`
 }

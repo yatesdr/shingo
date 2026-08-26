@@ -18,6 +18,7 @@
       <a href="/orders?status=pending" class="ofilter{{if eq .FilterStatus "pending"}} is-active{{end}}"><span class="ofilter-dot" data-status="pending"></span>Pending</a>
       <a href="/orders?status=dispatched" class="ofilter{{if eq .FilterStatus "dispatched"}} is-active{{end}}"><span class="ofilter-dot" data-status="dispatched"></span>Dispatched</a>
       <a href="/orders?status=in_transit" class="ofilter{{if eq .FilterStatus "in_transit"}} is-active{{end}}"><span class="ofilter-dot" data-status="in_transit"></span>In Transit</a>
+      <a href="/orders?status=faulted" class="ofilter{{if eq .FilterStatus "faulted"}} is-active{{end}}"><span class="ofilter-dot" data-status="faulted"></span>Faulted</a>
       <a href="/orders?status=delivered" class="ofilter{{if eq .FilterStatus "delivered"}} is-active{{end}}"><span class="ofilter-dot" data-status="delivered"></span>Delivered</a>
       <a href="/orders?status=confirmed" class="ofilter{{if eq .FilterStatus "confirmed"}} is-active{{end}}"><span class="ofilter-dot" data-status="confirmed"></span>Confirmed</a>
       <a href="/orders?status=failed" class="ofilter{{if eq .FilterStatus "failed"}} is-active{{end}}"><span class="ofilter-dot" data-status="failed"></span>Failed</a>
@@ -32,13 +33,19 @@
   </div>
 
   {{$labels := .QueueCodeLabels}}
-  {{if .QueueCodeCounts}}
+  {{if or .QueueCodeCounts .FaultedNoticeCount}}
   <div class="queue-why">
-    <span class="text-muted-xs">Why queued:</span>
+    {{if .QueueCodeCounts}}<span class="text-muted-xs">Why queued:</span>{{end}}
     {{range $code, $count := .QueueCodeCounts}}
       {{if and $code (gt $count 0)}}
       <span class="chip chip-muted">{{$label := index $labels $code}}{{if $label}}{{$label}}{{else}}{{$code}}{{end}}: <span class="tnum">{{$count}}</span></span>
       {{end}}
+    {{end}}
+    {{/* Only faults past the notice threshold get a chip. A 20s replan is not
+         something to walk toward, and a chip that fires on every fault stops
+         being read. */}}
+    {{if .FaultedNoticeCount}}
+    <span class="chip chip-warn">faulted: <span class="tnum">{{.FaultedNoticeCount}}</span></span>
     {{end}}
   </div>
   {{end}}
@@ -59,44 +66,8 @@
           {{if $.Authenticated}}<th>Actions</th>{{end}}
         </tr>
       </thead>
-      <tbody>
-        {{range .Orders}}
-        <tr data-action="openOrderModal:{{.ID}}">
-          {{/* The whole row does ONE thing: open the order. It stays an
-              <a> so the link is copyable and ctrl/middle-click opens it in
-              a new tab, where ?open= reopens the same modal; a plain click
-              is intercepted (see openOrderModal). */}}
-          <td class="tnum" data-sort-value="{{.ID}}"><a href="/orders?open={{.ID}}" data-action="openOrderModal:{{.ID}}">{{.ID}}</a></td>
-          <td class="orders-uuid" title="{{.EdgeUUID}}">{{.EdgeUUID}}</td>
-          <td>{{stationName .StationID}}</td>
-          <td>{{.OrderType}}</td>
-          <td data-sort-value="{{.PayloadCode}}">
-            {{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{end}}
-            {{if .PayloadDesc}}<div class="orders-subtext">{{.PayloadDesc}}</div>{{end}}
-            {{if and (not .PayloadCode) (not .PayloadDesc)}}<span class="text-muted">-</span>{{end}}
-          </td>
-          <td data-sort-value="{{.Status}}">
-            <span class="badge badge-{{.Status}}">{{.Status}}</span>
-            {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}</div>{{end}}
-          </td>
-          <td class="orders-robot">{{.RobotID}}</td>
-          <td class="orders-time" data-sort-value="{{.CreatedAt}}">{{formatTime .CreatedAt}}</td>
-          {{if $.Authenticated}}
-          <td class="orders-actions">
-            {{/* canCancel is engine.TerminateOrder's own gate
-                (dispatch.IsPostDelivery || protocol.IsTerminal), so the
-                button can only render where the handler would accept it.
-                This replaced a hand-listed status denylist that had
-                drifted: it missed "skipped" (terminal — the button was
-                dead) and guarded "completed", which is not a protocol
-                status at all. */}}
-            {{if canCancel .Status}}
-            <button class="btn btn-danger btn-sm" data-action="cancelOrderFromRow:{{.ID}}">Cancel</button>
-            {{end}}
-          </td>
-          {{end}}
-        </tr>
-        {{end}}
+      <tbody id="orders-rows">
+{{template "orders-rows" .}}
       </tbody>
     </table>
     {{else}}

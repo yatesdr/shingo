@@ -8,6 +8,8 @@ import "testing"
 // change). This is the snapshot the "empty = today's single load block" contract
 // rests on.
 func TestStepsToBlocks_UnconfiguredByteIdentical(t *testing.T) {
+	t.Parallel()
+
 	plan := buildTransportPlan("SRC", "DST", false)
 	blocks := stepsToBlocks("v-1", plan, 0, nil)
 	if len(blocks) != 2 {
@@ -31,6 +33,8 @@ func TestStepsToBlocks_UnconfiguredByteIdentical(t *testing.T) {
 // leg is untouched. Matches the RDS team's working Postman order (four
 // same-location named blocks) embedded in a normal transport.
 func TestStepsToBlocks_ConfiguredExpandsLoadLeg(t *testing.T) {
+	t.Parallel()
+
 	plan := buildTransportPlan("A", "DST", false)
 	seq := []string{"Go_AP1", "Spin_90", "load", "Spin_inverse_90"}
 	blocks := stepsToBlocks("v-2", plan, 0, seq)
@@ -64,6 +68,8 @@ func TestStepsToBlocks_ConfiguredExpandsLoadLeg(t *testing.T) {
 // expansion (one named block), delivery intact — the degenerate case that must
 // not collapse back to JackLoad.
 func TestStepsToBlocks_ConfiguredSingleName(t *testing.T) {
+	t.Parallel()
+
 	plan := buildTransportPlan("A", "DST", false)
 	blocks := stepsToBlocks("v-3", plan, 0, []string{"load"})
 	if len(blocks) != 2 {

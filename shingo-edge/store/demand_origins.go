@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"shingo/protocol"
 )
 
 // demand_origins.go — Edge's OPEN demand episodes.
@@ -33,8 +35,14 @@ type OpenOrigin struct {
 	// Revision is monotonic per episode and is what Core's upsert compares.
 	Revision int64
 
-	Kind        string
-	Direction   string
+	Kind string
+	// Direction holds the cell's ROLE — produce or consume — and is typed so it
+	// cannot hold anything else. The column keeps the name `direction` for now;
+	// the values changed under migration 87 and renaming the column on both
+	// services is a cosmetic follow-on for the tree-cleanup branch, not a
+	// behaviour change to smuggle into this one. Empty for the kinds that have
+	// no cell behind them (threshold, changeover).
+	Direction   protocol.ClaimRole
 	TriggerKind string
 	TriggerRef  string
 	// ProcessID is the process NAME ("SNF2"), not this database's processes.id.

@@ -86,7 +86,6 @@ Without a filter (`--log-debug`), all subsystems are logged.
 | `reconciliation` | Drift detection and recovery signals |
 | `nodestate` | Node state cache operations |
 | `engine` | Engine lifecycle events |
-| `countgroup` | Advanced-zone polling, hysteresis transitions, fail-safe |
 
 ## Web Interface
 
@@ -114,7 +113,6 @@ See [UI Guide](docs/ui-guide.md) for detailed page descriptions.
 - Core tracks processed inbound envelope IDs in a durable inbox to suppress replayed mutating commands.
 - The diagnostics page includes reconciliation drift checks and recovery tooling for dead-lettered outbox messages.
 - The `/health` endpoint now reflects reconciliation severity in addition to dependency connectivity.
-- Count-group polling includes a fail-safe timeout that forces safety lights on during sustained RDS communication failure.
 - Fire alarm activate/clear commands are audit-logged with actor, timestamp, and auto-resume setting.
 
 ## Documentation

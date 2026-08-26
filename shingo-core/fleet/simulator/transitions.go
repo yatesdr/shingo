@@ -1,6 +1,10 @@
 package simulator
 
-import "shingocore/fleet"
+import (
+	"log"
+
+	"shingocore/fleet"
+)
 
 // StateTransition records a single vendor state change for a simulated order.
 type StateTransition struct {
@@ -43,6 +47,13 @@ func (s *SimulatorBackend) DriveState(vendorOrderID, newState string) (oldState,
 	if emitter != nil && resolver != nil && oldState != newState {
 		if orderID, err := resolver.ResolveVendorOrderID(vendorOrderID); err == nil {
 			emitter.EmitOrderStatusChanged(orderID, vendorOrderID, oldState, newState, "", "", nil)
+		} else {
+			// THE ONE DROP PATH THAT LEFT NO TRACE. A state change the fleet made
+			// and Core never heard about is indistinguishable, downstream, from a
+			// state change that never happened — and every wedge investigation on
+			// this rig starts by reading the log for what the fleet said.
+			log.Printf("simulator: dropped %s → %s for %s: no Core order resolves to it: %v",
+				oldState, newState, vendorOrderID, err)
 		}
 	}
 
@@ -78,6 +89,10 @@ func (s *SimulatorBackend) DriveStateWithRobot(vendorOrderID, newState, robotID 
 	if emitter != nil && resolver != nil && oldState != newState {
 		if orderID, err := resolver.ResolveVendorOrderID(vendorOrderID); err == nil {
 			emitter.EmitOrderStatusChanged(orderID, vendorOrderID, oldState, newState, robotID, "", nil)
+		} else {
+			// Same silent drop as DriveState's, same reason to say so.
+			log.Printf("simulator: dropped %s → %s for %s (robot %s): no Core order resolves to it: %v",
+				oldState, newState, vendorOrderID, robotID, err)
 		}
 	}
 

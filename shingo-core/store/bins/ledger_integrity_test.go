@@ -17,10 +17,10 @@ import (
 // negative is LOUDLY wrong, a clamp would be SILENTLY wrong. These pin the
 // reads that find the wrongness, not a guard that hides it.
 
-// seedAudit writes one bin_uop_audit row directly — the applier's shape.
+// seedAudit writes one bin_uop_ledger row directly — the applier's shape.
 func seedAudit(t *testing.T, db *store.DB, binID int64, before, after int, op, payload string, at time.Time) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO bin_uop_audit
+	_, err := db.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, applied_at)
 		VALUES ($1,$2,$3,$4,'test',$5,'test','{"reason":"consume_tick"}',$6)`,
 		binID, before, after, op, payload, at)

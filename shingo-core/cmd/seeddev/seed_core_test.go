@@ -20,6 +20,8 @@ import (
 // single-window, dedicated-positions, deep-lane ASRS). demo.yaml's own validity is
 // guarded separately by plantspec.TestShippedDemoPlantValid.
 func TestSeedCore_DemoPlant(t *testing.T) {
+	t.Parallel()
+
 	db := testdb.Open(t)
 
 	plant, err := plantspec.Load("testdata/seed-fixture.yaml")
@@ -153,7 +155,7 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 	}
 
 	// Dedicated-positions loader: PLK_DECK keyed on a SYNTHETIC id (must not be a node),
-	// two BRKT positions (same-payload-two-position), buffer_dest wired for step 7.
+	// two BRKT positions (same-payload-two-position), sourcing from the near-line group.
 	if n, _ := db.GetNodeByName("PLK_DECK"); n != nil {
 		t.Fatalf("PLK_DECK must NOT be a node (synthetic identity), got node id %d", n.ID)
 	}
@@ -164,8 +166,8 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 	if deck.Layout != "dedicated_positions" {
 		t.Fatalf("PLK_DECK layout: want dedicated_positions, got %q", deck.Layout)
 	}
-	if deck.BufferDest != "SYN_BUF_Deck" {
-		t.Fatalf("PLK_DECK buffer_dest: want SYN_BUF_Deck, got %q", deck.BufferDest)
+	if deck.InboundSource != "SYN_BUF_Deck" {
+		t.Fatalf("PLK_DECK inbound_source: want SYN_BUF_Deck, got %q", deck.InboundSource)
 	}
 	dh, err := db.ListLoaderHomes(deck.ID)
 	if err != nil {
@@ -216,8 +218,84 @@ func TestSeedCore_DemoPlant(t *testing.T) {
 		}
 	}
 
+	// ── The maintained group ──────────────────────────────────────────────
+	//
+	// FLAT: positions parented by the ZONE, no lane between. That is the only
+	// shape a maintained group can have — the save-time rules refuse one with
+	// lanes — and until the spec grew `positions` it could not be written down at
+	// all, which would have left phase 2's soak unable to stage what it soaks.
+	mgZone, err := db.GetNodeByName("SYN_PRESS_EMPTIES")
+	if err != nil || mgZone == nil {
+		t.Fatalf("zone SYN_PRESS_EMPTIES: %v", err)
+	}
+	pos, err := db.GetNodeByName("PEB_001")
+	if err != nil || pos == nil {
+		t.Fatalf("position PEB_001: %v", err)
+	}
+	if pos.ParentID == nil || *pos.ParentID != mgZone.ID {
+		t.Fatalf("PEB_001 parent = %v, want the zone itself (%d) — a position hangs off the group, not a lane",
+			pos.ParentID, mgZone.ID)
+	}
+
+	// The four scalars, written through the same property path the settings modal
+	// uses so a seeded group and a hand-configured one are the same rows.
+	for _, want := range []struct{ key, value string }{
+		{"maintain_enabled", "on"},
+		{"strict_sourcing", "on"},
+		{"maintenance_station", "devplant.line1"},
+		{"overflow_destination", "SYN_SM_Stamp"},
+		// Explicit, never inherited: an ancestor's allowed-bins list must not
+		// silently govern a group that has just been told to hold two types.
+		{"bin_type_mode", "all"},
+	} {
+		if got := db.GetNodeProperty(mgZone.ID, want.key); got != want.value {
+			t.Errorf("SYN_PRESS_EMPTIES %s = %q, want %q", want.key, got, want.value)
+		}
+	}
+
+	levels, err := db.ListMaintainLevels(mgZone.ID)
+	if err != nil {
+		t.Fatalf("ListMaintainLevels: %v", err)
+	}
+	if len(levels) != 2 {
+		t.Fatalf("maintained levels = %d, want the fixture's mixed level of 2 lines", len(levels))
+	}
+	byCode := map[string]int{}
+	for _, l := range levels {
+		byCode[l.BinTypeCode] = l.Want
+	}
+	if byCode["STANDARD"] != 2 || byCode["STANDARD-SM"] != 1 {
+		t.Errorf("maintained level = %v, want STANDARD:2 STANDARD-SM:1", byCode)
+	}
+
+	// SUPPORTS RESOLVE FROM PROCESS TO NODE at seed time — the spec says PRESS-1,
+	// the table holds the core node that process's claim names. Same resolution
+	// the settings modal does at save, and for the same reason: Core cannot read
+	// an Edge claim when it has to decide anything.
+	sup, err := db.ListMaintainSupports(mgZone.ID)
+	if err != nil {
+		t.Fatalf("ListMaintainSupports: %v", err)
+	}
+	if len(sup) != 1 || sup[0].ProcessNodeName != "PLN_001" {
+		t.Fatalf("maintained supports = %+v, want the one node PRESS-1's claim names (PLN_001)", sup)
+	}
+
 	// Idempotent: a second run must not error or duplicate.
 	if err := seedCore(db, plant, map[string]int64{}); err != nil {
 		t.Fatalf("seedCore re-run (idempotency): %v", err)
+	}
+	levels, err = db.ListMaintainLevels(mgZone.ID)
+	if err != nil {
+		t.Fatalf("ListMaintainLevels after re-seed: %v", err)
+	}
+	if len(levels) != 2 {
+		t.Errorf("maintained levels after re-seed = %d, want 2 (upsert, not insert)", len(levels))
+	}
+	sup, err = db.ListMaintainSupports(mgZone.ID)
+	if err != nil {
+		t.Fatalf("ListMaintainSupports after re-seed: %v", err)
+	}
+	if len(sup) != 1 {
+		t.Errorf("maintained supports after re-seed = %d, want 1 (replace, not append)", len(sup))
 	}
 }

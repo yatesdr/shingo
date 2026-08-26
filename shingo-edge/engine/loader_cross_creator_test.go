@@ -64,17 +64,25 @@ func TestCrossCreator_UnloaderBudget_OperatorAndAutomatic(t *testing.T) {
 	}
 }
 
-// retrieveCreatorSites lists every non-test call site of the two exported
-// retrieve-order constructors. Both wrap one unexported body, so counting a
-// single name undercounts: fireThresholdL1 and the unloader U1 reach it through
-// CreateRetrieveOrderWithOrigin, and neither appears in a census that greps only
-// CreateRetrieveOrder.
+// retrieveCreatorSites lists every non-test call site of the exported
+// retrieve-order constructor.
+//
+// THERE IS ONE NAME NOW, and there used to be two: CreateRetrieveOrder and
+// CreateRetrieveOrderWithOrigin, wrapping one unexported body. This census
+// carried both needles because counting either alone undercounted —
+// fireThresholdL1 and the unloader U1 went through the attributed name and were
+// invisible to a grep for the plain one.
+//
+// The unattributed twin is deleted (origin is a required argument now), so the
+// second needle became a duplicate of the first and every site was counted
+// TWICE — 18 against an expected 9, which is how this test reported the merge.
+// The count below is unchanged at 9: no creator was added or removed.
 func retrieveCreatorSites(t *testing.T) []string {
 	t.Helper()
 	// Package dir is the test's CWD, so these are stable regardless of where
 	// `go test` was invoked from.
 	dirs := []string{".", "../www", "../orders"}
-	needles := []string{".CreateRetrieveOrder(", ".CreateRetrieveOrderWithOrigin("}
+	needles := []string{".CreateRetrieveOrder("}
 	var sites []string
 	for _, d := range dirs {
 		entries, err := os.ReadDir(d)
@@ -114,7 +122,11 @@ func retrieveCreatorSites(t *testing.T) []string {
 // scope comment on withLoaderBudget in the same commit.
 func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	t.Parallel()
-	const want = 9
+	// 10 since the press-index partial-empty prime (operator_produce.go) was
+	// added. Censused: it targets a press paired position, not a loader window,
+	// so it does NOT belong behind withLoaderBudget — it has its own per-cell
+	// lock at its own grain. See that function's SCOPE comment.
+	const want = 10
 	sites := retrieveCreatorSites(t)
 	if len(sites) != want {
 		t.Errorf("retrieve-order creator sites = %d, expected %d.\nA creator was added or removed. Re-run the census and update this count WITH the seam's scope comment.\nSites:\n  %s",

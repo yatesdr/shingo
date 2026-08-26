@@ -1,0 +1,615 @@
+# plants/lane-stress.yaml — the purpose-built LANE-STRESS plant.
+#
+# WHAT THIS IS FOR, AND WHAT IT IS NOT. This is not a model of a plant. It is a rig aimed
+# at one seam: single-file lanes, the mouth gate, digs, and what happens when several
+# flows want the same corridor. Cell fidelity is borrowed wholesale from plants/demo.yaml
+# (same presses, welds, loaders, unloader, same swap modes, same PLC tick rates) precisely
+# so that none of it is the variable. Everything that differs from demo.yaml is STORAGE.
+#
+# The owner's seed ruling: not SPR, not HK — "fledgling systems, not good datapoints".
+# Purpose-built, many lanes, hammered.
+#
+# ── FROZEN, AND IT SHIPS WITH TWO KNOWN DEFECTS (§R.78) ────────────────────────────────
+#
+# This file is the baseline every A/B on this stream is measured against — the 113-order
+# figure exists on THIS seed and nowhere else — so it is not corrected, because correcting
+# it would delete the comparison it exists for.
+#
+# The census at birth reports two air bubbles in SYN_COMP every time it loads, by name:
+# LSC_012 behind LSC_009, and LSC_019 behind LSC_017. They are seeded, not drilled — no
+# bin was ever at either slot and no order ever named one (§R.77) — and they are most of
+# why this group runs at a 2.7% working margin. Passing on a config this hostile is the
+# stronger result, which is why the closing run stays here.
+#
+# lane-stress-packed.yaml is the corrected successor and is where new baselines are cut.
+baseline_frozen_at: "§R.78"
+#
+# ── WHAT IS DELIBERATE HERE ───────────────────────────────────────────────────────────
+#
+# 1. TWO MARKETS, SPLIT BY AREA, NOT BY EMPTY/FULL. SYN_STAMP carries the panel loop;
+#    SYN_COMP carries components, finished goods, and the unloader. Each is a MIXED-FILL
+#    market holding its own empties, partials and fulls, self-segregated by payload under
+#    LKND. That preserves the 2026-07-12 lesson (an empty/full split stranded partials)
+#    while still giving two node groups, which matters because shuffle slots are a
+#    GROUP-scoped resource: two digs in the same group compete, two digs in different
+#    groups do not. A rig with one group cannot show the difference.
+#
+#    Cross-group traffic is real rather than incidental: WELD-1 consumes PANEL-A out of
+#    SYN_STAMP and produces ASSY into SYN_COMP, so a weld cell straddles both markets and
+#    a jam in one is visible in the other.
+#
+# 2. DEPTHS 1 THROUGH 5. demo.yaml is uniformly depth-3, which makes every dig a
+#    one-or-two-blocker dig. Here: depth-5 lanes (up to FOUR blockers — the owner's 3.3
+#    scenario), depth-4, depth-3, depth-2, and depth-1. Depth-1 matters on its own: it is
+#    ordering-exempt, and the arm that admits it is one line away from parking every store
+#    in the plant.
+#
+# 3. MARKED AND UNMARKED LANES SIDE BY SIDE — 6 of 22 lanes carry a gate point. The mark's
+#    EXISTENCE is the enablement; there is no mode to set. So an unmarked lane is not
+#    "the feature turned off", it is the other disposition running concurrently in the
+#    same market, competing for the same slots.
+#
+#    THE A/B PAIRS ARE THE POINT, and they are matched on purpose:
+#      D1 (depth 5, MARKED)   vs  D3 (depth 5, unmarked)  — both seeded PANEL-A, full,
+#                                                            both with the oldest bin at
+#                                                            depth 5, so FIFO must dig
+#                                                            four blockers out of each.
+#      C1 (depth 4, MARKED)   vs  C2 (depth 4, unmarked)  — same shape one payload apart.
+#    Identical depth, identical fill, identical load: the throughput and wait-time
+#    difference between them is the gated-vs-ungated number, measured rather than argued.
+#
+# 4. SHUFFLE HEADROOM IS SIZED, NOT HOPED FOR. A four-blocker dig needs four places to put
+#    blockers, and shuffle slots come from the group. SYN_STAMP: 35 slots, 22 bins seeded,
+#    13 free. SYN_COMP: 33 slots, 19 bins, 14 free. Lanes D2/D4/S1-S3 and C4/C6/C7 start
+#    EMPTY and are expected to stay mostly empty under LKND (which packs deepest-first, so
+#    mouths empty last and whole lanes stay available). If a soak run reports
+#    no-shuffle-slot waits as anything other than rare, that is a finding about sizing, not
+#    a rig defect — record the rate.
+#
+#    SIZED FOR THE GATED CASE SPECIFICALLY, which the first run got wrong. A gated dig
+#    cannot park a blocker in a DIFFERENT gated lane, so LS_D2's five deep empty slots are
+#    invisible to digs out of LS_D1 and LS_M1 — the two digs this plant seeds. What those
+#    digs can actually reach is LS_D4 (5) plus the three depth-1 lanes (3): eight slots
+#    against the six two concurrent digs want. Count the UNGATED pool when sizing, not the
+#    free-slot total.
+#
+# ── HOW TO USE IT ─────────────────────────────────────────────────────────────────────
+#
+#   docker compose -f docker-compose.dev.yml run --build --rm \
+#     -e SEED_PLANT=plants/lane-stress.yaml seed
+#
+# Marks are seeded from the `gate_point` field on each lane, so the rig comes up gated
+# with no post-seed API calls. Clearing one at runtime is
+# POST /api/nodes/properties/set {node_id, key: lane_gate_point, value: ""}.
+#
+# Gate-point VALUES are RDS map point names, handed to the fleet as a block location
+# verbatim and never resolved against nodes. Under the simulator nothing resolves them
+# either, which is what lets this file name them freely. On a real plant they would have
+# to exist in the map.
+
+namespace: devplant
+line_id: line1
+
+bin_types: [STANDARD]
+
+payloads:
+  - {code: PANEL-A, uop_capacity: 30, bin_type: STANDARD, robot_group: HEAVY-1500}
+  - {code: PANEL-B, uop_capacity: 30, bin_type: STANDARD, robot_group: HEAVY-1500}
+  - {code: BRKT,    uop_capacity: 40, bin_type: STANDARD}
+  - {code: CLIP,    uop_capacity: 40, bin_type: STANDARD}
+  - {code: STUD,    uop_capacity: 40, bin_type: STANDARD}
+  - {code: ASSY,    uop_capacity: 20, bin_type: STANDARD, robot_group: HEAVY-1500}
+
+zones:
+  # ══ SYN_STAMP — the dig theatre. PANEL-A, PANEL-B, and their empties. ══════════════
+  # 11 lanes / 35 slots. Marks on D1, D2, M1.
+  - name: SYN_STAMP
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      # D1 — depth 5, MARKED. Seeded full PANEL-A, oldest at the bottom: the headline
+      # four-blocker dig, run through the gate.
+      - name: LS_D1
+        gate_point: LSD-D1-WAIT
+        slots: [{name: LSD_001, depth: 1}, {name: LSD_002, depth: 2}, {name: LSD_003, depth: 3}, {name: LSD_004, depth: 4}, {name: LSD_005, depth: 5}]
+      # D2 — depth 5, MARKED, starts EMPTY. Shuffle headroom that is also gated, so a
+      # blocker parked here has to pass the mouth like anything else. Without a gated
+      # empty lane the rig would only ever exercise the gate on the retrieve side.
+      - name: LS_D2
+        gate_point: LSD-D2-WAIT
+        slots: [{name: LSD_006, depth: 1}, {name: LSD_007, depth: 2}, {name: LSD_008, depth: 3}, {name: LSD_009, depth: 4}, {name: LSD_010, depth: 5}]
+      # D3 — depth 5, UNMARKED. D1's twin: same depth, same fill, same buried-oldest.
+      # The controlled arm of the gated-vs-ungated comparison.
+      - name: LS_D3
+        slots: [{name: LSD_011, depth: 1}, {name: LSD_012, depth: 2}, {name: LSD_013, depth: 3}, {name: LSD_014, depth: 4}, {name: LSD_015, depth: 5}]
+      # D4 — depth 5, UNMARKED, starts EMPTY. D2's twin, same reasoning.
+      - name: LS_D4
+        slots: [{name: LSD_016, depth: 1}, {name: LSD_017, depth: 2}, {name: LSD_018, depth: 3}, {name: LSD_019, depth: 4}, {name: LSD_020, depth: 5}]
+      # M1 — depth 3, MARKED. PANEL-B, buried oldest at depth 3.
+      - name: LS_M1
+        gate_point: LSD-M1-WAIT
+        slots: [{name: LSD_021, depth: 1}, {name: LSD_022, depth: 2}, {name: LSD_023, depth: 3}]
+      # M2 — depth 3, UNMARKED. PANEL-B, full, no backdating: ordinary FIFO turnover.
+      - name: LS_M2
+        slots: [{name: LSD_024, depth: 1}, {name: LSD_025, depth: 2}, {name: LSD_026, depth: 3}]
+      # M3, M4 — depth 3, UNMARKED. The empty-carrier pool for the panel loop.
+      #
+      # M4 was added after the first rig run, and the reason is worth keeping: a
+      # gated dig may not park a blocker in a DIFFERENT gated lane (the splice cannot
+      # express two), so LS_D2's five slots — the obvious deep empty lane — are not
+      # available to digs out of LS_D1 or LS_M1. The effective ungated pool was five,
+      # and two concurrent digs want six. Everything waited, correctly and constantly,
+      # which measures the pool rather than the lanes.
+      - name: LS_M3
+        slots: [{name: LSD_027, depth: 1}, {name: LSD_028, depth: 2}, {name: LSD_029, depth: 3}]
+      - name: LS_M4
+        slots: [{name: LSD_033, depth: 1}, {name: LSD_034, depth: 2}, {name: LSD_035, depth: 3}]
+      # M5 — depth 3, UNMARKED. MORE empty-carrier pool, and it is a NEW LANE rather
+      # than three of the free slots that already existed, which is the whole point.
+      #
+      # THE POOL WAS EXACTLY AT ITS FLOOR AND THAT IS NOT A PASS. simcalc's per-pool
+      # floor for SYN_STAMP is 6 — four in flight (0.40 bins/min × 10m transit) plus
+      # one per produce station — and the file seeded exactly 6. Zero margin, on the
+      # zone that also carries three of the plant's four gated lanes and both deep
+      # digs, neither of which the transit figure models. The 2026-08-10 run drained
+      # it to ZERO empties while 15 sat in SYN_COMP, and three presses queued on
+      # "waiting for an empty bin" with the plant otherwise idle.
+      #
+      # WHY NOT JUST SEED THE FREE SLOTS: every free ungated slot in SYN_STAMP is
+      # shuffle headroom (LS_D4's five and S1..S3's three, eight against a deepest
+      # dig of four). Filling four of them to fix the carriers would leave four, and
+      # trade a carrier deadlock for the shuffle deadlock this rig exists to study —
+      # the trade the S1..S3 comment already learned once. Adding a lane pays for the
+      # carriers out of new space instead of out of the headroom.
+      - name: LS_M5
+        slots: [{name: LSD_036, depth: 1}, {name: LSD_037, depth: 2}, {name: LSD_038, depth: 3}]
+      # S1..S3 — depth 1, and now seeded EMPTY. Ordering-exempt by construction: there
+      # is nothing in front of anything. The file already called them the cheapest
+      # shuffle destinations in the group and then filled all three with empty
+      # carriers, which is the sort of thing a rig only notices once it runs.
+      - name: LS_S1
+        slots: [{name: LSD_030, depth: 1}]
+      - name: LS_S2
+        slots: [{name: LSD_031, depth: 1}]
+      - name: LS_S3
+        slots: [{name: LSD_032, depth: 1}]
+
+  # ══ SYN_COMP — components, finished goods, and their empties. ═════════════════════
+  # 11 lanes / 33 slots. Marks on C1, C5, C8 — one at each of three depths, so the gate
+  # is exercised against shallow lanes as well as deep ones.
+  - name: SYN_COMP
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      # C1 — depth 4, MARKED. BRKT, full, oldest at the bottom: a three-blocker dig
+      # through the gate.
+      - name: LS_C1
+        gate_point: LSC-C1-WAIT
+        slots: [{name: LSC_001, depth: 1}, {name: LSC_002, depth: 2}, {name: LSC_003, depth: 3}, {name: LSC_004, depth: 4}]
+      # C2 — depth 4, UNMARKED. C1's twin, one payload apart.
+      - name: LS_C2
+        slots: [{name: LSC_005, depth: 1}, {name: LSC_006, depth: 2}, {name: LSC_007, depth: 3}, {name: LSC_008, depth: 4}]
+      # C3 — depth 4, UNMARKED. STUD, three deep in a four-deep lane, so the mouth is
+      # open: a store into a partially-filled lane, which is the common case and the one
+      # that competes with a retrieve for the same corridor.
+      - name: LS_C3
+        slots: [{name: LSC_009, depth: 1}, {name: LSC_010, depth: 2}, {name: LSC_011, depth: 3}, {name: LSC_012, depth: 4}]
+      # C4 — depth 4, UNMARKED, EMPTY. Shuffle headroom.
+      - name: LS_C4
+        slots: [{name: LSC_013, depth: 1}, {name: LSC_014, depth: 2}, {name: LSC_015, depth: 3}, {name: LSC_016, depth: 4}]
+      # C5 — depth 3, MARKED. Finished goods; the unloader drains it, so this is the
+      # gate on an EGRESS lane rather than a supermarket lane.
+      - name: LS_C5
+        gate_point: LSC-C5-WAIT
+        slots: [{name: LSC_017, depth: 1}, {name: LSC_018, depth: 2}, {name: LSC_019, depth: 3}]
+      - name: LS_C6
+        slots: [{name: LSC_020, depth: 1}, {name: LSC_021, depth: 2}, {name: LSC_022, depth: 3}]
+      - name: LS_C7
+        slots: [{name: LSC_023, depth: 1}, {name: LSC_024, depth: 2}, {name: LSC_025, depth: 3}]
+      # C8 — depth 2, MARKED. The shallowest gated lane: one blocker maximum, so the
+      # gate's overhead is at its least justified here. If marks cost throughput anywhere,
+      # this is where the soak should see it.
+      - name: LS_C8
+        gate_point: LSC-C8-WAIT
+        slots: [{name: LSC_026, depth: 1}, {name: LSC_027, depth: 2}]
+      - name: LS_C9
+        slots: [{name: LSC_028, depth: 1}, {name: LSC_029, depth: 2}]
+      - name: LS_C10
+        slots: [{name: LSC_030, depth: 1}, {name: LSC_031, depth: 2}]
+      - name: LS_C11
+        slots: [{name: LSC_032, depth: 1}, {name: LSC_033, depth: 2}]
+      # C12 — depth 4, UNMARKED. The component loop's carrier pool, same reasoning as
+      # LS_M5 and a bigger number: SYN_COMP spends 1.00 bins/min against SYN_STAMP's
+      # 0.40 and feeds six produce stations, so its floor is 16 and the file seeded
+      # 12. It was SHORT BY 4 from the first run and nothing said so, because the
+      # only check was plant-wide and 24 seeded against a 22 plant-wide floor reads
+      # as comfortable.
+      #
+      # A new lane again rather than LS_C4 / LS_C11, which are SYN_COMP's shuffle
+      # headroom for the same reason LS_D4 and S1..S3 are SYN_STAMP's.
+      - name: LS_C12
+        slots: [{name: LSC_034, depth: 1}, {name: LSC_035, depth: 2}, {name: LSC_036, depth: 3}, {name: LSC_037, depth: 4}]
+
+stations:
+  # ── PRESS-1: two_robot_press_index (front + paired back, no staging) ──
+  - {name: PLN_001, kind: press}     # PRESS-1 front (produce PANEL-A)
+  - {name: PLN_002, kind: press}     # PRESS-1 back / paired index position (no own claim)
+  # ── PRESS-2: A/B sequential (two bins rotate, no staging) ──
+  - {name: PLN_003, kind: press}     # PRESS-2 A (active)  produce PANEL-B
+  - {name: PLN_004, kind: press}     # PRESS-2 B (parked)  produce PANEL-B
+  # ── WELD-1: two_robot (inbound + outbound staging) ──
+  - {name: ALN_001, kind: weld}      # WELD-1 consume PANEL-A
+  - {name: ALN_002, kind: weld}      # WELD-1 produce ASSY
+  - {name: SLN_001, kind: staging}   # WELD-1 ALN_001 inbound stage
+  - {name: SLN_002, kind: staging}   # WELD-1 ALN_002 inbound stage
+  - {name: SLN_011, kind: staging}   # WELD-1 ALN_001 OUTBOUND stage (two_robot removal leg)
+  # ── WELD-2: single_robot (consume PANEL-B + BRKT, produce ASSY) ──
+  - {name: ALN_003, kind: weld}      # WELD-2 consume PANEL-B
+  - {name: ALN_004, kind: weld}      # WELD-2 consume BRKT
+  - {name: ALN_005, kind: weld}      # WELD-2 produce ASSY
+  - {name: SLN_003, kind: staging}   # WELD-2 ALN_003 inbound
+  - {name: SLN_004, kind: staging}   # WELD-2 ALN_003 outbound
+  - {name: SLN_005, kind: staging}   # WELD-2 ALN_004 inbound
+  - {name: SLN_006, kind: staging}   # WELD-2 ALN_004 outbound
+  - {name: SLN_007, kind: staging}   # WELD-2 ALN_005 inbound
+  - {name: SLN_008, kind: staging}   # WELD-2 ALN_005 outbound
+  # ── WELD-3: two_robot consume CLIP (single-window loader leg's drain) ──
+  - {name: ALN_006, kind: weld}      # WELD-3 consume CLIP
+  - {name: SLN_009, kind: staging}   # WELD-3 ALN_006 inbound stage
+  - {name: SLN_012, kind: staging}   # WELD-3 ALN_006 OUTBOUND stage (two_robot removal leg)
+  # ── WELD-4: two_robot consume STUD (second single-window loader leg's drain) ──
+  - {name: ALN_007, kind: weld}      # WELD-4 consume STUD
+  - {name: SLN_010, kind: staging}   # WELD-4 ALN_007 inbound stage
+  - {name: SLN_013, kind: staging}   # WELD-4 ALN_007 OUTBOUND stage (two_robot removal leg)
+  # ── Loaders (manual_swap): one multi-window + two single-window ──
+  # PLK_LOADER is a SHARED MULTI-WINDOW BRKT loader (synthetic identity — not a node; its
+  # two windows below are its only physical nodes, each a delivery target + its own HMI).
+  - {name: PLK_W1, kind: loader}     # PLK_LOADER window 1
+  - {name: PLK_W2, kind: loader}     # PLK_LOADER window 2
+  # PLK_X1 / PLK_X2 = SINGLE-WINDOW loaders (each its own real-node anchor, the classic
+  # single-node shape). CLIP and STUD each flow through one.
+  - {name: PLK_X1, kind: loader}     # single-window CLIP loader
+  - {name: PLK_X2, kind: loader}     # single-window STUD loader
+  # ── Unloader ──
+  - {name: FGN_001, kind: unloader}  # drains ASSY finished goods
+
+# Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
+# (incl. A/B parked side + press-index back) seeded with EMPTY active carriers. Consume
+# nodes seeded ABOVE reorder so flow establishes before the first reorder. Empties pool in
+# SYN_MT_Return. Bin LABELS are a separate namespace from node names.
+
+# Bins. Two jobs: prime the cells exactly as demo.yaml does (so cell behaviour is not a
+# variable), and set up the digs the rig exists to run.
+#
+# THE FOUR SEEDED DIGS, and why each is backdated the way it is. Retrieve is FIFO, so the
+# OLDEST bin is the one demanded; putting it at the bottom of a full lane means the first
+# retrieve of that payload cannot happen without a dig. age_s backdates loaded_at at seed
+# time, which is the only way to make a bin globally-oldest from t0 — the seeder otherwise
+# stamps every bin the same second.
+#
+#   LS_D1 depth 5, MARKED   — PANEL-A, 4 blockers, oldest 7200s   } the gated/ungated
+#   LS_D3 depth 5, UNMARKED — PANEL-A, 4 blockers, oldest 5400s   } A/B pair, staggered
+#   LS_C1 depth 4, MARKED   — BRKT,    3 blockers, oldest 7200s   } so they do not both
+#   LS_C2 depth 4, UNMARKED — CLIP,    3 blockers, oldest 5400s   } fire on tick one
+#
+# The stagger is deliberate: firing all four digs simultaneously at t0 would exhaust the
+# shuffle pool in the first minute and the rig's first observation would be about seeding,
+# not about lanes. D1 and C1 go first; D3 and C2 follow once turnover has moved bins.
+bins:
+  # --- SYN_STAMP: LS_D1 full PANEL-A (the marked four-blocker dig) ---
+  - {name: BIN-PA-01, slot: LSD_001, payload: PANEL-A, uop: 30}
+  - {name: BIN-PA-02, slot: LSD_002, payload: PANEL-A, uop: 30}
+  - {name: BIN-PA-03, slot: LSD_003, payload: PANEL-A, uop: 30}
+  - {name: BIN-PA-04, slot: LSD_004, payload: PANEL-A, uop: 30}
+  - {name: BIN-PA-05, slot: LSD_005, payload: PANEL-A, uop: 30, age_s: 7200}   # OLDEST → dig 4
+  # --- SYN_STAMP: LS_D3 full PANEL-A (the unmarked twin) ---
+  - {name: BIN-PA-06, slot: LSD_011, payload: PANEL-A, uop: 30}
+  - {name: BIN-PA-07, slot: LSD_012, payload: PANEL-A, uop: 30}
+  - {name: BIN-PA-08, slot: LSD_013, payload: PANEL-A, uop: 30}
+  - {name: BIN-PA-09, slot: LSD_014, payload: PANEL-A, uop: 30}
+  - {name: BIN-PA-10, slot: LSD_015, payload: PANEL-A, uop: 30, age_s: 5400}   # 2nd-oldest → dig 4
+  # --- SYN_STAMP: LS_M1 full PANEL-B, buried oldest (marked, depth 3) ---
+  - {name: BIN-PB-01, slot: LSD_021, payload: PANEL-B, uop: 30}
+  - {name: BIN-PB-02, slot: LSD_022, payload: PANEL-B, uop: 30}
+  - {name: BIN-PB-03, slot: LSD_023, payload: PANEL-B, uop: 30, age_s: 3600}   # → dig 2
+  # --- SYN_STAMP: LS_M2 full PANEL-B, no backdating — ordinary mouth-first turnover ---
+  - {name: BIN-PB-04, slot: LSD_024, payload: PANEL-B, uop: 30}
+  - {name: BIN-PB-05, slot: LSD_025, payload: PANEL-B, uop: 30}
+  - {name: BIN-PB-06, slot: LSD_026, payload: PANEL-B, uop: 30}
+  # --- SYN_STAMP: empty carriers, all six in the two depth-3 pool lanes ---
+  - {name: BIN-MT-S1, slot: LSD_027}
+  - {name: BIN-MT-S2, slot: LSD_028}
+  - {name: BIN-MT-S3, slot: LSD_029}
+  - {name: BIN-MT-S4, slot: LSD_033}
+  - {name: BIN-MT-S5, slot: LSD_034}
+  - {name: BIN-MT-S6, slot: LSD_035}
+  # --- SYN_STAMP: the margin above the floor. See LS_M5 for why these are a new
+  # lane and not three of the free slots that were already there. ---
+  - {name: BIN-MT-S7, slot: LSD_036}
+  - {name: BIN-MT-S8, slot: LSD_037}
+  - {name: BIN-MT-S9, slot: LSD_038}
+  # --- SYN_COMP: LS_C1 full BRKT (the marked three-blocker dig) ---
+  - {name: BIN-BRKT-01, slot: LSC_001, payload: BRKT, uop: 40}
+  - {name: BIN-BRKT-02, slot: LSC_002, payload: BRKT, uop: 40}
+  - {name: BIN-BRKT-03, slot: LSC_003, payload: BRKT, uop: 40}
+  - {name: BIN-BRKT-04, slot: LSC_004, payload: BRKT, uop: 40, age_s: 7200}    # OLDEST → dig 3
+  # --- SYN_COMP: LS_C2 full CLIP (the unmarked twin) ---
+  - {name: BIN-CLIP-01, slot: LSC_005, payload: CLIP, uop: 40}
+  - {name: BIN-CLIP-02, slot: LSC_006, payload: CLIP, uop: 40}
+  - {name: BIN-CLIP-03, slot: LSC_007, payload: CLIP, uop: 40}
+  - {name: BIN-CLIP-04, slot: LSC_008, payload: CLIP, uop: 40, age_s: 5400}    # → dig 3
+  # --- SYN_COMP: LS_C3 STUD three deep in a four-deep lane (mouth stays open) ---
+  - {name: BIN-STUD-01, slot: LSC_009, payload: STUD, uop: 40}
+  - {name: BIN-STUD-02, slot: LSC_010, payload: STUD, uop: 40}
+  - {name: BIN-STUD-03, slot: LSC_011, payload: STUD, uop: 40}
+  # --- SYN_COMP: LS_C5 finished goods, shallow (the gated egress lane) ---
+  - {name: BIN-ASSY-01, slot: LSC_017, payload: ASSY, uop: 20}
+  - {name: BIN-ASSY-02, slot: LSC_018, payload: ASSY, uop: 20}
+  # --- SYN_COMP: extra empty carriers, C6 and C7 ---
+  # THE RIG DEADLOCKED ON CARRIERS AT ~75 MINUTES and this is the slack that
+  # breaks the circle. A cell that has spent its bin needs a swap; the swap needs
+  # an EMPTY bin to bring in; empties only reappear when a swap completes. With
+  # 12 carriers seeded across 7 cells and 4 loaders the run reached 6 empties
+  # against 5 spent-but-unswapped bins parked at cells, and every remaining order
+  # was waiting on one of them. Confirmed throughput was 126 and the open orders
+  # never moved again.
+  #
+  # C6 and C7 are the only lanes in either group with room that is not already
+  # spoken for: SYN_STAMP's 13 free slots are ALL deliberate shuffle headroom
+  # (LS_D2, LS_D4, and S1..S3, which this file already learned not to fill), and
+  # in SYN_COMP the same is true of LS_C4. LS_C11 is left free for the same
+  # reason — filling every ungated lane would trade a carrier deadlock for a
+  # shuffle deadlock, which is the failure this rig was built to study.
+  #
+  # This does not fix SYN_STAMP, which stays provisioned tight by design. The
+  # panel loop is still the first place to starve.
+  - {name: BIN-MT-C7,  slot: LSC_020}
+  - {name: BIN-MT-C8,  slot: LSC_021}
+  - {name: BIN-MT-C9,  slot: LSC_022}
+  - {name: BIN-MT-C10, slot: LSC_023}
+  - {name: BIN-MT-C11, slot: LSC_024}
+  - {name: BIN-MT-C12, slot: LSC_025}
+  # --- SYN_COMP: empty carriers in the depth-2 lanes ---
+  - {name: BIN-MT-C1, slot: LSC_026}
+  - {name: BIN-MT-C2, slot: LSC_027}
+  - {name: BIN-MT-C3, slot: LSC_028}
+  - {name: BIN-MT-C4, slot: LSC_029}
+  - {name: BIN-MT-C5, slot: LSC_030}
+  - {name: BIN-MT-C6, slot: LSC_031}
+  # --- SYN_COMP: the four the per-pool floor was short by, in LS_C12. ---
+  - {name: BIN-MT-C13, slot: LSC_034}
+  - {name: BIN-MT-C14, slot: LSC_035}
+  - {name: BIN-MT-C15, slot: LSC_036}
+  - {name: BIN-MT-C16, slot: LSC_037}
+  # --- Active produce bins (empty → fill → swap). Verbatim from demo.yaml. ---
+  - {name: BIN-ACT-P1F, slot: PLN_001}   # PRESS-1 front (filling)
+  - {name: BIN-ACT-P1B, slot: PLN_002}   # PRESS-1 back (staged empty, indexes to front)
+  - {name: BIN-ACT-P2A, slot: PLN_003}   # PRESS-2 A active (filling)
+  - {name: BIN-ACT-P2B, slot: PLN_004}   # PRESS-2 B parked (empty, ready)
+  - {name: BIN-ACT-W1,  slot: ALN_002}   # WELD-1 ASSY output (empty carrier)
+  - {name: BIN-ACT-W2,  slot: ALN_005}   # WELD-2 ASSY output (empty carrier)
+  # --- Active consume bins, seeded above reorder so flow establishes first. Verbatim. ---
+  - {name: BIN-ACT-W1-PA, slot: ALN_001, payload: PANEL-A, uop: 25}
+  - {name: BIN-ACT-W2-PB, slot: ALN_003, payload: PANEL-B, uop: 25}
+  - {name: BIN-ACT-W2-BR, slot: ALN_004, payload: BRKT,    uop: 40}
+  - {name: BIN-ACT-W3-CL, slot: ALN_006, payload: CLIP,    uop: 40}
+  - {name: BIN-ACT-W4-ST, slot: ALN_007, payload: STUD,    uop: 40}
+processes:
+  - {name: PRESS-1, active_style: PRESS-1-RUN}        # two_robot_press_index → PANEL-A
+  - {name: PRESS-2, active_style: PRESS-2-RUN}        # A/B sequential → PANEL-B
+  - {name: WELD-1,  active_style: WELD-1-RUN}         # two_robot: PANEL-A → ASSY
+  - {name: WELD-2,  active_style: WELD-2-RUN}         # single_robot: PANEL-B + BRKT → ASSY
+  - {name: WELD-3,  active_style: WELD-3-RUN}         # two_robot consume CLIP (single-window loader leg)
+  - {name: WELD-4,  active_style: WELD-4-RUN}         # two_robot consume STUD (second single-window loader leg)
+  - {name: LOADER-COMP, active_style: LOADER-COMP-RUN}   # manual_swap multi-window BRKT (no PLC; sim-operator-driven)
+  - {name: LOADER-CLIP, active_style: LOADER-CLIP-RUN}   # manual_swap single-window CLIP
+  - {name: LOADER-STUD, active_style: LOADER-STUD-RUN}   # manual_swap single-window STUD
+  - {name: UNLOADER-A, active_style: UNLOADER-A-RUN}  # drains ASSY (main circle)
+  # Loaders have no single station — their windows/positions are per-node operator stations
+  # (PLK_W1/2-OPS, PLK_X1-OPS, PLK_X2-OPS), declared via operator_station on the claims below.
+
+styles:
+  - {name: PRESS-1-RUN,    process: PRESS-1,    payload: PANEL-A}
+  - {name: PRESS-2-RUN,    process: PRESS-2,    payload: PANEL-B}
+  - {name: WELD-1-RUN,     process: WELD-1,     payload: ASSY}
+  - {name: WELD-2-RUN,     process: WELD-2,     payload: ASSY}
+  - {name: WELD-3-RUN,     process: WELD-3,     payload: CLIP}
+  - {name: WELD-4-RUN,     process: WELD-4,     payload: STUD}
+  - {name: LOADER-COMP-RUN, process: LOADER-COMP, payload: BRKT}
+  - {name: LOADER-CLIP-RUN, process: LOADER-CLIP, payload: CLIP}
+  - {name: LOADER-STUD-RUN, process: LOADER-STUD, payload: STUD}
+  - {name: UNLOADER-A-RUN, process: UNLOADER-A, payload: ASSY}
+
+operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, WELD-4-OPS, PLK_W1-OPS, PLK_W2-OPS, PLK_X1-OPS, PLK_X2-OPS, UNLOADER-A-OPS]
+
+claims:
+  # ── PRESS-1 (two_robot_press_index): one claim on the front node, paired back ──
+  - core_node: PLN_001
+    style: PRESS-1-RUN
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-A
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_002
+    inbound_source: SYN_STAMP
+    outbound_destination: SYN_STAMP
+
+  # ── PRESS-2 (A/B sequential): two paired claims, A active / B parked ──
+  - core_node: PLN_003
+    style: PRESS-2-RUN
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-B
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_004
+    inbound_source: SYN_STAMP
+    outbound_destination: SYN_STAMP
+  - core_node: PLN_004
+    style: PRESS-2-RUN
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-B
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_003
+    active_pull: false
+    inbound_source: SYN_STAMP
+    outbound_destination: SYN_STAMP
+
+  # ── WELD-1 (two_robot): consume PANEL-A + produce ASSY ──
+  - core_node: ALN_001
+    style: WELD-1-RUN
+    role: consume
+    swap_mode: two_robot
+    payload: PANEL-A
+    uop_capacity: 30
+    reorder_point: 15
+    auto_reorder: true
+    inbound_source: SYN_STAMP
+    outbound_destination: SYN_STAMP
+    inbound_staging: SLN_001
+    outbound_staging: SLN_011
+  - core_node: ALN_002
+    style: WELD-1-RUN
+    role: produce
+    swap_mode: two_robot
+    payload: ASSY
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SYN_COMP
+    outbound_destination: SYN_COMP
+    inbound_staging: SLN_002
+
+  # ── WELD-2 (single_robot): consume PANEL-B + BRKT, produce ASSY ──
+  - core_node: ALN_003
+    style: WELD-2-RUN
+    role: consume
+    swap_mode: single_robot
+    payload: PANEL-B
+    uop_capacity: 30
+    reorder_point: 15
+    auto_reorder: true
+    inbound_source: SYN_STAMP
+    outbound_destination: SYN_STAMP
+    inbound_staging: SLN_003
+    outbound_staging: SLN_004
+  - core_node: ALN_004
+    style: WELD-2-RUN
+    role: consume
+    swap_mode: single_robot
+    payload: BRKT
+    uop_capacity: 40
+    reorder_point: 25
+    auto_reorder: true
+    inbound_source: SYN_COMP
+    outbound_destination: SYN_COMP
+    inbound_staging: SLN_005
+    outbound_staging: SLN_006
+  - core_node: ALN_005
+    style: WELD-2-RUN
+    role: produce
+    swap_mode: single_robot
+    payload: ASSY
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SYN_COMP
+    outbound_destination: SYN_COMP
+    inbound_staging: SLN_007
+    outbound_staging: SLN_008
+
+  # ── WELD-3 (two_robot): consume CLIP from the shared Comp market ──
+  - core_node: ALN_006
+    style: WELD-3-RUN
+    role: consume
+    swap_mode: two_robot
+    payload: CLIP
+    uop_capacity: 40
+    reorder_point: 25
+    auto_reorder: true
+    inbound_source: SYN_COMP
+    outbound_destination: SYN_COMP
+    inbound_staging: SLN_009
+    outbound_staging: SLN_012
+
+  # ── WELD-4 (two_robot): consume STUD from the shared Comp market ──
+  - core_node: ALN_007
+    style: WELD-4-RUN
+    role: consume
+    swap_mode: two_robot
+    payload: STUD
+    uop_capacity: 40
+    reorder_point: 25
+    auto_reorder: true
+    inbound_source: SYN_COMP
+    outbound_destination: SYN_COMP
+    inbound_staging: SLN_010
+    outbound_staging: SLN_013
+
+  # ── PLK_LOADER (manual_swap, MULTI-WINDOW): BRKT → SYN_SM_Comp ──
+  # No anchor claim — synthetic identity. Each window declares window_of: PLK_LOADER; the
+  # seed builds ONE shared_window loader keyed on PLK_LOADER with the windows as homes.
+  # Each window pins its OWN operator station (per-window-HMI).
+  - {core_node: PLK_W1, style: LOADER-COMP-RUN, role: produce, swap_mode: manual_swap, payload: BRKT, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_COMP, outbound_destination: SYN_COMP, window_of: PLK_LOADER, operator_station: PLK_W1-OPS}
+  - {core_node: PLK_W2, style: LOADER-COMP-RUN, role: produce, swap_mode: manual_swap, payload: BRKT, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_COMP, outbound_destination: SYN_COMP, window_of: PLK_LOADER, operator_station: PLK_W2-OPS}
+
+  # ── PLK_X1 (manual_swap, SINGLE-WINDOW): CLIP → SYN_SM_Comp ──
+  - {core_node: PLK_X1, style: LOADER-CLIP-RUN, role: produce, swap_mode: manual_swap, payload: CLIP, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_COMP, outbound_destination: SYN_COMP, operator_station: PLK_X1-OPS}
+
+  # ── PLK_X2 (manual_swap, SINGLE-WINDOW): STUD → SYN_SM_Comp ──
+  - {core_node: PLK_X2, style: LOADER-STUD-RUN, role: produce, swap_mode: manual_swap, payload: STUD, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_COMP, outbound_destination: SYN_COMP, operator_station: PLK_X2-OPS}
+
+  # ── UNLOADER-A (manual_swap: pull full ASSY, return empty) ──
+  - core_node: FGN_001
+    style: UNLOADER-A-RUN
+    role: consume
+    swap_mode: manual_swap
+    payload: ASSY
+    uop_capacity: 20
+    reorder_point: 0
+    auto_reorder: false
+    inbound_source: SYN_COMP
+    outbound_destination: SYN_COMP
+    auto_push: true
+
+demands:
+  # Loader demands key on the loader identity (synthetic PLK_LOADER, or the single-window
+  # anchor node). The seed derives demand_registry from the loader aggregate; these
+  # thresholds stamp onto each loader's payload/home UOPThreshold. ~2 bins worth each.
+  #
+  # THRESHOLDS ARE COVER TIME, NOT A BIN COUNT, and 40 was one bin exactly.
+  # A component payload enters the plant ONLY through a loader round trip —
+  # Core raises a replenish, a robot carries an empty carrier to the window, the
+  # operator loads it, and it travels back out to the market and on to the line.
+  # That is several robot legs against a line draining 5 uop/min, so 40 UOP of
+  # cover is under 8 minutes and any contention or downtime inside that window
+  # starves the cell outright. 80 is two bins, ~16 minutes, which is slack rather
+  # than a promise.
+  - {payload: BRKT, node: PLK_LOADER, replenish_uop_threshold: 80}
+  - {payload: CLIP, node: PLK_X1, replenish_uop_threshold: 80}
+  - {payload: STUD, node: PLK_X2, replenish_uop_threshold: 80}
+  # Unloader is event/auto-push driven (informational threshold 0).
+  - {payload: ASSY, node: FGN_001, replenish_uop_threshold: 0}
+
+# Reporting points: one PLC counter per counting process (manual_swap excluded).
+# plc_name/tag_name MUST match sim.processes in shingoedge.dev.yaml. The tick fans
+# to all nodes of the active (process, style); for A/B it follows active_pull.
+reporting_points:
+  - {plc_name: PRESS-1, tag_name: PRESS-1_COUNTER, node: PLN_001, style: PRESS-1-RUN}
+  - {plc_name: PRESS-2, tag_name: PRESS-2_COUNTER, node: PLN_003, style: PRESS-2-RUN}
+  - {plc_name: WELD-1,  tag_name: WELD-1_COUNTER,  node: ALN_001, style: WELD-1-RUN}
+  - {plc_name: WELD-2,  tag_name: WELD-2_COUNTER,  node: ALN_003, style: WELD-2-RUN}
+  - {plc_name: WELD-3,  tag_name: WELD-3_COUNTER,  node: ALN_006, style: WELD-3-RUN}
+  - {plc_name: WELD-4,  tag_name: WELD-4_COUNTER,  node: ALN_007, style: WELD-4-RUN}
+
+cell_configs:
+  - {process: PRESS-1, station: PRESS-1-OPS}
+  - {process: PRESS-2, station: PRESS-2-OPS}
+  - {process: WELD-1,  station: WELD-1-OPS}
+  - {process: WELD-2,  station: WELD-2-OPS}
+  - {process: WELD-3,  station: WELD-3-OPS}
+  - {process: WELD-4,  station: WELD-4-OPS}
+  - {process: UNLOADER-A, station: UNLOADER-A-OPS}
+  # Loaders have no single cell station — their windows are per-node operator stations
+  # (PLK_W1/2-OPS, PLK_X1-OPS, PLK_X2-OPS), declared via operator_station above.

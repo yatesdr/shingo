@@ -126,6 +126,13 @@ func (db *DB) SetOrderQueueReason(uuid, reason, code string) error {
 	return orders.SetQueueReason(db.DB, uuid, reason, code)
 }
 
+// SetOrderFaultClock writes (or clears) the fault window on an order. Called
+// from the edge handler when Core pushes an OrderUpdate (or boot snapshot)
+// carrying fault_since / fault_deadline / fault_notice_after_s.
+func (db *DB) SetOrderFaultClock(uuid string, since, deadline *time.Time, noticeAfterS int, ref string) error {
+	return orders.SetFaultClock(db.DB, uuid, since, deadline, noticeAfterS, ref)
+}
+
 // LinkOrderSiblings writes a bidirectional sibling_order_id pointer
 // between two orders in a two-robot swap pair. Used so the supply
 // guard and release gate can identify the pair without depending on

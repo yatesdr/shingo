@@ -49,7 +49,7 @@ type Changeover struct {
 	// on the StartProcessChangeover response: participant nodes whose
 	// core_node_name resolves to NO process_nodes row.
 	//
-	// These are almost always press-index extension seats — physically
+	// These are almost always press-index extension positions — physically
 	// traversed by the index motion, owning no task and no order, and (before
 	// participants existed) invisible to every consumer. A node with no row
 	// cannot be gated, rendered, or released, so naming it here is the point:
@@ -57,7 +57,7 @@ type Changeover struct {
 	//
 	// ADVISORY ONLY. The changeover still starts. A hard refusal on day one
 	// could block every same-bin-type press-index changeover at a plant that
-	// has never had rows for those seats -- and the 2026-06-03 Springfield
+	// has never had rows for those positions -- and the 2026-06-03 Springfield
 	// softening is the standing evidence that a guard the floor cannot work
 	// around gets disabled rather than fixed. Hardening waits on the V.4 audit
 	// returning clean at both plants AND the affordance widening shipping.

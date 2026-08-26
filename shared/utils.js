@@ -157,17 +157,145 @@ export function formatTime(ts, opts) {
     return d.toLocaleString();
 }
 
+// formatDuration is THE SAME LADDER as protocol.FormatDuration (Go), output
+// byte for byte. That is a hard requirement, not a nicety.
+//
+// The fault line is rendered ONCE by the server and then re-rendered every
+// second by installLiveDurations below. When the two ladders disagreed, every
+// faulted row on every board visibly rewrote itself one second after it
+// painted — "Replanning · 4m 07s" became "Replanning · 4m 7s" — and again after
+// each reconcile, because the reconcile restores the server's text. The
+// mismatch was not one space: the old ladder kept seconds all the way to an
+// hour where Go drops them at ten minutes, zero-padded nothing, had a
+// millisecond tier Go has no equivalent for, had no days tier at all, and
+// rendered zero as "-" where Go renders "0 s".
+//
+// The tiers, from protocol/duration.go — change them in both or in neither:
+//
+//	< 1m    "18 s"     seconds, with the space
+//	< 10m   "4m 07s"   zero-padded seconds so a tnum column stays aligned
+//	< 1h    "23m"      whole minutes; seconds stop carrying anything
+//	< 24h   "2h 05m"
+//	else    "3d 04h"
+//
+// Zero is "0 s", NOT the dash — Go's ladder floors negatives at zero and prints
+// that, and a fault line rendered at the instant of the fault must agree. The
+// dash is reserved for ABSENT (null / undefined / NaN), which Go never renders:
+// BuildFaultLine omits the element entirely when it has no instant, rather than
+// printing a duration measured from the zero time.
 export function formatDuration(ms) {
-    if (!ms || ms <= 0) return '-';
-    if (ms < 1000) return ms + 'ms';
-    let s = Math.floor(ms / 1000);
-    if (s < 60) return s + 's';
-    let m = Math.floor(s / 60);
-    s = s % 60;
-    if (m < 60) return m + 'm ' + s + 's';
+    if (ms === null || ms === undefined || isNaN(ms)) return '—';
+    const total = Math.max(0, Math.floor(ms));
+    const s = Math.floor(total / 1000);
+    if (s < 60) return s + ' s';
+    const m = Math.floor(s / 60);
+    if (s < 600) return m + 'm ' + String(s % 60).padStart(2, '0') + 's';
+    if (s < 3600) return m + 'm';
     const h = Math.floor(m / 60);
-    m = m % 60;
-    return h + 'h ' + m + 'm';
+    if (s < 86400) return h + 'h ' + String(m % 60).padStart(2, '0') + 'm';
+    return Math.floor(h / 24) + 'd ' + String(h % 24).padStart(2, '0') + 'h';
+}
+
+// ─── Live durations ──────────────────────────────────────────────────────
+
+// Tick the elapsed / remaining durations on a page.
+//
+//   <span class="tnum" data-since="2026-08-22T14:00:00Z"></span>   -> "3m 12s"
+//   <span class="tnum" data-until="2026-08-22T14:45:00Z"></span>   -> "41m"
+//
+// Both render through formatDuration. A past data-until shows its data-past
+// text, or an em-dash. A data-since may also carry data-notice-after (seconds)
+// to swap a sibling's wording at a server-supplied threshold — see
+// applyNoticeWording; the client only compares, it never picks the number.
+//
+// The interval runs only while such nodes exist, so a page without them pays
+// nothing. Idempotent; re-run after any DOM change that may insert nodes.
+let _liveDurationTimer = null;
+
+export function installLiveDurations(root) {
+    const live = renderLiveDurations(root);
+    if (_liveDurationTimer || !live) return;
+    _liveDurationTimer = setInterval(() => {
+        // Sweep the document, not `root` — a second caller's nodes must keep
+        // ticking after the first caller's are gone.
+        if (!renderLiveDurations(document)) {
+            clearInterval(_liveDurationTimer);
+            _liveDurationTimer = null;
+        }
+    }, 1000);
+}
+
+// Paint one frame; report whether anything remains to tick. Exported for tests
+// and for a single repaint without arming the interval.
+export function renderLiveDurations(root) {
+    const scope = root || document;
+    let live = 0;
+    scope.querySelectorAll('[data-since]').forEach(elem => {
+        const since = Date.parse(elem.getAttribute('data-since'));
+        if (isNaN(since)) return;
+        live++;
+        const elapsed = Date.now() - since;
+        elem.textContent = formatDuration(elapsed);
+        applyNoticeWording(elem, elapsed);
+    });
+    scope.querySelectorAll('[data-until]').forEach(elem => {
+        const until = Date.parse(elem.getAttribute('data-until'));
+        if (isNaN(until)) return;
+        const left = until - Date.now();
+        if (left <= 0) {
+            elem.textContent = elem.getAttribute('data-past') || '—';
+            return;
+        }
+        live++;
+        elem.textContent = formatDuration(left);
+    });
+    return live > 0;
+}
+
+// Swap a sibling's wording once elapsed crosses the server's threshold. The
+// node carries the threshold and both words, so no policy lives here.
+function applyNoticeWording(elem, elapsedMs) {
+    const afterS = parseInt(elem.getAttribute('data-notice-after'), 10);
+    if (!afterS) return;
+    const target = elem.parentNode && elem.parentNode.querySelector
+        ? elem.parentNode.querySelector('[data-notice-word]') : null;
+    if (!target) return;
+    const over = elapsedMs >= afterS * 1000;
+    const word = over
+        ? target.getAttribute('data-notice-over')
+        : target.getAttribute('data-notice-under');
+    if (word !== null && word !== undefined && target.textContent !== word) {
+        target.textContent = word;
+    }
+    // Clauses that belong only to the over-threshold sentence (the grace
+    // countdown: noise beside a 14s replan, the point beside a 3m fault).
+    const parent = elem.parentNode;
+    if (parent && parent.querySelectorAll) {
+        parent.querySelectorAll('[data-notice-only-over]').forEach(node => {
+            node.hidden = !over;
+        });
+    }
+}
+
+// Re-render live durations after an htmx swap, as
+// installHtmxTimestampConversion does for <time data-utc>. Without it a
+// swapped-in row's duration stays empty until the next tick, or forever if the
+// interval had already stopped.
+let _htmxLiveDurInstalled = false;
+export function installHtmxLiveDurations() {
+    if (_htmxLiveDurInstalled) return;
+    _htmxLiveDurInstalled = true;
+    const attach = () => {
+        document.body.addEventListener('htmx:afterSwap', (evt) => {
+            const target = (evt && evt.detail && evt.detail.target) || document;
+            installLiveDurations(target);
+        });
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attach);
+    } else {
+        attach();
+    }
 }
 
 // Rewrite <time data-utc="..."> elements to the browser's local-time string.

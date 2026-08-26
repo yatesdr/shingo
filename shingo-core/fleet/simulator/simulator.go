@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/fleet"
 )
 
@@ -61,7 +61,15 @@ type SimulatorBackend struct {
 	mu       sync.RWMutex
 	orders   map[string]*simulatedOrder // vendorOrderID → order
 	orderSeq []string                   // creation order
-	seq      atomic.Int64               // monotonic order-ID source (F1: IDs are never reused, so eviction is safe)
+	// settled is the tombstone set: every vendorOrderID this backend once held
+	// and then evicted after it reached a terminal state. It exists so that a
+	// map miss can answer WHICH miss it is — an order that settled and was
+	// reaped (moot, idempotent) versus an order this backend has never issued
+	// (a lie somewhere upstream). Without it the two are the same absence, and
+	// the second one reads as success. IDs are never re-minted (F1), so a
+	// tombstone can never be shadowed by a later order.
+	settled  map[string]struct{}
+	seq      atomic.Int64 // monotonic order-ID source (F1: IDs are never reused, so eviction is safe)
 	opts     Options
 	clk      clock.Clock           // stamps terminalAt + (via driver) times transitions
 	emitter  fleet.TrackerEmitter  // set by InitTracker
@@ -77,8 +85,9 @@ type SimulatorBackend struct {
 // New creates a SimulatorBackend with the given options.
 func New(opts ...Option) *SimulatorBackend {
 	s := &SimulatorBackend{
-		orders: make(map[string]*simulatedOrder),
-		clk:    clock.Real(),
+		orders:  make(map[string]*simulatedOrder),
+		settled: make(map[string]struct{}),
+		clk:     clock.Real(),
 	}
 	for _, o := range opts {
 		o(&s.opts)
@@ -126,6 +135,10 @@ func (s *SimulatorBackend) EvictTerminalBefore(cutoff time.Time) int {
 		}
 		if !o.terminalAt.IsZero() && o.terminalAt.Before(cutoff) {
 			delete(s.orders, id)
+			// Leave the tombstone behind. A release that arrives after this
+			// point is moot rather than impossible, and only this record can
+			// say so — see ReleaseOrder.
+			s.settled[id] = struct{}{}
 			evicted++
 			continue
 		}
@@ -179,21 +192,42 @@ func (s *SimulatorBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.Tran
 // ReleaseOrder appends additional blocks to a staged order. When complete is
 // true the order is marked finished; when false it stays staged so the robot
 // can dwell at the next wait point (multi-wait complex orders).
+//
+// ── A MAP MISS IS TWO DIFFERENT FACTS AND THEY GET DIFFERENT ANSWERS ──────
+//
+// Until §R.98 this returned nil for every miss, which made "I never issued this
+// mission" indistinguishable from "that mission settled and I reaped it". The
+// first is a lie about the plant and it cost the program a whole measured
+// window: Core restarted mid-run, this in-process fleet forgot its three
+// in-flight missions, and every subsequent append to them was ACKNOWLEDGED.
+// Core's correct error arm (dig_dwell.go, which keeps the source-lane hold when
+// an append fails) exists and had never once fired.
+//
+// A real RDS is a separate durable process. It can be missing a mission Core
+// believes in — but it says so; it does not accept work for it. So: settled and
+// evicted stays idempotent nil, and never-issued is an error.
 func (s *SimulatorBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock, complete bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	order, ok := s.orders[vendorOrderID]
 	if !ok {
-		// Idempotent: the order already settled (FINISHED/STOPPED/FAILED) and was reaped
-		// by the eviction sweep before this release arrived — typically a complex order
-		// the downtime model FAILED mid-flight while Core's auto-release was in flight for
-		// it. Its terminal status already reached Core (DriveState fired before eviction),
-		// so the release is moot. No-op instead of erroring: a hard error cascades a
-		// spurious fleet_failed that fails the order a SECOND time on the Edge — the source
-		// of the "not found for release" noise. A real fleet tolerates an idempotent
-		// release of a settled order.
-		return nil
+		if _, wasSettled := s.settled[vendorOrderID]; wasSettled {
+			// Idempotent: the order already settled (FINISHED/STOPPED/FAILED) and was reaped
+			// by the eviction sweep before this release arrived — typically a complex order
+			// the downtime model FAILED mid-flight while Core's auto-release was in flight for
+			// it. Its terminal status already reached Core (DriveState fired before eviction),
+			// so the release is moot. No-op instead of erroring: a hard error cascades a
+			// spurious fleet_failed that fails the order a SECOND time on the Edge — the source
+			// of the "not found for release" noise. A real fleet tolerates an idempotent
+			// release of a settled order.
+			return nil
+		}
+		// NEVER ISSUED. Nothing this backend has ever held carried this ID, so
+		// there is no mission to append to and no robot that will drive the
+		// blocks. Say so: the caller must not advance its durable witness on an
+		// append that did not happen.
+		return fmt.Errorf("simulator: order %s was never issued by this backend (no mission to release)", vendorOrderID)
 	}
 	if isEvictableTerminal(order.state) {
 		// Same moot case, order still in the map (not yet evicted): it already reached a

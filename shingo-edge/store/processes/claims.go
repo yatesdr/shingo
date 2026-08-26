@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"slices"
 	"strings"
 
@@ -62,18 +63,22 @@ const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code
 	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
-	reuse_compatible_bins, auto_push, below_reorder_since, created_at`
+	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
+	changeover_evac_nodes, changeover_evac_destination,
+	index_robot_supplies, key_route, key_task, changeover_carryover_disposition`
 
 func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	var c NodeClaim
-	var createdAt, allowedJSON string
+	var createdAt, allowedJSON, evacNodesJSON, keyRouteJSON string
 	var belowSince sql.NullString
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&c.UOPCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &allowedJSON, &c.AutoRequestPayload,
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
-		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt); err != nil {
+		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
+		&evacNodesJSON, &c.ChangeoverEvacDestination,
+		&c.IndexRobotSupplies, &keyRouteJSON, &c.KeyTask, &c.ChangeoverCarryoverDisposition); err != nil {
 		return c, err
 	}
 	// NULL means "not below", which is the ordinary state — a zero time would
@@ -86,6 +91,12 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	c.CreatedAt = helpers.ScanTime(createdAt)
 	if allowedJSON != "" {
 		_ = json.Unmarshal([]byte(allowedJSON), &c.AllowedPayloadCodes)
+	}
+	if evacNodesJSON != "" {
+		_ = json.Unmarshal([]byte(evacNodesJSON), &c.ChangeoverEvacNodes)
+	}
+	if keyRouteJSON != "" {
+		_ = json.Unmarshal([]byte(keyRouteJSON), &c.KeyRoute)
 	}
 	return c, nil
 }
@@ -240,38 +251,66 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 			}
 		}
 	}
+	// IndexRobotSupplies describes the CELL'S HARDWARE — which robot can reach
+	// the supermarket from that press. Two styles on one press disagreeing
+	// about it is not a configuration, it is an operator who edited one style
+	// and not the other, and the symptom is a press that choreographs
+	// differently depending on what it is running.
+	//
+	// A WARNING, NOT A REFUSAL, and the direction matters: refusing would make
+	// the flag unsettable, because changing a press with four styles means
+	// four saves and the first three would each be refused by the other three.
+	warnIndexRobotSuppliesDrift(db, in)
+
 	var existingID int64
 	err := db.QueryRow(`SELECT id FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
 		in.StyleID, in.CoreNodeName).Scan(&existingID)
 	if err == nil {
 		return existingID, updateClaim(db, existingID, in)
 	}
-	if in.Sequence <= 0 {
+	// INSERT takes the documented defaults for the absent-means-untouched
+	// columns: a claim has to have a board position, a provenance and two
+	// flag values from the moment it exists. Only UPDATE can leave a column
+	// alone, because only UPDATE has a prior value to leave.
+	sequence := 0
+	if in.Sequence != nil {
+		sequence = *in.Sequence
+	}
+	if sequence <= 0 {
 		var maxSeq int
 		db.QueryRow(`SELECT COALESCE(MAX(sequence), 0) FROM style_node_claims WHERE style_id=?`, in.StyleID).Scan(&maxSeq)
-		in.Sequence = maxSeq + 1
+		sequence = maxSeq + 1
 	}
+	autoReorder := in.AutoReorder != nil && *in.AutoReorder
+	indexRobotSupplies := in.IndexRobotSupplies != nil && *in.IndexRobotSupplies
+	keepStaged := in.KeepStaged != nil && *in.KeepStaged
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 	// INSERT OR IGNORE: if a concurrent writer inserted the same
 	// (style_id, core_node_name) between our SELECT above and this
 	// INSERT, RowsAffected==0 and we fall through to UPDATE the
 	// winner's row with our values. Plain INSERT failed here with
 	// UNIQUE constraint on the same race.
-	source := in.ReorderPointSource
-	if source == "" {
-		source = "legacy"
+	source := "legacy"
+	if in.ReorderPointSource != nil && *in.ReorderPointSource != "" {
+		source = *in.ReorderPointSource
 	}
 	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		uop_capacity, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
-		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
+		changeover_evac_nodes, changeover_evac_destination,
+		index_robot_supplies, key_route, key_task, changeover_carryover_disposition)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
-		in.UOPCapacity, in.ReorderPoint, source, in.AutoReorder, in.InboundStaging, in.OutboundStaging,
+		in.UOPCapacity, in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
-		in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence,
-		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush)
+		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
+		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
+		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
+		domain.OptValue(in.ChangeoverEvacDestination),
+		indexRobotSupplies, marshalKeyRoute(domain.OptValue(in.KeyRoute)),
+		domain.OptValue(in.KeyTask), carryoverOrDefault(in.ChangeoverCarryoverDisposition))
 	if err != nil {
 		return 0, err
 	}
@@ -285,26 +324,144 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	return existingID, updateClaim(db, existingID, in)
 }
 
+// updateClaim writes the columns the caller expressed an opinion about.
+//
+// The always-written set is every column with exactly one writer. The
+// pointer-typed ones below it are the columns a writer can decline to speak
+// about (see the contract on NodeClaimInput): this used to be one
+// unconditional UPDATE of every column, which meant a caller sending a subset
+// silently reset the rest to their zero values on every save.
+//
+// The set grew from four to nine because the second half of the disease was
+// found the same way as the first: five columns added later were put in the
+// unconditional list on the argument that the claims editor always fills them
+// in. The replenishment admin page is also a writer, and a reorder-point edit
+// wiped a press's evacuation positions, its evacuation destination, the loader
+// card and the key route.
+// warnIndexRobotSuppliesDrift logs when this save would leave two styles on the
+// same press disagreeing about which robot fetches the replacement.
+//
+// Scoped to claims on the SAME core node in the same process, because that is
+// what "one press" means; two presses may legitimately differ.
+//
+// Silent on a caller with no opinion (nil) — an import or the compare grid is
+// not asserting anything about the hardware and must not be reported as if it
+// were.
+func warnIndexRobotSuppliesDrift(db *sql.DB, in NodeClaimInput) {
+	if in.IndexRobotSupplies == nil || in.CoreNodeName == "" {
+		return
+	}
+	want := *in.IndexRobotSupplies
+	rows, err := db.Query(`
+		SELECT s.name, c.index_robot_supplies
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE c.core_node_name = ?
+		  AND c.style_id != ?
+		  AND s.deleted_at IS NULL
+		  AND s.process_id = (SELECT process_id FROM styles WHERE id = ?)`,
+		in.CoreNodeName, in.StyleID, in.StyleID)
+	if err != nil {
+		// Cannot check is not a finding. Saying nothing is right here: the
+		// save proceeds either way and a warning we could not substantiate
+		// would be worse than none.
+		return
+	}
+	defer rows.Close()
+	var disagree []string
+	for rows.Next() {
+		var styleName string
+		var flag bool
+		if err := rows.Scan(&styleName, &flag); err != nil {
+			return
+		}
+		if flag != want {
+			disagree = append(disagree, styleName)
+		}
+	}
+	if len(disagree) > 0 {
+		log.Printf("claim %s: index_robot_supplies=%v disagrees with style(s) %s on the same press. "+
+			"This flag describes which robot can reach the supermarket — a fact about the cell, not "+
+			"about a style — so the press will choreograph differently depending on what it runs. "+
+			"Set it the same on every style for this node.",
+			in.CoreNodeName, want, strings.Join(disagree, ", "))
+	}
+}
+
 func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
-	source := in.ReorderPointSource
-	if source == "" {
-		source = "legacy"
+
+	sets := []string{
+		`role=?`, `swap_mode=?`, `payload_code=?`, `uop_capacity=?`, `reorder_point=?`,
+		`inbound_staging=?`, `outbound_staging=?`, `inbound_source=?`, `outbound_destination=?`,
+		`allowed_payload_codes=?`, `auto_request_payload=?`, `evacuate_on_changeover=?`,
+		`paired_core_node=?`, `auto_confirm=?`, `lineside_soft_threshold=?`,
+		`second_paired_core_node=?`, `reuse_compatible_bins=?`, `auto_push=?`,
 	}
-	_, err := db.Exec(`UPDATE style_node_claims SET role=?, swap_mode=?, payload_code=?,
-		uop_capacity=?, reorder_point=?, reorder_point_source=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
-		inbound_source=?, outbound_destination=?, allowed_payload_codes=?, auto_request_payload=?,
-		keep_staged=?, evacuate_on_changeover=?, paired_core_node=?, auto_confirm=?, sequence=?,
-		lineside_soft_threshold=?, second_paired_core_node=?,
-		reuse_compatible_bins=?, auto_push=?
-		WHERE id=?`,
-		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, source, in.AutoReorder,
-		in.InboundStaging, in.OutboundStaging,
-		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
-		in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence,
-		in.LinesideSoftThreshold, in.SecondPairedCoreNode,
-		in.ReuseCompatibleBins, in.AutoPush, id)
+	args := []any{
+		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint,
+		in.InboundStaging, in.OutboundStaging, in.InboundSource, in.OutboundDestination,
+		allowedJSON, in.AutoRequestPayload, in.EvacuateOnChangeover,
+		in.PairedCoreNode, in.AutoConfirm, in.LinesideSoftThreshold,
+		in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
+	}
+
+	if in.ReorderPointSource != nil {
+		// An explicit empty string still means "legacy" — the column has never
+		// been allowed to hold "", and a caller that speaks is answered.
+		source := *in.ReorderPointSource
+		if source == "" {
+			source = "legacy"
+		}
+		sets, args = append(sets, `reorder_point_source=?`), append(args, source)
+	}
+	if in.AutoReorder != nil {
+		sets, args = append(sets, `auto_reorder=?`), append(args, *in.AutoReorder)
+	}
+	if in.KeepStaged != nil {
+		sets, args = append(sets, `keep_staged=?`), append(args, *in.KeepStaged)
+	}
+	if in.Sequence != nil {
+		sets, args = append(sets, `sequence=?`), append(args, *in.Sequence)
+	}
+	if in.IndexRobotSupplies != nil {
+		sets, args = append(sets, `index_robot_supplies=?`), append(args, *in.IndexRobotSupplies)
+	}
+	if in.ChangeoverEvacNodes != nil {
+		sets, args = append(sets, `changeover_evac_nodes=?`), append(args, marshalEvacNodes(*in.ChangeoverEvacNodes))
+	}
+	if in.ChangeoverEvacDestination != nil {
+		sets, args = append(sets, `changeover_evac_destination=?`), append(args, *in.ChangeoverEvacDestination)
+	}
+	if in.ChangeoverCarryoverDisposition != nil {
+		sets, args = append(sets, `changeover_carryover_disposition=?`), append(args, string(*in.ChangeoverCarryoverDisposition))
+	}
+	if in.KeyRoute != nil {
+		sets, args = append(sets, `key_route=?`), append(args, marshalKeyRoute(*in.KeyRoute))
+	}
+	if in.KeyTask != nil {
+		sets, args = append(sets, `key_task=?`), append(args, *in.KeyTask)
+	}
+
+	args = append(args, id)
+	_, err := db.Exec(`UPDATE style_node_claims SET `+strings.Join(sets, ", ")+` WHERE id=?`, args...)
 	return err
+}
+
+// marshalEvacNodes stores the per-position tooling-relevance set the same way
+// allowed_payload_codes is stored: a JSON array, and the EMPTY STRING for an
+// empty set rather than "[]", so "no position marked" reads identically on a row
+// written today and a row that predates the column.
+// marshalKeyRoute stores the ordered via-point list. ORDER IS MEANINGFUL to
+// SEER, so this is a JSON array and not a set — the same encoding as the
+// allowed-payload and evac-position lists, for the same reason: one TEXT column,
+// no join table, and nothing here is ever queried by element.
+func marshalKeyRoute(points []string) string {
+	return marshalAllowedPayloads(points)
+}
+
+func marshalEvacNodes(positions []string) string {
+	return marshalAllowedPayloads(positions)
 }
 
 func marshalAllowedPayloads(codes []string) string {
@@ -319,4 +476,15 @@ func marshalAllowedPayloads(codes []string) string {
 func DeleteClaim(db *sql.DB, id int64) error {
 	_, err := db.Exec(`DELETE FROM style_node_claims WHERE id=?`, id)
 	return err
+}
+
+// carryoverOrDefault writes 'replace' when the caller said nothing, matching
+// the column default. The zero value of the type is the empty string, and an
+// empty string in this column would read as "unset" to anything that checks it
+// literally rather than through domain.CarryoverFor.
+func carryoverOrDefault(d *domain.CarryoverDisposition) string {
+	if d == nil || *d == "" {
+		return string(domain.CarryoverReplace)
+	}
+	return string(*d)
 }

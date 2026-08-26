@@ -29,7 +29,6 @@ const (
 	EventDBDisconnected
 	EventRobotsUpdated
 	EventCMSTransaction
-	EventCountGroupTransition
 	EventBlockCompleted
 	EventBinEnteredTransit
 	EventOrderFaulted
@@ -48,6 +47,21 @@ const (
 	// cycle regardless of change; this event deliberately does NOT follow that,
 	// or an idle plant would pulse the page on a timer.
 	EventSourcingUpdated
+	// EventOrderResumed — a compound finished and its complex parent went back
+	// to Queued (Reshuffling → Queued, lifecycle.go's actionMap).
+	//
+	// IT EXISTS TO TELL THE EDGE, and EventOrderQueued could not. That event's
+	// Edge-facing subscriber is the QUEUE-REASON push: it returns early unless
+	// the order still IsAcquiring AND carries a non-empty QueueReason, because
+	// its job is delivering a block sentence, not mirroring a status. A resumed
+	// parent has no block reason (ResumeCompound clears it — the wait is over)
+	// and is usually dispatched again by the in-band scanner within the same
+	// millisecond, so both halves of that gate are false and nothing was sent.
+	//
+	// The Edge therefore never learned the order left `reshuffling`, and every
+	// later push was an illegal jump it rejected — three robots per run, held
+	// from the first minute of the soak to the end. See §12.49.
+	EventOrderResumed
 )
 
 // --- Event payloads ---
@@ -93,6 +107,16 @@ type OrderCompletedEvent struct {
 	StationID string
 }
 
+// OrderResumedEvent carries a compound's parent going back to Queued. Same
+// three fields as OrderCompletedEvent because it drives the same thing — one
+// TypeOrderUpdate to the station that owns the order.
+type OrderResumedEvent struct {
+	eventbus.PayloadBase
+	OrderID   int64
+	EdgeUUID  string
+	StationID string
+}
+
 type OrderFailedEvent struct {
 	eventbus.PayloadBase
 	OrderID   int64
@@ -122,7 +146,7 @@ type OrderCancelledEvent struct {
 	EdgeUUID       string
 	StationID      string
 	Reason         string
-	PreviousStatus string // status before cancellation â€” used to skip auto-return for delivered/confirmed orders
+	PreviousStatus string // status before cancellation — used to skip auto-return for delivered/confirmed orders
 }
 
 type OrderQueuedEvent struct {
@@ -196,18 +220,6 @@ type CMSTransactionEvent struct {
 	Transactions []*cms.Transaction
 }
 
-// CountGroupTransitionEvent is emitted by the countgroup Runner whenever
-// an advanced zone's debounced occupancy flips (or the RDS-down fail-safe
-// fires). A wiring subscriber picks it up and ships it to edge via the outbox.
-type CountGroupTransitionEvent struct {
-	eventbus.PayloadBase
-	Group             string
-	Desired           string // "on" | "off"
-	Robots            []string
-	FailSafeTriggered bool
-	Timestamp         time.Time
-}
-
 // BlockCompletedEvent fires when a single block within a vendor order
 // transitions to FINISHED while the order is still mid-flight. Phase 2
 // of the bin-transit-state project: pickup blocks (BinTask=Load /
@@ -235,7 +247,7 @@ type BlockCompletedEvent struct {
 }
 
 // BinEnteredTransitEvent fires when a bin's NodeID transitions to the
-// synthetic _TRANSIT node â€” the moment the source slot is freed for
+// synthetic _TRANSIT node — the moment the source slot is freed for
 // new placements. Subscribers: the fulfillment scanner trigger (so
 // queued orders re-check their dispatch eligibility against the now-
 // vacant source slot) and the materials/admin UI for live transit-lane

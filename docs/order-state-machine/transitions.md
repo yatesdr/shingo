@@ -64,7 +64,7 @@ The couplings worth knowing:
 
 ## What bypasses `transition()`
 
-Four things write an order's status without going through the state machine.
+Three things write an order's status without going through the state machine.
 Described by what they are rather than by line number, because line numbers were
 the other half of why this document rotted.
 
@@ -73,17 +73,16 @@ the other half of why this document rotted.
 2. **`MarkPending`** — the initial write at intake. There is no source status to
    validate against. Its real product is the `order_history` row, since the INSERT
    has already set the column.
-3. **`MarkReshuffling`** — the same shape, for the synthetic restore parent.
-4. **The INSERT** — `orders.Create` binds the struct's `Status` field directly.
+3. **The INSERT** — `orders.Create` binds the struct's `Status` field directly.
 
-**Number four is the one to know about.** Movement is governed; *entry* is not.
+**Number three is the one to know about.** Movement is governed; *entry* is not.
 There is no CHECK constraint on `orders.status` in either schema, `Scan`
 deliberately does not validate on read, and the lint guard matches selector
 expressions like `db.UpdateOrderStatus` — it cannot see `Status:` in a struct
 literal. Three statuses are used at creation today. That is convention, not
 enforcement.
 
-Related: the three writes that bypass `transition()` are also the three with no
+Related: the two writes that bypass `transition()` are also the two with no
 compare-and-swap. `UpdateStatus` writes by id alone. There is a recorded incident
 — a stale scanner snapshot wrote `queued → sourcing` over a cancel and
 resurrected a cancelled order — which is why the other paths CAS.

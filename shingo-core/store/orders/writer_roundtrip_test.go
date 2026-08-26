@@ -79,10 +79,20 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"PayloadCode":      std.Payload.Code,
 		"SkipAutoConfirm":  true,
 		"SiblingOrderUUID": "roundtrip-sibling-uuid",
-		"SourceIntent":     "empty",
-		"Coordinated":      true,
-		"OriginID":         "6f1c8b2e-4a9d-4c3f-8e5b-7d2a1f0c9b34",
-		"OriginClass":      "demand",
+		// TWO POINTS, NOT ONE, AND IN AN UNSORTED ORDER. key_route is a list in
+		// one TEXT column: a writer that round-tripped it as a set would return
+		// the same two strings and pass a one-element or sorted probe. SEER
+		// walks the points in the order given, so the order IS the route.
+		"KeyRoute":     []string{"ROUNDTRIP-AISLE-B", "ROUNDTRIP-AISLE-A"},
+		"KeyTask":      "unload",
+		"SourceIntent": "empty",
+		"Coordinated":  true,
+		"OriginID":     "6f1c8b2e-4a9d-4c3f-8e5b-7d2a1f0c9b34",
+		"OriginClass":  "demand",
+		// A birth fact, so unlike OpenForChildren it round-trips through Create.
+		// That is the property worth pinning: if this ever stops surviving the
+		// INSERT, a service dig's lane releases on the last blocker and the bin
+		// it uncovered sits in an open lane with nothing but its claim.
 	}
 
 	// Fields the writer does not take from the struct. Keyed by struct field,
@@ -101,6 +111,11 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		"QueueCode":     "queue_code",
 		"QueueCause":    "queue_cause",
 		"RemainingUOP":  "remaining_uop",
+		// Create does not carry it and must not: an order is born sealed by the
+		// column's DEFAULT, and SetCompoundOpen is the only thing that changes
+		// it. Round-tripping a probe value through Create would assert the
+		// opposite -- that a caller can hand openness in at creation.
+		"OpenForChildren": "open_for_children",
 	}
 
 	// Every excluded field must be excluded for a reason that is written down,

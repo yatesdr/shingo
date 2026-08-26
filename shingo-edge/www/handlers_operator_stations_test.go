@@ -53,7 +53,6 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
 		r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
 		r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
-		r.Post("/processes/{id}/changeover/release-wait", h.apiReleaseChangeoverWait)
 		r.Post("/processes/{id}/changeover/stage-node/{nodeID}", h.apiStageNodeChangeoverMaterial)
 		r.Post("/processes/{id}/changeover/evacuate-node/{nodeID}", h.apiEvacuateNode)
 		r.Post("/processes/{id}/changeover/deliver-material/{nodeID}", h.apiDeliverNewMaterialForChangeover)
@@ -923,61 +922,6 @@ func TestOperatorStations_CancelChangeover_AsRedirect(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/cancel", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "action", "redirected")
-}
-
-func TestOperatorStations_ReleaseChangeoverWait_Success(t *testing.T) {
-	_, router := newOperatorStationsRouter(t)
-
-	body := map[string]any{"called_by": "test-station"}
-	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", body, nil)
-	assertStatus(t, resp, http.StatusOK)
-	assertJSONPath(t, resp, "status", "ok")
-}
-
-// TestOperatorStations_ReleaseChangeoverWait_ThreadsCalledBy verifies that
-// the called_by field in the request body flows through to the engine call,
-// closing the gap where Phase 8 added body parsing but no test asserted the
-// value was actually plumbed (regression coverage for item 15 in the
-// release-manifest follow-ups).
-func TestOperatorStations_ReleaseChangeoverWait_ThreadsCalledBy(t *testing.T) {
-	h, router := newOperatorStationsRouter(t)
-
-	body := map[string]any{"called_by": "stephen-station-7"}
-	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", body, nil)
-	assertStatus(t, resp, http.StatusOK)
-
-	stub := h.engine.(*stubEngine)
-	if stub.lastReleaseChangeoverWaitDisp == nil {
-		t.Fatal("ReleaseChangeoverWait was not called")
-	}
-	if got := stub.lastReleaseChangeoverWaitDisp.CalledBy; got != "stephen-station-7" {
-		t.Errorf("ReleaseChangeoverWait called_by: got %q, want %q", got, "stephen-station-7")
-	}
-}
-
-// TestOperatorStations_ReleaseChangeoverWait_AcceptsBareBody verifies the
-// 2026-05-06 relaxation of the body contract: changeover release-wait must
-// accept a bare-body POST and operate with default disposition (evac =
-// capture_lineside, supply = no-op). The other two release endpoints
-// (apiReleaseOrder, apiReleaseNodeStagedOrders) still require called_by
-// because their callers always supply it; this endpoint serves clients
-// (legacy operator station, htmx button) where mandating a body created
-// real operational pain without a corresponding audit benefit.
-func TestOperatorStations_ReleaseChangeoverWait_AcceptsBareBody(t *testing.T) {
-	h, router := newOperatorStationsRouter(t)
-
-	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", nil, nil)
-	assertStatus(t, resp, http.StatusOK)
-
-	// Engine still gets called — disposition has the default operator_station
-	// called_by stamped so audits aren't blank.
-	stub := h.engine.(*stubEngine)
-	if stub.lastReleaseChangeoverWaitDisp == nil {
-		t.Fatal("ReleaseChangeoverWait was not called")
-	}
-	if got := stub.lastReleaseChangeoverWaitDisp.CalledBy; got != "operator_station" {
-		t.Errorf("default called_by: got %q, want %q", got, "operator_station")
-	}
 }
 
 func TestOperatorStations_CompleteProductionCutover_Success(t *testing.T) {

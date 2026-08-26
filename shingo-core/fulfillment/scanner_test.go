@@ -95,6 +95,14 @@ type recordingDispatcher struct {
 	// reshuffleErr drives the transient-vs-structural disposition.
 	reshuffleCalls []int64
 	reshuffleErr   error
+
+	// laneConflict makes AcquireLanesForOrder report the lane contended (the P4
+	// mouth-gate park branch); releaseLaneCalls counts fleet-fail lane releases.
+	laneConflict     bool
+	releaseLaneCalls int
+	buriedErr        error // makes BuriedForHeldBin fail (cannot describe the dig)
+	laneBuried       bool  // admission reports the order's source bin walled
+	entryKinds       []dispatch.EntryKind
 }
 
 // confirmCall records one Rule-1 confirm-at-dispatch: the order, the bin, and the
@@ -126,9 +134,13 @@ func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
 
 // ReserveStorageDropoff honors reserveErr so the slot-reserve conflict requeue
 // is exercisable here; the node-driven reserve is also covered end-to-end in the
-// dispatch package's docker tests.
-func (d *recordingDispatcher) ReserveStorageDropoff(*orders.Order) error {
-	return d.reserveErr
+// dispatch package's docker tests. On success it returns the destination the
+// order names, which is the real contract: nil error ⇒ non-nil settled node.
+func (d *recordingDispatcher) ReserveStorageDropoff(o *orders.Order) (*nodes.Node, error) {
+	if d.reserveErr != nil {
+		return nil, d.reserveErr
+	}
+	return &nodes.Node{Name: o.DeliveryNode}, nil
 }
 
 // ConfirmForDispatch records the Rule-1 confirm-at-dispatch step and honors
@@ -137,7 +149,32 @@ func (d *recordingDispatcher) ConfirmForDispatch(o *orders.Order, binID int64, s
 	d.confirmCalls = append(d.confirmCalls, confirmCall{orderID: o.ID, binID: binID, source: src.Name, dest: dst.Name})
 	return d.confirmErr
 }
-func (d *recordingDispatcher) PostFindHook() {}
+
+// AcquireLanesForOrder / ReleaseLanesForOrder: the lane mouth gate is OFF in
+// these mock-based tests (admit everything), so behavior is byte-identical to
+// pre-P4. laneConflict lets a test force the contended branch.
+func (d *recordingDispatcher) AcquireLanesForOrder(_ *orders.Order, _, _ *nodes.Node, kind dispatch.EntryKind) (bool, dispatch.QueueCause, string, error) {
+	d.entryKinds = append(d.entryKinds, kind)
+	if d.laneBuried {
+		return false, dispatch.CauseLaneTargetBuried, "LANE-B", nil
+	}
+	if d.laneConflict {
+		return false, dispatch.CauseLaneHeldTraffic, "LANE-X", nil
+	}
+	return true, "", "", nil
+}
+func (d *recordingDispatcher) ReleaseLanesForOrder(int64) error { d.releaseLaneCalls++; return nil }
+func (d *recordingDispatcher) PostFindHook()                    {}
+
+// BuriedForHeldBin: the held-bin burial route. buriedErr drives the "cannot
+// describe the dig" arm; otherwise a minimal BuriedError is enough, since
+// PlanBuriedReshuffle above only records the order.
+func (d *recordingDispatcher) BuriedForHeldBin(o *orders.Order) (*dispatch.BuriedError, error) {
+	if d.buriedErr != nil {
+		return nil, d.buriedErr
+	}
+	return &dispatch.BuriedError{Bin: &bins.Bin{ID: 1}, Slot: &nodes.Node{ID: 2, Name: "SLOT"}, LaneID: 3}, nil
+}
 
 func (d *recordingDispatcher) PlanBuriedReshuffle(o *orders.Order, _ *dispatch.BuriedError) error {
 	d.reshuffleCalls = append(d.reshuffleCalls, o.ID)
@@ -661,5 +698,118 @@ func TestScanner_StartPeriodicSweep_StopHaltsLoop(t *testing.T) {
 	if final > afterStop+1 {
 		t.Errorf("sweep ran %d extra times after Stop (%d → %d), want ≤ 1",
 			final-afterStop, afterStop, final)
+	}
+}
+
+// ── The held-bin reachability gap (plan §12.10, window 2) ───────────────────
+
+// TestHeldBin_DeclaresItselfAsHeldBinEntry pins the audit rule at the call site.
+//
+// The reachability skip survives on ONE justification — the finder answered it —
+// and that is true of exactly one of the two plain-entry callers. If the held-bin
+// path declared itself EntryFreshBin it would inherit a skip whose reason does
+// not apply to it, which is the drift the convergence removed and would be
+// invisible: everything still dispatches, just without ever looking.
+func TestHeldBin_DeclaresItselfAsHeldBinEntry(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	binID := int64(77)
+	order := &orders.Order{
+		ID: 4, Status: protocol.StatusQueued, OrderType: protocol.OrderType("store"),
+		BinID: &binID, SourceNode: "HB-SRC", DeliveryNode: "HB-DEST",
+	}
+	f.queued = append(f.queued, order)
+	f.ordersByID[4] = order
+	f.nodesByDot["HB-SRC"] = &nodes.Node{ID: 500, Name: "HB-SRC"}
+	f.nodesByDot["HB-DEST"] = &nodes.Node{ID: 501, Name: "HB-DEST"}
+
+	d := &recordingDispatcher{}
+	s := newScannerWith(t, f, waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{}), d,
+		func(int64, string, string) {})
+	s.RunOnce()
+
+	if len(d.entryKinds) != 1 || d.entryKinds[0] != dispatch.EntryHeldBin {
+		t.Fatalf("entry kinds = %v, want [EntryHeldBin]. This caller never called the finder, so it "+
+			"has no answer to the reachability question and must not inherit the skip that assumes one",
+			d.entryKinds)
+	}
+}
+
+// TestHeldBin_BuriedRoutesToADig is the wiring that makes the new refusal safe.
+//
+// Admission can now tell a held-bin order its bin is walled. A refusal with
+// nothing to clear it is a permanent park — trading "drives to a slot it cannot
+// reach" for "never moves again" is not the better failure. This routes it to the
+// same dig the FRESH path already plans for the same fact.
+//
+// MUTATION (verified): drop the CauseLaneTargetBuried arm in dispatchHeldBin. No
+// reshuffle is planned and this fires.
+func TestHeldBin_BuriedRoutesToADig(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	binID := int64(78)
+	order := &orders.Order{
+		ID: 5, Status: protocol.StatusQueued, OrderType: protocol.OrderType("retrieve"),
+		BinID: &binID, SourceNode: "HB2-SRC", DeliveryNode: "HB2-DEST",
+	}
+	f.queued = append(f.queued, order)
+	f.ordersByID[5] = order
+	f.nodesByDot["HB2-SRC"] = &nodes.Node{ID: 502, Name: "HB2-SRC"}
+	f.nodesByDot["HB2-DEST"] = &nodes.Node{ID: 503, Name: "HB2-DEST"}
+
+	d := &recordingDispatcher{laneBuried: true}
+	s := newScannerWith(t, f, waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{}), d,
+		func(orderID int64, code, detail string) {
+			t.Errorf("a buried held bin must not FAIL the order: order=%d code=%s detail=%s",
+				orderID, code, detail)
+		})
+	s.RunOnce()
+
+	if len(d.reshuffleCalls) != 1 || d.reshuffleCalls[0] != 5 {
+		t.Fatalf("reshuffle calls = %v, want [5]. A held bin buried after its hold was taken has no "+
+			"other releaser: the finder is never consulted on this path, so nothing else will ever "+
+			"plan the dig", d.reshuffleCalls)
+	}
+	if len(d.directCalls) != 0 {
+		t.Errorf("the order dispatched anyway (%+v) — it would drive to a slot behind another bin",
+			d.directCalls)
+	}
+}
+
+// TestHeldBin_BuriedCongestionWaitsRatherThanFails is D18-Q4 on the new path.
+//
+// ErrReshuffleWait means the lane is busy or no shuffle slot is free RIGHT NOW.
+// That is congestion, not a broken lane: the order keeps its held bin and retries
+// next tick. Failing here is what the buried path did at intake before D18-Q4
+// (sim order 21, 2026-07-10) and it must not come back through this door.
+func TestHeldBin_BuriedCongestionWaitsRatherThanFails(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	binID := int64(79)
+	order := &orders.Order{
+		ID: 6, Status: protocol.StatusQueued, OrderType: protocol.OrderType("retrieve"),
+		BinID: &binID, SourceNode: "HB3-SRC", DeliveryNode: "HB3-DEST", PayloadCode: "PN-9",
+	}
+	f.queued = append(f.queued, order)
+	f.ordersByID[6] = order
+	f.nodesByDot["HB3-SRC"] = &nodes.Node{ID: 504, Name: "HB3-SRC"}
+	f.nodesByDot["HB3-DEST"] = &nodes.Node{ID: 505, Name: "HB3-DEST"}
+
+	d := &recordingDispatcher{laneBuried: true, reshuffleErr: dispatch.ErrReshuffleWait}
+	s := newScannerWith(t, f, waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{}), d,
+		func(orderID int64, code, detail string) {
+			t.Errorf("congestion FAILED the order: order=%d code=%s detail=%s", orderID, code, detail)
+		})
+	s.RunOnce()
+
+	found := false
+	for _, qr := range f.queueReasons {
+		if qr.OrderID == 6 && qr.Code == string(protocol.QueueStorageRearranging) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no storage_rearranging queue reason for the congested order (got %+v). The lane is "+
+			"crowded, not broken, and the row has to say so", f.queueReasons)
 	}
 }

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 // handleOverview renders the Operations Overview exec dashboard (plan §15).

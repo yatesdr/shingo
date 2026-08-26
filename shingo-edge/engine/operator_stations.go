@@ -13,11 +13,19 @@ import (
 	"shingoedge/store/processes"
 )
 
+// NodeOrderResult is what an operator's material action returns.
+//
+// NO cycle_mode. It had no reader anywhere — and worse, it could not have
+// been a useful one: a primes-only produce round and a consume downgrade both
+// report "simple", so the one discrimination anyone would reach for it to make
+// is the one it cannot make. Round 2 already had to key primeNoticeText on the
+// swap legs instead and write a test forbidding the cycle_mode reading. A
+// field that is unread AND fenced off by a test is not costing a line, it is
+// a trap; the round-3 body audit is what settled removing it.
 type NodeOrderResult struct {
-	CycleMode protocol.SwapMode  `json:"cycle_mode"`
-	Order     *storeorders.Order `json:"order,omitempty"`
-	OrderA    *storeorders.Order `json:"order_a,omitempty"`
-	OrderB    *storeorders.Order `json:"order_b,omitempty"`
+	Order  *storeorders.Order `json:"order,omitempty"`
+	OrderA *storeorders.Order `json:"order_a,omitempty"`
+	OrderB *storeorders.Order `json:"order_b,omitempty"`
 	// PrimeOrders are additional simple deliveries emitted alongside Order
 	// when a press-index empty-station downgrade prime-filled the paired
 	// positions. Empty for non-press-index requests and for press-index
@@ -173,13 +181,15 @@ func (e *Engine) openEpisodeForConsume(
 	discretionary := trigger == protocol.EpisodeTriggerOperator &&
 		claim.ReorderPoint > 0 && remaining > claim.ReorderPoint
 
+	// No direction argument: the claim carries the role, and this path's claim is
+	// a consume one. Passing the word here was how the backfill site came to pass
+	// the wrong word at its own.
 	originID, _, err := e.openCellEpisode(
-		node.ProcessID, claim,
-		protocol.EpisodeDirectionSupply, trigger,
+		node.ProcessID, claim, trigger,
 		plan.OrderCount(), remaining, discretionary,
 	)
 	if err != nil {
-		e.logFn("demand_episode: open supply episode node=%s: %v", node.Name, err)
+		e.logFn("demand_episode: open %s episode node=%s: %v", claim.Role, node.Name, err)
 	}
 	if originID == "" {
 		// No episode, so nothing to attach to. Say NOTHING rather than
@@ -198,7 +208,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 	nodeID := node.ID
 
 	if plan.SimpleMove {
-		order, err := e.orderMgr.CreateMoveOrderWithOrigin(&nodeID, plan.Quantity, plan.SimpleSource, plan.SimpleDest, plan.AutoConfirm, origin)
+		order, err := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, plan.SimpleSource, plan.SimpleDest, plan.AutoConfirm, origin)
 		if err != nil {
 			return nil, err
 		}
@@ -217,7 +227,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 		// error so the operator sees that priming was incomplete.
 		var primes []*storeorders.Order
 		for _, p := range plan.PrimePairedPositions {
-			po, perr := e.orderMgr.CreateMoveOrderWithOrigin(&nodeID, plan.Quantity, p.Source, p.Dest, plan.AutoConfirm, origin)
+			po, perr := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, p.Source, p.Dest, plan.AutoConfirm, origin)
 			if perr != nil {
 				return nil, fmt.Errorf("prime %s: %w", p.Dest, perr)
 			}
@@ -227,7 +237,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 			}
 			primes = append(primes, refreshed)
 		}
-		return &NodeOrderResult{CycleMode: protocol.SwapModeSimple, Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
 	}
 
 	dispatch := plan.Dispatch
@@ -280,9 +290,9 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 	}
 
 	if orderB == nil {
-		return &NodeOrderResult{CycleMode: dispatch.CycleMode, Order: orderA, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{Order: orderA, ProcessNodeID: nodeID}, nil
 	}
-	return &NodeOrderResult{CycleMode: dispatch.CycleMode, OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
+	return &NodeOrderResult{OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
 }
 
 // refreshOrderStation re-reads an order after the runtime-orders write
@@ -345,12 +355,32 @@ func (e *Engine) ReleaseNodeWithRemainingUOP(nodeID int64, qty int64, remainingU
 }
 
 func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingUOP *int) (*storeorders.Order, error) {
+	return e.releaseNodeWithClaim(nodeID, qty, overrideRemainingUOP, nil)
+}
+
+// releaseNodeWithClaim is releaseNodeInternal with the acting claim supplied by
+// the caller, used when the node cannot resolve one by name.
+//
+// The only such caller is the changeover evacuation of a fanned-out press position.
+// A position owns changeover work but has no style_node_claims row under its own
+// name, so the by-name resolution here returns nothing and the release refuses
+// "no active claim for release" — the same refusal, from a different function,
+// that stalls every other action on that position.
+//
+// fallback is used ONLY when the node resolves no claim of its own; a node that
+// has one is unaffected, so no existing path changes. It is safe to write
+// through: a position claim carries its PARENT's row id, unlike the loader synth
+// whose ID is 0 (see domain.SynthesizePositionClaim and Loader.SynthClaim).
+func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemainingUOP *int, fallback *processes.NodeClaim) (*storeorders.Order, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
 	}
 	if qty < 1 {
 		return nil, fmt.Errorf("qty must be at least 1")
+	}
+	if claim == nil {
+		claim = fallback
 	}
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim for release", node.Name)
@@ -371,7 +401,20 @@ func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingU
 		v := runtime.RemainingUOPCached
 		remainingUOP = &v
 	}
-	order, err := e.orderMgr.CreateMoveOrderWithUOP(&nodeID, qty, claim.CoreNodeName, claim.OutboundDestination, remainingUOP, claim.AutoConfirm || e.cfg.Web.AutoConfirm)
+	// ── THE RELEASE IS PART OF THE CIRCLE, NOT A SEPARATE ERRAND ─────────────
+	//
+	// §R.87: an episode represents its process's FULL circular material handling.
+	// Sending the spent bin to its outbound destination is the return leg of the
+	// very circle the inbound delivery opened — so it belongs to that cell's
+	// episode, and it had been reaching Core carrying nothing.
+	//
+	// JOIN-ONLY, never mint, for the reason the sequential backfill states: a
+	// release is the plant finishing something that was already asked for, not a
+	// new ask. If no episode is open the origin is left unstated and Core
+	// classifies, which is exactly what happened here before — so this is strictly
+	// more attribution and never a guess.
+	order, err := e.orderMgr.CreateMoveOrderWithUOP(&nodeID, qty, claim.CoreNodeName, claim.OutboundDestination, remainingUOP, claim.AutoConfirm || e.cfg.Web.AutoConfirm,
+		e.cellEpisodeOrigin(node, claim))
 	if err != nil {
 		return nil, err
 	}
@@ -387,9 +430,10 @@ func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingU
 
 	// L1 (consume-side empty-in) used to fire here too, mirroring the
 	// hook in operator_release.go. Removed when Core's wiring_kanban
-	// DemandSignal pipeline became the single trigger source for L1.
-	// See the same explanation in operator_release.go's side-cycle
-	// comment block.
+	// DemandSignal pipeline became the single trigger source for L1 —
+	// then removed again when that pipeline itself was deleted
+	// (2026-08). Consume empties are operator-driven now. See the
+	// side-cycle comment block in operator_release.go.
 
 	return order, nil
 }
@@ -411,7 +455,7 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	// press sharing its process (the Springfield field report).
 	//
 	// PARTICIPANTS, not tasks. The task set is too narrow: a same-bin-type
-	// press-index changeover never fans out, so its indexed-over seats own no
+	// press-index changeover never fans out, so its indexed-over positions own no
 	// task at all and were left OPEN to unrelated dispatch while the index
 	// motion was about to place a bin on them. Two bins on one node — the
 	// catastrophic family. Participants are the superset that includes them.
@@ -530,7 +574,33 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 // whole pair, but a leg Core cannot yet accept is deferred, not desynced.
 // See shingo_todo.md and the 2026-04-27 retrospective for the interim
 // fan-out-regardless design this supersedes.
+// ── THE ORDER INSIDE THIS FUNCTION IS PART OF ITS CONTRACT ────────────────
+//
+// EVERY GATE AND VALIDATION FIRST — anything that can refuse — AND ONLY THEN
+// THE SIDE EFFECTS: manifests, count changes, state clears. The two halves are
+// separated by a marked line below, and a refusal must be reachable without
+// having changed anything.
+//
+// This is written down because it was got wrong in exactly the way that is
+// hard to see: the produce paperwork sat 26 lines above the collision gate, so
+// an ADVISORY "not yet, click again" had already shipped the departing bin's
+// manifest and zeroed the press's count. Every gate here is advisory by
+// design — the operator repeats the click — which is precisely why none of them
+// may leave a trace.
+//
+// Read alongside FinalizeProduceNode and the consume release path, which are
+// held to the same order by TestReleasePathsGateBeforeSideEffects.
 func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
+	// A changeover node whose work is a SINGLE leg — a cleared position's
+	// clear-and-refill, one order on one robot — is released through the
+	// changeover path. It is not a swap pair and must not be judged as one; the
+	// gates below would refuse it for having no sibling, or for having no claim
+	// row of its own. See releaseSingleLegChangeoverNode.
+	if handled, err := e.releaseSingleLegChangeoverNode(nodeID, disp); handled {
+		return err
+	}
+
+	// ── GATES AND VALIDATION. Nothing below may mutate anything. ─────────
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return fmt.Errorf("get runtime for node %d: %w", nodeID, err)
@@ -583,11 +653,77 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 			node.Name, err, orderIDStr(stagedPtr), orderIDStr(activePtr), task != nil)
 		return fmt.Errorf("node %s: %w", node.Name, err)
 	}
+	// -- THE LABELS ARE POSITIONAL; THE DISPOSITION IS NOT ---------------
+	//
+	// ResolveSwapPair maps staged->evac and active->supply, which is a
+	// two_robot assumption and is INVERTED for press-index (R1 clears the
+	// press, R2 supplies it - the flip does not change that). The label chosen
+	// here decides which leg carries the operator's disposition, and the
+	// disposition sets remaining_uop: which bin's manifest Core clears.
+	//
+	// It does NOT wipe the wrong bin -- the steps-based supply-bin guard
+	// downstream suppresses the sync on the real supply leg. It loses the
+	// other half: the real EVAC gets the bare disposition, so the bin leaving
+	// the press is released with remaining_uop=nil and its manifest is never
+	// cleared. Latent while every live press-index claim is produce-role
+	// (produce discards remaining_uop for both legs); live the day a consume
+	// one exists. See classifySwapLegsBySteps for the full accounting,
+	// including the produce-side trigger the inversion silently withholds.
+	//
+	// So re-derive from the legs' STEPS, using the same discriminator the Edge
+	// classifier and Core's dispatch predicates use. ComputeSwapReady keeps
+	// the positional resolver: it accepts EITHER staged leg for press-index,
+	// so the inversion never reached the button.
+	if evacOrderID != nil && supplyOrderID != nil {
+		if e2, s2, ok := e.classifySwapLegsBySteps(claim.CoreNodeName, *evacOrderID, *supplyOrderID); ok {
+			if e2 != *evacOrderID {
+				e.logFn("release-staged node=%s: steps say the pair is inverted relative to the runtime slots - evac=%d supply=%d (slots said evac=%d supply=%d)",
+					node.Name, e2, s2, *evacOrderID, *supplyOrderID)
+			}
+			evacOrderID, supplyOrderID = &e2, &s2
+		}
+	}
 	e.logFn("release-staged node=%s resolved evac=%s supply=%s",
 		node.Name, orderIDStr(evacOrderID), orderIDStr(supplyOrderID))
 
-	// Fix D: the deferred produce paperwork fires HERE, before either release
-	// envelope, so Core applies the manifest first (outbox drains by id).
+	// ── v1'S SAFETY: NEVER PLACE ONTO A PRESS THAT IS NOT CLEAR YET ──────
+	//
+	// The supply leg puts a bin ON the process node; the evac leg takes the
+	// old one OFF. Releasing the placing leg while its sibling is still coming
+	// is the two-bins-on-one-node collision, and it is reachable through the
+	// operator's ordinary RELEASE click: ComputeSwapReady shows the button when
+	// EITHER leg is staged, and the loop below happily released whichever leg
+	// Core would accept.
+	//
+	// THIS IS WHERE v1 ENFORCES, and it is the whole reason swap_hold.go is
+	// untouched. A dispatch-time hold on both legs is a permanent mutual
+	// deadlock (SYNTH-round2, 5/5 reviewers); a refused RELEASE is a click the
+	// operator repeats a minute later. Under the IndexRobotSupplies flip both
+	// legs open with a wait and neither is self-sufficient, so dispatch fails
+	// open by design and this is the only thing standing between the flip and
+	// a collision.
+	//
+	// Scoped to press-index. two_robot's release ordering has been in
+	// production unchanged for a long time and its supply leg parks at a
+	// staging node rather than the press, so widening this would be a change
+	// to a mode nobody is working on.
+	if err := e.refusePlacingLegWhileSiblingPending(node, claim, evacOrderID, supplyOrderID); err != nil {
+		return err
+	}
+
+	// ── FROM HERE ON, SIDE EFFECTS. Nothing above this line has changed
+	// anything; nothing below it may refuse.
+	//
+	// The produce paperwork fires FIRST among them, before either release
+	// envelope, so Core applies the manifest first (the outbox drains by id).
+	// It used to fire above the gate, which meant an ADVISORY refusal —
+	// "the other robot has not cleared the press yet, click again" — had
+	// already shipped the departing bin's manifest, cleared active_bin_id and
+	// zeroed remaining_uop_cached, starting the hold-and-replay window for a
+	// bin still sitting on a press that was still making parts into it.
+	// Nothing in the gate reads anything the paperwork produces, so the two
+	// were only in that order by accident.
+	//
 	// Changeover-owned pairs are excluded — their manifests belong to the
 	// changeover release dispositions, and this pair resolution can be
 	// serving a changeover task's legs (the task fallback above).
@@ -599,21 +735,23 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 
 	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
 
-	// Order B (evacuation) — full disposition. Gated per-leg on
+	// The EVACUATION leg - full disposition. "evac"/"supply" here are the
+	// step-derived roles above, not the A/B creation order they used to name:
+	// under press-index the evac IS leg A. Gated per-leg on
 	// ReleasableAtCore (hop A4-i): a leg still queued/sourcing/dispatched/
 	// acknowledged is skipped, not force-flipped to in_transit.
 	evacReleased := false
 	if evacOrderID != nil {
-		released, err := e.releaseIfReleasable(*evacOrderID, "B", disp)
+		released, err := e.releaseIfReleasable(*evacOrderID, "evac", disp)
 		if err != nil {
 			return err
 		}
 		evacReleased = released
 	}
-	// Order A (supply) — zero disposition (preserve supply bin manifest).
+	// The SUPPLY leg - zero disposition (preserve the supply bin's manifest).
 	supplyReleased := false
 	if supplyOrderID != nil {
-		released, err := e.releaseIfReleasable(*supplyOrderID, "A", supplyDisp)
+		released, err := e.releaseIfReleasable(*supplyOrderID, "supply", supplyDisp)
 		if err != nil {
 			return err
 		}
@@ -634,6 +772,159 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		e.rememberDeferredSiblingRelease(*evacOrderID, disp)
 	}
 	return nil
+}
+
+// SwapPairNotReadyError refuses a RELEASE that would drop a bin onto a press
+// its sibling has not cleared yet.
+//
+// ADVISORY: nothing is broken and nothing needs fixing. The other robot is on
+// its way, and the operator's only correct action is to click again once it
+// arrives. Rendered red it reads as a fault to escalate; the Advisory() marker
+// is what makes the station show it as a notice (round 2's PrimeInFlightError
+// pattern, keyed on behaviour so the handler needed no change).
+type SwapPairNotReadyError struct {
+	NodeName     string
+	SiblingState string
+}
+
+func (e *SwapPairNotReadyError) Error() string {
+	return fmt.Sprintf("node %s: the other robot has not cleared the press yet (%s) — "+
+		"release again once it is staged", e.NodeName, e.SiblingState)
+}
+
+// Advisory marks this as the system working rather than a fault.
+func (e *SwapPairNotReadyError) Advisory() bool { return true }
+
+// refusePlacingLegWhileSiblingPending is v1's collision guard. See the call
+// site for why it lives at RELEASE and not at dispatch.
+//
+// A TERMINAL SIBLING IS NOT PENDING. If it already ran — or was cancelled, or
+// was skipped because the press was found empty — nothing is coming to collide
+// with, and refusing then would strand the other leg forever with no sibling
+// that can ever stage. Same for a sibling that is itself releasable: both legs
+// go on this click, in the safe order.
+//
+// BOTH POSITIONS, NOT JUST THE HEAD. The guard used to ask only "does this leg
+// place a bin at CoreNodeName", which is the front position, and that is only half
+// of an unflipped press-index swap:
+//
+//	R1  wait@front, pickup front, dropoff outbound, pickup inbound, dropoff BACKFILL
+//	R2  wait@paired, pickup paired, dropoff FRONT [, pickup second, dropoff paired]
+//
+// R2 places at the front and R1 places at the backfill position — and it is R2 that
+// lifts the on-deck carrier OFF that position. So releasing R1 while R2 was still
+// queued sent a robot to set a bin down on a position nothing had cleared, and the
+// front-position-only question could not see it. Under the IndexRobotSupplies flip
+// R1 places nowhere on the press, which is why the flipped case was never the
+// one at risk and why widening the question rather than adding a second guard
+// is what keeps the two cases answered the same way.
+//
+// The positions come from the claim's own geometry, so a 3-position press is
+// covered by the same walk.
+func (e *Engine) refusePlacingLegWhileSiblingPending(
+	node *processes.Node, claim *processes.NodeClaim, evacOrderID, supplyOrderID *int64,
+) error {
+	if claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		return nil
+	}
+	if supplyOrderID == nil || evacOrderID == nil {
+		// One-legged: there is no sibling to wait for.
+		return nil
+	}
+	positions := pressPositionNodes(claim)
+	// TWO ARMS, AND THEY ARE NOT SYMMETRIC.
+	//
+	// The supply leg is the placing leg BY THE CALLER'S OWN CLASSIFICATION —
+	// classifySwapLegsBySteps labelled it that because it sets a bin down on
+	// the front position — so that arm needs no further evidence and asks for none.
+	// It is the original guard, unchanged.
+	//
+	// The evac arm is the addition, and it must prove itself from the steps:
+	// unflipped it also places, at the backfill position, and flipped it places
+	// nowhere on the press. Requiring the evidence is what keeps the flipped
+	// case releasable. A leg whose steps cannot be read simply does not earn a
+	// refusal on this arm — which cannot re-open the original hole, because the
+	// supply arm above never depended on steps in the first place.
+	for i, arm := range [][2]int64{
+		{*supplyOrderID, *evacOrderID},
+		{*evacOrderID, *supplyOrderID},
+	} {
+		legID, siblingID := arm[0], arm[1]
+		leg, err := e.db.GetOrder(legID)
+		if err != nil {
+			// REFUSE, do not wave through. This is a collision guard: a read it
+			// cannot complete is a question it cannot answer, and the two
+			// answers do not cost the same. A wrong refusal is an operator
+			// clicking again in a minute; a wrong pass is two bins on one position.
+			e.logFn("release-staged HELD node=%s: cannot read leg %d to check for a collision: %v",
+				node.Name, legID, err)
+			return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: "unreadable"}
+		}
+		if !orders.ReleasableAtCore(leg.Status) {
+			// Not going anywhere on this click anyway; the per-leg gate handles
+			// it and the deferral remembers it.
+			continue
+		}
+		sibling, err := e.db.GetOrder(siblingID)
+		if err != nil {
+			e.logFn("release-staged HELD node=%s: cannot read sibling %d to check for a collision: %v",
+				node.Name, siblingID, err)
+			return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: "unreadable"}
+		}
+		if orders.IsTerminal(sibling.Status) || orders.ReleasableAtCore(sibling.Status) {
+			continue
+		}
+		position := claim.CoreNodeName
+		if i == 1 {
+			if position = e.legPlacesAtAnyPosition(legID, positions); position == "" {
+				continue // sets nothing down on the press — the flipped R1
+			}
+		}
+		e.logFn("release-staged HELD node=%s: leg %d is staged and would place a bin at %s, "+
+			"but leg %d is %q and has not cleared it",
+			node.Name, leg.ID, position, sibling.ID, sibling.Status)
+		return &SwapPairNotReadyError{NodeName: node.Name, SiblingState: string(sibling.Status)}
+	}
+	return nil
+}
+
+// pressPositionNodes lists the physical positions of a press-index cell, front
+// first. Empty names are dropped, so a 2-position press yields two.
+func pressPositionNodes(claim *processes.NodeClaim) []string {
+	out := make([]string, 0, 3)
+	for _, n := range []string{claim.CoreNodeName, claim.PairedCoreNode, claim.SecondPairedCoreNode} {
+		if n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// legPlacesAtAnyPosition returns the first position this order sets a bin down on, or
+// "" if it sets one down on none of them.
+//
+// Steps are the only truth for a complex order — delivery_node is a display
+// value on these. An unreadable or undecodable list answers "no position", which is
+// deliberately NOT the fail-closed direction of the status reads in the caller:
+// this only ever decides the EVAC arm, the arm that did not exist before, and
+// the supply arm's guarantee never depended on steps. So a missing steps list
+// costs exactly the coverage that was never there, rather than stranding a
+// release the previous guard would have allowed.
+func (e *Engine) legPlacesAtAnyPosition(orderID int64, positions []string) string {
+	stepsJSON, err := e.db.GetOrderStepsJSON(orderID)
+	if err != nil {
+		return ""
+	}
+	steps, err := decodeSteps(stepsJSON)
+	if err != nil {
+		return ""
+	}
+	for _, position := range positions {
+		if legPlacesBinAt(steps, position) {
+			return position
+		}
+	}
+	return ""
 }
 
 // rememberDeferredSiblingRelease records a two-robot leg whose consolidated

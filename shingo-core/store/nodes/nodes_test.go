@@ -5,7 +5,9 @@ package nodes_test
 import (
 	"database/sql"
 	"shingocore/store/nodes"
+	"strings"
 	"testing"
+	"time"
 
 	"shingo/protocol/testutil"
 	"shingocore/domain"
@@ -765,6 +767,55 @@ func TestNodeProperties_SetGetDelete(t *testing.T) {
 	var _ *domain.NodeProperty = list2[0]
 }
 
+// TestNodeProperties_UpsertMovesUpdatedAt pins v90's mtime on the row a
+// re-saved property leaves behind.
+//
+// The column exists because the UPSERT changes the value IN PLACE: before it, a
+// property edited a hundred times still reported only when it was first written,
+// so the schema could not corroborate the audit trail at all (SPR Finding 3 —
+// "cannot be proven with the current schema").
+//
+// It moves on every write, including a write that stores the same value again.
+// That is the intended reading: created_at is when the property appeared,
+// updated_at is when somebody last saved it, and whether the SAVE CHANGED
+// ANYTHING is the audit_log's question, answered at the property endpoint.
+func TestNodeProperties_UpsertMovesUpdatedAt(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sdb := db.DB
+
+	n := &nodes.Node{Name: "MTIME", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(sdb, n), "nodes.Create")
+
+	readTimes := func() (created, updated time.Time) {
+		t.Helper()
+		testutil.MustNoErr(t, sdb.QueryRow(
+			`SELECT created_at, updated_at FROM node_properties WHERE node_id=$1 AND key='maintain_enabled'`,
+			n.ID).Scan(&created, &updated), "read property timestamps")
+		return
+	}
+
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "maintain_enabled", "off"), "SetProperty insert")
+	created1, updated1 := readTimes()
+
+	// A CHANGED value moves updated_at and leaves created_at where it was.
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "maintain_enabled", "on"), "SetProperty change")
+	created2, updated2 := readTimes()
+	if !created2.Equal(created1) {
+		t.Errorf("created_at moved on upsert: %v → %v", created1, created2)
+	}
+	if !updated2.After(updated1) {
+		t.Errorf("updated_at did not move on a changed value: %v → %v", updated1, updated2)
+	}
+
+	// An UNCHANGED value moves it too — a save is a save.
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "maintain_enabled", "on"), "SetProperty same value")
+	_, updated3 := readTimes()
+	if !updated3.After(updated2) {
+		t.Errorf("updated_at did not move on a re-save of the same value: %v → %v", updated2, updated3)
+	}
+}
+
 func TestListPropertiesEmpty(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -1008,4 +1059,131 @@ func TestPayloadAssignments(t *testing.T) {
 	if got := countNodePayloads(t, sdb, n.ID); got != 0 {
 		t.Errorf("node_payloads count after nodes.SetPayloads(nil) = %d, want 0", got)
 	}
+}
+
+// ── The parentage guard ────────────────────────────────────────────────────
+//
+// A node tree cannot be made into a node graph. Seven recursive walks over
+// nodes.parent_id recurse until the chain runs out, so a cycle makes each of
+// them run forever — and hardening seven readers against bad data is the
+// expensive, incomplete answer. The cheap, complete one is refusing to write it.
+//
+// These test the STORE, which is where the guard lives, because that is the only
+// place every write path crosses: Update sets parent_id directly (the node form
+// posts into it) and SetParent carries the reparent endpoint and the lane-slot
+// reorder. A guard at a caller is a guard the next caller forgets.
+
+// A node may not be its own parent. The trivial case, and the one a mistyped
+// form actually produces.
+func TestParentage_SelfParentRefused(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sdb := db.DB
+
+	n := &nodes.Node{Name: "CYC-SELF", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(sdb, n), "nodes.Create")
+
+	err := nodes.SetParent(sdb, n.ID, n.ID)
+	if err == nil {
+		t.Fatal("SetParent(self): expected a refusal, got nil")
+	}
+	if !nodes.IsParentCycle(err) {
+		t.Fatalf("SetParent(self) error = %v, want a ParentCycleError", err)
+	}
+	if !strings.Contains(err.Error(), "CYC-SELF") {
+		t.Errorf("error %q does not name the node", err)
+	}
+
+	// And the same through Update, which sets parent_id in its own statement
+	// rather than going through SetParent.
+	n.ParentID = &n.ID
+	if err := nodes.Update(sdb, n); !nodes.IsParentCycle(err) {
+		t.Errorf("Update(self-parent) error = %v, want a ParentCycleError", err)
+	}
+}
+
+// A two-node loop: B is under A, so A may not go under B.
+func TestParentage_TwoNodeCycleRefused(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sdb := db.DB
+
+	a := &nodes.Node{Name: "CYC-A", Enabled: true}
+	b := &nodes.Node{Name: "CYC-B", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(sdb, a), "create A")
+	testutil.MustNoErr(t, nodes.Create(sdb, b), "create B")
+	testutil.MustNoErr(t, nodes.SetParent(sdb, b.ID, a.ID), "B under A")
+
+	err := nodes.SetParent(sdb, a.ID, b.ID)
+	if !nodes.IsParentCycle(err) {
+		t.Fatalf("SetParent(A under B) error = %v, want a ParentCycleError", err)
+	}
+	// THE ERROR NAMES THE CHAIN. "You cannot put A under B" is a statement
+	// somebody argues with until they can see why, and the why is a path that is
+	// not visible on the screen they are looking at.
+	for _, want := range []string{"CYC-A", "CYC-B"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s; the chain has to be readable", err, want)
+		}
+	}
+
+	// The write did not happen.
+	got, err2 := nodes.Get(sdb, a.ID)
+	testutil.MustNoErr(t, err2, "re-read A")
+	if got.ParentID != nil {
+		t.Errorf("A gained a parent despite the refusal: %v", *got.ParentID)
+	}
+}
+
+// A three-node loop, so the guard is not just comparing the immediate parent.
+func TestParentage_DeepCycleRefused(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sdb := db.DB
+
+	a := &nodes.Node{Name: "CYC3-A", Enabled: true}
+	b := &nodes.Node{Name: "CYC3-B", Enabled: true}
+	c := &nodes.Node{Name: "CYC3-C", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(sdb, a), "create A")
+	testutil.MustNoErr(t, nodes.Create(sdb, b), "create B")
+	testutil.MustNoErr(t, nodes.Create(sdb, c), "create C")
+	testutil.MustNoErr(t, nodes.SetParent(sdb, b.ID, a.ID), "B under A")
+	testutil.MustNoErr(t, nodes.SetParent(sdb, c.ID, b.ID), "C under B")
+
+	err := nodes.SetParent(sdb, a.ID, c.ID)
+	if !nodes.IsParentCycle(err) {
+		t.Fatalf("SetParent(A under its own grandchild) error = %v, want a ParentCycleError", err)
+	}
+	if !strings.Contains(err.Error(), "CYC3-B") {
+		t.Errorf("error %q should name the intermediate node — the chain is the evidence", err)
+	}
+}
+
+// The guard must not refuse legal work. A move under a DIFFERENT subtree, and a
+// move deeper into an unrelated tree, both go through.
+func TestParentage_LegalReparentSucceeds(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sdb := db.DB
+
+	oldParent := &nodes.Node{Name: "OK-OLD", Enabled: true}
+	newParent := &nodes.Node{Name: "OK-NEW", Enabled: true}
+	child := &nodes.Node{Name: "OK-CHILD", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(sdb, oldParent), "create old")
+	testutil.MustNoErr(t, nodes.Create(sdb, newParent), "create new")
+	testutil.MustNoErr(t, nodes.Create(sdb, child), "create child")
+	testutil.MustNoErr(t, nodes.SetParent(sdb, child.ID, oldParent.ID), "child under old")
+
+	testutil.MustNoErr(t, nodes.SetParent(sdb, child.ID, newParent.ID), "child under new")
+	got, err := nodes.Get(sdb, child.ID)
+	testutil.MustNoErr(t, err, "re-read child")
+	if got.ParentID == nil || *got.ParentID != newParent.ID {
+		t.Fatalf("child parent = %v, want %d", got.ParentID, newParent.ID)
+	}
+
+	// A sibling moving UNDER the moved child is still legal — it is deeper, not
+	// circular.
+	sib := &nodes.Node{Name: "OK-SIB", Enabled: true}
+	testutil.MustNoErr(t, nodes.Create(sdb, sib), "create sib")
+	testutil.MustNoErr(t, nodes.SetParent(sdb, sib.ID, child.ID), "sib under child")
 }

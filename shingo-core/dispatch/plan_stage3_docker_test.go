@@ -31,7 +31,7 @@ func mkPlainOrder(t *testing.T, db interface {
 // node.
 func TestStage3_IsStorageDropoff(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, _ := setupTestData(t, db) // lineNode is a top-level, untyped consume node
 	storType, err := db.GetNodeTypeByCode("STOR")
 	testutil.MustNoErr(t, err, "get STOR type")
@@ -71,7 +71,7 @@ func TestStage3_IsStorageDropoff(t *testing.T) {
 // store had before C2).
 func TestStage3_MoveToStorageRace_ExactlyOneWins(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 	storType, _ := db.GetNodeTypeByCode("STOR")
 	dest := &nodes.Node{Name: "S3-MV-DEST", Enabled: true, NodeTypeID: &storType.ID}
@@ -81,8 +81,8 @@ func TestStage3_MoveToStorageRace_ExactlyOneWins(t *testing.T) {
 	m1 := mkPlainOrder(t, db, "s3-mv-1", OrderTypeMove, bp.Code, dest.Name)
 	m2 := mkPlainOrder(t, db, "s3-mv-2", OrderTypeMove, bp.Code, dest.Name)
 
-	e1 := d.ReserveStorageDropoff(m1)
-	e2 := d.ReserveStorageDropoff(m2)
+	_, e1 := d.ReserveStorageDropoff(m1)
+	_, e2 := d.ReserveStorageDropoff(m2)
 	wins := 0
 	if e1 == nil {
 		wins++
@@ -100,7 +100,7 @@ func TestStage3_MoveToStorageRace_ExactlyOneWins(t *testing.T) {
 // one wins, regardless of which type it is.
 func TestStage3_MoveVsStore_ExactlyOneWins(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
 	storType, _ := db.GetNodeTypeByCode("STOR")
 	dest := &nodes.Node{Name: "S3-MVST-DEST", Enabled: true, NodeTypeID: &storType.ID}
@@ -113,8 +113,8 @@ func TestStage3_MoveVsStore_ExactlyOneWins(t *testing.T) {
 	// by the order type, so two differently-typed orders race the same slot.
 	st := mkPlainOrder(t, db, "s3-mvst-store", protocol.OrderType("store"), bp.Code, dest.Name)
 
-	e1 := d.ReserveStorageDropoff(mv)
-	e2 := d.ReserveStorageDropoff(st)
+	_, e1 := d.ReserveStorageDropoff(mv)
+	_, e2 := d.ReserveStorageDropoff(st)
 	wins := 0
 	if e1 == nil {
 		wins++

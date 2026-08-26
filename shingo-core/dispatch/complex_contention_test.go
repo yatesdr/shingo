@@ -24,7 +24,7 @@ import (
 
 func TestReserveComplexPlan_ConcurrentContention(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 
 	// Source node with a single bin — the contested resource.

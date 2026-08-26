@@ -69,9 +69,10 @@ func occupancyUnverifiable(outcome string) bool {
 // createUnloaderEmptyOut), not off this U1 completing, so a press/forklift-fed
 // drain with no U1 still drains.
 //
-// Callers: the consume DemandSignal handler (a full arrived at FG storage —
-// cmd/shingoedge/main.go) and ReleaseOrderWithLineside in operator_release.go
-// (produce-role lineside release). The seam dedups both (never-2N).
+// Caller: ReleaseOrderWithLineside in operator_release.go (produce-role
+// lineside release). The consume DemandSignal caller is gone (2026-08) with
+// the kanban demand-signal route; fulls landing at FG storage no longer
+// auto-trigger a U1. The seam still applies (never-2N).
 func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 	loader, err := e.loaderStore.LoaderForPayload(domain.PayloadCode(payloadCode), domain.RoleConsume, true)
 	if err != nil || loader == nil {
@@ -158,7 +159,7 @@ func (e *Engine) createUnloaderFullInViaSeam(loader *domain.Loader, payloadCode 
 			// pulled it in, the same shape as the loader's opportunistic push.
 			// If it were ever to become real demand that would be a column
 			// value here, not a redesign.
-			if _, cerr := e.orderMgr.CreateRetrieveOrderWithOrigin(
+			if _, cerr := e.orderMgr.CreateRetrieveOrder(
 				&nodeID, false, 1, deliveryNode, loader.InboundSource(), "",
 				"standard", payloadCode, false, true, orders.NoDemand(),
 			); cerr != nil {

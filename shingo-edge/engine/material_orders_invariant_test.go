@@ -43,6 +43,17 @@ func TestSwapBuilders_EveryLegEndsOnADropoff(t *testing.T) {
 	twoRobotA, twoRobotB := BuildTwoRobotSwapSteps(claim(""))
 	pi2R1, pi2R2 := BuildTwoRobotPressIndexSwapSteps(claim(""))
 	pi3R1, pi3R2 := BuildTwoRobotPressIndexSwapSteps(claim("INDEX-C"))
+	// Flipped (IndexRobotSupplies): R1 evac-only, R2 indexes AND refills.
+	// Every leg invariant applies to the new shapes unchanged — that is the
+	// point of running them through the same table rather than asserting the
+	// step lists somewhere else.
+	flipped := func(secondPaired string) *processes.NodeClaim {
+		c := claim(secondPaired)
+		c.IndexRobotSupplies = true
+		return c
+	}
+	fl2R1, fl2R2 := BuildTwoRobotPressIndexSwapSteps(flipped(""))
+	fl3R1, fl3R2 := BuildTwoRobotPressIndexSwapSteps(flipped("INDEX-C"))
 
 	legs := []struct {
 		name  string
@@ -57,6 +68,10 @@ func TestSwapBuilders_EveryLegEndsOnADropoff(t *testing.T) {
 		{"press_index 2-pos R2", pi2R2},
 		{"press_index 3-pos R1", pi3R1},
 		{"press_index 3-pos R2", pi3R2},
+		{"press_index FLIPPED 2-pos R1", fl2R1},
+		{"press_index FLIPPED 2-pos R2", fl2R2},
+		{"press_index FLIPPED 3-pos R1", fl3R1},
+		{"press_index FLIPPED 3-pos R2", fl3R2},
 	}
 
 	for _, leg := range legs {
@@ -73,6 +88,234 @@ func TestSwapBuilders_EveryLegEndsOnADropoff(t *testing.T) {
 					last.Action, last.Node)
 			}
 		})
+	}
+}
+
+// TestEveryEdgeAuthoredWaitIsStamped is W1's drift test on the Edge side: every
+// wait this station authors declares that the station owns it.
+//
+// ── WHY DECLARING IT MATTERS ──────────────────────────────────────────────
+//
+// The old rule was "no kind means the operator's", and inside Core that was
+// enough — the splice stamps the lane waits and everything else is the
+// station's by elimination. It fails at the boundary. The Edge holds the plan it
+// authored and used to receive no stamp at all, so it could not tell "unmarked
+// because I own it" from "unmarked because nobody said", and neither could the
+// board it draws. The sim operator guessed with a three-strike retry cap and
+// guessed wrong; a human at an HMI has less to go on than that.
+//
+// So the stamp is now made, not inferred, and this walks every builder to keep
+// it that way. A twenty-third wait added as a raw literal fails here rather than
+// reaching a plant as an unowned step.
+func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
+	t.Parallel()
+
+	claim := func(secondPaired string) *processes.NodeClaim {
+		return &processes.NodeClaim{
+			CoreNodeName:         "PRESS",
+			Role:                 protocol.ClaimRoleConsume,
+			InboundSource:        "MARKET-EMPTIES",
+			InboundStaging:       "IN-STAGING",
+			OutboundStaging:      "OUT-STAGING",
+			OutboundDestination:  "MARKET",
+			PairedCoreNode:       "INDEX-B",
+			SecondPairedCoreNode: secondPaired,
+		}
+	}
+	// Flipped press-index shapes go through the same wait-stamp check: the
+	// flip moves steps between legs, and an unstamped wait is exactly the kind
+	// of thing that rides along in a move.
+	flipped2 := func(secondPaired string) *processes.NodeClaim {
+		c := claim(secondPaired)
+		c.IndexRobotSupplies = true
+		return c
+	}
+	fl2R1b, fl2R2b := BuildTwoRobotPressIndexSwapSteps(flipped2(""))
+	fl3R1b, fl3R2b := BuildTwoRobotPressIndexSwapSteps(flipped2("INDEX-C"))
+	from, to := claim(""), claim("")
+	to.CoreNodeName = "PRESS-B"
+
+	twoRobotA, twoRobotB := BuildTwoRobotSwapSteps(claim(""))
+	pi2R1, pi2R2 := BuildTwoRobotPressIndexSwapSteps(claim(""))
+	pi3R1, pi3R2 := BuildTwoRobotPressIndexSwapSteps(claim("INDEX-C"))
+	swapCO := BuildSwapChangeoverSteps(from, to, "PRESS-B", "PRESS")
+	evacCO := BuildEvacuateChangeoverSteps(from, to, "PRESS-B", "PRESS")
+
+	legs := map[string][]protocol.ComplexOrderStep{
+		"release":                      BuildReleaseSteps(claim("")),
+		"staged release":               BuildStagedReleaseSteps(claim("")),
+		"stage":                        BuildStageSteps(claim("")),
+		"staged deliver":               BuildStagedDeliverSteps(claim("")),
+		"single_robot":                 BuildSingleSwapSteps(claim("")),
+		"sequential removal":           BuildSequentialRemovalSteps(claim("")),
+		"sequential backfill":          BuildSequentialBackfillSteps(claim("")),
+		"two_robot A":                  twoRobotA,
+		"two_robot B":                  twoRobotB,
+		"press_index FLIPPED 2-pos R1": fl2R1b,
+		"press_index FLIPPED 2-pos R2": fl2R2b,
+		"press_index FLIPPED 3-pos R1": fl3R1b,
+		"press_index FLIPPED 3-pos R2": fl3R2b,
+		"press_index 2-pos R1":         pi2R1,
+		"press_index 2-pos R2":         pi2R2,
+		"press_index 3-pos R1":         pi3R1,
+		"press_index 3-pos R2":         pi3R2,
+		"keep-staged evac":             BuildKeepStagedEvacSteps(from),
+		"keep-staged deliver":          BuildKeepStagedDeliverSteps(to),
+		"keep-staged combined":         BuildKeepStagedCombinedSteps(from, to),
+		"changeover swap A":            swapCO.StepsA,
+		"changeover swap B":            swapCO.StepsB,
+		"changeover evacuate A":        evacCO.StepsA,
+		"changeover evacuate B":        evacCO.StepsB,
+	}
+
+	seen := 0
+	for name, steps := range legs {
+		for i, s := range steps {
+			if s.Action != protocol.ActionWait {
+				continue
+			}
+			seen++
+			if s.WaitKind != waitKindStation {
+				t.Errorf("%s step %d: wait at %q carries wait_kind %q, want %q.\n"+
+					"Every wait this file authors is a STATION fact — the line has cleared, the tooling "+
+					"is done, the operator is ready — and Core cannot observe any of them. An unstamped "+
+					"wait reaches the far side as an unowned step: the board cannot say whether to offer "+
+					"Release, which is how three robots sat for a whole soak. Build it with "+
+					"stationWait().", name, i, s.Node, s.WaitKind, waitKindStation)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no wait steps found in any builder — the fixture stopped exercising them, so this " +
+			"test is now vacuous")
+	}
+}
+
+// TestEveryStagingDropoffIsDeclared is the mirror of the wait stamp, one field
+// over: every dropoff this station authors at a STAGING node declares that the
+// node holds one bin and must be reserved.
+//
+// ── WHY DECLARING IT MATTERS ──────────────────────────────────────────────
+//
+// Core gates its destination checks on node ROLE, and a staging node fails that
+// test — it is seeded as a station with no parent, so Core reads "not a storage
+// slot" and both the capacity check and the slot reservation stand down. Nothing
+// reserves the node and nothing asks whether it is free.
+//
+// Core cannot repair that by looking harder: every station carries the one
+// STATION node type, the plantspec Kind is advisory and unpersisted, and the
+// inbound/outbound staging designation lives in the cell config on THIS side.
+// The station is the only party that knows, which makes this the exact shape of
+// the wait stamp above — a fact the far side cannot infer, carried on the wire
+// rather than guessed at.
+//
+// Undeclared, two orders can take one staging node and the second robot arrives
+// to find it full. (A Springfield attribution stood here; §R.112 falsified it —
+// see protocol.ComplexOrderStep.ExclusiveSlot.)
+//
+// LINE DROPOFFS MUST NOT BE DECLARED, and that half is asserted too. Gating a
+// supply leg on a line node its sibling evac is on the way to clear re-creates
+// the deadlock Core's 2b05dce fixed, so this test fails in both directions: a
+// staging dropoff that is not declared, and a line dropoff that is.
+//
+// MUTATION (verified): return a plain literal from stagingDropoff. Eight legs
+// report an undeclared staging dropoff.
+func TestEveryStagingDropoffIsDeclared(t *testing.T) {
+	t.Parallel()
+
+	claim := func(secondPaired string) *processes.NodeClaim {
+		return &processes.NodeClaim{
+			CoreNodeName:         "PRESS",
+			Role:                 protocol.ClaimRoleConsume,
+			InboundSource:        "MARKET-EMPTIES",
+			InboundStaging:       "IN-STAGING",
+			OutboundStaging:      "OUT-STAGING",
+			OutboundDestination:  "MARKET",
+			PairedCoreNode:       "INDEX-B",
+			SecondPairedCoreNode: secondPaired,
+		}
+	}
+	from, to := claim(""), claim("")
+	to.CoreNodeName = "PRESS-B"
+
+	// The staging nodes, by name — the same two every fixture claim carries. A
+	// dropoff at one of these is staging; a dropoff anywhere else is not.
+	staging := map[string]bool{"IN-STAGING": true, "OUT-STAGING": true}
+	// The nodes that must NEVER be declared: a line dropoff gated this way is the
+	// 2b05dce deadlock coming back.
+	line := map[string]bool{"PRESS": true, "PRESS-B": true, "INDEX-B": true, "INDEX-C": true}
+
+	twoRobotA, twoRobotB := BuildTwoRobotSwapSteps(claim(""))
+	pi2R1, pi2R2 := BuildTwoRobotPressIndexSwapSteps(claim(""))
+	pi3R1, pi3R2 := BuildTwoRobotPressIndexSwapSteps(claim("INDEX-C"))
+	swapCO := BuildSwapChangeoverSteps(from, to, "PRESS-B", "PRESS")
+	evacCO := BuildEvacuateChangeoverSteps(from, to, "PRESS-B", "PRESS")
+
+	legs := map[string][]protocol.ComplexOrderStep{
+		"release":               BuildReleaseSteps(claim("")),
+		"staged release":        BuildStagedReleaseSteps(claim("")),
+		"stage":                 BuildStageSteps(claim("")),
+		"staged deliver":        BuildStagedDeliverSteps(claim("")),
+		"single_robot":          BuildSingleSwapSteps(claim("")),
+		"sequential removal":    BuildSequentialRemovalSteps(claim("")),
+		"sequential backfill":   BuildSequentialBackfillSteps(claim("")),
+		"two_robot A":           twoRobotA,
+		"two_robot B":           twoRobotB,
+		"press_index 2-pos R1":  pi2R1,
+		"press_index 2-pos R2":  pi2R2,
+		"press_index 3-pos R1":  pi3R1,
+		"press_index 3-pos R2":  pi3R2,
+		"keep-staged evac":      BuildKeepStagedEvacSteps(from),
+		"keep-staged deliver":   BuildKeepStagedDeliverSteps(to),
+		"keep-staged combined":  BuildKeepStagedCombinedSteps(from, to),
+		"changeover swap A":     swapCO.StepsA,
+		"changeover swap B":     swapCO.StepsB,
+		"changeover evacuate A": evacCO.StepsA,
+		"changeover evacuate B": evacCO.StepsB,
+	}
+
+	seen := 0
+	for name, steps := range legs {
+		for i, s := range steps {
+			if s.Action != protocol.ActionDropoff {
+				continue
+			}
+			if staging[s.Node] {
+				seen++
+				if !s.ExclusiveSlot {
+					t.Errorf("%s step %d: dropoff at staging node %q is not declared exclusive.\n"+
+						"Core cannot tell a staging node from a line node — one STATION node type, an "+
+						"advisory Kind that is never persisted, and the staging designation living in "+
+						"OUR cell config. Undeclared, both of Core's destination gates stand down and "+
+						"a second order is free to take the node, so the first robot arrives to find "+
+						"it full. Build it with stagingDropoff().", name, i, s.Node)
+				}
+			}
+			if line[s.Node] && s.ExclusiveSlot {
+				t.Errorf("%s step %d: dropoff at LINE node %q is declared exclusive.\n"+
+					"A supply leg delivers to a line node that a sibling evac is on its way to clear. "+
+					"Gating it re-creates the deadlock Core's 2b05dce fixed — which is the whole "+
+					"reason Core's role test excludes line nodes rather than checking everything.",
+					name, i, s.Node)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no staging dropoffs found in any builder — the fixture stopped exercising them, so " +
+			"this test is now vacuous")
+	}
+}
+
+// TestWaitKindStation_MatchesCore pins the cross-module constant. Edge cannot
+// import Core, so the value is duplicated; if Core renames its side, the stamp
+// silently stops matching the fence that reads it and every station wait becomes
+// unowned. The literal here is the contract, spelled out so a rename has to
+// touch both.
+func TestWaitKindStation_MatchesCore(t *testing.T) {
+	t.Parallel()
+	if waitKindStation != "station" {
+		t.Errorf("waitKindStation = %q, want %q — this must equal dispatch.WaitKindStation, which is "+
+			"what Core's release fence and its population partition read", waitKindStation, "station")
 	}
 }
 

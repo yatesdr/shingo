@@ -31,14 +31,15 @@
             <td>{{.ID}}</td>
             <td><code>{{.Code}}</code></td>
             <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
-            <td>{{if .WidthIn}}{{.WidthIn}} x {{.HeightIn}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+            <td>{{if .WidthIn}}{{.WidthIn}} x {{.HeightIn}}{{if .LengthIn}} x {{.LengthIn}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
             <td>
               <button class="btn btn-sm" data-action="openEditBTModal"
                 data-id="{{.ID}}"
                 data-code="{{.Code}}"
                 data-desc="{{.Description}}"
                 data-width="{{.WidthIn}}"
-                data-height="{{.HeightIn}}">Edit</button>
+                data-height="{{.HeightIn}}"
+                data-length="{{.LengthIn}}">Edit</button>
               <form method="POST" action="/bin-types/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete bin type {{.Code}}? All bins of this type must be removed first.">
                 <input type="hidden" name="id" value="{{.ID}}">
                 <button type="submit" class="btn btn-danger btn-sm">Delete</button>
@@ -131,6 +132,26 @@
         <td data-sort-value="{{if .InTransit}}{{.TransitSource}} → {{.TransitDest}}{{else}}{{.NodeName}}{{end}}">
           {{if .InTransit}}<span title="In transit">{{if .TransitSource}}{{.TransitSource}} &rarr; {{.TransitDest}}{{else}}in transit{{end}}</span>
           {{else if .NodeName}}{{.NodeName}}{{else}}<span class="text-muted">-</span>{{end}}
+          {{/* Where it actually is. A bin on a robot names the robot; a stranded
+               one carries the position inferred from that robot's last telemetry,
+               so the operator walks to a pin instead of searching. */}}
+          {{/* THE ONLY SURFACE THAT CAN SHOW THIS BUTTON. RecoverCarriedBin
+               accepts exactly the bins on a carrier node, and the diagnostics
+               anomalies table cannot list one — ListAnomalousTransitBins
+               excludes carrier nodes by name. This row is where a carried bin
+               is already visible, so this is where the door goes. Diagnostics
+               stays the read-only receipt. */}}
+          {{if .CarriedBy}}<div class="text-muted-xs">on {{.CarriedBy}}</div>
+            {{/* And why it has not settled. The diagnostics anomalies table
+                 excludes carrier nodes, so this row is the only place the jack
+                 watch's reason is ever shown. */}}
+            {{if .AnomalyNote}}<div class="text-muted-xs">{{.AnomalyNote}}</div>{{end}}
+            {{if $.Authenticated}}<div data-action="stopPropagation">
+              <button class="btn btn-sm" data-action="askRobotToSetDown:{{.ID}}"
+                      title="Creates an order pinned to {{.CarriedBy}} whose only step is to put this bin down">Ask {{.CarriedBy}} to set it down</button>
+            </div>{{end}}
+          {{end}}
+          {{if .Stranded}}<div class="text-muted-xs">stranded{{if .AnomalyNote}} &mdash; {{.AnomalyNote}}{{end}}</div>{{end}}
         </td>
         <td data-sort-value="{{if .PayloadCode}}{{.PayloadCode}}{{else}}{{.TransitPayload}}{{end}}">
           {{if .PayloadCode}}<code>{{.PayloadCode}}</code>
@@ -180,10 +201,11 @@
         </div>
       </div>
       <div class="form-group">
-        <label>Dimensions (in) <span class="tooltip-trigger" title="Physical dimensions: Width x Height">?</span></label>
+        <label>Dimensions (in) <span class="tooltip-trigger" title="Physical dimensions: Width x Height x Length. Recorded for reference — carrier fit is decided by type, not by measurement.">?</span></label>
         <div class="flex gap-05">
           <input type="number" name="width_in" placeholder="W" step="0.1" style="flex:1">
           <input type="number" name="height_in" placeholder="H" step="0.1" style="flex:1">
+          <input type="number" name="length_in" placeholder="L" step="0.1" style="flex:1">
         </div>
       </div>
       <button type="submit" class="btn btn-primary">Create</button>
@@ -216,6 +238,7 @@
         <div class="flex gap-05">
           <input type="number" name="width_in" id="bt-edit-w" placeholder="W" step="0.1" style="flex:1">
           <input type="number" name="height_in" id="bt-edit-h" placeholder="H" step="0.1" style="flex:1">
+          <input type="number" name="length_in" id="bt-edit-l" placeholder="L" step="0.1" style="flex:1">
         </div>
       </div>
       <button type="submit" class="btn btn-primary">Save Changes</button>
@@ -231,7 +254,7 @@
       <h2>Create Bin</h2>
       <button class="modal-close" data-action="closeCreateBinModal">&times;</button>
     </div>
-    <form method="POST" action="/bins/create">
+    <form method="POST" action="/bins/create" data-action-submit="confirmBinCreate">
       <div class="grid grid-2">
         <div class="form-group">
           <label>Bin Type</label>
@@ -243,8 +266,8 @@
           </select>
         </div>
         <div class="form-group">
-          <label>Label <span class="tooltip-trigger" title="Quantity 1 uses this exact label. For more than 1, a trailing number is incremented (e.g. 'BIN-010' generates BIN-010, BIN-011, …); with no trailing number it appends 0001, 0002, …">?</span></label>
-          <input type="text" name="label_prefix" placeholder="e.g. BIN-010" required>
+          <label>Label</label>
+          <input type="text" name="label_prefix" placeholder="e.g. CARRIER-0101" required data-action-input="previewBinLabels">
         </div>
         <div class="form-group">
           <label>Node (optional)</label>
@@ -256,8 +279,8 @@
           </select>
         </div>
         <div class="form-group">
-          <label>Quantity <span class="tooltip-trigger" title="Number of bins to create (1-100). Labels will be auto-numbered.">?</span></label>
-          <input type="number" name="quantity" value="1" min="1" max="100">
+          <label>Quantity — how many carriers to create (1–100)</label>
+          <input type="number" name="quantity" value="1" min="1" max="100" data-action-input="previewBinLabels">
         </div>
         <div class="form-group">
           <label>Status</label>
@@ -267,6 +290,7 @@
           </select>
         </div>
       </div>
+      <p class="form-hint" id="bin-label-preview" style="margin:0.25rem 0 0.75rem"></p>
       <button type="submit" class="btn btn-primary">Create</button>
       <button type="button" class="btn ml-05" data-action="closeCreateBinModal">Cancel</button>
     </form>

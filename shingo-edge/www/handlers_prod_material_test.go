@@ -120,6 +120,40 @@ func TestApiSaveShifts_InvalidJSON(t *testing.T) {
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
+// TestApiSaveShifts_AbsentShiftIsDeleted covers the DOM-side removeShiftRow
+// path: the row is dropped from the editor entirely, so the shift_number
+// never appears in the PUT payload. The handler must reconcile against the
+// existing rows and delete the absent one — otherwise a removed shift sat
+// in the DB forever.
+func TestApiSaveShifts_AbsentShiftIsDeleted(t *testing.T) {
+	_, router := newProdMaterialRouter(t)
+
+	if _, err := testDB.Exec("DELETE FROM shifts"); err != nil {
+		t.Fatalf("clear shifts: %v", err)
+	}
+	// Seed two shifts; the operator removes shift 2 in the UI, so only
+	// shift 1 is sent. Shift 2 must be deleted from the DB.
+	testutil.MustNoErr(t, testDB.UpsertShift(1, "Day", "06:00", "14:00"), "seed shift 1")
+	testutil.MustNoErr(t, testDB.UpsertShift(2, "Swing", "14:00", "22:00"), "seed shift 2")
+
+	body := []map[string]any{
+		{"shift_number": 1, "name": "Day", "start_time": "06:00", "end_time": "14:00"},
+	}
+	resp := doRequest(t, router, "PUT", "/api/shifts", body, nil)
+	assertStatus(t, resp, http.StatusOK)
+
+	got, err := testDB.ListShifts()
+	if err != nil {
+		t.Fatalf("ListShifts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 surviving shift (shift 2 absent should be deleted), got %d: %+v", len(got), got)
+	}
+	if got[0].ShiftNumber != 1 || got[0].Name != "Day" {
+		t.Errorf("surviving shift: got %+v, want shift_number=1 name=Day", got[0])
+	}
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // apiGetHourlyCounts
 // ═══════════════════════════════════════════════════════════════════════

@@ -6,6 +6,7 @@ package www
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -122,10 +123,32 @@ func (h *Handlers) apiSetProcessGroup(w http.ResponseWriter, r *http.Request) {
 	if req.GroupID != nil && *req.GroupID > 0 {
 		gid = req.GroupID
 	}
+	if err := h.validateGroupID(gid); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := h.engine.ProcessService().SetGroupID(processID, gid); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.requestBackup("process-group-assigned")
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// validateGroupID returns nil for an ungroup request (nil or zero), and
+// verifies the group exists for a positive id. foreign_keys is OFF (see
+// store/store.go), so the ON DELETE SET NULL FK does not fire and nothing
+// else guards an orphan group_id on the processes row — without this
+// check, a stale modal or direct API call could write group_id=999 for a
+// group that doesn't exist, and renderSidebar would silently drop the
+// process from every section (not Ungrouped, not any real group).
+func (h *Handlers) validateGroupID(gid *int64) error {
+	if gid == nil || *gid <= 0 {
+		return nil
+	}
+	g, err := h.engine.ProcessService().GetGroup(*gid)
+	if err != nil || g == nil {
+		return fmt.Errorf("process group %d does not exist", *gid)
+	}
+	return nil
 }

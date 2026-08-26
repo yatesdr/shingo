@@ -18,7 +18,7 @@ import (
 // /missions/{orderID} and are reached from here rather than reproduced.
 //
 // NOT A CYCLE BROWSER OVER TAKT. "Cycle" is overloaded in this codebase: the
-// production-cycle surfaces read bin_uop_audit at the takt grain, while this
+// production-cycle surfaces read bin_uop_ledger at the takt grain, while this
 // reads the order/mission lifecycle at the demand grain. Different table,
 // different grain, no dependency between them.
 

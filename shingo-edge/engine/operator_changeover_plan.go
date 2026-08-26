@@ -33,6 +33,9 @@ type changeoverPlan struct {
 	// unresolvedParticipants names participants with no process_nodes row.
 	// Advisory; see domain.Changeover.UnresolvedParticipants.
 	unresolvedParticipants []string
+	// tooling is the marked-press decoration, computed from the ORIGINAL claim
+	// lists rather than from the diffs. See changeover_tooling.go.
+	tooling toolingChangeover
 }
 
 // planChangeover assembles all data needed for a changeover without writing anything.
@@ -41,7 +44,47 @@ type changeoverPlan struct {
 // Note: validation errors use changeover-specific messages ("process is already running
 // style %d", etc). If this is later reused for a dry-run API, the error messages will
 // still be appropriate — but callers should be aware they're changeover-flavored.
-func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, error) {
+// logEvacConfigOnWrongSide names the case the ownership decision changes: the
+// INCOMING claim asks for evacuation and the outgoing one does not, so this
+// transition will not evacuate where the old read would have.
+//
+// A DIAGNOSTIC, NOT A FALLBACK. Honouring it would be a second ownership rule,
+// and the point of the decision is that there is one. Saying it is what turns
+// "the config is on the wrong claim" from a silent behaviour change into a
+// line an engineer can act on.
+func (e *Engine) logEvacConfigOnWrongSide(fromClaims, toClaims []processes.NodeClaim) {
+	toByNode := make(map[string]*processes.NodeClaim, len(toClaims))
+	for i := range toClaims {
+		toByNode[toClaims[i].CoreNodeName] = &toClaims[i]
+	}
+	for i := range fromClaims {
+		from := &fromClaims[i]
+		to := toByNode[from.CoreNodeName]
+		if domain.EvacConfigOnWrongSide(from, to) {
+			e.logFn("changeover: node %s — 'Evacuate on changeover' is set on the INCOMING style's "+
+				"claim but not the outgoing one, and the outgoing claim is what decides. This "+
+				"transition will NOT evacuate. Move the setting to the outgoing style's claim.",
+				from.CoreNodeName)
+		}
+	}
+}
+
+// planChangeover builds everything a changeover needs before anything is
+// written: the diffs, the node tasks, the participants and the tooling
+// decoration.
+//
+// materializePositions is the difference between the two callers. A marked press
+// position owns no style_node_claims row and therefore no process_nodes row until
+// something creates one, and the thing that used to create one was
+// ChangeoverService.Create — which runs AFTER this. So the FIRST changeover of
+// any marked press planned one position fewer than the second, silently: no
+// clearance, no hold, no order (N1-a, sim-proven on a pristine seed 2026-08-24).
+//
+// Start passes true and the rows are written here, before planning, so the
+// first changeover plans exactly like the second. Preview passes false and gets
+// the same positions as UNSAVED nodes — the operator must see the work the
+// changeover will do, and a preview that writes rows is not a preview.
+func (e *Engine) planChangeover(processID, toStyleID int64, materializePositions bool) (*changeoverPlan, error) {
 	process, err := e.db.GetProcess(processID)
 	if err != nil {
 		return nil, err
@@ -78,11 +121,33 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 	if err != nil {
 		return nil, fmt.Errorf("list to-style claims: %w", err)
 	}
+	// The tooling changeover parks the incoming style's bins at InboundStaging
+	// until tooling-done. Refuse to arm without one, LOUDLY and by name: the
+	// alternative is a plan whose supply legs have nowhere to go, discovered as
+	// robots idling mid-changeover — or worse, material driving into a cell a
+	// human is standing in.
+	//
+	// Reads the CLAIMS, not the diffs, and so runs before them: the question is
+	// about the operator's configuration, which no diff pass can change.
+	if err := refuseToolingChangeoverWithoutStaging(fromClaims, toClaims); err != nil {
+		return nil, err
+	}
+	// The tooling decoration, also from the original claims. Applied last, by
+	// BuildChangeoverPlan, over the finished plan.
+	tooling := planToolingChangeover(fromClaims, toClaims)
 	diffs, err := e.applyChangeoverDiffPostProcessors(processID, DiffStyleClaims(fromClaims, toClaims))
 	if err != nil {
 		return nil, err
 	}
+	e.logEvacConfigOnWrongSide(fromClaims, toClaims)
 	nodes, err := e.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return nil, err
+	}
+	// Participants first: they name every node the diffs touch, and resolving
+	// the plan's nodes needs that whole set — not just the ones a mark names.
+	participants := buildParticipants(diffs)
+	nodes, err = e.resolveToolingNodes(processID, tooling, participants, nodes, materializePositions)
 	if err != nil {
 		return nil, err
 	}
@@ -92,8 +157,8 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 		stationIDs[i] = stations[i].ID
 	}
 
-	nodeTasks := make([]processes.NodeTaskInput, len(diffs))
-	for i, diff := range diffs {
+	nodeTasks := make([]processes.NodeTaskInput, 0, len(diffs))
+	for _, diff := range diffs {
 		state := "unchanged"
 		switch diff.Situation {
 		case SituationSwap, SituationEvacuate, SituationDrop, SituationAdd:
@@ -108,17 +173,17 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 			id := diff.ToClaim.ID
 			toClaimID = &id
 		}
-		nodeTasks[i] = processes.NodeTaskInput{
+		nodeTasks = append(nodeTasks, processes.NodeTaskInput{
 			ProcessID:    processID,
 			CoreNodeName: diff.CoreNodeName,
 			FromClaimID:  fromClaimID,
 			ToClaimID:    toClaimID,
 			Situation:    string(diff.Situation),
 			State:        state,
-		}
+		})
 	}
+	nodeTasks = appendToolingClearanceTasks(processID, tooling, nodeTasks)
 
-	participants := buildParticipants(diffs)
 	unresolved := assertParticipantsResolve(participants, nodes)
 
 	return &changeoverPlan{
@@ -133,6 +198,7 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 		participants: participants,
 
 		unresolvedParticipants: unresolved,
+		tooling:                tooling,
 	}, nil
 }
 
@@ -168,6 +234,15 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 // Add new diff post-processors to this function so the ordering
 // invariants stay in one place. Any new processor needs to declare
 // where it sits in the pipeline relative to the existing four.
+//
+// TOOLING IS NOT IN THIS LIST, and that is its declaration: it is not a
+// diff post-processor at all. It runs LAST, over the FINISHED PLAN, and
+// edits the legs these four produced (see changeover_tooling.go). It was
+// a fifth entry here once — FanOutStagedToolingEvacuation — and step 3
+// silently disqualified it by rewriting the SwapMode its predicate read,
+// so a press that was both marked for tooling and changing bin type got
+// no tooling at all. A pass that cannot be reached by another pass's
+// output does not need a slot in this ordering.
 func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []ChangeoverNodeDiff) ([]ChangeoverNodeDiff, error) {
 	diffs = ApplyReuseCompatibleBinsShortcut(diffs, e.binEmptyAtCoreNode(processID))
 	if err := e.refusePressIndexWhenCoreUnavailable(diffs); err != nil {
@@ -221,11 +296,11 @@ func isPressIndexClaim(c *processes.NodeClaim) bool {
 // returned verbatim — the operator should see the same gating reason a Start
 // would surface.
 func (e *Engine) PreviewChangeoverPlan(processID, toStyleID int64) (changeover.Plan, error) {
-	plan, err := e.planChangeover(processID, toStyleID)
+	plan, err := e.planChangeover(processID, toStyleID, false)
 	if err != nil {
 		return changeover.Plan{}, err
 	}
-	return BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes)), nil
+	return BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes), plan.tooling), nil
 }
 
 // binTypeSnapshot pre-resolves canonical bin type codes for every
@@ -288,7 +363,7 @@ func (e *Engine) activePullSnapshot(nodes []processes.Node) map[string]bool {
 
 // buildParticipants derives the changeover's participant set from the
 // POST-FAN-OUT diffs: every diff node as a task-role participant, plus every
-// press-index extension seat that no diff already covers as indexed_over.
+// press-index extension position that no diff already covers as indexed_over.
 //
 // TASK ROLE IS THE FULL DIFF SLICE, including SituationUnchanged. That is a
 // strict widening and it is deliberate: unchanged diffs mint task rows today,
@@ -298,14 +373,14 @@ func (e *Engine) activePullSnapshot(nodes []processes.Node) map[string]bool {
 // never gets gated (that regression is what forced the gate to be scoped in the
 // first place).
 //
-// INDEXED_OVER is the set this table exists for: a press-index extension seat
+// INDEXED_OVER is the set this table exists for: a press-index extension position
 // is physically traversed by the index motion but mints no order and owns no
 // task, so a task-keyed view cannot see it. Same-bin-type press-index
-// changeovers never fan out (binTypesDiffer is false), so those seats appear
+// changeovers never fan out (binTypesDiffer is false), so those positions appear
 // ONLY here — and without them, intake gating leaves a position open to
 // unrelated dispatch while a bin is about to be placed on it.
 //
-// Seats already covered by a diff (the different-bin-type case, where fan-out
+// Positions already covered by a diff (the different-bin-type case, where fan-out
 // gave each position its own task) stay task-role; the UNIQUE constraint would
 // reject the duplicate anyway, but skipping it keeps the roles honest rather
 // than order-dependent.
@@ -329,13 +404,13 @@ func buildParticipants(diffs []ChangeoverNodeDiff) []domain.ParticipantInput {
 			if claim == nil || claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 				continue
 			}
-			for _, seat := range pressIndexExtensionPositions(claim) {
-				if taskNodes[seat] || seen[seat] {
+			for _, position := range pressIndexExtensionPositions(claim) {
+				if taskNodes[position] || seen[position] {
 					continue
 				}
-				seen[seat] = true
+				seen[position] = true
 				out = append(out, domain.ParticipantInput{
-					CoreNodeName:       seat,
+					CoreNodeName:       position,
 					Role:               domain.ParticipantRoleIndexedOver,
 					OwningTaskCoreNode: d.CoreNodeName,
 				})
@@ -358,6 +433,19 @@ func buildParticipants(diffs []ChangeoverNodeDiff) []domain.ParticipantInput {
 // Advisory by construction: it returns a list, it does not refuse. See
 // domain.Changeover.UnresolvedParticipants for why hardening is gated.
 //
+// TASK-ROLE PARTICIPANTS ARE NOT REPORTED, because their rows are not missing
+// for long: ChangeoverService.Create auto-creates a process_nodes row for every
+// node task whose name does not resolve, in the same transaction, moments after
+// this runs. Reporting them told the engineer to go and add a node the system
+// had already added itself — a no-op errand attached to the one message the
+// floor reads during a changeover. Every fanned-out press position is a task-role
+// participant, so this was the common case, not the rare one.
+//
+// What is left is the population the advisory is actually about: indexed_over
+// positions. Those own no task, Create does not create rows for them (it looks the
+// id up and stores NULL when there is none), and without a row they cannot be
+// rendered or gated. For those the advice is real.
+//
 // Scope note: this checks row EXISTENCE only. The companion check — that every
 // task-role participant resolves a release station — needs stationForRelease,
 // which ships with the affordance widening; without the affordance a named
@@ -372,6 +460,9 @@ func assertParticipantsResolve(participants []domain.ParticipantInput, nodes []p
 	}
 	var unresolved []string
 	for _, p := range participants {
+		if p.Role == domain.ParticipantRoleTask {
+			continue
+		}
 		if p.CoreNodeName != "" && !known[p.CoreNodeName] {
 			unresolved = append(unresolved, p.CoreNodeName)
 		}

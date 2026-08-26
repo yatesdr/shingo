@@ -34,16 +34,15 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/debuglog"
 	"shingocore/config"
-	"shingocore/countgroup"
 	"shingocore/dispatch"
 	"shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
 	"shingocore/messaging"
 	"shingocore/messaging/middleware"
-	"shingocore/rds"
 	"shingocore/service"
 	"shingocore/store"
+	storemessaging "shingocore/store/messaging"
 	"shingocore/store/robotconfidence"
 	"shingocore/www"
 )
@@ -107,7 +106,6 @@ func printUsage() {
 	fmt.Println("  outbox        Outbox drain cycles and delivery")
 	fmt.Println("  core_handler  Inbound message handler dispatch")
 	fmt.Println("  engine        Engine wiring, vendor status changes")
-	fmt.Println("  countgroup    Advanced-zone occupancy changes")
 	fmt.Println()
 	fmt.Println("--log-debug gates the FILE only. What reaches stderr (journald under")
 	fmt.Println("systemd) is logging.stderr_subsystems in the YAML; the browser log UI")
@@ -189,7 +187,31 @@ func mustOpenDatabase(cfg *config.Config) *store.DB {
 		log.Fatalf("open database: %v", err)
 	}
 	log.Printf("shingocore: database open (postgres)")
+	auditLaneGeometry(db)
 	return db
+}
+
+// auditLaneGeometry logs any single-file lane geometry the mouth-gate's one-hop
+// parent walk cannot see (§8), and any lane child holding a bin with no depth —
+// inventory the reachability predicate ignores by design. Scene-config
+// diagnostics, never fatal. A clean scene logs nothing.
+func auditLaneGeometry(db *store.DB) {
+	warnings, err := db.AuditLaneGeometry()
+	if err != nil {
+		log.Printf("shingocore: lane-geometry audit failed: %v", err)
+	}
+	for _, w := range warnings {
+		log.Printf("shingocore: lane-geometry audit: %s", w)
+	}
+
+	depthWarnings, err := db.AuditLaneDepths()
+	if err != nil {
+		log.Printf("shingocore: lane-depth audit failed: %v", err)
+		return
+	}
+	for _, w := range depthWarnings {
+		log.Printf("shingocore: lane-depth audit: %s", w)
+	}
 }
 
 func startHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -327,24 +349,6 @@ func main() {
 		DebugLog:   dbg.Func("engine"),
 	})
 
-	// ── Count-group runner (advanced-zone light alerts) ────────────────
-	// Uses a dedicated short-timeout RDS client separate from the 10s
-	// fleet adapter so one slow response can't back up N poll cycles.
-	// Always register the builder so the Traffic UI can add groups at
-	// runtime. Runner.Start() is a no-op if no groups are enabled.
-	// Skipped entirely in sim mode — there is no RDS to poll (brief T1.1).
-	if !cfg.Sim.Enabled {
-		cgTimeout := cfg.CountGroups.RDSTimeout
-		if cgTimeout <= 0 {
-			cgTimeout = 400 * time.Millisecond
-		}
-		cgClient := rds.NewClient(cfg.RDS.BaseURL, cgTimeout)
-		cgClient.DebugLog = dbg.Func("countgroup")
-		eng.SetCountGroupRunner(func(em countgroup.Emitter) *countgroup.Runner {
-			return countgroup.NewRunner(cfg.CountGroups, cgClient, em, log.Printf)
-		})
-	}
-
 	eng.Start()
 	defer eng.Stop()
 
@@ -385,6 +389,11 @@ func main() {
 	// re-evaluation. Engine.Start() has already constructed the monitor
 	// and kicked its startup-sweep goroutine.
 	coreDataService.SetThresholdMonitor(eng.ThresholdMonitor())
+	// So a reconciling Edge can render a faulted order's sentence and clock
+	// instead of a badge with nothing under it. Read once at boot: a live
+	// config edit drifts an in-flight countdown, which is acceptable for a
+	// countdown and is the same trade the live push makes.
+	coreDataService.SetFaultWindow(cfg.RDS.FaultGrace, cfg.RDS.FaultNoticeAfter)
 
 	subjectRouter, err := buildSubjectRouter(coreDataService)
 	if err != nil {
@@ -447,6 +456,11 @@ func main() {
 	// ── Outbox drainer (outbound to ShinGo Edge) ───────────────────────
 	drainer := messaging.NewOutboxDrainer(db, msgClient, cfg.Messaging.OutboxDrainInterval)
 	drainer.DebugLog = dbg.Func("outbox")
+	// Ring the drainer on enqueue so a message does not wait out the tick for
+	// its first send attempt. The interval keeps its other job — the retry and
+	// purge cadence — unchanged.
+	storemessaging.SetEnqueueNotifier(drainer.Notify)
+	defer storemessaging.SetEnqueueNotifier(nil)
 	drainer.Start()
 	defer drainer.Stop()
 
@@ -471,6 +485,19 @@ func main() {
 					log.Printf("shingocore: purge old inbox: %v", err)
 				} else if n > 0 {
 					log.Printf("shingocore: purged %d inbox record(s) older than %s", n, store.InboxRetentionPeriod)
+				}
+				// Rides this ticker rather than getting its own: both are daily
+				// housekeeping over a handful of rows, and a second goroutine
+				// for a DELETE that removes two rows a month is not worth the
+				// lifecycle. Latest-wins (529dbe1a) cannot clear a row nothing
+				// will ever update again, which is what a decommissioned or
+				// renamed station leaves behind.
+				ln, err := db.PurgeStaleLinesideReports(store.LinesideReportRetentionPeriod)
+				if err != nil {
+					log.Printf("shingocore: purge stale lineside reports: %v", err)
+				} else if ln > 0 {
+					log.Printf("shingocore: purged %d lineside report(s) not updated in %s",
+						ln, store.LinesideReportRetentionPeriod)
 				}
 			}
 		}

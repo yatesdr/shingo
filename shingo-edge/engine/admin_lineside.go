@@ -24,7 +24,7 @@ import (
 // The capture/drain pipeline is the normal source of bucket changes;
 // this admin path is for unstuck scenarios where state has drifted
 // (chip lingering on the HMI after operations the bucket layer didn't
-// observe). Audit trail at Core: bin_uop_audit's bucket equivalent
+// observe). Audit trail at Core: bin_uop_ledger's bucket equivalent
 // records source, station, and the delta with reason=operator_correction.
 func (e *Engine) AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearBucket bool) error {
 	bucket, err := e.db.GetLinesideBucket(bucketID)

@@ -22,6 +22,25 @@ func (e *Engine) PayloadBinTypes() []protocol.PayloadBinTypeInfo {
 	return e.payloadBinTypes
 }
 
+// BinTypeForPayload resolves one payload code to its dunnage code from the
+// cached catalog, or "" when the catalog has no rule for it.
+//
+// "" IS "UNKNOWN", NOT "NONE", and every caller has to read it that way. The
+// catalog arrives with each node-list sync, so an Edge that has not heard from
+// Core yet answers "" for everything — and a consumer that treats that as a
+// fact rather than an absence is inventing plant configuration.
+func (e *Engine) BinTypeForPayload(payloadCode string) string {
+	if payloadCode == "" {
+		return ""
+	}
+	for _, row := range e.PayloadBinTypes() {
+		if row.PayloadCode == payloadCode {
+			return row.BinTypeCode
+		}
+	}
+	return ""
+}
+
 // payloadDunnageCodes returns the distinct bin_type_codes that appear in
 // catalog for the given payloadCodes. If payloadCodes is empty, all distinct
 // bin_type_codes from the catalog are returned (no-restriction fallback).

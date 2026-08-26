@@ -169,7 +169,24 @@ export async function fetchWithTimeout(url, opts, ms) {
 // postAction is the single POST→refresh path. Returns true on 2xx.
 // Caller passes its own loadView callback so this module stays free of
 // state/view dependencies.
-export async function postAction(url, body, loadView) {
+// postAction posts an operator action and refreshes the view.
+//
+// opts is ADDITIVE and every existing 3-argument caller is unchanged:
+//   opts.onResult(parsedBody)  — called with the decoded success body.
+//
+// WHY THE RESPONSE AND NOT AN EVENT. The station is event-driven: an action
+// returns, the client re-renders from the orders list, and the structured
+// response body has gone unread for so long that reaching for it needs a
+// reason. This is the reason — the primes-only outcome is the OUTCOME OF THIS
+// CLICK, not a fact about the node. Broadcast as an SSE event it would reach
+// every station watching that cell and tell operators who pressed nothing to
+// "press again when it lands". A per-click answer belongs on the reply to that
+// click.
+//
+// It is also symmetric with what this function already does: it parses the
+// body on failure, for `error` and for the inline `exit` action. It only ever
+// threw the body away on success.
+export async function postAction(url, body, loadView, opts) {
     try {
         const res = await fetch(url, {
             method: 'POST',
@@ -200,8 +217,27 @@ export async function postAction(url, body, loadView) {
                 });
                 return false;
             }
+            // An ADVISORY refusal is the system working: the request was
+            // declined because what it asked for is already under way. Red
+            // says "something is broken and you must act", and the only
+            // correct action here is to wait — so a notice, and the view
+            // still refreshes because the state it reports did change.
+            if (parsed && parsed.notice) {
+                showToast(msg, 'info');
+                if (loadView) await loadView();
+                return false;
+            }
             showToast(msg, 'error');
             return false;
+        }
+        if (opts && typeof opts.onResult === 'function') {
+            // Read before the refresh so a caller can compare against what it
+            // asked for; failures here must not swallow the refresh.
+            try {
+                opts.onResult(await res.clone().json());
+            } catch (e) {
+                console.error('postAction onResult', url, e);
+            }
         }
         if (loadView) await loadView();
         return true;
@@ -228,6 +264,70 @@ export async function postAction(url, body, loadView) {
 // and the modal's waiting label need it, and a pure formatter is exactly
 // what this module is for — the alternative was the modal importing the
 // tile renderer for one function.
+// primeNoticeText turns a primes-only NodeOrderResult into the sentence the
+// operator needs, or '' when the result is an ordinary swap.
+//
+// A primes-only round is the press-index partial-empty fix doing its job: the
+// cell had a bare index position, so the swap that would have wedged was not
+// minted and an empty was sent to fill the position instead. Without this the
+// operator presses REQUEST SWAP, no swap appears, and nothing says why.
+//
+// Keyed on "primes and no swap legs", not on cycle_mode: a consume downgrade
+// emits primes ALONGSIDE its delivery, and that round did do the thing the
+// operator asked for.
+export function primeNoticeText(result) {
+    if (!result) return '';
+    var primes = result.prime_orders || [];
+    if (primes.length === 0) return '';
+    if (result.order_a || result.order_b) return '';
+    var where = primes.map(function(p) {
+        var dest = p.delivery_node || 'the index position';
+        return p.source_node ? (dest + ' from ' + p.source_node) : dest;
+    }).join(' and ');
+    return 'Priming ' + where + ' — press again when it lands.';
+}
+
+// withQueueCause appends Core's typed queue-cause sentence to a status label.
+//
+// THE STATUS WORD STAYS. `queued` and `sourcing` are distinct lifecycles and
+// are not merged, renamed or collapsed anywhere — the cause is rendered BESIDE
+// whatever the surface already said, never instead of it.
+//
+// The sentence is built once, at set-time, by Core's queue-reason formatter
+// from the structured cause (queue_code + queue_cause carry the analytic
+// signal; this carries the human one) and pushed to the Edge order row via
+// OrderUpdate. Nothing here rebuilds or interprets it — this only puts what is
+// already on the row in front of the operator.
+//
+// It is preferred over the status word wherever both exist because it is a
+// whole sentence ("Waiting for material: 74577-6SA0A.06") and because it
+// survives the status-write path independently: SetOrderQueueReason bypasses
+// the transition validator, so the reason lands even in the window where the
+// status push itself was refused.
+//
+// No cause returns the label untouched — an order parked with nothing said
+// about it must not grow a dangling dash.
+export function withQueueCause(label, order) {
+    const cause = order && order.queue_reason;
+    return cause ? label + ' — ' + cause : label;
+}
+
+// distinctQueueCauses returns the cause sentences across a set of parked
+// orders, in first-seen order, with duplicates dropped. A swap pair parked for
+// the same reason has one reason, not two identical lines.
+//
+// Orders with no cause contribute nothing rather than a blank entry: the count
+// line already says how many are parked, and an empty line would read as a
+// cause nobody can name.
+export function distinctQueueCauses(orders) {
+    const out = [];
+    (orders || []).forEach(function(o) {
+        const cause = o && o.queue_reason;
+        if (cause && out.indexOf(cause) === -1) out.push(cause);
+    });
+    return out;
+}
+
 export function formatETA(etaStr) {
     if (!etaStr) return { text: '', overdue: false, empty: true };
     const etaMs = Date.parse(etaStr);

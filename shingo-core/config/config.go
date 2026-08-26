@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"log"
 	"os"
 	"slices"
 	"sync"
@@ -8,6 +10,16 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// defaultFaultNoticeAfter is the shipped fault-notice threshold, named because
+// Defaults() and Load()'s fallback must not be able to disagree.
+const defaultFaultNoticeAfter = 60 * time.Second
+
+// defaultStrandedSweepWindow is the shipped age limit on the stranded-bin
+// inference, named for the same reason as the constant above: Defaults() and
+// Load()'s fallback must not be able to disagree. See
+// RDSConfig.StrandedSweepWindow for why the sweep declines older bins.
+const defaultStrandedSweepWindow = 2 * time.Hour
 
 type Config struct {
 	mu sync.RWMutex `yaml:"-"`
@@ -17,7 +29,6 @@ type Config struct {
 	Web           WebConfig           `yaml:"web"`
 	Messaging     MessagingConfig     `yaml:"messaging"`
 	Staging       StagingConfig       `yaml:"staging"`
-	CountGroups   CountGroupsConfig   `yaml:"count_groups"`
 	FireAlarm     FireAlarmConfig     `yaml:"fire_alarm"`
 	Notifications NotificationsConfig `yaml:"notifications"`
 	Sim           SimConfig           `yaml:"sim"`
@@ -124,9 +135,11 @@ type FutilityConfig struct {
 // LoggingConfig gates what reaches stderr — under systemd, journald.
 //
 // debuglog mirrors every dbg() call to stderr. That mirror was unconditional
-// until 2026-07-25, which put Springfield's journal at 633,129 lines/day (53%
-// of it the two countgroup poll lines at a 500ms tick) and collapsed journald
-// retention to ~15 days — shorter than the incidents being investigated.
+// until 2026-07-25, which put Springfield's journal at 633,129 lines/day and
+// collapsed journald retention to ~15 days — shorter than the incidents being
+// investigated. Over half of that volume was a 500ms poll loop that has since
+// been retired outright, but the allow-list is what keeps the next one from
+// costing the same.
 //
 // The ring buffer and the browser log UI are NOT gated by this. A muted
 // subsystem is still fully readable in the UI; only the journal is quieter.
@@ -150,12 +163,12 @@ type LoggingConfig struct {
 }
 
 // DefaultStderrSubsystems is the allow-list applied when logging config is
-// absent: everything except the two poll loops. countgroup (334,361 lines/day)
-// and rds (125,817) are 75% of the journal between them and neither carries a
-// signal that is not also in the ring buffer.
+// absent: everything except the rds poll loop, which was 125,817 lines/day at
+// Springfield and carries no signal that is not also in the ring buffer.
 //
-// Muting countgroup's logging is NOT disabling countgroup. The interlock
-// returns 1-2 robots 6,265 times a day and stays enabled; see rds/robots.go.
+// Muting a subsystem's logging is NOT disabling it. The poller runs exactly as
+// it did; only the journal is quieter, and the browser log UI still shows
+// every subsystem.
 func DefaultStderrSubsystems() []string {
 	return []string{"dispatch", "engine", "core_handler", "kafka", "outbox", "protocol"}
 }
@@ -190,25 +203,6 @@ type ReplenishmentConfig struct {
 	// Unknown values fall back to "edge_reports" with a warning. Either way the
 	// ledger-vs-edge disagreement audit line is logged permanently.
 	LinesideDecisionMode string `yaml:"lineside_decision_mode"`
-}
-
-// CountGroupsConfig configures the advanced-zone polling feature.
-// Empty Groups slice ⇒ feature disabled.
-// All fields are overridable per-deployment via shingocore.yaml.
-type CountGroupsConfig struct {
-	PollInterval       time.Duration      `yaml:"poll_interval"`
-	RDSTimeout         time.Duration      `yaml:"rds_timeout"`
-	OnThreshold        int                `yaml:"on_threshold"`
-	OffThreshold       int                `yaml:"off_threshold"`
-	FailSafeTimeout    time.Duration      `yaml:"fail_safe_timeout"`
-	NeverOccupiedWarn  time.Duration      `yaml:"never_occupied_warn"`
-	NeverOccupiedError time.Duration      `yaml:"never_occupied_error"`
-	Groups             []CountGroupConfig `yaml:"groups"`
-}
-
-type CountGroupConfig struct {
-	Name    string `yaml:"name"`
-	Enabled bool   `yaml:"enabled"`
 }
 
 type FireAlarmConfig struct {
@@ -349,7 +343,97 @@ type RDSConfig struct {
 	// inside the window (FAILED->RUNNING) clears the deadline and the
 	// order carries on, so this is really "how long we let the floor sort
 	// a stuck AMR out before the order is written off".
+	//
+	// It is the OUTER bound. FaultNoticeAfter below is the inner one, and the
+	// two together are the whole fault policy: nothing is said before the
+	// inner, everything is over at the outer.
 	FaultGrace time.Duration `yaml:"fault_grace"`
+	// FaultNoticeAfter is how long an order must have been faulted before the
+	// floor is told the word "fault". Below it the order is described as
+	// REPLANNING; at or above it, as a FAULT with the fleet's reason.
+	//
+	// THIS IS THE ONLY NUMBER THAT CHANGES WHAT AN OPERATOR IS TOLD, which is
+	// why it is config and not a constant in five JS files. 30 days of
+	// Springfield history: 730 faulted transitions, 706 of them recovered on
+	// their own with a median of 20 seconds. A badge that fires on all 730
+	// trains the floor to ignore the 24 that matter. Sixty seconds is three
+	// times that median and well inside any grace window — it hides the
+	// replans and shows the stalls.
+	//
+	// It is a default, not a truth. A plant whose robots re-plan more slowly
+	// will hide real stalls at 60s, and one with a faster fleet will cry fault
+	// at noise; both are a config edit, which is the point.
+	//
+	// Must be greater than zero and strictly less than FaultGrace — see
+	// RDSConfig.Validate. At or above the grace window it could never fire,
+	// because the order is failed by then.
+	FaultNoticeAfter time.Duration `yaml:"fault_notice_after"`
+	// StrandedSweepWindow is how recently a `_TRANSIT` bin's order must have
+	// ended for the reconciliation sweep to infer where that bin was set down.
+	//
+	// ONE NUMBER, THREE INTERVALS, and they are three readings of the same
+	// sentence — "telemetry stops describing a bin this long after the fact":
+	//
+	//	1  the terminal window: how long after the order ended the sweep will
+	//	   still run the inference at all (engine.terminalWithin);
+	//	2  the pickup window: how long after the bin LEFT THE FLOOR branch A
+	//	   will believe the robot's current position (engine.pickupWithin) —
+	//	   the terminal row cannot bound this, because on the event path it is
+	//	   milliseconds old by construction;
+	//	3  the observation window: how long a FROZEN drop reading stays worth
+	//	   acting on when the placement it wants keeps being refused
+	//	   (engine.freezeDrop).
+	//
+	// THE SWEEP IS A BACKSTOP FOR THE FAST PATH, NOT A BACKFILL OF HISTORY, and
+	// this number is what makes that true. The inference reads the robot's
+	// CURRENT telemetry: where it is standing now, and whether its deck is
+	// empty now. That answers "where did this bin go" only while the robot has
+	// not moved on. An hour later the robot has run a dozen other jobs and its
+	// position says nothing about a bin it set down before them — placing on it
+	// would invent a bin at a node the floor would then be sent to fetch.
+	//
+	// So bins older than this window are LEFT AS ANOMALIES for an operator to
+	// resolve, which is what they were before any of this shipped. Nothing is
+	// lost by declining; something real is broken by guessing.
+	//
+	// Two hours is comfortably longer than FaultGrace (45m default), so an
+	// order that faulted, sat out its whole grace window and was written off is
+	// still inside it — that is the case the sweep exists to catch when the
+	// terminal-event hook is missed.
+	//
+	// THE JACK IS STILL THE JACK for a carrier (`_ROBOT:*`) bin: how long that
+	// bin has been RIDING is not gated, and a deck that reports empty after a
+	// week has still set its bin down, so the freeze forms on that tick and the
+	// placement follows from it. What reading 3 bounds is the age of the
+	// OBSERVATION afterwards — a drop that was watched but could not be placed
+	// (an occupied slot, a point the scene cannot name) stops being safe to act
+	// on once enough time has passed for somebody to have moved the bin by hand.
+	// Past that the watch declines and says how old the reading is; it does not
+	// take a fresh one, because by then the robot is standing somewhere else
+	// entirely and a fresh reading would place the bin there.
+	StrandedSweepWindow time.Duration `yaml:"stranded_sweep_window"`
+}
+
+// Validate reports a fault-window configuration that cannot do its job.
+//
+// Reported, not fatal: the caller (Load) falls back to the shipped default for
+// the offending field rather than refusing to boot. A number that decides what
+// wording an operator sees must not be able to stop a plant's core from
+// starting — the same reasoning as DisplayConfig.Validate, and the same
+// reasoning as the zero-guard on the fault_grace form field
+// (handlers_config.go). A plant that lowers fault_grace below the notice
+// threshold gets a working core and a log line, not a dead one.
+func (r RDSConfig) Validate() error {
+	if r.FaultNoticeAfter <= 0 {
+		return fmt.Errorf("rds: fault_notice_after (%s) must be greater than zero — "+
+			"at zero every replan is announced as a fault", r.FaultNoticeAfter)
+	}
+	if r.FaultGrace > 0 && r.FaultNoticeAfter >= r.FaultGrace {
+		return fmt.Errorf("rds: fault_notice_after (%s) must be strictly less than fault_grace (%s) — "+
+			"at or above it the notice could never fire, because the order is failed by then",
+			r.FaultNoticeAfter, r.FaultGrace)
+	}
+	return nil
 }
 
 type WebConfig struct {
@@ -376,6 +460,22 @@ type MessagingConfig struct {
 type KafkaConfig struct {
 	Brokers []string `yaml:"brokers"`
 	GroupID string   `yaml:"group_id"`
+	// DialTimeout bounds the per-broker reachability probe in Connect.
+	// Zero means the 5s production default. A config that names unreachable
+	// brokers pays this per broker, serially — which is why it is a knob at
+	// all: the config-save handler reconfigures messaging inline, and a test
+	// (or a plant) saving broker names that don't resolve would hold the
+	// handler for 5s × brokers.
+	DialTimeout time.Duration `yaml:"dial_timeout"`
+}
+
+// DialTimeoutOr returns the effective broker-probe timeout: the configured
+// value, or the 5s production default when zero.
+func (k KafkaConfig) DialTimeoutOr() time.Duration {
+	if k.DialTimeout > 0 {
+		return k.DialTimeout
+	}
+	return 5 * time.Second
 }
 
 // RobotConfidenceConfig tunes the localization-confidence collector, which
@@ -454,10 +554,12 @@ func Defaults() *Config {
 			},
 		},
 		RDS: RDSConfig{
-			BaseURL:      "http://192.168.1.100:8088",
-			PollInterval: 5 * time.Second,
-			Timeout:      10 * time.Second,
-			FaultGrace:   45 * time.Minute,
+			BaseURL:             "http://192.168.1.100:8088",
+			PollInterval:        5 * time.Second,
+			Timeout:             10 * time.Second,
+			FaultGrace:          45 * time.Minute,
+			FaultNoticeAfter:    defaultFaultNoticeAfter,
+			StrandedSweepWindow: defaultStrandedSweepWindow,
 		},
 		Web: WebConfig{
 			Host:          "0.0.0.0",
@@ -515,15 +617,6 @@ func Defaults() *Config {
 			StationID:           "core",
 			StaleEdgeThreshold:  15 * time.Minute,
 		},
-		CountGroups: CountGroupsConfig{
-			PollInterval:       500 * time.Millisecond,
-			RDSTimeout:         400 * time.Millisecond,
-			OnThreshold:        2,
-			OffThreshold:       3,
-			FailSafeTimeout:    5 * time.Second,
-			NeverOccupiedWarn:  5 * time.Minute,
-			NeverOccupiedError: 30 * time.Minute,
-		},
 		Notifications: NotificationsConfig{
 			Enabled:         false,
 			SMTPHost:        "localhost",
@@ -572,6 +665,28 @@ func Load(path string) (*Config, error) {
 	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+	// A bad fault window degrades to a working one rather than killing the boot.
+	// See RDSConfig.Validate for why this is reported and not fatal.
+	if err := cfg.RDS.Validate(); err != nil {
+		fallback := defaultFaultNoticeAfter
+		if cfg.RDS.FaultGrace > 0 && fallback >= cfg.RDS.FaultGrace {
+			// A grace window shorter than the default notice. The notice still
+			// has to fit inside it or it can never fire, so it takes half the
+			// window — the replan/fault distinction survives at any grace.
+			fallback = cfg.RDS.FaultGrace / 2
+		}
+		log.Printf("config: %v — using fault_notice_after=%s", err, fallback)
+		cfg.RDS.FaultNoticeAfter = fallback
+	}
+	// A zero window is what every pre-2026-08-22 config file carries, and it
+	// would read as "sweep nothing" — the inference would decline every bin and
+	// the backstop would silently stop being one. Own that here rather than
+	// letting an absent key turn a feature off. Not part of RDSConfig.Validate:
+	// that reports ONE error and Load's fallback above repairs the fault window,
+	// so a second condition sharing it would misassign the repair.
+	if cfg.RDS.StrandedSweepWindow <= 0 {
+		cfg.RDS.StrandedSweepWindow = defaultStrandedSweepWindow
 	}
 	return cfg, nil
 }

@@ -2,7 +2,9 @@ package service
 
 import (
 	"fmt"
+	"time"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -151,6 +153,28 @@ func (s *OrderService) ListOrders(status string, limit int) ([]*orders.Order, er
 // www-handler service migration (PR 3a.3a).
 func (s *OrderService) ListOrderHistory(orderID int64) ([]*orders.History, error) {
 	return s.db.ListOrderHistory(orderID)
+}
+
+// LatestOrderHistoryForStatus returns the order's most recent row for a status,
+// nil when it never recorded one.
+//
+// Exists for the fault surfaces: "how long has this order been faulted" is the
+// latest faulted row's created_at, and www cannot reach the store directly
+// (depguard). See orders.LatestHistoryForStatus for why the LATEST row and not
+// the first, and why not orders.updated_at.
+func (s *OrderService) LatestOrderHistoryForStatus(orderID int64, status protocol.Status) (*orders.History, error) {
+	return s.db.LatestOrderHistoryForStatus(orderID, status)
+}
+
+// LatestOrderHistoryTimesForStatus is the batch form of the method above: one
+// round trip for a SET of orders, returning when each most recently reached the
+// status.
+//
+// The fault surfaces ask this question of a whole list — every faulted order on
+// the health gauge, every robot's order on the robots page — and asking it one
+// order at a time made the cost scale with how bad the plant's day was.
+func (s *OrderService) LatestOrderHistoryTimesForStatus(orderIDs []int64, status protocol.Status) (map[int64]time.Time, error) {
+	return s.db.LatestOrderHistoryTimesForStatus(orderIDs, status)
 }
 
 // ListChildOrders returns the sequenced child orders for a compound

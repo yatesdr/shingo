@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/dispatch/binresolver"
 	"shingocore/fleet"
 	"shingocore/service"
@@ -196,11 +198,27 @@ func (s *LifecycleService) admitOrder(order *orders.Order) *lifecycleError {
 	if lerr != nil {
 		return lerr
 	}
-	if lerr := s.resolveSyntheticDestination(order, destNode); lerr != nil {
+	resolvedAt, lerr := s.resolveSyntheticDestination(order, destNode)
+	if lerr != nil {
 		return lerr
 	}
 	if err := s.db.CreateOrder(order); err != nil {
 		return lifecycleErr("internal_error", err.Error(), err)
+	}
+	// THE SELECTOR'S OWN CLOCK READING, WRITTEN AFTER THE ROW EXISTS. There is no
+	// earlier seam: resolution rewrites a field on a struct that has no id yet, so
+	// the stamp cannot ride the INSERT without threading a diagnostic column
+	// through Order, SelectCols and ScanOrders — the hot read path — for one
+	// reader that consults it once per burial. orphan_aged_at set the precedent.
+	//
+	// Logged and swallowed. This is the burial tripwire's input, not the order's
+	// business, and an order that has already been created must not fail because a
+	// diagnostic write did.
+	if !resolvedAt.IsZero() {
+		if err := s.db.StampDestinationResolved(order.ID, resolvedAt); err != nil {
+			log.Printf("dispatch: stamp destination-resolved for order %d: %v "+
+				"(the burial tripwire falls back to fleet-commit for this order)", order.ID, err)
+		}
 	}
 	if err := s.db.UpdateOrderStatus(order.ID, string(StatusPending), "order received"); err != nil {
 		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
@@ -248,12 +266,52 @@ func (s *LifecycleService) checkOrderRefs(order *orders.Order) (*nodes.Node, *li
 // That is the whole reason this is not part of checkOrderRefs. The two look
 // like one job at intake and are not: one asks whether a thing exists, the
 // other changes where an order is going.
-func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, destNode *nodes.Node) *lifecycleError {
+//
+// ── IT RETURNS WHEN IT LOOKED ─────────────────────────────────────────────
+//
+// A zero time means no choice was made here — not synthetic, no resolver, or a
+// full group left to queue. A non-zero time is the instant the store-slot
+// selector approved this destination, and it is the only moment in the system at
+// which that guard was consulted for this order. admitOrder writes it down
+// because the burial tripwire has to be able to ask "could the selector have
+// seen this claim", and until this column existed it was reduced to comparing
+// against the fleet-commit — an event that can trail the choice by minutes.
+func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, destNode *nodes.Node) (time.Time, *lifecycleError) {
 	if destNode == nil || !destNode.IsSynthetic || s.resolver == nil {
-		return nil
+		return time.Time{}, nil
 	}
 	requested := order.DeliveryNode
-	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, nil)
+
+	// ── MG4-2: THE BUILT-BUT-NIL PARAMETER GETS ITS CONSUMER ────────────────
+	//
+	// binTypeID has been threaded through ResolveStore since the resolver had a
+	// per-child Allowed Bins check, and every caller passed nil — so a check that
+	// existed was never exercised. The level keeper is the first caller that
+	// knows the answer: its ask carries an origin, and that episode names exactly
+	// one carrier type.
+	//
+	// TYPED PLACEMENT IS NOT COSMETIC HERE. A group declaring "four 45x58 and two
+	// 45x48" has positions that accept one and not the other; an untyped resolve
+	// picks the emptiest slot and can put a 45x48 where only a 45x58 fits, which
+	// the floor discovers when the robot arrives. It also makes MG4-1's level cap
+	// evaluate per type rather than on the group total, which is the tighter and
+	// more correct of the two readings.
+	//
+	// A FAILED READ RESOLVES UNTYPED rather than refusing. That is the behaviour
+	// every order had before this line existed, so the failure mode is "no worse
+	// than yesterday" rather than a placement that does not happen.
+	var binTypeID *int64
+	if order.OriginID != "" {
+		id, terr := s.db.MaintainedBinTypeIDForOrigin(order.OriginID)
+		if terr != nil {
+			s.dbg("intake: maintained bin type for origin %s unreadable (%v) — resolving untyped",
+				order.OriginID, terr)
+		} else {
+			binTypeID = id
+		}
+	}
+
+	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, binTypeID, digAskerFor(order))
 	if err != nil {
 		// A full group (ResolutionCapacity — "no available slot in node group
 		// X") must NOT fail the operator's action. Leave the synthetic
@@ -264,14 +322,44 @@ func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, dest
 		// enabled children, DB error) still hard-fail so a real misconfiguration
 		// surfaces to the operator instead of queueing forever.
 		if class, _ := classifyResolutionError(err); class != ResolutionCapacity {
-			return lifecycleErr("resolution_failed", fmt.Sprintf("cannot resolve synthetic node %s: %v", requested, err), err)
+			return time.Time{}, lifecycleErr("resolution_failed", fmt.Sprintf("cannot resolve synthetic node %s: %v", requested, err), err)
 		}
+
+		// ── MG6-1: TRY THE OVERFLOW ─────────────────────────────────────────
+		//
+		// A maintained group at its level refuses the push. If somebody named an
+		// overflow destination for it, the carrier goes there instead of parking.
+		//
+		// CORE-SIDE ONLY. Edge keeps naming the group unconditionally — it has no
+		// level to read and should not grow one — so this is Core answering "where
+		// does this actually go" at admission, which is the same shape as every
+		// other placement decision in the system.
+		//
+		// ONE HOP, NOT A CHAIN. An overflow whose own group is full parks; it does
+		// not consult ITS overflow. A chain is a loop with extra steps the first
+		// time two groups name each other, and "the carrier went three groups away
+		// from where anybody expected" is worse than a park an operator can see.
+		//
+		// NO MID-ROUTE RE-AIM, EVER. This runs at ADMISSION, before a robot has
+		// been told anything. A push already in flight that arrives at a
+		// just-topped group parks at its dropoff with a named cause — it does not
+		// get redirected underneath the robot carrying it.
+		if node, stamp, ok := s.tryOverflow(order, destNode); ok {
+			s.dbg("intake: %s at level — overflowing to %s", requested, node)
+			order.DeliveryNode = node
+			return stamp, nil
+		}
+
 		s.dbg("intake: synthetic %s full — creating order against group so it queues: %v", requested, err)
-		return nil
+		// NO STAMP, and it is the honest answer rather than an omission: nothing was
+		// chosen. planMove resolves this order's destination at dispatch, where the
+		// selector runs close enough to the commit that the fallback comparison is
+		// the right one.
+		return time.Time{}, nil
 	}
 	s.dbg("resolved synthetic %s -> %s", requested, result.Node.Name)
 	order.DeliveryNode = result.Node.Name
-	return nil
+	return clock.Now().UTC(), nil
 }
 
 // resolveIngestBin finds the bin an ingest should manifest.
@@ -379,10 +467,10 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 	} else {
 		// Item 19 of the bin-as-truth refactor: route through the audited
 		// BinManifestService so the 0→capacity initial fill surfaces in
-		// bin_uop_audit. Pre-Item-19 this path called the lower-level
+		// bin_uop_ledger. Pre-Item-19 this path called the lower-level
 		// SetBinManifestFromTemplate directly, bypassing audit; the resulting
 		// timeline gap made forensics confusing because freshly-loaded bins
-		// appeared in bin_uop_audit only at the first downstream delta.
+		// appeared in bin_uop_ledger only at the first downstream delta.
 		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, p.PayloadCode, nil, p.ProducedAt); err != nil {
 			return lifecycleErr("internal_error", err.Error(), err)
 		}
@@ -426,4 +514,62 @@ func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode 
 		log.Printf("dispatch: redirect order %d to sourcing: %v", order.ID, err)
 	}
 	return sourceNode, newDest, nil
+}
+
+// tryOverflow resolves a maintained group's configured overflow destination.
+// Reports whether it found one and where.
+//
+// ── THE RESIDUALS, STATED RATHER THAN SOLVED ────────────────────────────────
+//
+// NO OVERFLOW CONFIGURED: false, and the push parks holding its bin. That is
+// backpressure into whatever was pushing — an unloader that cannot put its
+// carrier down stops draining — which is uncomfortable and is the honest
+// consequence of telling a group to hold exactly four carriers and giving it
+// nowhere to send the fifth. Blank is a real answer, not a missing one.
+//
+// THE OVERFLOW IS ITSELF FULL: false, same park. See the one-hop note above.
+//
+// THE OVERFLOW NAMES A NODE THAT DOES NOT EXIST, or one that cannot be resolved
+// for a structural reason: false, and the push parks. A misconfigured overflow
+// must not be able to FAIL an order that would otherwise have queued perfectly
+// well — the operator's action succeeds either way, and the only difference is
+// where the carrier ends up.
+//
+// It re-resolves rather than reusing anything from the first attempt, because
+// the overflow is a different group with its own algorithm, its own children,
+// and possibly its own level.
+func (s *LifecycleService) tryOverflow(order *orders.Order, group *nodes.Node) (string, time.Time, bool) {
+	overflow := s.db.GetNodeProperty(group.ID, nodes.PropOverflowDestination)
+	if overflow == "" {
+		return "", time.Time{}, false
+	}
+	dest, err := s.db.GetNodeByDotName(overflow)
+	if err != nil || dest == nil {
+		s.dbg("intake: overflow %q of %s does not resolve (%v) — parking instead",
+			overflow, group.Name, err)
+		return "", time.Time{}, false
+	}
+	if dest.ID == group.ID {
+		// A group naming itself is the one-hop rule's degenerate case, and it is
+		// worth refusing explicitly: without this it would re-resolve the same
+		// full group and return the same capacity error, which reads as a
+		// mysterious no-op rather than a configuration mistake.
+		s.dbg("intake: overflow of %s names itself — parking instead", group.Name)
+		return "", time.Time{}, false
+	}
+
+	var binTypeID *int64
+	if order.OriginID != "" {
+		if id, terr := s.db.MaintainedBinTypeIDForOrigin(order.OriginID); terr == nil {
+			binTypeID = id
+		}
+	}
+	result, err := s.resolver.Resolve(dest, binresolver.ResolveModeStore, order.PayloadCode,
+		binTypeID, digAskerFor(order))
+	if err != nil || result == nil || result.Node == nil {
+		s.dbg("intake: overflow %s of %s has no room either (%v) — parking",
+			overflow, group.Name, err)
+		return "", time.Time{}, false
+	}
+	return result.Node.Name, clock.Now().UTC(), true
 }

@@ -58,24 +58,16 @@ const (
 
 	SubjectNodeStructureChanged = "node.structure_changed"
 
-	// Kanban demand wiring (Phase 2)
-	SubjectDemandSignal = "demand.signal" // Core -> Edge: kanban demand trigger
-
-	// UOP-threshold replenishment (C-push):
-	//   Core observes combined inventory (bins + buckets) per payload,
-	//   compares against the configured threshold from demand_registry,
-	//   and emits LoopBelowThresholdSignal on threshold crossing. Edge
-	//   fires L1 retrieve_empty on receipt, deduped by the reservation
-	//   seam (withLoaderBudget), which counts in-flight per loader.
-	//
-	//   There is no second automatic path any more. The legacy bin-count
-	//   DemandSignal route is retired: Core still emits produce
-	//   DemandSignals, but Edge routes them to no handler, so there are no
-	//   "opted-in pairs" for anything to skip.
-
-	// Count-group light alerts (advanced-zone occupancy → PLC-driven warning light)
-	SubjectCountGroupCommand = "countgroup.command" // Core -> Edge: requested light state for a zone
-	SubjectCountGroupAck     = "countgroup.ack"     // Edge -> Core: PLC ack outcome for a prior command
+	// UOP-threshold replenishment (C-push): Core observes combined
+	// inventory (bins + buckets) per payload, compares it against the
+	// configured threshold from demand_registry, and — since the
+	// 2026-07-31 cutover — creates the retrieve orders itself.
+	// There is no replenishment subject on the wire: the earlier design
+	// (SubjectLoopBelowThreshold, Core→Edge, Edge sizing the ask) was
+	// deleted 2026-08-02 after a Springfield over-order showed the two
+	// halves counted different things. The kanban bin-count DemandSignal
+	// route followed (2026-08). Edge's only replenishment writers are the
+	// operator request, the operator push, and the unloader auto-push.
 
 	// Inventory delta envelopes. Edge → Core. Carry signed count
 	// changes against bins and lineside buckets. Routed on subject
@@ -325,7 +317,6 @@ func CoreInboundSubjects() []string {
 		SubjectTagVerifyRequest,
 		SubjectCatalogPayloadsRequest,
 		SubjectOrderStatusRequest,
-		SubjectCountGroupAck,
 		SubjectBinUOPDelta,
 		SubjectLinesideBucketDelta,
 		SubjectProductionTick,
@@ -339,7 +330,7 @@ func CoreInboundSubjects() []string {
 
 // EdgeInboundSubjects returns every Subject Edge handles (envelopes
 // originated by Core: registration acks, node-list/catalog responses,
-// demand signals, count-group commands, bin-picked-up notifications).
+// bin-picked-up notifications).
 // Used by cmd/shingoedge/main.go's boot-time SubjectRouter coverage
 // assertion.
 //
@@ -360,8 +351,6 @@ func EdgeInboundSubjects() []string {
 		SubjectEdgeRegisterRequest,
 		SubjectEdgeStale,
 		SubjectNodeStructureChanged,
-		SubjectDemandSignal,
-		SubjectCountGroupCommand,
 		SubjectBinPickedUp,
 		SubjectUOPAdjustment,
 		SubjectBinEpochRefresh,
@@ -386,19 +375,6 @@ func AllSubjects() []string {
 	return out
 }
 
-// AckOutcome is the typed outcome of a CountGroupAck. Wraps string for
-// SQL/JSON-native serialization while gaining compile-time distinction
-// from raw strings and other enum-shaped types in this package.
-type AckOutcome string
-
-// CountGroupAck.Outcome values.
-// Use these constants instead of string literals at every call site.
-const (
-	AckOutcomeAcked      AckOutcome = "acked"         // PLC ladder cleared the request tag.
-	AckOutcomeTimeout    AckOutcome = "ack_timeout"   // PLC did not clear within ack_dead; edge abandoned the request.
-	AckOutcomeWarlinkErr AckOutcome = "warlink_error" // WarLink read or write failed.
-)
-
 // Roles for Address.Role.
 const (
 	RoleEdge = "edge"
@@ -411,8 +387,8 @@ const (
 // English word "role" — the two are unrelated and using the same type
 // for both would be misleading.
 //
-// Cross-module: this value crosses Edge ↔ Core boundaries via
-// DemandSignal.Role (and the plant-claims mirror); the typed alias keeps
+// Cross-module: this value crosses Edge ↔ Core boundaries via the
+// plant-claims mirror; the typed alias keeps
 // JSON serialization byte-identical to the prior untyped string while
 // giving Go callers compile-time distinction from raw strings.
 type ClaimRole string
@@ -420,6 +396,19 @@ type ClaimRole string
 const (
 	ClaimRoleConsume ClaimRole = "consume" // node consumes a material payload from upstream
 	ClaimRoleProduce ClaimRole = "produce" // node produces a material payload for downstream
+)
+
+// scope_kind values for the inventory-delta dedup partition.
+//
+// These DO cross the wire, which core's copy used to deny: its comment said
+// "Edge has no awareness of these values; they are a Core-internal partition",
+// while Edge writes scope_kind when it allocates a sequence-id and Core dedups
+// on the value it receives. Both sides spelled them independently and
+// identically; a rename on one side alone silently stops deduplication, which
+// is the failure this single definition exists to prevent.
+const (
+	InvDeltaScopeBin    = "bin"
+	InvDeltaScopeBucket = "bucket"
 )
 
 // OrderType is the typed kind-of-order for fulfillment orders. Used by
@@ -441,22 +430,15 @@ type OrderType string
 const (
 	OrderTypeRetrieve      OrderType = "retrieve"       // pull a loaded bin matching a payload to a destination
 	OrderTypeRetrieveEmpty OrderType = "retrieve_empty" // pull an empty bin compatible with a payload to a destination
+	OrderTypeStore         OrderType = "store"          // push a payload from a node to storage
 	OrderTypeMove          OrderType = "move"           // generic move; no manifest semantics
 	OrderTypeComplex       OrderType = "complex"        // multi-step order composed of sub-steps
-	// OrderTypeReshuffleRestore is a Core-internal housekeeping order
-	// that wraps the post-pickup restock compound for the complex-order
-	// buried-bin reshuffle "restore blockers" toggle. Never created by
-	// edge; not dispatched to edge.
-	//
-	// It IS shown in the admin orders list. This comment used to say it was
-	// filtered out, and that stopped being true when the exclusion was removed:
-	// these synthetics can strand at reshuffling, and the sweeps that resolve
-	// them are much easier to trust when their subjects are visible. See the
-	// note above SelectCols in store/orders.
-	//
-	// The synthetic-parent type exists so the restock compound has a parent row
-	// to satisfy AdvanceCompoundOrder, since the compound machinery keys off
-	// ParentOrderID != nil.
+	OrderTypeIngest        OrderType = "ingest"         // edge-legacy: no longer minted (manifest-only ingest write); kept for historical order rows
+	// OrderTypeReshuffleRestore is the RETIRED restore-blockers housekeeping type.
+	// The subsystem that minted it is deleted (blockers lie now) and no order is
+	// ever created with it again — the constant is kept ONLY so historical rows
+	// (and the one-shot retirement sweep) display and match a name rather than a
+	// raw string.
 	OrderTypeReshuffleRestore OrderType = "reshuffle_restore"
 )
 
@@ -569,6 +551,51 @@ func IsValidTransition(from, to Status) bool {
 		return false
 	}
 	return slices.Contains(allowed, to)
+}
+
+// IsForwardJump reports whether `to` is REACHABLE from `from` by some path
+// through validTransitions, but is not a single legal step.
+//
+// ── WHAT IT IS FOR: A MIRROR THAT LOST A MESSAGE ──────────────────────────
+//
+// Core owns order state; the Edge reflects it. When Core walks
+// reshuffling → queued → sourcing → dispatched → staged and the Edge is told
+// only about the last one, the Edge is asked for reshuffling → staged, which is
+// not a legal STEP but is a legal DESTINATION — every state in between exists
+// and Core has already passed through them. Rejecting it strands the mirror at a
+// status the authority left minutes ago, which is how three robots became
+// unreleasable for a whole soak (§12.49).
+//
+// A jump that is NOT reachable is a different animal — a terminal being
+// resurrected, or a status Core could not have arrived at — and stays refused.
+// So this is precisely "I missed a notification", never "the authority is
+// impossible".
+//
+// DERIVED FROM THE TABLE, NOT A SECOND ORDERING. There is no hand-listed
+// rank of statuses to keep in step with validTransitions; reachability IS the
+// table, walked. A terminal `from` has no outgoing edges, so nothing is
+// reachable from it and every jump off a terminal is refused, which is the
+// existing rule and not a new one.
+func IsForwardJump(from, to Status) bool {
+	if from == to || IsValidTransition(from, to) {
+		return false
+	}
+	seen := map[Status]bool{from: true}
+	queue := []Status{from}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, next := range validTransitions[cur] {
+			if next == to {
+				return true
+			}
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return false
 }
 
 // AllValidTransitions returns a copy of the validTransitions map for test

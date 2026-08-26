@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -12,7 +13,7 @@ import (
 //
 // EmitBlockCompleted fires once per block transition into FINISHED while
 // the parent order is still mid-flight. This is the per-pickup signal
-// the bin-transit-state design needs â€” vendor doesn't expose a separate
+// the bin-transit-state design needs — vendor doesn't expose a separate
 // "PICKED_UP" order state, but block-level state IS in the poll snapshot
 // (just unused pre-2026-04). For pickup blocks, the engine handler
 // transitions the corresponding bin onto the synthetic _TRANSIT node so
@@ -51,7 +52,19 @@ type Poller struct {
 	graceDuration   time.Duration
 	stopChan        chan struct{}
 	stopOnce        sync.Once
+	// doneChan closes when run() returns, which is what makes Stop
+	// synchronous. started gates the wait: Stop is documented as safe
+	// before Start, and waiting on a loop that was never launched would
+	// block forever.
+	doneChan chan struct{}
+	started  atomic.Bool
 }
+
+// stopDrainLimit bounds how long Stop waits for an in-flight poll to finish.
+// It is a safety net, not a timeout anyone should hit: a poll is bounded by
+// the HTTP client's own timeout per order, and the interval is seconds. If it
+// IS hit, a poll is wedged and Stop returning is better than hanging forever.
+const stopDrainLimit = 30 * time.Second
 
 func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, interval time.Duration, graceDuration ...time.Duration) *Poller {
 	// Fallback only — production passes cfg.RDS.FaultGrace. Kept in step
@@ -71,6 +84,7 @@ func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, 
 		faultedDeadline: make(map[string]time.Time),
 		graceDuration:   gd,
 		stopChan:        make(chan struct{}),
+		doneChan:        make(chan struct{}),
 	}
 }
 
@@ -120,14 +134,37 @@ func (p *Poller) SetGraceDuration(d time.Duration) {
 }
 
 func (p *Poller) Start() {
+	p.started.Store(true)
 	go p.run()
 }
 
+// Stop halts polling and WAITS FOR THE LOOP TO EXIT before returning. After it
+// returns, no further poll can begin and none is in flight.
+//
+// SYNCHRONOUS BECAUSE "STOPPED" SHOULD MEAN STOPPED. Asynchronously, Stop only
+// asked: the loop returned at its own pace and a poll already running carried
+// on to completion, so a caller had no way to know when the polling actually
+// ceased. TestPollerStopHaltsPolling asserted exactly that property against a
+// 30ms wall-clock window, and failed about one run in eight on a loaded box —
+// the test was right and the contract was wrong.
+//
+// Safe to call before Start, and safe to call twice: stopOnce guards the close,
+// and started gates the wait so a loop that never launched is never waited on.
 func (p *Poller) Stop() {
 	p.stopOnce.Do(func() { close(p.stopChan) })
+	if !p.started.Load() {
+		return
+	}
+	select {
+	case <-p.doneChan:
+	case <-time.After(stopDrainLimit):
+	}
 }
 
 func (p *Poller) run() {
+	// Closing this is what lets Stop know the loop is finished. Deferred, so
+	// it happens on every return path including a panic.
+	defer close(p.doneChan)
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 
@@ -136,6 +173,23 @@ func (p *Poller) run() {
 		case <-p.stopChan:
 			return
 		case <-ticker.C:
+			// STOP WINS OVER A TICK THAT ARRIVED AT THE SAME MOMENT. A select
+			// with two ready cases picks uniformly at random, so the outer
+			// select alone gives a stopped poller a coin-flip chance of
+			// polling once more on every tick — and it keeps flipping for as
+			// long as ticks keep arriving, so "one last poll" is the expected
+			// case rather than the bound. TestPollerStopHaltsPolling caught
+			// this at roughly one run in six, reporting two and three polls
+			// after Stop, not one.
+			//
+			// Re-checking here stops a NEW poll from starting once Stop has been
+			// asked for. Stop then waits for this loop to return, so between the
+			// two, nothing is polling by the time Stop returns.
+			select {
+			case <-p.stopChan:
+				return
+			default:
+			}
 			p.poll()
 		}
 	}
@@ -190,7 +244,7 @@ func (p *Poller) poll() {
 			oid, err := p.resolver.ResolveRDSOrderID(rdsID)
 			if err != nil {
 				log.Printf("poller: resolve %s: %v", rdsID, err)
-				p.dbg("poll error: resolve(%s): %v â€” will retry next cycle", rdsID, err)
+				p.dbg("poll error: resolve(%s): %v — will retry next cycle", rdsID, err)
 				return 0, false
 			}
 			resolvedOrderID = oid
@@ -201,7 +255,7 @@ func (p *Poller) poll() {
 		// last seen state for that block. Fire EmitBlockCompleted on the
 		// first transition into FINISHED. We do this BEFORE the order-
 		// state transition check so the per-block events arrive in
-		// causally-correct order (block FINISHED â†’ order moves on) â€” even
+		// causally-correct order (block FINISHED → order moves on) — even
 		// though the underlying RDS state field is sampled at one moment.
 		p.diffBlockStates(rdsID, detail, resolveOrderID)
 
@@ -213,13 +267,13 @@ func (p *Poller) poll() {
 
 		orderID, ok := resolveOrderID()
 		if !ok {
-			// Resolution failed â€” keep the old tracked state so the
+			// Resolution failed — keep the old tracked state so the
 			// transition is retried on the next poll cycle instead of
 			// being silently lost.
 			continue
 		}
 
-		// Resolution succeeded â€” now commit the state transition.
+		// Resolution succeeded — now commit the state transition.
 		p.mu.Lock()
 		if newState == StateFailed {
 			// FAILED is no longer terminal per SEER docs. Record grace deadline
@@ -289,9 +343,9 @@ func (p *Poller) checkGraceExpiry() {
 // state design uses: a "load" or "unload" block reaching FINISHED means
 // the robot has physically completed that step. The pickup-block case
 // drives a bin's transition onto the synthetic _TRANSIT node (engine
-// handler â€” see wiring_block_completed.go). Pre-2026-04 the per-block
+// handler — see wiring_block_completed.go). Pre-2026-04 the per-block
 // state was already in the poll snapshot but only marshalled into
-// mission_events JSON â€” never compared, never surfaced as an event.
+// mission_events JSON — never compared, never surfaced as an event.
 func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrderID func() (int64, bool)) {
 	if len(detail.Blocks) == 0 {
 		return
@@ -316,7 +370,7 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 			continue
 		}
 		prev[b.BlockID] = b.State
-		// Only fire on the transition INTO FINISHED â€” once. Subsequent
+		// Only fire on the transition INTO FINISHED — once. Subsequent
 		// polls keep `prev[blockID] = FINISHED` so the equality check
 		// above short-circuits.
 		//
@@ -342,7 +396,7 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 
 	orderID, ok := resolveOrderID()
 	if !ok {
-		// Resolution failed â€” drop these block events. They'll be
+		// Resolution failed — drop these block events. They'll be
 		// re-emitted next cycle since `prev` was already updated, but
 		// re-emit on the same already-FINISHED state is suppressed by
 		// the equality check. Lose these events but don't loop.

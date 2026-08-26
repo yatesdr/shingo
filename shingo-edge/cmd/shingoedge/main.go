@@ -30,6 +30,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -38,11 +39,11 @@ import (
 	"shingo/protocol/router"
 	"shingoedge/backup"
 	"shingoedge/config"
-	"shingoedge/countgroup"
 	"shingoedge/engine"
 	"shingoedge/messaging"
 	"shingoedge/store"
 	"shingoedge/store/counters"
+	storemessaging "shingoedge/store/messaging"
 	"shingoedge/uop"
 	"shingoedge/www"
 )
@@ -240,12 +241,18 @@ func startHTTPServer(addr string, handler http.Handler) *http.Server {
 
 // setupKafkaSubscribers wires protocol ingestor, heartbeater, and all handler
 // callbacks that require a live Kafka connection. Called only when Connect succeeds.
+// plantClaimsPub hands the plant-claims publisher to the SubjectEdgeRegistered
+// handler, which lives in setupKafkaSubscribers while the publisher is built in
+// main().
 //
-// cgHandler may be nil — countgroup is an optional feature. If non-nil, the
-// handler's MarkStarted() is called after the Kafka subscribe succeeds, which
-// enables the heartbeat writer (deadman). See countgroup/handler.go for the
-// `started` guard rationale.
-func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID, instanceID string, db *store.DB, cgHandler *countgroup.Handler) {
+// Package-level rather than a parameter because setupKafkaSubscribers already
+// takes seven, and atomic rather than a plain pointer because ORDERING MAKES
+// THE RACE REAL: subscribers are wired (twice — once inline, once from the
+// kafka-connect-retry goroutine) well before main constructs the publisher, so
+// a Registered ack can genuinely arrive while this is still nil.
+var plantClaimsPub atomic.Pointer[messaging.PlantClaimsPublisher]
+
+func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID, instanceID string, db *store.DB) {
 	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager())
 	edgeHandler.DebugLog = messaging.DebugLogFunc(dbg.Func("edge_handler"))
 	dataDbg := dbg.Func("edge_handler")
@@ -277,13 +284,26 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// ── Subject router (Data sub-dispatch) ─────────────────────────────
 	// Every protocol.SubjectX is registered against the closure that
 	// drives the corresponding Edge subsystem (engine method, heartbeater
-	// resync trigger, countgroup command, etc). Pre-router this was done
+	// resync trigger, node structure changes, etc). Pre-router this was done
 	// via nine EdgeHandler.SetXHandler setters; the router is now the
 	// registration surface and EdgeHandler holds only order-channel
 	// state.
 	subjectRouter := router.NewSubject()
+
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegistered, func(_ *protocol.Envelope, reg *protocol.EdgeRegistered) {
 		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", reg.StationID, reg.Message)
+		// Republish the full claim set on every registration, not just at boot.
+		// This is the path that covers CORE restarting: Core sends
+		// EdgeRegisterRequest to an edge it does not recognise, the edge
+		// re-registers, and the ack lands here. Without it, a restarted Core
+		// waits out the (now hourly) safety snapshot with an empty mirror.
+		if pub := plantClaimsPub.Load(); pub != nil {
+			goSafe("plant-claims-on-register", func() {
+				if err := pub.PublishAll(); err != nil {
+					log.Printf("plant_claims: publish on register: %v", err)
+				}
+			})
+		}
 		if eng.Uptime() > 30 {
 			hb.RequestNodeSync()
 			hb.RequestCatalogSync()
@@ -305,10 +325,12 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
-		log.Printf("edge_handler: received node list (%d nodes, %d loaders, %d payload-bin-types)", len(resp.Nodes), len(resp.Loaders), len(resp.PayloadBinTypes))
+		log.Printf("edge_handler: received node list (%d nodes, %d loaders, %d payload-bin-types, %d scene points, %d scene edges)",
+			len(resp.Nodes), len(resp.Loaders), len(resp.PayloadBinTypes), len(resp.ScenePoints), len(resp.SceneEdges))
 		eng.SetCoreNodes(resp.Nodes)
 		eng.SetCoreLoaders(resp.Loaders)
 		eng.SetPayloadBinTypes(resp.PayloadBinTypes)
+		eng.SetSceneGraph(resp.ScenePoints, resp.SceneEdges)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectProductionReportAck, func(_ *protocol.Envelope, ack *protocol.ProductionReportAck) {
 		log.Printf("edge_handler: production report ack: station=%s accepted=%d", ack.StationID, ack.Accepted)
@@ -350,26 +372,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			changed.NodeName, changed.Action)
 		hb.RequestNodeSync()
 	})
-	// Kanban demand signals from Core's wiring_kanban driver. PRODUCE-role signals
-	// are NO LONGER handled: the legacy bin-count produce trigger is retired — a
-	// produce loader's automatic replenishment is decided on Core and arrives as
-	// a whole order, never a bin-count floor. CONSUME-role signals fire
-	// the unloader U1 to pull a freshly-arrived full (MaybeCreateUnloaderFullIn); the
-	// withLoaderBudget seam dedups against the operator-release trigger by in-flight
-	// count. Core still emits produce DemandSignals on bin movements; the Edge drops
-	// them here harmlessly.
-	router.RegisterSubject(subjectRouter, protocol.SubjectDemandSignal, func(_ *protocol.Envelope, s *protocol.DemandSignal) {
-		log.Printf("edge_handler: demand signal: node=%s payload=%s role=%s reason=%s",
-			s.CoreNodeName, s.PayloadCode, s.Role, s.Reason)
-		if s.Role == protocol.ClaimRoleConsume {
-			eng.MaybeCreateUnloaderFullIn(s.PayloadCode)
-		}
-	})
-	if cgHandler != nil {
-		router.RegisterSubject(subjectRouter, protocol.SubjectCountGroupCommand, func(_ *protocol.Envelope, cmd *protocol.CountGroupCommand) {
-			cgHandler.OnCommand(*cmd)
-		})
-	}
 	// Item 11: SEND PARTIAL BACK pickup notification. Fires when Core's
 	// rds.Poller observes the robot finished the pickup block — Edge
 	// flushes the released bin's accumulator and clears the runtime's
@@ -423,14 +425,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			log.Printf("edge_handler: order projection %s: %v", p.OrderUUID, err)
 		}
 	})
-	// SubjectCountGroupCommand may be skipped above when cgHandler is nil
-	// (countgroup is an optional feature). The boot-time coverage assertion
-	// below is gated on the same condition so a non-countgroup edge doesn't
-	// fail to start over an unregistered optional subject.
 	for _, s := range protocol.EdgeInboundSubjects() {
-		if s == protocol.SubjectCountGroupCommand && cgHandler == nil {
-			continue
-		}
 		if !subjectRouter.Has(s) {
 			log.Fatalf("shingoedge: subject router missing handler for %s — composition root is incomplete", s)
 		}
@@ -481,14 +476,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		log.Printf("protocol ingestor subscribe: %v", err)
 	} else {
 		log.Printf("protocol ingestor listening on %s (station=%s)", cfg.Messaging.DispatchTopic, stationID)
-		// Kafka subscription is live — flip the countgroup started flag
-		// so the heartbeat writer can begin. Before this moment the
-		// heartbeat is intentionally suppressed so the PLC deadman
-		// trips ON during the startup window (fail-safe).
-		if cgHandler != nil {
-			cgHandler.MarkStarted()
-			log.Printf("countgroup: subscription confirmed, heartbeat enabled")
-		}
 	}
 
 	// Wrap msgClient.Reconnect so a UI-triggered reconnect (operator saves
@@ -539,13 +526,12 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 
 	eng.SetNodeSyncFunc(hb.RequestNodeSync)
 	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
-	log.Printf("kanban: demand-signal handler wired — consume->MaybeCreateUnloaderFullIn (produce-role signals are received and dropped by design; produce supply is Core-decided threshold replenishment or operator staging)")
 	// Says what this build does NOT do, on purpose. Threshold replenishment moved
 	// to Core; this Edge has no receiver for it and creates no loader empties from
 	// one. The window where somebody reads this line is the Edge-first half of a
 	// deploy, diagnosing a loader that is not being fed — and the answer they need
 	// is "look at Core", which the line this replaced actively argued against.
-	log.Printf("kanban: threshold replenishment is Core-owned — this Edge consumes no below-threshold signal and originates no loader empties from one (operator push and changeover paths unaffected)")
+	log.Printf("kanban: threshold replenishment is Core-owned — this Edge consumes no below-threshold signal and originates no loader empties from one (operator push and changeover paths unaffected; the kanban demand-signal route is gone entirely — unloader U1 fires from operator release alone)")
 
 	if err := eng.StartupReconcile(); err != nil {
 		log.Printf("initial startup reconcile: %v", err)
@@ -706,6 +692,9 @@ func main() {
 	// Inject the Kafka IsConnected closure so /status can report
 	// kafka_connected without a hard engine→messaging dep.
 	eng.SetKafkaConnFunc(msgClient.IsConnected)
+	// And the last-publish outcome, which is the one that actually reports
+	// broker reachability — IsConnected only says a writer exists.
+	eng.SetKafkaLastPublishFunc(msgClient.LastPublish)
 
 	// ── Data sender & outbox drainer ────────────────────────────────────
 	dataSender := messaging.NewDataSender(msgClient, cfg.Messaging.OrdersTopic, nil)
@@ -721,6 +710,11 @@ func main() {
 	// Outbox drainer — runs unconditionally, drains when connected
 	drainer := messaging.NewOutboxDrainer(db, msgClient, &cfg.Messaging)
 	drainer.DebugLog = messaging.DebugLogFunc(dbg.Func("outbox"))
+	// Ring the drainer on enqueue so a message does not wait out the tick for
+	// its first send attempt. The interval keeps its other job — the retry and
+	// purge cadence — unchanged.
+	storemessaging.SetEnqueueNotifier(drainer.Notify)
+	defer storemessaging.SetEnqueueNotifier(nil)
 	drainer.Start()
 	defer drainer.Stop()
 
@@ -750,21 +744,6 @@ func main() {
 	uopMutator.Start()
 	defer uopMutator.Stop()
 
-	// ── Count-group handler (advanced-zone light alerts) ────────────────
-	// Constructed before Kafka connect so the heartbeat writer can start
-	// immediately (but gated by `started` until subscription confirms).
-	// Handler is nil if feature disabled / no bindings — setupKafkaSubscribers
-	// tolerates nil and simply doesn't register the handler.
-	var cgHandler *countgroup.Handler
-	var cgHeartbeat *countgroup.HeartbeatWriter
-	if len(cfg.CountGroups.Bindings) > 0 {
-		cgHandler = countgroup.New(cfg.CountGroups, eng.PLCManager(), eng.SendCountGroupAck, log.Printf)
-		cgHeartbeat = countgroup.NewHeartbeatWriter(cgHandler, log.Printf)
-		cgHeartbeat.Start()
-		defer cgHeartbeat.Stop()
-		log.Printf("countgroup: edge handler active (%d bindings)", len(cfg.CountGroups.Bindings))
-	}
-
 	// ── Kafka connect & subscribe ───────────────────────────────────────
 	//
 	// Background retry-with-backoff: if Connect fails at boot, Edge
@@ -775,7 +754,7 @@ func main() {
 	// operators can see the deaf-but-running state. Log loudly at
 	// startup so operators notice from the boot log too.
 	if msgClient.IsConnected() {
-		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db, cgHandler)
+		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db)
 	} else {
 		log.Printf("WARNING messaging not connected at boot — Edge will run deaf to inbound (orders, demand, stale) until Kafka is reachable. Outbox drainer is active and will flush when connected.")
 		goSafe("kafka-connect-retry", func() {
@@ -793,7 +772,7 @@ func main() {
 					continue
 				}
 				log.Printf("kafka connect succeeded — wiring subscribers")
-				setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db, cgHandler)
+				setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, instanceID, db)
 				return
 			}
 		})
@@ -947,6 +926,9 @@ func main() {
 	// edit via the coalesced spec-change signal.
 	plantClaims := messaging.NewPlantClaimsPublisher(db, stationID)
 	plantClaims.DebugLog = messaging.DebugLogFunc(dbg.Func("plant_claims"))
+	// Publish it for the SubjectEdgeRegistered handler registered far above,
+	// which cannot capture a variable that does not exist yet.
+	plantClaimsPub.Store(plantClaims)
 	h.SetPlantSpecChangeHook(func() {
 		if err := plantClaims.PublishChanged(); err != nil {
 			log.Printf("plant_claims: spec-change publish: %v", err)
@@ -968,49 +950,10 @@ func runInteractiveRestore(configPath string) error {
 	fmt.Println("ShinGo Edge interactive restore")
 	fmt.Println("Provide minimal backup storage settings to restore this machine before startup.")
 
-	stationID, err := promptNonEmpty(reader, "Station ID")
+	stationID, s3cfg, err := promptS3Settings(reader)
 	if err != nil {
 		return err
 	}
-	endpoint, err := promptNonEmpty(reader, "S3 Endpoint URL")
-	if err != nil {
-		return err
-	}
-	bucket, err := promptNonEmpty(reader, "Bucket")
-	if err != nil {
-		return err
-	}
-	region, err := promptWithDefault(reader, "Region", "us-east-1")
-	if err != nil {
-		return err
-	}
-	accessKey, err := promptNonEmpty(reader, "Access Key")
-	if err != nil {
-		return err
-	}
-	secretKey, err := promptNonEmpty(reader, "Secret Key")
-	if err != nil {
-		return err
-	}
-	usePathStyle, err := promptYesNo(reader, "Use path-style S3", true)
-	if err != nil {
-		return err
-	}
-	insecureSkip, err := promptYesNo(reader, "Skip TLS verification", false)
-	if err != nil {
-		return err
-	}
-
-	s3cfg := config.BackupS3Config{
-		Endpoint:              endpoint,
-		Bucket:                bucket,
-		Region:                region,
-		AccessKey:             accessKey,
-		SecretKey:             secretKey,
-		UsePathStyle:          usePathStyle,
-		InsecureSkipTLSVerify: insecureSkip,
-	}
-
 	storage, err := backup.NewS3Storage(s3cfg)
 	if err != nil {
 		return err
@@ -1136,4 +1079,57 @@ func humanBytes(v int64) string {
 		return fmt.Sprintf("%d %s", v, units[idx])
 	}
 	return fmt.Sprintf("%.1f %s", size, units[idx])
+}
+
+// promptS3Settings collects the station id and the backup-storage settings the
+// restore needs before anything else can run.
+//
+// Split out for the reason the rest of this function cannot be tested: it takes
+// the reader rather than reaching for os.Stdin, so the prompt sequence, the
+// us-east-1 region default and the two yes/no defaults are drivable from a
+// strings.Reader.
+func promptS3Settings(reader *bufio.Reader) (string, config.BackupS3Config, error) {
+	stationID, err := promptNonEmpty(reader, "Station ID")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	endpoint, err := promptNonEmpty(reader, "S3 Endpoint URL")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	bucket, err := promptNonEmpty(reader, "Bucket")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	region, err := promptWithDefault(reader, "Region", "us-east-1")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	accessKey, err := promptNonEmpty(reader, "Access Key")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	secretKey, err := promptNonEmpty(reader, "Secret Key")
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	usePathStyle, err := promptYesNo(reader, "Use path-style S3", true)
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+	insecureSkip, err := promptYesNo(reader, "Skip TLS verification", false)
+	if err != nil {
+		return "", config.BackupS3Config{}, err
+	}
+
+	s3cfg := config.BackupS3Config{
+		Endpoint:              endpoint,
+		Bucket:                bucket,
+		Region:                region,
+		AccessKey:             accessKey,
+		SecretKey:             secretKey,
+		UsePathStyle:          usePathStyle,
+		InsecureSkipTLSVerify: insecureSkip,
+	}
+	return stationID, s3cfg, nil
 }

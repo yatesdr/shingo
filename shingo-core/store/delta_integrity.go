@@ -2,7 +2,7 @@
 //
 // AT THE OUTER store/ LEVEL, not in store/bins, and that placement is the
 // depguard rule working as intended: this query spans two aggregates. It reads
-// bin_uop_audit (the audit aggregate — the ops, and the dropped quantity in
+// bin_uop_ledger (the audit aggregate — the ops, and the dropped quantity in
 // metadata) and bins (the ledger total each row is set against), and it names
 // store/audit's op constants rather than re-spelling them as string literals
 // that would drift the first time one is renamed. Cross-aggregate orchestration
@@ -24,7 +24,7 @@ import (
 // that payload's current plant-wide ledger total.
 //
 // WHY THIS IS READ-ONLY. Every drop is already recorded. The applier writes an
-// observation row into bin_uop_audit (before_uop == after_uop, because the
+// observation row into bin_uop_ledger (before_uop == after_uop, because the
 // count did not move) with the dropped quantity in the metadata JSONB, and
 // flags the bin via anomaly_at. So the whole panel is a query; there is nothing
 // new to write.
@@ -64,7 +64,7 @@ func deltaIntegrityByPayload(db *sql.DB, since time.Time) ([]domain.DeltaIntegri
 		         op,
 		         applied_at,
 		         COALESCE((metadata->>'delta')::INTEGER, 0) AS delta
-		    FROM bin_uop_audit
+		    FROM bin_uop_ledger
 		   WHERE op IN ($1, $2, $3)
 		     AND applied_at >= $4
 		     AND payload_code <> ''
@@ -148,7 +148,7 @@ func deltaIntegrityDaily(db *sql.DB, since time.Time, tz string) ([]domain.Delta
 		       COUNT(*) FILTER (WHERE op = $2)::INTEGER                            AS payload_mismatch_rows,
 		       COUNT(DISTINCT payload_code)::INTEGER                               AS payloads,
 		       COUNT(DISTINCT bin_id)::INTEGER                                     AS bins
-		  FROM bin_uop_audit
+		  FROM bin_uop_ledger
 		 WHERE op IN ($1, $2)
 		   AND applied_at >= $3
 		 GROUP BY 1

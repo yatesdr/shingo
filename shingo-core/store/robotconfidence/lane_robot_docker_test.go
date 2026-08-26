@@ -22,6 +22,7 @@ import (
 
 // TWO ROBOTS ON ONE LANE COME BACK AS TWO WINDOWS, EACH ITS OWN.
 func TestLaneRobotWindows_SeparatesRobotsOnTheSameLane(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 
@@ -88,6 +89,7 @@ func TestLaneRobotWindows_SeparatesRobotsOnTheSameLane(t *testing.T) {
 // the merged grain; this pins it one grain finer, because the per-robot write
 // loop is its own code path.
 func TestLaneRobotWindows_SentinelSurvivesTheRoundTrip(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 
@@ -129,6 +131,7 @@ func TestLaneRobotWindows_SentinelSurvivesTheRoundTrip(t *testing.T) {
 // which is the page's nodata. Empty fleet is not tested here because the caller
 // falls back to LaneWindows for it; an unknown vehicle is the empty answer.
 func TestLaneRobotWindows_AbsentRobotAnswersNothing(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 	insert(t, db,

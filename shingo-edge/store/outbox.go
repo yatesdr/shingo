@@ -23,18 +23,46 @@ func (db *DB) EnqueueOutbox(payload []byte, msgType string) (int64, error) {
 	return messaging.Enqueue(db.DB, payload, msgType)
 }
 
+// EnqueueSnapshotOutbox replaces every unsent row of msgType with the given
+// payloads. Only full-snapshot subjects may use it; see
+// store/messaging.EnqueueSnapshot, which refuses anything else.
+func (db *DB) EnqueueSnapshotOutbox(payloads [][]byte, msgType string) error {
+	return messaging.EnqueueSnapshot(db.DB, payloads, msgType)
+}
+
 // ListPendingOutbox returns the next batch of un-sent messages whose
 // retry count is below MaxOutboxRetries.
 func (db *DB) ListPendingOutbox(limit int) ([]messaging.Message, error) {
 	return messaging.ListPending(db.DB, limit)
 }
 
-// ListUnsentOutboxByType returns every un-sent outbox message matching
-// any of the given msg_type values. Used at startup to recover
-// in-memory state from durable outbox entries (e.g. inventory delta
-// pending sets after a crash).
+// ListUnsentOutboxByType returns every un-sent outbox message matching any of
+// the given msg_type values.
+//
+// ⚠️ IT HAS NO PRODUCTION CALLER. This comment used to claim it was "used at
+// startup to recover in-memory state from durable outbox entries (e.g.
+// inventory delta pending sets after a crash)". No such caller exists, and the
+// LoadPendingFromOutbox that a test comment in the uop package named as though
+// it were real does not exist anywhere in the tree. Whatever wired that up was
+// removed, or never written, and the sentence outlived it.
+//
+// It is kept because it IS used — by test helpers reading the outbox directly
+// (engine/demand_origin_state_test.go). Deleting a working test helper to
+// satisfy a claim that was only ever in a comment would be the wrong trade.
+//
+// What is genuinely NOT rebuilt after an edge restart is the uop accumulator's
+// in-flight knowledge — which deltas it has already enqueued. The MESSAGES are
+// safe regardless: they are durable in the outbox, the drainer sends them on
+// the next pass, and since 2026-08-22 the delta subjects carry no expiry so
+// arriving late cannot destroy them. Whether the accumulator can double-count
+// after a restart is a real design question and is NOT answered here.
 func (db *DB) ListUnsentOutboxByType(msgTypes []string) ([]messaging.Message, error) {
 	return messaging.ListUnsentByType(db.DB, msgTypes)
+}
+
+// GetOutboxMessage returns one outbox row by id.
+func (db *DB) GetOutboxMessage(id int64) (*messaging.Message, error) {
+	return messaging.Get(db.DB, id)
 }
 
 // ListDeadLetterOutbox returns un-sent messages that have hit
@@ -71,15 +99,34 @@ func (db *DB) CountPendingOutbox() (int, error) {
 	return n, err
 }
 
+// CountDeadLetterOutbox returns the number of un-sent messages that
+// have exhausted their retries (sent_at IS NULL AND retries >=
+// MaxRetries). These will never be sent again: the drainer's own
+// pending query filters on retries < MaxRetries, so an exhausted row
+// stops matching it and simply falls out of every later pass.
+//
+// It is the counterpart CountPendingOutbox needs to be read with.
+// Pending counts only rows still below the cap, so during an outage
+// the depth RISES while rows retry and then FALLS AS THEY DIE — a
+// draining-to-zero depth reads like recovery and can equally mean the
+// backlog was destroyed. Springfield, 2026-08-21: depth returned to
+// zero with 120 messages permanently lost.
+func (db *DB) CountDeadLetterOutbox() (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE sent_at IS NULL AND retries >= ?`, messaging.MaxRetries).Scan(&n)
+	return n, err
+}
+
 // RequeueOutbox resets the retry counter so a dead-lettered message
 // will be picked up by the drainer again.
 func (db *DB) RequeueOutbox(id int64) error {
 	return messaging.Requeue(db.DB, id)
 }
 
-// PurgeOldOutbox deletes sent messages older than the given duration,
-// and dead-lettered messages (retries >= max) older than the given
-// duration.
-func (db *DB) PurgeOldOutbox(olderThan time.Duration) (int64, error) {
-	return messaging.PurgeOld(db.DB, olderThan)
+// PurgeOldOutbox deletes delivered messages past the delivered cutoff and
+// dead-lettered ones past their own, longer cutoff. The two windows differ
+// because the rows mean opposite things — a delivered row is a receipt, a dead
+// letter is the only surviving record of a destroyed message.
+func (db *DB) PurgeOldOutbox(delivered, deadLetter time.Duration) (int64, error) {
+	return messaging.PurgeOld(db.DB, delivered, deadLetter)
 }

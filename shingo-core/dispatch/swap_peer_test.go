@@ -72,7 +72,7 @@ func hasSwapHalfAudit(t *testing.T, db *store.DB, orderID int64) bool {
 // resident with no replacement coming (ALN_003 post-dispatch strand).
 func TestSwapPeerTerminal_SupplyFails_CancelsLiveEvac(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-1", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
@@ -95,7 +95,7 @@ func TestSwapPeerTerminal_SupplyFails_CancelsLiveEvac(t *testing.T) {
 // bin onto the still-occupied line (collision).
 func TestSwapPeerTerminal_EvacFails_CancelsLiveSupply(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-2", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
@@ -123,7 +123,7 @@ func TestSwapPeerTerminal_EvacFails_CancelsLiveSupply(t *testing.T) {
 // The supply stays acquiring; the half-state surfaces as an audit instead.
 func TestSwapPeerTerminal_EvacFails_LeavesParkedSupply(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-PARK", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
@@ -182,7 +182,7 @@ func hasAuditAction(t *testing.T, db *store.DB, orderID int64, action string) bo
 // re-create anything (re-issue is operator-driven).
 func TestSwapPeerTerminal_SupplyFails_EvacDelivered_Surfaces(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-3", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
@@ -208,7 +208,7 @@ func TestSwapPeerTerminal_SupplyFails_EvacDelivered_Surfaces(t *testing.T) {
 // surface (nothing half-done to unwind).
 func TestSwapPeerTerminal_DoubleTerminal_NoAction(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-4", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
@@ -234,7 +234,7 @@ func TestSwapPeerTerminal_DoubleTerminal_NoAction(t *testing.T) {
 // handler must NOT cancel it.
 func TestSwapPeerTerminal_EvacSkipped_LeavesSupply(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-5", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")
@@ -263,7 +263,7 @@ func TestSwapPeerTerminal_EvacSkipped_LeavesSupply(t *testing.T) {
 // A skipped supply is a lost replacement. The evac must be cancelled.
 func TestSwapPeerTerminal_PressIndexR2Skipped_CancelsEvac(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, press, bp := setupTestData(t, db)
 	market := &nodes.Node{Name: "SWAP-STORE-6", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(market), "create market node")
@@ -307,7 +307,7 @@ func TestSwapPeerTerminal_PressIndexR2Skipped_CancelsEvac(t *testing.T) {
 // half-swap is auditable on the surviving leg.
 func TestSwapPeerTerminal_Abandoned_LeavesPartner(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	store1 := &nodes.Node{Name: "SWAP-STORE-AB", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(store1), "create store node")

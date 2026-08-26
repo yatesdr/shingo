@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/debuglog"
 	"shingo/protocol/types"
-	"shingo/shared/clock"
 	"shingoedge/config"
 	"shingoedge/orders"
 	"shingoedge/plc"
@@ -89,8 +89,11 @@ type Engine struct {
 	// coordinators (stationService, changeoverService); Phase 6.2′
 	// completed the per-domain extraction, deleting
 	// engine_db_methods.go and dropping EngineAccess to ~30 methods;
-	// Phase 6.5 split that into ServiceAccess (16 methods) +
-	// EngineOrchestration (35 verbs, embeds ServiceAccess).
+	// Phase 6.5 split that into ServiceAccess + EngineOrchestration
+	// (embeds ServiceAccess). Measured 2026-08-19: 19 and 71, the latter
+	// adding 52 verbs of its own — the parenthetical here read "16" and
+	// "35 verbs" from the split until then. www's width test is the
+	// authority on both numbers; this comment is not.
 	stationService    *service.StationService
 	changeoverService *service.ChangeoverService
 	preflightChecker  *service.PreflightChecker
@@ -107,10 +110,15 @@ type Engine struct {
 	coreNodesMu       sync.RWMutex
 	payloadBinTypes   []protocol.PayloadBinTypeInfo
 	payloadBinTypesMu sync.RWMutex
-	nodeSyncFn        func()
-	catalogSyncFn     func()
-	sendFn            func(*protocol.Envelope) error
-	kafkaReconnFn     func() error
+	// The vendor map's own universe — see scene_graph.go. In-memory only and
+	// re-delivered on every node-list sync, like the catalog above.
+	scenePoints   []protocol.ScenePointInfo
+	sceneEdges    []protocol.SceneEdgeInfo
+	sceneGraphMu  sync.RWMutex
+	nodeSyncFn    func()
+	catalogSyncFn func()
+	sendFn        func(*protocol.Envelope) error
+	kafkaReconnFn func() error
 
 	// inventoryDelta is the Phase 1 delta sink. Set by the composition
 	// root via SetInventoryDeltaSink. Nil in test contexts that don't
@@ -139,13 +147,22 @@ type Engine struct {
 	strandedAlarms sync.Map
 
 	// loaderResv serializes the count→fire reservation per loader so concurrent
-	// writers (a Kafka demand signal vs an HTTP RequestEmptyBin, or the push
-	// sweep) can't both read the same in-flight count and both fire empties —
+	// writers (an HTTP RequestEmptyBin vs the push sweep) can't both read the
+	// same in-flight count and both fire empties —
 	// the never-2N invariant. map[loaderID]*sync.Mutex, keyed from day one (no
 	// global lock). NO transaction: see withLoaderBudget and
 	// FINAL-ADJUDICATION Q1 (monotonicity + non-tx-pure CreateRetrieveOrder) —
 	// shingo-library/archive/bin-loader-multiwindow-reviews-2026-06-12/FINAL-ADJUDICATION.md.
 	loaderResv sync.Map
+
+	// primeResv serializes the count->decide->create sequence for the
+	// press-index partial-empty prime, so two concurrent produce requests on
+	// one cell cannot both read "nothing inbound" and both fire an empty at
+	// the same bare paired position. Keyed by the claim's CORE node name, not
+	// its process_node id: a shared core node carries many process_node rows
+	// for one physical cell, and the in-flight count that the lock protects is
+	// itself scoped by delivery node. map[coreNodeName]*sync.Mutex.
+	primeResv sync.Map
 
 	// loaderStore is the consumer-defined resolver for loaders, backed by the
 	// Core-owned aggregate (the synced core_loaders cache), refreshed on each
@@ -161,6 +178,10 @@ type Engine struct {
 	// durable fix, not a tidy-up.
 
 	kafkaConnFn func() bool
+	// kafkaLastPublishFn reports the outcome of the most recent publish
+	// attempt. Injected like kafkaConnFn so the engine keeps no hard
+	// dependency on the messaging package.
+	kafkaLastPublishFn func() (bool, time.Time, bool)
 
 	// homeConsolidations tracks pending two-order consolidation sequences
 	// initiated by ClearLoaderHome. Key = Order A's UUID. When Order A's robot
@@ -242,6 +263,9 @@ func New(c Config) *Engine {
 	// Wire the parked-ticks alarm (P2-C7) onto the operator tile: BuildView reads
 	// the live alarm map so the chip renders on load and on every refresh.
 	e.stationService.SetStrandedResolver(e.StrandedAlarmDetail)
+	// The changeover load directive names a BIN TYPE, so it needs the payload
+	// -> dunnage catalog Core delivers with every node-list sync.
+	e.stationService.SetBinTypeResolver(e.BinTypeForPayload)
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.processService = service.NewProcessService(e.db)
@@ -380,6 +404,26 @@ func (e *Engine) SetKafkaConnFunc(fn func() bool) {
 	e.kafkaConnFn = fn
 }
 
+// SetKafkaLastPublishFunc injects the messaging client's LastPublish
+// closure. Same indirection as SetKafkaConnFunc.
+func (e *Engine) SetKafkaLastPublishFunc(fn func() (bool, time.Time, bool)) {
+	e.kafkaLastPublishFn = fn
+}
+
+// KafkaLastPublish reports the outcome of the most recent publish attempt:
+// whether it succeeded, when it was, and whether one has happened at all.
+//
+// This is the field that answers "is Kafka reachable". KafkaConnected reports
+// only that a writer object exists — on Edge that is true from the first
+// Connect until shutdown, because Connect performs no I/O. During the
+// Springfield outage of 2026-08-21 KafkaConnected read true throughout.
+func (e *Engine) KafkaLastPublish() (bool, time.Time, bool) {
+	if e.kafkaLastPublishFn == nil {
+		return false, time.Time{}, false
+	}
+	return e.kafkaLastPublishFn()
+}
+
 // StationID returns the station identifier from config.
 func (e *Engine) StationID() string {
 	return e.cfg.StationID()
@@ -390,6 +434,15 @@ func (e *Engine) StationID() string {
 // operational signal that Kafka or Core is unreachable.
 func (e *Engine) CountPendingOutbox() (int, error) {
 	return e.db.CountPendingOutbox()
+}
+
+// CountDeadLetterOutbox returns the count of un-sent outbox messages that have
+// exhausted their retries and will never be sent. Surfaced via /status beside
+// the pending depth, which cannot be read safely on its own: pending counts
+// only rows still under the retry cap, so a depth falling to zero during an
+// outage can mean recovery or can mean the backlog died.
+func (e *Engine) CountDeadLetterOutbox() (int, error) {
+	return e.db.CountDeadLetterOutbox()
 }
 
 // Stop shuts down all subsystems gracefully.
@@ -553,23 +606,23 @@ func (e *Engine) RequestCatalogSync() {
 // ── Payload catalog ─────────────────────────────────────────────────
 
 // HandlePayloadCatalog upserts payload catalog entries received from core and
-// prunes any local entries that no longer exist in core's response.
+// prunes any local entries that no longer exist in core's response — all in
+// ONE transaction (the sync fires every 2 minutes; 57 separate implicit
+// txns per sync held the edge's single SQLite connection ~41,000 times/day
+// to write back rows that almost never change). The upsert itself is
+// conditional on a real change, so an unchanged catalog writes nothing.
 func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
-	ids := make([]int64, 0, len(entries))
+	rows := make([]*catalog.CatalogEntry, 0, len(entries))
 	for _, b := range entries {
-		entry := &catalog.CatalogEntry{
+		rows = append(rows, &catalog.CatalogEntry{
 			ID: b.ID, Name: b.Name, Code: b.Code,
 			Description: b.Description,
 			UOPCapacity: b.UOPCapacity,
 			CATID:       b.CATID,
-		}
-		if err := e.db.UpsertPayloadCatalog(entry); err != nil {
-			log.Printf("engine: upsert payload catalog entry %s: %v", b.Name, err)
-		}
-		ids = append(ids, b.ID)
+		})
 	}
-	if err := e.db.DeleteStalePayloadCatalogEntries(ids); err != nil {
-		log.Printf("engine: prune stale payload catalog: %v", err)
+	if err := e.db.SyncPayloadCatalog(rows); err != nil {
+		log.Printf("engine: sync payload catalog: %v", err)
 	}
 	// Now that the catalog (and its CATIDs) is current, retire any expected_catid
 	// stamp that merely duplicates the style's derived single CATID (the guard now

@@ -195,22 +195,3 @@ func (h *Handlers) apiClearAllProduced(w http.ResponseWriter, r *http.Request) {
 	}
 	h.jsonSuccess(w)
 }
-
-func (h *Handlers) apiDemandLog(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		h.jsonError(w, "invalid id", http.StatusBadRequest)
-		return
-	}
-	demand, err := h.engine.DemandService().Get(id)
-	if err != nil {
-		h.jsonError(w, "demand not found", http.StatusNotFound)
-		return
-	}
-	entries, err := h.engine.DemandService().ListProductionLog(demand.CatID, 100)
-	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonOK(w, entries)
-}

@@ -24,13 +24,29 @@ function collectManifestRows(containerId) {
   return items;
 }
 
-function getSelectedBinTypes(selectId) {
-  var sel = document.getElementById(selectId);
+// The bin-type pickers are CHECKBOX LISTS, not <select multiple>. Multi-select
+// needs ctrl-click to add and drops the whole selection on a plain click, which
+// is an easy way to clear a payload's carrier types by accident with nothing on
+// screen saying you did.
+function getSelectedBinTypes(hostId) {
+  var host = document.getElementById(hostId);
+  if (!host) return [];
   var ids = [];
-  for (var i = 0; i < sel.options.length; i++) {
-    if (sel.options[i].selected) ids.push(parseInt(sel.options[i].value));
-  }
+  host.querySelectorAll('input[type=checkbox]').forEach(function(cb) {
+    if (cb.checked) ids.push(parseInt(cb.value));
+  });
   return ids;
+}
+
+// setSelectedBinTypes checks exactly the given ids and clears the rest. Passing
+// an empty list is how both modals clear a stale selection.
+function setSelectedBinTypes(hostId, ids) {
+  var host = document.getElementById(hostId);
+  if (!host) return;
+  ids = ids || [];
+  host.querySelectorAll('input[type=checkbox]').forEach(function(cb) {
+    cb.checked = ids.indexOf(parseInt(cb.value)) >= 0;
+  });
 }
 
 /* --- Payload modals --- */
@@ -138,8 +154,7 @@ function openCreatePayloadModal() {
   document.getElementById('plc-notes').value = '';
   document.getElementById('plc-robot-group').value = '';
   document.getElementById('plc-manifest-rows').innerHTML = '';
-  var sel = document.getElementById('plc-bin-types');
-  for (var i = 0; i < sel.options.length; i++) sel.options[i].selected = false;
+  setSelectedBinTypes('plc-bin-types', []);
   loadRobotGroups();
   loadLoadSequences('plc-load-sequence', '');
   showModal('pl-create-modal');
@@ -190,8 +205,7 @@ function openEditPayloadModal(btn) {
   // nothing selected (matches the create modal); the async fetch below sets the
   // real selection, and a fetch failure then leaves it cleared rather than a
   // bogus option[0]. Fixes "bin type resets to 0 on edit".
-  var pleBinTypes = document.getElementById('ple-bin-types');
-  for (var bi = 0; bi < pleBinTypes.options.length; bi++) pleBinTypes.options[bi].selected = false;
+  setSelectedBinTypes('ple-bin-types', []);
   loadRobotGroups();
   showModal('pl-edit-modal');
 
@@ -223,10 +237,7 @@ function openEditPayloadModal(btn) {
     })
     .then(function(resp) {
       var ids = (resp && resp.data) || resp || [];
-      var sel = document.getElementById('ple-bin-types');
-      for (var i = 0; i < sel.options.length; i++) {
-        sel.options[i].selected = ids.indexOf(parseInt(sel.options[i].value)) >= 0;
-      }
+      setSelectedBinTypes('ple-bin-types', ids);
     })
     .catch(function(err) {
       console.error('Bin types load failed:', err);

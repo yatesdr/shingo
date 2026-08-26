@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -74,6 +75,94 @@ func LookupLastReleaseError(db *DB, runtime *processes.RuntimeState) string {
 		}
 	}
 	return ""
+}
+
+// LastReleaseErrorsForRuntimes is LookupLastReleaseError for a whole board in
+// one query.
+//
+// The per-runtime form ran inside the tile loop and issued up to two
+// ListOrderHistory queries per tile — up to 44 on the 22-tile Springfield
+// bin-loader board, on every poll, serialized on a connection with
+// SetMaxOpenConns(1), to fill a chip that is almost always empty. Every other
+// per-tile read on this path was hoisted to a board-wide batch; this one was
+// missed.
+//
+// Returns the release error per PROCESS NODE id, empty entries omitted, so the
+// tile loop is a map lookup.
+func LastReleaseErrorsForRuntimes(db *DB, runtimes map[int64]*processes.RuntimeState) map[int64]string {
+	// Collect the orders any tile might ask about. Both slots, because the
+	// rollback lands on whichever order was being released.
+	var ids []int64
+	seen := map[int64]bool{}
+	for _, rt := range runtimes {
+		if rt == nil {
+			continue
+		}
+		for _, oid := range []*int64{rt.ActiveOrderID, rt.StagedOrderID} {
+			if oid != nil && !seen[*oid] {
+				seen[*oid] = true
+				ids = append(ids, *oid)
+			}
+		}
+	}
+	out := map[int64]string{}
+	if len(ids) == 0 {
+		return out
+	}
+
+	// The most recent NON-EMPTY detail per order, which is the only row
+	// LookupLastReleaseError ever looked at: it walks history backwards, skips
+	// empty details, and stops at the first non-empty one — so a non-error
+	// transition above the rollback means no chip. Ordering by (created_at, id)
+	// rather than created_at alone because SQLite's datetime('now') has
+	// one-second granularity and a rollback lands in the same second as the
+	// transition it follows; id breaks that tie by insertion order, which is
+	// what walking the slice backwards effectively did.
+	ph := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		ph[i] = "?"
+		args[i] = id
+	}
+	lastDetail := map[int64]string{}
+	rows, err := db.Query(
+		`SELECT order_id, detail FROM order_history
+		 WHERE order_id IN (`+strings.Join(ph, ",")+`) AND detail <> ''
+		 ORDER BY order_id, created_at, id`, args...)
+	if err != nil {
+		// Best-effort, exactly as the per-tile form was: a history read failure
+		// leaves the chip absent rather than blocking the board.
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var oid int64
+		var detail string
+		if err := rows.Scan(&oid, &detail); err != nil {
+			return out
+		}
+		lastDetail[oid] = detail // ascending order, so the last write wins
+	}
+	if rows.Err() != nil {
+		return out
+	}
+
+	for nodeID, rt := range runtimes {
+		if rt == nil {
+			continue
+		}
+		// Active before staged, the same precedence the per-runtime form used.
+		for _, oid := range []*int64{rt.ActiveOrderID, rt.StagedOrderID} {
+			if oid == nil {
+				continue
+			}
+			if d := lastDetail[*oid]; strings.HasPrefix(d, releaseErrorPrefix) {
+				out[nodeID] = d
+				break
+			}
+		}
+	}
+	return out
 }
 
 // ComputeSwapReady returns true when a two-robot swap can be released via
@@ -213,35 +302,34 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 // pair is single-leg (one half has no sibling). Single-leg flows
 // (drops, manual single, sequential) must use per-order release.
 //
-// ── KNOWN WRONG FOR PRESS-INDEX. Marked for the leg_role conversion. ──
+// ── THE NAMES ARE POSITIONAL, AND POSITIONAL IS WRONG FOR PRESS-INDEX ──
 //
 // This maps role POSITIONALLY: staged→evac, active→supply. That mapping is a
 // two_robot assumption (leg A is the supply, leg B is the evac) and it is
 // INVERTED for two_robot_press_index, where R1 — the first leg — is the EVAC (it
-// clears the press) and R2 is the SUPPLY (it indexes the fresh bin on).
+// clears the press) and R2 is the SUPPLY (it indexes the fresh bin on). The
+// IndexRobotSupplies flip does not change that: it moves the supermarket trip
+// between the legs, not the press pickup and dropoff.
 //
-// It is masked today: the live press-index claims are produce-role, and the
-// produce release path returns before the evac/supply distinction is used. It is
-// a live bug the moment a consume-role press-index claim exists.
+// STILL POSITIONAL HERE, AND DELIBERATELY. This function resolves from runtime
+// pointers and a node task and never loads the orders, so it cannot ask the
+// steps. It returns the PAIR — which is what both callers actually need — and
+// each caller decides whether the names matter to it:
 //
-// Deliberately NOT fixed here. This is the fourth site that infers a leg's role,
-// after the Edge classifier and Core's two dispatch predicates — all three of
-// which now read the leg's STEPS (legPlacesBinAt / legTakesLineBin). This one
-// cannot: it resolves from runtime pointers and a node task, and never loads the
-// orders' steps at all. Fixing it in place would mean a fourth independent
-// re-derivation of the same fact; it is the case that earns the `leg_role` field
-// on the order, which is the next phase. Until then it is wrong, contained, and
-// written down.
+//   - ComputeSwapReady (below) does not care which is which. It accepts EITHER
+//     staged leg for press-index, which is what hop A4-iv fixed: the RELEASE
+//     button vanishing on a legitimately-staged index leg.
+//   - ReleaseStagedOrders DOES care — the name picks which leg carries the
+//     operator's disposition — so it re-derives from the legs' STEPS via
+//     engine.classifySwapLegsBySteps, the same discriminator the Edge
+//     classifier and Core's two dispatch predicates already use. See there for
+//     what the inversion cost before that call existed.
 //
-// hop A4-iv (2026-07-23) did NOT un-invert this mapping — that still waits on
-// leg_role. It only fixed the downstream symptom that bit an operator: the
-// RELEASE button vanishing on a legitimately-staged index leg. ComputeSwapReady
-// works around the inversion by accepting EITHER staged leg for press-index
-// (see there), so the button survives even though this resolver still labels the
-// legs positionally. The disposition/ordering the positional labels drive in
-// ReleaseStagedOrders stays masked (live press-index claims are produce-role,
-// whose release returns before the evac/supply split) and harmless (press-index
-// is fleet-sequenced, so leg order at release doesn't gate physical safety).
+// So there is no fourth re-derivation of a leg's role and no caller left
+// trusting these names for a decision that turns on them. A `leg_role` column
+// on the order would still be an improvement — it would let this function
+// answer correctly instead of handing the question on — but it is no longer
+// load-bearing.
 func ResolveSwapPair(db *DB, runtime *processes.RuntimeState, task *processes.NodeTask) (evacID, supplyID *int64, err error) {
 	if runtime != nil {
 		if runtime.StagedOrderID != nil {

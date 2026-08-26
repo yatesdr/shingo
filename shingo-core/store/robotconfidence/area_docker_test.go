@@ -32,6 +32,7 @@ func withAreaIDs(s robotconfidence.Sample, ids ...string) robotconfidence.Sample
 // wrong, and it is asserted rather than assumed because the natural reading of
 // any daily aggregate is that its rows partition the day.
 func TestRollUp_AZoneRollUpIsOneToMany(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 
@@ -80,6 +81,7 @@ func TestRollUp_AZoneRollUpIsOneToMany(t *testing.T) {
 // somewhere the robot could name, and gating zones on the lane would lose
 // exactly the readings a dead zone produces most of.
 func TestRollUp_ZonesCountReadingsThatSnappedToNoLane(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 
@@ -117,6 +119,7 @@ func TestRollUp_ZonesCountReadingsThatSnappedToNoLane(t *testing.T) {
 // almost perfectly backwards. A zone that returns a good reading half the time
 // and nothing the rest must read as 0.45 in p50 and 0.90 in mean_good.
 func TestRollUp_ZoneKeepsBothPopulations(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 
@@ -159,6 +162,7 @@ func TestRollUp_ZoneKeepsBothPopulations(t *testing.T) {
 // behind them expire at 14 days — so a fortnight after any interesting day,
 // "was the plant like this" stopped being answerable.
 func TestRollUp_PlantDailyRecordsWhatHasNoLane(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 	addUnnamedSegment(t, db, "area-a", "NAMELESS", 0, 60, 10, 60)
@@ -210,6 +214,7 @@ func TestRollUp_PlantDailyRecordsWhatHasNoLane(t *testing.T) {
 // unkeyable or unversioned sample vanished from the robot's own mean too —
 // answering "which lane was this on" by discarding "how is this robot doing".
 func TestRollUp_LaneQuarantineDoesNotErasyTheRobotsOwnReading(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addUnnamedSegment(t, db, "area-a", "NAMELESS", 0, 0, 10, 0)
 
@@ -243,6 +248,7 @@ func TestRollUp_LaneQuarantineDoesNotErasyTheRobotsOwnReading(t *testing.T) {
 
 // The zone label is resolved at the DAY, not at now.
 func TestRollUp_ZoneClassComesFromTheMapAsItWasThatDay(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 
@@ -280,6 +286,7 @@ func TestRollUp_ZoneClassComesFromTheMapAsItWasThatDay(t *testing.T) {
 
 // A missing class resolver costs the LABEL, never the MEASUREMENT.
 func TestRollUp_ZonesAreStillWrittenWithNoClassResolver(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "LM1-LM2", 0, 0, 10, 0)
 	insert(t, db,

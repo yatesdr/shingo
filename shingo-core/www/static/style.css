@@ -7,7 +7,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 a { color: var(--primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-.container { max-width: 1200px; margin: 0 auto; padding: 0 1rem; }
 
 /* Nav */
 nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.75rem 0; }
@@ -115,11 +114,23 @@ textarea { resize: vertical; min-height: 60px; }
   font-weight: 400; font-size: 0.85rem; margin-top: 0.4rem; margin-bottom: 0;
 }
 .form-check input[type="checkbox"] { width: auto; margin: 0; }
-/* The visibility utility the form-state convention is written against: a form
-   renders from its state and toggles this class, instead of event handlers
-   reaching for element.style.display. !important because it lands on elements
-   that also carry a display-setting layout class (.flex, .form-group). */
-.is-hidden { display: none !important; }
+/* A scrollable list of checkboxes, for picking SEVERAL of something.
+   It replaces <select multiple>, which needs ctrl-click to add and drops the
+   whole selection on a plain click — an easy way to clear a set by accident,
+   with nothing on screen saying you did. Bordered and scrolled rather than
+   growing without limit, so a long catalogue does not push the modal's buttons
+   off the screen. */
+.check-list {
+  max-height: 9rem; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 0.3rem;
+  padding: 0.3rem 0.4rem; background: var(--bg-dark);
+}
+.check-list-item {
+  display: flex; align-items: center; gap: 0.45rem;
+  font-weight: 400; font-size: 0.85rem; padding: 0.15rem 0; cursor: pointer;
+}
+.check-list-item input[type="checkbox"] { width: auto; margin: 0; flex: none; }
+.check-list-item:hover { color: var(--primary); }
 
 /* Buttons */
 .btn { display: inline-block; padding: 0.4rem 1rem; border: none; border-radius: 0.3rem; font-size: 0.9rem; cursor: pointer; text-align: center; }
@@ -181,9 +192,10 @@ textarea { resize: vertical; min-height: 60px; }
 
 /* Nodes toolbar "Dev tools" disclosure — holds the test-node generate/delete
  * actions that used to be hidden behind Ctrl/Shift-click on Sync from Fleet. */
+/* The marker reset is .disclosure-bare (shared/components.css); this carries
+   only what makes it a dropdown rather than a plain disclosure. */
 .dev-menu { position: relative; display: inline-block; }
-.dev-menu > summary { list-style: none; display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
-.dev-menu > summary::-webkit-details-marker { display: none; }
+.dev-menu > summary { display: inline-flex; align-items: center; gap: 0.3rem; }
 .dev-menu-items {
   position: absolute;
   right: 0;
@@ -297,6 +309,12 @@ textarea { resize: vertical; min-height: 60px; }
 .manifest .timeline-list li + li { border-top: 1px dashed var(--border); }
 .manifest .tl-time { color: var(--text-muted); font-size: 0.72rem; white-space: nowrap; min-width: 10em; }
 .manifest .tl-detail { color: var(--text-muted); font-size: 0.75rem; }
+/* The unaccounted-gap row: an order existed and nothing was written for it.
+   Muted and italic because it is an ABSENCE being reported, not an event — it
+   must read as "we do not know", never as another status the order passed
+   through. */
+.manifest .tl-unaccounted .tl-detail { font-style: italic; }
+.manifest .tl-unaccounted { opacity: 0.85; }
 @media (max-width: 640px) { .manifest-row, .manifest-row.cols-3 { grid-template-columns: 1fr; } }
 .modal {
   background: var(--surface);
@@ -491,6 +509,10 @@ textarea { resize: vertical; min-height: 60px; }
  * and motion here would read as a change that did not happen. */
 .robot-confidence { margin-top: 0.35rem; }
 
+/* The order line under the robot's name. Text, never the tile's colour: the
+ * tile's colour is the ROBOT's state, and a stuck order is not a stuck robot. */
+.robot-order { margin-top: 0.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* THE CHIP GETS AN OPAQUE BACKDROP HERE, AND THIS IS A CONTRAST FIX, NOT A
  * STYLE PREFERENCE.
  *
@@ -565,19 +587,14 @@ textarea { resize: vertical; min-height: 60px; }
 .mb-1 { margin-bottom: 0.5rem; }
 .mb-2 { margin-bottom: 1rem; }
 .mt-2 { margin-top: 1rem; }
-.text-muted { color: var(--text-muted); }
 .text-right { text-align: right; }
-.flex { display: flex; }
 .flex-between { justify-content: space-between; align-items: center; }
-.gap-1 { gap: 0.5rem; }
 .gap-05 { gap: 0.25rem; }
-.gap-2 { gap: 1rem; }
 .flex-col { display: flex; flex-direction: column; }
 .flex-center { display: flex; align-items: center; }
 .flex-wrap { flex-wrap: wrap; }
 .items-center { align-items: center; }
 .ml-05 { margin-left: 0.5rem; }
-.ml-auto { margin-left: auto; }
 .mt-0 { margin-top: 0; }
 .mt-05 { margin-top: 0.5rem; }
 .mt-1 { margin-top: 0.5rem; }
@@ -586,10 +603,8 @@ textarea { resize: vertical; min-height: 60px; }
 .p-2 { padding: 1rem; }
 .text-sm { font-size: 0.85rem; }
 .text-xs { font-size: 0.75rem; }
-.text-center { text-align: center; }
 .font-semibold { font-weight: 600; }
 .w-full { width: 100%; }
-.nowrap { white-space: nowrap; }
 .overflow-y-auto { overflow-y: auto; }
 .hide { display: none; }
 
@@ -1003,6 +1018,9 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .ofilter-dot[data-status="in_transit"]  { background:var(--status-in-transit-dot); }
 .ofilter-dot[data-status="delivered"]   { background:var(--status-delivered-dot); }
 .ofilter-dot[data-status="confirmed"]   { background:var(--status-delivered-dot); }
+/* faulted reuses --warning the way failed reuses --danger. No new hue: the
+   palette has none free, and the pill's label carries the meaning. */
+.ofilter-dot[data-status="faulted"]     { background:var(--warning); }
 .ofilter-dot[data-status="failed"]      { background:var(--danger); }
 .ofilter-dot[data-status="reshuffling"] { background:var(--status-reshuffling-dot); }
 
@@ -1862,6 +1880,9 @@ body[data-dashboard-kind="node-report"] #dash-main {
 .rh-row { cursor: pointer; }
 .rh-row:hover { background: var(--elev-raised); }
 .rh-num { text-align: right; font-variant-numeric: tabular-nums; }
+/* The only coloured number on a Maintained Groups row. A covered level is not
+   a green tick, it is nothing happening — so only the short case is marked. */
+.mg-short { color: var(--warning); font-weight: 600; }
 .rh-neg { color: var(--viz-coral); }
 .rh-split { font-size: var(--font-xs); color: var(--text-muted); }
 .chev { display: inline-block; transition: transform var(--dur-fast, 0.15s) var(--ease, ease); color: var(--text-muted); }
@@ -2531,11 +2552,12 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .mf-read-beyond .mf-read-name { color: var(--accent); }
 
 /* ── Localization board (robots page) ───────────────────────────────────── */
+/* (.lb-seg — the 7d/30d preset buttons — retired with the presets; every
+   window is now asked with the from→to picker.) */
 .lb-controls { display:flex; align-items:center; gap:16px; margin-bottom:10px; flex-wrap:wrap; }
-.lb-seg { display:inline-flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
-.lb-seg button { background:transparent; border:0; padding:5px 12px; color:var(--text-muted); cursor:pointer; font:inherit; font-size:.85rem; }
-.lb-seg button.on { background:var(--elev-raised); color:var(--text-strong); }
 .lb-toggle { display:inline-flex; align-items:center; gap:6px; font-size:.85rem; color:var(--text-muted); cursor:pointer; }
+/* the main range picker reuses the compare dates' field styling */
+#lb-range-wrap { gap:6px; }
 .lb-spacer { flex:1; }
 .lb-window-note { font-size:.8rem; color:var(--text-muted); }
 .lb-main { display:grid; grid-template-columns:260px minmax(0,1fr) 300px; gap:12px; align-items:stretch; }
@@ -2564,8 +2586,8 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .lb-diff-lanes { font-size:.72rem; color:var(--text-muted); margin-top:2px; }
 .lb-stat { display:flex; justify-content:space-between; gap:10px; padding:4px 0; font-size:.82rem; color:var(--text-muted); }
 .lb-stat b { color:var(--text-strong); font-variant-numeric:tabular-nums; }
-.lb-note { font-size:.75rem; color:var(--text-muted); line-height:1.45; margin:8px 0; }
-.lb-warn { font-size:.75rem; color:var(--viz-amber); line-height:1.45; margin:8px 0; }
+.lb-note { font-size:.8rem; color:var(--text-muted); line-height:1.45; margin:8px 0; }
+.lb-warn { font-size:.8rem; font-weight:600; color:var(--viz-amber); line-height:1.45; margin:8px 0; }
 .lb-empty { font-size:.78rem; color:var(--text-muted); }
 .lb-band { display:inline-block; font-size:.75rem; padding:2px 8px; border-radius:10px; margin-bottom:8px;
   border:1px solid currentColor; }
@@ -2580,14 +2602,46 @@ tr.row-stale > td { background: color-mix(in srgb, var(--viz-coral) 7%, transpar
 .lb-zones-tbl tbody tr:hover { background:var(--elev-raised); }
 .lb-undrawn { color:var(--text-muted); font-size:.65rem; border:1px solid currentColor; border-radius:6px; padding:0 4px; }
 #lb-map.lb-dragging { cursor:grabbing; }
-.lb-change { width:100%; border-collapse:collapse; font-size:.78rem; margin-top:4px; }
-.lb-change td { padding:3px 4px; color:var(--text-muted); vertical-align:top; }
+.lb-change { width:100%; border-collapse:collapse; font-size:.85rem; margin-top:4px; }
+.lb-change td { padding:3px 4px; color:var(--text-strong); vertical-align:top; }
 .lb-change td:first-child { color:var(--text-muted); white-space:nowrap; }
 .lb-change.lb-thin { opacity:.55; }
-.lb-change-hd { font-size:.78rem; color:var(--text-strong); margin-top:4px; }
+.lb-change-hd { font-size:.85rem; color:var(--text-strong); margin-top:4px; }
 .lb-plant { color:var(--text-muted); font-size:.72rem; }
 .lb-better { color:var(--viz-green); }
 .lb-worse  { color:var(--viz-coral); }
 .lb-neutral { color:var(--text-strong); }
-.lb-warn-inline { color:var(--viz-amber); }
-.lb-suppressed { color:var(--viz-amber); font-size:.72rem; line-height:1.4; }
+.lb-warn-inline { color:var(--viz-amber); font-weight:600; }
+.lb-suppressed { color:var(--viz-amber); font-size:.78rem; font-weight:600; line-height:1.4; }
+
+/* compare mode — one day vs one day, verdict colours. The display rule
+   re-enables hidden: without the [hidden] override the date inputs would
+   render with Compare unchecked — author display beats the UA's
+   display:none, the same trap .map-key-items hit. */
+.lb-cmp { display:inline-flex; align-items:center; gap:8px; }
+.lb-cmp[hidden] { display:none; }
+.lb-dt { display:inline-flex; align-items:center; gap:4px; font-size:.8rem; color:var(--text-muted); }
+.lb-dt input[type="date"] { background:var(--elev-raised); border:1px solid var(--border);
+  border-radius:4px; color:var(--text-strong); font:inherit; font-size:.8rem; padding:2px 6px; }
+.lb-verdict { display:block; font-size:1rem; font-weight:700; padding:6px 10px;
+  border-radius:6px; margin:8px 0; }
+.lb-verdict-better { color:var(--viz-green); background:color-mix(in srgb, var(--viz-green) 12%, transparent); }
+.lb-verdict-worse { color:var(--viz-coral); background:color-mix(in srgb, var(--viz-coral) 12%, transparent); }
+.lb-verdict-neutral { color:var(--text-strong); background:var(--elev-raised); }
+.lb-verdict-suppressed, .lb-verdict-thin, .lb-verdict-nodata { color:var(--viz-amber); background:var(--elev-raised); }
+.lb-verdict-thin, .lb-verdict-nodata { color:var(--text-muted); }
+.lb-verdict-dot { font-size:.82rem; }
+.lb-verdict-dot.lb-verdict-better { color:var(--viz-green); }
+.lb-verdict-dot.lb-verdict-worse { color:var(--viz-coral); }
+.lb-verdict-dot.lb-verdict-suppressed { color:var(--viz-amber); }
+
+/* the change annotation's verdict banner — the number that answers
+   "did it help" leads, instead of hiding inside a table cell */
+.lb-verdict-banner { display:block; font-size:1rem; font-weight:700; padding:8px 10px;
+  border-radius:6px; margin:8px 0 4px; }
+.lb-verdict-banner.lb-better { color:var(--viz-green); background:color-mix(in srgb, var(--viz-green) 12%, transparent); }
+.lb-verdict-banner.lb-worse { color:var(--viz-coral); background:color-mix(in srgb, var(--viz-coral) 12%, transparent); }
+.lb-verdict-banner.lb-neutral { color:var(--text-strong); background:var(--elev-raised); }
+.lb-verdict-banner.lb-banner-thin { opacity:.75; }
+.lb-verdict-banner .lb-plant-inline { display:block; font-size:.75rem; font-weight:400;
+  color:var(--text-muted); margin-top:2px; }

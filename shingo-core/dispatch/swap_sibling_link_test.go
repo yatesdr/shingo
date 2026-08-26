@@ -28,7 +28,7 @@ import (
 // ALONE (with the sibling set), skipping the fragile link call entirely.
 func TestSwapRemovalLeg_DurableLinkSurvivesFailedIntakeLink(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 
 	superNode := &nodes.Node{Name: "SWAP-SUPER-DL", Enabled: true}
@@ -103,7 +103,7 @@ func twoRobotEvacSteps(t *testing.T, lineName, destName string) string {
 // supply side.
 func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 
 	superNode := &nodes.Node{Name: "SWAP-SUPER-RB", Enabled: true}
@@ -156,7 +156,7 @@ func TestSwapSibling_ReverseBacklinkRepairedOnRead(t *testing.T) {
 // cancels the evac — a moot swap, nothing to replace.
 func TestSwapPeerTerminalRace_LiveLegResolvesDeadSibling(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 
 	superNode := &nodes.Node{Name: "SWAP-SUPER-RACE", Enabled: true}

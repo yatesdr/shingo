@@ -20,6 +20,7 @@ import (
 // The headline case: a day's samples land, Core restarts before any timer
 // could plausibly have fired, and the aggregates still get written.
 func TestCatchUp_RollsUpADayNoTickerWouldHaveReached(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "SEG", 0, 0, 10, 0)
 
@@ -51,6 +52,7 @@ func TestCatchUp_RollsUpADayNoTickerWouldHaveReached(t *testing.T) {
 // A backlog is processed OLDEST FIRST, so a run of missed days resolves with
 // the same trailing baselines it would have had if nothing had been missed.
 func TestCatchUp_ProcessesBacklogOldestFirst(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "SEG", 0, 0, 10, 0)
 
@@ -80,6 +82,7 @@ func TestCatchUp_ProcessesBacklogOldestFirst(t *testing.T) {
 // The pass runs hourly and at every boot, so it must be nearly free when there
 // is nothing to do — otherwise a restart storm turns into a query storm.
 func TestCatchUp_IsIdempotentAndQuietWhenCaughtUp(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "SEG", 0, 0, 10, 0)
 
@@ -112,6 +115,7 @@ func TestCatchUp_IsIdempotentAndQuietWhenCaughtUp(t *testing.T) {
 // written as though it were complete is indistinguishable from a real one
 // afterwards — and, because the row exists, would never be recomputed.
 func TestPendingDays_ExcludesToday(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	insert(t, db, sample("AMR-01", testDay.Add(9*time.Hour), 0.90, 5, 0, 1))
 
@@ -129,6 +133,7 @@ func TestPendingDays_ExcludesToday(t *testing.T) {
 // A fresh install must not try to roll up every day of its retention window
 // forever, finding nothing each time.
 func TestPendingDays_IgnoresDaysWithNoSamples(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	days, err := robotconfidence.PendingDays(db.DB, testDay, 14)
 	if err != nil {
@@ -143,6 +148,7 @@ func TestPendingDays_IgnoresDaysWithNoSamples(t *testing.T) {
 // there is nothing left to read — so the window must not reach past retention
 // and re-ask an unanswerable question on every tick.
 func TestPendingDays_StopsAtTheRetentionWindow(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "SEG", 0, 0, 10, 0)
 
@@ -173,6 +179,7 @@ func TestPendingDays_StopsAtTheRetentionWindow(t *testing.T) {
 // hand-building a row: it is the LAST thing RollUp writes, so its absence is
 // exactly what a run that died partway through leaves behind.
 func TestPendingDays_ADayMissingItsPlantRowIsNotDone(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "SEG", 0, 0, 10, 0)
 
@@ -211,6 +218,7 @@ func TestPendingDays_ADayMissingItsPlantRowIsNotDone(t *testing.T) {
 // have no plant row either, so they come back as pending and re-roll into all
 // four tables. Nothing has to be deleted by hand to trigger it.
 func TestCatchUp_RefillsAggregatesAddedAfterAnEarlierRollUp(t *testing.T) {
+	t.Parallel()
 	db := openWithWindow(t)
 	addSegment(t, db, "area-a", "SEG", 0, 0, 10, 0)
 

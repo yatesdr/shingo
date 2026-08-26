@@ -16,9 +16,10 @@ package recovery
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/store/internal/helpers"
 )
 
@@ -83,29 +84,38 @@ func RepairConfirmedOrderCompletion(db *sql.DB, orderID, binID, toNodeID int64, 
 	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail, created_at) VALUES ($1, 'confirmed', 'order completion repaired', $2)`, orderID, clock.Now().UTC()); err != nil {
 		return fmt.Errorf("insert history: %w", err)
 	}
-	// Reconcile occupancy in the same tx before placing the repaired bin — the
-	// same stale-ghost eviction the arrival writers perform (ApplyArrival /
-	// ApplyMultiBinArrival). Without it this repair silently co-locates onto a
-	// node that already records another bin. Any evicted ghost is stamped
-	// anomaly_at and surfaces on the operator anomalies page.
-	if _, err := helpers.EvictStaleGhostBinsTx(tx, toNodeID, binID); err != nil {
-		return fmt.Errorf("reconcile stale ghost at node %d: %w", toNodeID, err)
+	// ONE PLACEMENT, shared with the two arrival writers. Every defect this
+	// path carried came from spelling the placement itself: it evicted no stale
+	// ghost until that was added by hand, it unclaimed without scope long after
+	// 445f79eb fixed the same line in applyArrival, and it released no bin
+	// reservation at all — so a repaired bin stayed reserved until its owning
+	// order terminalized.
+	//
+	// A repair is a HANDOFF: the whole method is "this order's completion is
+	// being finished", so the order is done with the bin. orderID is the placer
+	// by construction.
+	//
+	// IT DOES NOT RELEASE THE DESTINATION SLOT, which is the one place this
+	// caller differs from the arrival writers. A repair reconstructs a completion
+	// that already happened, possibly long ago; the slot's dispatch-time claim,
+	// if there is one, belongs to whatever is driving there now, and clearing it
+	// would take a live claim off a slot on the strength of a historical event.
+	evicted, err := helpers.PlaceBinTx(tx, helpers.BinPlacement{
+		BinID:                  binID,
+		ToNodeID:               toNodeID,
+		PlacedByOrder:          orderID,
+		ReleaseClaim:           true,
+		ReleaseDestinationSlot: false,
+		Staged:                 staged,
+		ExpiresAt:              expiresAt,
+	})
+	if err != nil {
+		return err
 	}
-	if _, err := tx.Exec(`UPDATE bins SET node_id=$1, claimed_by=NULL, updated_at=NOW() WHERE id=$2`, toNodeID, binID); err != nil {
-		return fmt.Errorf("move bin: %w", err)
-	}
-	if staged {
-		if _, err := tx.Exec(`UPDATE bins
-			SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW()
-			WHERE id=$2`, helpers.NullableTime(expiresAt), binID); err != nil {
-			return fmt.Errorf("stage bin: %w", err)
-		}
-	} else {
-		if _, err := tx.Exec(`UPDATE bins
-			SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW()
-			WHERE id=$1`, binID); err != nil {
-			return fmt.Errorf("set available bin: %w", err)
-		}
+	for _, ghostID := range evicted {
+		log.Printf("WARN: completion repair for order %d evicted a stale bin record (bin %d) to "+
+			"_TRANSIT — the slot it repaired onto already recorded another bin; recover via the "+
+			"anomalies page", orderID, ghostID)
 	}
 
 	return tx.Commit()

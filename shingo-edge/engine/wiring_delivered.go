@@ -53,6 +53,45 @@ import (
 // disagreed with Core. Operator UI may display the fallback value
 // briefly; this is the accepted bias (see Risk: Gap A in the refactor
 // plan / architecture doc).
+// legLeftNoBinHereByDesign reports whether the delivered leg's own steps say it
+// was never going to leave a bin at the process node the order names. That is
+// the ordinary shape of a press-index R1 — it carries two bins and sets both
+// down elsewhere — and a nil BinID on such a leg is the plan working, not a
+// gap.
+//
+// EVERY UNCERTAIN ANSWER IS false, so the alarm still fires. A node we cannot
+// read, steps we cannot load or decode, and an order whose steps are absent or
+// empty (a simple order, where a missing bin id IS the SNF3-shaped gap) all
+// mean we do not know whether a bin was due here — and a check that cannot
+// tell must not report "nothing to see". The empty-list case is the sharp one:
+// `null` and `[]` decode without error and legPlacesBinAt answers false for
+// them, which is indistinguishable from a real evac leg unless it is caught
+// here.
+func (e *Engine) legLeftNoBinHereByDesign(delivered OrderDeliveredEvent) bool {
+	node, err := e.db.GetProcessNode(*delivered.ProcessNodeID)
+	if err != nil {
+		return false
+	}
+	stepsJSON, err := e.db.GetOrderStepsJSON(delivered.OrderID)
+	if err != nil {
+		return false
+	}
+	steps, err := decodeSteps(stepsJSON)
+	if err != nil || len(steps) == 0 {
+		// An EMPTY step list is not a leg that places nothing — it is a leg we
+		// know nothing about. `null` and `[]` both decode without error, and
+		// legPlacesBinAt answers false for them, which reads identically to a
+		// genuine evac leg. Alarm.
+		return false
+	}
+	if legPlacesBinAt(steps, node.CoreNodeName) {
+		return false
+	}
+	e.debugFn("delivered: order %d leg places no bin at %s (steps say so) — nil bin id is the plan, not a gap; no alarm",
+		delivered.OrderID, node.CoreNodeName)
+	return true
+}
+
 func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if delivered.ProcessNodeID == nil || delivered.BinID == nil {
 		switch {
@@ -70,6 +109,18 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 			// below). BinID is nil here only when Core resolved NO order_bin to this
 			// process node — a genuine gap worth naming, not a routine multi-tote
 			// delivery. Alarm, bind nothing.
+			//
+			// UNLESS THE LEG WAS NEVER GOING TO LEAVE A BIN HERE. A press-index R1
+			// picks the full tote off the press and sets its two carried bins down
+			// at OUT and at the index position — neither of them at the process
+			// node. Core is right to ship BinID nil, and this alarm then fires on
+			// every produce swap the plant runs, telling the operator to "Record
+			// Count to bind" a bin that was never coming. Ask the steps whether a
+			// bin was due here at all, and alarm only when one was and none
+			// resolved — the shape the backstop was actually written for.
+			if e.legLeftNoBinHereByDesign(delivered) {
+				return
+			}
 			e.raiseDeliveredNotBound(delivered, "", "multi-bin delivery carried no bin id — no bin resolved to this node (F1b backstop)")
 		default:
 			// NOTHING matched, and before this arm existed that meant a silent

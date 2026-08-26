@@ -13,7 +13,7 @@ service under `service/`:
 | `service.BinManifestService`         | Manifest edits (items, overrides, confirm / unconfirm)     |
 | `service.OrderService`               | Order CRUD / queries, vendor + priority mutations, claims  |
 | `service.NodeService`                | Node CRUD, group / lane / slot layout, scene + state reads |
-| `service.DemandService`              | Demand registry CRUD + produced counters + production log  |
+| `service.DemandService`              | Demand registry CRUD + produced counters                   |
 | `service.PayloadService`             | Payload templates, manifest items, bin-type + node links   |
 | `service.MissionService`             | Mission telemetry / events / stats                         |
 | `service.TestCommandService`         | Test-order command workflow                                 |

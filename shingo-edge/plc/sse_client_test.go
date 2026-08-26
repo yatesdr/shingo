@@ -11,9 +11,9 @@ func TestSSEReader_BasicEvent(t *testing.T) {
 	input := "event: greeting\ndata: hello\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
-	ev, err := r.Next()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	ev, ok, err := r.Next()
+	if err != nil || !ok {
+		t.Fatalf("unexpected error/flag: ok=%v err=%v", ok, err)
 	}
 	if ev.Event != "greeting" {
 		t.Errorf("event = %q, want %q", ev.Event, "greeting")
@@ -22,7 +22,7 @@ func TestSSEReader_BasicEvent(t *testing.T) {
 		t.Errorf("data = %q, want %q", ev.Data, "hello")
 	}
 
-	_, err = r.Next()
+	_, _, err = r.Next()
 	if err != io.EOF {
 		t.Errorf("expected io.EOF, got %v", err)
 	}
@@ -33,9 +33,9 @@ func TestSSEReader_MultiLineData(t *testing.T) {
 	input := "event: multi\ndata: line1\ndata: line2\ndata: line3\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
-	ev, err := r.Next()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	ev, ok, err := r.Next()
+	if err != nil || !ok {
+		t.Fatalf("unexpected error/flag: ok=%v err=%v", ok, err)
 	}
 	if ev.Data != "line1\nline2\nline3" {
 		t.Errorf("data = %q, want %q", ev.Data, "line1\nline2\nline3")
@@ -47,9 +47,23 @@ func TestSSEReader_CommentsIgnored(t *testing.T) {
 	input := ": this is a comment\nevent: test\ndata: value\n: another comment\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
-	ev, err := r.Next()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// The leading comment reports as activity, not an event.
+	_, ok, err := r.Next()
+	if err != nil || ok {
+		t.Fatalf("comment: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+
+	// event+data accumulate, then the mid-stream comment reports as
+	// activity before the event can dispatch.
+	_, ok, err = r.Next()
+	if err != nil || ok {
+		t.Fatalf("mid-stream comment: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+
+	// The blank line dispatches the accumulated event intact.
+	ev, ok, err := r.Next()
+	if err != nil || !ok {
+		t.Fatalf("dispatch: ok=%v err=%v", ok, err)
 	}
 	if ev.Event != "test" {
 		t.Errorf("event = %q, want %q", ev.Event, "test")
@@ -59,22 +73,49 @@ func TestSSEReader_CommentsIgnored(t *testing.T) {
 	}
 }
 
+// TestSSEReader_CommentMidEventKeepsPendingData pins the reason the partial
+// event lives in the reader rather than a local: SSE permits comments between
+// the data lines of a still-arriving event, and a keepalive landing there
+// must not discard the lines already seen.
+func TestSSEReader_CommentMidEventKeepsPendingData(t *testing.T) {
+	t.Parallel()
+	input := "event: split\ndata: part1\n: keepalive\ndata: part2\n\n"
+	r := NewSSEReader(strings.NewReader(input))
+
+	// The keepalive between the data lines reports as activity first.
+	_, ok, err := r.Next()
+	if err != nil || ok {
+		t.Fatalf("mid-event comment: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+
+	ev, ok, err := r.Next()
+	if err != nil || !ok {
+		t.Fatalf("unexpected error/flag: ok=%v err=%v", ok, err)
+	}
+	if ev.Event != "split" {
+		t.Errorf("event = %q, want %q", ev.Event, "split")
+	}
+	if ev.Data != "part1\npart2" {
+		t.Errorf("data = %q, want %q", ev.Data, "part1\npart2")
+	}
+}
+
 func TestSSEReader_MultipleEvents(t *testing.T) {
 	t.Parallel()
 	input := "event: first\ndata: 1\n\nevent: second\ndata: 2\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
-	ev1, err := r.Next()
-	if err != nil {
-		t.Fatalf("event 1 error: %v", err)
+	ev1, ok, err := r.Next()
+	if err != nil || !ok {
+		t.Fatalf("event 1: ok=%v err=%v", ok, err)
 	}
 	if ev1.Event != "first" || ev1.Data != "1" {
 		t.Errorf("event 1: event=%q data=%q", ev1.Event, ev1.Data)
 	}
 
-	ev2, err := r.Next()
-	if err != nil {
-		t.Fatalf("event 2 error: %v", err)
+	ev2, ok, err := r.Next()
+	if err != nil || !ok {
+		t.Fatalf("event 2: ok=%v err=%v", ok, err)
 	}
 	if ev2.Event != "second" || ev2.Data != "2" {
 		t.Errorf("event 2: event=%q data=%q", ev2.Event, ev2.Data)
@@ -86,9 +127,9 @@ func TestSSEReader_IDField(t *testing.T) {
 	input := "id: 42\nevent: test\ndata: hello\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
-	ev, err := r.Next()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	ev, ok, err := r.Next()
+	if err != nil || !ok {
+		t.Fatalf("unexpected error/flag: ok=%v err=%v", ok, err)
 	}
 	if ev.ID != "42" {
 		t.Errorf("id = %q, want %q", ev.ID, "42")
@@ -100,9 +141,9 @@ func TestSSEReader_DataOnly(t *testing.T) {
 	input := "data: just data\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
-	ev, err := r.Next()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	ev, ok, err := r.Next()
+	if err != nil || !ok {
+		t.Fatalf("unexpected error/flag: ok=%v err=%v", ok, err)
 	}
 	if ev.Event != "" {
 		t.Errorf("event = %q, want empty", ev.Event)
@@ -117,9 +158,9 @@ func TestSSEReader_NoSpaceAfterColon(t *testing.T) {
 	input := "event:nospace\ndata:value\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
-	ev, err := r.Next()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	ev, ok, err := r.Next()
+	if err != nil || !ok {
+		t.Fatalf("unexpected error/flag: ok=%v err=%v", ok, err)
 	}
 	if ev.Event != "nospace" {
 		t.Errorf("event = %q, want %q", ev.Event, "nospace")
@@ -135,9 +176,9 @@ func TestSSEReader_EOFWithPendingEvent(t *testing.T) {
 	input := "event: last\ndata: final"
 	r := NewSSEReader(strings.NewReader(input))
 
-	ev, err := r.Next()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	ev, ok, err := r.Next()
+	if err != nil || !ok {
+		t.Fatalf("unexpected error/flag: ok=%v err=%v", ok, err)
 	}
 	if ev.Event != "last" || ev.Data != "final" {
 		t.Errorf("event=%q data=%q", ev.Event, ev.Data)
@@ -148,7 +189,7 @@ func TestSSEReader_EmptyStream(t *testing.T) {
 	t.Parallel()
 	r := NewSSEReader(strings.NewReader(""))
 
-	_, err := r.Next()
+	_, _, err := r.Next()
 	if err != io.EOF {
 		t.Errorf("expected io.EOF, got %v", err)
 	}
@@ -158,7 +199,7 @@ func TestSSEReader_BlankLinesOnly(t *testing.T) {
 	t.Parallel()
 	r := NewSSEReader(strings.NewReader("\n\n\n"))
 
-	_, err := r.Next()
+	_, _, err := r.Next()
 	if err != io.EOF {
 		t.Errorf("expected io.EOF, got %v", err)
 	}
@@ -169,9 +210,9 @@ func TestSSEReader_JSONData(t *testing.T) {
 	input := "event: tag_change\ndata: {\"plc\":\"PLC1\",\"tag\":\"Counter1\",\"value\":42,\"type\":\"DINT\"}\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
-	ev, err := r.Next()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	ev, ok, err := r.Next()
+	if err != nil || !ok {
+		t.Fatalf("unexpected error/flag: ok=%v err=%v", ok, err)
 	}
 	if ev.Event != "tag_change" {
 		t.Errorf("event = %q, want %q", ev.Event, "tag_change")

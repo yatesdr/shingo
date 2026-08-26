@@ -42,6 +42,11 @@ CREATE TABLE process_nodes (
   sequence INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(process_id, code));
+-- HAND-COPIED FROM THE EDGE SCHEMA, and it drifts. seeddev cannot import the
+-- edge module, so this DDL is maintained by hand against
+-- shingo-edge/store/schema/schema.snapshot.sql; a column the seeder learns to
+-- write fails here with "no such column" until it is added in both places.
+-- That failure is the only thing keeping the two in step.
 CREATE TABLE style_node_claims (
   id INTEGER PRIMARY KEY AUTOINCREMENT, style_id INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
   core_node_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'consume', swap_mode TEXT NOT NULL,
@@ -52,9 +57,18 @@ CREATE TABLE style_node_claims (
   allowed_payload_codes TEXT NOT NULL DEFAULT '', auto_request_payload TEXT NOT NULL DEFAULT '',
   keep_staged INTEGER NOT NULL DEFAULT 0, evacuate_on_changeover INTEGER NOT NULL DEFAULT 0,
   paired_core_node TEXT NOT NULL DEFAULT '', auto_confirm INTEGER NOT NULL DEFAULT 0,
+  second_paired_core_node TEXT NOT NULL DEFAULT '', index_robot_supplies INTEGER NOT NULL DEFAULT 0,
   sequence INTEGER NOT NULL DEFAULT 0, lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
   reuse_compatible_bins INTEGER NOT NULL DEFAULT 0, auto_push INTEGER NOT NULL DEFAULT 0,
   reorder_point_source TEXT NOT NULL DEFAULT 'legacy', created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  below_reorder_since TEXT,
+  changeover_evac_nodes TEXT NOT NULL DEFAULT '', changeover_evac_destination TEXT NOT NULL DEFAULT '',
+  changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
+  key_route TEXT NOT NULL DEFAULT '', key_task TEXT NOT NULL DEFAULT '',
+  staging_node TEXT NOT NULL DEFAULT '', release_node TEXT NOT NULL DEFAULT '',
+  inbound_source_node TEXT NOT NULL DEFAULT '', inbound_source_node_group TEXT NOT NULL DEFAULT '',
+  outbound_source_node TEXT NOT NULL DEFAULT '', outbound_source_node_group TEXT NOT NULL DEFAULT '',
+  outbound_source TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'loader',
   UNIQUE(style_id, core_node_name));
 CREATE TABLE reporting_points (
   id INTEGER PRIMARY KEY AUTOINCREMENT, style_id INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
@@ -94,10 +108,35 @@ func openSeededEdge(t *testing.T) (*sql.DB, string, *plantspec.Plant) {
 	if err := plant.Validate(); err != nil {
 		t.Fatalf("validate demo plant: %v", err)
 	}
-	if err := seedEdgeDB(db, plant, fakeBinIDs(plant)); err != nil {
+	// One transaction, the way the production entry point runs it (seed_edge.go
+	// wraps seedEdgeDB in Begin/Commit) — not 800-odd autocommit round trips.
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if err := seedEdgeDB(tx, plant, fakeBinIDs(plant)); err != nil {
 		t.Fatalf("seedEdgeDB: %v", err)
 	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
 	return db, path, plant
+}
+
+// seedEdgeInTx runs seedEdgeDB inside one transaction, the shape the
+// production entry point uses — a seed is hundreds of statements, and as
+// autocommit each one pays its own SQLite fsync.
+func seedEdgeInTx(t *testing.T, db *sql.DB, plant *plantspec.Plant) error {
+	t.Helper()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := seedEdgeDB(tx, plant, fakeBinIDs(plant)); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // fakeBinIDs assigns synthetic core bin ids per at-node slot (seedCore would
@@ -217,7 +256,7 @@ func TestSeedEdge_Idempotent(t *testing.T) {
 		return n
 	}
 	n1 := before()
-	if err := seedEdgeDB(db, plant, fakeBinIDs(plant)); err != nil { // re-run
+	if err := seedEdgeInTx(t, db, plant); err != nil { // re-run
 		t.Fatalf("re-run: %v", err)
 	}
 	if n2 := before(); n2 != n1 {

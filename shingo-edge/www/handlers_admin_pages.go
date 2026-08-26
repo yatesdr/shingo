@@ -117,9 +117,21 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Line positions of the active process, by core node name. The claim
+	// editor's pickers rank by this: a paired press position is almost always
+	// a node on this process, and a supermarket almost never is. RANK, not
+	// filter — a dedicated loader's home position is both a process_node and a
+	// legitimate InboundSource (source_finder tier 2), so hiding either side
+	// would hide a supported configuration.
+	processNodeNames := make([]string, 0, len(processNodes))
+	for _, n := range processNodes {
+		processNodeNames = append(processNodeNames, n.CoreNodeName)
+	}
+
 	anomalies, rpMap := loadAnomalyData(h)
 	data := map[string]any{
 		"Page":              "processes",
+		"ProcessNodeNames":  processNodeNames,
 		"Processes":         processList,
 		"ProcessGroups":     groupList,
 		"Styles":            styles,

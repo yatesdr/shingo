@@ -157,6 +157,19 @@ CREATE TABLE IF NOT EXISTS orders (
     -- it: it labels the board and it is what a projected-row test asserts
     -- against. Deliberately cheap to stop rendering.
     authored_by     TEXT NOT NULL DEFAULT 'edge',
+    -- The fault clock (v36). Set only while the order is faulted; the handler
+    -- clears them on any other status, derived from the status rather than from
+    -- a pushed empty value — see messaging/edge_handler.go and the queue_reason
+    -- incident it documents. fault_notice_after_s is Core's replan/fault
+    -- threshold in seconds as it stood when the fault was pushed; 0 means an
+    -- older Core that did not send one.
+    fault_since     TEXT NOT NULL DEFAULT '',
+    fault_deadline  TEXT NOT NULL DEFAULT '',
+    fault_notice_after_s INTEGER NOT NULL DEFAULT 0,
+    -- The fleet's reason as protocol.TermRef JSON. Stored as a reference, not a
+    -- rendered sentence: the sentence changes when the clock crosses the
+    -- threshold, and the board re-renders it without another push.
+    fault_ref       TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -379,6 +392,39 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     sequence                INTEGER NOT NULL DEFAULT 0,
     lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
     reuse_compatible_bins   INTEGER NOT NULL DEFAULT 0,
+    -- Which core NODES hold bins that block the tooling change, as a JSON array
+    -- of node names ("PLN_001"/"PLN_002"). Same shape and same reasoning as
+    -- allowed_payload_codes: a small set on one row rather than a child table,
+    -- because an index-paired node has no claim row of its own to hang it on.
+    -- Empty = nothing marked = today's behaviour.
+    changeover_evac_nodes   TEXT NOT NULL DEFAULT '',
+    -- Where a marked position's bin is CLEARED to, when this cell wants it
+    -- somewhere other than its ordinary outbound destination. A node OR a group
+    -- name; blank means normal routing, which is the default and the common
+    -- case. There is no bay: see engine/changeover_tooling.go.
+    changeover_evac_destination TEXT NOT NULL DEFAULT '',
+    -- What happens to a marked position's bin when its part CARRIES OVER — the same
+    -- payload on that position in both styles. "replace" (the default) clears it
+    -- like any other marked position and brings a fresh carrier through staging;
+    -- "keep_lineside" leaves the bin where it is, because that part does not
+    -- have to move for the setup; "outbound_staging" walks the SAME bin to the
+    -- cell's outbound staging spot to clear the floor and brings it back on the
+    -- tooling-done release. Never consulted when the payloads differ — the bin
+    -- has to change anyway.
+    changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
+    -- Which robot of a press-index pair fetches the replacement carrier.
+    -- 0 = today's shape (R1 evacuates and refills); 1 = flipped (R1 evacuates
+    -- only, R2 indexes and refills). Describes the cell's hardware, so
+    -- UpsertClaim warns when two styles on one press disagree.
+    index_robot_supplies    INTEGER NOT NULL DEFAULT 0,
+    -- SEER robot-SELECTION hints, carried through to the fleet request.
+    -- key_route is a JSON array of map points to prefer passing through, IN
+    -- ORDER; key_task is 'load'/'unload'. Both empty on every claim until one
+    -- is configured, and empty means the fleet picks freely. A point that does
+    -- not resolve terminates the robot's waybill on issue, which is why
+    -- ValidateNodeClaim checks each one against Core's synced node list.
+    key_route               TEXT NOT NULL DEFAULT '',
+    key_task                TEXT NOT NULL DEFAULT '',
     auto_push               INTEGER NOT NULL DEFAULT 0,
     -- UOP-threshold replenishment: tracks how reorder_point was set.
     -- 'legacy' = default, never edited (silent-inert when 0).
@@ -447,9 +493,11 @@ CREATE TABLE IF NOT EXISTS core_loaders (
     replenishment  TEXT    NOT NULL DEFAULT '',
     outbound_dest  TEXT    NOT NULL DEFAULT '',
     inbound_source TEXT    NOT NULL DEFAULT '',
-    buffer_dest    TEXT    NOT NULL DEFAULT '',
     config_gen     INTEGER NOT NULL DEFAULT 0,
     funnel_windows INTEGER NOT NULL DEFAULT 0,  -- 1 = one window at a time; 0 = spread across windows (the default everywhere)
+    -- 1 = a changeover commandeers this station's card and names the carrier the
+    -- incoming style needs. Core owns it (bin_loaders); this is the mirror.
+    changeover_load_directive INTEGER NOT NULL DEFAULT 0,
     synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (loader_key)
 );
@@ -458,6 +506,7 @@ CREATE TABLE IF NOT EXISTS core_loader_positions (
     position_node  TEXT    NOT NULL,   -- the position node NAME (a real node)
     payload_code   TEXT    NOT NULL,
     kind           TEXT    NOT NULL DEFAULT '',  -- 'window' | 'dedicated' (synced from Core; Layout is authoritative if empty)
+    home_kind      TEXT    NOT NULL DEFAULT '',  -- 'home' | 'buffer' (synced from Core); '' = pre-field Core, fall back to classifying by empty payload
     min_stock      INTEGER NOT NULL DEFAULT 0,
     uop_threshold  INTEGER NOT NULL DEFAULT 0,
     ordinal        INTEGER NOT NULL DEFAULT 0,   -- where the operator dragged this window; 0 everywhere = nothing arranged, fall back to a number-aware name sort

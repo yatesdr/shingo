@@ -38,7 +38,11 @@
 namespace: devplant
 line_id: line1
 
-bin_types: [STANDARD]
+# STANDARD-SM is carried by no payload, on purpose: it gives the maintained group
+# a SECOND carrier type so the fixture freezes the mixed-level shape, and a type no
+# payload maps to cannot be drawn into any other flow. STANDARD stays first — a bin
+# naming no type falls back to bin_types[0].
+bin_types: [STANDARD, STANDARD-SM]
 
 payloads:
   - {code: PANEL-LH, uop_capacity: 30, bin_type: STANDARD}
@@ -122,18 +126,25 @@ zones:
       - {name: Lane_22, slots: [{name: UTN_041, depth: 1}, {name: UTN_042, depth: 2}, {name: UTN_043, depth: 3}, {name: UTN_044, depth: 4}]}
       - {name: Lane_23, slots: [{name: UTN_045, depth: 1}, {name: UTN_046, depth: 2}, {name: UTN_047, depth: 3}, {name: UTN_048, depth: 4}]}
       # Extra return-bank capacity for the two new lines (more empties cycling).
+      # THE LAST LANE OF THIS GROUP SEEDS EMPTY, and it is the headroom rule made
+      # literal (§R.78): a group with no free lane cannot conduct an excavation at
+      # all, because a dig has nowhere to stand the blockers it lifts out. This
+      # bank used to seed 56 bins into 56 slots.
       - {name: Lane_42, slots: [{name: UTN_049, depth: 1}, {name: UTN_050, depth: 2}, {name: UTN_051, depth: 3}, {name: UTN_052, depth: 4}]}
       - {name: Lane_43, slots: [{name: UTN_053, depth: 1}, {name: UTN_054, depth: 2}, {name: UTN_055, depth: 3}, {name: UTN_056, depth: 4}]}
-  # Dedicated-loader BUFFER (step 7). A FIFO node group that stages empties to rotate into a
-  # PLK_DECK position on threshold AND parks changeover-orphaned partials. FIFO retrieve =
-  # oldest-first, so a parked partial (the older bin) is consumed before a fresh empty
-  # automatically — no partial-first logic. Wired as PLK_DECK.buffer_dest on the
-  # dedicated-loader claims below, AND as UNLOADER-D's outbound: PLK_DECK sources its
-  # threshold-fill empties FROM here, and UNLOADER-D returns the CLEAN empties it strips off
-  # drained ASSY-D INTO here — empties cycle unloader->buffer->position, distinct from the
-  # far return bank. (A consume node's evac would park payload-bearing partials that inflate
-  # the loader's stock count, so the unloader is the empty source, not WELD-5.) 6 slots =
-  # cycling empties + evac headroom.
+  # Dedicated-loader NEAR-LINE EMPTY GROUP. A FIFO node group that stages empties to rotate
+  # into a PLK_DECK position on threshold. FIFO retrieve = oldest-first.
+  #
+  # It is wired at BOTH ends of a short loop: PLK_DECK.inbound_source on the dedicated-loader
+  # claims below, and UNLOADER-D.outbound_destination. PLK_DECK sources its threshold-fill
+  # empties FROM here, and UNLOADER-D returns the CLEAN empties it strips off drained ASSY-D
+  # INTO here — empties cycle unloader->group->position, distinct from the far return bank.
+  # (A consume node's evac would park payload-bearing partials that inflate the loader's stock
+  # count, so the unloader is the empty source, not WELD-5.) 6 slots = cycling empties + evac
+  # headroom.
+  #
+  # It holds EMPTIES only. Carriers orphaned by a changeover park in a member slot of the
+  # loader (PLK_BUF, below), not here — two different mechanisms that once shared a word.
   - name: SYN_BUF_Deck
     retrieve_algorithm: FIFO
     store_algorithm: DPTH
@@ -177,6 +188,17 @@ zones:
     store_algorithm: LKND
     lanes:
       - {name: Lane_39, slots: [{name: SMN_058, depth: 1}, {name: SMN_059, depth: 2}, {name: SMN_060, depth: 3}]}
+  # A MAINTAINED GROUP, and the FLAT topology shape this fixture exists to freeze:
+  # positions parented by the zone with no lane between them. The save-time rules
+  # refuse a maintained group with lanes, so this is the only shape one can have.
+  - name: SYN_PRESS_EMPTIES
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    positions:
+      - {name: PEB_001, depth: 1}
+      - {name: PEB_002, depth: 1}
+      - {name: PEB_003, depth: 1}
+      - {name: PEB_004, depth: 1}
 
 stations:
   # ── PRESS-1: two_robot_press_index (front + paired back, no staging) ──
@@ -264,14 +286,14 @@ bins:
   - {name: BIN-RH-06, slot: SMN_009, payload: PANEL-RH, uop: 30}
   # --- SYN_SM_Comp source: Lane_06 seeded light (1 BRKT) so the PLK_001 loader's
   # C-push trips within a few minutes instead of after draining a deep buffer ---
-  - {name: BIN-BRKT-01, slot: SMN_016, payload: BRKT, uop: 20}
+  - {name: BIN-BRKT-01, slot: SMN_018, payload: BRKT, uop: 20}
   # De-confounded component supermarkets seeded light (1 bin each) so the loaders' C-push
   # trips quickly: PLK_X1→CLIP→SYN_SM_Clip→WELD-1, PLK_DECK→STUD→SYN_SM_Stud→WELD-3.
-  - {name: BIN-CLIP-01, slot: SMN_041, payload: CLIP, uop: 20}
-  - {name: BIN-STUD-01, slot: SMN_045, payload: STUD, uop: 20}
+  - {name: BIN-CLIP-01, slot: SMN_043, payload: CLIP, uop: 20}
+  - {name: BIN-STUD-01, slot: SMN_047, payload: STUD, uop: 20}
   # New-line panel supermarkets seeded light (1 bin each) so WELD-4/5 have initial runway.
-  - {name: BIN-PC-01,   slot: SMN_049, payload: PANEL-C, uop: 30}
-  - {name: BIN-PD-01,   slot: SMN_052, payload: PANEL-D, uop: 30}
+  - {name: BIN-PC-01,   slot: SMN_051, payload: PANEL-C, uop: 30}
+  - {name: BIN-PD-01,   slot: SMN_054, payload: PANEL-D, uop: 30}
   # --- Active produce bins (empty → fill → swap) ---
   - {name: BIN-ACT-P1F, slot: PLN_001}   # PRESS-1 front (filling)
   - {name: BIN-ACT-P1B, slot: PLN_002}   # PRESS-1 back (staged empty, indexes to front)
@@ -335,11 +357,11 @@ bins:
   - {name: BIN-MT-34, slot: UTN_034}
   - {name: BIN-MT-35, slot: UTN_035}
   - {name: BIN-MT-36, slot: UTN_036}
-  # --- Dedicated-loader buffer pre-stage: empties parked in SYN_BUF_Deck (step 7) ---
-  - {name: BIN-MT-37, slot: BUF_001}
-  - {name: BIN-MT-38, slot: BUF_002}
-  - {name: BIN-MT-59, slot: BUF_003}   # +2 prime the buffer loop (PLK_DECK pulls out; UNLOADER-D refills in)
-  - {name: BIN-MT-60, slot: BUF_004}
+  # --- Dedicated-loader near-line pre-stage: empties parked in SYN_BUF_Deck ---
+  - {name: BIN-MT-37, slot: BUF_006}
+  - {name: BIN-MT-38, slot: BUF_003}
+  - {name: BIN-MT-59, slot: BUF_004}   # +2 prime the near-line loop (PLK_DECK pulls out; UNLOADER-D refills in)
+  - {name: BIN-MT-60, slot: BUF_005}
   # --- Extra empties: headroom for the CLIP + STUD loader loops cycling through the
   # return bank (loader fills an empty → SM → unloader returns the empty here). ---
   - {name: BIN-MT-39, slot: UTN_037}
@@ -358,10 +380,6 @@ bins:
   - {name: BIN-MT-52, slot: UTN_050}
   - {name: BIN-MT-53, slot: UTN_051}
   - {name: BIN-MT-54, slot: UTN_052}
-  - {name: BIN-MT-55, slot: UTN_053}
-  - {name: BIN-MT-56, slot: UTN_054}
-  - {name: BIN-MT-57, slot: UTN_055}
-  - {name: BIN-MT-58, slot: UTN_056}
 
 processes:
   - {name: PRESS-1, active_style: PRESS-1-RUN}        # two_robot_press_index
@@ -415,6 +433,15 @@ claims:
     paired_core_node: PLN_002
     inbound_source: SYN_MT_Return
     outbound_destination: SYN_SM_Stamp
+    # The round-3/4 claim config, present so the seeder round-trip asserts it
+    # lands. Distinctive on every axis a wrong encoding would flatten: TWO positions
+    # (not one, not all), a destination that is NOT outbound_destination, and a
+    # two-point route in an order that is not sorted.
+    changeover_evac_nodes: [PLN_001, PLN_002]
+    changeover_evac_destination: SYN_MT_Return
+    key_route: [WP_AISLE_S, WP_AISLE_N]
+    key_task: unload
+    allowed_payloads: [PANEL-LH, PANEL-RH]
 
   # ── PRESS-2 (A/B sequential): two paired claims, A active / B parked ──
   - core_node: PLN_003
@@ -558,12 +585,14 @@ claims:
   # synthetic id PLK_DECK. Each position is its own demand_registry row + delivery target +
   # operator HMI; the pooled STUD threshold trips and the (step-3) member-aware ReservationTarget
   # routes the empty to the position the signal names. Its OWN STUD loop (→ SYN_SM_Stud, drained by
-  # UNLOADER-D) isolates the O2 routing watch. buffer_dest = SYN_BUF_Deck (step-7 buffer).
+  # UNLOADER-D) isolates the O2 routing watch. inbound_source = SYN_BUF_Deck — the near-line
+  # group UNLOADER-D stocks, so this loader is fed from the short loop rather than the far bank.
+  # PARTIALS ARE A DIFFERENT MECHANISM and live in a member slot, not in that group:
   # PLK_BUF is a no-payload home position that acts as the Clear-Loader-Home consolidation buffer:
   # the operator can push an empty from a home position to PLK_BUF and pull a partial from PLK_BUF
   # back to that home. Edge identifies it as a buffer via pos.Payload == "" in the loader aggregate.
-  - {core_node: PLK_D1, style: LOADER-STUD-RUN, role: produce, swap_mode: manual_swap, payload: STUD, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MT_Return, outbound_destination: SYN_SM_Stud, buffer_dest: SYN_BUF_Deck, home_of: PLK_DECK, operator_station: PLK_D1-OPS}
-  - {core_node: PLK_D2, style: LOADER-STUD-RUN, role: produce, swap_mode: manual_swap, payload: STUD, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MT_Return, outbound_destination: SYN_SM_Stud, buffer_dest: SYN_BUF_Deck, home_of: PLK_DECK, operator_station: PLK_D2-OPS}
+  - {core_node: PLK_D1, style: LOADER-STUD-RUN, role: produce, swap_mode: manual_swap, payload: STUD, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_BUF_Deck, outbound_destination: SYN_SM_Stud, home_of: PLK_DECK, operator_station: PLK_D1-OPS}
+  - {core_node: PLK_D2, style: LOADER-STUD-RUN, role: produce, swap_mode: manual_swap, payload: STUD, uop_capacity: 20, reorder_point: 2, auto_reorder: true, inbound_source: SYN_BUF_Deck, outbound_destination: SYN_SM_Stud, home_of: PLK_DECK, operator_station: PLK_D2-OPS}
   # ── UNLOADER-A (manual_swap: pull full ASSY-X, return empty) ──
   - core_node: FGN_001
     style: UNLOADER-A-RUN
@@ -699,10 +728,10 @@ claims:
     reorder_point: 0
     auto_reorder: false
     inbound_source: SYN_SM_FGD
-    # step-7 buffer loop: UNLOADER-D drains ASSY-D and returns the CLEAN empty (uop 0, no
-    # payload) into the dedicated loader's buffer (SYN_BUF_Deck), NOT the far return bank.
-    # PLK_DECK re-sources that empty from the buffer on its next STUD threshold fill, so
-    # empties cycle unloader->buffer->position. (A consume node's evac would park payload-
+    # Near-line empty loop: UNLOADER-D drains ASSY-D and returns the CLEAN empty (uop 0, no
+    # payload) into SYN_BUF_Deck, NOT the far return bank. That group is PLK_DECK's
+    # inbound_source, so it re-sources the empty on its next STUD threshold fill and
+    # empties cycle unloader->group->position. (A consume node's evac would park payload-
     # bearing partials that inflate the loader's stock count, so the unloader — not WELD-5 —
     # is the clean-empty source.)
     outbound_destination: SYN_BUF_Deck
@@ -761,3 +790,16 @@ cell_configs:
   - {process: UNLOADER-B, station: UNLOADER-B-OPS}
   - {process: UNLOADER-C, station: UNLOADER-C-OPS}
   - {process: UNLOADER-D, station: UNLOADER-D-OPS}
+
+# The maintained-group config shape seeddev must write: four node properties and
+# two node-keyed tables, with supports resolved from process names to the core
+# nodes those processes' claims name.
+maintained_groups:
+  - group: SYN_PRESS_EMPTIES
+    station: devplant.line1
+    strict: true
+    overflow: SYN_SM_Stamp
+    levels:
+      - {bin_type: STANDARD, want: 2}
+      - {bin_type: STANDARD-SM, want: 1}
+    supports: [PRESS-1]

@@ -62,7 +62,7 @@ func mkWidenOrder(t *testing.T, db interface {
 // scanner to retry.
 func TestWiden_AprilLegacyDryNodeParks(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -100,7 +100,7 @@ func TestWiden_AprilLegacyDryNodeParks(t *testing.T) {
 // which is the §8.2 property: the stamp write must trip the persist trigger.
 func TestWiden_RewriteReanchorsToGroupNode(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -145,7 +145,7 @@ func TestWiden_RewriteReanchorsToGroupNode(t *testing.T) {
 // The April contrast case (same step shape, ProcessNode="") IS widened.
 func TestWidenSupplyPickups_ScopeMatrix(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -198,7 +198,7 @@ func TestWidenSupplyPickups_ScopeMatrix(t *testing.T) {
 // TestSimulator_StagedComplexOrder parking this exact shape).
 func TestWidenSupplyPickups_StopsAtWait(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -238,7 +238,7 @@ func TestWidenSupplyPickups_StopsAtWait(t *testing.T) {
 // genuinely spoken for).
 func TestWidenSupplyPickups_OwnHoldSkipsFinder(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 

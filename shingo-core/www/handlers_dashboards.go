@@ -310,6 +310,141 @@ func (h *Handlers) apiStations(w http.ResponseWriter, r *http.Request) {
 // apiDashboardNodeReport returns the live bin state for every node in the
 // loader referenced by a node-report dashboard's config_json. Public: the
 // chromeless kiosk reads it.
+// nodeRow is one loader home position on the node-report kiosk.
+type nodeRow struct {
+	NodeName      string `json:"node_name"`
+	GroupName     string `json:"group_name"`
+	Occupied      bool   `json:"occupied"`
+	PayloadCode   string `json:"payload_code"`
+	UOPRemaining  int    `json:"uop_remaining"`
+	IsActiveStyle bool   `json:"is_active_style"`
+}
+
+// payloadRow is one configured payload on the node-report kiosk, in
+// shared-window mode where positions are not fixed to a part.
+type payloadRow struct {
+	PayloadCode   string `json:"payload_code"`
+	Occupied      bool   `json:"occupied"`
+	NodeName      string `json:"node_name"`
+	GroupName     string `json:"group_name"`
+	UOPRemaining  int    `json:"uop_remaining"`
+	IsActiveStyle bool   `json:"is_active_style"`
+}
+
+// activeStylePayloads is the set of payload codes claimed by whatever style each
+// process is currently running, which is what the kiosk highlights.
+//
+// Best-effort by design -- an unhighlighted board beats no board -- but note it
+// gets there the expensive way: SourceabilityPage assembles the entire sourcing
+// read model (four queries, three sorts, the unlock panel) and this reads one
+// derived map out of it. Only LoadClaims and ActiveStyles are actually needed. A
+// narrower engine accessor would drop two queries from every kiosk poll; it is
+// left alone here because it is an engine change, not a handler one.
+func (h *Handlers) activeStylePayloads() map[string]bool {
+	out := make(map[string]bool)
+	sp, err := h.engine.SourceabilityPage()
+	if err != nil {
+		return out
+	}
+	for _, p := range sp.Processes {
+		if p.RunningStyle == "" {
+			continue
+		}
+		for _, st := range p.Styles {
+			if st.StyleID != p.RunningStyle {
+				continue
+			}
+			for _, c := range st.Claims {
+				out[c.Payload] = true
+			}
+			break
+		}
+	}
+	return out
+}
+
+// transitRow is one bin currently on a robot, as the node-report kiosk renders
+// it. Package-level because both loader layouts emit it.
+type transitRow struct {
+	PayloadCode  string `json:"payload_code"`
+	DestNode     string `json:"dest_node"`
+	SourceNode   string `json:"source_node,omitempty"`
+	RobotID      string `json:"robot_id,omitempty"`
+	UOPRemaining int    `json:"uop_remaining"`
+	IsEmpty      bool   `json:"is_empty"`
+	IsPartial    bool   `json:"is_partial"`
+}
+
+// transitRows builds the in-flight half of the node report: every non-retired
+// bin sitting at _TRANSIT that this loader cares about, with the destination,
+// source and robot read off the order that CLAIMS it.
+//
+// It exists because the two layout branches carried these ~40 statements
+// verbatim, and the comment they carried said what that cost: the maps were
+// once keyed by bin id and indexed by claiming-order id, and because both are
+// dense small integers the lookup never failed loudly -- it answered about
+// whichever order happened to share a number with the bin. That had to be found
+// and fixed twice. The next defect in here should only have to be fixed once.
+//
+// payloadSet is what each branch means by "this loader's payloads": the
+// configured payload list in shared-window mode, the payloads on its home rows
+// in dedicated-positions mode. That difference is the only thing that ever
+// varied between the two copies.
+func (h *Handlers) transitRows(allBins []*domain.Bin, payloadSet map[string]bool) []transitRow {
+	activeOrders, _ := h.engine.OrderService().ListActiveOrders()
+	// KEYED BY ORDER ID, which is what reads it -- see the note above.
+	orderDest := make(map[int64]string, len(activeOrders))
+	orderRobot := make(map[int64]string, len(activeOrders))
+	orderSource := make(map[int64]string, len(activeOrders))
+	for _, o := range activeOrders {
+		if o.DeliveryNode != "" {
+			orderDest[o.ID] = o.DeliveryNode
+			orderRobot[o.ID] = o.RobotID
+		}
+		if o.SourceNode != "" {
+			orderSource[o.ID] = o.SourceNode
+		}
+	}
+
+	transit := make([]transitRow, 0)
+	for _, b := range allBins {
+		if b.Status == "retired" {
+			continue
+		}
+		if b.NodeName != domain.TransitNodeName {
+			continue
+		}
+		dest := ""
+		robot := ""
+		source := ""
+		isEmpty := b.PayloadCode == ""
+		isPartial := false
+		if b.ClaimedBy != nil {
+			dest = orderDest[*b.ClaimedBy]
+			source = orderSource[*b.ClaimedBy]
+			robot = orderRobot[*b.ClaimedBy]
+		}
+		if !isEmpty && b.UOPRemaining > 0 && b.UOPCapacity > 0 && b.UOPRemaining < b.UOPCapacity {
+			isPartial = true
+		}
+		outbound := !isEmpty && !isPartial && payloadSet[b.PayloadCode]
+		returnTrip := isEmpty || isPartial
+		if !outbound && !returnTrip {
+			continue
+		}
+		transit = append(transit, transitRow{
+			PayloadCode:  b.PayloadCode,
+			DestNode:     dest,
+			SourceNode:   source,
+			RobotID:      robot,
+			UOPRemaining: b.UOPRemaining,
+			IsEmpty:      isEmpty,
+			IsPartial:    isPartial,
+		})
+	}
+	return transit
+}
+
 func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -347,254 +482,169 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 
 	nodeSvc := h.engine.NodeService()
 
-	activeStylePayloads := make(map[string]bool)
-	if sp, err := h.engine.SourceabilityPage(); err == nil {
-		for _, p := range sp.Processes {
-			if p.RunningStyle == "" {
-				continue
-			}
-			for _, s := range p.Styles {
-				if s.StyleID == p.RunningStyle {
-					for _, c := range s.Claims {
-						activeStylePayloads[c.Payload] = true
-					}
-					break
-				}
-			}
-		}
-	}
-
-	type nodeRow struct {
-		NodeName      string `json:"node_name"`
-		GroupName     string `json:"group_name"`
-		Occupied      bool   `json:"occupied"`
-		PayloadCode   string `json:"payload_code"`
-		UOPRemaining  int    `json:"uop_remaining"`
-		IsActiveStyle bool   `json:"is_active_style"`
-	}
-	type payloadRow struct {
-		PayloadCode   string `json:"payload_code"`
-		Occupied      bool   `json:"occupied"`
-		NodeName      string `json:"node_name"`
-		GroupName     string `json:"group_name"`
-		UOPRemaining  int    `json:"uop_remaining"`
-		IsActiveStyle bool   `json:"is_active_style"`
-	}
-
-	type transitRow struct {
-		PayloadCode  string `json:"payload_code"`
-		DestNode     string `json:"dest_node"`
-		SourceNode   string `json:"source_node,omitempty"`
-		RobotID      string `json:"robot_id,omitempty"`
-		UOPRemaining int    `json:"uop_remaining"`
-		IsEmpty      bool   `json:"is_empty"`
-		IsPartial    bool   `json:"is_partial"`
-	}
+	activeStylePayloads := h.activeStylePayloads()
 
 	resp := map[string]any{
 		"loader_name": loader.Name,
 		"layout":      loader.Layout,
 	}
 
+	var ok bool
 	if loader.Layout == "shared_window" {
-		payloads, pErr := svc.Payloads(cfg.LoaderID)
-		if pErr != nil {
-			h.jsonError(w, pErr.Error(), http.StatusInternalServerError)
-			return
-		}
-		resp["payloads_count"] = len(payloads)
-		allBins, bErr := h.engine.BinService().ListBins()
-		if bErr != nil {
-			h.jsonError(w, bErr.Error(), http.StatusInternalServerError)
-			return
-		}
-		allNodes, _ := nodeSvc.ListNodes()
-		nodeParent := make(map[string]string, len(allNodes))
-		nodeTypeByName := make(map[string]string, len(allNodes))
-		for _, n := range allNodes {
-			if n.ParentName != "" {
-				nodeParent[n.Name] = n.ParentName
-			}
-			nodeTypeByName[n.Name] = n.NodeTypeCode
-		}
-		binByPayload := make(map[string]*domain.Bin, len(allBins))
-		for i := range allBins {
-			b := allBins[i]
-			if b.PayloadCode != "" && b.Status != "retired" {
-				if nodeTypeByName[b.NodeName] != protocol.NodeClassSTOR {
-					continue
-				}
-				if _, exists := binByPayload[b.PayloadCode]; !exists {
-					binByPayload[b.PayloadCode] = b
-				}
-			}
-		}
-		rows := make([]payloadRow, 0, len(payloads))
-		for _, p := range payloads {
-			row := payloadRow{PayloadCode: p.PayloadCode, IsActiveStyle: activeStylePayloads[p.PayloadCode]}
-			if b, ok := binByPayload[p.PayloadCode]; ok {
-				row.Occupied = true
-				row.UOPRemaining = b.UOPRemaining
-				row.NodeName = b.NodeName
-				row.GroupName = nodeParent[b.NodeName]
-			}
-			rows = append(rows, row)
-		}
-		resp["rows"] = rows
-		activeOrders, _ := h.engine.OrderService().ListActiveOrders()
-		orderDest := make(map[int64]string, len(activeOrders))
-		orderRobot := make(map[int64]string, len(activeOrders))
-		orderSource := make(map[int64]string, len(activeOrders))
-		for _, o := range activeOrders {
-			if o.BinID != nil {
-				if o.DeliveryNode != "" {
-					orderDest[*o.BinID] = o.DeliveryNode
-				}
-				if o.SourceNode != "" {
-					orderSource[*o.BinID] = o.SourceNode
-				}
-				orderRobot[*o.BinID] = o.RobotID
-			}
-		}
-		payloadSet := make(map[string]bool, len(payloads))
-		for _, p := range payloads {
-			payloadSet[p.PayloadCode] = true
-		}
-		transit := make([]transitRow, 0)
-		for _, b := range allBins {
-			if b.Status == "retired" {
-				continue
-			}
-			if b.NodeName != domain.TransitNodeName {
-				continue
-			}
-			dest := ""
-			robot := ""
-			source := ""
-			isEmpty := b.PayloadCode == ""
-			isPartial := false
-			if b.ClaimedBy != nil {
-				dest = orderDest[*b.ClaimedBy]
-				source = orderSource[*b.ClaimedBy]
-				robot = orderRobot[*b.ClaimedBy]
-			}
-			if !isEmpty && b.UOPRemaining > 0 && b.UOPCapacity > 0 && b.UOPRemaining < b.UOPCapacity {
-				isPartial = true
-			}
-			outbound := !isEmpty && !isPartial && payloadSet[b.PayloadCode]
-			returnTrip := isEmpty || isPartial
-			if !outbound && !returnTrip {
-				continue
-			}
-			transit = append(transit, transitRow{
-				PayloadCode:  b.PayloadCode,
-				DestNode:     dest,
-				SourceNode:   source,
-				RobotID:      robot,
-				UOPRemaining: b.UOPRemaining,
-				IsEmpty:      isEmpty,
-				IsPartial:    isPartial,
-			})
-		}
-		resp["transit"] = transit
+		ok = h.nodeReportSharedWindow(w, resp, svc, nodeSvc, cfg.LoaderID, activeStylePayloads)
 	} else {
-		homes, err := svc.Homes(cfg.LoaderID)
-		if err != nil {
-			h.jsonError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		rows := make([]nodeRow, 0, len(homes))
-		for _, hm := range homes {
-			node, nErr := nodeSvc.GetNode(hm.PositionNodeID)
-			if nErr != nil || node == nil {
-				continue
-			}
-			row := nodeRow{NodeName: node.Name}
-			if node.ParentName != "" {
-				row.GroupName = node.ParentName
-			}
-			bins, bErr := nodeSvc.ListBinsByNode(hm.PositionNodeID)
-			if bErr == nil {
-				for _, b := range bins {
-					if b.PayloadCode != "" && b.Status != "retired" {
-						row.Occupied = true
-						row.PayloadCode = b.PayloadCode
-						row.UOPRemaining = b.UOPRemaining
-						break
-					}
-				}
-			}
-			if row.PayloadCode == "" && hm.PayloadCode != "" {
-				row.PayloadCode = hm.PayloadCode
-			}
-			row.IsActiveStyle = activeStylePayloads[row.PayloadCode]
-			rows = append(rows, row)
-		}
-		resp["homes_count"] = len(homes)
-		resp["rows"] = rows
-		allBins, bErr := h.engine.BinService().ListBins()
-		if bErr == nil {
-			activeOrders, _ := h.engine.OrderService().ListActiveOrders()
-			orderDest := make(map[int64]string, len(activeOrders))
-			orderRobot := make(map[int64]string, len(activeOrders))
-			orderSource := make(map[int64]string, len(activeOrders))
-			for _, o := range activeOrders {
-				if o.BinID != nil {
-					if o.DeliveryNode != "" {
-						orderDest[*o.BinID] = o.DeliveryNode
-					}
-					if o.SourceNode != "" {
-						orderSource[*o.BinID] = o.SourceNode
-					}
-					orderRobot[*o.BinID] = o.RobotID
-				}
-			}
-			payloadSet := make(map[string]bool, len(rows))
-			for _, r := range rows {
-				if r.PayloadCode != "" {
-					payloadSet[r.PayloadCode] = true
-				}
-			}
-			transit := make([]transitRow, 0)
-			for _, b := range allBins {
-				if b.Status == "retired" {
-					continue
-				}
-				if b.NodeName != domain.TransitNodeName {
-					continue
-				}
-				dest := ""
-				robot := ""
-				source := ""
-				isEmpty := b.PayloadCode == ""
-				isPartial := false
-				if b.ClaimedBy != nil {
-					dest = orderDest[*b.ClaimedBy]
-					source = orderSource[*b.ClaimedBy]
-					robot = orderRobot[*b.ClaimedBy]
-				}
-				if !isEmpty && b.UOPRemaining > 0 && b.UOPCapacity > 0 && b.UOPRemaining < b.UOPCapacity {
-					isPartial = true
-				}
-				outbound := !isEmpty && !isPartial && payloadSet[b.PayloadCode]
-				returnTrip := isEmpty || isPartial
-				if !outbound && !returnTrip {
-					continue
-				}
-				transit = append(transit, transitRow{
-					PayloadCode:  b.PayloadCode,
-					DestNode:     dest,
-					SourceNode:   source,
-					RobotID:      robot,
-					UOPRemaining: b.UOPRemaining,
-					IsEmpty:      isEmpty,
-					IsPartial:    isPartial,
-				})
-			}
-			resp["transit"] = transit
-		}
+		ok = h.nodeReportPositions(w, resp, svc, nodeSvc, cfg.LoaderID, activeStylePayloads)
+	}
+	if !ok {
+		return
 	}
 
 	w.Header().Set("Cache-Control", "no-store")
 	h.jsonOK(w, resp)
+}
+
+// nodeReportSharedWindow fills the node report for a loader whose windows are
+// not fixed to a part: one row per configured payload, located by finding that
+// payload's bin in storage. Reports false when it has already written an error.
+func (h *Handlers) nodeReportSharedWindow(
+	w http.ResponseWriter, resp map[string]any, svc *service.LoaderService,
+	nodeSvc *service.NodeService, loaderID int64, activeStylePayloads map[string]bool,
+) bool {
+	payloads, pErr := svc.Payloads(loaderID)
+	if pErr != nil {
+		h.jsonError(w, pErr.Error(), http.StatusInternalServerError)
+		return false
+	}
+	resp["payloads_count"] = len(payloads)
+	allBins, bErr := h.engine.BinService().ListBins()
+	if bErr != nil {
+		h.jsonError(w, bErr.Error(), http.StatusInternalServerError)
+		return false
+	}
+	allNodes, _ := nodeSvc.ListNodes()
+	nodeParent := make(map[string]string, len(allNodes))
+	nodeTypeByName := make(map[string]string, len(allNodes))
+	for _, n := range allNodes {
+		if n.ParentName != "" {
+			nodeParent[n.Name] = n.ParentName
+		}
+		nodeTypeByName[n.Name] = n.NodeTypeCode
+	}
+	binByPayload := make(map[string]*domain.Bin, len(allBins))
+	for i := range allBins {
+		b := allBins[i]
+		if b.PayloadCode != "" && b.Status != "retired" {
+			if nodeTypeByName[b.NodeName] != protocol.NodeClassSTOR {
+				continue
+			}
+			if _, exists := binByPayload[b.PayloadCode]; !exists {
+				binByPayload[b.PayloadCode] = b
+			}
+		}
+	}
+	rows := make([]payloadRow, 0, len(payloads))
+	for _, p := range payloads {
+		row := payloadRow{PayloadCode: p.PayloadCode, IsActiveStyle: activeStylePayloads[p.PayloadCode]}
+		if b, ok := binByPayload[p.PayloadCode]; ok {
+			row.Occupied = true
+			row.UOPRemaining = b.UOPRemaining
+			row.NodeName = b.NodeName
+			row.GroupName = nodeParent[b.NodeName]
+		}
+		rows = append(rows, row)
+	}
+	resp["rows"] = rows
+	payloadSet := make(map[string]bool, len(payloads))
+	for _, p := range payloads {
+		payloadSet[p.PayloadCode] = true
+	}
+	resp["transit"] = h.transitRows(allBins, payloadSet)
+	return true
+}
+
+// nodeReportPositions fills the node report for a loader with dedicated home
+// positions: one row per home, located by what is parked on it. Reports false
+// when it has already written an error.
+func (h *Handlers) nodeReportPositions(
+	w http.ResponseWriter, resp map[string]any, svc *service.LoaderService,
+	nodeSvc *service.NodeService, loaderID int64, activeStylePayloads map[string]bool,
+) bool {
+	homes, err := svc.Homes(loaderID)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	// TWO READS FOR THE BOARD, NOT TWO PER HOME. This loop used to call
+	// GetNode and ListBinsByNode per home, so the 22-tile Springfield board
+	// cost 44 queries on a poll endpoint a kiosk hits continuously. The
+	// shared-window branch above already batches exactly these two reads;
+	// this one was missed.
+	homeNodeIDs := make([]int64, 0, len(homes))
+	for _, hm := range homes {
+		homeNodeIDs = append(homeNodeIDs, hm.PositionNodeID)
+	}
+	allNodes, hnErr := nodeSvc.ListNodes()
+	if hnErr != nil {
+		h.jsonError(w, hnErr.Error(), http.StatusInternalServerError)
+		return false
+	}
+	nodeByID := make(map[int64]*domain.Node, len(allNodes))
+	for _, n := range allNodes {
+		nodeByID[n.ID] = n
+	}
+	homeBins, hbErr := nodeSvc.ListBinsByNodes(homeNodeIDs)
+	if hbErr != nil {
+		h.jsonError(w, hbErr.Error(), http.StatusInternalServerError)
+		return false
+	}
+	binsByNode := make(map[int64][]*domain.Bin, len(homeNodeIDs))
+	for _, b := range homeBins {
+		if b.NodeID != nil {
+			binsByNode[*b.NodeID] = append(binsByNode[*b.NodeID], b)
+		}
+	}
+
+	rows := make([]nodeRow, 0, len(homes))
+	for _, hm := range homes {
+		node := nodeByID[hm.PositionNodeID]
+		if node == nil {
+			continue
+		}
+		row := nodeRow{NodeName: node.Name}
+		if node.ParentName != "" {
+			row.GroupName = node.ParentName
+		}
+		for _, b := range binsByNode[hm.PositionNodeID] {
+			if b.PayloadCode != "" && b.Status != "retired" {
+				row.Occupied = true
+				row.PayloadCode = b.PayloadCode
+				row.UOPRemaining = b.UOPRemaining
+				break
+			}
+		}
+		if row.PayloadCode == "" && hm.PayloadCode != "" {
+			row.PayloadCode = hm.PayloadCode
+		}
+		row.IsActiveStyle = activeStylePayloads[row.PayloadCode]
+		rows = append(rows, row)
+	}
+	resp["homes_count"] = len(homes)
+	resp["rows"] = rows
+
+	// A read failure here used to be swallowed, so the kiosk rendered an
+	// empty transit panel with HTTP 200 -- indistinguishable from "nothing
+	// is in transit". The sibling branch 500s on the same call.
+	allBins, bErr := h.engine.BinService().ListBins()
+	if bErr != nil {
+		h.jsonError(w, bErr.Error(), http.StatusInternalServerError)
+		return false
+	}
+	payloadSet := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		if r.PayloadCode != "" {
+			payloadSet[r.PayloadCode] = true
+		}
+	}
+	resp["transit"] = h.transitRows(allBins, payloadSet)
+	return true
 }

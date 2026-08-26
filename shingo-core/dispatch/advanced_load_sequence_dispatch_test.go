@@ -8,16 +8,21 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty proves
 // the two F4c features compose on one real dispatched order: the LOAD leg expands
 // to the four same-location named blocks (the evidence-doc Postman shape) AND
-// keyRoute stays empty — shingo never populates it, so the two top-level concerns
-// don't interact. Complete stays true (single-shot).
+// keyRoute stays empty. Complete stays true (single-shot).
+//
+// "Empty" here is about THIS order, which configures no route — it is no
+// longer true that shingo never populates keyRoute (a claim's Routing
+// fieldset does, see key_route_dispatch_test.go). What this pins is that
+// load-sequence expansion does not invent one.
 func TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	storageNode, lineNode, payload := setupTestData(t, db)
 
 	// Configure the payload with the seeded child-cart sequence.
@@ -51,7 +56,7 @@ func TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty(t *te
 	req := reqs[0]
 
 	if len(req.KeyRoute) != 0 {
-		t.Errorf("KeyRoute = %v, want empty (shingo leaves it unset)", req.KeyRoute)
+		t.Errorf("KeyRoute = %v, want empty (this order configures no route)", req.KeyRoute)
 	}
 	if !req.Complete {
 		t.Error("Complete = false, want true (single-shot)")
@@ -88,9 +93,15 @@ func TestDispatchDirect_ConfiguredPayload_ExpandsLoadAndKeepsKeyRouteEmpty(t *te
 // [JackLoad, JackUnload] order.
 func TestDispatchDirect_UnconfiguredPayload_SingleLoadBlock(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
-	storageNode, lineNode, payload := setupTestData(t, db)
-	_ = payload // left unconfigured (AdvancedLoadSequence empty)
+	db := testDBShared(t)
+	storageNode, lineNode, _ := setupTestData(t, db)
+
+	// Own payload, not PART-A: this file's other test configures PART-A's
+	// AdvancedLoadSequence and persists it, and both tests share this file's
+	// database. Asserting "unconfigured" on PART-A would test write-order,
+	// not the unconfigured path.
+	payload := &payloads.Payload{Code: "PART-PLAIN", Description: "unconfigured twin", UOPCapacity: 100}
+	testutil.MustNoErr(t, db.CreatePayload(payload), "create plain payload")
 
 	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)

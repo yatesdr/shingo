@@ -6,7 +6,11 @@
 
 package domain
 
-import "time"
+import (
+	"time"
+
+	"shingo/protocol"
+)
 
 // DemandOrigin is one demand episode: a continuous period during which a
 // specific place needed material.
@@ -61,7 +65,13 @@ type DemandOrigin struct {
 	Revision   int64
 	EpisodeKey string
 	Kind       string
-	Direction  string
+	// Direction holds the cell's ROLE — produce or consume, the claim's own two
+	// values. It held "supply"/"evacuate", a second vocabulary for the same fact,
+	// and migration 87 rewrote the stored rows. Typed so a reader cannot compare
+	// it against a word that no longer exists. Empty for the kinds with no cell
+	// behind them. The COLUMN keeps the name `direction`; renaming it on both
+	// services is a cosmetic follow-on, deliberately not bundled here.
+	Direction  protocol.ClaimRole
 	Trigger    string
 	TriggerRef string
 	StationID  string
@@ -82,8 +92,9 @@ type DemandOrigin struct {
 
 	// ExpectedOrders is NULLABLE BY DESIGN, and the nil is load-bearing.
 	//
-	// The threshold formula divides by the catalog's UOPCapacity and fireThresholdL1
-	// explicitly guards capacity <= 0, so an unknowable denominator genuinely
+	// The threshold formula divides by the catalog's UOPCapacity and the
+	// sizing entry point (dispatch.BinsToReachThreshold) explicitly refuses
+	// capacity <= 0, so an unknowable denominator genuinely
 	// happens. NOT 0 and NOT 1 — both are lies that render as a real ratio, and
 	// a demand whose denominator is unknowable is a DIFFERENT STATE from one
 	// whose denominator is 1. The pointer is what carries that difference as far

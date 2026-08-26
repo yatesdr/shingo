@@ -15,12 +15,6 @@ type Client struct {
 	baseURL    string
 	httpClient *http.Client
 	DebugLog   func(string, ...any)
-
-	// countGroupSeen is the last logged outcome per count group, so the
-	// 500ms occupancy poll logs on transition instead of on tick. See
-	// logCountGroupChange.
-	cgMu           sync.Mutex
-	countGroupSeen map[string]string
 }
 
 func NewClient(baseURL string, timeout time.Duration) *Client {
@@ -36,43 +30,6 @@ func (c *Client) dbg(format string, args ...any) {
 	if fn := c.DebugLog; fn != nil {
 		fn(format, args...)
 	}
-}
-
-// logCountGroupChange emits one debug line only when a group's occupancy
-// outcome differs from the last one logged for that group.
-//
-// The count-group poll runs at 500ms and its two per-tick trace lines were
-// 334,361 lines/day at Springfield — 53% of the whole journal — for a value
-// that changes a few thousand times a day. Edge-triggering it is modelled on
-// wireChanged in engine/sourceability_monitor.go: log the operator-visible
-// verdict, not the sample.
-//
-// This is a logging change only. The interlock still polls at 500ms and the
-// debouncer still sees every sample — deduping upstream of the debouncer
-// would starve its off-threshold counter (see the note in countgroup/loop.go
-// runTick). countgroup at Springfield returns 1-2 robots 6,265 times a day;
-// it is working and stays enabled.
-func (c *Client) logCountGroupChange(group, outcome string) {
-	if c.DebugLog == nil {
-		return
-	}
-	c.cgMu.Lock()
-	prev, seen := c.countGroupSeen[group]
-	if seen && prev == outcome {
-		c.cgMu.Unlock()
-		return
-	}
-	if c.countGroupSeen == nil {
-		c.countGroupSeen = make(map[string]string, 4)
-	}
-	c.countGroupSeen[group] = outcome
-	c.cgMu.Unlock()
-
-	if !seen {
-		c.dbg("/robotsInCountGroup group=%s %s (first poll)", group, outcome)
-		return
-	}
-	c.dbg("/robotsInCountGroup group=%s %s (was %s)", group, outcome, prev)
 }
 
 // slowResponseThreshold is the latency cutoff above which the response

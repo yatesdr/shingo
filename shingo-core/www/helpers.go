@@ -125,6 +125,32 @@ func canCancelStatus(s protocol.Status) bool {
 	return !dispatch.IsPostDelivery(s) && !protocol.IsTerminal(s)
 }
 
+// canHardReleaseOrder reports whether the Core-side hard release (W3) should
+// render for this order — computed here, like canCancelStatus, so the button
+// cannot appear where the handler would refuse it.
+//
+// ── ONLY FOR A WAIT CORE OWNS ─────────────────────────────────────────────
+//
+// A STATION-owned wait is released from the station's own board, by the person
+// who can see whether the cell is clear. Offering a Core-side override for one
+// would invite an engineer to advance a robot into a cell somebody is working
+// in, from a screen that cannot show them the cell — and it would do it in the
+// one case where the ordinary path is not even broken.
+//
+// So the hatch is scoped to the waits Core is responsible for advancing: a lane
+// wait whose evaluator is wedged is a wedge only Core can clear, and that is
+// exactly the shape this stream kept meeting.
+//
+// An untagged wait (pre-ruling plan, still draining) reads as station-owned and
+// therefore does NOT get the button — the conservative direction, and consistent
+// with dispatch.IsStationWait, which is the single place that rule lives.
+func canHardReleaseOrder(o *domain.Order) bool {
+	if o == nil || o.Status != protocol.StatusStaged {
+		return false
+	}
+	return dispatch.CoreOwnsWaitAt(o.StepsJSON, o.WaitIndex)
+}
+
 // stationNamer resolves an opaque station identity to the operator's label.
 // Satisfied by *service.NodeService; an interface here so the template layer
 // does not reach into the service package for one method, and so tests can

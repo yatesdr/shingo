@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 )
 
 var updateFlag = flag.Bool("update", false, "update golden files")
@@ -157,7 +158,8 @@ func TestGolden_RetrieveAlgorithms(t *testing.T) {
 		//   - FAVL: skips locked lane → no first match → error
 		//
 		// This locks in the behavioral change where the buried-bin scan
-		// now respects LaneLock.IsLocked (old COST did not).
+		// now respects the dig hold (old COST did not) — which is now enforced
+		// by the candidate query rather than by a check inside the scan.
 		{
 			name: "locked_lane_buried_bin",
 			setup: func(f *fakeStore) (*nodes.Node, string) {
@@ -184,12 +186,11 @@ func TestGolden_RetrieveAlgorithms(t *testing.T) {
 			group, payload := sc.setup(f)
 			f.setProp(group.ID, "retrieve_algorithm", algo)
 
-			ll := NewLaneLock()
 			if sc.lockLane != 0 {
-				ll.TryLock(sc.lockLane, 999) // locked by some other order
+				f.lockLaneForDig(sc.lockLane) // a dig holds it, owned by some other order
 			}
-			gr := &GroupResolver{DB: f, LaneLock: ll}
-			got, err := gr.ResolveRetrieve(group, payload)
+			gr := &GroupResolver{DB: f}
+			got, err := gr.ResolveRetrieve(group, payload, reservations.Anyone)
 
 			gs := goldenScenario{
 				Name:      sc.name,

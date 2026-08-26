@@ -21,6 +21,7 @@ package schema
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // Querier is the subset of database/sql methods these helpers need.
@@ -60,6 +61,27 @@ func TableExists(c Querier, table string) bool {
 
 // ColumnExists reports whether the named column exists on the named
 // table. Returns false on any query error or if either name is empty.
+// CheckConstraintAllows reports whether a named CHECK constraint's definition
+// mentions `value`. It is the verify hook for migrations that WIDEN a CHECK
+// (adding a permitted enum value), which — unlike ADD COLUMN IF NOT EXISTS — has
+// no idempotent DDL form and so must be drop-and-recreate. Substring matching on
+// pg_get_constraintdef is coarse, and that is fine for the job: the question is
+// only "has the wider constraint been installed", and a false negative merely
+// re-applies an idempotent drop-and-recreate.
+func CheckConstraintAllows(c Querier, table, constraint, value string) bool {
+	var def string
+	if err := c.QueryRow(
+		`SELECT pg_get_constraintdef(pgc.oid)
+		 FROM pg_constraint pgc
+		 JOIN pg_class rel ON rel.oid = pgc.conrelid
+		 WHERE rel.relname = $1 AND pgc.conname = $2`,
+		table, constraint,
+	).Scan(&def); err != nil {
+		return false
+	}
+	return strings.Contains(def, value)
+}
+
 func ColumnExists(c Querier, table, column string) bool {
 	var exists bool
 	c.QueryRow(

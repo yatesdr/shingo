@@ -10,9 +10,9 @@ import (
 // instead of reaching through engine passthroughs to *store.DB.
 //
 // Absorbed from engine_db_methods.go as part of the Phase 3a closeout
-// (PR 3a.6). Fleet / messaging / count-group health remains on the
-// engine (each subsystem owns its own health surface); this service
-// only covers the database-side ping.
+// (PR 3a.6). Fleet and messaging health remain on the engine (each
+// subsystem owns its own health surface); this service only covers the
+// database-side ping.
 type HealthService struct {
 	db *store.DB
 }

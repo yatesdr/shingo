@@ -165,7 +165,7 @@ func TestCreateComplexOrderSibling_CarriesSiblingUUID(t *testing.T) {
 	const supplyUUID = "supply-uuid-abc123"
 	evac, err := mgr.CreateComplexOrderSibling(nil, 1, "AMR Supermarket", "ALN_003",
 		[]protocol.ComplexOrderStep{{Action: "pickup", Node: "ALN_003"}, {Action: "dropoff", Node: "AMR Supermarket"}},
-		true, "", supplyUUID)
+		true, "", supplyUUID, NoDemand())
 	testutil.MustNoErr(t, err, "create evac leg")
 
 	var req protocol.ComplexOrderRequest
@@ -184,7 +184,7 @@ func TestCreateRetrieveOrder_HappyPath(t *testing.T) {
 	emitter := &capturingEmitter{}
 	mgr := NewManager(db, emitter, "edge.station")
 
-	order, err := mgr.CreateRetrieveOrder(nil, false, 7, "LINE-1", "SRC-A", "STAGE-1", "LOAD-A", "PL-42", false, false)
+	order, err := mgr.CreateRetrieveOrder(nil, false, 7, "LINE-1", "SRC-A", "STAGE-1", "LOAD-A", "PL-42", false, false, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateRetrieveOrder: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestCreateRetrieveOrder_PayloadMetaFromStyleClaim(t *testing.T) {
 		Description: "Auto Test Payload",
 	}), "UpsertCatalog")
 
-	order, err := mgr.CreateRetrieveOrder(&nid, false, 1, "LINE-1", "", "", "", "", false, false)
+	order, err := mgr.CreateRetrieveOrder(&nid, false, 1, "LINE-1", "", "", "", "", false, false, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateRetrieveOrder: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestCreateMoveOrder_HappyPath(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	order, err := mgr.CreateMoveOrder(nil, 3, "SRC-M", "DST-M", false)
+	order, err := mgr.CreateMoveOrder(nil, 3, "SRC-M", "DST-M", false, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestCreateMoveOrderWithUOP_ThreadsRemainingUOP(t *testing.T) {
 	mgr := NewManager(db, testEmitter{}, "edge")
 
 	remaining := 5
-	if _, err := mgr.CreateMoveOrderWithUOP(nil, 1, "SRC", "DST", &remaining, false); err != nil {
+	if _, err := mgr.CreateMoveOrderWithUOP(nil, 1, "SRC", "DST", &remaining, false, NoDemand()); err != nil {
 		t.Fatalf("CreateMoveOrderWithUOP: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -306,7 +306,7 @@ func TestCreateComplexOrder_PersistsStepsAndQueuesEnvelope(t *testing.T) {
 		{Action: "pickup", Node: "A"},
 		{Action: "dropoff", Node: "B"},
 	}
-	order, err := mgr.CreateComplexOrder(nil, 2, "DEL-C", "", steps)
+	order, err := mgr.CreateComplexOrder(nil, 2, "DEL-C", "", steps, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateComplexOrder: %v", err)
 	}
@@ -1087,7 +1087,7 @@ func TestLookupPayloadMeta_NilProcessNode_NoLookup(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	if _, err := mgr.CreateMoveOrder(nil, 1, "S", "D", false); err != nil {
+	if _, err := mgr.CreateMoveOrder(nil, 1, "S", "D", false, NoDemand()); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -1108,7 +1108,7 @@ func TestLookupPayloadMeta_ActiveStyleOnly(t *testing.T) {
 	active := sid
 	testutil.MustNoErr(t, db.SetActiveStyle(pid, &active), "SetActiveStyle")
 
-	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false); err != nil {
+	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false, NoDemand()); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -1137,7 +1137,7 @@ func TestLookupPayloadMeta_TargetStyleOverridesActiveDuringChangeover(t *testing
 	_ = db.SetActiveStyle(pid, &active)
 	_ = db.SetTargetStyle(pid, &target)
 
-	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false); err != nil {
+	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false, NoDemand()); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -1155,7 +1155,7 @@ func TestLookupPayloadMeta_NoActiveStyleFallsThrough(t *testing.T) {
 	_, _, nid := seedProcessStyleNode(t, db, "P-NA", "S-NA", "CN-NA")
 	// Don't set ActiveStyleID — lookup should early-return empty.
 
-	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false); err != nil {
+	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false, NoDemand()); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -1524,7 +1524,7 @@ func TestCreateComplexOrder_AutoConfirmSplit(t *testing.T) {
 		{Action: "dropoff", Node: "AMRSM"},
 	}
 
-	manual, err := mgr.CreateComplexOrder(nil, 1, "LINE1", "LINE1", steps)
+	manual, err := mgr.CreateComplexOrder(nil, 1, "LINE1", "LINE1", steps, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateComplexOrder: %v", err)
 	}
@@ -1532,7 +1532,7 @@ func TestCreateComplexOrder_AutoConfirmSplit(t *testing.T) {
 		t.Errorf("CreateComplexOrder: AutoConfirm=true, want false (lineside delivery requires operator press)")
 	}
 
-	auto, err := mgr.CreateComplexOrderWithAutoConfirm(nil, 1, "", "LINE1", steps)
+	auto, err := mgr.CreateComplexOrderWithAutoConfirm(nil, 1, "", "LINE1", steps, NoDemand())
 	if err != nil {
 		t.Fatalf("CreateComplexOrderWithAutoConfirm: %v", err)
 	}
@@ -1541,5 +1541,97 @@ func TestCreateComplexOrder_AutoConfirmSplit(t *testing.T) {
 			"Bug 2a regression: evac legs to the supermarket would sit in delivered until " +
 			"manually confirmed, re-opening the FINISHED→CONFIRMED race window where " +
 			"the fulfillment scanner re-claims the bin and the late confirm teleports it back.")
+	}
+}
+
+// TestMirrorFollowsCore_ForwardJumpLandsAndAlarms is W2, and it reproduces the
+// three-robot wedge by doing what the wire did: skipping a notification.
+//
+// Core walked reshuffling → queued → … → staged. The Edge was told only about
+// the last step. reshuffling → staged is not a legal STEP, so the validated path
+// refused it and the mirror stayed at `reshuffling` forever — rejecting every
+// later push, showing a board that could not offer Release, and holding a robot
+// for the length of the soak (§12.49).
+//
+// It is a legal DESTINATION, though: every state between exists and Core has
+// already passed through them. So the mirror catches up in one move and says so.
+func TestMirrorFollowsCore_ForwardJumpLandsAndAlarms(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, err := db.CreateOrder("uuid-jump", TypeComplex, nil, false, 1, "X", "", "", "", false, "")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// The dig: Core put the parent in `reshuffling` and told the Edge that much.
+	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusReshuffling)), "set reshuffling")
+
+	// THE SUPPRESSED NOTIFICATION: nothing tells the Edge about `queued`. The
+	// next thing it hears is Core reporting the order staged.
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-jump", ReplyStaged, "", "", "dwelling at staging"),
+		"staged reply after a skipped notification must not error")
+
+	// (a) THE JUMP LANDS — no wedge.
+	o, err := db.GetOrder(oid)
+	testutil.MustNoErr(t, err, "reload")
+	if o.Status != StatusStaged {
+		t.Fatalf("status = %q, want %q. The mirror refused to follow the authority, which is the "+
+			"wedge: it stays behind Core forever, rejects every later push, and the board never "+
+			"offers Release", o.Status, StatusStaged)
+	}
+
+	// (b) AND THE ALARM FIRES, naming the transition well enough to find the
+	// missing notification.
+	hist, err := db.ListOrderHistory(oid)
+	testutil.MustNoErr(t, err, "history")
+	var jump string
+	for _, h := range hist {
+		if strings.Contains(h.Detail, mirrorJumpDetail) {
+			jump = h.Detail
+		}
+	}
+	if jump == "" {
+		t.Fatalf("no %q history row. A silent catch-up is worse than the refusal: the mirror is "+
+			"correct and nobody learns that a transition somewhere stopped notifying", mirrorJumpDetail)
+	}
+	if !strings.Contains(jump, string(StatusReshuffling)) || !strings.Contains(jump, string(StatusStaged)) {
+		t.Errorf("alarm detail %q does not name both ends of the jump — it has to say which "+
+			"transition to go looking for", jump)
+	}
+}
+
+// TestMirrorFollowsCore_BackwardAndImpossibleStayRefused keeps the strictness
+// where it still means something. A forward jump is "I missed a message"; these
+// are not, and accepting them would let a terminal be resurrected or a bogus
+// status be written because the sender was wrong.
+func TestMirrorFollowsCore_BackwardAndImpossibleStayRefused(t *testing.T) {
+	t.Parallel()
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-term", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusConfirmed)), "set confirmed")
+
+	// Confirmed is terminal: nothing is reachable from it, so this is not a
+	// forward jump and must not resurrect the order. Transition's terminal arm
+	// absorbs it idempotently rather than erroring — what matters is the status.
+	_ = mgr.HandleDispatchReply("uuid-term", ReplyStaged, "", "", "late staged push")
+	o, _ := db.GetOrder(oid)
+	if o.Status != StatusConfirmed {
+		t.Errorf("status = %q, want %q — a terminal order was moved by a late push. Nothing is "+
+			"reachable from a terminal, so this can never be a missed notification", o.Status, StatusConfirmed)
+	}
+
+	// And the predicate itself, stated directly.
+	if protocol.IsForwardJump(StatusConfirmed, StatusStaged) {
+		t.Error("IsForwardJump(confirmed, staged) = true — a terminal has no outgoing edges")
+	}
+	if !protocol.IsForwardJump(StatusReshuffling, StatusStaged) {
+		t.Error("IsForwardJump(reshuffling, staged) = false — staged IS reachable from reshuffling " +
+			"via queued, which is exactly the gap the wedge fell into")
+	}
+	if protocol.IsForwardJump(StatusQueued, StatusDispatched) {
+		t.Error("IsForwardJump(queued, dispatched) = true — that is a legal single step, not a jump")
 	}
 }

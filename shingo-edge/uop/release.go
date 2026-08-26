@@ -40,7 +40,7 @@ const (
 	// "physical inventory was less than tracked" signal forward so
 	// Core's audit row records released_underpack instead of
 	// released_empty. Forensics trend the missing-inventory delta
-	// from suggested_uop - after_uop in bin_uop_audit.
+	// from suggested_uop - after_uop in bin_uop_ledger.
 	DispositionReleaseUnderpack ReleaseDispositionMode = "release_underpack"
 )
 
@@ -190,7 +190,7 @@ func BuildProtocolDisposition(disp ReleaseDisposition, runtime *processes.Runtim
 		return d
 	case DispositionReleaseUnderpack:
 		// CountSuggested carries the system's expected count (the
-		// runtime cache at click time). Core's bin_uop_audit row
+		// runtime cache at click time). Core's bin_uop_ledger row
 		// will pick up before_uop = current bins.uop_remaining,
 		// after_uop = 0; the suggested_uop - after_uop gap is the
 		// missing-inventory delta forensics read.

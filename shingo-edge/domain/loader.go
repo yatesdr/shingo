@@ -66,8 +66,8 @@ func (p PayloadCode) String() string { return string(p) }
 type LoaderLayout string
 
 const (
-	LayoutSharedWindow       LoaderLayout = "shared_window"
-	LayoutDedicatedPositions LoaderLayout = "dedicated_positions"
+	LayoutSharedWindow       LoaderLayout = protocol.LoaderLayoutSharedWindow
+	LayoutDedicatedPositions LoaderLayout = protocol.LoaderLayoutDedicatedPositions
 )
 
 // LoaderRole is produce (a bin loader: operator fills empties) or consume (an
@@ -75,8 +75,8 @@ const (
 type LoaderRole string
 
 const (
-	RoleProduce LoaderRole = "produce"
-	RoleConsume LoaderRole = "consume"
+	RoleProduce LoaderRole = LoaderRole(protocol.ClaimRoleProduce)
+	RoleConsume LoaderRole = LoaderRole(protocol.ClaimRoleConsume)
 )
 
 func (r LoaderRole) valid() bool { return r == RoleProduce || r == RoleConsume }
@@ -88,8 +88,8 @@ func (r LoaderRole) valid() bool { return r == RoleProduce || r == RoleConsume }
 type LoaderReplenishment string
 
 const (
-	ReplenishmentOperator  LoaderReplenishment = "operator"
-	ReplenishmentThreshold LoaderReplenishment = "threshold"
+	ReplenishmentOperator  LoaderReplenishment = protocol.LoaderReplenishmentOperator
+	ReplenishmentThreshold LoaderReplenishment = protocol.LoaderReplenishmentThreshold
 )
 
 // PositionKind is the EXPLICIT marker that replaces the empty-payload-means-window
@@ -123,9 +123,44 @@ type Window struct {
 // to one payload with its own replenishment policy. Positions do NOT share a
 // budget — each is an independent one-bin slot for a distinct payload.
 type Position struct {
-	Node         NodeID
-	Payload      PayloadCode // "" when the operator hasn't assigned a payload yet
+	Node    NodeID
+	Payload PayloadCode // "" when the operator hasn't assigned a payload yet
+	// HomeKind is Core's own classification of this position: HomeKindHome or
+	// HomeKindBuffer. EMPTY MEANS UNKNOWN — a Core predating the field on the
+	// wire — and callers must fall back to the blank-payload inference rather
+	// than reading blank as "home"; an older Core sends blank for buffers too.
+	//
+	// It exists because Payload == "" answers two questions at once: a BUFFER
+	// slot pins no payload, and so does a HOME the operator has dragged in but
+	// not yet assigned. Core keeps them apart (bin_loader_homes.home_kind, read
+	// by InSourcePool to leave an unassigned home out of the source pool); the
+	// Edge could not, and classified an unpinned home as a buffer.
+	HomeKind     string
 	UOPThreshold int
+}
+
+// Position home kinds, mirroring Core's bin_loader_homes.home_kind. Blank is a
+// third state — "this Core did not say" — and IsBuffer treats it as such.
+const (
+	HomeKindHome   = protocol.LoaderHomeKindHome
+	HomeKindBuffer = protocol.LoaderHomeKindBuffer
+)
+
+// IsBuffer reports whether this position is a kept-partial BUFFER slot.
+//
+// Prefers Core's answer and falls back to the old inference only when Core did
+// not give one. That fallback is the pre-field behaviour verbatim, so an Edge
+// talking to an older Core behaves exactly as it did — and an Edge talking to a
+// current Core stops calling an unassigned home a buffer.
+func (p Position) IsBuffer() bool {
+	switch p.HomeKind {
+	case HomeKindBuffer:
+		return true
+	case HomeKindHome:
+		return false
+	default:
+		return p.Payload == ""
+	}
 }
 
 // ── The aggregate ───────────────────────────────────────────────────
@@ -158,11 +193,11 @@ type Loader struct {
 
 	// Optional runtime config carried so the empty-in / completion paths need
 	// neither the legacy claim nor a second lookup. Set via LoaderOption.
-	inboundSource string              // the empty market L1s source from
-	outboundDest  string              // the market filled (L2) / emptied (U2) bins go to on completion
-	bufferDest    string              // the buffer node group (step 7): stages empties / parks orphaned partials
-	uopThreshold  map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in); dedicated carries it on Position
-	funnelWindows bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
+	inboundSource           string              // the empty market L1s source from
+	outboundDest            string              // the market filled (L2) / emptied (U2) bins go to on completion
+	uopThreshold            map[PayloadCode]int // shared_window per-payload UOP-threshold (C-push opt-in, display-read only on Edge); dedicated carries it on Position
+	funnelWindows           bool                // shared_window only: take one window at a time instead of spreading (see FunnelWindows)
+	changeoverLoadDirective bool                // a changeover commandeers this station's card (see ChangeoverLoadDirective)
 }
 
 // LoaderOption sets optional runtime config on a constructed Loader. Variadic, so
@@ -183,16 +218,11 @@ func WithOutboundDest(dst string) LoaderOption {
 	return func(l *Loader) { l.outboundDest = dst }
 }
 
-// WithBufferDest sets the buffer node group (CoreLoader.BufferDest): a FIFO group
-// that stages empties to rotate into a position on threshold and parks
-// changeover-orphaned partials (the step-7 buffer). Empty when not configured.
-func WithBufferDest(dst string) LoaderOption {
-	return func(l *Loader) { l.bufferDest = dst }
-}
-
-// WithUOPThreshold sets the shared_window per-payload UOP threshold (the C-push
-// opt-in the demand sweep checks to defer a payload to HandleLoopBelowThreshold).
-// Mirrors WithMinStock; dedicated loaders carry the threshold on each Position.
+// WithUOPThreshold sets the shared_window per-payload UOP threshold — carried
+// down from the Core aggregate for display/config parity. Nothing on the Edge
+// acts on it any more (the threshold receiver it fed is deleted; Core orders
+// directly). Mirrors WithMinStock; dedicated loaders carry the threshold on
+// each Position.
 func WithUOPThreshold(m map[PayloadCode]int) LoaderOption {
 	return func(l *Loader) {
 		l.uopThreshold = make(map[PayloadCode]int, len(m))
@@ -305,14 +335,11 @@ func (l *Loader) InboundSource() string { return l.inboundSource }
 // then logs and skips rather than firing a malformed move.
 func (l *Loader) OutboundDest() string { return l.outboundDest }
 
-// BufferDest is the buffer node group (step 7); empty when not configured.
-func (l *Loader) BufferDest() string { return l.bufferDest }
-
 // UOPThresholdFor returns the per-payload UOP threshold (the C-push opt-in): the
 // shared per-payload value for shared_window, or the matching position's
 // UOPThreshold for dedicated. Zero means "no UOP-threshold policy" (not opted into
-// C-push). The demand sweep asks the aggregate directly instead of a node-keyed
-// cache lookup that the loader_key token can never match.
+// C-push). Only display reads this on the Edge (station board starvation tint);
+// ordering is Core's.
 func (l *Loader) UOPThresholdFor(p PayloadCode) int {
 	if v, ok := l.uopThreshold[p]; ok {
 		return v
@@ -425,6 +452,20 @@ func (l *Loader) IsDedicated() bool { return l.layout == LayoutDedicatedPosition
 // a budget.
 func (l *Loader) FunnelWindows() bool { return l.funnelWindows }
 
+// WithChangeoverLoadDirective opts this station into having its card
+// commandeered during a changeover.
+func WithChangeoverLoadDirective(on bool) LoaderOption {
+	return func(l *Loader) { l.changeoverLoadDirective = on }
+}
+
+// ChangeoverLoadDirective reports whether a changeover replaces this station's
+// board with an instruction naming the carrier the incoming style needs.
+//
+// Core owns the setting — it is a fact about the station and how it is run, so
+// it lives beside the rest of the station's setup in bin_loaders rather than on
+// each style's claim, where it used to be duplicated per style.
+func (l *Loader) ChangeoverLoadDirective() bool { return l.changeoverLoadDirective }
+
 // IsOperatorDriven reports whether the loader's replenishment is operator-driven
 // (replenishment = operator) — the operator stages/clears at the board rather than
 // the automatic threshold path supplying it.
@@ -500,6 +541,23 @@ func (l *Loader) LoadablePayloadCodesAt(coreNode NodeID) []string {
 // is scoped to THIS node (LoadablePayloadCodesAt): a dedicated home carries only
 // its own pinned payload, a shared window the whole set — so loadablePayloads
 // resolves the same per-node truth off the claim that the gate does.
+//
+// TWO SYNTHESIZED CLAIMS EXIST IN THIS PACKAGE AND THEIR ID RULES ARE OPPOSITE.
+//
+//	Loader.SynthClaim (here)        ID == 0.       There is no persisted row
+//	                                               anywhere. Guard ID == 0 before
+//	                                               using it as a foreign key.
+//	SynthesizePositionClaim    ID == parent's. A press position's claim IS a
+//	                                               view of the parent press-index
+//	                                               row, and node tasks store that
+//	                                               id so FromClaimID/ToClaimID
+//	                                               resolve back to it.
+//
+// Neither is ever written back. The difference is whether the thing being
+// stood in for exists: a Core-owned loader window has no claim at all, while a
+// press position has one — its parent's. Reading a position's ID as "synthetic, so
+// zero" would break the position resolver; writing a loader's ID anywhere would
+// dangle. See PositionClaimFromParent in process.go for the position side.
 func (l *Loader) SynthClaim(coreNode NodeID) *NodeClaim {
 	return &NodeClaim{
 		CoreNodeName:        string(coreNode),
@@ -561,7 +619,7 @@ func (l *Loader) ServesPayload(p PayloadCode) bool {
 //   - dedicated_positions: the payload maps to ONE independent one-bin position;
 //     budget 1, delivered there. When member names a position serving the payload,
 //     deliver to THAT position (the same-payload-two-positions fix) instead of
-//     first-match; member "" (legacy DemandSignal, operator request) falls back to
+//     first-match; member "" (operator request) falls back to
 //     first-match, preserving prior behaviour. Positions never share a budget.
 //
 // member is the specific loader member node the triggering signal names

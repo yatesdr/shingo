@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"shingoedge/domain"
+	ordermgr "shingoedge/orders"
 	"shingoedge/store/orders"
 )
 
@@ -40,7 +41,7 @@ type APIRetrieveRequest struct {
 // aggregate whether some loader or unloader owns that node, in either role. If
 // one does, the order goes through withLoaderBudget on that loader's key, so
 // this door contends on the same mutex as every other door onto the same
-// windows. If no loader owns the node — a press seat, a supermarket slot, a
+// windows. If no loader owns the node — a press position, a supermarket slot, a
 // quality-hold spot — nothing changes: those have no budget to belong to, and
 // inventing one for them is what the RequestEmptyBin simple-mode guard comment
 // already explains is wrong.
@@ -74,6 +75,12 @@ func (e *Engine) CreateRetrieveForAPI(req APIRetrieveRequest) ([]*orders.Order, 
 					req.ProcessNodeID, req.RetrieveEmpty, req.Quantity,
 					deliveryNode, req.SourceNode, req.StagingNode, req.LoadType,
 					req.PayloadCode, req.AutoConfirm, false,
+					// NoDemand: a direct API command belongs to no cell episode and
+					// never will. Not "nobody wanted it" — the caller did — but the
+					// demand grain measures EPISODES, and this order is structurally
+					// outside them. Leaving it unstated put it in the orphan bucket
+					// beside the genuinely lost origins.
+					ordermgr.NoDemand(),
 				)
 				if cerr != nil {
 					return n, cerr
@@ -123,6 +130,7 @@ func (e *Engine) createRetrieveDirect(req APIRetrieveRequest, count int) ([]*ord
 			req.ProcessNodeID, req.RetrieveEmpty, req.Quantity,
 			req.DeliveryNode, req.SourceNode, req.StagingNode, req.LoadType,
 			req.PayloadCode, req.AutoConfirm, false,
+			ordermgr.NoDemand(), // see createRetrieveForLoader
 		)
 		if err != nil {
 			// A partial batch is reported as what it is: the orders that exist

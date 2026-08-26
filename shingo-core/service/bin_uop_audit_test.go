@@ -15,7 +15,7 @@ import (
 	"shingocore/store/audit"
 )
 
-// auditRow is the bin_uop_audit row shape needed by these tests. Mirrors
+// auditRow is the bin_uop_ledger row shape needed by these tests. Mirrors
 // the schema columns we care about asserting on; defined locally to keep
 // the test self-contained (no production read helper exists yet — Phase
 // 4's www audit timeline page will introduce one when it lands).
@@ -33,16 +33,16 @@ type auditRow struct {
 func loadBinUOPAudit(t *testing.T, db *store.DB, binID int64) []auditRow {
 	t.Helper()
 	rows, err := db.Query(`SELECT bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor
-		FROM bin_uop_audit WHERE bin_id=$1 ORDER BY id`, binID)
+		FROM bin_uop_ledger WHERE bin_id=$1 ORDER BY id`, binID)
 	if err != nil {
-		t.Fatalf("query bin_uop_audit bin=%d: %v", binID, err)
+		t.Fatalf("query bin_uop_ledger bin=%d: %v", binID, err)
 	}
 	defer rows.Close()
 
 	var out []auditRow
 	for rows.Next() {
 		var r auditRow
-		testutil.MustNoErr(t, rows.Scan(&r.BinID, &r.BeforeUOP, &r.AfterUOP, &r.Op, &r.Source, &r.OrderID, &r.PayloadCode, &r.Actor), "scan bin_uop_audit row")
+		testutil.MustNoErr(t, rows.Scan(&r.BinID, &r.BeforeUOP, &r.AfterUOP, &r.Op, &r.Source, &r.OrderID, &r.PayloadCode, &r.Actor), "scan bin_uop_ledger row")
 		out = append(out, r)
 	}
 	return out
@@ -50,7 +50,7 @@ func loadBinUOPAudit(t *testing.T, db *store.DB, binID int64) []auditRow {
 
 // TestBinUOPAudit_SyncOrClearForReleased_LogsBeforeAndAfter pins Phase 0a:
 // every BinManifestService write that touches uop_remaining must append a
-// bin_uop_audit row inside the same transaction as the bin update,
+// bin_uop_ledger row inside the same transaction as the bin update,
 // capturing the before/after counts plus the op, order, and actor that
 // produced the change. Without this, Phase 1+ regressions devolve into
 // guessing which of ~13 write sites stomped a bin.
@@ -173,9 +173,9 @@ type overrideRow struct {
 func loadBinUOPOverrideRows(t *testing.T, db *store.DB, binID int64, op string) []overrideRow {
 	t.Helper()
 	rows, err := db.Query(`SELECT bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, metadata
-		FROM bin_uop_audit WHERE bin_id=$1 AND op=$2 ORDER BY id`, binID, op)
+		FROM bin_uop_ledger WHERE bin_id=$1 AND op=$2 ORDER BY id`, binID, op)
 	if err != nil {
-		t.Fatalf("query bin_uop_audit override bin=%d op=%q: %v", binID, op, err)
+		t.Fatalf("query bin_uop_ledger override bin=%d op=%q: %v", binID, op, err)
 	}
 	defer rows.Close()
 
@@ -198,7 +198,7 @@ func loadBinUOPOverrideRows(t *testing.T, db *store.DB, binID int64, op string) 
 // TestRegression_OverrideAuditReleasePartial pins Phase 0b: when the
 // operator submits a release_partial Count that diverges from the
 // system-suggested baseline, AuditReleaseOverride writes one
-// bin_uop_audit row with op=operator_override_release_partial. before
+// bin_uop_ledger row with op=operator_override_release_partial. before
 // holds the suggested value, after holds the operator's submission, and
 // metadata carries the disposition kind for cross-row context.
 //

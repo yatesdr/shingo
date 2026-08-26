@@ -26,15 +26,18 @@ type CoreLoader struct {
 	Replenishment string
 	OutboundDest  string
 	InboundSource string
-	BufferDest    string
 	ConfigGen     int64
 	// FunnelWindows: take one window at a time rather than spreading empties
 	// across all of them. Synced from Core, which owns the setting; false (spread)
 	// on a row written by a Core that predates the field, which is the behaviour
 	// every loader had when it was a plant-wide config key.
 	FunnelWindows bool
-	Positions     []CoreLoaderPosition
-	Payloads      []CoreLoaderPayload
+	// ChangeoverLoadDirective: a changeover commandeers this station's card,
+	// naming the carrier the incoming style needs rather than offering the
+	// whole board. Core owns it; this is the mirror.
+	ChangeoverLoadDirective bool
+	Positions               []CoreLoaderPosition
+	Payloads                []CoreLoaderPayload
 	// Quota is the declared carrier mix. Empty means none declared, which is
 	// today's behaviour: the loader takes whatever compatible carrier it finds.
 	Quota []CoreLoaderQuota
@@ -50,6 +53,11 @@ type CoreLoaderPosition struct {
 	PositionNode string
 	PayloadCode  string
 	Kind         string
+	// HomeKind is 'home' | 'buffer', synced from Core. EMPTY MEANS UNKNOWN, not
+	// home: a Core predating the field sends blank for buffer slots too, so a
+	// reader must fall back to the old empty-payload inference rather than
+	// treating blank as a positive answer.
+	HomeKind     string
 	UOPThreshold int
 	// Ordinal is where the operator dragged this window, synced from Core.
 	// Zero on every row means nothing was arranged (or the Core that sent it
@@ -90,17 +98,17 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 	for _, l := range loaders {
 		if _, err := tx.Exec(
-			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, buffer_dest, config_gen, funnel_windows, synced_at)
+			`INSERT INTO core_loaders (loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive, synced_at)
 			 VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
-			l.LoaderKey, l.Role, l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.BufferDest, l.ConfigGen, l.FunnelWindows,
+			l.LoaderKey, l.Role, l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.ConfigGen, l.FunnelWindows, l.ChangeoverLoadDirective,
 		); err != nil {
 			return fmt.Errorf("insert core_loader %s/%s: %w", l.LoaderKey, l.Role, err)
 		}
 		for _, p := range l.Positions {
 			// min_stock column left dormant (bin-count floor retired) — defaults to 0.
 			if _, err := tx.Exec(
-				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, kind, uop_threshold, ordinal) VALUES (?,?,?,?,?,?)`,
-				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.Kind, p.UOPThreshold, p.Ordinal,
+				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, kind, home_kind, uop_threshold, ordinal) VALUES (?,?,?,?,?,?,?)`,
+				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.Kind, p.HomeKind, p.UOPThreshold, p.Ordinal,
 			); err != nil {
 				return fmt.Errorf("insert position %s: %w", p.CoreNodeName, err)
 			}
@@ -135,7 +143,7 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 
 // ListCoreLoaders returns every cached loader assembled with positions+payloads.
 func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, buffer_dest, config_gen, funnel_windows FROM core_loaders ORDER BY loader_key`)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive FROM core_loaders ORDER BY loader_key`)
 	if err != nil {
 		return nil, fmt.Errorf("list core_loaders: %w", err)
 	}
@@ -153,7 +161,7 @@ func (db *DB) ListCoreLoaders() ([]CoreLoader, error) {
 
 // GetCoreLoader returns the cached loader with loaderKey, or nil.
 func (db *DB) GetCoreLoader(loaderKey string) (*CoreLoader, error) {
-	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, buffer_dest, config_gen, funnel_windows FROM core_loaders WHERE loader_key=?`, loaderKey)
+	rows, err := db.Query(`SELECT loader_key, role, name, layout, replenishment, outbound_dest, inbound_source, config_gen, funnel_windows, changeover_load_directive FROM core_loaders WHERE loader_key=?`, loaderKey)
 	if err != nil {
 		return nil, fmt.Errorf("get core_loader %s: %w", loaderKey, err)
 	}
@@ -176,7 +184,8 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 	for rows.Next() {
 		var l CoreLoader
 		if err := rows.Scan(&l.LoaderKey, &l.Role, &l.Name, &l.Layout, &l.Replenishment,
-			&l.OutboundDest, &l.InboundSource, &l.BufferDest, &l.ConfigGen, &l.FunnelWindows); err != nil {
+			&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &l.FunnelWindows,
+			&l.ChangeoverLoadDirective); err != nil {
 			return nil, fmt.Errorf("scan core_loader: %w", err)
 		}
 		out = append(out, l)
@@ -201,13 +210,13 @@ func scanCoreLoaders(rows *sql.Rows) ([]CoreLoader, error) {
 // This read used to be `ORDER BY position_node` — plain name order, with the
 // operator's arrangement discarded because there was no column to put it in.
 func (db *DB) attachCoreLoaderChildren(l *CoreLoader) error {
-	prows, err := db.Query(`SELECT position_node, payload_code, kind, uop_threshold, ordinal FROM core_loader_positions WHERE loader_key=?`, l.LoaderKey)
+	prows, err := db.Query(`SELECT position_node, payload_code, kind, home_kind, uop_threshold, ordinal FROM core_loader_positions WHERE loader_key=?`, l.LoaderKey)
 	if err != nil {
 		return fmt.Errorf("list positions %s: %w", l.LoaderKey, err)
 	}
 	for prows.Next() {
 		var p CoreLoaderPosition
-		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.Kind, &p.UOPThreshold, &p.Ordinal); err != nil {
+		if err := prows.Scan(&p.PositionNode, &p.PayloadCode, &p.Kind, &p.HomeKind, &p.UOPThreshold, &p.Ordinal); err != nil {
 			prows.Close()
 			return err
 		}

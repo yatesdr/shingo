@@ -13,7 +13,6 @@ package engine
 //                            RequestOrderStatusSync + HandleOrderStatusSnapshots
 //   reconciliation.go      — thin Engine delegates
 //   reconciliation_service.go — ReconciliationService delegates
-//   countgroup_sender.go   — SendCountGroupAck
 //
 // The tests construct Engine and subsystem structs directly (injecting
 // fields) rather than calling Start(); Start() wires PLC polling and
@@ -1068,63 +1067,5 @@ func TestReconciliationService_ListDeadLetterAndRequeue(t *testing.T) {
 	}
 	if len(dead2) != 0 {
 		t.Errorf("after requeue, dead-letter list should be empty, got %d rows", len(dead2))
-	}
-}
-
-// ── countgroup_sender.go ────────────────────────────────────────────
-
-func TestEngine_SendCountGroupAck_NoSendFn(t *testing.T) {
-	t.Parallel()
-	eng := newCoverageEngine(t)
-	err := eng.SendCountGroupAck(&protocol.CountGroupAck{
-		CorrelationID: "corr-1", Group: "g1", Outcome: "acked",
-	})
-	if err == nil || !strings.Contains(err.Error(), "send function not configured") {
-		t.Errorf("err = %v, want send-function-not-configured", err)
-	}
-}
-
-func TestEngine_SendCountGroupAck_BuildsEnvelope(t *testing.T) {
-	t.Parallel()
-	eng := newCoverageEngine(t)
-	var captured *protocol.Envelope
-	eng.SetSendFunc(func(env *protocol.Envelope) error {
-		captured = env
-		return nil
-	})
-	ack := &protocol.CountGroupAck{
-		CorrelationID: "corr-1",
-		Group:         "g1",
-		Outcome:       protocol.AckOutcomeAcked,
-		AckLatencyMs:  42,
-		Timestamp:     time.Now(),
-	}
-	testutil.MustNoErr(t, eng.SendCountGroupAck(ack), "SendCountGroupAck")
-	if captured == nil {
-		t.Fatal("expected envelope to be sent")
-	}
-	if captured.Type != protocol.TypeData {
-		t.Errorf("envelope Type = %q, want %q", captured.Type, protocol.TypeData)
-	}
-	var data protocol.Data
-	testutil.MustNoErr(t, captured.DecodePayload(&data), "decode payload")
-	if data.Subject != protocol.SubjectCountGroupAck {
-		t.Errorf("Subject = %q, want %q", data.Subject, protocol.SubjectCountGroupAck)
-	}
-	if captured.Src.Role != protocol.RoleEdge || captured.Src.Station != eng.cfg.StationID() {
-		t.Errorf("Src = %+v, want edge/%s", captured.Src, eng.cfg.StationID())
-	}
-	if captured.Dst.Role != protocol.RoleCore {
-		t.Errorf("Dst.Role = %q, want core", captured.Dst.Role)
-	}
-}
-
-func TestEngine_SendCountGroupAck_SendFnError(t *testing.T) {
-	t.Parallel()
-	eng := newCoverageEngine(t)
-	eng.SetSendFunc(func(*protocol.Envelope) error { return fmt.Errorf("bus closed") })
-	err := eng.SendCountGroupAck(&protocol.CountGroupAck{CorrelationID: "c1"})
-	if err == nil || !strings.Contains(err.Error(), "bus closed") {
-		t.Errorf("err = %v, want bus-closed", err)
 	}
 }

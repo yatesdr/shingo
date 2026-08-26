@@ -146,7 +146,9 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		{"Edge wire intake", "dispatch/lifecycle_service.go", "an Edge station sends an order request"},
 		{"complex intake", "dispatch/complex_intake.go", "an Edge station sends a multi-leg order; the buried branch is this same door"},
 		{"compound children", "dispatch/compound.go", "a reshuffle plan, written as child rows in one transaction"},
-		{"restore synthetic", "dispatch/restore_listeners.go", "Core itself, to parent the put-back compound"},
+		// The "restore synthetic" door that stood here is gone: the restore-blockers
+		// subsystem that minted those parents is retired (no code creates them; the
+		// one-shot boot sweep only cancels leftovers). No order-creation site, no door.
 		// One door, two screens. It was two doors — the operator's orders page
 		// and the engineers' /test-orders page — which had drifted twelve ways
 		// between them, and each difference was a bug waiting its turn. They
@@ -164,6 +166,43 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		//     there is no episode; blank would land it in the bucket that means
 		//     "we lost a demand link".
 		{"bin move", "engine/bin_move.go", "a person moving one bin from where it is to somewhere else — the operator names the bin, the engineer names the node"},
+		// The one door that is about a ROBOT rather than about material. A bin
+		// riding a deck has nothing coming to fetch it — the order that was
+		// carrying it is terminal — so this asks that robot, and only that
+		// robot, to set the bin down somewhere.
+		//
+		// The three questions:
+		//  1. Projects to the Edge? No. It writes the row itself, like the bin-move
+		//     door beside it, so it is outside the projection scope. That is the
+		//     right answer here for a second reason as well: no Edge station asked
+		//     for this order and none of them owns the bin. It is Core reconciling
+		//     its own bookkeeping with the floor.
+		//  2. Needs the dropoff-capacity gate? Yes, and it takes the real slot
+		//     reservation: ReserveStorageDropoff before ConfirmForDispatch, which
+		//     also settles a group destination to a concrete child. Its own
+		//     three-tier destination search additionally refuses any node that is
+		//     occupied or claimed before it gets that far.
+		//  3. What origin_class? no_demand, by omission — and deliberately. No
+		//     place asked for material; a bin is in the wrong state and Core is
+		//     putting it right. An episode here would count a recovery as demand
+		//     and read every plant's demand history high by however many bins got
+		//     dropped that month.
+		{"carried-bin recovery", "engine/carried_bin_recovery.go", "nobody — Core asks the robot holding a stranded bin to put it down"},
+		// THE LANE SELF-HEAL DOOR IS DELETED (§R.104), and it is not merely moved:
+		// nothing takes its place, because the order it used to create does not
+		// exist. Its entry read "nobody — the lane gate finds a robot dwelling
+		// behind a bin no one is coming for, and digs it out", and its comment
+		// explained that it "mints the parent that OWNS the excavation, because the
+		// dweller cannot: {staged → reshuffling} is not a legal transition and
+		// should not become one, so the demand keeps dwelling and something else
+		// does the digging."
+		//
+		// The dweller can. It owns its excavation without moving at all — no
+		// transition is needed because its resume is the splice-append, not the
+		// queue round-trip. So the excavation's children are written by the
+		// compound door like every other dig's, and this list is one door shorter
+		// rather than one door renamed. The three questions it answered are now
+		// the compound door's, unchanged.
 	}
 
 	// Each named door has to still be there. A door whose site stops writing

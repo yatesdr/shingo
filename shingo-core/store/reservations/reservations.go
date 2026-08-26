@@ -67,12 +67,23 @@ const (
 )
 
 // Kind is the resource a reservation covers — the resource_kind column's domain
-// (v44). 'mouth' is accepted by the schema but has no dedicated code path yet.
+// (v44): a bin, a storage slot, or a lane mouth. The mouth kind is the lane-seam
+// substrate (v51 mode column + the AcquireLanes family in mouth.go).
 type Kind string
 
 const (
 	KindBin  Kind = "bin"
 	KindSlot Kind = "slot"
+	// KindMouth is a lane-mouth hold: one row per (lane, order), node_id = the
+	// LANE node, carrying a mode (mouth.go). Unlike bin/slot rows it has NO unique
+	// index — same-mode sharing means several active mouth rows on one lane is
+	// legal. A mouth hold is per-visit and released by its own owner, so the G3
+	// foreign-release class is structurally dead for it.
+	//
+	// Steal (Rule 2) must NEVER select a mouth row. No steal predicate exists yet;
+	// when one is written it is pinned to resource_kind IN ('bin','slot'). This
+	// comment is the pin until that helper exists.
+	KindMouth Kind = "mouth"
 )
 
 // Ref is the kind-agnostic identity of a reserved resource: a bin (Kind=bin,

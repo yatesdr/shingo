@@ -46,6 +46,8 @@ func sameOrder(a, b []string) bool {
 // distinct bins; the 2 staging re-grabs are skipped because those nodes are empty
 // at reserve (the bin hasn't relayed there yet).
 func TestComplexPickups_SwapRelay(t *testing.T) {
+	t.Parallel()
+
 	// Mirrors BuildSingleSwapSteps' 9-step shape.
 	steps := []resolvedStep{
 		{Action: protocol.ActionPickup, Node: "src"},         // 1 true source (new bin)
@@ -83,6 +85,8 @@ func TestComplexPickups_SwapRelay(t *testing.T) {
 // live-emptiness check rather than silently skip. This trips if the pure flag
 // stops being set.
 func TestComplexPickups_DropoffBeforePickupIsRelay(t *testing.T) {
+	t.Parallel()
+
 	steps := []resolvedStep{
 		{Action: protocol.ActionDropoff, Node: "N"},
 		{Action: protocol.ActionPickup, Node: "N"}, // flagged potential relay
@@ -101,6 +105,8 @@ func TestComplexPickups_DropoffBeforePickupIsRelay(t *testing.T) {
 // dropoff is a TRUE source (potentialRelay false) — the discriminator keys on
 // relay position, not payload — and carries Empty through for the reserve.
 func TestComplexPickups_EmptyLegIsATrueSource(t *testing.T) {
+	t.Parallel()
+
 	steps := []resolvedStep{
 		{Action: protocol.ActionPickup, Node: "emptyPool", Empty: true},
 		{Action: protocol.ActionDropoff, Node: "produceLine"},

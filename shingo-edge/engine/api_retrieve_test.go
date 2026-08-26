@@ -1,5 +1,3 @@
-//go:build docker
-
 package engine
 
 import (
@@ -86,7 +84,7 @@ func TestCreateRetrieveForAPI_BatchIsCappedByTheLoaderBudget(t *testing.T) {
 // TestCreateRetrieveForAPI_NonLoaderDestinationIsUnchanged is the other half of
 // the rule, and the reason this is not "route everything through the seam".
 //
-// A press seat, a supermarket slot, a quality-hold spot: no loader owns them, so
+// A press position, a supermarket slot, a quality-hold spot: no loader owns them, so
 // there is no budget for them to belong to. Inventing one would be the mistake
 // the RequestEmptyBin simple-mode guard comment already explains. A batch to
 // such a destination creates exactly what was asked for, as it always has.

@@ -95,16 +95,19 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 		return nil, err
 	}
 
-	// Look up the to-claim from the changeover's target style
-	toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.changeover.ToStyleID, ctx.node.CoreNodeName)
-	if err != nil {
+	// Look up the to-claim from the changeover's target style. A fanned-out
+	// press position has no row under its own name and resolves through the parent
+	// its task was planned from — see changeoverToClaim.
+	toClaim := e.changeoverToClaim(ctx.changeover.ToStyleID, ctx.node, ctx.nodeTask)
+	if toClaim == nil {
 		return nil, fmt.Errorf("no claim for target style on node %s", ctx.node.Name)
 	}
 
 	if toClaim.InboundStaging != "" {
 		steps := BuildStageSteps(toClaim)
 		if steps != nil {
-			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.InboundStaging, toClaim.CoreNodeName, steps)
+			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.InboundStaging, toClaim.CoreNodeName, steps,
+				e.changeoverOrigin(ctx.changeover.ID))
 			if err != nil {
 				return nil, err
 			}
@@ -117,7 +120,8 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 	// so the changeover retrieve honours the configured supermarket; empty
 	// preserves Core's global FIFO fallback for legacy claims.
 	retrieveEmpty := toClaim.Role == protocol.ClaimRoleProduce
-	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, toClaim.InboundSource, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm, false)
+	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, toClaim.InboundSource, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm, false,
+		e.changeoverOrigin(ctx.changeover.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -134,10 +138,14 @@ func (e *Engine) EvacuateNode(processID, nodeID int64, partialQty int64) (*order
 		return nil, err
 	}
 
-	// Use claim-based release
-	if fromClaim := findActiveClaim(e.db, ctx.node); fromClaim != nil && fromClaim.OutboundStaging != "" {
+	// Use claim-based release. A fanned-out press position has no row under its own
+	// name; changeoverFromClaim resolves it through the parent the position's task
+	// was planned from.
+	fromClaim := e.changeoverFromClaim(ctx.node, ctx.nodeTask)
+	if fromClaim != nil && fromClaim.OutboundStaging != "" {
 		steps := BuildReleaseSteps(fromClaim)
-		order, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&ctx.node.ID, 1, "", fromClaim.CoreNodeName, steps)
+		order, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&ctx.node.ID, 1, "", fromClaim.CoreNodeName, steps,
+			e.changeoverOrigin(ctx.changeover.ID))
 		if err != nil {
 			return nil, err
 		}
@@ -145,13 +153,15 @@ func (e *Engine) EvacuateNode(processID, nodeID int64, partialQty int64) (*order
 		return order, nil
 	}
 
-	// Fallback: simple release via move order
+	// Fallback: simple release via move order. The position claim is passed through
+	// because the release path resolves claims by node name too, and would
+	// otherwise refuse the same position for the same reason.
 	var order *orders.Order
-	if partialQty > 0 {
-		order, err = e.ReleaseNodePartial(nodeID, partialQty)
-	} else {
-		order, err = e.ReleaseNodeEmpty(nodeID)
+	qty := partialQty
+	if qty <= 0 {
+		qty = 1
 	}
+	order, err = e.releaseNodeWithClaim(nodeID, qty, nil, fromClaim)
 	if err != nil {
 		return nil, err
 	}
@@ -169,26 +179,64 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 	}
 
 	// Use claim-based delivery — check if this is a restore (changeover-only) or new material
-	toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.changeover.ToStyleID, ctx.node.CoreNodeName)
-	if err != nil {
+	toClaim := e.changeoverToClaim(ctx.changeover.ToStyleID, ctx.node, ctx.nodeTask)
+	if toClaim == nil {
 		return nil, fmt.Errorf("no claim for target style on node %s", ctx.node.Name)
 	}
 
-	if toClaim.InboundStaging != "" {
-		steps := BuildStagedDeliverSteps(toClaim)
+	// THE STAGING NODE IS A PROPERTY OF THE CELL, NOT OF ONE POSITION IN IT.
+	//
+	// A fanned-out press position has no claim row, so toClaim here is synthesized —
+	// and SynthesizePositionClaim clears InboundStaging on purpose, because
+	// the diff pipeline needs a synthesized Add to fall through to a direct
+	// retrieve that the tooling decorator then adds the hold to. Reading that
+	// cleared field here as "this node does not stage" is what made this button
+	// return 200, mark the position released, and deliver nothing (N1-a, sim
+	// 2026-08-24). The position's answer is its parent's answer.
+	staging := toClaim.InboundStaging
+	if staging == "" {
+		if parent := e.parentClaimOf(ctx.nodeTask.ToClaimID); parent != nil {
+			staging = parent.InboundStaging
+		}
+	}
+	if staging != "" {
+		stagedClaim := *toClaim
+		stagedClaim.InboundStaging = staging
+		steps := BuildStagedDeliverSteps(&stagedClaim)
 		if steps != nil {
-			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, toClaim.CoreNodeName, steps)
+			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, toClaim.CoreNodeName, steps,
+				e.changeoverOrigin(ctx.changeover.ID))
 			if err != nil {
 				return nil, err
 			}
 			e.recordChangeoverOrder(ctx, false, &order.ID, ctx.nodeTask.OldMaterialReleaseOrderID, domain.NodeTaskReleaseRequested)
 			return order, nil
 		}
+		// The cell stages but no steps could be built, so nothing is coming.
+		// Refuse rather than mark released: "released" on a node whose material
+		// never moved is the lie this whole round has been removing.
+		return nil, fmt.Errorf("node %s stages its inbound material at %s but no delivery could be "+
+			"built for it — the position's material has not moved", ctx.node.Name, staging)
 	}
 
-	// No staging — mark as released directly
+	// No staging anywhere in the cell — the material goes straight to the node,
+	// so there is nothing to release from and the task is done.
 	e.recordChangeoverOrder(ctx, false, ctx.nodeTask.NextMaterialOrderID, ctx.nodeTask.OldMaterialReleaseOrderID, domain.NodeTaskReleased)
 	return nil, nil
+}
+
+// parentClaimOf loads the persisted claim a synthesized position claim was derived
+// from. The id is the parent's precisely because SynthesizePositionClaim
+// keeps it — see the contract note there.
+func (e *Engine) parentClaimOf(claimID *int64) *processes.NodeClaim {
+	if claimID == nil {
+		return nil
+	}
+	claim, err := e.db.GetStyleNodeClaim(*claimID)
+	if err != nil {
+		return nil
+	}
+	return claim
 }
 
 func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
@@ -214,9 +262,13 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	// drop, per IsNodeTaskStateTerminal) without touching runtime, then
 	// run the station rollup so an all-drop station still completes.
 	changeover, coErr := e.db.GetActiveProcessChangeover(processID)
+	var nodeTask *processes.NodeTask
 	if coErr == nil {
-		nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-		if err == nil && nodeTask.Situation == "drop" {
+		task, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+		if err == nil {
+			nodeTask = task
+		}
+		if nodeTask != nil && nodeTask.Situation == "drop" {
 			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskLineCleared); err != nil {
 				log.Printf("switch_node: update drop task state for task %d: %v", nodeTask.ID, err)
 			}
@@ -228,8 +280,12 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 		}
 	}
 
-	claim, err := e.db.GetStyleNodeClaimByNode(*process.TargetStyleID, node.CoreNodeName)
-	if err != nil {
+	// A fanned-out press position has no claim under its own name and resolves
+	// through the parent its task was planned from. Without this the position's
+	// task can never reach `switched`, and because the cutover gate blocks on
+	// any live task the whole changeover deadlocks with cancel as the only exit.
+	claim := e.changeoverToClaim(*process.TargetStyleID, node, nodeTask)
+	if claim == nil {
 		return fmt.Errorf("target style claim not found for node")
 	}
 	claimID := claim.ID
@@ -267,8 +323,7 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	}
 
 	if coErr == nil {
-		nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-		if err == nil {
+		if nodeTask != nil {
 			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskSwitched); err != nil {
 				log.Printf("switch_node: update node task state for task %d: %v", nodeTask.ID, err)
 			}

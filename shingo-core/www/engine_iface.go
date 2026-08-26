@@ -6,7 +6,6 @@ import (
 
 	"shingocore/config"
 	"shingocore/dispatch"
-	"shingocore/dispatch/eta"
 	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/fleet"
@@ -23,18 +22,29 @@ import (
 // Phase 6.5 (2026-04-25) split this out of EngineAccess. The split
 // captures the architectural role distinction: most handlers do pure
 // CRUD through services and have no business reaching engine-level
-// orchestration. ServiceAccess gives those handlers a 25-method surface;
+// orchestration. ServiceAccess gives those handlers a 49-method surface;
 // orchestration handlers take EngineOrchestration explicitly via
 // h.orchestration.
+//
+// It said "25-method" from the split in 2026-04 until 2026-08-19, by which
+// point the interface had doubled. Nothing measured it, so nothing noticed.
+// The count above is now asserted by a test — change it there when you
+// change it here, and read that test's comment before widening either
+// interface.
 //
 // State queries (GetCachedRobotStatus, GetAllCachedRobots,
 // GetNodeOccupancy) live here despite being engine-side because they
 // are pure reads with no side effects — semantically equivalent to
 // service queries from the handler's perspective.
 //
-// See implementation-plan.md "Post-Phase 6 tripwires" for the
-// boundary-creep guard: this split must stay at two interfaces, not
-// drift into N-per-handler.
+// The boundary-creep guard — this split must stay at two interfaces, not
+// drift into N-per-handler — is "Post-Phase 6 tripwires" in
+// the implementation plan (docs/plans/implementation-plan.md at the
+// GitHub root, OUTSIDE this repo — it was never committed in-tree).
+//
+// That document is why the widths above drifted unwatched: a ratchet
+// written only in a file the repo cannot see is a ratchet nothing enforces.
+// The enforced guard is engine_iface_width_test.go in this package.
 type ServiceAccess interface {
 	// ── Subsystem accessors ────────────────────────────────────────
 	AppConfig() *config.Config
@@ -93,6 +103,16 @@ type ServiceAccess interface {
 	// cached total (for drift detection), and configured thresholds. A pure read
 	// of the monitor snapshot + inventory.
 	ReplenishmentHealth(ctx context.Context) ([]engine.PayloadHealth, error)
+	// MaintainedGroupStates is the keeper's last tick, one line per (group, bin
+	// type): the declared level and the three populations it subtracted to reach
+	// its gap.
+	//
+	// A SNAPSHOT OF A COMPLETED TICK, not a fresh computation. The page shows what
+	// the keeper actually decided, so an operator reading a surprising gap is
+	// reading the arithmetic that produced the asks in front of them rather than a
+	// second opinion computed at render time. Empty until the first tick, and
+	// empty forever on a plant with no maintained group.
+	MaintainedGroupStates() []engine.MaintainerGroupState
 
 	// Ledger-integrity exception list (Phase 4.6). Read-side only.
 	OpenNegativeBins() ([]domain.OpenNegativeBin, error)
@@ -118,7 +138,6 @@ type ServiceAccess interface {
 	// error (reject the save); an un-checkable case (no RDS, no nodes) returns a
 	// check with warnings and err=nil (save allowed, flagged unverified).
 	ValidateAdvancedLoadSequence(payloadID int64, seqName string) (*engine.LoadSequenceCheck, error)
-	EtaCache() *eta.Cache
 	GetActiveOrdersWithRobotLocation() ([]engine.BoardOrder, error)
 	GetActiveOrdersWithRobotLocationFiltered(stations []string) ([]engine.BoardOrder, error)
 	GetActiveOrderWithRobotLocation(orderID int64) (*engine.BoardOrder, error)
@@ -145,6 +164,10 @@ type EngineOrchestration interface {
 	// ── Orders ─────────────────────────────────────────────────────
 	CreateBinMove(req engine.BinMoveRequest) (*engine.BinMoveResult, error)
 	TerminateOrder(orderID int64, actor string) error
+	// HardReleaseOrder advances a dwelling order past its wait regardless of who
+	// owns it — the escape hatch for a wait whose ordinary releaser is wedged.
+	// Same privilege class as TerminateOrder; the audit row names the actor.
+	HardReleaseOrder(orderID int64, actor string) error
 
 	// ── Scene sync ─────────────────────────────────────────────────
 	SceneSync() (int, int, int, error)
@@ -158,7 +181,6 @@ type EngineOrchestration interface {
 	ReconfigureDatabase()
 	ReconfigureFleet()
 	ReconfigureMessaging()
-	ReconfigureCountGroups()
 	ReconfigureNotifications()
 }
 

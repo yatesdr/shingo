@@ -247,7 +247,7 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 			// evaluated on every tick above the level, not just the first.
 			if _, shouldClose := e.evaluateCellLevel(claim, newRemaining); shouldClose {
 				e.closeCellEpisode(node.ProcessID, string(claim.PayloadCode),
-					protocol.EpisodeDirectionSupply, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
+					claim.Role, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 			}
 		}
 	}
@@ -312,7 +312,7 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 			// rather than only the first.
 			if _, shouldClose := e.evaluateProduceLevel(claim, newRemaining); shouldClose {
 				e.closeCellEpisode(node.ProcessID, string(claim.PayloadCode),
-					protocol.EpisodeDirectionEvacuate, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
+					claim.Role, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
 			}
 		} else {
 			canAccept, reason := e.CanAcceptOrders(node.ID)

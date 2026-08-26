@@ -20,13 +20,14 @@ import (
 // empty/full bin from anywhere in the system, including the empty-tote return
 // area instead of the configured supermarket. See planRetrieveEmpty in
 // shingo-core/dispatch/planning_service.go for the resolver branch.
-func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, sourceNode, stagingNode, loadType, payloadCode string, autoConfirm, skipAutoConfirm bool) (*orders.Order, error) {
+// origin is REQUIRED. There is no unattributed twin of this any more — see the
+// Origin type, and see specimen (c) for what the twin cost.
+func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, sourceNode, stagingNode, loadType, payloadCode string, autoConfirm, skipAutoConfirm bool, origin Origin) (*orders.Order, error) {
 	return m.createRetrieveOrder(processNodeID, retrieveEmpty, quantity,
-		deliveryNode, sourceNode, stagingNode, loadType, payloadCode, autoConfirm, skipAutoConfirm, Origin{})
+		deliveryNode, sourceNode, stagingNode, loadType, payloadCode, autoConfirm, skipAutoConfirm, origin)
 }
 
-// createRetrieveOrder is the one body. The exported wrappers differ only in
-// whether they can name an origin.
+// createRetrieveOrder is the one body.
 func (m *Manager) createRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64,
 	deliveryNode, sourceNode, stagingNode, loadType, payloadCode string,
 	autoConfirm, skipAutoConfirm bool, origin Origin) (*orders.Order, error) {
@@ -68,8 +69,9 @@ func (m *Manager) createRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 // autoConfirm threads through to the order row so Manager.handleDelivered
 // can self-confirm instead of stranding the order at "delivered" when no
 // operator station is wired up to confirm manually.
-func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, autoConfirm bool) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", nil, autoConfirm, Origin{})
+// origin is REQUIRED; see the Origin type.
+func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, autoConfirm bool, origin Origin) (*orders.Order, error) {
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", nil, autoConfirm, origin)
 }
 
 // CreateMoveOrderWithPayloadCode is CreateMoveOrder with an explicit payload
@@ -81,16 +83,18 @@ func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNo
 // filter active orders by payload_code per card — show no in-transit state on
 // the loaded payload's tile and may render unrelated tiles as queued via the
 // no-payload-code fallback in operator-render.js / operator-modal.js.
-func (m *Manager) CreateMoveOrderWithPayloadCode(processNodeID *int64, quantity int64, sourceNode, deliveryNode, payloadCode string, autoConfirm bool) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, nil, autoConfirm, Origin{})
+// origin is REQUIRED; see the Origin type.
+func (m *Manager) CreateMoveOrderWithPayloadCode(processNodeID *int64, quantity int64, sourceNode, deliveryNode, payloadCode string, autoConfirm bool, origin Origin) (*orders.Order, error) {
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, payloadCode, nil, autoConfirm, origin)
 }
 
 // CreateMoveOrderWithUOP creates a move order and threads remainingUOP into the
 // protocol envelope so Core can atomically clear/sync the bin manifest on claim.
 // autoConfirm mirrors CreateMoveOrder so operator-initiated moves at a
 // manual_swap node can self-confirm on delivery.
-func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, remainingUOP *int, autoConfirm bool) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", remainingUOP, autoConfirm, Origin{})
+// origin is REQUIRED; see the Origin type.
+func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, remainingUOP *int, autoConfirm bool, origin Origin) (*orders.Order, error) {
+	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", remainingUOP, autoConfirm, origin)
 }
 
 // createMoveOrder is the one body behind all four move variants.
@@ -149,8 +153,9 @@ func (m *Manager) createMoveOrder(processNodeID *int64, quantity int64,
 // order.BinID and targets it at release-time fallback. Pass "" when the
 // order has no distinct line node — Core falls back to source-node
 // behavior.
-func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, false, "", "", Origin{})
+// origin is REQUIRED; see the Origin type.
+func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, origin Origin) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, false, "", "", "", origin)
 }
 
 // CreateComplexOrderWithAutoConfirm creates an auto-confirm complex order.
@@ -160,12 +165,14 @@ func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliv
 // FINISHED, eliminating the FINISHED → CONFIRMED race window where the
 // scanner can re-claim a delivered bin and the late confirm clobbers state
 // (the SMN_001 / SMN_002 teleport bug, plant-test 2026-04-27).
-func (m *Manager) CreateComplexOrderWithAutoConfirm(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, true, "", "", Origin{})
+// origin is REQUIRED; see the Origin type.
+func (m *Manager) CreateComplexOrderWithAutoConfirm(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, origin Origin) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, true, "", "", "", origin)
 }
 
-func (m *Manager) CreateComplexOrderWithPayload(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode string) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, "", Origin{})
+// origin is REQUIRED; see the Origin type.
+func (m *Manager) CreateComplexOrderWithPayload(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode string, origin Origin) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, "", "", origin)
 }
 
 // CreateComplexOrderSibling creates a complex order and records the
@@ -173,12 +180,48 @@ func (m *Manager) CreateComplexOrderWithPayload(processNodeID *int64, quantity i
 // can pair the legs at intake — before the removal leg's synchronous
 // dispatch claims the line bin. siblingUUID is the *other* leg's edge UUID,
 // or "" for non-swap / first-created legs.
-func (m *Manager) CreateComplexOrderSibling(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode, siblingUUID string) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, siblingUUID, Origin{})
+// origin is REQUIRED; see the Origin type.
+func (m *Manager) CreateComplexOrderSibling(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode, siblingUUID string, origin Origin) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, siblingUUID, "", origin)
 }
 
-func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadOverride, siblingUUID string, origin Origin) (*orders.Order, error) {
-	orderUUID := uuid.New().String()
+// CreateComplexOrderPaired creates one leg of a swap whose BOTH uuids were
+// minted before either create, so each leg can name its partner.
+//
+// ── WHY THE UUID COMES FROM THE CALLER ────────────────────────────────────
+//
+// createComplexOrder used to mint the uuid itself, which made the first leg
+// created structurally unable to name a sibling that did not exist yet: it
+// went in with siblingUUID == "", and everything downstream that pairs legs
+// had to cope with a half-linked pair. swap_hold's fail-open at sibUUID == ""
+// is one such coping mechanism, and SYNTH-round2's finding is that it makes
+// CREATION ORDER a correctness input — the changeover path creates the filler
+// first, the produce path the supply, and no single ordering is safe once both
+// legs are held.
+//
+// Minting both up front removes the window entirely: neither leg is ever
+// unpaired, and creation order stops mattering. Core's intake back-link
+// becomes redundant-but-harmless rather than load-bearing.
+//
+// ORDERING STILL MATTERS FOR THE OUTBOX, and differently: the outbox drains
+// strictly ORDER BY id, so the leg created first is the leg Core sees first.
+// That is about which robot is asked for first, not about pairing, and the
+// callers keep their existing order for that reason.
+func (m *Manager) CreateComplexOrderPaired(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode, siblingUUID, orderUUID string, origin Origin) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode, siblingUUID, orderUUID, origin)
+}
+
+// NewOrderUUID mints an order uuid. Exported so a caller creating a PAIR can
+// mint both before either create — see CreateComplexOrderPaired.
+func NewOrderUUID() string { return uuid.New().String() }
+
+func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadOverride, siblingUUID, presetUUID string, origin Origin) (*orders.Order, error) {
+	// Caller-supplied when this leg is half of a pre-minted pair; minted here
+	// for every single-order path, which is most of them.
+	orderUUID := presetUUID
+	if orderUUID == "" {
+		orderUUID = uuid.New().String()
+	}
 
 	stepsJSON, err := json.Marshal(steps)
 	if err != nil {
@@ -198,6 +241,11 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 		return nil, fmt.Errorf("store steps: %w", err)
 	}
 
+	// Routing comes from the claim, resolved the same way and at the same
+	// moment as the payload — see lookupRouting for why this is not a
+	// parameter.
+	keyRoute, keyTask := m.lookupRouting(processNodeID)
+
 	env, envErr := m.sender.build(protocol.TypeComplexOrderRequest, &protocol.ComplexOrderRequest{
 		OrderUUID:        orderUUID,
 		PayloadCode:      payloadCode,
@@ -206,6 +254,8 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 		ProcessNode:      processNodeName,
 		Steps:            steps,
 		SiblingOrderUUID: siblingUUID,
+		KeyRoute:         keyRoute,
+		KeyTask:          keyTask,
 		OriginID:         origin.ID,
 		OriginClass:      origin.Class,
 	})
@@ -249,14 +299,43 @@ func (m *Manager) QueueIngestManifest(payloadCode, binLabel string, binID int64,
 // order nothing but the compiler could check — and the compiler cannot tell
 // origin_id from origin_class.
 //
-// The zero value is "not stated", which is exactly right for the ~29 create
-// sites that are neither demand-serving nor structurally originless. Core
-// classifies those; saying nothing here is honest, where guessing would not be.
+// ── THERE IS NO "NOT STATED" ANY MORE ─────────────────────────────────────
+//
+// The zero value used to be a third state, defended as honest: "Core classifies
+// those; saying nothing here is honest, where guessing would not be." The
+// defence was sound and the outcome was not. Every door that was never wired
+// took the zero — the HMI button, the sequential backfill, the changeover
+// applier's legs, RequestEmptyBin's multi-step arm — and each of them WAS
+// demand-serving. They reached Core carrying nothing, Core honestly stamped
+// orphan, and the episode surface showed changeovers and thresholds only. Not
+// mislabelled: absent. A zero value that means "nobody decided" is
+// indistinguishable from "somebody decided nothing", and the whole of specimen
+// (c) is the second one wearing the first one's clothes.
+//
+// So the type is TOTAL: exactly two constructors, and every create site names
+// one. "Forgot" is now a compile error, because the unattributed wrappers that
+// used to supply this silently are deleted and origin is a required argument.
+// The remaining hole is a bare Origin{} literal, which Go will always let you
+// write; a forbidigo fence closes it outside this package.
+//
+// NO_DEMAND MEANS "BELONGS TO NO DEMAND EPISODE BY CONSTRUCTION" — not "nobody
+// wanted it". An API-commanded retrieve, a loader's owed outbound, a home
+// consolidation: somebody or something wanted every one of those, and none of
+// them will ever belong to a cell's episode. That is the distinction the class
+// records, and it is what keeps the orphan bucket meaning "should have had one
+// and lost it".
+//
+// AND A WRONG no_demand IS WORSE THAN A WRONG attached, which is the thing to
+// hold on to when adding a site. An order labelled no_demand has ANSWERED the
+// question and leaves the orphan bucket for good; an order labelled with the
+// wrong episode is visibly wrong on a surface somebody reads. When a site is
+// genuinely unclear, it is the no_demand answer that needs the argument.
 type Origin struct {
-	// ID is the demand episode. Empty for a no_demand or unattributed order.
+	// ID is the demand episode. Empty for a no_demand order.
 	ID string
-	// Class is one of protocol.OriginClass*. Empty means "not stated" and
-	// leaves the classification to Core.
+	// Class is one of protocol.OriginClass*. Empty means the value was never
+	// built through a constructor — see the fence above; nothing in the tree
+	// should be able to produce it.
 	Class string
 }
 
@@ -274,36 +353,4 @@ func Attached(originID string) Origin {
 // in it. This is what keeps the orphan bucket meaning something.
 func NoDemand() Origin {
 	return Origin{Class: protocol.OriginClassNoDemand}
-}
-
-// CreateRetrieveOrderWithOrigin is CreateRetrieveOrder, attributed.
-func (m *Manager) CreateRetrieveOrderWithOrigin(processNodeID *int64, retrieveEmpty bool, quantity int64,
-	deliveryNode, sourceNode, stagingNode, loadType, payloadCode string,
-	autoConfirm, skipAutoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createRetrieveOrder(processNodeID, retrieveEmpty, quantity,
-		deliveryNode, sourceNode, stagingNode, loadType, payloadCode, autoConfirm, skipAutoConfirm, origin)
-}
-
-// CreateMoveOrderWithOrigin is CreateMoveOrder, attributed. Used for
-// PrimePairedPositions: a prime created inside one entry-point call is a CHILD
-// of that call's episode, not a demand of its own and not no_demand.
-func (m *Manager) CreateMoveOrderWithOrigin(processNodeID *int64, quantity int64,
-	sourceNode, deliveryNode string, autoConfirm bool, origin Origin) (*orders.Order, error) {
-	return m.createMoveOrder(processNodeID, quantity, sourceNode, deliveryNode, "", nil, autoConfirm, origin)
-}
-
-// CreateComplexOrderWithOrigin is CreateComplexOrder, attributed. BOTH legs of
-// a swap pair take the SAME origin: one fire is one demand served by two rows.
-func (m *Manager) CreateComplexOrderWithOrigin(processNodeID *int64, quantity int64,
-	deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, origin Origin) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, false, "", "", origin)
-}
-
-// CreateComplexOrderSiblingWithOrigin is CreateComplexOrderSibling, attributed.
-// Both legs of a swap pair take the same origin.
-func (m *Manager) CreateComplexOrderSiblingWithOrigin(processNodeID *int64, quantity int64,
-	deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep,
-	autoConfirm bool, payloadCode, siblingUUID string, origin Origin) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName,
-		steps, autoConfirm, payloadCode, siblingUUID, origin)
 }

@@ -48,9 +48,10 @@ func (a *coreOutboxStore) MarkOutboxExhausted(id int64, reason string) error {
 	return a.db.MarkOutboxExhausted(id, reason)
 }
 
-// PurgeOldOutbox removes old messages.
-func (a *coreOutboxStore) PurgeOldOutbox(olderThan time.Duration) (int, error) {
-	n, err := a.db.PurgeOldOutbox(olderThan)
+// PurgeOldOutbox removes delivered messages past the delivered cutoff and
+// dead-lettered ones past their own, longer cutoff.
+func (a *coreOutboxStore) PurgeOldOutbox(delivered, deadLetter time.Duration) (int, error) {
+	n, err := a.db.PurgeOldOutbox(delivered, deadLetter)
 	return int(n), err
 }
 

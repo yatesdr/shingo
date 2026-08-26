@@ -135,7 +135,7 @@ func TestInventoryDelta_BinUOPDelta_StaleEpochDroppedAndAudited(t *testing.T) {
 
 	var before, after int
 	var meta string
-	testutil.MustNoErr(t, db.QueryRow(`SELECT before_uop, after_uop, metadata FROM bin_uop_audit
+	testutil.MustNoErr(t, db.QueryRow(`SELECT before_uop, after_uop, metadata FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op='stale_epoch_dropped'`, bin.ID).Scan(&before, &after, &meta), "read stale audit row")
 	if before != 100 || after != 100 {
 		t.Errorf("audit before/after = %d/%d, want 100/100 (count-unchanged observation)", before, after)
@@ -600,7 +600,7 @@ func TestApplyBinUOPDelta_CaptureReductionToZeroFiresClearForReuse(t *testing.T)
 
 	// Audit row with op=released_capture_empty must exist for this bin.
 	var auditCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2`,
 		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&auditCount); err != nil {
 		t.Fatalf("read audit: %v", err)
@@ -645,7 +645,7 @@ func TestApplyBinUOPDelta_ConsumeTickToZeroDoesNotFireClearForReuse(t *testing.T
 	}
 
 	var auditCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2`,
 		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&auditCount); err != nil {
 		t.Fatalf("read audit: %v", err)
@@ -698,7 +698,7 @@ func TestApplyBinUOPDelta_CaptureReductionOverpackToNegativeFiresClear(t *testin
 	// Audit trail: must contain both the bin_uop_delta row with after_uop=-1
 	// AND the released_capture_empty row with after_uop=0.
 	var deltaCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op='bin_uop_delta' AND after_uop=-1`, bin.ID).Scan(&deltaCount); err != nil {
 		t.Fatalf("read delta audit: %v", err)
 	}
@@ -706,7 +706,7 @@ func TestApplyBinUOPDelta_CaptureReductionOverpackToNegativeFiresClear(t *testin
 		t.Errorf("bin_uop_delta audit rows with after_uop=-1 = %d, want 1", deltaCount)
 	}
 	var clearCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2 AND after_uop=0`,
 		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&clearCount); err != nil {
 		t.Fatalf("read clear audit: %v", err)
@@ -826,7 +826,7 @@ func TestApplyBinUOPDelta_CaptureReductionReplayShortCircuits(t *testing.T) {
 	}
 
 	var clearCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2`,
 		bin.ID, audit.OpReleasedCaptureEmpty).Scan(&clearCount); err != nil {
 		t.Fatalf("read clear audit: %v", err)
@@ -895,7 +895,7 @@ func TestApplyBinUOPDelta_FirstDeltaBindsBlankProduceBin(t *testing.T) {
 	}
 
 	var old string
-	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload' FROM bin_uop_audit
+	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload' FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpPayloadBoundFirstDelta).Scan(&old), "read bind audit row")
 	if old != "" {
 		t.Errorf("audit old_payload = %q, want blank (bin was a fresh carrier)", old)
@@ -930,7 +930,7 @@ func TestApplyBinUOPDelta_FirstDeltaRebindsStaleLabelAtZero(t *testing.T) {
 	}
 
 	var old string
-	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload' FROM bin_uop_audit
+	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload' FROM bin_uop_ledger
 		WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpPayloadBoundFirstDelta).Scan(&old), "read bind audit row")
 	if old != "PART-OLD" {
 		t.Errorf("audit old_payload = %q, want PART-OLD", old)
@@ -974,7 +974,7 @@ func TestApplyBinUOPDelta_ProduceRebindWithInventoryKeepsCounting(t *testing.T) 
 	var old string
 	var aboard int
 	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata->>'old_payload', (metadata->>'inventory_at_rebind')::int
-		FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpPayloadReboundWithInventory).Scan(&old, &aboard), "read rebind audit row")
+		FROM bin_uop_ledger WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpPayloadReboundWithInventory).Scan(&old, &aboard), "read rebind audit row")
 	if old != "PART-OLD" || aboard != 480 {
 		t.Errorf("rebind audit old=%q aboard=%d, want PART-OLD/480", old, aboard)
 	}
@@ -983,7 +983,7 @@ func TestApplyBinUOPDelta_ProduceRebindWithInventoryKeepsCounting(t *testing.T) 
 	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation,
 		makeBinDelta(bin.ID, "PART-NEW", 2, 2, protocol.ReasonProduceTick)), "apply follow-up tick")
 	var rebindRows int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger WHERE bin_id=$1 AND op=$2`,
 		bin.ID, audit.OpPayloadReboundWithInventory).Scan(&rebindRows)
 	if rebindRows != 1 {
 		t.Errorf("rebind audit rows = %d, want 1 (follow-up ticks match the new label)", rebindRows)
@@ -1030,7 +1030,7 @@ func TestApplyBinUOPDelta_ConsumeMismatchStillRejectsButLoudly(t *testing.T) {
 	var droppedRows int
 	var droppedSum int
 	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*), COALESCE(SUM((metadata->>'delta')::int), 0)
-		FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+		FROM bin_uop_ledger WHERE bin_id=$1 AND op=$2`,
 		bin.ID, audit.OpPayloadMismatchDropped).Scan(&droppedRows, &droppedSum), "read dropped observation rows")
 	if droppedRows != 2 || droppedSum != -8 {
 		t.Errorf("dropped rows/sum = %d/%d, want 2/-8 (one observation per drop, quantities reconstructible)",
@@ -1172,5 +1172,53 @@ func TestInventoryDelta_C6_AnomalyObservability(t *testing.T) {
 	}
 	if _, present := byLabel["BIN-C6-STAGED"]; present {
 		t.Error("stale-staged bin must NOT appear in rejected-delta detail (it is not anomaly-flagged)")
+	}
+}
+
+// TestInventoryDelta_AppliedDeltaRecordsItsEpoch pins the ledger row of an
+// APPLIED delta carrying wire_epoch and bin_epoch.
+//
+// Until 2026-08-22 the epoch was recorded only when a delta was DROPPED, so a
+// delta that arrived on a stale generation and applied left no trace of which
+// generation it carried. "Did a late delta ever land on the wrong generation"
+// was therefore unanswerable from the ledger by construction — the question was
+// asked on 2026-08-22 and could only be answered from a 24-hour window of edge
+// outbox payloads, the one place the epoch survived.
+//
+// It matters more since bin_uop_delta stopped expiring: a delta can now arrive
+// arbitrarily late, and the epoch is the only field that says whether that was
+// harmless. Same JSON keys as the drop branch, so one query covers both
+// outcomes.
+func TestInventoryDelta_AppliedDeltaRecordsItsEpoch(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db, service.EpochAnnounce{}), service.EpochAnnounce{})
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-APPLIED-EPOCH", "PART-A", 100)
+	_, err := db.Exec(`UPDATE bins SET delta_epoch=4 WHERE id=$1`, bin.ID)
+	testutil.MustNoErr(t, err, "set epoch")
+
+	d := makeBinDelta(bin.ID, "PART-A", -6, 1, protocol.ReasonConsumeTick)
+	d.Epoch = 4
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(testStation, d), "apply delta")
+
+	var meta string
+	testutil.MustNoErr(t, db.QueryRow(`SELECT metadata FROM bin_uop_ledger
+		WHERE bin_id=$1 AND op='bin_uop_delta'`, bin.ID).Scan(&meta), "read applied ledger row")
+
+	var m struct {
+		Delta     int   `json:"delta"`
+		WireEpoch int64 `json:"wire_epoch"`
+		BinEpoch  int64 `json:"bin_epoch"`
+	}
+	testutil.MustNoErr(t, json.Unmarshal([]byte(meta), &m), "parse metadata")
+	if m.Delta != -6 {
+		t.Errorf("delta = %d, want -6", m.Delta)
+	}
+	if m.WireEpoch != 4 || m.BinEpoch != 4 {
+		t.Errorf("wire_epoch/bin_epoch = %d/%d, want 4/4 — without these the ledger "+
+			"cannot say which generation an applied delta belonged to",
+			m.WireEpoch, m.BinEpoch)
 	}
 }

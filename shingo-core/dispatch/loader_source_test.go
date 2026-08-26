@@ -11,6 +11,8 @@ import (
 // the docker tag — it pins the bins.Bin -> binsource.Cand contract the ranker
 // relies on.
 func TestCandFromBin(t *testing.T) {
+	t.Parallel()
+
 	loaded := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	created := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
 	var order int64 = 77

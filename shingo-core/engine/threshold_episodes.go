@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"sort"
-
 	"github.com/google/uuid"
 
 	"shingo/protocol"
@@ -169,17 +167,19 @@ func (m *ThresholdMonitor) closeThresholdEpisodeRef(key string, ref openEpisodeR
 // closeThresholdEpisodesForPayloadNotIn closes every open episode for a payload
 // whose binding is no longer in the rebuilt set.
 //
-// THIS IS THE ONLY SITE THAT CAN FIRE threshold_removed. engagePayloads rebuilds
-// a payload's bindings from demand_registry and, before the grain existed,
-// simply dropped whatever was there — so a binding deleted underneath an open
-// demand stranded that demand permanently, with nothing anywhere saying it had
-// ended.
+// THIS IS THE NOTIFICATION PATH for threshold_removed, not the only one — the
+// reconciling sweep fires it too, and so does the maintainer's config-withdrawn
+// pass. (This comment did once say "the only site", and it stopped being true
+// when the sweep landed. The reason is a shared vocabulary, not a private one:
+// anything that notices a declaration vanish says threshold_removed.)
 //
-// SCOPED BY LIVE-KEY SET, NOT BY "the payload has no bindings left". The obvious
-// version only closes when the rebuild comes back empty, which misses the case
-// that actually happens: a payload bound at two stations loses one of them, the
-// set is still non-empty, and the removed station's episode is stranded exactly
-// as before. Comparing keys covers both, and costs nothing extra.
+// engagePayloads rebuilds a payload's bindings from demand_registry and, before
+// the grain existed, simply dropped whatever was there — so a binding deleted
+// underneath an open demand stranded that demand permanently, with nothing
+// anywhere saying it had ended.
+//
+// SCOPED BY LIVE-KEY SET, NOT BY "the payload has no bindings left" — see
+// staleEpisodeKeys, which now owns that comparison for every caller.
 //
 // The need did not RECOVER here — it stopped being watched. Closing these as
 // `recovered` would report a satisfied demand every time somebody deleted a
@@ -201,39 +201,26 @@ func (m *ThresholdMonitor) closeThresholdEpisodesForPayloadNotIn(payload string,
 	m.closeThresholdEpisodesNotIn(candidates, live, protocol.ClosedByNotification)
 }
 
-// closeThresholdEpisodesNotIn is THE key comparison, and there is exactly one
-// of it.
+// closeThresholdEpisodesNotIn is the threshold side of THE key comparison, and
+// there is exactly one of it.
 //
 // Both the notification path and the reconciling sweep ask the same question —
 // "which of these open episodes has no binding left?" — and they must not be
-// able to answer it differently. Two implementations of a set difference look
-// identical the day they are written and drift the first time one of them
-// learns something the other doesn't; the scoping subtlety here (compare LIVE
-// KEYS, never "the payload has no bindings left", which misses a payload that
-// loses one station out of two) is exactly the kind of lesson that gets learned
-// in one copy.
+// able to answer it differently. What the callers legitimately differ on is
+// only WHERE THE CANDIDATES COME FROM. The notification path knows which
+// payload it just rebuilt and reads the monitor's own hold; the sweep knows
+// nothing and reads the database. That difference is a parameter, not a second
+// function.
 //
-// What the callers legitimately differ on is only WHERE THE CANDIDATES COME
-// FROM. The notification path knows which payload it just rebuilt and reads the
-// monitor's own hold; the sweep knows nothing and reads the database. That
-// difference is a parameter, not a second function.
+// The set difference itself lives in staleEpisodeKeys, shared with the
+// maintainer's config-withdrawn pass — see there for the scoping lesson it
+// carries.
 func (m *ThresholdMonitor) closeThresholdEpisodesNotIn(candidates map[string]openEpisodeRef, live map[string]bool, closedBy string) int {
 	if m.eng == nil || m.eng.db == nil {
 		return 0
 	}
-	var stale []string
-	for key := range candidates {
-		if !live[key] {
-			stale = append(stale, key)
-		}
-	}
-	// Sorted so a sweep that closes several at once logs them in a stable
-	// order. Map iteration is randomised, and a log that reorders itself
-	// between passes is harder to diff than it needs to be.
-	sort.Strings(stale)
-
 	closed := 0
-	for _, key := range stale {
+	for _, key := range staleEpisodeKeys(candidates, live) {
 		if m.closeThresholdEpisodeRef(key, candidates[key], protocol.CloseReasonThresholdRemoved, closedBy) {
 			closed++
 		}

@@ -10,12 +10,18 @@ package messaging
 
 import (
 	"database/sql"
+	"sync/atomic"
 	"time"
+
+	"shingo/protocol/outbox"
 )
 
 // MaxOutboxRetries is the number of delivery attempts before a message
 // is considered dead-lettered and skipped by the drainer.
-const MaxOutboxRetries = 10
+// The cap itself is protocol/outbox's: the drainer that enforces it lives
+// there, and this constant, edge's twin and the drainer's own were three
+// independent spellings of one number.
+const MaxOutboxRetries = outbox.MaxRetries
 
 // OutboxMessage is one queued outbound envelope.
 type OutboxMessage struct {
@@ -35,7 +41,35 @@ type OutboxMessage struct {
 func EnqueueOutbox(ex Execer, topic string, payload []byte, eventType, stationID string) error {
 	_, err := ex.Exec(`INSERT INTO outbox (topic, payload, msg_type, station_id) VALUES ($1, $2, $3, $4)`,
 		topic, payload, eventType, stationID)
-	return err
+	if err != nil {
+		return err
+	}
+	notifyEnqueued()
+	return nil
+}
+
+// enqueueNotifier is the drainer's doorbell, set once at wiring time.
+//
+// It lives here rather than on DB because this is the only INSERT into outbox,
+// and it is reached two ways: through DB.EnqueueOutbox for an ordinary send,
+// and directly with a transaction for a message that must live or die with the
+// work that caused it. A hook on DB would miss the second.
+var enqueueNotifier atomic.Pointer[func()]
+
+// SetEnqueueNotifier registers fn to run after each successful enqueue. Passing
+// nil clears it. Wired in cmd/shingocore to the drainer's Notify.
+func SetEnqueueNotifier(fn func()) {
+	if fn == nil {
+		enqueueNotifier.Store(nil)
+		return
+	}
+	enqueueNotifier.Store(&fn)
+}
+
+func notifyEnqueued() {
+	if p := enqueueNotifier.Load(); p != nil {
+		(*p)()
+	}
 }
 
 // ListPendingOutbox returns unsent rows whose retries are below the cap.
@@ -100,16 +134,50 @@ func RequeueOutbox(db *sql.DB, id int64) error {
 
 // PurgeOldOutbox deletes sent or dead-lettered outbox rows older than the
 // given duration. Returns the count of deleted rows.
-func PurgeOldOutbox(db *sql.DB, olderThan time.Duration) (int64, error) {
+// PurgeOldOutbox deletes delivered rows past the delivered cutoff and
+// dead-lettered rows past their own, longer one. Two statements in one
+// transaction rather than one with an OR: the cutoffs genuinely differ now, so
+// the statement had to split anyway.
+//
+// Splitting is NOT a performance change and should not be re-opened as one. The
+// OR could use no index on either arm (idx_outbox_pending is
+// `WHERE sent_at IS NULL`, the exact inverse of arm 1), but at ~4k rows a purge
+// that costs nothing measurable — the split is about the cutoffs.
+func PurgeOldOutbox(db *sql.DB, delivered, deadLetter time.Duration) (int64, error) {
 	// Bind a time.Time, not a formatted string: sent_at/created_at are
 	// TIMESTAMPTZ, and a zoneless literal would be compared in the session
 	// TimeZone, shifting the cutoff by the offset on a non-UTC session.
-	cutoff := time.Now().UTC().Add(-olderThan)
-	res, err := db.Exec(`DELETE FROM outbox WHERE (sent_at IS NOT NULL AND sent_at < $1) OR (retries >= $2 AND created_at < $3)`, cutoff, MaxOutboxRetries, cutoff)
+	now := time.Now().UTC()
+
+	tx, err := db.Begin()
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	defer tx.Rollback()
+
+	sentRes, err := tx.Exec(`DELETE FROM outbox WHERE sent_at IS NOT NULL AND sent_at < $1`,
+		now.Add(-delivered))
+	if err != nil {
+		return 0, err
+	}
+	deadRes, err := tx.Exec(`DELETE FROM outbox WHERE sent_at IS NULL AND retries >= $1 AND created_at < $2`,
+		MaxOutboxRetries, now.Add(-deadLetter))
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	sentN, err := sentRes.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	deadN, err := deadRes.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return sentN + deadN, nil
 }
 
 // RecordInboundMessage records a processed inbound envelope ID. Returns

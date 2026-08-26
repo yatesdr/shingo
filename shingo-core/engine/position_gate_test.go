@@ -65,7 +65,7 @@ func TestPositionGate_HoldsWhenAnotherOrderOwnsTheBin(t *testing.T) {
 	// is now free and the empty-in may land — the real choreography, in order.
 	transit, err := db.GetNodeByDotName("_TRANSIT")
 	testutil.MustNoErr(t, err, "get _TRANSIT")
-	_, err = eng.BinService().ApplyArrival(full.ID, transit.ID, false, nil)
+	_, err = eng.BinService().ApplyArrival(full.ID, transit.ID, false, nil, 0)
 	testutil.MustNoErr(t, err, "lift the full bin out of the press")
 
 	if ok, why := eng.CanEnterPosition("sim-empty-in", press.Name, drop); !ok {

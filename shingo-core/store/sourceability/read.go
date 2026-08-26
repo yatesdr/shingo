@@ -233,7 +233,7 @@ func consumptionRateByPayload(db *sql.DB, window time.Duration) (map[string]floa
 	}
 	rows, err := db.Query(`
 		SELECT payload_code, COALESCE(SUM(before_uop - after_uop), 0)
-		FROM bin_uop_audit
+		FROM bin_uop_ledger
 		WHERE op = 'bin_uop_delta'
 		  AND after_uop < before_uop
 		  AND payload_code <> ''

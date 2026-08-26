@@ -22,8 +22,16 @@ import (
 //     the leg that supplies it.
 //
 // Ask the steps what the leg does to the LINE BIN. Nothing else answers it.
-// Mirrors legPlacesBinAt in shingo-edge/engine/swap_leg_role.go — same question,
-// same answer, both sides of the wire.
+//
+// Relationship to legPlacesBinAt in shingo-edge/engine/swap_leg_role.go: the
+// two predicates are COMPLEMENTS, not copies. Edge's answers "does this leg
+// leave a bin at the node" (true = supply); legTakesLineBin below answers "does
+// it lift the node's bin and not put one back" (true = evac). Run the same leg
+// through both and they disagree by construction — two_robot B is TRUE here and
+// false there, press-index R2 is false here and true there. Their verification
+// tables agree on every shape; the predicates are opposite readings of it. This
+// header used to claim "same question, same answer, both sides of the wire",
+// which would make either one a drop-in for the other. It is not.
 
 // legTakesLineBin reports whether the leg lifts the line node's bin and does not
 // put one back: a pickup at processNode with no dropoff at processNode. That is

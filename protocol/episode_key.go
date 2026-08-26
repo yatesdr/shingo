@@ -33,15 +33,57 @@ const (
 	EpisodeKindCell = "cell"
 	// EpisodeKindChangeover is a style transition.
 	EpisodeKindChangeover = "changeover"
+	// EpisodeKindMaintain is Core's maintained-group level keeper: a node group
+	// is holding fewer unclaimed empty carriers of one type than it is declared
+	// to hold.
+	//
+	// The SECOND kind Core mints, and the first whose demand is for an EMPTY
+	// carrier rather than a payload. That is why its key carries a bin type
+	// where the others carry a payload code: nothing about "four 45x58x32 on
+	// hand" is expressible in payload terms, and the episode has to be
+	// identifiable per type or one group's two declared types would share one
+	// open episode and one counting stream.
+	EpisodeKindMaintain = "maintain"
 )
 
-// Cell-episode directions. Mirror images with the same dual-trigger shape:
-// supply brings material IN (RequestNodeMaterial), evacuate takes it OUT
-// (RequestProduceSwap).
-const (
-	EpisodeDirectionSupply   = "supply"
-	EpisodeDirectionEvacuate = "evacuate"
-)
+// ── AN EPISODE IS PRODUCE OR CONSUME, AND THAT IS THE CLAIM'S OWN WORD ────
+//
+// This was a separate two-valued vocabulary: EpisodeDirectionSupply = "supply"
+// and EpisodeDirectionEvacuate = "evacuate", naming the direction material
+// TRAVELS on one leg. It is retired in favour of ClaimRoleConsume /
+// ClaimRoleProduce, which are the values already sitting in
+// style_node_claims.role and already spelled in this package.
+//
+// ONE FACT HAD TWO SPELLINGS AND THE TREE CARRIED THE DICTIONARY BETWEEN THEM.
+// demand_reconciler.go read `if ep.Direction == EpisodeDirectionEvacuate { role
+// = ClaimRoleProduce }` — a hand-written translation, 1:1, from a value that is
+// a function of the claim to the claim's own field. A claim has exactly one
+// role, so an episode was only ever one direction; the direction was never
+// independent information. This file's own header warns that two spellings of
+// one identity is how they drift, and the drift is silent because a mismatched
+// key does not error, it just fails to find the open episode.
+//
+// IT DRIFTED EXACTLY THERE. backfillCellOrigin hardcoded the supply spelling
+// while a produce cell only ever opens in the other one, so the join asked for
+// `cell|PRESS-2|PANEL-B|supply` against an open row reading
+// `cell|PRESS-2|PANEL-B|evacuate`, missed, and every sequential backfill in the
+// plant landed on Core as an orphan. Deleting the translation is what makes that
+// unspellable: there is no second vocabulary left to pick the wrong word from.
+//
+// AND IT NAMES THE RIGHT THING UNDER THE CIRCLE DOCTRINE. An episode represents
+// a process's full circular material handling — for a produce cell, empty in,
+// fill, full out. "supply" and "evacuate" name single LEGS of that circle, which
+// is the reading that invites one cell to hold two open episodes for one loop.
+// "produce" and "consume" name the cell's standing role in it, which is one
+// episode per circle.
+//
+// SPELLING CHANGE, PERSISTED IDENTITY: migration 87 rewrites Springfield's
+// stored demand_origins keys and direction values. See its header for why this
+// was not free — the "free until the first deploy" note further down this file
+// had already expired.
+
+// ParseEpisodeKey and CellEpisodeKey take a ClaimRole; the constants live in
+// types.go beside the claim they belong to.
 
 // Episode triggers.
 const (
@@ -113,8 +155,12 @@ func ThresholdEpisodeKey(coreNodeName, payloadCode string) string {
 // would split one demand into several, and each half would mint its own
 // episode for the same need.
 //
-// Direction is part of the identity because a cell can genuinely need material
-// brought IN and taken OUT at the same time — those are two demands, not one.
+// THE ROLE IS PART OF THE IDENTITY because one process can genuinely run a
+// consume cell and a produce cell for the same payload at the same time, and
+// those are two demands with two circles, not one. It is NOT here to separate
+// the legs of a single cell's loop: a produce cell taking an empty in and
+// sending a full out is ONE episode, because it is one circle. See the ClaimRole
+// note above for what that distinction cost when the component named legs.
 //
 // PROCESSID IS THE EDGE PROCESS NAME ("SNF2"), NOT ITS SQLITE ROW ID.
 //
@@ -158,8 +204,13 @@ func ThresholdEpisodeKey(coreNodeName, payloadCode string) string {
 // second episode mints for a demand already open, and the first is only ever
 // resolved by the sweep marking it unattributed. Cross-service, so neither end
 // sees a contradiction — Edge closed something, Core recorded something else.
-func CellEpisodeKey(processID, payloadCode, direction string) string {
-	return fmt.Sprintf("cell|%s|%s|%s", processID, payloadCode, direction)
+// THE ROLE IS TYPED, and that is load-bearing rather than tidiness. The fourth
+// component used to be a bare string, so every call site chose a word — and one
+// of them chose the wrong one for its cell and cost the plant every sequential
+// backfill's attribution. A ClaimRole has two values and comes off the claim,
+// so the caller supplies the fact instead of naming it.
+func CellEpisodeKey(processID, payloadCode string, role ClaimRole) string {
+	return fmt.Sprintf("cell|%s|%s|%s", processID, payloadCode, role)
 }
 
 // ChangeoverEpisodeKey identifies an Edge changeover episode.
@@ -192,6 +243,35 @@ func ChangeoverEpisodeKey(station string, processChangeoverID int64) string {
 	return fmt.Sprintf("co|%s|%d", station, processChangeoverID)
 }
 
+// MaintainEpisodeKey identifies a Core maintained-group episode: one node group
+// falling short of its declared level in ONE carrier type.
+//
+// NO STATION, for the threshold key's reason and more strongly: nodes.name is
+// TEXT NOT NULL UNIQUE, so the group names the place by itself. The maintenance
+// station the keeper's orders are projected to is CONFIG on the group, not part
+// of what the demand IS — a group whose station is retargeted is the same group
+// with the same shortfall, and an episode that changed key when somebody edited
+// a dropdown would orphan itself mid-demand.
+//
+// THE TYPE IS PART OF THE IDENTITY, and it is the whole reason this kind exists
+// separately from threshold. A group declaring four of one carrier and two of
+// another has two demands that are satisfied independently, counted
+// independently, and can be short at different moments. One episode per group
+// would make "the group is short" a single fact, and the keeper would have no
+// way to say which type it was short OF — which is precisely the information the
+// ask has to carry (SYNTH round 2 §1: the episode is the carrier of the type).
+//
+// binTypeCode, not bin_type_id. The id is a local key; the code is what travels
+// on every other carrier-typed surface, what a person reads, and what
+// MaintainedEpisodeForOrigin hands back to the finder. An id here would make the
+// key unreadable in a log and unresolvable across a restore.
+//
+// The code must not contain "|" — config save refuses one that does
+// (service.ValidateMaintainedGroup), because this key is split on it.
+func MaintainEpisodeKey(groupNodeName, binTypeCode string) string {
+	return strings.Join([]string{"mnt", groupNodeName, binTypeCode}, "|")
+}
+
 // ParsedEpisodeKey is what an episode key says about itself.
 type ParsedEpisodeKey struct {
 	Kind string
@@ -204,15 +284,24 @@ type ParsedEpisodeKey struct {
 	// the right source for "who told me"; the key answers "which place", and
 	// those are different questions. Kept because ChangeoverID is meaningless
 	// without the space it was counted in.
-	Station   string
-	Payload   string
-	Direction string
-	CoreNode  string
+	Station string
+	Payload string
+	// Role is the cell's standing role in its circle — produce or consume. It
+	// was Direction ("supply"/"evacuate"), a second vocabulary for the claim's
+	// own field; see the ClaimRole note at the top of this file.
+	Role     ClaimRole
+	CoreNode string
 	// ProcessID is the Edge process NAME, matching demand_origins.process_id,
 	// process_styles.process_id and PlantClaimsReport.ProcessID. See
 	// CellEpisodeKey for why it is not the SQLite row id.
 	ProcessID    string
 	ChangeoverID int64
+	// BinType is populated for the MAINTAIN kind only — the carrier type the
+	// group is short of. It sits where the other kinds carry a payload, and
+	// deliberately does not reuse Payload: a maintained group's demand is for an
+	// EMPTY carrier, and a reader that found a value in Payload would reasonably
+	// conclude the episode wanted parts in it.
+	BinType string
 }
 
 // ParseEpisodeKey reads a key back. It is the guard behind "every mint site
@@ -255,11 +344,33 @@ func ParseEpisodeKey(key string) (ParsedEpisodeKey, error) {
 				"cell episode key %q: empty process name — the process IS the grain here, so a "+
 					"key without one identifies no place and collides with every other such key", key)
 		}
-		if parts[3] != EpisodeDirectionSupply && parts[3] != EpisodeDirectionEvacuate {
-			return ParsedEpisodeKey{}, fmt.Errorf("cell episode key %q: unknown direction %q", key, parts[3])
+		role := ClaimRole(parts[3])
+		if role != ClaimRoleConsume && role != ClaimRoleProduce {
+			return ParsedEpisodeKey{}, fmt.Errorf(
+				"cell episode key %q: unknown role %q — an episode is produce or consume, which are the "+
+					"claim's own two roles. %q and %q were the old leg-naming spelling and are retired; "+
+					"a key still carrying one predates migration 87", key, parts[3], "supply", "evacuate")
 		}
 		return ParsedEpisodeKey{
-			Kind: EpisodeKindCell, ProcessID: pid, Payload: parts[2], Direction: parts[3],
+			Kind: EpisodeKindCell, ProcessID: pid, Payload: parts[2], Role: role,
+		}, nil
+	case "mnt":
+		if len(parts) != 3 {
+			return ParsedEpisodeKey{}, fmt.Errorf("maintain episode key %q: want 3 parts, got %d", key, len(parts))
+		}
+		if parts[1] == "" {
+			return ParsedEpisodeKey{}, fmt.Errorf(
+				"maintain episode key %q: empty group node name — the group IS the place here, so a "+
+					"key without one identifies nothing and collides with every other such key", key)
+		}
+		if parts[2] == "" {
+			return ParsedEpisodeKey{}, fmt.Errorf(
+				"maintain episode key %q: empty carrier type — a maintained group's demand is per TYPE, "+
+					"so a key without one cannot say what the group is short of and would merge every "+
+					"declared type into one episode", key)
+		}
+		return ParsedEpisodeKey{
+			Kind: EpisodeKindMaintain, CoreNode: parts[1], BinType: parts[2],
 		}, nil
 	case "co":
 		if len(parts) != 3 {

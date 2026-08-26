@@ -64,6 +64,23 @@ type VendorProxy interface {
 	BaseURL() string
 }
 
+// MissionRegistry is the OPTIONAL backend capability for asking whether the
+// fleet still holds a mission Core believes in.
+//
+// It exists for exactly one question, asked once, at boot: Core reloads its
+// non-terminal orders into the tracker and starts driving them again, and
+// nothing has ever checked that the fleet on the other side agrees those
+// missions exist. Against a real RDS that check is nearly always redundant —
+// the server is a separate durable process and a Core restart does not touch
+// it. Against the in-process simulator it is the whole story: a restart empties
+// the fleet, and Core resumes commanding missions nobody holds (§R.98).
+//
+// Read-only and advisory by construction. It answers a question; it decides
+// nothing. Backends without it degrade to unasked, exactly like RobotGroupLister.
+type MissionRegistry interface {
+	HasOrder(vendorOrderID string) bool
+}
+
 // VendorCommand represents a raw vendor command for debugging/testing.
 type VendorCommand struct {
 	Type          string
@@ -158,8 +175,18 @@ type RobotStatus struct {
 	LiftCount      int
 	LiftHeight     float64
 	LiftError      int
-	BatteryV       float64
-	BatteryA       float64
+	// JackState is the deck's at-rest state: 1 = a bin is up, 3 = the deck is
+	// empty. See rds.JackReport.JackState for the full enum and for why there
+	// is no unload EVENT to listen for.
+	//
+	// This is the primary "is the bin still on the robot" signal, with
+	// JackIsFull and IsLoaded as corroboration and LiftHeight as the fallback
+	// proxy for a fleet that does not report the state.
+	JackState  int
+	JackIsFull bool
+	IsLoaded   bool
+	BatteryV   float64
+	BatteryA   float64
 	// Battery pack telemetry. Nothing in this system has ever retained a
 	// battery time-series — RDS has no column for it and its
 	// t_batterylevelrecord is empty — so this poll is the only place it can

@@ -129,7 +129,7 @@ type OpenNegativeBin struct {
 	PayloadCode  string `json:"payload_code"`
 	NodeName     string `json:"node_name"`
 	UOPRemaining int    `json:"uop_remaining"`
-	// NegativeSince is when it last crossed zero, from bin_uop_audit. Nil when
+	// NegativeSince is when it last crossed zero, from bin_uop_ledger. Nil when
 	// the crossing predates the audit window.
 	NegativeSince *time.Time `json:"negative_since,omitempty"`
 	LastCountedAt *time.Time `json:"last_counted_at,omitempty"`

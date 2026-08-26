@@ -1,14 +1,12 @@
 package www
 
 import (
-	"encoding/json"
-	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
+	"sync"
 	"time"
 
 	"shingo/protocol/debuglog"
@@ -64,6 +62,10 @@ type Handlers struct {
 	// is now the only work on this signal.
 	specChangeCh   chan struct{}
 	specChangeStop chan struct{}
+	// specChangeOnce guards the close of specChangeStop in the cleanup
+	// closure NewRouter returns, for the same reason EventHub.Stop carries
+	// one: an unguarded close panics if the cleanup ever runs twice.
+	specChangeOnce sync.Once
 
 	// onPlantSpecChange is the plant-claims publisher's spec-change hook.
 	// Set by main after constructing the publisher; fired from
@@ -102,59 +104,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	}
 	go h.specChangeLoop()
 
-	funcMap := template.FuncMap{
-		"join": strings.Join,
-		"truncate": func(s string, n int) string {
-			if len(s) <= n {
-				return s
-			}
-			return s[:n] + "..."
-		},
-		"divPercent": func(a, b int) float64 {
-			if b == 0 {
-				return 0
-			}
-			return float64(a) / float64(b) * 100
-		},
-		"deref": func(p *int64) int64 {
-			if p == nil {
-				return 0
-			}
-			return *p
-		},
-		"brokerHost": func(s string) string {
-			if i := strings.LastIndex(s, ":"); i >= 0 {
-				return s[:i]
-			}
-			return s
-		},
-		"brokerPort": func(s string) string {
-			if i := strings.LastIndex(s, ":"); i >= 0 {
-				return s[i+1:]
-			}
-			return ""
-		},
-		"buildVer":  func() string { return buildVer },
-		"cacheBust": func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
-		"formatTime": func(t time.Time) template.HTML {
-			if t.IsZero() {
-				return template.HTML("")
-			}
-			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
-				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
-		},
-		"formatTimePtr": func(t *time.Time) template.HTML {
-			if t == nil {
-				return template.HTML("")
-			}
-			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
-				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
-		},
-		"json": func(v any) template.JS {
-			b, _ := json.Marshal(v)
-			return template.JS(b)
-		},
-	}
+	funcMap := templateFuncs()
 	h.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
 
 	h.eventHub.Start()
@@ -271,7 +221,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Group(func(r chi.Router) {
 			r.Use(h.adminMiddleware)
 			r.Get("/config", h.handleConfig)
-			r.Get("/traffic", h.handleTraffic)
 			r.Get("/processes", h.handleProcesses)
 			r.Get("/manual-order", h.handleManualOrder)
 			r.Get("/manual-message", h.handleManualMessage)
@@ -336,7 +285,15 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/processes/{id}/changeover/switch-station/{stationID}", h.apiSwitchOperatorStationToTarget)
 			r.Post("/processes/{id}/changeover/switch-node/{nodeID}", h.apiSwitchNodeToTarget)
 			r.Post("/processes/{id}/changeover/abandon-node/{nodeID}", h.apiAbandonChangeoverNode)
-			r.Post("/processes/{id}/changeover/release-wait", h.apiReleaseChangeoverWait)
+			// The changeover-wide release, wired to a button this time. Its
+			// ancestor /changeover/release-wait was retired in 2026-08 for
+			// having no caller — "a registered route with no caller is a door
+			// nobody checks" — with the note that a future release-everything
+			// button would compose the engine methods again in a handler
+			// written for it. That button is the operator marking the setup
+			// finished, and it is the only door that expresses what the floor
+			// actually does: one click, every leg of the press moves in.
+			r.Post("/processes/{id}/changeover/release", h.apiReleaseChangeoverProcess)
 			r.Post("/processes/{id}/changeover/sequential-cutover/{nodeID}", h.apiSequentialChangeoverCutover)
 
 			// Orders — LIFECYCLE ONLY here. These act on an order that already
@@ -469,12 +426,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Get("/shifts", h.apiListShifts)
 				r.Put("/shifts", h.apiSaveShifts)
 
-				// Traffic (count-group bindings)
-				r.Get("/traffic/bindings", h.apiTrafficBindings)
-				r.Put("/traffic/heartbeat", h.apiTrafficSaveHeartbeat)
-				r.Post("/traffic/bindings", h.apiTrafficAddBinding)
-				r.Post("/traffic/bindings/delete", h.apiTrafficDeleteBinding)
-
 				// Config & backups
 				r.Put("/config/core-api", h.apiUpdateCoreAPI)
 				r.Post("/config/core-api/test", h.apiTestCoreAPI)
@@ -500,7 +451,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 	return h, r, func() {
 		h.eventHub.Stop()
-		close(h.specChangeStop)
+		h.specChangeOnce.Do(func() { close(h.specChangeStop) })
 	}
 }
 
@@ -621,6 +572,9 @@ func (h *Handlers) renderTemplate(w http.ResponseWriter, r *http.Request, name s
 		_, isAuth := h.sessions.getUser(r)
 		m["Authenticated"] = isAuth
 	}
+	// Before the first write: the compression middleware reads Content-Type at
+	// WriteHeader and skips compression when it is empty. See shared.SetHTMLContentType.
+	shared.SetHTMLContentType(w)
 	if err := h.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

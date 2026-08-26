@@ -46,14 +46,13 @@ type Config struct {
 
 	Timezone string `yaml:"timezone"` // IANA timezone for shift/hourly bucketing (e.g. "America/Chicago")
 
-	CoreAPI     string            `yaml:"core_api"` // Core HTTP base URL (e.g. "http://192.168.1.10:8080")
-	WarLink     WarLinkConfig     `yaml:"warlink"`
-	Web         WebConfig         `yaml:"web"`
-	Messaging   MessagingConfig   `yaml:"messaging"`
-	Counter     CounterConfig     `yaml:"counter"`
-	Backup      BackupConfig      `yaml:"backup"`
-	CountGroups CountGroupsConfig `yaml:"count_groups"`
-	Sim         SimConfig         `yaml:"sim"`
+	CoreAPI   string          `yaml:"core_api"` // Core HTTP base URL (e.g. "http://192.168.1.10:8080")
+	WarLink   WarLinkConfig   `yaml:"warlink"`
+	Web       WebConfig       `yaml:"web"`
+	Messaging MessagingConfig `yaml:"messaging"`
+	Counter   CounterConfig   `yaml:"counter"`
+	Backup    BackupConfig    `yaml:"backup"`
+	Sim       SimConfig       `yaml:"sim"`
 
 	// LoadersMultiWindow — DEPRECATED. The setting moved onto the loader itself:
 	// Core's bin_loaders.funnel_windows, synced down and read by
@@ -167,29 +166,6 @@ func (c *Config) HysteresisMargin(reorderPoint int) int {
 		return MinHysteresisUOP
 	}
 	return margin
-}
-
-// CountGroupsConfig holds the edge side of the advanced-zone light feature.
-// Unresolved bindings produce a startup WARN but don't block the handler —
-// commands for unbound groups log and return.
-//
-// Heartbeat is a single shared tag; all configured bindings must live on
-// HeartbeatPLC for v1. Multi-PLC support is a v2 candidate.
-type CountGroupsConfig struct {
-	HeartbeatInterval time.Duration      `yaml:"heartbeat_interval"`
-	HeartbeatTag      string             `yaml:"heartbeat_tag"`
-	HeartbeatPLC      string             `yaml:"heartbeat_plc"`
-	AckWarn           time.Duration      `yaml:"ack_warn"`
-	AckDead           time.Duration      `yaml:"ack_dead"`
-	Codes             map[string]int     `yaml:"codes"`    // desired state -> DINT action code
-	Bindings          map[string]Binding `yaml:"bindings"` // group name -> plc+request_tag
-}
-
-// Binding resolves a group name (used by core) to the PLC + tag pair
-// WarLink talks to.
-type Binding struct {
-	PLC        string `yaml:"plc"`
-	RequestTag string `yaml:"request_tag"`
 }
 
 // WarLinkConfig defines the WarLink connection.
@@ -364,6 +340,30 @@ type SimOperatorsConfig struct {
 	UnloaderAutoClear     time.Duration `yaml:"unloader_auto_clear"`     // default 8s
 	ChangeoverAutoCutover bool          `yaml:"changeover_auto_cutover"` // default true (T3.2)
 	CutoverDelay          time.Duration `yaml:"cutover_delay"`           // default 10s
+	// SwapRelease is the simulated reaction time between a swap reaching its
+	// wait (status "staged") and the operator pushing Release. Default 3s.
+	//
+	// CONFIGURABLE BECAUSE THE DEFAULT CLOSES THE WINDOW UNDER TEST. Three
+	// seconds is a good imitation of a person, and it means a scenario built to
+	// observe a HELD release — one leg staged, its sibling still coming — has
+	// three seconds to look before the operator releases anyway. A sim run
+	// against the round-4 collision gate lost that window 480 times to this
+	// timer and reported the gate as never firing.
+	SwapRelease time.Duration `yaml:"swap_release"`
+	// PairRelease routes a staged swap through ReleaseStagedOrders — the
+	// operator's RELEASE button — instead of releasing each leg on its own.
+	//
+	// DEFAULT OFF, and it is a different code path rather than a faster one.
+	// The per-leg auto-release calls ReleaseOrderWithLineside once per order,
+	// which is the API door; the button releases the PAIR, and everything the
+	// pair path owns — the collision gate, the produce paperwork ordering, the
+	// deferred-sibling re-fire, the disposition split across the two legs — has
+	// no sim coverage at all while the per-leg path is the only one that runs.
+	//
+	// The two must not both run: the per-leg release would win the race and the
+	// pair path would find nothing to release, which reads as the pair path
+	// being broken.
+	PairRelease bool `yaml:"pair_release"`
 }
 
 // Defaults returns a Config with sane defaults.
@@ -414,16 +414,6 @@ func Defaults() *Config {
 				UsePathStyle: true,
 			},
 		},
-		CountGroups: CountGroupsConfig{
-			HeartbeatInterval: 1 * time.Second,
-			AckWarn:           2 * time.Second,
-			AckDead:           10 * time.Second,
-			Codes: map[string]int{
-				"on":  1,
-				"off": 2,
-			},
-			Bindings: map[string]Binding{},
-		},
 		Sim: SimConfig{
 			// Enabled false by default. Sim operator timings default here so a dev
 			// YAML can enable sim without spelling out every knob; per-process
@@ -433,6 +423,7 @@ func Defaults() *Config {
 				UnloaderAutoClear:     8 * time.Second,
 				ChangeoverAutoCutover: true,
 				CutoverDelay:          10 * time.Second,
+				SwapRelease:           3 * time.Second,
 			},
 		},
 	}

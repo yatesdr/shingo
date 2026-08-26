@@ -1,6 +1,6 @@
-﻿/* Shingo Edge Web UI */
+/* Shingo Edge Web UI */
 
-/* Design tokens — see /static/shared/tokens.css (loaded ahead of this
+/* Design tokens � see /static/shared/tokens.css (loaded ahead of this
  * file in header.html). The :root and [data-theme="dark"] blocks
  * previously inlined here now cascade from the shared module. The
  * previous Edge dark-mode --info value (#58a6ff) collided with
@@ -180,12 +180,6 @@ body {
     color: var(--text);
 }
 
-/* === Container === */
-.container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 1rem;
-}
 
 main.container {
     padding-top: 1.5rem;
@@ -551,6 +545,19 @@ textarea.form-input {
     display: flex;
 }
 
+/* A MODAL MUST FIT THE SCREEN IT OPENS ON.
+ *
+ * This had no max-height and no overflow, while .modal-overlay is
+ * position:fixed and vertically centred. So any modal taller than the
+ * viewport bled off BOTH edges with nothing able to scroll it � and the
+ * footer went with it, which is where Save lives. Zooming the browser out
+ * was the only way to reach the button, which is exactly what operators
+ * were doing on the claim editor (20 controls, 5 fieldsets).
+ *
+ * The fix is a column flexbox: header and footer hold their size, the body
+ * takes the remainder and scrolls. min-height:0 on the body is load-bearing
+ * � a flex item defaults to min-height:auto, which refuses to shrink below
+ * its content and reinstates the overflow this is removing. */
 .modal {
     background: var(--surface);
     border-radius: var(--radius);
@@ -558,6 +565,38 @@ textarea.form-input {
     width: 100%;
     max-width: 500px;
     margin: 1rem;
+    max-height: calc(100vh - 2rem);
+    display: flex;
+    flex-direction: column;
+}
+
+
+/* A readonly input that is derived rather than entered (UoP per bin comes
+ * from the payload catalog). Reads as a value, not a field you failed to
+ * fill in. */
+.input-readonly {
+  background: var(--bg);
+}
+
+/* A quiet qualifier inside a <label> � units, ranges, "(optional)". */
+.label-aside {
+  color: var(--text-muted);
+  font-weight: normal;
+  font-size: 0.8rem;
+}
+
+.modal--wide {
+  max-width: 880px;
+}
+
+/* The scrolling region. Both spellings: the style guide prescribes
+ * .modal-body, and every modal in this template predates that and uses
+ * .card-body. */
+.modal > .card-body,
+.modal > .modal-body {
+    overflow-y: auto;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 /* Standard modal sizes (replacing inline max-width). */
@@ -582,6 +621,7 @@ textarea.form-input {
     padding: 1rem;
     border-bottom: 1px solid var(--border);
     font-weight: 600;
+    flex: 0 0 auto;
 }
 
 .modal-footer {
@@ -590,6 +630,7 @@ textarea.form-input {
     justify-content: flex-end;
     padding: 1rem;
     border-top: 1px solid var(--border);
+    flex: 0 0 auto;
 }
 
 /* Row currently being edited via a modal (e.g. Calculate threshold).
@@ -1197,9 +1238,9 @@ textarea.form-input {
 }
 
 
-/* === Debug Log Beautification — color-group tinting === */
+/* === Debug Log Beautification � color-group tinting === */
 
-/* Row rule from the substrate ramp (U8). It was rgba(48,54,61,0.4) — the DARK
+/* Row rule from the substrate ramp (U8). It was rgba(48,54,61,0.4) � the DARK
    --border hex, hardcoded with an alpha. In dark that landed at 1.13:1, fainter
    than the header rule below it (correct by luck); in LIGHT it composited to
    #acafb1 at 2.21:1, i.e. every body rule was heavier than the header rule, and
@@ -1298,7 +1339,7 @@ textarea.form-input {
 .group-sync .log-uuid        { color: #8870b8; }
 .group-sync .log-err-kw      { color: #ff5040; }
 
-/* Severity overrides — error rows */
+/* Severity overrides � error rows */
 .debug-row.debug-error {
     background: #3b1219;
 }
@@ -1309,7 +1350,7 @@ textarea.form-input {
 .debug-row.debug-error .log-prefix      { color: #ff5040; }
 .debug-row.debug-error .log-err-kw      { color: #ff5040; }
 
-/* Severity overrides — warn rows */
+/* Severity overrides � warn rows */
 .debug-row.debug-warn {
     background: #3d2e00;
 }
@@ -1320,7 +1361,7 @@ textarea.form-input {
 .debug-row.debug-warn .log-prefix      { color: #ffaa20; }
 .debug-row.debug-warn .log-err-kw      { color: #ffaa20; }
 
-/* Debug (verbose) rows — muted */
+/* Debug (verbose) rows � muted */
 .debug-row.debug-debug td { color: #a0aab4; }
 
 /* JSON expand/collapse */
@@ -1393,7 +1434,7 @@ textarea.form-input {
     border-left: 2px solid #404850;
 }
 
-/* ─── Orders page: tab + pill filters ───────────────────────
+/* --- Orders page: tab + pill filters -----------------------
  * Mirrors Core's layout (orders-head + order-filters). The All/Active
  * aggregate tabs carry no dot; the status pills each carry a colored
  * dot in the same hue as the matching badge in the table.
@@ -1476,7 +1517,7 @@ textarea.form-input {
     margin-bottom: 0.75rem;
 }
 
-/* ─── Orders table (mirrors Core's .orders-card / .orders-table) ─── */
+/* --- Orders table (mirrors Core's .orders-card / .orders-table) --- */
 .orders-card { padding: 0.75rem; }
 .orders-search { min-width: 220px; max-width: 260px; }
 
@@ -1525,7 +1566,7 @@ textarea.form-input {
 .tnum { font-variant-numeric: tabular-nums; }
 .text-muted-xs { font-size: 0.72rem; color: var(--text-muted); }
 
-/* ─── Process sidebar groups (collapsible) ─── */
+/* --- Process sidebar groups (collapsible) --- */
 .proc-group-header {
     display: flex;
     align-items: center;

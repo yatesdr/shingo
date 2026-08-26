@@ -58,7 +58,7 @@ func TestRecordChange_WritesTheVerdictAndTheMissingPayload(t *testing.T) {
 	if len(meta.Missing) != 2 {
 		t.Errorf("metadata should carry the whole missing list, got %+v", meta.Missing)
 	}
-	// bin_uop_audit's vocabulary, not a new one.
+	// bin_uop_ledger's vocabulary, not a new one.
 	if e.Op != "sourceability_change" || e.Actor != "system" || e.Source == "" {
 		t.Errorf("op/source/actor not populated: %+v", e)
 	}

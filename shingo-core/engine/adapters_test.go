@@ -5,18 +5,16 @@ package engine
 import (
 	"sync"
 	"testing"
-	"time"
 
 	"shingo/protocol/testutil"
-	"shingocore/countgroup"
 	"shingocore/fleet"
 	"shingocore/store/orders"
 )
 
 // adapters_test.go — coverage tests for adapters.go.
 //
-// adapters.go holds three EventBus-bridging emitter structs
-// (dispatchEmitter, pollerEmitter, countGroupEventEmitter) and one
+// adapters.go holds two EventBus-bridging emitter structs
+// (dispatchEmitter, pollerEmitter) and one
 // fleet.OrderIDResolver adapter (orderResolver). Each emitter has no
 // state of its own — it just repackages its arguments into an Event
 // and forwards to the bus. These tests assert every emitter method:
@@ -238,71 +236,6 @@ func TestPollerEmitter_EmitOrderStatusChanged_NilSnapshot(t *testing.T) {
 	}
 	if p.OrderID != 56 || p.NewStatus != "dispatched" {
 		t.Errorf("payload fields = %+v", p)
-	}
-}
-
-// ── countGroupEventEmitter ──────────────────────────────────────────
-
-func TestCountGroupEventEmitter_Emit(t *testing.T) {
-	t.Parallel()
-	bus, mu, got := captureBus()
-	em := &countGroupEventEmitter{bus: bus}
-	now := time.Now()
-
-	tr := countgroup.Transition{
-		Group:             "Crosswalk1",
-		Desired:           "on",
-		Robots:            []string{"AMR-1", "AMR-2"},
-		FailSafeTriggered: false,
-		Timestamp:         now,
-	}
-	em.Emit(tr)
-
-	mu.Lock()
-	defer mu.Unlock()
-	evt, ok := got[EventCountGroupTransition]
-	if !ok {
-		t.Fatal("EventCountGroupTransition not emitted")
-	}
-	p, ok := evt.Payload.(CountGroupTransitionEvent)
-	if !ok {
-		t.Fatalf("payload type = %T", evt.Payload)
-	}
-	if p.Group != "Crosswalk1" || p.Desired != "on" {
-		t.Errorf("group/desired = %+v", p)
-	}
-	if len(p.Robots) != 2 || p.Robots[0] != "AMR-1" || p.Robots[1] != "AMR-2" {
-		t.Errorf("Robots = %v", p.Robots)
-	}
-	if p.FailSafeTriggered {
-		t.Error("FailSafeTriggered should be false")
-	}
-	if !p.Timestamp.Equal(now) {
-		t.Errorf("Timestamp = %v, want %v", p.Timestamp, now)
-	}
-}
-
-func TestCountGroupEventEmitter_Emit_FailSafe(t *testing.T) {
-	t.Parallel()
-	// The fail-safe branch fires when RDS is down — Robots is typically nil.
-	bus, mu, got := captureBus()
-	em := &countGroupEventEmitter{bus: bus}
-	em.Emit(countgroup.Transition{
-		Group:             "Crosswalk2",
-		Desired:           "on",
-		Robots:            nil,
-		FailSafeTriggered: true,
-		Timestamp:         time.Now(),
-	})
-
-	mu.Lock()
-	defer mu.Unlock()
-	p := got[EventCountGroupTransition].Payload.(CountGroupTransitionEvent)
-	if !p.FailSafeTriggered {
-		t.Error("FailSafeTriggered should be true for fail-safe branch")
-	}
-	if p.Robots != nil {
-		t.Errorf("Robots should be nil, got %v", p.Robots)
 	}
 }
 

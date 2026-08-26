@@ -1,20 +1,20 @@
-// wiring.go â€" Core event handler wiring.
+// wiring.go — Core event handler wiring.
 //
 // This is the reactive heart of ShinGo Core. wireEventHandlers() is the
-// single master registry â€" every EventBus subscription lives here so
+// single master registry — every EventBus subscription lives here so
 // the full reactive contract can be read top-to-bottom without cross-
 // referencing other files. Handler implementations are split by
 // functional concern into sibling files:
 //
-//   wiring_vendor_status.go   â€" fleet status â†’ order status mapping,
+//   wiring_vendor_status.go   — fleet status → order status mapping,
 //                                waybill/staged/terminal dispatch
-//   wiring_completion.go      â€" delivery arrival, completion cleanup,
+//   wiring_completion.go      — delivery arrival, completion cleanup,
 //                                multi-bin junction-table paths
-//   wiring_staging.go         â€" resolveNodeStaging / resolveStagingExpiry
-//   wiring_auto_return.go     â€" maybeCreateReturnOrder and related
-//   wiring_kanban.go          â€" demand-registry signalling on bin moves
-//   wiring_telemetry.go       â€" per-transition mission events + summary
-//   wiring_count_group.go     â€" CountGroup broadcast to edges
+//   wiring_staging.go         — resolveNodeStaging / resolveStagingExpiry /
+//                                isStorageSlot
+//   wiring_block_completed.go — per-block completion fan-out
+//   wiring_lane_gate.go       — lane-mouth gate hold/release
+//   wiring_telemetry.go       — per-transition mission events + summary
 //
 // sendToEdge (the outbound envelope helper) also lives here since it
 // is shared by the subscription handlers above.
@@ -50,7 +50,7 @@ func lookupRobotID(e *Engine, orderID int64) string {
 	return order.RobotID
 }
 
-// â"€â"€ Outbound messaging â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Outbound messaging ──────────────────────────────────────────────
 
 // sendToEdge builds a protocol envelope and enqueues it for dispatch to an edge station.
 func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error {
@@ -71,10 +71,10 @@ func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error
 	return nil
 }
 
-// â"€â"€ Event subscriptions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Event subscriptions ───────────────────────────────────────────
 
 func (e *Engine) wireEventHandlers() {
-	// â"€â"€ Dispatch tracking â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+	// ── Dispatch tracking ───────────────────────────────────────────
 	// When an order is dispatched, track it in the tracker
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderDispatchedEvent]) {
 		ev := evt.Payload
@@ -91,7 +91,7 @@ func (e *Engine) wireEventHandlers() {
 		e.logFn("engine: tracking vendor order %s for order %d", ev.VendorOrderID, ev.OrderID)
 	}, EventOrderDispatched)
 
-	// â"€â"€ Vendor status changes â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+	// ── Vendor status changes ───────────────────────────────────────
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderStatusChangedEvent]) {
 		ev := evt.Payload
 		e.dbg("vendor status change: order=%d vendor=%s %s->%s robot=%s", ev.OrderID, ev.VendorOrderID, ev.OldStatus, ev.NewStatus, ev.RobotID)
@@ -103,7 +103,7 @@ func (e *Engine) wireEventHandlers() {
 		e.recordMissionEvent(evt.Payload)
 	}, EventOrderStatusChanged)
 
-	// â"€â"€ Order failure â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+	// ── Order failure ───────────────────────────────────────────────
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
 		ev := evt.Payload
 		e.logFn("engine: order %d failed: %s - %s", ev.OrderID, ev.ErrorCode, ev.Detail)
@@ -111,7 +111,7 @@ func (e *Engine) wireEventHandlers() {
 
 		// Notify ShinGo Edge so it can transition the order locally.
 		// Mirrors the EventOrderCancelled handler's notification block below.
-		// The edge handler (HandleOrderError) is idempotent â€" duplicate
+		// The edge handler (HandleOrderError) is idempotent — duplicate
 		// failure notifications for an already-failed order are harmless.
 		// Auto-return orders have empty EdgeUUID by design (Core-internal);
 		// the gate correctly skips them.
@@ -140,6 +140,11 @@ func (e *Engine) wireEventHandlers() {
 				e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, dispatch.SwapTerminalFailed)
 			}
 		}
+
+		// Where did the bin go. The claim was released without touching
+		// node_id, so a bin the robot had picked up is now at _TRANSIT with
+		// nobody holding it. See stranded_transit.go.
+		e.inferStrandedTransitBin(ev.OrderID)
 	}, EventOrderFailed)
 
 	// ── Order skipped ────────────────────────────────────────────────────
@@ -171,9 +176,13 @@ func (e *Engine) wireEventHandlers() {
 		if e.dispatcher != nil {
 			e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, dispatch.SwapTerminalSkipped)
 		}
+
+		// A skipped order rarely has a bin on a deck, but the terminal
+		// chokepoint treats every terminal alike and so does this.
+		e.inferStrandedTransitBin(ev.OrderID)
 	}, EventOrderSkipped)
 
-	// â"€â"€ Order completion â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+	// ── Order completion ────────────────────────────────────────────
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
 		ev := evt.Payload
 		e.logFn("engine: order %d completed", ev.OrderID)
@@ -228,7 +237,7 @@ func (e *Engine) wireEventHandlers() {
 		e.handleOrderCompleted(ev)
 	}, EventOrderCompleted)
 
-	// â"€â"€ Order cancellation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+	// ── Order cancellation ─────────────────────────────────────────
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
 		ev := evt.Payload
 		e.logFn("engine: order %d cancelled: %s", ev.OrderID, ev.Reason)
@@ -238,7 +247,7 @@ func (e *Engine) wireEventHandlers() {
 		// The dispatcher path (edge-initiated cancel) sends its own reply via
 		// ReplySender.SendCancelled, but engine-initiated cancellations (web UI
 		// terminate, fleet status change, recovery) go through this event handler.
-		// The edge handler (HandleOrderCancelled) is idempotent â€" a duplicate
+		// The edge handler (HandleOrderCancelled) is idempotent — a duplicate
 		// cancellation for an already-cancelled order is harmless.
 		if ev.StationID != "" && ev.EdgeUUID != "" {
 			if err := e.sendToEdge(protocol.TypeOrderCancelled, ev.StationID,
@@ -272,9 +281,50 @@ func (e *Engine) wireEventHandlers() {
 			}
 			e.dispatcher.HandleSwapPeerTerminal(ev.OrderID, kind)
 		}
+
+		// A DISSOLVED DIG'S CANCELS RE-DRIVE THEIR COMPOUND, so the terminal arm can
+		// return the parent to the acquiring set. The dissolve deliberately does not
+		// transition the parent itself: {Reshuffling → Queued} fires the SYNCHRONOUS
+		// fulfillment scanner, and the dissolve is reachable from inside that scanner
+		// (tryFulfill → PlanBuriedReshuffle → CreateCompoundOrder →
+		// AdvanceCompoundOrder) under a non-reentrant scanMu. This is the hop that
+		// breaks the loop — the same reason triggerFulfillment above spawns rather
+		// than calls.
+		//
+		// SCOPED TO DISSOLVE CANCELS, and narrowly, because the first version was
+		// not. Re-driving on EVERY child cancel put an advance in the middle of every
+		// other teardown, and the operator-cancel path is the one that bit: it
+		// cancels the children BEFORE the parent, so the re-drive arrived while the
+		// parent still read `reshuffling`, dissolved the next leg, and raced the
+		// parent's own cancel to a `failed` finish. An operator asked for cancelled
+		// and got failed.
+		//
+		// The other teardowns need nothing from this: they are ending the compound,
+		// not re-planning it, and the reconciliation sweep remains their backstop
+		// exactly as before.
+		// GATE 1 WIDENED IT BY ONE MARKER, not by loosening it. A chapter now
+		// also ends when a LEG FAILS, and those cancels need the same hop for
+		// the same reason: without it the demand's disposition waits for the
+		// 30-second reconciliation sweep instead of arriving on the event.
+		// dispatch.IsChapterEndCancel is the one list both sides read, so the
+		// narrow scoping this comment block is about survives being widened.
+		if e.dispatcher != nil && dispatch.IsChapterEndCancel(ev.Reason) {
+			if order, err := e.db.GetOrder(ev.OrderID); err == nil && order.ParentOrderID != nil {
+				parentID := *order.ParentOrderID
+				go func() {
+					if err := e.dispatcher.AdvanceCompoundOrder(parentID); err != nil {
+						e.logFn("engine: advance dissolved compound %d after leg %d cancelled: %v",
+							parentID, ev.OrderID, err)
+					}
+				}()
+			}
+		}
+		// The commonest way a bin is stranded: a robot is carrying it and the
+		// order is cancelled out from under it.
+		e.inferStrandedTransitBin(ev.OrderID)
 	}, EventOrderCancelled)
 
-	// â"€â"€ Audit-only subscriptions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+	// ── Audit-only subscriptions ────────────────────────────────────
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderReceivedEvent]) {
 		ev := evt.Payload
 		e.logFn("engine: order %d received from %s: %s %s -> %s", ev.OrderID, ev.StationID, ev.OrderType, ev.PayloadCode, ev.DeliveryNode)
@@ -299,7 +349,7 @@ func (e *Engine) wireEventHandlers() {
 		e.db.AppendAudit("correction", ev.CorrectionID, ev.CorrectionType, "", ev.Reason, ev.Actor)
 	}, EventCorrectionApplied)
 
-	// â"€â"€ CMS transaction logging â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+	// ── CMS transaction logging ────────────────────────────────────
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
 		ev := evt.Payload
 		if ev.Action == "moved" && ev.FromNodeID != 0 && ev.ToNodeID != 0 {
@@ -307,7 +357,7 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventBinUpdated)
 
-	// â"€â"€ Fulfillment scanner triggers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+	// ── Fulfillment scanner triggers ────────────────────────────────
 	// Async trigger for high-volume signals (bin moves, order
 	// completions). The scanner coalesces overlapping triggers via
 	// its `pending` flag; a goroutine here keeps the emitting handler
@@ -324,12 +374,25 @@ func (e *Engine) wireEventHandlers() {
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCompleted)
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCancelled)
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderFailed)
+	// EventOrderSkipped — the one terminal this set was missing, and the
+	// unification is what made the gap matter. TerminalizeOrder releases an
+	// order's reservations in the same transaction as the status write for EVERY
+	// terminal including skip (store/orders.go → reservations.ReleaseByOrder), so
+	// a skipped order frees its lane occupancy exactly as a cancelled one does —
+	// but only the other three re-drove the scanner, so a plain order parked on
+	// that occupancy waited for the ticker instead of for the event. The lane-gate
+	// evaluator already subscribed to all four (engine/wiring_lane_gate.go); this
+	// makes the two trigger sets agree.
+	e.Events.SubscribeTypes(triggerFulfillment, EventOrderSkipped)
 	// EventBinEnteredTransit is the slot-vacancy signal added in Phase 1
-	// of the bin-transit-state project â€" every pickup that moves a bin
+	// of the bin-transit-state project — every pickup that moves a bin
 	// to _TRANSIT frees its source slot, which can unblock queued orders
 	// that needed to drop something there. Subscribing here makes the
 	// scanner re-evaluate without waiting for the order to fully complete.
 	e.Events.SubscribeTypes(triggerFulfillment, EventBinEnteredTransit)
+	// NOTE: a sixth trigger — EventBlockCompleted — is deliberately registered
+	// further down, immediately after the handleBlockCompleted subscription,
+	// because it must observe the mouth row that handler releases. See there.
 
 	// Sync trigger for fresh-intake (Phase 4b): EventOrderQueued.
 	// HandleComplexOrderRequest creates new complex orders as queued and
@@ -337,7 +400,7 @@ func (e *Engine) wireEventHandlers() {
 	// DispatchPreparedComplex, so capacity decisions are serialized via
 	// scan-mu (no TOCTOU between two concurrent fresh intakes for the
 	// same dropoff). Synchronous so the dispatched-status transition is
-	// observable on return from HandleComplexOrderRequest â€" the existing
+	// observable on return from HandleComplexOrderRequest — the existing
 	// test fixtures rely on that ordering, and operator-facing latency
 	// expectations don't tolerate "queued for ~1ms while a goroutine
 	// gets scheduled." Untyped subscribe — handler doesn't read payload.
@@ -347,7 +410,7 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventOrderQueued)
 
-	// â"€â"€ Per-block completion â†’ transit transition â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+	// ── Per-block completion → transit transition ───────────────────
 	// Phase 2 of the bin-transit-state project: pickup blocks (BinTask=Load
 	// or "pickup"-flavoured operations) drive the bin claimed at that step
 	// onto the synthetic _TRANSIT node. The poller diffs per-block state
@@ -356,6 +419,25 @@ func (e *Engine) wireEventHandlers() {
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BlockCompletedEvent]) {
 		e.handleBlockCompleted(evt.Payload)
 	}, EventBlockCompleted)
+
+	// Fulfillment trigger on per-block completion (A′ — placement release).
+	// A store parked by the tiered-entry gate is waiting on a DEEPER store to
+	// get its bin into the lane; that moment is the deeper store's dropoff
+	// block reaching FINISHED, where handleStoreBlockCompleted deletes its
+	// inbound mouth row (wiring_block_completed.go → ReleaseInboundLaneForOrder)
+	// and the gate's active set stops counting it (dispatch/lane_entry.go
+	// stillWorkingLaneMouth). Nothing re-scanned on that signal before, so a
+	// parked order sat until the blocker's whole ORDER completed — the gate was
+	// completion-coarse purely for want of this subscription.
+	//
+	// REGISTRATION ORDER IS LOAD-BEARING. The bus dispatches synchronously in
+	// registration order (protocol/eventbus: "Subscribers are called in
+	// registration order on the emitting goroutine"), so this MUST stay AFTER
+	// the handleBlockCompleted subscription above — that handler is what drops
+	// the mouth row. Registered before it, the scan would read the pre-release
+	// state, still see the placer as a blocker, and the admit would slip to the
+	// next trigger or the periodic sweep. Do not reorder these two.
+	e.Events.SubscribeTypes(triggerFulfillment, EventBlockCompleted)
 
 	// ── Restore-blockers + lane-lock-extension listeners ──────────────
 	// Both listeners trigger on the same bin-transit and parent-
@@ -386,57 +468,19 @@ func (e *Engine) wireEventHandlers() {
 		if e.dispatcher == nil {
 			return
 		}
-		e.dispatcher.HandleBinEnteredTransit(evt.Payload.BinID, evt.Payload.FromNodeID)
-		e.dispatcher.HandleBinTransitForLaneLock(evt.Payload.BinID, evt.Payload.FromNodeID)
+		// Lane mouth gate (§4): release the order's hold on the lane its bin just
+		// left, as soon as the bin physically clears (a no-op when the gate is off).
+		e.dispatcher.HandleTransitForLaneGate(evt.Payload.OrderID, evt.Payload.FromNodeID)
 	}, EventBinEnteredTransit)
 
-	// Parent terminal: drop both listeners so the lock isn't stuck
-	// and the synthetic-restock parent is cancelled. All four terminal
-	// statuses are wired:
-	//
-	//   - Cancelled / Failed: explicit cleanup paths.
-	//   - Skipped: a complex parent that gets skipped at Queued (e.g.,
-	//     ApplyComplexPlan returns no_source_bin because the unburied
-	//     target was moved or anomalied between unbury completion and
-	//     scanner pickup) needs the same cleanup — no pickup happens,
-	//     so the bin-transit listener will never fire.
-	//   - Completed: defensive idempotent sweep. In the normal happy
-	//     path the bin-transit listener already consumed the in-memory
-	//     entry and deleted the DB row before the parent reached
-	//     Confirmed, so this is a no-op. Covers the rare path where
-	//     an admin / recovery action force-confirms a parent past the
-	//     pickup leg.
-	//
-	// Both handlers are safe to call on a parent with no entry —
-	// they no-op when nothing matches.
-	terminal := func(orderID int64) {
-		if e.dispatcher == nil {
-			return
-		}
-		e.dispatcher.HandleComplexParentTerminal(orderID)
-		e.dispatcher.HandleComplexParentTerminalForLaneLock(orderID)
-	}
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
-		terminal(evt.Payload.OrderID)
-	}, EventOrderCancelled)
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
-		terminal(evt.Payload.OrderID)
-	}, EventOrderFailed)
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderSkippedEvent]) {
-		terminal(evt.Payload.OrderID)
-	}, EventOrderSkipped)
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
-		terminal(evt.Payload.OrderID)
-	}, EventOrderCompleted)
-
-	// â"€â"€ Queued order audit â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+	// ── Queued order audit ─────────────────────────────────────────
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
 		ev := evt.Payload
 		e.logFn("engine: order %d queued for payload %s", ev.OrderID, ev.PayloadCode)
 		e.db.AppendAudit("order", ev.OrderID, "queued", "", fmt.Sprintf("payload=%s from %s", ev.PayloadCode, ev.StationID), "system")
 	}, EventOrderQueued)
 
-	// â"€â"€ Queue-reason push â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+	// ── Queue-reason push ─────────────────────────────────────────
 	// Runs third for EventOrderQueued — after the sync scanner (1st) and
 	// the audit handler (2nd) above — so the scanner's latest
 	// SetOrderQueueDetail call is visible when we read the order back.
@@ -468,15 +512,38 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventOrderQueued)
 
-	// â"€â"€ Kanban demand â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-	// look up the demand registry and send a demand signal to Edge.
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
-		e.handleKanbanDemand(evt.Payload)
-	}, EventBinUpdated)
+	// ── Resume push: the parent left `reshuffling` ────────────────────────
+	//
+	// UNCONDITIONAL, WHICH IS THE POINT. The queue-reason push above returns
+	// early without a block sentence and without an acquiring status; a resumed
+	// parent has neither, so it fell through both and the Edge never learned the
+	// order had left `reshuffling`. Its mirror then rejected every later push as
+	// an illegal jump and the order became unreleasable — three robots a run.
+	//
+	// Status is written as `queued` rather than read back off the row: by the
+	// time this runs the in-band scanner may already have dispatched the order,
+	// and the Edge needs the step it MISSED, not the one Core is on now.
+	// reshuffling → queued is the only legal edge out of reshuffling toward the
+	// live path, so it is the one the mirror has to be walked through.
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderResumedEvent]) {
+		ev := evt.Payload
+		if ev.EdgeUUID == "" || ev.StationID == "" {
+			return
+		}
+		if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID, &protocol.OrderUpdate{
+			OrderUUID: ev.EdgeUUID,
+			Status:    string(protocol.StatusQueued),
+			Detail:    "reshuffle complete; parent requeued",
+		}); err != nil {
+			e.logFn("engine: resume notification to edge for order %d: %v", ev.OrderID, err)
+		} else {
+			e.dbg("resume notification sent to edge: station=%s uuid=%s", ev.StationID, ev.EdgeUUID)
+		}
+	}, EventOrderResumed)
 
 	// ── UOP-threshold replenishment monitor ─────────────────────────────
-	// Combined bin + bucket UOP per payload — fires LoopBelowThresholdSignal
-	// when a monitored (loader, payload) drops below its configured
+	// Combined bin + bucket UOP per payload — the monitor creates retrieve
+	// orders when a monitored (loader, payload) drops below its configured
 	// threshold. Bucket-apply events go through OnBucketApplied from the
 	// messaging layer; bin updates land via this subscription so cell-side
 	// consume ticks and loader-side bin moves both re-evaluate.
@@ -515,15 +582,6 @@ func (e *Engine) wireEventHandlers() {
 			e.sourceabilityMonitor.onPayloadChanged(evt.Payload.PayloadCode)
 		}, EventOrderQueued)
 	}
-
-	// â"€â"€ Count-group transitions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-	// When the countgroup runner detects a debounced occupancy change
-	// (or fires the RDS-down fail-safe), ship a CountGroupCommand to
-	// all edges. Each edge checks its own bindings map and either
-	// drives the PLC tag or ignores.
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CountGroupTransitionEvent]) {
-		e.handleCountGroupTransition(evt.Payload)
-	}, EventCountGroupTransition)
 	// Grace-expiry: poller detected a faulted order whose grace period expired
 	// without fleet recovery. Best-effort cancel at RDS, then local fail.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, GraceExpiredEvent]) {
@@ -544,11 +602,11 @@ func (e *Engine) wireEventHandlers() {
 	// clients group them as a conversation.
 
 	type faultSentInfo struct {
-		messageID   string
-		sentAt      time.Time
-		robotID     string
-		edgeUUID    string
-		stationID   string
+		messageID string
+		sentAt    time.Time
+		robotID   string
+		edgeUUID  string
+		stationID string
 	}
 
 	var faultTimersMu sync.Mutex
@@ -664,4 +722,12 @@ func (e *Engine) wireEventHandlers() {
 			notify.GraceExpiredAlert(ev.OrderID, ev.VendorOrderID, robotID),
 		)
 	}, EventGraceExpired)
+
+	// ── Lane-gate release evaluator ─────────────────────────────────────
+	// Registered LAST on purpose. The bus dispatches synchronously in
+	// registration order, and the evaluator has to observe the mouth rows that
+	// handlers above it release — handleBlockCompleted on a dropoff, and the
+	// bin-transit handler on a pickup. Registering it last is the cheapest way
+	// to be after all of them; see wiring_lane_gate.go.
+	e.wireLaneGateHandlers()
 }

@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"shingo/protocol"
 )
 
 // Key mints the opaque wire/identity token for a loader from its surrogate id:
@@ -32,23 +34,28 @@ func Key(id int64) string { return "loader:" + strconv.FormatInt(id, 10) }
 // A consume loader (unloader) is always operator — the window-queue drain.
 // "auto" was renamed to "threshold" (v40 migration) once the legacy bin-count
 // floor was retired, so "auto" no longer conflates threshold with bin-count.
+//
+// The strings themselves are single-sourced in protocol/: these values cross
+// the wire, and Edge spells the same vocabulary in shingo-edge/domain, so a
+// disagreement is a defect that reaches the floor rather than a style
+// difference. The names and the local surface are unchanged.
 const (
-	RoleProduce = "produce"
-	RoleConsume = "consume"
+	RoleProduce = string(protocol.ClaimRoleProduce)
+	RoleConsume = string(protocol.ClaimRoleConsume)
 
-	LayoutSharedWindow       = "shared_window"
-	LayoutDedicatedPositions = "dedicated_positions"
+	LayoutSharedWindow       = protocol.LoaderLayoutSharedWindow
+	LayoutDedicatedPositions = protocol.LoaderLayoutDedicatedPositions
 
-	ReplenishmentOperator  = "operator"
-	ReplenishmentThreshold = "threshold"
+	ReplenishmentOperator  = protocol.LoaderReplenishmentOperator
+	ReplenishmentThreshold = protocol.LoaderReplenishmentThreshold
 
 	// home_kind discriminates a dedicated loader's members: a HOME is a position
 	// the cell binds to (payload pinned, or blank when not yet assigned); a BUFFER
 	// is a kept-partial slot with no pinned payload. Source ranks homes ∪ buffers;
 	// an unpinned home (kind=home, blank payload) is inert. Replaces the
 	// blank-payload overload (D4 / round-3 Call 2).
-	HomeKindHome   = "home"
-	HomeKindBuffer = "buffer"
+	HomeKindHome   = protocol.LoaderHomeKindHome
+	HomeKindBuffer = protocol.LoaderHomeKindBuffer
 )
 
 // Loader is the aggregate root: a bin loader (produce) or unloader (consume)
@@ -62,9 +69,17 @@ type Loader struct {
 	Replenishment string     `json:"replenishment"`
 	OutboundDest  string     `json:"outbound_dest"`
 	InboundSource string     `json:"inbound_source"`
-	BufferDest    string     `json:"buffer_dest"`
 	ConfigGen     int64      `json:"config_gen"`
 	ArchivedAt    *time.Time `json:"archived_at,omitempty"` // soft-delete marker; nil = active (step 7)
+	// ChangeoverLoadDirective commandeers this loader's card during a
+	// changeover: rather than offering every payload it serves, the card names
+	// the carrier the incoming style needs and who is waiting for it.
+	//
+	// ON THE LOADER, because that is what it describes. It began life on
+	// style_node_claims — keyed (style, node) — where a loader serving six
+	// styles carried six copies of one policy that had to agree. Whether a
+	// station's card is commandeered is a fact about the station.
+	ChangeoverLoadDirective bool `json:"changeover_load_directive"`
 
 	// FunnelWindows restricts a shared-window loader to ONE window at a time:
 	// inbound empties all go to its first window on a budget of 1, instead of
@@ -129,7 +144,7 @@ type Config struct {
 	Payloads []Payload `json:"payloads"`
 }
 
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, buffer_dest, config_gen, archived_at, funnel_windows`
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive`
 
 type scanner interface{ Scan(...any) error }
 
@@ -137,7 +152,8 @@ func scanLoader(s scanner) (Loader, error) {
 	var l Loader
 	var archivedAt sql.NullTime
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
-		&l.OutboundDest, &l.InboundSource, &l.BufferDest, &l.ConfigGen, &archivedAt, &l.FunnelWindows)
+		&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &archivedAt, &l.FunnelWindows,
+		&l.ChangeoverLoadDirective)
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
 	}
@@ -150,9 +166,11 @@ func scanLoader(s scanner) (Loader, error) {
 func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	var id int64
 	err := db.QueryRow(`
-		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source, buffer_dest, funnel_windows)
+		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source,
+			funnel_windows, changeover_load_directive)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.BufferDest, l.FunnelWindows,
+		l.Name, l.Role, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
+		l.ChangeoverLoadDirective,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
@@ -190,7 +208,7 @@ func GetLoaderByName(db *sql.DB, name, role string) (*Loader, error) {
 // ListLoaders returns every ACTIVE loader (archived_at IS NULL), ordered by name. This
 // is the config enumeration the downward sync (BuildLoaderInfos) and demand derivation
 // (BuildDemandRegistryFromAggregate) consume, so a soft-deleted loader stops driving the
-// plant. Analytics that must include retired loaders read bin_uop_audit (the stamped
+// plant. Analytics that must include retired loaders read bin_uop_ledger (the stamped
 // loader_id survives), not this.
 func ListLoaders(db *sql.DB) ([]Loader, error) {
 	rows, err := db.Query(`SELECT ` + loaderCols + ` FROM bin_loaders WHERE archived_at IS NULL ORDER BY name`)
@@ -214,10 +232,12 @@ func ListLoaders(db *sql.DB) ([]Loader, error) {
 func UpdateLoader(db *sql.DB, l Loader) error {
 	res, err := db.Exec(`
 		UPDATE bin_loaders SET name=$1, layout=$2, replenishment=$3,
-			outbound_dest=$4, inbound_source=$5, buffer_dest=$6, funnel_windows=$7,
+			outbound_dest=$4, inbound_source=$5, funnel_windows=$6,
+			changeover_load_directive=$7,
 			config_gen=config_gen+1, updated_at=NOW()
 		WHERE id=$8`,
-		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.BufferDest, l.FunnelWindows, l.ID)
+		l.Name, l.Layout, l.Replenishment, l.OutboundDest, l.InboundSource, l.FunnelWindows,
+		l.ChangeoverLoadDirective, l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}
@@ -225,11 +245,11 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 }
 
 // DeleteLoader SOFT-deletes a loader: it sets archived_at instead of removing the row,
-// so the stamped bin_uop_audit history (loader_id is non-cascading) survives a retired
+// so the stamped bin_uop_ledger history (loader_id is non-cascading) survives a retired
 // loader — the whole reason the cascade was removed (6 reviewers flagged it). The
 // homes/payloads rows are left intact (a hard DELETE would have cascaded them away).
 // Active reads (ListLoaders) filter on archived_at IS NULL, so an archived loader stops
-// syncing to Edge and driving demand; analytics read bin_uop_audit, which is preserved.
+// syncing to Edge and driving demand; analytics read bin_uop_ledger, which is preserved.
 // Idempotent: re-archiving just re-stamps archived_at. config_gen bumps so the next
 // downward sync drops the loader from the Edge cache.
 //

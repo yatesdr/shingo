@@ -106,6 +106,54 @@ func findActiveClaim(db *store.DB, node *processes.Node) *processes.NodeClaim {
 	return nil
 }
 
+// positionClaimForTask derives the per-position claim for a press position that owns
+// changeover work but has no style_node_claims row under its own name.
+//
+// parentClaimID selects the side, and it is the node task's own record of what
+// the position was planned from: ToClaimID for the material arriving,
+// FromClaimID for the material physically on the position. Both point at the real
+// persisted parent press-index row, because the synthesized claim the planner
+// built kept the parent's ID.
+//
+// Returns nil for anything domain.PositionClaimFromParent does not recognise as a
+// position of a press-index parent, so a caller that gets nil reports its own
+// refusal rather than acting on an invented claim.
+func (e *Engine) positionClaimForTask(parentClaimID *int64, coreNodeName string) *processes.NodeClaim {
+	if parentClaimID == nil {
+		return nil
+	}
+	parent, err := e.db.GetStyleNodeClaim(*parentClaimID)
+	if err != nil {
+		return nil
+	}
+	return domain.PositionClaimFromParent(parent, coreNodeName)
+}
+
+// changeoverToClaim resolves the TARGET-style claim a per-node changeover
+// action acts on: the persisted row when the node has one, otherwise the position
+// derivation for a fanned-out press position.
+func (e *Engine) changeoverToClaim(toStyleID int64, node *processes.Node, task *processes.NodeTask) *processes.NodeClaim {
+	if claim, err := e.db.GetStyleNodeClaimByNode(toStyleID, node.CoreNodeName); err == nil && claim != nil {
+		return claim
+	}
+	if task == nil {
+		return nil
+	}
+	return e.positionClaimForTask(task.ToClaimID, node.CoreNodeName)
+}
+
+// changeoverFromClaim resolves the OUTGOING claim — what is physically on the
+// node — with the same position fallback.
+func (e *Engine) changeoverFromClaim(node *processes.Node, task *processes.NodeTask) *processes.NodeClaim {
+	if claim := findActiveClaim(e.db, node); claim != nil {
+		return claim
+	}
+	if task == nil {
+		return nil
+	}
+	return e.positionClaimForTask(task.FromClaimID, node.CoreNodeName)
+}
+
 // loadChangeoverNodeTask loads the changeover station task and node task for a given changeover and node.
 // Pure function - takes db parameter instead of Engine receiver.
 func loadChangeoverNodeTask(db *store.DB, changeoverID int64, node *processes.Node) (*processes.StationTask, *processes.NodeTask, error) {

@@ -47,17 +47,37 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	// Read once per action rather than per leg, so both legs of a swap take the
 	// SAME origin — one demand served by two rows, which is what
 	// CreateComplexOrderSiblingWithOrigin documents.
-	origin := ordermgr.Origin{}
-	if originID, oerr := e.db.GetChangeoverOriginID(nodeTask.ProcessChangeoverID); oerr != nil {
-		e.logFn("changeover: read episode for changeover %d: %v — orders will be unattributed",
-			nodeTask.ProcessChangeoverID, oerr)
-	} else if originID != "" {
-		origin = ordermgr.Attached(originID)
-	}
+	origin := e.changeoverOrigin(nodeTask.ProcessChangeoverID)
+
+	// BOTH UUIDs BEFORE EITHER CREATE — the same fix as applyProducePlan, and
+	// this path needed it more. The supply went in with siblingUUID == "",
+	// then the evac was stamped with a uuid READ BACK from the database, so a
+	// swap's pairing depended on a refetch succeeding and on the supply being
+	// created first. SYNTH-round2 found the changeover path creates the filler
+	// first while the produce path creates the supply first, and once both
+	// legs can be held no single ordering is safe.
+	//
+	// Pre-minting removes the refetch AND the ordering dependency: neither leg
+	// is ever unpaired. The read-back-failure branch below is gone with it —
+	// it existed only because the uuid was not knowable in advance.
+	//
+	// Creation ORDER is unchanged: the outbox drains strictly ORDER BY id, so
+	// whichever leg is created first is the one Core is asked for first. That
+	// is a dispatch-sequencing fact, not a pairing one.
+	//
+	// ONLY COMPLEX LEGS GET ONE, because only ComplexOrderRequest carries
+	// SiblingOrderUUID on the wire — a retrieve leg is structurally unpairable
+	// at Core. The old read-back did not know that and would happily stamp an
+	// evac with a retrieve's uuid, producing exactly the ASYMMETRIC link
+	// swap_hold rejects (it checks sib.SiblingOrderUUID == order.EdgeUUID).
+	// Leaving it blank there fails open cleanly instead. Local pairing is
+	// unaffected either way: LinkOrderSiblings below works on row ids, and it
+	// is what supply_bin_guard and ComputeSwapReady read.
+	supplyUUID, evacUUID := mintPairableLegUUID(action.SupplyOrder), mintPairableLegUUID(action.EvacOrder)
 
 	var supplyID, evacID *int64
 	if action.SupplyOrder != nil {
-		id, err := e.createPlannedOrder(nodeID, action.SupplyOrder, "", origin)
+		id, err := e.createPlannedOrder(nodeID, action.SupplyOrder, evacUUID, supplyUUID, origin)
 		if err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): create supply order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
@@ -68,30 +88,8 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 		}
 		supplyID = &id
 	}
-	// Evac leg carries the supply leg's UUID so Core can pair them at intake.
-	supplyUUID := ""
-	if supplyID != nil {
-		so, gerr := e.db.GetOrder(*supplyID)
-		if gerr != nil || so == nil {
-			// The supply was created but we can't read back its UUID, so we cannot
-			// stamp the evac's sibling pointer. Creating the evac anyway yields an
-			// UNLINKED two-robot pair at Core — silently disabling BOTH the swap
-			// starvation hold (dispatch.swapLegHeld) and the peer-death
-			// handler (dispatch.HandleSwapPeerTerminal), the exact ALN_003
-			// fail-open. Fail this node task like the create-order errors above
-			// rather than ship a half-linked swap; the rest of the plan proceeds
-			// (per-node log-and-continue contract).
-			log.Printf("changeover: auto-create orders for %s (%s): refetch supply order %d for sibling link: %v — operator must handle manually",
-				action.NodeName, action.Situation, *supplyID, gerr)
-			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskError); err != nil {
-				log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
-			}
-			return
-		}
-		supplyUUID = so.UUID
-	}
 	if action.EvacOrder != nil {
-		id, err := e.createPlannedOrder(nodeID, action.EvacOrder, supplyUUID, origin)
+		id, err := e.createPlannedOrder(nodeID, action.EvacOrder, supplyUUID, evacUUID, origin)
 		if err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): create evac order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
@@ -178,18 +176,31 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	logChangeoverAction(action, supplyID, evacID)
 }
 
-func (e *Engine) createPlannedOrder(nodeID int64, spec *changeover.OrderSpec, siblingUUID string, origin ordermgr.Origin) (int64, error) {
+// mintPairableLegUUID pre-mints a uuid for a leg that can actually carry a
+// sibling pointer to Core, and returns "" for one that cannot (nil, or a
+// retrieve spec — see the call site).
+func mintPairableLegUUID(spec *changeover.OrderSpec) string {
+	if spec == nil || spec.Complex == nil {
+		return ""
+	}
+	return ordermgr.NewOrderUUID()
+}
+
+// createPlannedOrder creates one leg. orderUUID is the pre-minted uuid for this
+// leg (empty for a single-order spec, which mints its own); siblingUUID is its
+// partner's.
+func (e *Engine) createPlannedOrder(nodeID int64, spec *changeover.OrderSpec, siblingUUID, orderUUID string, origin ordermgr.Origin) (int64, error) {
 	switch {
 	case spec.Complex != nil:
-		return e.createComplexFromSpec(nodeID, spec.Complex, siblingUUID, origin)
+		return e.createComplexFromSpec(nodeID, spec.Complex, siblingUUID, orderUUID, origin)
 	case spec.Retrieve != nil:
 		return e.createRetrieveFromSpec(nodeID, spec.Retrieve, origin)
 	}
 	return 0, nil
 }
 
-func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderSpec, siblingUUID string, origin ordermgr.Origin) (int64, error) {
-	o, err := e.orderMgr.CreateComplexOrderSiblingWithOrigin(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps, c.AutoConfirm, c.PayloadCode, siblingUUID, origin)
+func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderSpec, siblingUUID, orderUUID string, origin ordermgr.Origin) (int64, error) {
+	o, err := e.orderMgr.CreateComplexOrderPaired(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps, c.AutoConfirm, c.PayloadCode, siblingUUID, orderUUID, origin)
 	if err != nil {
 		return 0, err
 	}
@@ -197,7 +208,7 @@ func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderS
 }
 
 func (e *Engine) createRetrieveFromSpec(nodeID int64, r *changeover.RetrieveOrderSpec, origin ordermgr.Origin) (int64, error) {
-	o, err := e.orderMgr.CreateRetrieveOrderWithOrigin(&nodeID, r.RetrieveEmpty, 1, r.DeliveryNode, r.SourceNode, r.StagingNode, r.LoadType, r.PayloadCode, r.AutoConfirm, false, origin)
+	o, err := e.orderMgr.CreateRetrieveOrder(&nodeID, r.RetrieveEmpty, 1, r.DeliveryNode, r.SourceNode, r.StagingNode, r.LoadType, r.PayloadCode, r.AutoConfirm, false, origin)
 	if err != nil {
 		return 0, err
 	}
@@ -230,4 +241,38 @@ func derefID(id *int64) int64 {
 		return 0
 	}
 	return *id
+}
+
+// changeoverOrigin returns the demand episode a changeover's orders belong to.
+//
+// ONE SPELLING, FIVE SITES. These three lines were written once, in
+// applyNodeAction, and the four operator-driven changeover entry points
+// (StageNodeChangeoverMaterial, EvacuateNode, DeliverNewMaterialForChangeover,
+// and the release path) each created their orders through the unattributed
+// constructors instead. So an AUTO-planned changeover leg carried its episode
+// and an OPERATOR-driven one for the same changeover did not — the same
+// changeover, attributed or orphaned depending on which button produced it.
+//
+// openChangeoverEpisode mints the origin and stamps it onto the changeover row
+// precisely so any site can read it back. This is that read, spelled once,
+// because a change to it now has to land in five places — which is the rule
+// this collapse exists under.
+//
+// A READ FAILURE DOES NOT BLOCK THE CHANGEOVER. Attribution never blocks
+// transport; the leg is created carrying nothing and Core classifies it, which
+// is what happened at every one of these sites before.
+func (e *Engine) changeoverOrigin(processChangeoverID int64) ordermgr.Origin {
+	originID, err := e.db.GetChangeoverOriginID(processChangeoverID)
+	if err != nil {
+		e.logFn("changeover: read episode for changeover %d: %v — orders will be unattributed",
+			processChangeoverID, err)
+		return ordermgr.Origin{}
+	}
+	if originID == "" {
+		// The changeover has no episode. Not an error and not no_demand: the
+		// episode exists for every changeover this build opens, so an empty one
+		// here means an older row, and Core's orphan class is the true answer.
+		return ordermgr.Origin{}
+	}
+	return ordermgr.Attached(originID)
 }

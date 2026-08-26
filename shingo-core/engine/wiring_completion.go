@@ -14,7 +14,8 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
+	"shingocore/service"
 	"shingocore/store/orders"
 )
 
@@ -39,7 +40,50 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	// previous order — sendToEdge then applyBinArrivalForOrder — let
 	// AutoConfirm Edge orders auto-confirm before the bin-arrival
 	// commit landed.
-	e.applyBinArrivalForOrder(order)
+	//
+	// ── FAIL LOUD, AND STOP ───────────────────────────────────────────────
+	// A refusal here means the robot arrived carrying something the ledger says
+	// belongs to someone else, and Core cannot tell what is actually on the deck.
+	// That is an integrity fault, not congestion, so wait-not-fail does not cover
+	// it: standing law 1's own carve-out is that genuine faults fail loud with a
+	// named message.
+	//
+	// THE LICENCE IS THE EVIDENCE, not an argument. The instrument read 121, then
+	// 2, then 1 as three successive extraction errors were corrected, and every
+	// surviving specimen was explained benign — the last being a terminal order
+	// whose bin had moved on, closed by the discriminator in arrival_guard.go. A
+	// refusal that survives all four cuts is a state nothing in the claim
+	// lifecycle should be able to produce, so the right response to seeing one is
+	// to stop and say so.
+	//
+	// Parking was the alternative and it loses on a fact discovered while
+	// building: Core does not know what the robot is holding. Parking keeps an
+	// order alive whose payload is unidentifiable, still holding a runtime slot —
+	// the dead-robot wedge — which is worse than a loud failure.
+	//
+	// IT RETURNS rather than falling through, because the rest of this function
+	// tells Edge the order was DELIVERED. Failing the order and then announcing
+	// its delivery in the same breath is the lie this whole thread has been
+	// unwinding.
+	//
+	// failOrderAndEmit, not a bare FailOrderAtomic: it routes through
+	// Lifecycle().Fail and fires EventOrderFailed, so the failure lands in the
+	// audit trail and reaches the station like every other failure. It also
+	// releases the order's bin claims, which is correct here — the bin it thought
+	// it held is demonstrably not its own.
+	if refusal := e.applyBinArrivalForOrder(order); refusal != nil {
+		claimant := "nobody"
+		if refusal.ClaimedBy != nil {
+			claimant = fmt.Sprintf("order %d", *refusal.ClaimedBy)
+		}
+		detail := fmt.Sprintf("cargo does not match the ledger: bin %d is claimed by %s, not by this "+
+			"order (%s). Core cannot identify what the robot is carrying, so the delivery is not "+
+			"recorded and the order is failed rather than reported delivered.",
+			refusal.BinID, claimant, refusal.Context())
+		e.logFn("FAIL: order=%d refused at %s — %s", order.ID, refusal.Site, detail)
+		e.failOrderAndEmit(order.ID, "cargo_ledger_mismatch", detail)
+		return
+	}
 
 	// Ship the bin ID so Edge can attribute PLC tick deltas to the
 	// right bin. Single-bin orders carry BinID; multi-tote (multi-bin)
@@ -153,14 +197,19 @@ func selectConsumingBinForNode(orderBins []*orders.OrderBin, processNode string)
 // Called from handleOrderDelivered (on fleet FINISHED) so that telemetry
 // is accurate immediately. handleOrderCompleted still runs on confirmation
 // but is idempotent — it skips the bin move if already at the destination.
-func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
+// It returns the refusal when the claim guard declines the placement, so the
+// completion path can see that this order did not deliver what it says it did.
+// What to DO about that is an open ruling (see arrival_guard.go) — today the
+// caller records it and nothing more, which is exactly the previous behaviour
+// plus the ability to know.
+func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 	if order.SourceNode == "" || order.DeliveryNode == "" {
 		// Bin-stuck-at-source diagnostic: previously a silent skip. Move-order
 		// post-mortem 2026-04-28 traced "delivered but bin still at source"
 		// scenarios that left no log line at all.
 		e.logFn("delivery: order=%d type=%s bin=%v skipped arrival: missing source/delivery (source=%q delivery=%q)",
 			order.ID, order.OrderType, order.BinID, order.SourceNode, order.DeliveryNode)
-		return
+		return nil
 	}
 
 	// Release the order's destination-slot claims now that its bins have
@@ -177,25 +226,38 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 	if len(orderBins) > 0 {
 		e.logFn("delivery: order=%d type=%s taking multi-bin arrival path (%d junction rows)",
 			order.ID, order.OrderType, len(orderBins))
-		e.applyMultiBinArrivalForOrder(order, orderBins)
-		return
+		// A multi-bin order can be refused for some bins and place the rest. The
+		// first refusal is enough to tell the caller this order did not deliver
+		// everything it is about to claim it did; all of them are counted and
+		// logged inside.
+		if rs := e.applyMultiBinArrivalForOrder(order, orderBins); len(rs) > 0 {
+			return rs[0]
+		}
+		return nil
 	}
 
 	// Single-bin path
+	//
+	// SHADOWED: the diagnostic below reads a NULL bin_id as "planMove may have
+	// failed to persist BinID", which is true of a broken order AND true of a
+	// coordinator, whose bin_id is NULL permanently and correctly. See
+	// service.NoteFolderShadow.
 	if order.BinID == nil {
+		owns, oerr := e.db.OrderOwnsNoCargo(order.ID)
+		service.NoteFolderShadow(service.FolderSiteDeliverySettle, order.ID, owns, oerr)
 		// Bin-stuck-at-source diagnostic: this is the failure mode where
 		// planMove's UpdateOrderBinID didn't persist (or was never called)
 		// but the order still progressed to FINISHED. Without a log here,
 		// the bin silently stays at source and the symptom shows up downstream.
 		e.logFn("delivery: order=%d type=%s skipped arrival: order.BinID is nil (source=%s delivery=%s) — planMove may have failed to persist BinID",
 			order.ID, order.OrderType, order.SourceNode, order.DeliveryNode)
-		return
+		return nil
 	}
 
 	destNode, err := e.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
 		e.logFn("engine: dest node %s not found for delivery arrival: %v", order.DeliveryNode, err)
-		return
+		return nil
 	}
 
 	sourceNode, _ := e.db.GetNodeByDotName(order.SourceNode)
@@ -222,21 +284,24 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 	// compound dispatcher serializes children sequentially, so the
 	// teleport class this guard prevents (concurrent reclaim) doesn't
 	// apply within a compound family.
-	if order.ParentOrderID == nil {
-		bin, binErr := e.db.GetBin(*order.BinID)
-		if binErr != nil {
-			e.logFn("engine: get bin %d for delivery arrival guard: %v", *order.BinID, binErr)
-			return
-		}
-		if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
-			claimedDesc := "nil"
-			if bin.ClaimedBy != nil {
-				claimedDesc = fmt.Sprintf("%d", *bin.ClaimedBy)
-			}
-			e.logFn("delivery: order=%d bin=%d not claimed by this order (claimed_by=%s) — skipping arrival to avoid teleport",
-				order.ID, *order.BinID, claimedDesc)
-			return
-		}
+	//
+	// "The LAST step's UPDATE wins" is no longer unconditional, and the
+	// difference matters to this skip. That claim is now a sibling-scoped
+	// compare-and-set (store/orders.go CreateCompoundChildren): last-write-wins
+	// still holds for a bin held by this compound's parent or by one of its
+	// children — which is every case this skip is about — but a bin held by an
+	// order OUTSIDE the compound is refused and fails the whole transaction.
+	// So a child reaching here can no longer be carrying a bin an unrelated
+	// order claimed after the plan was built: the compound would never have been
+	// created. The skip is therefore narrower than it was in what it lets
+	// through, and unchanged in what it is FOR.
+	guardBin, binErr := e.db.GetBin(*order.BinID)
+	if binErr != nil {
+		e.logFn("engine: get bin %d for delivery arrival guard: %v", *order.BinID, binErr)
+		return nil
+	}
+	if r := e.recordArrivalRefusal(refuseArrival(order, guardBin, destNode.ID, arrivalSiteDelivery)); r != nil {
+		return r
 	}
 
 	staged, expiresAt := e.resolveNodeStaging(destNode)
@@ -250,10 +315,10 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 
 	e.logFn("delivery: order=%d type=%s bin=%d arriving %s -> %s (staged=%v)",
 		order.ID, order.OrderType, *order.BinID, order.SourceNode, order.DeliveryNode, staged)
-	evicted, err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt)
+	evicted, err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt, order.ID)
 	if err != nil {
 		e.logFn("engine: apply bin arrival on delivery for order %d bin %d: %v", order.ID, *order.BinID, err)
-		return
+		return nil
 	}
 	if evicted {
 		e.logFn("WARN: delivery of bin %d to %s evicted a stale bin record there — a delivery cannot physically complete onto an occupied slot, so the completed delivery proves the slot was empty; the stale bin is at _TRANSIT, recover via the anomalies page", *order.BinID, order.DeliveryNode)
@@ -276,6 +341,7 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 			NodeID:      destNode.ID,
 		}})
 	}
+	return nil
 }
 
 // applyMultiBinArrivalForOrder handles the multi-bin case at delivery time.
@@ -284,12 +350,22 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 // WaitIndex > 0 ("operatorConfirmed"). Override removed 2026-04-14 — bins
 // arriving at lineside via complex orders now stage like simple orders do.
 // See applyBinArrivalForOrder for full context.
-func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*orders.OrderBin) {
+// It returns one refusal per bin the claim guard declined — see
+// applyBinArrivalForOrder and arrival_guard.go. A multi-bin order can be refused
+// for SOME of its bins and place the rest, so this is a slice rather than a
+// single answer; that partial shape is exactly why the disposition ruling is
+// still open.
+func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*orders.OrderBin) []*ArrivalRefusal {
+	var refusals []*ArrivalRefusal
 	var instructions []orders.BinArrivalInstruction
 	// fromNodeIDs[i] is the source node of instructions[i]. Captured here
 	// so the post-arrival BinUpdatedEvent can carry FromNodeID — without it
 	// handleKanbanDemand cannot fire produce signals on storage-slot exit.
 	var fromNodeIDs []int64
+
+	// Measured before anything is placed, because the interesting number is how
+	// often the record the settle is ABOUT TO USE disagrees with the plan.
+	e.noteDestNodeDrift(order, orderBins, driftSiteDelivery)
 
 	for _, ob := range orderBins {
 		if ob.DestNode == "" {
@@ -306,25 +382,43 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 		// Compound children (ParentOrderID != nil) skip the guard for
 		// the same overlapping-claim reason documented in
 		// applyBinArrivalForOrder.
-		if order.ParentOrderID == nil {
-			guardBin, err := e.db.GetBin(ob.BinID)
-			if err != nil {
-				e.logFn("engine: order %d bin %d get for delivery guard: %v", order.ID, ob.BinID, err)
-				continue
-			}
-			if guardBin.ClaimedBy == nil || *guardBin.ClaimedBy != order.ID {
-				claimedDesc := "nil"
-				if guardBin.ClaimedBy != nil {
-					claimedDesc = fmt.Sprintf("%d", *guardBin.ClaimedBy)
-				}
-				e.logFn("delivery: order=%d bin=%d not claimed by this order (claimed_by=%s) — skipping multi-bin arrival to avoid teleport",
-					order.ID, ob.BinID, claimedDesc)
-				continue
-			}
+		guardBin, err := e.db.GetBin(ob.BinID)
+		if err != nil {
+			e.logFn("engine: order %d bin %d get for delivery guard: %v", order.ID, ob.BinID, err)
+			continue
 		}
+		// Destination resolved BEFORE the guard so a refusal can say where the bin
+		// was owed, not just who owns it — the diagnosable half.
 		destNode, err := e.db.GetNodeByDotName(ob.DestNode)
 		if err != nil {
 			e.logFn("engine: order %d bin %d dest node %q not found on delivery: %v", order.ID, ob.BinID, ob.DestNode, err)
+			continue
+		}
+		// ALREADY THERE IS NOT A PLACEMENT, and this site had no way to say so.
+		//
+		// Its completion-time sibling has asked this first since cb7ed41d; here the
+		// settle re-placed every junction row unconditionally. The asymmetry matters
+		// more at THIS site than at that one, because of where the destination comes
+		// from: order_bins.dest_node is written once at allocation and updated by
+		// nothing (D2), while the single-bin path next door reads order.DeliveryNode,
+		// which the gate re-bind does maintain. So this is the loop that can re-place
+		// a bin the fleet already reported somewhere.
+		//
+		// Asked BEFORE ownership, matching the sibling: a bin sitting at its
+		// destination is a finished delivery whoever holds the claim by now, and
+		// asking about ownership first is what counted 121 ordinary deliveries as
+		// defects. On a repeat `delivered` event — the at-least-once shape — the
+		// claim is already released, so this site would have logged a refusal for a
+		// delivery that worked.
+		//
+		// SKIPPING DOES NOT STRAND THE CLAIM: TerminalizeOrderWithReason releases
+		// every claim this order holds, unconditionally, and stamps anomaly_at only
+		// on bins still at _TRANSIT — which a landed bin is not.
+		if binAlreadyAt(guardBin, destNode.ID) {
+			continue
+		}
+		if r := e.recordArrivalRefusal(refuseArrival(order, guardBin, destNode.ID, arrivalSiteMultiBinDelivery)); r != nil {
+			refusals = append(refusals, r)
 			continue
 		}
 		staged, expiresAt := e.resolveNodeStaging(destNode)
@@ -347,18 +441,60 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 		fromNodeIDs = append(fromNodeIDs, fromNodeID)
 	}
 
-	if len(instructions) == 0 {
-		return
+	// ── A PARTIAL SETTLEMENT IS CORRUPTION, SO NOTHING COMMITS ───────────────
+	//
+	// This used to place the bins that passed and THEN hand the refusals back, so
+	// a swap whose second leg was refused had its first leg written, the order
+	// failed, and Edge was never told about the bin that did land (D4). Wrong
+	// under every disposition the round considered, which is why the mechanics
+	// were fixed regardless of how the policy landed.
+	//
+	// R.26 settled the policy on a plant fact rather than an argument: a dig works
+	// LANES and never reclaims a leg of another process's in-flight order, so one
+	// bin of a settlement belonging to somebody else is not a race the design
+	// permits — it is an integrity failure. The right response to seeing one is to
+	// stop loudly with nothing written, not to record half a delivery.
+	//
+	// THIS IS AN ASSERT, and it is deliberately placed before the commit rather
+	// than compensating after it. It is also future-proofing: if a later era
+	// changes the dig rule, this fires on day one and the partial-delivery policy
+	// question comes back with evidence attached instead of being re-argued.
+	//
+	// It does NOT widen the blast radius. handleOrderDelivered has failed the
+	// order on any refusal since 5c31033e; all that changes is whether a partial
+	// write happened first. And the arrived check above narrowed the population
+	// reaching here — a repeat delivery event whose bins are still at their
+	// destinations is now skipped rather than refused.
+	if len(refusals) > 0 {
+		for _, r := range refusals {
+			e.logFn("ASSERT: order %d settlement refused for bin %d (%s; %s) — NOTHING IS WRITTEN. "+
+				"%d of this order's %d bins were about to be placed and are not: a settlement that "+
+				"finds one leg's bin no longer belonging to this order is an integrity failure, and "+
+				"digs work lanes rather than another process's in-flight legs, so this is not a race "+
+				"the design permits (PLAN §R.26).",
+				order.ID, r.BinID, r.Reason(), r.Context(), len(instructions), len(orderBins))
+		}
+		return refusals
 	}
 
-	evictedGhosts, err := e.db.ApplyMultiBinArrival(instructions)
+	if len(instructions) == 0 {
+		return refusals
+	}
+
+	evictedGhosts, err := e.db.ApplyMultiBinArrival(order.ID, instructions)
 	if err != nil {
 		e.logFn("engine: multi-bin delivery arrival for order %d: %v", order.ID, err)
-		return
+		return refusals
 	}
 	for _, ghostID := range evictedGhosts {
 		e.logFn("WARN: multi-bin delivery for order %d evicted a stale bin record (bin %d) to _TRANSIT — a delivery cannot physically complete onto an occupied slot; recover via the anomalies page",
 			order.ID, ghostID)
+	}
+	// The burial shadow instrument. Explicit here because the multi-bin arrival
+	// goes through the store aggregate rather than BinService.ApplyArrival, which
+	// calls it for itself. Post-commit and result-free either way.
+	for _, inst := range instructions {
+		e.binService.NoteBurialShadow(inst.BinID, inst.ToNodeID, order.ID)
 	}
 
 	for i, inst := range instructions {
@@ -375,6 +511,7 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 			NodeID:      inst.ToNodeID,
 		}})
 	}
+	return refusals
 }
 
 // handleOrderCompleted runs when Edge confirms receipt. Bin movement already
@@ -408,7 +545,12 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 
 	// Legacy single-bin path: idempotent safety net — bin should already be at
 	// dest from handleOrderDelivered, but re-apply in case delivery arrival failed.
+	//
+	// SHADOWED (silent skip): a coordinator relies on this returning, and so does
+	// a defective order — the same branch for opposite reasons.
 	if order.BinID == nil {
+		owns, oerr := e.db.OrderOwnsNoCargo(order.ID)
+		service.NoteFolderShadow(service.FolderSiteCompletionNet, order.ID, owns, oerr)
 		return
 	}
 
@@ -428,45 +570,18 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		sourceNodeID = sourceNode.ID
 	}
 
-	// Safety-net invariant: only re-apply this order's arrival if the bin
-	// is STILL claimed by THIS order. claimed_by is the canonical "this
-	// order owns the bin" pointer; it is cleared atomically in
-	// ApplyArrival (normal post-FINISH state) and in
-	// FailOrderAtomic / CancelOrderAtomic. So:
+	// The safety net's question — is there anything left to re-apply? — is
+	// answered by reapplyRefused, which documents itself. Read it there.
 	//
-	//   - claimed_by == nil   → ApplyArrival already ran (or order
-	//                           failed/cancelled); arrival happened or
-	//                           is no longer wanted. Skip.
-	//   - claimed_by == other → re-claimed by a newer order during the
-	//                           FINISH → CONFIRM window. Skip — re-
-	//                           applying would clobber the new order
-	//                           (the SMN_001 / SMN_002 teleport bug
-	//                           originally fixed by checking node_id).
-	//   - claimed_by == this  → re-apply. The bin is somewhere
-	//                           (source, _TRANSIT, or stale dest), but
-	//                           it's still ours, and ApplyArrival is
-	//                           idempotent across all of those.
-	//
-	// Pre-Phase-2 this used `bin.NodeID == sourceNode.ID` as a proxy
-	// for "still ours" — true because the bin physically stayed at
-	// source until FINISH. Phase 2 transit semantics break that proxy
-	// (the bin is at _TRANSIT during in-flight, not at source), so the
-	// guard now reads claimed_by directly. Same intent, narrower
-	// invariant — also correctly handles the rare case where the bin
-	// happens to still be at the same source node but has been re-
-	// claimed by another order (which the node-based predicate
-	// would have falsely accepted).
-	//
-	// Compound children (ParentOrderID != nil) skip the guard: the
-	// same multi-step plan that touches a bin in multiple legs claims
-	// it for the LAST leg only, so interim children's safety-net runs
-	// must not check claimed_by. See applyBinArrivalForOrder for the
-	// long-form rationale.
-	if order.ParentOrderID == nil {
-		if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
-			e.dbg("completion: bin %d not claimed by order %d — skipping safety-net arrival", *order.BinID, order.ID)
-			return
-		}
+	// The 34 lines that used to sit here narrated the contract as it stood BEFORE
+	// cb7ed41d: three claim arms, `claimed_by == nil → Skip` stated
+	// unconditionally, no arrived check and no terminal cut. Two of those three
+	// answers are now true only downstream of two questions this text did not
+	// mention, and a load-bearing comment that describes a predicate's previous
+	// shape is worse than none — it is the version a reader trusts (law 14).
+	if skip, r := reapplyRefused(order, bin, destNode.ID, arrivalSiteCompletionNet); skip {
+		e.recordArrivalRefusal(r) // nil for the ordinary already-landed case
+		return
 	}
 
 	// Bin still at source — apply arrival as recovery from a missed FINISH
@@ -477,7 +592,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 	// Same overrides existed here in the safety-net path and were removed
 	// for the same reason.
 
-	evicted, err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt)
+	evicted, err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt, order.ID)
 	if err != nil {
 		e.logFn("engine: apply bin arrival for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return
@@ -518,6 +633,12 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 	// for complex orders with WaitIndex > 0. Removed 2026-04-14 — see
 	// applyBinArrivalForOrder for context.
 
+	// Same reading as the delivery-time site, taken separately: this handler fires
+	// on (X → delivered) and again on (delivered → confirmed), so a per-site split
+	// is what tells a drift that survived the first settle from one that only the
+	// safety net ever sees.
+	e.noteDestNodeDrift(order, orderBins, driftSiteCompleted)
+
 	for _, ob := range orderBins {
 		if ob.DestNode == "" {
 			e.logFn("engine: order %d bin %d has no dest_node in order_bins — skipping", order.ID, ob.BinID)
@@ -534,16 +655,14 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 		// single-bin path — see the long comment there for the
 		// SMN_001 / Phase 2 transit-semantics rationale. Compound
 		// children skip the guard (overlapping claims by design).
-		if order.ParentOrderID == nil {
-			bin, err := e.db.GetBin(ob.BinID)
-			if err != nil {
-				e.logFn("engine: order %d bin %d get for safety-net guard: %v", order.ID, ob.BinID, err)
-				continue
-			}
-			if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
-				e.dbg("multi-bin completion: bin %d not claimed by order %d — skipping safety-net arrival", ob.BinID, order.ID)
-				continue
-			}
+		netBin, err := e.db.GetBin(ob.BinID)
+		if err != nil {
+			e.logFn("engine: order %d bin %d get for safety-net guard: %v", order.ID, ob.BinID, err)
+			continue
+		}
+		if skip, r := reapplyRefused(order, netBin, destNode.ID, arrivalSiteMultiBinCompleted); skip {
+			e.recordArrivalRefusal(r) // nil for the ordinary already-landed case
+			continue
 		}
 
 		staged, expiresAt := e.resolveNodeStaging(destNode)
@@ -576,7 +695,14 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 	// transition (handled by HandleOrderReceipt's MarkConfirmed) is the
 	// natural cleanup point — by then no more re-runs of this handler
 	// will fire for the order.
-	if protocol.IsTerminal(order.Status) {
+	//
+	// orderIsTerminal, not a bare protocol.IsTerminal, and this is the site the
+	// distinction was written for: protocol.IsTerminal("") is TRUE, so a
+	// zero-value status used to reach this line and DELETE the junction rows —
+	// the per-bin destinations, and the exact rows whose absence made two
+	// specimens unreconstructable after the fact (PLAN §R.5, §R.9). An order that
+	// could not be read is the last one whose evidence should be thrown away.
+	if orderIsTerminal(order) {
 		defer e.db.DeleteOrderBins(order.ID)
 	}
 
@@ -585,7 +711,7 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 		return
 	}
 
-	evictedGhosts, err := e.db.ApplyMultiBinArrival(instructions)
+	evictedGhosts, err := e.db.ApplyMultiBinArrival(order.ID, instructions)
 	if err != nil {
 		e.logFn("engine: multi-bin arrival for order %d: %v", order.ID, err)
 		return
@@ -593,6 +719,11 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 	for _, ghostID := range evictedGhosts {
 		e.logFn("WARN: multi-bin arrival for order %d evicted a stale bin record (bin %d) to _TRANSIT — a delivery cannot physically complete onto an occupied slot; recover via the anomalies page",
 			order.ID, ghostID)
+	}
+	// The burial shadow instrument — same reason as the delivery-side multi-bin
+	// arrival above: this path does not go through BinService.ApplyArrival.
+	for _, inst := range instructions {
+		e.binService.NoteBurialShadow(inst.BinID, inst.ToNodeID, order.ID)
 	}
 
 	// Emit BinUpdatedEvent only for bins that actually moved

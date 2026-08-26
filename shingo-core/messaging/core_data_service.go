@@ -3,12 +3,11 @@ package messaging
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"time"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/dispatch"
 	"shingocore/service"
 	"shingocore/store"
@@ -26,6 +25,11 @@ const heartbeatRetentionDays = 90
 // downtimeRetentionDays matches heartbeatRetentionDays. Same event-log shape,
 // same 90-day window; no reason for the two to differ.
 const downtimeRetentionDays = 90
+
+// binUOPDeltaRetentionDays is the raw bin_uop_delta retention window (D6).
+// Same house number as the other two; the permanent records that outlive it
+// are bin_uop_exception (v93) and bin_uop_delta_daily (v94).
+const binUOPDeltaRetentionDays = 90
 
 type coreDataResponder interface {
 	dbg(format string, args ...any)
@@ -70,6 +74,12 @@ type CoreDataService struct {
 	// (Phase E). Optional; nil in tests and headless runs. Set once before
 	// StartHeartbeatProjection, so the worker reads it race-free.
 	cellTickEmitter func(station string, processID, styleID int64, recordedAt time.Time)
+	// faultGrace / faultNoticeAfter are config durations echoed onto faulted
+	// order snapshots so a reconciling Edge can render the fault line and its
+	// clock. Optional (see SetFaultWindow); zero means the snapshot carries the
+	// status without the clock.
+	faultGrace       time.Duration
+	faultNoticeAfter time.Duration
 }
 
 // SetThresholdMonitor wires the engine's threshold-monitor for
@@ -78,6 +88,18 @@ type CoreDataService struct {
 // path can skip it.
 func (s *CoreDataService) SetThresholdMonitor(tm ThresholdMonitor) {
 	s.thresholdMonitor = tm
+}
+
+// SetFaultWindow wires the two config durations the boot reconcile needs to
+// answer "how long has this been faulted, and when does Core give up".
+//
+// Optional, like SetThresholdMonitor: unset means the snapshot carries the
+// status and no clock, which is what an Edge gets from an older Core anyway.
+// The reconcile matters here precisely because a faulted order may be stuck —
+// an Edge that restarts beside one would otherwise show a badge with no
+// sentence until a push that may never come.
+func (s *CoreDataService) SetFaultWindow(grace, noticeAfter time.Duration) {
+	s.faultGrace, s.faultNoticeAfter = grace, noticeAfter
 }
 
 // SetCellTickEmitter wires a callback invoked after each production.tick is
@@ -152,6 +174,29 @@ func (s *CoreDataService) StartHeartbeatProjection() {
 			} else if purged > 0 {
 				log.Printf("core_handler: purged %d expired production.tick dedup row(s)", purged)
 			}
+			// The bin_uop_delta_daily roll-up (v94) rides the same daily
+			// ticker as the purges — it must run while the raw delta rows
+			// are still inside the 90-day window, and the one-day-ago day
+			// boundary is the natural cadence: yesterday is complete, still
+			// raw-resident, and re-derivable if this attempt fails (the
+			// upsert is idempotent per day).
+			if rolled, err := s.db.RollupBinUOPDeltaDay(now.AddDate(0, 0, -1)); err != nil {
+				log.Printf("core_handler: rollup bin_uop_delta_daily: %v", err)
+			} else if rolled > 0 {
+				log.Printf("core_handler: rolled up %d bin_uop_delta_daily row(s) for %s",
+					rolled, now.AddDate(0, 0, -1).UTC().Format("2006-01-02"))
+			}
+			// The 90-day retention on the raw delta stream (D6), last of the
+			// family and ordered after the roll-up on purpose: the permanent
+			// records (v93 exceptions, v94 roll-up) exist by the time any
+			// binary carrying this purge runs, so this deletes nothing the
+			// owner named durable. Delta rows only — bump ops and the rare
+			// non-delta observations stay forever.
+			if purged, err := s.db.PurgeOldBinUOPDelta(binUOPDeltaRetentionDays, now); err != nil {
+				log.Printf("core_handler: purge old bin_uop_ledger delta rows: %v", err)
+			} else if purged > 0 {
+				log.Printf("core_handler: purged %d expired bin_uop_delta audit row(s)", purged)
+			}
 		}
 	}()
 }
@@ -198,7 +243,7 @@ func (s *CoreDataService) HandleProductionTick(env *protocol.Envelope, snap *pro
 
 	// §14 production.report retirement — BLOCKED, see Q-024. The gate
 	// (isProductionTick) is ready and tested, and this isNew branch is the
-	// correct, dedup-guarded placement for the IncrementProduced/LogProduction
+	// correct, dedup-guarded placement for the IncrementProduced
 	// calls (§14 risk #4). But IncrementProduced needs cat_id = payload_code,
 	// and production.tick is emitted UPSTREAM of payload attribution
 	// (plc/manager.go enqueueProductionTick has only style/process; payload is
@@ -278,9 +323,6 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 		if err := s.db.IncrementProduced(d.PayloadCode, qty); err != nil {
 			log.Printf("core_handler: increment produced payload=%s qty=%d: %v", d.PayloadCode, qty, err)
 		}
-		if err := s.db.LogProduction(d.PayloadCode, station, qty); err != nil {
-			log.Printf("core_handler: log production payload=%s: %v", d.PayloadCode, err)
-		}
 	}
 }
 
@@ -326,20 +368,6 @@ func (s *CoreDataService) HandleLinesideBucketDelta(env *protocol.Envelope, d *p
 	// fine — the monitor short-circuits on unknown payload.
 	if s.thresholdMonitor != nil {
 		s.thresholdMonitor.OnBucketApplied(station, d.CoreNodeName, d.PayloadCode, d.Delta, d.Reason)
-	}
-}
-
-// HandleCountGroupAck records an edge's response to a prior CountGroupCommand.
-// One audit row per ack — combined with the transition-side row emitted by
-// countgroup_wiring.go, this gives end-to-end forensics: core saw X, edge
-// wrote Y, PLC took Z ms to ack (or timed out).
-func (s *CoreDataService) HandleCountGroupAck(env *protocol.Envelope, ack *protocol.CountGroupAck) {
-	log.Printf("core_handler: countgroup ack from=%s group=%s outcome=%s latency=%dms corr=%s",
-		env.Src.Station, ack.Group, ack.Outcome, ack.AckLatencyMs, ack.CorrelationID)
-	detail := fmt.Sprintf("group=%s outcome=%s latency_ms=%d corr=%s station=%s",
-		ack.Group, ack.Outcome, ack.AckLatencyMs, ack.CorrelationID, env.Src.Station)
-	if err := s.db.AppendAudit("countgroup_ack", 0, string(ack.Outcome), "", detail, env.Src.Station); err != nil {
-		log.Printf("core_handler: countgroup ack audit: %v", err)
 	}
 }
 
@@ -481,22 +509,6 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 		return
 	}
 
-	// parentType resolves the parent's NodeTypeCode without assuming the
-	// parent sits in the current result slice. Station-scoped queries
-	// only return rows assigned to the station, so a storage slot's
-	// LANE parent typically won't be included — a single targeted Get
-	// is the cheapest correct lookup.
-	parentType := func(parentID *int64) string {
-		if parentID == nil {
-			return ""
-		}
-		p, err := s.db.GetNode(*parentID)
-		if err != nil || p == nil {
-			return ""
-		}
-		return p.NodeTypeCode
-	}
-
 	var infos []protocol.NodeInfo
 	if stationScoped {
 		for _, n := range nodeList {
@@ -505,9 +517,8 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 				name = n.ParentName + "." + n.Name
 			}
 			infos = append(infos, protocol.NodeInfo{
-				Name:           name,
-				NodeType:       n.NodeTypeCode,
-				ParentNodeType: parentType(n.ParentID),
+				Name:     name,
+				NodeType: n.NodeTypeCode,
 			})
 		}
 	} else {
@@ -524,9 +535,8 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 			} else if !n.IsSynthetic {
 				if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == protocol.NodeClassNGRP {
 					infos = append(infos, protocol.NodeInfo{
-						Name:           parent.Name + "." + n.Name,
-						NodeType:       n.NodeTypeCode,
-						ParentNodeType: parent.NodeTypeCode,
+						Name:     parent.Name + "." + n.Name,
+						NodeType: n.NodeTypeCode,
 					})
 				}
 			}
@@ -537,12 +547,21 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 	// Empty (and omitted on the wire) until Core authors loaders — additive.
 	loaderInfos, lerr := s.db.BuildLoaderInfos()
 	if lerr != nil {
-		// Non-fatal: send the node list without loaders rather than nothing.
-		log.Printf("core_handler: build loader infos for %s: %v", env.Src.Station, lerr)
+		// Sending the node list WITHOUT loaders is not "degraded but safe" — the Edge
+		// cannot distinguish an absent Loaders field from "no loaders configured", and
+		// ReplaceCoreLoaders(nil) truncates all five cache tables. Send nothing; the
+		// Edge keeps its last-known-good cache and re-requests on the next tick.
+		log.Printf("core_handler: build loader infos for %s: %v — node list NOT sent", env.Src.Station, lerr)
+		return
 	}
 	// Payload→dunnage mapping: one query replaces the N+1 per-node
 	// GetEffectiveBinTypes calls. Edge uses this to derive picker options
 	// from the node's allowed payloads (claim.AllowedPayloadCodes).
+	//
+	// Unlike the loader branch above, a read failure here deliberately does
+	// NOT return: this slice is memory-only on the Edge (re-derived from the
+	// next node list), while the loader slice backs a durable cache that a
+	// wrong read destroys. Do not "unify" the two branches.
 	pbtPairs, pbtErr := s.db.ListPayloadBinTypeMappings()
 	if pbtErr != nil {
 		log.Printf("core_handler: list payload bin types for %s: %v", env.Src.Station, pbtErr)
@@ -551,12 +570,47 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 	for _, p := range pbtPairs {
 		payloadBinTypes = append(payloadBinTypes, protocol.PayloadBinTypeInfo{PayloadCode: p[0], BinTypeCode: p[1]})
 	}
+	// The vendor map's own universe of locations, and what leads to what.
+	//
+	// Shingo works in APs, so the node list above is only the subset of map
+	// points Shingo gave a job to. A key route is expressed in the VENDOR's
+	// universe — a plain waypoint is its primary use — so an Edge validating a
+	// route against the node list refuses correct routes. Core has mirrored the
+	// whole scene graph since the SEER adapter was written and simply never
+	// sent it down.
+	//
+	// Read failures do NOT return, for the same reason as payload_bin_types
+	// and NOT the loader slice: this is memory-only on the Edge and re-derived
+	// from the next sync, while the loader slice backs a durable cache a wrong
+	// read destroys. An Edge that receives no scene points degrades to allowing
+	// a key route with a warning, which is the documented CheckLocationTasks
+	// posture — it must not start refusing routes because one query failed.
+	scenePointPairs, spErr := s.db.ListScenePointNames()
+	if spErr != nil {
+		log.Printf("core_handler: list scene points for %s: %v", env.Src.Station, spErr)
+	}
+	var scenePoints []protocol.ScenePointInfo
+	for _, p := range scenePointPairs {
+		scenePoints = append(scenePoints, protocol.ScenePointInfo{InstanceName: p[0], ClassName: p[1]})
+	}
+	sceneEdgePairs, seErr := s.db.ListSceneEdgeEndpoints()
+	if seErr != nil {
+		log.Printf("core_handler: list scene edges for %s: %v", env.Src.Station, seErr)
+	}
+	var sceneEdges []protocol.SceneEdgeInfo
+	for _, e := range sceneEdgePairs {
+		sceneEdges = append(sceneEdges, protocol.SceneEdgeInfo{From: e[0], To: e[1]})
+	}
+
 	s.resp.replyData(env, protocol.SubjectNodeListResponse, &protocol.NodeListResponse{
 		Nodes:           infos,
 		Loaders:         loaderInfos,
 		PayloadBinTypes: payloadBinTypes,
+		ScenePoints:     scenePoints,
+		SceneEdges:      sceneEdges,
 	})
-	log.Printf("core_handler: sent node list (%d nodes, %d loaders) to %s", len(infos), len(loaderInfos), env.Src.Station)
+	log.Printf("core_handler: sent node list (%d nodes, %d loaders, %d scene points, %d scene edges) to %s",
+		len(infos), len(loaderInfos), len(scenePoints), len(sceneEdges), env.Src.Station)
 }
 
 func (s *CoreDataService) HandleProductionReport(env *protocol.Envelope, rpt *protocol.ProductionReport) {
@@ -567,12 +621,14 @@ func (s *CoreDataService) HandleProductionReport(env *protocol.Envelope, rpt *pr
 			continue
 		}
 		// §14 parallel-run (risk #3): the new bin_uop_delta path is now the
-		// SOLE writer of produced_qty / production_log. IncrementProduced is
+		// SOLE writer of produced_qty. IncrementProduced is
 		// NOT idempotent, so we must NOT also write here — double-writing would
 		// silently double the counter and the parity check would pass on both
 		// being wrong. Keep the handler + ack live and LOG what this path WOULD
 		// have written so Stephen can compare LOGS (not counter values) for a
 		// week before the production_reporter deletion lands (Q-024-FOLLOWUP).
+		// (The production_log half of the old claim was a duplicate ledger,
+		// dropped at v92 — this path's counter claim is the surviving half.)
 		log.Printf("core_handler: [production.report parallel-run] would write cat_id=%s station=%s count=%d",
 			entry.CatID, rpt.StationID, entry.Count)
 		accepted++
@@ -655,11 +711,45 @@ func (s *CoreDataService) HandleOrderStatusRequest(env *protocol.Envelope, req *
 			snap.ErrorDetail = order.ErrorDetail
 			snap.QueueReason = order.QueueReason
 			snap.QueueCode = order.QueueCode
+			s.attachFaultWindow(&snap, order.ID, order.Status)
 		}
 		resp.Orders = append(resp.Orders, snap)
 	}
 	resp.Unlisted = s.unlistedFor(env.Src.Station, asked)
 	s.resp.replyData(env, protocol.SubjectOrderStatusResponse, resp)
+}
+
+// attachFaultWindow puts the fault clock on a snapshot for a faulted order.
+//
+// One extra read per FAULTED order in the reconcile, and none for any other
+// status — a reconcile names the Edge's open orders, of which the faulted ones
+// are a handful at worst. Served by idx_order_history_order.
+//
+// A read failure or a missing faulted row leaves the clock off. The Edge then
+// renders the status word without a sentence, which is what it does today; the
+// reconcile's job is the Edge's whole order list and one unreadable history row
+// must not cost it.
+func (s *CoreDataService) attachFaultWindow(snap *protocol.OrderStatusSnapshot, orderID int64, status protocol.Status) {
+	if status != protocol.StatusFaulted || s.faultNoticeAfter <= 0 {
+		return
+	}
+	snap.FaultNoticeAfterS = int(s.faultNoticeAfter.Seconds())
+	h, err := s.db.LatestOrderHistoryForStatus(orderID, protocol.StatusFaulted)
+	if err != nil {
+		log.Printf("core_handler: fault window for order %d: %v — snapshot goes without the clock", orderID, err)
+		return
+	}
+	if h == nil {
+		return
+	}
+	since := h.CreatedAt
+	deadline := since.Add(s.faultGrace)
+	snap.FaultSince = &since
+	snap.FaultDeadline = &deadline
+	if h.Ref != nil && !h.Ref.Empty() {
+		snap.FaultRef = h.Ref
+	}
+	snap.FaultNotice = clock.Now().UTC().Sub(since) >= s.faultNoticeAfter
 }
 
 // unlistedFor collects this station's active orders that the Edge did not name.

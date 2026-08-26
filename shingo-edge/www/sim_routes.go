@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 // registerSimRoutes adds the dev-only sim control endpoints (the live speed
@@ -31,6 +31,12 @@ func (h *Handlers) apiSimStatus(w http.ResponseWriter, r *http.Request) {
 	if sc := clock.AsSimClock(); sc != nil {
 		resp["has_clock"] = true
 		resp["speed"] = sc.Speed()
+		// Requested vs effective: SetSpeed clamps against max_speed, so a
+		// crank past the cap otherwise reports plain success at a speed the
+		// clock is not running. Reporting both lets the dev top-strip say
+		// "asked N, running M" instead of silently disagreeing with itself.
+		resp["requested_speed"] = sc.RequestedSpeed()
+		resp["max_speed"] = sc.MaxSpeed()
 		resp["sim_now"] = sc.Now().UTC().Format(time.RFC3339)
 		resp["epoch"] = sc.Epoch().UTC().Format(time.RFC3339)
 	}
@@ -66,7 +72,12 @@ func (h *Handlers) apiSimSetSpeed(w http.ResponseWriter, r *http.Request) {
 	}
 	sc.SetSpeed(speed)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "speed": sc.Speed()})
+	json.NewEncoder(w).Encode(map[string]any{
+		"ok":              true,
+		"speed":           sc.Speed(),
+		"requested_speed": sc.RequestedSpeed(),
+		"max_speed":       sc.MaxSpeed(),
+	})
 }
 
 // apiSimSeedProductionDemo inserts demo lineside buckets and hourly

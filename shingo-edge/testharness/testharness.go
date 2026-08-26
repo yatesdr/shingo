@@ -68,8 +68,8 @@ type Edge struct {
 //   - InventoryDeltaReporter: HandleBinPickedUp's flush call already
 //     guards on nil. Set explicitly via SetInventoryDeltaSink if a
 //     scenario needs delta accumulation tested.
-//   - Production reporter, count-group handler, backup service: not
-//     touched by release-path code.
+//   - Production reporter, backup service: not touched by
+//     release-path code.
 //
 // AppConfig is minimal: namespace + line_id are used for station ID
 // derivation and log strings. WarLink stays disabled (default zero-
@@ -115,8 +115,8 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 
 	// Mirror cmd/shingoedge/main.go's wiring for the subject handlers F'
 	// Phase 2 scenarios actually exercise. Other subjects (catalog,
-	// status snapshots, registered/register_request, count-group
-	// commands) are deliberately left unwired — the SubjectRouter will
+	// status snapshots, registered/register_request) are deliberately
+	// left unwired — the SubjectRouter will
 	// log "no handler registered" if a scenario produces one; scenarios
 	// that need them can RegisterSubject on the router directly.
 	subjectRouter := router.NewSubject()

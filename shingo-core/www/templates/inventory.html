@@ -46,7 +46,7 @@
       <!-- Fed by /api/inventory/ledger-exceptions. -->
       <div id="rh-ledger-exceptions"></div>
       <!-- Read-side only — every drop is already an observation row in
-           bin_uop_audit with the dropped quantity in its metadata. -->
+           bin_uop_ledger with the dropped quantity in its metadata. -->
       <div id="rh-delta-integrity"></div>
     </div>
     <div class="table-scroll-y">
@@ -65,6 +65,41 @@
           </tr>
         </thead>
         <tbody id="rh-body"><tr><td colspan="9" class="dash-empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Maintained Groups — the empty-carrier levels Core holds, and the
+       arithmetic behind each one.
+
+       THE WHOLE ROW IS THE SUBTRACTION. want − resident − asked − coming = gap
+       is printed term by term rather than collapsed into a status, because a
+       group that is short and quiet has two opposite explanations — asks
+       already out, or carriers already coming — and a single pill hides which.
+
+       HIDDEN ENTIRELY WHEN THERE IS NOTHING TO SAY. No maintained group, or no
+       tick yet, and the section does not render. A card reading "0 groups" is a
+       card that gets scrolled past forever. -->
+  <section class="card mb-2 is-hidden" id="mg">
+    <div class="section-head">
+      <h2>Maintained Groups</h2>
+      <span class="text-muted-sm">Empty carriers Core keeps standing by · level &minus; here &minus; asked &minus; coming = short</span>
+    </div>
+    <div class="table-scroll-y">
+      <table class="rh-table">
+        <thead>
+          <tr>
+            <th>Group</th>
+            <th>Carrier type</th>
+            <th class="rh-num">Level</th>
+            <th class="rh-num">Here</th>
+            <th class="rh-num">Asked</th>
+            <th class="rh-num">Coming</th>
+            <th class="rh-num">Short</th>
+            <th>Waiting on</th>
+          </tr>
+        </thead>
+        <tbody id="mg-body"></tbody>
       </table>
     </div>
   </section>

@@ -81,11 +81,11 @@ function blankForm() {
     name: '',
     role: 'produce',       // produce | consume
     kind: 'multi_window',  // multi_window | single_window | dedicated
+    changeoverLoadDirective: false,
     replenishment: 'operator',
     fedByHand: false,
     inbound: '',
     outbound: '',
-    buffer: '',
   };
 }
 
@@ -99,9 +99,9 @@ function readForm() {
     kind: val('loader-kind') || 'multi_window',
     replenishment: val('loader-replenishment') || 'operator',
     fedByHand: checked('loader-fed-by-hand'),
+    changeoverLoadDirective: checked('loader-changeover-directive'),
     inbound: val('loader-inbound'),
     outbound: val('loader-outbound'),
-    buffer: val('loader-buffer'),
   };
 }
 
@@ -130,10 +130,6 @@ function normalizeForm(state) {
 //   - An UNLOADER has exactly one mode — it drains when the operator clears a
 //     window — so there is no supply question to ask.
 //   - FED BY HAND means no robot pulls anything, so there is no source to name.
-//   - A DEDICATED loader's spots are their own outbound.
-//   - The STAGING GROUP holds empties that rotate into a SPOT when that spot
-//     runs low, which is dedicated-home behaviour. A window loader is fed from
-//     its inbound source and sends to its outbound, and has no third place.
 //   - The CARRIER MIX and the per-window capability are properties of a window
 //     SET; a dedicated loader is already one part per spot. Both are edited
 //     against a saved loader, so they wait for one.
@@ -143,8 +139,12 @@ function formShape(state) {
   return {
     supply: state.role !== 'consume',
     inbound: !state.fedByHand,
-    outbound: !dedicated,
-    staging: dedicated && !state.fedByHand,
+    // Outbound is asked of EVERY loader. It used to be hidden on a dedicated
+    // loader, on the reading that each spot is its own outbound — but a
+    // dedicated loader still has one place its filled carriers go, and hiding
+    // the field made "an inbound group and an outbound group" unenterable on
+    // exactly the layout that wants it.
+    outbound: true,
     mix: !dedicated && saved,
     windows: !dedicated && saved,
   };
@@ -165,16 +165,15 @@ function renderForm(state) {
   setVal('loader-role', state.role);
   setVal('loader-kind', state.kind);
   setChecked('loader-fed-by-hand', state.fedByHand);
+  setChecked('loader-changeover-directive', state.changeoverLoadDirective);
   setVal('loader-inbound', state.inbound);
   setVal('loader-outbound', state.outbound);
-  setVal('loader-buffer', state.buffer);
   setReplenishmentOptions(state);
 
   const shape = formShape(state);
   setShown('loader-supply-row', shape.supply);
   setShown('loader-inbound', shape.inbound);
   setShown('loader-outbound', shape.outbound);
-  setShown('loader-staging-row', shape.staging);
   setShown('loader-mix-row', shape.mix);
   setShown('loader-windows-row', shape.windows);
   if (shape.mix) renderMixEditor(state.id);
@@ -421,12 +420,12 @@ function formStateFromLoader(l) {
     name: l.name || '',
     role: l.role || 'produce',
     kind: kindFromLoader(l),
+    changeoverLoadDirective: !!l.changeover_load_directive,
     replenishment: l.replenishment || 'operator',
     // No source IS the fed-by-hand choice; that is what the stored blank means.
     fedByHand: !(l.inbound_source || ''),
     inbound: l.inbound_source || '',
     outbound: l.outbound_dest || '',
-    buffer: l.buffer_dest || '',
   };
 }
 
@@ -477,9 +476,12 @@ function loaderPayload(state) {
     layout: kindToLayout(state.kind),
     replenishment: state.replenishment,
     funnel_windows: state.kind === 'single_window',
+    // Commandeer this station's card during a changeover: instead of offering
+    // every payload it serves, the card names the carrier the incoming style
+    // needs. Set here because it describes the station, not a style.
+    changeover_load_directive: !!state.changeoverLoadDirective,
     inbound_source: state.inbound,
     outbound_dest: state.outbound,
-    buffer_dest: state.buffer,
   };
 }
 
@@ -525,10 +527,10 @@ async function submitLoader() {
   }
 
   result('Creating…');
-  // 1c: name the loader's node groups INLINE — if the output/buffer name isn't an
-  // existing node group, create it first, then the loader references it by name. So you
-  // set up the loader and its two groups in one flow instead of pre-making the groups.
-  const newGroups = [body.outbound_dest, body.buffer_dest].filter(function (n) { return n && !(n in nodesByName); });
+  // 1c: name the loader's outbound group INLINE — if the name isn't an existing
+  // node group, create it first, then the loader references it by name. So you set
+  // up the loader and its group in one flow instead of pre-making the group.
+  const newGroups = [body.outbound_dest].filter(function (n) { return n && !(n in nodesByName); });
   Promise.all(newGroups.map(function (n) { return apiPost('/api/node-group/create', { name: n }); }))
     .then(function () {
       return apiPost('/api/loader/create', Object.assign({ role: state.role }, body));
@@ -605,7 +607,7 @@ function renderGrid() {
 }
 
 // markLinkedTiles mirrors each loader slot's CANONICAL grid tile state onto the slot,
-// for BOTH window/position slots (.loader-member) AND output/buffer group-zone slots
+// for BOTH window/position slots (.loader-member) AND output group-zone slots
 // (.loader-group-slot), so a node shows the same live colour (loaded / empty / staged
 // / claimed …) everywhere it appears — group or loader. The grid (group) tile itself is
 // left untouched: a slot is differentiated by its teal outline, not by ringing the node.
@@ -637,7 +639,7 @@ function groupSlots(groupName) {
   return out;
 }
 
-// groupZoneHtml renders ONE associated node group (output / buffer) as a labelled
+// groupZoneHtml renders ONE associated node group (the output market) as a labelled
 // drop-zone inside the loader box: its current slots as draggable tiles (drag a tile OUT
 // to the grid to remove it from the group) and the zone itself a drop-target (drag a node
 // tile IN to add it). data-group carries the group name for the drop handler.
@@ -655,22 +657,19 @@ function groupZoneHtml(label, groupName) {
     + '<div class="loader-group-zone-body">' + tiles + '</div></div>';
 }
 
-// loaderGroupsHtml renders the loader's associated node groups — its output supermarket
-// (shared_window only; dedicated positions are their own outbound) and its staging group
-// — each as a drag-in/out zone INSIDE the teal box, placed after the positions + payload
-// set + note.
+// loaderGroupsHtml renders the loader's output market as a drag-in/out zone INSIDE
+// the teal box, placed after the positions + payload set + note.
 //
-// The staging group used to be labelled "Buffer", which is also what a dedicated
-// loader's kept-partial SLOTS are called, one zone further up the same box. Two
-// different things under one word, side by side: a node group that empties are
-// staged in, and positions inside the loader that hold partials nobody has a
-// payload for. The form calls the group a staging group, so this does too, and
-// "Buffer" is left to mean only the slots.
+// There used to be a second zone here, labelled "Buffer" and then "Staging", for a
+// group named on the loader row. It is gone: "Buffer" now means only one thing on
+// this screen — the kept-partial SLOTS one zone further up the same box — and where
+// a loader's empties come from is the inbound source, with no second answer.
+//
+// Shown for every layout. A dedicated loader's filled carriers go somewhere too;
+// the field used to be hidden on that layout and the zone with it.
 function loaderGroupsHtml(l) {
-  const dedicated = l.layout === 'dedicated_positions';
   let html = '';
-  if (!dedicated && l.outbound_dest) html += groupZoneHtml('Output', l.outbound_dest);
-  if (l.buffer_dest) html += groupZoneHtml('Staging', l.buffer_dest);
+  if (l.outbound_dest) html += groupZoneHtml('Output', l.outbound_dest);
   return html;
 }
 
@@ -722,12 +721,11 @@ function boxHtml(item) {
   // is meant to look wrong.
   let meta = escapeHtml(l.role) + ' · ' + escapeHtml(l.layout) + ' · ' + escapeHtml(replenishLabel(l));
   let flow;
-  if (dedicated) {
+  if (dedicated && !l.outbound_dest) {
     flow = (l.inbound_source || '—') + ' → (spots)';
   } else {
     flow = (l.inbound_source || '—') + ' → ' + (l.outbound_dest || '—');
   }
-  if (l.buffer_dest) flow += ' · staging ' + l.buffer_dest;
   meta += ' · ' + escapeHtml(flow);
   // Member nodes are shown ONLY for dedicated-home loaders (each position is a
   // meaningful payload-pinned slot). Shared-window loaders + unloaders are defined
@@ -856,7 +854,7 @@ function wireAll(host) {
     box.addEventListener('dragover', onBoxDragOver);
     box.addEventListener('dragleave', onBoxDragLeave);
     box.addEventListener('drop', onBoxDrop);
-    // 1b: each associated group zone (output / buffer) is a drop-target — dropping a
+    // 1b: the associated group zone (output) is a drop-target — dropping a
     // node tile there reparents it INTO that node group (topology move), distinct from
     // dropping on the box body (a loader-position overlay). Its slot tiles drag OUT.
     box.querySelectorAll('.loader-box-group-zone').forEach(function (g) {

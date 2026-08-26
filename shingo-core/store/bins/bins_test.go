@@ -8,6 +8,7 @@ import (
 	"errors"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/reservations"
 	"testing"
 	"time"
 
@@ -507,7 +508,7 @@ func TestFindEmptyCompatible(t *testing.T) {
 	testutil.MustNoErr(t, bins.Create(db.DB, other), "bins.Create other")
 
 	t.Run("prefer_zone_returns_zone_match", func(t *testing.T) {
-		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", 0)
+		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", 0, bins.EmptyFence{}, reservations.Anyone)
 		if err != nil {
 			t.Fatalf("bins.FindEmptyCompatible zone A: %v", err)
 		}
@@ -517,7 +518,7 @@ func TestFindEmptyCompatible(t *testing.T) {
 	})
 
 	t.Run("no_zone_returns_first_match", func(t *testing.T) {
-		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
+		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0, bins.EmptyFence{}, reservations.Anyone)
 		if err != nil {
 			t.Fatalf("bins.FindEmptyCompatible no zone: %v", err)
 		}
@@ -534,7 +535,7 @@ func TestFindEmptyCompatible(t *testing.T) {
 		// (strict semantics), which was the cause of the plant starvation:
 		// payloads not yet linked in payload_bin_types produced zero
 		// candidate bins even when empties were available.
-		got, err := bins.FindEmptyCompatible(db.DB, "DOES-NOT-EXIST", "", 0)
+		got, err := bins.FindEmptyCompatible(db.DB, "DOES-NOT-EXIST", "", 0, bins.EmptyFence{}, reservations.Anyone)
 		if err != nil {
 			t.Fatalf("expected advisory fallback to return a bin, got err: %v", err)
 		}
@@ -554,7 +555,7 @@ func TestFindEmptyCompatible(t *testing.T) {
 		// the other at LineNode. When excludeNodeID = StorageNode.ID, the
 		// finder must return the LineNode bin even though zoneA would have
 		// won by zone preference and id ordering.
-		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", std.StorageNode.ID)
+		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", std.StorageNode.ID, bins.EmptyFence{}, reservations.Anyone)
 		if err != nil {
 			t.Fatalf("bins.FindEmptyCompatible with exclude: %v", err)
 		}
@@ -570,7 +571,7 @@ func TestFindEmptyCompatible(t *testing.T) {
 		// Sanity: passing 0 (the documented "no exclude" sentinel) returns
 		// the same result as the original prefer_zone_returns_zone_match
 		// case. Locks down the contract that 0 is not a valid node ID.
-		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", 0)
+		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", 0, bins.EmptyFence{}, reservations.Anyone)
 		if err != nil {
 			t.Fatalf("bins.FindEmptyCompatible with 0 exclude: %v", err)
 		}
@@ -585,8 +586,8 @@ func TestFindEmptyCompatible(t *testing.T) {
 // grabs the one that costs the least to extract — an accessible lane-mouth empty
 // before a buried one — rather than the lowest bin id. Before the fix these
 // queries ordered by bin id alone, so a deep empty that happened to be inserted
-// first was picked and then reactively reshuffled (planning_service.go
-// IsSlotAccessible → planBuriedReshuffle). Accessibility-first ordering means the
+// first was picked and then reactively reshuffled (source_finder.go's tier-6
+// buried check → planBuriedReshuffleAtIntake). Accessibility-first ordering means the
 // dig-out only happens when every empty is buried (see the last-resort test).
 func TestFindEmptyCompatible_PrefersAccessibleEmpty(t *testing.T) {
 	t.Parallel()
@@ -610,7 +611,7 @@ func TestFindEmptyCompatible_PrefersAccessibleEmpty(t *testing.T) {
 	shallow := &bins.Bin{BinTypeID: std.BinType.ID, Label: "FEC-SHALLOW", NodeID: &s1.ID, Status: "available"}
 	testutil.MustNoErr(t, bins.Create(db.DB, shallow), "bins.Create shallow")
 
-	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
+	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0, bins.EmptyFence{}, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("FindEmptyCompatible: %v", err)
 	}
@@ -645,7 +646,7 @@ func TestFindEmptyCompatible_BuriedEmptyIsLastResort(t *testing.T) {
 	buried := &bins.Bin{BinTypeID: std.BinType.ID, Label: "LR-BURIED", NodeID: &s2.ID, Status: "available"}
 	testutil.MustNoErr(t, bins.Create(db.DB, buried), "bins.Create buried")
 
-	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
+	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0, bins.EmptyFence{}, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("FindEmptyCompatible: %v", err)
 	}
@@ -675,7 +676,7 @@ func TestFindEmptyCompatible_AdvisoryFallback_NoRules(t *testing.T) {
 	zoneA := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-NORULES-A", NodeID: &std.StorageNode.ID, Status: "available"}
 	testutil.MustNoErr(t, bins.Create(db.DB, zoneA), "bins.Create zoneA")
 
-	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
+	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0, bins.EmptyFence{}, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("expected advisory match for unconstrained payload, got err: %v", err)
 	}
@@ -710,7 +711,7 @@ func TestFindEmptyCompatible_RulesEnforced_ExcludesIncompatibleType(t *testing.T
 	defaultBin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-DEFAULT-LINE", NodeID: &std.LineNode.ID, Status: "available"}
 	testutil.MustNoErr(t, bins.Create(db.DB, defaultBin), "bins.Create defaultBin")
 
-	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", 0)
+	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", 0, bins.EmptyFence{}, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("FindEmptyCompatible: %v", err)
 	}
@@ -740,7 +741,7 @@ func TestFindEmptyCompatible_RulesEnforced_NoMatchReturnsErr(t *testing.T) {
 	otherBin := &bins.Bin{BinTypeID: otherType.ID, Label: "BIN-OTHER-A", NodeID: &std.StorageNode.ID, Status: "available"}
 	testutil.MustNoErr(t, bins.Create(db.DB, otherBin), "bins.Create otherBin")
 
-	_, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
+	_, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0, bins.EmptyFence{}, reservations.Anyone)
 	if err == nil {
 		t.Error("expected ErrNoRows when only incompatible-type bins exist with rules in place, got nil")
 	}

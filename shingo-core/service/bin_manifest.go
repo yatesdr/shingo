@@ -39,7 +39,7 @@ func NewBinManifestService(db BinManifestStore, announce EpochAnnounce) *BinMani
 }
 
 // readBinUOPInTx returns the bin's current uop_remaining inside a tx,
-// for capture as before_uop on a bin_uop_audit row. Returns nil when the
+// for capture as before_uop on a bin_uop_ledger row. Returns nil when the
 // bin row does not exist (a path that's only legitimate for
 // SetForProduction on freshly created bins; every other caller has
 // already validated the bin's presence upstream).
@@ -149,7 +149,7 @@ func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64) (int64, error) {
 	return epoch, nil
 }
 
-// resolveBinUOPContext builds the bin_uop_audit enrichment context inside the caller's
+// resolveBinUOPContext builds the bin_uop_ledger enrichment context inside the caller's
 // tx (keystone step 2): the bin's CURRENT node and the loader that owns that node, via
 // bin_loader_homes.position_node_id (UNIQUE — one loader per member node). Stamping the
 // loader_id at event time is what lets loads (set_for_production) and unloads
@@ -266,7 +266,7 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 		return 0, err
 	}
 	// Record from→to bin-type codes in the audit detail so a floating
-	// carrier's dunnage history is reconstructable from bin_uop_audit rows.
+	// carrier's dunnage history is reconstructable from bin_uop_ledger rows.
 	if binTypeID != nil {
 		fromCode := binTypeCodeInTx(tx, oldTypeID.Int64) // "" when NULL or missing
 		toCode := binTypeCodeInTx(tx, *binTypeID)
@@ -293,7 +293,7 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 // previously called the lower-level *store.DB.SetBinManifestFromTemplate
 // which bypassed audit. Item 19 of the bin-as-truth refactor: routing
 // through this service method ensures every manifest write surfaces
-// in bin_uop_audit so the Item 10 audit timeline UI sees the
+// in bin_uop_ledger so the Item 10 audit timeline UI sees the
 // freshly-loaded bin's 0→capacity initial fill alongside the
 // downstream consume / capture deltas.
 //
@@ -405,7 +405,7 @@ func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifes
 }
 
 // Confirm marks a bin's manifest as confirmed by an operator or automated
-// process. Writes a same-tx manifest_confirmed bin_uop_audit row so the
+// process. Writes a same-tx manifest_confirmed bin_uop_ledger row so the
 // confirm is no longer a silent mutation (§16 PR 3); detail carries loaded_at.
 // after_uop is the bin's unchanged uop_remaining (confirm records a lifecycle
 // event, not a count change).
@@ -494,7 +494,7 @@ func (s *BinManifestService) Unconfirm(binID int64) error {
 }
 
 // ClearAndClaim atomically clears manifest and claims the bin for an order.
-// Closes the TOCTOU race where ClaimBin + ClearBinManifest are separate txns.
+// Closes the TOCTOU race where ClaimBin + the manifest clear are separate txns.
 func (s *BinManifestService) ClearAndClaim(binID, orderID int64) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -945,7 +945,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 // AuditReleaseOverride records operator-override observations for a
 // release-time disposition. Compares the operator-submitted values
 // (Count / Captures) against the system-suggested baseline
-// (CountSuggested / CapturesSuggested) and writes one bin_uop_audit
+// (CountSuggested / CapturesSuggested) and writes one bin_uop_ledger
 // row per divergence.
 //
 // Phase 0b. Independent of the manifest-sync flow: the override audit

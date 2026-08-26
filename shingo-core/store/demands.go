@@ -1,8 +1,8 @@
 package store
 
-// Phase 5 delegate file: demand + production-log persistence lives in
-// store/demands/. This file preserves the *store.DB method surface so
-// external callers don't need to change.
+// Phase 5 delegate file: demand persistence lives in store/demands/.
+// This file preserves the *store.DB method surface so external callers
+// don't need to change.
 
 import "shingocore/store/demands"
 
@@ -24,10 +24,6 @@ func (db *DB) ListDemands() ([]*demands.Demand, error) { return demands.List(db.
 
 func (db *DB) GetDemand(id int64) (*demands.Demand, error) { return demands.Get(db.DB, id) }
 
-func (db *DB) GetDemandByCatID(catID string) (*demands.Demand, error) {
-	return demands.GetByCatID(db.DB, catID)
-}
-
 func (db *DB) IncrementProduced(catID string, qty int64) error {
 	return demands.IncrementProduced(db.DB, catID, qty)
 }
@@ -37,11 +33,3 @@ func (db *DB) ClearAllProduced() error { return demands.ClearAllProduced(db.DB) 
 func (db *DB) ClearProduced(id int64) error { return demands.ClearProduced(db.DB, id) }
 
 func (db *DB) SetProduced(id int64, qty int64) error { return demands.SetProduced(db.DB, id, qty) }
-
-func (db *DB) LogProduction(catID, stationID string, qty int64) error {
-	return demands.LogProduction(db.DB, catID, stationID, qty)
-}
-
-func (db *DB) ListProductionLog(catID string, limit int) ([]*demands.ProductionLogEntry, error) {
-	return demands.ListProductionLog(db.DB, catID, limit)
-}

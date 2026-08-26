@@ -63,7 +63,7 @@ func TestBinService_RecordCount_OverCapacityWritesAuditLine(t *testing.T) {
 		actual    int // after_uop carries the operator's count
 	)
 	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(MAX(before_uop),0), COALESCE(MAX(after_uop),0)
-		FROM bin_uop_audit WHERE bin_id=$1 AND op='cycle_count_over_capacity'`,
+		FROM bin_uop_ledger WHERE bin_id=$1 AND op='cycle_count_over_capacity'`,
 		bin.ID).Scan(&count, &suggested, &actual); err != nil {
 		t.Fatalf("query over-capacity audit: %v", err)
 	}

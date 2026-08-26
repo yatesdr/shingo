@@ -3,7 +3,7 @@ package protocol
 import (
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 // Default TTLs by message type.
@@ -27,8 +27,42 @@ var defaultTTLs = map[string]time.Duration{
 	TypeOrderDelivered: 60 * time.Minute,
 }
 
+// NoExpiry marks a subject whose envelopes carry NO `exp` on the wire.
+//
+// It is not "expire immediately". NewDataEnvelope leaves ExpiresAt zero for
+// these, and IsExpired/IsExpiredHeader both treat a zero ExpiresAt as never
+// expiring. The distinction matters because `now.Add(0)` — what a zero TTL used
+// to produce — stamps exp = now, which expires on the very next clock tick and
+// is the exact opposite of the intent.
+//
+// Reserve it for subjects where a LATE copy is harmless and a DROPPED copy is
+// not. That is a property of the receiving handler, not of the sender, so do
+// not add a subject here without checking Core's handler for a dedup key and an
+// ordering guard.
+const NoExpiry time.Duration = 0
+
 // Subject-specific TTLs for data channel messages.
 var subjectTTLs = map[string]time.Duration{
+	// The two sequenced inventory deltas carry information nothing else
+	// resupplies. Every other data subject is a snapshot whose successor
+	// carries the same truth a few seconds later, so dropping a late copy costs
+	// nothing; these are increments, and a dropped one is a permanently wrong
+	// count that never self-corrects.
+	//
+	// Safe to arrive late because Core guards both ends of the problem:
+	// ApplyBinUOPDelta dedups on SequenceID via inventory_delta_dedup, so a
+	// replay is a no-op, and the stale-epoch guard routes a delta from a
+	// superseded epoch to the discrepancy audit rather than applying it. So a
+	// late copy is either applied exactly once or recorded as a discrepancy —
+	// never silently wrong.
+	//
+	// Measured at Springfield 2026-08-21, before the edge was hardwired: ~17
+	// bin_uop_delta a day arrived past the 5-minute default and were discarded
+	// by the ingestor before any handler ran, averaging 142 minutes late and
+	// peaking at 23 hours. The edge marked every one of them sent.
+	SubjectBinUOPDelta:         NoExpiry,
+	SubjectLinesideBucketDelta: NoExpiry,
+
 	SubjectEdgeHeartbeat:    90 * time.Second,
 	SubjectEdgeHeartbeatAck: 90 * time.Second,
 	SubjectEdgeRegister:     5 * time.Minute,
@@ -47,7 +81,8 @@ var subjectTTLs = map[string]time.Duration{
 // FallbackTTL is used when no specific TTL is configured.
 const FallbackTTL = 10 * time.Minute
 
-// DataTTLFor returns the TTL for a data channel subject.
+// DataTTLFor returns the TTL for a data channel subject. A return of NoExpiry
+// means the envelope carries no expiry at all — see NoExpiry.
 func DataTTLFor(subject string) time.Duration {
 	if ttl, ok := subjectTTLs[subject]; ok {
 		return ttl

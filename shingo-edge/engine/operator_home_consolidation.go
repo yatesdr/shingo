@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"log"
 
+	ordermgr "shingoedge/orders"
+
 	"shingoedge/domain"
 )
 
@@ -66,12 +68,17 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 		return fmt.Errorf("node %s is a buffer position, not a home position", node.Name)
 	}
 
-	// Gather buffer node names: positions whose Payload is "" in the loader aggregate.
+	// Gather buffer node names, asking the position what it IS rather than
+	// inferring it from an empty payload. An unpinned home — dragged in, no
+	// payload assigned yet — also carries no payload, and used to be collected
+	// here as a buffer; Core excludes it from the loader's source pool, so a
+	// carrier moved onto one is parked where nothing will source it.
+	// Position.IsBuffer falls back to the old inference when Core did not say.
 	// Exclude the home node itself (guard for loaders where the home has no pinned
 	// payload — shouldn't happen given the check above, but defence-in-depth).
 	var bufferNodes []string
 	for _, pos := range l.Positions() {
-		if pos.Payload == "" && string(pos.Node) != node.CoreNodeName {
+		if pos.IsBuffer() && string(pos.Node) != node.CoreNodeName {
 			bufferNodes = append(bufferNodes, string(pos.Node))
 		}
 	}
@@ -137,8 +144,10 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 	// The buffer is currently occupied by the partial we'll move via Order B, so
 	// Core will queue this delivery until Order B's pickup frees the slot.
 	nodeIDCopy := nodeID
+	// NoDemand, both legs: a consolidation is housekeeping the system schedules
+	// for itself. No cell is waiting on either order.
 	orderA, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeIDCopy, 1,
-		node.CoreNodeName, bufferCoreName, "", true)
+		node.CoreNodeName, bufferCoreName, "", true, ordermgr.NoDemand())
 	if err != nil {
 		return fmt.Errorf("clear loader home: create empty-out order: %w", err)
 	}
@@ -165,7 +174,7 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 func (e *Engine) dispatchBufferConsolidation(c homeConsolidation) {
 	nodeID := c.homeProcessNodeID
 	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1,
-		c.bufferCoreName, c.homeCoreName, c.payload, true)
+		c.bufferCoreName, c.homeCoreName, c.payload, true, ordermgr.NoDemand())
 	if err != nil {
 		e.logFn("home_consolidation: create Order B (buffer→home) %s→%s: %v",
 			c.bufferCoreName, c.homeCoreName, err)
@@ -218,7 +227,9 @@ func (e *Engine) EnrichHomeBufferPartials(nodes []domain.StationNodeView) {
 		}
 		var bufs []string
 		for _, pos := range l.Positions() {
-			if pos.Payload != "" {
+			// Same question as ClearLoaderHome asks, so the list the HMI offers
+			// and the list the action uses cannot disagree.
+			if !pos.IsBuffer() {
 				continue
 			}
 			name := string(pos.Node)

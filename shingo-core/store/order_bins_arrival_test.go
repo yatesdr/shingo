@@ -40,8 +40,17 @@ func TestApplyMultiBinArrival_EvictsStaleGhostOnOccupiedPhysicalNode(t *testing.
 	// Stale ghost: shingo records it at destA, still claimed.
 	ghost := &bins.Bin{BinTypeID: bt.ID, Label: "MB-GHOST", NodeID: &destA.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(ghost), "create ghost bin")
+	// The ghost holds a DEAD claim — its order already went terminal, so nothing
+	// is coming back for this bin. That is what makes it an orphan the operator
+	// must recover, and it is the only case in which the eviction may clear
+	// ownership: a LIVE holder keeps its claim, because it may be carrying the bin
+	// right now (see EvictStaleGhostBinsTx and the service-side sibling
+	// TestApplyArrival_GhostEvictionKeepsALiveHolderClaim).
 	ghostOrder := testdb.CreateOrder(t, db)
 	testdb.ClaimBinForTest(t, db, ghost.ID, ghostOrder.ID)
+	if _, err := db.Exec(`UPDATE orders SET status='confirmed' WHERE id=$1`, ghostOrder.ID); err != nil {
+		t.Fatalf("terminalize ghost holder: %v", err)
+	}
 
 	// Two arriving bins, one per destination, both claimed by the same order.
 	arrA := &bins.Bin{BinTypeID: bt.ID, Label: "MB-ARR-A", NodeID: &startNode.ID, Status: "available"}
@@ -52,7 +61,7 @@ func TestApplyMultiBinArrival_EvictsStaleGhostOnOccupiedPhysicalNode(t *testing.
 	testdb.ClaimBinForTest(t, db, arrA.ID, order.ID)
 	testdb.ClaimBinForTest(t, db, arrB.ID, order.ID)
 
-	evicted, err := db.ApplyMultiBinArrival([]orders.BinArrivalInstruction{
+	evicted, err := db.ApplyMultiBinArrival(order.ID, []orders.BinArrivalInstruction{
 		{BinID: arrA.ID, ToNodeID: destA.ID}, // collides with the ghost
 		{BinID: arrB.ID, ToNodeID: destB.ID}, // empty destination
 	})
@@ -84,7 +93,8 @@ func TestApplyMultiBinArrival_EvictsStaleGhostOnOccupiedPhysicalNode(t *testing.
 		t.Errorf("ghost NodeID = %v, want %d (_TRANSIT)", gotGhost.NodeID, transit.ID)
 	}
 	if gotGhost.ClaimedBy != nil {
-		t.Errorf("ghost ClaimedBy = %v, want nil (must unclaim so it surfaces in ListAnomalies)", gotGhost.ClaimedBy)
+		t.Errorf("ghost ClaimedBy = %v, want nil — its holder is terminal, so the claim is dead and "+
+			"clearing it is what surfaces the bin for operator recovery", gotGhost.ClaimedBy)
 	}
 	if gotGhost.AnomalyAt == nil {
 		t.Error("ghost AnomalyAt = nil, want set")
@@ -124,7 +134,7 @@ func TestApplyMultiBinArrival_SyntheticDestNotEvicted(t *testing.T) {
 	order := testdb.CreateOrder(t, db)
 	testdb.ClaimBinForTest(t, db, arriving.ID, order.ID)
 
-	evicted, err := db.ApplyMultiBinArrival([]orders.BinArrivalInstruction{
+	evicted, err := db.ApplyMultiBinArrival(order.ID, []orders.BinArrivalInstruction{
 		{BinID: arriving.ID, ToNodeID: syn.ID},
 	})
 	testutil.MustNoErr(t, err, "ApplyMultiBinArrival")
@@ -163,7 +173,7 @@ func TestApplyMultiBinArrival_EvictsMultipleGhostsAtOneNode(t *testing.T) {
 	order := testdb.CreateOrder(t, db)
 	testdb.ClaimBinForTest(t, db, arriving.ID, order.ID)
 
-	evicted, err := db.ApplyMultiBinArrival([]orders.BinArrivalInstruction{
+	evicted, err := db.ApplyMultiBinArrival(order.ID, []orders.BinArrivalInstruction{
 		{BinID: arriving.ID, ToNodeID: dest.ID},
 	})
 	testutil.MustNoErr(t, err, "ApplyMultiBinArrival")

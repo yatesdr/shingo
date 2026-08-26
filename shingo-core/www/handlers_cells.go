@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 )
 
 // Production-heartbeat read endpoints (plan §12 slice 5). Cell id = station.

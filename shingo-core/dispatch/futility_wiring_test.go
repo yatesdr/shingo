@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
-	"shingo/shared/clock"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -53,7 +53,9 @@ func seedFutilityOrder(t *testing.T, db *store.DB, uuid, node, payload string) *
 
 // An order cancelled straight out of queued never had a robot: futile.
 func TestFutilityWiring_QueuedCancelCountsAsFutile(t *testing.T) {
-	db := testDB(t)
+	t.Parallel()
+
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
 	aud := armDetector(t, d, 3, clk)
@@ -74,7 +76,9 @@ func TestFutilityWiring_QueuedCancelCountsAsFutile(t *testing.T) {
 // a robot moved for it. `from` alone cannot tell these apart, which is why
 // the classification reads order_history.
 func TestFutilityWiring_OrderThatMovedIsNotFutile(t *testing.T) {
-	db := testDB(t)
+	t.Parallel()
+
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
 	aud := armDetector(t, d, 2, clk)
@@ -97,7 +101,9 @@ func TestFutilityWiring_OrderThatMovedIsNotFutile(t *testing.T) {
 // One robot departing for the tuple clears the count, so an intermittent
 // problem never accumulates into a false record.
 func TestFutilityWiring_InTransitResetsTheTuple(t *testing.T) {
-	db := testDB(t)
+	t.Parallel()
+
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 	clk := clock.NewManual(time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC))
 	aud := armDetector(t, d, 3, clk)
@@ -130,7 +136,9 @@ func TestFutilityWiring_InTransitResetsTheTuple(t *testing.T) {
 // With no detector installed — the default until a plant opts in — the hook
 // is inert and nothing changes about the transition.
 func TestFutilityWiring_NilDetectorIsInert(t *testing.T) {
-	db := testDB(t)
+	t.Parallel()
+
+	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	o := seedFutilityOrder(t, db, "fut-nil", "ALN_003", "PART-X")

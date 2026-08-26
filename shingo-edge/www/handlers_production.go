@@ -207,13 +207,12 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	processNodes, _ := h.engine.ProcessService().ListNodes()
 	coreNodes := h.engine.CoreNodes()
 	type coreNodeOpt struct {
-		Name       string `json:"name"`
-		NodeType   string `json:"node_type,omitempty"`
-		ParentType string `json:"parent_node_type,omitempty"`
+		Name     string `json:"name"`
+		NodeType string `json:"node_type,omitempty"`
 	}
 	coreNodeOpts := make([]coreNodeOpt, 0, len(coreNodes))
 	for name, info := range coreNodes {
-		coreNodeOpts = append(coreNodeOpts, coreNodeOpt{Name: name, NodeType: info.NodeType, ParentType: info.ParentNodeType})
+		coreNodeOpts = append(coreNodeOpts, coreNodeOpt{Name: name, NodeType: info.NodeType})
 	}
 	type edgeNode struct {
 		ID   string `json:"id"`
@@ -297,6 +296,29 @@ func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&shifts); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// The UI sends the FULL desired shift set: every row still in the
+	// editor at Save time, with the rows the operator removed simply
+	// absent. The previous loop only upserted what arrived and deleted
+	// a shift when its row arrived with blank start/end — the blank-row
+	// path. The DOM-side removeShiftRow drops the row entirely instead
+	// of blanking it, so a removed shift never reached this handler,
+	// and shift 3 sat in the DB forever after the operator Removed it.
+	// Reconcile against the existing rows so absence is also deletion.
+	existing, err := h.engine.ShiftService().List()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	seen := make(map[int]bool, len(shifts))
+	for _, s := range shifts {
+		seen[s.ShiftNumber] = true
+	}
+	for _, ex := range existing {
+		if !seen[ex.ShiftNumber] {
+			h.engine.ShiftService().Delete(ex.ShiftNumber)
+		}
 	}
 
 	for _, s := range shifts {

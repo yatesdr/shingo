@@ -233,6 +233,24 @@ func (db *DB) migrate() error {
 	// gap-window. Old rows land at 0 (no pending). Idempotent ADD COLUMN.
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN pending_uop_delta INTEGER NOT NULL DEFAULT 0")
 
+	// buffer_dest is retired: the loader staging group it named is gone from
+	// Core and from this side. Dropped rather than left dormant, in the same
+	// release, on the owner's call. core_loaders is a CACHE — SyncCoreLoaders
+	// deletes every row and re-inserts from Core on each node-list sync — so
+	// there is nothing to preserve and no rebuild needed; a plain DROP COLUMN on
+	// a table whose contents are regenerated within ~2 minutes.
+	//
+	// No-op on a fresh DB that never had it (this pass re-runs every startup and
+	// ignores errors), and on one this already ran on.
+	db.Exec("ALTER TABLE core_loaders DROP COLUMN buffer_dest")
+
+	// home_kind on the cached loader positions: 'home' | 'buffer', synced from
+	// Core. Idempotent ADD COLUMN; existing rows land at '' and the readers fall
+	// back to classifying by empty payload, which is what they did before. The
+	// value arrives on its own within one node-list sync (~2 min) because the
+	// cache is a full-state replace, so no backfill is needed here.
+	db.Exec("ALTER TABLE core_loader_positions ADD COLUMN home_kind TEXT NOT NULL DEFAULT ''")
+
 	// Drop zombie nodes table (replaced by process_nodes + core node sync)
 	db.Exec("DROP TABLE IF EXISTS nodes")
 
@@ -301,6 +319,9 @@ func (db *DB) migrate() error {
 	// column existed reads as today's behaviour. Repopulated full-state on the
 	// next node-list sync regardless.
 	db.Exec("ALTER TABLE core_loaders ADD COLUMN funnel_windows INTEGER NOT NULL DEFAULT 0")
+	// Core owns it (bin_loaders); this is the mirror. Default 0 = the ordinary
+	// board, which is what every station does until one is opted in.
+	db.Exec("ALTER TABLE core_loaders ADD COLUMN changeover_load_directive INTEGER NOT NULL DEFAULT 0")
 
 	// Where the operator dragged this window. Core has always stored the
 	// arrangement and sent it down; there was nowhere here to put it, so the
@@ -467,9 +488,10 @@ func (db *DB) migrate() error {
 	// v24 (Hopkinsville 2026-05-14): per-claim opt-in for unloader auto-push.
 	// When true on a consume manual_swap claim, Edge fires a U1 retrieve_full
 	// whenever the unloader window is free and a full bin of an allowed
-	// payload exists in claim.InboundSource — no kanban demand signal
-	// required. Default false preserves the existing kanban-driven model.
-	// See engine/operator_demand.go MaybePushUnloader for the trigger logic.
+	// payload exists in claim.InboundSource — no external trigger
+	// required. Default false preserves the event-driven model. (The
+	// kanban demand signal this comment used to contrast against was
+	// deleted 2026-08.) See engine/operator_demand.go MaybePushUnloader.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_push INTEGER NOT NULL DEFAULT 0")
 
 	// v25 (2026-05-16, UOP-threshold replenishment Phase 1): source
@@ -632,6 +654,74 @@ func (db *DB) migrate() error {
 	// why the rebuild is unavoidable and what else it folds in.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN below_reorder_since TEXT")
 	db.Exec("ALTER TABLE process_changeovers ADD COLUMN origin_id TEXT NOT NULL DEFAULT ''")
+
+	// EVERY style_node_claims COLUMN THE BASELINE CREATE CAN NO LONGER DELIVER
+	// IS ADDED HERE, AND ONLY HERE.
+	//
+	// These fourteen used to live in a private list inside
+	// migrations_style_claims.go, executed by the rebuild on its way past. That
+	// was a SECOND road for adding a column, and it is a road that closes: the
+	// rebuild is self-disarming (it reads the live table's defaults to decide
+	// whether to run), so on every database that has already crossed it the list
+	// stops executing. Five columns — changeover_evac_nodes,
+	// changeover_evac_destination, index_robot_supplies, key_route, key_task —
+	// reached fresh installs through
+	// the baseline CREATE and reached no upgraded plant at all, because their only
+	// ALTER was behind that early return. A fresh database had 41 columns and an
+	// upgraded one 35.
+	//
+	// One road, one source of truth. The rebuild below now does only the rebuild.
+	//
+	// The definitions are the baseline CREATE's, character for character, and
+	// TestAlterPassMatchesBaselineCreate holds them there. That is not tidiness:
+	// an ALTER-added column's declared DEFAULT is permanent on an upgraded
+	// database — no rebuild downstream normalises it — so any drift between the
+	// two statements splits fresh installs from plants forever.
+	//
+	// The first eight are older columns that only ever arrived through the
+	// baseline CREATE, which is a no-op on a table that already exists. They are
+	// no-ops on any database that has crossed the rebuild, and they are what makes
+	// the rebuild's INSERT ... SELECT safe to name on a database of any age.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN role TEXT NOT NULL DEFAULT 'consume'")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN uop_capacity INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN reorder_point INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_reorder INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN outbound_destination TEXT NOT NULL DEFAULT ''")
+	// outbound_source is RE-ADDED here, and it is not a duplicate of the add
+	// earlier in this pass. The RENAME COLUMN above (outbound_source ->
+	// outbound_destination) consumes the earlier one, so by this point in the
+	// pass the column is gone — while the rebuild's CREATE and its
+	// INSERT ... SELECT both still name it. Without this line the rebuild dies
+	// with "no such column: outbound_source" on a database of any vintage, which
+	// is what the store package's rebuild tests report the moment it is missing.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN outbound_source TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0")
+	// created_at CANNOT BE DELIVERED BY AN ALTER on a database that has rows:
+	// SQLite rejects a non-constant default ("Cannot add a column with
+	// non-constant default"), and this one is (datetime('now')). It is kept
+	// because it is correct on an empty table and because the definition has to
+	// be declared somewhere the drift assertion can see it — but a populated
+	// database missing created_at is NOT repaired here. It fails loudly instead,
+	// at the rebuild's INSERT, which is the honest outcome. Changing the default
+	// to a constant to make this "work" would be exactly the fresh-vs-upgraded
+	// split the comment above describes.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))")
+
+	// v37 (2026-08-24, B1): the six the private list was swallowing. Same
+	// definitions as the baseline CREATE.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_evac_nodes TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_evac_destination TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN index_robot_supplies INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN key_route TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN key_task TEXT NOT NULL DEFAULT ''")
+
+	// v38 (2026-08-25, carry-over parts): what happens to a marked position's bin
+	// when the part is common to both styles. Same definition as the baseline
+	// CREATE; 'replace' is today's behaviour, so every existing mark is
+	// unchanged by the column arriving.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace'")
+
 	if err := db.rebuildStyleNodeClaims(); err != nil {
 		return err
 	}
@@ -642,6 +732,69 @@ func (db *DB) migrate() error {
 	// 'edge' is correct for every row that already exists — every one of them was
 	// created here.
 	db.Exec("ALTER TABLE orders ADD COLUMN authored_by TEXT NOT NULL DEFAULT 'edge'")
+
+	// v35 (2026-08-17, MG2-8): the three projection fields Core has always sent
+	// and the Edge has never had anywhere to put.
+	//
+	// THIS IS A DROP BEING FIXED, NOT A FEATURE. All three are on
+	// protocol.OrderProjection, all three are copied by dispatch.ProjectionFor,
+	// and all three fell on the floor at UpsertProjection because the INSERT's
+	// column list did not name them. Both sides compiled, every test passed, and
+	// the value simply was not there — which is the failure
+	// order_projection_drift_test.go was written to make impossible to repeat.
+	//
+	// payload_desc is what an operator READS. Every Core-authored order shows the
+	// payload code on the board and nothing else, so a maintained-group ask
+	// currently renders as a robot arriving for no stated reason. It has been on
+	// the wire for its whole life.
+	//
+	// origin_id and origin_class are worse than payload_desc, because the wire
+	// type's own doc says what they are for: "passed through so a projected row
+	// answers 'why does this exist' the same way a locally created one does". It
+	// did not. A Core-authored order on an Edge board carried no attribution at
+	// all, and the demand-episode grain — the thing built specifically to answer
+	// that question — stopped at the module boundary.
+	//
+	// DEFAULT '' IS CORRECT FOR EVERY EXISTING ROW, and not merely convenient. An
+	// Edge-authored order has no Core origin by construction, and a projected row
+	// written before this column existed genuinely does not carry one: the value
+	// was dropped, and no backfill can invent it. Blank means "not recorded", the
+	// board renders it as nothing, and the next projection of a live order fills
+	// it in — Core re-sends freely, so the reconcile heals the recent rows on its
+	// own without a migration pretending to know history.
+	db.Exec("ALTER TABLE orders ADD COLUMN payload_desc TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE orders ADD COLUMN origin_id TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE orders ADD COLUMN origin_class TEXT NOT NULL DEFAULT ''")
+
+	// v36 (2026-08-22, fault presentation): the fault clock, so the Edge board
+	// can say how long an order has been faulted and when Core gives up.
+	//
+	// A faulted order on the Edge board is a badge and nothing else today, and
+	// the Detail it did receive said "fleet state: FAILED" — the vendor's word
+	// for a state that recovers on its own within 20 seconds in 97% of cases.
+	// Core now sends a sentence and these three values with it.
+	//
+	// TEXT, not a timestamp type: SQLite has none, and every other instant on
+	// this schema is RFC3339 text. Empty is the honest value for "not faulted"
+	// and for every pre-v36 row — no backfill can invent when an order faulted,
+	// and Core re-sends on the next push and the boot reconcile, so live orders
+	// heal on their own.
+	//
+	// fault_notice_after_s is Core's threshold, stored per order rather than as
+	// a setting, because it is the threshold that was in force when this fault
+	// was pushed. A plant that retunes the number mid-fault should not have
+	// in-flight rows silently re-classify themselves. 0 = not supplied (an
+	// older Core), and the board then renders the sentence Core sent without
+	// re-deciding the wording.
+	db.Exec("ALTER TABLE orders ADD COLUMN fault_since TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE orders ADD COLUMN fault_deadline TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE orders ADD COLUMN fault_notice_after_s INTEGER NOT NULL DEFAULT 0")
+	// fault_ref is the fleet's reason as JSON (protocol.TermRef), the same shape
+	// Core stores on the history row. The REFERENCE is stored rather than the
+	// rendered sentence because the sentence changes as the clock crosses the
+	// threshold, and the board must be able to re-render it without another
+	// push. Empty = the fleet gave no reason, which is the common case.
+	db.Exec("ALTER TABLE orders ADD COLUMN fault_ref TEXT NOT NULL DEFAULT ''")
 
 	return nil
 }

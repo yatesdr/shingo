@@ -85,6 +85,101 @@ func TestStagedOrder_TakesThePayloadFromTheBinNotTheOperator(t *testing.T) {
 	}
 }
 
+// TestStagedOrder_DeclaresTheStagingDropoffExclusive covers the operator door,
+// which the first pass at this fix missed entirely.
+//
+// ── WHY IT WAS MISSED, RECORDED SO THE NEXT CENSUS IS DONE FIRST ──────────
+//
+// The defect is that Core cannot recognise a staging node — it is a station with
+// no parent, so isConcreteStorageDropoff rejects it and both destination gates
+// stand down. The fix is for the author of the plan to declare it, and the fix
+// was written against the EDGE builders because that is where the investigation
+// had been reading.
+//
+// This handler is the other author, and it emits the identical five-step shape:
+// pickup source, dropoff staging, wait, pickup staging, dropoff delivery. Left
+// undeclared it kept the whole bug, on the path an operator drives by hand. The
+// tree has exactly two sites that author complex steps and only one of them had
+// been fixed.
+//
+// ── AND CORE GENUINELY KNOWS, HERE ────────────────────────────────────────
+//
+// Everywhere else Core has to be told, because the staging designation lives in
+// the Edge cell config. Not on this path: the operator typed the node into a
+// field named staging_node, and the handler refuses the request without one.
+// Declaring it here is reading the request, not inferring from the plant.
+//
+// MUTATION (verified): drop ExclusiveSlot from the staging dropoff in
+// apiManualOrderSubmit's staged branch.
+func TestStagedOrder_DeclaresTheStagingDropoffExclusive(t *testing.T) {
+	t.Parallel()
+	sim := simulator.New()
+	h, db := testHandlersWithSim(t, sim)
+	sd := testdb.SetupStandardData(t, db)
+
+	// A staging node the way the seeder builds one: a station with NO PARENT.
+	// That nil parent is the defect — the role test bails on it before it ever
+	// asks about LANE/NGRP.
+	staging := &nodes.Node{Name: "STAGE-EXCLUSIVE-TEST", Enabled: true}
+	if err := db.CreateNode(staging); err != nil {
+		t.Fatalf("create staging node: %v", err)
+	}
+	delivery := &nodes.Node{Name: "DELIV-EXCLUSIVE-TEST", Enabled: true}
+	if err := db.CreateNode(delivery); err != nil {
+		t.Fatalf("create delivery node: %v", err)
+	}
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-STAGED-EXCLUSIVE")
+
+	resp, status := submitStaged(t, h, sd.StorageNode.Name, staging.Name, delivery.Name, sd.Payload.Code)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; err=%q", status, resp.Error)
+	}
+	order, err := db.GetOrder(resp.OrderID)
+	if err != nil {
+		t.Fatalf("reload order %d: %v", resp.OrderID, err)
+	}
+
+	// Read the PERSISTED steps. steps_json is what slotNeeds consults on every
+	// scanner replay, so this is the same view the reservation actually gets —
+	// not the struct the handler happened to build.
+	var steps []struct {
+		Action        string `json:"action"`
+		Node          string `json:"node"`
+		ExclusiveSlot bool   `json:"exclusive_slot"`
+	}
+	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
+		t.Fatalf("unmarshal steps_json %q: %v", order.StepsJSON, err)
+	}
+
+	sawStaging := false
+	for i, s := range steps {
+		if s.Action != "dropoff" {
+			continue
+		}
+		switch s.Node {
+		case staging.Name:
+			sawStaging = true
+			if !s.ExclusiveSlot {
+				t.Errorf("step %d: the staging dropoff at %s is not declared exclusive.\n"+
+					"Core's role test cannot see a staging node, so undeclared it is reserved by "+
+					"nothing and capacity-checked by nothing — a second order takes it and the "+
+					"first robot arrives to a full node holding a bin.\n"+
+					"steps_json: %s", i, staging.Name, order.StepsJSON)
+			}
+		case delivery.Name:
+			if s.ExclusiveSlot {
+				t.Errorf("step %d: the DELIVERY dropoff at %s is declared exclusive. On this form "+
+					"the delivery node is routinely a line node, and gating a line dropoff "+
+					"re-creates the deadlock 2b05dce fixed", i, delivery.Name)
+			}
+		}
+	}
+	if !sawStaging {
+		t.Fatalf("no dropoff at the staging node in steps_json %q — the plan shape changed and this "+
+			"test is now vacuous", order.StepsJSON)
+	}
+}
+
 // TestStagedOrder_KeepsTheOperatorsPayloadWhenTheSourceIsAGroup is the other
 // half of the rule, and the reason it is not "always derive".
 //

@@ -7,8 +7,13 @@ import "testing"
 // is the one multi-window loaders exposed: three windows pulling empties in parallel
 // contend on a buried lane's reshuffle lock, and the simple-retrieve path used to fail
 // instead of queue — dropping an order that just needed to wait for the lock to clear.
+//
+// blocker_claimed is the same defect one layer in: a bin the dig must move is held by
+// a dispatched order whose robot is carrying it out of the lane. It waits.
 func TestPlanningError_Transient(t *testing.T) {
-	transient := []string{"claim_failed", "lane_locked"}
+	t.Parallel()
+
+	transient := []string{"claim_failed", "lane_locked", "no_shuffle_slot", "blocker_claimed"}
 	for _, code := range transient {
 		if !(&planningError{Code: code}).Transient() {
 			t.Errorf("code %q should be transient (queue + retry), got terminal", code)

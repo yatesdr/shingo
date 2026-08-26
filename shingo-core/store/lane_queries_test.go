@@ -35,6 +35,78 @@ func TestFindStoreSlot_SkipsReservedSlot(t *testing.T) {
 	}
 }
 
+// TestFindStoreSlot_SkipsStrandedDeepSlot: with a bin at depth 2, the empty
+// depth-3 slot is stranded behind it — a robot entering at the mouth cannot
+// reach it. The accessibility guard must skip the deepest-empty stranded slot
+// and return the reachable depth-1 slot instead (never picks into an air bubble).
+func TestFindStoreSlot_SkipsStrandedDeepSlot(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	testdb.SetupStandardData(t, db)
+	laneID, slot1ID, slot2ID, _ := laneFixture(t, db, "BUBBLE")
+
+	// Occupy depth-2, leaving depth-1 and depth-3 empty. The deep empty (depth-3)
+	// is walled off behind the depth-2 bin.
+	testdb.CreateBinAtNode(t, db, "PART-A", slot2ID, "BIN-BUBBLE")
+
+	got, err := db.FindStoreSlotInLane(laneID)
+	if err != nil {
+		t.Fatalf("FindStoreSlotInLane: %v", err)
+	}
+	if got.ID != slot1ID {
+		t.Fatalf("store slot = %d (depth %v), want slot1=%d — the depth-3 slot stranded behind the depth-2 bin must be skipped",
+			got.ID, got.Depth, slot1ID)
+	}
+}
+
+// TestLaneAcceptsInbound: the resolve-around compatibility read mirrors the mouth
+// gate. An empty lane and an inbound-only lane are compatible for a store (same-
+// mode sharing is legal, §2); an outbound hold or a dig makes the lane
+// incompatible.
+func TestLaneAcceptsInbound(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	laneID, _, _, _ := laneFixture(t, db, "ACCEPT")
+
+	// Empty lane → compatible.
+	if ok, err := db.LaneAcceptsInbound(laneID); err != nil || !ok {
+		t.Fatalf("empty lane: got ok=%v err=%v, want compatible", ok, err)
+	}
+
+	// An inbound hold shares fine — still compatible.
+	oIn := testdb.CreateOrder(t, db)
+	if err := reservations.AcquireLanes(db.DB, oIn.ID, reservations.ModeInbound, "test", laneID); err != nil {
+		t.Fatalf("AcquireLanes inbound: %v", err)
+	}
+	if ok, err := db.LaneAcceptsInbound(laneID); err != nil || !ok {
+		t.Fatalf("inbound-held lane: got ok=%v err=%v, want compatible (same-mode share)", ok, err)
+	}
+	if _, err := reservations.ReleaseLanesByOwner(db.DB, oIn.ID); err != nil {
+		t.Fatalf("release inbound: %v", err)
+	}
+
+	// An outbound hold conflicts — incompatible for an inbound store.
+	oOut := testdb.CreateOrder(t, db)
+	if err := reservations.AcquireLanes(db.DB, oOut.ID, reservations.ModeOutbound, "test", laneID); err != nil {
+		t.Fatalf("AcquireLanes outbound: %v", err)
+	}
+	if ok, err := db.LaneAcceptsInbound(laneID); err != nil || ok {
+		t.Fatalf("outbound-held lane: got ok=%v err=%v, want incompatible", ok, err)
+	}
+	if _, err := reservations.ReleaseLanesByOwner(db.DB, oOut.ID); err != nil {
+		t.Fatalf("release outbound: %v", err)
+	}
+
+	// A dig excludes everyone — incompatible.
+	oDig := testdb.CreateOrder(t, db)
+	if err := reservations.AcquireLanes(db.DB, oDig.ID, reservations.ModeDig, "test", laneID); err != nil {
+		t.Fatalf("AcquireLanes dig: %v", err)
+	}
+	if ok, err := db.LaneAcceptsInbound(laneID); err != nil || ok {
+		t.Fatalf("dig-held lane: got ok=%v err=%v, want incompatible", ok, err)
+	}
+}
+
 // laneFixture builds a NGRP > LANE > 3 slots hierarchy and returns the lane ID
 // plus the three slot IDs (front→back).
 func laneFixture(t *testing.T, db *store.DB, prefix string) (laneID int64, slot1ID, slot2ID, slot3ID int64) {

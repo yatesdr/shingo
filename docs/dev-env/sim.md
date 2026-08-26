@@ -43,7 +43,7 @@ hardware seams.
 | Piece | Where | What it does |
 |---|---|---|
 | Build-tag + runtime guards | `//go:build sim`, `SHINGO_ALLOW_SIM=1` | Sim code is absent from prod builds *and* refuses to run without the env flag; prints a NOT-FOR-PRODUCTION banner. |
-| Injectable clock | `shared/clock` | All sim timing goes through an injected `Clock` (real today; the seam for the speed knob + DST). |
+| Injectable clock | `protocol/clock` | All sim timing goes through an injected `Clock` (real today; the seam for the speed knob + DST). |
 | Docker stack | `docker-compose.dev.yml`, `Dockerfile.dev`, `Makefile` | postgres + kafka (KRaft) + core + edge + a one-shot seed service. |
 | Fleet simulator | `shingo-core/fleet/simulator` | Clock-driven robot moves with jitter + fault injection, monotonic IDs, eviction; `RobotLister` parity with the real fleet. |
 | Fake WarLink PLC | `shingo-edge/plc/simwarlink` | Emits counter ticks per process node; injected at `engine.New`, handshake-verified like a real PLC. |
@@ -98,6 +98,32 @@ make dev-reset    # stop + drop volumes (fresh DBs next up)
 
 UIs (when bound to `0.0.0.0` via the dev configs): core on `:8083`
 (`/heartbeat`, dashboards), edge on `:8081`.
+
+### Reading the Edge database: copy the WAL too
+
+Edge SQLite runs in WAL mode, so **the main database file on its own is a stale
+snapshot**. Copying only `shingoedge.db` out of the container hands you rows
+that are self-consistent and minutes old — a state you drove through the API
+"did not happen", and nothing errors. Take all three files:
+
+```sh
+docker compose -f docker-compose.dev.yml cp edge:/data/shingoedge.db     /tmp/e.db
+docker compose -f docker-compose.dev.yml cp edge:/data/shingoedge.db-wal /tmp/e.db-wal
+docker compose -f docker-compose.dev.yml cp edge:/data/shingoedge.db-shm /tmp/e.db-shm
+```
+
+(Cost one wrong reading during the 2026-08-24 sim run: a 4 MB `-wal` sat beside
+a main file that had last been checkpointed minutes earlier.)
+
+### The sim operator releases everything on a timer
+
+`sim.operators.swap_release` defaults to **3 s of sim time**, which at
+`sim.speed: 10` is 0.3 s of wall clock. That is a good imitation of a person and
+a poor instrument: any scenario that needs to observe a HELD release — or to
+beat the sim operator to a release door and click it — has a third of a second
+to do it. Widen it (`swap_release: 300s` ≈ 30 s wall) and **rebuild the edge
+image**, since the config is baked in; restore it afterwards. The knob's own
+comment in `sim_operator.go` says the same thing.
 
 Pacing knobs live in the dev configs — `sim.transit_time` (core),
 `sim.processes[].tick_interval` + `sim.operators.*` (edge). `sim.speed` scales

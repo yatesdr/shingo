@@ -46,12 +46,20 @@ const (
 // process_changeovers is an Edge-local SQLite table and no changeover marker
 // reaches the Core order row (origin_class is a closed enum of
 // attached/orphan/no_demand). `Coordinated` is the Core-side category that
-// actually carries the property we care about, and it is the SAME category
-// IsGateStaged already excludes, for the same stated reason — "a complex order's
-// staging is operator-owned and has its own release path (HandleOrderRelease)".
-// A mid-cycle two-robot swap has the identical hazard (both legs cancelled, line
-// left un-cleared) and the identical operator dependency, so covering it too is
-// intended, not overreach.
+// actually carries the property we care about. A mid-cycle two-robot swap has
+// the identical hazard (both legs cancelled, line left un-cleared) and the
+// identical operator dependency, so covering it too is intended, not overreach.
+//
+// ⛔ THIS IS NO LONGER "the SAME category IsGateStaged excludes", which is what
+// this note used to say. IsGateStaged stopped being a statement about order
+// class: it asks which WAIT the order is parked at, so a coordinated order can
+// satisfy both predicates. This one is deliberately still coarse — Coordinated
+// AND staged — and it stays coarse safely only because the abandon sweep asks
+// IsGateStaged FIRST (reconciliation_service.go). A coordinated order parked at
+// a LANE wait is claimed there and never reaches here; what reaches here is a
+// coordinated order parked on a wait Core does not own, which is exactly the
+// population this bound is for. Read the two together; the precedence is
+// load-bearing.
 func IsOperatorGatedStaging(order *orders.Order) bool {
 	if order == nil {
 		return false

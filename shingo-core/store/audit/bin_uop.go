@@ -4,9 +4,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"shingo/protocol/clock"
 )
 
-// Standard op tags for bin_uop_audit.op. Stable strings — historical
+// Standard op tags for bin_uop_ledger.op. Stable strings — historical
 // rows will reference these, so renames must come with a migration.
 //
 // Phase 0a of the UOP bin-as-truth refactor. Phase 1+ adds the delta-
@@ -145,7 +146,7 @@ var ReleaseFamilyOps = []string{
 // believes one carrier holds one payload and every delta it accepts is counted
 // against that belief. It is the grain the 5.11 stale-binding candidates are
 // measured on (store/bins.CarrierBindings), and it is derivable from
-// bin_uop_audit alone because a bump always writes one of these rows in the same
+// bin_uop_ledger alone because a bump always writes one of these rows in the same
 // transaction (service/bin_manifest.go — bumpEpoch is called from five places and
 // each one appends an op below).
 //
@@ -193,12 +194,14 @@ var EpochBumpOps = []string{
 // AppendBinUOP takes it so the audit insert participates in the caller's
 // transaction when one exists, falling back to the connection pool when
 // the caller has no tx (degraded log path — atomicity lost but the row
-// still lands).
+// still lands). QueryRow joined Exec when v93's boundary hook needed to
+// number the row's epoch_seq inside the same tx.
 type BinUOPExecer interface {
 	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
-// BinUOPContext carries the §16-enrichment fields for a bin_uop_audit row: the node
+// BinUOPContext carries the §16-enrichment fields for a bin_uop_ledger row: the node
 // the bin was at, the loader that owns that node (resolved at event time so loads /
 // unloads group per loader — keystone analytics), the station, and a freeform JSON
 // detail blob. Grouped into a struct (rather than more positional params on an
@@ -250,11 +253,35 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 	if len(ctx.Detail) > 0 {
 		detail = []byte(ctx.Detail)
 	}
-	if _, err := execer.Exec(`INSERT INTO bin_uop_audit
+	if _, err := execer.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, node_id, station, loader_id, detail)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		binID, before, afterUOP, op, source, ord, payloadCode, actor, node, ctx.Station, loader, detail); err != nil {
-		return fmt.Errorf("append bin_uop_audit bin=%d op=%q: %w", binID, op, err)
+		return fmt.Errorf("append bin_uop_ledger bin=%d op=%q: %w", binID, op, err)
+	}
+	// Epoch-bump ops also write their boundary row on the permanent
+	// exceptions ledger (v93) — the one structural addition this function
+	// makes to its caller's transaction. Every bump site routes through here
+	// (the set is pinned to them by TestEpochBumpOpsCoversEveryBumpSite), so
+	// hooking the append rather than each caller is what keeps a sixth bump
+	// site from silently missing its boundary row. Same tx, same before/
+	// after, detail verbatim.
+	for _, bump := range EpochBumpOps {
+		if bump == op {
+			seq, err := NextBinUOPEpochSeq(execer, binID)
+			if err != nil {
+				return err
+			}
+			var det []byte
+			if len(ctx.Detail) > 0 {
+				det = ctx.Detail
+			}
+			if err := AppendBinUOPException(execer, ExcBoundary, binID, payloadCode, actor,
+				&seq, clock.Now().UTC(), beforeUOP, &afterUOP, nil, nil, op, det); err != nil {
+				return err
+			}
+			break
+		}
 	}
 	return nil
 }
@@ -272,7 +299,7 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 // review aggregate override patterns (mislabelled bins, upstream
 // overfill, miscount drift) without re-running the operator's keypad
 // session.
-// BinUOPRow is one row read from bin_uop_audit. Returned by the
+// BinUOPRow is one row read from bin_uop_ledger. Returned by the
 // list helpers (Item 10) so the audit UI can render timelines without
 // re-querying for every row's columns. Nullable columns surface as
 // pointers; metadata stays a raw JSON string (the UI parses it).
@@ -350,78 +377,49 @@ func ListBinUOPByBin(db *sql.DB, binID int64, limit, offset int) ([]BinUOPRow, e
 		offset = 0
 	}
 	rows, err := db.Query(`SELECT `+binUOPSelectCols+`
-		FROM bin_uop_audit
+		FROM bin_uop_ledger
 		WHERE bin_id = $1
 		ORDER BY applied_at DESC, id DESC
 		LIMIT $2 OFFSET $3`, binID, limit, offset)
 	if err != nil {
-		return nil, fmt.Errorf("list bin_uop_audit by bin %d: %w", binID, err)
+		return nil, fmt.Errorf("list bin_uop_ledger by bin %d: %w", binID, err)
 	}
 	return scanBinUOPRows(rows)
 }
 
-// ListBinUOPByOperator returns recent activity by one actor (operator
-// or system), newest first. Filter is exact match on the actor
-// column; callers that want fuzzy match can do that client-side.
-func ListBinUOPByOperator(db *sql.DB, actor string, limit, offset int) ([]BinUOPRow, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	rows, err := db.Query(`SELECT `+binUOPSelectCols+`
-		FROM bin_uop_audit
-		WHERE actor = $1
-		ORDER BY applied_at DESC, id DESC
-		LIMIT $2 OFFSET $3`, actor, limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("list bin_uop_audit by actor %q: %w", actor, err)
-	}
-	return scanBinUOPRows(rows)
-}
-
-// ListBinUOPOverridesByStation returns recent operator-override rows
-// for a station, newest first. Filters to OpOperatorOverridePullParts
-// and OpOperatorOverrideReleasePartial — the audit-relevant override
-// observations — so the per-station UI surfaces the divergence
-// patterns SCO and management actually want to review.
-func ListBinUOPOverridesByStation(db *sql.DB, station string, limit, offset int) ([]BinUOPRow, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	rows, err := db.Query(`SELECT `+binUOPSelectCols+`
-		FROM bin_uop_audit
-		WHERE actor = $1
-		AND op IN ($2, $3)
-		ORDER BY applied_at DESC, id DESC
-		LIMIT $4 OFFSET $5`,
-		station, OpOperatorOverridePullParts, OpOperatorOverrideReleasePartial,
-		limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("list bin_uop_audit overrides by station %q: %w", station, err)
-	}
-	return scanBinUOPRows(rows)
-}
+// The per-actor readers that used to sit here — ListBinUOPByOperator and
+// ListBinUOPOverridesByStation — were removed on 2026-08-22.
+//
+// Their HTTP routes (/audit/operator/{name}, /audit/station/{station}) had zero
+// callers in any page or script, and they were the only queries that filtered
+// this table on `actor`: a column with no index, 99.2% of rows under a single
+// value, and a plan that parallel-seq-scanned 402k rows for both the common and
+// the rare value. Adding the index they wanted would have been a sixth index on
+// an insert-only table to serve a query nobody ran. If a per-operator view is
+// wanted later, write it against the index the access pattern actually needs
+// rather than reviving these.
 
 // ListBinUOPDiscrepancies returns the discrepancy ledger, newest first.
-// It is a view over bin_uop_audit — no separate table — surfacing rows where
-// the tracked count diverged from physical reality:
+// It is a view over bin_uop_ledger UNION bin_uop_exception, surfacing rows
+// where the tracked count diverged from physical reality:
 //   - stale_epoch_dropped / payload_mismatch_dropped: a delta the applier
 //     dropped (lost production/consumption signal);
 //   - payload_rebound_with_inventory: a produce bin's label flipped while it
 //     held units under the old label — mixed contents, cycle count needed;
-//   - after_uop < 0: over-consume / negative remaining ("needs reconcile");
+//   - negative_crossing rows from bin_uop_exception (v93): a bin taken below
+//     zero. Repointed off the raw stream's after_uop < 0 arm — the permanent
+//     ledger outlives the raw delta rows (90-day retention, D6), so this view
+//     stays complete after the purge. The exception row carries the crossing
+//     itself; continuations are folded into deepest_uop, which lands in
+//     metadata so the row shape is unchanged;
 //   - released_empty / released_underpack (incl. the no-owner fallback) where
 //     the bin still carried counted parts at release (before_uop > after_uop) —
 //     parts that left without being counted down.
 //
 // Clean empties (before == after) are excluded so the ledger stays signal, and
 // payload_code is captured at release time (see SyncOrClearForReleased) so the
-// part is named. Served by idx_bin_uop_audit_op / idx_bin_uop_audit_op_time.
+// part is named. Served by idx_bin_uop_ledger_op / idx_bin_uop_ledger_op_time
+// and idx_bin_uop_exception_bin.
 func ListBinUOPDiscrepancies(db *sql.DB, limit, offset int) ([]BinUOPRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -429,18 +427,28 @@ func ListBinUOPDiscrepancies(db *sql.DB, limit, offset int) ([]BinUOPRow, error)
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := db.Query(`SELECT `+binUOPSelectCols+`
-		FROM bin_uop_audit
+	rows, err := db.Query(`SELECT * FROM (
+		SELECT `+binUOPSelectCols+`
+		FROM bin_uop_ledger
 		WHERE op IN ($1, $2, $3)
-		   OR after_uop < 0
 		   OR (op IN ($4, $5, $6) AND COALESCE(before_uop, 0) > after_uop)
-		ORDER BY applied_at DESC, id DESC
-		LIMIT $7 OFFSET $8`,
+		UNION ALL
+		SELECT e.id, e.bin_id, e.before_uop, e.after_uop, e.op, 'bin_uop_exception' AS source,
+		       NULL::bigint AS order_id, e.payload_code, e.actor, NULL::bigint AS node_id,
+		       '' AS station, NULL::bigint AS loader_id,
+		       jsonb_build_object('deepest_uop', e.deepest_uop, 'recovered_at', e.recovered_at) AS metadata,
+		       e.occurred_at AS applied_at
+		FROM bin_uop_exception e
+		WHERE e.kind = $7
+	) u
+	ORDER BY u.applied_at DESC, u.id DESC
+	LIMIT $8 OFFSET $9`,
 		OpStaleEpochDropped, OpPayloadMismatchDropped, OpPayloadReboundWithInventory,
 		OpReleasedEmpty, OpReleasedEmptyFallback, OpReleasedUnderpack,
+		ExcNegativeCrossing,
 		limit, offset)
 	if err != nil {
-		return nil, fmt.Errorf("list bin_uop_audit discrepancies: %w", err)
+		return nil, fmt.Errorf("list bin_uop_ledger discrepancies: %w", err)
 	}
 	return scanBinUOPRows(rows)
 }
@@ -454,11 +462,11 @@ func AppendBinUOPOverride(execer BinUOPExecer, binID int64, suggestedUOP, operat
 	if len(metadata) > 0 {
 		meta = metadata
 	}
-	if _, err := execer.Exec(`INSERT INTO bin_uop_audit
+	if _, err := execer.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, order_id, payload_code, actor, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		binID, suggestedUOP, operatorUOP, op, source, ord, payloadCode, actor, meta); err != nil {
-		return fmt.Errorf("append bin_uop_audit override bin=%d op=%q: %w", binID, op, err)
+		return fmt.Errorf("append bin_uop_ledger override bin=%d op=%q: %w", binID, op, err)
 	}
 	return nil
 }

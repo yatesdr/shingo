@@ -13,14 +13,18 @@ package orders
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
+	"strconv"
 	"strings"
 	"time"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
+	"shingocore/store/internal/nodetree"
 )
 
 // Order is the order domain entity. The struct lives in shingocore/domain
@@ -39,7 +43,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, remaining_uop, origin_id, origin_class`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children`
 
 // Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
 // CountActive) return EVERY order type. They used to exclude reshuffle_restore —
@@ -60,16 +64,29 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	// origin_id is a nullable UUID — NULL is the honest reading for an order
 	// nothing asked for, and it is what the partial index on the column keys off.
 	var originID sql.NullString
+	// key_route is a JSON array in one TEXT column; '' is the ordinary state.
+	var keyRouteJSON string
 
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
-		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass)
+		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
+		&o.SourceIntent, &o.Coordinated, &remainingUOP,
+		&originID, &o.OriginClass, &o.OpenForChildren)
 	if err != nil {
 		return nil, err
+	}
+	if keyRouteJSON != "" {
+		// A malformed route reads as none. It cannot be repaired here and a
+		// scan error would take out every query that touches orders; the
+		// dispatch-time effect of no route is SEER auto-picking, which is the
+		// same thing the plant does today.
+		if err := json.Unmarshal([]byte(keyRouteJSON), &o.KeyRoute); err != nil {
+			log.Printf("orders: order %d has unparseable key_route %q: %v — dispatching with no route", o.ID, keyRouteJSON, err)
+			o.KeyRoute = nil
+		}
 	}
 	if originID.Valid {
 		o.OriginID = originID.String
@@ -119,14 +136,18 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 //
 // At a plant the two clocks agree to ~40ms (0 of 1878 rows affected), so this
 // is a sim-fidelity fix, not a plant-correctness one.
+//
+// open_for_children is deliberately NOT bound here: it CHANGES over a compound's
+// life and has exactly one writer for that reason.
 func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
-	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, source_intent, coordinated, origin_id, origin_class, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $22) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $24) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
 		helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
-		helpers.NullableInt64(o.BinID), o.PayloadCode, o.SkipAutoConfirm, o.SiblingOrderUUID, o.SourceIntent, o.Coordinated,
+		helpers.NullableInt64(o.BinID), o.PayloadCode, o.SkipAutoConfirm, o.SiblingOrderUUID,
+		marshalKeyRoute(o.KeyRoute), o.KeyTask, o.SourceIntent, o.Coordinated,
 		helpers.NullableText(o.OriginID), o.OriginClass,
 		now)
 	if err != nil {
@@ -134,6 +155,20 @@ func Create(db helpers.QueryRower, o *Order) error {
 	}
 	o.ID = id
 	return nil
+}
+
+// marshalKeyRoute stores the ordered via-point list. Empty stays ” rather
+// than 'null' so the column reads the same whether an order predates the
+// feature or simply has no route.
+func marshalKeyRoute(points []string) string {
+	if len(points) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(points)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // ListChildren returns all child orders for a parent order.
@@ -146,9 +181,56 @@ func ListChildren(db *sql.DB, parentOrderID int64) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
-// GetNextChild returns the next pending child order for a parent.
+// AwaitingFleetSQL renders "Core has NOT yet handed this leg to the fleet" —
+// the one spelling of the question every compound re-drive asks.
+//
+// ── WHY IT IS A FUNCTION AND NOT A LITERAL AT EACH QUERY ──────────────────
+//
+// The question had three spellings and one of them was the authority:
+//
+//   - GetNextChild                 status='pending'
+//   - ListHeldLegParentsInLane     status='pending'
+//   - the exactly-once guard       vendor_order_id != ""  (compound.go)
+//
+// The third is the real one, and its own comment says so: vendor_order_id "is
+// non-empty once and only once a child has been handed to the fleet, it
+// survives a crash, and it does not depend on what any sibling is doing." The
+// other two used a STATUS as a proxy for it, and the proxy was exact only
+// because nothing ever left `pending` without reaching the fleet.
+//
+// A leg whose fleet CREATE is refused breaks that. It has been claimed
+// (pending → sourcing) and rolled back out of `dispatched`, so it sits at
+// `sourcing` holding no vendor order — not yet with the fleet, and invisible to
+// both status-keyed queries. Terminating it was the old answer (the demand died
+// on a robot-system blip); parking it is the new one, and parking only works if
+// the re-drives can still see it.
+//
+// The status half stays, narrowed to its honest meaning: IsPreDispatch is
+// "still in Core's planning space and has not yet been sent to the fleet
+// vendor", which is this question exactly. A compound child is never `queued`,
+// so on this population the set is {pending, sourcing} — but it is DERIVED from
+// the predicate rather than hand-listed, so a status added to the pre-dispatch
+// family cannot leave one of these queries behind.
+//
+// Rendered rather than written out, on the DigExclusionSQL precedent: there is
+// no second place where the comparison is spelled.
+//
+// alias is the table alias the caller uses ("" for an unaliased `orders`).
+func AwaitingFleetSQL(alias string) string {
+	q := ""
+	if alias != "" {
+		q = alias + "."
+	}
+	return fmt.Sprintf("%sstatus IN (%s) AND COALESCE(%svendor_order_id, '') = ''",
+		q, protocol.PreDispatchStatusSQLList(), q)
+}
+
+// GetNextChild returns the next child order a compound has not yet handed to
+// the fleet — see AwaitingFleetSQL for why that is not the same as `pending`.
 func GetNextChild(db *sql.DB, parentOrderID int64) (*Order, error) {
-	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM orders WHERE parent_order_id=$1 AND status='pending' ORDER BY sequence LIMIT 1`, SelectCols), parentOrderID)
+	row := db.QueryRow(fmt.Sprintf(
+		`SELECT %s FROM orders WHERE parent_order_id=$1 AND %s ORDER BY sequence LIMIT 1`,
+		SelectCols, AwaitingFleetSQL("")), parentOrderID)
 	return ScanOrder(row)
 }
 
@@ -324,6 +406,40 @@ func LinkSiblingsByEdgeUUID(db *sql.DB, uuidA, uuidB string) (int64, error) {
 	return res.RowsAffected()
 }
 
+// ReleaseTerminalEdgeUUID blanks edge_uuid on TERMINAL orders holding it, so a
+// deterministic uuid can be minted again. Returns how many rows were cleared.
+//
+// WHY THIS EXISTS. idx_orders_uuid is UNIQUE over edge_uuid WHERE edge_uuid
+// <> ”, and some orders derive their uuid from what they are ABOUT rather than
+// from a counter — carried-bin recovery mints "recovery-bin-{id}-{robot}" so a
+// racing double-create collides on the index instead of putting two robots on
+// one bin. A deterministic uuid is therefore a finite resource: there is
+// exactly one per subject, and a dead order holding it makes the subject
+// unactionable forever.
+//
+// TERMINAL ONLY, and that is the whole safety argument. A live order holding
+// the uuid is doing the work, and clearing it would let a second order be
+// minted for the same subject — the two-orders-one-bin shape the uniqueness is
+// there to prevent. A terminal order is finished; its uuid is a headstone, and
+// the row itself is preserved (status, error_detail, history) so the record of
+// the attempt survives. Only the index entry is given up.
+func ReleaseTerminalEdgeUUID(db *sql.DB, uuid string) (int64, error) {
+	if uuid == "" {
+		return 0, nil
+	}
+	terminals := protocol.TerminalStatuses()
+	names := make([]string, len(terminals))
+	for i, t := range terminals {
+		names[i] = string(t)
+	}
+	res, err := db.Exec(`UPDATE orders SET edge_uuid='', updated_at=$3
+		WHERE edge_uuid=$1 AND status = ANY($2)`, uuid, names, clock.Now().UTC())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // SiblingUUID returns the order's two-robot swap sibling edge UUID, or "".
 func SiblingUUID(db *sql.DB, id int64) (string, error) {
 	var s string
@@ -336,6 +452,47 @@ func UpdateVendor(db *sql.DB, id int64, vendorOrderID, vendorState, robotID stri
 	_, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=$5 WHERE id=$4`,
 		vendorOrderID, vendorState, robotID, id, clock.Now().UTC())
 	return err
+}
+
+// SetCompoundOpen is THE writer of orders.open_for_children — the only thing
+// in shingo-core that changes whether a compound parent may still gain
+// children. Everything else reads it.
+//
+// ONE WRITER, ONE FACT, and the value is a parameter rather than the function
+// being split in two. Seal-here / open-there would read better at the call
+// sites and would be two places deciding one fact — the shape §17.1 records,
+// which briefs 1 and 2 each spent a commit undoing.
+//
+// Creation is not a second writer. An order is born sealed by the column's
+// DEFAULT and Create deliberately does not bind it (writer_totality_test names
+// it), so there is exactly one statement in the codebase that can make a
+// compound open and exactly one that can seal it, and they are this line.
+//
+// AND THERE IS NO AUTO-SEAL. The tempting rule — "seal it when the last leg
+// completes" — is a second writer wearing a convenience, and it is wrong on its
+// own terms: the whole point of openness is that a reshuffle between moves has
+// all its children terminal and is NOT finished, so last-leg-completion is
+// precisely the moment that cannot decide this. Whatever concludes there is no
+// more digging to do calls this. Nothing infers it.
+//
+// A write that matches no row is an error rather than a silent no-op. A caller
+// that sealed a parent that has since been deleted has had its instruction
+// dropped, and finding that out later — from a reshuffle that completed half
+// dug — is the expensive way.
+func SetCompoundOpen(db *sql.DB, parentOrderID int64, open bool) error {
+	res, err := db.Exec(`UPDATE orders SET open_for_children=$1, updated_at=$3 WHERE id=$2`,
+		open, parentOrderID, clock.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("set open_for_children=%t on order %d: %w", open, parentOrderID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set open_for_children on order %d: rows affected: %w", parentOrderID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("set open_for_children=%t: order %d does not exist", open, parentOrderID)
+	}
+	return nil
 }
 
 // UpdateSourceNode rewrites the source_node field.
@@ -538,6 +695,75 @@ func ListActiveByStation(db *sql.DB, stationID string) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
+// ActiveByDeliveryNodes returns non-terminal orders whose delivery_node is one of
+// the given names — the active stores targeting a lane (the tiered-entry gate's
+// input). Empty names → no orders.
+func ActiveByDeliveryNodes(db *sql.DB, names []string) ([]*Order, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(names))
+	args := make([]any, len(names))
+	for i, n := range names {
+		ph[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = n
+	}
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT %s FROM orders WHERE delivery_node IN (%s) AND status NOT IN (%s) ORDER BY id`,
+		SelectCols, strings.Join(ph, ", "), protocol.TerminalStatusSQLList()), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanOrders(rows)
+}
+
+// ActiveGateCandidates returns every non-terminal order that COULD be parked at
+// a lane wait: it reached the fleet (a vendor order) and it carries a plan.
+//
+// ── WHY IT IS NOT KEYED ON THE LANE ───────────────────────────────────────
+//
+// The lane a gate wait belongs to lives on the WAIT STEP inside steps_json
+// (resolvedStep.WaitLane), and steps_json is TEXT, not jsonb — there is no
+// containment operator to key on, and the wait that matters is the one at
+// wait_index, which means COUNTING waits. A LIKE on the rendered field would
+// have to distinguish lane 4 from lane 42 by punctuation, which is the kind of
+// clever that breaks silently.
+//
+// So the narrowing is done here on the two columns that ARE indexed facts, and
+// the wait-step test happens in Go (dispatch.gateStagedForLane). The residual
+// set is orders that are in flight AND carry a plan, which is small: it is
+// bounded by what the fleet is currently doing, not by history.
+//
+// THIS REPLACED TWO ENDPOINT QUERIES. ActiveByDeliveryNodes/ActiveBySourceNodes
+// found gate-staged orders by matching an endpoint column against a lane's slot
+// names, which structurally missed any order whose lane entry is INTERIOR to its
+// plan — neither its first actionable step nor its last. A spliced plan has
+// exactly that shape whenever the lane is not an endpoint.
+func ActiveGateCandidates(db *sql.DB) ([]*Order, error) {
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT %s FROM orders
+		  WHERE vendor_order_id <> '' AND steps_json <> ''
+		    AND status NOT IN (%s)
+		  ORDER BY id`,
+		SelectCols, protocol.TerminalStatusSQLList()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanOrders(rows)
+}
+
+// ActiveBySourceNodes WAS HERE AND IS DELETED, with its only caller.
+//
+// It was the source-node mirror of ActiveByDeliveryNodes, and the lane-gate
+// evaluator used the pair to find gate-staged retrieves and stores by matching
+// an ENDPOINT column against a lane's slot names. Candidate discovery now keys
+// on the wait step (ActiveGateCandidates above), which is both the right
+// question and the one that can see an order whose lane entry is interior to its
+// plan. ActiveByDeliveryNodes survives because the tiered-entry classifier still
+// legitimately asks "which active stores target this lane's slots".
+
 // CountActive returns the number of orders in non-terminal statuses, using
 // the same WHERE clause as ListActive so the count matches the list exactly.
 // Backs the dashboard "in flight" KPI (plan §3.A / §15.A).
@@ -640,6 +866,136 @@ func ListHistory(db *sql.DB, orderID int64) ([]*History, error) {
 	return history, rows.Err()
 }
 
+// LatestHistoryForStatus returns the most recent history row an order recorded
+// for a given status, or nil when it never recorded one.
+//
+// THE MOST RECENT, not the first, and that is the whole reason this exists. An
+// order can fault more than once — 730 faulted transitions over 30 days at
+// Springfield spread across fewer orders than that — so "when did this fault
+// start" is answered by the last faulted row, and the first one would time a
+// recovery from a fault the order already recovered from.
+//
+// It is also why orders.updated_at is not the source: UpdateOrderVendor rewrites
+// it after every poll (engine/wiring_vendor_status.go), so it measures the last
+// time the fleet said anything, not the last time the order's state changed.
+//
+// ORDER BY id DESC rather than created_at DESC: two rows written inside the same
+// clock tick sort by insertion, and id is the only monotonic column. Served by
+// idx_order_history_order.
+// LatestHistoryTimesForStatus is LatestHistoryForStatus over MANY orders in one
+// round trip: order id -> when that order most recently reached the status.
+//
+// Exists because the callers that want it want it for a SET — the health gauge
+// asks "how long has each faulted order been faulted", the robots page asks the
+// same for every robot's order. One query per order made the cost scale with how
+// bad the plant's day was: a fleet-wide dropout faults thirty orders at once and
+// turned a 15-second health poll into thirty-one queries.
+//
+// DISTINCT ON is the latest row per order, ordered the same way the single-row
+// query orders it (id DESC), so the two cannot disagree about which row is
+// "latest" for an order that reached the status twice.
+//
+// Only the instant is returned, not the row. Every batch caller so far wants the
+// clock; the one caller that wants the REF (the orders board's fault line) wants
+// it for one order at a time and keeps using LatestHistoryForStatus.
+//
+// An empty id list is a nil map and no query.
+func LatestHistoryTimesForStatus(db *sql.DB, orderIDs []int64, status protocol.Status) (map[int64]time.Time, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+	// pq.Array is unavailable in this package (it takes a bare *sql.DB and the
+	// driver is wired above it), so the id set is expanded as a positional IN
+	// list — the same workaround bins.CarrierBindings uses.
+	ph := make([]string, len(orderIDs))
+	args := make([]any, 0, len(orderIDs)+1)
+	for i, id := range orderIDs {
+		ph[i] = fmt.Sprintf("$%d", i+1)
+		args = append(args, id)
+	}
+	args = append(args, string(status))
+	rows, err := db.Query(`SELECT DISTINCT ON (order_id) order_id, created_at
+		FROM order_history WHERE order_id IN (`+strings.Join(ph, ",")+`)
+		  AND status=$`+strconv.Itoa(len(orderIDs)+1)+`
+		ORDER BY order_id, id DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("latest %s history for %d orders: %w", status, len(orderIDs), err)
+	}
+	defer rows.Close()
+	out := make(map[int64]time.Time, len(orderIDs))
+	for rows.Next() {
+		var id int64
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		out[id] = at
+	}
+	return out, rows.Err()
+}
+
+func LatestHistoryForStatus(db *sql.DB, orderID int64, status protocol.Status) (*History, error) {
+	var h History
+	var code, actor sql.NullString
+	var ref []byte
+	err := db.QueryRow(`SELECT id, order_id, status, detail, code, actor, ref, created_at
+		FROM order_history WHERE order_id=$1 AND status=$2 ORDER BY id DESC LIMIT 1`,
+		orderID, string(status)).
+		Scan(&h.ID, &h.OrderID, &h.Status, &h.Detail, &code, &actor, &ref, &h.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Never recorded that status. Not an error — the caller asking "when
+		// did this fault start" for an order that never faulted gets nil and
+		// decides what that means.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("order %d latest %s history: %w", orderID, status, err)
+	}
+	h.Code, h.Actor = code.String, actor.String
+	// Same tolerance as ListHistory: a malformed ref is left nil rather than
+	// failing the read.
+	if len(ref) > 0 {
+		var r protocol.TermRef
+		if err := json.Unmarshal(ref, &r); err == nil {
+			h.Ref = &r
+		}
+	}
+	return &h, nil
+}
+
+// EarliestHistoryForStatus is LatestHistoryForStatus from the other end: the
+// FIRST time the order reached a status.
+//
+// The two are different questions and an order can answer both. `in_transit`
+// is reachable twice — `faulted -> in_transit` is a legal transition
+// (dispatch/lifecycle.go, fireFaultedRecovered) — and the two rows mean
+// different things: the first is when the bin left the floor, the last is when
+// a replan started. Anything dating the BIN wants the first; anything dating
+// the current attempt wants the last.
+func EarliestHistoryForStatus(db *sql.DB, orderID int64, status protocol.Status) (*History, error) {
+	var h History
+	var code, actor sql.NullString
+	var ref []byte
+	err := db.QueryRow(`SELECT id, order_id, status, detail, code, actor, ref, created_at
+		FROM order_history WHERE order_id=$1 AND status=$2 ORDER BY id ASC LIMIT 1`,
+		orderID, string(status)).
+		Scan(&h.ID, &h.OrderID, &h.Status, &h.Detail, &code, &actor, &ref, &h.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("order %d earliest %s history: %w", orderID, status, err)
+	}
+	h.Code, h.Actor = code.String, actor.String
+	if len(ref) > 0 {
+		var r protocol.TermRef
+		if err := json.Unmarshal(ref, &r); err == nil {
+			h.Ref = &r
+		}
+	}
+	return &h, nil
+}
+
 // EverReachedStatus reports whether the order ever recorded the given status.
 //
 // Asked of order_history rather than of the order's current status, because
@@ -679,6 +1035,53 @@ func CountActiveByDeliveryNode(db *sql.DB, nodeName string) (int, error) {
 	var count int
 	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node=$1 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()), nodeName).Scan(&count)
 	return count, err
+}
+
+// ListStalledChapters returns compound parents in `reshuffling` that still have a
+// non-terminal child and whose whole family has gone quiet — nothing in the
+// parent or any of its children written since `since`.
+//
+// ── THE POPULATION SR.91 CREATED AND LEFT UNFLOORED (law 8) ────────────────
+//
+// AdvanceStuckReshuffleParents covers the other half of this status: a parent
+// whose children are ALL terminal, which is a chapter that finished and did not
+// get returned. This is the half where a leg is still open. Before SR.91 that
+// half held only synthetic folders and the demand behind them waited in `queued`,
+// inside IsAcquiring, swept every 60s. SR.91 made the demand itself wear
+// `reshuffling` -- which no sweep, no floor and no anomaly detector covers.
+//
+// QUIET IS ASKED ACROSS THE WHOLE FAMILY, not just the parent. A parent's own
+// updated_at does not move while its legs run, so a parent-only test would call
+// every healthy excavation stalled within a minute of starting.
+func ListStalledChapters(db *sql.DB, since time.Time, limit int) ([]int64, error) {
+	rows, err := db.Query(fmt.Sprintf(`
+		SELECT p.id
+		FROM orders p
+		WHERE p.status IN ('reshuffling', 'staged')
+		  AND p.updated_at < $1
+		  AND EXISTS (
+			SELECT 1 FROM orders c
+			WHERE c.parent_order_id = p.id AND c.status NOT IN (%s)
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM orders c
+			WHERE c.parent_order_id = p.id AND c.updated_at >= $1
+		  )
+		ORDER BY p.id
+		LIMIT $2`, protocol.TerminalStatusSQLList()), since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // ListTrackedVendorOrderIDs returns the vendor order IDs Core must keep watching
@@ -782,9 +1185,9 @@ func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, exclu
 	return count, err
 }
 
-// LiveCountsByOriginPerDeliveryNode returns one demand episode's OWN
-// non-terminal orders, counted per delivery node. The map is empty when the
-// episode has nothing outstanding.
+// CountLiveByOrigin returns a demand episode's OWN non-terminal order count — a
+// bare total, not a per-window breakdown. It returns zero when the episode has
+// nothing outstanding.
 //
 // IT DELIBERATELY COUNTS `queued`, which is the whole point and the one way it
 // differs from the two counts above. Those answer "is something on its way
@@ -813,6 +1216,136 @@ func CountLiveByOrigin(db *sql.DB, originID string) (int, error) {
 	var count int
 	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE origin_id = $1 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()), originID).Scan(&count)
 	return count, err
+}
+
+// CountLiveRootsByOrigin is CountLiveByOrigin restricted to ROOT orders: the
+// asks a demand episode made, not the legs those asks grew.
+//
+// WHY THE PLAIN COUNT IS WRONG FOR THE LEVEL KEEPER. Compound reshuffle children
+// INHERIT their parent's origin (dispatch/compound.go:553), deliberately — a dig
+// is part of the cost of the demand that caused it, and the demand grain wants
+// that recorded. But it means one physical ask that happens to trip a reshuffle
+// reports as N against the origin, and a keeper subtracting "what I have already
+// asked for" from its gap would conclude it had asked four times when it asked
+// once, and stop refilling a group that is still short.
+//
+// So the narrowing is `parent_order_id IS NULL`: the legs of one physical ask are
+// not additional demand. It is the same distinction CountLiveByOrigin's own
+// comment draws between "what has this demand asked for" and "what is on its way
+// here" — one level further in.
+//
+// `queued` COUNTS, exactly as it does in CountLiveByOrigin, and for the same
+// incident. Springfield 2026-08-03 accumulated 241 identical queued
+// retrieve_empty orders because the only guard against re-asking was a count
+// that could not see the orders it had already created. A keeper that filtered
+// queued out would rebuild that bug at a new grain within one tick.
+func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
+	if originID == "" {
+		// origin_id is a UUID column; comparing it to "" is a type error rather
+		// than an empty result. Same guard MaintainedEpisodeForOrigin carries.
+		return 0, nil
+	}
+	var count int
+	err := db.QueryRow(fmt.Sprintf(
+		`SELECT COUNT(*) FROM orders
+		  WHERE origin_id = $1 AND parent_order_id IS NULL AND status NOT IN (%s)`,
+		protocol.TerminalStatusSQLList()), originID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count live roots by origin %s: %w", originID, err)
+	}
+	return count, nil
+}
+
+// CountTypedInboundToGroup counts the carriers of one type ALREADY ON THEIR WAY
+// into a group that the keeper did not ask for.
+//
+// THE THIRD POPULATION, and the one that is neither "standing there" nor "I
+// asked for it". An unloader pushing a drained empty back, a changeover
+// evacuating one, an operator move — none carries a maintain origin, all land in
+// the group, and a keeper blind to them over-asks by exactly their number and
+// then overfills. This is the 241-duplicates shape arriving from the other
+// direction.
+//
+// TYPED BY THE CARRIER ALREADY CHOSEN, not by a requested type, because these
+// orders have no requested type — nothing in the plant carries one. An order
+// that has not yet sourced a bin is therefore INVISIBLE here, deliberately and
+// statedly: crediting an unsourced inbound would let the keeper subtract a
+// carrier that may never arrive. Over-asking is the safe direction — it is
+// bounded by want, and the loser of a race re-queues, which is a normal outcome.
+//
+// TWO ARMS, because a complex order records its carriers in two places. The
+// direct arm reads orders.bin_id against the order's own delivery_node; the
+// junction arm reads order_bins.bin_id against that row's dest_node, which is
+// where a multi-pickup complex order records "this carrier goes to that node".
+// A single-pickup complex order writes no junction row at all
+// (allocator.go:743's len(claimed) > 1 guard), so the direct arm is what covers
+// it. COUNT(DISTINCT b.id) because the two arms can name the same carrier.
+//
+// THE GROUP-NAME ARM IS NOT REDUNDANT. resolveSyntheticDestination rewrites
+// delivery_node from the group to a concrete child at admit, so a settled order
+// names a child — but an order admitted while the group was momentarily full
+// keeps the GROUP name and is never re-resolved (planTransport gates
+// re-resolution on isMove). Those orders are real, they are coming, and matching
+// only on descendants would miss every one of them.
+//
+// EVERY MAINTAIN ORIGIN IS EXCLUDED, not just the asking one. An order minted by
+// the keeper is already counted as "asked" by CountLiveRootsByOrigin, so
+// counting it here too would double-subtract; and a SECOND group's keeper order
+// inbound to THIS group cannot happen (a keeper only ever delivers into its own
+// group), so excluding all of them costs nothing and removes a case a reader
+// would otherwise have to reason about.
+//
+// Blank payload on the carrier, matching the resident count: a carrier arriving
+// with parts in it is not joining an empty level.
+//
+// The status filter is the POSITIVE form (IN NonTerminalStatusSQLList), not
+// NOT IN terminal: a NOT IN against 4 values anti-joined the whole unbounded
+// orders table (324 buffers, 0.841 ms); the positive IN enumerates the 10
+// live values and the planner walks the partial path instead (25 buffers,
+// 0.036 ms). Semantic difference: a row carrying an off-spec (retired)
+// status would now read as not-inbound — under-counting `coming` and
+// over-asking, which is the direction the note above already declares safe.
+// The enum's drift tests hold both lists to the same source of truth.
+func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTypeCode string) (int, error) {
+	if binTypeCode == "" || groupNodeName == "" {
+		return 0, nil
+	}
+	var count int
+	err := db.QueryRow(nodetree.DescendantsOf(1)+fmt.Sprintf(`
+		SELECT COUNT(DISTINCT bin_id) FROM (
+		    SELECT o.bin_id AS bin_id
+		      FROM orders o
+		      JOIN bins b  ON b.id = o.bin_id
+		      JOIN bin_types bt ON bt.id = b.bin_type_id
+		      LEFT JOIN nodes dn ON dn.name = o.delivery_node
+		     WHERE o.status IN (%[1]s)
+		       AND o.bin_id IS NOT NULL
+		       AND bt.code = $2
+		       AND COALESCE(b.payload_code, '') = ''
+		       AND (o.delivery_node = $3 OR dn.id IN (SELECT id FROM descendants))
+		       AND NOT EXISTS (
+		           SELECT 1 FROM demand_origins d
+		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND d.closed_at IS NULL)
+		    UNION ALL
+		    SELECT ob.bin_id AS bin_id
+		      FROM order_bins ob
+		      JOIN orders o ON o.id = ob.order_id
+		      JOIN bins b  ON b.id = ob.bin_id
+		      JOIN bin_types bt ON bt.id = b.bin_type_id
+		      LEFT JOIN nodes dn ON dn.name = ob.dest_node
+		     WHERE o.status IN (%[1]s)
+		       AND bt.code = $2
+		       AND COALESCE(b.payload_code, '') = ''
+		       AND (ob.dest_node = $3 OR dn.id IN (SELECT id FROM descendants))
+		       AND NOT EXISTS (
+		           SELECT 1 FROM demand_origins d
+		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND d.closed_at IS NULL)
+		) AS inbound`, protocol.NonTerminalStatusSQLList()),
+		groupNodeID, binTypeCode, groupNodeName, protocol.EpisodeKindMaintain).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count typed inbound to group %s (%s): %w", groupNodeName, binTypeCode, err)
+	}
+	return count, nil
 }
 
 // CountLiveByDeliveryNode counts ALL non-terminal orders pointed at a delivery

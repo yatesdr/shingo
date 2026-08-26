@@ -40,6 +40,16 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	// Validate group_id before any writes — a stale modal can carry a
+	// group_id whose group was deleted in another tab, and with FKs off
+	// the SetGroupID call would otherwise write an orphan that the
+	// sidebar renderer silently drops.
+	if req.GroupID != nil && *req.GroupID > 0 {
+		if err := h.validateGroupID(req.GroupID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	id, err := h.engine.ProcessService().Create(req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -80,6 +90,16 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Validate group_id before any writes — see apiCreateProcess for the
+	// orphan-id rationale.
+	var gid *int64
+	if req.GroupID != nil && *req.GroupID > 0 {
+		gid = req.GroupID
+	}
+	if err := h.validateGroupID(gid); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := h.engine.ProcessService().Update(id, req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -91,10 +111,6 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 	// Update group assignment. req.GroupID == nil means "Ungrouped" (clear
 	// the FK); a positive value means "assign to that group". We always write
 	// so the user can ungroup via the General tab dropdown.
-	var gid *int64
-	if req.GroupID != nil && *req.GroupID > 0 {
-		gid = req.GroupID
-	}
 	if err := h.engine.ProcessService().SetGroupID(id, gid); err != nil {
 		log.Printf("set group_id on process %d: %v", id, err)
 	}

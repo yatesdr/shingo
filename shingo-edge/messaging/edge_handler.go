@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"encoding/json"
 	"log"
 	"time"
 
@@ -119,6 +120,42 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	} else if err := h.orderMgr.SetOrderQueueReason(p.OrderUUID, "", ""); err != nil {
 		log.Printf("edge_handler: clear queue_reason for %s: %v", p.OrderUUID, err)
 	}
+
+	// The fault clock, on exactly the same terms as the queue reason above and
+	// for exactly the same reason. A fault window explains a faulted order, so
+	// it is meaningful precisely while the order is faulted — Core sends these
+	// only then, and the Edge keeps them only then. DERIVED FROM THE STATUS, not
+	// from the pushed values: an absent omitempty field and a deliberately
+	// cleared one look identical on the wire, so trusting the push would let an
+	// unrelated update wipe a live fault, which is the queue_reason bug of
+	// 2026-08-03 pointed the other way.
+	//
+	// The board reads Detail for the sentence. These three are what let it tick
+	// the clock and cross the threshold on its own between pushes.
+	if protocol.Status(p.Status) == protocol.StatusFaulted {
+		if err := h.orderMgr.SetOrderFaultClock(p.OrderUUID,
+			p.FaultSince, p.FaultDeadline,
+			p.FaultNoticeAfterS, encodeFaultRef(p.FaultRef)); err != nil {
+			log.Printf("edge_handler: set fault clock for %s: %v", p.OrderUUID, err)
+		}
+	} else if err := h.orderMgr.SetOrderFaultClock(p.OrderUUID, nil, nil, 0, ""); err != nil {
+		log.Printf("edge_handler: clear fault clock for %s: %v", p.OrderUUID, err)
+	}
+}
+
+// encodeFaultRef renders the fleet's reason as the JSON the Edge column stores,
+// or "" when Core sent none — which is the common case. A ref that will not
+// marshal is stored as absent rather than as broken JSON the board would then
+// fail to read back.
+func encodeFaultRef(ref *protocol.TermRef) string {
+	if ref == nil || ref.Empty() {
+		return ""
+	}
+	b, err := json.Marshal(ref)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func (h *EdgeHandler) HandleOrderDelivered(env *protocol.Envelope, p *protocol.OrderDelivered) {

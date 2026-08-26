@@ -1,5 +1,5 @@
 import { api, apiGet, apiPost, debounce, delegateActions, escapeHtml, formatTime, h, hideModal, showModal, toggleVisibility, uiConfirm } from '/static/app.js';
-import { onSSE } from '/static/shared/utils.js';
+import { installLiveDurations, onSSE, reconcileList } from '/static/shared/utils.js';
 
 // Controls live inside the manifest, which can be on screen twice at once
 // (detail page with a child-step modal open over it), so the status line is
@@ -74,6 +74,28 @@ async function forceConfirmDelivered(id, el) {
   var oid = parseInt(id, 10);
   if (!await uiConfirm('Force-confirm order #' + oid + ' (skip operator confirm)? Use when the bin has been moved elsewhere and the order is stuck in delivered.')) return;
   orderControlPost('/api/recovery/repair', {action: 'force_confirm_delivered', order_id: oid, bin_id: 0}, el);
+}
+
+// Hard-release a dwelling order past its wait, whoever owns that wait (W3).
+//
+// This is the ESCAPE HATCH, not the ordinary release. The station's board is
+// where a station-owned wait gets released; Core's fence advances a lane-owned
+// one when the lane is safe. This bypasses both, for the case those mechanisms
+// are themselves wedged — which this stream met three times in one campaign.
+//
+// The confirm says what is actually at risk, because a hard release of a
+// station wait can drive a robot into a cell somebody is still working in. The
+// server records the actor and the physical lane verdict it overrode.
+async function hardReleaseOrder(id, el) {
+  var oid = parseInt(id, 10);
+  if (!await uiConfirm(
+      'HARD RELEASE order #' + oid + '?\n\n' +
+      'This advances the robot past its wait WITHOUT asking whose turn it is — ' +
+      'skipping both the station\'s release and Core\'s lane fence.\n\n' +
+      'If the cell or lane is still occupied, the robot will drive into it. ' +
+      'Use this only when the normal releaser is stuck. The action is recorded ' +
+      'against your username.')) return;
+  orderControlPost('/api/orders/hard-release', {order_id: oid}, el);
 }
 
 function setOrderPriority(id, el) {
@@ -158,15 +180,54 @@ function fieldH(label, val, cls) { return field(label, escapeHtml(val || '-'), c
 
 // elapsedLabel answers "how long did this take / has this been going" —
 // the question the timestamps made you compute by hand.
+// durationText renders a span of seconds. One spelling, because the timeline's
+// unaccounted-gap marker has to read in the same units as the elapsed label
+// beside it — two formatters would drift into two vocabularies.
+function durationText(secs) {
+  return secs < 60 ? secs + 's'
+    : secs < 3600 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's'
+    : Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
+}
+
+// timelineExtra adds what a fault row knows and the timeline never read: the
+// fleet's reason, and how long the order stayed in this status.
+//
+// The history JSON has carried code/actor/ref since migration 55; only detail
+// was ever rendered. Dwell is shown on faulted rows because that is the number
+// the whole replan-vs-fault distinction rests on. The last row has no next row,
+// so its dwell is live (data-since) rather than fixed.
+function timelineExtra(ev, next) {
+  var parts = '';
+  var ref = ev.ref || {};
+  if (ev.status === 'faulted' || ev.code === 'grace_timeout') {
+    if (ref.vendor_desc || ref.vendor_code) {
+      var reason = ref.vendor_desc
+        ? String(ref.vendor_desc).toLowerCase() + (ref.vendor_code ? ' (' + ref.vendor_code + ')' : '')
+        : 'fleet code ' + ref.vendor_code;
+      parts += h`<span class="tl-detail">${'· ' + reason}</span>`;
+    }
+  }
+  if (ev.status !== 'faulted') return parts;
+  if (next && next.created_at) {
+    var secs = Math.round((new Date(next.created_at) - new Date(ev.created_at)) / 1000);
+    if (isFinite(secs) && secs >= 0) {
+      parts += h`<span class="tl-detail tnum">${'· ' + durationText(secs)}</span>`;
+    }
+    return parts;
+  }
+  // Still faulted: the dwell is running.
+  parts += '<span class="tl-detail tnum">· <span class="tnum" data-since="' +
+    escapeHtml(ev.created_at) + '"></span></span>';
+  return parts;
+}
+
 function elapsedLabel(o) {
   if (!o.created_at) return '';
   var start = new Date(o.created_at).getTime();
   var end = o.completed_at ? new Date(o.completed_at).getTime() : Date.now();
   var secs = Math.round((end - start) / 1000);
   if (!isFinite(secs) || secs < 0) return '';
-  var txt = secs < 60 ? secs + 's'
-    : secs < 3600 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's'
-    : Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
+  var txt = durationText(secs);
   return o.completed_at ? 'took ' + txt : txt + ' elapsed';
 }
 
@@ -201,6 +262,9 @@ function buildManifest(data, opts) {
   // on exactly the orders someone opens that page to understand.
   if (o.error_detail) out += '<div class="manifest-error">' + escapeHtml(o.error_detail) + '</div>';
   if (o.queue_reason) out += '<div class="manifest-reason">' + escapeHtml(o.queue_reason) + '</div>';
+  // .manifest-reason, not .manifest-error: a faulted order is still live, and
+  // the error slot is red and terminal. Server-rendered and pre-escaped.
+  if (data.fault_line) out += '<div class="manifest-reason">' + data.fault_line + '</div>';
 
   // Identity strip: small, muted, one wrapping line. Zones ride along with
   // the nodes they belong to instead of taking their own cells.
@@ -325,14 +389,57 @@ function buildManifest(data, opts) {
   }
 
   // ── TIMELINE ──
+  //
+  // ── IT STARTS AT THE ORDER, NOT AT THE FIRST ROW ──────────────────────────
+  //
+  // order_history records status CHANGES, and a row is written in the same
+  // transaction as every change — so nothing is ever lost. But an order's
+  // CREATION writes no row, and a gate that parks a blocked order in its ENTRY
+  // status changes nothing, so it writes none either. The result was a panel
+  // that began at whatever happened first and silently dropped everything
+  // before it.
+  //
+  // Measured at Springfield 2026-08-11: 34 of 110 complex orders in two days had
+  // a gap between created_at and their first history row; the average was 28
+  // MINUTES and the worst 7h42m. Every other order type was a clean zero — which
+  // is why the panel looks trustworthy right up until the order where it isn't,
+  // and the orders it truncates are the interesting ones: the ones that WAITED.
+  //
+  // Both facts are already in the database, so this is a read-side fix and it
+  // works on every order already stored. What is NOT stored is what the order was
+  // DOING in that window — queue_cause is a current-value column that gets
+  // overwritten — so the gap is marked as unaccounted rather than guessed at. A
+  // panel that admits what it does not know beats one that implies nothing
+  // happened.
   if (data.history && data.history.length > 0) {
     out += '<div class="manifest-section">History</div>';
-    out += h`<ul class="timeline-list">${
-      data.history.map(function(ev) {
+    var lead = '';
+    if (o && o.created_at) {
+      lead = h`<li>
+          <span class="tl-time">${{__html:true, value: formatTime(o.created_at)}}</span>
+          <span class="badge badge-xs">created</span>
+          <span class="tl-detail">order created</span>
+        </li>`;
+      var gapSecs = Math.round(
+        (new Date(data.history[0].created_at).getTime() - new Date(o.created_at).getTime()) / 1000);
+      // 60s, matching the threshold the Springfield measurement used. Below that
+      // is transaction timing, not a wait worth a line.
+      if (isFinite(gapSecs) && gapSecs > 60) {
+        lead += h`<li class="tl-unaccounted">
+            <span class="tl-time">—</span>
+            <span class="badge badge-xs">unaccounted</span>
+            <span class="tl-detail">${durationText(gapSecs) + ' before the first recorded change — the order existed and nothing was written for it'}</span>
+          </li>`;
+      }
+    }
+    out += h`<ul class="timeline-list">${{__html:true, value: lead}}${
+      data.history.map(function(ev, i) {
+        var extra = timelineExtra(ev, data.history[i + 1]);
         return h`<li>
           <span class="tl-time">${{__html:true, value: formatTime(ev.created_at)}}</span>
           <span class="badge badge-xs badge-${ev.status}">${ev.status}</span>
           ${ev.detail ? {__html:true, value: h`<span class="tl-detail">${ev.detail}</span>`} : ''}
+          ${extra ? {__html:true, value: extra} : ''}
         </li>`;
       })
     }</ul>`;
@@ -352,6 +459,15 @@ function buildManifest(data, opts) {
     // engine.TerminateOrder applies — never re-derived from a status list here.
     if (data.can_cancel) {
       out += '<button class="btn btn-danger btn-sm" data-action="terminateOrder:' + o.id + '">Terminate Order</button>';
+    }
+    // Hard release (W3), beside Terminate because it is the same class of verb:
+    // an engineer overriding the machinery. can_hard_release comes from the
+    // server — TRUE only for a wait CORE owns — for the same reason can_cancel
+    // does: never re-derive a gate in JS that the handler also applies. A
+    // STATION-owned wait is released from the station's board, by the person who
+    // can see the cell.
+    if (data.can_hard_release) {
+      out += '<button class="btn btn-warning btn-sm" data-action="hardReleaseOrder:' + o.id + '">Hard Release</button>';
     }
     if (o.status === 'delivered') {
       out += '<button class="btn btn-warning btn-sm" data-action="forceConfirmDelivered:' + o.id + '">Force Confirm</button>';
@@ -374,7 +490,10 @@ function buildManifest(data, opts) {
 }
 
 function renderOrderModal(data) {
-  document.getElementById('order-modal-content').innerHTML = buildManifest(data);
+  var host = document.getElementById('order-modal-content');
+  host.innerHTML = buildManifest(data);
+  // The hero sentence and the timeline's open fault row carry live spans.
+  installLiveDurations(host);
 }
 
 // Deep link: /orders?open=N opens that order's modal on load. There is no
@@ -403,9 +522,73 @@ onSSE('order-update', debounce(function(data) {
     }
     return;
   }
-  // No modal open: refresh the order list to reflect status changes.
-  location.reload();
+  // No modal open: refresh the rows in place.
+  refreshOrderRows();
 }, 2000));
+
+// A page that reloads itself every two seconds cannot host a one-second clock,
+// and it also threw away the text filter and the scroll position on every
+// unrelated event. Rows are now refreshed in place from the same partial the
+// page renders, keyed by order id.
+//
+// The 30s sweep is the backstop: an event-only board goes stale silently when
+// one is dropped, so the refresh does not depend on having heard about it.
+var ORDER_ROWS_BACKSTOP_MS = 30000;
+var _rowsRefreshInFlight = false;
+
+function refreshOrderRows() {
+  if (_rowsRefreshInFlight) return;
+  var tbody = document.getElementById('orders-rows');
+  if (!tbody) return;
+  _rowsRefreshInFlight = true;
+  // Same query string as the page, so the server applies the same status
+  // filter. Reconciling rows the current filter excludes would quietly widen
+  // the view.
+  fetch('/orders/rows' + location.search, { headers: { 'Accept': 'text/html' } })
+    .then(function(r) {
+      if (!r.ok) throw new Error('rows ' + r.status);
+      var count = r.headers.get('X-Faulted-Notice-Count');
+      return r.text().then(function(html) { return { html: html, count: count }; });
+    })
+    .then(function(res) {
+      var doc = new DOMParser().parseFromString('<table><tbody>' + res.html + '</tbody></table>', 'text/html');
+      var fresh = Array.prototype.slice.call(doc.querySelectorAll('tr[data-order-id]'));
+      reconcileList(tbody, fresh, {
+        key: function(tr) { return tr.getAttribute('data-order-id'); },
+        nodeKey: function(node) { return node.getAttribute && node.getAttribute('data-order-id'); },
+        create: function(tr) { return document.importNode(tr, true); },
+        update: function(node, tr) { node.innerHTML = tr.innerHTML; },
+      });
+      updateFaultedChip(res.count);
+      applyOrderFilter();
+      installLiveDurations(tbody);
+    })
+    .catch(function(e) { console.error('refreshOrderRows', e); })
+    .then(function() { _rowsRefreshInFlight = false; });
+}
+
+// The chip counts only faults past the notice threshold, so it can reach zero
+// while faulted rows remain on the board. Removed at zero rather than shown as
+// "faulted: 0", which reads as a state rather than the absence of one.
+function updateFaultedChip(count) {
+  var n = parseInt(count, 10);
+  var bar = document.querySelector('.queue-why');
+  var chip = bar ? bar.querySelector('.chip-warn') : null;
+  if (!bar || isNaN(n)) return;
+  if (!n) {
+    if (chip) chip.remove();
+    return;
+  }
+  if (!chip) {
+    chip = document.createElement('span');
+    chip.className = 'chip chip-warn';
+    bar.appendChild(chip);
+  }
+  chip.innerHTML = 'faulted: <span class="tnum"></span>';
+  chip.querySelector('.tnum').textContent = String(n);
+}
+
+setInterval(refreshOrderRows, ORDER_ROWS_BACKSTOP_MS);
 
 // --- Manual order modal ---
 var _moNodesLoaded = false;
@@ -766,26 +949,32 @@ function submitManualOrder() {
     });
 }
 
-// Client-side table filter
-(function() {
+// Client-side table filter.
+//
+// Rows are re-queried on every pass rather than cached at load: refreshOrderRows
+// inserts and removes them, and a cached NodeList would leave new rows
+// unfilterable and stale ones counted.
+function applyOrderFilter() {
   var input = document.getElementById('filter-search');
   var countEl = document.getElementById('filter-count');
   var table = document.getElementById('orders-table');
   if (!input || !table) return;
 
   var rows = table.querySelectorAll('tbody tr');
+  var q = input.value.toLowerCase().trim();
+  var visible = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var show = !q || rows[i].textContent.toLowerCase().indexOf(q) !== -1;
+    rows[i].style.display = show ? '' : 'none';
+    if (show) visible++;
+  }
+  if (countEl) countEl.textContent = q ? visible + ' of ' + rows.length : '';
+}
 
-  input.addEventListener('input', function() {
-    var q = this.value.toLowerCase().trim();
-    var visible = 0;
-    for (var i = 0; i < rows.length; i++) {
-      var text = rows[i].textContent.toLowerCase();
-      var show = !q || text.indexOf(q) !== -1;
-      rows[i].style.display = show ? '' : 'none';
-      if (show) visible++;
-    }
-    countEl.textContent = q ? visible + ' of ' + rows.length : '';
-  });
+(function() {
+  var input = document.getElementById('filter-search');
+  if (input) input.addEventListener('input', applyOrderFilter);
+  installLiveDurations();
 })();
 
 // ─── delegated event handlers ─────────────────────────
@@ -801,6 +990,7 @@ delegateActions(document.body, {
     field,
     fieldH,
     forceConfirmDelivered,
+    hardReleaseOrder,
     loadManualOrderBinDropdown,
     loadManualOrderDropdowns,
     manualOrderTransportTypeChanged,

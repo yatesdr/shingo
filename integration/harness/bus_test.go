@@ -78,7 +78,7 @@ func (s *fakeEdgeStore) MarkOutboxExhausted(id int64, reason string) error {
 	return nil
 }
 
-func (s *fakeEdgeStore) PurgeOldOutbox(olderThan time.Duration) (int64, error) {
+func (s *fakeEdgeStore) PurgeOldOutbox(delivered, deadLetter time.Duration) (int64, error) {
 	return 0, nil
 }
 
@@ -131,7 +131,7 @@ func (s *fakeCoreStore) MarkOutboxExhausted(id int64, reason string) error {
 	return nil
 }
 
-func (s *fakeCoreStore) PurgeOldOutbox(olderThan time.Duration) (int64, error) {
+func (s *fakeCoreStore) PurgeOldOutbox(delivered, deadLetter time.Duration) (int64, error) {
 	return 0, nil
 }
 

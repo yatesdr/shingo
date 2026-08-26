@@ -84,28 +84,37 @@ func BaselineFromGit(repoRoot, rev string) (string, error) {
 
 // extractDDLConst pulls the raw-string body out of the baseline const
 // declaration. The const has been named both postgresDDL and schemaPostgres,
-// so match on the shape — a const whose value is a backtick-quoted literal —
-// rather than on the name.
+// so match on the shape — a const whose value is a backtick-quoted literal
+// containing CREATE TABLE — rather than on the name.
+//
+// Scanning until the DDL is found, rather than taking the first const in the
+// file, is what makes this robust across historical revisions: the first const
+// only happens to be the DDL in the vintages currently pinned, and a revision
+// that declares anything else ahead of it would fail with "wrong const" on a
+// file that does contain the schema. Edge's copy already scanned; this is that
+// loop (shingo-edge/internal/schemadump/baseline.go).
 func extractDDLConst(src string) (string, error) {
-	const marker = "const "
-	idx := strings.Index(src, marker)
-	if idx < 0 {
-		return "", fmt.Errorf("no const declaration")
+	rest := src
+	for {
+		idx := strings.Index(rest, "const ")
+		if idx < 0 {
+			return "", fmt.Errorf("no const with a CREATE TABLE raw string")
+		}
+		rest = rest[idx+len("const "):]
+		open := strings.Index(rest, "`")
+		if open < 0 {
+			continue
+		}
+		closeIdx := strings.Index(rest[open+1:], "`")
+		if closeIdx < 0 {
+			return "", fmt.Errorf("unterminated raw string literal")
+		}
+		ddl := rest[open+1 : open+1+closeIdx]
+		if strings.Contains(strings.ToUpper(ddl), "CREATE TABLE") {
+			return ddl, nil
+		}
+		rest = rest[open+1+closeIdx:]
 	}
-	open := strings.Index(src[idx:], "`")
-	if open < 0 {
-		return "", fmt.Errorf("const is not a raw string literal")
-	}
-	open += idx + 1
-	closeIdx := strings.Index(src[open:], "`")
-	if closeIdx < 0 {
-		return "", fmt.Errorf("unterminated raw string literal")
-	}
-	ddl := src[open : open+closeIdx]
-	if !strings.Contains(strings.ToUpper(ddl), "CREATE TABLE") {
-		return "", fmt.Errorf("extracted literal contains no CREATE TABLE — wrong const")
-	}
-	return ddl, nil
 }
 
 // missingRevisionHint recognises the shallow-clone failure and says what it

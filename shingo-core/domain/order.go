@@ -63,6 +63,19 @@ type Order struct {
 	// step; the swapLegHeld starvation gate depends on it to avoid
 	// the ALN_003 line-strand. "" for every non-swap order.
 	SiblingOrderUUID string `json:"sibling_order_uuid,omitempty"`
+	// KeyRoute / KeyTask are the SEER robot-selection hints this order's Edge
+	// claim asked for, carried through to fleet.CreateOrderRequest — see that
+	// type for the vendor semantics and for why an unresolvable keyRoute point
+	// is not a soft failure.
+	//
+	// Columns rather than request-scoped values because intake and dispatch
+	// are separated by time: a complex order can sit queued for a sibling, a
+	// lane or a slot long after the request that named its route is gone.
+	//
+	// Empty on every order until a claim configures one, which is exactly the
+	// behaviour before they existed.
+	KeyRoute []string `json:"key_route,omitempty"`
+	KeyTask  string   `json:"key_task,omitempty"`
 	// SourceIntent classifies how a plain order sources its bin (full / empty /
 	// node-local) — the Stage-4 data home replacing the OrderType reads in the
 	// source finder + scanner. Set once at intake; "" (full) for retrieves and
@@ -104,4 +117,25 @@ type Order struct {
 	// the actual lost origins buried in there. Only `orphan` is a finding.
 	OriginID    string `json:"origin_id,omitempty"`
 	OriginClass string `json:"origin_class,omitempty"`
+	// OpenForChildren says a compound parent may still gain children.
+	// SEALED is exactly !OpenForChildren -- "sealed" is the concept's name
+	// everywhere else (SealDigGroup, the two-holds work order, the design's
+	// join and fold sections), and this is the field that carries it, so a
+	// grep for "sealed" arrives here.
+	//
+	// Two readers decide a reshuffle is FINISHED from "all its children are
+	// terminal" -- AdvanceCompoundOrder's success arm and
+	// AdvanceStuckReshuffleParents. That inference is sound only while every
+	// child exists up front, which is true today and stops being true under the
+	// fold, where all-terminal is the ordinary state BETWEEN moves. Everything
+	// else that walks the child list is asking a different question ("is
+	// anything running right now", "is this one child live") and must not
+	// consult this.
+	//
+	// NAMED FOR THE EXCEPTION ON PURPOSE. The zero value of this struct is
+	// false, the column's default is false, and both mean SEALED -- so the safe
+	// reading is what you get by forgetting, in Go and in Postgres alike. A
+	// `Sealed bool` field would have zero-valued to "open" and disagreed with
+	// its own column. Openness is never inherited; it is written.
+	OpenForChildren bool `json:"open_for_children,omitempty"`
 }

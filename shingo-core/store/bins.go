@@ -8,6 +8,7 @@ package store
 // service.BinManifestService.SetFromTemplate for the audit-bearing path.
 
 import (
+	"shingocore/store/reservations"
 	"time"
 
 	"shingocore/domain"
@@ -53,8 +54,11 @@ func (db *DB) MoveBinClearingStaging(binID, toNodeID int64, clearStaging bool) e
 	return bins.MoveAndClearStaging(db.DB, binID, toNodeID, clearStaging)
 }
 
-// ListAvailableBins returns bins with no manifest.
-func (db *DB) ListAvailableBins() ([]*bins.Bin, error) { return bins.ListAvailable(db.DB) }
+// MoveBinOffTransit moves a bin off `_TRANSIT` or a carrier node and clears the
+// transit anomaly with it. See bins.MoveOffTransit.
+func (db *DB) MoveBinOffTransit(binID, toNodeID int64, clearStaging bool) error {
+	return bins.MoveOffTransit(db.DB, binID, toNodeID, clearStaging)
+}
 
 // ClaimBin marks a bin as claimed by an order.
 func (db *DB) ClaimBin(binID, orderID int64) error { return bins.Claim(db.DB, binID, orderID) }
@@ -68,15 +72,17 @@ func (db *DB) ClaimBin(binID, orderID int64) error { return bins.Claim(db.DB, bi
 // FindEmptyCompatibleBin finds an unclaimed, available bin compatible with
 // the given payload code, preferring the given zone. excludeNodeID > 0
 // skips bins at that node (pass destination to avoid same-node retrieve).
-func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64) (*bins.Bin, error) {
-	return bins.FindEmptyCompatible(db.DB, payloadCode, preferZone, excludeNodeID)
+func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64,
+	fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
+	return bins.FindEmptyCompatible(db.DB, payloadCode, preferZone, excludeNodeID, fence, asker)
 }
 
 // FindEmptyCompatibleBinInGroup is FindEmptyCompatibleBin scoped to descendants
 // of a synthetic group node. See bins.FindEmptyCompatibleInGroup for the full
 // rationale. Used by planRetrieveEmpty's source-group branch.
-func (db *DB) FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error) {
-	return bins.FindEmptyCompatibleInGroup(db.DB, payloadCode, groupNodeID, excludeNodeID)
+func (db *DB) FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64,
+	asker reservations.DigAsker) (*bins.Bin, error) {
+	return bins.FindEmptyCompatibleInGroup(db.DB, payloadCode, groupNodeID, excludeNodeID, asker)
 }
 
 // UpdateBinStatus sets the status on a bin.
@@ -108,6 +114,18 @@ func (db *DB) MoveBinToTransit(binID, transitNodeID int64) error {
 
 // MarkBinAnomaly stamps bins.anomaly_at = NOW().
 func (db *DB) MarkBinAnomaly(binID int64) error { return bins.MarkAnomaly(db.DB, binID) }
+
+// ListBinsOnCarrierNodes returns every bin riding a robot's deck — see
+// bins.ListOnCarrierNodes.
+func (db *DB) ListBinsOnCarrierNodes() ([]*bins.Bin, error) {
+	return bins.ListOnCarrierNodes(db.DB)
+}
+
+// MarkBinAnomalyWithNote stamps the anomaly and records where the robot
+// carrying the bin last was — see bins.MarkAnomalyWithNote.
+func (db *DB) MarkBinAnomalyWithNote(binID int64, note string) error {
+	return bins.MarkAnomalyWithNote(db.DB, binID, note)
+}
 
 // ClearBinAnomaly clears bins.anomaly_at.
 func (db *DB) ClearBinAnomaly(binID int64) error { return bins.ClearAnomaly(db.DB, binID) }

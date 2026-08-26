@@ -19,9 +19,12 @@ import (
 // onto Core. Three publish triggers:
 //   - PublishChanged: called by the spec-edit handlers on every style/claim
 //     change (one full snapshot — a message per process).
-//   - a periodic full snapshot (snapshotInterval), so a late-joining or
-//     restarted Core rebuilds its mirror from the most recent snapshot.
-//   - PublishAll on boot/reconnect (Start calls it once).
+//   - PublishAll on registration — Start calls it at boot, and the
+//     SubjectEdgeRegistered handler calls it again on every re-register, which
+//     covers Core restarting (Core sends EdgeRegisterRequest to an edge it does
+//     not know, the edge re-registers, and the ack lands on that handler).
+//   - a periodic full snapshot (snapshotInterval) as the last-resort safety net
+//     for a change whose publish was lost outright.
 //
 // Together the periodic + boot snapshots replace Kafka compaction for late
 // joiners: Core persists the mirror on every message, and a snapshot rebuilds
@@ -31,10 +34,16 @@ import (
 type PlantClaimsPublisher struct {
 	db        *store.DB
 	stationID string
-	// snapshotInterval is the full-snapshot cadence. Defaults to 5 minutes —
-	// long enough to avoid chatter, short enough that a late-joining Core is
-	// current within a few minutes of reconnect. Mirrors the cadence shape of
-	// other periodic Edge publishers.
+	// snapshotInterval is the full-snapshot cadence — the SAFETY NET, not the
+	// delivery mechanism. Changes are published by PublishChanged, and a
+	// register/re-register publishes a full snapshot, so this only has to catch
+	// a change whose publish was lost entirely.
+	//
+	// It was 5 minutes, which cost ~65 messages an hour at Springfield (one per
+	// process, twelve times an hour) for config that changes a few times a
+	// shift. That made plant.claims 66% of all envelopes Core discarded for
+	// expiry — 181 a day — and every one of them was carrying config identical
+	// to the snapshot before it.
 	snapshotInterval time.Duration
 
 	stopOnce sync.Once
@@ -50,7 +59,7 @@ func NewPlantClaimsPublisher(db *store.DB, stationID string) *PlantClaimsPublish
 	return &PlantClaimsPublisher{
 		db:               db,
 		stationID:        stationID,
-		snapshotInterval: 5 * time.Minute,
+		snapshotInterval: 60 * time.Minute,
 		stopCh:           make(chan struct{}),
 	}
 }
@@ -102,18 +111,32 @@ func (p *PlantClaimsPublisher) PublishAll() error {
 	if err != nil {
 		return err
 	}
+	// Build every process's payload first, then enqueue the whole set in ONE
+	// call. EnqueueSnapshot supersedes the unsent predecessors, so this has to
+	// be atomic across processes: enqueuing per-process would have each one
+	// delete the payloads the previous ones just wrote, and Core would end up
+	// mirroring a single process.
+	payloads := make([][]byte, 0, len(procs))
 	for _, proc := range procs {
-		if err := p.publishProcess(proc); err != nil {
-			log.Printf("plant_claims: publish %s: %v", proc.Name, err)
+		data, err := p.buildProcess(proc)
+		if err != nil {
+			// One unreadable process must not block the rest — the same
+			// contract this loop had when it published per process.
+			log.Printf("plant_claims: build %s: %v", proc.Name, err)
+			continue
 		}
+		payloads = append(payloads, data)
 	}
-	return nil
+	if len(payloads) == 0 {
+		return nil
+	}
+	return p.db.EnqueueSnapshotOutbox(payloads, protocol.SubjectPlantClaims)
 }
 
-func (p *PlantClaimsPublisher) publishProcess(proc processes.Process) error {
+func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, error) {
 	styles, err := processes.ListStylesByProcess(p.db.DB, proc.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	report := protocol.PlantClaimsReport{
 		ProcessID: proc.Name,
@@ -122,7 +145,7 @@ func (p *PlantClaimsPublisher) publishProcess(proc processes.Process) error {
 	for _, st := range styles {
 		claims, err := processes.ListClaims(p.db.DB, st.ID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		// Mark the running style. proc.ActiveStyleID is the field Edge itself
 		// resolves claims through (findActiveClaim keys on it), so publishing it
@@ -148,10 +171,13 @@ func (p *PlantClaimsPublisher) publishProcess(proc processes.Process) error {
 		}
 		report.Styles = append(report.Styles, wire)
 	}
-	return p.enqueue(report)
+	return p.encode(report)
 }
 
-func (p *PlantClaimsPublisher) enqueue(report protocol.PlantClaimsReport) error {
+// encode builds one process's envelope. It does NOT touch the outbox — the
+// caller enqueues the whole set together, because a per-process enqueue would
+// make each process supersede the last.
+func (p *PlantClaimsPublisher) encode(report protocol.PlantClaimsReport) ([]byte, error) {
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectPlantClaims,
 		protocol.Address{Role: protocol.RoleEdge, Station: p.stationID},
@@ -159,15 +185,12 @@ func (p *PlantClaimsPublisher) enqueue(report protocol.PlantClaimsReport) error 
 		&report,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	data, err := env.Encode()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := p.db.EnqueueOutbox(data, protocol.SubjectPlantClaims); err != nil {
-		return err
-	}
-	p.DebugLog.Log("published %s: %d styles", report.ProcessID, len(report.Styles))
-	return nil
+	p.DebugLog.Log("built %s: %d styles", report.ProcessID, len(report.Styles))
+	return data, nil
 }

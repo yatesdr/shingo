@@ -46,7 +46,7 @@ A physical container that can be tracked, moved, and stored. The bin is the prim
 
 | Field | Description |
 |-------|-------------|
-| `label` | Unique identifier / QR code (e.g., `SHG:0042`) |
+| `label` | Unique identifier (e.g., `SHG:0042`). Not scanned — see material-flow.md |
 | `bin_type_id` | Physical container class |
 | `node_id` | Current floor location (nullable — bin may be in transit) |
 | `status` | Lifecycle state (see [Bin Statuses](#bin-statuses)) |
@@ -63,6 +63,24 @@ A physical container that can be tracked, moved, and stored. The bin is the prim
 - Belongs to one **BinType**
 - Sits at one **Node** (nullable)
 - Can be claimed by one **Order**
+
+**The UOP ledger and its two permanent tables.** Every count change on a bin
+writes a row to `bin_uop_ledger` (the raw stream, ~7,000 rows/day). The table was
+called `bin_uop_audit` until 2026-08-22 (migration v95, metadata-only rename): it
+holds every APPLIED delta with before/after totals, which is a ledger, and eight
+files read it as one. `bin_uop_exception` keeps its name — the exceptions really
+are the audit trail. Since 2026-08 the
+raw `bin_uop_delta` rows carry a **90-day retention** — deleted by the daily Core
+sweep. Two permanent tables carry what outlives them:
+
+- `bin_uop_exception` — one row per exception-worthy event, never deleted:
+  `negative_crossing` (a bin taken below zero; `deepest_uop`/`recovered_at` carry the
+  excursion's shape), `stale_epoch` and `payload_mismatch` (deltas the applier
+  dropped), and `boundary` (one row per epoch bump — the per-bin binding ordinal,
+  `epoch_seq`). This is the durable answer to "where are the negatives".
+- `bin_uop_delta_daily` — one row per (day, bin, epoch, payload, reason, actor):
+  ticks, consumed, added, first/last/min UOP, crossings. The durable "how parts
+  moved" answer once the raw rows age out.
 
 ### BinType
 
@@ -188,23 +206,31 @@ full mechanism.
 | Field | Description |
 |-------|-------------|
 | `order_id` | The order that holds the reservation |
-| `resource_kind` | `bin` (a source bin) or `slot` (a destination node); `mouth` is schema-accepted but unused |
+| `resource_kind` | `bin` (a source bin), `slot` (a destination node), `mouth` (the right to work a lane), or `occupancy` (a robot is inside the lane now) |
 | `bin_id` | `bins.id` when `resource_kind = 'bin'` (NULL otherwise) |
-| `node_id` | `nodes.id` when `resource_kind = 'slot'` (NULL otherwise) |
+| `node_id` | the target node for `slot`, `mouth` and `occupancy` (NULL for `bin`) |
+| `mode` | `inbound` \| `outbound` \| `dig` — the work direction. **`mouth` rows only**; NULL on every other kind |
 | `state` | `pending` (held, not yet shipped) or `confirmed` (shipped — the claim moved with it) |
-| `reserved_by` | Actor tag for forensics |
+| `reserved_by` | Actor tag for forensics — also what identifies a `dig` row raised by an excavation from one raised by ordinary sourcing |
+
+`bin` and `slot` are the soft-until-complete substrate the paragraph above
+describes. `mouth` and `occupancy` share the table but are a different mechanism:
+no confirm step, an advisory lock rather than a unique index, and their own
+admission rule. See [reservations.md](reservations.md) §The lane mouth.
 
 Lifecycle: **Acquire** (write `pending`) → **Confirm** (`pending → confirmed`,
 paired with the hard-column write in one transaction) → **Release** (a hard
 `DELETE`; a reservation never reaches a terminal state). The partial unique
 indexes — `uq_reservations_bin_active` on `bin_id`, `uq_reservations_slot_active`
-on `node_id` — make Acquire exactly-one-winner, so two orders can't both hold
-the same resource. Rows are reaped when their owning order is terminal or gone
-(owner-liveness, never age). Migrations v42–v44.
+on `node_id` — make Acquire exactly-one-winner **for `bin` and `slot` rows only**,
+so two orders can't both hold the same resource. `mouth` and `occupancy` have no
+such index. Rows are reaped when their owning order is terminal or gone
+(owner-liveness, never age). Migrations v42–v44, v69 (`mode` + read index), v76
+(`occupancy`).
 
 **Relationships:**
 - Belongs to one **Order**
-- Targets exactly one resource: one **Bin** (`resource_kind = 'bin'`) **or** one **Node** (`resource_kind = 'slot'`), enforced by a `CHECK`
+- Targets exactly one resource: one **Bin** (`resource_kind = 'bin'`) **or** one **Node** (every other kind), enforced by a `CHECK`
 
 ---
 
@@ -350,6 +376,6 @@ audit_log               (system-wide audit)
 admin_users             (authentication)
 edge_registry           (connected edge stations)
 scene_points            (fleet map cache)
-demands, production_log (demand planning)
+demands                 (demand planning)
 test_commands           (fleet testing)
 ```

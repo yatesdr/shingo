@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingo/protocol/types"
-	"shingo/shared/clock"
 	"shingoedge/config"
 	"shingoedge/store"
 	"shingoedge/store/counters"
@@ -101,6 +101,50 @@ type Manager struct {
 	wg              sync.WaitGroup
 
 	sseCancel context.CancelFunc
+
+	// SSE timing, per manager rather than per package.
+	//
+	// These were package-level vars that tests overwrote and restored. Two
+	// parallel tests plus a poller goroutine outliving the test that started it
+	// is all it took: CI caught TestSSE_StallReconnects writing the global while
+	// TestSSE_HealthEvent's leaked sseConnect read it. Zero means "use the
+	// shipped default", so a Manager built without them still behaves as
+	// production does. Read and written under mu like every other mutable field
+	// here, which is what makes the race structurally impossible rather than
+	// merely unlikely.
+	sseStallTimeoutOverride      time.Duration
+	sseReconcileIntervalOverride time.Duration
+}
+
+// stallTimeout / reconcileInterval return this manager's SSE timings, falling
+// back to the shipped defaults.
+func (m *Manager) stallTimeout() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.sseStallTimeoutOverride > 0 {
+		return m.sseStallTimeoutOverride
+	}
+	return defaultSSEStallTimeout
+}
+
+func (m *Manager) reconcileInterval() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.sseReconcileIntervalOverride > 0 {
+		return m.sseReconcileIntervalOverride
+	}
+	return defaultSSEReconcileInterval
+}
+
+// SetSSETimingsForTest shortens this manager's SSE timings. Test-only, and
+// named so: production has no reason to move them off the defaults, and the
+// previous mechanism for "tests can shorten it" was the package global that
+// raced.
+func (m *Manager) SetSSETimingsForTest(stall, reconcile time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sseStallTimeoutOverride = stall
+	m.sseReconcileIntervalOverride = reconcile
 }
 
 // NewManager creates a PLC manager. If wl is nil the default WarLink HTTP
@@ -297,105 +341,10 @@ func (m *Manager) warlinkSync(ownsConnState bool) {
 
 	for _, p := range plcs {
 		seen[p.Name] = true
-
-		m.mu.Lock()
-		existing, exists := m.plcs[p.Name]
-		if !exists {
-			existing = newManagedPLC(p.Name)
-			m.plcs[p.Name] = existing
-		}
-		m.mu.Unlock()
-
-		effectiveStatus := p.Status
-		effectiveErr := p.Error
-		var tags map[string]WarlinkTag
-
-		if p.Status == "Connected" {
-			tags, err = m.fetchTags(ctx, p.Name)
-			if err != nil {
-				log.Printf("WarLink fetch tags %s: %v", p.Name, err)
-				effectiveStatus = "Disconnected"
-				effectiveErr = err.Error()
-			} else if connErr := connectionErrorFromTags(tags); connErr != "" {
-				effectiveStatus = "Disconnected"
-				effectiveErr = connErr
-			}
-		}
-
-		existing.mu.Lock()
-		oldStatus := existing.Status
-		existing.Status = effectiveStatus
-		existing.Error = effectiveErr
-		if effectiveStatus != "Connected" {
-			existing.Values = map[string]TagValue{}
-		}
-		existing.mu.Unlock()
-
-		// Emit connection transitions
-		if effectiveStatus == "Connected" && oldStatus != "Connected" {
-			m.DebugLog.Log("plc connected: %s", p.Name)
-			m.emitter.EmitPLCConnected(p.Name)
-		} else if effectiveStatus != "Connected" && oldStatus == "Connected" {
-			var emitErr error
-			if effectiveErr != "" {
-				emitErr = errors.New(effectiveErr)
-			}
-			m.DebugLog.Log("plc disconnected: %s err=%v", p.Name, emitErr)
-			m.emitter.EmitPLCDisconnected(p.Name, emitErr)
-		}
-
-		// Fetch tags for connected PLCs
-		if effectiveStatus == "Connected" {
-			m.applyTags(p.Name, tags)
-		}
+		m.reconcilePLC(ctx, p)
 	}
 
-	// PLCs that disappeared from WarLink. Two things happen and both matter:
-	//
-	//  1. Status → Disconnected. GetPLC hands out the raw *ManagedPLC, so a
-	//     caller still holding one from before the eviction must not go on
-	//     reading "Connected".
-	//  2. The entry is DELETED from m.plcs. Marking it disconnected but keeping
-	//     it — the behaviour until now — left a removed PLC visible for the life
-	//     of the process in PLCNames() and PLCStatuses(), so it kept appearing
-	//     in the Processes-page PLC dropdown and in GET /api/plcs. That is why
-	//     removing a PLC upstream looked like it needed an edge restart to take
-	//     effect: the status was right, the list was not.
-	//
-	// Only a PLC that WAS connected gets a disconnect event — one already marked
-	// disconnected has no transition to report. It is still evicted, though,
-	// otherwise a PLC that drops and is only then removed upstream lingers for
-	// good, which is exactly the ghost this fixes.
-	//
-	// A single absence is treated as authoritative, consistent with the
-	// disconnect event this has always emitted on the same signal. A failed
-	// fetchPLCs returns early above, so `seen` is only ever compared against a
-	// list WarLink actually served.
-	m.mu.Lock()
-	var evicted, disconnected []string
-	for name, mp := range m.plcs {
-		if seen[name] {
-			continue
-		}
-		delete(m.plcs, name)
-		mp.mu.Lock()
-		wasConnected := mp.Status == "Connected"
-		mp.Status = "Disconnected"
-		mp.mu.Unlock()
-		evicted = append(evicted, name)
-		if wasConnected {
-			disconnected = append(disconnected, name)
-		}
-	}
-	m.mu.Unlock()
-
-	// Emissions and logging outside the lock — the emitter can re-enter.
-	for _, name := range evicted {
-		m.DebugLog.Log("plc evicted: %s no longer listed by warlink", name)
-	}
-	for _, name := range disconnected {
-		m.emitter.EmitPLCDisconnected(name, fmt.Errorf("removed from WarLink"))
-	}
+	m.evictMissingPLCs(seen)
 
 	// Emit after all PLCs are in the map so the API returns the full list
 	if wasDisconnected {
@@ -793,5 +742,124 @@ func toInt64(v any) (int64, bool) {
 		return 0, false
 	default:
 		return 0, false
+	}
+}
+
+// reconcilePLC re-derives one PLC's status from its WarLink record: fetch its
+// tags if WarLink calls it connected, promote a tag-level failure to
+// Disconnected, and emit whatever transition that implies.
+//
+// The tag fetch declares its own err. It used to assign the warlinkSync-level
+// one, which was safe only because nothing read that variable after the loop --
+// exactly the kind of shared-variable seam that turns a later edit into a silent
+// bug.
+func (m *Manager) reconcilePLC(ctx context.Context, p WarlinkPLC) {
+
+	m.mu.Lock()
+	existing, exists := m.plcs[p.Name]
+	if !exists {
+		existing = newManagedPLC(p.Name)
+		m.plcs[p.Name] = existing
+	}
+	m.mu.Unlock()
+
+	effectiveStatus := p.Status
+	effectiveErr := p.Error
+	var tags map[string]WarlinkTag
+
+	if p.Status == "Connected" {
+		// `var err` + plain `=`, NOT `tags, err := ...`. The := form declares a
+		// SECOND tags inside this block, shadowing the one above, so every
+		// fetched tag is discarded when the block ends and applyTags below is
+		// handed a nil map — which empties mp.Values and makes every tag read
+		// fail "tag X not found on Y". Before the extraction this block lived
+		// in warlinkSync where err was already in scope and the assignment was
+		// a plain `=`; adding the declaration is what introduced the shadow.
+		var err error
+		tags, err = m.fetchTags(ctx, p.Name)
+		if err != nil {
+			log.Printf("WarLink fetch tags %s: %v", p.Name, err)
+			effectiveStatus = "Disconnected"
+			effectiveErr = err.Error()
+		} else if connErr := connectionErrorFromTags(tags); connErr != "" {
+			effectiveStatus = "Disconnected"
+			effectiveErr = connErr
+		}
+	}
+
+	existing.mu.Lock()
+	oldStatus := existing.Status
+	existing.Status = effectiveStatus
+	existing.Error = effectiveErr
+	if effectiveStatus != "Connected" {
+		existing.Values = map[string]TagValue{}
+	}
+	existing.mu.Unlock()
+
+	// Emit connection transitions
+	if effectiveStatus == "Connected" && oldStatus != "Connected" {
+		m.DebugLog.Log("plc connected: %s", p.Name)
+		m.emitter.EmitPLCConnected(p.Name)
+	} else if effectiveStatus != "Connected" && oldStatus == "Connected" {
+		var emitErr error
+		if effectiveErr != "" {
+			emitErr = errors.New(effectiveErr)
+		}
+		m.DebugLog.Log("plc disconnected: %s err=%v", p.Name, emitErr)
+		m.emitter.EmitPLCDisconnected(p.Name, emitErr)
+	}
+
+	// Fetch tags for connected PLCs
+	if effectiveStatus == "Connected" {
+		m.applyTags(p.Name, tags)
+	}
+}
+
+// PLCs that disappeared from WarLink. Two things happen and both matter:
+//
+//  1. Status → Disconnected. GetPLC hands out the raw *ManagedPLC, so a
+//     caller still holding one from before the eviction must not go on
+//     reading "Connected".
+//  2. The entry is DELETED from m.plcs. Marking it disconnected but keeping
+//     it — the behaviour until now — left a removed PLC visible for the life
+//     of the process in PLCNames() and PLCStatuses(), so it kept appearing
+//     in the Processes-page PLC dropdown and in GET /api/plcs. That is why
+//     removing a PLC upstream looked like it needed an edge restart to take
+//     effect: the status was right, the list was not.
+//
+// Only a PLC that WAS connected gets a disconnect event — one already marked
+// disconnected has no transition to report. It is still evicted, though,
+// otherwise a PLC that drops and is only then removed upstream lingers for
+// good, which is exactly the ghost this fixes.
+//
+// A single absence is treated as authoritative, consistent with the
+// disconnect event this has always emitted on the same signal. A failed
+// fetchPLCs returns early above, so `seen` is only ever compared against a
+// list WarLink actually served.
+func (m *Manager) evictMissingPLCs(seen map[string]bool) {
+	m.mu.Lock()
+	var evicted, disconnected []string
+	for name, mp := range m.plcs {
+		if seen[name] {
+			continue
+		}
+		delete(m.plcs, name)
+		mp.mu.Lock()
+		wasConnected := mp.Status == "Connected"
+		mp.Status = "Disconnected"
+		mp.mu.Unlock()
+		evicted = append(evicted, name)
+		if wasConnected {
+			disconnected = append(disconnected, name)
+		}
+	}
+	m.mu.Unlock()
+
+	// Emissions and logging outside the lock — the emitter can re-enter.
+	for _, name := range evicted {
+		m.DebugLog.Log("plc evicted: %s no longer listed by warlink", name)
+	}
+	for _, name := range disconnected {
+		m.emitter.EmitPLCDisconnected(name, fmt.Errorf("removed from WarLink"))
 	}
 }

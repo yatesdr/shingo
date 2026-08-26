@@ -25,11 +25,11 @@ func newTestLogger(t *testing.T) (*Logger, *bytes.Buffer) {
 func TestStderrGate_NoFilterMirrorsEverything(t *testing.T) {
 	l, buf := newTestLogger(t)
 
-	l.Log("countgroup", "poll")
+	l.Log("nodestate", "poll")
 	l.Log("dispatch", "plan")
 
 	out := buf.String()
-	if !strings.Contains(out, "[countgroup] poll") || !strings.Contains(out, "[dispatch] plan") {
+	if !strings.Contains(out, "[nodestate] poll") || !strings.Contains(out, "[dispatch] plan") {
 		t.Fatalf("default (nil filter) should mirror every subsystem, got:\n%s", out)
 	}
 }
@@ -38,12 +38,12 @@ func TestStderrGate_AllowListDropsOthers(t *testing.T) {
 	l, buf := newTestLogger(t)
 	l.SetStderrSubsystems([]string{"dispatch", "engine"})
 
-	l.Log("countgroup", "poll")
+	l.Log("nodestate", "poll")
 	l.Log("rds", "GET /robotsStatus")
 	l.Log("dispatch", "plan")
 
 	out := buf.String()
-	if strings.Contains(out, "countgroup") || strings.Contains(out, "rds") {
+	if strings.Contains(out, "nodestate") || strings.Contains(out, "rds") {
 		t.Fatalf("muted subsystems reached stderr:\n%s", out)
 	}
 	if !strings.Contains(out, "[dispatch] plan") {
@@ -58,16 +58,16 @@ func TestStderrGate_RingBufferKeepsMutedSubsystems(t *testing.T) {
 	l, buf := newTestLogger(t)
 	l.SetStderrSubsystems([]string{"dispatch"})
 
-	l.Log("countgroup", "occupancy now [AMR-03]")
+	l.Log("nodestate", "cache refresh for PLN_002")
 
-	if strings.Contains(buf.String(), "countgroup") {
+	if strings.Contains(buf.String(), "nodestate") {
 		t.Fatalf("muted subsystem reached stderr: %s", buf.String())
 	}
-	entries := l.Entries("countgroup")
-	if len(entries) != 1 || entries[0].Message != "occupancy now [AMR-03]" {
+	entries := l.Entries("nodestate")
+	if len(entries) != 1 || entries[0].Message != "cache refresh for PLN_002" {
 		t.Fatalf("ring buffer lost the muted entry, got %#v", entries)
 	}
-	if subs := l.Subsystems(); len(subs) != 1 || subs[0] != "countgroup" {
+	if subs := l.Subsystems(); len(subs) != 1 || subs[0] != "nodestate" {
 		t.Fatalf("muted subsystem missing from Subsystems(), got %v", subs)
 	}
 }
@@ -91,9 +91,9 @@ func TestStderrGate_NilRestoresFullMirror(t *testing.T) {
 	l.SetStderrSubsystems([]string{"dispatch"})
 	l.SetStderrSubsystems(nil)
 
-	l.Log("countgroup", "poll")
+	l.Log("nodestate", "poll")
 
-	if !strings.Contains(buf.String(), "countgroup") {
+	if !strings.Contains(buf.String(), "nodestate") {
 		t.Fatalf("nil should clear the restriction, got: %s", buf.String())
 	}
 }
@@ -101,12 +101,12 @@ func TestStderrGate_NilRestoresFullMirror(t *testing.T) {
 func TestStderrMirrors_ReportsEffectiveGate(t *testing.T) {
 	l, _ := newTestLogger(t)
 
-	if !l.StderrMirrors("countgroup") {
+	if !l.StderrMirrors("nodestate") {
 		t.Fatal("nil filter: everything mirrors")
 	}
 	l.SetStderrSubsystems([]string{"dispatch"})
-	if l.StderrMirrors("countgroup") {
-		t.Fatal("countgroup is not on the allow-list")
+	if l.StderrMirrors("nodestate") {
+		t.Fatal("nodestate is not on the allow-list")
 	}
 	if !l.StderrMirrors("dispatch") {
 		t.Fatal("dispatch is on the allow-list")

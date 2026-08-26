@@ -22,7 +22,7 @@ import (
 // after (the count did NOT move) with the dropped quantity in metadata.
 func seedDrop(t *testing.T, db *store.DB, binID, at60 int, op, payload string, delta, standing int, base time.Time) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO bin_uop_audit
+	_, err := db.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, applied_at)
 		VALUES ($1,$2,$2,$3,'test',$4,'test',$5::jsonb,$6)`,
 		binID, standing, op, payload,
@@ -185,12 +185,12 @@ func TestDeltaIntegrity_RespectsTheWindow(t *testing.T) {
 	}
 }
 
-// seedAudit writes one ordinary bin_uop_audit row — a delta that APPLIED, so
+// seedAudit writes one ordinary bin_uop_ledger row — a delta that APPLIED, so
 // before != after. The quiet case needs these to prove the panel stays silent
 // on activity that is not a drop.
 func seedAudit(t *testing.T, db *store.DB, binID int64, before, after int, op, payload string, at time.Time) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO bin_uop_audit
+	_, err := db.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, applied_at)
 		VALUES ($1,$2,$3,$4,'test',$5,'test','{"reason":"consume_tick"}',$6)`,
 		binID, before, after, op, payload, at)

@@ -34,11 +34,11 @@ func claimsByCoreNode(db *sql.DB, styleID int64) (map[string]processes.NodeClaim
 }
 
 // pressPositionClaimsForBoard derives the per-position claim for every press
-// seat that a fanned-out changeover gave its OWN task, keyed by process node
+// position that a fanned-out changeover gave its OWN task, keyed by process node
 // ID. Returns nil when the board has no changeover tasks, which is the steady
 // state — this costs nothing on an ordinary poll.
 //
-// The seats it covers have no style_node_claims row by design: the planner
+// The positions it covers have no style_node_claims row by design: the planner
 // synthesizes their claims in memory and UpsertClaim refuses to persist the
 // press_position marker. Before Hopkinsville 2026-08-05 the view simply had no
 // route to them, so they rendered as unclaimed nodes with no actions — see the
@@ -47,7 +47,7 @@ func claimsByCoreNode(db *sql.DB, styleID int64) (map[string]processes.NodeClaim
 // Derivation is deliberately the planner's own: the node task records the
 // claim it was planned from (FromClaimID/ToClaimID → the PARENT press-index
 // row, since a synthesized claim carries its parent's ID), and
-// domain.SynthesizePressPositionClaim is the same function the planner used.
+// domain.SynthesizePositionClaim is the same function the planner used.
 // Anything that fails a check is left claimless rather than given an invented
 // claim — a wrong claim is worse than none.
 func pressPositionClaimsForBoard(
@@ -60,8 +60,8 @@ func pressPositionClaimsForBoard(
 		return nil
 	}
 	out := map[int64]*processes.NodeClaim{}
-	// Parent claims are shared by the seats of one press, so read each at most
-	// once. A failed read caches nil and is not retried per seat.
+	// Parent claims are shared by the positions of one press, so read each at most
+	// once. A failed read caches nil and is not retried per position.
 	parents := map[int64]*processes.NodeClaim{}
 	for _, node := range nodes {
 		if node.CoreNodeName == "" {
@@ -77,9 +77,9 @@ func pressPositionClaimsForBoard(
 		if !ok {
 			continue
 		}
-		// Drop and Swap carry the seat's current material on FromClaimID; Add
+		// Drop and Swap carry the position's current material on FromClaimID; Add
 		// only ever has ToClaimID. Prefer From — it names the payload physically
-		// sitting on the seat, which is what an evac release acts on.
+		// sitting on the position, which is what an evac release acts on.
 		claimID := task.FromClaimID
 		if claimID == nil {
 			claimID = task.ToClaimID
@@ -99,18 +99,18 @@ func pressPositionClaimsForBoard(
 		if parent == nil {
 			continue
 		}
-		// Only a press-index parent fans out into per-position seats, and the
-		// seat must be one this parent actually names. Together these keep the
-		// fallback to exactly the shape the planner produced: any other
-		// claimless node owning a task is a different problem and stays
-		// claimless.
-		if parent.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		// Only a press-index parent fans out into per-position positions, and the
+		// position must be one this parent actually names. Both checks live in
+		// domain.PositionClaimFromParent, which is the same derivation the per-node
+		// changeover actions and the cutover gate use — the view and the actions
+		// have to agree about which positions are resolvable, or a position renders with
+		// buttons that refuse. Anything that is not a position of a press-index
+		// parent comes back nil and is left claimless.
+		position := domain.PositionClaimFromParent(parent, node.CoreNodeName)
+		if position == nil {
 			continue
 		}
-		if parent.PairedCoreNode != node.CoreNodeName && parent.SecondPairedCoreNode != node.CoreNodeName {
-			continue
-		}
-		out[node.ID] = domain.SynthesizePressPositionClaim(parent, node.CoreNodeName)
+		out[node.ID] = position
 	}
 	return out
 }
@@ -150,6 +150,11 @@ type StationService struct {
 	// core node name. Optional: nil leaves StrandedAlarm empty. The engine injects
 	// the live resolver (its strandedAlarms map) via SetStrandedResolver.
 	stranded func(coreNodeName string) string
+	// binTypes resolves a payload code to its dunnage code, for the
+	// changeover load directive. Optional, and OPTIONAL MATTERS: unset means
+	// no bin type resolves, which means no directive — a card that cannot
+	// name the carrier says nothing rather than guessing one.
+	binTypes func(payloadCode string) string
 
 	// touched throttles the liveness write — see Touch.
 	touchMu sync.Mutex
@@ -179,6 +184,36 @@ func NewStationService(db *store.DB) *StationService {
 // multi-window view fields (WindowGroupAnchor / WindowNodes). The engine calls
 // this once at startup with its flag-selected LoaderStore.
 func (s *StationService) SetLoaderResolver(r LoaderResolver) { s.loaders = r }
+
+// SetBinTypeResolver injects the payload -> dunnage lookup the changeover load
+// directive needs. Optional; unset leaves every directive nil.
+func (s *StationService) SetBinTypeResolver(r func(payloadCode string) string) { s.binTypes = r }
+
+// binTypeForPayload is the nil-safe read. An unwired resolver answers "unknown"
+// for every payload, and BuildChangeoverLoadDirective drops an unknown rather
+// than naming a carrier it cannot identify.
+// stationTakesLoadDirective asks the Core-owned loader this node belongs to
+// whether a changeover should commandeer its card.
+//
+// A clean miss (no loader, or no resolver wired) is false: a node Core does not
+// know as a loader has no station setup to have opted in.
+func (s *StationService) stationTakesLoadDirective(coreNodeName string) bool {
+	if s.loaders == nil || coreNodeName == "" {
+		return false
+	}
+	l, err := s.loaders.LoaderForNode(domain.NodeID(coreNodeName))
+	if err != nil || l == nil {
+		return false
+	}
+	return l.ChangeoverLoadDirective()
+}
+
+func (s *StationService) binTypeForPayload(payloadCode string) string {
+	if s.binTypes == nil {
+		return ""
+	}
+	return s.binTypes(payloadCode)
+}
 
 // SetStrandedResolver injects the parked-ticks alarm resolver (P2-C8) — the
 // engine's StrandedAlarmDetail — so BuildView can render the tile chip. Optional;
@@ -327,490 +362,44 @@ func (s *StationService) BuildView(ctx context.Context, stationID int64) (*store
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	station, err := s.db.GetOperatorStation(stationID)
+	view, err := s.newStationView(stationID)
 	if err != nil {
 		return nil, err
 	}
-	process, err := s.db.GetProcess(station.ProcessID)
+	process := &view.Process
+
+	nodes, nodeTaskMap, childOf, err := s.adoptChangeoverParticipants(stationID, view.ActiveChangeover)
 	if err != nil {
 		return nil, err
 	}
-
-	view := &store.OperatorStationView{
-		Station: *station,
-		Process: *process,
-	}
-	if process.ActiveStyleID != nil {
-		if st, err := s.db.GetStyle(*process.ActiveStyleID); err == nil {
-			view.CurrentStyle = st
-		}
-	}
-	if process.TargetStyleID != nil {
-		if st, err := s.db.GetStyle(*process.TargetStyleID); err == nil {
-			view.TargetStyle = st
-		}
-	}
-	view.AvailableStyles, _ = s.db.ListStylesByProcess(process.ID)
-	if co, err := s.db.GetActiveProcessChangeover(process.ID); err == nil {
-		view.ActiveChangeover = co
-		if stationTask, err := s.db.GetChangeoverStationTaskByStation(co.ID, stationID); err == nil {
-			view.StationTask = stationTask
-		}
-	}
-
-	nodes, err := s.db.ListProcessNodesByStation(stationID)
-	if err != nil {
-		return nil, err
-	}
-	nodeTaskMap := map[int64]processes.NodeTask{}
-	childOf := map[int64]string{}
-
-	// THREE narrowings used to hide a changeover node from its own station, and
-	// all three are relaxed here. A press-index extension seat is auto-created
-	// with no operator_station_id (changeover_service.go inserts only
-	// process_id/core_node_name/code/name), so it fell through every one:
-	//
-	//  1. `if view.StationTask != nil` — a station with no
-	//     changeover_station_tasks row got an EMPTY task map, so none of its
-	//     nodes showed a task even when tasks existed. The real precondition is
-	//     the CHANGEOVER existing, not this station having a row; gate on that.
-	//  2. ListChangeoverNodeTasksByStation filters `n.operator_station_id=?`,
-	//     which drops every task whose node has no station. Read the tasks
-	//     unfiltered and key them by process_node_id — safe, because the map is
-	//     only ever consulted for nodes in THIS station's list, so another
-	//     station's task can never match.
-	//  3. ListProcessNodesByStation likewise never returns a stationless node.
-	//     Resolve each participant's station (own → owning task's node) and
-	//     append the ones that belong here as CHILD tiles of the node they
-	//     extend.
-	if view.ActiveChangeover != nil {
-		allTasks, _ := s.db.ListChangeoverNodeTasks(view.ActiveChangeover.ID)
-		taskByID := make(map[int64]processes.NodeTask, len(allTasks))
-		for _, nodeTask := range allTasks {
-			nodeTaskMap[nodeTask.ProcessNodeID] = nodeTask
-			taskByID[nodeTask.ID] = nodeTask
-		}
-
-		known := make(map[int64]bool, len(nodes))
-		for i := range nodes {
-			known[nodes[i].ID] = true
-		}
-		// Does THIS board own any of the changeover's work? Computed from the
-		// station's own nodes, before any adoption, so it answers "is this
-		// changeover being run from here" rather than "did we adopt something".
-		// It is the anchor for the orphan fallback below.
-		stationRunsChangeover := false
-		for i := range nodes {
-			if _, ok := nodeTaskMap[nodes[i].ID]; ok {
-				stationRunsChangeover = true
-				break
-			}
-		}
-		parts, perr := s.db.ListParticipantsWithStation(view.ActiveChangeover.ID)
-		if perr != nil {
-			log.Printf("station view: resolve participant stations for changeover %d: %v", view.ActiveChangeover.ID, perr)
-		}
-		for _, p := range parts {
-			if p.ProcessNodeID == nil || known[*p.ProcessNodeID] {
-				continue
-			}
-			// Two ways a participant belongs on this board:
-			//
-			//  - OWNER: it has no station of its own but the task that owns it
-			//    does, and that station is us. The press-index case — PLN_02 is
-			//    an `indexed_over` seat of PLN_01's task, so it rides along.
-			//
-			//  - ORPHAN: it resolves to NO station at all. That happens when a
-			//    changeover FANS OUT and gives the seat its OWN task: station
-			//    resolution walks own -> owning-task's-node, and for a
-			//    self-owning task both are the same stationless row, so it
-			//    lands nil and the seat renders NOWHERE. Hopkinsville
-			//    2026-07-28: a tote->bin changeover dropped all four press
-			//    positions independently, PLN_02/PLN_05 vanished from the
-			//    board, and the two robots parked at them could not be
-			//    released — there was no tile to press. Adopt onto the board
-			//    already running this changeover.
-			//
-			// Adoption stays inside the ActiveChangeover guard, so these seats
-			// appear only while they have work and disappear afterwards. That
-			// matters: a paired on-deck position must NOT be a permanent tile —
-			// LoadBin refuses to stamp a part there precisely because doing so
-			// hung a press-index swap once already.
-			byOwner := p.StationID != nil && *p.StationID == stationID && p.StationSource == "owner"
-			orphan := p.StationID == nil && stationRunsChangeover
-			if !byOwner && !orphan {
-				continue
-			}
-			child, gerr := s.db.GetProcessNode(*p.ProcessNodeID)
-			if gerr != nil || child == nil {
-				continue
-			}
-			// Render as a child of the node whose task owns it — but never of
-			// itself. A fanned-out seat owns its own task, so naming it its own
-			// parent would be meaningless; it stands as its own tile instead.
-			if p.OwningTaskID != nil {
-				if owner, ok := taskByID[*p.OwningTaskID]; ok && owner.ProcessNodeID != child.ID {
-					childOf[child.ID] = owner.NodeName
-				}
-			}
-			nodes = append(nodes, *child)
-			known[child.ID] = true
-		}
-	}
-	// Loader payload sets, computed ONCE for the whole board. PayloadsForLoader
-	// walks every process/style/claim, so calling it per manual_swap tile made an
-	// N-home board do N walks (14 homes → ~44s on the Springfield bin loader). One
-	// walk, keyed by (core node, role); each tile just looks itself up below.
-	loaderPayloads, err := processes.PayloadsForManualSwapNodes(s.db.DB)
-	if err != nil {
-		loaderPayloads = nil // fail-open: tiles fall back to the claim-derived set
-	}
-	// Per-tile lookups hoisted to one query each for the whole board. Same
-	// motivation as loaderPayloads above: every read serialises on one
-	// connection, so a query inside the tile loop is a query multiplied by the
-	// tile count (22 on the Springfield bin loader).
-	//
-	// Claims are safe to index by core node name because style_node_claims
-	// declares UNIQUE(style_id, core_node_name) — at most one claim per
-	// (style, node), so a map lookup is exactly what GetStyleNodeClaimByNode
-	// returns. Both maps fail open to nil: a nil map lookup yields the zero
-	// value, and the tile then reads as "no claim", which is the same thing
-	// GetStyleNodeClaimByNode's sql.ErrNoRows produced.
-	var activeClaims, targetClaims map[string]processes.NodeClaim
-	if process.ActiveStyleID != nil {
-		activeClaims, _ = claimsByCoreNode(s.db.DB, *process.ActiveStyleID)
-	}
-	if process.TargetStyleID != nil {
-		targetClaims, _ = claimsByCoreNode(s.db.DB, *process.TargetStyleID)
-	}
-	// Press-index fan-out claims, computed ONCE for the whole board for the same
-	// reason as loaderPayloads/runtimes/boardOrders above — never a query inside
-	// the tile loop. Empty (and free) on any board without an active changeover.
-	pressPositionClaims := pressPositionClaimsForBoard(s.db.DB, nodes, nodeTaskMap, activeClaims, targetClaims)
-	nodeIDs := make([]int64, 0, len(nodes))
-	nodeKeys := make([]orders.NodeKey, 0, len(nodes))
-	for _, node := range nodes {
-		nodeIDs = append(nodeIDs, node.ID)
-		nodeKeys = append(nodeKeys, orders.NodeKey{ProcessNodeID: node.ID, CoreNodeName: node.CoreNodeName})
-	}
-	// Runtime rows: one SELECT for the board. This is the READ half of
-	// EnsureProcessNodeRuntime — the tile loop still calls Ensure for any node
-	// missing from this map, so the INSERT happens for exactly the same set of
-	// nodes as before. On a live plant every node already has its row, so the
-	// per-tile query disappears and the write path is untouched.
-	runtimes, err := processes.RuntimesForNodes(s.db.DB, nodeIDs)
-	if err != nil {
-		runtimes = nil // fall back to per-node Ensure below
-	}
-	boardOrders, err := orders.ListActiveByNodeKeys(s.db.DB, nodeKeys)
-	if err != nil {
-		boardOrders = nil
-	}
-	// Standing supply refusals, ONE READ FOR THE WHOLE BOARD, indexed
-	// loader_node → payload → refusal. The table holds only what is open — one
-	// row per card actually refused right now — so the whole-table read is
-	// cheaper than a query per card, and this is the board's poll path, which is
-	// the one place that difference is felt. Best-effort, like every other
-	// enrichment here: a failed read renders a board without refusal state
-	// rather than no board.
-	refusals := map[string]map[string]domain.SupplyRefusal{}
-	// byPayload is the CUSTOMER's index of the same rows. A cell does not know
-	// which window supplies it — that resolution is the thing the broadcast
-	// design deliberately avoids needing — so it looks up by part alone and the
-	// sentence names the window that said it.
-	byPayload := map[string]domain.CellSupplyRefusal{}
-	if open, rerr := s.db.ListOpenSupplyRefusals(); rerr == nil {
-		for _, r := range open {
-			if refusals[r.LoaderNode] == nil {
-				refusals[r.LoaderNode] = map[string]domain.SupplyRefusal{}
-			}
-			refusals[r.LoaderNode][r.PayloadCode] = domain.SupplyRefusal{
-				RefusedAt: r.RefusedAt,
-				RefusedBy: r.RefusedBy,
-				Answered:  r.Answered(),
-				AckChoice: r.AckChoice,
-			}
-			// An UNANSWERED refusal wins over an answered one for the same part:
-			// it is the one that still needs a person, and it is what the modal
-			// fires on.
-			if prev, seen := byPayload[r.PayloadCode]; seen && !prev.Answered {
-				continue
-			}
-			byPayload[r.PayloadCode] = domain.CellSupplyRefusal{
-				LoaderNode: r.LoaderNode, PayloadCode: r.PayloadCode,
-				RefusedAt: r.RefusedAt, RefusedBy: r.RefusedBy,
-				Answered: r.Answered(), AckChoice: r.AckChoice,
-			}
-		}
-	}
-	activeBuckets, err := lineside.ListActiveForNodes(s.db.DB, nodeIDs)
-	if err != nil {
-		activeBuckets = nil // best-effort, as the per-node call was
-	}
-	inactiveBuckets, err := lineside.ListInactiveForNodes(s.db.DB, nodeIDs)
-	if err != nil {
-		inactiveBuckets = nil
-	}
+	b := s.prefetchBoardData(process, nodes, nodeTaskMap)
 	for _, node := range nodes {
 		// See the BuildView doc comment: one abandoned tile-loop iteration is the
 		// granularity at which we give the single DB connection back.
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		nodeView := store.StationNodeView{Node: node}
-		runtime := runtimes[node.ID]
-		if runtime == nil {
-			// No row yet (a freshly created node), or the batch read failed.
-			// Ensure materialises it, exactly as the per-tile call always did.
-			runtime, _ = s.db.EnsureProcessNodeRuntime(node.ID)
-		}
-		nodeView.Runtime = runtime
-		if process.ActiveStyleID != nil && node.CoreNodeName != "" {
-			if c, ok := activeClaims[node.CoreNodeName]; ok {
-				claim := c
-				nodeView.ActiveClaim = &claim
-			}
-		}
-		if process.TargetStyleID != nil && node.CoreNodeName != "" {
-			if c, ok := targetClaims[node.CoreNodeName]; ok {
-				claim := c
-				nodeView.TargetClaim = &claim
-			}
-		}
-		// Core-owned-loader fallback: a window/position of a Core loader with no
-		// per-style edge claim still reads as a manual_swap loader node, so the
-		// operator board renders (and the runtime treats it as a loader). Synthesize
-		// the claim from the aggregate via the SAME resolver the runtime uses, so the
-		// view and the engine never disagree. A node that isn't an aggregate loader
-		// resolves to nil (clean miss) and keeps its plain-node view.
-		if nodeView.ActiveClaim == nil && s.loaders != nil && node.CoreNodeName != "" {
-			if l, lerr := s.loaders.LoaderForNode(domain.NodeID(node.CoreNodeName)); lerr == nil && l != nil {
-				nodeView.ActiveClaim = l.SynthClaim(domain.NodeID(node.CoreNodeName))
-			}
-		}
-		// Press-index fan-out fallback — the same move as the loader fallback
-		// above, for the other node kind that owns work but no claim row. When a
-		// changeover FANS OUT (different bin types across the index, e.g. tote →
-		// bin) each press position gets its OWN task and order instead of riding
-		// along on the front position's. Those seats have no style_node_claims
-		// row — press_position claims are in-memory only — so the view saw a
-		// claimless node and every claim-keyed gate failed closed.
+		tile := s.buildNodeTile(node, process, b, childOf, nodeTaskMap)
+		// A loader's card becomes a LOADING INSTRUCTION during a changeover:
+		// which empty bin type the changing-over cells are waiting for.
 		//
-		// Hopkinsville 2026-08-05, P400 changeover 51: PLN_02/PLN_05 each held a
-		// robot at a staged wait needing a RELEASE. isReleaseReady keys off the
-		// TASK and lit both tiles release-ready; the modal keys off the CLAIM and
-		// rendered no buttons at all. 19 minutes later the operator cancelled both
-		// orders to free the robots and hand-drove the bins out. Deriving the
-		// claim the planner already built closes that split for every claim-keyed
-		// gate at once, not just the one that surfaced.
-		if nodeView.ActiveClaim == nil {
-			nodeView.ActiveClaim = pressPositionClaims[node.ID]
-		}
-		if nodeTask, ok := nodeTaskMap[node.ID]; ok {
-			taskCopy := nodeTask
-			nodeView.ChangeoverTask = &taskCopy
-		}
-		// Child tile: rendered here only because the node it extends lives on
-		// this station. Marked so the board can suppress the release button —
-		// it owns no task and no order, so there is nothing to release.
-		nodeView.ChildOfNode = childOf[node.ID]
-		// Include orders sourcing FROM this node's CoreNode in addition to
-		// orders tracked at this process_node. A manual_swap supermarket
-		// loader (SMN_001 etc.) doesn't directly own orders — the line
-		// operator's REQUEST creates orders tracked at the line node. But
-		// the loader operator still needs to see "demand for my bin" so
-		// they keep it loaded. Plant test 2026-04-27: line-initiated swap
-		// orders went silent on the loader UI after the kanban-spam guard
-		// stopped firing process-node-tracked orders here.
-		nodeView.Orders = boardOrders[node.ID]
-		nodeView.SwapReady = store.ComputeSwapReady(s.db, nodeView.ActiveClaim, runtime, nodeView.ChangeoverTask)
-		// Lineside buckets power the active-bar and stranded-chip UI on
-		// the operator station modal. Best-effort — absence of buckets
-		// just means the node has nothing pulled to lineside yet.
-		nodeView.LinesideActive = activeBuckets[node.ID]
-		nodeView.LinesideInactive = inactiveBuckets[node.ID]
-		// Surface any pending release-time error that's been rolled back to
-		// Staged for the operator to retry.
-		nodeView.LastReleaseError = store.LookupLastReleaseError(s.db, runtime)
-		// Surface any active parked-ticks alarm (P2-C7/C8): consume ticks piling
-		// up on this node while no bin is bound. Rendered as an amber chip.
-		if s.stranded != nil {
-			nodeView.StrandedAlarm = s.stranded(node.CoreNodeName)
-		}
-		// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding
-		// order for something a loader operator has said they cannot supply.
+		// BUILT FROM CHANGEOVER STATE, not from delivered orders. The obvious
+		// hook — the U1-confirm path that watches for arrivals — matches
+		// RETRIEVE orders only, and a changeover's evac arrivals are COMPLEX
+		// ones, so a card wired there would stay silent through exactly the
+		// window it exists for.
 		//
-		// THE SUPPLIER IS NOT A CUSTOMER OF ITSELF. This used to attach the
-		// refusal wherever the payload matched, and the comment here called that
-		// "the same test either way". It is not. A loader window's own orders ARE
-		// the calls it is being asked to fill, so the window that just refused a
-		// part always matched its own refusal — and the operator who had said
-		// "no parts" was immediately asked to choose whether to wait for them or
-		// change over. Reported from Springfield the first time it was pressed.
-		//
-		// Keyed on the core node name because that is what the refusal stores and
-		// what a shared loader is identified by across its process nodes.
-		if len(byPayload) > 0 {
-			for i := range nodeView.Orders {
-				o := nodeView.Orders[i]
-				if o.PayloadCode == "" || protocol.IsTerminal(o.Status) {
-					continue
-				}
-				r, ok := byPayload[o.PayloadCode]
-				if !ok || r.LoaderNode == node.CoreNodeName {
-					continue
-				}
-				rc := r
-				nodeView.SupplyRefusedForMe = &rc
-				break
-			}
+		// Applied here rather than inside buildNodeTile because it needs the
+		// view's active changeover, which the tile builder is not given.
+		if view.ActiveChangeover != nil && tile.ActiveClaim != nil {
+			tile.ChangeoverLoadDirective = domain.BuildChangeoverLoadDirective(
+				view.ActiveChangeover.ID, s.stationTakesLoadDirective(node.CoreNodeName),
+				tile.ActiveClaim, b.targetClaimList, s.binTypeForPayload)
 		}
-		// Multi-process loader-board unions: for a manual_swap node, resolve
-		// the active-style and all-style payload sets across EVERY active
-		// process sharing this CoreNodeName (PayloadsForLoader walks all
-		// processes), so a loader shared by two cells surfaces both cells'
-		// payloads, not just this station's. Plus the transitional flag the
-		// board reads to default into preload mode.
-		if nodeView.ActiveClaim != nil && nodeView.ActiveClaim.SwapMode == protocol.SwapModeManualSwap {
-			if rp, ok := loaderPayloads[node.CoreNodeName][nodeView.ActiveClaim.Role]; ok {
-				nodeView.ActiveStylePayloads = rp.Active
-				nodeView.AllStylePayloads = rp.All
-			}
-			// Standing refusals for this window's cards, from the one snapshot
-			// taken above. Role-agnostic on purpose: an unloader states the same
-			// kind of thing about empties that a loader states about parts, and
-			// the mechanism carries over unchanged — only the WORDING differs,
-			// and that lives on the render side.
-			if forThisWindow := refusals[node.CoreNodeName]; len(forThisWindow) > 0 {
-				nodeView.SupplyRefusals = forThisWindow
-			}
-			// Operator-driven (board defaults to preload) + dedicated-position layout +
-			// window-group membership all come from the Core aggregate — the SAME resolver
-			// the runtime uses — so the board and the engine never disagree. A node absent
-			// from the aggregate resolves to nil (exactly as for the runtime), leaving the
-			// operator/layout fields false.
-			if s.loaders != nil {
-				if loader, err := s.loaders.LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(nodeView.ActiveClaim.Role)); err == nil && loader != nil {
-					nodeView.OperatorDriven = loader.IsOperatorDriven()
-					nodeView.HomeLocationLoader = loader.IsDedicated()
-					// Core owns the loader's payload set — the board shows it (the edge claim
-					// is just the node now). Overrides the claim-derived set above; falls back
-					// to it only when the loader carries no Core payloads (legacy / not migrated).
-					// Scoped to THIS node (the same per-node set the load/request gate uses):
-					// a dedicated home shows only its own pinned payload, not the loader's
-					// other positions' parts, so the board and the engine never disagree.
-					if codes := loader.LoadablePayloadCodesAt(domain.NodeID(node.CoreNodeName)); len(codes) > 0 {
-						nodeView.ActiveStylePayloads = codes
-						nodeView.AllStylePayloads = codes
-					}
-					if loader.IsShared() {
-						if wins := loader.Windows(); len(wins) > 1 {
-							nodeView.WindowGroupAnchor = string(loader.ID())
-							names := make([]string, len(wins))
-							for i, w := range wins {
-								names[i] = string(w.Node)
-							}
-							nodeView.WindowNodes = names
-						}
-					}
-				}
-			}
-		}
-		view.Nodes = append(view.Nodes, nodeView)
+		view.Nodes = append(view.Nodes, tile)
 	}
 
-	// Lineside UOP per active payload, attached to manual_swap loader nodes so
-	// the transitional board can show real numbers on ACTIVE cards instead of a
-	// meaningless "no demand" (the loader is operator-driven). Computed once for
-	// the process's active style; all local Edge data.
-	// Gate on the board actually having a tile that consumes the result.
-	// activePayloadLineside is a PLANT-WIDE scan — every active consume claim on
-	// the edge, not just this station's — so a board with no manual_swap produce
-	// tile was paying the full cost and then discarding every value. The
-	// predicate is exactly the one the loop below filters on.
-	wantsLineside := false
-	for i := range view.Nodes {
-		nv := &view.Nodes[i]
-		if nv.ActiveClaim != nil &&
-			nv.ActiveClaim.SwapMode == protocol.SwapModeManualSwap &&
-			nv.ActiveClaim.Role == protocol.ClaimRoleProduce {
-			wantsLineside = true
-			break
-		}
-	}
-	// Runs whenever the board HAS a loader tile, not only when the lineside scan
-	// returned rows. An empty result is itself an answer — no active consume
-	// claim wants any of these parts — and the loop below has to see it to strip
-	// the ACTIVE badge off every card. Gating on len>0 left a stopped line
-	// showing a board where everything still claimed to be running.
-	if lineside := s.activePayloadLineside(wantsLineside); wantsLineside {
-		for i := range view.Nodes {
-			nv := &view.Nodes[i]
-			if nv.ActiveClaim == nil ||
-				nv.ActiveClaim.SwapMode != protocol.SwapModeManualSwap ||
-				nv.ActiveClaim.Role != protocol.ClaimRoleProduce {
-				continue
-			}
-			// THE LOADER AGGREGATE IS CORE-OWNED AND CARRIES THE THRESHOLD.
-			// Resolved here rather than threading it down from the block above,
-			// which resolves the same aggregate for the payload set — one extra
-			// lookup per loader tile, and it keeps the threshold read next to the
-			// comparison that uses it.
-			var loader *domain.Loader
-			if s.loaders != nil && nv.Node.CoreNodeName != "" {
-				loader, _ = s.loaders.LoaderAt(
-					domain.NodeID(nv.Node.CoreNodeName),
-					domain.LoaderRole(nv.ActiveClaim.Role))
-			}
-
-			m := map[string]int{}
-			starved := map[string]bool{}
-			// ACTIVE MEANS A RUNNING STYLE CONSUMES IT. The keys of `lineside`
-			// are exactly the payloads some ACTIVE consume claim allows, because
-			// activePayloadLineside walks active claims only — so membership here
-			// is the honest active test, and it is rebuilt below.
-			active := make([]string, 0, len(nv.ActiveStylePayloads))
-			for _, p := range nv.ActiveStylePayloads {
-				v, ok := lineside[p]
-				if !ok {
-					continue
-				}
-				active = append(active, p)
-				m[p] = v
-				// The CONFIGURED threshold, not a heuristic. This was
-				// lineside < UOPCapacity/4 — a quarter-bin guess that had no
-				// relationship to the number that actually triggers
-				// replenishment, so the board could go red while the reorder
-				// logic was content, or stay calm while it was not.
-				//
-				// Zero means the loader is not on a UOP-threshold policy at all.
-				// No threshold, no claim about starvation: staying silent is
-				// correct where nobody has said what "low" means.
-				if loader != nil {
-					if t := loader.UOPThresholdFor(domain.PayloadCode(p)); t > 0 && v < t {
-						starved[p] = true
-					}
-				}
-			}
-			// REPLACES THE PINNED SET WITH THE GENUINELY ACTIVE ONE. The block
-			// above overwrites ActiveStylePayloads with LoadablePayloadCodesAt —
-			// the parts this position is CONFIGURED for — which made
-			// isActiveStylePayload always true on a dedicated-home board and every
-			// card read ACTIVE. Measured at Springfield: 7 of 22 positions were
-			// genuinely active and all 22 claimed to be.
-			//
-			// AllStylePayloads deliberately keeps the pinned set: "what can this
-			// position hold" and "what does a running style want now" are
-			// different questions, and collapsing them is what broke the badge.
-			nv.ActiveStylePayloads = active
-			if len(m) > 0 {
-				nv.ActivePayloadLineside = m
-			}
-			if len(starved) > 0 {
-				nv.StarvedPayloads = starved
-			}
-		}
-	}
+	s.applyLoaderLineside(view)
 
 	return view, nil
 }
@@ -984,4 +573,589 @@ func (s *StationService) Move(id int64, direction string) error {
 // GetNodeNames returns the core_node_name list for a station.
 func (s *StationService) GetNodeNames(stationID int64) ([]string, error) {
 	return s.db.GetStationNodeNames(stationID)
+}
+
+// newStationView loads the station and its process and fills the board header:
+// the current and target styles, the style list, and the active changeover with
+// this station's task on it. The style and changeover reads are best-effort --
+// a board that renders without a style chip beats no board.
+func (s *StationService) newStationView(stationID int64) (*store.OperatorStationView, error) {
+	station, err := s.db.GetOperatorStation(stationID)
+	if err != nil {
+		return nil, err
+	}
+	process, err := s.db.GetProcess(station.ProcessID)
+	if err != nil {
+		return nil, err
+	}
+
+	view := &store.OperatorStationView{
+		Station: *station,
+		Process: *process,
+	}
+	if process.ActiveStyleID != nil {
+		if st, err := s.db.GetStyle(*process.ActiveStyleID); err == nil {
+			view.CurrentStyle = st
+		}
+	}
+	if process.TargetStyleID != nil {
+		if st, err := s.db.GetStyle(*process.TargetStyleID); err == nil {
+			view.TargetStyle = st
+		}
+	}
+	view.AvailableStyles, _ = s.db.ListStylesByProcess(process.ID)
+	if co, err := s.db.GetActiveProcessChangeover(process.ID); err == nil {
+		view.ActiveChangeover = co
+		if stationTask, err := s.db.GetChangeoverStationTaskByStation(co.ID, stationID); err == nil {
+			view.StationTask = stationTask
+		}
+	}
+	return view, nil
+}
+
+// boardData is everything the tile loop needs that is read ONCE for the whole
+// board rather than per tile.
+//
+// A struct rather than eleven parameters because that is what it already was:
+// every field here started life as a query inside the tile loop, and the
+// comments in prefetchBoardData are the record of hoisting them out. Naming the
+// group states the invariant -- one read per board, never per tile -- instead of
+// leaving it a convention eleven separate locals have to keep.
+type boardData struct {
+	loaderPayloads map[string]map[protocol.ClaimRole]processes.PayloadSet
+	activeClaims   map[string]processes.NodeClaim
+	targetClaims   map[string]processes.NodeClaim
+	// targetClaimList is targetClaims as a slice, computed once: the load
+	// directive is a question about the whole incoming style, not about the
+	// tile being built.
+	targetClaimList     []processes.NodeClaim
+	pressPositionClaims map[int64]*processes.NodeClaim
+	runtimes            map[int64]*processes.RuntimeState
+	boardOrders         map[int64][]orders.Order
+	releaseErrors       map[int64]string
+	refusals            map[string]map[string]domain.SupplyRefusal
+	byPayload           map[string]domain.CellSupplyRefusal
+	activeBuckets       map[int64][]lineside.Bucket
+	inactiveBuckets     map[int64][]lineside.Bucket
+}
+
+// prefetchBoardData performs every board-wide read the tile loop depends on.
+// Each is fail-open on its own terms: a failed enrichment renders a board
+// missing that detail, never no board.
+func (s *StationService) prefetchBoardData(
+	process *processes.Process, nodes []processes.Node, nodeTaskMap map[int64]processes.NodeTask,
+) *boardData {
+	// Loader payload sets, computed ONCE for the whole board. PayloadsForLoader
+	// walks every process/style/claim, so calling it per manual_swap tile made an
+	// N-home board do N walks (14 homes → ~44s on the Springfield bin loader). One
+	// walk, keyed by (core node, role); each tile just looks itself up below.
+	loaderPayloads, err := processes.PayloadsForManualSwapNodes(s.db.DB)
+	if err != nil {
+		loaderPayloads = nil // fail-open: tiles fall back to the claim-derived set
+	}
+	// Per-tile lookups hoisted to one query each for the whole board. Same
+	// motivation as loaderPayloads above: every read serialises on one
+	// connection, so a query inside the tile loop is a query multiplied by the
+	// tile count (22 on the Springfield bin loader).
+	//
+	// Claims are safe to index by core node name because style_node_claims
+	// declares UNIQUE(style_id, core_node_name) — at most one claim per
+	// (style, node), so a map lookup is exactly what GetStyleNodeClaimByNode
+	// returns. Both maps fail open to nil: a nil map lookup yields the zero
+	// value, and the tile then reads as "no claim", which is the same thing
+	// GetStyleNodeClaimByNode's sql.ErrNoRows produced.
+	var activeClaims, targetClaims map[string]processes.NodeClaim
+	if process.ActiveStyleID != nil {
+		activeClaims, _ = claimsByCoreNode(s.db.DB, *process.ActiveStyleID)
+	}
+	if process.TargetStyleID != nil {
+		targetClaims, _ = claimsByCoreNode(s.db.DB, *process.TargetStyleID)
+	}
+	// Press-index fan-out claims, computed ONCE for the whole board for the same
+	// reason as loaderPayloads/runtimes/boardOrders above — never a query inside
+	// the tile loop. Empty (and free) on any board without an active changeover.
+	targetClaimList := make([]processes.NodeClaim, 0, len(targetClaims))
+	for _, c := range targetClaims {
+		targetClaimList = append(targetClaimList, c)
+	}
+	pressPositionClaims := pressPositionClaimsForBoard(s.db.DB, nodes, nodeTaskMap, activeClaims, targetClaims)
+	nodeIDs := make([]int64, 0, len(nodes))
+	nodeKeys := make([]orders.NodeKey, 0, len(nodes))
+	for _, node := range nodes {
+		nodeIDs = append(nodeIDs, node.ID)
+		nodeKeys = append(nodeKeys, orders.NodeKey{ProcessNodeID: node.ID, CoreNodeName: node.CoreNodeName})
+	}
+	// Runtime rows: one SELECT for the board. This is the READ half of
+	// EnsureProcessNodeRuntime — the tile loop still calls Ensure for any node
+	// missing from this map, so the INSERT happens for exactly the same set of
+	// nodes as before. On a live plant every node already has its row, so the
+	// per-tile query disappears and the write path is untouched.
+	runtimes, err := processes.RuntimesForNodes(s.db.DB, nodeIDs)
+	if err != nil {
+		runtimes = nil // fall back to per-node Ensure below
+	}
+	boardOrders, err := orders.ListActiveByNodeKeys(s.db.DB, nodeKeys)
+	if err != nil {
+		boardOrders = nil
+	}
+	// Pending release-time errors, ONE READ FOR THE WHOLE BOARD, indexed by
+	// process node. This used to be up to two ListOrderHistory queries per tile
+	// inside the loop below -- the last per-tile read on this path, and the same
+	// shape every batch above it exists to remove.
+	releaseErrors := store.LastReleaseErrorsForRuntimes(s.db, runtimes)
+	// Standing supply refusals, ONE READ FOR THE WHOLE BOARD, indexed
+	// loader_node → payload → refusal. The table holds only what is open — one
+	// row per card actually refused right now — so the whole-table read is
+	// cheaper than a query per card, and this is the board's poll path, which is
+	// the one place that difference is felt. Best-effort, like every other
+	// enrichment here: a failed read renders a board without refusal state
+	// rather than no board.
+	refusals := map[string]map[string]domain.SupplyRefusal{}
+	// byPayload is the CUSTOMER's index of the same rows. A cell does not know
+	// which window supplies it — that resolution is the thing the broadcast
+	// design deliberately avoids needing — so it looks up by part alone and the
+	// sentence names the window that said it.
+	byPayload := map[string]domain.CellSupplyRefusal{}
+	if open, rerr := s.db.ListOpenSupplyRefusals(); rerr == nil {
+		for _, r := range open {
+			if refusals[r.LoaderNode] == nil {
+				refusals[r.LoaderNode] = map[string]domain.SupplyRefusal{}
+			}
+			refusals[r.LoaderNode][r.PayloadCode] = domain.SupplyRefusal{
+				RefusedAt: r.RefusedAt,
+				RefusedBy: r.RefusedBy,
+				Answered:  r.Answered(),
+				AckChoice: r.AckChoice,
+			}
+			// An UNANSWERED refusal wins over an answered one for the same part:
+			// it is the one that still needs a person, and it is what the modal
+			// fires on.
+			if prev, seen := byPayload[r.PayloadCode]; seen && !prev.Answered {
+				continue
+			}
+			byPayload[r.PayloadCode] = domain.CellSupplyRefusal{
+				LoaderNode: r.LoaderNode, PayloadCode: r.PayloadCode,
+				RefusedAt: r.RefusedAt, RefusedBy: r.RefusedBy,
+				Answered: r.Answered(), AckChoice: r.AckChoice,
+			}
+		}
+	}
+	activeBuckets, err := lineside.ListActiveForNodes(s.db.DB, nodeIDs)
+	if err != nil {
+		activeBuckets = nil // best-effort, as the per-node call was
+	}
+	inactiveBuckets, err := lineside.ListInactiveForNodes(s.db.DB, nodeIDs)
+	if err != nil {
+		inactiveBuckets = nil
+	}
+	return &boardData{
+		loaderPayloads:      loaderPayloads,
+		activeClaims:        activeClaims,
+		targetClaims:        targetClaims,
+		targetClaimList:     targetClaimList,
+		pressPositionClaims: pressPositionClaims,
+		runtimes:            runtimes,
+		boardOrders:         boardOrders,
+		releaseErrors:       releaseErrors,
+		refusals:            refusals,
+		byPayload:           byPayload,
+		activeBuckets:       activeBuckets,
+		inactiveBuckets:     inactiveBuckets,
+	}
+}
+
+// applyLoaderLineside is the board's last pass: lineside UOP per active
+// payload, attached to the manual_swap loader tiles that can render it.
+//
+// Lineside UOP per active payload, attached to manual_swap loader nodes so
+// the transitional board can show real numbers on ACTIVE cards instead of a
+// meaningless "no demand" (the loader is operator-driven). Computed once for
+// the process's active style; all local Edge data.
+// Gate on the board actually having a tile that consumes the result.
+// activePayloadLineside is a PLANT-WIDE scan — every active consume claim on
+// the edge, not just this station's — so a board with no manual_swap produce
+// tile was paying the full cost and then discarding every value. The
+// predicate is exactly the one the loop below filters on.
+func (s *StationService) applyLoaderLineside(view *store.OperatorStationView) {
+	wantsLineside := false
+	for i := range view.Nodes {
+		nv := &view.Nodes[i]
+		if nv.ActiveClaim != nil &&
+			nv.ActiveClaim.SwapMode == protocol.SwapModeManualSwap &&
+			nv.ActiveClaim.Role == protocol.ClaimRoleProduce {
+			wantsLineside = true
+			break
+		}
+	}
+	// Runs whenever the board HAS a loader tile, not only when the lineside scan
+	// returned rows. An empty result is itself an answer — no active consume
+	// claim wants any of these parts — and the loop below has to see it to strip
+	// the ACTIVE badge off every card. Gating on len>0 left a stopped line
+	// showing a board where everything still claimed to be running.
+	if lineside := s.activePayloadLineside(wantsLineside); wantsLineside {
+		for i := range view.Nodes {
+			nv := &view.Nodes[i]
+			if nv.ActiveClaim == nil ||
+				nv.ActiveClaim.SwapMode != protocol.SwapModeManualSwap ||
+				nv.ActiveClaim.Role != protocol.ClaimRoleProduce {
+				continue
+			}
+			// THE LOADER AGGREGATE IS CORE-OWNED AND CARRIES THE THRESHOLD.
+			// Resolved here rather than threading it down from the block above,
+			// which resolves the same aggregate for the payload set — one extra
+			// lookup per loader tile, and it keeps the threshold read next to the
+			// comparison that uses it.
+			var loader *domain.Loader
+			if s.loaders != nil && nv.Node.CoreNodeName != "" {
+				loader, _ = s.loaders.LoaderAt(
+					domain.NodeID(nv.Node.CoreNodeName),
+					domain.LoaderRole(nv.ActiveClaim.Role))
+			}
+
+			m := map[string]int{}
+			starved := map[string]bool{}
+			// ACTIVE MEANS A RUNNING STYLE CONSUMES IT. The keys of `lineside`
+			// are exactly the payloads some ACTIVE consume claim allows, because
+			// activePayloadLineside walks active claims only — so membership here
+			// is the honest active test, and it is rebuilt below.
+			active := make([]string, 0, len(nv.ActiveStylePayloads))
+			for _, p := range nv.ActiveStylePayloads {
+				v, ok := lineside[p]
+				if !ok {
+					continue
+				}
+				active = append(active, p)
+				m[p] = v
+				// The CONFIGURED threshold, not a heuristic. This was
+				// lineside < UOPCapacity/4 — a quarter-bin guess that had no
+				// relationship to the number that actually triggers
+				// replenishment, so the board could go red while the reorder
+				// logic was content, or stay calm while it was not.
+				//
+				// Zero means the loader is not on a UOP-threshold policy at all.
+				// No threshold, no claim about starvation: staying silent is
+				// correct where nobody has said what "low" means.
+				if loader != nil {
+					if t := loader.UOPThresholdFor(domain.PayloadCode(p)); t > 0 && v < t {
+						starved[p] = true
+					}
+				}
+			}
+			// REPLACES THE PINNED SET WITH THE GENUINELY ACTIVE ONE. The block
+			// above overwrites ActiveStylePayloads with LoadablePayloadCodesAt —
+			// the parts this position is CONFIGURED for — which made
+			// isActiveStylePayload always true on a dedicated-home board and every
+			// card read ACTIVE. Measured at Springfield: 7 of 22 positions were
+			// genuinely active and all 22 claimed to be.
+			//
+			// AllStylePayloads deliberately keeps the pinned set: "what can this
+			// position hold" and "what does a running style want now" are
+			// different questions, and collapsing them is what broke the badge.
+			nv.ActiveStylePayloads = active
+			if len(m) > 0 {
+				nv.ActivePayloadLineside = m
+			}
+			if len(starved) > 0 {
+				nv.StarvedPayloads = starved
+			}
+		}
+	}
+}
+
+// adoptChangeoverParticipants returns the tiles this station's board shows,
+// which is NOT simply the nodes assigned to it: a press-index extension position is
+// auto-created with no operator_station_id, so it belongs on the board of the
+// press it extends. It also returns the per-node task map and, for an adopted
+// position, the name of the node it hangs under.
+func (s *StationService) adoptChangeoverParticipants(
+	stationID int64, changeover *processes.Changeover,
+) ([]processes.Node, map[int64]processes.NodeTask, map[int64]string, error) {
+	nodes, err := s.db.ListProcessNodesByStation(stationID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	nodeTaskMap := map[int64]processes.NodeTask{}
+	childOf := map[int64]string{}
+
+	// THREE narrowings used to hide a changeover node from its own station, and
+	// all three are relaxed here. A press-index extension position is auto-created
+	// with no operator_station_id (changeover_service.go inserts only
+	// process_id/core_node_name/code/name), so it fell through every one:
+	//
+	//  1. `if view.StationTask != nil` — a station with no
+	//     changeover_station_tasks row got an EMPTY task map, so none of its
+	//     nodes showed a task even when tasks existed. The real precondition is
+	//     the CHANGEOVER existing, not this station having a row; gate on that.
+	//  2. ListChangeoverNodeTasksByStation filters `n.operator_station_id=?`,
+	//     which drops every task whose node has no station. Read the tasks
+	//     unfiltered and key them by process_node_id — safe, because the map is
+	//     only ever consulted for nodes in THIS station's list, so another
+	//     station's task can never match.
+	//  3. ListProcessNodesByStation likewise never returns a stationless node.
+	//     Resolve each participant's station (own → owning task's node) and
+	//     append the ones that belong here as CHILD tiles of the node they
+	//     extend.
+	if changeover != nil {
+		allTasks, _ := s.db.ListChangeoverNodeTasks(changeover.ID)
+		taskByID := make(map[int64]processes.NodeTask, len(allTasks))
+		for _, nodeTask := range allTasks {
+			nodeTaskMap[nodeTask.ProcessNodeID] = nodeTask
+			taskByID[nodeTask.ID] = nodeTask
+		}
+
+		known := make(map[int64]bool, len(nodes))
+		for i := range nodes {
+			known[nodes[i].ID] = true
+		}
+		// Does THIS board own any of the changeover's work? Computed from the
+		// station's own nodes, before any adoption, so it answers "is this
+		// changeover being run from here" rather than "did we adopt something".
+		// It is the anchor for the orphan fallback below.
+		stationRunsChangeover := false
+		for i := range nodes {
+			if _, ok := nodeTaskMap[nodes[i].ID]; ok {
+				stationRunsChangeover = true
+				break
+			}
+		}
+		parts, perr := s.db.ListParticipantsWithStation(changeover.ID)
+		if perr != nil {
+			log.Printf("station view: resolve participant stations for changeover %d: %v", changeover.ID, perr)
+		}
+		for _, p := range parts {
+			if p.ProcessNodeID == nil || known[*p.ProcessNodeID] {
+				continue
+			}
+			// Two ways a participant belongs on this board:
+			//
+			//  - OWNER: it has no station of its own but the task that owns it
+			//    does, and that station is us. The press-index case — PLN_02 is
+			//    an `indexed_over` position of PLN_01's task, so it rides along.
+			//
+			//  - ORPHAN: it resolves to NO station at all. That happens when a
+			//    changeover FANS OUT and gives the position its OWN task: station
+			//    resolution walks own -> owning-task's-node, and for a
+			//    self-owning task both are the same stationless row, so it
+			//    lands nil and the position renders NOWHERE. Hopkinsville
+			//    2026-07-28: a tote->bin changeover dropped all four press
+			//    positions independently, PLN_02/PLN_05 vanished from the
+			//    board, and the two robots parked at them could not be
+			//    released — there was no tile to press. Adopt onto the board
+			//    already running this changeover.
+			//
+			// Adoption stays inside the ActiveChangeover guard, so these positions
+			// appear only while they have work and disappear afterwards. That
+			// matters: a paired on-deck position must NOT be a permanent tile —
+			// LoadBin refuses to stamp a part there precisely because doing so
+			// hung a press-index swap once already.
+			byOwner := p.StationID != nil && *p.StationID == stationID && p.StationSource == "owner"
+			orphan := p.StationID == nil && stationRunsChangeover
+			if !byOwner && !orphan {
+				continue
+			}
+			child, gerr := s.db.GetProcessNode(*p.ProcessNodeID)
+			if gerr != nil || child == nil {
+				continue
+			}
+			// Render as a child of the node whose task owns it — but never of
+			// itself. A fanned-out position owns its own task, so naming it its own
+			// parent would be meaningless; it stands as its own tile instead.
+			if p.OwningTaskID != nil {
+				if owner, ok := taskByID[*p.OwningTaskID]; ok && owner.ProcessNodeID != child.ID {
+					childOf[child.ID] = owner.NodeName
+				}
+			}
+			nodes = append(nodes, *child)
+			known[child.ID] = true
+		}
+	}
+	return nodes, nodeTaskMap, childOf, nil
+}
+
+// buildNodeTile assembles one tile: its claims, runtime, orders, swap-readiness,
+// lineside buckets, release error, stranded chip, refusals, and -- for a
+// manual_swap node -- its loader aggregate fields.
+//
+// Every board-wide read it needs is already on b. It issues no query of its own,
+// which is the property the whole prefetch exists to preserve: a query here is a
+// query multiplied by the tile count, on one serialised connection.
+func (s *StationService) buildNodeTile(
+	node processes.Node, process *processes.Process, b *boardData,
+	childOf map[int64]string, nodeTaskMap map[int64]processes.NodeTask,
+) store.StationNodeView {
+	nodeView := store.StationNodeView{Node: node}
+	runtime := b.runtimes[node.ID]
+	if runtime == nil {
+		// No row yet (a freshly created node), or the batch read failed.
+		// Ensure materialises it, exactly as the per-tile call always did.
+		runtime, _ = s.db.EnsureProcessNodeRuntime(node.ID)
+	}
+	nodeView.Runtime = runtime
+	if process.ActiveStyleID != nil && node.CoreNodeName != "" {
+		if c, ok := b.activeClaims[node.CoreNodeName]; ok {
+			claim := c
+			nodeView.ActiveClaim = &claim
+		}
+	}
+	if process.TargetStyleID != nil && node.CoreNodeName != "" {
+		if c, ok := b.targetClaims[node.CoreNodeName]; ok {
+			claim := c
+			nodeView.TargetClaim = &claim
+		}
+	}
+	// Core-owned-loader fallback: a window/position of a Core loader with no
+	// per-style edge claim still reads as a manual_swap loader node, so the
+	// operator board renders (and the runtime treats it as a loader). Synthesize
+	// the claim from the aggregate via the SAME resolver the runtime uses, so the
+	// view and the engine never disagree. A node that isn't an aggregate loader
+	// resolves to nil (clean miss) and keeps its plain-node view.
+	if nodeView.ActiveClaim == nil && s.loaders != nil && node.CoreNodeName != "" {
+		if l, lerr := s.loaders.LoaderForNode(domain.NodeID(node.CoreNodeName)); lerr == nil && l != nil {
+			nodeView.ActiveClaim = l.SynthClaim(domain.NodeID(node.CoreNodeName))
+		}
+	}
+	// Press-index fan-out fallback — the same move as the loader fallback
+	// above, for the other node kind that owns work but no claim row. When a
+	// changeover FANS OUT (different bin types across the index, e.g. tote →
+	// bin) each press position gets its OWN task and order instead of riding
+	// along on the front position's. Those positions have no style_node_claims
+	// row — press_position claims are in-memory only — so the view saw a
+	// claimless node and every claim-keyed gate failed closed.
+	//
+	// Hopkinsville 2026-08-05, P400 changeover 51: PLN_02/PLN_05 each held a
+	// robot at a staged wait needing a RELEASE. isReleaseReady keys off the
+	// TASK and lit both tiles release-ready; the modal keys off the CLAIM and
+	// rendered no buttons at all. 19 minutes later the operator cancelled both
+	// orders to free the robots and hand-drove the bins out. Deriving the
+	// claim the planner already built closes that split for every claim-keyed
+	// gate at once, not just the one that surfaced.
+	if nodeView.ActiveClaim == nil {
+		nodeView.ActiveClaim = b.pressPositionClaims[node.ID]
+	}
+	if nodeTask, ok := nodeTaskMap[node.ID]; ok {
+		taskCopy := nodeTask
+		nodeView.ChangeoverTask = &taskCopy
+	}
+	// Child tile: rendered here only because the node it extends lives on
+	// this station. Marked so the board can suppress the release button —
+	// it owns no task and no order, so there is nothing to release.
+	nodeView.ChildOfNode = childOf[node.ID]
+	// Include orders sourcing FROM this node's CoreNode in addition to
+	// orders tracked at this process_node. A manual_swap supermarket
+	// loader (SMN_001 etc.) doesn't directly own orders — the line
+	// operator's REQUEST creates orders tracked at the line node. But
+	// the loader operator still needs to see "demand for my bin" so
+	// they keep it loaded. Plant test 2026-04-27: line-initiated swap
+	// orders went silent on the loader UI after the kanban-spam guard
+	// stopped firing process-node-tracked orders here.
+	nodeView.Orders = b.boardOrders[node.ID]
+	nodeView.SwapReady = store.ComputeSwapReady(s.db, nodeView.ActiveClaim, runtime, nodeView.ChangeoverTask)
+	// Lineside buckets power the active-bar and stranded-chip UI on
+	// the operator station modal. Best-effort — absence of buckets
+	// just means the node has nothing pulled to lineside yet.
+	nodeView.LinesideActive = b.activeBuckets[node.ID]
+	nodeView.LinesideInactive = b.inactiveBuckets[node.ID]
+	// Surface any pending release-time error that's been rolled back to
+	// Staged for the operator to retry. Prefetched for the board above; a
+	// node whose runtime the batch read missed falls back to the per-node
+	// form, so a freshly Ensured runtime still gets its chip.
+	if e, ok := b.releaseErrors[node.ID]; ok {
+		nodeView.LastReleaseError = e
+	} else if b.runtimes[node.ID] == nil {
+		nodeView.LastReleaseError = store.LookupLastReleaseError(s.db, runtime)
+	}
+	// Surface any active parked-ticks alarm (P2-C7/C8): consume ticks piling
+	// up on this node while no bin is bound. Rendered as an amber chip.
+	if s.stranded != nil {
+		nodeView.StrandedAlarm = s.stranded(node.CoreNodeName)
+	}
+	// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding
+	// order for something a loader operator has said they cannot supply.
+	//
+	// THE SUPPLIER IS NOT A CUSTOMER OF ITSELF. This used to attach the
+	// refusal wherever the payload matched, and the comment here called that
+	// "the same test either way". It is not. A loader window's own orders ARE
+	// the calls it is being asked to fill, so the window that just refused a
+	// part always matched its own refusal — and the operator who had said
+	// "no parts" was immediately asked to choose whether to wait for them or
+	// change over. Reported from Springfield the first time it was pressed.
+	//
+	// Keyed on the core node name because that is what the refusal stores and
+	// what a shared loader is identified by across its process nodes.
+	if len(b.byPayload) > 0 {
+		for i := range nodeView.Orders {
+			o := nodeView.Orders[i]
+			if o.PayloadCode == "" || protocol.IsTerminal(o.Status) {
+				continue
+			}
+			r, ok := b.byPayload[o.PayloadCode]
+			if !ok || r.LoaderNode == node.CoreNodeName {
+				continue
+			}
+			rc := r
+			nodeView.SupplyRefusedForMe = &rc
+			break
+		}
+	}
+	s.applyManualSwapLoaderFields(&nodeView, node, b)
+	return nodeView
+}
+
+// applyManualSwapLoaderFields adds the loader-aggregate half of a manual_swap
+// tile: the payload sets, the dedicated/window flags and the window grouping.
+//
+// Multi-process loader-board unions: for a manual_swap node, resolve
+// the active-style and all-style payload sets across EVERY active
+// process sharing this CoreNodeName (PayloadsForLoader walks all
+// processes), so a loader shared by two cells surfaces both cells'
+// payloads, not just this station's. Plus the transitional flag the
+// board reads to default into preload mode.
+func (s *StationService) applyManualSwapLoaderFields(
+	nodeView *store.StationNodeView, node processes.Node, b *boardData,
+) {
+	if nodeView.ActiveClaim != nil && nodeView.ActiveClaim.SwapMode == protocol.SwapModeManualSwap {
+		if rp, ok := b.loaderPayloads[node.CoreNodeName][nodeView.ActiveClaim.Role]; ok {
+			nodeView.ActiveStylePayloads = rp.Active
+			nodeView.AllStylePayloads = rp.All
+		}
+		// Standing b.refusals for this window's cards, from the one snapshot
+		// taken above. Role-agnostic on purpose: an unloader states the same
+		// kind of thing about empties that a loader states about parts, and
+		// the mechanism carries over unchanged — only the WORDING differs,
+		// and that lives on the render side.
+		if forThisWindow := b.refusals[node.CoreNodeName]; len(forThisWindow) > 0 {
+			nodeView.SupplyRefusals = forThisWindow
+		}
+		// Operator-driven (board defaults to preload) + dedicated-position layout +
+		// window-group membership all come from the Core aggregate — the SAME resolver
+		// the runtime uses — so the board and the engine never disagree. A node absent
+		// from the aggregate resolves to nil (exactly as for the runtime), leaving the
+		// operator/layout fields false.
+		if s.loaders != nil {
+			if loader, err := s.loaders.LoaderAt(domain.NodeID(node.CoreNodeName), domain.LoaderRole(nodeView.ActiveClaim.Role)); err == nil && loader != nil {
+				nodeView.OperatorDriven = loader.IsOperatorDriven()
+				nodeView.HomeLocationLoader = loader.IsDedicated()
+				// Core owns the loader's payload set — the board shows it (the edge claim
+				// is just the node now). Overrides the claim-derived set above; falls back
+				// to it only when the loader carries no Core payloads (legacy / not migrated).
+				// Scoped to THIS node (the same per-node set the load/request gate uses):
+				// a dedicated home shows only its own pinned payload, not the loader's
+				// other positions' parts, so the board and the engine never disagree.
+				if codes := loader.LoadablePayloadCodesAt(domain.NodeID(node.CoreNodeName)); len(codes) > 0 {
+					nodeView.ActiveStylePayloads = codes
+					nodeView.AllStylePayloads = codes
+				}
+				if loader.IsShared() {
+					if wins := loader.Windows(); len(wins) > 1 {
+						nodeView.WindowGroupAnchor = string(loader.ID())
+						names := make([]string, len(wins))
+						for i, w := range wins {
+							names[i] = string(w.Node)
+						}
+						nodeView.WindowNodes = names
+					}
+				}
+			}
+		}
+	}
 }

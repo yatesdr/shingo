@@ -1,0 +1,914 @@
+//go:build docker
+
+package dispatch
+
+import (
+	"fmt"
+	"testing"
+
+	"shingo/protocol"
+	"shingo/protocol/testutil"
+	"shingocore/internal/testdb"
+	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+	"shingocore/store/payloads"
+	"shingocore/store/reservations"
+)
+
+// ── WINDOW 3, THE F-11 SCENARIO, END TO END ───────────────────────────────
+//
+// F-11, from the lane-stress rig on 2026-08-09: three robots dwelling at LS_D2's
+// mark for 77 minutes, aimed at depths 2, 3 and 4 of a lane whose depth-1 slot
+// held BIN-ACT-P2B with `claimed_by = NULL`. No mouth hold, no occupancy row, no
+// dig on the lane, and the walling bin unclaimed — so, in the finding's words,
+// "no releaser exists in principle". Fourteen free slots behind a wall nobody was
+// going to move, and three robots parked in front of it indefinitely.
+//
+// These tests build that lane and assert that the plant fixes itself.
+
+// clearLaneFixture builds the F-11 geometry.
+//
+//	GRP-HEAL
+//	├── HEAL-WALL (MARKED)   W0 depth 0  <- the unclaimed bin nobody wants
+//	│                        W1 depth 1  <- the dweller's slot, EMPTY and unreachable
+//	│                        W2 depth 2  <- the deeper store that puts it at the mark
+//	└── HEAL-PARK (unmarked) P0, P1      <- somewhere for the blocker to go
+//
+// HEAL-PARK is deliberately UNMARKED: a dig out of a marked lane may not park a
+// blocker in a different marked lane (findShuffleSlots, the F-03 fix), so a marked
+// park lane would make this test about that exclusion instead of about the heal.
+func clearLaneFixture(t *testing.T, db *store.DB, name string) (wall, park *nodes.Node, w, p []*nodes.Node, bp *payloads.Payload) {
+	t.Helper()
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "NGRP type")
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "LANE type")
+
+	bp = &payloads.Payload{Code: name + "P"}
+	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
+
+	grp := &nodes.Node{Name: name + "-GRP", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
+
+	mkLane := func(lname, mark string, depth int) (*nodes.Node, []*nodes.Node) {
+		lane := &nodes.Node{Name: lname, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
+		testutil.MustNoErr(t, db.CreateNode(lane), "create "+lname)
+		if mark != "" {
+			testutil.MustNoErr(t, db.SetNodeProperty(lane.ID, PropLaneGatePoint, mark), "mark "+lname)
+		}
+		var slots []*nodes.Node
+		for i := 0; i < depth; i++ {
+			d := i
+			s := &nodes.Node{Name: fmt.Sprintf("%s-S%d", lname, i), ParentID: &lane.ID, Enabled: true, Depth: &d}
+			testutil.MustNoErr(t, db.CreateNode(s), "create slot")
+			slots = append(slots, s)
+		}
+		reloaded, _ := db.GetNode(lane.ID)
+		return reloaded, slots
+	}
+	wall, w = mkLane(name+"-WALL", name+"-WALL-WAIT", 3)
+	park, p = mkLane(name+"-PARK", "", 2)
+	return wall, park, w, p, bp
+}
+
+// digParentFor returns the compound parent whose children move bins out of this
+// lane, or nil. It looks for the thing the heal creates rather than for a
+// particular id, because "a dig now exists that did not before" is the claim.
+func digParentFor(t *testing.T, db *store.DB, sourceSlot string) *orders.Order {
+	t.Helper()
+	var parentID int64
+	err := db.DB.QueryRow(
+		`SELECT parent_order_id FROM orders
+		  WHERE source_node = $1 AND parent_order_id IS NOT NULL
+		  ORDER BY id DESC LIMIT 1`, sourceSlot).Scan(&parentID)
+	if err != nil {
+		return nil
+	}
+	parent, err := db.GetOrder(parentID)
+	testutil.MustNoErr(t, err, "load dig parent")
+	return parent
+}
+
+// TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking is F-11's fix.
+//
+// THE SETUP IS THE FINDING. A store is put at the mark the way F-11's three were
+// — by a DEEPER store holding the lane's mouth, which is Tier 2 doing exactly its
+// job. Then the deeper store places and drops its mouth row, so every ORDERING
+// reason to hold the dweller is gone and the only thing left between it and its
+// empty slot is a bin sitting in the corridor that nothing in the plant has any
+// plan for. That is the state F-11 photographed, and before this change it was
+// terminal in every sense but the status column: the evaluator re-derived the same
+// refusal on every firing, forever, and the lane's free slots stayed unreachable.
+//
+// WHAT THE TEST DOES, AND THE LIST IS SHORT ON PURPOSE. It calls
+// EvaluateLaneReleases once — the same call the event wiring makes on any lane
+// event — and then, later, it plays the ROBOT (moves the bin, confirms the legs).
+// It never asks for a dig, never re-drives the gate after the dig, and never
+// touches the dweller. Everything else in the assertion list has to arrive on its
+// own. "Zero human intervention" is the requirement, so the absence of those calls
+// is as much the test as the assertions are.
+//
+// MUTATION (run 2026-08-10): comment out the two `propose(c)` calls in
+// evaluateLaneReleasesPass. The dig is never created, the dweller is still
+// gate-staged at the end of the run with wait_index 0, and the lane still holds
+// its wall — the 77-minute dwell, reproduced in a second.
+//
+// SECOND MUTATION (run 2026-08-10): keep the trigger, remove the
+// EvaluateLaneReleases call from unlockLaneForCompound. The dig fires, claims,
+// runs and clears the lane — and the dweller is STILL dwelling at the end, because
+// every lane event the dig emitted was consumed while the dig's own lock was still
+// held. That arm is why the unlock had to become a trigger.
+func TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	wall, park, w, _, bp := clearLaneFixture(t, db, "HL1")
+	line := lineNode(t, db, "HL1-LINE")
+
+	// The deeper store: dispatched, holding its inbound mouth row, not yet placed.
+	// This is what puts the dweller at the mark in the first place (Tier 2).
+	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[2].Name
+		o.Status = "in_transit"
+	})
+	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
+		t.Fatalf("the deeper store must take its mouth row: adm=%v err=%v", adm, err)
+	}
+	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, "hl1-deep", "RUNNING", ""), "deep vendor")
+
+	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	if !IsGateStaged(dweller) {
+		t.Fatalf("the dweller must be gate-staged behind the deeper store "+
+			"(wait_index=%d vendor=%q) — the fixture is not reproducing F-11",
+			dweller.WaitIndex, dweller.VendorOrderID)
+	}
+	markStaged(t, db, dweller.ID)
+
+	// THE WALL ARRIVES. Unclaimed, in the mouth, wanted by nobody.
+	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL1-WALL")
+	if blocker.ClaimedBy != nil {
+		t.Fatalf("fixture bug: the walling bin must be UNCLAIMED, or this is a different finding")
+	}
+
+	// The deeper store places. Every ORDERING reason to hold the dweller is now
+	// gone; only the physical wall is left.
+	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
+
+	if d.laneLock.IsLocked(wall.ID) {
+		t.Fatal("precondition: no dig may hold the lane before the heal")
+	}
+	if n := appendsTo(backend, dweller.VendorOrderID); n != 0 {
+		t.Fatalf("the dweller already has %d tail append(s) — it is not actually dwelling", n)
+	}
+
+	// ── THE ONE CALL. Any lane event would make it; the wiring makes it. ──
+	d.EvaluateLaneReleases(wall.ID)
+
+	// 1. A DIG NOW EXISTS, and nobody asked for it.
+	parent := digParentFor(t, db, w[0].Name)
+	if parent == nil {
+		t.Fatalf("no dig was created for %s. A robot is dwelling at the mark aimed at %s, which is "+
+			"EMPTY; %s holds unclaimed bin %d walling it; no order names that bin and no dig is "+
+			"planned. Nothing else in the plant will ever move it — this is F-11, and the dweller "+
+			"waits forever.", wall.Name, w[1].Name, w[0].Name, blocker.ID)
+	}
+	// RE-POINTED by §R.104. This asserted the FOLDER: a separate parent in
+	// `reshuffling`, and PLAIN so it would confirm rather than resume ("the heal
+	// parent must be PLAIN: a coordinated parent routes to ResumeCompound and
+	// would come back wanting work of its own, and clearing the corridor was the
+	// whole job").
+	//
+	// There is no folder now. The dweller digs its own lane, so the parent IS the
+	// dweller: still `staged` (true — its robot is standing at the mark), still
+	// coordinated (it has a plan it still owes), and its resume is the
+	// splice-append rather than either of the two doors that sentence was choosing
+	// between. The scenario and the outcome are unchanged; the owner is not.
+	if parent.ID != dweller.ID {
+		t.Fatalf("the dig parent is order %d, want the dweller %d — a staged order digs its OWN lane; "+
+			"a separate parent means a folder was minted", parent.ID, dweller.ID)
+	}
+	if !IsGateStaged(parent) {
+		t.Errorf("the digging dweller is %s, want it still gate-staged — no status moves at either "+
+			"end, which is what makes the illegal {staged -> reshuffling} transition unreachable",
+			parent.Status)
+	}
+
+	// 2. THE DIG CLAIMED THE BLOCKER AT CREATION — the owner's requirement.
+	claimed, err := db.GetBin(blocker.ID)
+	testutil.MustNoErr(t, err, "reload blocker")
+	if claimed.ClaimedBy == nil {
+		t.Fatal("the dig did not claim the blocker. 'The dig should claim it on the heal — isn't " +
+			"that the whole point': an unclaimed blocker can be stolen by any other planner " +
+			"between now and the leg running, and the dig would arrive at an empty slot")
+	}
+	children, err := db.ListChildOrders(parent.ID)
+	testutil.MustNoErr(t, err, "list dig legs")
+	if len(children) != 1 {
+		t.Fatalf("dig has %d legs, want 1 (one blocker in the way)", len(children))
+	}
+	leg := children[0]
+	if *claimed.ClaimedBy != leg.ID {
+		t.Errorf("blocker is claimed by order %d, want the dig's own leg %d", *claimed.ClaimedBy, leg.ID)
+	}
+	if leg.SourceNode != w[0].Name {
+		t.Errorf("the dig leg picks from %q, want the walling slot %q", leg.SourceNode, w[0].Name)
+	}
+	// WHERE IT PARKS THE BLOCKER, read after the release rather than after the
+	// plan: the leg dwells in the walled lane holding the blocker until Core
+	// chooses a slot (the outbound dwell), so a plan-time read finds nothing bound.
+	// The property is the same one — the blocker goes to the ungated parking — and
+	// so is the exclusion enforcing it.
+	leg = releaseDwell(t, d, db, leg)
+	destNode, err := db.GetNodeByDotName(leg.DeliveryNode)
+	testutil.MustNoErr(t, err, "resolve the leg's dropoff")
+	if destNode == nil || destNode.ParentID == nil || *destNode.ParentID != park.ID {
+		t.Errorf("the dig parks the blocker at %q, want a slot in the ungated %s",
+			leg.DeliveryNode, park.Name)
+	}
+
+	// 3. THE DWELLER WAS NOT TOUCHED. The heal is about the lane; the robot at the
+	// mark keeps dwelling, which is what a gate wait is for, and it must not have
+	// been sealed into a corridor that is still walled.
+	stillWaiting, err := db.GetOrder(dweller.ID)
+	testutil.MustNoErr(t, err, "reload dweller")
+	if !IsGateStaged(stillWaiting) {
+		t.Error("the dweller must still be gate-staged while the dig runs")
+	}
+	if n := appendsTo(backend, dweller.VendorOrderID); n != 0 {
+		t.Errorf("the dweller got %d tail append(s) while the lane was still walled — "+
+			"nothing may be sealed into a corridor it cannot drive down", n)
+	}
+
+	// ── THE ROBOT DOES THE DIG. The fleet's half, and the only half a test has to
+	// play: the bin arrives, the leg ends. Everything after this line has to happen
+	// by itself. ──
+	robotRunsDigLeg(t, db, leg, destNode.ID)
+	testutil.MustNoErr(t, d.AdvanceCompoundOrder(parent.ID), "advance the finished dig")
+
+	// 4. THE DWELLER IS RELEASED, WITH NO FURTHER PROMPTING. No second
+	// EvaluateLaneReleases here on purpose: the dig's completion has to be its own
+	// releaser, or the heal is a dig that fixes a lane nobody is told about.
+	freed, err := db.GetOrder(dweller.ID)
+	testutil.MustNoErr(t, err, "reload dweller after the dig")
+	if IsGateStaged(freed) {
+		t.Fatalf("the lane is clear and the dweller is STILL at the mark (wait_index=%d, status=%s). "+
+			"The dig ran, so the wall is gone — but every lane event it emitted was consumed while "+
+			"its own lane lock was still held, and nothing re-asked after the lock dropped.",
+			freed.WaitIndex, freed.Status)
+	}
+	if n := appendsTo(backend, dweller.VendorOrderID); n != 1 {
+		t.Fatalf("the dweller got %d tail append(s), want exactly 1", n)
+	}
+	for _, c := range backend.ReleaseCalls() {
+		if c.VendorOrderID == dweller.VendorOrderID && !c.Complete {
+			t.Error("the dweller's tail must SEAL it")
+		}
+	}
+	// THE LOCK IS STILL HELD, AND THAT IS THE RULE — re-pointed by §R.104a.
+	// This asserted "the heal dig must not leave its lane lock behind", which was
+	// right when the digger was a folder that finished and went away. The digger is
+	// the dweller, and it has just been appended INTO this corridor: lock -> dig ->
+	// append, one lock throughout, released when its bin leaves by its mover.
+	if !d.laneLock.IsLocked(wall.ID) {
+		t.Error("the dweller was appended into a lane it no longer holds — the lock outlives the " +
+			"chapter precisely because the append comes after it")
+	}
+	// It used to read: "The parent has no demand of its own to resume — clearing
+	// the corridor WAS the work — so it confirms rather than requeueing into a
+	// scanner that has nothing to plan for it." That was the folder's disposition.
+	// The dweller's own work is the whole point of the excavation, and having been
+	// appended it is now DRIVING.
+	done, err := db.GetOrder(parent.ID)
+	testutil.MustNoErr(t, err, "reload the digging dweller")
+	if done.Status != StatusInTransit {
+		t.Errorf("the dweller finished its dig as %s, want %s — the chapter closed and its tail was "+
+			"appended where it stood", done.Status, StatusInTransit)
+	}
+}
+
+// TestWindow3_ClaimedBlockerWaitsInsteadOfDigging is the law that keeps the heal
+// from being a bulldozer, and it is the arm that makes the trigger safe to fire on
+// every refusal.
+//
+// A HARD CLAIM IS A ROBOT IN MOTION. `claimed_by` is written immediately before
+// the fleet call and cleared on arrival, so a claimed blocker is a bin that is
+// already leaving — somebody IS coming for it. Digging it out would send a second
+// robot to a bin a first robot is on its way to, which is the collision the claim
+// exists to prevent, and it would do so in the name of self-healing.
+//
+// The distinction is the same one the burial guard draws (hard claims only, soft
+// holds recalculate), and it is deliberately not re-derived here: the compound
+// transaction refuses a foreign-claimed bin on its own (store.ErrBlockerClaimed).
+// This test pins the earlier read, which exists so the common case does not mint
+// an order it would immediately cancel.
+//
+// MUTATION (run 2026-08-10, and the FIRST FORM OF THIS TEST DID NOT CATCH IT —
+// worth recording, because the reason is the interesting part). Dropping the
+// `binIsUnclaimed` arm from acceptanceDigNeeded leaves the test green if it only
+// asserts "no dig ran": the compound transaction refuses the foreign-claimed bin
+// on its own and rolls the whole thing back, so no child, no lane lock, no dig.
+// The deeper law holds without the pre-check — which is exactly what makes the
+// pre-check a pre-check rather than the guard.
+//
+// What the mutation DOES produce is a heal PARENT minted and then cancelled on
+// every firing, at lane-event rate, for a lane that was never stuck. So the
+// assertion is on the parent row, not on the dig, and with it the mutation fires.
+func TestWindow3_ClaimedBlockerWaitsInsteadOfDigging(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL2")
+	line := lineNode(t, db, "HL2-LINE")
+
+	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[2].Name
+		o.Status = "in_transit"
+	})
+	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
+		t.Fatalf("the deeper store must take its mouth row: adm=%v err=%v", adm, err)
+	}
+	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, "hl2-deep", "RUNNING", ""), "deep vendor")
+
+	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	if !IsGateStaged(dweller) {
+		t.Fatalf("the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
+	}
+	markStaged(t, db, dweller.ID)
+
+	// Same wall — but a retrieve is already on its way to this bin.
+	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL2-WALL")
+	carrier := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w[0].Name
+		o.Status = "in_transit"
+	})
+	testutil.MustNoErr(t, execAt(db, `UPDATE bins SET claimed_by=$1 WHERE id=$2`, carrier.ID, blocker.ID),
+		"claim the blocker for the carrier")
+
+	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
+	d.EvaluateLaneReleases(wall.ID)
+
+	if parent := digParentFor(t, db, w[0].Name); parent != nil {
+		t.Fatalf("a heal dig (%d) was created against bin %d, which order %d is already driving to. "+
+			"A hard claim means the bin is leaving on its own; the correct disposition is the wait "+
+			"the floor already has.", parent.ID, blocker.ID, carrier.ID)
+	}
+	if d.laneLock.IsLocked(wall.ID) {
+		t.Error("no dig was warranted, so no lane lock may have been taken")
+	}
+	still, err := db.GetOrder(dweller.ID)
+	testutil.MustNoErr(t, err, "reload dweller")
+	if !IsGateStaged(still) {
+		t.Error("the dweller keeps dwelling — the carrier's pickup is what releases it")
+	}
+}
+
+// TestWindow3_OccupiedSlotIsNotAWallToDigOut guards the arm that separates "I am
+// walled" from "my slot is taken", which look identical from the refusal and want
+// opposite answers.
+//
+// If a bin already sits in the slot a store is aimed at, excavating the corridor
+// in front of it delivers the robot to an occupied slot — the dig would run,
+// consume a lane lock and two shuffle slots, and change nothing about why the
+// order cannot place. The answer to a taken slot is a re-bind (which
+// rebindGatedDropoff already does whenever one is reachable) or another lane.
+//
+// MUTATION (run 2026-08-10): drop the store-slot-emptiness arm from
+// acceptanceDigNeeded (fact 2). A dig is created for a lane that is simply FULL, and it repeats
+// every time the lane is re-evaluated as long as the fill lasts.
+func TestWindow3_OccupiedSlotIsNotAWallToDigOut(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL3")
+	line := lineNode(t, db, "HL3-LINE")
+
+	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[2].Name
+		o.Status = "in_transit"
+	})
+	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
+		t.Fatalf("the deeper store must take its mouth row: adm=%v err=%v", adm, err)
+	}
+	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, "hl3-deep", "RUNNING", ""), "deep vendor")
+
+	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	if !IsGateStaged(dweller) {
+		t.Fatalf("the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
+	}
+	markStaged(t, db, dweller.ID)
+
+	// A wall in front AND a bin in the dweller's own slot. The lane is just full.
+	createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL3-WALL")
+	createTestBinAtNode(t, db, bp.Code, w[1].ID, "BIN-HL3-SITTING")
+
+	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
+	d.EvaluateLaneReleases(wall.ID)
+
+	if parent := digParentFor(t, db, w[0].Name); parent != nil {
+		t.Fatalf("heal dig %d was created for a lane whose problem is that it is FULL. Clearing the "+
+			"corridor would deliver the robot to a slot that already has a bin in it; the answer to "+
+			"a taken slot is a re-bind, not an excavation.", parent.ID)
+	}
+	if d.laneLock.IsLocked(wall.ID) {
+		t.Error("no dig was warranted, so no lane lock may have been taken")
+	}
+}
+
+// THE "NOT EVEN A ROW" ASSERTIONS ARE GONE, AND NOTHING REPLACES THEM. Read this
+// before writing another one.
+//
+// Six assertions here called healParentsMinted, which counted
+// `payload_desc LIKE 'clear <lane>:%'` — a string only the deleted folder minter
+// ever wrote. It returned 0 for every input, so all six compared 0 to 0 and the
+// 16,947-family fix below was pinned by nothing.
+//
+// The obvious repair — count the orders table before and after — was built and
+// then MUTATION-TESTED, and it is a dead net too. With the blocker pre-check
+// disabled the refusal still writes nothing: the dig's parent is a demand that
+// already existed, its children go in one transaction, and that transaction rolls
+// back. The row-and-cancel trail the 16,947 and 38,203 measurements were made of
+// belonged to the FOLDER, and the folder is gone.
+//
+// So the failure mode those assertions guarded is now structurally impossible
+// rather than merely absent, and no state assertion can tell the pre-check from
+// its absence: same outcome, same lock, same rows. What the pre-check still buys
+// is COST — a plan build and a transaction per lane event — which is real and is
+// not assertable from here without a call-counting seam nobody has asked for.
+// The outcome and lock assertions each test already makes are the live cover.
+//
+// ── TWO READERS, TWO QUESTIONS, A DURABLE WRITE BETWEEN THEM ─────────────
+//
+// The heal path pre-checked with LaneLock.IsLocked — "does a DIG hold this
+// lane" — then created the dig's PARENT ORDER, then called TryLock, which is
+// AcquireLanes(ModeDig) and refuses on ANY other owner's mouth row. TryLock's
+// own doc says so: "already held — by another dig, OR BY AN ORDINARY ORDER'S
+// MOUTH HOLD."
+//
+// So on a lane an ordinary order holds, the guard said GO and the claim said NO
+// — forever, because that answer does not change while the row exists, and a
+// gate-staged order keeps its row until it places. Between the two sat an
+// INSERT, so every lane event minted an order and cancelled it.
+//
+// MEASURED, lane-stress rig 2026-08-10, on a freshly seeded plant: LS_C5 held
+// exactly one row — `mouth`/`outbound`, owned by a staged order. 16,947 heal
+// parents were created and cancelled in minutes, ZERO digs ever started, ~64
+// cancellations per second, and every other status drained to nothing. The
+// cancellation reason read "another dig took lane LS_C5 first", naming a dig
+// that did not exist — which is what sent the first look in the wrong direction.
+//
+// THE OUTCOME IS UNCHANGED AND THAT IS THE POINT. AcquireLanes was always going
+// to refuse this dig; asking one read earlier does not change what happens on
+// the floor, only whether Core writes an order to find out. That is what makes
+// this a churn fix rather than a policy change.
+//
+// NO MUTATION NOTE. The recipe that stood here — restore
+// `if d.laneLock.IsLocked(lane.ID) { return }` and watch "assertion (a) report a
+// minted, cancelled heal parent" — is unperformable: assertion (a) was the dead
+// row count, now deleted, and the guard runs before any write, so restoring the
+// narrower pre-check adds a redundant early return and changes no observable
+// state. What this test still pins is the OUTCOME and the untaken lock.
+func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL4")
+	line := lineNode(t, db, "HL4-LINE")
+
+	// The Tier-2 blocker that parks the dweller, exactly as the positive test
+	// builds it.
+	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[2].Name
+		o.Status = "in_transit"
+	})
+	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
+		t.Fatalf("the deeper store must take its mouth row: adm=%v err=%v", adm, err)
+	}
+	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, "hl4-deep", "RUNNING", ""), "deep vendor")
+
+	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	if !IsGateStaged(dweller) {
+		t.Fatalf("the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
+	}
+	markStaged(t, db, dweller.ID)
+
+	// An unclaimed wall — so a heal is genuinely WARRANTED. Without this the test
+	// would pass for the wrong reason (nothing to dig).
+	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL4-WALL")
+	if blocker.ClaimedBy != nil {
+		t.Fatalf("fixture bug: the walling bin must be UNCLAIMED")
+	}
+
+	// The ordering reason goes, leaving only the wall — the exact state the
+	// positive test digs from.
+	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
+
+	// ── AND NOW THE RIG'S ACTUAL SHAPE: an ORDINARY, non-dig mouth hold on the
+	// same lane.
+	//
+	// RE-POINTED by §R.101. This used to be a retrieve LEAVING the lane, whose
+	// `outbound` row is what LS_C5 was holding. A source hold is now the full lane
+	// lock, so that order no longer produces a non-dig row and the fixture would
+	// prove the opposite of what it says. An order DROPPING INTO the lane still
+	// takes `inbound` — destination-side holds are unchanged — so the ordinary
+	// non-dig holder the runaway needs still exists, and the property under test is
+	// untouched: a pre-check that asks about DIGS while the acquire refuses on ANY
+	// row is the 16,947 family.
+	dropper := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = line.Name
+		o.DeliveryNode = w[0].Name
+		o.Status = "in_transit"
+	})
+	if adm, _, _, err := d.AcquireLanesForOrder(dropper, line, w[0], EntryHeldBin); err != nil || !adm {
+		t.Fatalf("the dropper must take an inbound mouth row on the wall lane: adm=%v err=%v", adm, err)
+	}
+	if d.laneLock.IsLocked(wall.ID) {
+		t.Fatal("precondition: no DIG holds the lane — that is the whole point, the holder is ordinary")
+	}
+	if d.laneLock.CanTake(wall.ID) {
+		t.Fatal("precondition: a dig must NOT be admissible while an ordinary mouth row is held; " +
+			"if it is, this fixture is not reproducing the runaway")
+	}
+
+	d.EvaluateLaneReleases(wall.ID)
+
+	// (a) NO ORDER WAS WRITTEN TO DISCOVER A REFUSAL THAT WAS KNOWABLE.
+
+	// (b) AND NO LOCK WAS TAKEN. The outcome is identical to before the fix; only
+	// the paper trail differs.
+	if d.laneLock.IsLocked(wall.ID) {
+		t.Error("a dig lock was taken on a lane an ordinary order holds")
+	}
+}
+
+// TestWindow3_ClaimedBlockerRefusesTheHealBeforeMintingAParent is the test above
+// one layer down, and it is the 2026-08-13 rig's other runaway.
+//
+// THE MEASUREMENT: 38,203 heal parents created and cancelled over 2h15m on the
+// lane-stress rig, a steady 200-290 a minute, every one of them ending "heal dig
+// not started: a blocker was claimed while the dig was being written". The blocker
+// was claimed by a complex order that was itself frozen for the whole window, so
+// the answer never changed — and each cancellation was a terminal event that
+// re-drove the proposer that had just been refused, so the loop fed itself.
+//
+// WHY THE EXISTING FACT-3 CHECK DID NOT CATCH IT: acceptanceDigNeeded asks about
+// claimed blockers, but acceptanceDigNeeded is the LANE GATE's route into the
+// proposer. The rig's loop came through a complex demand's walled pickup
+// (proposeDigForBuriedPickup), which asked nothing. That is why the check now
+// lives in proposeLaneClearDig — the one writer of a service dig — instead of in
+// a third caller.
+//
+// SO THIS TEST GOES THROUGH THE WRITER, not through the gate: a gate-routed
+// fixture would be answered by fact 3 and pass with the fix reverted.
+//
+// MUTATION (verified): delete the blocker-claim loop in proposeLaneClearDig.
+// Assertion (a) fires with one minted-and-cancelled parent — one per firing, which
+// on the rig was two hours of them.
+func TestWindow3_ClaimedBlockerRefusesTheHealBeforeMintingAParent(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL5")
+	line := lineNode(t, db, "HL5-LINE")
+
+	// The wall, and a live order carrying it out — the commonest holder by a wide
+	// margin, per BlockerClaimedError's own header.
+	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL5-WALL")
+	holder := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w[0].Name
+		o.DeliveryNode = line.Name
+		o.Status = "in_transit"
+	})
+	testutil.MustNoErr(t, execAt(db, `UPDATE bins SET claimed_by=$1 WHERE id=$2`, holder.ID, blocker.ID),
+		"claim the blocker")
+
+	// A requester walled behind it. It is carried for its origin only — the dig
+	// serves the lane, not this order.
+	requester := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[1].Name
+		o.Status = protocol.StatusPending
+	})
+
+	if !d.laneLock.CanTake(wall.ID) {
+		t.Fatal("precondition: the LANE is takeable — this test is about the BIN, and a lane-level " +
+			"refusal would let it pass with the fix reverted")
+	}
+
+	res := d.proposeLaneClearDig(wall, w[1], requester)
+
+	// (a) NO ORDER WAS WRITTEN TO DISCOVER A REFUSAL THAT WAS KNOWABLE.
+
+	// (b) AND IT IS STILL A WAIT, NOT A FAULT. Law 1: a claimed blocker is
+	// congestion. The outcome has to be the one whose releaser is the holder
+	// carrying the bin out, or the requester parks under something that never clears.
+	if res.outcome != laneClearBlockerClaimed {
+		t.Errorf("outcome is %v, want laneClearBlockerClaimed — the holder is a live order driving "+
+			"that bin out of the lane, which is the releaser the requester's wait names", res.outcome)
+	}
+
+	// (c) AND NO LOCK WAS TAKEN.
+	if d.laneLock.IsLocked(wall.ID) {
+		t.Error("a dig lock was taken for a dig that was never going to be written")
+	}
+}
+
+// execAt is a one-line raw write for the two places these tests have to play the
+// ROBOT — arriving a bin, and putting a claim on one. Both are fleet-side facts
+// with no Core-side writer to borrow, and spelling them out is honest about which
+// half of the loop the test is standing in for.
+func execAt(db *store.DB, q string, args ...any) error {
+	_, err := db.DB.Exec(q, args...)
+	return err
+}
+
+// appendsTo counts the tail appends aimed at one vendor order.
+//
+// Counting ALL appends does not work here and the reason is worth stating: the
+// dig's own leg picks OUT of the marked lane, so it goes through the same gated
+// valve as everyone else and gets its own tail appended the moment it is
+// dispatched. A total is therefore a mix of the dweller's release and the dig's
+// ordinary traffic, and an assertion on it would be measuring the wrong robot.
+func appendsTo(backend *testdb.MockBackend, vendorOrderID string) int {
+	n := 0
+	for _, c := range backend.ReleaseCalls() {
+		if c.VendorOrderID == vendorOrderID {
+			n++
+		}
+	}
+	return n
+}
+
+// robotRunsDigLeg plays the fleet for one dig leg: the bin arrives at the slot the
+// leg was sent to, and the leg goes terminal.
+//
+// IT TERMINALIZES THROUGH THE REAL PATH rather than fast-forwarding the status
+// column, and that is the whole reason this exists next to the shared
+// driveCompoundChildrenToConfirmed helper instead of calling it. That helper
+// writes `confirmed` with a raw UPDATE, deliberately — most compound tests only
+// care about the parent's terminal effect. But a raw status write skips
+// TerminalizeOrder, which is where a finished order's claims and RESERVATIONS are
+// released in the same transaction as the status. So a fast-forwarded dig leg
+// keeps its Hold B occupancy row on the dug lane forever, and the next entrant is
+// correctly refused with lane-occupied by a robot that finished minutes ago.
+//
+// That is a property of the harness, not of the floor — but it is exactly the
+// fact this test is about, so borrowing the shortcut would have the test assert
+// the shortcut's behaviour instead of the product's.
+func robotRunsDigLeg(t *testing.T, db *store.DB, leg *orders.Order, destNodeID int64) {
+	t.Helper()
+	testutil.MustNoErr(t, execAt(db, `UPDATE bins SET node_id=$1, claimed_by=NULL WHERE id=$2`,
+		destNodeID, *leg.BinID), "the robot places the blocker")
+	if _, err := db.TerminalizeOrder(leg.ID, StatusConfirmed, "test harness: the leg placed its bin"); err != nil {
+		t.Fatalf("terminalize dig leg %d: %v", leg.ID, err)
+	}
+}
+
+// TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue is the LS_C5
+// two-cycle, reproduced and then broken.
+//
+// ── THE SHAPE, WHICH IS THE WHOLE FINDING ─────────────────────────────────
+//
+// The 16,947-order runaway had two halves and only one of them was closed.
+//
+// The first half was CHURN: the pre-check asked "does a DIG hold this lane"
+// while the acquire refused on any other owner's mouth row, so every lane event
+// minted a heal parent and cancelled it. CanTake fixed that, and
+// TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent pins it.
+//
+// The second half survived, because closing the first half made the refusal
+// CHEAP rather than making it WRONG: the row at LS_C5 belonged to THE ORDER THE
+// DIG WAS BEING RAISED FOR. A gate-staged dweller keeps its outbound hold until
+// it places; the wall it is staged behind is exactly what the dig would clear.
+// So the dweller waited for a dig that was refused because the dweller was
+// waiting, and the answer could never change — 16,947 attempts, zero digs, the
+// plant doing nothing else.
+//
+// A cheaper refusal is still a refusal. The rescue has to be told who it is
+// rescuing.
+//
+// ── WHAT IS NOT EXEMPTED, AND WHY THE NEGATIVE HALF IS HERE ───────────────
+//
+// Only the requester's own holds. A dig still excludes every other owner —
+// that is the entire content of ModeDig — so the second half of this test puts
+// a THIRD order's outbound row on the same lane and requires the refusal back.
+// Without it, "the exemption is narrow" would be an unverified claim, and an
+// exemption that quietly widened would read exactly the same in the log.
+//
+// MUTATION (verified): revert DigAdmissible to `len(holders) == 0` — assertion
+// (b) fires, reporting the dig refused with the requester's own hold as the
+// obstacle.
+//
+// MUTATION (verified, and it fires EARLIER THAN INTENDED — stated because a
+// mutation note that overclaims is worse than none): widening the exemption to
+// every holder trips assertion (a), the fixture's own precondition, before the
+// stranger half is ever reached. The narrowness of the exemption is therefore
+// NOT pinned here — it is pinned at the row layer, where
+// TestDigAdmissible_AgreesWithTheAcquireAboutTheBeneficiary's "a dig raised for
+// an unrelated order must still be refused" is a real assertion rather than a
+// precondition and fires on that same mutation. Assertions (d) and (e) below
+// are the dispatch-level statement of the same rule and are worth keeping, but
+// they are not what makes the widening red.
+func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL6")
+	line := lineNode(t, db, "HL6-LINE")
+
+	// The wall: unclaimed, in the mouth, wanted by nobody. A heal is warranted.
+	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL6-WALL")
+	if blocker.ClaimedBy != nil {
+		t.Fatalf("fixture bug: the walling bin must be UNCLAIMED")
+	}
+
+	// THE REQUESTER, HOLDING THE LANE IT IS WAITING BEHIND. Its bin is at w[1],
+	// behind the wall, so its hold is `outbound` on this very lane — the row
+	// LS_C5 was carrying.
+	requester := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w[1].Name
+		o.DeliveryNode = line.Name
+		o.Status = "in_transit"
+	})
+	if adm, _, _, err := d.AcquireLanesForOrder(requester, w[1], line, EntryHeldBin); err != nil || !adm {
+		t.Fatalf("the requester must take its own outbound mouth row on the wall lane: adm=%v err=%v", adm, err)
+	}
+
+	// (a) THE FIXTURE REPRODUCES THE RUNAWAY. Asked owner-blind, this lane is
+	// still refused — if it were not, the test would pass without the fix.
+	if d.laneLock.CanTake(wall.ID) {
+		t.Fatal("precondition: owner-blind, an ordinary mouth row must still refuse the dig; " +
+			"this fixture is not reproducing LS_C5")
+	}
+
+	res := d.proposeLaneClearDig(wall, w[1], requester)
+
+	// (b) AND ASKED ON THE REQUESTER'S BEHALF, THE DIG STARTS.
+	if res.outcome != laneClearStarted {
+		t.Fatalf("the dig was refused (%v). The only mouth row on %s belongs to order %d — the order "+
+			"this dig exists to rescue. It waits for the dig; the dig is refused because it waits; "+
+			"and nothing in the plant can break that. On the rig: 16,947 attempts, zero digs",
+			res.outcome, wall.Name, requester.ID)
+	}
+	if res.parent == nil {
+		t.Fatal("laneClearStarted with no parent")
+	}
+	if !d.laneLock.IsLocked(wall.ID) {
+		t.Error("the dig started but took no lane lock")
+	}
+
+	// (c) THE REQUESTER STILL HOLDS ITS OWN LANE. The exemption lets the dig in
+	// beside it; it does not evict the order that was already there. Losing the
+	// row would let a third party drop into the lane while the dig runs.
+	rows, err := reservations.ActiveMouthRows(db.DB, wall.ID)
+	testutil.MustNoErr(t, err, "read mouth rows")
+	//
+	// RE-POINTED by §R.101: the requester's row was `outbound` and is now the full
+	// lane lock its resolve took. The property is unchanged — its row survives the
+	// rescue rather than being evicted by it.
+	var sawRequester, sawDig bool
+	for _, h := range rows {
+		if h.OrderID == requester.ID && h.Mode == reservations.ModeDig {
+			sawRequester = true
+		}
+		if h.OrderID == res.parent.ID && h.Mode == reservations.ModeDig {
+			sawDig = true
+		}
+	}
+	if !sawRequester {
+		t.Errorf("the requester's own lane row is gone from %s: %+v", wall.Name, rows)
+	}
+	if !sawDig {
+		t.Errorf("the dig's own row is missing from %s: %+v", wall.Name, rows)
+	}
+
+	// ── THE NEGATIVE HALF: A STRANGER'S ROW STILL REFUSES ────────────────────
+	wall2, _, w2, _, bp2 := clearLaneFixture(t, db, "HL7")
+	line2 := lineNode(t, db, "HL7-LINE")
+	blocker2 := createTestBinAtNode(t, db, bp2.Code, w2[0].ID, "BIN-HL7-WALL")
+	if blocker2.ClaimedBy != nil {
+		t.Fatalf("fixture bug: the second walling bin must be UNCLAIMED")
+	}
+	requester2 := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w2[1].Name
+		o.DeliveryNode = line2.Name
+		o.Status = protocol.StatusPending
+	})
+	stranger := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w2[0].Name
+		o.DeliveryNode = line2.Name
+		o.Status = "in_transit"
+	})
+	if adm, _, _, err := d.AcquireLanesForOrder(stranger, w2[0], line2, EntryHeldBin); err != nil || !adm {
+		t.Fatalf("the stranger must take an outbound mouth row: adm=%v err=%v", adm, err)
+	}
+
+	// (d) the pre-check refuses...
+	if d.laneLock.CanTakeFor(wall2.ID, digAskerFor(requester2)) {
+		t.Error("a lane held by an unrelated order was reported admissible to a dig for a different " +
+			"order — the exemption is meant to be the requester's own holds and nobody else's")
+	}
+	// (e) ...and so does the writer, without minting an order to find out.
+	res2 := d.proposeLaneClearDig(wall2, w2[1], requester2)
+	if res2.outcome != laneClearLaneBusy {
+		t.Errorf("outcome is %v, want laneClearLaneBusy — order %d holds %s and is not the order "+
+			"this dig serves", res2.outcome, stranger.ID, wall2.Name)
+	}
+}
+
+// TestWindow3_ADigIsNotStartedIntoALaneWithARobotInIt moves the occupancy
+// question into the one writer, and pins that it is asked there.
+//
+// ── WHY THE MOUTH CHECK ABOVE IT IS NOT THE SAME QUESTION ─────────────────
+//
+// Two holds, two lifetimes. A mouth row says who may WORK the corridor; an
+// occupancy row says who is physically IN it. CanTake reads only the first, and
+// a complex order takes no mouth row anywhere — DispatchPreparedComplex never
+// acquires one — so the commonest robot in the plant is invisible to it. A dig
+// could pass the mouth check and take the lane with a machine already inside.
+//
+// The leg would then be refused by admission's arm 2, which reads the same
+// occupancy row. That is not the same outcome: by then the dig EXISTS and HOLDS
+// THE LANE, so the plant gets a locked corridor with a parked excavation in
+// front of it instead of a clean refusal that costs nothing.
+//
+// ── AND WHY IT IS THE WRITER RATHER THAN A THIRD COPY ─────────────────────
+//
+// acceptanceDigNeeded asks it as its fact 4 and keeps doing so. The two complex
+// callers asked nothing, and the complex arm carries the traffic. This test
+// goes through proposeLaneClearDig directly for that reason: a gate-routed
+// fixture would be answered by fact 4 and would pass with the fix reverted.
+//
+// MUTATION (verified): delete the occupancy loop in proposeLaneClearDig —
+// assertion (a) reports a dig started into an occupied lane, and (b) reports
+// the lane locked behind it.
+// MUTATION (verified): drop the requester exemption (refuse on any occupant) —
+// assertion (c) fires, which is the LS_C5 two-cycle arriving through the other
+// hold: the order's own presence refusing its own rescue.
+func TestWindow3_ADigIsNotStartedIntoALaneWithARobotInIt(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	wall, _, w, _, bp := clearLaneFixture(t, db, "HL8")
+	line := lineNode(t, db, "HL8-LINE")
+
+	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL8-WALL")
+	if blocker.ClaimedBy != nil {
+		t.Fatalf("fixture bug: the walling bin must be UNCLAIMED")
+	}
+	requester := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[1].Name
+		o.Status = protocol.StatusPending
+	})
+
+	// A ROBOT IS IN THERE. Owned by an unrelated order, and holding NO mouth row
+	// — which is the complex shape, and the reason the check above cannot see it.
+	inside := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = w[2].Name
+		o.DeliveryNode = line.Name
+		o.Status = "in_transit"
+	})
+	_, occErr := reservations.AcquireOccupancy(db.DB, inside.ID, wall.ID)
+	testutil.MustNoErr(t, occErr, "put a robot in the lane")
+	if !d.laneLock.CanTakeFor(wall.ID, digAskerFor(requester)) {
+		t.Fatal("precondition: the MOUTH is takeable — this test is about the INSIDE, and a mouth-level " +
+			"refusal would let it pass with the fix reverted")
+	}
+
+	res := d.proposeLaneClearDig(wall, w[1], requester)
+
+	// (a) THE DIG IS REFUSED, AND AS CONGESTION RATHER THAN A FAULT. Law 1: the
+	// robot inside is going to place or pick, and that drops the row.
+	if res.outcome != laneClearLaneOccupied {
+		t.Errorf("outcome is %v, want laneClearLaneOccupied — order %d is inside %s and an excavation "+
+			"would send a second robot in beside it", res.outcome, inside.ID, wall.Name)
+	}
+
+	// (b) AND NO LANE LOCK WAS TAKEN. This is the half admission's arm 2 cannot
+	// undo: it refuses the LEG, by which time the dig owns the corridor.
+	if d.laneLock.IsLocked(wall.ID) {
+		t.Error("a dig took the lane while another order's robot was inside it")
+	}
+
+	// (c) THE REQUESTER'S OWN PRESENCE IS NOT AN OBSTACLE. Same rule as the mouth
+	// one line above: an order's own hold must not refuse its own rescue.
+	testutil.MustNoErr(t, reservations.ReleaseOccupancy(db.DB, inside.ID, wall.ID), "the robot leaves")
+	_, reqErr := reservations.AcquireOccupancy(db.DB, requester.ID, wall.ID)
+	testutil.MustNoErr(t, reqErr, "the requester is inside")
+	res2 := d.proposeLaneClearDig(wall, w[1], requester)
+	if res2.outcome != laneClearStarted {
+		t.Errorf("outcome is %v, want laneClearStarted — the only occupancy row on %s belongs to the "+
+			"order the dig is being raised for, and its own presence must not refuse its own rescue",
+			res2.outcome, wall.Name)
+	}
+}

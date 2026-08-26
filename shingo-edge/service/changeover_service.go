@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"

@@ -18,6 +18,7 @@ import (
 
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
+	"shingocore/store/internal/nodetree"
 )
 
 // Node is the node domain entity. The struct lives in shingocore/domain
@@ -28,7 +29,7 @@ type Node = domain.Node
 
 // SelectCols and FromClause are exported so cross-aggregate readers
 // at the outer store/ level can compose their own WHERE clauses.
-const SelectCols = `n.id, n.name, n.is_synthetic, n.zone, n.enabled, n.depth, n.created_at, n.updated_at, n.node_type_id, n.parent_id, COALESCE(nt.code, ''), COALESCE(nt.name, ''), COALESCE(pn.name, ''), n.claimed_by`
+const SelectCols = `n.id, n.name, n.is_synthetic, n.zone, n.enabled, n.depth, n.created_at, n.updated_at, n.node_type_id, n.parent_id, COALESCE(nt.code, ''), COALESCE(pn.name, ''), n.claimed_by`
 const FromClause = `FROM nodes n LEFT JOIN node_types nt ON nt.id = n.node_type_id LEFT JOIN nodes pn ON pn.id = n.parent_id`
 
 // ScanNode reads a single nodes row (with joined node_type and parent name).
@@ -38,7 +39,7 @@ func ScanNode(row interface{ Scan(...any) error }) (*Node, error) {
 	var depth sql.NullInt32
 	var nodeTypeID, parentID, claimedBy sql.NullInt64
 	err := row.Scan(&n.ID, &n.Name, &n.IsSynthetic, &n.Zone, &n.Enabled, &depth, &n.CreatedAt, &n.UpdatedAt,
-		&nodeTypeID, &parentID, &n.NodeTypeCode, &n.NodeTypeName, &n.ParentName, &claimedBy)
+		&nodeTypeID, &parentID, &n.NodeTypeCode, &n.ParentName, &claimedBy)
 	if err != nil {
 		return nil, err
 	}
@@ -138,8 +139,19 @@ func Create(db *sql.DB, n *Node) error {
 }
 
 // Update writes the mutable columns on a node.
+//
+// Parentage is guarded here rather than at the caller: this statement sets
+// parent_id directly (it does not go through SetParent), and the node form posts
+// straight into it. A guard a caller has to remember is a guard that gets
+// forgotten — and the thing it prevents makes every recursive walk over the tree
+// run forever.
 func Update(db *sql.DB, n *Node) error {
 	n.Name = strings.TrimSpace(n.Name)
+	if n.ParentID != nil {
+		if err := CheckParentage(db, n.ID, *n.ParentID); err != nil {
+			return err
+		}
+	}
 	_, err := db.Exec(`UPDATE nodes SET name=$1, is_synthetic=$2, zone=$3, enabled=$4, depth=$5, node_type_id=$6, parent_id=$7, updated_at=NOW() WHERE id=$8`,
 		n.Name, n.IsSynthetic, n.Zone, n.Enabled, helpers.NullableInt(n.Depth), helpers.NullableInt64(n.NodeTypeID), helpers.NullableInt64(n.ParentID), n.ID)
 	if err != nil {
@@ -181,18 +193,65 @@ func GetByDotName(db *sql.DB, name string) (*Node, error) {
 // GetRoot walks the parent_id chain from the given node up to the
 // top-level ancestor (where parent_id IS NULL) and returns it.
 // If the node has no parent, it returns the node itself.
+//
+// Composes the same AncestorsOf walk the inheritance lookups use, and reads a
+// different row out of it: they want the NEAREST ancestor carrying rows
+// (ORDER BY depth), this wants the one with no parent. The walk's `depth` column
+// goes unread here — an unused derived column changes no row and no result,
+// which is cheaper than a second spelling of the same recursion.
 func GetRoot(db *sql.DB, nodeID int64) (*Node, error) {
-	row := db.QueryRow(fmt.Sprintf(`
-		WITH RECURSIVE ancestors AS (
-			SELECT id, parent_id FROM nodes WHERE id = $1
-			UNION ALL
-			SELECT n.id, n.parent_id FROM nodes n JOIN ancestors a ON n.id = a.parent_id
-		)
+	row := db.QueryRow(fmt.Sprintf(nodetree.AncestorsOf(1)+`
 		SELECT %s %s WHERE n.id = (SELECT id FROM ancestors WHERE parent_id IS NULL)`, SelectCols, FromClause), nodeID)
 	return ScanNode(row)
 }
 
 // List returns every node ordered by name.
+// DeleteCarrierNodeIfEmpty removes a per-robot carrier node (`_ROBOT:<vehicle>`)
+// once nothing is on it.
+//
+// The carrier nodes are created lazily as robots pick bins up, so without this
+// they only ever accumulate: one permanent row per vehicle that has ever carried
+// a stranded bin, on a table operators read. With it, a carrier node exists only
+// while a bin is actually riding that deck — which is rare and short — and the
+// node list stays a list of places.
+//
+// ONE STATEMENT, and the NOT EXISTS is the interlock. A concurrent park that has
+// created the node but not yet moved its bin onto it is the only race, and it
+// resolves safely in both orders: if the bin lands first the delete finds it and
+// declines; if the delete wins the park's move fails, logs, and the bin falls to
+// an anomaly the next sweep re-runs. Deleting a node with a bin still on it is
+// the outcome that must not happen, and cannot.
+//
+// Guarded on is_synthetic as well as the name so a hand-made physical node that
+// happens to be called `_ROBOT:something` is never removed by a sweep.
+func DeleteCarrierNodeIfEmpty(db *sql.DB, name string) error {
+	_, err := db.Exec(`DELETE FROM nodes n WHERE n.name=$1 AND n.is_synthetic
+		AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)`, name)
+	return err
+}
+
+// RetireEmptyCarrierNodes removes every carrier node that no longer holds a
+// bin, and reports how many went.
+//
+// The per-name call above only fires on the ONE path that places a carried bin
+// itself — the jack watch. A bin can also leave a deck because a recovery order
+// unloaded it, and that path ends in the ordinary arrival handling, which knows
+// nothing about carrier nodes. Sweeping by shape rather than by name covers
+// both, and any third way that appears later.
+//
+// Cheap and idempotent: carrier nodes number at most one per robot, and the
+// predicate is the same NOT EXISTS. Nothing else can match — the LIKE is
+// anchored on the carrier prefix and combined with is_synthetic.
+func RetireEmptyCarrierNodes(db *sql.DB, prefix string) (int64, error) {
+	res, err := db.Exec(`DELETE FROM nodes n WHERE n.is_synthetic AND n.name LIKE $1 || '%'
+		AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)`, prefix)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 func List(db *sql.DB) ([]*Node, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s %s ORDER BY n.name`, SelectCols, FromClause))
 	if err != nil {
@@ -213,7 +272,13 @@ func ListChildren(db *sql.DB, parentID int64) ([]*Node, error) {
 }
 
 // SetParent assigns a node to a parent.
+//
+// Guarded, and this is the reparent path: the drag-and-drop endpoint and the
+// lane-slot reorder both arrive here through Reparent. See CheckParentage.
 func SetParent(db *sql.DB, nodeID, parentID int64) error {
+	if err := CheckParentage(db, nodeID, parentID); err != nil {
+		return err
+	}
 	_, err := db.Exec(`UPDATE nodes SET parent_id=$1, updated_at=NOW() WHERE id=$2`, parentID, nodeID)
 	return err
 }

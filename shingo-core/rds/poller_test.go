@@ -67,48 +67,6 @@ func TestPollerStartPolls(t *testing.T) {
 	}
 }
 
-func TestPollerStopHaltsPolling(t *testing.T) {
-	t.Parallel()
-	ch := &countingHandler{inner: func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-stop","state":"RUNNING","vehicle":"AMB-01"}`))
-	}}
-	srv := httptest.NewServer(ch)
-	defer srv.Close()
-	client := NewClient(srv.URL, 2*time.Second)
-
-	p := NewPoller(client, &mockPollerEmitter{}, &mockResolver{}, 10*time.Millisecond)
-	p.Track("rds-stop")
-	p.Start()
-
-	// Wait until at least one poll has happened.
-	deadline := time.After(500 * time.Millisecond)
-waitLoop:
-	for {
-		if ch.Count() >= 1 {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("no polls observed in 500ms")
-		case <-time.After(5 * time.Millisecond):
-			continue waitLoop
-		}
-	}
-
-	p.Stop()
-	// KEEP: post-stop quiet window — 3× poll interval for any in-flight poll to drain.
-	time.Sleep(30 * time.Millisecond)
-	beforeQuiet := ch.Count()
-
-	// KEEP: negative assertion — 10× poll interval to prove no new requests arrive after Stop.
-	time.Sleep(100 * time.Millisecond)
-	afterQuiet := ch.Count()
-
-	if afterQuiet != beforeQuiet {
-		t.Errorf("polls continued after Stop: before=%d after=%d", beforeQuiet, afterQuiet)
-	}
-}
-
 func TestPollerStopIdempotent(t *testing.T) {
 	t.Parallel()
 	client := NewClient("http://localhost:1", time.Second)

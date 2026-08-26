@@ -9,8 +9,36 @@ import (
 )
 
 // isBinAvailableForRetrieve checks if a bin can be claimed for retrieval.
+//
+// Locked is checked here rather than only downstream. Without it this predicate
+// selected bins the claim could never take: a LOCKED bin passed selection,
+// acquired a soft reservation (Acquire has no locked predicate), then failed the
+// hard claim, whose CAS requires locked=false. The order requeued as
+// claim-failed -- a reason implying a lost race rather than "the resolver picked
+// a locked bin". Worse, that reservation is not released on confirm failure and
+// carries no expiry, so the bin then disappeared from every reader that excludes
+// bins with a pending reservation until the order terminalised. A locked bin
+// read as a material shortage.
+//
+// HasPendingReservation is deliberately NOT checked, and must not be added.
+// The field is OWNER-BLIND: it is true when ANY order holds a pending
+// reservation, including this order's own. BinUnavailableReason can consult it
+// safely because its caller (the reserve reconcile) loads its own holds first;
+// this path has no such step. Refusing here would therefore refuse an order the
+// bin IT ALREADY RESERVED whenever the resolver re-runs -- scanner replay or a
+// reconcile tick -- and the order could never source it. Another order's
+// reservation is already refused one layer down by uq_reservations_bin_active,
+// so nothing is lost by leaving it out.
+//
+// Status composes on the shared rule instead of restating it: sourceable, and
+// additionally not 'staged', because a retrieve from a group must not take a bin
+// an operator is working at. Equivalent to the previous `!= available` for every
+// declared status.
 func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string) bool {
-	if b.ClaimedBy != nil || !b.ManifestConfirmed || b.Status != domain.BinStatusAvailable {
+	if b.ClaimedBy != nil || b.Locked || !b.ManifestConfirmed {
+		return false
+	}
+	if !b.Status.Sourceable() || b.Status == domain.BinStatusStaged {
 		return false
 	}
 	if payloadCode != "" && b.PayloadCode != payloadCode {
@@ -81,18 +109,40 @@ func BinUnavailableReason(b *bins.Bin, payloadCode string) string {
 	return ""
 }
 
+// PropResolveAround is the node-property key (read on a lane's GROUP) that turns
+// on lane-aware resolve-around for storage. When "on", the store ranker prefers a
+// lane whose mouth is currently free of a conflicting hold, so an order need not
+// stall at a mode-held lane. Unset (or anything but "on") = off, and the ranking
+// is byte-identical to before. Set per group in the Core web UI node editor.
+//
+// Note: lanes carry NO depth — only their slots do (seed_core.go seeds LANE nodes
+// with depth nil), so in a lane group every lane's ranking depth is 0 and this
+// preference effectively orders all of the group's lanes (prefer compatible, then
+// emptiest). It still sorts BELOW depth in candidateBetter, which keeps it inert
+// for the direct-slot branch where depth is real. Opportunistic and never load-
+// bearing (§13.3): the mouth gate still arbitrates admission. (The store-ranker
+// depth overload is tracked as tech-debt in SHINGO_TODO.md.)
+const PropResolveAround = "resolve_around"
+
 // storageCandidate represents a potential storage slot for ranking.
 type storageCandidate struct {
 	node     *nodes.Node
 	hasMatch bool
 	count    int
 	depth    int // lane/slot depth; higher = further back. Packs deepest-first.
+	// laneCompatible is the resolve-around hint: the lane's mouth is currently
+	// free of a conflicting hold. Only ever set when the group enables the arm;
+	// false otherwise, which leaves the ranking unchanged (see candidateBetter).
+	laneCompatible bool
 }
 
 // bestStorageCandidate picks the best slot. Precedence:
 //  1. consolidate with a matching payload (hasMatch),
 //  2. pack to the back — prefer the deeper lane/slot (higher depth),
-//  3. then the emptiest lane (lowest count) as a final tiebreak.
+//  3. resolve-around: when a group enables it, prefer a mouth-compatible lane
+//     (lanes all rank at depth 0, so this is the effective cross-lane order among
+//     lanes; neutral when the arm is off),
+//  4. then the emptiest lane (lowest count) as a final tiebreak.
 //
 // Depth packing applies under LKND too: LKND vs DPTH differ only in which lane
 // wins, never in whether the deepest slot is preferred. Before, LKND dropped
@@ -117,6 +167,16 @@ func candidateBetter(c, best storageCandidate) bool {
 	}
 	if c.depth != best.depth {
 		return c.depth > best.depth // deeper (further back) wins — pack to the back
+	}
+	// Resolve-around (opportunistic; off unless the group enables it): prefer a
+	// lane whose mouth is currently compatible so the order need not stall there.
+	// It sorts BELOW depth, which keeps it inert in the direct-slot branch where
+	// depth is real; lanes themselves carry no depth (all rank at 0), so for a lane
+	// group this is the effective cross-lane order — prefer compatible, then
+	// emptiest. When the arm is off every candidate's laneCompatible is false and
+	// this comparison is a no-op, leaving the ranking byte-identical.
+	if c.laneCompatible != best.laneCompatible {
+		return c.laneCompatible // compatible lane wins the equal-depth tie
 	}
 	return c.count < best.count // emptiest as a final tiebreak
 }

@@ -17,6 +17,7 @@ package www
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"runtime"
@@ -24,6 +25,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"shingo/protocol"
+	"shingo/protocol/clock"
 )
 
 // buildInfo is stamped once at boot by the composition root. Version and
@@ -79,6 +83,44 @@ var dbWaitGauge = struct {
 
 // dbWaitWindow matches the strip's poll interval (dashboard-landing.js).
 const dbWaitWindow = 15 * time.Second
+
+// expiredDropGauge windows protocol.ExpiredDrops the same way dbWaitGauge
+// windows sql.DBStats.WaitCount, and for the same reason: the underlying number
+// is a process-lifetime total, so reporting it raw would latch the verdict
+// degraded forever after a single bad afternoon.
+var expiredDropGauge = struct {
+	mu         sync.Mutex
+	started    bool
+	baseline   int64
+	baselineAt time.Time
+	reported   int64
+}{}
+
+// expiredDropWindow is deliberately far longer than dbWaitWindow. Expired drops
+// arrive in bursts at reconnect — Springfield saw 124 in one minute and then
+// nothing for an hour — so a 15-second window would show zero almost always and
+// miss the event entirely. Five minutes is long enough to still be showing the
+// burst when someone opens the dashboard because of it.
+const expiredDropWindow = 5 * time.Minute
+
+// expiredDropsSinceBaseline reports drops in the last completed window. Same
+// contract as waitsSinceBaseline: closed-window delta so concurrent pollers
+// agree, zero on first observation so startup does not report history as a
+// symptom, and a re-baseline if the total ever goes backwards.
+func expiredDropsSinceBaseline(total int64, now time.Time) int64 {
+	expiredDropGauge.mu.Lock()
+	defer expiredDropGauge.mu.Unlock()
+	if !expiredDropGauge.started || total < expiredDropGauge.baseline {
+		expiredDropGauge.started = true
+		expiredDropGauge.baseline, expiredDropGauge.baselineAt, expiredDropGauge.reported = total, now, 0
+		return 0
+	}
+	if now.Sub(expiredDropGauge.baselineAt) >= expiredDropWindow {
+		expiredDropGauge.reported = total - expiredDropGauge.baseline
+		expiredDropGauge.baseline, expiredDropGauge.baselineAt = total, now
+	}
+	return expiredDropGauge.reported
+}
 
 // waitsSinceBaseline reports the waits recorded in the last completed window.
 //
@@ -157,6 +199,15 @@ type CoreHealth struct {
 	Goroutines       int   `json:"goroutines"`
 	GoroutineHistory []int `json:"goroutine_history"`
 
+	// ExpiredDropsRecent is envelopes discarded for expiry in the last
+	// completed window — the SECOND silent loss channel, and the larger one.
+	// Core's ingestor drops an expired envelope before any handler runs while
+	// the sender records a successful publish, so this number is the only place
+	// the loss is visible at all. ExpiredDropsTotal is the process lifetime, so
+	// a quiet window can still say how much has been lost since boot.
+	ExpiredDropsRecent int64 `json:"expired_drops_recent"`
+	ExpiredDropsTotal  int64 `json:"expired_drops_total"`
+
 	// Already computed by the reconciliation loop; surfaced rather than
 	// recomputed.
 	DeadLetters int `json:"dead_letters"`
@@ -171,6 +222,43 @@ type CoreHealth struct {
 	// sentence and the rule that produced it from drifting apart anyway.
 	CompletionAnomalyWindowHours int `json:"completion_anomaly_window_hours"`
 	SSEClients                   int `json:"sse_clients"`
+
+	// FaultedNow is every order sitting in `faulted` right now; FaultedNotice
+	// is the subset past the config threshold.
+	//
+	// Both come from the DB (ListActiveOrders), not from Poller.FaultedCount() —
+	// which has no caller, and is poller MEMORY: after a Core restart it reads
+	// zero until the next FAILED transition, because Track seeds StateCreated.
+	// A gauge that says "0 faulted" while the board shows three is worse than
+	// no gauge. Reading the DB also means the strip and the board agree by
+	// construction.
+	//
+	// ONLY FaultedNotice colours the verdict. 706 of 730 faults over 30 days
+	// recovered on their own with a median of 20 seconds; a strip that goes
+	// amber for those is amber most of the day and read by nobody.
+	FaultedNow    int `json:"faulted_now"`
+	FaultedNotice int `json:"faulted_notice"`
+	// FaultedHalfGrace is the subset past HALF the grace window — the only one
+	// that colours the verdict.
+	//
+	// The notice threshold turned out to be the wrong line for a VERDICT even
+	// though it is the right one for a gauge. At 60s it fires on any order that
+	// takes a slightly long replan, so a strip driven by it reads `degraded`
+	// several times a shift for something that resolves itself, and a verdict
+	// that cries wolf is a verdict nobody reads — which is the same argument
+	// that kept replans off the gauge, one level up.
+	//
+	// Half the grace window is the point of no return: past it the order is
+	// closer to being written off than to having started, and Core giving up on
+	// it is now the likely outcome rather than a remote one. That IS a degraded
+	// core, and it is rare enough that saying so means something.
+	FaultedHalfGrace int `json:"faulted_half_grace"`
+	// FaultHalfGraceSeconds is the threshold behind FaultedHalfGrace, carried so
+	// deriveReasons can name the duration instead of asserting a bare number.
+	FaultHalfGraceSeconds int `json:"fault_half_grace_seconds"`
+	// FaultNoticeAfterSeconds is the threshold behind FaultedNotice, carried so
+	// the sentence can name it rather than asserting a bare number of seconds.
+	FaultNoticeAfterSeconds int `json:"fault_notice_after_seconds"`
 }
 
 const (
@@ -219,12 +307,19 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 	}
 	c.Load1 = loadAverage1()
 
+	// WALL clock, same reason as the DB gauge above: a real-time window must
+	// not be fast-forwarded by the sim.
+	c.ExpiredDropsTotal = protocol.ExpiredDrops()
+	c.ExpiredDropsRecent = expiredDropsSinceBaseline(c.ExpiredDropsTotal, time.Now())
+
 	if recon, err := h.engine.Reconciliation().Summary(); err == nil && recon != nil {
 		c.DeadLetters = recon.DeadLetters
 		c.CompletionAnomalies = recon.CompletionAnomalies
 		c.CompletionAnomaliesTotal = recon.CompletionAnomaliesTotal
 		c.CompletionAnomalyWindowHours = recon.CompletionAnomalyWindowHours
 	}
+
+	c.FaultedNow, c.FaultedNotice, c.FaultedHalfGrace, c.FaultNoticeAfterSeconds, c.FaultHalfGraceSeconds = h.faultedGauge()
 
 	if !depsOK {
 		c.DepsDown = depReasons
@@ -266,6 +361,14 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 		reasons = append(reasons, fmt.Sprintf("%d %s", c.DeadLetters,
 			plural(c.DeadLetters, "dead letter", "dead letters")))
 	}
+	// Windowed like the DB waits, and named so the sentence points somewhere.
+	// An expired drop is almost always transport: the message sat in a sender's
+	// outbox past its TTL and Core threw it away on arrival.
+	if c.ExpiredDropsRecent > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d expired %s dropped in the last %s",
+			c.ExpiredDropsRecent,
+			plural(int(c.ExpiredDropsRecent), "message", "messages"), expiredDropWindow))
+	}
 	// Named, windowed, and it says which. "Core degraded" on its own sent a
 	// reader looking for a dependency outage; the condition is an order-
 	// completion anomaly and the sentence now says so, with the window
@@ -276,7 +379,78 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 			plural(c.CompletionAnomalies, "anomaly", "anomalies"),
 			formatWindow(c.CompletionAnomalyWindowHours)))
 	}
+	// HALF-GRACE faults only — not the notice count, which is the gauge's line
+	// and not the verdict's. A 20-second replan is the overwhelming majority of
+	// faults and is not a degraded core; neither is a 90-second one, which is
+	// all `notice` means at the default threshold. Past half the grace window
+	// the order is more likely to be written off than to recover, and that is
+	// worth the word.
+	if c.FaultedHalfGrace > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d %s faulted more than %s — halfway to giving up",
+			c.FaultedHalfGrace,
+			plural(c.FaultedHalfGrace, "order", "orders"),
+			FormatDuration(time.Duration(c.FaultHalfGraceSeconds)*time.Second)))
+	}
 	return reasons
+}
+
+// faultedGauge counts the orders sitting in `faulted` right now, and the subset
+// past the notice threshold.
+//
+// A read failure reports zeros. The strip is a health surface: it must not
+// itself become the outage, and a missing gauge is visible next to the
+// dependency dots that would also be down.
+func (h *Handlers) faultedGauge() (now, notice, halfGrace, thresholdS, halfGraceS int) {
+	cfg := h.engine.AppConfig()
+	noticeAfter := cfg.RDS.FaultNoticeAfter
+	// Half the grace window is the verdict's line. Derived rather than
+	// configured: it is not an independent policy, it is "the point of no
+	// return" expressed in terms of the one number that already says when Core
+	// gives up, so a plant that retunes fault_grace moves both together.
+	halfGraceAfter := cfg.RDS.FaultGrace / 2
+	thresholdS, halfGraceS = int(noticeAfter.Seconds()), int(halfGraceAfter.Seconds())
+	svc := h.engine.OrderService()
+	orders, err := svc.ListActiveOrders()
+	if err != nil {
+		log.Printf("core health: list active orders: %v", err)
+		return 0, 0, 0, thresholdS, halfGraceS
+	}
+	at := clock.Now().UTC()
+	faultedIDs := make([]int64, 0, 8)
+	for _, o := range orders {
+		if o.Status != protocol.StatusFaulted {
+			continue
+		}
+		now++
+		faultedIDs = append(faultedIDs, o.ID)
+	}
+	if len(faultedIDs) == 0 || (noticeAfter <= 0 && halfGraceAfter <= 0) {
+		return now, 0, 0, thresholdS, halfGraceS
+	}
+	// ONE query for the whole set, not one per faulted order. This runs on a
+	// 15-second poll per open dashboard, and the per-order form made it cost
+	// more the worse the plant's day was: a fleet-wide dropout faults thirty
+	// orders at once, which is exactly when nobody wants the health endpoint
+	// adding thirty queries to the pile.
+	since, err := svc.LatestOrderHistoryTimesForStatus(faultedIDs, protocol.StatusFaulted)
+	if err != nil {
+		log.Printf("core health: fault clocks for %d orders: %v", len(faultedIDs), err)
+		return now, 0, 0, thresholdS, halfGraceS
+	}
+	for _, id := range faultedIDs {
+		t, ok := since[id]
+		if !ok {
+			continue
+		}
+		elapsed := at.Sub(t)
+		if noticeAfter > 0 && elapsed >= noticeAfter {
+			notice++
+		}
+		if halfGraceAfter > 0 && elapsed >= halfGraceAfter {
+			halfGrace++
+		}
+	}
+	return now, notice, halfGrace, thresholdS, halfGraceS
 }
 
 // plural picks the singular or plural WORD for n. Two call sites were writing

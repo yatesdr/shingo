@@ -18,6 +18,7 @@ import { onSSE } from '/static/shared/utils.js';
 // ── state ──────────────────────────────────────────────────────────────
 let health = [];        // /api/inventory/monitor-totals rows
 let ledgerExceptions = {}; // /api/inventory/ledger-exceptions
+let maintained = [];    // /api/inventory/maintained-groups — the keeper's last tick
 let anomalySummary = {}; // /api/inventory/anomaly-summary (rejected/stale counts)
 let loaders = [];       // /api/loader/list loaders (editable config)
 let bins = [];          // /api/inventory rows
@@ -42,7 +43,7 @@ const STALE_BAD_MS = 30 * 24 * 3600 * 1000;
 // ── data loading ─────────────────────────────────────────────────────────
 async function loadAll(quiet) {
   try {
-    const [h, ld, inv, bk, nd, an, lx] = await Promise.all([
+    const [h, ld, inv, bk, nd, an, lx, mg] = await Promise.all([
       apiGet('/api/inventory/monitor-totals').catch(() => []),
       apiGet('/api/loader/list').catch(() => ({ loaders: [] })),
       apiGet('/api/inventory').catch(() => []),
@@ -50,8 +51,10 @@ async function loadAll(quiet) {
       apiGet('/api/nodes').catch(() => ({})),
       apiGet('/api/inventory/anomaly-summary').catch(() => ({})),
       apiGet('/api/inventory/ledger-exceptions').catch(() => ({})),
+      apiGet('/api/inventory/maintained-groups').catch(() => []),
     ]);
     ledgerExceptions = lx && typeof lx === 'object' ? lx : {};
+    maintained = Array.isArray(mg) ? mg : [];
     health = Array.isArray(h) ? h : [];
     anomalySummary = an && typeof an === 'object' ? an : {};
     loaders = (ld && ld.loaders) || [];
@@ -148,6 +151,7 @@ function renderAll() {
   renderLedgerExceptions();
   renderDeltaIntegrity();
   renderHealth();
+  renderMaintained();
   renderBuckets();
   const asof = document.getElementById('inv-asof');
   if (asof) asof.textContent = 'as of ' + new Date().toLocaleTimeString();
@@ -280,6 +284,56 @@ function renderHealth() {
   }
   body.innerHTML = rows.map(rhRowHtml).join('');
 }
+// Maintained Groups — the keeper's last tick, printed term by term.
+//
+// THE SECTION HIDES ITSELF when there is nothing to say: no maintained group,
+// or Core has not ticked yet. Both are the ordinary state on most plants, and a
+// permanent card reading "0 groups" is a card that gets scrolled past forever.
+//
+// THE CAUSE STRING IS PRINTED RAW, deliberately. The queue-cause vocabulary is
+// thirty-odd values and lives in exactly one place (dispatch/queue_cause.go); a
+// friendly-label map here would be a second copy of it, free to drift the first
+// time a cause is added. The value is greppable as-is, and the orders page is
+// where a cause gets explained.
+function renderMaintained() {
+  const sec = document.getElementById('mg');
+  const body = document.getElementById('mg-body');
+  if (!sec || !body) return;
+  if (!maintained.length) { sec.classList.add('is-hidden'); body.innerHTML = ''; return; }
+  sec.classList.remove('is-hidden');
+
+  // Shortest-covered first: a group actually short is what the operator came
+  // for, and a row whose gap is <= 0 is the keeper working.
+  const rows = maintained.slice().sort((a, b) => (b.gap || 0) - (a.gap || 0)
+    || String(a.group_node).localeCompare(String(b.group_node))
+    || String(a.bin_type_code).localeCompare(String(b.bin_type_code)));
+
+  body.innerHTML = rows.map((r) => {
+    const gap = r.gap || 0;
+    // Short is the only coloured number on the row. A gap of 0 or less is not
+    // "good" needing a green tick, it is nothing happening.
+    const gapCell = gap > 0
+      ? '<td class="rh-num mg-short" title="Core is short ' + gap
+        + ' and has asks out or is placing them">' + gap + '</td>'
+      : '<td class="rh-num text-muted" title="the level is covered">0</td>';
+    const waiting = r.oldest_ask_cause
+      ? '<span class="tnum" title="the longest-waiting ask against this level has been parked '
+        + escapeHtml(r.oldest_ask_age || '') + '">' + escapeHtml(r.oldest_ask_cause)
+        + ' &middot; ' + escapeHtml(r.oldest_ask_age || '') + '</span>'
+      : '<span class="text-muted" title="nothing parked — every ask this level made is moving">&mdash;</span>';
+    return '<tr>'
+      + '<td>' + escapeHtml(r.group_node || '') + '</td>'
+      + '<td>' + escapeHtml(r.bin_type_code || '') + '</td>'
+      + '<td class="rh-num">' + (r.want || 0) + '</td>'
+      + '<td class="rh-num">' + (r.resident || 0) + '</td>'
+      + '<td class="rh-num">' + (r.asked || 0) + '</td>'
+      + '<td class="rh-num">' + (r.coming || 0) + '</td>'
+      + gapCell
+      + '<td>' + waiting + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
 function headroom(r) { return r.on_hand - (r.threshold || 0); }
 
 function meterHtml(r) {

@@ -2,19 +2,87 @@ package www
 
 import (
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
+	"shingo/shared"
 	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/fleet"
 )
 
 func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
+	orders, err := h.listOrdersForPage(r)
+	if err != nil {
+		log.Printf("orders page: list orders: %v", err)
+	}
+
+	faultLines, noticeCount := h.faultLinesFor(orders)
+	data := map[string]any{
+		"Page":               "orders",
+		"Orders":             orders,
+		"FilterStatus":       r.URL.Query().Get("status"),
+		"QueueCodeCounts":    countQueueCodes(orders),
+		"QueueCodeLabels":    queueCodeLabels(),
+		"FaultLines":         faultLines,
+		"FaultedNoticeCount": noticeCount,
+	}
+	h.render(w, r, "orders.html", data)
+}
+
+// handleOrdersRows renders just the table rows for the current filter.
+//
+// It exists so the board can refresh without reloading the page. The rows come
+// from the same partial the page renders, so there is no second copy of the row
+// markup in JS — which is what a "build the row client-side from /api/orders/N"
+// refresh would have required.
+//
+// Same filter semantics as handleOrders, read from the same query params, so a
+// refresh cannot quietly widen or narrow what the page is showing.
+func (h *Handlers) handleOrdersRows(w http.ResponseWriter, r *http.Request) {
+	orders, err := h.listOrdersForPage(r)
+	if err != nil {
+		// 500, NOT a 200 with an empty <tbody>. This fragment REPLACES the
+		// board's rows, so answering a failed read with an empty body told the
+		// operator the plant had no orders — a DB blip rendering as "nothing is
+		// happening" on the one page whose job is to say what is. The client
+		// treats a non-2xx as "keep what you have and log it", which is the
+		// honest failure: stale rows an operator can see are worth more than
+		// fresh emptiness they cannot distinguish from the truth.
+		log.Printf("orders rows: list orders: %v", err)
+		http.Error(w, "could not list orders", http.StatusInternalServerError)
+		return
+	}
+	faultLines, noticeCount := h.faultLinesFor(orders)
+	tmpl, ok := h.tmpls["orders.html"]
+	if !ok {
+		http.Error(w, "template not found", http.StatusInternalServerError)
+		return
+	}
+	// The notice count rides a header so the page can update its chip without a
+	// second request or a JSON envelope wrapping HTML.
+	w.Header().Set("X-Faulted-Notice-Count", strconv.Itoa(noticeCount))
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+	shared.SetHTMLContentType(w)
+	if err := tmpl.ExecuteTemplate(w, "orders-rows", map[string]any{
+		"Orders":        orders,
+		"FaultLines":    faultLines,
+		"Authenticated": h.isAuthenticated(r),
+	}); err != nil {
+		log.Printf("orders rows: %v", err)
+	}
+}
+
+// listOrdersForPage is the order list behind both the page and the row
+// fragment. One function so the two cannot answer the same query differently.
+func (h *Handlers) listOrdersForPage(r *http.Request) ([]*domain.Order, error) {
 	status := r.URL.Query().Get("status")
 	limit := 100
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -22,30 +90,59 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-
 	svc := h.engine.OrderService()
-	var orders []*domain.Order
-	var err error
 	switch {
 	case status == "":
-		orders, err = svc.ListActiveOrders()
+		return svc.ListActiveOrders()
 	case status == "all":
-		orders, err = svc.ListOrders("", limit)
+		return svc.ListOrders("", limit)
 	default:
-		orders, err = svc.ListOrders(status, limit)
+		return svc.ListOrders(status, limit)
 	}
-	if err != nil {
-		log.Printf("orders page: list orders: %v", err)
-	}
+}
 
-	data := map[string]any{
-		"Page":            "orders",
-		"Orders":          orders,
-		"FilterStatus":    status,
-		"QueueCodeCounts": countQueueCodes(orders),
-		"QueueCodeLabels": queueCodeLabels(),
+// faultLinesFor builds the rendered fault line for each faulted order on the
+// page, keyed by order id, and counts the ones over the notice threshold.
+//
+// Only NOTICE faults are counted. A replan is not actionable and a chip that
+// fires on all 730 faults in a month teaches the floor to ignore the chip.
+//
+// One history read per faulted order. That is a handful on any real page: if a
+// board ever lists hundreds of faulted orders at once, the fault is the plant's,
+// not the query's.
+func (h *Handlers) faultLinesFor(orders []*domain.Order) (map[int64]template.HTML, int) {
+	lines := make(map[int64]template.HTML)
+	notice := 0
+	cfg := h.engine.AppConfig()
+	grace, noticeAfter := cfg.RDS.FaultGrace, cfg.RDS.FaultNoticeAfter
+	svc := h.engine.OrderService()
+	now := clock.Now().UTC()
+
+	for _, o := range orders {
+		if o.Status != protocol.StatusFaulted {
+			continue
+		}
+		var ref protocol.TermRef
+		var since, deadline time.Time
+		// A read failure costs the clock, not the row: the sentence still
+		// renders and simply has no duration under it.
+		if hrow, err := svc.LatestOrderHistoryForStatus(o.ID, protocol.StatusFaulted); err != nil {
+			log.Printf("orders page: fault row for order %d: %v", o.ID, err)
+		} else if hrow != nil {
+			since = hrow.CreatedAt
+			deadline = since.Add(grace)
+			if hrow.Ref != nil {
+				ref = *hrow.Ref
+			}
+		}
+		line := protocol.BuildFaultLine(ref, since, deadline, now, noticeAfter)
+		if line.Notice {
+			notice++
+		}
+		// Safe: FaultLine.HTML escapes every interpolated value.
+		lines[o.ID] = template.HTML(line.HTML())
 	}
-	h.render(w, r, "orders.html", data)
+	return lines, notice
 }
 
 // countQueueCodes tallies the active orders by their structured queue_code so the
@@ -112,6 +209,33 @@ func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {
 	h.jsonSuccess(w)
 }
 
+// apiHardReleaseOrder is W3's door: advance a dwelling order past its wait when
+// the mechanism that should have done it is wedged.
+//
+// SAME GUARDS AS ITS NEIGHBOURS, deliberately — it sits in the protected group
+// beside /orders/terminate and /robots/force-complete, which are the comparable
+// "an engineer has decided" verbs. It is not a new privilege class, and the
+// actor is recorded because a hard release of a STATION-owned wait overrides a
+// cell that may still be occupied.
+//
+// The station HMI must never offer this. The board offers Release only for waits
+// the station owns — a read now that ownership is carried, not a guess — and
+// this door exists for the other kind.
+func (h *Handlers) apiHardReleaseOrder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrderID int64 `json:"order_id"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	actor := h.getUsername(r)
+	if err := h.orchestration.HardReleaseOrder(req.OrderID, actor); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
 func (h *Handlers) apiListOrders(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	limit := 100
@@ -170,11 +294,32 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		// duplicated into JS is exactly how the old template denylists
 		// drifted from the engine.
 		CanCancel bool `json:"can_cancel"`
+		// CanHardRelease drives the Hard Release button, and is computed here for
+		// the same reason CanCancel is: the control may only appear where the
+		// handler would accept it. It is TRUE only for a wait CORE owns — a
+		// station-owned wait belongs to the station's board, and the handler
+		// refuses it too.
+		CanHardRelease bool `json:"can_hard_release"`
+		// FaultLine is the rendered fault sentence with its live-clock spans,
+		// for a faulted order. Server-rendered for the same reason CanCancel is
+		// computed here: the threshold is Core's, and the modal must say what
+		// the board says. Every value inside is escaped by FaultLine.HTML.
+		FaultLine string `json:"fault_line,omitempty"`
 	}
 
-	result := enrichedOrder{Order: order, CanCancel: canCancelStatus(order.Status)}
+	result := enrichedOrder{
+		Order:          order,
+		CanCancel:      canCancelStatus(order.Status),
+		CanHardRelease: canHardReleaseOrder(order),
+	}
 
 	result.History, _ = svc.ListOrderHistory(id)
+
+	if order.Status == protocol.StatusFaulted {
+		if lines, _ := h.faultLinesFor([]*domain.Order{order}); lines != nil {
+			result.FaultLine = string(lines[order.ID])
+		}
+	}
 
 	if order.BinID != nil {
 		result.Bin, _ = h.engine.BinService().GetBin(*order.BinID)
@@ -389,9 +534,24 @@ func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
 		OriginClass: protocol.OriginClassNoDemand,
 		Steps: []protocol.ComplexOrderStep{
 			{Action: "pickup", Node: sourceNode},
-			{Action: "dropoff", Node: stagingNode},
+			// DECLARED, because this form is the one place Core knows. The role
+			// test cannot recognise a staging node — it is a station with no
+			// parent, so isConcreteStorageDropoff rejects it and both destination
+			// gates stand down, leaving the node reserved by nothing and checked
+			// by nothing — so a second order takes it while the first robot is on
+			// its way.
+			//
+			// Everywhere else the Edge has to declare it, because the staging
+			// designation lives in the cell config Core does not have. HERE the
+			// operator has just typed it into a field named staging_node and the
+			// handler has already refused the request without one. There is no
+			// inference in this: the request says which node is the staging node.
+			{Action: "dropoff", Node: stagingNode, ExclusiveSlot: true},
 			{Action: "wait"},
 			{Action: "pickup", Node: stagingNode},
+			// NOT declared. deliveryNode is where the material is going, and on
+			// this form that is routinely a LINE node. Gating a line dropoff
+			// re-creates the deadlock 2b05dce fixed.
 			{Action: "dropoff", Node: deliveryNode},
 		},
 	}
@@ -503,6 +663,18 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 	})
 	if err != nil {
 		h.jsonError(w, err.Error(), binMoveStatus(err))
+		return
+	}
+	// A lane that would not take the move yet is not a refusal — the order is
+	// real and the scanner drives it in when the lane clears. Reporting it as
+	// `dispatched` would tell the operator a robot is coming that is not; the
+	// status and the reason together are what the screen renders.
+	if result.Queued {
+		h.jsonOK(w, map[string]any{
+			"order_id":     result.OrderID,
+			"status":       protocol.StatusQueued,
+			"queue_reason": result.QueueReason,
+		})
 		return
 	}
 	h.jsonOK(w, map[string]any{

@@ -21,12 +21,18 @@ CREATE TABLE IF NOT EXISTS nodes (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- bin_types.length_in is the third dimension, added at v90. The table carried
+-- width and height only, which left a code like "45x58x32" holding its own
+-- length in the STRING and nowhere a query could reach it. Nothing consumes any
+-- of the three — carrier fit is type identity everywhere — so this is metadata
+-- hygiene, not the start of geometry-based fitting.
 CREATE TABLE IF NOT EXISTS bin_types (
     id          BIGSERIAL PRIMARY KEY,
     code        TEXT NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT '',
     width_in    DOUBLE PRECISION NOT NULL DEFAULT 0,
     height_in   DOUBLE PRECISION NOT NULL DEFAULT 0,
+    length_in   DOUBLE PRECISION NOT NULL DEFAULT 0,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -115,6 +121,8 @@ CREATE TABLE IF NOT EXISTS orders (
     queue_cause     TEXT,
     skip_auto_confirm BOOLEAN NOT NULL DEFAULT false,
     sibling_order_uuid TEXT NOT NULL DEFAULT '',
+    key_route          TEXT NOT NULL DEFAULT '',
+    key_task           TEXT NOT NULL DEFAULT '',
     source_intent   TEXT NOT NULL DEFAULT '',
     coordinated     BOOLEAN NOT NULL DEFAULT false,
     remaining_uop   INTEGER,
@@ -125,12 +133,54 @@ CREATE TABLE IF NOT EXISTS orders (
     -- origins buried in there. Only 'orphan' is a finding.
     origin_id       UUID,
     origin_class    TEXT NOT NULL DEFAULT '',
+    -- SEALEDNESS, on the compound parent. sealed = NOT open_for_children --
+    -- "sealed" is the concept's name everywhere else (SealDigGroup, the work
+    -- order, section 10.1, section 15.6) and this is the column that carries
+    -- it, so a grep for "sealed" lands here.
+    --
+    -- Named for the EXCEPTION so the safe state is the zero value in both
+    -- languages: false here and false for a bare orders.Order literal in Go,
+    -- and both mean sealed. A "sealed BOOLEAN DEFAULT TRUE" column would have
+    -- had the DB reading safe and the Go zero value reading OPEN, so the
+    -- dangerous value would be the one you get by forgetting.
+    --
+    -- Only a compound parent means anything by it. A reshuffle that may still
+    -- gain children is not finished when its current children are all
+    -- terminal, and "all children terminal" is what two readers use to decide
+    -- a reshuffle is DONE (AdvanceCompoundOrder's success arm and
+    -- AdvanceStuckReshuffleParents). Under the fold that state is the normal
+    -- one BETWEEN moves.
+    open_for_children BOOLEAN NOT NULL DEFAULT false,
     -- When an order was judged an orphan. A timestamp rather than a fourth
     -- origin_class, so aging records WHEN a judgement was made without
     -- overwriting WHAT the judgement was. Added by migration 61 and present at
     -- both plants; it was missing from this constant, so a fresh install
     -- carried the column only after migrations ran.
-    orphan_aged_at  TIMESTAMPTZ
+    orphan_aged_at  TIMESTAMPTZ,
+    -- WHEN THE STORE-SLOT SELECTOR CHOSE THIS ORDER'S DESTINATION, at intake.
+    --
+    -- Written only by admitOrder, only when resolveSyntheticDestination actually
+    -- rewrote a group into a concrete slot. NULL means the destination was not
+    -- chosen at intake -- either it was named concretely by the sender, or the
+    -- group was full and planMove resolves it at dispatch instead.
+    --
+    -- IT EXISTS FOR ONE READER: the burial shadow's tripwire
+    -- (service/burial_shadow.go). That instrument has to tell "a placement
+    -- skipped the guard" from "the guard was consulted and the world moved
+    -- afterwards", and the only honest way to do it is to know WHEN the guard
+    -- looked. It had been comparing against the fleet-commit time instead, on
+    -- the assumption that choosing a destination and dispatching to it are the
+    -- same moment. They are not: intake resolves BEFORE the order row exists,
+    -- and the commit can follow minutes later when the order queues behind
+    -- capacity. Every claim landing in that gap was reported as a GUARD BYPASS
+    -- -- a should-be-zero tripwire accusing correct code, which is how an alarm
+    -- earns the right to be ignored.
+    --
+    -- NULLABLE, AND THE FALLBACK IS THE OLD BEHAVIOUR. An order without a stamp
+    -- is judged against fleet-commit exactly as before, so the column can be
+    -- absent, unwritten, or new without the tripwire changing its mind about
+    -- anything it can already decide.
+    destination_resolved_at TIMESTAMPTZ
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
 -- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every
@@ -142,17 +192,26 @@ CREATE TABLE IF NOT EXISTS orders (
 -- from a hand-applied index; this constant declared the plain one, so a fresh
 -- install built a database the plants did not match.
 --
--- The restore- exemption (migration 73) is TEMPORARY and has a stated expiry.
--- "restore-<parentID>-<binID>" is the synthetic restore parent's edge_uuid, and
--- it is not decoration: that parent sets no parent_order_id, so the string is
--- parsed back to rebuild the link to its complex parent. It cannot be minted
--- without deleting the link, and a re-restore of the same parent and bin
--- legitimately repeats it. When refactor-phase1 deletes the put-back subsystem
--- the format goes with it -- drop the exemption then and restore the plain
--- predicate. (Compound children USED to need an exemption too; they now mint a
--- real UUID instead, which is why only one prefix is listed here.)
+-- The restore- exemption is RETIRED. It read
+--     AND edge_uuid NOT LIKE 'restore-%'
+-- and it outlived the thing it existed for: "restore-<parentID>-<binID>" was the
+-- synthetic restore parent's edge_uuid, parsed back to rebuild the link to its
+-- complex parent, and both the format and the put-back subsystem that minted it
+-- are gone (v70 dropped pending_restocks; migration 89 dropped the exemption).
+-- UUID means UUID for every order now — compound children mint a real one.
+--
+-- IT WAS LEFT HERE, WHICH MADE THIS CONSTANT THE ONE COPY OUT OF THREE THAT
+-- STILL CLAIMED THE EXEMPTION. Migration 89's own comment says the plain
+-- predicate "is what the schema snapshot and postgres_ddl.go declare" — true of
+-- schema.snapshot.sql:1321, false here until this edit. The baseline runs ahead
+-- of the versioned migrations on every startup, so a fresh install built the
+-- exempting index from this constant and then had v89 DROP and rebuild it; the
+-- end state converged, which is exactly why nothing caught the disagreement.
+-- What it cost was the constant's standing as the answer to "what shape is this
+-- index" -- two live declarations of one index, and the next reader believing
+-- whichever they opened first.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid)
-    WHERE edge_uuid <> '' AND edge_uuid NOT LIKE 'restore-%';
+    WHERE edge_uuid <> '';
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_vendor ON orders(vendor_order_id);
 CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node);
@@ -408,15 +467,6 @@ CREATE TABLE IF NOT EXISTS demands (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS production_log (
-    id          BIGSERIAL PRIMARY KEY,
-    cat_id      TEXT NOT NULL,
-    station_id  TEXT NOT NULL,
-    quantity    BIGINT NOT NULL,
-    reported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_production_log_cat ON production_log(cat_id);
-
 CREATE TABLE IF NOT EXISTS test_commands (
     id              BIGSERIAL PRIMARY KEY,
     command_type    TEXT NOT NULL,
@@ -456,18 +506,27 @@ CREATE TABLE IF NOT EXISTS node_payloads (
     PRIMARY KEY (node_id, payload_id)
 );
 
+-- node_properties.updated_at and node_bin_types.created_at arrived at v90.
+-- Both tables are written by the group settings modal, and neither row could say
+-- when it was last touched: the property UPSERT changes the value in place, so a
+-- created_at-only row reads as untouched forever, and node_bin_types carried no
+-- timestamp at all. The audit_log says who and what; these say when the ROW
+-- moved, which is the half SPR Finding 3 could not prove from the schema.
+-- (No backticks in this file: the whole DDL is one Go raw string literal.)
 CREATE TABLE IF NOT EXISTS node_properties (
     id         BIGSERIAL PRIMARY KEY,
     node_id    BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     key        TEXT NOT NULL,
     value      TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (node_id, key)
 );
 
 CREATE TABLE IF NOT EXISTS node_bin_types (
     node_id     BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     bin_type_id BIGINT NOT NULL REFERENCES bin_types(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (node_id, bin_type_id)
 );
 

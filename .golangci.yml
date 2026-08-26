@@ -44,6 +44,7 @@ linters:
   enable:
     - depguard
     - forbidigo
+    - funlen
     - govet
     - staticcheck
     - unused
@@ -61,6 +62,28 @@ linters:
         - all
         - -ST1*
         - -QF1*
+    funlen:
+      # STATEMENTS, NOT LINES — and the distinction is the whole point.
+      #
+      # This repo runs about 0.65 comment lines per code line, and dispatch/
+      # runs far higher; compound.go is 2.4:1. A line-based ceiling would
+      # therefore fire mostly on prose, and the cheapest way to clear it would
+      # be to delete the incident narrative that makes these functions
+      # maintainable. That is an actively harmful incentive, so lines is off.
+      #
+      # Statements also auto-exempt the flat registries, which is the right
+      # answer for a different reason: shingo-edge/store/migrations.go's
+      # migrationList is one statement across ~931 lines, and both NewRouter
+      # functions and wireEventHandlers pass comfortably. A registry read
+      # top-to-bottom is the point of a registry; splitting one to satisfy a
+      # linter makes it worse.
+      #
+      # 60 was measured, not guessed: at this threshold the repo has 39
+      # production offenders (29 core, 10 edge, 0 in protocol/shared/
+      # integration), which is a baseline someone can actually work down.
+      lines: -1
+      statements: 60
+      ignore-comments: true
     forbidigo:
       # State-machine bypass guard (Stage 10 follow-up). Direct calls to
       # the order-status atomic writes must go through
@@ -101,6 +124,27 @@ linters:
           msg: "Direct FindSourceBinFIFO calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
         - pattern: 'db\.FindEmptyCompatibleBin'
           msg: "Direct FindEmptyCompatibleBin(InGroup) calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go)."
+        # The TYPED empty finders, added with maintained groups (MG2). Same guard,
+        # same reason, and it matters more here than for the payload-matched
+        # finders: a maintained group's asks are empty pulls, and an empty pulled
+        # outside the seam skips the group scoping and the tier order that decide
+        # WHICH empty — which is the drift that produced wrong-source-on-replay
+        # for the untyped finders. `db\.FindEmptyBinOfType` prefix-matches
+        # FindEmptyBinOfTypeInGroup, so one pattern covers both.
+        #
+        # IT MUST NOT CATCH THE COUNT. db.CountEmptyBinsOfTypeInGroup is the level
+        # keeper's `resident` term — a read of how many are standing there, not a
+        # selection of which one to move — and it is REQUIRED to share a WHERE
+        # spelling with the finder it mirrors (bins.EmptyOfTypeInGroupWhere), which
+        # is the opposite of bypassing the seam. The pattern does not match it:
+        # the count's name has no "Find" in it. That is load-bearing, not luck, and
+        # renaming either one has to keep it true.
+        #
+        # source_finder.go IS the seam and calls both directly; it is already
+        # carved out by exclusions.rules #7, which keys on this message's text —
+        # so the wording below must keep saying "bypass the shared source seam".
+        - pattern: 'db\.FindEmptyBinOfType'
+          msg: "Direct FindEmptyBinOfType(InGroup) calls bypass the shared source seam. Route through dispatch.SourceFinder.FindSource (source_finder.go). The COUNT of the same population (db.CountEmptyBinsOfTypeInGroup) is a read, not a selection, and is not covered by this guard."
         # Unclaim-inverse guard. Clearing bins.claimed_by WITHOUT releasing
         # the coupled reservation orphans a confirmed reservation and bricks the bin
         # via uq_reservations_bin_active — the exact failure the coupled release
@@ -183,6 +227,32 @@ linters:
             - pkg: "shingoedge/store"
               desc: "www handlers must use a service interface, not *store.DB directly"
 
+        # ── dispatch sub-package isolation ────────────────────────────────
+        #
+        # dispatch/ is being decomposed outward: binresolver, binsource and eta
+        # were carved OUT of it. A sub-package importing the parent back would
+        # re-close that seam and make the extraction cosmetic, so the direction
+        # is enforced rather than remembered. Verified clean when this rule
+        # landed (2026-08-19) — it is a regression guard, not a migration.
+        #
+        # THE ALLOW ENTRY IS LOAD-BEARING, not decoration. depguard matches deny
+        # entries by PREFIX, so `pkg: shingocore/dispatch` on its own also
+        # matches shingocore/dispatch/binsource, and binresolver's entirely
+        # legitimate import of binsource fails. Confirmed by running it. The
+        # longer allow prefix wins for sibling imports and leaves the bare
+        # parent import denied; both halves were verified against a probe
+        # back-import before this landed. Do not delete the allow entry as
+        # redundant.
+        dispatch-sub-pkg-isolation:
+          list-mode: lax
+          files:
+            - "**/shingo-core/dispatch/*/**"
+          allow:
+            - "shingocore/dispatch/"
+          deny:
+            - pkg: "shingocore/dispatch"
+              desc: "dispatch sub-packages must not import the parent back — the extraction direction is out of dispatch/, not into it"
+
         # ── Phase 6.0c: store sub-package isolation ──────────────────────
         #
         # Each store sub-package owns one aggregate. Cross-aggregate
@@ -231,6 +301,213 @@ linters:
 
   exclusions:
     rules:
+
+      # ---- funlen: tests are out of scope (permanent) ----------------------
+      #
+      # A table-driven test IS a long list of statements; that is the shape
+      # working as intended, and the same reasoning as the blanket forbidigo
+      # and depguard carveouts below. The ceiling is a production guardrail.
+      - path: ".*_test\\.go"
+        linters:
+          - funlen
+
+      # ---- funlen baseline (2026-08-19) ------------------------------------
+      #
+      # 39 production functions exceeded 60 statements on the day funlen was
+      # enabled (40 entries: the D6 cut split one of them in two). They are listed rather than the threshold being raised to
+      # clear them, because a threshold set above the worst offender guards
+      # nothing: the point of the ceiling is that the NEXT one fails CI.
+      #
+      # Each entry is pinned to a function NAME as well as a path, so a second
+      # oversized function appearing in an excluded file is still caught.
+      #
+      # Two classes:
+      #   permanent — the shape is correct and a split would make it worse
+      #               (composition roots, flat registries, fixture builders), or
+      #               an owner decision fences the function. Names the decision.
+      #   pinnable  — should come off this list, and NAMES THE TEST that is its
+      #               exit condition. Remove the entry in the same commit that
+      #               shrinks the function; do not raise the threshold and do not
+      #               delete comments to fit.
+      #
+      # "pinnable", not "transitional". Transitional read as a todo list and was
+      # treated as one — an invitation to extract on judgement, with the pin
+      # left implicit. An entry now says what evidence its extraction has to be
+      # done behind, and an entry whose pin DOES NOT EXIST says that too, which
+      # is the honest form of "not yet".
+      #
+      # ── THE THREE RATCHET RULES ──────────────────────────────────────────
+      #
+      # 1. An extraction that MOVES A FUNCTION BODY requires a behaviour-pinning
+      #    test in the SAME commit. BuildView got a golden and reconcilePLC got
+      #    nothing, and that is the entire difference between the two outcomes:
+      #    one refactor was safe and the other silently killed PLC counting at
+      #    every plant. A body move with no pin is not a refactor, it is a
+      #    rewrite nobody checked.
+      #
+      # 2. A BEHAVIOUR CHANGE inside a funlen-extraction commit must be called
+      #    out in the commit SUBJECT, not only in the body. A reviewer scanning
+      #    subjects for "what changed behaviour this round" must not have to
+      #    read every extraction commit to find one.
+      #
+      # 3. An entry may be retired only by a behaviour-preserving diff that does
+      #    not push ANY OTHER function in the same file over budget. Extracting
+      #    from one function and spending the slack on its neighbour leaves the
+      #    file no better and the next toucher with a red gate they did not
+      #    cause.
+      #
+      # The NAME pinning below stays: the exclusion names the function, so a
+      # rename or a move fails the gate rather than silently transferring the
+      # exemption to whatever now sits at that path.
+      # main: permanent
+      # Composition root. The wiring order IS the program; splitting it into
+      # helpers moves the order somewhere you have to reassemble by hand.
+      - path: "shingo-core/cmd/shingocore/main\\.go"
+        text: "Function 'main' has too many statements"
+        linters:
+          - funlen
+      # main: permanent
+      # Composition root, same reason as core's.
+      - path: "shingo-edge/cmd/shingoedge/main\\.go"
+        text: "Function 'main' has too many statements"
+        linters:
+          - funlen
+      # setupKafkaSubscribers: permanent
+      # A flat subscriber registry. Registration order is delivery order, so this
+      # reads top-to-bottom on purpose.
+      - path: "shingo-edge/cmd/shingoedge/main\\.go"
+        text: "Function 'setupKafkaSubscribers' has too many statements"
+        linters:
+          - funlen
+      # migrate: permanent
+      # The migration driver. Append-only by construction and it grows one step
+      # per schema change; that growth is the design, not decay.
+      - path: "shingo-edge/store/migrations\\.go"
+        text: "Function 'migrate' has too many statements"
+        linters:
+          - funlen
+      # seedCore: permanent
+      # Dev-only fixture builder: a flat sequence of INSERTs describing one plant.
+      - path: "shingo-core/cmd/seeddev/seed_core\\.go"
+        text: "Function 'seedCore' has too many statements"
+        linters:
+          - funlen
+      # seedBinLoaders: permanent
+      # Dev-only fixture builder, as above.
+      - path: "shingo-core/cmd/seeddev/seed_core\\.go"
+        text: "Function 'seedBinLoaders' has too many statements"
+        linters:
+          - funlen
+      # seedEdgeDB: permanent
+      # Dev-only fixture builder, as above.
+      - path: "shingo-core/cmd/seeddev/seed_edge\\.go"
+        text: "Function 'seedEdgeDB' has too many statements"
+        linters:
+          - funlen
+      # SetupCompound: permanent
+      # Test-fixture builder that lives outside _test.go so several packages can
+      # share it. Excluded for the same reason the blanket _test.go rule exists.
+      - path: "shingo-core/internal/testdb/compound\\.go"
+        text: "Function 'SetupCompound' has too many statements"
+        linters:
+          - funlen
+      # Validate: permanent
+      # A flat validation registry: one independent check per rule, each a couple
+      # of statements. Splitting it scatters the rule set without simplifying any
+      # rule.
+      - path: "shingo-core/plantspec/validate\\.go"
+        text: "Function 'Validate' has too many statements"
+        linters:
+          - funlen
+      # FindSourceForNeed: permanent (owner decision D7)
+      # Owner decision D7: whether tier extraction reduces or CONCENTRATES the
+      # fall-through risk is a study question, and no code moves before it
+      # reports. Do not clear this entry by refactoring on your own judgement.
+      - path: "shingo-core/dispatch/source_finder\\.go"
+        text: "Function 'FindSourceForNeed' has too many statements"
+        linters:
+          - funlen
+      # AdvanceCompoundOrder: permanent until the north-star unification (owner decision D6)
+      # Owner decision D6 funds the chapter-close extraction only; the dispatch
+      # half waits for the north-star unification. That cut landed on
+      # 2026-08-19 and took this function from 136 statements to 74. The rest
+      # is the dispatch half and its four recursion sites, which are deferred
+      # by D6 — do not clear this entry by refactoring on your own judgement.
+      - path: "shingo-core/dispatch/compound\\.go"
+        text: "Function 'AdvanceCompoundOrder' has too many statements"
+        linters:
+          - funlen
+      # computeCarriers: pinnable
+      # Exit condition: cmd/simcalc/carriers_test.go — TestCarriers_APoolCanStarve...
+      # and TestCarriers_PoolsAreKeyedOnTheSourceNotTheZoneOfTheBin pin the pool
+      # arithmetic. Extract behind those.
+      - path: "shingo-core/cmd/simcalc/carriers\\.go"
+        text: "Function 'computeCarriers' has too many statements"
+        linters:
+          - funlen
+      # shuffleSlotsFrom: pinnable
+      # Exit condition: dispatch/bubble_and_standoff_docker_test.go and
+      # dig_dwell_docker_test.go drive this through the reshuffle it decides.
+      # Both are docker-tagged, so run `gate.sh docker` before and after.
+      - path: "shingo-core/dispatch/reshuffle\\.go"
+        text: "Function 'shuffleSlotsFrom' has too many statements"
+        linters:
+          - funlen
+      # SourceabilityPage: pinnable
+      # Exit condition: TestSourceabilityPage_GridClaimsAndQueue.
+      - path: "shingo-core/engine/sourceability_page\\.go"
+        text: "Function 'SourceabilityPage' has too many statements"
+        linters:
+          - funlen
+      # handleVendorStatusChange: pinnable
+      # Exit condition: engine/wiring_vendor_robot_test.go — the TestVendorStatus_*
+      # family pins the robot-id assignment cases this function decides.
+      - path: "shingo-core/engine/wiring_vendor_status\\.go"
+        text: "Function 'handleVendorStatusChange' has too many statements"
+        linters:
+          - funlen
+      # tryFulfill: pinnable
+      # Exit condition: TestScanner_TryFulfill_* in fulfillment/.
+      - path: "shingo-core/fulfillment/scanner\\.go"
+        text: "Function 'tryFulfill' has too many statements"
+        linters:
+          - funlen
+      # syncOrClearForReleased: pinnable
+      # Exit condition: TestBinManifestService_SyncOrClearForReleased_*.
+      - path: "shingo-core/service/bin_manifest\\.go"
+        text: "Function 'syncOrClearForReleased' has too many statements"
+        linters:
+          - funlen
+      # LocalizationBoardAt: pinnable — NO PIN EXISTS YET, and writing one IS the
+      # exit condition. Nothing in service/ characterizes this function's output;
+      # extracting from it today would be a body move with no behavioural
+      # evidence, which ratchet rule 1 forbids.
+      - path: "shingo-core/service/localization_board\\.go"
+        text: "Function 'LocalizationBoardAt' has too many statements"
+        linters:
+          - funlen
+      # ApplyBinUOPDelta: pinnable
+      # Exit condition: TestApplyBinUOPDelta_* — the capture-reduction and
+      # clear-for-reuse cases.
+      - path: "shingo-core/uop/applier\\.go"
+        text: "Function 'ApplyBinUOPDelta' has too many statements"
+        linters:
+          - funlen
+      # apiReparentNode: pinnable
+      # Exit condition: TestApiReparentNode_NonForceBlocked and its siblings.
+      - path: "shingo-core/www/handlers_nodegroup\\.go"
+        text: "Function 'apiReparentNode' has too many statements"
+        linters:
+          - funlen
+      # apiTestCommandSubmit: pinnable — NO PIN EXISTS YET, and writing one IS
+      # the exit condition. This is an operator-facing submit path with no
+      # characterization test; see LocalizationBoardAt above for why that blocks
+      # the extraction rather than merely making it riskier.
+      - path: "shingo-core/www/handlers_test_orders_commands\\.go"
+        text: "Function 'apiTestCommandSubmit' has too many statements"
+        linters:
+          - funlen
+
       # ---- Structural exemptions (permanent) --------------------------------
       # engine_iface.go is the service-interface definition itself; it must
       # reference store types to define the contract. Test files need store

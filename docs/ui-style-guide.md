@@ -56,24 +56,35 @@ The one rule the HMI *is* already held to is the no-emoji policy: Edge's
 
 ### Shared module structure
 
-**Decided: third Go module + Go workspace.**
+**Decided: its own Go module + Go workspace.**
+
+`shared/` was the third module when this section was written and the UI assets
+below were all of it. The workspace now lists five (`protocol`, `shared`,
+`shingo-core`, `shingo-edge`, `integration`), and `shared/` has since taken on
+cross-surface answers and cross-module test fixtures alongside the assets. It is
+still not the home for shared infrastructure — that is `protocol/`. See
+[`shared-layer-promotion.md`](shared-layer-promotion.md).
 
 ```
 shingo/                          ← repo root
-├── go.work                      ← workspace file, lists all three modules
+├── go.work                      ← workspace file, lists all five modules
+├── protocol/
+│   └── go.mod                   ← wire protocol + shared infrastructure
 ├── shingo-core/
 │   └── go.mod                   ← imports shingo/shared
 ├── shingo-edge/
 │   └── go.mod                   ← imports shingo/shared
-└── shared/                      ← new third Go module
+└── shared/
     ├── go.mod
     ├── static.go                ← go:embed *.css *.js *.html
     ├── tokens.css               ← semantic design tokens
     ├── status-classes.css       ← per-status badge classes
-    └── utils.js                 ← h, el, escapeHtml, api, modal, confirm, toast, SSE factory
+    ├── utils.js                 ← h, el, escapeHtml, api, modal, confirm, toast, SSE factory
+    ├── windoworder/             ← a cross-surface answer, not an asset
+    └── loadervectors/           ← cross-module fixtures pinning Core against Edge
 ```
 
-The `go.work` file at the repo root declares all three modules as a
+The `go.work` file at the repo root declares all of them as a
 workspace. Local development picks up edits to `shared/` immediately; no
 version bumps or `replace` directives needed during normal work. Plant
 deploys (`git pull` + service restart + rebuild) work transparently — the
@@ -104,10 +115,17 @@ Template references use the prefixed path:
 ### Adding to shared/
 
 Promote a file to `shared/` only when **both** Core and Edge need it
-identically. Don't preemptively populate. Concrete current candidates
-(known to belong in shared based on the consistency refactor): tokens,
-status-classes CSS, the JS utility module. Add others as a real shared
-need surfaces.
+identically, and only when a disagreement between them would actually be a
+defect. Don't preemptively populate. The full criterion — all four clauses, and
+the rule that the drift guard ships in the promoting commit — is in
+[`docs/shared-layer-promotion.md`](shared-layer-promotion.md); read it before
+promoting anything.
+
+For UI specifically the candidates are tokens, status-classes CSS and the JS
+utility module. Note that `shared/` is no longer UI-only: it also holds
+cross-surface answers (`windoworder`) and cross-module fixtures
+(`loadervectors`). Shared *infrastructure* does not go here — that is
+`protocol/`.
 
 ## Design tokens
 
@@ -771,7 +789,7 @@ digit beyond what the input supports is an assertion the data cannot back, made
 by a formatter that has no idea what the data is.
 
 Work it through on the number Phase 6 actually ships. Cycle time (5.10) is a
-difference between two `bin_uop_audit` timestamps on a stream that is
+difference between two `bin_uop_ledger` timestamps on a stream that is
 deliberately lossy in known ways — a stale-epoch drop erases the interval it
 lands in, and the drops are episodic rather than steady: zero on most days,
 then a burst past 3,000 in one — stamped by service clocks not synchronised to
@@ -806,7 +824,7 @@ that is much harder to catch, because the number involved is not wrong.
 
 `1,779` was a true count: stale-epoch drops at Springfield in the 24 hours to
 2026-07-25T05:18Z, read off a `journalctl` fingerprint and later reproduced to
-the digit by querying `bin_uop_audit` over the same window. Nobody rounded it,
+the digit by querying `bin_uop_ledger` over the same window. Nobody rounded it,
 nobody estimated it, and it survived re-measurement in a different tool. It then
 misled every document that carried it — and both reasons are about what failed
 to travel *with* the number, not about the number.
@@ -1892,7 +1910,7 @@ SHA inside the passage about getting the record wrong; corrected here.)
 
 **Raw `UOP` counts are meaningless here.** Most occurrences in the tree are
 supposed to be uppercase — `{{.UOPRemaining}}`, `UOPCapacity`, `remainingUOP`,
-`lsUOP`, `data-uop`, `bin_uop_audit`. An unfiltered grep returns ~199 and reads
+`lsUOP`, `data-uop`, `bin_uop_ledger`. An unfiltered grep returns ~199 and reads
 as catastrophic drift; a differently-scoped one returned "34 vs 7" and then
 "44 vs 30", which reads as a rule actively decaying. **Neither number described
 a real problem**, and the second was used to justify re-opening an item that had

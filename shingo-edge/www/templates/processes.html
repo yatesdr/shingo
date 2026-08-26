@@ -132,8 +132,8 @@
                             <tr>
                                 <th>Name</th>
                                 <th>Description</th>
-                                <th style="width:1%">Status</th>
-                                <th style="width:1%">Actions</th>
+                                <th class="col-shrink">Status</th>
+                                <th class="col-shrink">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -141,10 +141,10 @@
                             <tr>
                                 <td>{{.Name}}</td>
                                 <td>{{.Description}}</td>
-                                <td style="white-space:nowrap">
+                                <td class="nowrap">
                                     {{if $.ActiveProcess.ActiveStyleID}}{{if eq .ID (deref $.ActiveProcess.ActiveStyleID)}}<span class="badge badge-info">Active</span>{{end}}{{end}}
                                 </td>
-                                <td style="white-space:nowrap">
+                                <td class="nowrap">
                                     {{if $.ActiveProcess.ActiveStyleID}}{{if eq .ID (deref $.ActiveProcess.ActiveStyleID)}}{{else}}<button class="btn btn-sm" data-action="setActiveStyle:{{.ID}}">Set Active</button>{{end}}{{else}}<button class="btn btn-sm btn-primary" data-action="setActiveStyle:{{.ID}}">Set Active</button>{{end}}
                                     <button class="btn btn-sm" data-action="editStyle" data-style-json="{{json .}}">Edit</button>
                                     <button class="btn btn-sm" data-action="openCloneStyleModal" data-style-json="{{json .}}">Clone</button>
@@ -261,6 +261,11 @@
 
 <script>
 window.claimedByStation = {{json .ClaimedByStation}};
+// The node catalog the claim editor's pickers are built from: every core node
+// with its class (NGRP = group, LANE, STOR, or plain), plus which names are
+// line positions on the active process. See buildNodePickers.
+window.coreNodeCatalog = {{json .CoreNodes}};
+window.processNodeNames = {{json .ProcessNodeNames}};
 </script>
 
 <div class="modal-overlay" id="process-modal">
@@ -413,6 +418,8 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         <option value="">-- Select a node --</option>
                         {{range $name, $info := .CoreNodes}}<option value="{{$name}}" data-type="{{$info.NodeType}}">{{$name}}{{if eq $info.NodeType "NGRP"}} (group){{end}}</option>{{end}}
                     </select>
+                    <div class="field-error-msg" id="claims-err-core-node-name" hidden></div>
+                    <div class="field-notice-msg" id="claims-notice-core-node-name" hidden></div>
                 </div>
                 <div class="form-group form-group--nogap">
                     <label>Role</label>
@@ -420,6 +427,11 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         <option value="consume">Consume</option>
                         <option value="produce">Produce</option>
                     </select>
+                </div>
+                <div class="form-group form-group--nogap" id="claims-add-sequence-group">
+                    <label>Board Order <span class="label-aside">(low first)</span></label>
+                    <input type="number" id="claims-add-sequence" class="form-input" value="0" min="0">
+                    <div class="field-error-msg" id="claims-err-sequence" hidden></div>
                 </div>
                 <div class="form-group form-group--nogap" id="claims-add-swap-group">
                     <label>Swap Mode</label>
@@ -430,8 +442,22 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         <option value="two_robot">2-Robot Swap</option>
                         <option value="two_robot_press_index">2-Robot Press Index Swap</option>
                     </select>
+                    <div class="field-error-msg" id="claims-err-swap-mode" hidden></div>
                 </div>
             </div>
+            <div class="field-error-msg" id="claims-err-form" hidden></div>
+            <!-- The node pickers below are filtered to what each field can
+                 actually use, and ranked into optgroups for what it likely
+                 wants. A plant's naming can defeat any heuristic, so this
+                 reveals everything. Deliberately not persisted. -->
+            <label class="check-row mb-2 text-muted-xs">
+                <input type="checkbox" id="claims-show-all-nodes" data-action-change="toggleShowAllNodes">
+                <span>Show every node in the pickers below</span>
+            </label>
+            <!-- Fields the selected mode does not use. Populated live by
+                 renderClaimForm so the operator sees what a mode change will
+                 discard BEFORE saving, rather than finding it gone after. -->
+            <div class="field-notice-msg" id="claims-mode-drop-note" hidden></div>
             <div class="form-group" id="claims-add-payload-group">
                 <label>Payload</label>
                 <div class="flex gap-1 items-center">
@@ -440,6 +466,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                     </select>
                     <button class="btn btn-sm" type="button" data-action="syncPayloadCatalog" title="Sync payload catalog from core">Sync</button>
                 </div>
+                <div class="field-error-msg" id="claims-err-payload-code" hidden></div>
             </div>
             <div class="form-group" id="claims-add-allowed-group" hidden>
                 <label>Allowed Payloads</label>
@@ -447,21 +474,28 @@ window.claimedByStation = {{json .ClaimedByStation}};
                 <div id="claims-allowed-picker" style="display:flex;flex-direction:column;gap:0.3rem;max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:0.5rem"></div>
                 <button class="btn btn-sm mt-2" type="button" data-action="syncPayloadCatalog" title="Sync payload catalog from core">Sync Catalog</button>
             </div>
-            <div class="form-grid-2 mb-3">
+            <!-- Loader replenishment (operator-driven vs auto/UoP-threshold) and the
+                 dedicated-position layout are configured on the Core loader setup screen
+                 (Nodes → Create/Edit Loader), not per style here. -->
+            <div class="form-grid-3 mb-3">
                 <div class="form-group form-group--nogap" id="claims-add-capacity-group">
                     <label>UoP per Bin</label>
-                    <input type="number" id="claims-add-capacity" class="form-input" value="0" readonly style="background:var(--bg)">
+                    <input type="number" id="claims-add-capacity" class="form-input input-readonly" value="0" readonly>
                 </div>
                 <div class="form-group form-group--nogap" id="claims-add-reorder-group">
                     <label>Reorder At</label>
                     <input type="number" id="claims-add-reorder" class="form-input" value="0">
                 </div>
+                <div id="claims-add-lineside-group" class="form-group form-group--nogap">
+                    <label>Lineside Soft Cap <span class="label-aside">(per-part; 0 = off)</span></label>
+                    <input type="number" id="claims-add-lineside-soft" class="form-input" value="0" min="0">
+                </div>
             </div>
-            <div id="claims-add-lineside-group" class="form-group mb-3">
-                <label>Lineside Soft Cap <span class="text-muted-xs">(per-part; 0 = off)</span></label>
-                <input type="number" id="claims-add-lineside-soft" class="form-input" value="0" min="0">
-                <div class="field-help--inline">When set, the release prompt warns if an entered qty exceeds 2× this value. Catches typos; never blocks release.</div>
-            </div>
+            <label class="check-row mb-2" id="claims-add-auto-reorder-row">
+                <input type="checkbox" id="claims-add-auto-reorder">
+                <span>Auto-reorder <span class="label-aside">request material automatically when the count falls to the reorder point</span></span>
+            </label>
+            <div class="field-help--inline mb-3" id="claims-lineside-help">Lineside soft cap: the release prompt warns if an entered qty exceeds 2× this value. Catches typos; never blocks release.</div>
 
             <fieldset id="claims-staging-fieldset" class="fieldset-card mb-0">
                 <legend class="fieldset-legend">Staging</legend>
@@ -473,6 +507,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                             {{range $name, $_ := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
                         </select>
                         <div class="field-help--inline">New material stages here before delivery</div>
+                        <div class="field-error-msg" id="claims-err-inbound-staging" hidden></div>
                     </div>
                     <div class="form-group form-group--nogap">
                         <label>Outbound</label>
@@ -481,11 +516,16 @@ window.claimedByStation = {{json .ClaimedByStation}};
                             {{range $name, $_ := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
                         </select>
                         <div class="field-help--inline">Old material parks here after removal</div>
+                        <div class="field-error-msg" id="claims-err-outbound-staging" hidden></div>
                     </div>
                 </div>
                 <div id="claims-staging-warning" class="text-muted-xs mt-2" style="color:var(--warning, #c59000);display:none">
                     1-Robot requires both inbound and outbound staging. 2-Robot requires inbound staging.
                 </div>
+                <label class="check-row mt-2" id="claims-add-keep-staged-row">
+                    <input type="checkbox" id="claims-add-keep-staged">
+                    <span>Keep staged <span class="label-aside">leave the incoming bin on the staging node instead of delivering it; the operator releases it</span></span>
+                </label>
             </fieldset>
 
             <fieldset id="claims-source-fieldset" class="fieldset-card--stacked">
@@ -498,6 +538,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                             <option value="">-- None --</option>
                             {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}{{if eq $info.NodeType "NGRP"}} (group){{end}}</option>{{end}}
                         </select>
+                        <div class="field-error-msg" id="claims-err-inbound-source" hidden></div>
                     </div>
                     <div class="form-group form-group--nogap" id="claims-outbound-destination-group">
                         <label>Outbound Destination</label>
@@ -505,44 +546,108 @@ window.claimedByStation = {{json .ClaimedByStation}};
                             <option value="">-- None --</option>
                             {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}{{if eq $info.NodeType "NGRP"}} (group){{end}}</option>{{end}}
                         </select>
+                        <div class="field-error-msg" id="claims-err-outbound-destination" hidden></div>
                     </div>
                 </div>
             </fieldset>
 
-            <fieldset id="claims-changeover-fieldset" class="fieldset-card--stacked">
-                <legend class="fieldset-legend">Changeover</legend>
+            <details id="claims-changeover-fieldset" class="collapse-card">
+                <summary>Changeover <span class="collapse-hint" id="claims-changeover-hint"></span></summary>
                 <label class="check-row">
                     <input type="checkbox" id="claims-add-evacuate">
                     <span>Evacuate on changeover (even if same payload)</span>
                 </label>
-            </fieldset>
+                <div id="claims-add-tooling-relevance-row" class="mt-3">
+                    <div class="field-help">Which of this cell's nodes hold bins that are in the way of a setup. Marked nodes are cleared before the humans can work; unmarked nodes stay put — the stored value is the node name itself.</div>
+                    <label class="check-row" id="claims-position-front-row">
+                        <input type="checkbox" class="claims-evac-position" data-slot="front" value="">
+                        <span>Front position <span class="label-aside" id="claims-position-front-node"></span></span>
+                    </label>
+                    <label class="check-row" id="claims-position-paired-row">
+                        <input type="checkbox" class="claims-evac-position" data-slot="paired" value="">
+                        <span>Back position <span class="label-aside" id="claims-position-paired-node"></span></span>
+                    </label>
+                    <label class="check-row" id="claims-position-second-row">
+                        <input type="checkbox" class="claims-evac-position" data-slot="second" value="">
+                        <span>Third position <span class="label-aside" id="claims-position-second-node"></span></span>
+                    </label>
+                    <div class="field-error-msg" id="claims-err-changeover-evac-nodes" hidden></div>
+                </div>
+                <div class="form-group form-group--nogap mt-3" id="claims-add-evac-destination-group">
+                    <label>Tooling Evac Destination <span class="label-aside">(blank = Outbound Destination)</span></label>
+                    <select id="claims-add-evac-destination" class="form-input">
+                        <option value="">-- Use Outbound Destination --</option>
+                        {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}{{if eq $info.NodeType "NGRP"}} (group){{end}}</option>{{end}}
+                    </select>
+                    <div class="field-help--inline">Where cleared bins go when this cell wants them somewhere other than its ordinary outbound destination. A node or a group — an unloader is reached by naming a group it projects over.</div>
+                </div>
+                <div class="form-group form-group--nogap mt-3" id="claims-add-carryover-group">
+                    <label>Carried-over parts <span class="label-aside">(same part in both styles)</span></label>
+                    <select id="claims-add-carryover" class="form-input">
+                        <option value="replace">Replace — clear it and bring a fresh carrier</option>
+                        <option value="keep_lineside">Keep at line — the bin does not move</option>
+                        <option value="outbound_staging">Outbound staging — the same bin hops out and comes back</option>
+                    </select>
+                    <div class="field-help--inline">Only applies when a marked position runs the SAME part in both styles. When the part changes, the bin has to go whatever this says.</div>
+                    <div class="field-error-msg" id="claims-err-changeover-carryover-disposition" hidden></div>
+                </div>
+            </details>
 
             <fieldset id="claims-ab-fieldset" class="fieldset-card--stacked" hidden>
                 <legend id="claims-ab-legend" class="fieldset-legend">A/B Node Cycling</legend>
                 <div id="claims-ab-help" class="field-help">Pair this node with another node for alternating operation. The operator flips which node is active via the station HMI.</div>
-                <div class="form-group form-group--nogap">
-                    <label id="claims-ab-label">Paired Node</label>
-                    <select id="claims-add-paired-node" class="form-input">
-                        <option value="">-- None (no A/B cycling) --</option>
-                        {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
-                    </select>
+                <div class="form-grid-2">
+                    <div class="form-group form-group--nogap">
+                        <label id="claims-ab-label">Paired Node</label>
+                        <select id="claims-add-paired-node" class="form-input">
+                            <option value="">-- None (no A/B cycling) --</option>
+                            {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
+                        </select>
+                        <div class="field-error-msg" id="claims-err-paired-core-node" hidden></div>
+                    </div>
+                    <div class="form-group form-group--nogap" id="claims-add-second-paired-group">
+                        <label>Third Press Position (optional)</label>
+                        <select id="claims-add-second-paired-node" class="form-input">
+                            <option value="">-- None (2-position layout) --</option>
+                            {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
+                        </select>
+                        <div class="field-error-msg" id="claims-err-second-paired-core-node" hidden></div>
+                    </div>
                 </div>
-                <div class="form-group" id="claims-add-second-paired-group" style="margin:0.75rem 0 0 0;display:none">
-                    <label>Third Press Position (optional)</label>
-                    <select id="claims-add-second-paired-node" class="form-input">
-                        <option value="">-- None (2-position layout) --</option>
-                        {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
-                    </select>
-                    <div class="field-help--inline">Set for a 3-position press where bins index C → B → A. R1 drops fresh empties at C; R2 indexes C → B and B → A. Leave blank for the default 2-position layout (R1 → B, R2 → A).</div>
-                </div>
+                <div class="field-help--inline" id="claims-third-position-help">Third position: for a 3-position press where bins index C → B → A. R1 drops fresh empties at C; R2 indexes C → B and B → A. Leave blank for the default 2-position layout (R1 → B, R2 → A).</div>
+                <label id="claims-add-index-robot-supplies-row" class="check-row mt-2" hidden>
+                    <input type="checkbox" id="claims-add-index-robot-supplies">
+                    <span>Index robot fetches the replacement <span class="label-aside">R1 evacuates and leaves; R2 indexes forward and collects the new carrier. Describes the cell's hardware — set it the same on every style for this press.</span></span>
+                </label>
                 <label id="claims-add-reuse-bins-row" class="check-row mt-2" hidden>
                     <input type="checkbox" id="claims-add-reuse-bins">
                     <span>Reuse compatible bins on changeover (skip swap when next style needs same payload and bin is empty)</span>
                 </label>
             </fieldset>
 
-            <fieldset id="claims-auto-request-fieldset" class="fieldset-card--stacked" hidden>
-                <legend class="fieldset-legend">Auto-Request</legend>
+            <fieldset id="claims-routing-fieldset" class="fieldset-card--stacked" hidden>
+                <legend class="fieldset-legend">Routing</legend>
+                <div class="field-help">Optional hints passed to the fleet when an order for this claim is issued. Leave empty unless a cell needs them &mdash; empty means the fleet picks freely, which is how every node runs today.</div>
+                <div class="form-group form-group--nogap mt-3" id="claims-add-key-routes-group">
+                    <label>Key Route <span class="label-aside">(ordered via-points)</span></label>
+                    <div id="claims-key-route-list"></div>
+                    <button type="button" class="btn btn-sm mt-2" data-action="addKeyRoutePoint">Add Point</button>
+                    <div class="field-error-msg" id="claims-err-key-route" hidden></div>
+                    <div class="field-help--inline">Map points a robot should pass through, in order. This is a robot-<em>selection</em> assist, not a path constraint &mdash; the fleet still plans its own route. A point that does not exist or cannot be reached ends the robot's job the moment it is issued, so every point is checked against Core's node list when you save.</div>
+                </div>
+                <div class="form-group form-group--nogap mt-3">
+                    <label>Key Task <span class="label-aside">(robot preference)</span></label>
+                    <select id="claims-add-key-task" class="form-input">
+                        <option value="">-- Any robot --</option>
+                        <option value="load">Prefer a robot loading</option>
+                        <option value="unload">Prefer a robot unloading</option>
+                    </select>
+                    <div class="field-error-msg" id="claims-err-key-task" hidden></div>
+                </div>
+            </fieldset>
+
+            <details id="claims-auto-request-fieldset" class="collapse-card" hidden>
+                <summary>Auto-Request <span class="collapse-hint" id="claims-auto-request-hint"></span></summary>
                 <div id="claims-auto-request-manual-swap" hidden>
                     <div class="field-help">Demand signals automatically create orders for all allowed payloads. When a bin is consumed downstream, the system requests replenishment for that payload.</div>
                     <div class="field-help--inline">Auto-confirm delivery is always enabled for manual swap nodes.</div>
@@ -564,7 +669,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         <span>Auto-confirm delivery (skip operator acknowledgement)</span>
                     </label>
                 </div>
-            </fieldset>
+            </details>
         </div>
         <div class="modal-footer">
             <button class="btn" data-action="closeClaimModal">Cancel</button>
@@ -595,7 +700,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
             <fieldset class="fieldset-card mt-4 mb-0">
                 <legend class="fieldset-legend">Claimed Nodes</legend>
                 <div class="text-muted-sm mb-2">Select the physical core nodes this screen controls. Nodes claimed by another screen are shown grayed.</div>
-                <div id="station-node-picker" style="display:flex;flex-direction:column;gap:0.35rem;max-height:220px;overflow-y:auto">
+                <div id="station-node-picker" class="scroll-list">
                     {{range $name, $_ := .CoreNodes}}
                     <label class="check-row" data-node="{{$name}}">
                         <input type="checkbox" class="station-node-cb" value="{{$name}}">

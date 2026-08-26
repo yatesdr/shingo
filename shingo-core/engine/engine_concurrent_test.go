@@ -41,6 +41,8 @@ import (
 // claim-fail→requeue path is now covered directly at the scanner in
 // fulfillment.TestScannerSimpleClaimFailRequeues.
 func TestConcurrent_ClaimSerialized_NoDoubleClaim(t *testing.T) {
+	t.Parallel()
+
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RACE")
@@ -275,9 +277,24 @@ func TestComplexOrder_ZeroQuantity(t *testing.T) {
 // Redirect mid-transit
 // =============================================================================
 
-// --- Redirect: order redirected while robot is in transit ---
-// Scenario: Dispatch retrieve, drive to RUNNING (in_transit), redirect to different line.
-// Expected: old vendor order cancelled, new one dispatched, bin claim intact.
+// TestRedirect_MidTransit — REPURPOSED 2026-08-08. It now pins the CIRCUIT
+// BREAKER, not the redirect.
+//
+// It used to assert "old vendor order cancelled, new one dispatched, bin claim
+// intact" — but the only thing it actually checked after the redirect was the bin
+// CLAIM. It never checked the robot reached the new destination and never
+// inspected the re-issued blocks, and it runs against the simulator, which does
+// not model the bin having left its source slot.
+//
+// So it was green over a path that cannot work: RDS has no modify-destination
+// call, Core fakes redirect by terminating the live order and creating a new one
+// from [pickup@ORIGINAL source, dropoff@new dest], and mid-transit that tells a
+// loaded robot to fetch a bin from a slot it already emptied.
+//
+// Mid-transit redirect is now REFUSED at the handler (dispatcher.go). This test
+// asserts the refusal and — the part that matters operationally — that the
+// refusal is INERT: the live vendor order is NOT terminated and the bin claim is
+// untouched, so a robot mid-job keeps doing its job.
 func TestRedirect_MidTransit(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -323,7 +340,7 @@ func TestRedirect_MidTransit(t *testing.T) {
 		t.Fatalf("after RUNNING: status = %q, want in_transit", order.Status)
 	}
 
-	// Step 3: Redirect to LINE2-IN
+	// Step 3: Redirect to LINE2-IN — must be REFUSED, the order is in_transit.
 	d.HandleOrderRedirect(env, &protocol.OrderRedirect{
 		OrderUUID:       "redirect-1",
 		NewDeliveryNode: lineNode2.Name,
@@ -333,23 +350,29 @@ func TestRedirect_MidTransit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get order after redirect: %v", err)
 	}
-	t.Logf("order after redirect: status=%s bin=%v vendor=%s", order.Status, order.BinID, order.VendorOrderID)
 
-	// Bin claim should be intact
+	// THE REFUSAL MUST BE INERT. A refusal that had already terminated the vendor
+	// order would be worse than the bug it replaces: the robot's job destroyed and
+	// nothing issued to replace it.
+	if order.Status != dispatch.StatusInTransit {
+		t.Errorf("status = %q after a refused redirect, want in_transit — the refusal must not "+
+			"disturb an order that is mid-job", order.Status)
+	}
+	if order.VendorOrderID == "" {
+		t.Error("vendor order id was cleared by a refused redirect — the live fleet job must survive")
+	}
+	if order.DeliveryNode != lineNode1.Name {
+		t.Errorf("delivery_node = %q after a refused redirect, want the ORIGINAL %q — a refused "+
+			"redirect must not half-apply", order.DeliveryNode, lineNode1.Name)
+	}
+
+	// The bin claim is untouched, which was the one property the old version of
+	// this test genuinely pinned.
 	if order.BinID == nil {
-		t.Fatalf("order lost bin claim after redirect")
+		t.Fatalf("order lost bin claim after a refused redirect")
 	}
 	if *order.BinID != claimedBinID {
-		t.Errorf("bin changed after redirect: got %d, want %d", *order.BinID, claimedBinID)
-	}
-	bin, err := db.GetBin(claimedBinID)
-	if err != nil {
-		t.Fatalf("get bin: %v", err)
-	}
-	if bin.ClaimedBy != nil && *bin.ClaimedBy == order.ID {
-		t.Logf("bin %d claim intact after redirect (claimed_by=%d)", claimedBinID, *bin.ClaimedBy)
-	} else {
-		t.Errorf("bin claim state after redirect: claimed_by=%v (expected order %d)", bin.ClaimedBy, order.ID)
+		t.Errorf("bin changed after a refused redirect: got %d, want %d", *order.BinID, claimedBinID)
 	}
 }
 

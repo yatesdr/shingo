@@ -2,8 +2,10 @@ package store
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,13 +18,52 @@ import (
 	"shingoedge/store/stations"
 )
 
-// coverageDB opens a fresh in-tempdir SQLite file and returns a migrated DB.
-// A local helper (rather than reusing testDB from outbox_test.go, which is
-// gated behind //go:build docker) so these tests run under the default build.
+// coverageDB hands out a fresh migrated DB from a once-per-binary template.
+//
+// The migration-chain Open cost ~70ms per call (inflated further under
+// parallelism), and the ~50 coverage tests in this file paid it each. The
+// migrations_* test files still call Open directly — they are ABOUT the chain
+// — so this template pool is deliberately scoped to coverage tests that just
+// need a migrated database.
+var (
+	coverageTplOnce sync.Once
+	coverageTplPath string
+	coverageTplErr  error
+)
+
 func coverageDB(t *testing.T) *DB {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "cov.db")
-	db, err := Open(dbPath)
+	coverageTplOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "shingo-edge-store-tpl-*")
+		if err != nil {
+			coverageTplErr = err
+			return
+		}
+		db, err := Open(filepath.Join(dir, "template.db"))
+		if err != nil {
+			os.RemoveAll(dir)
+			coverageTplErr = err
+			return
+		}
+		if err := db.Close(); err != nil {
+			os.RemoveAll(dir)
+			coverageTplErr = err
+			return
+		}
+		coverageTplPath = filepath.Join(dir, "template.db")
+	})
+	if coverageTplErr != nil {
+		t.Fatalf("build coverage template: %v", coverageTplErr)
+	}
+	dst := filepath.Join(t.TempDir(), "cov.db")
+	src, err := os.ReadFile(coverageTplPath)
+	if err != nil {
+		t.Fatalf("read coverage template: %v", err)
+	}
+	if err := os.WriteFile(dst, src, 0o600); err != nil {
+		t.Fatalf("copy coverage template: %v", err)
+	}
+	db, err := OpenMigrated(dst)
 	if err != nil {
 		t.Fatalf("open cov db: %v", err)
 	}

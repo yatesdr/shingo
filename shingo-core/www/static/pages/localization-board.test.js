@@ -35,6 +35,12 @@ function load() {
     const ctx = { console: console, Math: Math, Number: Number, Map: Map, Set: Set, Date: Date };
     vm.createContext(ctx);
     vm.runInContext(src + '\n__out = { histPath: histPath, serverLaneKey: serverLaneKey, ' +
+        'deltaVerdict: deltaVerdict, DELTA_SIGNIFICANT: DELTA_SIGNIFICANT, ' +
+        'annotationVerdict: annotationVerdict, ' +
+        'seedMainRange: seedMainRange, seedCompareDays: seedCompareDays, ' +
+        'rangeProblem: rangeProblem, RANGE_MAX_DAYS: RANGE_MAX_DAYS, ' +
+        'VERDICT_TOKEN: VERDICT_TOKEN, VERDICT_STROKE: VERDICT_STROKE, ' +
+        'VERDICT_DASH: VERDICT_DASH, ' +
         'BAND_STROKE: BAND_STROKE, BAND_TOKEN: BAND_TOKEN };', ctx);
     return ctx.__out;
 }
@@ -98,6 +104,22 @@ console.log('histPath');
     check('a missing histogram is absent, not empty-at-zero',
         m.histPath(null, 200, 50).line === '' && m.histPath([], 200, 50).line === '',
         'a padded or invented curve answers from a distribution nobody stored');
+
+    // THE SPAN CONTRACT: histPath draws over exactly [0, w]. histBlock
+    // translates the curve +14 to clear the sentinel bar, so the "1.0" axis
+    // label belongs at 14 + w — the curve's actual right edge. The original
+    // pinned the label at 220 while the curve ran to 234, and the top bin
+    // rendered to the right of "1.0", which read as values above 1. Confidence
+    // is bounded at 1.0 by construction; only the axis can be wrong.
+    const full = new Array(51).fill(0);
+    full[50] = 5;              // everything in the top bin
+    const hf = m.histPath(full, 220, 56);
+    const firstX = parseFloat(hf.line.slice(1));
+    const lastX = parseFloat(hf.line.slice(hf.line.lastIndexOf('L') + 1));
+    check('the curve starts at x=0 and ends at exactly x=w',
+        firstX === 0 && lastX === 220,
+        'first=' + firstX + ' last=' + lastX +
+        ' — the 1.0 label sits at 14 + w and drifts with this span');
 })();
 
 // --- the redundant channel -----------------------------------------------
@@ -128,6 +150,213 @@ console.log('bands');
     check('no-data does not share a hue with any measured band',
         order.every(function (b) { return m.BAND_TOKEN[b] !== m.BAND_TOKEN.nodata; }),
         m.BAND_TOKEN.nodata);
+})();
+
+// --- the window seeds and the picker's guards ------------------------------
+console.log('range seeds and guards');
+(function () {
+    // The roll-up closes COMPLETE days — a day's rows are written the night
+    // after — so a seed ending today asks for a day that never exists yet.
+    // Both seeds end yesterday, and the harness pins it with a FIXED date so
+    // the assertion cannot drift with the clock.
+    const TODAY = '2026-08-19';
+
+    const main = m.seedMainRange(new Date(TODAY + 'T12:00:00Z'));
+    check('the main seed is the last seven complete days, ending yesterday',
+        main.from === '2026-08-12' && main.to === '2026-08-18',
+        JSON.stringify(main));
+
+    const cmp = m.seedCompareDays(new Date(TODAY + 'T12:00:00Z'));
+    check('the compare seed is yesterday vs the same weekday a week before',
+        cmp.b === '2026-08-18' && cmp.a === '2026-08-11',
+        JSON.stringify(cmp) + ' — seven days apart, not six, or it compares ' +
+        'adjacent weekdays');
+
+    // The endpoint's guards, mirrored client-side. Every rule the server
+    // 400s on should be refused before the fetch, or the picker's error
+    // surface is a network toast instead of the input.
+    check('a good range passes',
+        m.rangeProblem('2026-08-01', '2026-08-13', TODAY) === null);
+    check('a one-day range is askable (from === to)',
+        m.rangeProblem('2026-08-13', '2026-08-13', TODAY) === null,
+        'compare mode asks for exactly this shape');
+    check('a half-picked range is refused',
+        !!m.rangeProblem('', '2026-08-13', TODAY) &&
+        !!m.rangeProblem('2026-08-01', '', TODAY));
+    check('an inverted range is refused',
+        m.rangeProblem('2026-08-13', '2026-08-01', TODAY) !== null);
+    check('an end of today is allowed, mirroring the handler',
+        m.rangeProblem('2026-08-01', TODAY, TODAY) === null,
+        'the handler serves it and lets data_days say the day is empty; ' +
+        'the client refusing it would be stricter than the server');
+    check('a strictly future end is refused',
+        m.rangeProblem('2026-08-01', '2026-08-20', TODAY) !== null);
+    // The inclusive span cap: Aug 1 2025 → Aug 1 2026 is 366 days and fits;
+    // one day more does not. Both sides pinned, the same boundary the
+    // server's boardMaxSpanDays 400s on.
+    check('the span cap is inclusive at both edges',
+        m.rangeProblem('2025-08-01', '2026-08-01', TODAY) === null &&
+        m.rangeProblem('2025-07-31', '2026-08-01', TODAY) !== null,
+        '366 fits, 367 does not — must move with boardMaxSpanDays');
+    check('RANGE_MAX_DAYS still mirrors the server cap',
+        m.RANGE_MAX_DAYS === 366);
+})();
+
+// --- the compare verdict --------------------------------------------------
+console.log('deltaVerdict');
+(function () {
+    const MIN = 20;
+    const lane = function (p50, n, sentinel) {
+        return { p50_estimate: p50, samples: n, sentinel_samples: sentinel || 0 };
+    };
+
+    // A lane that rose exactly with the plant has NOT improved. This is the
+    // guard that stops "better" from meaning "the whole plant had a good
+    // week" — the attribution failure the annotation's plant baseline exists
+    // to prevent, carried into the map.
+    check('a lane that follows the plant reads neutral',
+        m.deltaVerdict(lane(0.60, 100), lane(0.70, 100), 0.75, 0.85, MIN) === 'neutral',
+        'lane +0.10, plant +0.10 — attributable is zero');
+
+    check('a lane that beats the plant reads better',
+        m.deltaVerdict(lane(0.60, 100), lane(0.70, 100), 0.75, 0.76, MIN) === 'better',
+        'lane +0.10, plant +0.01 — attributable +0.09');
+
+    check('a lane that falls behind a rising plant reads worse',
+        m.deltaVerdict(lane(0.60, 100), lane(0.62, 100), 0.75, 0.85, MIN) === 'worse',
+        'lane +0.02, plant +0.10 — attributable -0.08');
+
+    // The threshold itself, tested at ±0.001 around it. The boundary is the
+    // annotation's own, and both sides of it are pinned so retuning one
+    // caller cannot silently hollow out the other.
+    check('the significance threshold is applied to the attributable delta',
+        m.deltaVerdict(lane(0.60, 100), lane(0.60 + m.DELTA_SIGNIFICANT + 0.001, 100), 0.5, 0.5, MIN) === 'better' &&
+        m.deltaVerdict(lane(0.60, 100), lane(0.60 + m.DELTA_SIGNIFICANT - 0.001, 100), 0.5, 0.5, MIN) === 'neutral',
+        'just over and just under DELTA_SIGNIFICANT, plant flat');
+
+    // The miss-rate guard, mirrored from the server: routing into a bad
+    // reflector zone makes the conditioned average go UP while things get
+    // WORSE, so a miss rate that moved > 10 points suppresses the verdict
+    // entirely rather than reporting a delta over different populations.
+    check('a miss rate that moved materially suppresses the verdict',
+        m.deltaVerdict(lane(0.60, 100, 0), lane(0.90, 100, 20), 0.5, 0.5, MIN) === 'suppressed',
+        'miss rate 0% → 20%');
+
+    check('a miss rate that moved two points does not suppress',
+        m.deltaVerdict(lane(0.60, 100, 0), lane(0.70, 100, 2), 0.5, 0.5, MIN) === 'better',
+        'miss rate 0% → 2%');
+
+    // Guards that grey rather than hide — absence reads as fine.
+    check('below the minimum n on either side greys',
+        m.deltaVerdict(lane(0.60, MIN - 1), lane(0.90, 100), 0.5, 0.5, MIN) === 'thin' &&
+        m.deltaVerdict(lane(0.60, 100), lane(0.90, MIN - 1), 0.5, 0.5, MIN) === 'thin',
+        'either side below min_samples');
+
+    check('no estimate on either side is nodata',
+        m.deltaVerdict(lane(null, 100), lane(0.90, 100), 0.5, 0.5, MIN) === 'nodata' &&
+        m.deltaVerdict(lane(0.60, 100), lane(null, 100), 0.5, 0.5, MIN) === 'nodata',
+        'a missing side is a missing answer, not a zero');
+
+    check('a lane present on one board only is nodata',
+        m.deltaVerdict(null, lane(0.90, 100), 0.5, 0.5, MIN) === 'nodata',
+        'nobody drove it in one window');
+
+    // A missing PLANT baseline on ONE side: the adjustment that side would
+    // contribute is zero, so the OTHER side's plant level enters the
+    // attributable delta raw. A plant at 0.5 against a null reads as the plant
+    // "rising" 0.5, and a +0.10 lane reads worse. That is the honest failure
+    // of a half-missing baseline — it does not invent symmetry, and the
+    // verdict says the data cannot support the comparison rather than
+    // crediting the lane. Pinned as-is so a future "friendlier" null
+    // handling cannot silently start inventing baselines.
+    check('a half-missing plant baseline biases, does not invent',
+        m.deltaVerdict(lane(0.60, 100), lane(0.70, 100), null, 0.5, MIN) === 'worse',
+        'plant null vs 0.5: the 0.5 enters the attributable delta unpaired');
+
+    // Both plant baselines missing: no adjustment, and the raw lane delta
+    // stands alone.
+    check('no plant baselines at all leaves the raw delta',
+        m.deltaVerdict(lane(0.60, 100), lane(0.70, 100), null, null, MIN) === 'better',
+        'null on both sides — no adjustment, no invention');
+})();
+
+// The change annotation's verdict — same arithmetic as deltaVerdict, but over
+// a /lane-change payload, and it must return its pieces (num, lane, plant)
+// because the banner prints all three. Pinned here so banner and table cell
+// can never disagree, and so the suppressed/no-p50 cases stay verdicts with
+// banner weight rather than reverting to grey footnotes.
+console.log('annotationVerdict');
+(function () {
+    const ann = function (before, after, plant) {
+        return m.annotationVerdict({
+            p50_before: before, p50_after: after, plant_delta: plant,
+            suppress_p50: false
+        });
+    };
+
+    check('a lane that beats the plant is better, with the attributable number',
+        (function () {
+            const v = ann(0.60, 0.70, 0.01);
+            return v.cls === 'lb-better' && v.word === 'better' &&
+                Math.abs(v.num - 0.09) < 1e-9 &&
+                Math.abs(v.lane - 0.10) < 1e-9 && Math.abs(v.plant - 0.01) < 1e-9;
+        })(), 'lane +0.10, plant +0.01 → better +0.09');
+
+    check('a lane that moves with the plant is neutral',
+        ann(0.60, 0.70, 0.10).cls === 'lb-neutral',
+        'lane +0.10, plant +0.10 → attributable 0');
+
+    check('a lane that falls behind the plant is worse',
+        ann(0.60, 0.62, 0.10).cls === 'lb-worse',
+        'lane +0.02, plant +0.10 → attributable −0.08');
+
+    check('the ±0.02 threshold applies to the attributable delta',
+        ann(0.60, 0.60 + m.DELTA_SIGNIFICANT + 0.001, 0).cls === 'lb-better' &&
+        ann(0.60, 0.60 + m.DELTA_SIGNIFICANT - 0.001, 0).cls === 'lb-neutral',
+        'just over and just under, plant flat');
+
+    check('a suppressed payload is a withheld verdict, not a missing one',
+        (function () {
+            const v = m.annotationVerdict({ suppress_p50: true, suppressed: 'miss rate moved' });
+            return v.cls === 'lb-suppressed' && v.word === 'not comparable' &&
+                v.num === null && v.plant === null;
+        })(), 'suppress_p50 must still render a banner');
+
+    check('a null p50 on one side is stated, not guessed',
+        (function () {
+            const v = ann(null, 0.70, 0.0);
+            return v.cls === 'lb-neutral' && v.word === 'no p50 one side' &&
+                v.num === null;
+        })(), 'no before-average → no verdict number');
+
+    check('a null plant delta withholds the classification, keeps the raw delta',
+        (function () {
+            const v = ann(0.60, 0.70, null);
+            return v.cls === 'lb-neutral' && v.num === null &&
+                Math.abs(v.lane - 0.10) < 1e-9 && v.plant === null;
+        })(),
+        'without a baseline nothing is attributable; the lane delta is data, not a verdict');
+
+    check('a null payload is not a verdict',
+        m.annotationVerdict(null) === null,
+        'no annotation → no banner');
+})();
+
+// The greyscale channel: hue does not carry direction, so worse and
+// suppressed must be distinguishable from better and neutral by something
+// other than colour.
+console.log('verdict marks');
+(function () {
+    check('worse is dashed and better is not',
+        !!m.VERDICT_DASH.worse && !m.VERDICT_DASH.better,
+        'the dash is the direction channel that survives desaturation');
+    check('suppressed is dashed too',
+        !!m.VERDICT_DASH.suppressed,
+        'not-comparable must not read as a confident solid mark');
+    check('every verdict has a token and a weight',
+        ['better', 'worse', 'neutral', 'suppressed', 'thin', 'nodata'].every(function (v) {
+            return m.VERDICT_TOKEN[v] && m.VERDICT_STROKE[v];
+        }), JSON.stringify(m.VERDICT_TOKEN));
 })();
 
 if (failures) {

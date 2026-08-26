@@ -5,8 +5,8 @@
 // The bug these exist to prevent: the whole Material-flow section was
 // display:none for dedicated_positions, on the reasoning that a dedicated
 // loader's spots are their own in/out. Only OUTBOUND was ever true of that.
-// Inbound is where the Edge retrieves empties FROM (loaderEmptySource →
-// tryCreateL1); blank, the threshold→empty-to-home chain silently no-ops at
+// Inbound is where the Edge retrieves empties FROM (the loader's inbound_source
+// → tryCreateL1); blank, the threshold→empty-to-home chain silently no-ops at
 // debug level. Springfield ran a dedicated loader with a blank inbound_source
 // and the replenishment chain was mute with nothing on any screen to say so.
 //
@@ -79,12 +79,12 @@ function shown(el) { return !el.classList.contains('is-hidden'); }
 
 function load() {
     const ids = [
-        'loader-layout', 'loader-inbound', 'loader-outbound', 'loader-buffer',
+        'loader-layout', 'loader-inbound', 'loader-outbound',
         'loader-flow-section', 'loader-flow-scope', 'loader-outbound-note',
-        'loader-buffer-note-dedicated', 'loader-role', 'loader-replenishment',
+        'loader-role', 'loader-replenishment',
         'loader-replenishment-hint', 'loader-name', 'loader-edit-id',
         'loader-modal', 'loader-result', 'loader-modal-title', 'loader-submit-btn',
-        'loader-kind', 'loader-fed-by-hand', 'loader-supply-row', 'loader-staging-row',
+        'loader-kind', 'loader-fed-by-hand', 'loader-supply-row',
         'loader-mix-row', 'loader-mix-editor', 'loader-mix-add-type',
         'loader-mix-add-want', 'loader-edit-id', 'loader-windows-row',
         'loader-windows-editor',
@@ -131,23 +131,19 @@ console.log('formShape — the rules, as a pure function of state');
         return Object.assign({
             id: 1, name: 'L', role: 'produce', kind: 'multi_window',
             replenishment: 'operator', fedByHand: false,
-            inbound: '', outbound: '', buffer: '',
+            inbound: '', outbound: '',
         }, over || {});
     };
 
-    // THE STAGING GROUP BELONGS TO DEDICATED HOMES. It holds empties that
-    // rotate into a SPOT when that spot runs low — position language. A window
-    // loader is fed from its inbound source and sends to its outbound, and has
-    // no third place; offering it one invited a plant to configure a source
-    // that nothing on the window path reads.
-    check('staging: offered to a dedicated loader',
-        shape(st({ kind: 'dedicated' })).staging === true);
-    check('staging: NOT offered to a multi-window loader',
-        shape(st({ kind: 'multi_window' })).staging === false);
-    check('staging: NOT offered to a single-window loader',
-        shape(st({ kind: 'single_window' })).staging === false);
-    check('staging: not offered when nothing pulls at all',
-        shape(st({ kind: 'dedicated', fedByHand: true })).staging === false);
+    // THE STAGING GROUP IS RETIRED, on every layout. It was a second name for
+    // the group a loader's empties come from, outranking the inbound source
+    // with no fallback, and offered only where the layout happened to allow it.
+    // A loader now has one source and one destination, and both are asked of
+    // every layout.
+    ['dedicated', 'multi_window', 'single_window'].forEach(function (kind) {
+        check('staging: no such field for a ' + kind + ' loader',
+            !('staging' in shape(st({ kind: kind }))));
+    });
 
     // The mix and the per-window capability are properties of a window SET.
     check('mix: offered to a window loader', shape(st({})).mix === true);
@@ -165,9 +161,12 @@ console.log('formShape — the rules, as a pure function of state');
     check('supply: asked of a loader, not of an unloader',
         shape(st({})).supply === true &&
         shape(st({ role: 'consume' })).supply === false);
-    check('outbound: asked of a window loader, not of dedicated spots',
+    // Outbound is asked of EVERY layout now. It used to be hidden on a
+    // dedicated loader, which made "an inbound group and an outbound group" -
+    // the shape a dedicated loader actually wants - unenterable on the screen.
+    check('outbound: asked of every layout, dedicated included',
         shape(st({})).outbound === true &&
-        shape(st({ kind: 'dedicated' })).outbound === false);
+        shape(st({ kind: 'dedicated' })).outbound === true);
     check('inbound: not asked when fed by hand',
         shape(st({ fedByHand: true })).inbound === false);
 })();
@@ -180,29 +179,23 @@ console.log('applyLoaderForm — the same rules, through the DOM');
     h.els['loader-role'].value = 'produce';
     h.els['loader-inbound'].value = 'AMR Supermarket';
     h.els['loader-outbound'].value = 'LEGACY-OUT';
-    h.els['loader-buffer'].value = 'LEGACY-BUF';
 
     h.ctx.applyLoaderForm();
 
     check('dedicated: inbound still asked for', shown(h.els['loader-inbound']));
-    check('dedicated: outbound not asked for - the spots are their own outbound',
-        !shown(h.els['loader-outbound']));
-    check('dedicated: staging group offered - the buffer is a dedicated-home idea',
-        shown(h.els['loader-staging-row']));
+    check('dedicated: outbound now asked for too',
+        shown(h.els['loader-outbound']));
     check('dedicated: no carrier mix - a spot is already one part',
         !shown(h.els['loader-mix-row']));
 
     // THE LOAD-BEARING ONE. submitLoader writes all of these on every save, so
-    // a gate that blanked a hidden field would drop config silently.
+    // a gate that blanked a field would drop config silently.
     check('dedicated: inbound value preserved',
         h.els['loader-inbound'].value === 'AMR Supermarket',
         'got ' + JSON.stringify(h.els['loader-inbound'].value));
-    check('dedicated: hidden outbound value preserved',
+    check('dedicated: outbound value preserved',
         h.els['loader-outbound'].value === 'LEGACY-OUT',
         'got ' + JSON.stringify(h.els['loader-outbound'].value));
-    check('dedicated: staging value preserved',
-        h.els['loader-buffer'].value === 'LEGACY-BUF',
-        'got ' + JSON.stringify(h.els['loader-buffer'].value));
 })();
 
 (function multiWindowGating() {
@@ -211,24 +204,16 @@ console.log('applyLoaderForm — the same rules, through the DOM');
     h.els['loader-role'].value = 'produce';
     h.els['loader-inbound'].value = 'EMPTY-BANK';
     h.els['loader-outbound'].value = 'FG-MARKET';
-    h.els['loader-buffer'].value = 'LEGACY-BUF';
 
     h.ctx.applyLoaderForm();
 
     check('multi window: inbound asked for', shown(h.els['loader-inbound']));
     check('multi window: outbound asked for', shown(h.els['loader-outbound']));
-    check('multi window: NO staging group - inbound and outbound are the whole flow',
-        !shown(h.els['loader-staging-row']));
     check('multi window: supply asked for - a loader has modes',
         shown(h.els['loader-supply-row']));
     check('multi window: values preserved',
         h.els['loader-inbound'].value === 'EMPTY-BANK' &&
         h.els['loader-outbound'].value === 'FG-MARKET');
-    // A window loader is not offered the staging group, and a plant that had
-    // one set keeps it rather than having it dropped on the next save.
-    check('multi window: hidden staging value preserved',
-        h.els['loader-buffer'].value === 'LEGACY-BUF',
-        'got ' + JSON.stringify(h.els['loader-buffer'].value));
 })();
 
 (function unloaderHasNoSupplyQuestion() {
@@ -264,15 +249,21 @@ console.log('applyLoaderForm — the same rules, through the DOM');
 (function switchingKindRegates() {
     // The gate is wired to each control's change event, so switching with the
     // modal already open must re-decide rather than leave the prior state.
+    //
+    // Asserted against the CARRIER MIX rather than outbound: outbound is now
+    // asked of every layout, so it can no longer witness a re-gate. The mix is
+    // a property of a window set and still turns off for a dedicated loader.
     const h = load();
+    h.els['loader-edit-id'].value = '4';
     h.els['loader-kind'].value = 'multi_window';
     h.ctx.applyLoaderForm();
-    check('switch: outbound asked before', shown(h.els['loader-outbound']));
+    check('switch: carrier mix asked before', shown(h.els['loader-mix-row']));
 
     h.els['loader-kind'].value = 'dedicated';
     h.els['loader-outbound'].value = 'STILL-HERE';
     h.ctx.applyLoaderForm();
-    check('switch: outbound dropped after', !shown(h.els['loader-outbound']));
+    check('switch: carrier mix dropped after', !shown(h.els['loader-mix-row']));
+    check('switch: outbound stays asked on both kinds', shown(h.els['loader-outbound']));
     check('switch: value survived the re-gate', h.els['loader-outbound'].value === 'STILL-HERE');
 })();
 
@@ -303,7 +294,7 @@ function box(loader) {
     const html = box({
         id: 7, name: 'SMN Loader', role: 'produce',
         layout: 'dedicated_positions', replenishment: 'threshold',
-        inbound_source: 'AMR Supermarket', outbound_dest: '', buffer_dest: '',
+        inbound_source: 'AMR Supermarket', outbound_dest: '',
     });
     check('dedicated: renders inbound → (spots)',
         html.indexOf('AMR Supermarket → (spots)') >= 0,
@@ -314,7 +305,7 @@ function box(loader) {
     const html = box({
         id: 8, name: 'Blank Loader', role: 'produce',
         layout: 'dedicated_positions', replenishment: 'threshold',
-        inbound_source: '', outbound_dest: '', buffer_dest: '',
+        inbound_source: '', outbound_dest: '',
     });
     // A blank inbound on a dedicated loader is the Springfield silent-failure
     // config. It must render, and it must look wrong.
@@ -327,11 +318,25 @@ function box(loader) {
     const html = box({
         id: 9, name: 'Shared Loader', role: 'produce',
         layout: 'shared_window', replenishment: 'operator',
-        inbound_source: 'EMPTY-BANK', outbound_dest: 'FG-MARKET', buffer_dest: 'BUF-1',
+        inbound_source: 'EMPTY-BANK', outbound_dest: 'FG-MARKET',
     });
     check('shared: inbound → outbound unchanged',
         html.indexOf('EMPTY-BANK → FG-MARKET') >= 0);
-    check('shared: staging group still annotated', html.indexOf('staging BUF-1') >= 0);
+    check('shared: nothing annotates a staging group any more',
+        html.indexOf('staging') < 0);
+})();
+
+(function dedicatedWithOutboundRendersBothEnds() {
+    // The rider: a dedicated loader may now name an outbound group, and the box
+    // says so instead of falling back to "(spots)".
+    const html = box({
+        id: 10, name: 'Deck Loader', role: 'produce',
+        layout: 'dedicated_positions', replenishment: 'threshold',
+        inbound_source: 'NEAR-LINE', outbound_dest: 'FG-MARKET',
+    });
+    check('dedicated: renders inbound → outbound when one is set',
+        html.indexOf('NEAR-LINE → FG-MARKET') >= 0,
+        'html did not contain the two-ended flow line');
 })();
 
 if (failures > 0) {

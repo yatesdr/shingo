@@ -146,7 +146,11 @@ func List(db *sql.DB) ([]*Payload, error) {
 }
 
 // SetBinTypes replaces all bin type associations for a payload template.
-// Runs as a single transaction.
+// Runs as a single transaction. The INSERT is ON CONFLICT DO NOTHING: two
+// concurrent SetBinTypes calls for the same payload can interleave their
+// DELETE/INSERT phases, and without it one transaction's INSERT trips over
+// the other's committed rows on payload_bin_types_pkey and the loser returns
+// an error for a write whose end state is exactly what it asked for.
 func SetBinTypes(db *sql.DB, payloadID int64, binTypeIDs []int64) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -157,7 +161,8 @@ func SetBinTypes(db *sql.DB, payloadID int64, binTypeIDs []int64) error {
 		return err
 	}
 	for _, btID := range binTypeIDs {
-		if _, err := tx.Exec(`INSERT INTO payload_bin_types (payload_id, bin_type_id) VALUES ($1, $2)`, payloadID, btID); err != nil {
+		if _, err := tx.Exec(`INSERT INTO payload_bin_types (payload_id, bin_type_id) VALUES ($1, $2)
+			ON CONFLICT (payload_id, bin_type_id) DO NOTHING`, payloadID, btID); err != nil {
 			return err
 		}
 	}

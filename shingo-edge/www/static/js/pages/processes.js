@@ -199,14 +199,6 @@ function populateGroupProcessPicker(currentGroupID) {
     });
 }
 
-function getSelectedGroupProcessIDs() {
-    var ids = [];
-    document.querySelectorAll('.group-process-cb:checked').forEach(function(cb) {
-        ids.push(parseInt(cb.value, 10));
-    });
-    return ids;
-}
-
 async function saveGroup() {
     var id = document.getElementById('group-id').value;
     var name = document.getElementById('group-name').value.trim();
@@ -226,15 +218,31 @@ async function saveGroup() {
             groupID = res.id;
             toast('Group created', 'success');
         }
-        // Assign selected processes to this group.
-        var selectedIDs = getSelectedGroupProcessIDs();
-        var gid = groupID;
-        for (var i = 0; i < selectedIDs.length; i++) {
-            try {
-                await api.put('/api/processes/' + selectedIDs[i] + '/group', { group_id: gid });
-            } catch(e) {
-                // Non-fatal — group was still saved.
-            }
+        // Reconcile membership against the picker. Each candidate row
+        // the picker showed (ungrouped + this group's members) is compared
+        // to its checkbox: a checked box assigns to this group, an
+        // unchecked box that was previously a member ungroups it. Without
+        // this diff, unchecking a member to remove it from the group was
+        // silently dropped — the row stayed in the group in the DB.
+        var picker = document.getElementById('group-process-picker');
+        if (picker) {
+            var cbs = picker.querySelectorAll('.group-process-cb');
+            cbs.forEach(function(cb) {
+                var pid = parseInt(cb.value, 10);
+                var proc = _processes.find(function(p) { return p.id === pid; });
+                if (!proc) return;
+                var wasMember = proc.group_id && proc.group_id === groupID;
+                var wantsIn = cb.checked;
+                if (wantsIn && !wasMember) {
+                    api.put('/api/processes/' + pid + '/group', { group_id: groupID }).catch(function(e) {
+                        toast('Failed to assign process ' + pid + ': ' + e, 'warning');
+                    });
+                } else if (!wantsIn && wasMember) {
+                    api.put('/api/processes/' + pid + '/group', { group_id: null }).catch(function(e) {
+                        toast('Failed to ungroup process ' + pid + ': ' + e, 'warning');
+                    });
+                }
+            });
         }
         location.reload();
     } catch (e) {
@@ -282,11 +290,20 @@ function renderSidebar() {
     if (!container) return;
     container.innerHTML = '';
 
+    // Build a set of valid group ids so a process whose group_id points
+    // at a group that no longer exists (deleted in another tab, imported
+    // from a backup, written by direct API) falls through to Ungrouped
+    // instead of vanishing — byGroup[orphanID] is never read by the
+    // _processGroups loop, so without this guard the process is silently
+    // dropped from every section.
+    var validGroupIDs = {};
+    _processGroups.forEach(function(g) { validGroupIDs[g.id] = true; });
+
     // Group processes by group_id
     var byGroup = {};
     var ungrouped = [];
     _processes.forEach(function(p) {
-        if (p.group_id) {
+        if (p.group_id && validGroupIDs[p.group_id]) {
             if (!byGroup[p.group_id]) byGroup[p.group_id] = [];
             byGroup[p.group_id].push(p);
         } else {
@@ -778,8 +795,28 @@ function ensureCompareDelegation(wrap) {
 
 // claimToBody maps a fetched claim to the upsert POST body, mirroring
 // saveClaim's claimBody so a compare-grid edit preserves every field it does
-// not touch (staging, pairing, flags). transitional_loader is omitted so the
-// *bool "absent = leave untouched" contract holds.
+// not touch (staging, pairing, flags).
+//
+// index_robot_supplies is absent here too, and it is pointer-typed for exactly
+// this reason: it describes the press's hardware, and a grid cell edit about a
+// payload must not be able to flip a cell's choreography by omitting a field.
+//
+// SEND ONLY WHAT THIS EDITOR OWNS. The compare grid edits one field per cell,
+// so sequence, reorder_point_source, keep_staged, auto_reorder, the two
+// changeover-evacuation fields, the loader-card flag and the key route are all
+// omitted here — it has a control for none of them. (The claim MODAL has
+// controls for them and sends those; this grid is a different surface with a
+// different answer, which is the point of absent-means-untouched.)
+//
+// auto_reorder used to be echoed back by hand here — read the claim, send its
+// own value — which was the same problem patched one field at a time, and only
+// after a hard-coded `true` had spent a while re-arming cell auto-reorder on
+// every claim an engineer touched. changeover_evac_nodes and
+// changeover_evac_destination were echoed for exactly the same reason, and were
+// deleted when the store contract was extended to cover them. The echo is never
+// the fix: it is correct only for the surfaces someone remembered, and the two
+// it covered here still left key_route and key_task
+// unprotected. Do not reintroduce one.
 function claimToBody(c) {
     return {
         style_id: c.style_id,
@@ -791,22 +828,11 @@ function claimToBody(c) {
         uop_capacity: c.uop_capacity || 0,
         reorder_point: c.reorder_point || 0,
         lineside_soft_threshold: c.lineside_soft_threshold || 0,
-        // Preserve, never assert. This editor has no auto_reorder control, and
-        // UpsertStyleNodeClaim writes the WHOLE row — so a hard-coded value
-        // here silently rewrites plant config on every unrelated field edit.
-        // It was `true`, which re-armed cell auto-reorder on any claim an
-        // engineer touched, undoing a plant-wide disable one claim at a time.
-        // Note the field is a plain bool on the wire (domain.NodeClaimInput),
-        // NOT a *bool — omitting it decodes to false and would bulk-DISARM
-        // just as silently. Echoing the fetched value is the only neutral
-        // option, same as auto_push / auto_confirm below.
-        auto_reorder: !!c.auto_reorder,
         inbound_staging: c.inbound_staging || '',
         outbound_staging: c.outbound_staging || '',
         inbound_source: c.inbound_source || '',
         outbound_destination: c.outbound_destination || '',
         auto_request_payload: c.auto_request_payload || '',
-        keep_staged: false,
         evacuate_on_changeover: !!c.evacuate_on_changeover,
         reuse_compatible_bins: !!c.reuse_compatible_bins,
         auto_push: !!c.auto_push,
@@ -880,7 +906,28 @@ function jumpToStyleEditor(styleID) {
 // editClaim/toggleClaimsAddPayload/validateClaimStaging looking for
 // every place to add a `style.display = ''`.
 
+// ROUND-3 AND ROUND-4 SLOTS.
+//
+// Both rounds add fields to this editor. Their visibility rules are written
+// here NOW, inert behind these two constants, so that those rounds add a
+// control and a table value rather than going hunting for every place a field
+// has to be registered — which is the trap this table exists to close and the
+// one that made IndexRobotSupplies unenterable in the round-1 design review.
+//
+// The rules are real, not placeholders: flipping a constant is what turns the
+// group on, and nothing else here has to change. Until then every entry
+// evaluates false, no DOM exists for them, and renderClaimForm skips an id it
+// cannot resolve.
+const ROUND3_CHANGEOVER = true; // per-position tooling relevance + evac destination (round 3)
+const ROUND4_ROUTING = true;     // IndexRobotSupplies + key routes — round 4 shipped both
+
+// hasThirdPosition is read from the form rather than passed, because the
+// visibility table's (role, swap) signature is load-bearing: every caller and
+// the whole characterization matrix key on those two. A third argument would
+// have to be threaded through all of them to answer one row.
 function claimFieldVisibility(role, swap) {
+    const secondEl = document.getElementById('claims-add-second-paired-node');
+    const hasThirdPosition = !!(secondEl && secondEl.value);
     const isManual = swap === 'manual_swap';
     const isPressIndex = swap === 'two_robot_press_index';
     const usesStaging = swap === 'single_robot' || swap === 'two_robot';
@@ -898,11 +945,27 @@ function claimFieldVisibility(role, swap) {
         'claims-add-allowed-group':           false,
         'claims-add-capacity-group':          !isManual,
         'claims-add-reorder-group':           !isManual,
+        // Board order is an identity fact — every claim has a place in the
+        // list, whatever it does.
+        'claims-add-sequence-group':          true,
+        // Auto-reorder arms the reorder point, so it shows exactly where the
+        // reorder point does.
+        'claims-add-auto-reorder-row':        !isManual,
         'claims-add-lineside-group':          role === 'consume' && !isManual,
+        // Extracted from inside the field group when the numeric row became a
+        // 3-column grid; it follows the field it explains.
+        'claims-lineside-help':               role === 'consume' && !isManual,
         // Staging fieldset is hidden by manual_swap (no staging concept),
         // then further hidden when the swap mode doesn't use staging at
         // all (sequential / press_index).
-        'claims-staging-fieldset':            !isManual && usesStaging,
+        // Round 3's changeover-evac mode stages the incoming style at
+        // InboundStaging, so press-index gains this fieldset THEN — and only
+        // then. Today's runtime rule is unchanged: plain press-index neither
+        // shows nor requires staging.
+        'claims-staging-fieldset':            !isManual && (usesStaging || (ROUND3_CHANGEOVER && isPressIndex)),
+        // keep_staged parks the incoming bin ON the staging node, so it is
+        // meaningless without one.
+        'claims-add-keep-staged-row':         !isManual && (usesStaging || (ROUND3_CHANGEOVER && isPressIndex)),
         'claims-add-swap-group':              true,
         'claims-source-fieldset':             !isManual,
         'claims-inbound-source-group':        !isManual,
@@ -910,15 +973,54 @@ function claimFieldVisibility(role, swap) {
         // two_robot (the old bin still goes somewhere).
         'claims-outbound-destination-group':  !isManual,
         'claims-changeover-fieldset':         !isManual,
+        // Round 3 — Changeover fieldset. Per-position tooling relevance applies to
+        // any consume or process node, not only presses, so it is not
+        // press-index scoped. The evac destination is free-form: a node or a
+        // group.
+        // Per-position relevance is a press-index question — a single-position node
+        // answers it with the Evacuate checkbox above.
+        'claims-add-tooling-relevance-row':   ROUND3_CHANGEOVER && isPressIndex,
+        // The individual positions follow the LAYOUT, not the mode: a 2-position
+        // press has no third position, and offering one is how a selection that
+        // can never fire gets made.
+        'claims-position-front-row':              ROUND3_CHANGEOVER && isPressIndex,
+        'claims-position-paired-row':             ROUND3_CHANGEOVER && isPressIndex,
+        'claims-position-second-row':             ROUND3_CHANGEOVER && isPressIndex && hasThirdPosition,
+        'claims-add-evac-destination-group':  ROUND3_CHANGEOVER && !isManual,
+        // Carry-over only means anything for a marked position, and only a
+        // press-index cell has positions to mark.
+        'claims-add-carryover-group':         ROUND3_CHANGEOVER && isPressIndex,
+        'claims-err-changeover-evac-positions':   false,
         'claims-ab-fieldset':                 showPair,
         'claims-add-second-paired-group':     showPair && isPressIndex,
+        'claims-third-position-help':         showPair && isPressIndex,
         'claims-add-reuse-bins-row':          showPair && isPressIndex,
-        'claims-auto-request-fieldset':       false,
+        // Round 4 — Press Index Pairing fieldset. Which robot supplies the
+        // press is a per-claim fact (every other press-index geometry fact
+        // already lives on NodeClaim), so it belongs beside the positions.
+        // Round 4 shipped the flip. Registered by round 2, real now.
+        'claims-add-index-robot-supplies-row': isPressIndex,
+        // Was an unconditional `false`, which killed the whole group for every
+        // claim type. 2635ad10 meant to hide it for manual_swap only — its
+        // message says "every other claim type (presses, welds, ...) is
+        // untouched" — and the inner claims-auto-request-standard entry below
+        // was written that way. The parent was not, so auto_confirm has had no
+        // reachable control since: the checkbox renders inside a hidden
+        // fieldset, editClaim echoes the stored value into it, and no operator
+        // can change it.
+        'claims-auto-request-fieldset':       !isManual,
         'claims-auto-request-manual-swap':    false,
         'claims-auto-request-standard':       !isManual,
         // Auto-push is only meaningful for a consume manual_swap
         // (unloader pulling parts from a bin).
         'claims-add-auto-push-row':           isManual && role === 'consume',
+        // The load directive is a LOADER's card behaviour, so it follows the
+        // manual_swap fieldset. Role-neutral: a loader and an unloader both
+        // have a card, and both can be told to name what the changeover needs.
+        // Round 4 — Routing, a new fieldset. Key routes are the named paths a
+        // leg may take; meaningless for a loader, which does not drive.
+        'claims-routing-fieldset':            ROUND4_ROUTING && !isManual,
+        'claims-add-key-routes-group':        ROUND4_ROUTING && !isManual,
     };
 }
 
@@ -1100,6 +1202,9 @@ function readClaimStateFromForm() {
         allowedPayloadCodes: allowedCodes,
         uopCapacity: parseInt(get('claims-add-capacity').value, 10) || 0,
         reorderPoint: parseInt(get('claims-add-reorder').value, 10) || 0,
+        sequence: Math.max(0, parseInt(get('claims-add-sequence').value, 10) || 0),
+        autoReorder: get('claims-add-auto-reorder').checked,
+        keepStaged: get('claims-add-keep-staged').checked,
         linesideSoftThreshold: Math.max(0, parseInt(get('claims-add-lineside-soft').value, 10) || 0),
         inboundStaging: get('claims-add-inbound').value,
         outboundStaging: get('claims-add-outbound').value,
@@ -1111,6 +1216,12 @@ function readClaimStateFromForm() {
         autoPush: get('claims-add-auto-push').checked,
         pairedCoreNode: get('claims-add-paired-node').value,
         secondPairedCoreNode: get('claims-add-second-paired-node').value,
+        indexRobotSupplies: get('claims-add-index-robot-supplies').checked,
+        keyRoute: readKeyRoute(),
+        keyTask: get('claims-add-key-task').value,
+        changeoverEvacNodes: readEvacNodes(),
+        changeoverEvacDestination: get('claims-add-evac-destination').value,
+        changeoverCarryoverDisposition: get('claims-add-carryover').value,
         autoConfirm: get('claims-add-auto-confirm').checked,
     };
 }
@@ -1127,6 +1238,9 @@ function writeClaimStateToForm(state) {
     get('claims-add-payload').value = state.payloadCode || '';
     get('claims-add-capacity').value = String(state.uopCapacity || 0);
     get('claims-add-reorder').value = String(state.reorderPoint || 0);
+    get('claims-add-sequence').value = String(state.sequence || 0);
+    get('claims-add-auto-reorder').checked = !!state.autoReorder;
+    get('claims-add-keep-staged').checked = !!state.keepStaged;
     get('claims-add-lineside-soft').value = String(state.linesideSoftThreshold || 0);
     get('claims-add-inbound').value = state.inboundStaging || '';
     get('claims-add-outbound').value = state.outboundStaging || '';
@@ -1138,6 +1252,18 @@ function writeClaimStateToForm(state) {
     get('claims-add-auto-push').checked = !!state.autoPush;
     get('claims-add-paired-node').value = state.pairedCoreNode || '';
     get('claims-add-second-paired-node').value = state.secondPairedCoreNode || '';
+    get('claims-add-index-robot-supplies').checked = !!state.indexRobotSupplies;
+    writeKeyRoute(state.keyRoute || []);
+    get('claims-add-key-task').value = state.keyTask || '';
+    // ORDER MATTERS: the checkboxes carry NODE names, and the values are filled
+    // from the claim's layout. Match the stored marks only after the values
+    // exist, or every box is empty-valued and nothing is ever checked.
+    renderEvacNodeLabels(state);
+    claimLoadedEvacNodes = (state.changeoverEvacNodes || []).slice();
+    writeEvacNodes(state.changeoverEvacNodes || []);
+    get('claims-add-evac-destination').value = state.changeoverEvacDestination || '';
+    // Blank reads as replace everywhere else, so the control shows replace.
+    get('claims-add-carryover').value = state.changeoverCarryoverDisposition || 'replace';
     get('claims-add-auto-confirm').checked = !!state.autoConfirm;
 }
 
@@ -1181,6 +1307,635 @@ function validateClaimState(state) {
     return { ok: errors.length === 0, errors: errors };
 }
 
+// ── Field-level validation feedback ─────────────────────────────────
+//
+// CLAIM_ERROR_SLOTS maps a validation finding's field name to the DOM it
+// renders on: the message slot, and the input that gets the error border.
+//
+// KEYED ON THE WIRE NAME, because two validators feed this and only one of
+// them is JavaScript. domain.ValidateNodeClaim (round 1) tags its findings
+// with NodeClaimInput's json names, and it is the authority — the browser's
+// validateClaimState is a fast local echo of the same rules, so its camelCase
+// keys are normalised into these rather than the other way round. A rule that
+// exists only on the server still lands on the right field.
+const CLAIM_ERROR_SLOTS = {
+    style_id:                { slot: 'claims-err-form' },
+    core_node_name:          { slot: 'claims-err-core-node-name',          input: 'claims-add-node',
+                               notice: 'claims-notice-core-node-name' },
+    swap_mode:               { slot: 'claims-err-swap-mode',               input: 'claims-add-swap' },
+    payload_code:            { slot: 'claims-err-payload-code',            input: 'claims-add-payload' },
+    inbound_staging:         { slot: 'claims-err-inbound-staging',         input: 'claims-add-inbound' },
+    outbound_staging:        { slot: 'claims-err-outbound-staging',        input: 'claims-add-outbound' },
+    inbound_source:          { slot: 'claims-err-inbound-source',          input: 'claims-add-inbound-source' },
+    outbound_destination:    { slot: 'claims-err-outbound-destination',    input: 'claims-add-outbound-destination' },
+    paired_core_node:        { slot: 'claims-err-paired-core-node',        input: 'claims-add-paired-node' },
+    second_paired_core_node: { slot: 'claims-err-second-paired-core-node', input: 'claims-add-second-paired-node' },
+    // key_route has no single input to outline — it is a list, and the row at
+    // fault is named in the message. The slot sits under the whole group.
+    key_route:               { slot: 'claims-err-key-route' },
+    key_task:                { slot: 'claims-err-key-task',                input: 'claims-add-key-task' },
+};
+
+// The browser validator's own key spellings, normalised to wire names.
+// `staging` is browser-only and has no single field — it is the pair, and the
+// inbound slot is where the operator looks first.
+const CLAIM_ERROR_KEY_ALIASES = {
+    coreNodeName:         'core_node_name',
+    payloadCode:          'payload_code',
+    swapMode:             'swap_mode',
+    staging:              'inbound_staging',
+    inboundStaging:       'inbound_staging',
+    outboundStaging:      'outbound_staging',
+    inboundSource:        'inbound_source',
+    outboundDestination:  'outbound_destination',
+    pairedCoreNode:       'paired_core_node',
+    secondPairedCoreNode: 'second_paired_core_node',
+    keyRoute:             'key_route',
+    keyTask:              'key_task',
+};
+
+function normalizeClaimErrorField(field) {
+    if (!field) return '';
+    return CLAIM_ERROR_KEY_ALIASES[field] || field;
+}
+
+// clearClaimFieldErrors wipes every slot and border. Called before each render
+// and on any edit, so a message never outlives the value that caused it.
+function clearClaimFieldErrors() {
+    Object.keys(CLAIM_ERROR_SLOTS).forEach(function(key) {
+        var spec = CLAIM_ERROR_SLOTS[key];
+        [spec.slot, spec.notice].forEach(function(id) {
+            if (!id) return;
+            var el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = '';
+            el.hidden = true;
+            el.style.display = 'none';
+        });
+        if (spec.input) {
+            var input = document.getElementById(spec.input);
+            if (input && input.classList) input.classList.remove('form-input--error');
+        }
+    });
+    var form = document.getElementById('claims-err-form');
+    if (form) { form.textContent = ''; form.hidden = true; form.style.display = 'none'; }
+}
+
+// renderClaimFieldErrors puts each finding on its own field.
+//
+// Findings are {field, message|msg, severity}. Severity "warning" renders in
+// the notice slot and does NOT mark the input — a warning did not refuse the
+// save, and colouring it like a refusal is how a refusal colour stops meaning
+// anything. Everything else is an error.
+//
+// A finding whose field has no slot still renders, at the form level. Silently
+// dropping it would be the toast problem again with extra steps: the operator
+// would see a refusal and no reason at all.
+function renderClaimFieldErrors(findings) {
+    clearClaimFieldErrors();
+    var orphans = [];
+    (findings || []).forEach(function(f) {
+        var key = normalizeClaimErrorField(f.field);
+        var text = f.message || f.msg || '';
+        var isWarning = f.severity === 'warning';
+        var spec = CLAIM_ERROR_SLOTS[key];
+        var slotID = spec && (isWarning ? (spec.notice || spec.slot) : spec.slot);
+        var el = slotID ? document.getElementById(slotID) : null;
+        if (!el) { orphans.push(text); return; }
+        el.textContent = el.textContent ? el.textContent + ' ' + text : text;
+        el.hidden = false;
+        el.style.display = '';
+        if (!isWarning && spec.input) {
+            var input = document.getElementById(spec.input);
+            if (input && input.classList) input.classList.add('form-input--error');
+        }
+    });
+    if (orphans.length > 0) {
+        var form = document.getElementById('claims-err-form');
+        if (form) {
+            form.textContent = orphans.join(' ');
+            form.hidden = false;
+            form.style.display = '';
+        }
+    }
+}
+
+// CLAIM_INPUT_TO_ERROR_FIELD is CLAIM_ERROR_SLOTS read the other way: which
+// finding does editing THIS input answer. Built once from the table so the two
+// directions cannot disagree.
+const CLAIM_INPUT_TO_ERROR_FIELD = (function() {
+    var out = {};
+    Object.keys(CLAIM_ERROR_SLOTS).forEach(function(key) {
+        var input = CLAIM_ERROR_SLOTS[key].input;
+        if (input) out[input] = key;
+    });
+    return out;
+})();
+
+// clearClaimFieldError drops one field's message and border.
+//
+// A message that outlives the value it was about is worse than no message: the
+// operator fixes the field, the red stays, and they stop believing the red.
+function clearClaimFieldError(field) {
+    var spec = CLAIM_ERROR_SLOTS[field];
+    if (!spec) return;
+    [spec.slot, spec.notice].forEach(function(id) {
+        if (!id) return;
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = '';
+        el.hidden = true;
+        el.style.display = 'none';
+    });
+    if (spec.input) {
+        var input = document.getElementById(spec.input);
+        if (input && input.classList) input.classList.remove('form-input--error');
+    }
+}
+
+// ensureClaimErrorDelegation clears a field's error the moment it is edited.
+// One delegated listener on the modal rather than a handler per input, and
+// idempotent so re-opening the modal does not stack listeners.
+function ensureClaimErrorDelegation() {
+    var modal = document.getElementById('claim-modal');
+    if (!modal || modal.dataset.errDelegated === '1') return;
+    modal.dataset.errDelegated = '1';
+    var onEdit = function(e) {
+        var id = e.target && e.target.id;
+        var field = id && CLAIM_INPUT_TO_ERROR_FIELD[id];
+        if (field) clearClaimFieldError(field);
+    };
+    modal.addEventListener('change', onEdit);
+    modal.addEventListener('input', onEdit);
+}
+
+// ── Node pickers ────────────────────────────────────────────────────
+//
+// All six geometry pickers were unfiltered dumps of every core node, so "Back
+// Press Node" offered supermarkets and groups and "Inbound Source" offered
+// presses.
+//
+// TWO MECHANISMS, AND THE DIFFERENCE MATTERS.
+//
+//   EXCLUDE only what the runtime CANNOT do. A robot cannot index a bin into a
+//   group — the press-index builder emits pickup/dropoff at concrete nodes — so
+//   a group in a paired-position picker is not an unlikely choice, it is an
+//   impossible one.
+//
+//   RANK what is merely unlikely, into labelled optgroups. The signals
+//   available here (node class, and whether the name is a line position on this
+//   process) do not separate a press from a supermarket: both are plain
+//   concrete nodes. And the one case where the distinction looks obvious is a
+//   trap — a dedicated loader's home position is BOTH a line position AND a
+//   legitimate InboundSource (Core's source_finder tier 2, sourceFromDedicated-
+//   Loader). Filtering sources by "not a line position" would hide a supported,
+//   tested configuration. So sources rank groups first and hide nothing.
+//
+// The escape hatch exists because a plant's naming and topology can defeat any
+// heuristic: "Show every node" reveals the excluded entries in all six pickers.
+// Not persisted — it is a per-session look, not a setting.
+const NODE_PICKER_KIND = {
+    'claims-add-inbound':              'staging',
+    'claims-add-outbound':             'staging',
+    'claims-add-inbound-source':       'endpoint',
+    'claims-add-outbound-destination': 'endpoint',
+    'claims-add-evac-destination':     'endpoint',
+    'claims-add-paired-node':          'position',
+    'claims-add-second-paired-node':   'position',
+};
+
+// The blank first option each picker keeps, by element id.
+const NODE_PICKER_PLACEHOLDER = {
+    'claims-add-inbound':              '-- None --',
+    'claims-add-outbound':             '-- None --',
+    'claims-add-inbound-source':       '-- None --',
+    'claims-add-outbound-destination': '-- None --',
+    'claims-add-evac-destination':     '-- Use Outbound Destination --',
+    'claims-add-paired-node':          '-- None (no A/B cycling) --',
+    'claims-add-second-paired-node':   '-- None (2-position layout) --',
+};
+
+var _showAllNodes = false;
+
+function nodeCatalog() {
+    var cat = (typeof window !== 'undefined' && window.coreNodeCatalog) || {};
+    var out = [];
+    Object.keys(cat).forEach(function(name) {
+        var info = cat[name] || {};
+        out.push({ name: name, type: info.node_type || '' });
+    });
+    out.sort(function(a, b) { return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0); });
+    return out;
+}
+
+function isLinePosition(name) {
+    var names = (typeof window !== 'undefined' && window.processNodeNames) || [];
+    return names.indexOf(name) >= 0;
+}
+
+// nodeAllowedForPicker: is this node a POSSIBLE answer for this field.
+//
+// Every rule here removes something the runtime cannot use, never something it
+// merely usually does not. `self` is the claim's own core node and its paired
+// positions — a cell cannot stage at, source from or deliver to itself, and a
+// press position cannot be paired with itself.
+function nodeAllowedForPicker(kind, node, self) {
+    if (self && self.indexOf(node.name) >= 0) return false;
+    switch (kind) {
+        case 'position':
+            // The builder emits pickup/dropoff at a concrete node; a group has
+            // no coordinates to drive to.
+            return node.type !== 'NGRP';
+        case 'staging':
+            // Staging is a place a robot parks a bin. A group is not a place.
+            return node.type !== 'NGRP';
+        case 'endpoint':
+            // Sources and destinations accept a group OR a concrete node —
+            // Core resolves either. Nothing is excluded but self.
+            return true;
+        default:
+            return true;
+    }
+}
+
+// nodePickerGroupLabel: which optgroup a node sorts into, or '' for a flat
+// list. Ranking only; every entry is still selectable.
+function nodePickerGroupLabel(kind, node) {
+    if (kind === 'position') {
+        return isLinePosition(node.name) ? 'This process' : 'Other nodes';
+    }
+    if (kind === 'endpoint') {
+        return node.type === 'NGRP' ? 'Groups' : 'Nodes';
+    }
+    return '';
+}
+
+const NODE_PICKER_GROUP_ORDER = ['This process', 'Groups', 'Other nodes', 'Nodes'];
+
+// buildNodePickers rewrites the six geometry selects from the catalog.
+//
+// THE CURRENT VALUE IS ALWAYS PRESENT, even when the filter would exclude it.
+// A picker that drops the value it is displaying is the round-2 unit-2 bug
+// wearing a different hat: the operator opens a claim, the select silently
+// falls back to blank, and the next save writes the blank. An out-of-filter
+// value is kept and marked so the operator can see WHY it looks odd.
+function buildNodePickers(state) {
+    var catalog = nodeCatalog();
+    Object.keys(NODE_PICKER_KIND).forEach(function(selID) {
+        var sel = document.getElementById(selID);
+        if (!sel) return;
+        var kind = NODE_PICKER_KIND[selID];
+        var current = sel.value || '';
+        var self = claimSelfNodes(selID, state);
+
+        var buckets = {};
+        var order = [];
+        var currentIncluded = false;
+        catalog.forEach(function(node) {
+            if (!_showAllNodes && !nodeAllowedForPicker(kind, node, self)) return;
+            var g = _showAllNodes ? '' : nodePickerGroupLabel(kind, node);
+            if (!buckets[g]) { buckets[g] = []; order.push(g); }
+            buckets[g].push(node);
+            if (node.name === current) currentIncluded = true;
+        });
+
+        var html = '<option value="">' + escapeHtml(NODE_PICKER_PLACEHOLDER[selID] || '-- None --') + '</option>';
+        if (current && !currentIncluded) {
+            html += '<option value="' + escapeHtml(current) + '" selected>' +
+                escapeHtml(current) + ' (not offered for this field)</option>';
+        }
+        order.sort(function(a, b) {
+            var ia = NODE_PICKER_GROUP_ORDER.indexOf(a);
+            var ib = NODE_PICKER_GROUP_ORDER.indexOf(b);
+            return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+        });
+        order.forEach(function(g) {
+            if (g) html += '<optgroup label="' + escapeHtml(g) + '">';
+            buckets[g].forEach(function(node) {
+                var label = node.name + (node.type === 'NGRP' ? ' (group)' : '');
+                html += '<option value="' + escapeHtml(node.name) + '">' + escapeHtml(label) + '</option>';
+            });
+            if (g) html += '</optgroup>';
+        });
+        sel.innerHTML = html;
+        sel.value = current;
+    });
+}
+
+// claimSelfNodes: the node names this picker must not offer, because the claim
+// already uses them somewhere the field cannot repeat.
+function claimSelfNodes(selID, state) {
+    if (!state) return [];
+    var kind = NODE_PICKER_KIND[selID];
+    var out = [];
+    if (state.coreNodeName) out.push(state.coreNodeName);
+    if (kind === 'position') {
+        // The three press positions must be distinct — the same rule
+        // domain.ValidateNodeClaim enforces server-side.
+        if (selID !== 'claims-add-paired-node' && state.pairedCoreNode) out.push(state.pairedCoreNode);
+        if (selID !== 'claims-add-second-paired-node' && state.secondPairedCoreNode) out.push(state.secondPairedCoreNode);
+    }
+    return out;
+}
+
+// toggleShowAllNodes is the escape hatch. Deliberately NOT persisted: a plant
+// whose naming defeats the heuristic needs a look, not a permanent setting that
+// quietly turns the filtering off for everyone who follows.
+function resetShowAllNodes() {
+    _showAllNodes = false;
+    var cb = document.getElementById('claims-show-all-nodes');
+    if (cb) cb.checked = false;
+}
+
+function toggleShowAllNodes() {
+    var cb = document.getElementById('claims-show-all-nodes');
+    _showAllNodes = !!(cb && cb.checked);
+    renderClaimForm();
+}
+
+// renderCollapseHints keeps a collapsed group honest.
+//
+// Collapsing may hide DETAIL; it must not hide STATE. A card whose summary
+// reads "Changeover" tells the operator nothing about whether this claim
+// evacuates, so they open every card every time and the collapse has bought
+// nothing. The hint carries the current value, and a group holding a
+// non-default value opens itself.
+function renderCollapseHints(state) {
+    var setHint = function(cardID, hintID, text, isDefault) {
+        var hint = document.getElementById(hintID);
+        if (hint) hint.textContent = text;
+        var card = document.getElementById(cardID);
+        // Only force OPEN. Forcing closed would slam the card shut under an
+        // operator who had just opened it to look.
+        if (card && !isDefault) card.open = true;
+    };
+    var markedNodes = state.changeoverEvacNodes || [];
+    var coHint = state.evacuateOnChangeover ? 'evacuate: on' : 'evacuate: off';
+    if (markedNodes.length > 0) coHint += ' · cleared for setup: ' + markedNodes.join(', ');
+    setHint('claims-changeover-fieldset', 'claims-changeover-hint', coHint,
+        !state.evacuateOnChangeover && markedNodes.length === 0);
+    setHint('claims-auto-request-fieldset', 'claims-auto-request-hint',
+        state.autoRequestPayload ? ('payload: ' + state.autoRequestPayload)
+                                 : (state.autoConfirm ? 'auto-confirm: on' : 'disabled'),
+        !state.autoRequestPayload && !state.autoConfirm);
+}
+
+// readEvacNodes snapshots which of this claim's nodes are marked for clearance.
+//
+// IT DOES NOT FILTER BY VISIBILITY, and that is deliberate. Filtering here
+// looked right and made the drop note impossible: renderClaimForm hides the
+// clearance rows the moment the mode changes, so by the time anything asked "what
+// will this mode discard" the answer was already gone and the operator was
+// told nothing. Same shape as the value-eating bug of round 2 — a view
+// decision reaching back into the model.
+//
+// A position the mode or the layout cannot use is dropped at SAVE by
+// claimForbiddenFields, which is where every other such value is dropped, and
+// named in the note first.
+// ── KEY ROUTE LIST CONTROL ───────────────────────────────────────────────
+//
+// A repeatable list rather than the single <select> every other node field
+// uses, because a key route is ORDERED and arbitrary-length. DOM order IS the
+// route order — there is no separate index to keep in step, which is the way
+// this kind of control usually rots.
+//
+// Each row is a node picker rather than a text box: the points must resolve
+// against Core's node list or the robot's job dies on issue, and a picker is
+// the difference between finding that out here and finding it out at 2am. The
+// server checks anyway (ValidateNodeClaim) — a picker is a convenience, not
+// the guard.
+function keyRouteList() {
+    return document.getElementById('claims-key-route-list');
+}
+
+function keyRouteOptionsHTML(selected) {
+    var html = '<option value="">-- Choose a point --</option>';
+    var found = false;
+    nodeCatalog().forEach(function(node) {
+        var sel = node.name === selected ? ' selected' : '';
+        if (sel) found = true;
+        html += '<option value="' + escapeHtml(node.name) + '"' + sel + '>' +
+            escapeHtml(node.name) + (node.type === 'NGRP' ? ' (group)' : '') + '</option>';
+    });
+    // A stored point Core no longer offers stays visible and stays SELECTED.
+    // Dropping it would silently rewrite a saved route on the next save of an
+    // unrelated field — the save-stomp shape round 2 spent a unit on.
+    if (selected && !found) {
+        html += '<option value="' + escapeHtml(selected) + '" selected>' +
+            escapeHtml(selected) + ' (not offered by Core)</option>';
+    }
+    return html;
+}
+
+function keyRouteRowHTML(point) {
+    return '<div class="key-route-row">' +
+        '<select class="form-input claims-key-route-point">' + keyRouteOptionsHTML(point) + '</select>' +
+        '<button type="button" class="btn btn-sm btn-danger" data-action="removeKeyRoutePoint">&times;</button>' +
+        '</div>';
+}
+
+function writeKeyRoute(points) {
+    var list = keyRouteList();
+    if (!list) return;
+    list.innerHTML = (points || []).map(keyRouteRowHTML).join('');
+}
+
+function readKeyRoute() {
+    var out = [];
+    document.querySelectorAll('.claims-key-route-point').forEach(function(sel) {
+        // Blank rows are dropped here rather than sent and refused. An empty
+        // row is an operator mid-edit, not a configuration error.
+        if (sel.value) out.push(sel.value);
+    });
+    return out;
+}
+
+function addKeyRoutePoint() {
+    var list = keyRouteList();
+    if (!list) return;
+    list.insertAdjacentHTML('beforeend', keyRouteRowHTML(''));
+}
+
+// delegateActions calls a pure verb as fn(el, evt) — the clicked element is
+// the first argument, not an encoded arg.
+function removeKeyRoutePoint(el) {
+    var row = el && el.closest && el.closest('.key-route-row');
+    if (row) row.remove();
+}
+
+// THE CHECKBOXES CARRY NODE NAMES. Each row is a slot in the claim's layout —
+// front / back / third — but what it stores is the node that slot currently
+// holds, because clearing a node is a node operation and the marks name nodes.
+// The slot is presentation; data-slot says which layout field fills the value.
+// claimLoadedEvacNodes remembers the marks the claim was LOADED with, because
+// the form cannot always represent them.
+//
+// A mark naming a node this claim no longer holds — the third node was unset,
+// or a slot re-pointed — has no checkbox to live in: the row is hidden and its
+// value is empty. Reading only the boxes would make that mark vanish from the
+// state, and the drop note would have nothing to name. That is the same
+// value-eating shape the visibility filter caused in round 3, arriving by a
+// different route, so the answer is the same: keep it in the state, name it,
+// and let the save drop it deliberately.
+var claimLoadedEvacNodes = [];
+
+function readEvacNodes() {
+    var out = [];
+    var representable = {};
+    document.querySelectorAll('.claims-evac-position').forEach(function(cb) {
+        if (cb.value) representable[cb.value] = true;
+        if (cb.checked && cb.value) out.push(cb.value);
+    });
+    // Marks no box can hold ride along so the drop note can name them.
+    claimLoadedEvacNodes.forEach(function(n) {
+        if (!representable[n] && out.indexOf(n) < 0) out.push(n);
+    });
+    return out;
+}
+
+function writeEvacNodes(nodes) {
+    var want = {};
+    (nodes || []).forEach(function(n) { want[n] = true; });
+    document.querySelectorAll('.claims-evac-position').forEach(function(cb) {
+        cb.checked = !!(cb.value && want[cb.value]);
+    });
+}
+
+// renderEvacNodeLabels fills each row's VALUE with the node that slot holds and
+// shows it beside the label. "Back position" is the same words on every press on
+// the line; "Back position (PLN_002_B)" is the one the operator is standing at —
+// and now it is also what gets saved.
+//
+// A slot with no node gets an empty value, so it can never contribute a mark;
+// the row is hidden for that case anyway (claimFieldVisibility).
+function renderEvacNodeLabels(state) {
+    var pairs = [
+        ['front', state.coreNodeName],
+        ['paired', state.pairedCoreNode],
+        ['second', state.secondPairedCoreNode],
+    ];
+    pairs.forEach(function(p) {
+        var el = document.getElementById('claims-position-' + p[0] + '-node');
+        if (el) el.textContent = p[1] ? '(' + p[1] + ')' : '(not set)';
+        document.querySelectorAll('.claims-evac-position').forEach(function(cb) {
+            if (cb.getAttribute('data-slot') !== p[0]) return;
+            var was = cb.checked && cb.value;
+            cb.value = p[1] || '';
+            // Re-pairing a slot must not silently move a mark to the new node.
+            if (was && was !== cb.value) cb.checked = false;
+        });
+    });
+}
+
+// claimForbiddenFields answers: which populated values does THIS mode not use.
+//
+// Derived from the same (role, swap) facts as claimFieldVisibility, so the
+// answer cannot disagree with what the form shows. Only POPULATED fields are
+// reported — a mode that does not use a field the operator never set has
+// nothing to say about it.
+//
+// This is the whole set that renderClaimForm used to blank on sight. Moving it
+// here changes WHEN a value dies, not WHICH: a straight-through save drops the
+// same fields it always did, and a mode toggled away and back no longer loses
+// anything, because the question is asked once, at save, about the mode the
+// operator actually chose.
+function claimForbiddenFields(role, swap, state) {
+    var isManual = swap === 'manual_swap';
+    var isPressIndex = swap === 'two_robot_press_index';
+    var usesStaging = swap === 'single_robot' || swap === 'two_robot';
+    var showPair = swap === 'sequential' || isPressIndex;
+    var out = [];
+    var forbid = function(key, label) {
+        var v = state[key];
+        if (v === '' || v === false || v === undefined || v === null) return;
+        out.push({ key: key, label: label });
+    };
+
+    if (!showPair) {
+        forbid('pairedCoreNode', 'Paired Node');
+    }
+    var markedNodes = state.changeoverEvacNodes || [];
+    if (isManual && (state.keyRoute || []).length > 0) {
+        out.push({ key: 'keyRoute', label: 'Key route', value: [] });
+    }
+    if (isManual && state.keyTask) {
+        out.push({ key: 'keyTask', label: 'Key task', value: '' });
+    }
+    if (!isPressIndex && state.indexRobotSupplies) {
+        out.push({ key: 'indexRobotSupplies', label: 'Index robot fetches the replacement', value: false });
+    }
+    if (!isPressIndex) {
+        // Per-node clearance needs a claim that names several nodes; a
+        // single-node claim answers the same question with Evacuate on changeover.
+        if (markedNodes.length > 0) {
+            out.push({ key: 'changeoverEvacNodes', label: 'Per-node changeover clearance', value: [] });
+        }
+    } else {
+        // A PARTIAL drop: a mark naming a node this claim no longer holds — the
+        // third node was unset, or a slot was re-pointed. The rest of the
+        // selection is fine and must survive; dropping the whole set would take
+        // the good marks with it.
+        var held = [state.coreNodeName, state.pairedCoreNode, state.secondPairedCoreNode]
+            .filter(function(n) { return !!n; });
+        var stale = markedNodes.filter(function(n) { return held.indexOf(n) < 0; });
+        if (stale.length > 0) {
+            out.push({
+                key: 'changeoverEvacNodes',
+                label: 'Nodes marked for clearance that this claim no longer holds (' + stale.join(', ') + ')',
+                value: markedNodes.filter(function(n) { return held.indexOf(n) >= 0; }),
+            });
+        }
+    }
+    if (!(showPair && isPressIndex)) {
+        forbid('secondPairedCoreNode', 'Third Press Position');
+        forbid('reuseCompatibleBins', 'Reuse compatible bins');
+    }
+    if (!(isManual && role === 'consume')) {
+        forbid('autoPush', 'Auto-push full bins');
+    }
+    if (!usesStaging && !isManual) {
+        forbid('inboundStaging', 'Inbound Staging');
+        forbid('outboundStaging', 'Outbound Staging');
+    }
+    // two_robot uses inbound staging only; robot B takes the old bin straight
+    // out, so an outbound staging node is ignored by the builder.
+    if (swap === 'two_robot') {
+        forbid('outboundStaging', 'Outbound Staging');
+    }
+    return out;
+}
+
+// renderModeDropNote tells the operator, while they are still looking at the
+// form, what the selected mode will discard.
+//
+// BEFORE, NOT AFTER. The old behaviour blanked the field the instant its
+// fieldset hid, so the operator's only signal was noticing later that a value
+// had gone. Naming them up front makes the drop a decision rather than a
+// discovery.
+// setHidden sets both halves of hiding an element: the `hidden` attribute for
+// meaning, and `.is-hidden` for effect. See that class in shared/components.css
+// for why the attribute is not enough by itself.
+function setHidden(el, hide) {
+    if (!el) return;
+    el.hidden = !!hide;
+    el.classList.toggle('is-hidden', !!hide);
+}
+
+function renderModeDropNote(role, swap, state) {
+    var el = document.getElementById('claims-mode-drop-note');
+    if (!el) return;
+    var dropped = claimForbiddenFields(role, swap, state);
+    if (dropped.length === 0) {
+        el.textContent = '';
+        setHidden(el, true);
+        return;
+    }
+    var names = dropped.map(function(d) { return d.label; }).join(', ');
+    el.textContent = (SWAP_MODE_LABELS[swap] || swap) +
+        ' does not use: ' + names + ' — cleared when you save.';
+    setHidden(el, false);
+}
+
 // renderClaimForm: drives the editor DOM from current role/swap mode.
 // Replaces the prior toggleClaimsAddPayload + validateClaimStaging
 // pair. The lookup at claimFieldVisibility is the single source of
@@ -1193,33 +1948,32 @@ function renderClaimForm() {
     var isTwoRobot = swap === 'two_robot';
     var visibility = claimFieldVisibility(role, swap);
 
-    // Apply visibility map. Both `hidden` and inline `display` are toggled:
-    // several template elements use the HTML `hidden` attribute as their
-    // initial state, and clearing inline `display` alone leaves the UA
-    // `[hidden]{display:none}` rule in force.
+    // Apply the visibility map. The `hidden` ATTRIBUTE carries the meaning —
+    // it is what assistive technology and find-in-page read — and `.is-hidden`
+    // does the hiding, because the attribute alone cannot: `[hidden]` has
+    // class-level specificity, so `.check-row { display: flex }` beats it and
+    // a row hidden only by the attribute stays on screen.
+    //
+    // This replaces a paired inline `style.display` write plus two special
+    // cases that re-set `display: flex` on the rows the attribute could not
+    // hide. Nothing here needs to know what an element's display value is
+    // supposed to be when it comes back, which is what made those cases
+    // necessary and what made them easy to forget for a third row.
     for (var id in visibility) {
         var el = document.getElementById(id);
         if (el) {
             el.hidden = !visibility[id];
-            el.style.display = visibility[id] ? '' : 'none';
+            el.classList.toggle('is-hidden', !visibility[id]);
         }
-    }
-    // The reuse-bins row uses display:flex when visible (not block).
-    var reuseRow = document.getElementById('claims-add-reuse-bins-row');
-    if (reuseRow && visibility['claims-add-reuse-bins-row']) {
-        reuseRow.style.display = 'flex';
-    }
-    // auto-push uses flex too.
-    var autoPushRow = document.getElementById('claims-add-auto-push-row');
-    if (autoPushRow && visibility['claims-add-auto-push-row']) {
-        autoPushRow.style.display = 'flex';
     }
 
     // Disable outbound staging for two_robot (data: ignored anyway).
     var outboundSel = document.getElementById('claims-add-outbound');
     if (outboundSel) {
         if (isTwoRobot) {
-            outboundSel.value = '';
+            // Disabled, NOT blanked: two_robot ignores outbound staging, and
+            // the value is dropped at save. Blanking it here would lose it on
+            // a mode toggle the operator was only browsing with.
             outboundSel.disabled = true;
             outboundSel.style.opacity = '0.5';
         } else {
@@ -1248,36 +2002,26 @@ function renderClaimForm() {
             if (pairSel.options.length > 0 && pairSel.options[0].value === '') {
                 pairSel.options[0].textContent = '-- None (no A/B cycling) --';
             }
-            // Reset state that doesn't apply outside press index.
-            document.getElementById('claims-add-second-paired-node').value = '';
-            document.getElementById('claims-add-reuse-bins').checked = false;
         }
-    } else {
-        // AB fieldset hidden entirely → clear paired-node state.
-        document.getElementById('claims-add-paired-node').value = '';
-        document.getElementById('claims-add-second-paired-node').value = '';
-        document.getElementById('claims-add-reuse-bins').checked = false;
     }
 
-    // Auto-push only applies to a consume manual_swap (unloader).
-    if (!(isManual && role === 'consume')) {
-        document.getElementById('claims-add-auto-push').checked = false;
-    }
+    // NOTHING IS CLEARED HERE, AND THAT IS THE POINT.
+    //
+    // This function used to blank paired_core_node, second_paired_core_node,
+    // reuse_compatible_bins, auto_push and both staging fields whenever their
+    // fieldset went out of view. Rendering is not editing: toggling the swap
+    // mode to look at another mode's fields, then toggling back, silently
+    // destroyed a press-index pairing the operator never touched. The state is
+    // the model; visibility is a view of it.
+    //
+    // Values a mode genuinely cannot use are dropped at SAVE, by
+    // claimForbiddenFields below, and the operator is told which — see
+    // renderModeDropNote.
 
     // Manual swap on a fresh open clears staging fields (no concept of
     // staging there). When editing, leave alone so the operator can
     // see prior values before manual_swap was selected.
     var isEditing = !!document.getElementById('claims-edit-id').value;
-    if (isManual && !isEditing) {
-        document.getElementById('claims-add-reorder').value = '0';
-        document.getElementById('claims-add-payload').value = '';
-        document.getElementById('claims-add-inbound').value = '';
-        document.getElementById('claims-add-outbound').value = '';
-        document.getElementById('claims-add-inbound-source').value = '';
-        document.getElementById('claims-add-evacuate').checked = false;
-        document.getElementById('claims-add-paired-node').value = '';
-        buildAllowedPayloadPicker([]);
-    }
     if (isManual && isEditing) {
         var picker = document.getElementById('claims-allowed-picker');
         var hasCheckboxes = picker && picker.querySelector('.allowed-payload-cb');
@@ -1289,20 +2033,21 @@ function renderClaimForm() {
         }
     }
 
-    // Clear staging values when not used so they aren't saved.
-    if (!(swap === 'single_robot' || swap === 'two_robot') && !isManual) {
-        document.getElementById('claims-add-inbound').value = '';
-        document.getElementById('claims-add-outbound').value = '';
-    }
+    // Rebuild the geometry pickers for the current claim before reading state
+    // back out, so the note below sees the values the pickers actually hold.
+    buildNodePickers(readClaimStateFromForm());
 
     // Validation warning for missing required staging.
+    var state = readClaimStateFromForm();
     var warn = document.getElementById('claims-staging-warning');
     if (warn) {
-        var state = readClaimStateFromForm();
         var missing = (swap === 'single_robot' && (!state.inboundStaging || !state.outboundStaging))
             || (swap === 'two_robot' && !state.inboundStaging);
         warn.style.display = missing ? '' : 'none';
     }
+    renderModeDropNote(role, swap, state);
+    renderEvacNodeLabels(state);
+    renderCollapseHints(state);
 }
 
 // Backwards-compat shims for inline onchange handlers in processes.html.
@@ -1320,6 +2065,11 @@ function defaultClaimState() {
         allowedPayloadCodes: [],
         uopCapacity: 0,
         reorderPoint: 0,
+        // 0 means "no opinion": the store gives a new claim the next free
+        // board slot. Not a real position, and not sent as one.
+        sequence: 0,
+        autoReorder: false,
+        keepStaged: false,
         linesideSoftThreshold: 0,
         inboundStaging: '',
         outboundStaging: '',
@@ -1331,6 +2081,11 @@ function defaultClaimState() {
         autoPush: false,
         pairedCoreNode: '',
         secondPairedCoreNode: '',
+        changeoverEvacNodes: [],
+        changeoverEvacDestination: '',
+        indexRobotSupplies: false,
+        keyRoute: [],
+        keyTask: '',
         autoConfirm: false,
     };
 }
@@ -1350,6 +2105,9 @@ function openClaimModal() {
     sel.disabled = false;
     writeClaimStateToForm(defaultClaimState());
     document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
+    ensureClaimErrorDelegation();
+    clearClaimFieldErrors();
+    resetShowAllNodes();
     renderClaimForm();
     showModal('claim-modal');
 }
@@ -1371,6 +2129,9 @@ function editClaim(claim) {
         payloadCode: claim.payload_code || '',
         uopCapacity: claim.uop_capacity || 0,
         reorderPoint: claim.reorder_point || 0,
+        sequence: claim.sequence || 0,
+        autoReorder: !!claim.auto_reorder,
+        keepStaged: !!claim.keep_staged,
         linesideSoftThreshold: claim.lineside_soft_threshold || 0,
         inboundStaging: claim.inbound_staging || '',
         outboundStaging: claim.outbound_staging || '',
@@ -1382,6 +2143,12 @@ function editClaim(claim) {
         autoPush: !!claim.auto_push,
         pairedCoreNode: claim.paired_core_node || '',
         secondPairedCoreNode: claim.second_paired_core_node || '',
+        indexRobotSupplies: !!claim.index_robot_supplies,
+        keyRoute: (claim.key_route || []).slice(),
+        keyTask: claim.key_task || '',
+        changeoverEvacNodes: claim.changeover_evac_nodes || [],
+        changeoverEvacDestination: claim.changeover_evac_destination || '',
+        changeoverCarryoverDisposition: claim.changeover_carryover_disposition || 'replace',
         autoConfirm: !!claim.auto_confirm,
     });
     document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
@@ -1398,6 +2165,9 @@ function editClaim(claim) {
         updateAutoRequestDropdown();
         document.getElementById('claims-add-auto-request').value = claim.auto_request_payload || '';
     }
+    ensureClaimErrorDelegation();
+    clearClaimFieldErrors();
+    resetShowAllNodes();
     renderClaimForm();
     showModal('claim-modal');
 }
@@ -1411,27 +2181,49 @@ async function saveClaim() {
     var state = readClaimStateFromForm();
     var validation = validateClaimState(state);
     if (!validation.ok) {
-        // Surface the first error; field-level error rendering is a
-        // follow-up. Today's UX matches the prior single-toast behavior.
-        toast(validation.errors[0].msg, 'warning');
+        // EVERY error, each on its own field. This used to surface
+        // validation.errors[0] as a toast and throw the rest away, which told
+        // an operator with three problems about one of them and did not say
+        // which input it meant. The toast stays as the summary line — the
+        // fields carry the detail.
+        renderClaimFieldErrors(validation.errors);
+        toast(validation.errors.length === 1
+            ? validation.errors[0].msg
+            : validation.errors.length + ' fields need attention', 'warning');
         return;
     }
+    clearClaimFieldErrors();
+
+    // Drop what this mode cannot use, ONCE, here — not every time a fieldset
+    // went out of view. The operator has already been shown the list by
+    // renderModeDropNote; the toast below is the confirmation that it happened.
+    var dropped = claimForbiddenFields(state.role, state.swapMode, state);
+    dropped.forEach(function(d) {
+        // An entry may name the value to keep — a PARTIAL drop, where only
+        // part of a set is unusable and blanking the whole thing would take
+        // good configuration with it.
+        if (Object.prototype.hasOwnProperty.call(d, 'value')) {
+            state[d.key] = d.value;
+        } else if (Array.isArray(state[d.key])) {
+            state[d.key] = [];
+        } else {
+            state[d.key] = (typeof state[d.key] === 'boolean') ? false : '';
+        }
+    });
 
     // manual_swap claims carry no edge-side payload: Core owns the loader's
     // payload set (loader board), so payload_code is blank and the operator
     // switches among the aggregate's payloads at load time.
     var primaryPayload = state.swapMode === 'manual_swap' ? '' : state.payloadCode;
 
-    // Preserve the claim's existing auto_reorder — see claimToBody. The modal
-    // has no control for it, so an edit must carry whatever the claim already
-    // had; a NEW claim (no id) starts off rather than arming itself. Read from
-    // the loaded claim rather than form state because the flag has no DOM
-    // field to round-trip through.
-    var existingClaim = (_currentClaims || []).find(function(c) {
-        return String(c.id) === String(state.id);
-    });
-    var autoReorder = !!(existingClaim && existingClaim.auto_reorder);
-
+    // A FORM THAT OWNS A FIELD SENDS IT. Round 1 made these pointers on
+    // NodeClaimInput so a writer could decline to speak; this editor now has
+    // controls for three of them, so it speaks. reorder_point_source stays
+    // absent — nothing here sets provenance.
+    //
+    // sequence 0 is the exception, and stays absent: it means "no opinion",
+    // and the store reads an absent sequence as "give a new claim the next
+    // free board slot". Sending a literal 0 would claim position zero.
     var claimBody = {
         style_id: state.styleId,
         core_node_name: state.coreNodeName,
@@ -1442,22 +2234,27 @@ async function saveClaim() {
         uop_capacity: state.uopCapacity,
         reorder_point: state.reorderPoint,
         lineside_soft_threshold: state.linesideSoftThreshold,
-        auto_reorder: autoReorder,
         inbound_staging: state.inboundStaging,
         outbound_staging: state.outboundStaging,
         inbound_source: state.inboundSource,
         outbound_destination: state.outboundDestination,
         auto_request_payload: state.autoRequestPayload,
-        // KeepStaged column persists as a backend safety net for the
-        // future supermarket rewire; the editor never sets it true.
-        keep_staged: false,
         evacuate_on_changeover: state.evacuateOnChangeover,
         reuse_compatible_bins: state.reuseCompatibleBins,
         auto_push: state.autoPush,
         paired_core_node: state.pairedCoreNode,
         second_paired_core_node: state.secondPairedCoreNode,
+        index_robot_supplies: state.indexRobotSupplies,
+        key_route: state.keyRoute,
+        key_task: state.keyTask,
+        changeover_evac_nodes: state.changeoverEvacNodes,
+        changeover_evac_destination: state.changeoverEvacDestination,
+        changeover_carryover_disposition: state.changeoverCarryoverDisposition,
         auto_confirm: state.autoConfirm,
+        auto_reorder: state.autoReorder,
+        keep_staged: state.keepStaged,
     };
+    if (state.sequence > 0) claimBody.sequence = state.sequence;
 
     // Loader replenishment + dedicated-position layout are configured on the Core
     // loader setup screen (Nodes -> Create/Edit Loader), not via this claim, so the
@@ -1491,17 +2288,38 @@ async function saveClaim() {
         }
     }
 
-    try {
-        for (var i = 0; i < nodeNames.length; i++) {
-            claimBody.core_node_name = nodeNames[i];
-            await api.post('/api/style-node-claims', claimBody);
+    // postDetailed, not post: a refusal from domain.ValidateNodeClaim carries
+    // field_errors, and a successful save can carry warnings (the
+    // node-membership notice). api.post throws away both. The server's
+    // findings render through the SAME path as the browser's, so the operator
+    // sees one thing whether JS or Go caught it.
+    var warnings = [];
+    for (var i = 0; i < nodeNames.length; i++) {
+        claimBody.core_node_name = nodeNames[i];
+        var res = await api.postDetailed('/api/style-node-claims', claimBody);
+        if (!res.ok) {
+            if (res.fieldErrors.length > 0) {
+                renderClaimFieldErrors(res.fieldErrors);
+                toast(res.fieldErrors.length === 1
+                    ? (res.fieldErrors[0].message || res.error)
+                    : res.fieldErrors.length + ' fields need attention', 'warning');
+            } else {
+                toast('Error: ' + res.error, 'error');
+            }
+            return; // modal stays open on the offending values
         }
-        closeClaimModal();
-        await loadClaims(_claimsStyleID);
-        if (nodeNames.length > 1) toast('Created ' + nodeNames.length + ' claims', 'success');
-    } catch (e) {
-        toast('Error: ' + e, 'error');
+        warnings = warnings.concat(res.warnings || []);
     }
+    closeClaimModal();
+    await loadClaims(_claimsStyleID);
+    if (nodeNames.length > 1) toast('Created ' + nodeNames.length + ' claims', 'success');
+    if (dropped.length > 0) {
+        toast('Cleared (not used by ' + (SWAP_MODE_LABELS[state.swapMode] || state.swapMode) + '): ' +
+            dropped.map(function(d) { return d.label; }).join(', '), 'warning');
+    }
+    // Advisory, and the save already happened. Surfaced after the reload so it
+    // is not mistaken for a refusal.
+    warnings.forEach(function(w) { toast(w.message || String(w), 'warning'); });
 }
 
 async function removeClaim(id) {
@@ -1724,6 +2542,11 @@ if (activeProcessID) initClaimsTab();
 // single-source.
 delegateActions(document.body, {
     addGenerateRow,
+    addKeyRoutePoint,
+    removeKeyRoutePoint,
+    keyRouteRowHTML,
+    readKeyRoute,
+    writeKeyRoute,
     autoFillClaimsCapacity,
     buildAllowedPayloadPicker,
     claimFieldVisibility,
@@ -1767,7 +2590,13 @@ delegateActions(document.body, {
     readClaimStateFromForm,
     removeClaim,
     removeGenerateRow,
+    buildNodePickers,
+    claimForbiddenFields,
+    clearClaimFieldError,
+    clearClaimFieldErrors,
+    renderClaimFieldErrors,
     renderClaimForm,
+    renderCollapseHints,
     renderClaimRow,
     resetNodePicker,
     resetProcessForm,
@@ -1782,6 +2611,7 @@ delegateActions(document.body, {
     showProcessTab,
     syncPayloadCatalog,
     toggleClaimsAddPayload,
+    toggleShowAllNodes,
     updateAutoRequestDropdown,
     validateClaimStaging,
     validateClaimState,

@@ -1,0 +1,135 @@
+[
+  {
+    "fixture": "full_of_X_confirmed",
+    "loader_drain": "",
+    "loader_fill": "full-not-a-container",
+    "concrete_node": "",
+    "ngrp_resolver": ""
+  },
+  {
+    "fixture": "partial_of_X_confirmed",
+    "loader_drain": "",
+    "loader_fill": "",
+    "concrete_node": "",
+    "ngrp_resolver": ""
+  },
+  {
+    "fixture": "empty_carrier",
+    "loader_drain": "empty-bin",
+    "loader_fill": "",
+    "concrete_node": "",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "wrong_part",
+    "loader_drain": "payload:PART-B",
+    "loader_fill": "payload:PART-B",
+    "concrete_node": "payload \"PART-B\" does not match order payload \"PART-A\"",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "zero_uop_still_labelled",
+    "loader_drain": "uop\u003c=0",
+    "loader_fill": "full-not-a-container",
+    "concrete_node": "",
+    "ngrp_resolver": ""
+  },
+  {
+    "fixture": "negative_uop_labelled",
+    "loader_drain": "uop\u003c=0",
+    "loader_fill": "full-not-a-container",
+    "concrete_node": "",
+    "ngrp_resolver": ""
+  },
+  {
+    "fixture": "over_capacity",
+    "loader_drain": "",
+    "loader_fill": "full-not-a-container",
+    "concrete_node": "",
+    "ngrp_resolver": ""
+  },
+  {
+    "fixture": "cap_unknown_zero",
+    "loader_drain": "",
+    "loader_fill": "full-not-a-container",
+    "concrete_node": "",
+    "ngrp_resolver": ""
+  },
+  {
+    "fixture": "unconfirmed_full",
+    "loader_drain": "unconfirmed-full",
+    "loader_fill": "full-not-a-container",
+    "concrete_node": "",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "unconfirmed_partial",
+    "loader_drain": "",
+    "loader_fill": "",
+    "concrete_node": "",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "status_staged",
+    "loader_drain": "",
+    "loader_fill": "",
+    "concrete_node": "",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "status_flagged",
+    "loader_drain": "status:flagged",
+    "loader_fill": "status:flagged",
+    "concrete_node": "status=\"flagged\" rejects pickup",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "status_maintenance",
+    "loader_drain": "status:maintenance",
+    "loader_fill": "status:maintenance",
+    "concrete_node": "status=\"maintenance\" rejects pickup",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "status_quality_hold",
+    "loader_drain": "status:quality_hold",
+    "loader_fill": "status:quality_hold",
+    "concrete_node": "status=\"quality_hold\" rejects pickup",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "status_retired",
+    "loader_drain": "status:retired",
+    "loader_fill": "status:retired",
+    "concrete_node": "status=\"retired\" rejects pickup",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "status_off_spec",
+    "loader_drain": "status:quarantine",
+    "loader_fill": "status:quarantine",
+    "concrete_node": "status=\"quarantine\" rejects pickup",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "claimed",
+    "loader_drain": "claimed",
+    "loader_fill": "claimed",
+    "concrete_node": "already claimed by order 9999",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "locked",
+    "loader_drain": "locked",
+    "loader_fill": "locked",
+    "concrete_node": "locked for active handling",
+    "ngrp_resolver": "rejected"
+  },
+  {
+    "fixture": "reserved_pending",
+    "loader_drain": "",
+    "loader_fill": "",
+    "concrete_node": "pending reservation held",
+    "ngrp_resolver": ""
+  }
+]

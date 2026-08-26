@@ -174,7 +174,7 @@ func TestBuildChangeoverPlan_AnyNodeWithErrFailsThePlan(t *testing.T) {
 		{ID: 42, Name: "N1", CoreNodeName: "N1"},
 		{ID: 43, Name: "N2", CoreNodeName: "N2"},
 	}
-	plan := BuildChangeoverPlan(diffs, nodes, false, nil)
+	plan := BuildChangeoverPlan(diffs, nodes, false, nil, toolingChangeover{})
 
 	if len(plan.Actions) != 2 {
 		t.Fatalf("expected 2 actions in plan, got %d", len(plan.Actions))
@@ -301,7 +301,7 @@ func TestBuildChangeoverPlan_Sequential_ActiveOnB_SwapsAFirst(t *testing.T) {
 	nodes := []processes.Node{{ID: 42, Name: "N1", CoreNodeName: "N1"}}
 	activePull := map[string]bool{"N1": false, "N1B": true}
 
-	plan := BuildChangeoverPlan(diffs, nodes, false, activePull)
+	plan := BuildChangeoverPlan(diffs, nodes, false, activePull, toolingChangeover{})
 	if len(plan.Actions) != 1 || plan.Actions[0].Err != nil {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
@@ -326,7 +326,7 @@ func TestBuildChangeoverPlan_Sequential_ActiveOnA_SwapsBFirst(t *testing.T) {
 	nodes := []processes.Node{{ID: 42, Name: "N1", CoreNodeName: "N1"}}
 	activePull := map[string]bool{"N1": true, "N1B": false}
 
-	plan := BuildChangeoverPlan(diffs, nodes, false, activePull)
+	plan := BuildChangeoverPlan(diffs, nodes, false, activePull, toolingChangeover{})
 	if len(plan.Actions) != 1 || plan.Actions[0].Err != nil {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
@@ -512,7 +512,7 @@ func TestBuildChangeoverPlan_SkipsUnchangedAndUnknownNodes(t *testing.T) {
 		{CoreNodeName: "Nmissing", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
 	}
 	nodes := []processes.Node{{ID: 42, Name: "N1", CoreNodeName: "N1"}}
-	plan := BuildChangeoverPlan(diffs, nodes, false, nil)
+	plan := BuildChangeoverPlan(diffs, nodes, false, nil, toolingChangeover{})
 
 	if len(plan.Actions) != 1 {
 		t.Fatalf("plan actions = %d, want 1 (only N1 should produce an action)", len(plan.Actions))

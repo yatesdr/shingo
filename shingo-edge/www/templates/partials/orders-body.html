@@ -17,14 +17,55 @@
         {{range .ActiveOrders}}
         <tr data-order-id="{{.ID}}">
             {{/* P20-equivalent: left-edge alert for faulted (amber) and failed (red). */}}
-            <td class="orders-uuid"{{if eq .Status "faulted"}} style="border-left:3px solid var(--warning)"{{else if eq .Status "failed"}} style="border-left:3px solid var(--danger)"{{end}} title="{{.UUID}}">{{printf "%.8s" .UUID}}{{if eq .AuthoredBy "core"}} <span title="Core created this order; this station did not request it" style="font-size:0.7rem;color:var(--text-muted);border:1px solid var(--border);border-radius:3px;padding:0 0.25rem">core</span>{{end}}</td>
+            {{/* The authored-by tag: "core" on an order Core decided to create and
+                 pushed down, nothing at all on the ordinary case. One rendering
+                 site, no logic reads the column, so switching it off is deleting
+                 this span.
+
+                 THE TAG NOW SAYS WHY. OriginClass names the kind of demand the
+                 order belongs to and OriginID is the episode it belongs to; both
+                 reached the Edge for the first time in MG2-8, and the wire type
+                 had promised them all along ("so a projected row answers 'why
+                 does this exist' the same way a locally created one does").
+                 Before that, "core" was the whole answer to why a robot was
+                 coming.
+
+                 The class is PRINTED and the id lives in the title. The class is
+                 the part an operator can act on; the id is a forty-character
+                 correlation key for whoever is reading Core's demand browser
+                 beside this screen, and printing it would swamp the column.
+
+                 Blank origin renders as the bare "core" tag, unchanged. That is
+                 every row projected before this column existed — the value was
+                 dropped in flight and no backfill can invent it. */}}
+            <td class="orders-uuid"{{if or (eq .Status "faulted") (eq .Status "failed")}} style="border-left:3px solid {{if eq .Status "faulted"}}var(--warning){{else}}var(--danger){{end}}"{{end}} title="{{.UUID}}">{{printf "%.8s" .UUID}}{{if eq .AuthoredBy "core"}} <span title="Core created this order; this station did not request it{{if .OriginID}}&#10;Demand episode: {{.OriginID}}{{end}}" style="font-size:0.7rem;color:var(--text-muted);border:1px solid var(--border);border-radius:3px;padding:0 0.25rem">core{{if .OriginClass}} · {{.OriginClass}}{{end}}</span>{{end}}</td>
             <td>{{.OrderType}}</td>
-            <td>{{if .PayloadCode}}<code style="font-size:0.8rem">{{.PayloadCode}}</code>{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
+            {{/* Payload: the code, and under it the words.
+
+                 PayloadDesc is what makes a Core-authored row legible. Core has
+                 sent it on every projection since the projection existed and the
+                 Edge had nowhere to put it until MG2-8, so a maintained-group ask
+                 rendered as a bare code and nothing else — a robot arriving for
+                 no stated reason. It is blank on every Edge-authored order and on
+                 every row projected before the column existed, which renders as
+                 the sub-line simply not appearing.
+
+                 NOT A FALLBACK for a missing code. Both are shown when both
+                 exist: the code is what the plant's other screens key on, and
+                 replacing it with prose would break the reader's ability to match
+                 this row against them. */}}
+            <td>
+                {{if .PayloadCode}}<code style="font-size:0.8rem">{{.PayloadCode}}</code>{{else if not .PayloadDesc}}<span style="color:var(--text-muted)">--</span>{{end}}
+                {{if .PayloadDesc}}<div style="font-size:0.75rem;color:var(--text-muted);max-width:16rem;white-space:normal">{{.PayloadDesc}}</div>{{end}}
+            </td>
             <td>{{if .ProcessName}}{{.ProcessName}}{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
             <td class="mono">{{.DeliveryNode}}{{if .StagingNode}} <span style="color:var(--text-muted);font-size:0.75rem">(stg: {{.StagingNode}})</span>{{end}}</td>
             <td>
                 <span class="badge badge-{{.Status}}">{{.Status}}</span>
+                {{/* Reason slot, status-agnostic: queued explains its wait, faulted
+                     explains its fault. The fault line ticks its own clock. */}}
                 {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}</div>{{end}}
+                {{with faultLine .}}<div class="orders-subtext orders-reason">{{.}}</div>{{end}}
             </td>
             <td class="orders-time">{{formatTime .CreatedAt}}</td>
             <td class="orders-time">{{if .ETA}}{{.ETA}}{{else}}--{{end}}</td>
@@ -33,7 +74,7 @@
                     <button class="btn btn-sm btn-primary" data-action="confirmDelivery:{{.ID}}:{{.Quantity}}">Confirm</button>
                 {{end}}
                 {{if eq .Status "staged"}}
-                    {{if .StagedExpireAt}}<span class="text-muted orders-subtext" data-countdown="{{.StagedExpireAt.Format "2006-01-02T15:04:05Z07:00"}}"></span>{{end}}
+                    {{if .StagedExpireAt}}<span class="text-muted orders-subtext" data-until="{{.StagedExpireAt.Format "2006-01-02T15:04:05Z07:00"}}" data-past="Expired"></span>{{end}}
                     <button class="btn btn-sm btn-primary" data-action="releaseOrder:{{.ID}}">Release</button>
                 {{end}}
                 {{if eq .Status "pending"}}

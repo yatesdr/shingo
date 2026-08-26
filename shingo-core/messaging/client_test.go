@@ -2,6 +2,11 @@ package messaging
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -198,9 +203,12 @@ func TestClient_Reconfigure(t *testing.T) {
 
 	_ = client.Subscribe("test-topic", handler)
 
-	// Reconfigure with new brokers
+	// Reconfigure with new brokers. 127.0.0.1:1, not a made-up hostname: Connect()
+	// wraps the dial in a 5s deadline and an unresolvable name blocks until it on
+	// this host's DNS, which made this test a flat 5.00s every run. Connection
+	// refused is instant and exercises the same unreachable-broker path.
 	newCfg := &config.MessagingConfig{
-		Kafka:         config.KafkaConfig{Brokers: []string{"newhost:9092"}},
+		Kafka:         config.KafkaConfig{Brokers: []string{"127.0.0.1:1"}},
 		OrdersTopic:   "shingo.orders",
 		DispatchTopic: "shingo.dispatch",
 	}
@@ -212,8 +220,8 @@ func TestClient_Reconfigure(t *testing.T) {
 	}
 
 	// Verify config was updated
-	if len(client.cfg.Kafka.Brokers) != 1 || client.cfg.Kafka.Brokers[0] != "newhost:9092" {
-		t.Errorf("brokers = %v, want [newhost:9092]", client.cfg.Kafka.Brokers)
+	if len(client.cfg.Kafka.Brokers) != 1 || client.cfg.Kafka.Brokers[0] != "127.0.0.1:1" {
+		t.Errorf("brokers = %v, want [127.0.0.1:1]", client.cfg.Kafka.Brokers)
 	}
 }
 
@@ -404,5 +412,72 @@ func TestClient_BackoffCalculation(t *testing.T) {
 
 	if backoff != maxBackoff {
 		t.Errorf("backoff = %v, want %v (capped)", backoff, maxBackoff)
+	}
+}
+
+// TestKafkaWriterSetsRequiredAcks guards the defect fixed in this package:
+// the writer was built as a &kafka.Writer{} struct literal that never set
+// RequiredAcks, so it published at the zero value — RequireNone — under which
+// the broker returns no response and WriteMessages reports success for a
+// message the broker rejected. The outbox drainer reads that nil as "sent"
+// and deletes the row. kafka-go's 0-means-RequireAll fixup is inside
+// NewWriter, which a struct literal does not go through.
+//
+// The assertion is on the source, not on a constructed writer, because
+// connect() needs a live broker to reach the construction site. A composite
+// literal is exactly the shape that lost the field, so the literal is what
+// gets checked.
+func TestKafkaWriterSetsRequiredAcks(t *testing.T) {
+	t.Parallel()
+
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+
+	found := 0
+	for _, entry := range entries {
+		path := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			sel, ok := lit.Type.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Writer" {
+				return true
+			}
+			if ident, ok := sel.X.(*ast.Ident); !ok || ident.Name != "kafka" {
+				return true
+			}
+			found++
+			for _, elt := range lit.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "RequiredAcks" {
+					return true
+				}
+			}
+			t.Errorf("%s:%d: kafka.Writer literal does not set RequiredAcks — "+
+				"it will publish at RequireNone and the drainer will treat "+
+				"broker rejections as successful sends",
+				path, fset.Position(lit.Pos()).Line)
+			return true
+		})
+	}
+
+	if found == 0 {
+		t.Fatal("no kafka.Writer composite literal found — the writer moved or " +
+			"changed shape; re-point this guard rather than deleting it")
 	}
 }

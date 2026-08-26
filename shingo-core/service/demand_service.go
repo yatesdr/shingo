@@ -71,11 +71,3 @@ func (s *DemandService) ClearProduced(id int64) error {
 func (s *DemandService) ClearAllProduced() error {
 	return s.db.ClearAllProduced()
 }
-
-// --- Production log -------------------------------------------------------
-
-// ListProductionLog returns the most recent production-log entries for
-// a catalogue ID, capped at limit rows.
-func (s *DemandService) ListProductionLog(catID string, limit int) ([]*demands.ProductionLogEntry, error) {
-	return s.db.ListProductionLog(catID, limit)
-}

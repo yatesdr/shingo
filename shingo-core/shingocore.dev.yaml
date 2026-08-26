@@ -32,8 +32,8 @@ messaging:
   outbox_drain_interval: 500ms
   station_id: core
 
-# rds / count_groups / fire_alarm intentionally omitted — sim mode skips the RDS
-# adapter and the count-group runner (T1.1). Defaults apply for anything else.
+# rds / fire_alarm intentionally omitted — sim mode skips the RDS adapter
+# (T1.1). Defaults apply for anything else.
 
 # Staging / reconciliation cadence. The sim has no human operator to confirm a
 # produce/consume delivery, so `delivered` orders rely on the reconciliation
@@ -76,13 +76,23 @@ sim:
   enabled: true
   seed: 1                           # fixed for reproducible dev runs (0 = derive+log)
   speed: 10.0                       # time multiplier. Change live in the dev top-strip / POST /api/sim/speed.
-  # Synced fast-forward (zero core↔edge drift). In running-clock mode (no epoch) each
-  # binary stamps its own boot-now as the clock epoch, so core+edge drift by boot-skew ×
-  # speed and cross-process coordination messages expire (the 2026-07-12 loop-degradation
-  # root cause — 400+ expired-message drops). Setting epoch + an IDENTICAL anchor_wall in
-  # BOTH configs puts them in SimSyncedFastForward (NewSimClockAnchored), locked to one
-  # shared anchor: sim-now = epoch + speed×(wallNow−anchor), identical on both sides. The
-  # epoch is a few minutes in the past so the sim fast-forwards briefly then runs 10× live.
+  # SYNCED RUNNING (zero core↔edge drift, and the multiplier is real). In
+  # running-clock mode (no epoch) each binary stamps its own boot-now as the clock
+  # epoch, so core+edge drift by boot-skew × speed and cross-process coordination
+  # messages expire (the 2026-07-12 loop-degradation root cause — 400+ expired-message
+  # drops). Setting epoch + an IDENTICAL anchor_wall in BOTH configs locks them to one
+  # shared anchor: sim-now = epoch + speed×(wallNow−anchor), identical on both sides.
+  #
+  # epoch == anchor_wall selects SimSyncedRunning: no wall clamp, so Now() and every
+  # ticker run at the SAME speed. Until §R.98 this same pair built a CLAMPING clock,
+  # and the clamp was permanent from the first tick — Now() ran at 1× while tickers
+  # ran at 10×, for every run this rig has ever done. The old comment here said the
+  # sim "fast-forwards briefly then runs 10× live", which a clamping clock cannot do:
+  # after catch-up it tracks wall at 1×, forever. The line was describing this mode
+  # before it existed.
+  #
+  # Set epoch EARLIER than anchor_wall only to replay history: that still clamps, on
+  # purpose, and the boot banner now says when it stops being fast.
   # Both epoch AND anchor_wall MUST match shingoedge.dev.yaml EXACTLY. Rebuild after edit.
   epoch: 2026-07-12T02:30:00Z
   anchor_wall: 2026-07-12T02:30:00Z

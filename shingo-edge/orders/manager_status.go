@@ -1,6 +1,7 @@
 package orders
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -58,15 +59,15 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 
 	switch replyType {
 	case ReplyAck:
-		return m.TransitionOrder(order.ID, StatusAcknowledged, statusDetail)
+		return m.mirrorTransition(order.ID, StatusAcknowledged, statusDetail)
 	case ReplyWaybill:
 		if err := m.db.UpdateOrderWaybill(order.ID, waybillID, eta); err != nil {
 			return err
 		}
-		return m.TransitionOrder(order.ID, StatusInTransit, fmt.Sprintf("waybill %s, ETA %s", waybillID, eta))
+		return m.mirrorTransition(order.ID, StatusInTransit, fmt.Sprintf("waybill %s, ETA %s", waybillID, eta))
 	case ReplyQueued:
 		// Order queued by Core — awaiting inventory
-		return m.TransitionOrder(order.ID, StatusQueued, statusDetail)
+		return m.mirrorTransition(order.ID, StatusQueued, statusDetail)
 	case ReplyUpdate:
 		// Status update with ETA only — don't touch waybill_id.
 		if eta != "" {
@@ -89,12 +90,118 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		// order's local status.
 		return m.TransitionOrder(order.ID, StatusSkipped, statusDetail)
 	case ReplyStaged:
-		return m.TransitionOrder(order.ID, StatusStaged, statusDetail)
+		return m.mirrorTransition(order.ID, StatusStaged, statusDetail)
 	case ReplyCancelled:
-		return m.TransitionOrder(order.ID, StatusCancelled, statusDetail)
+		return m.mirrorTransition(order.ID, StatusCancelled, statusDetail)
 	default:
 		return fmt.Errorf("unknown reply type: %s", replyType)
 	}
+}
+
+// mirrorJumpDetail prefixes the order_history detail written when the mirror had
+// to jump. It is the string a count is taken on — `SELECT count(*) FROM
+// order_history WHERE detail LIKE 'MIRROR JUMP%'` — so it is a constant rather
+// than prose assembled at each site.
+const mirrorJumpDetail = "MIRROR JUMP"
+
+// expectedMirrorJumps are the forward jumps Core NEVER PROMISED TO ANNOUNCE, so
+// the mirror catching up across them is the design working rather than a defect
+// to go find. Each entry names the pure transition being skipped and why its
+// silence is intended — at the transition, where the next reader will look.
+//
+// ── WHY THIS LIST HAD TO EXIST ────────────────────────────────────────────
+//
+// The jump row is a TICKET QUEUE: a non-zero count is supposed to mean "some
+// transition is still not notifying, and the detail says which one". A soak
+// produced 31 of them — 28 pending->acknowledged and 3 sourcing->in_transit —
+// and every one was a transition that is silent BY CONSTRUCTION. A queue that
+// is permanently non-zero for expected reasons stops being readable, and then a
+// real gap arrives and nobody looks (standing law 9: a net that always fires
+// means as little as one that never does).
+//
+// The judgment, per transition:
+//
+//	pending -> acknowledged (x28). The step between is pending->queued, which
+//	  has no actionMap entry. dispatch/lifecycle.go's transition() applies ONLY
+//	  actionMap actions — there is no general per-status push — and that map's
+//	  own header states pure transitions (status write + audit, no side effects)
+//	  deliberately have none. `queued` is an internal scheduling state Core
+//	  passes through on its way to acknowledging; the Edge learns the outcome,
+//	  not the scheduling. Nothing durable is wrong at the Edge afterwards.
+//
+//	sourcing -> in_transit (x3). Same shape, one state along: the step between
+//	  is sourcing->dispatched (or ->queued), equally pure. Dispatch is Core
+//	  handing the job to the fleet; the Edge's board cares that the robot is
+//	  moving, which is exactly the status it receives.
+//
+// NOT a licence to silence future jumps. A jump that is NOT on this list still
+// tickets, loudly, with the instruction to find the transition that does not
+// notify — which is the whole reason the queue exists. Adding an entry here is a
+// claim that Core intends the silence, and it has to be argued at the entry.
+//
+// The counterexample is in the same file's neighbourhood and worth keeping in
+// view: {Reshuffling, Queued} DOES carry fireResumed, because there the Edge was
+// stuck AT reshuffling and would never have moved again. Silence is expected on
+// a state Core passes THROUGH, not on one the Edge is parked in.
+var expectedMirrorJumps = map[[2]protocol.Status]string{
+	{protocol.StatusPending, protocol.StatusAcknowledged}: "the step between is pending->queued, a pure transition with no actionMap entry: `queued` is Core's internal scheduling state, and the Edge is told the outcome rather than the scheduling",
+	{protocol.StatusSourcing, protocol.StatusInTransit}:   "the step between is sourcing->dispatched, a pure transition with no actionMap entry: dispatch is Core handing the job to the fleet, and the Edge's board cares that the robot is moving",
+}
+
+// mirrorTransition applies a status CORE has already reached.
+//
+// ── THE MIRROR FOLLOWS THE AUTHORITY, AND SAYS SO WHEN IT HAD TO CATCH UP ──
+//
+// Every caller of this is a Core-authored report: an ack, a waybill, a staged, a
+// cancel. Core owns order state and the Edge reflects it — ApplyCoreStatus has
+// said exactly that for its own arms since the Springfield 2026-07-31 refusals
+// ("a mirror does not validate its source"). The dispatch-reply path never got
+// the same treatment: it validated, so a single missed notification left the
+// Edge behind the authority permanently, refusing every later push as illegal.
+//
+// Measured: Core walked reshuffling → queued → … → staged; the Edge, never told
+// about `queued`, rejected both in_transit and staged and held three robots for
+// an entire soak with a board that could not offer Release.
+//
+// SO A FORWARD JUMP IS ACCEPTED AND RECORDED, NOT SWALLOWED. Reachable-but-not-
+// adjacent means "I missed a message", and the history row names the gap so the
+// count is a ticket queue: a non-zero trend means a transition somewhere is
+// still not notifying, and the detail says which one to go find.
+//
+// BACKWARD AND IMPOSSIBLE STAY REFUSED. Nothing reachable from a terminal, so a
+// terminal is never resurrected; and a status Core could not have arrived at is
+// a bug in the sender, not a gap in the wire. Strictness is kept exactly where
+// it still means something.
+func (m *Manager) mirrorTransition(orderID int64, target protocol.Status, detail string) error {
+	err := m.TransitionOrder(orderID, target, detail)
+	if err == nil || !errors.Is(err, ErrInvalidTransition) {
+		return err
+	}
+	order, gErr := m.db.GetOrder(orderID)
+	if gErr != nil || order == nil {
+		return err
+	}
+	if !protocol.IsForwardJump(order.Status, target) {
+		return err // backward, or somewhere Core could not have got to
+	}
+	// EXPECTED JUMPS CATCH UP THE SAME WAY AND DO NOT TICKET. The mirror still
+	// moves in one step — that behaviour is unchanged and is what keeps the Edge
+	// from wedging — but the history row is an ordinary catch-up rather than a
+	// defect naming a transition to go fix. See expectedMirrorJumps for the
+	// per-transition argument.
+	if why, expected := expectedMirrorJumps[[2]protocol.Status{order.Status, target}]; expected {
+		caught := fmt.Sprintf("mirror caught up %s->%s (expected: %s). %s",
+			order.Status, target, why, detail)
+		m.DebugLog.Log("orders: mirror caught up order %d %s->%s — expected silence: %s",
+			orderID, order.Status, target, why)
+		return m.lifecycle.ForceTransition(orderID, target, caught)
+	}
+	jump := fmt.Sprintf("%s %s->%s: a notification was skipped; Core is already at %s. %s",
+		mirrorJumpDetail, order.Status, target, target, detail)
+	log.Printf("orders: MIRROR JUMP order %d %s->%s — the Edge was never told about the step(s) "+
+		"between, so it is catching up to Core in one move. Find the transition that does not "+
+		"notify: %s", orderID, order.Status, target, detail)
+	return m.lifecycle.ForceTransition(orderID, target, jump)
 }
 
 // ApplyCoreStatusSnapshot reconciles a local order with Core's authoritative status.

@@ -75,6 +75,7 @@ async function startProcessChangeover() {
             toast('Changeover started — awaiting stock for: ' + co.awaiting_stock.join(', ') +
                 '. These supply orders will dispatch automatically once the bins are loaded and manifest-confirmed.', 'warning');
         }
+        renderUnresolvedParticipants(co && co.unresolved_participants);
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
         toast('Error: ' + e, 'error');
@@ -85,6 +86,7 @@ async function cancelProcessChangeover() {
     if (!await confirm('Cancel the active process changeover?')) return;
     try {
         await api.post('/api/processes/' + processID + '/changeover/cancel', {});
+        renderUnresolvedParticipants(null);
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
         toast('Error: ' + e, 'error');
@@ -94,9 +96,41 @@ async function cancelProcessChangeover() {
 async function completeCutover() {
     try {
         await api.post('/api/processes/' + processID + '/changeover/cutover', {});
+        renderUnresolvedParticipants(null);
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
         toast('Error: ' + e, 'error');
+    }
+}
+
+// releaseChangeoverMaterial is the operator saying the setup is finished: ONE
+// click that releases every leg of this changeover that is holding.
+//
+// A tool change is human work at the asset. While it runs, the marked positions'
+// bins are already gone and the incoming material is parked at inbound staging
+// with robots holding it — deliberately, so nothing drives into a cell someone
+// is standing in. This is the button that ends that hold.
+//
+// It reports counts because the honest answer is sometimes partial: a leg that
+// has not reached its wait yet cannot be released, and the operator needs to
+// know there is one to come back for rather than assuming the cell is fed.
+async function releaseChangeoverMaterial() {
+    try {
+        var res = await api.post('/api/processes/' + processID + '/changeover/release', {
+            called_by: 'operator_station'
+        });
+        var released = (res && res.released) || 0;
+        var pending = (res && res.pending) || 0;
+        if (released === 0 && pending === 0) {
+            toast('Nothing is waiting to be released', 'info');
+        } else if (pending > 0) {
+            toast('Released ' + released + '; ' + pending + ' not ready yet — click again when they stage', 'warning');
+        } else {
+            toast('Released ' + released + ' — material moving in', 'success');
+        }
+        htmx.trigger(document.body, 'refreshChangeover');
+    } catch (e) {
+        toast('Release failed: ' + e, 'error');
     }
 }
 
@@ -117,6 +151,50 @@ function closeChangeoverPreview() {
     if (panel) panel.style.display = 'none';
 }
 
+// renderUnresolvedParticipants shows the start response's advisory: participant
+// nodes whose core_node_name resolves to no process_nodes row. These are
+// press-index extension positions that own NO task — physically traversed by the
+// index motion, carrying no order of their own, and invisible to every consumer
+// without a row.
+//
+// POSITIONS THAT OWN A TASK ARE NOT IN THIS LIST and the wording must not imply
+// they are. Their rows are auto-created at changeover start, and since the
+// per-node actions resolve a position's claim through its task's parent claim, a
+// fanned-out position is fully driveable with no configuration at all. The advisory
+// used to name those too, which sent the engineer to add a node the system had
+// just added itself.
+//
+// A BANNER, NOT A TOAST, and never blocking. The changeover has already
+// started; this is a config gap the engineer fixes on the process-nodes page,
+// which is not something to read in the three seconds a toast lasts. It is also
+// the only place this list is ever available — it is transient and not
+// persisted, so nothing re-renders it from state.
+//
+// Pass a falsy or empty list to clear it, which is what cancel and cutover do:
+// the advisory belongs to one changeover and must not outlive it.
+function renderUnresolvedParticipants(nodes) {
+    var el = document.getElementById('changeover-advisory');
+    if (!el) return;
+    if (!nodes || !nodes.length) {
+        el.hidden = true;
+        el.innerHTML = '';
+        return;
+    }
+    var names = nodes.map(function(n) { return '<span class="mono">' + escapeHtml(String(n)) + '</span>'; }).join(', ');
+    var one = nodes.length === 1;
+    el.innerHTML =
+        '<strong>Changeover started.</strong> ' + nodes.length +
+        (one ? ' participant node has' : ' participant nodes have') +
+        ' no process node configured: ' + names +
+        '. ' + (one ? 'This position is' : 'These positions are') +
+        ' indexed over by the press rather than handled directly, so ' +
+        (one ? 'it owns' : 'they own') + ' no changeover task and no order. Without a row ' +
+        (one ? 'it cannot' : 'they cannot') + ' be rendered on the board or protected from ' +
+        'unrelated robot traffic — add ' + (one ? 'it' : 'them') + ' on the ' +
+        '<a href="/processes">process nodes</a> page. The changeover is running regardless.';
+    el.hidden = false;
+}
+
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions
 // on document.body. Multiple event types share the same handler
@@ -130,6 +208,7 @@ delegateActions(document.body, {
     completeCutover,
     navigateToProcess,
     previewProcessChangeover,
+    releaseChangeoverMaterial,
     renderChangeoverPreview,
     startProcessChangeover,
     switchStation

@@ -1,0 +1,45 @@
+{{define "orders-rows"}}
+{{/* One row per order. Defined as a partial because two things render it: the
+     page, and the row-refresh endpoint the SSE handler calls. A second copy in
+     JS would be the drift this partial exists to prevent. */}}
+{{range .Orders}}
+<tr data-order-id="{{.ID}}" data-action="openOrderModal:{{.ID}}">
+  {{/* The whole row does ONE thing: open the order. It stays an
+      <a> so the link is copyable and ctrl/middle-click opens it in
+      a new tab, where ?open= reopens the same modal; a plain click
+      is intercepted (see openOrderModal). */}}
+  <td class="tnum" data-sort-value="{{.ID}}"><a href="/orders?open={{.ID}}" data-action="openOrderModal:{{.ID}}">{{.ID}}</a></td>
+  <td class="orders-uuid" title="{{.EdgeUUID}}">{{.EdgeUUID}}</td>
+  <td>{{stationName .StationID}}</td>
+  <td>{{.OrderType}}</td>
+  <td data-sort-value="{{.PayloadCode}}">
+    {{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{end}}
+    {{if .PayloadDesc}}<div class="orders-subtext">{{.PayloadDesc}}</div>{{end}}
+    {{if and (not .PayloadCode) (not .PayloadDesc)}}<span class="text-muted">-</span>{{end}}
+  </td>
+  <td data-sort-value="{{.Status}}">
+    <span class="badge badge-{{.Status}}">{{.Status}}</span>
+    {{/* Same slot, either reason: a queued order explains its wait, a faulted
+         one explains its fault. The fault line ticks its own clock. */}}
+    {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}</div>{{end}}
+    {{if $.FaultLines}}{{with index $.FaultLines .ID}}<div class="orders-subtext orders-reason">{{.}}</div>{{end}}{{end}}
+  </td>
+  <td class="orders-robot">{{.RobotID}}</td>
+  <td class="orders-time" data-sort-value="{{.CreatedAt}}">{{formatTime .CreatedAt}}</td>
+  {{if $.Authenticated}}
+  <td class="orders-actions">
+    {{/* canCancel is engine.TerminateOrder's own gate
+        (dispatch.IsPostDelivery || protocol.IsTerminal), so the
+        button can only render where the handler would accept it.
+        This replaced a hand-listed status denylist that had
+        drifted: it missed "skipped" (terminal — the button was
+        dead) and guarded "completed", which is not a protocol
+        status at all. */}}
+    {{if canCancel .Status}}
+    <button class="btn btn-danger btn-sm" data-action="cancelOrderFromRow:{{.ID}}">Cancel</button>
+    {{end}}
+  </td>
+  {{end}}
+</tr>
+{{end}}
+{{end}}

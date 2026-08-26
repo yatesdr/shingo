@@ -240,7 +240,7 @@ func TestCoreOutboxStore_PurgeOldOutbox_RemovesSentMessages(t *testing.T) {
 	// The underlying store formats the cutoff to second precision, so
 	// using a negative duration (cutoff = now + margin) is the most
 	// reliable way to ensure sent_at < cutoff without a >1s sleep.
-	n, err := adapter.PurgeOldOutbox(-1 * time.Minute)
+	n, err := adapter.PurgeOldOutbox(-1*time.Minute, -1*time.Minute)
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestCoreOutboxStore_PurgeOldOutbox_PreservesRecentSends(t *testing.T) {
 	}
 	testutil.MustNoErr(t, adapter.AckOutbox(pending[0].ID), "ack")
 
-	n, err := adapter.PurgeOldOutbox(24 * time.Hour)
+	n, err := adapter.PurgeOldOutbox(24*time.Hour, outbox.DeadLetterRetentionPeriod)
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}

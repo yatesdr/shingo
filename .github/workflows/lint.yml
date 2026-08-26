@@ -2,6 +2,10 @@ name: Lint
 
 on:
   push:
+    # Skip doc-only changes — lint runs Go-only rules, so a README
+    # tweak shouldn't burn a CI minute. Match this set against
+    # core.yml / edge.yml / protocol.yml's path filters so the lint
+    # gate runs whenever the test gates do.
     paths:
       - '**.go'
       - '.golangci.yml'
@@ -16,6 +20,8 @@ on:
 permissions:
   contents: read
 
+# See core.yml for rationale — coalesce burst pushes; the latest
+# commit is the only run that matters.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,6 +31,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # All five Go modules. integration was missing from the original
+      # matrix even though it carries //go:build docker test files —
+      # adding it here closes that coverage gap (it lints clean today,
+      # both passes). shared was missing for the same reason and worse:
+      # it was in no workflow at all, so its seven test files ran
+      # nowhere in CI. It lints clean today.
       matrix:
         module: [protocol, shared, shingo-core, shingo-edge, integration]
     steps:
@@ -33,15 +45,93 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.25.0'
+          # Without this, the cache is silently OFF. setup-go defaults
+          # cache:true, and with no cache-dependency-path it requires `go.mod`
+          # in the REPO ROOT (readdirSync, not recursive). This is a go.work
+          # repo: the root has go.work and the go.mod files sit one level down,
+          # so the lookup throws "Dependencies file is not found ... Supported
+          # file pattern: go.mod" — and main.ts catches it into a warning, so
+          # the job stays green having restored nothing. It caches both
+          # GOMODCACHE and GOCACHE, so every job was re-downloading every
+          # module and recompiling from scratch. See core.yml for the full note.
+          cache-dependency-path: "**/go.sum"
+
+      # THE MODULE MUST BUILD WITHOUT go.work. Runs before the linter because
+      # it is the cheaper check and it fails on a strictly more basic problem:
+      # golangci-lint resolves imports through the workspace like everything
+      # else, so a module missing a `require` for something it imports lints
+      # perfectly and is broken for anyone who consumes it on its own. That is
+      # how protocol came to import shared/clock with no require and be
+      # circular with shared behind a workspace that hid it. Mirrors
+      # scripts/gate.sh's modbuild step; keep the two together.
+      - name: standalone module build
+        run: cd ${{ matrix.module }} && GOWORK=off go build ./...
 
       - name: golangci-lint
+        # v7 is the first action release that supports golangci-lint v2.x.
+        # v6 errors out with "invalid version string" on any v2.* binary.
         uses: golangci/golangci-lint-action@v9
         with:
+          # Pinned to match the version called out in the .golangci.yml
+          # header. Bump in lockstep when upgrading the linter.
           version: v2.11.4
           working-directory: ${{ matrix.module }}
+          # --config points at the repo-root .golangci.yml so all four
+          # modules share the same depguard + forbidigo rules.
+          # --issues-exit-code=1 is the default but stated explicitly
+          # so a future flag-default change can't silently turn lint
+          # into a non-blocking warning.
+          #
+          # --build-tags docker is what CLOSED THE GAP: the default-
+          # config pass compiles only the default build tag, so every
+          # //go:build docker test file (the testcontainers/Postgres
+          # tests) was invisible to CI lint until 2026-07. A single
+          # docker pass is used INSTEAD of a separate default pass
+          # because the docker tag is purely additive here: there are
+          # ZERO //go:build !docker alternate files in the repo, so the
+          # docker build set is a strict superset of the default one
+          # (it adds the docker-tagged files without swapping any
+          # default-tagged alternates). That invariant is load-bearing:
+          # if a !docker alternate is ever introduced, a single
+          # docker-tagged pass would MISS the default-tagged file it
+          # shadows — at that point add a second default-config pass.
+          # (Run `grep -rn '//go:build !docker' --include='*.go' .` to
+          # re-verify the invariant when changing this.)
           args: --build-tags docker --config=${{ github.workspace }}/.golangci.yml --issues-exit-code=1 ./...
+          # GOMODCACHE + analysis cache are enabled by default in v7.
+          # The opt-out switches are skip-cache / skip-save-cache; we
+          # leave both at default (caching on).
+          #
+          # CONFIG VERIFY IS OFF BECAUSE IT REACHES THE INTERNET.
+          #
+          # The action runs `golangci-lint config verify` before linting, and
+          # that command validates .golangci.yml against a JSON schema it
+          # DOWNLOADS from golangci-lint.run. So every run of this workflow made
+          # five HTTP requests to a third-party website — one per matrix module —
+          # and a slow response failed the job before a single line of Go was
+          # read. Observed 2026-08-13 on `protocol`: "failing loading
+          # https://golangci-lint.run/jsonschema/golangci.v2.11.jsonschema.json:
+          # context deadline exceeded", job red in 17 seconds, on a commit that
+          # touched no file in that module.
+          #
+          # A GATE THAT CAN FAIL FOR A REASON OUTSIDE THE DIFF IS NOT A GATE.
+          # That is the same rule scripts/gate.sh states for --allow-serial-
+          # runners, and it applies harder here: this failure is indistinguishable
+          # in the run list from a real finding, so the cost is paid by whoever
+          # next has to decide whether a red lint job means their code is wrong.
+          #
+          # NOTHING IS GIVEN UP. `config verify` checks the config's SHAPE; the
+          # very next step runs the same pinned binary against the same file and
+          # fails loudly on a config it cannot use, which is a strictly stronger
+          # check of the thing that matters. The local gate runs it too, on every
+          # invocation, before anything reaches CI.
+          verify: false
 
   swap-mode-literals:
+    # Guards against raw swap-mode strings outside protocol/swap_mode.go
+    # and tests. forbidigo can only match identifier expressions, so
+    # this grep-based check enforces "use the typed constants" instead.
+    # See scripts/check-swap-mode-literals.sh.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

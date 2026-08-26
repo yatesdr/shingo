@@ -35,6 +35,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
@@ -67,11 +68,29 @@ type Instance struct {
 }
 
 // Start boots a Postgres container. The caller must Close it.
+//
+// The container runs with the same durability-off tuning as the gate's shared
+// server (scripts/gate.sh start_shared_pg): fsync/synchronous_commit/
+// full_page_writes off, data on tmpfs. Nothing here outlives the process —
+// the whole point is a shape to diff — and with default settings the
+// migration path's thousands of DDL fsyncs are this package's dominant cost
+// under co-tenancy.
 func Start(ctx context.Context) (*Instance, error) {
 	c, err := postgres.Run(ctx, pgImage,
 		postgres.WithDatabase("postgres"),
 		postgres.WithUsername(pgUser),
 		postgres.WithPassword(pgPass),
+		testcontainers.WithEnv(map[string]string{"PGDATA": "/var/lib/postgresql/data/pgdata"}),
+		testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
+			ContainerRequest: testcontainers.ContainerRequest{
+				Cmd: []string{
+					"-c", "fsync=off",
+					"-c", "synchronous_commit=off",
+					"-c", "full_page_writes=off",
+				},
+				Tmpfs: map[string]string{"/var/lib/postgresql/data": "rw,size=1g"},
+			},
+		}),
 		testcontainers.WithWaitStrategy(wait.ForAll(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
@@ -185,7 +204,10 @@ func (i *Instance) BuildAged(_ context.Context, baselineSQL string) (string, err
 }
 
 // dumpFile is where pg_dump writes inside the container before we copy it out.
-const dumpFile = "/tmp/shingo-schema.sql"
+// Per-database, not fixed: tests dump concurrently against one shared instance,
+// and a fixed path made every concurrent dump read whichever run's output
+// landed last — the staleness test read a vintage's dump as "fresh".
+func dumpFile(dbName string) string { return "/tmp/shingo-schema-" + dbName + ".sql" }
 
 // Dump runs pg_dump --schema-only inside the container and returns the
 // normalized result.
@@ -200,23 +222,48 @@ const dumpFile = "/tmp/shingo-schema.sql"
 // copy gives clean bytes and the difference is visible the moment you open the
 // snapshot.
 func (i *Instance) Dump(ctx context.Context, dbName string) (string, error) {
+	file := dumpFile(dbName)
+	// THE EXIT CODE IS NOT A COMPLETION SIGNAL, so the command prints its own.
+	//
+	// testcontainers' Exec creates the exec, attaches, then immediately polls
+	// ContainerExecInspect in a loop that breaks on !Running. An exec the daemon
+	// has not scheduled yet is also not running, and it inspects as
+	// {Running:false, ExitCode:0} — so a slow daemon returns "succeeded" before
+	// pg_dump has run at all, and the copy below then fails with a file-not-found
+	// that names the symptom and hides the cause.
+	//
+	// It is invisible on a fast machine and reproducible on a loaded one: this
+	// failed only in the -race shards, where the detector's slowdown and CI
+	// co-tenancy widen the window, and passed in the plain docker job and on a
+	// dev box every time.
+	//
+	// So success is proved by the sentinel, and the drain that reads it is also
+	// the synchronisation: the attached stream does not reach EOF until the exec's
+	// process exits, so io.Copy returning means pg_dump is done and the file is
+	// closed. Both facts come from the same read.
+	const doneSentinel = "__SHINGO_DUMP_OK__"
 	code, reader, err := i.container.Exec(ctx, []string{
 		"sh", "-c",
-		fmt.Sprintf("pg_dump --schema-only --no-owner --no-privileges --no-comments --username=%s %s > %s",
-			pgUser, dbName, dumpFile),
-	})
+		fmt.Sprintf("pg_dump --schema-only --no-owner --no-privileges --no-comments --username=%s %s > %s && test -s %s && echo %s",
+			pgUser, dbName, file, file, doneSentinel),
+	}, tcexec.Multiplexed()) // demuxed: the raw stream frames every chunk with an
+	// 8-byte header, which can land inside the sentinel and fail the check for a
+	// dump that actually succeeded.
 	if err != nil {
 		return "", fmt.Errorf("exec pg_dump: %w", err)
 	}
-	if code != 0 {
-		var sb strings.Builder
-		_, _ = io.Copy(&sb, reader)
-		return "", fmt.Errorf("pg_dump exited %d: %s", code, sb.String())
+	var out strings.Builder
+	if _, cErr := io.Copy(&out, reader); cErr != nil {
+		return "", fmt.Errorf("read pg_dump exec stream for %s: %w", dbName, cErr)
+	}
+	if !strings.Contains(out.String(), doneSentinel) {
+		return "", fmt.Errorf("pg_dump for %s did not report success (exec exit code %d, which is not "+
+			"trustworthy on its own): %s", dbName, code, strings.TrimSpace(out.String()))
 	}
 
-	rc, err := i.container.CopyFileFromContainer(ctx, dumpFile)
+	rc, err := i.container.CopyFileFromContainer(ctx, file)
 	if err != nil {
-		return "", fmt.Errorf("copy %s out of container: %w", dumpFile, err)
+		return "", fmt.Errorf("copy %s out of container: %w", file, err)
 	}
 	defer rc.Close()
 	body, err := io.ReadAll(rc)

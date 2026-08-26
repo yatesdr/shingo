@@ -18,6 +18,8 @@ import (
 // for mutations, per-method error toggles. If a new test needs behaviour the fake
 // doesn't model, extend the struct rather than reaching past it.
 type fakeStore struct {
+	maintainLevels map[int64][]nodes.MaintainLevel
+	emptyInGroup   map[int64]int
 	// Seed data.
 	queued     []*orders.Order
 	ordersByID map[int64]*orders.Order
@@ -96,6 +98,11 @@ func (f *fakeStore) ListAcquiringOrders() ([]*orders.Order, error) {
 	}
 	return f.queued, nil
 }
+
+// OrderOwnsNoCargo: the fake has no child rows, so every order in it is an
+// ordinary one. False is the honest answer for this fixture and it is also the
+// value that preserves every existing guard's behaviour.
+func (f *fakeStore) OrderOwnsNoCargo(int64) (bool, error) { return false, nil }
 
 func (f *fakeStore) GetOrder(id int64) (*orders.Order, error) {
 	if f.errGetOrder != nil {
@@ -234,4 +241,18 @@ func (f *fakeStore) UpdateOrderStatus(id int64, status, detail string) error {
 func (f *fakeStore) SetOrderQueueDetail(id int64, reason string, code protocol.QueueCode, cause string) error {
 	f.queueReasons = append(f.queueReasons, queueReasonUpdate{OrderID: id, Reason: reason, Code: string(code), Cause: cause})
 	return nil
+}
+
+// ── The maintained-group level (MG4-3) ──────────────────────────────────────
+//
+// Both default to "no level declared", so every existing case keeps its
+// behaviour: the level gate is a no-op for a group nobody configured, which is
+// every group in every plant today.
+
+func (f *fakeStore) ListMaintainLevels(groupNodeID int64) ([]nodes.MaintainLevel, error) {
+	return f.maintainLevels[groupNodeID], nil
+}
+
+func (f *fakeStore) CountEmptyBinsOfTypeInGroup(binTypeCode string, groupNodeID int64) (int, error) {
+	return f.emptyInGroup[groupNodeID], nil
 }

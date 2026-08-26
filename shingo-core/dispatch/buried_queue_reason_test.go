@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -58,34 +59,42 @@ func TestBuriedIntake_QueueReasonReachesOrderHistory(t *testing.T) {
 
 	order, err := db.GetOrderByUUID("uuid-buried-history")
 	testutil.MustNoErr(t, err, "read back parent")
+	// The SUCCESSFUL arm is "a dig was raised" — no contention fired. Asserting the
+	// dig exists is what keeps this test on the successful arm rather than silently
+	// drifting onto a contention one.
+	//
+	// THE STATUS ASSERTION IS INVERTED (§R.91). It read: `want StatusQueued` —
+	// "the demand waits with its cause while the service dig runs; a status
+	// excursion here means it was re-parented". The demand IS the dig now, so
+	// `reshuffling` is the successful arm and `queued` would mean no excavation
+	// was taken at all.
+	laneClearFor(t, db, order)
 	if order.Status != StatusReshuffling {
-		t.Fatalf("parent status = %q, want %q — the reshuffle did not dispatch, so this test is exercising a contention arm rather than the successful one",
-			order.Status, StatusReshuffling)
+		t.Fatalf("demand status = %q, want %q — a demand that created a dig becomes its parent and "+
+			"wears reshuffling while it runs", order.Status, StatusReshuffling)
 	}
 	if order.QueueCode != string(protocol.QueueStorageRearranging) {
 		t.Errorf("queue_code = %q, want %q", order.QueueCode, protocol.QueueStorageRearranging)
 	}
 
-	// Drive the transition INTO queued and read what the history recorded. This
-	// is the resume the completing reshuffle performs; done directly so the
-	// assertion is about historyReason rather than about compound sequencing.
-	testutil.MustNoErr(t, d.lifecycle.ResumeCompound(order), "resume the parent back to queued")
-
-	history, err := db.ListOrderHistory(order.ID)
-	testutil.MustNoErr(t, err, "list order history")
-
-	var sawQueued bool
-	for _, h := range history {
-		if h.Status != StatusQueued {
-			continue
-		}
-		sawQueued = true
-		if h.Code == "" {
-			t.Errorf("order history has a transition into queued with a blank reason code (history id %d).\n"+
-				"historyReason copies QueueCode off the row, so a row queued without a reason writes a permanent blank here.", h.ID)
-		}
+	// THE CAUSE IS ON THE ROW, AND IT STAYS THERE. This is the ordinary burial —
+	// no contention arm fired, the dig was raised — and it is exactly the case
+	// that used to record nothing.
+	if order.QueueCause != string(CauseIntakeBuried) {
+		t.Errorf("queue_cause = %q, want %q — an ordinary burial must say why it is waiting, and it "+
+			"is the ordinary one that used to record nothing", order.QueueCause, CauseIntakeBuried)
 	}
-	if !sawQueued {
-		t.Fatal("no transition into queued recorded in history — this test asserted nothing")
+	if strings.TrimSpace(order.QueueReason) == "" {
+		t.Error("queue_reason is blank — this is the sentence the operator reads while the dig runs")
+	}
+
+	// And it survives the dig being raised, which is the "after the fact" half:
+	// the demand is not touched again, so nothing overwrites the cause between the
+	// burial and the dispatch.
+	again, err := db.GetOrderByUUID("uuid-buried-history")
+	testutil.MustNoErr(t, err, "re-read the demand")
+	if again.QueueCause != string(CauseIntakeBuried) || strings.TrimSpace(again.QueueReason) == "" {
+		t.Errorf("after the dig was raised the demand's cause is (%q, %q) — it must persist for as "+
+			"long as the wait does", again.QueueCause, again.QueueReason)
 	}
 }

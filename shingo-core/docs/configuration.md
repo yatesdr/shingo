@@ -44,7 +44,6 @@ Use `--log-debug=subsystem1,subsystem2` to filter debug output:
 | `core_handler` | Inbound message handling |
 | `nodestate` | Node state cache operations |
 | `engine` | Engine lifecycle events |
-| `countgroup` | Advanced-zone occupancy polls (logs on occupancy *change*, not per 500ms tick) |
 
 Without a filter (`--log-debug`), all subsystems are logged.
 
@@ -126,7 +125,7 @@ Semantics:
 
 | Value | Effect |
 |---|---|
-| _(key absent)_ | The default list above — everything except `countgroup` and `rds` |
+| _(key absent)_ | The default list above — everything except `rds` |
 | `[all]` | Mirror every subsystem (the incident escape hatch) |
 | `[]` or `null` | Mirror nothing |
 | `[a, b]` | Mirror exactly those |
@@ -137,11 +136,10 @@ Notes:
   stays out of the journal until someone opts it in. Core logs the effective
   list at boot (`shingocore: debug log mirroring to stderr: …`) so the omission
   is visible rather than silent.
-- **Muting is not disabling.** `countgroup` and `rds` are off the default list
-  because they were 334,361 and 125,817 lines/day at Springfield — 75% of a
-  journal whose retention had collapsed to ~15 days. Both pollers still run
-  unchanged; the count-group interlock in particular returns robots ~6,265
-  times a day and is load-bearing.
+- **Muting is not disabling.** `rds` is off the default list because it was
+  125,817 lines/day at Springfield, against a journal whose retention had
+  collapsed to ~15 days. The poller still runs unchanged; only its tracing is
+  out of the journal.
 - **Nothing is lost to the UI.** The ring buffer behind `/logs` is unfiltered.
 - Retention itself is a separate, host-wide decision — see
   `shingo-core/deploy/README.md`.

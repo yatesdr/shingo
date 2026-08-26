@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/config"
 	"shingocore/domain"
 )
@@ -265,39 +266,13 @@ func humanizeUnknown(v string) string {
 // FormatDuration renders a duration compound, never as decimal hours, at the
 // precision the measurement supports.
 //
-// Precision ladder, from docs/ui-style-guide.md: whole seconds under ten
-// minutes, whole minutes above. An episode duration is a difference between two
-// service clocks that are not synchronised to the millisecond, so sub-second
-// digits would assert an accuracy the source cannot supply.
-//
-// A DAYS TIER WAS ADDED FOR 5.11 and it is a fix rather than an extension. The
-// stale-binding candidates on /material-flags run to weeks — the longest binding
-// in the Springfield dump is 22.99 days — and the hours tier rendered that as
-// "551h 26m", which is compound, is not decimal hours, and is still a number
-// nobody converts in their head. The ladder's own rule ("whole seconds under ten
-// minutes, whole minutes above") generalises: at a day the minutes stop carrying
-// anything a reader acts on, so the tier is days plus whole hours. Below 24h
-// nothing changes.
-func FormatDuration(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
-	const day = 24 * time.Hour
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%d s", int(d.Seconds()))
-	case d < 10*time.Minute:
-		// Compound, zero-padded seconds so the column stays aligned under
-		// tabular-nums — "4m 07s", not "4m 7s".
-		return fmt.Sprintf("%dm %02ds", int(d.Minutes()), int(d.Seconds())%60)
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < day:
-		return fmt.Sprintf("%dh %02dm", int(d.Hours()), int(d.Minutes())%60)
-	default:
-		return fmt.Sprintf("%dd %02dh", int(d/day), int(d.Hours())%24)
-	}
-}
+// THE LADDER MOVED TO protocol.FormatDuration and this is a delegation, not a
+// second implementation. The fault sentence is rendered in protocol (it crosses
+// to the Edge), it prints durations, and two Go ladders for the same concept
+// would drift the way the JS pair already has (shared/utils.js:160 vs
+// mission-detail.js:7). Output is byte-identical; the ladder's reasoning and its
+// days tier are documented at the new home.
+func FormatDuration(d time.Duration) string { return protocol.FormatDuration(d) }
 
 // FormatCount renders a count in full with a thousands separator.
 //
@@ -365,8 +340,9 @@ type EpisodeRow struct {
 	OrdersText string
 
 	// Expected is expected_orders, which is NULLABLE BY DESIGN: the threshold
-	// formula divides by the catalog's UOPCapacity and fireThresholdL1 explicitly
-	// guards capacity <= 0, so "unknowable" happens. NOT 0 and NOT 1 — both are
+	// formula divides by the catalog's UOPCapacity and the sizing entry point
+	// (dispatch.BinsToReachThreshold) explicitly refuses capacity <= 0, so
+	// "unknowable" happens. NOT 0 and NOT 1 — both are
 	// lies that render as a real ratio.
 	Expected Cell
 
@@ -451,7 +427,7 @@ func BuildEpisodeRow(e domain.DemandEpisode, now time.Time, c config.DisplayConf
 		EpisodeKey:   o.EpisodeKey,
 		Kind:         o.Kind,
 		KindLabel:    kindLabel(o.Kind),
-		Direction:    o.Direction,
+		Direction:    string(o.Direction),
 		Station:      o.StationID,
 		Payload:      o.PayloadCode,
 		CoreNode:     o.CoreNodeName,
@@ -466,9 +442,39 @@ func BuildEpisodeRow(e domain.DemandEpisode, now time.Time, c config.DisplayConf
 		OrdersText:   FormatCount(children),
 	}
 
+	// ── The maintain kind's two borrowed columns ─────────────────────────────
+	//
+	// A maintain episode has no payload and no formula, so two columns that are
+	// load-bearing for every other kind arrive empty. Both are filled from what
+	// the row ALREADY STORES rather than from a new column or a second query.
+	//
+	// PLACE: the carrier type is the identity here — one episode per (group,
+	// type) — and it lives in the episode key, which is where the maintainer put
+	// it. Parsing it back is not a workaround: the key is the canonical spelling
+	// of that pair, and a duplicate copy in payload_code would be a second
+	// spelling free to disagree with it.
+	//
+	// EXPECTED: want − resident at the moment the episode opened, which is
+	// exactly Threshold − OpenedTotal, both already stored. That is the shortfall
+	// the episode was opened over, so the ratio reads as "carriers this shortfall
+	// eventually cost". It is deliberately NOT the keeper's first gap: the gap
+	// also subtracts what was already coming, and a denominator that shrinks
+	// because the keeper was smart would flatter the ratio for the wrong reason.
+	expected := o.ExpectedOrders
+	if o.Kind == protocol.EpisodeKindMaintain {
+		if parsed, perr := protocol.ParseEpisodeKey(o.EpisodeKey); perr == nil && parsed.BinType != "" {
+			row.Payload = parsed.BinType
+		}
+		if expected == nil {
+			if shortfall := o.Threshold - o.OpenedTotal; shortfall > 0 {
+				expected = &shortfall
+			}
+		}
+	}
+
 	// ── Expected, ratio, and the small-denominator rule (5.4) ────────────────
 	switch {
-	case o.ExpectedOrders == nil:
+	case expected == nil:
 		why := "expected orders could not be computed for this episode"
 		if o.ExpectedUnknownReason != "" {
 			why = o.ExpectedUnknownReason
@@ -477,18 +483,18 @@ func BuildEpisodeRow(e domain.DemandEpisode, now time.Time, c config.DisplayConf
 		row.Ratio = NoData("no ratio without a denominator — " + why)
 		row.SortGroup = sortGroupNoRatio
 
-	case *o.ExpectedOrders <= 0:
+	case *expected <= 0:
 		// Zero or negative expected is not a denominator. Guarded separately from
 		// NULL because it arrives by a different route — a stored value that is
 		// arithmetically unusable rather than an absent one — and dividing by it
 		// would produce +Inf, which renders as a number.
 		row.Expected = NoData(fmt.Sprintf(
-			"expected orders recorded as %d, which cannot be a denominator", *o.ExpectedOrders))
+			"expected orders recorded as %d, which cannot be a denominator", *expected))
 		row.Ratio = NoData("no ratio: the recorded expectation is not a usable denominator")
 		row.SortGroup = sortGroupNoRatio
 
 	default:
-		exp := *o.ExpectedOrders
+		exp := *expected
 		row.Expected = Value(FormatCount(exp))
 		ratio := float64(children) / float64(exp)
 		row.RatioSort = ratio
@@ -550,6 +556,12 @@ func kindLabel(kind string) string {
 		return "Cell"
 	case "changeover":
 		return "Changeover"
+	case protocol.EpisodeKindMaintain:
+		// "Maintained level", not "Maintain" — the noun says what the row is a
+		// record of. Every other kind on this page names a thing that happened to
+		// the plant; this one names a standing declaration that went unmet, and
+		// the verb form reads like an instruction to the operator.
+		return "Maintained level"
 	default:
 		// Rule 3 again. origin kinds can grow the same way close reasons did.
 		return humanizeUnknown(kind)

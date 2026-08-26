@@ -2,13 +2,14 @@ package www
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/xuri/excelize/v2"
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/domain"
 )
 
@@ -97,7 +98,7 @@ func (h *Handlers) apiInventoryMonitorTotals(w http.ResponseWriter, r *http.Requ
 // handful of points is worse than nothing, and a list that is empty until
 // something is wrong is the right instrument.
 //
-// Read-side only — every value comes from bins and bin_uop_audit, which are
+// Read-side only — every value comes from bins and bin_uop_ledger, which are
 // already on disk. No new table.
 //
 // ?since=<RFC3339> and ?limit= control the excursion history (default 7 days,
@@ -310,6 +311,14 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	f := excelize.NewFile()
+	// excelize.File holds a temp-file backing store; not closing it leaks one
+	// per export for the life of the process. Deferred rather than closed after
+	// the write, so an early return added later cannot skip it.
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			log.Printf("inventory export: close workbook: %v", cerr)
+		}
+	}()
 	sheet := "Inventory"
 	f.SetSheetName("Sheet1", sheet)
 
@@ -363,37 +372,74 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 	// Second sheet: lineside buckets. Same workbook so operators can
 	// review both inventory views in one download. Read failures
 	// degrade gracefully — the bins sheet still ships.
-	if bucketRows, err := h.engine.InventoryService().ListLinesideBuckets(); err == nil {
-		bucketSheet := "Lineside Buckets"
-		if _, err := f.NewSheet(bucketSheet); err == nil {
-			bucketHeaders := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Part", "Payload Code", "State", "Qty"}
-			for i, hdr := range bucketHeaders {
-				c, _ := excelize.CoordinatesToCellName(i+1, 1)
-				f.SetCellValue(bucketSheet, c, hdr)
-			}
-			f.SetRowStyle(bucketSheet, 1, 1, style)
-			for i, br := range bucketRows {
-				rn := i + 2
-				f.SetCellValue(bucketSheet, cell("A", rn), br.GroupName)
-				f.SetCellValue(bucketSheet, cell("B", rn), br.LaneName)
-				f.SetCellValue(bucketSheet, cell("C", rn), br.Station)
-				f.SetCellValue(bucketSheet, cell("D", rn), br.NodeName)
-				f.SetCellValue(bucketSheet, cell("E", rn), br.Zone)
-				f.SetCellValue(bucketSheet, cell("F", rn), br.StyleID)
-				f.SetCellValue(bucketSheet, cell("G", rn), br.PartNumber)
-				f.SetCellValue(bucketSheet, cell("H", rn), br.PayloadCode)
-				f.SetCellValue(bucketSheet, cell("I", rn), br.State)
-				f.SetCellValue(bucketSheet, cell("J", rn), br.Qty)
-			}
-		}
-	}
+	h.appendLinesideBucketSheet(f, style)
 
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", `attachment; filename="inventory.xlsx"`)
-	f.Write(w)
+	// THE HEADERS ARE ALREADY SENT, so there is no status code left to change:
+	// http.Error here would append its message to a half-written .xlsx and the
+	// browser would save a corrupt file with a 200. Log it instead — a
+	// truncated download the operator can see and retry, and a line naming why.
+	if err := f.Write(w); err != nil {
+		log.Printf("inventory export: write workbook to response: %v — the download is truncated", err)
+	}
+}
+
+// appendLinesideBucketSheet adds the second sheet of the inventory export, one
+// row per lineside bucket.
+//
+// Read failures degrade gracefully and deliberately: the bins sheet still ships,
+// which is the sheet the export is actually for. Same for a NewSheet failure --
+// a workbook with one good sheet beats a 500.
+func (h *Handlers) appendLinesideBucketSheet(f *excelize.File, headerStyle int) {
+	bucketRows, err := h.engine.InventoryService().ListLinesideBuckets()
+	if err != nil {
+		return
+	}
+	const bucketSheet = "Lineside Buckets"
+	if _, err := f.NewSheet(bucketSheet); err != nil {
+		return
+	}
+	bucketHeaders := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Part", "Payload Code", "State", "Qty"}
+	for i, hdr := range bucketHeaders {
+		c, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(bucketSheet, c, hdr)
+	}
+	f.SetRowStyle(bucketSheet, 1, 1, headerStyle)
+	for i, br := range bucketRows {
+		rn := i + 2
+		f.SetCellValue(bucketSheet, cell("A", rn), br.GroupName)
+		f.SetCellValue(bucketSheet, cell("B", rn), br.LaneName)
+		f.SetCellValue(bucketSheet, cell("C", rn), br.Station)
+		f.SetCellValue(bucketSheet, cell("D", rn), br.NodeName)
+		f.SetCellValue(bucketSheet, cell("E", rn), br.Zone)
+		f.SetCellValue(bucketSheet, cell("F", rn), br.StyleID)
+		f.SetCellValue(bucketSheet, cell("G", rn), br.PartNumber)
+		f.SetCellValue(bucketSheet, cell("H", rn), br.PayloadCode)
+		f.SetCellValue(bucketSheet, cell("I", rn), br.State)
+		f.SetCellValue(bucketSheet, cell("J", rn), br.Qty)
+	}
 }
 
 // cell builds a cell reference like "A2" from a column letter and row number.
 func cell(col string, row int) string {
 	return fmt.Sprintf("%s%d", col, row)
+}
+
+// apiInventoryMaintainedGroups returns the keeper's last tick, one row per
+// (group, bin type): the declared level and the three populations it subtracted.
+//
+// THE SUBTRACTION IS THE PAYLOAD, not a status word. An operator looking at a
+// group that is short and quiet needs to see WHICH term closed the gap — asks
+// already out, or carriers already coming — because those have opposite
+// remedies, and a single "ok / low" pill hides exactly that. Every term is a
+// separate question with a separate way of being wrong, so every term is a
+// column.
+//
+// EMPTY ON A PLANT WITH NO MAINTAINED GROUP, and empty before the first tick.
+// Both render as the section not appearing, which is correct: there is nothing
+// to say, and a card reading "0 groups" is a card that has to be scrolled past
+// forever.
+func (h *Handlers) apiInventoryMaintainedGroups(w http.ResponseWriter, r *http.Request) {
+	h.jsonOK(w, h.engine.MaintainedGroupStates())
 }

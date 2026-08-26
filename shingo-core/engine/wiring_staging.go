@@ -12,7 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/store/nodes"
 )
 
@@ -24,6 +25,48 @@ func (e *Engine) resolveNodeStaging(destNode *nodes.Node) (staged bool, expiresA
 		expiresAt = e.resolveStagingExpiry(destNode)
 	}
 	return !isStorage, expiresAt
+}
+
+// isStorageSlot returns true if the node is a storage slot — either a
+// LANE/NGRP itself, a direct child of one, or a dedicated loader home/buffer
+// position. NGRP children added 2026-04-29: plants modeling supermarkets as
+// an NGRP → direct concrete children (no LANE in the path) need those
+// children treated as storage so arriving bins land `available`, not `staged`.
+// Lineside cells remain parented under processes/zones and continue to stage
+// on arrival.
+//
+// Dedicated loader home/buffer positions (bin_loader_homes) are always
+// storage-like: the loader aggregate owns their inventory, bins should arrive
+// available so the threshold monitor and swap planner see them correctly.
+// These nodes are parentless (no LANE/NGRP in their lineage), so the
+// bin_loader_homes check must come before the parentless early-return.
+//
+// The string was "NODE_GROUP" until the SMKT→NGRP rename (commit 3e3fb4a)
+// dropped the legacy code — anything still comparing to "NODE_GROUP" is
+// a dead branch.
+//
+// Formerly lived in wiring_kanban.go; moved when the kanban demand-signal
+// path was removed (2026-08) — its remaining callers are resolveNodeStaging
+// (arrival staging, this file) and recovery_service.
+func (e *Engine) isStorageSlot(nodeID int64) bool {
+	node, err := e.db.GetNode(nodeID)
+	if err != nil {
+		return false
+	}
+	if node.NodeTypeCode == protocol.NodeClassLANE || node.NodeTypeCode == protocol.NodeClassNGRP {
+		return true
+	}
+	if node.ParentID == nil {
+		// Parentless nodes default to lineside (staged arrivals) unless this is a
+		// dedicated loader home or buffer position — those are storage-like.
+		home, herr := e.db.GetLoaderHomeByPositionNode(nodeID)
+		return herr == nil && home != nil
+	}
+	parent, err := e.db.GetNode(*node.ParentID)
+	if err != nil {
+		return false
+	}
+	return parent.NodeTypeCode == protocol.NodeClassLANE || parent.NodeTypeCode == protocol.NodeClassNGRP
 }
 
 // resolveStagingExpiry computes the staging expiry time for a node.

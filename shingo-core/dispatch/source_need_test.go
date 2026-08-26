@@ -50,7 +50,7 @@ func TestFindSourceForNeed_NodeLocalEmpty(t *testing.T) {
 	t.Parallel()
 	db := newFakeFinderDB()
 	srcID := int64(700)
-	db.addNode(&nodes.Node{ID: srcID, Name: "SEAT-SRC"})
+	db.addNode(&nodes.Node{ID: srcID, Name: "POSITION-SRC"})
 	full := &bins.Bin{ID: 71, PayloadCode: "PART-X", NodeID: &srcID, Status: "available"}
 	empty := &bins.Bin{ID: 72, PayloadCode: "", NodeID: &srcID, Status: "available"}
 	db.addBin(full)
@@ -59,7 +59,7 @@ func TestFindSourceForNeed_NodeLocalEmpty(t *testing.T) {
 	db.globalEmpty = &bins.Bin{ID: 99, PayloadCode: "", Status: "available"}
 
 	finder := NewSourceFinder(db, nil, nil)
-	need := SourceNeed{SourceNode: "SEAT-SRC", PayloadCode: "PART-X", Intent: IntentEmpty, NodeLocal: true}
+	need := SourceNeed{SourceNode: "POSITION-SRC", PayloadCode: "PART-X", Intent: IntentEmpty, NodeLocal: true}
 
 	res := finder.FindSourceForNeed(need)
 	if res.Outcome != OutcomeFound {
@@ -82,8 +82,12 @@ func TestFindSourceForNeed_NodeLocalEmpty(t *testing.T) {
 	if res.QueueCause != "finder-node-empty" {
 		t.Errorf("QueueCause = %q, want finder-node-empty (the scoped sentence)", res.QueueCause)
 	}
-	if res.QueueParams.Kind != "empty" || res.QueueParams.Destination != "SEAT-SRC" {
-		t.Errorf("QueueParams = %+v, want Kind=empty Destination=SEAT-SRC", res.QueueParams)
+	// GROUP, NOT Destination. This assertion used to read Destination, which
+	// pinned the field being POPULATED rather than being RENDERED: the material
+	// formatter only ever reads Group, so the node name went nowhere and the
+	// operator got "Waiting for an empty bin" with no location at all.
+	if res.QueueParams.Kind != "empty" || res.QueueParams.Group != "POSITION-SRC" {
+		t.Errorf("QueueParams = %+v, want Kind=empty Group=POSITION-SRC", res.QueueParams)
 	}
 	if db.globalEmptyCalls != 0 || db.fifoCalls != 0 {
 		t.Errorf("dry node widened plant-wide (%d empty, %d fifo) — it must QUEUE, never widen",

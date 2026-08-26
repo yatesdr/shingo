@@ -4,9 +4,10 @@ import "context"
 
 // All five delegate methods take m.mu.RLock() for the duration of the
 // underlying call. ReplaceClient (manager.go:99-103) swaps m.wl under
-// m.mu.Lock(); without the read-lock the swap races every other
-// per-second countgroup heartbeat tick. ManagedPLC's own mp.mu is not
-// involved here — the swap is on the Manager-level client pointer.
+// m.mu.Lock(); without the read-lock the swap races every concurrent
+// caller — the CATID monitor alone reaches EnableTagPublishing on a
+// 500ms tick (engine/plc_catid_monitor.go:154). ManagedPLC's own mp.mu
+// is not involved here — the swap is on the Manager-level client pointer.
 
 // ReadTagValue returns the current value of a single PLC tag via a live
 // WarLink read. Delegates to the underlying WarlinkClient; kept as a

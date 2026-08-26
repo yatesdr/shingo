@@ -5,14 +5,36 @@ on:
     paths:
       - "shingo-edge/**"
       - "protocol/**"
+      # shared/** is a real dependency: Edge's www package imports
+      # shingo/shared and embeds its stylesheets. Without it here, a
+      # change that breaks Edge's build lands with Edge CI never running.
       - "shared/**"
+      # Trigger on this file too. core.yml carries the reasoning: "a gate
+      # whose own edits do not run it cannot report on them" — and it was
+      # exactly this gap that let a restructuring of the jobs below sit
+      # unverified, because nothing in the diff matched any other path.
+      - ".github/workflows/edge.yml"
+      # The shared workflow and actions these jobs call. Without them a
+      # change to sharded-suite.yml or shared-postgres — the code that
+      # actually runs the tests — triggers nothing, which is the same
+      # gap as a workflow not triggering on its own edits, one level out.
+      - ".github/workflows/sharded-suite.yml"
+      - ".github/actions/**"
   pull_request:
     paths:
       - "shingo-edge/**"
       - "protocol/**"
       - "shared/**"
+      - ".github/workflows/edge.yml"
+      # The shared workflow and actions these jobs call. Without them a
+      # change to sharded-suite.yml or shared-postgres — the code that
+      # actually runs the tests — triggers nothing, which is the same
+      # gap as a workflow not triggering on its own edits, one level out.
+      - ".github/workflows/sharded-suite.yml"
+      - ".github/actions/**"
   workflow_call:
 
+# See core.yml for rationale - same idempotent burst-coalescing.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -23,44 +45,109 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # FULL HISTORY, and it is load-bearing.
+          #
+          # TestSchemaConvergesAcrossVintages builds an "aged" database from a
+          # baseline read out of git at a pinned revision — `git show
+          # <rev>:store/schema/...`. actions/checkout defaults to a SHALLOW
+          # clone (fetch-depth 1), where neither an older commit nor a tag
+          # exists, so every pinned vintage fails with "invalid object name"
+          # and the test that exists to catch upgrade-path bugs cannot run at
+          # all.
+          #
+          # Skipping the test when the revision is missing would be worse than
+          # this cost: it would go green in CI while asserting nothing, which is
+          # the exact failure class the convergence test was written to close.
           fetch-depth: 0
 
       - uses: actions/setup-go@v7
         with:
           go-version: "1.25.0"
+          # Without this, the cache is silently OFF. setup-go defaults
+          # cache:true, and with no cache-dependency-path it requires `go.mod`
+          # in the REPO ROOT (readdirSync, not recursive). This is a go.work
+          # repo: the root has go.work and the go.mod files sit one level down,
+          # so the lookup throws "Dependencies file is not found ... Supported
+          # file pattern: go.mod" — and main.ts catches it into a warning, so
+          # the job stays green having restored nothing. It caches both
+          # GOMODCACHE and GOCACHE, so every job was re-downloading every
+          # module and recompiling from scratch. See core.yml for the full note.
+          cache-dependency-path: |
+            shingo-edge/go.sum
+            protocol/go.sum
 
       - name: Build
         working-directory: shingo-edge
         run: go build ./...
 
+      # The sim files are only ever compiled when someone builds the dev stack
+      # on the sim box, so a signature change made in the plain configuration
+      # goes green here and fails there — days later, to whoever tried to boot
+      # it. That has now happened three times: the gofmt drift in June, and two
+      # call sites on this branch that a plain build could not see. `go build`
+      # is a compile-only check and costs seconds, which is all it takes to
+      # close the class.
       - name: Build (sim)
         working-directory: shingo-edge
         run: go build -tags sim ./...
 
-      - name: Prepare build dir
+      # THE UNTAGGED SUITE IS NOT RUN HERE, BECAUSE THE DOCKER STEPS BELOW
+      # ALREADY RUN IT — all 1,161 of its tests, and again under -race.
+      # `-tags=docker` ADDS files and removes none, and nothing in this tree
+      # carries a `!docker` constraint, so `go test -tags=docker ./...` executes
+      # every test `go test ./...` would, plus the docker ones. No docker-tagged
+      # file defines TestMain or init(), and every package-level var in one is
+      # an inert literal or a `var _ T = (*impl)(nil)` assertion, so the tag
+      # adds tests without re-wiring package state. See core.yml for the
+      # `go test -list` counts this was verified against.
+      #
+      # This step remains so the untagged BUILD stays gated: a test file that
+      # only compiles when a docker-tagged helper is present would otherwise
+      # break `go test ./...` for every developer while CI stayed green.
+      # -run NONE compiles the test binaries and runs nothing, which is the
+      # part the docker steps do not cover — `go build ./...` above reaches
+      # only non-test code. Mirrors what integration.yml already did.
+      - name: Build (test binaries, untagged)
         working-directory: shingo-edge
-        run: mkdir -p build
+        run: go test -run NONE -count=1 ./...
 
-      - name: Test (unit)
-        working-directory: shingo-edge
-        run: go test -coverprofile=build/coverage ./...
+  # THE PLAIN SUITE STAYS ONE JOB; ONLY THE RACE SUITE IS SHARDED.
+  #
+  # Edge's plain docker run is ~30s — less than the per-job entry cost, so
+  # sharding it would make it slower, not faster. Its race run is ~294s, nearly
+  # 10x, and that is the one worth splitting.
+  #
+  # FOUR SHARDS, NOT SIX. Edge's weight is concentrated: engine 19.6s, store
+  # 13.0s, www 9.6s of a 52.9s serial total — three packages are 80% of it, and
+  # eleven others share the rest. The floor is the longest package, so beyond
+  # about four shards the extra jobs pay startup to run nothing much. Getting
+  # under that floor means making engine itself cheaper, not splitting further.
+  #
+  # No Postgres: edge is SQLite throughout.
 
-      - name: Test (unit, race)
-        working-directory: shingo-edge
-        run: go test -race -count=1 ./...
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-      - name: Coverage report (unit)
-        working-directory: shingo-edge
-        run: go tool cover -func=build/coverage
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: |
+            shingo-edge/go.sum
+            protocol/go.sum
 
       - name: Test (Docker integration)
         working-directory: shingo-edge
-        run: go test -tags=docker -timeout=10m -count=1 -coverprofile=build/coverage-docker ./...
+        run: go test -tags=docker -timeout=10m -count=1 ./...
 
-      - name: Coverage report (Docker)
-        working-directory: shingo-edge
-        run: go tool cover -func=build/coverage-docker
-
-      - name: Test (Docker integration, race)
-        working-directory: shingo-edge
-        run: go test -tags=docker -race -timeout=25m -count=1 ./...
+  docker-race:
+    uses: ./.github/workflows/sharded-suite.yml
+    with:
+      module: shingo-edge
+      shards: 4
+      test-flags: "-race -timeout=25m"
+      cache-prefix: shard-timings-edge-race-
+      needs-postgres: false

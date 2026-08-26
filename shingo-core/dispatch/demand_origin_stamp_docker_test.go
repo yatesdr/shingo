@@ -3,13 +3,13 @@
 package dispatch
 
 import (
-	"fmt"
 	"testing"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // demand_origin_stamp_docker_test.go — the demand grain's Core half, against a
@@ -190,18 +190,21 @@ func TestOriginPropagation_ReshuffleChildrenInheritFromTheBuriedParent(t *testin
 	// And the reshuffle compound it scheduled IS derivative — the unbury moves
 	// exist only because this demand needed a buried bin, so they are part of
 	// what the demand cost and belong in its child count.
-	children, err := db.ListChildOrders(parent.ID)
-	testutil.MustNoErr(t, err, "list reshuffle children")
-	if len(children) == 0 {
-		t.Fatal("no reshuffle children created — the derivative half of this test asserted nothing")
-	}
+	// THE LEGS MOVED HOUSE, THE ASSERTION DID NOT. They used to hang off the
+	// demand, which was its own dig's parent; a complex demand is now a customer
+	// of a lane-clear dig and the legs hang off THAT. What this test is about —
+	// what a reshuffle leg carries — is unchanged, so it follows the legs.
+	children := laneClearChildren(t, db, parent)
 	for _, c := range children {
 		wantOrigin(t, c, "reshuffle child of the buried parent", testOriginID, protocol.OriginClassAttached)
 	}
 }
 
-// TestOriginPropagation_CompoundChildrenCarryTHEPARENTSOriginID is derivative
-// site 1 of 2, and the assertion is on the SPECIFIC id.
+// TestOriginPropagation_CompoundChildrenCarryTHEPARENTSOriginID covers the
+// derivative site through its ordinary caller, and the assertion is on the
+// SPECIFIC id. (There was a second derivative site — the synthetic restore
+// parent — until cb74bfdc deleted that subsystem; see
+// TestOriginPropagation_DigChildrenStampAtTheSeamNotTheCaller.)
 //
 // The parent here carries testOriginID and a second, unrelated order carries
 // testOriginIDAlt, so a child that inherited from the wrong row — or minted its
@@ -227,8 +230,8 @@ func TestOriginPropagation_CompoundChildrenCarryTHEPARENTSOriginID(t *testing.T)
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-ORIGIN-CMP-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-CMP-TGT")
-	plan, err := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
+	_ = createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-CMP-TGT")
+	plan, err := PlanLaneMouthClear(db, slots[1], lane, grp.ID, reservations.Anyone)
 	testutil.MustNoErr(t, err, "plan unbury")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
@@ -269,8 +272,8 @@ func TestOriginPropagation_CompoundChildrenInheritNoDemandToo(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create no_demand parent")
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-ORIGIN-ND-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-ND-TGT")
-	plan, err := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
+	_ = createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-ND-TGT")
+	plan, err := PlanLaneMouthClear(db, slots[1], lane, grp.ID, reservations.Anyone)
 	testutil.MustNoErr(t, err, "plan unbury")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
@@ -290,58 +293,73 @@ func TestOriginPropagation_CompoundChildrenInheritNoDemandToo(t *testing.T) {
 	}
 }
 
-// TestOriginPropagation_RestoreSyntheticAndItsChildrenCarryTheOrigin is
-// derivative site 2 of 2, and it is the one that proves the rule has to be
-// stamp-forward.
+// TestOriginPropagation_DigChildrenStampAtTheSeamNotTheCaller pins the stamp on
+// writeCompoundChildren ITSELF — the single orders INSERT every derivative order
+// is born from — rather than on CreateCompoundOrder, which merely calls it.
 //
-// The synthetic restore parent sets NO ParentOrderID at all — its only link to
-// the complex parent is a formatted EdgeUUID string and an in-memory map that
-// does not survive a restart — so a read-time walk from it reaches nothing. The
-// origin has to be carried across that boundary at creation or it is gone. Two
-// hops are asserted: complex parent → synthetic, and synthetic → its own restock
-// children, which reach the episode two levels down.
-func TestOriginPropagation_RestoreSyntheticAndItsChildrenCarryTheOrigin(t *testing.T) {
+// It used to enter through CreateCompoundChildrenOnly, which was a wrapper over
+// this same seam for parents already at Reshuffling. That method is deleted (one
+// compound-creation path), and entering at writeCompoundChildren is what the
+// test wanted all along: the seam, not a caller of it.
+//
+// THIS TEST REPLACED THE RESTORE-SYNTHETIC PROOF, and the substitution is not
+// like-for-like. The original was derivative site 2 of 2: the synthetic restore
+// parent set NO ParentOrderID at all, so a read-time walk from it reached
+// nothing, which made it the sharpest available argument that the origin has to
+// be carried forward at creation. That subsystem was deleted (cb74bfdc) and the
+// argument lost its live example — every surviving derivative order DOES set a
+// parent. The rule did not change; only the demonstration did.
+//
+// So this asserts what still has teeth on the surviving dig path. Site 1
+// (TestOriginPropagation_CompoundChildrenCarryTHEPARENTSOriginID) enters through
+// CreateCompoundOrder, which means the stamp could in principle be moved up into
+// that wrapper and site 1 would stay green while the seam underneath it silently
+// stopped stamping — leaving every future caller of writeCompoundChildren to
+// inherit the gap. Entering at the seam is what closes that.
+//
+// The decoy carries a DIFFERENT origin so a child inheriting from the wrong row
+// fails on the value, not on a presence check.
+func TestOriginPropagation_DigChildrenStampAtTheSeamNotTheCaller(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
-	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, PropReshuffleRestoreBlockers, "on"), "arm restore-blockers")
 
-	complexParent := &orders.Order{
-		EdgeUUID: "uuid-restore-origin", StationID: "line-1",
+	decoy := &orders.Order{
+		EdgeUUID: "uuid-dig-seam-decoy", StationID: "line-1",
 		OrderType: OrderTypeComplex, Status: StatusQueued,
+		OriginID: testOriginIDAlt, OriginClass: protocol.OriginClassAttached,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(decoy), "create decoy")
+
+	// Written directly at Reshuffling. writeCompoundChildren touches the parent's
+	// status not at all — that is its caller's job — so the seam can be entered
+	// against a parent in any state, which is what makes it the seam.
+	parent := &orders.Order{
+		EdgeUUID: "uuid-dig-seam-origin", StationID: "line-1",
+		OrderType: OrderTypeComplex, Status: StatusReshuffling,
 		OriginID: testOriginID, OriginClass: protocol.OriginClassAttached,
 	}
-	testutil.MustNoErr(t, db.CreateOrder(complexParent), "create complex parent")
+	testutil.MustNoErr(t, db.CreateOrder(parent), "create already-reshuffling parent")
 
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-ORIGIN-RST-BLK")
-	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-RST-TGT")
-	plan, err := PlanReshuffleUnburyOnly(db, target, slots[1], lane, grp.ID)
+	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-ORIGIN-DIG-BLK")
+	_ = createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-ORIGIN-DIG-TGT")
+	plan, err := PlanLaneMouthClear(db, slots[1], lane, grp.ID, reservations.Anyone)
 	testutil.MustNoErr(t, err, "plan unbury")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	testutil.MustNoErr(t, d.CreateCompoundOrder(complexParent, plan), "CreateCompoundOrder")
-	d.scheduleRestoreIfEnabled(complexParent, grp.ID, lane.ID, plan, slots[1].ID)
+	testutil.MustNoErr(t, d.writeCompoundChildren(parent, plan), "writeCompoundChildren")
 
-	syn, err := db.GetOrderByUUID(fmt.Sprintf("restore-%d-%d", complexParent.ID, target.ID))
-	testutil.MustNoErr(t, err, "read back synthetic restore parent")
-	wantOrigin(t, syn, "synthetic restore parent", testOriginID, protocol.OriginClassAttached)
-
-	if syn.ParentOrderID != nil {
-		t.Errorf("the synthetic restore parent now HAS a parent_order_id (%d) — "+
-			"this test's premise (that a read-time walk from it reaches nothing) no longer holds; "+
-			"re-read the stamp-forward rationale before relaxing anything", *syn.ParentOrderID)
+	children, err := db.ListChildOrders(parent.ID)
+	testutil.MustNoErr(t, err, "list dig children")
+	if len(children) == 0 {
+		t.Fatal("no dig children created — this test asserted nothing")
 	}
-
-	// Second hop: the restock compound the synthetic fathers. This is the one
-	// that reaches the episode two levels from the demand, and it goes through
-	// CreateCompoundChildren — the OTHER orders INSERT.
-	d.HandleBinEnteredTransit(target.ID, slots[1].ID)
-	restock, err := db.ListChildOrders(syn.ID)
-	testutil.MustNoErr(t, err, "list restock children")
-	if len(restock) == 0 {
-		t.Fatal("no restock children created — the second hop asserted nothing")
-	}
-	for _, c := range restock {
-		wantOrigin(t, c, "restock child of the synthetic", testOriginID, protocol.OriginClassAttached)
+	for _, c := range children {
+		if c.OriginID == testOriginIDAlt {
+			t.Errorf("dig child %d inherited the DECOY's origin %q — the stamp is reading the wrong row",
+				c.ID, c.OriginID)
+			continue
+		}
+		wantOrigin(t, c, "dig child via the children-only seam", testOriginID, protocol.OriginClassAttached)
 	}
 }

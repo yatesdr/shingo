@@ -88,6 +88,7 @@ func TestCoreHealthVerdict_ReasonsAreSentences(t *testing.T) {
 		{"overloaded", func(c *CoreHealth) { c.Load1, c.Cores = 9.5, 4 }, "over 4 cores"},
 		{"dead letters", func(c *CoreHealth) { c.DeadLetters = 2 }, "dead letter"},
 		{"anomalies", func(c *CoreHealth) { c.CompletionAnomalies = 7 }, "completion anomal"},
+		{"expired drops", func(c *CoreHealth) { c.ExpiredDropsRecent = 41 }, "expired"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := c
@@ -182,5 +183,54 @@ func TestCoreHealthVerdict_LoadAtCoreCountIsNotDegraded(t *testing.T) {
 func TestCoreHealthVerdict_UnreadableLoadIsNotAFault(t *testing.T) {
 	if got := deriveReasons(CoreHealth{Cores: 8, Load1: 0}, nil); len(got) != 0 {
 		t.Fatalf("unreadable load must not degrade the verdict, got %v", got)
+	}
+}
+
+func resetExpiredDropGauge() {
+	expiredDropGauge.mu.Lock()
+	defer expiredDropGauge.mu.Unlock()
+	expiredDropGauge.started, expiredDropGauge.baseline, expiredDropGauge.reported = false, 0, 0
+	expiredDropGauge.baselineAt = time.Time{}
+}
+
+// protocol.ExpiredDrops is a process-LIFETIME total, so reporting it raw would
+// latch the verdict degraded forever after one bad afternoon — the same defect
+// sql.DBStats.WaitCount had. Springfield dropped 797 envelopes on 2026-08-20;
+// a Core that reported that number until restart would be useless the next day.
+func TestExpiredDropGauge_DoesNotLatch(t *testing.T) {
+	resetExpiredDropGauge()
+	base := time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
+
+	// First observation of a long-running Core: history, not a symptom.
+	if got := expiredDropsSinceBaseline(797, base); got != 0 {
+		t.Fatalf("first observation reported %d, want 0 — a lifetime total is not "+
+			"evidence of a problem now", got)
+	}
+
+	// Inside the window the closed value stands, so concurrent pollers agree.
+	if got := expiredDropsSinceBaseline(820, base.Add(time.Minute)); got != 0 {
+		t.Errorf("mid-window reported %d, want the closed window's 0", got)
+	}
+
+	// Window closes: the delta becomes visible.
+	if got := expiredDropsSinceBaseline(820, base.Add(expiredDropWindow)); got != 23 {
+		t.Errorf("closed window reported %d, want 23", got)
+	}
+
+	// And it recovers — no further drops means a quiet window reports quiet.
+	if got := expiredDropsSinceBaseline(820, base.Add(2*expiredDropWindow+time.Second)); got != 0 {
+		t.Errorf("quiet window reported %d, want 0 — the verdict must be able to "+
+			"recover or it is a scar, not a verdict", got)
+	}
+}
+
+// A counter that goes backwards means the process restarted underneath us.
+func TestExpiredDropGauge_CounterGoingBackwardsRebaselines(t *testing.T) {
+	resetExpiredDropGauge()
+	base := time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
+
+	expiredDropsSinceBaseline(500, base)
+	if got := expiredDropsSinceBaseline(3, base.Add(expiredDropWindow)); got != 0 {
+		t.Errorf("a backwards counter reported %d, want 0 rather than a negative", got)
 	}
 }

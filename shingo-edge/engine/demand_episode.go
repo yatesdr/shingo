@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	ordermgr "shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -37,6 +38,147 @@ import (
 // than anything else here, and a lost open episode means the next tick mints a
 // duplicate while the first never closes.
 
+// joinOpenCellEpisode attaches to a cell's OPEN episode and does not mint one.
+// Returns ("", false, nil) when nothing is open — which is an answer, not a
+// failure.
+//
+// It is the first half of openCellEpisode, split out because a second caller
+// needs the join WITHOUT the mint. A follow-on order — the sequential
+// backfill, which exists because an earlier order for the same cell started
+// moving — is by construction never the origin of a demand: something else
+// asked, and this is the plant continuing to serve that ask. Letting it mint
+// would open an episode attributed to a trigger that did not happen, and would
+// need a trigger constant for "a previous order moved", which is not a demand
+// event.
+//
+// So: join if there is something to join, attach nothing if there is not, and
+// let Core classify — the same posture every other unattributed create site
+// takes, for the reason operatorRequestOrigin states.
+func (e *Engine) joinOpenCellEpisode(key, trigger string) (string, bool, error) {
+	open, err := e.db.GetOpenDemandOrigin(key)
+	if err != nil {
+		if errors.Is(err, store.ErrOriginNotOpen) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if open == nil {
+		return "", false, nil
+	}
+	joined, jerr := e.db.JoinDemandOrigin(key)
+	if jerr != nil {
+		return open.OriginID, true, jerr
+	}
+	e.logFn("demand_episode: JOINED origin=%s key=%s trigger=%s rerequests=%d rev=%d — same demand, expressed again",
+		joined.OriginID, key, trigger, joined.RerequestCount, joined.Revision)
+	// Re-send the WHOLE state at the new revision, so the count is current on
+	// Core while the episode is still open — which is the only time knowing an
+	// operator pushed six times is any use.
+	//
+	// Ignored deliberately: the row is still on disk, so a failed enqueue costs a
+	// stale rerequest_count on Core until the next change, and the close re-sends
+	// everything regardless.
+	_ = e.emitOriginState(joined, nil, "", "")
+	return joined.OriginID, true, nil
+}
+
+// cellEpisodeOrigin is the origin a sequential backfill carries: its cell's
+// open episode, joined, or nothing.
+//
+// ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+//
+// The backfill created its order through the unattributed constructor, so every
+// one of them reached Core with no origin and landed as an ORPHAN. Measured on
+// the lane-stress rig 2026-08-13: seven backfills in a 17-minute window, seven
+// orphans, and they were the whole of the complex-order orphan bucket.
+//
+// This is the same defect the changeover applier carries a paragraph about
+// ("THE CHANGEOVER ALREADY HAS AN EPISODE AND ITS ORDERS DID NOT CARRY IT") and
+// the same one operatorRequestOrigin was written to close for the HMI button.
+// The machinery was built and the doors were wired one at a time.
+//
+// ── WHAT IT COSTS TO BE WRONG HERE ────────────────────────────────────────
+//
+// More than a missing label. An order with no origin is invisible to every
+// instrument keyed on the episode, and — worse — some of them report that
+// blindness as a FINDING. A service dig raised for an origin-less demand cannot
+// look up who is collecting its target, so it hands its corridor to nobody and
+// files a "cleared a lane for a bin nobody is coming for" alarm against a demand
+// that was, in fact, coming and did collect it. One of those on the same rig.
+func (e *Engine) cellEpisodeOrigin(node *processes.Node, claim *processes.NodeClaim) ordermgr.Origin {
+	if node == nil || claim == nil {
+		return ordermgr.Origin{}
+	}
+	name := e.processName(node.ProcessID)
+	if name == "" {
+		return ordermgr.Origin{}
+	}
+	// ── THE JOIN ASKED FOR A KEY NOTHING EVER OPENS ───────────────────────────
+	//
+	// This line read protocol.EpisodeDirectionSupply, hardcoded. A PRODUCE cell
+	// only ever opens its episode in the other spelling (operator_produce.go), and
+	// the spelling is part of the key's identity — so the join asked for
+	// `cell|PRESS-2|PANEL-B|supply` while the open row said
+	// `cell|PRESS-2|PANEL-B|evacuate`. It could not match, ever. The miss returns
+	// no origin, attribution never blocks transport, and Core honestly stamps
+	// orphan: seven backfills in a 17-minute window on the lane-stress rig
+	// 2026-08-13, seven orphans, and they were the whole of the complex-order
+	// orphan bucket. An earlier fix (7a38f0a9) wired this join up and kept the
+	// key, which is exactly why it did not take.
+	//
+	// THE ROLE COMES OFF THE CLAIM, and under §R.87 that is not a constant swap.
+	// A backfill exists because an earlier order for this cell started moving; it
+	// serves THAT cell's circle, and the circle's identity is the cell's role.
+	// Deriving it here means a produce cell's backfill joins the produce episode
+	// because the claim says produce — not because this line was corrected to a
+	// different hardcoded word, which is the same defect one spelling later.
+	key := protocol.CellEpisodeKey(name, string(claim.PayloadCode), claim.Role)
+	originID, _, err := e.joinOpenCellEpisode(key, protocol.EpisodeTriggerAutoreorder)
+	if err != nil {
+		// Attribution never blocks transport. Log and create unattributed, which
+		// is exactly what happens today.
+		e.logFn("demand_episode: join %s episode for backfill at node=%s: %v", claim.Role, node.Name, err)
+		return ordermgr.Origin{}
+	}
+	if originID == "" {
+		// ── THE CIRCLE MAY HAVE BEEN DECLARED CLOSED WHILE IT WAS STILL TURNING ──
+		//
+		// The key is right now, so a miss here is no longer a spelling fault: it
+		// means this cell has NO OPEN EPISODE at the moment the plant is creating
+		// an order to keep serving it. Under §R.87 that is a contradiction worth
+		// recording — an episode represents its process's FULL circular material
+		// handling, and a backfill is by construction part of a circle that has
+		// not finished turning.
+		//
+		// Two things produce it, and they are not the same fact:
+		//
+		//   - THE RACE. The episode closed on its LEVEL recovering, which happens
+		//     when the cell is satisfied — not when the circle is complete. The
+		//     level says nothing about the return leg.
+		//   - A GENUINELY RECOVERED DEMAND. Something else fed this cell first,
+		//     the episode ended honestly, and this backfill is finishing a swap
+		//     whose demand is over.
+		//
+		// RECORDED, NOT REPAIRED. Which of the two it is cannot be told from
+		// here, and changing when an episode closes is a demand-grain change that
+		// must not arrive inside an attribution fix — the same reason arm 3's
+		// gate was counted rather than switched on. This line is the observable
+		// the closed-at-backfill question needs and could not previously have:
+		// before the key was fixed, a miss here proved nothing, because the join
+		// asked for a key nothing ever opened.
+		e.logFn("WARN: demand_episode: BACKFILL WITH NO OPEN EPISODE — node=%s process=%s payload=%s "+
+			"role=%s. The key is correct, so this is not a spelling miss: the cell has no open "+
+			"episode while the plant is creating an order to go on serving it. Either the episode "+
+			"closed on its level recovering before the circle finished turning (§R.87: closure is "+
+			"the circle closed, and early closure is a defect), or the demand genuinely ended and "+
+			"this backfill completes a swap nobody is waiting on. The order is created unattributed "+
+			"either way — attribution never blocks transport.",
+			node.Name, name, claim.PayloadCode, claim.Role)
+		return ordermgr.Origin{}
+	}
+	return ordermgr.Attached(originID)
+}
+
 // openCellEpisode opens — or JOINS — the demand episode for a cell.
 //
 // Returns the origin id to stamp on every order this call creates, and whether
@@ -51,10 +193,16 @@ import (
 // expectedOrders is stamped ONCE, at open, and never recomputed or accumulated.
 // Accumulating per re-fire would render 2026-07-21 as ratio 1.0 — normal, and
 // invisible. A join therefore does NOT touch it.
+// THE ROLE IS NOT A PARAMETER, and that is the fix rather than a tidy-up. It was
+// `direction string`, chosen by each caller, and one caller chose the word its
+// cell never opens under. The claim is already here and it carries the answer:
+// a claim has exactly one role, so an episode is only ever that role, and asking
+// the caller to say it again is asking to be told something we already know by
+// someone who might be wrong.
 func (e *Engine) openCellEpisode(
 	processID int64,
 	claim *processes.NodeClaim,
-	direction, trigger string,
+	trigger string,
 	expectedOrders int,
 	openedTotal int,
 	discretionary bool,
@@ -68,26 +216,14 @@ func (e *Engine) openCellEpisode(
 		// empty origin id by attaching nothing and letting Core classify.
 		return "", false, nil
 	}
-	key := protocol.CellEpisodeKey(name, string(claim.PayloadCode), direction)
+	key := protocol.CellEpisodeKey(name, string(claim.PayloadCode), claim.Role)
 
-	if open, err := e.db.GetOpenDemandOrigin(key); err == nil && open != nil {
-		joined, jerr := e.db.JoinDemandOrigin(key)
-		if jerr != nil {
-			return open.OriginID, true, jerr
-		}
-		e.logFn("demand_episode: JOINED origin=%s key=%s trigger=%s rerequests=%d rev=%d — same demand, expressed again",
-			joined.OriginID, key, trigger, joined.RerequestCount, joined.Revision)
-		// Re-send the WHOLE state at the new revision, so the count is current
-		// on Core while the episode is still open — which is the only time
-		// knowing an operator pushed six times is any use.
-		//
-		// Ignored deliberately: the row is still on disk, so a failed enqueue
-		// costs a stale rerequest_count on Core until the next change, and the
-		// close re-sends everything regardless.
-		_ = e.emitOriginState(joined, nil, "", "")
-		return joined.OriginID, true, nil
-	} else if err != nil && !errors.Is(err, store.ErrOriginNotOpen) {
+	originID, joined, err := e.joinOpenCellEpisode(key, trigger)
+	if err != nil {
 		return "", false, err
+	}
+	if joined {
+		return originID, true, nil
 	}
 
 	expected := expectedOrders
@@ -95,7 +231,7 @@ func (e *Engine) openCellEpisode(
 		EpisodeKey: key,
 		OriginID:   uuid.NewString(),
 		Kind:       protocol.EpisodeKindCell,
-		Direction:  direction,
+		Direction:  claim.Role,
 		// TriggerKind, not Trigger: SQLite reserves TRIGGER as a keyword.
 		TriggerKind:    trigger,
 		TriggerRef:     claimTriggerRef(claim),
@@ -163,7 +299,13 @@ func (e *Engine) processName(processID int64) string {
 }
 
 // closeCellEpisode ends the episode for a place, if one is open.
-func (e *Engine) closeCellEpisode(processID int64, payload, direction, reason, closedBy string) {
+//
+// role, not direction: the close must build the SAME key the open built, and the
+// surest way to guarantee that is for both to be keyed on the claim's own field
+// rather than on a word each site chooses. A close that names a different
+// spelling than its open does not error — it finds nothing, leaves the episode
+// open, and the sweep tidies it up later under a reason nobody asked for.
+func (e *Engine) closeCellEpisode(processID int64, payload string, role protocol.ClaimRole, reason, closedBy string) {
 	name := e.processName(processID)
 	if name == "" {
 		// Nothing to close by key. The row is still on disk and the reconciling
@@ -171,7 +313,7 @@ func (e *Engine) closeCellEpisode(processID int64, payload, direction, reason, c
 		// one on its own pass — which is the sweep's whole purpose.
 		return
 	}
-	e.closeEpisode(protocol.CellEpisodeKey(name, payload, direction), reason, closedBy)
+	e.closeEpisode(protocol.CellEpisodeKey(name, payload, role), reason, closedBy)
 }
 
 // closeEpisode is the ONE close path for every kind Edge owns.

@@ -40,6 +40,6 @@ func (db *DB) MarkOutboxExhausted(id int64, reason string) error {
 
 func (db *DB) RequeueOutbox(id int64) error { return messaging.RequeueOutbox(db.DB, id) }
 
-func (db *DB) PurgeOldOutbox(olderThan time.Duration) (int64, error) {
-	return messaging.PurgeOldOutbox(db.DB, olderThan)
+func (db *DB) PurgeOldOutbox(delivered, deadLetter time.Duration) (int64, error) {
+	return messaging.PurgeOldOutbox(db.DB, delivered, deadLetter)
 }

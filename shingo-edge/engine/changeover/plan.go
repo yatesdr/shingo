@@ -56,14 +56,19 @@ type OrderSpec struct {
 // A swap fills both (resupply + removal). The names describe what the
 // order does, not which "side" of a two-robot pair it belongs to.
 type NodeAction struct {
-	NodeID      int64
-	NodeName    string
-	Situation   string
-	SupplyOrder *OrderSpec           // "next material" — staging / delivery order. nil for drops.
-	EvacOrder   *OrderSpec           // "old material release" — swap/evac/release order. nil for adds.
-	NextState   domain.NodeTaskState // node-task state to set on success
-	LogTag      string               // short tag used in success log line
-	Err         error                // pre-flight validation failure (planning-time)
+	NodeID   int64
+	NodeName string
+	// CoreNodeName is the node's CORE name — the identity every routing
+	// decision is keyed by. NodeName is the Edge's display name and the two
+	// are free to differ, so a pass that edits legs by node (the tooling
+	// decorator) has to read this one.
+	CoreNodeName string
+	Situation    string
+	SupplyOrder  *OrderSpec           // "next material" — staging / delivery order. nil for drops.
+	EvacOrder    *OrderSpec           // "old material release" — swap/evac/release order. nil for adds.
+	NextState    domain.NodeTaskState // node-task state to set on success
+	LogTag       string               // short tag used in success log line
+	Err          error                // pre-flight validation failure (planning-time)
 }
 
 // Plan is the full set of per-node actions for a changeover.

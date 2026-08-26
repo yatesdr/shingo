@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/config"
 	"shingocore/fleet"
 )

@@ -35,16 +35,19 @@ type BinManifestStore interface {
 	// need to drive these methods need a real Postgres.
 	Begin() (*sql.Tx, error)
 
-	// Exec lets BinManifestStore satisfy audit.BinUOPExecer when
-	// AuditReleaseOverride passes the store to audit.AppendBinUOPOverride.
+	// Exec + QueryRow let BinManifestStore satisfy audit.BinUOPExecer when
+	// AuditReleaseOverride passes the store to audit.AppendBinUOPOverride
+	// (QueryRow joined Exec when v93's boundary hook began numbering
+	// epoch_seq — see NextBinUOPEpochSeq).
 	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
 
 	// Bin manifest mutations.
 	ConfirmBinManifest(binID int64, producedAt string) error
 	UnconfirmBinManifest(binID int64) error
 	ClaimBin(binID, orderID int64) error
 
-	// High-level audit-row append (legacy audit table, not bin_uop_audit
+	// High-level audit-row append (legacy audit table, not bin_uop_ledger
 	// — that one is reached via Exec / the BinUOPExecer interface).
 	AppendAudit(entityType string, entityID int64, action, oldValue, newValue, actor string) error
 

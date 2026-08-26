@@ -1,6 +1,6 @@
 package simulator
 
-import "shingo/shared/clock"
+import "shingo/protocol/clock"
 
 // Options controls simulated backend behavior.
 type Options struct {

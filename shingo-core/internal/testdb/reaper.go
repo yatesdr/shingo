@@ -200,6 +200,32 @@ func reapOrphans(ctx context.Context, now time.Time, owner string) ([]string, er
 // Writes go straight to os.Stderr rather than through the standard logger,
 // which test code elsewhere in this repo has been observed to redirect.
 func reapOrphansBestEffort() {
+	// A BEST-EFFORT STEP MAY NOT PANIC, and one of its callees does.
+	// testcontainers' docker-host resolution PANICS rather than returning an
+	// error when it cannot resolve a candidate socket path — on Linux with no
+	// $XDG_RUNTIME_DIR set (CI runners, WSL) it comes out as
+	// "checked path: $XDG_RUNTIME_DIR". So reapOrphans' error return, and the
+	// reporting below, never got the chance to do their job.
+	//
+	// It took the suite with it for two compounding reasons. This runs BEFORE
+	// postgres.Run, so the container that would have worked was never attempted;
+	// and it runs inside containerOnce, so sync.Once re-panics the stored value
+	// for every later caller — one unresolvable path failed every test in the
+	// binary. OpenWithConfig's recover has a graceful skip for exactly this
+	// shape, but it matches on the substring "docker", which this message does
+	// not contain.
+	//
+	// Recovering here rather than widening that match is the smaller and more
+	// honest fix: the reap clears debris from PREVIOUS runs, so failing it costs
+	// disk, not correctness, and the run that follows is unaffected. Widening the
+	// match would SKIP the tests instead of running them, which is the outcome
+	// this panic already produces by accident.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "testdb: orphan reap skipped (docker host unresolvable: %v)\n", r)
+		}
+	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), reapTimeout)
 	defer cancel()
 

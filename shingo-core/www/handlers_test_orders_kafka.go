@@ -231,16 +231,7 @@ func (h *Handlers) publishComplex(src, dst protocol.Address, payloadCode string,
 
 // apiKafkaComplexOrderSubmit builds complex order steps and publishes via Kafka.
 func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		CycleMode           protocol.SwapMode `json:"cycle_mode"`
-		Location            string            `json:"location"`
-		InboundStaging      string            `json:"inbound_staging"`
-		OutboundStaging     string            `json:"outbound_staging"`
-		InboundSource       string            `json:"inbound_source"`
-		OutboundDestination string            `json:"outbound_destination"`
-		PayloadCode         string            `json:"payload_code"`
-		Priority            int               `json:"priority"`
-	}
+	var req complexSwapRequest
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
@@ -260,13 +251,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 
 	switch req.CycleMode {
 	case protocol.SwapModeSequential:
-		steps := []protocol.ComplexOrderStep{
-			{Action: "dropoff", Node: req.Location},
-			{Action: "wait"},
-			{Action: "pickup", Node: req.Location},
-			dropoffStep(req.OutboundDestination),
-		}
-		uid, err := h.publishComplex(src, dst, req.PayloadCode, steps, req.Priority, "", "")
+		uid, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapSequentialSteps(req), req.Priority, "", "")
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -278,27 +263,14 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 			h.jsonError(w, "inbound_staging is required for two robot", http.StatusBadRequest)
 			return
 		}
-		resupplySteps := []protocol.ComplexOrderStep{
-			pickupStepDirect(req.InboundSource),
-			{Action: "dropoff", Node: req.InboundStaging},
-			{Action: "wait"},
-			{Action: "pickup", Node: req.InboundStaging},
-			{Action: "dropoff", Node: req.Location},
-		}
-		uid1, err := h.publishComplex(src, dst, req.PayloadCode, resupplySteps, req.Priority, req.Location, "")
+		uid1, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapResupplySteps(req), req.Priority, req.Location, "")
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		results = append(results, map[string]any{"role": "resupply", "order_uuid": uid1})
 
-		removalSteps := []protocol.ComplexOrderStep{
-			{Action: "dropoff", Node: req.Location},
-			{Action: "wait"},
-			{Action: "pickup", Node: req.Location},
-			dropoffStep(req.OutboundDestination),
-		}
-		uid2, err := h.publishComplex(src, dst, req.PayloadCode, removalSteps, req.Priority, req.Location, uid1)
+		uid2, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapRemovalSteps(req), req.Priority, req.Location, uid1)
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -310,19 +282,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 			h.jsonError(w, "inbound_staging and outbound_staging required for single robot", http.StatusBadRequest)
 			return
 		}
-		steps := []protocol.ComplexOrderStep{
-			pickupStepDirect(req.InboundSource),
-			{Action: "dropoff", Node: req.InboundStaging},
-			{Action: "dropoff", Node: req.Location},
-			{Action: "wait"},
-			{Action: "pickup", Node: req.Location},
-			{Action: "dropoff", Node: req.OutboundStaging},
-			{Action: "pickup", Node: req.InboundStaging},
-			{Action: "dropoff", Node: req.Location},
-			{Action: "pickup", Node: req.OutboundStaging},
-			dropoffStep(req.OutboundDestination),
-		}
-		uid, err := h.publishComplex(src, dst, req.PayloadCode, steps, req.Priority, "", "")
+		uid, err := h.publishComplex(src, dst, req.PayloadCode, buildSwapSingleRobotSteps(req), req.Priority, "", "")
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return

@@ -306,6 +306,11 @@ func TestDataTTLForSubjects(t *testing.T) {
 		{SubjectEdgeRegister, 5 * time.Minute},
 		{SubjectEdgeRegistered, 5 * time.Minute},
 		{"inventory.query", 5 * time.Minute}, // unknown subject falls back to TypeData default
+
+		// The sequenced deltas carry no expiry. See NoExpiry: a late copy is
+		// deduped or audited at Core, a dropped one is a permanently wrong count.
+		{SubjectBinUOPDelta, NoExpiry},
+		{SubjectLinesideBucketDelta, NoExpiry},
 	}
 	for _, tt := range tests {
 		if got := DataTTLFor(tt.subject); got != tt.want {

@@ -39,7 +39,7 @@ import (
 // REPLACEMENT (a second pickup, away from the line) rather than where it ends.
 func TestSwapHold_PressIndexR1_NotHeldOnItsSibling(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, press, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "PI-MARKET", Enabled: true}
@@ -117,7 +117,7 @@ func TestSwapHold_PressIndexR1_NotHeldOnItsSibling(t *testing.T) {
 // pulls the line's bin with nothing coming (swap-starvation, 2026-06-03).
 func TestSwapHold_TwoRobotEvac_StillHeldUntilSupplyClaims(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, line, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "TR-MARKET", Enabled: true}
@@ -155,6 +155,41 @@ func TestSwapHold_TwoRobotEvac_StillHeldUntilSupplyClaims(t *testing.T) {
 		t.Fatal("two_robot evac must stay held while its supply holds no claim — it has a single pickup, at the line, " +
 			"so it removes the line's bin with no replacement secured (ALN_003 swap-starvation)")
 	}
+
+	// ── AND RELEASED ONCE THE SUPPLY HAS SECURED ONE, EVEN WITHOUT A CLAIM ──
+	//
+	// This is the deadlock the live rig hit on 2026-08-11 (orders 21/22, ASSY).
+	// "Secured" was tested as "holds a claim NOW", and the supply DROPS its claim
+	// the moment it stages the replacement — the store unclaims on arrival. So the
+	// evac was held forever waiting for a claim that had already done its job,
+	// while the supply waited at the line it could not place into because the evac
+	// had not cleared it. Each waited for the other.
+	//
+	// Committing to the fleet is the evidence, exactly as it is for the mirror
+	// direction (swapLegCommittedToFleet): a complex order claims its sources
+	// BEFORE the fleet create, so `dispatched` already means a replacement was
+	// secured. No live claim required, and none available.
+	supply, err := db.GetOrderByUUID("tr-supply")
+	testutil.MustNoErr(t, err, "get supply")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(supply.ID, string(StatusInTransit),
+		"staged its replacement and drove on"), "supply → in_transit")
+	if bins, bErr := db.ListBinsByClaim(supply.ID); bErr != nil || len(bins) != 0 {
+		t.Fatalf("fixture: supply holds %d claim(s) (err %v) — this half is only a test while it "+
+			"holds NONE, which is the state after it stages its replacement", len(bins), bErr)
+	}
+
+	evac, err = db.GetOrderByUUID("tr-evac")
+	testutil.MustNoErr(t, err, "re-read evac")
+	steps, ok = decodeSteps(evac.StepsJSON)
+	if !ok {
+		t.Fatal("evac has no readable steps")
+	}
+	if held, reason := d.swapLegHeld(evac, steps); held {
+		t.Fatalf("evac still held (%s) after its supply committed to the fleet holding no claim. The "+
+			"supply has already secured and staged the replacement — that is a STRONGER guarantee "+
+			"than holding one — and it is now waiting at the line for this evac to clear it. Each "+
+			"leg waits for the other, permanently, and the robot stands still", reason)
+	}
 }
 
 // TestSwapHold_PressIndexR2_HeldUntilEvacDispatched is the HOP anti-collision half
@@ -165,7 +200,7 @@ func TestSwapHold_TwoRobotEvac_StillHeldUntilSupplyClaims(t *testing.T) {
 // R2's dropoff after R1's pickup — R2 is released.
 func TestSwapHold_PressIndexR2_HeldUntilEvacDispatched(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, press, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "PI2-MARKET", Enabled: true}
@@ -235,7 +270,7 @@ func TestSwapHold_PressIndexR2_HeldUntilEvacDispatched(t *testing.T) {
 // exempt it, because its evac sibling does not secure its own replacement.
 func TestSwapHold_TwoRobotSupply_NotHeld(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, line, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "TR2-MARKET", Enabled: true}
@@ -294,7 +329,7 @@ func TestSwapHold_TwoRobotSupply_NotHeld(t *testing.T) {
 // and a dead peer cannot be waiting on anyone.
 func TestSwapHold_Filler_HeldWhenClearerDied(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, line, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "DEAD-CLEARER-MARKET", Enabled: true}
@@ -348,7 +383,7 @@ func TestSwapHold_Filler_HeldWhenClearerDied(t *testing.T) {
 // its second leg.
 func TestSwapHold_Filler_ReleasedWhenClearerConfirmed(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, line, bp := setupTestData(t, db)
 
 	market := &nodes.Node{Name: "DONE-CLEARER-MARKET", Enabled: true}
@@ -388,5 +423,67 @@ func TestSwapHold_Filler_ReleasedWhenClearerConfirmed(t *testing.T) {
 	if held, reason := d.swapLegHeld(supply, supplySteps); held {
 		t.Fatalf("filler held (%s) after its clearer CONFIRMED — the line was cleared, "+
 			"holding here wedges the second half of every successful swap", reason)
+	}
+}
+
+// TestSwapHold_Filler_ReleasedWhenClearerSkipped is the third disposition, and
+// the one that was missing.
+//
+// A clearer is SKIPPED for the opposite reason it is cancelled: it found no bin
+// to clear. The line is empty, so there is nothing for the filler to collide
+// with — and the filler is exactly what should put a carrier back on it.
+// HandleSwapPeerTerminal has always said so ("a moot (skipped) evac is a clean
+// no-op — the supply proceeds"); this arm contradicted it, so the peer handler
+// released the filler and the hold re-caught it on the next scan, forever.
+//
+// It only became reachable when reserveMoot started skipping evacs that hold
+// their own replacement. lane-stress 2026-08-10: order 64 skipped as moot, order
+// 65 held on it, idle climbing with a reason describing a death that never
+// happened.
+func TestSwapHold_Filler_ReleasedWhenClearerSkipped(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	_, line, bp := setupTestData(t, db)
+
+	market := &nodes.Node{Name: "SKIP-CLEARER-MARKET", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "create market")
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "sk-supply", PayloadCode: bp.Code, Quantity: 1, ProcessNode: line.Name,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionPickup, Node: market.Name},
+			{Action: protocol.ActionDropoff, Node: line.Name},
+		},
+	})
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID: "sk-evac", PayloadCode: bp.Code, Quantity: 1, ProcessNode: line.Name,
+		SiblingOrderUUID: "sk-supply",
+		Steps: []protocol.ComplexOrderStep{
+			{Action: protocol.ActionWait, Node: line.Name},
+			{Action: protocol.ActionPickup, Node: line.Name},
+			{Action: protocol.ActionDropoff, Node: market.Name},
+		},
+	})
+
+	evac, err := db.GetOrderByUUID("sk-evac")
+	testutil.MustNoErr(t, err, "get evac")
+	// SKIPPED, not cancelled: there was no resident bin to clear.
+	if _, terr := db.TerminalizeOrder(evac.ID, StatusSkipped, "test: moot evac, line already empty"); terr != nil {
+		t.Fatalf("skip evac: %v", terr)
+	}
+
+	supply, err := db.GetOrderByUUID("sk-supply")
+	testutil.MustNoErr(t, err, "get supply")
+	supplySteps, ok := decodeSteps(supply.StepsJSON)
+	if !ok {
+		t.Fatal("supply has no readable steps")
+	}
+	held, reason := d.swapLegHeld(supply, supplySteps)
+	if held {
+		t.Errorf("filler held on a SKIPPED clearer (%q). Skipped means the clearer found nothing "+
+			"to clear, so the line is empty and this filler is the thing that refills it. Holding "+
+			"here contradicts HandleSwapPeerTerminal and leaves the leg queued forever", reason)
 	}
 }

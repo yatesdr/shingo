@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 
 	"shingocore/store"
 	"shingocore/store/audit"
@@ -37,10 +38,15 @@ import (
 
 const (
 	// invDeltaScopeBin / invDeltaScopeBucket — scope_kind values for the
-	// inventory_delta_dedup table. Stable strings. Edge has no awareness
-	// of these values; they are a Core-internal partition.
-	invDeltaScopeBin    = "bin"
-	invDeltaScopeBucket = "bucket"
+	// inventory_delta_dedup table.
+	//
+	// NOT a Core-internal partition, which is what this comment used to claim.
+	// Edge writes scope_kind when it allocates a sequence-id and Core dedups on
+	// the value it receives, so the two sides must agree; a rename on one side
+	// alone stops deduplication silently. Single-sourced in protocol/ for that
+	// reason.
+	invDeltaScopeBin    = protocol.InvDeltaScopeBin
+	invDeltaScopeBucket = protocol.InvDeltaScopeBucket
 )
 
 // ErrInventoryDeltaSkipped indicates the delta was a duplicate (its
@@ -284,6 +290,13 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 				nil, d.PayloadCode, station, metadata); err != nil {
 				return err
 			}
+			// The permanent exceptions ledger (v93) — this drop is one of the
+			// four durable kinds. Same transaction, same metadata blob.
+			if err := audit.AppendBinUOPException(tx, audit.ExcStaleEpoch, d.BinID,
+				d.PayloadCode, station, nil, clock.Now().UTC(), &before, &before, nil,
+				nil, audit.OpStaleEpochDropped, metadata); err != nil {
+				return err
+			}
 			// Flag the bin so the bins page surfaces a carrier whose deltas are
 			// being refused (P2-C6). Payload-mismatch drops already do this; a
 			// stale-epoch drop is just as much a "counts aren't landing" signal.
@@ -447,25 +460,60 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	// approach has no escaping). Typed marshal handles every JSON
 	// edge case correctly and matches the pattern in
 	// bin_manifest.AuditReleaseOverride.
+	// wire_epoch and bin_epoch use the SAME JSON keys the stale-epoch drop
+	// branch above writes, so one query answers the question across both
+	// outcomes.
+	//
+	// Until 2026-08-22 the epoch was recorded ONLY when a delta was dropped, so
+	// a delta that ARRIVED on a stale generation and was applied left no trace
+	// of which generation it carried — and "did a late delta ever land on the
+	// wrong generation" was unanswerable from the ledger by construction. That
+	// matters more since bin_uop_delta stopped expiring: a delta can now arrive
+	// arbitrarily late, and the epoch is the only thing that says whether that
+	// was harmless.
 	metadata, err := json.Marshal(struct {
 		Reason     string `json:"reason"`
 		Delta      int    `json:"delta"`
 		SequenceID int64  `json:"sequence_id"`
+		WireEpoch  int64  `json:"wire_epoch"`
+		BinEpoch   int64  `json:"bin_epoch"`
 	}{
 		Reason:     string(d.Reason),
 		Delta:      d.Delta,
 		SequenceID: d.SequenceID,
+		WireEpoch:  d.Epoch,
+		BinEpoch:   currentEpoch,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal BinUOPDelta audit metadata bin=%d: %w", d.BinID, err)
 	}
-	if _, err := tx.Exec(`INSERT INTO bin_uop_audit
+	if _, err := tx.Exec(`INSERT INTO bin_uop_ledger
 		(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata)
 		VALUES ($1, $2, $3, 'bin_uop_delta', 'service/inventory_delta_service.go', $4, $5, $6)`,
 		d.BinID, valueBefore, valueBefore+d.Delta,
 		d.PayloadCode, station, string(metadata),
 	); err != nil {
 		return fmt.Errorf("audit BinUOPDelta bin=%d: %w", d.BinID, err)
+	}
+
+	// The permanent exceptions ledger (v93): a crossing (>= 0 to < 0) opens a
+	// negative_crossing row; a recovery (< 0 back to >= 0) closes the open
+	// one and folds its deepest. Continuations (still negative) write
+	// nothing — they are the same excursion. This is the event-time half of
+	// what the backfill derived; after the 90-day retention lands, these rows
+	// are the only durable record of the negatives.
+	newValue := valueBefore + d.Delta
+	switch {
+	case valueBefore >= 0 && newValue < 0:
+		if err := audit.AppendBinUOPException(tx, audit.ExcNegativeCrossing, d.BinID,
+			d.PayloadCode, station, nil, clock.Now().UTC(), &valueBefore, &newValue, nil,
+			nil, "bin_uop_delta", metadata); err != nil {
+			return err
+		}
+	case valueBefore < 0 && newValue >= 0:
+		if err := audit.RecoverBinUOPOpenCrossing(tx, d.BinID, clock.Now().UTC()); err != nil {
+			return err
+		}
 	}
 
 	// Item 6 manifest-clear trigger: when a capture_reduction delta
@@ -508,7 +556,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 }
 
 // recordRejectedDelta makes a payload-mismatch drop visible: one
-// bin_uop_audit observation row PER dropped delta (before == after, the
+// bin_uop_ledger observation row PER dropped delta (before == after, the
 // dropped quantity in metadata — the same shape as OpStaleEpochDropped, so
 // the discrepancy ledger can reconstruct the missing total for a later
 // cycle count), plus the bin's anomaly flag, set once, so the bins page
@@ -535,6 +583,14 @@ func (s *InventoryDeltaService) recordRejectedDelta(station string, d *protocol.
 		audit.OpPayloadMismatchDropped, "service/inventory_delta_service.go:payloadMismatch",
 		nil, d.PayloadCode, station, metadata); err != nil {
 		log.Printf("audit rejected delta bin=%d: %v", d.BinID, err)
+	}
+	// The permanent exceptions ledger (v93), same best-effort contract as the
+	// row above: on s.db outside the rolled-back tx, and a failed write logs
+	// rather than masks the reject.
+	if err := audit.AppendBinUOPException(s.db.DB, audit.ExcPayloadMismatch, d.BinID,
+		d.PayloadCode, station, nil, clock.Now().UTC(), &valueBefore, &valueBefore, nil,
+		nil, audit.OpPayloadMismatchDropped, metadata); err != nil {
+		log.Printf("audit rejected-delta exception bin=%d: %v", d.BinID, err)
 	}
 	if !anomalyFlagged {
 		if err := s.db.MarkBinAnomaly(d.BinID); err != nil {
@@ -575,10 +631,15 @@ func (s *InventoryDeltaService) AnomalySummary() (AnomalyDeltaSummary, error) {
 		DroppedStaleEpoch:      atomic.LoadInt64(&s.droppedStaleEpoch),
 		DroppedPayloadMismatch: atomic.LoadInt64(&s.droppedPayloadMismatch),
 	}
+	// staged_expires_at is written from a Go value on the injected clock, so it is
+	// compared against that clock and not the database's NOW() (§R.98 stage D).
+	// The sweep that acts on this column (bins.ReleaseExpiredStaged) already does;
+	// this page did not, so the two could tell an operator opposite things about
+	// the same bin the moment the domains diverge.
 	if err := s.db.QueryRow(`SELECT
 		(SELECT COUNT(*) FROM bins WHERE anomaly_at IS NOT NULL AND status != 'retired'),
-		(SELECT COUNT(*) FROM bins WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < NOW())
-	`).Scan(&out.RejectedDeltaBins, &out.StaleStagedBins); err != nil {
+		(SELECT COUNT(*) FROM bins WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < $1::timestamptz)
+	`, clock.Now().UTC()).Scan(&out.RejectedDeltaBins, &out.StaleStagedBins); err != nil {
 		return out, fmt.Errorf("anomaly summary counts: %w", err)
 	}
 	return out, nil
@@ -608,12 +669,12 @@ type RejectedDeltaBin struct {
 func (s *InventoryDeltaService) RejectedDeltaDetail() ([]RejectedDeltaBin, error) {
 	rows, err := s.db.Query(`SELECT b.id, COALESCE(b.label,''), COALESCE(n.name,''),
 		COALESCE(b.payload_code,''), b.anomaly_at,
-		(SELECT a.op FROM bin_uop_audit a
+		(SELECT a.op FROM bin_uop_ledger a
 		   WHERE a.bin_id=b.id AND a.op IN ('stale_epoch_dropped','payload_mismatch_dropped')
 		   ORDER BY a.applied_at DESC LIMIT 1),
-		(SELECT MAX(a.applied_at) FROM bin_uop_audit a
+		(SELECT MAX(a.applied_at) FROM bin_uop_ledger a
 		   WHERE a.bin_id=b.id AND a.op IN ('stale_epoch_dropped','payload_mismatch_dropped')),
-		(SELECT COUNT(*) FROM bin_uop_audit a
+		(SELECT COUNT(*) FROM bin_uop_ledger a
 		   WHERE a.bin_id=b.id AND a.op IN ('stale_epoch_dropped','payload_mismatch_dropped'))
 		FROM bins b
 		LEFT JOIN nodes n ON n.id=b.node_id

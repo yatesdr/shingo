@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingocore/dispatch"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -55,13 +56,25 @@ type BinMoveRequest struct {
 	Desc     string
 }
 
-// BinMoveResult describes the order that is now on its way.
+// BinMoveResult describes the order that is now on its way — or, when Queued is
+// set, the order that is waiting for a lane and will go on its way by itself.
 type BinMoveResult struct {
 	OrderID       int64
 	VendorOrderID string
 	FromNode      string
 	ToNode        string
 	BinLabel      string
+
+	// Queued is true when the lane refused the move at dispatch. The order is
+	// real, holds its bin, and the fulfillment scanner drives it in as soon as
+	// the lane clears — so this is not a refusal and must not be answered as
+	// one. QueueReason is the operator sentence saying what it is waiting for.
+	//
+	// The pick is never blocked at the UI; the queue message carries the wait.
+	// The alternative — refusing at the door — would make an operator guess when
+	// to try again for a condition Core is already watching.
+	Queued      bool
+	QueueReason string
 }
 
 // BinMoveErrKind classifies a refusal, so a caller can answer with the right
@@ -249,6 +262,30 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 		return nil, refuse(BinMoveFault, err, "could not reserve bin %s: %v", bin.Label, err)
 	}
 
+	// MAY THIS MOVE HAPPEN NOW — the same question every other lane entry asks,
+	// asked here for the first time.
+	//
+	// This door went from the capacity preview straight to the fleet. Capacity is
+	// "is there room at the destination"; it is not "is another robot inside that
+	// corridor", "is someone digging this lane", or "is the bin behind another
+	// bin". A core operator's bin move is a robot in a lane exactly as much as a
+	// compound leg is, and it was the one lane entry with nothing between it and
+	// the fleet. An engineer clearing a slot could send a robot into a lane a dig
+	// owned.
+	//
+	// EntryHeldBin, because that is what this is: the bin is named, the finder was
+	// never called, so nothing has answered the reachability question and this
+	// caller must ask it.
+	//
+	// BEFORE ConfirmForDispatch, deliberately. A refusal here leaves the bin SOFT
+	// — reserved, not hard-claimed — which is exactly the state the scanner's
+	// held-bin path expects to pick the order up in, so the retry is the ordinary
+	// machinery rather than a second implementation of it.
+	if admitted, cause, laneName, aerr := e.dispatcher.AcquireLanesForOrder(
+		order, sourceNode, destNode, dispatch.EntryHeldBin); aerr != nil || !admitted {
+		return e.queueBinMoveForLane(order, bin, sourceNode, destNode, cause, laneName, aerr)
+	}
+
 	// Confirm-at-dispatch: hard-claim the destination slot (if a storage
 	// dropoff) and the bin in one step, immediately before the fleet call.
 	if err := e.dispatcher.ConfirmForDispatch(order, bin.ID, sourceNode, destNode); err != nil {
@@ -260,10 +297,21 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 
 	vendorOrderID, err := e.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
+		// THIS DOOR FAILS THE ROW, because this door has a person waiting on it.
+		// DispatchDirect no longer terminalizes — a fleet refusal is congestion and
+		// the scanner waits it out — but there is nobody here to wait for: the
+		// request answers now, and a row left queued with nothing driving it is an
+		// orphan the operator would see on the board and not understand. So the
+		// disposition that used to be DispatchDirect's is made explicitly here,
+		// where the reason for it holds.
+		//
+		// Through failOrderAndEmit rather than a bare FailOrderAtomic, for the same
+		// reason the reservation arm above uses it: the audit line and the station
+		// notification are part of failing an order.
+		e.failOrderAndEmit(order.ID, "fleet_failed", err.Error())
 		// Coupled rollback: clear the hard claim AND release the reservation, so
-		// a failed dispatch cannot orphan a confirmed one. (DispatchDirect has
-		// already failed the order, which released it — this is the idempotent
-		// belt.)
+		// a failed dispatch cannot orphan a confirmed one. (The terminalize above
+		// released them — this is the idempotent belt.)
 		if uerr := e.db.ReleaseClaimForBin(bin.ID, order.ID); uerr != nil {
 			e.logFn("engine: release claim for bin %d after dispatch failure: %v", bin.ID, uerr)
 		}
@@ -276,6 +324,66 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 		FromNode:      sourceNode.Name,
 		ToNode:        destNode.Name,
 		BinLabel:      bin.Label,
+	}, nil
+}
+
+// queueBinMoveForLane parks a bin move whose lane would not take it, and is the
+// #7 ruling in code: the UI never blocks the pick, the queue message carries the
+// wait.
+//
+// The order is REAL and it is not refused. It keeps its soft reservation on the
+// bin, moves to `queued`, and the emit runs the fulfillment scanner — whose
+// held-bin path re-asks this same question on every lane-clearing event and
+// dispatches the moment the answer changes. So the releaser is the one every
+// other lane wait rides, and nothing new is subscribed for it.
+//
+// An admission ERROR parks too, under its own cause. A lane Core could not read
+// is not a lane Core may send a robot into, and "undetermined" has to stay
+// distinguishable from "busy" on the row — the two are investigated differently.
+func (e *Engine) queueBinMoveForLane(order *orders.Order, bin *bins.Bin, sourceNode, destNode *nodes.Node,
+	cause dispatch.QueueCause, laneName string, aerr error,
+) (*BinMoveResult, error) {
+	code := protocol.QueueWaitingForSlot
+	params := dispatch.QueueParams{Destination: laneName}
+	if aerr != nil {
+		e.logFn("engine: bin move %d — lane admission could not be read: %v (holding)", order.ID, aerr)
+		cause = dispatch.CauseLaneAcquireError
+		params.Destination = destNode.Name
+	}
+	// Drop any mouth hold the acquire took before it refused, so a parked move
+	// does not sit on a lane it is not using.
+	if lerr := e.dispatcher.ReleaseLanesForOrder(order.ID); lerr != nil {
+		e.logFn("engine: release lanes for parked bin move %d: %v", order.ID, lerr)
+	}
+
+	reason := dispatch.FormatQueueSentence(code, params)
+	if err := e.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
+		e.logFn("engine: set queue_reason for parked bin move %d: %v", order.ID, err)
+	}
+	if err := e.dispatcher.Lifecycle().Queue(order, "bin-move", reason); err != nil {
+		// The order is stuck at `pending`, which no scanner pass selects. Say so
+		// loudly and fail it rather than hand back a row nothing will ever drive.
+		e.logFn("engine: parked bin move %d could not be queued: %v", order.ID, err)
+		e.failOrderAndEmit(order.ID, "lane_park_failed", "lane refused the move and the order could not be queued")
+		return nil, refuse(BinMoveFault, err, "the lane refused the move and it could not be queued: %v", err)
+	}
+	// The scanner trigger. Synchronous on this goroutine (wiring.go), so a lane
+	// that is already free dispatches before this call returns and the operator's
+	// "queued" is a fraction of a second old at worst.
+	e.Events.Emit(Event{Type: EventOrderQueued, Payload: OrderQueuedEvent{
+		OrderID:     order.ID,
+		EdgeUUID:    order.EdgeUUID,
+		StationID:   order.StationID,
+		PayloadCode: order.PayloadCode,
+	}})
+
+	return &BinMoveResult{
+		OrderID:     order.ID,
+		FromNode:    sourceNode.Name,
+		ToNode:      destNode.Name,
+		BinLabel:    bin.Label,
+		Queued:      true,
+		QueueReason: reason,
 	}, nil
 }
 

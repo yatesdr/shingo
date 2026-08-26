@@ -4,6 +4,7 @@ package schemadump_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,6 +25,29 @@ func moduleRoot(t *testing.T) string {
 	return filepath.Clean(filepath.Join(wd, "..", ".."))
 }
 
+// One Postgres for the whole test binary, not one per test. Container startup
+// was a fixed cost each test paid alone; the convergence test's three vintages
+// and the staleness test can share an instance because every database they
+// build is created empty and named uniquely — nothing crosses between them.
+var sharedInst *schemadump.Instance
+
+func TestMain(m *testing.M) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	inst, err := schemadump.Start(ctx)
+	if err != nil {
+		// Not a failure of the schema — no docker. Same verdict the per-test
+		// start() helper gives, stated once for the whole binary.
+		fmt.Fprintf(os.Stderr, "schemadump: skipping (cannot start postgres): %v\n", err)
+		os.Exit(0)
+	}
+	sharedInst = inst
+	code := m.Run()
+	cancel()
+	_ = inst.Close(context.Background())
+	os.Exit(code)
+}
+
 // TestSchemaSnapshotIsCurrent builds the schema from scratch and compares it
 // to the committed snapshot.
 //
@@ -31,6 +55,7 @@ func moduleRoot(t *testing.T) string {
 // worth nothing if it drifts, and nobody will remember to regenerate it — so
 // this test remembers, and it fails with the exact command that fixes it.
 func TestSchemaSnapshotIsCurrent(t *testing.T) {
+	t.Parallel()
 	root := moduleRoot(t)
 	path := filepath.Join(root, filepath.FromSlash(schemadump.SnapshotPath))
 
@@ -82,6 +107,7 @@ func TestSchemaSnapshotIsCurrent(t *testing.T) {
 // converge, and a plant at that vintage would get a different database from a
 // new one.
 func TestSchemaConvergesAcrossVintages(t *testing.T) {
+	t.Parallel()
 	root := moduleRoot(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
@@ -100,6 +126,13 @@ func TestSchemaConvergesAcrossVintages(t *testing.T) {
 
 	for _, v := range schemadump.Vintages {
 		t.Run(strings.NewReplacer("^", "-parent", "/", "-", ".", "_").Replace(v.Rev), func(t *testing.T) {
+			t.Parallel()
+			// Own context, not the parent's: the parent function returns (and
+			// defers cancel) as soon as these subtests are SCHEDULED, which
+			// would cancel every dump still queued behind t.Parallel().
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+
 			baseline, err := schemadump.BaselineFromGit(root, v.Rev)
 			if err != nil {
 				t.Fatalf("read baseline at %s: %v\n(%s)", v.Rev, err, v.Why)
@@ -130,15 +163,10 @@ func TestSchemaConvergesAcrossVintages(t *testing.T) {
 
 func start(ctx context.Context, t *testing.T) *schemadump.Instance {
 	t.Helper()
-	inst, err := schemadump.Start(ctx)
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "docker") {
-			t.Skipf("skipping: %v", err)
-		}
-		t.Fatalf("start postgres: %v", err)
+	if sharedInst == nil {
+		t.Fatal("TestMain did not start the shared instance")
 	}
-	t.Cleanup(func() { _ = inst.Close(context.Background()) })
-	return inst
+	return sharedInst
 }
 
 // shapeDiff reports which lines exist in one canonical form and not the other.

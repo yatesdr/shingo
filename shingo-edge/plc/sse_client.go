@@ -16,6 +16,15 @@ type SSERawEvent struct {
 // SSEReader reads SSE events from an io.Reader using a bufio.Scanner.
 type SSEReader struct {
 	scanner *bufio.Scanner
+
+	// Partial event accumulated across Next calls. SSE comments (keepalives)
+	// are legal anywhere — including between the data lines of a
+	// still-arriving event — so reporting one mid-event must not discard what
+	// already arrived.
+	pending SSERawEvent
+	// dataParts backs pending.Data across calls (Data is joined on dispatch).
+	dataParts []string
+	hasFields bool
 }
 
 // NewSSEReader creates a new SSE stream reader.
@@ -30,28 +39,34 @@ func NewSSEReader(r io.Reader) *SSEReader {
 	return &SSEReader{scanner: s}
 }
 
-// Next returns the next complete SSE event, or an error (io.EOF at end of stream).
-// It blocks until a full event is available.
-func (s *SSEReader) Next() (SSERawEvent, error) {
-	var ev SSERawEvent
-	var dataParts []string
-	hasFields := false
-
+// Next returns the next complete SSE event. The bool is true when an event
+// was dispatched; false with nil error means a comment line (keepalive) was
+// consumed — activity on the stream, but not an event. Callers that run
+// liveness timers (the stall detector does — a keepalive proves the stream
+// is alive) need that distinction; callers that only want events ignore it.
+// Returns io.EOF at end of stream.
+func (s *SSEReader) Next() (SSERawEvent, bool, error) {
 	for s.scanner.Scan() {
 		line := s.scanner.Text()
 
 		// Blank line dispatches the event
 		if line == "" {
-			if hasFields {
-				ev.Data = strings.Join(dataParts, "\n")
-				return ev, nil
+			if s.hasFields {
+				ev := s.pending
+				ev.Data = strings.Join(s.dataParts, "\n")
+				s.pending = SSERawEvent{}
+				s.dataParts = nil
+				s.hasFields = false
+				return ev, true, nil
 			}
 			continue
 		}
 
-		// Comment lines (starting with ':') are ignored
+		// Comment lines (starting with ':') are not events, but they are
+		// stream activity: report them so callers can reset liveness timers.
+		// Pending fields survive in s.pending/s.dataParts.
 		if strings.HasPrefix(line, ":") {
-			continue
+			return SSERawEvent{}, false, nil
 		}
 
 		// Split on first ':'
@@ -64,26 +79,30 @@ func (s *SSEReader) Next() (SSERawEvent, error) {
 
 		switch field {
 		case "event":
-			ev.Event = value
-			hasFields = true
+			s.pending.Event = value
+			s.hasFields = true
 		case "data":
-			dataParts = append(dataParts, value)
-			hasFields = true
+			s.dataParts = append(s.dataParts, value)
+			s.hasFields = true
 		case "id":
-			ev.ID = value
-			hasFields = true
+			s.pending.ID = value
+			s.hasFields = true
 		}
 	}
 
 	if err := s.scanner.Err(); err != nil {
-		return SSERawEvent{}, err
+		return SSERawEvent{}, false, err
 	}
 
 	// EOF with accumulated fields: dispatch final event
-	if hasFields {
-		ev.Data = strings.Join(dataParts, "\n")
-		return ev, nil
+	if s.hasFields {
+		ev := s.pending
+		ev.Data = strings.Join(s.dataParts, "\n")
+		s.pending = SSERawEvent{}
+		s.dataParts = nil
+		s.hasFields = false
+		return ev, true, nil
 	}
 
-	return SSERawEvent{}, io.EOF
+	return SSERawEvent{}, false, io.EOF
 }

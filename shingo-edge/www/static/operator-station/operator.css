@@ -1413,3 +1413,37 @@ body.os-board-mode-active #os-footer { font-size: 22px; }
     .os-release-qty-display { font-size: 26px; padding: 10px; }
     .os-release-part-btn { font-size: 13px; padding: 8px; min-height: 38px; }
 }
+
+/* ── Changeover loading directive ─────────────────────────────────────────
+ * The loader board's banner during a changeover: LOAD THIS BIN TYPE.
+ * Sized like an instruction rather than a status, because it is the one
+ * thing on the board the operator is meant to act on while it is showing. */
+.os-changeover-load-directive {
+  background: #1a2a4a;
+  border: 2px solid #3a5a8a;
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 12px;
+}
+.os-cld-label {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #8af;
+}
+.os-cld-bintype {
+  font-size: 44px;
+  font-weight: 700;
+  color: #fff;
+  margin-top: 4px;
+}
+.os-cld-why {
+  font-size: 20px;
+  color: #aab;
+  margin-top: 6px;
+}
+.os-cld-who {
+  font-size: 18px;
+  color: #889;
+  margin-top: 2px;
+}

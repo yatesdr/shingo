@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingoedge/config"
 	"shingoedge/engine"
 	"shingoedge/plc"
@@ -51,13 +51,21 @@ func simWarlinkClient(cfg *config.Config) plc.WarlinkClient {
 	clk, mode := clock.BuildSimClock(cfg.Sim.Epoch, cfg.Sim.AnchorWall, cfg.Sim.Speed, cfg.Sim.MaxSpeed)
 	switch mode {
 	case clock.SimRunning:
-		log.Printf("[sim] live clock: running %.1f× wall (change live via POST /api/sim/speed)", clk.Speed())
+		log.Printf("[sim] live clock: running %.1f× wall, per-process anchor (change live via POST /api/sim/speed)", clk.Speed())
+	case clock.SimSyncedRunning:
+		log.Printf("[sim] synced running clock: %.0f× wall, sustained (epoch=%s anchor=%s; no wall clamp, "+
+			"so Now() and every ticker run at the same speed) — must match core",
+			clk.Speed(), cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339))
 	case clock.SimSyncedFastForward:
-		log.Printf("[sim] fast-forward clock (synced): epoch=%s anchor=%s speed=%.0f× (must match core)",
-			cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339), clk.Speed())
+		// The banner names the catch-up window, because that is the only time this
+		// clock is faster than wall — see the matching sentence in core's.
+		log.Printf("[sim] fast-forward clock (synced): epoch=%s anchor=%s speed=%.0f× while catching up "+
+			"to wall, then Now() clamps to 1× (tickers stay at %.0f×) — must match core",
+			cfg.Sim.Epoch.Format(time.RFC3339), cfg.Sim.AnchorWall.Format(time.RFC3339), clk.Speed(), clk.Speed())
 	case clock.SimUnsyncedFastForward:
-		log.Printf("[sim] fast-forward clock (UNSYNCED — set sim.anchor_wall in BOTH core+edge to stop clock drift): epoch=%s speed=%.0f×",
-			cfg.Sim.Epoch.Format(time.RFC3339), clk.Speed())
+		log.Printf("[sim] fast-forward clock (UNSYNCED — set sim.anchor_wall in BOTH core+edge to stop clock drift): "+
+			"epoch=%s speed=%.0f× while catching up to wall, then Now() clamps to 1× (tickers stay at %.0f×)",
+			cfg.Sim.Epoch.Format(time.RFC3339), clk.Speed(), clk.Speed())
 	}
 	if clk.RequestedSpeed() > clk.Speed() {
 		log.Printf("[sim] requested %.0f× capped to max_speed %.0f×", clk.RequestedSpeed(), clk.Speed())

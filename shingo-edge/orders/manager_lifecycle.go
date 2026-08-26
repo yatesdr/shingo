@@ -3,6 +3,7 @@ package orders
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -115,6 +116,17 @@ func (m *Manager) SetOrderQueueReason(uuid, reason, code string) error {
 		m.stampAwaitingMaterial(uuid)
 	}
 	return nil
+}
+
+// SetOrderFaultClock persists (or clears) Core's fault window for an order.
+// Called from the edge handler on every OrderUpdate and boot snapshot.
+//
+// Nothing branches on it — it is what the board reads to render the fault
+// sentence and tick its clock. Deliberately inert beyond display, the way
+// QueueCode is: the day something does need to branch, the value is already
+// there and it is a read, not a schema change.
+func (m *Manager) SetOrderFaultClock(uuid string, since, deadline *time.Time, noticeAfterS int, ref string) error {
+	return m.db.SetOrderFaultClock(uuid, since, deadline, noticeAfterS, ref)
 }
 
 // stampAwaitingMaterial moves a changeover supply leg's node task to

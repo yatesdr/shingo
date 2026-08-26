@@ -11,6 +11,18 @@
 #   PRESS-1 (PANEL-A, two_robot_press_index) ─┐
 #   PRESS-2 (PANEL-B, sequential A/B)        ├─→ SYN_SM_Stamp (shared, PANEL-A + PANEL-B) ─→ WELD-1 (PANEL-A→ASSY)
 #                                            ┘                                            ─→ WELD-2 (PANEL-B→ASSY)
+#
+# THE MAINTAINED-GROUP LOOP (MG2-0) — the empty side of the same circle:
+#   SYN_PRESS_EMPTIES ──(empties)──→ PRESS-1, PRESS-2 ──(fulls)──→ SYN_MARKET
+#           ↑                                                          │
+#           ├──────── UNLOADER-A pushes drained STANDARD carriers ──────┘
+#           └──────── the level keeper covers the rest, from SYN_MARKET
+#
+#   4 STANDARD + 2 STANDARD-SM across 8 positions. The SM half has no direct
+#   return path on purpose: it is refilled by the keeper alone, so a scenario
+#   that breaks the keeper shows on one type while the other keeps running.
+#   PRESS-1 can change over to PANEL-C, which rides STANDARD-SM — that is how a
+#   changeover changes WHICH TYPE the group is asked for.
 #   PLK_LOADER (BRKT, multi-window) ─┐
 #   PLK_X1     (CLIP, single-window) ├─→ SYN_SM_Comp (shared, BRKT + CLIP + STUD) ─→ WELD-2 (BRKT), WELD-3 (CLIP), WELD-4 (STUD)
 #   PLK_X2     (STUD, single-window) ┘                                                ↓
@@ -29,7 +41,19 @@
 namespace: devplant
 line_id: line1
 
-bin_types: [STANDARD]
+# TWO REAL CARRIER TYPES, and the second one now FLOWS (MG2-0). It was declared
+# and carried by no payload while the level keeper was being built — a mixed
+# level the sim could stage but never drain. That made every mixed-type
+# assertion vacuous: a level whose second type nothing consumes is satisfied by
+# doing nothing.
+#
+# STANDARD-SM is the small carrier. PANEL-B and PANEL-C ride it, and both are
+# produced by presses the maintained group supports, so the group's "two of the
+# other" is drawn down by real production and refilled by the keeper.
+#
+# STANDARD stays first — a bin that names no type falls back to bin_types[0],
+# and most of this plant is STANDARD.
+bin_types: [STANDARD, STANDARD-SM]
 
 # robot_group is a CAPABILITY constraint, not a label: it names the SEER
 # robot-dispatch group allowed to carry the part, and an empty value means the
@@ -44,7 +68,12 @@ bin_types: [STANDARD]
 # one thing a sim run could not surface.
 payloads:
   - {code: PANEL-A, uop_capacity: 30, bin_type: STANDARD, robot_group: HEAVY-1500}
-  - {code: PANEL-B, uop_capacity: 30, bin_type: STANDARD, robot_group: HEAVY-1500}
+  - {code: PANEL-B, uop_capacity: 30, bin_type: STANDARD-SM, robot_group: HEAVY-1500}
+  # PANEL-C is PRESS-1's ALTERNATE style, and it deliberately rides the OTHER
+  # carrier type from PANEL-A. A PRESS-1 changeover therefore changes WHICH TYPE
+  # the press asks the maintained group for — which is the whole wrong-type and
+  # mix-churn scenario, and it cannot be staged with one type per process.
+  - {code: PANEL-C, uop_capacity: 30, bin_type: STANDARD-SM, robot_group: HEAVY-1500}
   - {code: BRKT,     uop_capacity: 40, bin_type: STANDARD}
   - {code: CLIP,     uop_capacity: 40, bin_type: STANDARD}
   - {code: STUD,     uop_capacity: 40, bin_type: STANDARD}
@@ -104,11 +133,64 @@ zones:
       # Lane_19 = extra empty headroom so returned empties don't leave air bubbles behind.
       - {name: Lane_19, slots: [{name: UTN_013, depth: 1}, {name: UTN_014, depth: 2}, {name: UTN_015, depth: 3}]}
 
+  # ── Press empty bank — a MAINTAINED GROUP, and the only flat zone here. ──
+  #
+  # Core holds a standing level of empty carriers beside the presses, so a press
+  # never waits for one. Declared in maintained_groups at the foot of this file.
+  #
+  # FLAT — positions, no lanes — because the save-time rules refuse a maintained
+  # group that has any. A lane means a carrier can be buried, and a level counted
+  # over buried carriers is a number whose meaning changes with what is parked in
+  # front of it.
+  #
+  # LIVE AS OF MG2-0. Both presses source their empties from here
+  # (inbound_source below), the unloader pushes its drained carriers back in
+  # (outbound_destination), and the level keeper refills whatever that leaves
+  # short. Eight positions against a level of six: two spare, on purpose, because
+  # a maintained group with no spare position has nowhere to put a carrier coming
+  # back in — the save-time rules warn about exactly that.
+  - name: SYN_PRESS_EMPTIES
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    positions:
+      - {name: PEB_001, depth: 1}
+      - {name: PEB_002, depth: 1}
+      - {name: PEB_003, depth: 1}
+      - {name: PEB_004, depth: 1}
+      - {name: PEB_005, depth: 1}
+      - {name: PEB_006, depth: 1}
+      - {name: PEB_007, depth: 1}
+      - {name: PEB_008, depth: 1}
+
+  # ── Changeover clearance bank — the OPTIONAL OVERRIDE, demonstrated honestly ──
+  #
+  # A cell whose ordinary outbound is the wrong place to put material during a
+  # setup can name somewhere else in changeover_evac_destination. It is a
+  # DESTINATION like any other, so this is a node group with lanes, not a
+  # dedicated station: if it fills, ordinary store-slot behaviour applies and
+  # the order waits for a slot instead of a robot parking on an occupied spot.
+  #
+  # PRESS-1-MOVED points at it (see claims). PRESS-1-RUN deliberately does NOT —
+  # the default path is normal routing, and the fixture has to exercise the
+  # default, or the thing everyone actually gets is the thing nothing covers.
+  - name: SYN_CLEAR
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    lanes:
+      - {name: Lane_20, slots: [{name: CLR_001, depth: 1}, {name: CLR_002, depth: 2}]}
+
 stations:
   # ── PRESS-1: two_robot_press_index (front + paired back, no staging) ──
   - {name: PLN_001, kind: press}     # PRESS-1 front (produce PANEL-A)
   - {name: PLN_002, kind: press}     # PRESS-1 back / paired index position (no own claim)
   # ── PRESS-2: A/B sequential (two bins rotate, no staging) ──
+  # PRESS-1's RELOCATED placement — the DISJOINT-NODE tooling changeover. The
+  # incoming style runs the same press on different nodes, so no node appears in
+  # both styles: the marked positions become Drops and the new positions become Adds.
+  # Round 3's staged fan-out required both claims on one diff and so contributed
+  # nothing to this shape at all; the tooling decorator is what makes it work.
+  - {name: PLN_005, kind: press}     # PRESS-1-MOVED front
+  - {name: PLN_006, kind: press}     # PRESS-1-MOVED back / paired index position
   - {name: PLN_003, kind: press}     # PRESS-2 A (active)  produce PANEL-B
   - {name: PLN_004, kind: press}     # PRESS-2 B (parked)  produce PANEL-B
   # ── WELD-1: two_robot (inbound + outbound staging) ──
@@ -144,8 +226,35 @@ stations:
   # single-node shape). CLIP and STUD each flow through one.
   - {name: PLK_X1, kind: loader}     # single-window CLIP loader
   - {name: PLK_X2, kind: loader}     # single-window STUD loader
-  # ── Unloader ──
+  # ── Unloaders ──
   - {name: FGN_001, kind: unloader}  # drains ASSY finished goods
+  # FGN_002 drains PANEL-A — PRESS-1's OWN payload, and that is the point.
+  # The U1 side-cycle trigger fires when an operator declares a produce-side bin
+  # full (capture_lineside) and asks the unloader that consumes THAT payload for
+  # a replacement. Every unloader in this scenario consumed ASSY, so a press-index
+  # release had no unloader to ask and the trigger was unobservable on any sim run.
+  - {name: FGN_002, kind: unloader, changeover_load_directive: true}  # drains PANEL-A; its card takes the changeover instruction
+  # ── PRESS-1 changeover clearance ──
+  # SHINGO DOES NOT TOUCH TOOLING. The tool change is human work at the press;
+  # what the changeover owes it is floor space and timing. So a marked position is
+  # CLEARED BY NORMAL ROUTING — its bin goes to SYN_MARKET like any other press
+  # bin — and the only station the feature needs is somewhere for the INCOMING
+  # style's bins to wait while the humans work (SLN_014).
+  #
+  # There used to be a `TBN_001` "tooling bay" here, a single staging station
+  # every marked position was routed to. It was built on the wrong premise, and the
+  # sim showed what that costs: a two-position press sends TWO bins, the bay holds
+  # one, nothing ever empties it, and robots dwell on it holding bins
+  # ("HOLDING at TBN_001 — a robot cannot place onto an occupied position").
+  # The clearance OVERRIDE demo is now SYN_CLEAR, a node group — see
+  # PRESS-1-MOVED's claim — so what an override names gets ordinary capacity
+  # behaviour instead of being a special place with special rules.
+  - {name: SLN_014, kind: staging}   # PRESS-1 inbound stage (incoming style waits here)
+  # Where a CARRIED-OVER bin waits out the setup. A part common to both styles
+  # does not have to make a round trip through the supermarket to get out of the
+  # way — the same bin hops here, holds, and comes back on the tooling-done
+  # release. See changeover_carryover_disposition on PRESS-1-RUN.
+  - {name: SLN_015, kind: staging}   # PRESS-1 outbound stage (carried-over bins wait here)
 
 # Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
 # (incl. A/B parked side + press-index back) seeded with EMPTY active carriers. Consume
@@ -156,9 +265,9 @@ bins:
   - {name: BIN-PA-01, slot: SMN_001, payload: PANEL-A, uop: 30}                          # Lane_01 mouth
   - {name: BIN-PA-02, slot: SMN_002, payload: PANEL-A, uop: 30}                          # Lane_01 buried (depth 2)
   - {name: BIN-PA-03, slot: SMN_003, payload: PANEL-A, uop: 30, age_s: 3600}             # Lane_01 buried (depth 3) + OLDEST → FIFO must reshuffle to it
-  - {name: BIN-PB-01, slot: SMN_004, payload: PANEL-B, uop: 30}                          # Lane_02 mouth
-  - {name: BIN-PB-02, slot: SMN_005, payload: PANEL-B, uop: 30}                          # Lane_02 buried (depth 2)
-  - {name: BIN-PB-03, slot: SMN_006, payload: PANEL-B, uop: 30, age_s: 1800}             # Lane_02 buried (depth 3), 2nd-oldest
+  - {name: BIN-PB-01, slot: SMN_004, payload: PANEL-B, uop: 30, bin_type: STANDARD-SM}   # Lane_02 mouth
+  - {name: BIN-PB-02, slot: SMN_005, payload: PANEL-B, uop: 30, bin_type: STANDARD-SM}   # Lane_02 buried (depth 2)
+  - {name: BIN-PB-03, slot: SMN_006, payload: PANEL-B, uop: 30, age_s: 1800, bin_type: STANDARD-SM}  # Lane_02 buried (depth 3), 2nd-oldest
   # --- SYN_SM_Comp: lanes seeded FULL 3-deep (like the panel lanes) so the shared component
   #     market keeps depth while bins are in transit / checked out at cells — otherwise the
   #     market empties, supply legs can't claim, and the removal-hold stalls the whole side. ---
@@ -174,16 +283,27 @@ bins:
   # --- Active produce bins (empty → fill → swap) ---
   - {name: BIN-ACT-P1F, slot: PLN_001}   # PRESS-1 front (filling)
   - {name: BIN-ACT-P1B, slot: PLN_002}   # PRESS-1 back (staged empty, indexes to front)
-  - {name: BIN-ACT-P2A, slot: PLN_003}   # PRESS-2 A active (filling)
-  - {name: BIN-ACT-P2B, slot: PLN_004}   # PRESS-2 B parked (empty, ready)
+  - {name: BIN-ACT-P2A, slot: PLN_003, bin_type: STANDARD-SM}   # PRESS-2 A active (filling PANEL-B)
+  - {name: BIN-ACT-P2B, slot: PLN_004, bin_type: STANDARD-SM}   # PRESS-2 B parked (empty, ready)
   - {name: BIN-ACT-W1,  slot: ALN_002}   # WELD-1 ASSY output (empty carrier)
   - {name: BIN-ACT-W2,  slot: ALN_005}   # WELD-2 ASSY output (empty carrier)
   # --- Active consume bins (seeded above reorder so flow establishes before first reorder) ---
   - {name: BIN-ACT-W1-PA, slot: ALN_001, payload: PANEL-A, uop: 25}   # WELD-1 PANEL-A consume (above reorder 15 → no startup-instant-reorder zombie)
-  - {name: BIN-ACT-W2-PB, slot: ALN_003, payload: PANEL-B, uop: 25}   # WELD-2 PANEL-B consume (above reorder 15)
+  - {name: BIN-ACT-W2-PB, slot: ALN_003, payload: PANEL-B, uop: 25, bin_type: STANDARD-SM}  # WELD-2 PANEL-B consume (above reorder 15)
   - {name: BIN-ACT-W2-BR, slot: ALN_004, payload: BRKT,     uop: 40}  # WELD-2 BRKT consume
   - {name: BIN-ACT-W3-CL, slot: ALN_006, payload: CLIP,     uop: 40}  # WELD-3 CLIP consume
   - {name: BIN-ACT-W4-ST, slot: ALN_007, payload: STUD,     uop: 40}  # WELD-4 STUD consume
+  # --- The maintained group, seeded AT its declared level (4 STANDARD + 2 SM) ---
+  #     Six of eight positions, so the keeper starts settled and the first thing a
+  #     scenario sees is the steady state rather than a cold-start refill it did
+  #     not ask for. PEB_007/008 stay free: the spare positions the pre-resolve
+  #     loop needs to have anywhere to put a carrier.
+  - {name: BIN-PEB-01, slot: PEB_001}                        # STANDARD (bin_types[0])
+  - {name: BIN-PEB-02, slot: PEB_002}
+  - {name: BIN-PEB-03, slot: PEB_003}
+  - {name: BIN-PEB-04, slot: PEB_004}
+  - {name: BIN-PEB-05, slot: PEB_005, bin_type: STANDARD-SM}
+  - {name: BIN-PEB-06, slot: PEB_006, bin_type: STANDARD-SM}
   # --- Empty carriers in SYN_MT_Return (prime the pump: presses + loaders draw from here) ---
   - {name: BIN-MT-01, slot: UTN_001}
   - {name: BIN-MT-02, slot: UTN_002}
@@ -209,13 +329,37 @@ processes:
   - {name: LOADER-CLIP, active_style: LOADER-CLIP-RUN}   # manual_swap single-window CLIP
   - {name: LOADER-STUD, active_style: LOADER-STUD-RUN}   # manual_swap single-window STUD
   - {name: UNLOADER-A, active_style: UNLOADER-A-RUN}  # drains ASSY (main circle)
+  - {name: UNLOADER-B, active_style: UNLOADER-B-RUN}  # drains PANEL-A (the U1 trigger's target)
   # Loaders have no single station — their windows/positions are per-node operator stations
   # (PLK_W1/2-OPS, PLK_X1-OPS, PLK_X2-OPS), declared via operator_station on the claims below.
 
+# TWO STYLES ON PRESS-1 AND ON WELD-1, which is what makes a changeover
+# runnable at all. Every process here used to carry exactly one style, so
+# "changeover under load" was a scenario with nothing to change over TO.
+#
+# The pair is deliberately CROSS-TYPE: PRESS-1-RUN produces PANEL-A on STANDARD
+# and PRESS-1-ALT produces PANEL-C on STANDARD-SM. Flipping PRESS-1 therefore
+# changes which carrier type the press asks the maintained group for — the
+# wrong-type-pressure and mix-churn scenarios in one move. An alternate style on
+# the same carrier type would exercise the changeover machinery and tell the
+# level keeper nothing.
+#
+# WELD-1 gets the matching pair so the loop stays balanced across the flip. A
+# press that changes style with its consumer left on the old payload does not
+# measure a changeover under load; it measures a market filling with something
+# nobody eats.
 styles:
   - {name: PRESS-1-RUN,    process: PRESS-1,    payload: PANEL-A}
+  - {name: PRESS-1-ALT,    process: PRESS-1,    payload: PANEL-C}
+  - {name: PRESS-1-MOVED,  process: PRESS-1,    payload: PANEL-A}
+  # SAME PART, NEW TOOLING. PRESS-1-RUN → PRESS-1-RETOOL is the carry-over
+  # shape: identical payload on identical nodes, so every marked node's part is
+  # common to both styles and the carry-over disposition is the only thing that
+  # decides what happens to those bins.
+  - {name: PRESS-1-RETOOL, process: PRESS-1,    payload: PANEL-A}
   - {name: PRESS-2-RUN,    process: PRESS-2,    payload: PANEL-B}
   - {name: WELD-1-RUN,     process: WELD-1,     payload: ASSY}
+  - {name: WELD-1-ALT,     process: WELD-1,     payload: ASSY}
   - {name: WELD-2-RUN,     process: WELD-2,     payload: ASSY}
   - {name: WELD-3-RUN,     process: WELD-3,     payload: CLIP}
   - {name: WELD-4-RUN,     process: WELD-4,     payload: STUD}
@@ -223,11 +367,16 @@ styles:
   - {name: LOADER-CLIP-RUN, process: LOADER-CLIP, payload: CLIP}
   - {name: LOADER-STUD-RUN, process: LOADER-STUD, payload: STUD}
   - {name: UNLOADER-A-RUN, process: UNLOADER-A, payload: ASSY}
+  - {name: UNLOADER-B-RUN, process: UNLOADER-B, payload: PANEL-A}
 
-operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, WELD-4-OPS, PLK_W1-OPS, PLK_W2-OPS, PLK_X1-OPS, PLK_X2-OPS, UNLOADER-A-OPS]
+operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, WELD-4-OPS, PLK_W1-OPS, PLK_W2-OPS, PLK_X1-OPS, PLK_X2-OPS, UNLOADER-A-OPS, UNLOADER-B-OPS]
 
 claims:
   # ── PRESS-1 (two_robot_press_index): one claim on the front node, paired back ──
+  # INBOUND FROM THE MAINTAINED GROUP, not the market. This is the whole point of
+  # MG2-0: the presses draw their empties from SYN_PRESS_EMPTIES, which drains it,
+  # which is what gives the level keeper something to keep. Outbound stays the
+  # market — a FULL panel belongs in the supermarket, not in the empty bank.
   - core_node: PLN_001
     style: PRESS-1-RUN
     role: produce
@@ -236,8 +385,124 @@ claims:
     uop_capacity: 30
     auto_reorder: true
     paired_core_node: PLN_002
-    inbound_source: SYN_MARKET
+    inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
+    # ── STAGED TOOLING EVACUATION, ON THE OUTGOING CLAIM ─────────────────
+    #
+    # BOTH positions marked, because a two-position press whose front is evacuated and
+    # whose back is not is the case that reads as working right up until the
+    # index motion tries to move a bin that is still there. Two marks also make
+    # the fan-out produce two diffs, which is the shape a single mark cannot
+    # distinguish from no fan-out at all.
+    #
+    # The OUTGOING claim owns the decision — ChangeoverNeedsEvacuation reads the
+    # from-side — so these live here and not on -ALT.
+    changeover_evac_nodes: [PLN_001, PLN_002]
+    # NO changeover_evac_destination, and that is the scenario: the marked positions
+    # are cleared BY NORMAL ROUTING, to outbound_destination like any other
+    # press bin. This is the default path and the one every plant gets unless it
+    # says otherwise, so it is the one the fixture must exercise.
+    #
+    # It is also an INCOMING style — PRESS-1-MOVED changes over back to it — so
+    # it names the stage its own returning bins wait at.
+    inbound_staging: SLN_014
+    # ── CARRIED-OVER PARTS ───────────────────────────────────────────────
+    #
+    # PRESS-1-RETOOL runs the SAME part on the same nodes: a tool change that
+    # does not change what the press makes. The marked nodes still have to be
+    # cleared — the humans need the floor space either way — but sending those
+    # bins to the market and fetching identical empties back is a round trip
+    # the cell did not need.
+    #
+    # outbound_staging says: walk the SAME bin to SLN_015, hold it there through
+    # the setup, bring it back on the tooling-done release. It is refused at
+    # save time without an outbound_staging node, which is why one is set here.
+    #
+    # It is consulted ONLY when the part carries over, so it changes nothing
+    # about RUN → ALT (different payload) or RUN → MOVED (disjoint nodes). The
+    # other two answers — replace, keep_lineside — are one edit away on this
+    # same claim, which is how a sim drives all three.
+    outbound_staging: SLN_015
+    changeover_carryover_disposition: outbound_staging
+
+  # PRESS-1's ALTERNATE style, same node, same swap mode, OTHER carrier type.
+  # A changeover to this claim makes the identical press ask the identical group
+  # for STANDARD-SM instead of STANDARD.
+  - core_node: PLN_001
+    style: PRESS-1-ALT
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-C
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_002
+    # THE FLIP, ON THE ALTERNATE STYLE ONLY, and that is deliberate on two
+    # counts. It gives a scenario both choreographies on one press — run
+    # PRESS-1-RUN for the unflipped shape, changeover to PRESS-1-ALT for the
+    # flipped one, no second cell to configure — and it is the exact
+    # cross-style disagreement UpsertClaim WARNS about, so a sim run also
+    # exercises the warning on a press that really does have two styles.
+    #
+    # It is a warning and not a refusal because the flag describes hardware:
+    # a real plant sets it the same on every style of a press. A sim is the
+    # one place setting it differently is useful.
+    index_robot_supplies: true
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+    # The incoming style's bins WAIT here while the tool is changed.
+    # refuseStagedChangeoverWithoutStaging refuses to arm a staged tooling
+    # changeover without one, by name — so this is what makes the -RUN → -ALT
+    # changeover armable at all now that -RUN marks positions.
+    inbound_staging: SLN_014
+
+  # PRESS-1 RE-TOOLED IN PLACE. Same nodes, same part, new tooling — the
+  # carry-over shape. Every marked node's part is common to both styles, so
+  # PRESS-1-RUN's changeover_carryover_disposition is the only thing deciding
+  # what happens to those bins, and all three answers are reachable by editing
+  # that one field.
+  - core_node: PLN_001
+    style: PRESS-1-RETOOL
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-A
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_002
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+    outbound_staging: SLN_015
+    inbound_staging: SLN_014
+
+  # PRESS-1 MOVED TO ANOTHER PLACEMENT. Same press, same payload, same carrier —
+  # the only thing that changes is WHICH NODES it occupies. That makes
+  # PRESS-1-RUN -> PRESS-1-MOVED the disjoint-node shape: PLN_001/PLN_002 are
+  # marked for clearance and leave the style entirely (Drops), PLN_005/PLN_006
+  # arrive with no outgoing bin to remove (Adds).
+  #
+  # In THAT direction the outgoing claim (PRESS-1-RUN) owns the marks and names
+  # no override, so the disjoint shape runs on normal routing.
+  #
+  # AND THIS CLAIM IS THE OVERRIDE DEMO, in the other direction. Changing back
+  # (PRESS-1-MOVED -> PRESS-1-RUN) makes THIS the outgoing claim, so its marks
+  # and its changeover_evac_destination are the ones that count — and it sends
+  # its cleared bins to SYN_CLEAR instead of to the market. One fixture, both
+  # halves of the rule: default routing one way, override the other.
+  - core_node: PLN_005
+    style: PRESS-1-MOVED
+    role: produce
+    swap_mode: two_robot_press_index
+    payload: PANEL-A
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_006
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+    inbound_staging: SLN_014
+    changeover_evac_nodes: [PLN_005, PLN_006]
+    # THE OVERRIDE, and the only one in this plant. A node group, not a station:
+    # whatever an override names is an ordinary destination and gets ordinary
+    # capacity behaviour.
+    changeover_evac_destination: SYN_CLEAR
 
   # ── PRESS-2 (A/B sequential): two paired claims, A active / B parked ──
   - core_node: PLN_003
@@ -248,7 +513,7 @@ claims:
     uop_capacity: 30
     auto_reorder: true
     paired_core_node: PLN_004
-    inbound_source: SYN_MARKET
+    inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
   - core_node: PLN_004
     style: PRESS-2-RUN
@@ -259,7 +524,7 @@ claims:
     auto_reorder: true
     paired_core_node: PLN_003
     active_pull: false
-    inbound_source: SYN_MARKET
+    inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
 
   # ── WELD-1 (two_robot): consume PANEL-A + produce ASSY ──
@@ -277,6 +542,33 @@ claims:
     outbound_staging: SLN_011
   - core_node: ALN_002
     style: WELD-1-RUN
+    role: produce
+    swap_mode: two_robot
+    payload: ASSY
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SYN_MARKET
+    outbound_destination: SYN_MARKET
+    inbound_staging: SLN_002
+
+  # ── WELD-1-ALT: the same cell eating PANEL-C, so a PRESS-1 changeover has a
+  #    consumer waiting on the other side of it. Identical in every respect the
+  #    keeper can see; the ONLY difference is the payload, and through it the
+  #    carrier type coming back as an empty.
+  - core_node: ALN_001
+    style: WELD-1-ALT
+    role: consume
+    swap_mode: two_robot
+    payload: PANEL-C
+    uop_capacity: 30
+    reorder_point: 15
+    auto_reorder: true
+    inbound_source: SYN_MARKET
+    outbound_destination: SYN_MARKET
+    inbound_staging: SLN_001
+    outbound_staging: SLN_011
+  - core_node: ALN_002
+    style: WELD-1-ALT
     role: produce
     swap_mode: two_robot
     payload: ASSY
@@ -365,6 +657,21 @@ claims:
   - {core_node: PLK_X2, style: LOADER-STUD-RUN, role: produce, swap_mode: manual_swap, payload: STUD, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, outbound_destination: SYN_MARKET, operator_station: PLK_X2-OPS}
 
   # ── UNLOADER-A (manual_swap: pull full ASSY, return empty) ──
+  #
+  # OUTBOUND INTO THE MAINTAINED GROUP (MG2-0). The drained carrier goes straight
+  # to the press empty bank rather than back to the market, which closes the loop
+  # the keeper sits in: presses draw the group down, the unloader pushes some of
+  # it back, and the keeper covers whatever difference is left.
+  #
+  # It refills the STANDARD half only — ASSY rides STANDARD — and that asymmetry
+  # is wanted. The STANDARD-SM half has NO direct return path, so it is refilled
+  # by the keeper alone, and a scenario that breaks the keeper shows up on one
+  # type while the other keeps running. A loop where both halves self-heal would
+  # hide exactly the failure the campaign is looking for.
+  #
+  # Queue-on-full applies here like everywhere: a full group parks the push, and
+  # nothing cancels it. The two spare positions are what keep that from being the
+  # normal case.
   - core_node: FGN_001
     style: UNLOADER-A-RUN
     role: consume
@@ -374,7 +681,30 @@ claims:
     reorder_point: 0
     auto_reorder: false
     inbound_source: SYN_MARKET
-    outbound_destination: SYN_MARKET
+    outbound_destination: SYN_PRESS_EMPTIES
+    auto_push: true
+
+  # ── UNLOADER-B: drains PANEL-A, so the U1 trigger has somewhere to go ──
+  #
+  # MaybeCreateUnloaderFullIn resolves a CONSUME loader for the payload the
+  # operator just declared full. PRESS-1 produces PANEL-A; with only the ASSY
+  # unloader above, that lookup returned nothing and the one live behaviour
+  # change on the branch could not be observed on a sim at all — it looked
+  # identical to the trigger not firing.
+  #
+  # FGN_002's changeover_load_directive is on its STATION entry, not here: it
+  # describes the station, so putting it on a claim would mean one copy per
+  # style, all required to agree.
+  - core_node: FGN_002
+    style: UNLOADER-B-RUN
+    role: consume
+    swap_mode: manual_swap
+    payload: PANEL-A
+    uop_capacity: 30
+    reorder_point: 0
+    auto_reorder: false
+    inbound_source: SYN_MARKET
+    outbound_destination: SYN_PRESS_EMPTIES
     auto_push: true
 
 demands:
@@ -386,14 +716,22 @@ demands:
   - {payload: STUD, node: PLK_X2, replenish_uop_threshold: 40}
   # Unloader is event/auto-push driven (informational threshold 0).
   - {payload: ASSY, node: FGN_001, replenish_uop_threshold: 0}
+  - {payload: PANEL-A, node: FGN_002, replenish_uop_threshold: 0}
 
 # Reporting points: one PLC counter per counting process (manual_swap excluded).
 # plc_name/tag_name MUST match sim.processes in shingoedge.dev.yaml. The tick fans
 # to all nodes of the active (process, style); for A/B it follows active_pull.
 reporting_points:
   - {plc_name: PRESS-1, tag_name: PRESS-1_COUNTER, node: PLN_001, style: PRESS-1-RUN}
+  # THE ALTERNATE STYLES NEED THEIR OWN POINTS. The tick fans to the nodes of the
+  # ACTIVE (process, style) pair, so a reporting point pinned only to the -RUN
+  # style stops counting the instant a changeover makes -ALT active — and a press
+  # that produces without counting is a group that drains with nothing recording
+  # why. Same PLC, same tag: it is the same physical counter on the same machine.
+  - {plc_name: PRESS-1, tag_name: PRESS-1_COUNTER, node: PLN_001, style: PRESS-1-ALT}
   - {plc_name: PRESS-2, tag_name: PRESS-2_COUNTER, node: PLN_003, style: PRESS-2-RUN}
   - {plc_name: WELD-1,  tag_name: WELD-1_COUNTER,  node: ALN_001, style: WELD-1-RUN}
+  - {plc_name: WELD-1,  tag_name: WELD-1_COUNTER,  node: ALN_001, style: WELD-1-ALT}
   - {plc_name: WELD-2,  tag_name: WELD-2_COUNTER,  node: ALN_003, style: WELD-2-RUN}
   - {plc_name: WELD-3,  tag_name: WELD-3_COUNTER,  node: ALN_006, style: WELD-3-RUN}
   - {plc_name: WELD-4,  tag_name: WELD-4_COUNTER,  node: ALN_007, style: WELD-4-RUN}
@@ -406,5 +744,36 @@ cell_configs:
   - {process: WELD-3,  station: WELD-3-OPS}
   - {process: WELD-4,  station: WELD-4-OPS}
   - {process: UNLOADER-A, station: UNLOADER-A-OPS}
+  # UNLOADER-B was declared in operator_stations and never built here, so the
+  # station did not exist: seed_edge creates operator_stations from cell_configs,
+  # FGN_002's process node had operator_station_id NULL, and FGN_002 carries the
+  # plant's ONLY changeover_load_directive — so the LOAD directive card had
+  # nowhere to render and the surface shipped unobservable (N3, sim 2026-08-24).
+  - {process: UNLOADER-B, station: UNLOADER-B-OPS}
   # Loaders have no single cell station — their windows are per-node operator stations
   # (PLK_W1/2-OPS, PLK_X1-OPS, PLK_X2-OPS), declared via operator_station above.
+
+# ── Maintained groups ───────────────────────────────────────────────────────
+#
+# The empty-carrier level Core holds, and for whom. LIVE as of MG2-0: both
+# supported presses source their empties here, so the level is drawn down by real
+# production rather than staged and left alone.
+#
+# Sum is six across eight positions, which deliberately leaves two free: a
+# maintained group with no spare position has nowhere to put a carrier coming
+# back in, and the pre-resolve loop is bounded by free positions — a full group
+# opens an episode and creates nothing until one frees up.
+#
+# 4 + 2 IS THE MIXED SHAPE, and both halves are now real. PANEL-A rides STANDARD;
+# PANEL-B and PANEL-C ride STANDARD-SM. A PRESS-1 changeover to PANEL-C moves the
+# demand from one half to the other without touching this declaration, which is
+# the wrong-type / mix-churn measurement the campaign runs.
+maintained_groups:
+  - group: SYN_PRESS_EMPTIES
+    station: devplant.line1
+    strict: false
+    overflow: SYN_MARKET
+    levels:
+      - {bin_type: STANDARD, want: 4}
+      - {bin_type: STANDARD-SM, want: 2}
+    supports: [PRESS-1, PRESS-2]

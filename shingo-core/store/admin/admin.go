@@ -38,6 +38,15 @@ func Get(db *sql.DB, username string) (*User, error) {
 	return &u, nil
 }
 
+// UpdatePassword sets a new password hash for the given username. A username
+// that does not exist is not an error at this layer — the caller has already
+// fetched the row to verify the current password, and reporting "no such user"
+// from an update would leak account existence to whatever surface calls it.
+func UpdatePassword(db *sql.DB, username, passwordHash string) error {
+	_, err := db.Exec(`UPDATE admin_users SET password_hash = $1 WHERE username = $2`, passwordHash, username)
+	return err
+}
+
 // AnyExists reports whether at least one admin user exists.
 func AnyExists(db *sql.DB) (bool, error) {
 	var count int

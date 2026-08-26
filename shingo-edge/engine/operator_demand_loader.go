@@ -33,8 +33,9 @@ const manualSwapWindowSlots = 1
 // in incident records: the bin-count produce DemandSignal trigger
 // (MaybeCreateLoaderEmptyIn + findLoaderForDemand + refillLoaderForPayload), and
 // the threshold receiver that replaced it (HandleLoopBelowThreshold + its
-// park/replay machinery). Core still emits produce DemandSignals on bin
-// movements; the Edge routes them to no handler.
+// park/replay machinery). A third followed (2026-08): the DemandSignal wire
+// subject itself was deleted — Core no longer emits it, so the unloader's U1
+// full-in now fires from operator release alone (operator_release.go).
 
 // L1Source identifies which path is creating a loader empty-in (L1)
 // retrieve_empty order. Two sources are retired: the legacy bin-count one
@@ -73,7 +74,7 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 // mutex it counts non-terminal retrieve orders across the delivery-node set in
 // ONE snapshot, applies the per-payload dedup and the loader-capacity cap, and
 // fires the remainder via the caller's `fire` closure — all without releasing
-// the lock, so a concurrent demand signal or operator request cannot interleave
+// the lock, so a concurrent operator request or push sweep cannot interleave
 // between the count and the create.
 //
 // SCOPE — this is the never-2N guarantee only for the writers that route
@@ -91,6 +92,15 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 // operator_node_changeover.go) also create retrieves outside this seam; whether
 // either can target a loader window was NOT established and is an open question,
 // not a cleared one.
+//
+// The press-index partial-empty prime (applyProducePlan) creates outside this
+// seam DELIBERATELY. Its delivery node is a press's bare paired POSITION, never
+// a loader window, so this seam's budget — one bin per delivery node across a
+// loader's window set — has nothing to say about it. It carries its own
+// count->decide->create lock for the same never-2N reason at its own grain:
+// Engine.primeResv, keyed by the cell's core node, around
+// pairedPositionsAlreadyPrimed. The InboundSource it pulls FROM may well be a
+// loader group; that is Core's resolver's business, not this budget's.
 //
 // An earlier version of this comment claimed EVERY empty-firing writer routed
 // through here. It did not, and the claim was load-bearing in two review rounds
@@ -284,33 +294,6 @@ func nodeIDStrings(ns []domain.NodeID) []string {
 	return out
 }
 
-// loaderEmptySource is the group an L1 empty is RETRIEVED FROM. A loader with a
-// configured buffer (the near-line staging group, step 7) sources from it, so empties
-// rotate buffer→position to satisfy a threshold fill; the buffer is kept stocked by the
-// cell routing its emptied carriers back into it (plant config). Falls back to the
-// far-upstream inbound_source only when no buffer is CONFIGURED.
-//
-// TODO(prod): EVALUATE FALLBACK-WHEN-DRY AGAINST REAL-PLANT BEHAVIOR. Today a buffered
-// loader sources UNCONDITIONALLY from the buffer — if the buffer is momentarily empty the
-// L1 just queues until the downstream cell recycles an empty back into it. That's fine for
-// the dev sim (a closed buffer↔cell loop), but in a real plant a slow or stalled
-// downstream cell would STARVE the loader, since it never reaches past the buffer. The
-// production-correct rule is almost certainly buffer-FIRST with a FALLBACK to
-// inbound_source (the big return bank) when the buffer is dry: the buffer as a near-line
-// cache, the return bank as the never-empty backstop, so the loader never idles. That
-// needs a runtime "does the buffer group hold an unclaimed empty?" check, which the Edge
-// can't do today — FetchNodeBins is per-NODE, not per-group, and there is no
-// empties-in-group query; the Edge only knows the buffer's group NAME, not its member
-// slots. Wiring it means a small Core endpoint (or threading the buffer's slots onto the
-// aggregate) plus a per-L1 lookup (mind the latency). Decide the real-plant semantics —
-// and whether a per-L1 Core round-trip is acceptable — before building it.
-func loaderEmptySource(l *domain.Loader) string {
-	if b := l.BufferDest(); b != "" {
-		return b
-	}
-	return l.InboundSource()
-}
-
 // stageOperatorEmpty creates loader empties opportunistically when a window
 // frees up on an operator-driven loader. THIS PATH STAYS on the Edge: it is
 // driven by what the operator physically did, which Core does not observe.
@@ -340,8 +323,8 @@ func (e *Engine) createLoaderEmpties(loader *domain.Loader, payload domain.Paylo
 			source.logTag(), coreNode, payload)
 		return 0, nil
 	}
-	if loaderEmptySource(loader) == "" {
-		// No inbound/buffer source to pull empties from — a forklift/press-fed loader is
+	if loader.InboundSource() == "" {
+		// No inbound source to pull empties from — a forklift/press-fed loader is
 		// supplied directly (operator stages empties at the window). Skip auto-L1; nothing
 		// to queue. Symmetric to the unloader's no-inbound gate in createUnloaderFullInViaSeam.
 		e.debugFn("%s: loader=%s payload=%s skipped — no inbound source (fed directly)",
@@ -356,8 +339,8 @@ func (e *Engine) createLoaderEmpties(loader *domain.Loader, payload domain.Paylo
 				return made, fmt.Errorf("%s: no process_node for delivery target %s: %w", source.logTag(), deliveryNode, nerr)
 			}
 			nodeID := node.ID
-			order, cerr := e.orderMgr.CreateRetrieveOrderWithOrigin(
-				&nodeID, true, 1, deliveryNode, loaderEmptySource(loader), "",
+			order, cerr := e.orderMgr.CreateRetrieveOrder(
+				&nodeID, true, 1, deliveryNode, loader.InboundSource(), "",
 				"standard", string(payload), false, true, origin,
 			)
 			if cerr != nil {

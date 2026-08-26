@@ -7,7 +7,7 @@
       <button class="btn btn-primary" data-action="openNgrpModal">Add Node Group</button>
       <button class="btn btn-primary" data-action="openLoaderModal">Create Loader</button>
       <button type="button" class="btn" data-action="syncFromFleet">Sync from Fleet</button>
-      <details class="dev-menu">
+      <details class="dev-menu disclosure-bare">
         <summary class="btn" title="Developer / test-data tools">Dev tools <svg class="icon icon-16" aria-hidden="true"><use href="#icon-chevron-down"></use></svg></summary>
         <div class="dev-menu-items">
           <button type="button" class="btn btn-sm" data-action="generateTestNodes">Generate test nodes</button>
@@ -177,12 +177,16 @@
       <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-weight:600;cursor:pointer">
         <input type="checkbox" id="nf-asrs-enabled" data-action-change="onAsrsToggle"> Enable ASRS — algorithm-driven retrieval, storage &amp; reshuffle
       </label>
+      <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">
+        <input type="checkbox" id="nf-resolve-around"> Resolve-around — among equal-depth lanes, prefer one whose mouth is free (never overrides depth packing)
+      </label>
       <div id="nf-asrs-controls">
       <div class="grid grid-2 text-sm">
         <div class="form-group">
           <label>Retrieval Algorithm</label>
           <select id="nf-retrieve-algo">
             <option value="FIFO">FIFO — Oldest First</option>
+            <option value="COST">COST — Oldest Reachable (dig only if nothing is reachable)</option>
             <option value="FAVL">FAVL — First Available</option>
           </select>
         </div>
@@ -194,30 +198,76 @@
           </select>
         </div>
       </div>
-      <!-- Complex-order buried-reshuffle controls (NGRP only) -->
+      </div>
+      <!-- Shown when the group is maintained. The algorithms are NOT hidden in
+           that case, deliberately: they still decide everything about loaded
+           carriers here. Saying which half they stop deciding is information; a
+           control that vanishes is a question. -->
+      <div id="nf-maintain-algo-note" class="form-hint hide" style="margin-top:6px">
+        Inert for empty pulls while a level is held here. Loaded carriers unaffected.
+      </div>
+    </div>
+
+    <!-- Maintained group (NGRP only) -------------------------------------
+         The level Core holds here in EMPTY carriers. Not a "buffer": a loader
+         window with home_kind=buffer is a different, existing thing. -->
+    <div id="nf-maintain" class="hide mb-2">
+      <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Maintained group</label>
+      <div class="text-muted" style="font-size:0.75rem;margin-bottom:10px">
+        Core can hold a set number of empty carriers here, so the equipment this group
+        serves never has to wait for one.
+      </div>
+
+      <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
+        <input type="checkbox" id="nf-maintain-enabled" data-action-change="onMaintainToggle">
+        Keep this group stocked
+      </label>
+      <label class="text-sm" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">
+        <input type="checkbox" id="nf-maintain-strict">
+        Only the processes listed below may take empties from here
+      </label>
+
       <div class="grid grid-2 text-sm">
         <div class="form-group">
-          <label>Reshuffle Target Nodes</label>
-          <div id="nf-reshuffle-targets-chips" class="tag-list"></div>
-          <select id="nf-reshuffle-targets-add" class="text-sm" data-action-change="addReshuffleTarget">
-            <option value="">+ Add target node…</option>
-          </select>
-          <div class="text-muted" style="font-size:0.75rem">
-            Empty = expose mode (target stays in lane). Configured = target-node mode (target moves to first empty configured node). Reduces shuffle-slot pool.
-          </div>
+          <label for="nf-maintain-station">Board these orders show on</label>
+          <select id="nf-maintain-station"></select>
+          <div class="form-hint">Without one, the top-up orders show on no board at all.</div>
         </div>
         <div class="form-group">
-          <label>Restore Blockers After Pickup</label>
-          <select id="nf-reshuffle-restore">
-            <option value="off">Off — blockers stay in shuffle slots</option>
-            <option value="on">On — restock blockers to original positions</option>
-          </select>
-          <div class="text-muted" style="font-size:0.75rem">
-            On: lane geometry restored after parent picks up. Off (default): lane stays shallow; direct-child storage retains the blockers.
-          </div>
+          <label for="nf-maintain-overflow">When this group has its level, send extras to</label>
+          <select id="nf-maintain-overflow"></select>
+          <div class="form-hint">Optional. Without one, a carrier that turns up anyway waits where it
+            is, still loaded.</div>
         </div>
       </div>
+
+      <div class="form-group">
+        <label>Maintained level</label>
+        <div id="nf-maintain-levels"></div>
+        <div class="form-hint">How many of each carrier type to keep here. Zero means none of that
+          type, on purpose.</div>
       </div>
+
+      <div class="form-group">
+        <label>Processes this group serves</label>
+        <div id="nf-maintain-supports"></div>
+        <div class="form-hint">Pick the processes that pull empties from here. Their positions are
+          what gets saved.</div>
+      </div>
+    </div>
+
+    <!-- Waiting points — on the GROUP, one row per lane (and on a LANE, its own row) -->
+    <div id="lane-gate" class="hide mb-2">
+      <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Waiting points</label>
+      <div class="text-muted" style="font-size:0.75rem;margin-bottom:10px">
+        Where robots wait their turn for each lane. Set a point and a robot drives out, does
+        everything it can, and holds there until the lane is clear. Leave it empty and the order waits
+        before a robot is sent. Either way the lane is protected from collisions — this chooses where
+        the waiting happens.
+      </div>
+      <!-- Rows are rendered per lane. One row today; when multi-point staging is
+           built, a lane grows more rows and nothing about this shape changes. -->
+      <div id="lane-gate-list" style="max-height:280px;overflow-y:auto;padding-right:4px"></div>
     </div>
 
     <!-- Occupant section -->
@@ -286,8 +336,16 @@
 </div>
 
 <div id="page-data" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}" data-bin-types='{{.BinTypesJSON}}' data-edges='{{.EdgesJSON}}'></div>
+<!-- ONE TAG PER MODULE, AND ONLY FOR MODULES NOBODY IMPORTS.
+     A module reached BOTH by a tag and by an import is loaded twice, because
+     {{cacheBust}} is a fresh timestamp per call and a bare import carries no
+     query — two URLs, two module instances, two copies of whatever state the
+     module holds, and which copy a handler sees depends on load order. Worse
+     after a deploy: the tag'd copy is un-cacheable and the imported copy is
+     not, so the two instances can be different VERSIONS of the file.
+     nodes-detail.js and nodes-maintain.js are therefore imported, never tagged;
+     see nodes-overview.js, which declares the dependency. -->
 <script type="module" src="/static/pages/nodes-overview.js?v={{cacheBust}}"></script>
-<script type="module" src="/static/pages/nodes-detail.js?v={{cacheBust}}"></script>
 <script type="module" src="/static/pages/nodes-supermarket.js?v={{cacheBust}}"></script>
 <script type="module" src="/static/pages/loaders.js?v={{cacheBust}}"></script>
 
@@ -376,18 +434,23 @@
           <input type="checkbox" id="loader-fed-by-hand">
           Fed by hand — a person or press loads it, no robot pulls
         </label>
-      </div>
-
-      <div class="form-group" id="loader-staging-row">
-        <label for="loader-buffer">Staging group <span class="form-label-aside">(optional)</span></label>
-        <input type="text" id="loader-buffer" class="form-input" list="loader-nodes-dl" placeholder="Node group to stage empties in">
-        <div class="form-hint">Empties are staged here and rotated into a spot when that spot runs low. Used <em>instead of</em> the source above, with no fallback if it runs dry.</div>
+        <label class="form-check" for="loader-changeover-directive">
+          <input type="checkbox" id="loader-changeover-directive">
+          During a changeover, tell this station what to load — the card names the
+          carrier the incoming style needs instead of offering the whole board
+        </label>
       </div>
 
       <div class="form-group" id="loader-mix-row">
-        <label>Carriers wanted on hand <span class="form-label-aside">(optional)</span></label>
+        <!-- CARRIER MIX here, MAINTAINED LEVEL in the group section above. Two
+             mechanisms, two names, deliberately: this one is a loader's own
+             quota across its windows, that one is a level Core holds in a group.
+             Sharing a word would make them one thing in an operator's head. -->
+        <label>Carrier mix <span class="form-label-aside">(optional)</span></label>
         <div id="loader-mix-editor"></div>
-        <div class="form-hint">Leave empty to take whatever carrier is available. Declare a mix and it is honoured — a window waits rather than taking the wrong type.</div>
+        <div class="form-hint">How many of each carrier type this loader wants on hand. Leave it
+          empty to take whatever carrier is available. Declare a mix and it is honoured — a window
+          waits rather than taking the wrong type.</div>
       </div>
 
       <div class="form-group" id="loader-windows-row">

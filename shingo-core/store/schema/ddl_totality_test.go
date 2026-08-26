@@ -34,14 +34,14 @@ var migrationOnlyTables = map[string]string{
 	"bin_loader_quotas":           "added by v75 — a loader's declared carrier mix",
 	"bin_loader_payloads":         "added by a numbered migration after the baseline was frozen",
 	"bin_loaders":                 "added by a numbered migration after the baseline was frozen",
-	"bin_uop_audit":               "added by a numbered migration after the baseline was frozen",
+	"bin_uop_ledger":              "added by a numbered migration after the baseline was frozen",
 	"cell_config":                 "added by a numbered migration after the baseline was frozen",
 	"demand_origins":              "added by a numbered migration after the baseline was frozen",
+	"node_maintain_levels":        "added by v90 — how many empty carriers of each type a maintained node group is to hold. Separate from bin_loader_quotas on purpose: a quota is a preference bounded by never-2N, a maintained level is the number Core keeps",
+	"node_maintain_supports":      "added by v90 — which process nodes a maintained group serves; the resolved node set, because a claim is Edge-local and Core cannot read one",
 	"edge_cells":                  "added by a numbered migration after the baseline was frozen",
 	"edge_lineside_reports":       "added by a numbered migration after the baseline was frozen",
 	"order_bins":                  "added by a numbered migration after the baseline was frozen",
-	"pending_lane_extensions":     "added by a numbered migration after the baseline was frozen",
-	"pending_restocks":            "added by a numbered migration after the baseline was frozen",
 	"process_styles":              "added by a numbered migration after the baseline was frozen",
 	"reservations":                "added by a numbered migration after the baseline was frozen",
 	"robot_confidence_daily":      "added by v77 — the permanent per-robot residual roll-up",
@@ -59,6 +59,8 @@ var migrationOnlyTables = map[string]string{
 	"sourceability_events":        "added by a numbered migration after the baseline was frozen",
 	"style_claims":                "added by a numbered migration after the baseline was frozen",
 	"supply_refusals":             "added by a numbered migration after the baseline was frozen",
+	"bin_uop_exception":           "added by v93 — the permanent exceptions ledger (owner decision D2: no retention, ever). Migration-created rather than baseline because it carries a one-shot backfill from bin_uop_ledger that must run while the raw rows still exist",
+	"bin_uop_delta_daily":         "added by v94 — the permanent daily roll-up of the raw delta stream (owner decision D3: growth accepted). Migration-created for the same reason as v93: the backfill must run while the raw rows still exist",
 }
 
 // TestBaselineDDL_DeclaresEveryTable pins which half of the schema each table
@@ -126,6 +128,29 @@ func TestBaselineDDL_DeclaresEveryTable(t *testing.T) {
 		if !shipping[tbl] {
 			t.Errorf("migrationOnlyTables names %q, but no such table is in the shipped schema — "+
 				"a migration dropped it and the entry outlived it. Drop the entry.", tbl)
+		}
+	}
+
+	// THE FOURTH GUARD, added with v92: a table the BASELINE declares that no
+	// longer ships. This is the direction that made v92's baseline edit
+	// load-bearing — production_log was declared in postgres_ddl.go while a
+	// migration dropped it, and neither check above can see that pair, because
+	// neither ever asks the baseline about a table the snapshot has lost.
+	//
+	// The mechanics are the v24/v85 trap: schema.Apply runs the baseline on
+	// every startup AHEAD of the versioned migrations, so a baseline CREATE for
+	// a dropped table re-creates it every boot, the drop migration's
+	// post-condition fails every boot, and the self-heal re-runs the drop every
+	// boot. A DROP migration therefore must remove the baseline CREATE in the
+	// same change, and this check is what makes forgetting it a test failure
+	// instead of a journal line nobody reads.
+	for tbl := range declared {
+		if !shipping[tbl] {
+			t.Errorf("baseline DDL declares %q, but no such table is in the shipped schema — "+
+				"a migration dropped it and left the baseline CREATE behind. That CREATE "+
+				"re-creates the table on every boot (schema.Apply runs the baseline first), "+
+				"so the drop's post-condition fails forever. Remove the CREATE from "+
+				"postgres_ddl.go in the same change as the drop.", tbl)
 		}
 	}
 }

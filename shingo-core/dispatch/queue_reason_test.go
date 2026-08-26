@@ -15,6 +15,8 @@ import (
 // queue-reason study. Each one is a sentence an operator was actually shown that
 // was missing context or was wrong.
 func TestFormatQueueSentence_Snapshot(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name   string
 		code   protocol.QueueCode
@@ -51,6 +53,24 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			code:   protocol.QueueWaitingForMaterial,
 			params: QueueParams{Payload: "767D2-6SA0A.06", Group: "AMR Supermarket"},
 			want:   "Waiting for material: 767D2-6SA0A.06 in AMR Supermarket",
+		},
+		{
+			// A FENCE IS NOT A SHORTAGE. The group holds empties and this asker
+			// may not have them, so the sentence must not send anyone looking
+			// for material that is standing right there. What ends this wait is
+			// a config change or a different source — not a delivery.
+			name:   "a reserved group says so instead of claiming a shortage",
+			code:   protocol.QueueWaitingForMaterial,
+			params: QueueParams{Kind: "empty", Group: "PRESS-BUFFER-A", Reserved: true},
+			want:   "PRESS-BUFFER-A is kept for other equipment — waiting for an empty from elsewhere",
+		},
+		{
+			// AT LEVEL IS NOT OUT OF ROOM. "Waiting for a slot" sends an operator
+			// to find space at a group that has space.
+			name:   "an at-level group says so instead of claiming no room",
+			code:   protocol.QueueWaitingForSlot,
+			params: QueueParams{Destination: "PRESS-BUFFER-A", AtLevel: true},
+			want:   "PRESS-BUFFER-A already holds the empties it is set to keep — waiting for one to leave",
 		},
 		{
 			name:   "material partial set is called out",
@@ -116,6 +136,47 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want: "Rearranging storage to reach this material",
 		},
 		{
+			// THE OWNER'S REDUNDANCY COMPLAINT. "Rearranging lane L12 to reach
+			// X" is true and it is one word plus a lookup: which excavation, and
+			// is it the one that frees me. Both are answerable from the dig id,
+			// so the wait names it.
+			//
+			// THE CASE THAT WENT, quoted because it is what the floor used to be
+			// told and this row is the record of the change:
+			//
+			//	name:   "storage rearranging names the dig and what it is uncovering"
+			//	params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06",
+			//	            DigOrderID: 4471, DigTarget: "LSD_011"},
+			//	want:   "Rearranging lane L12 to reach 74368-6SA0A.06 — dig 4471 is uncovering LSD_011"
+			//
+			// It had already stopped being reachable in the field: DigTarget came
+			// from digTargetOf, reading a column whose only writer was deleted with
+			// the folder, so every plant has rendered the sentence below since. The
+			// test was the last place the long sentence still appeared to work.
+			name: "storage rearranging names the dig",
+			code: protocol.QueueStorageRearranging,
+			params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06",
+				DigOrderID: 4471},
+			want: "Rearranging lane L12 to reach 74368-6SA0A.06 — dig 4471 is working this lane",
+		},
+		{
+			// The id is the join key, and it is the whole clause now.
+			name:   "storage rearranging with a dig and no payload",
+			code:   protocol.QueueStorageRearranging,
+			params: QueueParams{Lane: "L12", DigOrderID: 4471},
+			want:   "Rearranging lane L12 to reach this material — dig 4471 is working this lane",
+		},
+		{
+			// AND AN UNRESOLVED DIG CHANGES NOTHING. A lane held by an ordinary
+			// order, or a lock read that failed, renders exactly as it did before
+			// the clause existed — a dig id that could not be resolved must not be
+			// invented, and zero means "not known", never "none".
+			name:   "storage rearranging with no dig resolved is unchanged",
+			code:   protocol.QueueStorageRearranging,
+			params: QueueParams{Lane: "L12", Payload: "74368-6SA0A.06"},
+			want:   "Rearranging lane L12 to reach 74368-6SA0A.06",
+		},
+		{
 			// (F3) Sibling was passed at the swap-hold call site and never read.
 			// The pre-code free text explained which leg this is and what it
 			// waits for; this restores that.
@@ -166,6 +227,8 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 // rendered blank. (The empty "" code is excluded — it means "uncoded", not a
 // real category, and intentionally renders empty.)
 func TestFormatQueueSentence_Exhaustive(t *testing.T) {
+	t.Parallel()
+
 	for _, code := range protocol.AllQueueCodes() {
 		if got := FormatQueueSentence(code, QueueParams{}); got == "" {
 			t.Fatalf("FormatQueueSentence has no sentence for code %q — every code must render", code)
@@ -179,6 +242,8 @@ func TestFormatQueueSentence_Exhaustive(t *testing.T) {
 // Springfield failure was an operator sent to ALN_003 to look for a slot when
 // AMR Supermarket had no bin of the payload.
 func TestFormatQueueSentence_NeverNamesLinesideForGroupShortage(t *testing.T) {
+	t.Parallel()
+
 	const lineside = "ALN_003"
 	got := FormatQueueSentence(protocol.QueueWaitingForMaterial, QueueParams{
 		Payload: "767D2-6SA0A.06",
@@ -197,6 +262,8 @@ func TestFormatQueueSentence_NeverNamesLinesideForGroupShortage(t *testing.T) {
 // carries the GROUP and never the order's delivery node, and that an
 // unclassified error carries no payload to invent specificity with.
 func TestQueueParamsForCapacity_LocationRule(t *testing.T) {
+	t.Parallel()
+
 	const payload, delivery = "767D2-6SA0A.06", "ALN_003"
 
 	t.Run("payload shortage uses the group, not the delivery node", func(t *testing.T) {

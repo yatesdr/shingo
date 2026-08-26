@@ -11,6 +11,15 @@ type Emitter interface {
 	EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string)
 	EmitOrderCompleted(orderID int64, edgeUUID, stationID string)
 	EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)
+	// EmitOrderResumed announces Reshuffling → Queued — a compound finished and
+	// its complex parent is live again.
+	//
+	// SEPARATE FROM EmitOrderQueued BECAUSE THE EDGE PUSH IS. EventOrderQueued's
+	// Edge-facing subscriber is the queue-REASON push and returns early without
+	// one; a resumed parent has none, by design, because the wait it describes
+	// is over. So the status never reached the Edge and its mirror stayed at
+	// `reshuffling`, rejecting everything after it.
+	EmitOrderResumed(orderID int64, edgeUUID, stationID string)
 	EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)
 	EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID, robotID string)
 

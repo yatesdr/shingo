@@ -67,10 +67,16 @@ Creates a multi-block order with explicit location, operation, and bin task per 
 ```
 
 **Robot-selection hints (`keyRoute`, `keyTask`):** These are optional fields that
-help RDS pick which robot to assign. Shingo leaves them blank on every order it
-builds, so RDS auto-assigns robots. The wire plumbing (`rds.SetOrderRequest` and
-the fleet adapter) carries both fields, so a future job that needs them can set
-them explicitly per order.
+help RDS pick which robot to assign. Shingo now SETS them per order when the
+originating claim configures them: `style_node_claims.key_route` / `.key_task`
+are carried to `orders.key_route` / `.key_task` at intake and onto the fleet
+request at dispatch. Blank on a claim — which is every claim until one is
+configured — still means "RDS auto-assigns", which is the behaviour of the whole
+plant today.
+
+Route points are validated at save time against the plant's SCENE, not against
+Shingo's node list: Shingo works in APs, so its nodes are a subset of the map,
+and a plain waypoint is a key route's primary use.
 
 - `keyRoute` — extra via-waypoints a specific job should pass through on the way
   to its action points. Use only real map locations. `SELF_POSITION` is never
@@ -779,9 +785,11 @@ Returns current license information.
 
 Shingo integrates with RDS through the shingo-core/rds client package and the shingo-core/fleet/seerrds adapter:
 
-- **ds.Client** � Low-level HTTP client (GET/POST helpers, response decoding, debug logging)
+- **
+ds.Client** � Low-level HTTP client (GET/POST helpers, response decoding, debug logging)
 - **seerrds.Adapter** � Implements Shingo's leet.TrackingBackend, leet.RobotLister, leet.NodeOccupancyProvider, and leet.VendorProxy interfaces
-- **ds.Poller** � Periodically polls active orders for state transitions and emits events through the engine pipeline
+- **
+ds.Poller** � Periodically polls active orders for state transitions and emits events through the engine pipeline
 
 ### Key patterns
 

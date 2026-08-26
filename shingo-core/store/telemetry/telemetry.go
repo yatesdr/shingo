@@ -21,7 +21,7 @@ import (
 	"log"
 	"strings"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/domain"
 )
 

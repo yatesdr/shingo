@@ -2,7 +2,6 @@ package engine
 
 import (
 	"shingo/protocol"
-	"shingocore/countgroup"
 	"shingocore/fleet"
 	"shingocore/store"
 )
@@ -103,6 +102,14 @@ func (e *dispatchEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, pa
 	}})
 }
 
+func (e *dispatchEmitter) EmitOrderResumed(orderID int64, edgeUUID, stationID string) {
+	e.bus.Emit(Event{Type: EventOrderResumed, Payload: OrderResumedEvent{
+		OrderID:   orderID,
+		EdgeUUID:  edgeUUID,
+		StationID: stationID,
+	}})
+}
+
 func (e *dispatchEmitter) EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string) {
 	e.bus.Emit(Event{Type: EventOrderFaulted, Payload: OrderFaultedEvent{
 		OrderID:   orderID,
@@ -157,28 +164,10 @@ func (e *pollerEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, blockID
 	}})
 }
 
-// countGroupEventEmitter bridges the countgroup package's Emitter interface to the EventBus.
-type countGroupEventEmitter struct {
-	bus *EventBus
-}
-
-func (e *countGroupEventEmitter) Emit(t countgroup.Transition) {
-	e.bus.Emit(Event{
-		Type: EventCountGroupTransition,
-		Payload: CountGroupTransitionEvent{
-			Group:             t.Group,
-			Desired:           t.Desired,
-			Robots:            t.Robots,
-			FailSafeTriggered: t.FailSafeTriggered,
-			Timestamp:         t.Timestamp,
-		},
-	})
-}
-
-// orderResolver implements fleet.OrderIDResolver â€” the tracker looks
+// orderResolver implements fleet.OrderIDResolver — the tracker looks
 // up the internal order ID for a vendor order ID when it emits a
 // status-change event. Lives here because it's the same shape as the
-// other fleet/countgroup adapters: a tiny struct wrapping a
+// other fleet adapters: a tiny struct wrapping a
 // dependency with one method that satisfies an external interface.
 type orderResolver struct {
 	db *store.DB

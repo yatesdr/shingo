@@ -92,7 +92,7 @@ CREATE TABLE public.bin_loaders (
     replenishment text NOT NULL,
     outbound_dest text DEFAULT ''::text NOT NULL,
     inbound_source text DEFAULT ''::text NOT NULL,
-    buffer_dest text DEFAULT ''::text NOT NULL,
+    changeover_load_directive boolean DEFAULT false NOT NULL,
     config_gen bigint DEFAULT 1 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -118,6 +118,7 @@ CREATE TABLE public.bin_types (
     description text DEFAULT ''::text NOT NULL,
     width_in double precision DEFAULT 0 NOT NULL,
     height_in double precision DEFAULT 0 NOT NULL,
+    length_in double precision DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -131,7 +132,48 @@ CREATE SEQUENCE public.bin_types_id_seq
 
 ALTER SEQUENCE public.bin_types_id_seq OWNED BY public.bin_types.id;
 
-CREATE TABLE public.bin_uop_audit (
+CREATE TABLE public.bin_uop_delta_daily (
+    day date NOT NULL,
+    bin_id bigint NOT NULL,
+    epoch_seq bigint NOT NULL,
+    payload_code text DEFAULT ''::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    actor text DEFAULT ''::text NOT NULL,
+    ticks integer NOT NULL,
+    consumed integer NOT NULL,
+    added integer NOT NULL,
+    first_uop integer,
+    last_uop integer,
+    min_uop integer,
+    crossings integer DEFAULT 0 NOT NULL
+);
+
+CREATE TABLE public.bin_uop_exception (
+    id bigint NOT NULL,
+    kind text NOT NULL,
+    bin_id bigint NOT NULL,
+    payload_code text DEFAULT ''::text NOT NULL,
+    actor text DEFAULT ''::text NOT NULL,
+    epoch_seq bigint,
+    occurred_at timestamp with time zone NOT NULL,
+    before_uop integer,
+    after_uop integer,
+    deepest_uop integer,
+    recovered_at timestamp with time zone,
+    op text NOT NULL,
+    detail jsonb
+);
+
+CREATE SEQUENCE public.bin_uop_exception_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.bin_uop_exception_id_seq OWNED BY public.bin_uop_exception.id;
+
+CREATE TABLE public.bin_uop_ledger (
     id bigint NOT NULL,
     bin_id bigint NOT NULL,
     before_uop integer,
@@ -149,14 +191,14 @@ CREATE TABLE public.bin_uop_audit (
     loader_id bigint
 );
 
-CREATE SEQUENCE public.bin_uop_audit_id_seq
+CREATE SEQUENCE public.bin_uop_ledger_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
 
-ALTER SEQUENCE public.bin_uop_audit_id_seq OWNED BY public.bin_uop_audit.id;
+ALTER SEQUENCE public.bin_uop_ledger_id_seq OWNED BY public.bin_uop_ledger.id;
 
 CREATE TABLE public.bins (
     id bigint NOT NULL,
@@ -181,7 +223,8 @@ CREATE TABLE public.bins (
     loaded_at timestamp with time zone,
     anomaly_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    anomaly_note text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.bins_id_seq
@@ -597,7 +640,23 @@ ALTER SEQUENCE public.mission_telemetry_id_seq OWNED BY public.mission_telemetry
 
 CREATE TABLE public.node_bin_types (
     node_id bigint NOT NULL,
-    bin_type_id bigint NOT NULL
+    bin_type_id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE public.node_maintain_levels (
+    group_node_id bigint NOT NULL,
+    bin_type_id bigint NOT NULL,
+    want integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT node_maintain_levels_want_check CHECK ((want >= 0))
+);
+
+CREATE TABLE public.node_maintain_supports (
+    group_node_id bigint NOT NULL,
+    process_node_id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE TABLE public.node_payloads (
@@ -611,7 +670,8 @@ CREATE TABLE public.node_properties (
     node_id bigint NOT NULL,
     key text NOT NULL,
     value text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE SEQUENCE public.node_properties_id_seq
@@ -741,12 +801,16 @@ CREATE TABLE public.orders (
     queue_cause text,
     skip_auto_confirm boolean DEFAULT false NOT NULL,
     sibling_order_uuid text DEFAULT ''::text NOT NULL,
+    key_route text DEFAULT ''::text NOT NULL,
+    key_task text DEFAULT ''::text NOT NULL,
     source_intent text DEFAULT ''::text NOT NULL,
     coordinated boolean DEFAULT false NOT NULL,
     remaining_uop integer,
     origin_id uuid,
     origin_class text DEFAULT ''::text NOT NULL,
-    orphan_aged_at timestamp with time zone
+    open_for_children boolean DEFAULT false NOT NULL,
+    orphan_aged_at timestamp with time zone,
+    destination_resolved_at timestamp with time zone
 );
 
 CREATE SEQUENCE public.orders_id_seq
@@ -821,43 +885,6 @@ CREATE SEQUENCE public.payloads_id_seq
 
 ALTER SEQUENCE public.payloads_id_seq OWNED BY public.payloads.id;
 
-CREATE TABLE public.pending_lane_extensions (
-    id bigint NOT NULL,
-    complex_parent_id bigint NOT NULL,
-    lane_id bigint NOT NULL,
-    target_bin_id bigint NOT NULL,
-    expected_from_node_id bigint NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE SEQUENCE public.pending_lane_extensions_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.pending_lane_extensions_id_seq OWNED BY public.pending_lane_extensions.id;
-
-CREATE TABLE public.pending_restocks (
-    id bigint NOT NULL,
-    complex_parent_id bigint NOT NULL,
-    synthetic_parent_id bigint NOT NULL,
-    target_bin_id bigint NOT NULL,
-    expected_from_node_id bigint NOT NULL,
-    restock_plan_json text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE SEQUENCE public.pending_restocks_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.pending_restocks_id_seq OWNED BY public.pending_restocks.id;
-
 CREATE TABLE public.plant_confidence_daily (
     day date NOT NULL,
     samples_read bigint DEFAULT 0 NOT NULL,
@@ -882,23 +909,6 @@ CREATE TABLE public.process_styles (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     is_active boolean DEFAULT false NOT NULL
 );
-
-CREATE TABLE public.production_log (
-    id bigint NOT NULL,
-    cat_id text NOT NULL,
-    station_id text NOT NULL,
-    quantity bigint NOT NULL,
-    reported_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE SEQUENCE public.production_log_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.production_log_id_seq OWNED BY public.production_log.id;
 
 CREATE TABLE public.production_tick_dedup (
     station text NOT NULL,
@@ -935,8 +945,10 @@ CREATE TABLE public.reservations (
     expires_at timestamp with time zone,
     resource_kind text DEFAULT 'bin'::text NOT NULL,
     node_id bigint,
-    CONSTRAINT reservations_kind_target_check CHECK ((((resource_kind = 'bin'::text) AND (bin_id IS NOT NULL) AND (node_id IS NULL)) OR ((resource_kind = ANY (ARRAY['slot'::text, 'mouth'::text])) AND (node_id IS NOT NULL) AND (bin_id IS NULL)))),
-    CONSTRAINT reservations_resource_kind_check CHECK ((resource_kind = ANY (ARRAY['bin'::text, 'slot'::text, 'mouth'::text]))),
+    mode text,
+    CONSTRAINT reservations_kind_target_check CHECK ((((resource_kind = 'bin'::text) AND (bin_id IS NOT NULL) AND (node_id IS NULL)) OR ((resource_kind = ANY (ARRAY['slot'::text, 'mouth'::text, 'occupancy'::text])) AND (node_id IS NOT NULL) AND (bin_id IS NULL)))),
+    CONSTRAINT reservations_mode_check CHECK (((mode IS NULL) OR (mode = ANY (ARRAY['inbound'::text, 'outbound'::text, 'dig'::text])))),
+    CONSTRAINT reservations_resource_kind_check CHECK ((resource_kind = ANY (ARRAY['bin'::text, 'slot'::text, 'mouth'::text, 'occupancy'::text]))),
     CONSTRAINT reservations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'confirmed'::text])))
 );
 
@@ -1290,7 +1302,9 @@ ALTER TABLE ONLY public.bin_loaders ALTER COLUMN id SET DEFAULT nextval('public.
 
 ALTER TABLE ONLY public.bin_types ALTER COLUMN id SET DEFAULT nextval('public.bin_types_id_seq'::regclass);
 
-ALTER TABLE ONLY public.bin_uop_audit ALTER COLUMN id SET DEFAULT nextval('public.bin_uop_audit_id_seq'::regclass);
+ALTER TABLE ONLY public.bin_uop_exception ALTER COLUMN id SET DEFAULT nextval('public.bin_uop_exception_id_seq'::regclass);
+
+ALTER TABLE ONLY public.bin_uop_ledger ALTER COLUMN id SET DEFAULT nextval('public.bin_uop_ledger_id_seq'::regclass);
 
 ALTER TABLE ONLY public.bins ALTER COLUMN id SET DEFAULT nextval('public.bins_id_seq'::regclass);
 
@@ -1333,12 +1347,6 @@ ALTER TABLE ONLY public.outbox ALTER COLUMN id SET DEFAULT nextval('public.outbo
 ALTER TABLE ONLY public.payload_manifest ALTER COLUMN id SET DEFAULT nextval('public.payload_manifest_id_seq'::regclass);
 
 ALTER TABLE ONLY public.payloads ALTER COLUMN id SET DEFAULT nextval('public.payloads_id_seq'::regclass);
-
-ALTER TABLE ONLY public.pending_lane_extensions ALTER COLUMN id SET DEFAULT nextval('public.pending_lane_extensions_id_seq'::regclass);
-
-ALTER TABLE ONLY public.pending_restocks ALTER COLUMN id SET DEFAULT nextval('public.pending_restocks_id_seq'::regclass);
-
-ALTER TABLE ONLY public.production_log ALTER COLUMN id SET DEFAULT nextval('public.production_log_id_seq'::regclass);
 
 ALTER TABLE ONLY public.recovery_actions ALTER COLUMN id SET DEFAULT nextval('public.recovery_actions_id_seq'::regclass);
 
@@ -1401,8 +1409,14 @@ ALTER TABLE ONLY public.bin_types
 ALTER TABLE ONLY public.bin_types
     ADD CONSTRAINT bin_types_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.bin_uop_audit
-    ADD CONSTRAINT bin_uop_audit_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.bin_uop_delta_daily
+    ADD CONSTRAINT bin_uop_delta_daily_pkey PRIMARY KEY (day, bin_id, epoch_seq, payload_code, reason, actor);
+
+ALTER TABLE ONLY public.bin_uop_exception
+    ADD CONSTRAINT bin_uop_exception_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.bin_uop_ledger
+    ADD CONSTRAINT bin_uop_ledger_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.bins
     ADD CONSTRAINT bins_pkey PRIMARY KEY (id);
@@ -1485,6 +1499,12 @@ ALTER TABLE ONLY public.mission_telemetry
 ALTER TABLE ONLY public.node_bin_types
     ADD CONSTRAINT node_bin_types_pkey PRIMARY KEY (node_id, bin_type_id);
 
+ALTER TABLE ONLY public.node_maintain_levels
+    ADD CONSTRAINT node_maintain_levels_pkey PRIMARY KEY (group_node_id, bin_type_id);
+
+ALTER TABLE ONLY public.node_maintain_supports
+    ADD CONSTRAINT node_maintain_supports_pkey PRIMARY KEY (group_node_id, process_node_id);
+
 ALTER TABLE ONLY public.node_payloads
     ADD CONSTRAINT node_payloads_pkey PRIMARY KEY (node_id, payload_id);
 
@@ -1533,26 +1553,11 @@ ALTER TABLE ONLY public.payloads
 ALTER TABLE ONLY public.payloads
     ADD CONSTRAINT payloads_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.pending_lane_extensions
-    ADD CONSTRAINT pending_lane_extensions_complex_parent_id_key UNIQUE (complex_parent_id);
-
-ALTER TABLE ONLY public.pending_lane_extensions
-    ADD CONSTRAINT pending_lane_extensions_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.pending_restocks
-    ADD CONSTRAINT pending_restocks_complex_parent_id_key UNIQUE (complex_parent_id);
-
-ALTER TABLE ONLY public.pending_restocks
-    ADD CONSTRAINT pending_restocks_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.plant_confidence_daily
     ADD CONSTRAINT plant_confidence_daily_pkey PRIMARY KEY (day);
 
 ALTER TABLE ONLY public.process_styles
     ADD CONSTRAINT process_styles_pkey PRIMARY KEY (process_id, style_id);
-
-ALTER TABLE ONLY public.production_log
-    ADD CONSTRAINT production_log_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.production_tick_dedup
     ADD CONSTRAINT production_tick_dedup_pkey PRIMARY KEY (station, edge_snapshot_id);
@@ -1618,13 +1623,19 @@ CREATE INDEX idx_audit_entity ON public.audit_log USING btree (entity_type, enti
 
 CREATE INDEX idx_bin_loader_homes_loader ON public.bin_loader_homes USING btree (loader_id);
 
-CREATE INDEX idx_bin_uop_audit_bin_time ON public.bin_uop_audit USING btree (bin_id, applied_at DESC);
+CREATE INDEX idx_bin_uop_exception_bin ON public.bin_uop_exception USING btree (bin_id, occurred_at DESC);
 
-CREATE INDEX idx_bin_uop_audit_loader ON public.bin_uop_audit USING btree (loader_id, applied_at) WHERE (loader_id IS NOT NULL);
+CREATE INDEX idx_bin_uop_exception_occurred ON public.bin_uop_exception USING btree (occurred_at DESC);
 
-CREATE INDEX idx_bin_uop_audit_op ON public.bin_uop_audit USING btree (op);
+CREATE INDEX idx_bin_uop_exception_open ON public.bin_uop_exception USING btree (kind, occurred_at DESC) WHERE (recovered_at IS NULL);
 
-CREATE INDEX idx_bin_uop_audit_op_time ON public.bin_uop_audit USING btree (op, applied_at DESC);
+CREATE INDEX idx_bin_uop_ledger_bin_time ON public.bin_uop_ledger USING btree (bin_id, applied_at DESC);
+
+CREATE INDEX idx_bin_uop_ledger_loader ON public.bin_uop_ledger USING btree (loader_id, applied_at) WHERE (loader_id IS NOT NULL);
+
+CREATE INDEX idx_bin_uop_ledger_op ON public.bin_uop_ledger USING btree (op);
+
+CREATE INDEX idx_bin_uop_ledger_op_time ON public.bin_uop_ledger USING btree (op, applied_at DESC);
 
 CREATE UNIQUE INDEX idx_bins_label_unique ON public.bins USING btree (label) WHERE (label <> ''::text);
 
@@ -1688,7 +1699,7 @@ CREATE INDEX idx_orders_origin_id ON public.orders USING btree (origin_id) WHERE
 
 CREATE INDEX idx_orders_status ON public.orders USING btree (status);
 
-CREATE UNIQUE INDEX idx_orders_uuid ON public.orders USING btree (edge_uuid) WHERE ((edge_uuid <> ''::text) AND (edge_uuid !~~ 'restore-%'::text));
+CREATE UNIQUE INDEX idx_orders_uuid ON public.orders USING btree (edge_uuid) WHERE (edge_uuid <> ''::text);
 
 CREATE INDEX idx_orders_vendor ON public.orders USING btree (vendor_order_id);
 
@@ -1696,11 +1707,11 @@ CREATE INDEX idx_outbox_pending ON public.outbox USING btree (sent_at) WHERE (se
 
 CREATE INDEX idx_payload_manifest_payload ON public.payload_manifest USING btree (payload_id);
 
-CREATE INDEX idx_production_log_cat ON public.production_log USING btree (cat_id);
-
 CREATE INDEX idx_recovery_actions_created ON public.recovery_actions USING btree (created_at);
 
 CREATE INDEX idx_reservations_bin ON public.reservations USING btree (bin_id);
+
+CREATE INDEX idx_reservations_kind_node ON public.reservations USING btree (resource_kind, node_id);
 
 CREATE INDEX idx_reservations_order ON public.reservations USING btree (order_id);
 
@@ -1744,9 +1755,7 @@ CREATE INDEX idx_supply_refusals_payload ON public.supply_refusals USING btree (
 
 CREATE INDEX ix_process_styles_active ON public.process_styles USING btree (process_id) WHERE is_active;
 
-CREATE INDEX pending_lane_extensions_target_bin_idx ON public.pending_lane_extensions USING btree (target_bin_id);
-
-CREATE INDEX pending_restocks_target_bin_idx ON public.pending_restocks USING btree (target_bin_id);
+CREATE UNIQUE INDEX order_bins_order_bin_uniq ON public.order_bins USING btree (order_id, bin_id);
 
 CREATE UNIQUE INDEX uq_reservations_bin_active ON public.reservations USING btree (bin_id) WHERE ((resource_kind = 'bin'::text) AND (state = ANY (ARRAY['pending'::text, 'confirmed'::text])));
 
@@ -1805,6 +1814,18 @@ ALTER TABLE ONLY public.node_bin_types
 
 ALTER TABLE ONLY public.node_bin_types
     ADD CONSTRAINT node_bin_types_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.node_maintain_levels
+    ADD CONSTRAINT node_maintain_levels_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.node_maintain_levels
+    ADD CONSTRAINT node_maintain_levels_group_node_id_fkey FOREIGN KEY (group_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.node_maintain_supports
+    ADD CONSTRAINT node_maintain_supports_group_node_id_fkey FOREIGN KEY (group_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.node_maintain_supports
+    ADD CONSTRAINT node_maintain_supports_process_node_id_fkey FOREIGN KEY (process_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.node_payloads
     ADD CONSTRAINT node_payloads_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;

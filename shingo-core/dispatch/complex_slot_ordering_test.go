@@ -26,7 +26,7 @@ import (
 // holding ZERO bin reservations — bins are never touched before slots are secured.
 func TestSlotClaim_NoABBADeadlock(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testDBShared(t)
 	_, lineNode, bp := setupTestData(t, db)
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 

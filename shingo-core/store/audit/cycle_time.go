@@ -50,7 +50,7 @@ const OpBinUOPDelta = "bin_uop_delta"
 //
 // ── THE STATION COMES OUT OF actor, AND THAT IS NOT A TYPO ───────────────────
 //
-// bin_uop_audit has both a station column and a node_id column, and the applied
+// bin_uop_ledger has both a station column and a node_id column, and the applied
 // delta INSERT populates NEITHER: it names
 // (bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata) and
 // passes the Edge station as actor. So on this op the station column is empty
@@ -77,7 +77,7 @@ func ListCycleEvents(db *sql.DB, since time.Time, limit int) ([]domain.CycleEven
 		limit = 20000
 	}
 	rows, err := db.Query(`SELECT actor, payload_code, metadata->>'reason', applied_at
-		FROM bin_uop_audit
+		FROM bin_uop_ledger
 		WHERE op = $1
 		  AND applied_at >= $2
 		  AND metadata->>'reason' IN ($3, $4)

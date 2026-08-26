@@ -39,6 +39,14 @@ type Order struct {
 	// emission.
 	BinID       *int64 `json:"bin_id,omitempty"`
 	PayloadCode string `json:"payload_code"`
+	// PayloadDesc is the human sentence behind PayloadCode — what a robot is
+	// actually coming for, in words. Core has sent it on every projection since
+	// the projection existed; the Edge had no column for it until MG2-8, which is
+	// why a Core-authored order showed a bare code and nothing else.
+	//
+	// Blank is ordinary: an Edge-authored order has none, and so does a
+	// projection that landed before the column existed. Renders as nothing.
+	PayloadDesc string `json:"payload_desc"`
 	// SiblingOrderID is the id of the paired order in a two-robot swap
 	// (supply ↔ evac). Durable linkage so the supply guard and the
 	// release gate don't depend on volatile runtime slot pointers,
@@ -63,6 +71,32 @@ type Order struct {
 	// change; display keeps rendering the sentence today. Empty on non-queued
 	// orders. Cause never leaves Core.
 	QueueCode string `json:"queue_code"`
+	// FaultSince / FaultDeadline / FaultNoticeAfterS are the fault clock,
+	// mirrored from Core via the OrderUpdate push and the boot snapshot. They
+	// are what lets the board say "Replanning · 14 s" or "Fault · cannot replan
+	// (60011) · 3m 12s · gives up in 41m" instead of showing a badge and
+	// nothing.
+	//
+	// Non-nil only while the status is faulted, cleared on arrival for any
+	// other status by messaging/edge_handler.HandleOrderUpdate — derived from
+	// the status, NOT from a pushed empty value, for the reason written on
+	// QueueReason above. That invariant was claimed and unheld once already;
+	// queue_reason_clear_test.go exists because of it, and the fault fields are
+	// covered by the same kind of test.
+	//
+	// FaultNoticeAfterS is Core's replan-vs-fault threshold in seconds as it
+	// stood when the fault was pushed, so a plant retuning the number does not
+	// silently re-classify in-flight rows. 0 means an older Core sent none, and
+	// the board then renders Core's sentence without re-deciding the wording.
+	FaultSince        *time.Time `json:"fault_since,omitempty"`
+	FaultDeadline     *time.Time `json:"fault_deadline,omitempty"`
+	FaultNoticeAfterS int        `json:"fault_notice_after_s,omitempty"`
+	// FaultRef is the fleet's reason, mirrored from Core. Nil when the fleet
+	// gave none, which is the common case. The REFERENCE is stored rather than
+	// the rendered sentence so the board can re-render as its clock crosses the
+	// threshold, using protocol.FormatFaultSentence — the same function Core
+	// renders with.
+	FaultRef *protocol.TermRef `json:"fault_ref,omitempty"`
 	// AuthoredBy says who decided this order should exist: "edge" (this Edge
 	// created it and sent it up) or "core" (Core created it and pushed the row
 	// down as a projection). Every row that predates the column is "edge", which
@@ -71,9 +105,45 @@ type Order struct {
 	// NOTHING BRANCHES ON IT, deliberately. It labels the board and it is what
 	// the projection tests assert against. Keeping it inert means turning the
 	// label off is a rendering change, not a behaviour change.
-	AuthoredBy string    `json:"authored_by"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	AuthoredBy string `json:"authored_by"`
+	// OriginID and OriginClass are the demand attribution Core stamped on the
+	// order: which demand episode it belongs to, and what kind of demand that is.
+	//
+	// THE WIRE TYPE HAS ALWAYS PROMISED THESE — "passed through so a projected
+	// row answers 'why does this exist' the same way a locally created one does"
+	// — and until MG2-8 the promise was not kept: both were dropped at the
+	// projection INSERT, so a Core-authored order on the board carried no
+	// attribution at all and the demand grain stopped at the module boundary.
+	//
+	// INERT HERE, like AuthoredBy. Nothing branches on either; they label the
+	// board and they are what the drift test asserts against. Blank means "not
+	// recorded" — an Edge-authored order has no Core origin by construction, and
+	// no backfill can invent one for a row whose value was dropped.
+	OriginID    string `json:"origin_id"`
+	OriginClass string `json:"origin_class"`
+	// LaneHeld reports that this order is parked on a wait CORE owns — a lane
+	// gate — rather than on one the station owns. Derived, never stored: an order
+	// is lane-held exactly when it is `staged` and carries no Edge-authored step
+	// plan.
+	//
+	// That derivation is exact rather than approximate. A station wait exists only
+	// inside a plan this Edge wrote, so a plan-less order has no wait of its own;
+	// and a plan-less order's fleet waybill is [pickup, dropoff] with no Wait
+	// block, so the fleet never reports WAITING for it and it never reaches
+	// `staged` by any other route. The one thing that puts a plan-less order at
+	// `staged` is Core parking it at a lane's gate point.
+	//
+	// It exists to remove a CONTROL, not information: the tile still shows the
+	// order and its status, and only the RELEASE button goes. Core refuses such a
+	// release anyway (dispatch.HandleOrderRelease), so a button that survived here
+	// would be one whose only correct outcome is an error.
+	//
+	// Unlike AuthoredBy — which is deliberately inert — this one BRANCHES, so it
+	// is computed in the query beside the row it describes rather than being
+	// re-derived by each caller.
+	LaneHeld  bool      `json:"lane_held"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 	// Joined fields
 	ProcessName     string `json:"process_name"`
 	ProcessNodeName string `json:"process_node_name"`

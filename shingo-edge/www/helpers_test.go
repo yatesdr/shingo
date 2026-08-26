@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -81,12 +83,10 @@ type stubEngine struct {
 	// the values that flowed through. Add new fields here as needed; keep
 	// them named after the method that writes to them so the assertion
 	// site is easy to find.
-	lastReleaseChangeoverWaitDisp *engine.ReleaseDisposition
-	lastReleaseOrderDisposition   *engine.ReleaseDisposition
+	lastReleaseOrderDisposition *engine.ReleaseDisposition
 
 	// ChangeoverGateStatus canned response — the gate-status endpoint is a
 	// pure read, so the stub just replays whatever the test set.
-	lastReleaseNodeID int64
 
 	lastAbandonNodeID     int64
 	lastAbandonAcceptHalf bool
@@ -95,6 +95,15 @@ type stubEngine struct {
 	// requestProduceSwapErr, when set, is returned by RequestProduceSwap so a
 	// handler test can drive the armed-changeover exit path.
 	requestProduceSwapErr error
+
+	// /status fields. The outbox counts deliberately go through the real db so
+	// a test can seed rows and exercise the actual queries; the Kafka ones are
+	// canned, since the client is not wired in these tests.
+	statusKafkaConnected   bool
+	statusSubscribersWired bool
+	statusLastPublishOK    bool
+	statusLastPublishAt    time.Time
+	statusLastPublishEver  bool
 
 	gateCanComplete bool
 	gateBlockers    []domain.Blocker
@@ -108,24 +117,34 @@ type stubEngine struct {
 	backfillForce       bool
 
 	lastReleaseStagedOrdersDisposition *engine.ReleaseDisposition
+	lastChangeoverReleaseDisposition   *engine.ReleaseDisposition
+	lastChangeoverReleaseProcessID     int64
+	changeoverReleaseResult            engine.ReleaseChangeoverWaitResult
+	changeoverReleaseErr               error
 }
 
-func (s *stubEngine) AppConfig() *config.Config                                           { return s.cfg }
-func (s *stubEngine) ConfigPath() string                                                  { return s.cfgPath }
-func (s *stubEngine) CoreAPI() *engine.CoreClient                                         { return nil }
-func (s *stubEngine) PLCManager() *plc.Manager                                            { return nil }
-func (s *stubEngine) OrderManager() *orders.Manager                                       { return s.orderMgr }
-func (s *stubEngine) Reconciliation() *engine.ReconciliationService                       { return nil }
+func (s *stubEngine) AppConfig() *config.Config     { return s.cfg }
+func (s *stubEngine) ConfigPath() string            { return s.cfgPath }
+func (s *stubEngine) CoreAPI() *engine.CoreClient   { return nil }
+func (s *stubEngine) PLCManager() *plc.Manager      { return nil }
+func (s *stubEngine) OrderManager() *orders.Manager { return s.orderMgr }
+
+// A REAL reconciliation service over testDB. It used to return nil, which made
+// every handler that touches it untestable — apiReplayOutbox panicked on the
+// first call, so it shipped with no coverage at all.
+func (s *stubEngine) Reconciliation() *engine.ReconciliationService {
+	return engine.NewReconciliationService(s.db)
+}
 func (s *stubEngine) CoreSync() *engine.CoreSyncService                                   { return nil }
 func (s *stubEngine) ApplyWarLinkConfig()                                                 {}
 func (s *stubEngine) ReconnectKafka() error                                               { return nil }
 func (s *stubEngine) SendEnvelope(env *protocol.Envelope) error                           { return nil }
 func (s *stubEngine) CoreNodes() map[string]protocol.NodeInfo                             { return s.core }
 func (s *stubEngine) PayloadBinTypes() []protocol.PayloadBinTypeInfo                      { return nil }
+func (s *stubEngine) ScenePointNames() map[string]bool                                    { return nil }
+func (s *stubEngine) SceneAdjacency() map[string][]string                                 { return nil }
 func (s *stubEngine) RequestNodeSync()                                                    {}
 func (s *stubEngine) RequestCatalogSync()                                                 {}
-func (s *stubEngine) RequestOrderStatusSync() error                                       { return nil }
-func (s *stubEngine) StartupReconcile() error                                             { return nil }
 func (s *stubEngine) SyncProcessCounter(int64) error                                      { return nil }
 func (s *stubEngine) EnsureTagPublished(int64, string, string)                            {}
 func (s *stubEngine) ManageReportingPointTag(int64, string, string, bool, string, string) {}
@@ -159,6 +178,12 @@ func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition
 	s.lastReleaseStagedOrdersDisposition = &d
 	return nil
 }
+func (s *stubEngine) ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
+	d := disp
+	s.lastChangeoverReleaseDisposition = &d
+	s.lastChangeoverReleaseProcessID = processID
+	return s.changeoverReleaseResult, s.changeoverReleaseErr
+}
 func (s *stubEngine) RequestProduceSwap(int64) (*engine.NodeOrderResult, error) {
 	return nil, s.requestProduceSwapErr
 }
@@ -189,8 +214,7 @@ func (s *stubEngine) CreateRetrieveForAPI(req engine.APIRetrieveRequest) ([]*sto
 		o, err := s.orderMgr.CreateRetrieveOrder(
 			req.ProcessNodeID, req.RetrieveEmpty, req.Quantity,
 			req.DeliveryNode, req.SourceNode, req.StagingNode, req.LoadType,
-			req.PayloadCode, req.AutoConfirm, false,
-		)
+			req.PayloadCode, req.AutoConfirm, false, orders.NoDemand())
 		if err != nil {
 			return made, err
 		}
@@ -209,19 +233,8 @@ func (s *stubEngine) CancelProcessChangeover(int64) error                   { re
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error   { return nil }
 func (s *stubEngine) PostCutoverFlag(int64) (*engine.PostCutoverFlag, bool) { return nil, false }
 func (s *stubEngine) ClearPostCutoverFlag(int64) error                      { return nil }
-func (s *stubEngine) ReleaseChangeoverWait(_ int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
-	d := disp
-	s.lastReleaseChangeoverWaitDisp = &d
-	return engine.ReleaseChangeoverWaitResult{}, nil
-}
 func (s *stubEngine) ChangeoverGateStatus(int64) (bool, []domain.Blocker, error) {
 	return s.gateCanComplete, s.gateBlockers, s.gateErr
-}
-func (s *stubEngine) ReleaseChangeoverWaitForNode(_, nodeID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
-	d := disp
-	s.lastReleaseChangeoverWaitDisp = &d
-	s.lastReleaseNodeID = nodeID
-	return engine.ReleaseChangeoverWaitResult{}, nil
 }
 func (s *stubEngine) AbandonChangeoverSupply(_, nodeID int64, acceptHalf bool, _ string) error {
 	s.lastAbandonNodeID = nodeID
@@ -413,15 +426,32 @@ func doRequest(t *testing.T, router *chi.Mux, method, path string, body any, coo
 	return w.Result()
 }
 
+// testHashes memoizes bcrypt hashes by plaintext. bcrypt at DefaultCost costs
+// ~87ms, and this serial package was spending ~6.5s of its ~8s wall re-deriving
+// the same handful of hashes across ~75 call sites. Same password → same hash,
+// one salt; the login round-trips still exercise CheckPassword on the verify
+// side, which is the side production runs per request.
+var testHashes sync.Map // string password → string hash
+
+// testHash returns the bcrypt hash for a password, computed once per process.
+func testHash(t *testing.T, password string) string {
+	t.Helper()
+	if v, ok := testHashes.Load(password); ok {
+		return v.(string)
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		t.Fatalf("hash %q: %v", password, err)
+	}
+	testHashes.Store(password, hash)
+	return hash
+}
+
 // authCookie creates an admin user and returns a valid session cookie.
 func authCookie(t *testing.T, h *Handlers) *http.Cookie {
 	t.Helper()
-	hash, err := auth.HashPassword("password")
-	if err != nil {
-		t.Fatalf("hash password: %v", err)
-	}
 	testDB.Exec("DELETE FROM admin_users WHERE username = 'testadmin'")
-	testDB.Exec("INSERT INTO admin_users (username, password_hash) VALUES ('testadmin', ?)", hash)
+	testDB.Exec("INSERT INTO admin_users (username, password_hash) VALUES ('testadmin', ?)", testHash(t, "password"))
 
 	req := httptest.NewRequest("POST", "/api/login-dummy", nil)
 	req.Header.Set("Content-Type", "application/json")
@@ -551,4 +581,31 @@ func seedOrder(t *testing.T, orderType protocol.OrderType, status protocol.Statu
 		}
 	}
 	return id
+}
+
+// ── /status stub methods ────────────────────────────────────────────────
+//
+// statusEngine (handler_status.go) is type-asserted off h.orchestration, so
+// without these apiStatus answers 503 and every assertion about its body is
+// vacuous. That is what it did before these landed: the endpoint had no test
+// coverage at all.
+
+func (s *stubEngine) Uptime() int64 { return 42 }
+
+func (s *stubEngine) StationID() string { return "test.station" }
+
+func (s *stubEngine) StartedAt() time.Time {
+	return time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+}
+
+func (s *stubEngine) KafkaConnected() bool { return s.statusKafkaConnected }
+
+func (s *stubEngine) SubscribersWired() bool { return s.statusSubscribersWired }
+
+func (s *stubEngine) CountPendingOutbox() (int, error) { return s.db.CountPendingOutbox() }
+
+func (s *stubEngine) CountDeadLetterOutbox() (int, error) { return s.db.CountDeadLetterOutbox() }
+
+func (s *stubEngine) KafkaLastPublish() (bool, time.Time, bool) {
+	return s.statusLastPublishOK, s.statusLastPublishAt, s.statusLastPublishEver
 }

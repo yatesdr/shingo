@@ -40,11 +40,12 @@ import (
 
 const (
 	// invDeltaScopeBin / invDeltaScopeBucket — scope_kind values used
-	// when allocating sequence-ids and when Core dedups. Stable
-	// strings; renames must come with a coordinated migration on
-	// both sides.
-	invDeltaScopeBin    = "bin"
-	invDeltaScopeBucket = "bucket"
+	// when allocating sequence-ids and when Core dedups. Renames must
+	// come with a coordinated migration on both sides, which is why the
+	// strings are single-sourced in protocol/ rather than spelled here
+	// and again in shingo-core/uop.
+	invDeltaScopeBin    = protocol.InvDeltaScopeBin
+	invDeltaScopeBucket = protocol.InvDeltaScopeBucket
 
 	// defaultInventoryDeltaInterval is the periodic flush cadence used
 	// when the caller leaves interval unset. 5s matches the original
@@ -697,10 +698,20 @@ func (r *accumulator) clock() time.Time {
 }
 
 // bucketScopeKey builds the dedup scope_key for a LinesideBucketDelta.
-// Mirror of the Core helper in service/inventory_delta_service.go;
-// must produce byte-identical output. The pipe-delimited format is
-// stable; renames break in-flight Edge replays, so any change must
-// come with a coordinated migration on both sides.
+//
+// Core has a same-named helper — shingo-core/uop/applier.go, not the
+// service/inventory_delta_service.go path this comment used to name — and the
+// two DO NOT agree. Edge keys on nodeID; Core keys on coreNodeName (Round-3
+// Obs 8), so the first field of the key differs by construction. The claim
+// this comment carried, "must produce byte-identical output", is false and has
+// been since the Core side changed. Do not restore it, and do not "fix" either
+// side to match the other on the strength of a comment: whether the divergence
+// can drop lineside deltas depends on whether a process node has ever been
+// retired and re-added under the same core_node_name, which is an open
+// question against the live plants.
+//
+// The pipe-delimited format is stable; renames break in-flight Edge replays,
+// so any change must come with a coordinated migration on both sides.
 func bucketScopeKey(nodeID int64, pairKey string, styleID int64, partNumber string) string {
 	var sb strings.Builder
 	sb.WriteString(strconv.FormatInt(nodeID, 10))

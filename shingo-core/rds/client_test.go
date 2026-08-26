@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"shingo/protocol/testutil"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -452,12 +453,12 @@ func TestLogResponse_BodyIncludedOnNon200(t *testing.T) {
 			captured = append(captured, fmt.Sprintf(format, args...))
 		},
 	}
-	body := []byte(`{"code":400,"msg":"bad group"}`)
-	client.logResponse("POST", "/robotsInCountGroup", 400, 5*time.Millisecond, body)
+	body := []byte(`{"code":400,"msg":"bad order"}`)
+	client.logResponse("POST", "/redoFailedOrder", 400, 5*time.Millisecond, body)
 	if len(captured) != 1 {
 		t.Fatalf("expected 1 line, got %d: %v", len(captured), captured)
 	}
-	if !contains(captured[0], `body={"code":400,"msg":"bad group"}`) {
+	if !strings.Contains(captured[0], `body={"code":400,"msg":"bad order"}`) {
 		t.Errorf("line = %q, want body included on non-200", captured[0])
 	}
 }
@@ -475,7 +476,7 @@ func TestLogResponse_BodyIncludedOnSlowSuccess(t *testing.T) {
 	if len(captured) != 1 {
 		t.Fatalf("expected 1 line, got %d: %v", len(captured), captured)
 	}
-	if !contains(captured[0], "body=") {
+	if !strings.Contains(captured[0], "body=") {
 		t.Errorf("line = %q, want body included on slow success", captured[0])
 	}
 }

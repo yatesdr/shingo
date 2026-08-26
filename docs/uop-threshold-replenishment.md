@@ -2,9 +2,9 @@
 
 This document covers the continuous-review reorder-point system for loader L1 and cell autoreorder.
 
-The model is *C-push*: Core observes combined in-loop UOP (bins + lineside buckets), compares against engineer-configured thresholds, and signals Edge when replenishment is needed. Edge fires L1 in response. A threshold of `0` means Core does not monitor that pair — the loader is stocked by the operator push instead.
+The model is *C-push*: Core observes combined in-loop UOP (bins + lineside buckets), compares against engineer-configured thresholds, and creates the L1 retrieve orders itself when replenishment is needed. A threshold of `0` means Core does not monitor that pair — the loader is stocked by the operator push instead.
 
-**There is one automatic path.** This document used to describe two, with a dedup contract between them, and that is the single most important thing to know is no longer true. The legacy bin-count `DemandSignal` route is retired: Core still emits produce DemandSignals, but Edge routes them to no handler. There is no bin-count fallback, no `ReorderPoint` floor of 2 for loaders, and nothing that needs to "skip opted-in pairs".
+**There is one automatic path.** This document used to describe two, with a dedup contract between them, and that is the single most important thing to know is no longer true. The legacy bin-count `DemandSignal` route is retired entirely (2026-08): Core no longer emits it and no handler exists on Edge. There is no bin-count fallback, no `ReorderPoint` floor of 2 for loaders, and nothing that needs to "skip opted-in pairs".
 
 See [material-flow.md](material-flow.md) for `Bin`, `Payload`, `UOP`, and bucket terminology; [bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md) for the loader/unloader workflow this sits in; and [sweeps-and-monitors.md](sweeps-and-monitors.md) for the full list of what re-evaluates a threshold and when.
 
@@ -16,7 +16,7 @@ The system manages two separate threshold knobs, in series along the supply path
 
 ### Loader L1 threshold (loop UOP)
 
-When **total in-loop UOP for a payload** drops below this value, Core signals Edge and Edge fires an L1 retrieve_empty order.
+When **total in-loop UOP for a payload** drops below this value, Core creates an L1 retrieve_empty order (directly — no wire signal; Edge only executes).
 
 - *In-loop UOP* = `SUM(bin.uop_remaining)` + `SUM(bucket.qty)` for that payload, across every bin in the kanban lifecycle (`available`, `staged`, in-transit) and every lineside bucket carrying captured parts of that payload. Excludes `flagged`, `maintenance`, `quality_hold`, `retired` bins.
 - *Lives at*: `loader_payload_thresholds` table on Edge, keyed by `(core_node_name, payload_code)`. `core_node_name` is the canonical cross-system identifier — multi-cell plants sharing a Core loader share one threshold row.
@@ -35,7 +35,12 @@ The two thresholds work together: cell autoreorder pulls a fresh bin from the lo
 
 ---
 
-## C-push signal pipeline
+## C-push pipeline (no signal — Core orders directly)
+
+The wire signal this section used to describe (`LoopBelowThresholdSignal` on
+`demand.loop_below_threshold`, Edge sizing and firing the ask) was deleted
+2026-08-02 after a Springfield over-order showed the two halves counted
+different things. Core now owns the whole decision:
 
 ```
 Edge                                      Core
@@ -58,18 +63,16 @@ LinesideBucketApplied                       to all three.
                                               uop    = SystemUOPForPayload
                                               if total < threshold:
                                                 allow(debounce 15s):
-                                                  fire signal
-
-LoopBelowThresholdSignal              ←   SubjectLoopBelowThreshold,
-  HandleLoopBelowThreshold:                 carries:
-    resolve loader by LoaderKey               - core_node_name
-    desiredBins = ceil(gap/capacity)          - payload_code
-    withLoaderBudget(...)                     - current_uop / threshold
-      counts in-flight per loader             - reason
-      → fires the remainder
+                                                  fireSignalCached:
+                                                    size ask, resolve
+                                                    free windows,
+                                                    create one order
+                                                    per free window
 ```
 
-The signal subject is `demand.loop_below_threshold`. Edge's `EdgeHandler.HandleData` decodes and routes to `HandleLoopBelowThreshold`.
+The orders are created on Core; the Edge only executes them. See
+`fireSignalCached` in `engine/threshold_monitor.go` — the cutover comment
+there records the 2026-07-31 incident that ended the split.
 
 Three separate Core subscriptions funnel into one evaluation, so a single bin move commonly trips more than one; the 15-second debounce is what absorbs that. See [sweeps-and-monitors.md](sweeps-and-monitors.md).
 
@@ -81,7 +84,7 @@ Three separate Core subscriptions funnel into one evaluation, so a single bin mo
 
 ### Startup sweep
 
-On `Run()`, the monitor waits a brief grace period (3s — gives a reconnecting Edge time to drain `uop_backfill` deltas through the inventory_delta_dedup pipeline), then walks every binding with `threshold > 0`, computing `SystemUOPForPayload` once per distinct payload and signaling any binding currently under threshold with `reason="warm_up_startup_sweep"`. The first signal per binding bypasses debounce; subsequent firings during the warm-up window respect a per-binding counter (currently floor `2`, "at least 2 signals on cold start").
+On `Run()`, the monitor waits a brief grace period (3s — gives a reconnecting Edge time to drain `uop_backfill` deltas through the inventory_delta_dedup pipeline), then walks every binding with `threshold > 0`, computing `SystemUOPForPayload` once per distinct payload and ordering for any binding currently under threshold with `reason="warm_up_startup_sweep"`. The first order batch per binding bypasses debounce; subsequent firings during the warm-up window respect a per-binding counter (currently floor `2`, "at least 2 fires on cold start").
 
 The strict deploy ordering is: `uop_backfill` from a reconnecting Edge must complete before the startup sweep reads `SystemUOPForPayload`. The 3s grace period is a safety belt; production deploys document the explicit ordering as a checklist item.
 
@@ -89,11 +92,11 @@ The strict deploy ordering is: `uop_backfill` from a reconnecting Edge must comp
 
 ## The reservation seam
 
-One automatic path fires an L1 — the threshold signal — but it is not the only
-thing that puts a bin on a loader window. The operator's Request Empty and
-Request Full buttons, the push sweeps, the unloader's U1, and the HTTP order API
-all target the same windows, and every one of them goes through
-`withLoaderBudget` (`shingo-edge/engine/operator_demand_loader.go`).
+One automatic path fires an L1 — the threshold monitor on Core — but it is not
+the only thing that puts a bin on a loader window. The operator's Request Empty
+and Request Full buttons, the push sweeps, the unloader's U1, and the HTTP
+order API all target the same windows, and every one of the Edge-side ones goes
+through `withLoaderBudget` (`shingo-edge/engine/operator_demand_loader.go`).
 
 The seam takes a per-loader mutex and, in one snapshot, counts in-flight
 `retrieve_empty` orders across the loader's delivery-node set — applying both the
@@ -213,7 +216,7 @@ The **Recalculate all** button at the process level enumerates every `(loader, p
 | `replenish_uop_threshold` | Behavior |
 |---|---|
 | `0` or no row | Core never monitors. Nothing fires an L1 for that pair automatically; the loader is stocked by the operator push. Cell autoreorder is silent-inert. |
-| `> 0` | Core monitors and signals on crossing. C-push owns L1 firing for that pair. |
+| `> 0` | Core monitors and creates orders on crossing. C-push owns L1 firing for that pair. |
 
 A row with `threshold = 0` and `source = 'manual'` is semantically equivalent to no row at all from the runtime's perspective — it exists so the UI can show "engineer considered this and opted out" in the source audit. `DeleteLoaderThreshold` and "save threshold = 0" are both supported entry points to the opted-out state.
 
@@ -235,7 +238,7 @@ The replenishment admin UI shows a source badge per row.
 
 ### Warm-up cap
 
-On startup sweep, bindings below threshold get a per-binding warm-up counter seeded to `2`. The first signal fires immediately (bypassing debounce); subsequent inventory events during the warm-up window also fire (bypassing debounce, decrementing the counter) so the first L1 round drives both a bin to the supermarket and a second bin in flight. After the counter hits zero, normal debounced operation takes over.
+On startup sweep, bindings below threshold get a per-binding warm-up counter seeded to `2`. The first fire happens immediately (bypassing debounce); subsequent inventory events during the warm-up window also fire (bypassing debounce, decrementing the counter) so the first L1 round drives both a bin to the supermarket and a second bin in flight. After the counter hits zero, normal debounced operation takes over.
 
 The formula in the design brief is `max(2, ceil(threshold / C))` — the per-binding cap, not global. The implementation currently applies the `2` floor only; lifting `C` from claim config to apply the full formula is a later refinement.
 
@@ -257,7 +260,7 @@ There's a gap between physical pickup of the old bin at the cell and delivery of
 
 ### Backfill: there isn't one
 
-There is no payload-code backfill for pre-existing `lineside_buckets` rows. Springfield is a fresh install; all future plants get correct `payload_code` from day 1 because `capture.go` writes it from the order context at emit time. If a plant ever upgrades from a pre-feature version with existing buckets, the right design is `bin_uop_audit` correlation (the audit table records every `capture_reduction` operation with the bin's `order_id` and `payload_code`, so joining gives correct payload attribution). That work is deferred until a real plant needs it. Pre-existing empty `payload_code` rows are excluded from `SystemUOPForPayload` — conservative undercount, never overcount.
+There is no payload-code backfill for pre-existing `lineside_buckets` rows. Springfield is a fresh install; all future plants get correct `payload_code` from day 1 because `capture.go` writes it from the order context at emit time. If a plant ever upgrades from a pre-feature version with existing buckets, the right design is `bin_uop_ledger` correlation (the audit table records every `capture_reduction` operation with the bin's `order_id` and `payload_code`, so joining gives correct payload attribution). That work is deferred until a real plant needs it. Pre-existing empty `payload_code` rows are excluded from `SystemUOPForPayload` — conservative undercount, never overcount.
 
 ---
 
@@ -265,7 +268,7 @@ There is no payload-code backfill for pre-existing `lineside_buckets` rows. Spri
 
 ### Edge
 
-- `engine/operator_demand_loader.go` — `HandleLoopBelowThreshold`, `withLoaderBudget` (the reservation seam), the push sweeps.
+- `engine/operator_demand_loader.go` — `withLoaderBudget` (the reservation seam), the push sweeps. (`HandleLoopBelowThreshold` deleted with the Edge's ordering half.)
 - `engine/wiring_counter_delta.go` — cell autoreorder evaluation.
 - `engine/replenishment_admin.go` — admin-page engine wrappers (`UpsertLoaderThreshold`, `CalculateThresholdForLoader`, `ApplyCalculatedThreshold`, `OverrideCalculatedThreshold`, `ListLoaderClaimsForRecalculate`).
 - `service/threshold_calculator.go` — pure formula (`CalculateThresholds`) + date-range driver (`ThresholdCalculatorService.Calculate`).
@@ -275,13 +278,13 @@ There is no payload-code backfill for pre-existing `lineside_buckets` rows. Spri
 
 ### Core
 
-- `engine/threshold_monitor.go` — `ThresholdMonitor` (debounce, warm-up, startup sweep, signal dispatch).
+- `engine/threshold_monitor.go` — `ThresholdMonitor` (debounce, warm-up, startup sweep, order creation).
 - `service/inventory_system_count.go` — `SystemUOPForPayload`.
 - `store/demands/` — `demand_registry` CRUD including `replenish_uop_threshold`.
 
 ### Protocol
 
-- `protocol/payloads.go` — `LinesideBucketDelta.PayloadCode`, `LoopBelowThresholdSignal`. (Threshold values now ride `LoaderInfo` on the node-list sync, not a ClaimSync payload.)
+- `protocol/payloads.go` — `LinesideBucketDelta.PayloadCode`. (Threshold values now ride `LoaderInfo` on the node-list sync, not a ClaimSync payload. `LoopBelowThresholdSignal` was deleted — Core orders directly.)
 
 ---
 

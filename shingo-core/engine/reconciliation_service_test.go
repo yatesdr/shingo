@@ -11,6 +11,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
@@ -111,6 +112,137 @@ func TestAdvanceStuckReshuffleParents_ReDrivesOnlyStranded(t *testing.T) {
 	testutil.MustNoErr(t, err, "AdvanceStuckReshuffleParents")
 	if n != 1 || len(advanced) != 1 || advanced[0] != stranded {
 		t.Fatalf("advanced = %v (n=%d), want exactly [%d] (only the all-terminal parent)", advanced, n, stranded)
+	}
+}
+
+// TestAdvanceStuckReshuffleParents_SkipsOpenParent is the SECOND sealedness
+// guard, and deliberately not the load-bearing one — AdvanceCompoundOrder
+// refuses an open parent itself, and the poller and event paths reach that
+// refusal without coming through this sweep at all.
+//
+// What rests on this predicate is the forensic record. Without it the sweep
+// selects every open parent on every pass — it runs on the periodic ticker, not
+// only at boot — re-drives it into a refusal, and writes a RecordRecoveryAction
+// saying it rescued a reshuffle stranded in `reshuffling`. Nothing was
+// stranded and nothing was rescued. An alarm that fires when nothing happened
+// costs the same thing as one that cannot fire when something did: the next
+// reader stops believing it. Somebody will eventually count these rows.
+//
+// DESIGN §16 rule 7: the open parent here satisfies every other clause of the
+// predicate — status `reshuffling`, has children, all of them terminal — so
+// sealedness is the only thing that can exclude it. A fixture with a pending
+// child would be excluded by the clause that already existed and would pass
+// with this guard removed.
+//
+// The parent is opened through the production writer; nothing opens one on its
+// own until the fold lands (5c), so the fixture is ahead of the trigger.
+//
+// MUTATION (verified): drop `AND NOT p.open_for_children` from the predicate.
+// This fires with advanced = [open, sealed] — both selected — and the message
+// names the false recovery record as the cost.
+func TestAdvanceStuckReshuffleParents_SkipsOpenParent(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := newReconService(t, db)
+
+	var advanced []int64
+	svc.advanceCompound = func(parentID int64) error {
+		advanced = append(advanced, parentID)
+		return nil
+	}
+
+	mk := func(uuid string, open bool) int64 {
+		p := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeRetrieve,
+			Status: protocol.StatusReshuffling, Quantity: 1}
+		testutil.MustNoErr(t, db.CreateOrder(p), "create parent "+uuid)
+		c := &orders.Order{EdgeUUID: uuid + "-c1", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+			Status: protocol.StatusConfirmed, ParentOrderID: &p.ID, Quantity: 1}
+		testutil.MustNoErr(t, db.CreateOrder(c), "create child for "+uuid)
+		if open {
+			testutil.MustNoErr(t, db.SetCompoundOpen(p.ID, true), "open "+uuid)
+		}
+		return p.ID
+	}
+
+	// Identical in every respect the predicate looks at, except sealedness.
+	openParent := mk("resh-open", true)
+	sealedParent := mk("resh-sealed", false)
+
+	n, err := svc.AdvanceStuckReshuffleParents()
+	testutil.MustNoErr(t, err, "AdvanceStuckReshuffleParents")
+
+	if len(advanced) != 1 || advanced[0] != sealedParent {
+		t.Fatalf("advanced = %v (n=%d), want exactly [%d]. The open parent (%d) is mid-dig, not "+
+			"stranded: re-driving it logs a recovery that did not happen, every pass, forever",
+			advanced, n, sealedParent, openParent)
+	}
+}
+
+// TestAdvanceStuckReshuffleParents_RescuesADigThatNamesATarget is the deletion
+// of a carve-out, pinned so it cannot come back by accident.
+//
+// A service dig used to hold its lane past its last blocker until the bin it
+// uncovered was collected, which left it sealed, in `reshuffling`, with every
+// child terminal — every clause of this sweep's SELECT and none of its meaning.
+// So the sweep learned to skip such a parent, or it would have re-driven a
+// working dig into AdvanceCompoundOrder's refusal and written an
+// advance_stuck_reshuffle recovery row every pass, forever.
+//
+// THE HOLD IS GONE. A finished dig hands its corridor to the live demand in the
+// episode it was raised for and terminates on the ordinary path, so a dig
+// sitting in `reshuffling` with every child terminal is stuck in exactly the
+// plain sense this sweep was written for — and re-driving it is the rescue, not
+// a false record of one.
+//
+// THE FIXTURE IS THE OLD TEST'S, UNCHANGED, AND THE EXPECTATION IS INVERTED.
+// Both parents name a target slot and differ only in whether a bin is still
+// standing there, which was the whole of the deleted predicate. Both must now be
+// re-driven: the sweep does not ask that question any more, and a parent whose
+// target bin is still standing would otherwise be the one row it silently
+// refused to rescue.
+//
+// MUTATION: restore the `if owes { continue }` arm. This fires with advanced =
+// [collected] alone — the parent whose target bin is still standing is skipped,
+// which is a dig left in `reshuffling` with nothing coming to release it.
+func TestAdvanceStuckReshuffleParents_RescuesADigThatNamesATarget(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := newReconService(t, db)
+	_, _, bp := setupTestData(t, db)
+
+	var advanced []int64
+	svc.advanceCompound = func(parentID int64) error {
+		advanced = append(advanced, parentID)
+		return nil
+	}
+
+	// Each dig gets its own target slot. The slot exists in both cases; only the
+	// bin differs, because the predicate is about the bin and not the geometry.
+	mk := func(uuid string, binStillThere bool) (parentID int64, slotName string) {
+		slot := &nodes.Node{Name: uuid + "-TGT", Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(slot), "create target slot for "+uuid)
+		if binStillThere {
+			createTestBinAtNode(t, db, bp.Code, slot.ID, uuid+"-BIN")
+		}
+		p := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: protocol.OrderTypeMove,
+			Status: protocol.StatusReshuffling, Quantity: 1}
+		testutil.MustNoErr(t, db.CreateOrder(p), "create dig parent "+uuid)
+		c := &orders.Order{EdgeUUID: uuid + "-c1", StationID: "line-1", OrderType: protocol.OrderTypeMove,
+			Status: protocol.StatusConfirmed, ParentOrderID: &p.ID, Quantity: 1}
+		testutil.MustNoErr(t, db.CreateOrder(c), "create child for "+uuid)
+		return p.ID, slot.Name
+	}
+
+	standing, standingSlot := mk("dig-standing", true)
+	collected, _ := mk("dig-collected", false)
+
+	n, err := svc.AdvanceStuckReshuffleParents()
+	testutil.MustNoErr(t, err, "AdvanceStuckReshuffleParents")
+
+	if len(advanced) != 2 {
+		t.Fatalf("advanced = %v (n=%d), want both %d and %d. A dig no longer holds its lane for the "+
+			"bin at %s, so a dig parked in `reshuffling` with every child terminal is stranded and "+
+			"this sweep is what un-strands it", advanced, n, standing, collected, standingSlot)
 	}
 }
 
@@ -365,6 +497,100 @@ func TestPreDispatchNotSwept(t *testing.T) {
 	}
 }
 
+// TestGateStagedNotSwept: a robot parked at a lane wait point holding an unsealed
+// waybill must NOT be auto-cancelled by the stuck sweep.
+//
+// The landmine this guards is specific and destructive: the sweep's scope includes
+// `staged`, its default TTL is an hour, and a dwelling order's updated_at never
+// moves — so the cutoff fires reliably, and abandoning runs the full teardown
+// (fleet cancel, bin unclaim, edge notify) on a robot that is physically holding a
+// bin mid-order. A gate-staged order is not stuck; Core simply owes it a decision.
+//
+// TWO controls, both identical in status and age, and together they say what the
+// exemption keys on:
+//
+//   - no plan at all → swept. The exemption is narrow, not a disabled sweep.
+//   - a plan whose wait is UNSTAMPED → swept. This is the one that changed: the
+//     exemption used to key on plan-PRESENCE (steps_json non-empty, wait_index 0,
+//     not coordinated), and it now keys on the KIND of the wait the order is
+//     parked at. An order dwelling on a station's wait is a human's to answer for
+//     and gets the operator-gated bound, not Core's exemption.
+//
+// This test caught the change the moment the predicate was rewritten, because its
+// fixture had been hand-written in the old shape. That is the argument against the
+// compatibility fallback in miniature: with a fallback, this fixture would have
+// kept passing while no longer representing anything the valve produces.
+func TestGateStagedNotSwept(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	svc := newReconService(t, db)
+
+	mk := func(uuid string, apply func(*orders.Order)) *orders.Order {
+		o := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: "store", Status: "staged", SourceNode: "ALN_003", DeliveryNode: "SMN_001"}
+		if apply != nil {
+			apply(o)
+		}
+		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
+		return o
+	}
+	// Dwelling at a lane gate: the plan the valve actually writes — its wait
+	// carries wait_kind "lane" and the lane whose evaluator owns it — wait_index
+	// still 0, and a vendor order (a robot really is committed).
+	gateStaged := mk("gate-staged", func(o *orders.Order) {
+		o.StepsJSON = `[{"action":"pickup","node":"ALN_003"},` +
+			`{"action":"wait","node":"LANE-WAIT","wait_kind":"lane","wait_lane":42},` +
+			`{"action":"dropoff","node":"SMN_001"}]`
+	})
+	testutil.MustNoErr(t, db.UpdateOrderVendor(gateStaged.ID, "sg-gate-staged", "WAITING", ""), "vendor")
+	// Control 1: same status, same age, no plan at all — genuinely runtime-stuck.
+	plainStaged := mk("plain-staged", nil)
+	testutil.MustNoErr(t, db.UpdateOrderVendor(plainStaged.ID, "sg-plain-staged", "WAITING", ""), "vendor")
+	// Control 2: a plan whose wait is UNSTAMPED — a station's wait, not Core's.
+	// Byte-identical to control 1 in every column the old predicate looked at
+	// except steps_json, which is exactly what the old predicate keyed on.
+	stationStaged := mk("station-staged", func(o *orders.Order) {
+		o.StepsJSON = `[{"action":"pickup","node":"ALN_003"},` +
+			`{"action":"wait","node":"ALN_003"},` +
+			`{"action":"dropoff","node":"SMN_001"}]`
+	})
+	testutil.MustNoErr(t, db.UpdateOrderVendor(stationStaged.ID, "sg-station-staged", "WAITING", ""), "vendor")
+
+	for _, id := range []int64{gateStaged.ID, plainStaged.ID, stationStaged.ID} {
+		if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '10 hours' WHERE id = $1`, id); err != nil {
+			t.Fatalf("backdate %d: %v", id, err)
+		}
+	}
+
+	var abandoned []int64
+	svc.abandonOrder = func(o *orders.Order, reason string) error {
+		abandoned = append(abandoned, o.ID)
+		return nil
+	}
+
+	n, err := svc.AbandonStuckOrders(time.Hour, 4*time.Hour)
+	testutil.MustNoErr(t, err, "AbandonStuckOrders")
+
+	got := map[int64]bool{}
+	for _, id := range abandoned {
+		got[id] = true
+	}
+	if got[gateStaged.ID] {
+		t.Error("a gate-staged order was abandoned — that cancels a committed robot mid-order and strands the bin it is carrying")
+	}
+	if !got[plainStaged.ID] {
+		t.Error("the control staged order was NOT swept — the exemption must be narrow, not a disabled sweep")
+	}
+	if !got[stationStaged.ID] {
+		t.Error("an order carrying a plan whose wait is UNSTAMPED was exempted. The exemption is for " +
+			"waits CORE owes a decision on; a station's wait is a human's, and it answers to the " +
+			"operator-gated bound instead. Keying on plan-presence is the predicate this replaced")
+	}
+	if n != 2 {
+		t.Errorf("abandoned count = %d, want 2 (both controls)", n)
+	}
+}
+
 // ── Summary — critical by dead letter ───────────────────────────────
 
 func TestReconciliationService_Summary_DeadLetterCritical(t *testing.T) {
@@ -442,8 +668,18 @@ func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 			if a.Category != "order_runtime" {
 				t.Errorf("anomaly category = %q, want order_runtime", a.Category)
 			}
-			if a.RecommendedAction != "cancel_stuck_order" {
-				t.Errorf("recommended action = %q", a.RecommendedAction)
+			// IT USED TO ASSERT `cancel_stuck_order`, AND THAT IS THE CHANGE. The
+			// board turned that recommendation into this row's only affordance —
+			// a "Cancel Stuck Order" button — and cancelling a stuck order is
+			// ruled 4/4 never the answer: it clears the row and leaves the robot
+			// exactly where it was, minus the evidence.
+			if a.RecommendedAction != "investigate_stuck_order" {
+				t.Errorf("recommended action = %q, want investigate_stuck_order — the board must not "+
+					"propose the one act this house ruled is never right", a.RecommendedAction)
+			}
+			if a.Detail == "" {
+				t.Error("the anomaly carries no detail. The row renders an enum, an order id and a " +
+					"recommendation; without a sentence saying what is wrong it is not a diagnosis")
 			}
 			break
 		}

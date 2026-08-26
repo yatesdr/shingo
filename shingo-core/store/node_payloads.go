@@ -7,6 +7,7 @@ package store
 import (
 	"fmt"
 
+	"shingocore/store/internal/nodetree"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
 )
@@ -52,13 +53,7 @@ func (db *DB) ListNodesForPayload(payloadID int64) ([]*nodes.Node, error) {
 // no ancestor has payloads. Uses a recursive CTE to resolve the ancestor
 // chain in a single query. Cross-aggregate (nodes ↔ payloads).
 func (db *DB) GetEffectivePayloads(nodeID int64) ([]*payloads.Payload, error) {
-	rows, err := db.Query(fmt.Sprintf(`
-		WITH RECURSIVE ancestors AS (
-			SELECT id, parent_id, 0 AS depth FROM nodes WHERE id = $1
-			UNION ALL
-			SELECT n.id, n.parent_id, a.depth + 1 FROM nodes n
-			JOIN ancestors a ON n.id = a.parent_id
-		)
+	rows, err := db.Query(fmt.Sprintf(nodetree.AncestorsOf(1)+`
 		SELECT %s FROM payloads
 		WHERE id IN (
 			SELECT np.payload_id FROM node_payloads np

@@ -107,3 +107,8 @@ AGENTS.md
 
 # Gate run artifacts (container logs, scope output) — build output, never source
 .gate/
+
+# Shard planner scratch: package list, per-shard logs, recorded timings.
+# Written by scripts/gate.sh-adjacent CI tooling and by local rehearsals.
+.shard/
+.shard-artifacts/

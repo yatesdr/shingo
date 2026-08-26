@@ -239,7 +239,7 @@ type BindingRow struct {
 	AgeCell  Cell
 
 	// BoundAt is the boundary row's timestamp, printed beside the age so the
-	// reading is checkable against bin_uop_audit rather than merely asserted.
+	// reading is checkable against bin_uop_ledger rather than merely asserted.
 	// No-data when there is no boundary row.
 	BoundAt Cell
 
@@ -405,7 +405,7 @@ func buildBindingRow(c domain.CarrierBinding, age time.Duration, known bool, k c
 		r.SortGroup = bindingGroupUnknownAge
 		r.AgeCell = NoData("no load, clear or release row exists for this carrier — the " +
 			"binding predates the audit trail, so its age is unknown. NOT a new binding")
-		r.BoundAt = NoData("no boundary row in bin_uop_audit for this carrier")
+		r.BoundAt = NoData("no boundary row in bin_uop_ledger for this carrier")
 	}
 
 	reading, binloads, sized := ClassifyLedger(c, k)

@@ -14,6 +14,7 @@ import (
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/payloads"
+	"shingocore/store/reservations"
 )
 
 func createTestBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int64, label string) *bins.Bin {
@@ -77,7 +78,7 @@ func TestGroupResolveRetrieve_AccessibleFIFO(t *testing.T) {
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup(t, db)
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: db}
 
 	// Place bin at lane 0, slot depth 1 (front/accessible) — older
 	older := createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-FIFO-OLD")
@@ -88,7 +89,7 @@ func TestGroupResolveRetrieve_AccessibleFIFO(t *testing.T) {
 	// Place bin at lane 1, slot depth 1 (front/accessible) — newer
 	createTestBinAtNode(t, db, bp.Code, slots[1][0].ID, "BIN-FIFO-NEW")
 
-	result, err := gr.ResolveRetrieve(grp, bp.Code)
+	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveRetrieve: %v", err)
 	}
@@ -105,7 +106,7 @@ func TestGroupResolveRetrieve_BuriedFails(t *testing.T) {
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup(t, db)
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: db}
 
 	// Create a different payload template for the blocker
 	blockerBP := &payloads.Payload{Code: "BLK"}
@@ -117,7 +118,7 @@ func TestGroupResolveRetrieve_BuriedFails(t *testing.T) {
 	// Place target at lane 0, slot depth 3 (back — buried)
 	buried := createTestBinAtNode(t, db, bp.Code, slots[0][2].ID, "BIN-BURIED")
 
-	_, err := gr.ResolveRetrieve(grp, bp.Code)
+	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
 	if err == nil {
 		t.Fatal("expected error for buried bin, got nil")
 	}
@@ -136,9 +137,9 @@ func TestGroupResolveStore_BackToFront(t *testing.T) {
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup(t, db)
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: db}
 
-	result, err := gr.ResolveStore(grp, bp.Code, nil)
+	result, err := gr.ResolveStore(grp, bp.Code, nil, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -155,12 +156,12 @@ func TestGroupResolveStore_Consolidation(t *testing.T) {
 	db := testDB(t)
 	grp, lanes, slots, bp := setupNodeGroup(t, db)
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: db}
 
 	// Place a bin at lane 0, slot depth 3 (deepest)
 	createTestBinAtNode(t, db, bp.Code, slots[0][2].ID, "BIN-CONSOL")
 
-	result, err := gr.ResolveStore(grp, bp.Code, nil)
+	result, err := gr.ResolveStore(grp, bp.Code, nil, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -177,14 +178,14 @@ func TestGroupResolveStore_FullLane(t *testing.T) {
 	db := testDB(t)
 	grp, lanes, slots, bp := setupNodeGroup(t, db)
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: db}
 
 	// Fill all 3 slots of lane 0
 	for i := 0; i < 3; i++ {
 		createTestBinAtNode(t, db, bp.Code, slots[0][i].ID, fmt.Sprintf("BIN-FULL-%d", i))
 	}
 
-	result, err := gr.ResolveStore(grp, "", nil)
+	result, err := gr.ResolveStore(grp, "", nil, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -201,17 +202,24 @@ func TestGroupResolveRetrieve_LockedLaneSkipped(t *testing.T) {
 	db := testDB(t)
 	grp, lanes, slots, bp := setupNodeGroup(t, db)
 
-	laneLock := NewLaneLock()
-	gr := &GroupResolver{DB: db, LaneLock: laneLock}
+	gr := &GroupResolver{DB: db}
 
 	// Place bin at lane 0, slot depth 1
 	createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-LOCKED")
 
-	// Lock lane 0
-	laneLock.TryLock(lanes[0].ID, 999)
+	// Lock lane 0 with a REAL dig hold. The resolver no longer consults an
+	// in-memory lock object — ListChildNodesUnlocked filters dig-held lanes out
+	// of the candidate query — so the fixture has to create the durable row the
+	// query reads. It also needs a real owning order: reservations.order_id has
+	// a foreign key, which the old memory-only fixture never had to satisfy.
+	digger := testdb.CreateOrder(t, db)
+	laneLock := NewLaneLockWithDB(db.DB)
+	if !laneLock.TryLock(lanes[0].ID, digger.ID) {
+		t.Fatal("TryLock on a free lane must succeed")
+	}
 
 	// Should fail since lane 0 is locked and lane 1 has no bins
-	_, err := gr.ResolveRetrieve(grp, bp.Code)
+	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
 	if err == nil {
 		t.Fatal("expected error when lane is locked and no other bins available, got nil")
 	}
@@ -248,8 +256,8 @@ func TestNodeGroupResolveRetrieve_DirectChildren(t *testing.T) {
 	// Place bin at child2
 	b := createTestBinAtNode(t, db, bp.Code, child2.ID, "BIN-DC")
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
-	result, err := gr.ResolveRetrieve(grp, bp.Code)
+	gr := &GroupResolver{DB: db}
+	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveRetrieve: %v", err)
 	}
@@ -279,8 +287,8 @@ func TestNodeGroupResolveRetrieve_Mixed(t *testing.T) {
 	// Place newer bin at lane 0, slot 0
 	createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-MIX-NEW")
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
-	result, err := gr.ResolveRetrieve(grp, bp.Code)
+	gr := &GroupResolver{DB: db}
+	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveRetrieve: %v", err)
 	}
@@ -307,8 +315,8 @@ func TestNodeGroupResolveStore_DirectChildren(t *testing.T) {
 	child2 := &nodes.Node{Name: "DS-02", ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(child2)
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
-	result, err := gr.ResolveStore(grp, bp.Code, nil)
+	gr := &GroupResolver{DB: db}
+	result, err := gr.ResolveStore(grp, bp.Code, nil, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -343,10 +351,10 @@ func TestGroupResolveStore_BinTypeRestriction(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.SetNodeBinTypes(lane0.ID, []int64{btSmall.ID}), "set node bin types")
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: db}
 
 	// Try to store a LARGE bin — should skip lane 0 and use lane 1
-	result, err := gr.ResolveStore(grp, bp.Code, &btLarge.ID)
+	result, err := gr.ResolveStore(grp, bp.Code, &btLarge.ID, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -357,7 +365,7 @@ func TestGroupResolveStore_BinTypeRestriction(t *testing.T) {
 	}
 
 	// Try to store a SMALL bin — should use lane 0
-	result, err = gr.ResolveStore(grp, bp.Code, &btSmall.ID)
+	result, err = gr.ResolveStore(grp, bp.Code, &btSmall.ID, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("ResolveStore: %v", err)
 	}
@@ -440,7 +448,7 @@ func TestFIFOSelection_BuriedOlderThanAccessible(t *testing.T) {
 
 	_ = lanes // used implicitly via slots
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: db}
 
 	// Create blocker payload
 	blkPayload := &payloads.Payload{Code: "BLK"}
@@ -466,7 +474,7 @@ func TestFIFOSelection_BuriedOlderThanAccessible(t *testing.T) {
 	binNew := createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-NEW")
 	setBinLoadedAt(t, db, binNew.ID, baseTime.Add(2*time.Second))
 
-	_, err := gr.ResolveRetrieve(grp, bp.Code)
+	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
 	if err == nil {
 		t.Fatal("expected BuriedError for oldest buried bin, got nil")
 	}
@@ -485,7 +493,7 @@ func TestFIFOSelection_AccessibleOlderThanBuried(t *testing.T) {
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup3Lane(t, db)
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: db}
 
 	blkPayload := &payloads.Payload{Code: "BLK"}
 	testutil.MustNoErr(t, db.CreatePayload(blkPayload), "create blocker payload")
@@ -503,7 +511,7 @@ func TestFIFOSelection_AccessibleOlderThanBuried(t *testing.T) {
 	// Blocker in lane 3
 	createTestBinAtNode(t, db, blkPayload.Code, slots[2][0].ID, "BLK-1")
 
-	result, err := gr.ResolveRetrieve(grp, bp.Code)
+	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("expected accessible result, got error: %v", err)
 	}
@@ -522,7 +530,7 @@ func TestCOSTSelection_IgnoresBuriedWhenAccessible(t *testing.T) {
 	// Set group to COST mode
 	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, "retrieve_algorithm", "COST"), "set retrieve_algorithm")
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: db}
 
 	blkPayload := &payloads.Payload{Code: "BLK"}
 	testutil.MustNoErr(t, db.CreatePayload(blkPayload), "create blocker payload")
@@ -545,7 +553,7 @@ func TestCOSTSelection_IgnoresBuriedWhenAccessible(t *testing.T) {
 	binNew := createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-NEW")
 	setBinLoadedAt(t, db, binNew.ID, baseTime.Add(2*time.Second))
 
-	result, err := gr.ResolveRetrieve(grp, bp.Code)
+	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("COST mode should return accessible bin, got error: %v", err)
 	}
@@ -563,7 +571,7 @@ func TestCOSTSelection_FallsToBuriedWhenNoneAccessible(t *testing.T) {
 
 	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, "retrieve_algorithm", "COST"), "set retrieve_algorithm")
 
-	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+	gr := &GroupResolver{DB: db}
 
 	blkPayload := &payloads.Payload{Code: "BLK"}
 	testutil.MustNoErr(t, db.CreatePayload(blkPayload), "create blocker payload")
@@ -572,7 +580,7 @@ func TestCOSTSelection_FallsToBuriedWhenNoneAccessible(t *testing.T) {
 	buried := createTestBinAtNode(t, db, bp.Code, slots[0][2].ID, "BIN-BURIED")
 	createTestBinAtNode(t, db, blkPayload.Code, slots[0][0].ID, "BLK-FRONT")
 
-	_, err := gr.ResolveRetrieve(grp, bp.Code)
+	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
 	if err == nil {
 		t.Fatal("expected BuriedError when no accessible bins exist in COST mode")
 	}
@@ -631,7 +639,7 @@ func TestFindEmptyCompatible_LaneUnawareStarvation(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateBin(emptyL2), "create empty bin L2")
 
 	// GAP PROOF 1: FindEmptyCompatibleBin returns a buried empty (lane-unaware)
-	found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0)
+	found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0, bins.EmptyFence{}, reservations.Anyone)
 	if err != nil {
 		t.Fatalf("FindEmptyCompatibleBin returned error: %v — if all empties are buried and the query filtered by accessibility, this would be the starvation scenario", err)
 	}

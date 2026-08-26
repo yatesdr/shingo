@@ -174,7 +174,7 @@ import { onSSE } from '/static/shared/utils.js';
     var items = resp && resp.anomalies ? resp.anomalies : [];
     reconBody.innerHTML = '';
     if (!items.length) {
-      reconBody.innerHTML = '<tr><td colspan="9" class="text-muted">No anomalies detected.</td></tr>';
+      reconBody.innerHTML = '<tr><td colspan="10" class="text-muted">No anomalies detected.</td></tr>';
       return;
     }
     items.forEach(function(item) {
@@ -185,8 +185,10 @@ import { onSSE } from '/static/shared/utils.js';
         actionHtml = '<button class="btn btn-sm" data-action="repairAnomaly:release_terminal_claim:' + item.order_id + ':' + item.bin_id + '" >Release Claim</button>';
       } else if (item.recommended_action === 'release_staged_bin' && item.bin_id) {
         actionHtml = '<button class="btn btn-sm" data-action="repairAnomaly:release_staged_bin:0:' + item.bin_id + '" >Release Staged Bin</button>';
-      } else if (item.recommended_action === 'cancel_stuck_order' && item.order_id) {
-        actionHtml = '<button class="btn btn-sm" data-action="repairAnomaly:cancel_stuck_order:' + item.order_id + ':0" >Cancel Stuck Order</button>';
+      } else if (item.recommended_action === 'investigate_stuck_order') {
+        // No button. Cancelling a stuck order is ruled never the answer, and it
+        // was this row's only affordance — see the reconciliation producer.
+        actionHtml = '<span class="text-muted">Investigate &mdash; see detail</span>';
       }
       var tr = document.createElement('tr');
       tr.innerHTML =
@@ -198,6 +200,7 @@ import { onSSE } from '/static/shared/utils.js';
         '<td>' + escapeHtml(item.order_status || '') + '</td>' +
         '<td>' + escapeHtml(item.bin_status || '-') + '</td>' +
         '<td>' + escapeHtml(item.issue || '') + '</td>' +
+        '<td>' + escapeHtml(item.detail || '') + '</td>' +
         '<td>' + actionHtml + '</td>';
       reconBody.appendChild(tr);
     });

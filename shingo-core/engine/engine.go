@@ -5,10 +5,10 @@
 // Sibling files:
 //
 //   engine_lifecycle.go   Start, Stop, loadActiveOrders
-//   engine_accessors.go   one-liner subsystem getters + SetCountGroupRunner
-//   engine_messaging.go   SendToEdge, SendDataToEdge, RunFulfillmentScan
+//   engine_accessors.go   one-liner subsystem getters
+//   engine_messaging.go   SendDataToEdge, RunFulfillmentScan
 //   engine_connection.go  checkConnectionStatus, connectionHealthLoop
-//   engine_reconfigure.go ReconfigureDatabase/Fleet/CountGroups/Messaging
+//   engine_reconfigure.go ReconfigureDatabase/Fleet/Messaging
 //   engine_scene_sync.go  SyncScenePoints, SyncFleetNodes, UpdateNodeZones, SceneSync
 //   engine_background.go  robotRefreshLoop, stagedBinSweepLoop
 //
@@ -27,7 +27,6 @@ import (
 
 	"shingo/protocol/types"
 	"shingocore/config"
-	"shingocore/countgroup"
 	"shingocore/dispatch"
 	"shingocore/dispatch/eta"
 	"shingocore/fleet"
@@ -52,19 +51,41 @@ type Config struct {
 }
 
 type Engine struct {
-	cfg                   *config.Config
-	configPath            string
-	db                    *store.DB
-	fleet                 fleet.Backend
-	msgClient             *messaging.Client
-	dispatcher            *dispatch.Dispatcher
-	tracker               fleet.OrderTracker
-	countGroup            *countgroup.Runner                          // nil if feature disabled / no groups configured
-	countGroupMu          sync.Mutex                                  // guards the countGroup pointer (ReconfigureCountGroups vs Start/Stop)
-	countGroupBuild       func(countgroup.Emitter) *countgroup.Runner // stored for ReconfigureCountGroups
-	Events                *EventBus
-	logFn                 LogFunc
-	debugLog              types.DebugLogFunc
+	cfg        *config.Config
+	configPath string
+	db         *store.DB
+	fleet      fleet.Backend
+	msgClient  *messaging.Client
+	dispatcher *dispatch.Dispatcher
+	tracker    fleet.OrderTracker
+	Events     *EventBus
+	logFn      LogFunc
+	debugLog   types.DebugLogFunc
+	// strandedNotes is the last anomaly note LOGGED per bin, so the two-second
+	// sweep re-marks every stranded bin (which it must — the note carries the
+	// robot's latest position) without re-printing an identical line forever.
+	// See strandedAnomaly. Bounded by the bins that have been stranded and
+	// pruned on placement.
+	strandedNotes   map[int64]string
+	strandedNotesMu sync.Mutex
+	// dropObs is the FIRST at-rest, empty-deck sample per carried bin — the
+	// one reading that describes where the bin was actually set down.
+	// Everything after it describes where the robot went NEXT: on 2026-08-24
+	// the correct reading (AP102 -> SMN_007) was present on tick 1 and gone by
+	// tick 20, after which 50 more ticks reported a park point 12.3 m away.
+	//
+	// deckSeenLoaded is the other half: it records WHEN this process last
+	// watched the deck loaded. An empty deck with no such record is a Core
+	// that restarted after the unload; one whose record is older than
+	// deckWitnessRecency is a Core that was up but heard nothing about this
+	// robot in between. Neither is an observation of anything — see freezeDrop.
+	//
+	// Both are bounded by the bins on carrier nodes and pruned against that
+	// list on every sweep. Neither is persisted: they describe what this
+	// process witnessed, and a restart genuinely did not witness it.
+	dropObs               map[int64]dropObservation
+	deckSeenLoaded        map[int64]time.Time
+	dropObsMu             sync.Mutex
 	reconciliation        *ReconciliationService
 	recovery              *RecoveryService
 	fulfillment           *fulfillment.Scanner
@@ -92,6 +113,7 @@ type Engine struct {
 	heartbeatService      *service.HeartbeatService
 	thresholdMonitor      *ThresholdMonitor
 	sourceabilityMonitor  *SourceabilityMonitor
+	maintainer            *Maintainer
 	etaCache              *eta.Cache
 	notifier              *notify.Notifier
 	stopChan              chan struct{}
@@ -162,6 +184,12 @@ type Engine struct {
 	// these sit beside. See noteMapSyncFailure.
 	mapSyncFailKey string
 	mapSyncFailN   int
+	// sceneSyncFailKey/N are the same throttle for the SCENE half. Separate
+	// counters because the two syncs fail independently — different transport,
+	// different gate hash — and a shared counter would let one failure's
+	// backoff hide the other's first occurrence.
+	sceneSyncFailKey string
+	sceneSyncFailN   int
 }
 
 func New(c Config) *Engine {
@@ -212,12 +240,6 @@ func New(c Config) *Engine {
 	e.reconciliation.advanceCompound = func(parentID int64) error {
 		return e.dispatcher.AdvanceCompoundOrder(parentID)
 	}
-	// resolveRestoreSynthetic resolves stranded reshuffle_restore synthetics
-	// with zero children — complementary to advanceCompound (all-children
-	// terminal). Late-bound (e.dispatcher is created in Start()).
-	e.reconciliation.resolveRestoreSynthetic = func(syntheticParentID int64, edgeUUID string) error {
-		return e.dispatcher.ResolveOrphanedRestoreSynthetic(syntheticParentID, edgeUUID)
-	}
 	e.recovery = newRecoveryService(e)
 	epochAnnounce := service.EpochAnnounce{
 		Topic:       e.cfg.Messaging.DispatchTopic,
@@ -225,6 +247,12 @@ func New(c Config) *Engine {
 	}
 	e.binManifest = service.NewBinManifestService(e.db, epochAnnounce)
 	e.binService = service.NewBinService(e.db, e.binManifest)
+	// The burial shadow instrument's tally, read once per reconciliation sweep.
+	// Bound here rather than at construction because BinService does not exist
+	// when newReconciliationService runs — the same ordering every other
+	// late-bound callback on that service works around.
+	e.reconciliation.burialTally = e.binService.BurialShadowTally
+	e.reconciliation.strandedBinSweep = e.sweepStrandedBins
 	e.orderService = service.NewOrderService(e.db, e.fleet)
 	e.nodeService = service.NewNodeService(e.db)
 
@@ -246,6 +274,7 @@ func New(c Config) *Engine {
 	e.heartbeatService = service.NewHeartbeatService(e.db)
 	e.thresholdMonitor = NewThresholdMonitor(e)
 	e.sourceabilityMonitor = NewSourceabilityMonitor(e)
+	e.maintainer = NewMaintainer(e, nil)
 	e.notifier = notify.New(&c.AppConfig.Notifications)
 	// Loader CRUD re-derives demand_registry + nudges the monitor on each edit.
 	e.loaderService = service.NewLoaderService(e.db, e.thresholdMonitor)

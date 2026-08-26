@@ -47,11 +47,11 @@ Two changes fixed it, and the order matters:
 
 1. **Stop producing the volume.** `logging.stderr_subsystems` in
    `shingocore.yaml` gates which debuglog subsystems reach stderr, and
-   therefore journald. It defaults to everything except `countgroup` and
-   `rds`, which were 334,361 and 125,817 lines/day — 75% of the journal
-   between them. The count-group poll additionally logs on occupancy
-   *change* rather than per 500 ms tick. Neither poller was disabled;
-   only their tracing was.
+   therefore journald. It defaults to everything except `rds`, which was
+   125,817 lines/day. The other half of that volume was a 500 ms
+   occupancy poll writing 334,361 lines/day; that feature has since been
+   retired outright, so the traffic is gone rather than muted. The rds
+   poller was not disabled; only its tracing was.
 
    Escape hatch, no rebuild required — restore the full firehose for one
    incident with:

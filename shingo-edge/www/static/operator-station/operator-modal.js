@@ -1,4 +1,4 @@
-import { esc, fillColor, postAction, formatETA } from './operator-util.js';
+import { esc, fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, primeNoticeText, showToast } from './operator-util.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, REFUSE_LABEL, UNDO_LABEL,
 } from './operator-supply-refusal.js';
@@ -172,8 +172,11 @@ export function renderModal(entry) {
 
     if (isReplenishing(entry)) {
         const activeOrders = (entry.orders || []).filter(o => isActive(o.status));
+        // The status word stays and the cause is appended to it: an operator
+        // reading "retrieve: queued" cannot tell a capacity gate from a missing
+        // bin, and Core already generated the sentence that distinguishes them.
         const statusText = activeOrders.length > 0
-            ? activeOrders.map(o => o.order_type + ': ' + o.status).join(', ')
+            ? activeOrders.map(o => withQueueCause(o.order_type + ': ' + o.status, o)).join(', ')
             : 'Order in progress';
         html += '<div class="modal-status">[REP] ' + esc(statusText) + '</div>';
     } else {
@@ -249,17 +252,17 @@ export function renderModal(entry) {
     html += '<div class="modal-actions">';
 
     // CHILD TILE — this node is shown here only because the node it extends
-    // lives on this station (a press-index seat with no station of its own).
+    // lives on this station (a press-index position with no station of its own).
     // It owns no changeover task and no orders, so there is NOTHING to release
     // from here. Offering a release button would either no-op or, worse, act on
     // the parent's work from a tile that does not represent it. Render the
-    // relationship and stop; the seat is visible (which is the point — it used
+    // relationship and stop; the position is visible (which is the point — it used
     // to be invisible and got fork-trucked) but not actionable.
     if (entry.child_of_node) {
         html += '<div style="padding:12px 16px;border-radius:8px;background:#1a1a1a;border:1px solid #444;color:#aab;font-size:14px;line-height:1.5">' +
             'Indexed-over position of <strong>' + esc(entry.child_of_node) + '</strong>.' +
             '<div style="color:#888;font-size:12px;margin-top:4px">' +
-            'The changeover moves a bin through this seat. There is nothing to release here — ' +
+            'The changeover moves a bin through this position. There is nothing to release here — ' +
             'work it from ' + esc(entry.child_of_node) + '.</div></div>';
     } else if (claim) {
         if (claim.swap_mode === 'manual_swap') {
@@ -321,14 +324,22 @@ export function renderModal(entry) {
                 html += '</div>';
             }
             if (queued.length > 0) {
+                // "2 orders queued" tells the loader operator nothing they can
+                // act on. Core's cause sentence does — and it is already on the
+                // row. One line per distinct cause so a pair parked for the
+                // same reason does not print it twice.
+                var causes = distinctQueueCauses(queued);
                 html += '<div style="color:#999;font-size:12px;margin-bottom:10px">' + queued.length + ' order' + (queued.length > 1 ? 's' : '') + ' queued</div>';
+                causes.forEach(function(c) {
+                    html += '<div style="color:#999;font-size:12px;margin-bottom:10px;padding-left:8px;border-left:2px solid #444">' + esc(c) + '</div>';
+                });
             }
 
             var queuePos = 1;
             allowed.forEach(function(code) {
                 var payloadOrders = activeOrders.filter(function(o) { return o.payload_code === code; });
                 // Mirror operator-render.js: the no-payload-code fallback is
-                // for the empty-bin-parked demand-signaling phase only. After
+                // for the empty-bin-parked manual-request phase only. After
                 // load (bin has payload_code) or once any active order has a
                 // payload_code, fall back to the strict per-payload match.
                 var nodeBinIsEmpty = !!(binState && binState.occupied && !binState.payload_code);
@@ -353,9 +364,12 @@ export function renderModal(entry) {
                 // "no demand" cards with nothing actionable.
                 //
                 // Long term, manual_swap demand should flow in automatically
-                // (auto_request_payload, kanban / lineside demand signals,
-                // upstream consume-side reorder), so the operator never has
-                // to manually request a bin from this screen. Once that's
+                // (auto_push drains unloaders; upstream consume-side
+                // reorder feeds loaders), so the operator never has
+                // to manually request a bin from this screen. (The kanban
+                // / lineside demand-signal route this list used to name was
+                // deleted 2026-08; auto_request_payload is persisted but has
+                // no trigger reader.) Once that's
                 // wired up, the canRequest branch — and the matching
                 // /request-empty / /request-full URLs below — becomes dead
                 // code and should be deleted instead of being left as a
@@ -465,7 +479,7 @@ export function renderModal(entry) {
         } else {
             const orders = entry.orders || [];
             const active = orders.filter(o => isActive(o.status));
-            const staged = active.find(o => o.status === 'staged');
+            const staged = active.find(isStationReleasable);
             const delivered = active.find(o => o.status === 'delivered');
             const inFlight = active.find(o => !staged && !delivered);
 
@@ -731,10 +745,26 @@ function swapPair(active) {
 // the status-write path independently — SetOrderQueueReason bypasses the
 // transition validator, so the reason lands on the Edge row even in the window
 // where the status push itself was refused.
+// isStationReleasable reports whether a staged order's wait belongs to THIS
+// station, and is therefore something the RELEASE button can satisfy.
+//
+// A LANE-HELD order is staged on a wait CORE owns: the robot is parked at a
+// lane's gate point and the precondition is a lane being safe to enter, which
+// nobody at a station can observe or bring about. Core refuses such a release
+// outright, so a button here would be one whose only correct outcome is an error.
+//
+// The order still renders — it drops through to the waiting arm, which shows its
+// status and, when Core has given one, its reason. The CONTROL goes; the
+// information stays. Suppressing the status instead would leave the tile claiming
+// a parked robot is still driving.
+function isStationReleasable(o) {
+    return o.status === 'staged' && !o.lane_held;
+}
+
 function waitingLabel(blocker) {
     const base = 'WAITING FOR OTHER ROBOT';
     if (!blocker) return base;
-    if (blocker.queue_reason) return base + ' — ' + blocker.queue_reason;
+    if (blocker.queue_reason) return withQueueCause(base, blocker);
     switch (blocker.status) {
         case 'faulted':
             return base + ' — faulted, recovering';
@@ -841,7 +871,15 @@ export async function handleModalAction(evt) {
         url = parts[0];
         body = { payload_code: parts[1] };
     }
-    const ok = await postAction(url, body, loadViewRef);
+    // onResult is where a primes-only round becomes visible. Every station
+    // action funnels through this branch, so the produce swap and the consume
+    // downgrade are both covered by one hook rather than one per verb.
+    const ok = await postAction(url, body, loadViewRef, {
+        onResult: (result) => {
+            const notice = primeNoticeText(result);
+            if (notice) showToast(notice, 'info');
+        },
+    });
     if (ok) closeModal();
 }
 

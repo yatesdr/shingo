@@ -57,7 +57,7 @@ The Core-side applier. Holds:
 - `InventoryDeltaService` — receives `BinUOPDelta` and `LinesideBucketDelta` envelopes from Edge, dedups against `inventory_delta_dedup`, applies the signed delta to `bins.uop_remaining` / `lineside_buckets`, writes the audit row, fires `ClearForReuse` when a `capture_reduction` drives `uop_remaining` to zero.
 - `ManifestClearer` narrow interface — the `*sql.Tx`-taking method used to fire `BinManifestService.ClearForReuse` atomically inside the delta-apply transaction. Atomicity is load-bearing; a crash between the bin update and manifest clear would leave a bin with `uop_remaining=0` but a stale manifest.
 
-Audit table writes (`bin_uop_audit`) live in `shingo-core/store/audit/`. The audit package is shared infrastructure: the uop applier writes it, but so does `BinManifestService` (manifest imprint, manifest clear, partial-back sync, release override). Audit consolidation is a deferred follow-up; see `SHINGO_TODO.md`.
+Audit table writes (`bin_uop_ledger`) live in `shingo-core/store/audit/`. The audit package is shared infrastructure: the uop applier writes it, but so does `BinManifestService` (manifest imprint, manifest clear, partial-back sync, release override). Audit consolidation is a deferred follow-up; see `SHINGO_TODO.md`.
 
 ### Intent verbs
 
@@ -209,10 +209,10 @@ The conservative behavior protects the overpack scenario. A bin nominal 100, phy
 
 ## Audit log
 
-Every mutation of `bins.uop_remaining` writes a row to `bin_uop_audit`:
+Every mutation of `bins.uop_remaining` writes a row to `bin_uop_ledger`:
 
 ```sql
-CREATE TABLE bin_uop_audit (
+CREATE TABLE bin_uop_ledger (
   id              BIGSERIAL PRIMARY KEY,
   bin_id          BIGINT NOT NULL,
   before_uop      INT,

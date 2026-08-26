@@ -42,7 +42,32 @@ export function updateRobotTile(tile, r) {
             chg.remove();
         }
     }
+    updateRobotOrderLine(tile, r);
     setRobotDataset(tile, r);
+}
+
+// The order line under the name: which order this robot is on, and whether it
+// is stuck. Text and a chip, never the tile's colour — the tile's colour is the
+// ROBOT's state, and an order's trouble is not the robot's.
+function updateRobotOrderLine(tile, r) {
+    let line = tile.querySelector('.robot-order');
+    if (!r.order_id) {
+        if (line) line.remove();
+        return;
+    }
+    if (!line) {
+        line = el('div', { className: 'robot-order' });
+        const name = tile.querySelector('.robot-name');
+        if (name && name.nextSibling) tile.insertBefore(line, name.nextSibling);
+        else tile.appendChild(line);
+    }
+    if (r.fault_notice && r.fault_since) {
+        line.className = 'chip chip-warn robot-order';
+        line.innerHTML = h`on #${r.order_id} · fault <span class="tnum" data-since="${r.fault_since}"></span>`;
+        return;
+    }
+    line.className = 'text-muted-xs robot-order';
+    line.textContent = r.fault_since ? 'on #' + r.order_id + ' · replanning' : 'on #' + r.order_id;
 }
 
 // setRobotDataset mirrors robots.js's dataset contract exactly so the

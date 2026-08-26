@@ -116,6 +116,55 @@ func (e *Engine) ReleaseChangeoverWaitForNode(processID, processNodeID int64, di
 	return e.releaseChangeoverWaitScoped(processID, processNodeID, disp)
 }
 
+// releaseSingleLegChangeoverNode handles the per-node RELEASE click for a node
+// whose changeover work is NOT a coordinated swap pair.
+//
+// A cleared position's leg is one order on one robot: lift the bin off the position,
+// take it wherever this cell's bins go, fetch the replacement, hold it at
+// staging, set it down when the operator says the setup is finished. There is
+// no sibling because there is no second robot, and ResolveSwapPair — which
+// exists to keep a two-robot swap's two legs together — refused it for that:
+// "order 58 has no sibling — not a coordinated pair (single-leg flow should use
+// per-order release)". A position node has no claim row either, so the same click
+// could equally bounce on "no active claim for release". Both were the operator
+// pressing the only release button in front of them and getting nothing (N1-d,
+// sim 2026-08-24).
+//
+// The changeover path already releases exactly this shape, and correctly: it
+// fires a lone supply leg at click time and defers one that has an evac sibling
+// to that sibling's pickup. So route to it, and leave every pair on the pair
+// path — handled reports whether this took the click.
+func (e *Engine) releaseSingleLegChangeoverNode(nodeID int64, disp ReleaseDisposition) (handled bool, err error) {
+	node, err := e.db.GetProcessNode(nodeID)
+	if err != nil || node == nil {
+		return false, nil
+	}
+	changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID)
+	if err != nil || changeover == nil {
+		return false, nil // not in a changeover; the pair path owns this node
+	}
+	task, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+	if err != nil || task == nil {
+		return false, nil
+	}
+	// A task with BOTH legs is a coordinated pair and stays on the pair path,
+	// which has its own inversion handling and collision gate. Only the
+	// single-leg shape comes here.
+	if task.OldMaterialReleaseOrderID != nil && task.NextMaterialOrderID != nil {
+		return false, nil
+	}
+	if task.OldMaterialReleaseOrderID == nil && task.NextMaterialOrderID == nil {
+		return false, nil // nothing to release; let the pair path say so
+	}
+	res, err := e.ReleaseChangeoverWaitForNode(node.ProcessID, nodeID, disp)
+	if err != nil {
+		return true, err
+	}
+	e.logFn("release-staged node=%s: single-leg changeover release — released=%d pending=%d",
+		node.Name, res.Released, res.Pending)
+	return true, nil
+}
+
 // releaseChangeoverWaitScoped is the shared body. onlyNodeID == 0 means every
 // task (the changeover-wide release); non-zero narrows to that node.
 func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {

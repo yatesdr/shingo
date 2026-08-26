@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"shingo/shared/clock"
+	"shingo/protocol/clock"
 	"shingocore/domain"
 )
 
@@ -82,7 +82,7 @@ func ConfirmManifest(db *sql.DB, binID int64, producedAt string) error {
 
 // ConfirmManifestTx is ConfirmManifest inside a caller's transaction. Returns
 // the resolved loaded_at plus the bin's current uop_remaining and payload_code
-// so the caller can write a same-tx bin_uop_audit row for the confirm event
+// so the caller can write a same-tx bin_uop_ledger row for the confirm event
 // (§16 PR 3 — confirm was previously a silent mutation). Reuses resolveLoadedAt
 // so producedAt parsing matches ConfirmManifest.
 func ConfirmManifestTx(tx *sql.Tx, binID int64, producedAt string) (loadedAt time.Time, uop int, payloadCode string, err error) {
@@ -133,6 +133,24 @@ func GetManifest(db *sql.DB, binID int64) (*Manifest, error) {
 // starvation symptom was the empty-bin side; aligning here prevents the
 // inverse footgun (full bin loaded into a type the rules say is forbidden,
 // then sourceable as that incompatible type forever).
+// ── THE ONE SITE IN THE STATUS SWEEP WHERE BEHAVIOUR ACTUALLY CHANGED ─────
+//
+// Recorded where it happened rather than only in a commit message. This query's
+// status clause was a REJECT-LIST — `status NOT IN ('staged','maintenance',
+// 'flagged','retired','quality_hold')` — which answers TRUE for any value it does
+// not name. The status column carries no CHECK constraint (domain.BinStatus says
+// so, and write-time validation is deferred on purpose so operators can set
+// off-spec states during incident recovery), so a hand-corrected row, or a
+// seventh status added to the enum and not to this list, was SOURCEABLE by
+// default here. It is now refused by default.
+//
+// `644e2d50`'s message says "Equivalent for every declared status". That is true
+// and it is not the whole claim: the six declared statuses behave identically and
+// only an undeclared one moves. The direction is deliberate — fail-closed is the
+// right default for "should a robot drive to this bin" — but it means a plant
+// carrying off-spec status values will see those bins stop being sourced, which
+// presents as a material shortage rather than as a rejection. Worth a
+// `SELECT status, count(*) FROM bins GROUP BY 1` before deploying to a site.
 func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, error) {
 	// Empty payloadCode is always a bug here. After the bin-as-truth
 	// refactor, unattached bins store payload_code = "" instead of
@@ -150,7 +168,8 @@ func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, 
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
-		  AND b.status NOT IN ('staged', 'maintenance', 'flagged', 'retired', 'quality_hold')
+		  AND `+SourceableStatusSQL+`
+		  AND b.status <> 'staged'
 		  AND ($2 = 0 OR b.node_id != $2)
 		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC

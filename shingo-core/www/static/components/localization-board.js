@@ -81,6 +81,169 @@ export function serverLaneKey(from, to) {
     return from < to ? from + '-' + to : to + '-' + from;
 }
 
+// ── Window control seeds and guards ─────────────────────────────────────────
+//
+// Pure date math, at module scope so the node harness can pin it: these are
+// the values that would be WRONG SILENTLY — an off-by-one that includes a
+// day the roll-up has not closed yet, or a span cap that stopped mirroring
+// the server's.
+
+function iso(d) { return d.toISOString().slice(0, 10); }
+
+// seedMainRange is the board's opening range: the last seven COMPLETE days,
+// ending yesterday. The roll-up writes a day's rows the night after, so a
+// range ending today silently overstates itself by one empty day.
+export function seedMainRange(today) {
+    const to = new Date(today); to.setUTCDate(to.getUTCDate() - 1);
+    const from = new Date(to); from.setUTCDate(from.getUTCDate() - 6);
+    return { from: iso(from), to: iso(to) };
+}
+
+// seedCompareDays is what compare mode opens with: B yesterday, A seven days
+// before it — the same weekday, the day-grain version of the old "equal
+// stretch immediately before it" seed.
+export function seedCompareDays(today) {
+    const b = new Date(today); b.setUTCDate(b.getUTCDate() - 1);
+    const a = new Date(b); a.setUTCDate(a.getUTCDate() - 7);
+    return { a: iso(a), b: iso(b) };
+}
+
+// RANGE_MAX_DAYS mirrors boardMaxSpanDays (handlers_robots.go). The endpoint
+// 400s past it; the picker refuses before the fetch. Both want changing
+// together.
+export const RANGE_MAX_DAYS = 366;
+
+// rangeProblem is the picker's client-side mirror of the endpoint's guards:
+// null means the range is askable. ISO dates compare lexicographically.
+// to == today is allowed, mirroring the handler: a legitimate inclusive end
+// with no rolled-up rows yet, which the window note reports via data_days.
+// Only a STRICTLY future date is refused.
+export function rangeProblem(from, to, today) {
+    if (!from || !to) return 'pick both dates';
+    if (from > to) return 'the end is before the start';
+    if (to > today) return 'the end date is in the future';
+    const days = (Date.parse(to) - Date.parse(from)) / 86400000 + 1;
+    if (days > RANGE_MAX_DAYS) {
+        return days + ' days is past the ' + RANGE_MAX_DAYS + '-day limit';
+    }
+    return null;
+}
+
+// jsonOK surfaces the server's own 400 text instead of letting the error
+// body parse as an empty-looking board. rangeProblem keeps the picker off
+// the guards; this covers everything else (a hand-edited URL, a 500).
+function jsonOK(r) {
+    return r.json().then(function (d) {
+        if (!r.ok) throw new Error(d && d.error ? d.error : 'HTTP ' + r.status);
+        return d;
+    });
+}
+
+// ── The compare verdict ─────────────────────────────────────────────────────
+//
+// Compare mode answers the engineer's actual question — "I changed things
+// between these dates; what got better?" — by asking it over two explicit
+// windows instead of one trailing one. The verdict is computed CLIENT-SIDE
+// from two board payloads: every guard it needs is already on the wire, and a
+// second server surface would re-derive the annotation's arithmetic in a
+// place the annotation itself cannot see.
+
+// DELTA_SIGNIFICANT is the smallest attributable movement worth calling a
+// change — the annotation's own ±0.02 (see guard 5 in the panel), named here
+// so the two callers cannot drift apart.
+export const DELTA_SIGNIFICANT = 0.02;
+// MISS_RATE_MOVED_MATERIALLY mirrors the server's noEstimateMovedMaterially
+// (localization_board.go): above ten points the two sides' conditioned
+// figures measure different populations and the p50 delta is an artifact of
+// what survived. Both constants want changing together.
+export const MISS_RATE_MOVED_MATERIALLY = 0.10;
+
+// deltaVerdict grades one lane between two windows.
+//
+// a and b are the lane's BoardLane rows from the two boards; plantA/plantB
+// are the two boards' plant p50 estimates (numbers or null). Returns one of:
+//
+//   better | worse | neutral — the attributable delta cleared ±0.02, didn't,
+//                          or sat on the fence
+//   suppressed          — the no-estimate rate moved > 10 pts between the
+//                          windows; the averages are not comparable
+//   thin                — either side is below min_samples; too few to say
+//   nodata              — either side has no estimate at all (nobody drove
+//                          it, or no histogram survived)
+//
+// The delta is PLANT-ADJUSTED before the threshold is applied: a lane that
+// rose with the whole plant has not improved, and crediting it is the
+// attribution failure the annotation's guard 2 exists to prevent.
+export function deltaVerdict(a, b, plantA, plantB, minSamples) {
+    if (!a || !b) return 'nodata';
+    if (a.p50_estimate == null || b.p50_estimate == null) return 'nodata';
+    if ((a.samples || 0) < minSamples || (b.samples || 0) < minSamples) return 'thin';
+    const missA = a.samples ? a.sentinel_samples / a.samples : 0;
+    const missB = b.samples ? b.sentinel_samples / b.samples : 0;
+    if (Math.abs(missB - missA) > MISS_RATE_MOVED_MATERIALLY) return 'suppressed';
+    const pa = plantA == null ? 0 : plantA;
+    const pb = plantB == null ? 0 : plantB;
+    const attributable = (b.p50_estimate - a.p50_estimate) - (pb - pa);
+    if (attributable > DELTA_SIGNIFICANT) return 'better';
+    if (attributable < -DELTA_SIGNIFICANT) return 'worse';
+    return 'neutral';
+}
+
+// annotationVerdict grades an annotation payload (the /lane-change answer)
+// for the change block's banner. It is the annotation's own arithmetic —
+// attributable = lane delta − plant delta, ±0.02, withheld when the miss
+// rate moved — lifted out of the table cell it used to hide in. Returned as
+// data, not HTML, so the threshold and the plant-null and suppressed cases
+// are assertable without a DOM.
+export function annotationVerdict(c) {
+    if (!c) return null;
+    if (c.suppress_p50) {
+        return { cls: 'lb-suppressed', word: 'not comparable',
+            num: null, lane: null, plant: null };
+    }
+    if (c.p50_before == null || c.p50_after == null) {
+        return { cls: 'lb-neutral', word: 'no p50 one side',
+            num: null, lane: null, plant: null };
+    }
+    const d = c.p50_after - c.p50_before;
+    const hasPlant = c.plant_delta !== null && c.plant_delta !== undefined;
+    const attributable = hasPlant ? d - c.plant_delta : null;
+    let cls = 'lb-neutral', word = 'no change', num = null;
+    if (attributable !== null) {
+        if (attributable > DELTA_SIGNIFICANT) { cls = 'lb-better'; word = 'better'; num = attributable; }
+        else if (attributable < -DELTA_SIGNIFICANT) { cls = 'lb-worse'; word = 'worse'; num = attributable; }
+    }
+    return { cls: cls, word: word, num: num, lane: d,
+        plant: hasPlant ? c.plant_delta : null };
+}
+
+// VERDICT_STROKE / VERDICT_TOKEN / VERDICT_DASH are the compare-mode marks.
+//
+// HUE ALONE DOES NOT CARRY DIRECTION. Green and coral collapse under
+// deuteranomaly at dE 6.0 — the measured reason the band ramp carries weight
+// as its second channel — so direction gets its own non-hue channel: dashed
+// means worse, solid means better. The map stays legible desaturated to
+// greyscale, and the dash is also the reason worse is not merely "red, but
+// thicker" — a reader comparing two boards side by side sees stroke pattern,
+// not weight differences.
+export const VERDICT_STROKE = {
+    better: 3.4, worse: 3.4, neutral: 1.6, suppressed: 2.6,
+    thin: 1.3, nodata: 1.3
+};
+export const VERDICT_TOKEN = {
+    better: 'var(--viz-green)', worse: 'var(--viz-coral)',
+    neutral: 'var(--text-muted)', suppressed: 'var(--viz-amber)',
+    thin: 'var(--text-muted)', nodata: 'var(--text-muted)'
+};
+export const VERDICT_DASH = {
+    worse: '7 5', suppressed: '2 3'
+};
+const VERDICT_LABEL = {
+    better: 'better', worse: 'worse', neutral: 'no change',
+    suppressed: 'not comparable', thin: 'too few readings',
+    nodata: 'no data one side'
+};
+
 // histPath renders a distribution as an SVG polyline over a unit box.
 //
 // THE SHAPE IS THE FINDING, and it is the only mark on this page that can
@@ -107,7 +270,10 @@ export function createBoard(root, opts) {
     const o = opts || {};
     const state = {
         edges: [], board: null,
-        window: '7d',
+        from: '', to: '',    // the main view's explicit day range; ISO dates
+        compare: false,      // compare mode: one day against one day
+        boardA: null,        // the "before" (day A) board in compare mode
+        dayA: '', dayB: '',  // compare days A (earlier) and B (later); ISO dates
         showChanges: true, showReflectors: true,
         selected: null,      // lane key: area + lane, as serverLaneKey builds it
         focusDiff: null,     // diff id — dims lanes that edit did not touch
@@ -124,7 +290,16 @@ export function createBoard(root, opts) {
 
     root.innerHTML =
         '<div class="lb-controls">' +
-        '  <div class="lb-seg" id="lb-window"></div>' +
+        '  <label class="lb-dt" id="lb-range-wrap">' +
+        '    <input type="date" id="lb-from" title="First complete day">' +
+        '    <span aria-hidden="true">→</span>' +
+        '    <input type="date" id="lb-to" title="Last complete day">' +
+        '  </label>' +
+        '  <label class="lb-toggle"><input type="checkbox" id="lb-compare"> Compare</label>' +
+        '  <span id="lb-cmp" class="lb-cmp" hidden>' +
+        '    <label class="lb-dt">A <input type="date" id="lb-day-a" title="The earlier day"></label>' +
+        '    <label class="lb-dt">vs B <input type="date" id="lb-day-b" title="The later day"></label>' +
+        '  </span>' +
         '  <label class="lb-toggle lb-robot-pick"><select id="lb-robot">' +
         '    <option value="">Fleet</option>' +
         '  </select></label>' +
@@ -151,27 +326,92 @@ export function createBoard(root, opts) {
     const railBody = root.querySelector('#lb-rail-body');
     const note = root.querySelector('#lb-note');
 
-    // ── window selector ──────────────────────────────────────────────────
-    // Only windows the record can answer. Before the daily histograms landed,
-    // 30d could not be served at all against fourteen days of raw — a control
-    // whose label promises more than the data holds is the failure this whole
-    // design removes.
-    const winWrap = root.querySelector('#lb-window');
-    ['24h', '7d', '30d'].forEach(function (w) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.textContent = w;
-        b.dataset.win = w;
-        b.className = w === state.window ? 'on' : '';
-        b.addEventListener('click', function () {
-            if (state.window === w) return;
-            state.window = w;
-            winWrap.querySelectorAll('button').forEach(function (x) {
-                x.className = x.dataset.win === w ? 'on' : '';
-            });
-            load();
-        });
-        winWrap.appendChild(b);
+    // ── the range picker ─────────────────────────────────────────────────
+    //
+    // An explicit from→to REPLACED the 7d/30d presets. A preset is a trailing
+    // label, not a question: "30d" cannot ask about the week before the map
+    // edit, and its only virtue — being one click — is what the two date
+    // fields lose nothing of, since they open on the last seven complete
+    // days. The roll-up closes complete days, so the picker's ends are DAYS
+    // and both open on yesterday as the last closed one; a "today" end is a
+    // day that has no rows yet and reads as a plant-wide dropout.
+    const fromIn = root.querySelector('#lb-from');
+    const toIn = root.querySelector('#lb-to');
+    {
+        const seed = seedMainRange(new Date());
+        state.from = seed.from; state.to = seed.to;
+        fromIn.value = seed.from; toIn.value = seed.to;
+    }
+
+    function loadMainIfAskable() {
+        const problem = rangeProblem(state.from, state.to, iso(new Date()));
+        note.textContent = problem || '';
+        if (!problem) load();
+    }
+    fromIn.addEventListener('change', function () {
+        state.from = fromIn.value; loadMainIfAskable();
+    });
+    toIn.addEventListener('change', function () {
+        state.to = toIn.value; loadMainIfAskable();
+    });
+
+    // ── compare mode ─────────────────────────────────────────────────────
+    //
+    // ONE DAY AGAINST ONE DAY, A (earlier) vs B (later), and the map
+    // recolours by VERDICT rather than by band. The old mode let two
+    // arbitrary RANGES fight — a 3-day A against a 12-day B is not a
+    // comparison, and nothing about the verdict arithmetic survives unequal
+    // windows intact. A day is the smallest window the roll-up can answer
+    // honestly (both sides close, no mixing of geometry versions inside a
+    // side), which makes the two sides cleanly comparable populations. It
+    // opens with B yesterday, A seven days before it — the same weekday, the
+    // day-grain version of the old equal-stretch seed.
+    //
+    // Both days ride the SAME board endpoint via its from/to params (from =
+    // to = the day); no second server surface exists to drift out of sync
+    // with the annotation's guards.
+    const cmpWrap = root.querySelector('#lb-cmp');
+    const cmpToggle = root.querySelector('#lb-compare');
+    const dayAIn = root.querySelector('#lb-day-a');
+    const dayBIn = root.querySelector('#lb-day-b');
+
+    function seedCompareDaysInputs() {
+        const seed = seedCompareDays(new Date());
+        state.dayA = seed.a; state.dayB = seed.b;
+        dayAIn.value = seed.a; dayBIn.value = seed.b;
+    }
+
+    function dayProblem() {
+        if (!state.dayA || !state.dayB) return 'pick both days';
+        if (state.dayA === state.dayB) return 'the two days are the same';
+        if (state.dayA > state.dayB) return 'day A is after day B';
+        if (state.dayB > iso(new Date())) return 'day B is in the future';
+        return null;
+    }
+    // dayB == today is allowed on the same terms the range picker allows it.
+    function loadCompareIfAskable() {
+        const problem = dayProblem();
+        note.textContent = problem || '';
+        if (!problem) load();
+    }
+    dayAIn.addEventListener('change', function () {
+        state.dayA = dayAIn.value; loadCompareIfAskable();
+    });
+    dayBIn.addEventListener('change', function () {
+        state.dayB = dayBIn.value; loadCompareIfAskable();
+    });
+
+    cmpToggle.addEventListener('change', function () {
+        state.compare = cmpToggle.checked;
+        cmpWrap.hidden = !state.compare;
+        // The main picker is inert in compare mode — its change handler would
+        // otherwise fire a compare-shaped load, and a control that does
+        // something other than what it shows is the failure this page keeps
+        // refusing.
+        fromIn.disabled = state.compare;
+        toIn.disabled = state.compare;
+        if (state.compare) seedCompareDaysInputs();
+        load();
     });
 
     // ── robot selector ───────────────────────────────────────────────────
@@ -295,18 +535,42 @@ export function createBoard(root, opts) {
         applyTransform();
     }
 
+    // boardWindows (the 7d/30d presets) is gone: the picker asks every window
+    // as an explicit from→to, which is the only spelling of the question the
+    // endpoint answers without a label losing contact with its days.
+
     // ── data ─────────────────────────────────────────────────────────────
     async function load() {
         // The robot param rides on the board URL only; the edges never change
         // with the filter, so they are not refetched. An empty robot is fleet.
         const robotParam = state.robot ? '&robot=' + encodeURIComponent(state.robot) : '';
-        const [edges, board] = await Promise.all([
+        const boardURL = function (from, to) {
+            return '/api/robots/localization?from=' + from + '&to=' + to + robotParam;
+        };
+        let boardP;
+        if (state.compare) {
+            // One day each side: from = to = the day.
+            boardP = o.fetchBoard
+                ? Promise.all([o.fetchBoard(state.dayA, state.robot), o.fetchBoard(state.dayB, state.robot)])
+                : Promise.all([boardURL(state.dayA, state.dayA), boardURL(state.dayB, state.dayB)]
+                    .map(function (u) { return fetch(u).then(jsonOK); }));
+        } else {
+            boardP = o.fetchBoard
+                ? o.fetchBoard(state.from + '/' + state.to, state.robot)
+                : fetch(boardURL(state.from, state.to)).then(jsonOK);
+        }
+        const [edges, boards] = await Promise.all([
             o.fetchEdges ? o.fetchEdges() : fetch('/api/map/edges').then(function (r) { return r.json(); }),
-            o.fetchBoard ? o.fetchBoard(state.window, state.robot)
-                : fetch('/api/robots/localization?window=' + state.window + robotParam).then(function (r) { return r.json(); })
+            boardP
         ]);
         state.edges = edges || [];
-        state.board = board || null;
+        if (state.compare && Array.isArray(boards)) {
+            state.boardA = boards[0] || null;
+            state.board = boards[1] || null;
+        } else {
+            state.boardA = null;
+            state.board = Array.isArray(boards) ? null : (boards || null);
+        }
         computeView();
         draw();
         drawRail();
@@ -371,6 +635,28 @@ export function createBoard(root, opts) {
         return out;
     }
 
+    // verdictByLane builds the compare-mode colour key: one verdict per
+    // physical lane, from that lane's rows on both boards. The plant values
+    // are each board's own p50, so the adjustment is over the SAME two
+    // windows the lane is compared across.
+    function verdictByLane() {
+        if (!state.compare || !state.boardA || !state.board) return null;
+        const byLane = new Map();
+        state.boardA.lanes.forEach(function (l) { byLane.set(l.lane, { a: l }); });
+        state.board.lanes.forEach(function (l) {
+            const e = byLane.get(l.lane);
+            if (e) e.b = l; else byLane.set(l.lane, { b: l });
+        });
+        const plantA = state.boardA.plant ? state.boardA.plant.p50_estimate : null;
+        const plantB = state.board.plant ? state.board.plant.p50_estimate : null;
+        const minN = state.board.min_samples || 20;
+        const out = new Map();
+        byLane.forEach(function (pair, lane) {
+            out.set(lane, deltaVerdict(pair.a || null, pair.b || null, plantA, plantB, minN));
+        });
+        return out;
+    }
+
     function draw() {
         while (map.firstChild) map.removeChild(map.firstChild);
         const world = svg('g', { id: 'lb-world' });
@@ -378,6 +664,7 @@ export function createBoard(root, opts) {
         if (!state.edges.length) return;
 
         const P = state.proj;
+        const verdicts = verdictByLane();
         const focus = state.focusDiff && state.board
             ? new Set((state.board.diffs.find(function (d) { return String(d.id) === String(state.focusDiff); }) || {}).lanes || [])
             : null;
@@ -422,6 +709,20 @@ export function createBoard(root, opts) {
                 ? cubicPathD(a, P(e.ctrl1_x, e.ctrl1_y), P(e.ctrl2_x, e.ctrl2_y), b)
                 : 'M' + a[0] + ' ' + a[1] + 'L' + b[0] + ' ' + b[1];
             const band = row.st ? bandOf(row.st) : 'nodata';
+            // COMPARE MODE replaces the band with the verdict: the question
+            // the reader brought is "what changed between A and B", and a
+            // band answers "how good is B". The two colourings never share a
+            // legend — drawLegend swaps wholesale with the mode.
+            const verdict = verdicts ? (verdicts.get(row.st ? row.st.lane : '') || 'nodata') : null;
+            const mark = verdict
+                ? {
+                    token: VERDICT_TOKEN[verdict], stroke: VERDICT_STROKE[verdict],
+                    dash: VERDICT_DASH[verdict] || null
+                }
+                : {
+                    token: BAND_TOKEN[band], stroke: BAND_STROKE[band],
+                    dash: band === 'blind' ? '5 4' : null
+                };
             const dim = focus && !focus.has(row.st ? row.st.lane : '');
 
             if (state.showChanges && row.st && row.st.changed && !dim) {
@@ -452,9 +753,9 @@ export function createBoard(root, opts) {
             }));
             const p = svg('path', {
                 d: d, fill: 'none',
-                stroke: BAND_TOKEN[band], opacity: dim ? 0.12 : 1,
-                'stroke-width': BAND_STROKE[band], 'data-w': BAND_STROKE[band],
-                'data-dash': band === 'blind' ? '5 4' : null,
+                stroke: mark.token, opacity: dim ? 0.12 : 1,
+                'stroke-width': mark.stroke, 'data-w': mark.stroke,
+                'data-dash': mark.dash,
                 'stroke-linecap': 'round', 'data-lane': row.key,
                 'class': 'lb-lane'
             });
@@ -464,12 +765,13 @@ export function createBoard(root, opts) {
                 // Near-white rim — INTERFACE CHROME, not data.
                 lg.appendChild(svg('path', {
                     d: d, fill: 'none', stroke: 'var(--viz-primary)', opacity: 0.9,
-                    'stroke-width': BAND_STROKE[band] + 2.4, 'data-w': BAND_STROKE[band] + 2.4,
+                    'stroke-width': mark.stroke + 2.4, 'data-w': mark.stroke + 2.4,
                     'stroke-linecap': 'round', 'pointer-events': 'none'
                 }));
                 lg.appendChild(svg('path', {
-                    d: d, fill: 'none', stroke: BAND_TOKEN[band],
-                    'stroke-width': BAND_STROKE[band], 'data-w': BAND_STROKE[band],
+                    d: d, fill: 'none', stroke: mark.token,
+                    'stroke-width': mark.stroke, 'data-w': mark.stroke,
+                    'data-dash': mark.dash,
                     'stroke-linecap': 'round', 'pointer-events': 'none'
                 }));
             }
@@ -579,6 +881,9 @@ export function createBoard(root, opts) {
     }
 
     // annotationBlock renders the four guards, or says plainly why it cannot.
+    // The verdict leads as a banner — the number that answers "did the edit
+    // help" is the block's whole point, and it used to sit 11px and grey in a
+    // table cell third from the top.
     function annotationBlock() {
         const c = state.change;
         if (!c) return '';
@@ -591,6 +896,20 @@ export function createBoard(root, opts) {
         const moved = (c.moved_m === null || c.moved_m === undefined)
             ? 'redrawn (no distance — it gained or lost a vertex)'
             : 'moved ' + Number(c.moved_m).toFixed(2) + ' m';
+        const v = annotationVerdict(c);
+        // The banner. Suppressed and no-p50 are also verdicts, not footnotes —
+        // "withheld" carries the same visual weight as "worse", because an
+        // engineer skimming banners who skips the table must still see that
+        // nothing was concluded.
+        const banner = '<div class="lb-verdict-banner ' + v.cls +
+            (c.below_min_n ? ' lb-banner-thin' : '') + '">' + v.word +
+            (v.num === null ? '' : ' ' + (v.num >= 0 ? '+' : '') + v.num.toFixed(3)) +
+            (v.plant === null ? '' : '<span class="lb-plant-inline">lane ' +
+                (v.lane >= 0 ? '+' : '') + v.lane.toFixed(3) + ' · plant ' +
+                (v.plant >= 0 ? '+' : '') + v.plant.toFixed(3) + '</span>') +
+            (c.below_min_n ? '<span class="lb-plant-inline">few readings one side — ' +
+                'the number stands but is not strong</span>' : '') +
+            '</div>';
         let rows = '';
         // GUARD 1: the miss rate leads, and the p50 is suppressed when it moved.
         rows += '<tr><td>no estimate</td><td>' + pct(c.no_estimate_before) + ' → ' +
@@ -604,15 +923,10 @@ export function createBoard(root, opts) {
             const d = (c.p50_before !== null && c.p50_after !== null)
                 ? (c.p50_after - c.p50_before) : null;
             // GUARD 5: ink follows what is ATTRIBUTABLE. A lane that rose with
-            // the plant shows neutral, not the success colour.
-            let cls = 'lb-neutral';
-            if (d !== null && c.plant_delta !== null && c.plant_delta !== undefined) {
-                const attributable = d - c.plant_delta;
-                if (attributable > 0.02) cls = 'lb-better';
-                else if (attributable < -0.02) cls = 'lb-worse';
-            }
+            // the plant shows neutral, not the success colour. The class comes
+            // from annotationVerdict so banner and cell can never disagree.
             rows += '<tr><td>p50</td><td>' + fmtP(c.p50_before) + ' → ' + fmtP(c.p50_after) +
-                '</td><td class="' + cls + '">' +
+                '</td><td class="' + v.cls + '">' +
                 (d === null ? '—' : (d >= 0 ? '+' : '') + d.toFixed(2)) +
                 // GUARD 2: the plant baseline, always, never a toggle.
                 (c.plant_delta === null || c.plant_delta === undefined ? ''
@@ -624,7 +938,7 @@ export function createBoard(root, opts) {
         rows += '<tr><td>n</td><td colspan="2">' + c.n_before + ' before (' + c.days_before +
             ' d) · ' + c.n_after + ' after (' + c.days_after + ' d)</td></tr>';
 
-        return '<div class="lb-hist-title">Change</div>' +
+        return '<div class="lb-hist-title">Change</div>' + banner +
             '<div class="lb-change-hd">changed ' + new Date(c.changed_at).toLocaleString() +
             ' · ' + moved + '</div>' +
             // GUARD 4: grey below the minimum, never absent. Absence reads as fine.
@@ -639,6 +953,11 @@ export function createBoard(root, opts) {
     function drawPanel() {
         if (!state.board) { panel.innerHTML = ''; return; }
         const w = state.board.window;
+        if (state.compare && state.boardA) {
+            note.textContent = 'A ' + state.dayA + '  vs  B ' + state.dayB;
+            drawComparePanel();
+            return;
+        }
         note.textContent = w.data_days < w.requested_days
             ? w.data_days + ' of ' + w.requested_days + ' days hold data'
             : w.requested_days + ' days';
@@ -698,6 +1017,87 @@ export function createBoard(root, opts) {
     // plant between the collection starting and the first map fetch — which is
     // the exact defect this project keeps finding, so the list is keyed on the
     // zone id and says plainly which ones cannot be drawn yet.
+    // drawComparePanel is the compare mode's panel: the plant-level A→B
+    // summary when nothing is selected, both windows side by side for the
+    // selected lane. The verdict leads in both — it is the answer to the
+    // question compare mode exists for.
+    function drawComparePanel() {
+        const plantA = state.boardA.plant || {};
+        const plantB = state.board.plant || {};
+        const verdicts = verdictByLane() || new Map();
+        const tally = {};
+        verdicts.forEach(function (v) { tally[v] = (tally[v] || 0) + 1; });
+
+        if (!state.selected) {
+            const scope = state.robot ? state.robot : 'Plant';
+            const dP = (plantA.p50_estimate != null && plantB.p50_estimate != null)
+                ? plantB.p50_estimate - plantA.p50_estimate : null;
+            panel.innerHTML = '<div class="lb-hd">' + scope + ' · compare</div>' +
+                '<div class="lb-stat"><span>p50 A → B</span><b>' + fmtP(plantA.p50_estimate) +
+                ' → ' + fmtP(plantB.p50_estimate) +
+                (dP === null ? '' : ' (' + (dP >= 0 ? '+' : '') + dP.toFixed(3) + ')') +
+                '</b></div>' +
+                '<div class="lb-stat"><span>readings A → B</span><b>' +
+                (plantA.samples || 0) + ' → ' + (plantB.samples || 0) + '</b></div>' +
+                verdictCountsBlock(tally) +
+                '<p class="lb-note">The plant delta is the baseline every lane verdict is ' +
+                'measured against — a lane that moved with the plant reads neutral, not ' +
+                'better. Dashed marks are not comparable or worse; solid green is the only ' +
+                'improvement.</p>';
+            return;
+        }
+
+        const row = laneRows().find(function (r) { return r.key === state.selected; });
+        if (!row || !row.st) {
+            panel.innerHTML = '<div class="lb-hd">' + (state.selected || '') + '</div>' +
+                '<p class="lb-note">No readings in window B. Not the same as zero — ' +
+                'nothing drove here, or nothing was recorded.</p>';
+            return;
+        }
+        const laneA = (state.boardA.lanes || []).find(function (l) { return l.lane === row.st.lane; });
+        const v = verdicts.get(row.st.lane) || 'nodata';
+        // The attributable number, shown where the verdict is not suppressed —
+        // the same arithmetic deltaVerdict applied.
+        let attrLine = '';
+        if (v === 'better' || v === 'worse' || v === 'neutral') {
+            const pa = plantA.p50_estimate == null ? 0 : plantA.p50_estimate;
+            const pb = plantB.p50_estimate == null ? 0 : plantB.p50_estimate;
+            const attr = (row.st.p50_estimate - (laneA ? laneA.p50_estimate : 0)) - (pb - pa);
+            attrLine = '<div class="lb-stat"><span>attributable Δ</span><b>' +
+                (attr >= 0 ? '+' : '') + attr.toFixed(3) + '</b></div>';
+        }
+        panel.innerHTML = '<div class="lb-hd">' + row.st.lane + '</div>' +
+            '<div class="lb-verdict lb-verdict-' + v + '">' + VERDICT_LABEL[v] + '</div>' +
+            attrLine +
+            '<div class="lb-stat"><span>p50 A → B</span><b>' +
+            fmtP(laneA ? laneA.p50_estimate : null) + ' → ' + fmtP(row.st.p50_estimate) +
+            '</b></div>' +
+            '<div class="lb-stat"><span>no estimate A → B</span><b>' +
+            pctOf(laneA) + ' → ' + pctOf(row.st) + '</b></div>' +
+            '<div class="lb-stat"><span>readings A → B</span><b>' +
+            (laneA ? laneA.samples : 0) + ' → ' + row.st.samples + '</b></div>' +
+            (v === 'suppressed'
+                ? '<p class="lb-warn">The no-estimate rate moved too far between the ' +
+                  'windows for the two averages to describe the same population — the ' +
+                  'verdict is withheld rather than guessed.</p>' : '') +
+            (v === 'thin'
+                ? '<p class="lb-warn">Too few readings on one side of the comparison ' +
+                  'to say anything. Greyed rather than hidden — an absent number reads ' +
+                  'as fine.</p>' : '');
+    }
+
+    function verdictCountsBlock(tally) {
+        return ['better', 'worse', 'neutral', 'suppressed', 'thin', 'nodata']
+            .map(function (v) {
+                return '<div class="lb-stat"><span class="lb-verdict-dot lb-verdict-' + v +
+                    '">' + VERDICT_LABEL[v] + '</span><b>' + (tally[v] || 0) + '</b></div>';
+            }).join('');
+    }
+
+    function pctOf(l) {
+        return l && l.samples ? ((l.sentinel_samples / l.samples) * 100).toFixed(1) + '%' : '—';
+    }
+
     function zoneBlock() {
         var areas = (state.board && state.board.areas) || [];
         var withStats = areas.filter(function (a) { return a.has_stats; });
@@ -736,20 +1136,27 @@ export function createBoard(root, opts) {
         return '<div class="lb-stat"><span>' + k + '</span><b>' + v + '</b></div>';
     }
     function histBlock(hist, title) {
-        const h = histPath(hist, 220, 56);
+        const w = 220, h0 = 56;
+        const h = histPath(hist, w, h0);
         if (!h.line) return '<p class="lb-note">No distribution for this window.</p>';
         const total = (hist || []).reduce(function (a, b) { return a + b; }, 0);
         const share = total ? (h.sentinel / total) : 0;
+        // The curve is translated +14 to clear the sentinel bar, so its
+        // screen span is [14, 14+w]. The 1.0 tick sits at the CURVE's right
+        // edge, not the viewBox's — the original drew it at 220 while the
+        // curve ran to 234, and the top bin rendered to the right of the
+        // "1.0" label, reading as values above 1.
+        const x0 = 14, x1 = 14 + w;
         return '<div class="lb-hist-title">' + title + '</div>' +
             '<svg class="lb-hist" viewBox="0 0 240 70" role="img" aria-label="' + title + '">' +
-            '<rect x="0" y="' + (56 - Math.min(56, share * 56 * 3)).toFixed(1) +
-            '" width="8" height="' + Math.min(56, share * 56 * 3).toFixed(1) +
+            '<rect x="0" y="' + (h0 - Math.min(h0, share * h0 * 3)).toFixed(1) +
+            '" width="8" height="' + Math.min(h0, share * h0 * 3).toFixed(1) +
             '" fill="var(--viz-coral)" opacity="0.85"><title>no estimate: ' +
             h.sentinel + '</title></rect>' +
-            '<path d="' + h.line + '" transform="translate(14,0)" fill="none" ' +
+            '<path d="' + h.line + '" transform="translate(' + x0 + ',0)" fill="none" ' +
             'stroke="var(--viz-primary)" stroke-width="1.4"/>' +
-            '<text x="0" y="68" font-size="7" fill="var(--text-muted)">0 (no est.)</text>' +
-            '<text x="220" y="68" font-size="7" fill="var(--text-muted)" text-anchor="end">1.0</text>' +
+            '<text x="' + x0 + '" y="68" font-size="7" fill="var(--text-muted)">0 (no est.)</text>' +
+            '<text x="' + x1 + '" y="68" font-size="7" fill="var(--text-muted)" text-anchor="end">1.0</text>' +
             '</svg>';
     }
 

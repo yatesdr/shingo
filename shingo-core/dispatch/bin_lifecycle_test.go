@@ -345,7 +345,7 @@ func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 			// condition terminates rather than spinning; with two bins and
 			// two goroutines each loses at most once before claiming the other.
 			for attempt := 0; attempt < 4; attempt++ {
-				found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0)
+				found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0, bins.EmptyFence{}, reservations.Anyone)
 				if err != nil || found == nil {
 					if err != nil {
 						errors[idx] = err
@@ -715,7 +715,14 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 // dropoff is a FULL concrete storage slot must queue, not dispatch into the
 // occupied slot. The scanner dropped the capacity gate for every complex
 // order to unstick two-robot supply legs; the gate is restored here, scoped
-// to concrete storage/staging dropoffs.
+// to concrete STORAGE dropoffs — a child of a LANE or NGRP, which is what the
+// fixture below builds.
+//
+// NOT STAGING, though this comment said "storage/staging" for as long as the
+// gate existed. A staging node is a station with no parent and never passed
+// isConcreteStorageDropoff at all; it is covered by declaration instead
+// (ExclusiveSlot), and TestDeclaredStagingOccupiedByABinQueues is its
+// counterpart to this test.
 func TestDispatchPreparedComplex_QueuesOnFullConcreteStorageDropoff(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

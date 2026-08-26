@@ -40,11 +40,12 @@ RUN git config --global --add safe.directory /src \
  && CGO_ENABLED=0 go build -tags sim -ldflags "$LDFLAGS" -o /out/shingocore      ./shingo-core/cmd/shingocore \
  && CGO_ENABLED=0 go build -tags sim -o /out/seeddev         ./shingo-core/cmd/seeddev \
  && CGO_ENABLED=0 go build -tags sim -o /out/migrateloaders  ./shingo-core/cmd/migrateloaders \
+ && CGO_ENABLED=0 go build -tags sim -o /out/soakstat        ./shingo-core/cmd/soakstat \
  && CGO_ENABLED=0 go build -tags sim -ldflags "$LDFLAGS" -o /out/shingoedge      ./shingo-edge/cmd/shingoedge
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates tzdata
-COPY --from=build /out/shingocore /out/shingoedge /out/seeddev /out/migrateloaders /usr/local/bin/
+COPY --from=build /out/shingocore /out/shingoedge /out/seeddev /out/migrateloaders /out/soakstat /usr/local/bin/
 # Dev config baked in; rebuild after editing (or mount over /etc/shingo to iterate).
 COPY shingo-core/shingocore.dev.yaml /etc/shingo/shingocore.dev.yaml
 COPY shingo-edge/shingoedge.dev.yaml /etc/shingo/shingoedge.dev.yaml

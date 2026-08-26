@@ -19,14 +19,40 @@ import (
 // maintenance: the applied max in the template must equal the highest
 // migration the build defines. A mismatch means the template skipped a
 // migration (a stale template build).
+//
+// THE EXPECTATION HAS TO BE FORCED INTO EXISTENCE FIRST, and that is not a
+// detail — it is the reason this test can now catch a whole class it could not
+// catch before. store.LatestMigrationVersion() is populated as a SIDE EFFECT of
+// running migrations (migrations.go assigns it inside runVersionedMigrations),
+// so it reads 0 in a process that never ran any. That used to be impossible:
+// every process built its own template and therefore migrated. Once a template
+// is shared across processes (see testdb.go's $SHINGO_TEST_PG path) the common
+// case is a process that cloned a ready template and migrated nothing, where
+// the bare comparison is 76 against 0 — and it would have been comparing 0
+// against 0 in a run where the template was genuinely stale.
+//
+// So: re-open the clone through the production migrate path. Against an
+// already-migrated database that is a no-op per migration (each checks
+// schema_migrations and skips), but it builds the migration list, which is what
+// publishes the head version.
 func TestTemplateDB_HasAllSchema(t *testing.T) {
-	db := Open(t)
+	db, cfg := OpenWithConfig(t)
+
+	migrated, err := store.Open(cfg)
+	if err != nil {
+		t.Fatalf("re-open clone through the migrate path: %v", err)
+	}
+	defer migrated.Close()
 
 	var maxVersion int
 	if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&maxVersion); err != nil {
 		t.Fatalf("query schema_migrations: %v", err)
 	}
-	if want := store.LatestMigrationVersion(); maxVersion != want {
+	want := store.LatestMigrationVersion()
+	if want == 0 {
+		t.Fatal("store.LatestMigrationVersion() is 0 after a migrate run — the migration list published no head version")
+	}
+	if maxVersion != want {
 		t.Errorf("template schema_migrations max version = %d, want %d (template build skipped a migration)", maxVersion, want)
 	}
 
@@ -40,7 +66,7 @@ func TestTemplateDB_HasAllSchema(t *testing.T) {
 		"nodes",
 		"payloads",
 		"order_bins",
-		"bin_uop_audit",
+		"bin_uop_ledger",
 		"lineside_buckets",
 		"inventory_delta_dedup",
 	}
@@ -117,4 +143,37 @@ func TestTemplateDB_TerminateBackendRate(t *testing.T) {
 	} else {
 		t.Logf("pg_terminate_backend rate: %d / %d (%.2f%%, threshold %.1f%%)", fired, created, ratio*100, threshold*100)
 	}
+}
+
+// TestTemplateDB_RanItsTests is the Sunday-smoke instrument's other half
+// (fix-batch 2a): a test that can only pass by RUNNING, in the package the
+// gate's docker step always visits.
+//
+// THE PROBLEM IT EXISTS FOR: `t.Skipf` on a docker failure makes `go test` exit
+// 0 with every integration test skipped, and non-verbose output prints nothing
+// per skipped test — so "green" and "Docker was down and 327 files ran nothing"
+// are indistinguishable from the exit code. A smoke that only checks the exit
+// code is a smoke that cannot see its own blindness.
+//
+// THE INTERESTING NUMBER LIVES ONE LEVEL UP, and this test does not pretend to
+// hold it. Per-package test counts are `go test`'s own output — `ok
+// shingocore/dispatch 22.8s` — and the gate log already carries them. What this
+// test pins is the base of that chain from inside the run: the package the gate
+// always visits had a live Open(), its counters moved, and (the part the smoke
+// greps for) the sentinel was NOT emitted. A run where this passes and the
+// sentinel fired is a contradiction, and the smoke treats it as one.
+//
+// MUTATION (verified): delete the Open() call. The count assertion fires — the
+// counters did not move, which is the skip-everything shape wearing a green
+// exit code.
+func TestTemplateDB_RanItsTests(t *testing.T) {
+	before := TestDatabasesCreated()
+	db := Open(t)
+	after := TestDatabasesCreated()
+	if after <= before {
+		t.Fatalf("TestDatabasesCreated did not advance (%d -> %d) — Open() cloned nothing, which is "+
+			"the skip-everything shape: every docker test in this package skipped and the exit "+
+			"code was still 0", before, after)
+	}
+	_ = db
 }

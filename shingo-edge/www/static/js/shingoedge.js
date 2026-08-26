@@ -15,22 +15,27 @@
 // The IIFE wrap that used to populate `var ShingoEdge = {}` was
 // dropped in SPRINT 4. Helpers are now top-level `export function` /
 // `export const` declarations; the trailing `window.ShingoEdge = { … }`
-// block exists only for the two remaining non-module consumers:
-//   - traffic.html inline <script> reads ShingoEdge.api / ShingoEdge.toast
+// block exists only for the one remaining non-module consumer:
 //   - operator-station/operator.js reads window.ShingoEdge.createSSE
-// Migrate those to module imports and the window-bridge can go.
+// Migrate it to module imports and the window-bridge can go.
 
 import {
     installBackdropClose,
+    installHtmxLiveDurations,
     installHtmxTimestampConversion,
+    installLiveDurations,
     installTableSort,
     convertTimestamps,
 } from '/static/shared/utils.js';
 installBackdropClose();
 installHtmxTimestampConversion();
+// Live elapsed/countdown spans, re-armed after htmx swaps. The interval only
+// runs while such nodes exist, so pages without them pay nothing.
+installHtmxLiveDurations();
 document.addEventListener('DOMContentLoaded', function() {
     convertTimestamps();
     installTableSort();
+    installLiveDurations();
 });
 
 // --- HTML escaping ---
@@ -284,6 +289,43 @@ export const api = {
     },
     del: function(url) {
         return fetch(url, { method: 'DELETE' }).then(handleResponse);
+    },
+    // postDetailed is api.post for a caller that needs the RESPONSE BODY of a
+    // refusal, not just its message.
+    //
+    // ADDITIVE ON PURPOSE. api.post throws the `error` string and discards
+    // everything beside it, which every existing consumer relies on — they
+    // catch a string and render it. Changing that shape would touch every call
+    // site in the app to serve one form. So this is a second door: it never
+    // throws, and returns {ok, data, status, error, fieldErrors, warnings}.
+    //
+    // Field-tagged errors are what the claim editor renders on the offending
+    // input (domain.ValidateNodeClaim ships them as `field_errors`, and
+    // `warnings` alongside a successful save).
+    postDetailed: function(url, body) {
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        }).then(function(res) {
+            return res.text().then(function(text) {
+                var parsed = null;
+                try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+                return {
+                    ok: res.ok,
+                    status: res.status,
+                    data: parsed,
+                    error: (parsed && parsed.error) || (res.ok ? '' : (text || ('HTTP ' + res.status))),
+                    fieldErrors: (parsed && parsed.field_errors) || [],
+                    warnings: (parsed && parsed.warnings) || [],
+                };
+            });
+        }, function(err) {
+            // A transport failure is not a validation answer; say so plainly
+            // rather than returning an empty findings list that reads as "the
+            // server had no objection".
+            return { ok: false, status: 0, data: null, error: String(err), fieldErrors: [], warnings: [] };
+        });
     }
 };
 
@@ -462,11 +504,10 @@ export function navigateToProcessOrOrders(el) {
 export { delegateActions } from '/static/shared/utils.js';
 
 // --- window.ShingoEdge for non-module consumers ---
-// Two remaining non-module consumers still reach for these as bare
+// One remaining non-module consumer still reaches for these as bare
 // globals on the window:
-//   - traffic.html: inline <script> uses ShingoEdge.api / .toast
 //   - operator-station/operator.js: uses window.ShingoEdge.createSSE
-// When those two are migrated to module imports, this block (and the
+// When it is migrated to module imports, this block (and the
 // IIFE-era comment block at the top) can be deleted outright.
 window.ShingoEdge = {
     escapeHtml: escapeHtml,
