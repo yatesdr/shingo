@@ -15,6 +15,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingocore/domain"
 	"shingocore/service"
 	"shingocore/store/orders"
 )
@@ -320,9 +321,7 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 		e.logFn("engine: apply bin arrival on delivery for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return nil
 	}
-	if evicted {
-		e.logFn("WARN: delivery of bin %d to %s evicted a stale bin record there — a delivery cannot physically complete onto an occupied slot, so the completed delivery proves the slot was empty; the stale bin is at _TRANSIT, recover via the anomalies page", *order.BinID, order.DeliveryNode)
-	}
+	e.noteEvictedGhosts(evicted, "delivery", *order.BinID, order.DeliveryNode)
 
 	// Re-read bin for the event payload (post-ApplyArrival state). The
 	// guard's earlier read is pre-arrival; the event needs the new node
@@ -342,6 +341,54 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 		}})
 	}
 	return nil
+}
+
+// noteEvictedGhosts announces the bins a placement displaced — in the journal,
+// and in the displaced bin's OWN history.
+//
+// AN EVICTION USED TO LEAVE NO TRACE ON ITS VICTIM. helpers.EvictStaleGhostBinsTx
+// moves the displaced rows to _TRANSIT with a raw UPDATE, and nothing emitted a
+// BinUpdatedEvent for them, so the audit subscriber (wiring.go) never wrote the row
+// the ARRIVING bin gets. The bin whose record was deleted is the one an operator
+// goes looking at, and its journal ended at whatever order last touched it —
+// hours or days earlier.
+//
+// Springfield 2026-08-26: CARRIER-0003 was evicted from SMN_016 by order 5560's
+// arrival, and its journal's last word was order 5514, a complex delivery from the
+// night before. Two separate reconstructions of that night were misled by the gap,
+// one of them inventing a double-occupancy at SMN_009 out of an inferred recovery
+// that had gone unaudited the same way.
+//
+// The action is "evicted", not "moved": a reader can then tell a displacement from
+// a delivery, and it stays out of the kanban demand path that keys on "moved".
+func (e *Engine) noteEvictedGhosts(evicted []int64, what string, byBinID int64, atNode string) {
+	if len(evicted) == 0 {
+		return
+	}
+	e.logFn("WARN: %s of bin %d to %s evicted %d stale bin record(s) there — a delivery cannot "+
+		"physically complete onto an occupied slot, so the completed delivery proves the slot was "+
+		"empty; the stale bin is at _TRANSIT, recover via the anomalies page",
+		what, byBinID, atNode, len(evicted))
+
+	transit, err := e.db.GetNodeByDotName(domain.TransitNodeName)
+	if err != nil || transit == nil {
+		e.logFn("engine: resolve %s for eviction audit: %v", domain.TransitNodeName, err)
+		return
+	}
+	for _, id := range evicted {
+		ghost, gerr := e.db.GetBin(id)
+		if gerr != nil || ghost == nil {
+			e.logFn("engine: get evicted bin %d for its own audit row: %v", id, gerr)
+			continue
+		}
+		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
+			Action:      "evicted",
+			BinID:       ghost.ID,
+			PayloadCode: ghost.PayloadCode,
+			ToNodeID:    transit.ID,
+			NodeID:      transit.ID,
+		}})
+	}
 }
 
 // applyMultiBinArrivalForOrder handles the multi-bin case at delivery time.
@@ -597,9 +644,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		e.logFn("engine: apply bin arrival for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return
 	}
-	if evicted {
-		e.logFn("WARN: delivery of bin %d to %s evicted a stale bin record there — a delivery cannot physically complete onto an occupied slot, so the completed delivery proves the slot was empty; the stale bin is at _TRANSIT, recover via the anomalies page", *order.BinID, order.DeliveryNode)
-	}
+	e.noteEvictedGhosts(evicted, "delivery", *order.BinID, order.DeliveryNode)
 
 	// Emit bin contents changed
 	updatedBin, binErr := e.db.GetBin(*order.BinID)

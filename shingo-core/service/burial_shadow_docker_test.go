@@ -547,7 +547,7 @@ func TestBurialShadow_CannotRefuseThePlacement(t *testing.T) {
 
 	evicted, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, mover.ID)
 	testutil.MustNoErr(t, err, "ApplyArrival over a fully encumbered lane must still succeed")
-	if evicted {
+	if len(evicted) > 0 {
 		t.Error("evicted = true, want false — the destination was empty")
 	}
 
