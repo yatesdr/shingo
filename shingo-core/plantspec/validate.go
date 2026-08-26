@@ -344,8 +344,31 @@ func (p *Plant) Validate() error {
 		if c.OutboundStaging != "" && !ref(c.OutboundStaging) {
 			add("%s: unknown outbound_staging %q", where, c.OutboundStaging)
 		}
-		// manual_swap needs an outbound destination (claims.go enforces this).
-		if protocol.SwapMode(c.SwapMode) == protocol.SwapModeManualSwap && c.OutboundDestination == "" {
+		// manual_swap needs an outbound destination (claims.go enforces this) —
+		// EXCEPT a dedicated home, which must not have one.
+		//
+		// A produce loader pushes every carrier it fills to its OutboundDestination:
+		// createLoaderOutbound fires unconditionally at the tail of LoadBin. For a
+		// dedicated_positions loader whose LINE swaps directly against the home,
+		// that push is wrong — the carrier is supposed to sit on its home until the
+		// line's supply leg comes for it (Springfield: `complex SMN_016 -> ALN_002`,
+		// with no L2 move anywhere in the chain). Springfield's loader 7 expresses
+		// that by leaving the destination blank.
+		//
+		// PRODUCE ONLY. The consume side is the opposite and still needs one: an
+		// unloader receives direct from the press and sends its drained carriers OUT,
+		// to a node group — Springfield's loader 9 outbounds to SMN_BUF_100, an NGRP.
+		// Exempting on home_of alone would have let an unloader declare no
+		// destination and silently have nowhere to put what it drains.
+		//
+		// Requiring one unconditionally made that shape inexpressible here. Given a
+		// destination to satisfy this rule, the loader shuffles carriers straight
+		// back off the homes — pointed into its own pool it ping-pongs
+		// (`move PLK_H1 -> PLK_H2`, `move PLK_B2 -> PLK_B1`) and the homes stand
+		// empty while the pool sources from buffers; pointed at a market it drains
+		// the loop outright. Either way the plant cannot model a dedicated loader
+		// feeding a line, which is the shape the park side exists to serve.
+		if protocol.SwapMode(c.SwapMode) == protocol.SwapModeManualSwap && c.OutboundDestination == "" && !(c.HomeOf != "" && c.Role == "produce") {
 			add("%s: manual_swap requires outbound_destination", where)
 		}
 	}
@@ -425,10 +448,19 @@ func (p *Plant) Validate() error {
 			fl = &payloadFlow{}
 			flowByPayload[c.Payload] = fl
 		}
-		if c.Role == "produce" && c.OutboundDestination != "" {
+		// A dedicated home produces without an outbound: the line's swap lifts the
+		// carrier off it. Counting only claims that push meant such a loader read as
+		// "not a producer", and its payload as consumed-but-never-produced.
+		if c.Role == "produce" && (c.OutboundDestination != "" || c.HomeOf != "") {
 			fl.produce++
 		}
-		if c.Role == "consume" && c.InboundSource != "" {
+		// The mirror of the produce case above. An unloader can receive DIRECT from
+		// the cell it serves and name no inbound source at all — Springfield's
+		// loader 9 is exactly that: blank inbound_source, outbound_dest to the node
+		// group SMN_BUF_100. Counting only claims that name an inbound made such an
+		// unloader invisible as a consumer, so its payload read as produced-but-
+		// never-consumed and the plant was refused for a shape the plant actually runs.
+		if c.Role == "consume" && (c.InboundSource != "" || c.WindowOf != "" || c.HomeOf != "") {
 			fl.consume++
 		}
 	}
