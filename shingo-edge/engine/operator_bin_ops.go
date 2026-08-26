@@ -705,6 +705,35 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 
 	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
 
+	// ── THE SECOND DOOR ONTO A PRESS-INDEX SWAP ─────────────────────────
+	//
+	// The partial-empty prime lives in BuildProducePlan, which is REQUEST SWAP's
+	// planner. This is REQUEST EMPTY BIN, and it reaches BuildSwapDispatch
+	// directly — so a cell whose on-deck position is bare minted the full
+	// two-leg swap here with no guard at all, and the index leg opened with a
+	// pickup at a position holding nothing. Core cannot reserve a bin that is
+	// not there: the leg parks in `sourcing` forever, the release gate refuses
+	// its sibling for a collision that will never clear, and the operator
+	// cancels a pair that never had a chance. Springfield PLN_004, cancelled
+	// eight times on 2026-08-26 without one completed cycle.
+	//
+	// This is the button an operator reaches for when they are LOOKING at an
+	// empty position, so it is the door that most needs the guard, not the one
+	// that could go without it.
+	//
+	// Same reads, same lock, same order shape as the produce path — see
+	// primeBarePressIndexPositions. A prime is a legitimate answer to "request
+	// an empty bin": it puts an empty carrier exactly where the operator can
+	// see one is missing, and the next press runs the swap against a full cell.
+	if primes, suppressed, perr := e.primeBarePressIndexPositions(node, claim, reqOrigin); suppressed {
+		if perr != nil {
+			return nil, perr
+		}
+		return primes[0], nil
+	} else if perr != nil {
+		return nil, perr
+	}
+
 	// Multi-step swap modes reuse the same dispatch the consume side uses on
 	// RequestNodeMaterial / produce uses on Finalize. Robots execute the same
 	// choreography for empty and full bins; the order shape doesn't depend
