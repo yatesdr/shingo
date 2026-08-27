@@ -11,8 +11,10 @@ import (
 	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // parkFixture wires a dedicated consume loader for PART-X with a pinned home, an
@@ -573,4 +575,167 @@ func TestPlaceForDedicatedLoader_BufferFull_RecordsNoSlotAction(t *testing.T) {
 		}
 	}
 	t.Fatalf("no loader_park_no_slot recovery action for order %d — the drain left no durable trace", evac.ID)
+}
+
+// ── THE SPRINGFIELD INCIDENT, STAGED ────────────────────────────────────────
+//
+// 2026-08-26: CARRIER-0003 and CARRIER-0052 ended the shift stranded at _TRANSIT
+// with their records evicted. The chain had four links and no single one of them
+// looks wrong on its own:
+//
+//  1. a swap's supply leg lifts the carrier off its home
+//  2. the return leg is placed while that carrier is still standing there, reads
+//     the home as occupied, and YIELDS to a buffer
+//  3. the home is now claimed by nobody, so loader_replenish takes it — at the
+//     plant, 3.8 seconds after the supply lifted (bin 19 left SMN_035 at
+//     06:23:25Z, core-l1 order 5541 created 06:23:28Z)
+//  4. hours later the return comes home to an occupied home, finds no free
+//     buffer either, is delivered onto it anyway, and the arrival evicts
+//     whatever record was there
+//
+// Link 2 is the defect. Links 3 and 4 are the mechanism working as designed on a
+// bad input. This drives the real Dispatcher against a real database with no
+// fleet, so the sequence is staged rather than waited for — the free-running sim
+// could not produce it, because its transit (15-20s) is shorter than a carrier's
+// life and the contended window barely opens.
+//
+// stageSwapAtHome builds link 1's world: a carrier on the home, a supply leg that
+// will lift it, and its return sibling coming back to it.
+func stageSwapAtHome(t *testing.T, db *store.DB, home, line string) (ret *orders.Order, retSteps []resolvedStep) {
+	t.Helper()
+	supplySteps := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: home},
+		{Action: protocol.ActionDropoff, Node: line},
+	}
+	raw, err := json.Marshal(supplySteps)
+	if err != nil {
+		t.Fatalf("marshal supply steps: %v", err)
+	}
+	supply := &orders.Order{
+		EdgeUUID: "spr-supply", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		Quantity: 1, SourceNode: home, DeliveryNode: line, ProcessNode: line,
+		PayloadCode: "PART-X", StepsJSON: string(raw),
+	}
+	if err := db.CreateOrder(supply); err != nil {
+		t.Fatalf("create supply leg: %v", err)
+	}
+	retSteps = []resolvedStep{
+		{Action: protocol.ActionWait, Node: line},
+		{Action: protocol.ActionPickup, Node: line},
+		{Action: protocol.ActionDropoff, Node: home},
+	}
+	ret = &orders.Order{
+		EdgeUUID: "spr-return", StationID: "test", OrderType: protocol.OrderTypeComplex, Status: "staged",
+		Quantity: 1, SourceNode: line, DeliveryNode: home, ProcessNode: line,
+		PayloadCode: "PART-X", SiblingOrderUUID: supply.EdgeUUID,
+	}
+	if err := db.CreateOrder(ret); err != nil {
+		t.Fatalf("create return leg: %v", err)
+	}
+	return ret, retSteps
+}
+
+// springfieldLoaderFixture builds loader 7's actual shape, which the shared
+// dedicatedLoaderFixture cannot: role=produce, replenishment=threshold, and a real
+// inbound source. That combination is what makes ReplenishLoader do anything at all
+// — it refuses an operator-driven loader outright ("a person stages it"), and a
+// blank inbound means it pulls no carriers ("it is fed directly").
+func springfieldLoaderFixture(t *testing.T, db *store.DB) (home, buffer, market *nodes.Node, loaderID int64) {
+	t.Helper()
+	setupTestData(t, db)
+	if err := db.CreatePayload(&payloads.Payload{Code: "PART-X", Description: "X", UOPCapacity: 10}); err != nil {
+		t.Fatalf("create payload: %v", err)
+	}
+	for _, n := range []**nodes.Node{&home, &buffer, &market} {
+		*n = &nodes.Node{Enabled: true}
+	}
+	home.Name, buffer.Name, market.Name = "SPR-HOME", "SPR-BUF", "SPR-MARKET"
+	for _, n := range []*nodes.Node{home, buffer, market} {
+		if err := db.CreateNode(n); err != nil {
+			t.Fatalf("create node %s: %v", n.Name, err)
+		}
+	}
+	var err error
+	loaderID, err = db.CreateLoader(store.Loader{
+		Name: "SPR-LOADER", Role: "produce", Layout: "dedicated_positions",
+		Replenishment: "threshold", InboundSource: market.Name,
+	})
+	if err != nil {
+		t.Fatalf("create loader: %v", err)
+	}
+	if err := db.UpsertLoaderHome(store.LoaderHome{
+		LoaderID: loaderID, PositionNodeID: home.ID, PayloadCode: "PART-X", Kind: loaders.HomeKindHome,
+	}); err != nil {
+		t.Fatalf("upsert home: %v", err)
+	}
+	if err := db.UpsertLoaderHome(store.LoaderHome{
+		LoaderID: loaderID, PositionNodeID: buffer.ID, Kind: loaders.HomeKindBuffer,
+	}); err != nil {
+		t.Fatalf("upsert buffer: %v", err)
+	}
+	return home, buffer, market, loaderID
+}
+
+// The incident, end to end: the return holds its home, and BECAUSE it holds it the
+// replenishment loop yields instead of taking the position out from under it.
+//
+// That second half is the link I could never observe anywhere — it is cross-module
+// (dispatch placement vs the replenish gate) and the sim never produced the state.
+// loader_replenish.go's own comment asserts this relationship as designed intent:
+// "Returns are covered by CheckDropoffCapacity's in-flight arm above, which is the
+// physical question." It was true of the code and false in production, because the
+// return never carried the home as its delivery node to be seen by.
+func TestSpringfieldIncident_ReturnHoldsHome_ReplenishYields(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, _, loaderID := springfieldLoaderFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	line := &nodes.Node{Name: "SPR-LINE", Enabled: true}
+	if err := db.CreateNode(line); err != nil {
+		t.Fatalf("create line node: %v", err)
+	}
+	// Link 1: the carrier the supply leg is about to lift, still on its home.
+	makeLoaderBin(t, db, "PART-X", home.ID, "spr-on-home", 100, time.Now().UTC())
+
+	ret, retSteps := stageSwapAtHome(t, db, home.Name, line.Name)
+	d.placeForDedicatedLoader(ret, retSteps)
+
+	// Link 2, corrected: the occupant is this swap's own, so the home is held.
+	if ret.DeliveryNode != home.Name {
+		t.Fatalf("return DeliveryNode = %q, want HOME %q — yielding here is the defect: it leaves the "+
+			"home claimed by nobody for the replenishment loop to take (buffer was %q)",
+			ret.DeliveryNode, home.Name, buffer.Name)
+	}
+
+	// Link 3: the replenishment loop now runs against that same home. Holding the
+	// home made the return in-flight to it, which is the ONLY thing that makes this
+	// gate yield — a queued order is invisible to it (status != 'queued').
+	cfg, ok, err := d.LoadReplenishConfig(loaderID)
+	if err != nil || !ok {
+		t.Fatalf("load replenish config for loader %d: ok=%v err=%v", loaderID, ok, err)
+	}
+	// A real shortfall, so the loop actually sizes a carrier and gets as far as
+	// asking the capacity gate about the home. Without these it skips at
+	// BinsToReachThreshold and never looks.
+	res, err := d.ReplenishLoader(ReplenishRequest{
+		StationID: "test", LoaderID: loaderID, PayloadCode: "PART-X", MemberNode: home.Name,
+		Threshold: 100, CurrentUOP: 0, PerBinCapacity: 10,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("replenish: %v", err)
+	}
+	for _, o := range res.Created {
+		if o != nil && o.DeliveryNode == home.Name {
+			t.Fatalf("replenish created order %d into %s while the return leg is inbound to it — "+
+				"this is the extra carrier that turns a two-carrier cycle into three, and every one "+
+				"of them permanently consumes a pool slot", o.ID, home.Name)
+		}
+	}
+	if cause, held := res.HeldBy[home.Name]; !held {
+		t.Fatalf("replenish did not yield %s (held=%v) — the in-flight arm did not see the return leg",
+			home.Name, res.HeldBy)
+	} else {
+		t.Logf("replenish correctly yielded %s: %s", home.Name, cause)
+	}
 }
