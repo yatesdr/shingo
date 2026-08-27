@@ -101,16 +101,51 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 
 	switch diff.Situation {
 	case SituationSwap:
-		return planSwapAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
+		action = planSwapAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
 	case SituationEvacuate:
-		return planEvacuateAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
+		action = planEvacuateAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
 	case SituationAdd:
-		return planAddAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
+		action = planAddAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
 	case SituationDrop:
-		return planDropAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
+		action = planDropAction(action, diff, node, fallbackAutoConfirm, activePullByCoreNode)
+	default:
+		return action
 	}
-
+	markChangeoverRefillEmpty(&action, diff.FromClaim, diff.ToClaim)
 	return action
+}
+
+// markChangeoverRefillEmpty is the BOUNDARY half of the produce-refill
+// invariant: every changeover order leaving this planner that picks up at the
+// to-claim's inbound source fetches an EMPTY carrier, whichever builder made it.
+//
+// refillPickup is the first half and the one that matters at review time — it
+// makes the unflagged step hard to WRITE. This is defence in depth for the step
+// that got built some other way: a struct literal, a helper added later, a mode
+// whose builder assembles its list by hand. The cost of missing it is an order
+// that can never dispatch and never fails (Hopkinsville, 2026-08-26/27), so it
+// is worth paying for twice.
+//
+// Idempotent by construction: markInboundEmpty only ever SETS Empty, so a leg
+// its builder already flagged is untouched, and the two halves cannot disagree.
+//
+// Retrieve specs are left alone — planAddAction and planFallbackStagingAction
+// carry the same decision in RetrieveOrderSpec.RetrieveEmpty, which they set
+// themselves and which was never the broken path.
+func markChangeoverRefillEmpty(action *changeover.NodeAction, fromClaim, toClaim *processes.NodeClaim) {
+	if toClaim == nil || toClaim.Role != protocol.ClaimRoleProduce || toClaim.InboundSource == "" {
+		return
+	}
+	carrierFor := ""
+	if fromClaim != nil {
+		carrierFor = refillCarrierPayload(fromClaim, toClaim)
+	}
+	for _, spec := range []*changeover.OrderSpec{action.SupplyOrder, action.EvacOrder} {
+		if spec == nil || spec.Complex == nil {
+			continue
+		}
+		markInboundEmpty(spec.Complex.Steps, toClaim.InboundSource, carrierFor)
+	}
 }
 
 // planFallbackStagingAction mirrors createFallbackStagingOrder: a single

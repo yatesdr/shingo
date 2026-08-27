@@ -554,13 +554,10 @@ func toolingPositionAction(press toolingPress, position string, node *processes.
 	fromPosition := domain.SynthesizePositionClaim(press.from, position)
 	toPosition := domain.SynthesizePositionClaim(press.to, position)
 
-	steps := buildToolingEvacSteps(position, press.evacDest, toPosition.InboundSource, press.staging)
-	// A produce position's replacement is a fresh EMPTY carrier, not a full
-	// payload-matched bin; without this the pickup hunts a full bin in the
-	// empty pool and the dispatch fails ("no bin of requested payload").
-	if toPosition.Role == protocol.ClaimRoleProduce && toPosition.InboundSource != "" {
-		markInboundEmpty(steps, toPosition.InboundSource, refillCarrierPayload(fromPosition, toPosition))
-	}
+	// The replacement leg is a fresh EMPTY carrier for a produce position, and
+	// names the incoming style when the carrier type changes — refillPickup owns
+	// both, inside buildToolingEvacSteps.
+	steps := buildToolingEvacSteps(position, press.evacDest, fromPosition, toPosition, press.staging)
 	return changeover.NodeAction{
 		NodeID:       node.ID,
 		NodeName:     node.Name,
