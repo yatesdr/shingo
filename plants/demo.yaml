@@ -77,6 +77,7 @@ payloads:
   - {code: BRKT,     uop_capacity: 40, bin_type: STANDARD}
   - {code: CLIP,     uop_capacity: 40, bin_type: STANDARD}
   - {code: STUD,     uop_capacity: 40, bin_type: STANDARD}
+  - {code: SHIM,     uop_capacity: 40, bin_type: STANDARD}
   - {code: ASSY,     uop_capacity: 20, bin_type: STANDARD, robot_group: HEAVY-1500}
 
 # Storage — a few SHARED, UNIFORM depth-3 FIFO supermarkets ("cubes"). Every lane in a
@@ -217,6 +218,31 @@ stations:
   - {name: ALN_007, kind: weld}      # WELD-4 consume STUD
   - {name: SLN_010, kind: staging}   # WELD-4 ALN_007 inbound stage
   - {name: SLN_013, kind: staging}   # WELD-4 ALN_007 OUTBOUND stage (two_robot removal leg)
+  # ── WELD-5 / PLK_HOMES: the HOME-RETURN rig ───────────────────────────
+  #
+  # THE ONLY DEDICATED_POSITIONS LOADER IN THIS PLANT, and the only leg that
+  # reaches loader_place.go at all: placeForDedicatedLoader returns at its layout
+  # check for every order on every other leg here, so nothing else in demo.yaml
+  # exercises the park side.
+  #
+  # It reproduces Springfield's shape rather than the other component legs':
+  # the line swaps DIRECTLY against the loader home, with no supermarket in
+  # between (ALN_008.inbound_source = PLK_H1 = outbound_destination). That is the
+  # tier-2 dedicated-loader-pool source path. The supply leg lifts the carrier off
+  # the home, the return brings the spent one back to it, and the replenishment
+  # loop wants the same position the moment it reads empty. Whether the return
+  # HOLDS that home or yields it is the whole question the rig exists to answer.
+  #
+  # No buffer position, deliberately: seeddev only ever writes home_kind='home'
+  # (UpsertLoaderHome takes no kind), so a yielded home has nowhere to fall back to
+  # and goes straight to drain. That makes the two behaviours maximally distinct.
+  - {name: PLK_H1, kind: loader}     # PLK_HOMES dedicated position 1 (SHIM, pinned)
+  - {name: PLK_H2, kind: loader}     # PLK_HOMES dedicated position 2 (SHIM, pinned)
+  - {name: PLK_B1, kind: loader}     # PLK_HOMES buffer 1 (no payload — takes whatever returns)
+  - {name: PLK_B2, kind: loader}     # PLK_HOMES buffer 2
+  - {name: ALN_008, kind: weld}      # WELD-5 consume SHIM, swaps against PLK_H1
+  - {name: SLN_016, kind: staging}   # WELD-5 ALN_008 inbound stage
+  - {name: SLN_017, kind: staging}   # WELD-5 ALN_008 OUTBOUND stage (two_robot removal leg)
   # ── Loaders (manual_swap): one multi-window + two single-window ──
   # PLK_LOADER is a SHARED MULTI-WINDOW BRKT loader (synthetic identity — not a node; its
   # two windows below are its only physical nodes, each a delivery target + its own HMI).
@@ -293,6 +319,10 @@ bins:
   - {name: BIN-ACT-W2-BR, slot: ALN_004, payload: BRKT,     uop: 40}  # WELD-2 BRKT consume
   - {name: BIN-ACT-W3-CL, slot: ALN_006, payload: CLIP,     uop: 40}  # WELD-3 CLIP consume
   - {name: BIN-ACT-W4-ST, slot: ALN_007, payload: STUD,     uop: 40}  # WELD-4 STUD consume
+  # --- The home-return rig: a full carrier on each home, one consuming at the line ---
+  - {name: BIN-SHIM-01, slot: PLK_H1, payload: SHIM, uop: 40}         # PLK_H1 home stock
+  - {name: BIN-SHIM-02, slot: PLK_H2, payload: SHIM, uop: 40}         # PLK_H2 home stock
+  - {name: BIN-ACT-W5-SH, slot: ALN_008, payload: SHIM,     uop: 40}  # WELD-5 SHIM consume
   # --- The maintained group, seeded AT its declared level (4 STANDARD + 2 SM) ---
   #     Six of eight positions, so the keeper starts settled and the first thing a
   #     scenario sees is the steady state rather than a cold-start refill it did
@@ -325,6 +355,8 @@ processes:
   - {name: WELD-2,  active_style: WELD-2-RUN}         # single_robot: PANEL-B + BRKT → ASSY
   - {name: WELD-3,  active_style: WELD-3-RUN}         # two_robot consume CLIP (single-window loader leg)
   - {name: WELD-4,  active_style: WELD-4-RUN}         # two_robot consume STUD (second single-window loader leg)
+  - {name: WELD-5,  active_style: WELD-5-RUN}          # two_robot consume SHIM, swapping against a dedicated loader home
+  - {name: LOADER-SHIM, active_style: LOADER-SHIM-RUN}   # manual_swap DEDICATED-POSITIONS SHIM (PLK_H1+PLK_H2)
   - {name: LOADER-COMP, active_style: LOADER-COMP-RUN}   # manual_swap multi-window BRKT (no PLC; sim-operator-driven)
   - {name: LOADER-CLIP, active_style: LOADER-CLIP-RUN}   # manual_swap single-window CLIP
   - {name: LOADER-STUD, active_style: LOADER-STUD-RUN}   # manual_swap single-window STUD
@@ -363,13 +395,15 @@ styles:
   - {name: WELD-2-RUN,     process: WELD-2,     payload: ASSY}
   - {name: WELD-3-RUN,     process: WELD-3,     payload: CLIP}
   - {name: WELD-4-RUN,     process: WELD-4,     payload: STUD}
+  - {name: WELD-5-RUN,     process: WELD-5,     payload: SHIM}
+  - {name: LOADER-SHIM-RUN, process: LOADER-SHIM, payload: SHIM}
   - {name: LOADER-COMP-RUN, process: LOADER-COMP, payload: BRKT}
   - {name: LOADER-CLIP-RUN, process: LOADER-CLIP, payload: CLIP}
   - {name: LOADER-STUD-RUN, process: LOADER-STUD, payload: STUD}
   - {name: UNLOADER-A-RUN, process: UNLOADER-A, payload: ASSY}
   - {name: UNLOADER-B-RUN, process: UNLOADER-B, payload: PANEL-A}
 
-operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, WELD-4-OPS, PLK_W1-OPS, PLK_W2-OPS, PLK_X1-OPS, PLK_X2-OPS, UNLOADER-A-OPS, UNLOADER-B-OPS]
+operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, WELD-4-OPS, PLK_W1-OPS, PLK_W2-OPS, PLK_X1-OPS, PLK_X2-OPS, UNLOADER-A-OPS, UNLOADER-B-OPS, WELD-5-OPS, PLK_H1-OPS, PLK_H2-OPS, PLK_B1-OPS, PLK_B2-OPS]
 
 claims:
   # ── PRESS-1 (two_robot_press_index): one claim on the front node, paired back ──
@@ -643,6 +677,59 @@ claims:
     inbound_staging: SLN_010
     outbound_staging: SLN_013
 
+  # ── WELD-5 (two_robot): consume SHIM DIRECTLY off the dedicated loader home ──
+  #
+  # inbound_source and outbound_destination are both PLK_H1 — a POSITION node, not a
+  # market. There is no supermarket in this loop by design: this is the tier-2
+  # dedicated-loader-pool path (source_finder.go sourceFromDedicatedLoader), which
+  # gates on layout == dedicated_positions and never on the loader's role, so a
+  # produce loader's pinned home is a valid drain source for a consume cell.
+  #
+  # Pointing outbound BACK at the home is what puts the return leg through
+  # placeForDedicatedLoader Pattern B. Springfield runs exactly this shape.
+  - core_node: ALN_008
+    style: WELD-5-RUN
+    role: consume
+    swap_mode: two_robot
+    payload: SHIM
+    uop_capacity: 40
+    reorder_point: 25
+    auto_reorder: true
+    inbound_source: PLK_H1
+    outbound_destination: PLK_H1
+    inbound_staging: SLN_016
+    outbound_staging: SLN_017
+
+  # ── PLK_HOMES (manual_swap, DEDICATED-POSITIONS): SHIM on two pinned homes ──
+  # home_of groups both positions under one dedicated_positions loader keyed on the
+  # synthetic identity PLK_HOMES. Each position is pinned to SHIM, which is what puts
+  # it in InSourcePool() — an unpinned home is excluded from the pool entirely.
+  # NO outbound_destination — this is Springfield's shape, and the park side exists
+  # to serve it. A produce loader pushes every carrier it fills to its outbound
+  # (createLoaderOutbound, unconditional at the tail of LoadBin). A dedicated home
+  # feeding a line must not do that: the carrier sits on its home until the line's
+  # supply leg comes for it, which is why SPR shows `complex SMN_016 -> ALN_002` and
+  # no L2 move anywhere in the chain.
+  #
+  # Both alternatives were tried here and both break the loop. Pointed at a market,
+  # the loader drains every carrier out of it and the line starves after four cycles.
+  # Pointed into its own pool, it ping-pongs (`move PLK_H1 -> PLK_H2`,
+  # `move PLK_B2 -> PLK_B1`) and the homes stand empty while the pool sources from
+  # buffers — so the home-versus-buffer decision this rig exists to observe barely
+  # executes. plantspec used to require an outbound on every manual_swap claim,
+  # which is what made the correct shape inexpressible.
+  #
+  # inbound_source stays SYN_MARKET as a top-up path if a carrier is lost out of the
+  # loop; in steady state it should not be needed.
+  - {core_node: PLK_H1, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, operator_station: PLK_H1-OPS}
+  - {core_node: PLK_H2, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, operator_station: PLK_H2-OPS}
+  # The buffers. home_kind: buffer carries no payload and no threshold — it is
+  # spare parking, and it is the fallback placeForLoader walks when a returning
+  # partial finds its home busy. Two of them against two homes, so the loop always
+  # has somewhere to put a carrier that arrives while its home is occupied.
+  - {core_node: PLK_B1, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, home_kind: buffer, operator_station: PLK_B1-OPS}
+  - {core_node: PLK_B2, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, home_kind: buffer, operator_station: PLK_B2-OPS}
+
   # ── PLK_LOADER (manual_swap, MULTI-WINDOW): BRKT → SYN_SM_Comp ──
   # No anchor claim — synthetic identity. Each window declares window_of: PLK_LOADER; the
   # seed builds ONE shared_window loader keyed on PLK_LOADER with the windows as homes.
@@ -714,6 +801,10 @@ demands:
   - {payload: BRKT, node: PLK_LOADER, replenish_uop_threshold: 40}
   - {payload: CLIP, node: PLK_X1, replenish_uop_threshold: 40}
   - {payload: STUD, node: PLK_X2, replenish_uop_threshold: 40}
+  # The rig's threshold. Keyed on the dedicated loader identity, not a position:
+  # the seed stamps it onto every home's UOPThreshold. This is what makes the
+  # replenishment loop contend for the same home the return leg wants.
+  - {payload: SHIM, node: PLK_HOMES, replenish_uop_threshold: 40}
   # Unloader is event/auto-push driven (informational threshold 0).
   - {payload: ASSY, node: FGN_001, replenish_uop_threshold: 0}
   - {payload: PANEL-A, node: FGN_002, replenish_uop_threshold: 0}
@@ -735,6 +826,7 @@ reporting_points:
   - {plc_name: WELD-2,  tag_name: WELD-2_COUNTER,  node: ALN_003, style: WELD-2-RUN}
   - {plc_name: WELD-3,  tag_name: WELD-3_COUNTER,  node: ALN_006, style: WELD-3-RUN}
   - {plc_name: WELD-4,  tag_name: WELD-4_COUNTER,  node: ALN_007, style: WELD-4-RUN}
+  - {plc_name: WELD-5,  tag_name: WELD-5_COUNTER,  node: ALN_008, style: WELD-5-RUN}
 
 cell_configs:
   - {process: PRESS-1, station: PRESS-1-OPS}
@@ -743,6 +835,7 @@ cell_configs:
   - {process: WELD-2,  station: WELD-2-OPS}
   - {process: WELD-3,  station: WELD-3-OPS}
   - {process: WELD-4,  station: WELD-4-OPS}
+  - {process: WELD-5,  station: WELD-5-OPS}
   - {process: UNLOADER-A, station: UNLOADER-A-OPS}
   # UNLOADER-B was declared in operator_stations and never built here, so the
   # station did not exist: seed_edge creates operator_stations from cell_configs,

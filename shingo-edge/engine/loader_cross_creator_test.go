@@ -122,11 +122,14 @@ func retrieveCreatorSites(t *testing.T) []string {
 // scope comment on withLoaderBudget in the same commit.
 func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	t.Parallel()
-	// 10 since the press-index partial-empty prime (operator_produce.go) was
-	// added. Censused: it targets a press paired position, not a loader window,
-	// so it does NOT belong behind withLoaderBudget — it has its own per-cell
-	// lock at its own grain. See that function's SCOPE comment.
-	const want = 10
+	// 11 since primeBarePressIndexPositions (operator_produce.go) gave REQUEST
+	// EMPTY BIN the partial-empty prime that until 2026-08-26 only REQUEST SWAP
+	// had. Censused, and it lands the same way as the prime already counted
+	// here: the delivery node is a press's bare paired position, never a loader
+	// window, so it does NOT belong behind withLoaderBudget. It takes the same
+	// Engine.primeResv lock keyed by the CORE node, which is what serialises the
+	// two prime doors against each other. See that function's SCOPE comment.
+	const want = 11
 	sites := retrieveCreatorSites(t)
 	if len(sites) != want {
 		t.Errorf("retrieve-order creator sites = %d, expected %d.\nA creator was added or removed. Re-run the census and update this count WITH the seam's scope comment.\nSites:\n  %s",

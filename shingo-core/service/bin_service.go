@@ -677,7 +677,7 @@ func (s *BinService) GetManifest(binID int64) (*bins.Manifest, error) {
 // placedByOrder is the order whose placement this is. The burial instrument uses
 // it, and only it, to tell a guarded placement from a dig leg's — see applyArrival
 // for why it cannot be inferred from the bin's claim.
-func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time, placedByOrder int64) (bool, error) {
+func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time, placedByOrder int64) ([]int64, error) {
 	return s.applyArrival(binID, toNodeID, staged, expiresAt, true, placedByOrder)
 }
 
@@ -701,7 +701,7 @@ func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt 
 // order vouches for where it is, and delivering it anyway is how the SMN_001
 // and SMN_002 teleports happened. The bug was never the guard. It was calling
 // a handoff primitive for something that is not a handoff.
-func (s *BinService) ApplyIntermediateStore(binID, toNodeID int64, staged bool, expiresAt *time.Time, placedByOrder int64) (bool, error) {
+func (s *BinService) ApplyIntermediateStore(binID, toNodeID int64, staged bool, expiresAt *time.Time, placedByOrder int64) ([]int64, error) {
 	return s.applyArrival(binID, toNodeID, staged, expiresAt, false, placedByOrder)
 }
 
@@ -711,10 +711,10 @@ func (s *BinService) ApplyIntermediateStore(binID, toNodeID int64, staged bool, 
 // staging state, the burial instrument — is identical, and deliberately so:
 // two copies of this would drift the way the arrival paths drifted before
 // EvictStaleGhostBinsTx pulled their ghost handling together.
-func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time, releaseClaim bool, placedByOrder int64) (bool, error) {
+func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time, releaseClaim bool, placedByOrder int64) ([]int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return false, fmt.Errorf("begin tx: %w", err)
+		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -739,12 +739,11 @@ func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt 
 		ExpiresAt:              expiresAt,
 	})
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	evicted := len(evictedGhosts) > 0
 
 	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit arrival bin %d: %w", binID, err)
+		return nil, fmt.Errorf("commit arrival bin %d: %w", binID, err)
 	}
 
 	// The burial shadow instrument, AFTER the commit and with its result
@@ -752,7 +751,7 @@ func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	// that could refuse it. It observes; see burial_shadow.go for why arrival is
 	// the seam and why this returns nothing.
 	s.NoteBurialShadow(binID, toNodeID, placedByOrder)
-	return evicted, nil
+	return evictedGhosts, nil
 }
 
 // ── Phase 1 of bin-transit-state: in-transit lifecycle ─────────────

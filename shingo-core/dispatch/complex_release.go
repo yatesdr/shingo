@@ -449,8 +449,21 @@ func (d *Dispatcher) appendSegmentAndAdvance(order *orders.Order, segment []reso
 		// where the transition was going. When it is, the postcondition holds and
 		// the release completed. When it is not, the order became un-releasable
 		// mid-flight and this did not complete.
-		var it IllegalTransition
-		if !errors.As(err, &it) || it.From != it.To {
+		// AND THE SAME IS TRUE WHEN A CONCURRENT WRITER GOT THERE FIRST.
+		//
+		// Release and MarkInTransit both target in_transit. Between the fleet
+		// taking the segment above and this line, the wiring layer's fleet poll
+		// can see the robot already moving and call MarkInTransit — so the CAS
+		// here finds in_transit where its snapshot said staged and refuses. That
+		// is a ConcurrentTransition, not an IllegalTransition, so it missed the
+		// tolerant arm and a release whose robot was already under way was
+		// reported as a failure: Edge marked the order failed while Core had it
+		// confirmed. Springfield PLN_002, 2026-08-26 21:14:31, and ten times
+		// across the fleet in the ten days before.
+		//
+		// Same discriminator, so it is the same arm: ask whether the order is
+		// where the transition was going, not which error class said no.
+		if !d.releaseReachedInTransit(order, err, what) {
 			// The witness advanced, so keep the caller's struct matching the row it
 			// wrote even on the way out — the gate path re-reads it.
 			order.WaitIndex = newWaitIndex
@@ -463,8 +476,6 @@ func (d *Dispatcher) appendSegmentAndAdvance(order *orders.Order, segment []reso
 			return appendLanded(fmt.Errorf("%s: order %d: the fleet took the segment but the order could not be released from staging: %w",
 				what, order.ID, err))
 		}
-		d.dbg("%s: order %d was already %s when its segment was appended — the release is idempotent, not refused",
-			what, order.ID, it.From)
 	}
 	log.Printf("dispatch: %s: order %d appended %d blocks (wait %d, complete=%v)",
 		what, order.ID, len(blocks), order.WaitIndex, complete)
@@ -472,6 +483,63 @@ func (d *Dispatcher) appendSegmentAndAdvance(order *orders.Order, segment []reso
 	// path re-reads it to decide whether an order is still awaiting its tail.
 	order.WaitIndex = newWaitIndex
 	return nil
+}
+
+// releaseReachedInTransit reports whether a REFUSED release nevertheless left
+// the order where the release was taking it. True means the postcondition
+// holds and the caller must treat the release as complete; false means it did
+// not happen and the caller returns AppendLandedError.
+//
+// Two ways to be already-there, and they are answered differently:
+//
+//	in_transit → in_transit   The state machine has no self-edge, so an
+//	                          idempotent second append (gated ENTRY, then the
+//	                          dwell's own release) surfaces as an illegal
+//	                          transition. The error alone proves it — no read.
+//	CAS refused               Another writer moved the row since our snapshot.
+//	                          ConcurrentTransition carries the status the CAS
+//	                          EXPECTED, never the one it found, so the error
+//	                          cannot answer this and the row has to.
+//
+// THE RE-READ IS THE WHOLE POINT, and it must check for in_transit by name.
+// The concurrent writer is usually MarkInTransit (benign — the fleet poll beat
+// us to it), but it can just as easily be a cancel or a fail, and those must
+// keep the failure path. Treating "the write was refused" as "someone else
+// probably did it for us" would swallow exactly the cases the tolerant arm was
+// tightened to stop swallowing in the first place.
+//
+// A read error is NOT already-there: unknown means we did not prove the
+// postcondition, so it falls through to the failure path. The robot has the
+// segment either way; the caller's AppendLandedError carries that.
+func (d *Dispatcher) releaseReachedInTransit(order *orders.Order, err error, what string) bool {
+	var it IllegalTransition
+	if errors.As(err, &it) && it.From == it.To {
+		d.dbg("%s: order %d was already %s when its segment was appended — the release is idempotent, not refused",
+			what, order.ID, it.From)
+		return true
+	}
+	if !IsConcurrentTransition(err) {
+		return false
+	}
+	fresh, rerr := d.db.GetOrder(order.ID)
+	if rerr != nil || fresh == nil {
+		log.Printf("dispatch: order %d release CAS refused and the row could not be re-read (%v) — reporting the release as failed",
+			order.ID, rerr)
+		return false
+	}
+	if fresh.Status != StatusInTransit {
+		log.Printf("dispatch: order %d release CAS refused and the row is %s, not in_transit — the release did not land: %v",
+			order.ID, fresh.Status, err)
+		return false
+	}
+	// Adopt the status we lost the race to write. The caller keeps using this
+	// struct (the gate path re-reads WaitIndex off it), and leaving it saying
+	// `staged` for a row that is in_transit is the stale-snapshot bug one
+	// frame later.
+	order.Status = fresh.Status
+	log.Printf("dispatch: order %d was moved to in_transit concurrently while its segment was appended — "+
+		"the release landed, not refused (%v)", order.ID, err)
+	return true
 }
 
 // findFallbackBinAtSource locates a bin to manifest-sync when the

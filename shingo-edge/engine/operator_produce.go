@@ -146,6 +146,95 @@ func (e *PrimeInFlightError) Error() string {
 // so a second advisory refusal later needs no handler change.
 func (e *PrimeInFlightError) Advisory() bool { return true }
 
+// primeBarePressIndexPositions is the partial-empty prime for callers that do
+// NOT go through BuildProducePlan — today that is RequestEmptyBin, which
+// reaches BuildSwapDispatch directly.
+//
+// Returns (primes, suppressed, err). suppressed=true means this round minted
+// the primes and the caller must NOT build a swap; suppressed=false with a nil
+// error means the cell is whole and the caller carries on as before. A
+// suppressed round can still carry an error — the no-inbound-source refusal and
+// the advisory PrimeInFlightError both mean "no swap this round" too.
+//
+// WHY THIS IS A SECOND IMPLEMENTATION AND NOT A CALL INTO BuildProducePlan:
+// that function is a pure planner over a (node, runtime, claim) triple and its
+// UOP guard refuses a cell with nothing counted, which is every cell at
+// Springfield — the counter tag is not wired, so RemainingUOPCached reads 0
+// forever. Routing REQUEST EMPTY BIN through it would trade a missing guard for
+// a guaranteed refusal. The predicate below is the same one, lifted out of it;
+// the two must not drift, which is what TestRequestEmptyBin_PrimesBarePosition
+// and produce_swap_test.go's prime cases pin from either side.
+//
+// The lock, both reads, and the create sit inside one critical section for the
+// same reason the produce path does it: a double-tap must not fire two empties
+// at one bare position.
+func (e *Engine) primeBarePressIndexPositions(
+	node *processes.Node, claim *processes.NodeClaim, origin ordermgr.Origin,
+) (primes []*orders.Order, suppressed bool, err error) {
+	if claim == nil || claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		return nil, false, nil
+	}
+	mu := e.primeNodeLock(claim)
+	mu.Lock()
+	defer mu.Unlock()
+
+	occupancy := e.occupancyKnownNodesOnly(e.claimOccupancy(claim), node.Name)
+	// A BARE HEAD IS A DIFFERENT SHAPE and not this function's to answer: with
+	// nothing on the press there is nothing to index forward, and the consume
+	// side's node-empty downgrade owns that case. Matching BuildProducePlan's
+	// precondition exactly keeps the two from disagreeing about which shape
+	// they each handle.
+	if !isOccupied(occupancy, claim.CoreNodeName) {
+		return nil, false, nil
+	}
+	primedPositions, perr := e.pairedPositionsAlreadyPrimed(node, claim)
+	if perr != nil {
+		return nil, false, perr
+	}
+	var bare, needsPrime []string
+	for _, pos := range []string{claim.PairedCoreNode, claim.SecondPairedCoreNode} {
+		if pos == "" || isOccupied(occupancy, pos) {
+			continue
+		}
+		bare = append(bare, pos)
+		if !primedPositions[pos] {
+			needsPrime = append(needsPrime, pos)
+		}
+	}
+	if len(bare) == 0 {
+		return nil, false, nil
+	}
+	// SUPPRESSED FROM HERE DOWN, on every arm. A position that is physically
+	// bare cannot be indexed from whether or not the empty filling it is
+	// already on its way, so the swap stays suppressed for as long as the
+	// position reads empty and only the duplicate ORDER is skipped. Releasing
+	// the swap on the second tap of a double-tap would hand it exactly the
+	// un-sourceable leg this exists to prevent.
+	if len(needsPrime) == 0 {
+		return nil, true, &PrimeInFlightError{NodeName: node.Name}
+	}
+	if claim.InboundSource == "" {
+		return nil, true, fmt.Errorf("node %s has no inbound source configured", node.Name)
+	}
+	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	nodeID := node.ID
+	for _, pos := range needsPrime {
+		po, cerr := e.orderMgr.CreateRetrieveOrder(&nodeID, true, 1,
+			pos, claim.InboundSource, "", "standard", claim.PayloadCode,
+			autoConfirm, false, origin)
+		if cerr != nil {
+			// Partial success is still suppression: whatever was created is on
+			// its way, and minting a swap on top of a half-primed cell is the
+			// original bug with fewer steps.
+			return primes, true, fmt.Errorf("prime %s: %w", pos, cerr)
+		}
+		primes = append(primes, po)
+	}
+	log.Printf("[request-empty] node %s: head occupied, paired %v bare — priming from %s, no swap this round",
+		node.Name, needsPrime, claim.InboundSource)
+	return primes, true, nil
+}
+
 // primeNodeLock returns the per-cell prime mutex, creating it on first use.
 // Keyed by the claim's CORE node name so every process_node row that shares
 // one physical cell serialises against the same lock — the in-flight count it

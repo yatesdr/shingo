@@ -2524,6 +2524,30 @@ async function deleteStation(id) {
     }
 }
 
+// createLoaderBoard makes the operator screen for a Core loader that has none on
+// this edge, and binds the loader's windows to it.
+//
+// processID comes from the row when exactly one process already holds the
+// loader's windows as process_nodes; it is 0 when none does or several do, and
+// then the screen lands on the process being viewed. Either way the confirm
+// NAMES the target first — Core sends every loader to every edge, so which edge
+// and which process claims one is a decision that has to stay with a person.
+async function createLoaderBoard(loaderKey, processID) {
+    const target = Number(processID) > 0 ? Number(processID) : Number(activeProcessID);
+    if (!target) {
+        toast('Open a process first — a screen belongs to one process', 'error');
+        return;
+    }
+    const where = Number(processID) > 0 ? 'the process that already holds its windows' : 'this process';
+    if (!await confirm('Create the operator screen for ' + loaderKey + ' on ' + where + ', and bind its windows to it?')) return;
+    try {
+        await api.post('/api/loader-boards', { loader_key: loaderKey, process_id: target });
+        location.reload();
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
 // Wire up tag-select pickers for PLC counter tag fields
 (function initTagSelects() {
     tagSelect('counter-tag', 'counter-plc');
@@ -2576,6 +2600,7 @@ delegateActions(document.body, {
     loadClaims,
     loadPayloadCatalog,
     moveStation,
+    createLoaderBoard,
     onClaimsStyleChanged,
     onCompareFieldChanged,
     onCompareViewChanged,

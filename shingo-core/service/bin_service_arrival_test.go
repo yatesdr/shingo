@@ -62,7 +62,7 @@ func TestApplyArrival(t *testing.T) {
 			// other orders' claims on the rig.
 			evicted, err := svc.ApplyArrival(bin.ID, destNode.ID, tc.staged, tc.expiresAt, claimer.ID)
 			testutil.MustNoErr(t, err, "ApplyArrival")
-			if evicted {
+			if len(evicted) > 0 {
 				t.Errorf("evicted = true, want false (arrival onto an empty destination must not evict)")
 			}
 
@@ -150,8 +150,14 @@ func TestApplyArrival_EvictsStaleGhostOnOccupiedPhysicalNode(t *testing.T) {
 
 	evicted, err := svc.ApplyArrival(arriving.ID, destNode.ID, false, nil, arrivingOrder.ID)
 	testutil.MustNoErr(t, err, "ApplyArrival")
-	if !evicted {
-		t.Fatal("evicted = false, want true (occupied physical destination must evict the stale ghost)")
+	// The IDENTITY of what was displaced, not just that something was. A bare
+	// bool was all this returned until the caller needed to write the evicted
+	// bin's own audit row — an eviction that leaves no trace on its victim is
+	// how CARRIER-0003's journal came to name an order from the night before
+	// (Springfield 2026-08-26). See engine.noteEvictedGhosts.
+	if len(evicted) != 1 || evicted[0] != ghost.ID {
+		t.Fatalf("evicted = %v, want exactly [%d] (the occupied destination's stale ghost, by id)",
+			evicted, ghost.ID)
 	}
 
 	// The arriving bin took the slot, unclaimed.
@@ -213,7 +219,7 @@ func TestApplyArrival_SyntheticDestNotEvicted(t *testing.T) {
 
 	evicted, err := svc.ApplyArrival(arriving.ID, syn.ID, false, nil, 0)
 	testutil.MustNoErr(t, err, "ApplyArrival")
-	if evicted {
+	if len(evicted) > 0 {
 		t.Error("evicted = true, want false (synthetic destinations hold many bins; no eviction)")
 	}
 	gotOcc, _ := db.GetBin(occupant.ID)
@@ -271,7 +277,7 @@ func TestApplyArrival_GhostEvictionKeepsALiveHolderClaim(t *testing.T) {
 
 	evicted, err := svc.ApplyArrival(arriving.ID, destNode.ID, false, nil, arrivingOrder.ID)
 	testutil.MustNoErr(t, err, "ApplyArrival")
-	if !evicted {
+	if len(evicted) == 0 {
 		t.Fatal("evicted = false, want true — the occupied physical destination must still be reconciled")
 	}
 

@@ -330,6 +330,25 @@ type Claim struct {
 	// loader-aggregate grouping changes. The named loader id may be synthetic (no
 	// declared node of its own — the clean shape) or an anchor node.
 	HomeOf string `yaml:"home_of,omitempty"`
+	// HomeKind picks which KIND of position this home_of claim is: "home" (the
+	// default) pins a payload and is where the operator fills a carrier; "buffer"
+	// is the loader's spare parking, and is what a returning partial falls back to
+	// when the home it belongs to is busy.
+	//
+	// WITHOUT A BUFFER A BUSY HOME DRAINS. placeForLoader walks only the positions
+	// whose kind is buffer, so a loader declared with homes alone has no fallback:
+	// the return keeps whatever destination it arrived with, which is the occupied
+	// home, and the arrival evicts the record already there. Springfield's loader 7
+	// runs 22 pinned homes against 11 buffer slots for exactly this reason.
+	//
+	// The sim could not express one until 2026-08-26 — seeddev called UpsertLoaderHome
+	// with no kind at all, so every seeded position was a home and the buffer arm of
+	// placeForLoader was unreachable in every plant spec in the repo.
+	//
+	// A buffer carries no payload: it takes whatever comes back. InSourcePool()
+	// returns true on kind==buffer before it looks at the payload, so a partial
+	// parked in one is still re-sourced by the next demand.
+	HomeKind string `yaml:"home_kind,omitempty"`
 	// OperatorStation, when set, assigns this node's Edge process_node to its OWN
 	// operator station (created on the claim's process) instead of the process's
 	// default station. The per-window-HMI model gives each window of a shared loader

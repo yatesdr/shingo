@@ -93,14 +93,19 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 // either can target a loader window was NOT established and is an open question,
 // not a cleared one.
 //
-// The press-index partial-empty prime (applyProducePlan) creates outside this
-// seam DELIBERATELY. Its delivery node is a press's bare paired POSITION, never
-// a loader window, so this seam's budget — one bin per delivery node across a
-// loader's window set — has nothing to say about it. It carries its own
-// count->decide->create lock for the same never-2N reason at its own grain:
-// Engine.primeResv, keyed by the cell's core node, around
-// pairedPositionsAlreadyPrimed. The InboundSource it pulls FROM may well be a
-// loader group; that is Core's resolver's business, not this budget's.
+// The press-index partial-empty prime creates outside this seam DELIBERATELY,
+// from TWO sites now: applyProducePlan (REQUEST SWAP) and
+// primeBarePressIndexPositions (REQUEST EMPTY BIN, added 2026-08-26 — the same
+// guard was missing on that door and a bare paired position minted a swap whose
+// index leg could never source). Both have the same delivery node: a press's
+// bare paired POSITION, never a loader window, so this seam's budget — one bin
+// per delivery node across a loader's window set — has nothing to say about
+// either. Both carry the same count->decide->create lock for the same never-2N
+// reason at their own grain: Engine.primeResv, keyed by the cell's core node,
+// around pairedPositionsAlreadyPrimed — and because the key is the CORE node
+// they serialise against each other, so an operator hitting one door while the
+// other is mid-prime cannot double-fire. The InboundSource they pull FROM may
+// well be a loader group; that is Core's resolver's business, not this budget's.
 //
 // An earlier version of this comment claimed EVERY empty-firing writer routed
 // through here. It did not, and the claim was load-bearing in two review rounds

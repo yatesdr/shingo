@@ -128,8 +128,17 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 		processNodeNames = append(processNodeNames, n.CoreNodeName)
 	}
 
+	// Core loaders this edge draws no screen for. Read failure is logged and
+	// left empty rather than failing the page: this is an advisory panel, and a
+	// config page that will not load is worse than one missing an advisory.
+	loaderBoardGaps, err := h.engine.StationService().LoaderBoardGaps()
+	if err != nil {
+		log.Printf("loader board gaps: %v", err)
+	}
+
 	anomalies, rpMap := loadAnomalyData(h)
 	data := map[string]any{
+		"LoaderBoardGaps":   loaderBoardGaps,
 		"Page":              "processes",
 		"ProcessNodeNames":  processNodeNames,
 		"Processes":         processList,
