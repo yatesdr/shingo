@@ -122,6 +122,85 @@ func TestEveryChangeoverRefillFetchesAnEmpty(t *testing.T) {
 	}
 }
 
+// ── THE MIRROR INVARIANT: A LEG THAT LIFTS AN OLD BIN SAYS SO ───────────────
+//
+// assignDispatch states the rule already — "single-order shapes stamp the
+// from-style payload only when they open by lifting an OLD bin off the line" —
+// and then leaves each builder to declare it via CarriesFromPayloadA /
+// changeoverLeg.carriesFromPayload. Same enforcement shape as the Empty flag,
+// same failure when a builder forgets: the order is stamped blank,
+// lookupPayloadMeta backfills it to the TARGET style mid-changeover, and the
+// opening pickup filters for a part the press does not have. No bin claimed —
+// the ALN_001 shape, 2026-06-01.
+//
+// buildSequentialChangeoverSwap and buildSequentialChangeoverEvacuate both open
+// by lifting an old line bin and neither declared it. Found by walking this rule
+// after the Empty one; sequential is why this test exists.
+//
+// The two flags are coupled and only correct together. Naming the from-style on
+// an order that ALSO fetches a fresh carrier used to send that carrier leg
+// hunting the OUTGOING style's bin type, because Empty drops content matching
+// but not bin-type compatibility (N1-c). refillPickup stamping the incoming
+// style on the refill step is what makes this side safe to assert.
+func TestEveryChangeoverLegThatLiftsAnOldBinCarriesTheFromPayload(t *testing.T) {
+	t.Parallel()
+	modes := append(protocol.ConfigurableSwapModes(), pressPositionSwapMode)
+
+	for _, mode := range modes {
+		for _, situation := range []ChangeoverSituation{SituationSwap, SituationEvacuate} {
+			t.Run(string(mode)+"/"+string(situation), func(t *testing.T) {
+				from, to := refillClaims(mode, protocol.ClaimRoleProduce, false)
+				diff := ChangeoverNodeDiff{
+					CoreNodeName: "N1",
+					Situation:    situation,
+					FromClaim:    &from,
+					ToClaim:      &to,
+				}
+				action := planNodeAction(diff, &processes.Node{ID: 1, Name: "N1"}, false, nil)
+				if action.Err != nil {
+					t.Fatalf("planning failed, so this mode was never exercised: %v", action.Err)
+				}
+
+				// The press's own positions. A pickup here lifts a bin that was
+				// already on the line, which is the from-style's.
+				linePosition := map[string]bool{}
+				for _, n := range []string{from.CoreNodeName, from.PairedCoreNode, from.SecondPairedCoreNode} {
+					if n != "" {
+						linePosition[n] = true
+					}
+				}
+
+				for label, spec := range map[string]*changeover.OrderSpec{
+					"SupplyOrder": action.SupplyOrder, "EvacOrder": action.EvacOrder,
+				} {
+					if spec == nil || spec.Complex == nil {
+						continue
+					}
+					first, ok := firstPickup(spec.Complex.Steps)
+					if !ok || !linePosition[first.Node] {
+						continue // opens at the market/staging — not an old-bin leg
+					}
+					if spec.Complex.PayloadCode != from.PayloadCode {
+						t.Errorf("%s opens by lifting the old bin at %q but carries payload %q; it must carry the OUTGOING style %q or lookupPayloadMeta backfills it to the incoming one and the pickup matches nothing",
+							label, first.Node, spec.Complex.PayloadCode, from.PayloadCode)
+					}
+				}
+			})
+		}
+	}
+}
+
+// firstPickup returns the first pickup step, which is the one that decides
+// whether a leg opens on the line or at the market.
+func firstPickup(steps []protocol.ComplexOrderStep) (protocol.ComplexOrderStep, bool) {
+	for _, s := range steps {
+		if s.Action == protocol.ActionPickup {
+			return s, true
+		}
+	}
+	return protocol.ComplexOrderStep{}, false
+}
+
 // TestChangeoverRefillStaysFullForConsume pins the dual. Empty is not
 // unconditional: a CONSUME node's inbound leg pulls a payload-matched FULL bin
 // off the market, and flagging it would send the line an empty carrier. The

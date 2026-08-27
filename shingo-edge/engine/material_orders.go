@@ -884,8 +884,14 @@ func buildSequentialChangeoverEvacuate(fromClaim, toClaim *processes.NodeClaim) 
 		StepsA:        stepsA,
 		DeliveryNodeA: posA,
 		AutoConfirmA:  true,
-		StepsB:        stepsB,
-		AutoConfirmB:  true,
+		// Both legs open by lifting the OLD bin off their position, so both carry
+		// the from-style payload. StepsB gets it unconditionally from
+		// assignDispatch's evac arm; StepsA has to say so — see
+		// buildSequentialChangeoverSwap for why this is only safe once
+		// refillPickup names the incoming style on the refill leg.
+		CarriesFromPayloadA: true,
+		StepsB:              stepsB,
+		AutoConfirmB:        true,
 	}
 }
 
@@ -953,7 +959,20 @@ func buildSequentialChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, inac
 		StepsA:        steps,
 		DeliveryNodeA: activeNode, // last dropoff
 		AutoConfirmA:  true,
-		StepsB:        nil, // single-order shape
+		// The order OPENS by lifting the OLD bin off the inactive position, and
+		// lifts the old ACTIVE bin after the cutover wait, so it carries the
+		// from-style payload. Blank, lookupPayloadMeta backfills it to the TARGET
+		// style mid-changeover and both of those pickups then filter for a part
+		// the press does not have — no bin claimed, the ALN_001 shape.
+		//
+		// Safe to state now, and it was not before: this order ALSO fetches two
+		// fresh carriers, and until refillPickup stamped those steps with the
+		// incoming style they resolved bin-type compatibility against the order's
+		// payload. Naming the from-style here would have fetched the carrier type
+		// the press was LEAVING (N1-c). The two halves only work together, which
+		// is why press-index landed them in one commit (30630c70).
+		CarriesFromPayloadA: true,
+		StepsB:              nil, // single-order shape
 	}
 }
 
