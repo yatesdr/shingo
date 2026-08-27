@@ -40,9 +40,8 @@
             {{if .Authenticated}}
             <span class="nav-sep"></span>
             <div class="nav-dropdown">
-              <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "config") (eq .Page "traffic") (eq .Page "manual-message") (eq .Page "logs")}} active{{end}}">Admin</a>
+              <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "config") (eq .Page "manual-message") (eq .Page "logs")}} active{{end}}">Admin</a>
               <div class="nav-dropdown-menu">
-                <a href="/traffic"{{if eq .Page "traffic"}} class="active"{{end}}>PLC Signals</a>
                 <a href="/manual-message"{{if eq .Page "manual-message"}} class="active"{{end}}>Kafka Direct</a>
                 <a href="/config"{{if eq .Page "config"}} class="active"{{end}}>Config</a>
                 <a href="/diagnostics"{{if eq .Page "logs"}} class="active"{{end}}>Logs</a>

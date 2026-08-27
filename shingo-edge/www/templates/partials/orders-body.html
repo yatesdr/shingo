@@ -80,7 +80,7 @@
                 {{if eq .Status "pending"}}
                     <button class="btn btn-sm btn-primary" data-action="submitOrder:{{.ID}}">Submit</button>
                 {{end}}
-                {{if and (ne .Status "confirmed") (ne .Status "cancelled") (ne .Status "failed")}}
+                {{if and (ne .Status "confirmed") (ne .Status "cancelled") (ne .Status "failed") (ne .Status "skipped")}}
                     <button class="btn btn-sm btn-danger" data-action="abortOrder:{{.ID}}">Abort</button>
                 {{end}}
             </td>

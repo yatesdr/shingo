@@ -94,7 +94,8 @@ func (db *DB) UpdateProcessGroup(id int64, name, description string) error {
 }
 
 // DeleteProcessGroup removes a process_group. Member processes revert to
-// Ungrouped via the ON DELETE SET NULL FK.
+// Ungrouped via the explicit transactional UPDATE inside DeleteGroup —
+// foreign_keys is OFF, so the ON DELETE SET NULL FK never fires.
 func (db *DB) DeleteProcessGroup(id int64) error {
 	return process_groups.DeleteGroup(db.DB, id)
 }

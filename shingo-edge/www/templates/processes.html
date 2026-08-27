@@ -122,7 +122,7 @@
                 <fieldset class="fieldset-card">
                     <legend class="fieldset-legend">Styles</legend>
                     {{if and .ProcessStyles (not .ActiveProcess.ActiveStyleID)}}
-                    <div class="alert alert-warn mb-3">
+                    <div class="alert alert-warning mb-3">
                         <strong>No active style selected.</strong>
                         Choose one below — production and changeover both require an active style.
                     </div>
@@ -215,7 +215,7 @@
                 {{/* A Core loader with no screen ANYWHERE on this edge. Partial
                      binding is normal (buffer slots nobody works), so only a
                      loader with zero bound windows appears here. */}}
-                <div class="alert alert-warn mb-3">
+                <div class="alert alert-warning mb-3">
                     <div><strong>Core loaders with no operator screen on this edge</strong></div>
                     <div class="text-muted-sm mb-2">
                         Core knows these loaders; this edge draws no screen for their windows, so the

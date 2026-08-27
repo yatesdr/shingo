@@ -224,6 +224,10 @@ async function saveGroup() {
         // unchecked box that was previously a member ungroups it. Without
         // this diff, unchecking a member to remove it from the group was
         // silently dropped — the row stayed in the group in the DB.
+        // The PUTs are AWAITED before reload: fire-and-forget fetches are
+        // still queued when location.reload() starts the navigation, and
+        // the browser cancels them — dropping exactly these assignments.
+        var jobs = [];
         var picker = document.getElementById('group-process-picker');
         if (picker) {
             var cbs = picker.querySelectorAll('.group-process-cb');
@@ -234,16 +238,19 @@ async function saveGroup() {
                 var wasMember = proc.group_id && proc.group_id === groupID;
                 var wantsIn = cb.checked;
                 if (wantsIn && !wasMember) {
-                    api.put('/api/processes/' + pid + '/group', { group_id: groupID }).catch(function(e) {
-                        toast('Failed to assign process ' + pid + ': ' + e, 'warning');
-                    });
+                    jobs.push(
+                        api.put('/api/processes/' + pid + '/group', { group_id: groupID })
+                            .catch(function(e) { toast('Failed to assign process ' + pid + ': ' + e, 'warning'); })
+                    );
                 } else if (!wantsIn && wasMember) {
-                    api.put('/api/processes/' + pid + '/group', { group_id: null }).catch(function(e) {
-                        toast('Failed to ungroup process ' + pid + ': ' + e, 'warning');
-                    });
+                    jobs.push(
+                        api.put('/api/processes/' + pid + '/group', { group_id: null })
+                            .catch(function(e) { toast('Failed to ungroup process ' + pid + ': ' + e, 'warning'); })
+                    );
                 }
             });
         }
+        await Promise.all(jobs);
         location.reload();
     } catch (e) {
         toast('Error: ' + e, 'error');
@@ -713,9 +720,12 @@ function applyCompareMode() {
         'compare-field-wrap': one,
         'compare-help': one,
     };
+    // setHidden, not el.hidden alone: compare-field-wrap carries .flex,
+    // whose display:flex is an author rule and beats the UA's
+    // [hidden] { display:none } — the field selector stayed visible in
+    // "one style" view. See components.css on .is-hidden.
     Object.keys(ids).forEach(function(id) {
-        var el = document.getElementById(id);
-        if (el) el.hidden = ids[id];
+        setHidden(document.getElementById(id), ids[id]);
     });
     var singleWrap = document.getElementById('claims-single-style-wrap');
     if (singleWrap) singleWrap.style.display = one ? '' : 'none';

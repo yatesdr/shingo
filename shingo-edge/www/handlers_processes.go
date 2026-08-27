@@ -49,7 +49,11 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 	// sidebar renderer silently drops.
 	if req.GroupID != nil && *req.GroupID > 0 {
 		if err := h.validateGroupID(req.GroupID); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			if errors.Is(err, errUnknownGroupID) {
+				writeError(w, http.StatusBadRequest, err.Error())
+			} else {
+				writeError(w, http.StatusInternalServerError, err.Error())
+			}
 			return
 		}
 	}
@@ -93,6 +97,10 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
 	// Validate group_id before any writes — see apiCreateProcess for the
 	// orphan-id rationale.
 	var gid *int64
@@ -100,7 +108,11 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		gid = req.GroupID
 	}
 	if err := h.validateGroupID(gid); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		if errors.Is(err, errUnknownGroupID) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	if err := h.engine.ProcessService().Update(id, req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled); err != nil {

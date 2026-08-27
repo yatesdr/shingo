@@ -59,6 +59,12 @@ var requiredTables = []string{
 	// behind it, which is the silent-no-op failure this manifest exists to make
 	// loud.
 	"supply_refusals_open",
+	// process_groups is asserted because scanProcess selects processes.group_id
+	// unconditionally on every List/Get, and the group CRUD handlers read and
+	// write this table on every Processes-page load. A stale binary whose
+	// schema.Apply never created it would 500 the whole admin page at runtime
+	// instead of failing startup here.
+	"process_groups",
 }
 
 // requiredColumn is one (table, column) pair added by an unconditional
@@ -89,6 +95,10 @@ var requiredColumns = []requiredColumn{
 	{"payload_catalog", "catid"},
 	{"changeover_node_tasks", "skip_note"},
 	{"process_node_runtime_states", "remaining_uop_cached"},
+	// group_id is an ALTER-added column that scanProcess selects
+	// unconditionally; an ignored-error failure would kill every process
+	// query at runtime rather than at startup.
+	{"processes", "group_id"},
 }
 
 // verifySchema reports every required table and column that is missing. It

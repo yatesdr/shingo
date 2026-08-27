@@ -6,7 +6,9 @@ package process_groups
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 
 	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
@@ -55,9 +57,22 @@ func GetGroup(db *sql.DB, id int64) (*Group, error) {
 	return &g, nil
 }
 
+// ErrDuplicateGroupName is returned when a create or rename collides with
+// an existing group's name (UNIQUE constraint on process_groups.name). The
+// handler maps it to 409 so the operator sees "name already in use" rather
+// than a raw SQLite error in a 500 toast.
+var ErrDuplicateGroupName = errors.New("a group with that name already exists")
+
+// isUniqueViolation reports whether err is SQLite's UNIQUE-constraint
+// failure. modernc.org/sqlite surfaces it as a plain *sqlite.Error with
+// that message; there is no exported sentinel to errors.Is against.
+func isUniqueViolation(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
+
 // CreateGroup inserts a process_group row and returns the new id. name must
 // be non-empty and unique — the UNIQUE constraint on the column enforces
-// the latter; callers should surface a friendly error on a duplicate.
+// the latter; duplicates come back as ErrDuplicateGroupName.
 func CreateGroup(db *sql.DB, name, description string) (int64, error) {
 	if name == "" {
 		return 0, fmt.Errorf("name is required")
@@ -65,18 +80,25 @@ func CreateGroup(db *sql.DB, name, description string) (int64, error) {
 	res, err := db.Exec(`INSERT INTO process_groups (name, description) VALUES (?, ?)`,
 		name, description)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return 0, ErrDuplicateGroupName
+		}
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-// UpdateGroup modifies a process_group's name and description.
+// UpdateGroup modifies a process_group's name and description. Renaming to
+// a name another group already holds returns ErrDuplicateGroupName.
 func UpdateGroup(db *sql.DB, id int64, name, description string) error {
 	if name == "" {
 		return fmt.Errorf("name is required")
 	}
 	_, err := db.Exec(`UPDATE process_groups SET name=?, description=? WHERE id=?`,
 		name, description, id)
+	if isUniqueViolation(err) {
+		return ErrDuplicateGroupName
+	}
 	return err
 }
 

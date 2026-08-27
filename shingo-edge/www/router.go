@@ -215,6 +215,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		// ── Login/logout ────────────────────────────────────────
 		r.Get("/login", h.handleLoginPage)
 		r.Post("/login", h.handleLogin)
+		// GET logout backs the header's plain anchor. The handler only
+		// clears the session cookie, so a cross-site GET is a nuisance at
+		// worst (forced logout), not a privilege change.
+		r.Get("/logout", h.handleLogout)
 		r.Post("/logout", h.handleLogout)
 
 		// ── Admin pages (auth required) ─────────────────────────

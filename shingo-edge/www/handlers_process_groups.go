@@ -5,10 +5,18 @@
 package www
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+
+	"shingoedge/service"
 )
+
+// errUnknownGroupID marks validateGroupID's "id names no group" outcome so
+// callers can answer 400 (bad input) rather than 500 (infrastructure).
+var errUnknownGroupID = errors.New("unknown group id")
 
 // apiListProcessGroups returns every process_group row.
 func (h *Handlers) apiListProcessGroups(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +44,12 @@ func (h *Handlers) apiCreateProcessGroup(w http.ResponseWriter, r *http.Request)
 	}
 	id, err := h.engine.ProcessService().CreateGroup(req.Name, req.Description)
 	if err != nil {
+		// A duplicate name is an operator-input problem, not a fault — a
+		// 500 with raw SQLite text reads as "shingo broke".
+		if errors.Is(err, service.ErrDuplicateGroupName) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -63,6 +77,10 @@ func (h *Handlers) apiUpdateProcessGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := h.engine.ProcessService().UpdateGroup(id, req.Name, req.Description); err != nil {
+		if errors.Is(err, service.ErrDuplicateGroupName) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -71,7 +89,8 @@ func (h *Handlers) apiUpdateProcessGroup(w http.ResponseWriter, r *http.Request)
 }
 
 // apiDeleteProcessGroup removes a process_group. Member processes revert
-// to Ungrouped via the ON DELETE SET NULL FK.
+// to Ungrouped via the explicit transactional UPDATE in the store's
+// DeleteGroup — foreign_keys is OFF, so the ON DELETE SET NULL FK never fires.
 func (h *Handlers) apiDeleteProcessGroup(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -124,7 +143,11 @@ func (h *Handlers) apiSetProcessGroup(w http.ResponseWriter, r *http.Request) {
 		gid = req.GroupID
 	}
 	if err := h.validateGroupID(gid); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		if errors.Is(err, errUnknownGroupID) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	if err := h.engine.ProcessService().SetGroupID(processID, gid); err != nil {
@@ -142,13 +165,18 @@ func (h *Handlers) apiSetProcessGroup(w http.ResponseWriter, r *http.Request) {
 // check, a stale modal or direct API call could write group_id=999 for a
 // group that doesn't exist, and renderSidebar would silently drop the
 // process from every section (not Ungrouped, not any real group).
+//
+// The two failure modes are separated: an unknown id is the caller's input
+// problem (errUnknownGroupID → 400), while a failed lookup is an
+// infrastructure fault (any other error → 500) and must not be reported
+// as "group does not exist".
 func (h *Handlers) validateGroupID(gid *int64) error {
 	if gid == nil || *gid <= 0 {
 		return nil
 	}
 	g, err := h.engine.ProcessService().GetGroup(*gid)
-	if err != nil || g == nil {
-		return fmt.Errorf("process group %d does not exist", *gid)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && g == nil) {
+		return fmt.Errorf("process group %d does not exist: %w", *gid, errUnknownGroupID)
 	}
-	return nil
+	return err
 }

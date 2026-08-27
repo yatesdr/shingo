@@ -119,11 +119,14 @@ if (_searchInput) {
 // are referenced via data-action-change / data-action-input too,
 // so binding the map across every event type keeps the page wiring
 // single-source.
+// (updateCountdowns used to sit here; the staged-expiry clock moved to
+// installLiveDurations in shingoedge.js and the leftover reference
+// threw a ReferenceError at module load that killed every button
+// handler on this page.)
 delegateActions(document.body, {
     abortOrder,
     confirmDelivery,
     navigateToProcessOrOrders,
     releaseOrder,
-    submitOrder,
-    updateCountdowns
+    submitOrder
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

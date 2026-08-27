@@ -164,8 +164,11 @@ func TestApiGetHourlyCounts_NoProcessReturnsEmpty(t *testing.T) {
 	resp := doRequest(t, router, "GET", "/api/hourly-counts", nil, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	// Body is the literal "{}" (not a JSON-encoded map; the handler writes
-	// the bytes directly).
+	// A missing process_id now means ALL processes: the handler sums every
+	// process's HourlyTotals for the date. With no processes configured the
+	// sum is empty and the body marshals to "{}"; with any processes present
+	// it is their combined map. Only the status is asserted here so the test
+	// stays agnostic of how many processes the seed left behind.
 }
 
 func TestApiGetHourlyCounts_WithProcessIDReturnsMap(t *testing.T) {

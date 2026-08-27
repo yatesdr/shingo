@@ -3,6 +3,7 @@ package service
 import (
 	"shingoedge/store"
 	"shingoedge/store/lineside"
+	"shingoedge/store/process_groups"
 	"shingoedge/store/processes"
 )
 
@@ -48,6 +49,10 @@ func (s *ProcessService) Update(id int64, name, description, productionState, co
 // depguard rule. The sentinel is the store's; this is a name, not a copy, so
 // errors.Is matches either spelling.
 var ErrProcessHasStock = processes.ErrProcessHasStock
+
+// ErrDuplicateGroupName re-exports the store's UNIQUE-constraint refusal on
+// process_groups.name, for the same www classification pattern.
+var ErrDuplicateGroupName = process_groups.ErrDuplicateGroupName
 
 // Delete removes a process row by id, retiring the rows that are meaningless
 // without it. Returns ErrProcessHasStock when lineside stock is still booked at
@@ -97,7 +102,8 @@ func (s *ProcessService) UpdateGroup(id int64, name, description string) error {
 }
 
 // DeleteGroup removes a process_group. Member processes revert to
-// Ungrouped via the ON DELETE SET NULL FK.
+// Ungrouped via the explicit transactional UPDATE in the store's DeleteGroup
+// — foreign_keys is OFF, so the ON DELETE SET NULL FK never fires.
 func (s *ProcessService) DeleteGroup(id int64) error {
 	return s.db.DeleteProcessGroup(id)
 }
