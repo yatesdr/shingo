@@ -173,7 +173,7 @@ func (s *CounterService) SeedDemoHourlyCountsAllProcesses(countDate string) (int
 			continue // no style for this process — skip
 		}
 
-		mult := multipliers[i % len(multipliers)]
+		mult := multipliers[i%len(multipliers)]
 
 		// Wipe existing rows for this process+date.
 		if _, err := s.db.Exec(

@@ -5,8 +5,8 @@ package store
 // do not need to change.
 
 import (
-	"shingoedge/store/processes"
 	"shingoedge/store/process_groups"
+	"shingoedge/store/processes"
 )
 
 // ProcessGroup is the row type for the process_groups table; aliased

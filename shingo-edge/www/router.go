@@ -377,21 +377,21 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Put("/reporting-points/{id}", h.apiUpdateReportingPoint)
 				r.Delete("/reporting-points/{id}", h.apiDeleteReportingPoint)
 
-			// Processes
-			r.Get("/processes", h.apiListProcesses)
-			r.Post("/processes", h.apiCreateProcess)
-			r.Put("/processes/{id}", h.apiUpdateProcess)
-			r.Delete("/processes/{id}", h.apiDeleteProcess)
-			r.Put("/processes/{id}/active-style", h.apiSetActiveStyle)
-			r.Get("/processes/{id}/styles", h.apiListProcessStyles)
+				// Processes
+				r.Get("/processes", h.apiListProcesses)
+				r.Post("/processes", h.apiCreateProcess)
+				r.Put("/processes/{id}", h.apiUpdateProcess)
+				r.Delete("/processes/{id}", h.apiDeleteProcess)
+				r.Put("/processes/{id}/active-style", h.apiSetActiveStyle)
+				r.Get("/processes/{id}/styles", h.apiListProcessStyles)
 
-			// Process groups (UI taxonomy for the Processes admin sidebar)
-			r.Get("/process-groups", h.apiListProcessGroups)
-			r.Post("/process-groups", h.apiCreateProcessGroup)
-			r.Put("/process-groups/{id}", h.apiUpdateProcessGroup)
-			r.Delete("/process-groups/{id}", h.apiDeleteProcessGroup)
-			r.Get("/process-groups/{id}/member-count", h.apiCountProcessGroupMembers)
-			r.Put("/processes/{id}/group", h.apiSetProcessGroup)
+				// Process groups (UI taxonomy for the Processes admin sidebar)
+				r.Get("/process-groups", h.apiListProcessGroups)
+				r.Post("/process-groups", h.apiCreateProcessGroup)
+				r.Put("/process-groups/{id}", h.apiUpdateProcessGroup)
+				r.Delete("/process-groups/{id}", h.apiDeleteProcessGroup)
+				r.Get("/process-groups/{id}/member-count", h.apiCountProcessGroupMembers)
+				r.Put("/processes/{id}/group", h.apiSetProcessGroup)
 
 				// Styles & node claims
 				r.Get("/styles", h.apiListStyles)

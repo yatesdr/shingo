@@ -43,12 +43,12 @@ type Process struct {
 	//              behavior, raiseCATIDChangePrompt); never auto-start.
 	//   "off"    — neither auto-arm nor prompt; silent.
 	// Empty/unknown persisted values read as "auto" via NormalizeChangeoverAutoArm.
-	ChangeoverAutoArm string    `json:"changeover_auto_arm"`
+	ChangeoverAutoArm string `json:"changeover_auto_arm"`
 	// GroupID is the optional process_groups row this process belongs to.
 	// nil = "Ungrouped" on the Processes admin page. Pure UI taxonomy —
 	// nothing in the runtime reads this column.
-	GroupID          *int64    `json:"group_id,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	GroupID   *int64    `json:"group_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Changeover auto-arm modes for Process.ChangeoverAutoArm.

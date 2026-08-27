@@ -83,7 +83,9 @@ func (h *Handlers) apiSimSetSpeed(w http.ResponseWriter, r *http.Request) {
 // apiSimSeedProductionDemo inserts demo lineside buckets and hourly
 // chart data so the /production page has rows to modify/delete and a
 // populated Shift Production graph. Sim builds only — call once via
-//   //   curl -X POST http://localhost:8081/sim/seed-production-demo
+//
+//	//   curl -X POST http://localhost:8081/sim/seed-production-demo
+//
 // Re-running is safe: hourly_counts are wiped+reinserted for today,
 // and lineside buckets merge into any existing active rows for the
 // same (node, style, part).
@@ -125,7 +127,8 @@ func (h *Handlers) apiSimSeedProductionDemo(w http.ResponseWriter, r *http.Reque
 // spread unevenly across 24 hours. Sim builds only.
 //
 // Call via:
-//   curl -X POST http://localhost:8081/sim/seed-loader-graphs
+//
+//	curl -X POST http://localhost:8081/sim/seed-loader-graphs
 func (h *Handlers) apiSimSeedLoaderGraphs(w http.ResponseWriter, r *http.Request) {
 	today := time.Now().Format("2006-01-02")
 
@@ -194,7 +197,8 @@ func (h *Handlers) apiSimSeedLoaderGraphs(w http.ResponseWriter, r *http.Request
 // Production graph. Sim builds only.
 //
 // Call via:
-//   curl -X POST http://localhost:8081/sim/clear-hourly-counts
+//
+//	curl -X POST http://localhost:8081/sim/clear-hourly-counts
 func (h *Handlers) apiSimClearHourlyCounts(w http.ResponseWriter, r *http.Request) {
 	today := time.Now().Format("2006-01-02")
 	processes, _ := h.engine.ProcessService().List()
@@ -205,8 +209,8 @@ func (h *Handlers) apiSimClearHourlyCounts(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	resp := map[string]any{
-		"ok":              true,
-		"date":            today,
+		"ok":                true,
+		"date":              today,
 		"processes_cleared": cleared,
 	}
 	w.Header().Set("Content-Type", "application/json")

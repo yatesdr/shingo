@@ -268,7 +268,7 @@ func (h *Handlers) handleProductionPartial(w http.ResponseWriter, r *http.Reques
 	data := map[string]any{
 		"StationViews":    stationViews,
 		"Processes":       processes,
-		"ActiveProcessID":  activeProcessID,
+		"ActiveProcessID": activeProcessID,
 		"IsAll":           isAll,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
