@@ -628,14 +628,42 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	}
 
 	// manual_swap loaders route their empty-in reservation through the SAME
-	// per-loader seam as the demand/threshold paths, so an operator request and a
-	// kanban signal can't both pass the in-flight count and both fire — the
-	// never-2N invariant. The seam owns the count, the budget, and the create
-	// atomically; want=1 (the operator asks for one empty), autoConfirm forced off
-	// (the operator confirms after loading, matching the side-cycle path). Budget
-	// exhausted (a retrieve_empty already inbound across the loader's cluster) ⇒
-	// the seam fires nothing and we surface the familiar "already inbound" error.
+	// per-loader seam as the demand/threshold paths — see the extracted arm.
 	if claim.SwapMode == protocol.SwapModeManualSwap {
+		return e.requestEmptyAtManualSwapLoader(nodeID, node, claim, payloadCode, reqOrigin)
+	}
+
+	return e.requestEmptyForSwapModes(nodeID, node, runtime, claim, payloadCode, reqOrigin)
+}
+
+// requestEmptyAtManualSwapLoader is RequestEmptyBin's manual_swap arm, lifted out
+// whole. It returns on every path, which is what made it liftable — and the same
+// property dc97331c relied on when it found the two blocks below this one were
+// unreachable.
+//
+// EXTRACTED FOR THE CEILING, and the ceiling is real. dc97331c trimmed
+// RequestEmptyBin from 65 to 60 statements and wrote down that the file then held
+// two functions sitting at exactly 60 — "both one statement from the ceiling".
+// d030a8ca added the press-index prime guard, which is correct and belongs there,
+// and the function went to 64. Shaving it back to exactly 60 would have restored
+// the same trap for the next person with a legitimate guard to add, so the arm
+// moves out instead and the caller gets headroom rather than a fresh tripwire.
+//
+// The seam, unchanged: an operator request and a kanban signal can't both pass the
+// in-flight count and both fire — the never-2N invariant. The seam owns the count,
+// the budget, and the create atomically; want=1 (the operator asks for one empty),
+// autoConfirm forced off (the operator confirms after loading, matching the
+// side-cycle path). Budget exhausted (a retrieve_empty already inbound across the
+// loader's cluster) means the seam fires nothing and we surface the familiar
+// "already inbound" error.
+func (e *Engine) requestEmptyAtManualSwapLoader(
+	nodeID int64,
+	node *processes.Node,
+	claim *processes.NodeClaim,
+	payloadCode string,
+	reqOrigin ordermgr.Origin,
+) (*orders.Order, error) {
+	{
 		// Resolve the loader from the Core aggregate — the SAME read-model the
 		// demand/threshold path uses — so the never-2N seam locks on the loader_key
 		// token, the identity every entry point now shares. Pre-cutover this built a
@@ -685,7 +713,24 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		}
 		return created, nil
 	}
+}
 
+// requestEmptyForSwapModes is RequestEmptyBin's non-manual_swap arm: the simple and
+// multi-step (press swap) modes, where the empty rides the same robot choreography
+// as the part it precedes.
+//
+// Split from the manual_swap arm above for the funlen ceiling — see that function
+// for why the arm moved rather than being shaved. The two are genuinely different
+// mechanisms that shared only a name: one reserves through the per-loader never-2N
+// seam, the other guards a single physical slot and builds a swap dispatch.
+func (e *Engine) requestEmptyForSwapModes(
+	nodeID int64,
+	node *processes.Node,
+	runtime *processes.RuntimeState,
+	claim *processes.NodeClaim,
+	payloadCode string,
+	reqOrigin ordermgr.Origin,
+) (*orders.Order, error) {
 	// Anti-spam for simple / multi-step modes (manual_swap is handled above via
 	// the reservation seam): one physical slot, so reject a second request while a
 	// retrieve_empty is already non-terminal at this CORE NODE (delivery_node, not
