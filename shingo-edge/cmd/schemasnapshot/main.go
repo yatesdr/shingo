@@ -37,6 +37,12 @@ func run() error {
 	}
 
 	dump, err := schemadump.Dump(path)
+	if err != nil {
+		// Unchecked, a failed dump still fell through and wrote whatever `dump`
+		// held — committing an empty or truncated snapshot that the drift test
+		// would then treat as the schema of record.
+		return fmt.Errorf("dump schema: %w", err)
+	}
 
 	out := schemadump.SnapshotPath
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
