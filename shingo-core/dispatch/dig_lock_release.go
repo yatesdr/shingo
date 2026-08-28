@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"log"
 
 	"shingo/protocol"
@@ -254,6 +255,52 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 	if !IsCoordinated(parent) {
 		return false // its fetch was one of its own legs; nothing is left standing
 	}
+
+	// ── GATE 3: THE HOLDER HAS ALREADY COLLECTED ──────────────────────────
+	//
+	// THE NAKED TARGET IS THE WHOLE JUSTIFICATION ABOVE, AND IT IS A STATE, NOT A
+	// SHAPE. Gate 2 protects a bin standing at an open mouth with its demand not
+	// yet dispatched. Once the demand HAS dispatched and lifted, that bin is on a
+	// robot: there is nothing at the mouth to re-bury, and converting the dig row
+	// hands the corridor to an order that has already left it.
+	//
+	// What that costs is not theoretical. The row then excludes every inbound
+	// comer for the whole transport leg — minutes of driving that has nothing to
+	// do with this lane — and it becomes PERMANENT whenever the holder cannot
+	// terminate. The single-position swap race supplies exactly that: the holder
+	// waits at the station for its evac partner, the partner needs to drop INTO
+	// this lane, and the partner is refused by this row. Neither can finish.
+	// Observed on the sim 2026-08-28 (main 1a6b6d23): order 142 held Lane_15
+	// outbound with its bin already at _TRANSIT while sibling 143 sat in
+	// `sourcing` under `lane-held-traffic`, and Lane_15's only reservation was
+	// that one row — a corridor shut with nothing inside it.
+	//
+	// ── WHY NOT ASK legStillNeedsLane, WHICH IS RIGHT THERE ───────────────
+	//
+	// Because it is INERT here, and believing otherwise already cost one revision.
+	// Control only reaches this function because that predicate returned false,
+	// and being claim-keyed it returns false for BOTH arrivals — the naked target
+	// (no claim yet) and the collected demand (claim lifted out). It cannot tell
+	// them apart, so no amount of asking it again will.
+	//
+	// The discriminator is DISPATCH STATE. swapLegCommittedToFleet is that
+	// question already asked and already argued, for this same mistake in the
+	// mirror direction, and its `reshuffling` arm rules a mid-dig holder
+	// NOT-committed — which is the answer this gate needs too, since a demand
+	// still digging has not collected anything. It is inherited rather than
+	// re-decided so the two cannot drift apart.
+	//
+	// The drop-back shape — a plan that picks from this lane and later drops back
+	// into it — is NOT released here: holderStillOwesTheLane answers that from the
+	// remaining steps before the caller ever reaches this function.
+	if swapLegCommittedToFleet(parent) {
+		log.Printf("dig lock: demand %d has already collected from lane %d (status %s) — releasing the "+
+			"corridor rather than converting its dig row. Nothing is standing at the mouth to protect, "+
+			"and a hold taken here would outlast the demand's own visit",
+			parent.ID, laneID, parent.Status)
+		return false
+	}
+
 	handed, hErr := reservations.HandOffLaneToPicker(
 		d.db.DB, laneID, parent.ID, parent.ID, digHandoffReservedBy)
 	if hErr != nil {
@@ -308,6 +355,86 @@ func (d *Dispatcher) holderStillOwesTheLane(holder *orders.Order, laneID int64) 
 	}
 	if lane != nil && lane.ID == laneID {
 		return true, "still owes this lane a drop — its bin is in the gripper, not in the corridor"
+	}
+
+	// ── AND DeliveryNode IS ONLY THE LAST STEP (the whole-visit shape) ────
+	//
+	// A plan may pick from this lane and later drop BACK into it, with its final
+	// destination somewhere else entirely. resolveOrderLaneHolds and
+	// resolvePlanLaneHolds both dedupe that to ONE row with dig as the stronger
+	// mode, on the stated rule that "an order that both picks from and drops into
+	// a lane owns it for the whole visit" — and mouth holds are taken once at
+	// dispatch, not per step, so that single row is the drop-back's only
+	// protection. Reachable through the operator bin-move door.
+	//
+	// NOTHING ELSE IN THE WALK CAN SEE IT. The drop-back bin is in the GRIPPER, so
+	// legStillNeedsLane finds no bin of the holder's in the lane; DeliveryNode
+	// names the final destination, which is not this lane. Read the plan or miss
+	// it — and missing it means opening the corridor in the gap before the robot
+	// drives back down it, the re-burial window entered from the inbound side.
+	if owes, why := d.holderOwesLaneALaterDrop(holder, laneID); owes {
+		return true, why
+	}
+	return false, ""
+}
+
+// holderOwesLaneALaterDrop reports whether any step still AHEAD of the holder
+// drops into laneID.
+//
+// The position is entryStepIndex — the same answer binForStep uses for "where is
+// this order in its plan", rather than a second spelling of it. Steps before it
+// are done and say nothing about what the corridor is still owed.
+//
+// TWO ERROR DIRECTIONS, AND THEY DIFFER ON PURPOSE:
+//
+//	a DATABASE read that does not answer fails CLOSED, like every other read in
+//	this file — an unresolvable node must not shorten a claim.
+//
+//	an UNPARSEABLE PLAN does not. It is a malformed column rather than a database
+//	that is not answering, it will read the same on every retry, and the order
+//	carrying it cannot be dispatched by anyone — so holding its corridor forever
+//	is the wedge this guard exists to prevent, arrived at from the other side.
+//	wantedBin rules the same way on the same column for the same reason.
+func (d *Dispatcher) holderOwesLaneALaterDrop(holder *orders.Order, laneID int64) (bool, string) {
+	if holder == nil || holder.StepsJSON == "" {
+		return false, ""
+	}
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(holder.StepsJSON), &steps); err != nil {
+		return false, ""
+	}
+	// POSITION WHEN IT IS KNOWABLE, THE WHOLE PLAN WHEN IT IS NOT.
+	//
+	// entryStepIndex answers from the wait the order is parked at, so it has no
+	// answer for a dispatched order whose plan contains no wait at all — and a
+	// pick-then-drop-back plan is exactly that shape. An unlocatable order falls
+	// back to reading every step, which is not a guess: the hold was taken ONCE at
+	// dispatch under the rule that an order picking from and dropping into a lane
+	// owns it for the whole visit, so "does this plan drop here at all" IS the
+	// question the row was created to answer.
+	from := 0
+	if idx, ok := entryStepIndex(holder, steps); ok && idx > 0 && idx < len(steps) {
+		from = idx
+	}
+	for _, step := range steps[from:] {
+		if step.Action != protocol.ActionDropoff || step.Node == "" {
+			continue
+		}
+		node, err := d.db.GetNodeByDotName(step.Node)
+		if err != nil {
+			return true, "has a later drop-off whose node could not be resolved"
+		}
+		if node == nil {
+			continue
+		}
+		lane, err := d.db.LaneForNode(node.ID)
+		if err != nil {
+			return true, "has a later drop-off whose lane could not be resolved"
+		}
+		if lane != nil && lane.ID == laneID {
+			return true, "still owes this lane a drop at a LATER step — it picks from this lane and " +
+				"drops back into it, and it owns the corridor for the whole visit"
+		}
 	}
 	return false, ""
 }

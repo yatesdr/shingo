@@ -5,6 +5,7 @@ package dispatch
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
@@ -117,4 +118,130 @@ func TestSelfHandoff_ACoordinatedDemandKeepsItsOwnCorridorAsOutbound(t *testing.
 				lane.Name)
 		}
 	})
+}
+
+// TestSelfHandoff_ACollectedDemandReleasesInsteadOfConverting is the ORDERING
+// case: the demand dispatches and lifts BEFORE the release evaluates.
+//
+// ── WHY THE OBVIOUS GUARD IS INERT, AND WHAT THE REAL ONE KEYS ON ─────────
+//
+// Control reaches handOffDugLane only because legStillNeedsLane already returned
+// false, and that predicate is CLAIM-keyed. It returns false in both states that
+// arrive here, and they want opposite answers:
+//
+//	NAKED TARGET      — the demand has not dispatched, holds no claim yet, and its
+//	                    uncovered bin stands at an open mouth. MUST hold.
+//	ALREADY COLLECTED — the demand dispatched, claimed, and lifted the bin OUT.
+//	                    Nothing stands at the mouth. Converting pins the corridor
+//	                    for the whole transport leg, and permanently when the
+//	                    holder cannot terminate.
+//
+// So the discriminator is DISPATCH STATE, never a live claim, and the predicate
+// is swapLegCommittedToFleet — the shape already written for this same mistake in
+// the mirror direction, whose `reshuffling` arm rules the mid-dig case
+// not-committed and which this guard inherits rather than re-decides.
+//
+// OBSERVED LIVE (houseserver, main 1a6b6d23, 2026-08-28; wall clock): the
+// conversion fires while the holder is ALREADY in_transit — order 88 held Lane_14
+// as dig through `reshuffling` and `dispatched`, and the row flipped to
+// outbound/dighandoff one second after `in_transit`, then pinned Lane_14 for the
+// entire drive to Lane_15. On the collision draw it wedges: order 142 held
+// Lane_15 outbound with its bin already at _TRANSIT while its swap sibling 143
+// sat in `sourcing` under `lane-held-traffic` needing to deliver INTO Lane_15 —
+// each waiting on the other, with nothing physically in the corridor.
+func TestSelfHandoff_ACollectedDemandReleasesInsteadOfConverting(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		status protocol.Status
+	}{
+		{"dispatched", StatusDispatched},
+		{"intransit", StatusInTransit},
+	} {
+		t.Run(tc.name+": the corridor is released, not converted", func(t *testing.T) {
+			t.Parallel()
+			db := testDBShared(t)
+			d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+			lane, _, _, _, _ := clearLaneFixture(t, db, "SELFHC"+tc.name[:4])
+
+			demand := testdb.CreateOrder(t, db, func(o *orders.Order) {
+				o.EdgeUUID = "selfhc-" + tc.name
+				o.Coordinated = true
+				o.Status = tc.status
+			})
+			if !d.laneLock.TryLock(lane.ID, demand.ID) {
+				t.Fatal("the demand could not take the lane it excavated")
+			}
+
+			if handed := d.handOffDugLane(demand, lane.ID); handed {
+				t.Fatalf("demand %d is %s — it has already collected and its bin is out of lane %s — "+
+					"yet handOffDugLane kept the corridor as its own outbound hold. There is no naked "+
+					"target left to protect: the row now pins an empty corridor for the whole transport "+
+					"leg, and forever when the holder cannot terminate.", demand.ID, tc.status, lane.Name)
+			}
+
+			// AND THE LANE ENDS HELD BY NOBODY. handOffDugLane only reports; the
+			// caller's release arm is what acts on the report, so the end state is
+			// the claim that matters to the plant.
+			d.maybeReleaseDigOnLastBlockerOut(lane.ID)
+			holders, err := reservations.ActiveMouthRows(db.DB, lane.ID)
+			testutil.MustNoErr(t, err, "read the lane's holders")
+			if len(holders) != 0 {
+				t.Fatalf("lane %s still holds %+v after a collected demand's release evaluated. A row "+
+					"surviving here IS the leak: a mouth hold owned by an order that already took its "+
+					"bin out of this lane, excluding every inbound comer until it terminates.",
+					lane.Name, holders)
+			}
+		})
+	}
+}
+
+// TestSelfHandoff_AHolderThatDropsBackIntoTheLaneKeepsIt is the Caution, and it
+// is the one place the release guard could be worse than the hold it replaces.
+//
+// A plan may pick from AND later drop back into the SAME lane — resolveOrderLaneHolds
+// and resolvePlanLaneHolds both deduplicate that to ONE row with dig as the
+// stronger mode, because "an order that both picks from and drops into a lane owns
+// it for the whole visit". Mouth holds are acquired once at dispatch, not per
+// step, so that single row is all the corridor protection the drop-back has.
+//
+// Such a holder is COMMITTED by the time it lifts, so the dispatch-state guard
+// alone would release the lane it is about to drive back down. legStillNeedsLane
+// cannot see it either — the drop-back bin is in the GRIPPER, not in the lane —
+// and holderStillOwesTheLane checked only DeliveryNode, which names the FINAL
+// destination and not an intermediate dropoff step.
+//
+// So the question is asked of the REMAINING STEPS. Reachable through the operator
+// bin-move door, which is how the whole-visit shape surfaced in the first place.
+func TestSelfHandoff_AHolderThatDropsBackIntoTheLaneKeepsIt(t *testing.T) {
+	t.Parallel()
+
+	db := testDBShared(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	lane, _, wallSlots, parkSlots, _ := clearLaneFixture(t, db, "SELFHV")
+
+	demand := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "selfhv-demand"
+		o.Coordinated = true
+		o.Status = StatusInTransit
+		// Picks from this lane and drops BACK into it: the whole-visit shape.
+		// The FINAL destination is a different lane on purpose — DeliveryNode is
+		// the only thing the predicate used to read, so a plan whose drop-back is
+		// an INTERMEDIATE step is exactly the shape that slipped past it.
+		o.StepsJSON = `[{"action":"pickup","node":"` + wallSlots[0].Name + `"},` +
+			`{"action":"dropoff","node":"` + wallSlots[2].Name + `"},` +
+			`{"action":"pickup","node":"` + parkSlots[0].Name + `"},` +
+			`{"action":"dropoff","node":"` + parkSlots[1].Name + `"}]`
+		o.DeliveryNode = parkSlots[1].Name
+	})
+
+	owes, why := d.holderStillOwesTheLane(demand, lane.ID)
+	if !owes {
+		t.Fatalf("demand %d still has a DROPOFF into lane %s ahead of it (%s), and its bin is in the "+
+			"gripper where no bin-position predicate can see it — yet holderStillOwesTheLane said it "+
+			"owes the lane nothing (%q). Releasing here opens the corridor in the gap before the robot "+
+			"drives back down it, which is the re-burial window entered from the inbound side.",
+			demand.ID, lane.Name, wallSlots[2].Name, why)
+	}
 }
