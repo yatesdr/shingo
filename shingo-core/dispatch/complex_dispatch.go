@@ -227,6 +227,26 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 	// named and the ordinary triggers re-ask; nothing it holds is given up, which
 	// is Rule 1 exactly as the plain path applies it.
 	holds, hErr := d.resolvePlanLaneHolds(resolvedSteps)
+	// ── ONE OF THESE ERRORS IS NOT A WAIT ─────────────────────────────────
+	//
+	// Everything else here fails closed into a hold, because an unreadable lane is
+	// a busy lane and retrying is the right response. A LaneRevisitError is the
+	// opposite kind of thing: the PLAN is malformed — it picks from a lane, leaves,
+	// and comes back — and no amount of retrying changes a step list. Parking it
+	// would hide a producer nobody knew existed behind a queue reason that says
+	// "waiting for a slot", which is how a shape like this stays invisible.
+	//
+	// So it terminates, with `structural` (the code whose own doc is "malformed in
+	// a way retrying cannot fix") and the tripwire's sentence as the detail, which
+	// names the lane and both steps. It is deliberately loud: the shape has no
+	// producer today, and the first one to appear should arrive as a failed order
+	// somebody reads, not as a corridor quietly held for the life of an order.
+	var revisit *LaneRevisitError
+	if errors.As(hErr, &revisit) {
+		log.Printf("dispatch: REFUSING complex order %d — %v", order.ID, revisit)
+		d.failOrderInternal(order, codeStructural, revisit.Error())
+		return dispatchStep{done: true, err: hErr}
+	}
 	if hErr != nil {
 		log.Printf("dispatch: resolving lane holds for complex order %d: %v (holding)", order.ID, hErr)
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLaneAcquireError,

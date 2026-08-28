@@ -259,6 +259,24 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 // Written as its own arm rather than folded into `default` so that a future
 // editor has to delete a paragraph to get the answer wrong, instead of adding a
 // constant to a list.
+//
+// ── THERE IS A SECOND READER, AND IT READS `false` THE OPPOSITE WAY ───────
+//
+// handOffDugLane's gate 3 asks this same question of a LANE HOLDER: has the
+// demand already collected, so that the corridor can be given back. Everything
+// above is written in swap vocabulary, and the two callers agree on what "not
+// committed" MEANS while disagreeing completely on what it COSTS:
+//
+//	HERE          not committed → the partner keeps waiting. Erring this way
+//	              costs a wait, so `default` is the safe arm.
+//	GATE 3        not committed → convert the dig row and keep the corridor.
+//	              Erring this way is the leaked hold that wedged the plant.
+//
+// So before adding a status to `default` — or moving one out of the committed
+// list — check gate 3 as well: a status that is merely "not yet doing its part"
+// to a swap sibling may be "has already been to the lane and left" to a corridor.
+// `faulted` is exactly that status, and gate 3 handles it LOCALLY rather than
+// here, because this caller's answer for it is the right one.
 func swapLegCommittedToFleet(sib *orders.Order) bool {
 	switch sib.Status {
 	case StatusDispatched, StatusInTransit, StatusStaged, StatusDelivered, StatusConfirmed:

@@ -243,6 +243,44 @@ func (d *Dispatcher) resolveOrderLaneHolds(sourceNode, destNode *nodes.Node) ([]
 	return holds, nil
 }
 
+// LaneRevisitError is the TRIPWIRE on a plan shape nothing builds: a pickup in
+// lane L, a LATER dropoff back into L, and a final destination outside L.
+//
+// ── WHY IT IS A REFUSAL AND NOT A HOLD ────────────────────────────────────
+//
+// Mouth holds are taken ONCE, at dispatch, and this walk deduplicates a lane
+// named twice into one row on the rule that an order picking from and dropping
+// into a lane "owns it for the whole visit". That rule is honest for the two
+// shapes the plant actually emits — an in-lane MOVE (which finishes in the lane,
+// so the visit and the order end together) and a RELAY (whose bin stands parked
+// IN the lane between visits, claimed, where the lane's own state carries it).
+//
+// It is not honest for this one. The robot picks, LEAVES the lane entirely, and
+// comes back later — so a single row spans a departure, and the only truthful
+// lifetimes for it are both wrong: release at the lift and the corridor is open
+// when the robot drives back down it; hold to terminalization and the corridor is
+// shut through unrelated transport, which is the leak this whole seam was opened
+// to close.
+//
+// Reading the remaining ROUTE to tell those apart was tried and removed: the read
+// was wrong in both its regimes, and five reviewers plus the owner could not name
+// a door that emits the shape. So the shape is refused instead — loudly, by name,
+// at plan time. If a future door ever starts building one, this says so the first
+// time rather than mis-holding a corridor quietly and forever.
+type LaneRevisitError struct {
+	Lane        string // the lane the plan picks from and later returns to
+	PickupNode  string // the step it picks at
+	DropoffNode string // the LATER step it drops back at
+	FinalNode   string // where it actually finishes, outside the lane
+}
+
+func (e *LaneRevisitError) Error() string {
+	return fmt.Sprintf("plan picks from %s at %s, later drops back into it at %s, and finishes at %s "+
+		"outside the lane — a lane mouth is held once for one visit and cannot span the robot leaving "+
+		"and returning. No order door builds this shape; fix the plan that did",
+		e.Lane, e.PickupNode, e.DropoffNode, e.FinalNode)
+}
+
 // resolvePlanLaneHolds is resolveOrderLaneHolds over a whole coordinated plan:
 // every pickup step's lane is a source (the full lock), every dropoff step's is a
 // destination (inbound).
@@ -267,6 +305,22 @@ func (d *Dispatcher) resolveOrderLaneHolds(sourceNode, destNode *nodes.Node) ([]
 func (d *Dispatcher) resolvePlanLaneHolds(steps []resolvedStep) ([]laneHold, error) {
 	strongest := map[int64]reservations.Mode{}
 	var order []int64 // deterministic output; map iteration is not
+
+	// ── THE TRIPWIRE'S EVIDENCE, GATHERED ON THIS SAME WALK ───────────────
+	//
+	// It rides here rather than in a pass of its own because this loop is already
+	// resolving every step's node and lane, and those are database reads on every
+	// dispatch tick — a second walk would double them to answer a question this
+	// one has in hand.
+	//
+	// Recorded BEFORE the gated-lane skip below, deliberately: whether a lane
+	// defers its hold to its mark is configuration, and the shape is malformed
+	// either way. A tripwire that a mark can switch off is not a tripwire.
+	pickedFrom := map[int64]string{} // lane -> the node this plan picked at
+	var revisit *LaneRevisitError
+	revisitLane := int64(0)
+	finalNode, finalLane, finalResolved := "", int64(0), false
+
 	for _, step := range steps {
 		mode := reservations.ModeInbound
 		switch step.Action {
@@ -276,6 +330,11 @@ func (d *Dispatcher) resolvePlanLaneHolds(steps []resolvedStep) ([]laneHold, err
 		default:
 			continue
 		}
+		// WHERE THE PLAN ENDS is the last actionable step, which is the same
+		// answer extractEndpoints gives DeliveryNode — so the tripwire and
+		// holderStillOwesTheLane's surviving arm read one definition of "final
+		// destination" between them. Reset per step: only the last one counts.
+		finalNode, finalLane, finalResolved = step.Node, 0, false
 		if step.Node == "" {
 			continue
 		}
@@ -290,8 +349,22 @@ func (d *Dispatcher) resolvePlanLaneHolds(steps []resolvedStep) ([]laneHold, err
 		if err != nil {
 			return nil, err
 		}
+		finalResolved = true
 		if lane == nil || lane.ParentID == nil {
 			continue
+		}
+		finalLane = lane.ID
+		if mode == reservations.ModeDig {
+			if _, seen := pickedFrom[lane.ID]; !seen {
+				pickedFrom[lane.ID] = step.Node
+			}
+		} else if at, seen := pickedFrom[lane.ID]; seen && revisit == nil {
+			// A DROP BACK INTO A LANE THIS PLAN ALREADY PICKED FROM. Not yet a
+			// refusal — an in-lane move is exactly this and is legitimate. What
+			// decides it is where the plan ENDS, which is not known until the walk
+			// is over.
+			revisit = &LaneRevisitError{Lane: lane.Name, PickupNode: at, DropoffNode: step.Node}
+			revisitLane = lane.ID
 		}
 		// ── A GATED LANE'S ENTRY IS NOT THIS MOMENT ───────────────────────
 		//
@@ -328,6 +401,23 @@ func (d *Dispatcher) resolvePlanLaneHolds(steps []resolvedStep) ([]laneHold, err
 			strongest[lane.ID] = mode
 		}
 	}
+
+	// ── AND NOW THE TRIPWIRE CAN ANSWER ───────────────────────────────────
+	//
+	// A revisit is only the ghost when the plan LEAVES the lane for good: if it
+	// finishes there, the visit and the order end together, the single row is
+	// honest for the whole of it, and holderStillOwesTheLane's DeliveryNode arm
+	// releases it at the drop. That is the in-lane move, and it is ordinary.
+	//
+	// FAIL OPEN ON AN UNRESOLVED ENDING. If the last actionable step's node did
+	// not resolve, "where does this plan finish" has no answer, and a tripwire is
+	// the wrong thing to fire on a question it cannot ask. Admission owns an
+	// unresolvable node and has already run.
+	if revisit != nil && finalResolved && finalLane != revisitLane {
+		revisit.FinalNode = finalNode
+		return nil, revisit
+	}
+
 	holds := make([]laneHold, 0, len(order))
 	for _, laneID := range order {
 		holds = append(holds, laneHold{laneID: laneID, mode: strongest[laneID]})

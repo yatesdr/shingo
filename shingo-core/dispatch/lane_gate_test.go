@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"errors"
 	"testing"
 
 	"shingo/protocol"
@@ -560,4 +561,101 @@ func TestLaneGate_UnmarkedLaneSerializesOpposingModes(t *testing.T) {
 	if err != nil || !admitted {
 		t.Fatalf("B after A released: admitted=%v err=%v — a refusal with no releaser is not a wait", admitted, err)
 	}
+}
+
+// TestLaneGate_ResolveHoldsRefusesAPlanThatRevisitsALaneItLeaves is the TRIPWIRE
+// on the ghost shape, and the ghost shape is a plan nothing builds.
+//
+// ── WHAT WAS DELETED, AND WHY A TRIPWIRE REPLACED IT ──────────────────────
+//
+// holderStillOwesTheLane briefly read the holder's remaining ROUTE, looking for a
+// later dropoff back into a lane it had already picked from — "owns it for the
+// whole visit". The route read was wrong in both of its regimes (it started from
+// the wait index, which sits one gate AHEAD of the robot, and fell back to the
+// whole plan, which cannot tell a completed drop from a pending one), and the
+// shape it defended has no producer:
+//
+//	THE OPERATOR BIN-MOVE DOOR is structurally two steps, so its in-lane form
+//	has its DeliveryNode inside the lane — the arm that survived already covers it.
+//
+//	THE RELAY parks a bin IN the lane between its two visits, claimed, where
+//	legStillNeedsLane sees it. Its dropoff also comes BEFORE its pickup, so it is
+//	not this shape at all.
+//
+// So later visits belong to the LANE'S OWN STATE, not to a route read. What is
+// left is the possibility that some future door starts emitting the ghost: a
+// pickup in lane L, a LATER dropoff back into L, and a final destination outside
+// L. One mouth row cannot honestly express that — it would be held from dispatch
+// to terminalization on a lane the robot leaves in between — so the plan is
+// REFUSED, loudly and by name, the first time anyone builds one. A wait would
+// hide it; a fail says who to talk to.
+func TestLaneGate_ResolveHoldsRefusesAPlanThatRevisitsALaneItLeaves(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	_, ghostLaneID, ghostS0 := gatedLane(t, db, "GHOST", "") // unmarked: the hold is taken here
+	ghostS1, err := db.GetNodeByDotName("GHOST-S1")
+	if err != nil || ghostS1 == nil {
+		t.Fatalf("read GHOST-S1: %v", err)
+	}
+	line := lineNode(t, db, "GHOST-LINE")
+
+	t.Run("the ghost is refused", func(t *testing.T) {
+		_, err := d.resolvePlanLaneHolds([]resolvedStep{
+			{Action: protocol.ActionPickup, Node: ghostS0.Name},
+			{Action: protocol.ActionDropoff, Node: ghostS1.Name},
+			{Action: protocol.ActionPickup, Node: line.Name},
+			{Action: protocol.ActionDropoff, Node: line.Name},
+		})
+		var revisit *LaneRevisitError
+		if !errors.As(err, &revisit) {
+			t.Fatalf("a plan that picks from lane %d, later drops BACK into it, and finishes somewhere "+
+				"else was accepted (err=%v). No door builds that shape, and one mouth row cannot express "+
+				"it honestly — the row would be held from dispatch to terminalization across a visit the "+
+				"robot leaves in the middle. Refuse it by name, or the first producer of it silently "+
+				"mis-holds a corridor forever.", ghostLaneID, err)
+		}
+		if revisit.Lane == "" || revisit.PickupNode == "" || revisit.DropoffNode == "" {
+			t.Fatalf("the refusal is %+v — an operator has to be able to read which lane and which "+
+				"steps, or the tripwire reports that something is wrong without saying what", revisit)
+		}
+	})
+
+	t.Run("an in-lane move is NOT the ghost", func(t *testing.T) {
+		// Pick from the lane, drop back into it, and FINISH there. This is the real
+		// two-steps-one-lane shape, it is what the operator bin-move door emits, and
+		// holderStillOwesTheLane's DeliveryNode arm covers it. It must still take
+		// its one dig hold.
+		holds, err := d.resolvePlanLaneHolds([]resolvedStep{
+			{Action: protocol.ActionPickup, Node: ghostS0.Name},
+			{Action: protocol.ActionDropoff, Node: ghostS1.Name},
+		})
+		if err != nil {
+			t.Fatalf("an in-lane move was refused (%v). Its final destination IS the lane, so the "+
+				"whole-visit hold is exactly right and the DeliveryNode arm releases it at the drop.", err)
+		}
+		if len(holds) != 1 || holds[0].laneID != ghostLaneID || holds[0].mode != reservations.ModeDig {
+			t.Fatalf("in-lane move holds = %+v, want ONE dig hold on lane %d", holds, ghostLaneID)
+		}
+	})
+
+	t.Run("a relay is NOT the ghost", func(t *testing.T) {
+		// Drop into the lane, then pick back up from it later, finishing elsewhere.
+		// The parked bin stands IN the lane between the two visits, claimed, where
+		// legStillNeedsLane sees it — so the lane's own state carries this one and
+		// there is nothing for a tripwire to say about it.
+		holds, err := d.resolvePlanLaneHolds([]resolvedStep{
+			{Action: protocol.ActionDropoff, Node: ghostS1.Name},
+			{Action: protocol.ActionPickup, Node: ghostS1.Name},
+			{Action: protocol.ActionDropoff, Node: line.Name},
+		})
+		if err != nil {
+			t.Fatalf("a relay was refused (%v). Its bin is parked in the lane between visits, claimed, "+
+				"which is the state the claim walk reads — the tripwire must not fire on it.", err)
+		}
+		if len(holds) != 1 || holds[0].mode != reservations.ModeDig {
+			t.Fatalf("relay holds = %+v, want ONE dig hold (the stronger mode wins the dedupe)", holds)
+		}
+	})
 }

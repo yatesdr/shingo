@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"encoding/json"
 	"log"
 
 	"shingo/protocol"
@@ -302,10 +301,33 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 	// still digging has not collected anything. It is inherited rather than
 	// re-decided so the two cannot drift apart.
 	//
+	// ── AND `faulted` IS ADDED HERE, NOT THERE ────────────────────────────
+	//
+	// The shared predicate's `default` arm means "not committed", and the two
+	// callers read that answer with OPPOSITE consequences: for the swap hold it
+	// means keep waiting, which is safe; here it means convert, which is the leak.
+	// So the one status where they must differ is fixed locally. Widening
+	// swapLegCommittedToFleet would be wrong for the swap caller, which genuinely
+	// wants a faulted sibling to read not-committed because it may yet recover and
+	// do its part.
+	//
+	// `faulted` is POST-DISPATCH BY CONSTRUCTION — every inbound edge to it comes
+	// from acknowledged, dispatched, in_transit or staged — so a faulted holder
+	// standing here has been handed to the fleet and, having passed the claim
+	// walk, has its bin out of this lane. A jammed aisle is jammed by the ROBOT,
+	// not by a row; an empty aisle held for a faulted order is the same leak
+	// wearing a different status, and a worse one, because `faulted` sits outside
+	// the runtime-stuck population and nothing alarms on it.
+	//
+	// THE BIN THAT COMES BACK IS ALREADY COVERED. A dropped load set down again in
+	// this lane is a bin sitting in this lane, which legStillNeedsLane sees on the
+	// next evaluation — before control can reach this function at all. The order
+	// re-owing the lane after a recovery is likewise a fresh acquire, not this row.
+	//
 	// The drop-back shape — a plan that picks from this lane and later drops back
 	// into it — is NOT released here: holderStillOwesTheLane answers that from the
-	// remaining steps before the caller ever reaches this function.
-	if swapLegCommittedToFleet(parent) {
+	// lane's own state before the caller ever reaches this function.
+	if swapLegCommittedToFleet(parent) || parent.Status == StatusFaulted {
 		log.Printf("dig lock: demand %d has already collected from lane %d (status %s) — releasing the "+
 			"corridor rather than converting its dig row. Nothing is standing at the mouth to protect, "+
 			"and a hold taken here would outlast the demand's own visit",
@@ -313,7 +335,7 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 		return false
 	}
 
-	handed, hErr := reservations.HandOffLaneToPicker(
+	outcome, hErr := reservations.HandOffLaneToPicker(
 		d.db.DB, laneID, parent.ID, parent.ID, digHandoffReservedBy)
 	if hErr != nil {
 		log.Printf("dig lock: could not convert dig %d's own claim on lane %d to its outbound "+
@@ -321,12 +343,32 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 			parent.ID, laneID, hErr)
 		return true // the row may or may not have moved: do not release on top of a failed write
 	}
-	if !handed {
-		return false
+
+	// ── PAST THIS POINT THE LANE IS NEVER THE CALLER'S TO RELEASE ─────────
+	//
+	// All three outcomes report true, and that is the correction rather than a
+	// shortcut. Two of them are "nothing was converted", and the old bool said so
+	// in a way the caller read as PERMISSION — whereupon its mode-blind release
+	// deleted whatever row it found for this owner, including the outbound row a
+	// concurrent pass had just created. See reservations.HandOff.
+	//
+	// The two gates above are where false comes from now, and both of them decide
+	// BEFORE touching the row. That is the honest shape: a release is authorized
+	// by what the holder is, never by what a write happened to find.
+	switch outcome {
+	case reservations.HandOffConverted:
+		log.Printf("dig lock: demand %d finished its own excavation of lane %d and kept the corridor "+
+			"as an OUTBOUND hold. Nothing may drop into it until the demand has its bin, and the "+
+			"hold ends with the demand however it ends", parent.ID, laneID)
+	case reservations.HandOffNoDigRow:
+		log.Printf("dig lock: lane %d had no dig row left for demand %d when the handoff ran — a "+
+			"concurrent pass already converted or released it, under the same lane lock. Standing "+
+			"down: releasing on top of that would delete whatever it just put there", laneID, parent.ID)
+	case reservations.HandOffPickerNotCollector:
+		log.Printf("dig lock: demand %d holds lane %d INBOUND, so it is dropping into the lane rather "+
+			"than collecting from it and the corridor is not its hold to take. The dig row is gone; "+
+			"its own inbound row stays", parent.ID, laneID)
 	}
-	log.Printf("dig lock: demand %d finished its own excavation of lane %d and kept the corridor "+
-		"as an OUTBOUND hold. Nothing may drop into it until the demand has its bin, and the "+
-		"hold ends with the demand however it ends", parent.ID, laneID)
 	return true
 }
 
@@ -349,6 +391,37 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 // bin, and legStillNeedsLane is right about it and mutation-pinned; widening that
 // predicate would answer a question the legs are not being asked.
 //
+// ── IT READS LANE STATE, AND IT DOES NOT READ THE ROUTE ───────────────────
+//
+// This briefly grew a second arm that parsed the holder's remaining steps looking
+// for a LATER dropoff back into a lane it had already picked from. That arm is
+// gone, and the ruling behind its removal is the useful part:
+//
+//	A LATER VISIT IS THE LANE'S OWN BUSINESS. Every shape the plant actually
+//	builds announces itself in state that is already read here. An IN-LANE MOVE
+//	names the lane in DeliveryNode — the arm above. A RELAY parks its bin IN the
+//	lane between visits, claimed, where legStillNeedsLane sees it. A PICK-ONLY
+//	visit is over at the lift. Three shapes, three lane-state answers, and the
+//	release timing falls out of each without anybody consulting a step list.
+//
+//	THE SHAPE THAT NEEDED THE ROUTE HAS NO PRODUCER. Pick from a lane, leave,
+//	come back later, finish elsewhere: not the operator bin-move door (two steps,
+//	so its in-lane form finishes in the lane), not the relay (its dropoff comes
+//	BEFORE its pickup), not anything five readers or the owner could name. It is
+//	refused at plan time instead — see LaneRevisitError — so if a door ever starts
+//	emitting one we hear about it rather than mis-holding a corridor quietly.
+//
+//	AND A ROUTE READ CANNOT BE MADE EXACT HERE ANYWAY. "Which steps are still
+//	ahead" has no reliable answer at this seam: wait_index advances when a segment
+//	is APPENDED, one gate ahead of the robot, so a positioned scan skips the
+//	segment being executed, and the fallback — read every step — cannot tell a
+//	completed drop from a pending one and holds the lane, as a DIG, through
+//	transport it owes nothing to. Both regimes were wrong in opposite directions.
+//
+// A RE-ENTRY IS NOT THIS FUNCTION'S PROBLEM either. An order that comes back to a
+// lane acquires it again through the ordinary mouth gate, with its own admission
+// and its own spliced wait; it does not ride a row taken for an earlier visit.
+//
 // FAIL CLOSED, like every read in this file.
 func (d *Dispatcher) holderStillOwesTheLane(holder *orders.Order, laneID int64) (bool, string) {
 	if holder.DeliveryNode == "" {
@@ -367,86 +440,6 @@ func (d *Dispatcher) holderStillOwesTheLane(holder *orders.Order, laneID int64) 
 	}
 	if lane != nil && lane.ID == laneID {
 		return true, "still owes this lane a drop — its bin is in the gripper, not in the corridor"
-	}
-
-	// ── AND DeliveryNode IS ONLY THE LAST STEP (the whole-visit shape) ────
-	//
-	// A plan may pick from this lane and later drop BACK into it, with its final
-	// destination somewhere else entirely. resolveOrderLaneHolds and
-	// resolvePlanLaneHolds both dedupe that to ONE row with dig as the stronger
-	// mode, on the stated rule that "an order that both picks from and drops into
-	// a lane owns it for the whole visit" — and mouth holds are taken once at
-	// dispatch, not per step, so that single row is the drop-back's only
-	// protection. Reachable through the operator bin-move door.
-	//
-	// NOTHING ELSE IN THE WALK CAN SEE IT. The drop-back bin is in the GRIPPER, so
-	// legStillNeedsLane finds no bin of the holder's in the lane; DeliveryNode
-	// names the final destination, which is not this lane. Read the plan or miss
-	// it — and missing it means opening the corridor in the gap before the robot
-	// drives back down it, the re-burial window entered from the inbound side.
-	if owes, why := d.holderOwesLaneALaterDrop(holder, laneID); owes {
-		return true, why
-	}
-	return false, ""
-}
-
-// holderOwesLaneALaterDrop reports whether any step still AHEAD of the holder
-// drops into laneID.
-//
-// The position is entryStepIndex — the same answer binForStep uses for "where is
-// this order in its plan", rather than a second spelling of it. Steps before it
-// are done and say nothing about what the corridor is still owed.
-//
-// TWO ERROR DIRECTIONS, AND THEY DIFFER ON PURPOSE:
-//
-//	a DATABASE read that does not answer fails CLOSED, like every other read in
-//	this file — an unresolvable node must not shorten a claim.
-//
-//	an UNPARSEABLE PLAN does not. It is a malformed column rather than a database
-//	that is not answering, it will read the same on every retry, and the order
-//	carrying it cannot be dispatched by anyone — so holding its corridor forever
-//	is the wedge this guard exists to prevent, arrived at from the other side.
-//	wantedBin rules the same way on the same column for the same reason.
-func (d *Dispatcher) holderOwesLaneALaterDrop(holder *orders.Order, laneID int64) (bool, string) {
-	if holder == nil || holder.StepsJSON == "" {
-		return false, ""
-	}
-	var steps []resolvedStep
-	if err := json.Unmarshal([]byte(holder.StepsJSON), &steps); err != nil {
-		return false, ""
-	}
-	// POSITION WHEN IT IS KNOWABLE, THE WHOLE PLAN WHEN IT IS NOT.
-	//
-	// entryStepIndex answers from the wait the order is parked at, so it has no
-	// answer for a dispatched order whose plan contains no wait at all — and a
-	// pick-then-drop-back plan is exactly that shape. An unlocatable order falls
-	// back to reading every step, which is not a guess: the hold was taken ONCE at
-	// dispatch under the rule that an order picking from and dropping into a lane
-	// owns it for the whole visit, so "does this plan drop here at all" IS the
-	// question the row was created to answer.
-	from := 0
-	if idx, ok := entryStepIndex(holder, steps); ok && idx > 0 && idx < len(steps) {
-		from = idx
-	}
-	for _, step := range steps[from:] {
-		if step.Action != protocol.ActionDropoff || step.Node == "" {
-			continue
-		}
-		node, err := d.db.GetNodeByDotName(step.Node)
-		if err != nil {
-			return true, "has a later drop-off whose node could not be resolved"
-		}
-		if node == nil {
-			continue
-		}
-		lane, err := d.db.LaneForNode(node.ID)
-		if err != nil {
-			return true, "has a later drop-off whose lane could not be resolved"
-		}
-		if lane != nil && lane.ID == laneID {
-			return true, "still owes this lane a drop at a LATER step — it picks from this lane and " +
-				"drops back into it, and it owns the corridor for the whole visit"
-		}
 	}
 	return false, ""
 }
