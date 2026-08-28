@@ -100,6 +100,25 @@ func TestValidateNodeClaim_Invariants(t *testing.T) {
 		{"manual_swap without outbound destination", func(c *NodeClaimInput) {
 			c.SwapMode, c.OutboundDestination, c.PayloadCode = protocol.SwapModeManualSwap, "", ""
 		}, "outbound_destination"},
+
+		// SEQUENTIAL HAD NO ARM AT ALL. Every other mode's required routing is
+		// refused here, at the moment the operator saves the claim; sequential
+		// fell through the switch, so a claim missing its partner or its routing
+		// saved clean and failed at runtime as an empty dispatch — a changeover
+		// that plans, creates nothing, and leaves the node task in error with a
+		// message about the builder rather than about the field.
+		{"sequential without a paired position", func(c *NodeClaimInput) {
+			c.SwapMode, c.PairedCoreNode = protocol.SwapModeSequential, ""
+		}, "paired_core_node"},
+		{"sequential paired to itself", func(c *NodeClaimInput) {
+			c.SwapMode, c.PairedCoreNode = protocol.SwapModeSequential, "PRESS"
+		}, "paired_core_node"},
+		{"sequential without outbound destination", func(c *NodeClaimInput) {
+			c.SwapMode, c.OutboundDestination = protocol.SwapModeSequential, ""
+		}, "outbound_destination"},
+		{"sequential without inbound source", func(c *NodeClaimInput) {
+			c.SwapMode, c.InboundSource = protocol.SwapModeSequential, ""
+		}, "inbound_source"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
