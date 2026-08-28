@@ -101,8 +101,15 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 		return
 	}
 	digOwner, err := d.laneLock.DigOwner(laneID)
-	if err != nil || digOwner == 0 {
-		return // no dig holds this lane, or the row could not be read: keep whatever is there
+	if err != nil {
+		return // the row could not be read: keep whatever is there
+	}
+	if digOwner == 0 {
+		// NO DIG — but there may be a converted handoff row that nothing else
+		// will ever look at again. This is the only walk that visits a lane on
+		// an ordinary exit event, so it is the only place that can notice.
+		d.maybeReleaseStrandedHandoff(laneID)
+		return
 	}
 	children, err := d.db.ListChildOrders(digOwner)
 	if err != nil {
@@ -194,6 +201,139 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 	// releaser. A leg parked under `dig-holds-parking` is standing in a different
 	// lane naming THIS one, so evaluating only the lane that just freed re-asks
 	// everyone except the population the cause was invented for.
+	d.EvaluateDwellersSharingGroupWith(laneID)
+}
+
+// maybeReleaseStrandedHandoff gives the converted naked-target row the releaser
+// it never had.
+//
+// ── THE ROW LEAVES THE MACHINERY THE MOMENT IT IS CREATED ─────────────────
+//
+// handOffDugLane converts the dig row to an OUTBOUND row so the uncovered bin
+// cannot be re-buried before its demand dispatches. That conversion also takes
+// the row OUT OF THIS WALK: the walk opens on DigOwner, which reads mode='dig',
+// and returns the moment there is none. From then on the row's only releasers
+// are its owner's own block progress (releaseOrderLaneFor) and its
+// terminalization.
+//
+// For a demand that dispatches shortly that is exactly right, and the row lives
+// seconds. For one that goes back to the scanner and RE-RESOLVES ONTO A BIN
+// SOMEWHERE ELSE, nothing looks at the row again and the corridor stays shut for
+// the rest of that order's life. Flip 2's own header records five of those
+// wedging five lanes on the lane-stress rig 2026-08-13 — "no live order wanted
+// any of the five slots they were holding for" — and the same shape wedged the
+// sim on 2026-08-28: order 202 held Lane_03 as `dighandoff` while its own route
+// had re-resolved to SMN_001 → SMN_008, and the evac that needed a slot in
+// Lane_03 queued behind it until three cells had stopped.
+//
+// It was survivable before only by accident. A second blocker-out pass used to
+// read "the dig row is already gone" as permission to release, and ReleaseLane
+// is mode-blind, so it deleted the fresh handoff row — the race graphite-finch
+// found and 9466f086 closed. That bug was sweeping these rows away constantly.
+// Closing it was right; it exposed the hole underneath, which is this one.
+//
+// ── WHAT DECIDES IT, AND WHY IT IS NOT A ROUTE READ ───────────────────────
+//
+//	RESHUFFLING           the gap the row exists for. The dig is still finishing
+//	                      and the demand has not been handed back to the scanner.
+//	                      KEEP — this is gate 2 doing its job.
+//
+//	DISPATCHED OR BEYOND  its own per-visit release and its terminalization own
+//	                      the row now, exactly as HandOffLaneToPicker's doc says.
+//	                      KEEP.
+//
+//	A BIN OF ITS OWN      legStillNeedsLane — it is coming for something still in
+//	  STILL IN THE LANE   here, or dwelling in it. KEEP.
+//
+//	PRE-DISPATCH WITH     it has not re-resolved yet and has not chosen. This is
+//	  NO CLAIM ANYWHERE   still the gap. KEEP. ("No claim → release" would be
+//	                      wrong for exactly this reason: a naked target holds no
+//	                      claim BY DEFINITION, so that rule would drop the row one
+//	                      scanner tick after the parent left `reshuffling` and
+//	                      undo gate 2 across most of its window.)
+//
+//	ANYTHING ELSE         RELEASE. Two shapes reach here and both are stranded:
+//	                      an order that went back through the scanner and resolved
+//	                      onto a bin SOMEWHERE ELSE, and one that has COLLECTED
+//	                      and driven off with its bin.
+//
+// ── THE COLLECTED ARM IS GATE 3, ASKED A SECOND TIME ──────────────────────
+//
+// It was tempting — and wrong, and the sim said so — to treat "dispatched or
+// beyond" as KEEP on the grounds that the demand's own per-visit release owns
+// the row from then on. That is what HandOffLaneToPicker's doc claims, and it
+// holds only while the lane is ON THE DEMAND'S ROUTE: releaseOrderLaneFor fires
+// on block progress AT A NODE IN THIS LANE, so an order whose route never
+// returns here produces no such progress and the row lives to terminalization.
+//
+// Measured (run C, 2026-08-28): order 260 sat `in_transit`, "Waiting for partner
+// robot", bin already at _TRANSIT, holding Lane_15 as `dighandoff` — while its
+// own route was SMN_023 → ALN_001, which never touches Lane_15. Gate 3 had
+// already ruled that shape at conversion time ("a demand that has already
+// collected releases its corridor"); a row converted while the demand was still
+// a naked target simply never got asked again. So this asks it.
+//
+// No step list is read: later visits belong to the lane's own state.
+//
+// FAIL CLOSED on every read, like the rest of this file. A row kept one pass too
+// long costs a wait; a row released while its demand is walking to the bin is
+// the re-burial this whole seam exists to prevent.
+func (d *Dispatcher) maybeReleaseStrandedHandoff(laneID int64) {
+	rows, err := reservations.ActiveMouthRows(d.db.DB, laneID)
+	if err != nil {
+		return
+	}
+	for _, h := range rows {
+		if h.ReservedBy != digHandoffReservedBy {
+			continue
+		}
+		holder, hErr := d.db.GetOrder(h.OrderID)
+		if hErr != nil {
+			return // unreadable holder keeps the lane
+		}
+		if holder == nil {
+			d.releaseStrandedHandoff(laneID, h.OrderID, "its owner no longer exists")
+			continue
+		}
+		if holder.Status == StatusReshuffling {
+			continue // the gap the row exists for: the dig is still finishing
+		}
+		if needs, _ := d.legStillNeedsLane(holder, laneID); needs {
+			continue // a bin of its own is still in here, or it is dwelling in it
+		}
+		claimed, cErr := d.db.ListBinsByClaim(h.OrderID)
+		if cErr != nil {
+			return // unreadable claims keep the lane
+		}
+		if len(claimed) == 0 && !swapLegCommittedToFleet(holder) {
+			continue // pre-dispatch and undecided: it has not chosen yet
+		}
+		d.releaseStrandedHandoff(laneID, h.OrderID, strandedWhy(holder))
+	}
+}
+
+// strandedWhy names which of the two stranded shapes this is, so the log says
+// what happened rather than that something did.
+func strandedWhy(holder *orders.Order) string {
+	if swapLegCommittedToFleet(holder) {
+		return "its owner has already collected and driven off with its bin, so nothing is coming " +
+			"for what this corridor was protecting (gate 3's rule, asked a second time)"
+	}
+	return "its owner went back through the scanner and resolved onto a bin somewhere else"
+}
+
+// releaseStrandedHandoff drops one stranded handoff row and wakes the lane, the
+// same three wakes the ordinary release arm performs.
+func (d *Dispatcher) releaseStrandedHandoff(laneID, owner int64, why string) {
+	if err := reservations.ReleaseLaneHandoff(d.db.DB, owner, laneID); err != nil {
+		log.Printf("dig lock: could not release order %d's stranded handoff row on lane %d: %v",
+			owner, laneID, err)
+		return
+	}
+	log.Printf("dig lock: released order %d's stranded handoff hold on lane %d — %s",
+		owner, laneID, why)
+	d.EvaluateLaneReleases(laneID)
+	d.RedriveHeldCompoundLegs(laneID)
 	d.EvaluateDwellersSharingGroupWith(laneID)
 }
 
