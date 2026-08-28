@@ -337,3 +337,73 @@ func TestListAnomalies_ARetryingOrderCannotRefreshItsOwnStalenessTimer(t *testin
 		"second old because the retry loop keeps touching it — which is precisely the order that "+
 		"needs reporting, and precisely the one an updated_at clock cannot see.", o.ID)
 }
+
+// TestListAnomalies_AnOrderThatJustTransitionedIsNotStuck is the pin that makes
+// the LATERAL load-bearing, and without it the join is decoration.
+//
+// The detector's clock is MAX(order_history.created_at), with orders.created_at
+// as the COALESCE fallback for a row that has never transitioned. Every other
+// fixture in this file backdates BOTH — which is right for what those tests
+// assert, and means the fallback alone satisfies all of them. Delete the LATERAL,
+// compare o.created_at directly, and the suite stays green while the change this
+// file exists to protect is gone.
+//
+// That mutation is not contrived. Inside the lateral, `MAX(created_at)` and
+// `order_id` are unqualified while `orders` is also in scope with a created_at of
+// its own; Postgres resolves them to the inner table, which is correct — but an
+// editor "tidying" them to `o.` turns the aggregate into a correlated constant.
+// The query still runs, still returns rows, and every long-lived order reports as
+// stuck from the moment it was created.
+//
+// So this is the other direction: an OLD order that has JUST MOVED. Its birth is
+// two hours behind the bound and its last transition is a second old. It is the
+// busiest possible order, and it must raise nothing.
+func TestListAnomalies_AnOrderThatJustTransitionedIsNotStuck(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	node := &nodes.Node{Name: "MOVING-LINE", Enabled: true}
+	if err := nodes.Create(db.DB, node); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	o := &orders.Order{EdgeUUID: "moving-along", StationID: "edge.1", OrderType: "retrieve_empty",
+		Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+	if err := orders.Create(db.DB, o); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	// Born two hours ago — well past both bounds on the fallback clock.
+	if _, err := db.DB.Exec(
+		`UPDATE orders SET status='in_transit', created_at = NOW() - INTERVAL '2 hours'
+		 WHERE id=$1`, o.ID); err != nil {
+		t.Fatalf("age the order: %v", err)
+	}
+	// ...and progressing normally the whole time, most recently a second ago.
+	for _, h := range []struct {
+		status string
+		ago    string
+	}{
+		{"sourcing", "119 minutes"},
+		{"dispatched", "90 minutes"},
+		{"in_transit", "1 second"},
+	} {
+		if _, err := db.DB.Exec(
+			`INSERT INTO order_history (order_id, status, detail, created_at)
+			 VALUES ($1, $2, 'progressing', NOW() - $3::interval)`, o.ID, h.status, h.ago); err != nil {
+			t.Fatalf("seed transition %s: %v", h.status, err)
+		}
+	}
+
+	anomalies, err := reconciliation.ListAnomalies(db.DB)
+	if err != nil {
+		t.Fatalf("ListAnomalies: %v", err)
+	}
+	for _, a := range anomalies {
+		if a.Issue == "active_order_stuck" && a.OrderID != nil && *a.OrderID == o.ID {
+			t.Fatalf("order %d changed status ONE SECOND ago and was flagged as stuck (observed_at "+
+				"%v). Only its created_at is old. Reporting a moving order teaches operators to "+
+				"ignore the board, and it means the detector is reading the order's birth rather "+
+				"than the order_history row the LATERAL exists to find.", o.ID, a.ObservedAt)
+		}
+	}
+}
