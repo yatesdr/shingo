@@ -604,6 +604,19 @@ func ListDigHolds(q Queryer) ([]DigHold, error) {
 // happens to it. There is no state left behind that outlives an order, which is
 // what a hold parked on a finished dig was.
 //
+// ── AND THAT DEPENDS ENTIRELY ON THE CALLER'S GATE ────────────────────────
+//
+// The per-visit release fires "when its bin clears the lane", so it is worth
+// nothing to a picker whose bin cleared the lane BEFORE this row existed. Such a
+// row has one releaser left, terminalization — and a holder waiting at its
+// station for an evac partner that needs to drop into this very lane never
+// reaches it. That was the leak: a corridor shut with nothing inside it, both
+// sides of a swap waiting on each other.
+//
+// So this function is safe because handOffDugLane only calls it for a holder that
+// has NOT yet dispatched. Do not widen the caller without re-reading this
+// paragraph: the sentence above is a conclusion, not a property of the row.
+//
 // Returns false with no error when the dig row is already gone (the release
 // raced this) — the caller has nothing to do, and nothing has been broken.
 func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy string) (bool, error) {

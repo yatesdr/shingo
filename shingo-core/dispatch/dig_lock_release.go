@@ -131,7 +131,12 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 	// clears on the pickup. A BURIED resolve re-parents (§R.91), so the legs hold it
 	// through the excavation and the parent's own row holds it afterwards until the
 	// target is collected — which is "clears after it achieves the target", with no
-	// handoff anywhere, because the collector was the holder all along.
+	// CHANGE OF OWNER, because the collector was the holder all along.
+	//
+	// That last clause used to read "with no handoff anywhere", and it was read as
+	// a statement about reachability rather than about ownership. handOffDugLane
+	// does run in this shape — it converts the holder's own dig row to the holder's
+	// own outbound row. What does not happen is the corridor changing hands.
 	//
 	// FAIL CLOSED, like every read in this file: an unreadable holder keeps the lane.
 	holder, hErr := d.db.GetOrder(digOwner)
@@ -248,10 +253,17 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 	// convert. HandOffLaneToPicker's own picker-already-holds arm covers the
 	// remaining shape: it returns true and keeps what is there.
 	//
-	// SCOPED TO A PARENT THAT STILL OWES ITS OWN WORK. A plain retrieve's fetch is
-	// one of its own legs — the bin leaves the lane inside the compound — so there
-	// is nothing standing at the mouth to protect and legStillNeedsLane already
-	// covered it.
+	// SCOPED TO A COORDINATED PARENT. A plain retrieve's fetch is one of its own
+	// legs — the bin leaves the lane inside the compound — so there is nothing
+	// standing at the mouth to protect and legStillNeedsLane already covered it.
+	//
+	// THE HEADER HERE USED TO SAY "a parent that still owes its own work", and this
+	// check does not ask that. IsCoordinated is provenance (hasEvacLeg); it says
+	// nothing about whether the parent has already been to the lane. The gap
+	// between the two readings is exactly where the handoff leak lived: every
+	// coordinated demand passed this arm, including the ones that had already
+	// collected and left. "Still owes its own work" is now a real gate, and it is
+	// gate 3 below.
 	if !IsCoordinated(parent) {
 		return false // its fetch was one of its own legs; nothing is left standing
 	}
