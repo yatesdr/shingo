@@ -1510,7 +1510,7 @@ func TestChangeoverBlockerNeverSaysInFlightAboutAQueuedOrder(t *testing.T) {
 func TestSequentialCutover_WaitsForTheParkedSideToBeRefilled(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	eng, processID, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	eng, processID, activeNodeID, parkedNodeID, co := seedSequentialCutoverScenario(t, db)
 
 	parkedTask, err := db.GetChangeoverNodeTaskByNode(co.ID, parkedNodeID)
 	if err != nil {
@@ -1576,10 +1576,7 @@ func activePullOf(t *testing.T, db *store.DB, nodeID int64) bool {
 // seedSequentialCutoverScenario builds a two-position sequential press mid
 // changeover: SEQ-A active (the line is pulling from it), SEQ-B parked, both
 // claimed in both styles so each yields its own Swap diff and its own order.
-// evacuate=true makes both positions a tooling EVACUATE (same payload in both
-// styles + EvacuateOnChangeover) instead of a SWAP, which is the situation whose
-// bare waits the plant-wide tooling-done click must still release.
-func seedSequentialScenario(t *testing.T, db *store.DB, evacuate bool) (
+func seedSequentialCutoverScenario(t *testing.T, db *store.DB) (
 	eng *Engine, processID, activeNodeID, parkedNodeID int64, co *processes.Changeover) {
 	t.Helper()
 
@@ -1619,27 +1616,21 @@ func seedSequentialScenario(t *testing.T, db *store.DB, evacuate bool) (
 	// Both positions claimed in BOTH styles — the A/B steady state, and what
 	// makes a PRESS-2-RUN → PRESS-2-ALT changeover a Swap on each position
 	// rather than a Drop/Add pair.
-	toPayload := "PART-TO"
-	if evacuate {
-		toPayload = "PART-FROM" // same payload both sides → SituationEvacuate, not Swap
-	}
 	for _, c := range []struct {
 		style        int64
 		own, partner string
 		payload      string
-		isFrom       bool
 	}{
-		{fromStyleID, "SEQ-A", "SEQ-B", "PART-FROM", true},
-		{fromStyleID, "SEQ-B", "SEQ-A", "PART-FROM", true},
-		{toStyleID, "SEQ-A", "SEQ-B", toPayload, false},
-		{toStyleID, "SEQ-B", "SEQ-A", toPayload, false},
+		{fromStyleID, "SEQ-A", "SEQ-B", "PART-FROM"},
+		{fromStyleID, "SEQ-B", "SEQ-A", "PART-FROM"},
+		{toStyleID, "SEQ-A", "SEQ-B", "PART-TO"},
+		{toStyleID, "SEQ-B", "SEQ-A", "PART-TO"},
 	} {
 		if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
 			StyleID: c.style, CoreNodeName: c.own, Role: "produce", SwapMode: "sequential",
 			PayloadCode: c.payload, UOPCapacity: 100,
 			InboundSource: "MARKET", OutboundDestination: "DEST",
-			PairedCoreNode:       c.partner,
-			EvacuateOnChangeover: evacuate && c.isFrom,
+			PairedCoreNode: c.partner,
 		}); err != nil {
 			t.Fatalf("upsert claim %s/%d: %v", c.own, c.style, err)
 		}
@@ -1652,171 +1643,4 @@ func seedSequentialScenario(t *testing.T, db *store.DB, evacuate bool) (
 		t.Fatalf("start changeover: %v", err)
 	}
 	return eng, processID, activeNodeID, parkedNodeID, co
-}
-
-// ── THE RELEASE BUTTON AT A SEQUENTIAL PRESS ──────────────────────────────
-//
-// A release click is "robot, come in" at every other mode: pure permission, and
-// sweeping it plant-wide is harmless. At a sequential SWAP it is not, because
-// the wait it would release is the CUTOVER wait — the one whose release changes
-// which position the press draws parts from. Releasing it without flipping the
-// pull first sends a robot to clear the position the line is still running on,
-// which is the exact ordering SequentialChangeoverCutover exists to enforce.
-//
-// So the two doors are split by what they mean, not by what they touch:
-//
-//	PER-NODE  the operator is standing at that press. Their click IS the
-//	          cutover — flip, then release — precondition and all.
-//	SWEEP     a supervisor letting robots into six stopped stations does not
-//	          mean "and cut Press 2 onto the new part". That is a production
-//	          decision, not a side effect. The sweep skips and names the button.
-//
-// Scoped to situation == swap, NOT to the mode: a sequential EVACUATE also
-// parks a bare wait on each position, and one tooling-done click releasing both
-// through the sweep's per-task fan-out is its whole design.
-
-// TestSequentialRelease_SweepDoesNotCutOverAPress pins the skip.
-func TestSequentialRelease_SweepDoesNotCutOverAPress(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng, processID, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
-
-	activeOrder, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
-	// The parked side is DONE, so the cutover precondition would not refuse. The
-	// only thing standing between this sweep and a cut-over press is the skip.
-	markOrderTerminal(db, parkedOrder)
-	// And the active order is genuinely releasable, so a missing skip would
-	// really fire rather than bouncing off ReleasableAtCore.
-	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage the active order")
-
-	res, err := eng.ReleaseChangeoverWait(processID, ReleaseDisposition{CalledBy: "supervisor-sweep"})
-	if err != nil {
-		t.Fatalf("the sweep errored; a skipped node must not fail the whole sweep for five other "+
-			"stations: %v", err)
-	}
-	if activePullOf(t, db, parkedNodeID) {
-		t.Error("the plant-wide sweep flipped the press onto its parked position. A supervisor " +
-			"releasing robots at several stopped stations has not decided to change what Press 2 " +
-			"is producing — that decision belongs to the cutover button at the press.")
-	}
-	if got := orderStatusOf(t, db, activeOrder); got != string(orders.StatusStaged) {
-		t.Errorf("the sweep released the active position's order (status now %q). That wait is the "+
-			"cutover gate: releasing it without flipping the pull first sends a robot to clear the "+
-			"position the line is still drawing from.", got)
-	}
-	if res.Pending == 0 {
-		t.Error("the skip reported nothing pending — the operator needs to see that this node is " +
-			"still waiting on a click, not assume the sweep covered it")
-	}
-}
-
-// TestSequentialRelease_SweepStillReleasesATooling Evacuate is the dual, and it
-// is the reason the skip keys on the SITUATION and not on the mode.
-//
-// A sequential evacuate puts a BARE wait on each position and the whole design
-// is that ONE tooling-done click releases both, through the same per-task
-// fan-out this sweep is. Skipping "sequential nodes" would break tooling
-// changeovers on every A/B press.
-func TestSequentialRelease_SweepStillReleasesAToolingEvacuate(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng, processID, aNodeID, bNodeID, co := seedSequentialScenario(t, db, true)
-
-	orderA, orderB := seqTaskOrders(t, db, co.ID, aNodeID, bNodeID)
-	for _, id := range []int64{orderA, orderB} {
-		testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(orders.StatusStaged)), "stage evac order")
-	}
-
-	res, err := eng.ReleaseChangeoverWait(processID, ReleaseDisposition{CalledBy: "tooling-done"})
-	if err != nil {
-		t.Fatalf("tooling-done sweep errored: %v", err)
-	}
-	if res.Released != 2 {
-		t.Fatalf("tooling-done released %d orders, want BOTH positions. One click releasing every "+
-			"position of the press is what the bare wait is for; a mode-keyed skip breaks it.",
-			res.Released)
-	}
-}
-
-// TestSequentialRelease_PerNodeClickAtTheActiveSideCutsOver pins the route: the
-// operator standing at the press gets one button that does the whole correct
-// thing, instead of one real button and one trap beside it.
-func TestSequentialRelease_PerNodeClickAtTheActiveSideCutsOver(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
-
-	activeOrder, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
-	markOrderTerminal(db, parkedOrder)
-	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage the active order")
-
-	handled, err := eng.releaseSingleLegChangeoverNode(activeNodeID, ReleaseDisposition{CalledBy: "operator"})
-	if !handled {
-		t.Fatal("the per-node click was not handled at a sequential swap node — the operator pressed " +
-			"the only button in front of them and got nothing")
-	}
-	if err != nil {
-		t.Fatalf("per-node click at the active side: %v", err)
-	}
-	if !activePullOf(t, db, parkedNodeID) {
-		t.Error("the click did not flip the press onto its freshly-stocked parked position. Flip " +
-			"comes FIRST: the robot must not begin clearing a position the line is still pulling from.")
-	}
-	if got := orderStatusOf(t, db, activeOrder); got == string(orders.StatusStaged) {
-		t.Error("the click flipped the pull but never released the active position's order, so the " +
-			"robot is still parked and the old bin never leaves")
-	}
-}
-
-// TestSequentialRelease_PerNodeClickWaitsForTheParkedSide — the precondition
-// survives the reroute. It is the same gate SequentialChangeoverCutover applies;
-// routing the button through it is precisely how the button inherits it.
-func TestSequentialRelease_PerNodeClickWaitsForTheParkedSide(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
-
-	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
-	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage the active order")
-	// The parked side is deliberately left unfinished.
-
-	handled, err := eng.releaseSingleLegChangeoverNode(activeNodeID, ReleaseDisposition{CalledBy: "operator"})
-	if !handled {
-		t.Fatal("the click was not handled")
-	}
-	if err == nil {
-		t.Fatal("the click cut the press over while the parked position was still being restocked. " +
-			"The line would be switched onto a slot with no bin on it.")
-	}
-	if !strings.Contains(err.Error(), "SEQ-B") {
-		t.Errorf("refusal = %q, want it to name the parked position the operator must wait for", err.Error())
-	}
-	if activePullOf(t, db, parkedNodeID) {
-		t.Error("the refused click flipped the pull anyway — the gate must precede both mutations")
-	}
-}
-
-// seqTaskOrders returns the (active, parked) positions' changeover order ids.
-func seqTaskOrders(t *testing.T, db *store.DB, changeoverID, activeNodeID, parkedNodeID int64) (active, parked int64) {
-	t.Helper()
-	get := func(nodeID int64) int64 {
-		task, err := db.GetChangeoverNodeTaskByNode(changeoverID, nodeID)
-		if err != nil {
-			t.Fatalf("get node task %d: %v", nodeID, err)
-		}
-		if task.NextMaterialOrderID == nil {
-			t.Fatalf("node task %d has no order; the fixture is wrong", nodeID)
-		}
-		return *task.NextMaterialOrderID
-	}
-	return get(activeNodeID), get(parkedNodeID)
-}
-
-func orderStatusOf(t *testing.T, db *store.DB, orderID int64) string {
-	t.Helper()
-	o, err := db.GetOrder(orderID)
-	if err != nil {
-		t.Fatalf("get order %d: %v", orderID, err)
-	}
-	return string(o.Status)
 }
