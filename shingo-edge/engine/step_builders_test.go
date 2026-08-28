@@ -486,7 +486,7 @@ func TestBuildPressIndexPerPositionSwap_MissingConfig_EmptyDispatch(t *testing.T
 // calls — the parked side here, the active side in the test below. Nothing
 // about the physical route changed; what changed is that each position's steps
 // arrive on their own order, linked to their own node task.
-func TestBuildSwapChangeoverSteps_Sequential_ParkedSideRunsImmediately(t *testing.T) {
+func TestBuildSwapChangeoverSteps_Sequential_ParkedSideWaitsAtItsOwnNode(t *testing.T) {
 	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-A",
@@ -504,9 +504,10 @@ func TestBuildSwapChangeoverSteps_Sequential_ParkedSideRunsImmediately(t *testin
 	disp := BuildSwapChangeoverSteps(from, to, "CORE-A" /* inactive */, "CORE-B" /* active */)
 
 	want := []protocol.ComplexOrderStep{
+		stationWait("CORE-A"),               // operator release, per node
 		{Action: "pickup", Node: "CORE-A"},  // evac what is standing here
 		{Action: "dropoff", Node: "DEST"},   // old bin to destination
-		{Action: "pickup", Node: "MARKET"},  // fetch new
+		{Action: "pickup", Node: "MARKET"},  // fetch new — AFTER the old one clears
 		{Action: "dropoff", Node: "CORE-A"}, // deliver new
 	}
 	if len(disp.StepsA) != len(want) {
@@ -520,11 +521,12 @@ func TestBuildSwapChangeoverSteps_Sequential_ParkedSideRunsImmediately(t *testin
 	if disp.StepsB != nil {
 		t.Errorf("per-node sequential is one order per position; StepsB must be nil, got %+v", disp.StepsB)
 	}
-	// NO WAIT AT ALL on the parked side. The line is still running on the other
-	// position, so nothing gates this one — and finishing it is precisely what
-	// makes the cutover safe.
-	if w := countWaits(disp.StepsA); w != 0 {
-		t.Errorf("parked side has %d waits, want 0 — it runs immediately", w)
+	// ONE WAIT, AT ITS OWN NODE. Both positions are operator-released now (owner
+	// ruling 2026-08-28): the parked side used to run immediately, which made the
+	// two sides different shapes and put the ordering in the choreography rather
+	// than in the guards.
+	if w := countWaits(disp.StepsA); w != 1 {
+		t.Errorf("parked side has %d waits, want exactly 1 at its own node", w)
 	}
 	// And it never touches its partner's position.
 	for _, s := range disp.StepsA {

@@ -298,7 +298,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// finished, and it is the only door that expresses what the floor
 			// actually does: one click, every leg of the press moves in.
 			r.Post("/processes/{id}/changeover/release", h.apiReleaseChangeoverProcess)
-			r.Post("/processes/{id}/changeover/sequential-cutover/{nodeID}", h.apiSequentialChangeoverCutover)
 
 			// Orders — LIFECYCLE ONLY here. These act on an order that already
 			// exists and are driven by the operator station, which is a shop-floor

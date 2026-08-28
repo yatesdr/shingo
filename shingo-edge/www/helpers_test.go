@@ -241,7 +241,6 @@ func (s *stubEngine) AbandonChangeoverSupply(_, nodeID int64, acceptHalf bool, _
 	s.lastAbandonAcceptHalf = acceptHalf
 	return s.abandonErr
 }
-func (s *stubEngine) SequentialChangeoverCutover(int64, int64, string) error { return nil }
 func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*storeorders.Order, error) {
 	return nil, nil
 }

@@ -148,7 +148,6 @@ type EngineOrchestration interface {
 	PostCutoverFlag(processID int64) (*engine.PostCutoverFlag, bool)
 	// ClearPostCutoverFlag clears that flag — the operator confirmed or resolved it.
 	ClearPostCutoverFlag(processID int64) error
-	SequentialChangeoverCutover(processID, nodeID int64, calledBy string) error
 	StageNodeChangeoverMaterial(processID, nodeID int64) (*domain.Order, error)
 	EvacuateNode(processID, nodeID int64, partialQty int64) (*domain.Order, error)
 	DeliverNewMaterialForChangeover(processID, nodeID int64) (*domain.Order, error)

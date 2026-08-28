@@ -949,16 +949,25 @@ func buildSequentialPerPositionSwap(fromClaim, toClaim *processes.NodeClaim, ina
 	parked := pos == inactiveNode
 	onDeckEmpty := parked && fromClaim.Role == protocol.ClaimRoleProduce
 
-	var steps []protocol.ComplexOrderStep
-	if !parked {
-		steps = append(steps, stationWait(pos)) // the cutover gate
-	}
-	steps = append(steps,
+	// BOTH POSITIONS OPEN WITH A WAIT AT THEIR OWN NODE (owner ruling
+	// 2026-08-28). The parked side used to run immediately, which made the two
+	// sides different shapes and put the ordering in the choreography. It is the
+	// operator's now: one release per node, sequenced however he likes, and the
+	// ordering safety lives in the release and flip guards instead — a robot may
+	// not strip a position the line is still pulling from, and the line may not
+	// be flipped onto a position that is not ready.
+	//
+	// The robot therefore ARRIVES EMPTY-HANDED and waits. Fetching the new bin
+	// after the old one clears is what makes a per-node release safe to hold
+	// indefinitely: nothing is standing in the aisle holding material for a
+	// position whose operator has not pressed anything yet.
+	steps := []protocol.ComplexOrderStep{
+		stationWait(pos),
 		protocol.ComplexOrderStep{Action: "pickup", Node: pos, Empty: onDeckEmpty},
 		buildStep("dropoff", fromClaim.OutboundDestination),
 		refillPickup(fromClaim, toClaim),
 		protocol.ComplexOrderStep{Action: "dropoff", Node: pos},
-	)
+	}
 	return ChangeoverDispatch{
 		StepsA:        steps,
 		DeliveryNodeA: pos,

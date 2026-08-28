@@ -151,7 +151,6 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"RequestProduceSwap",
 		"ScenePointNames",
 		"SendEnvelope",
-		"SequentialChangeoverCutover",
 		"ShiftService",
 		"SourcingStateForProcess",
 		"StageNodeChangeoverMaterial",

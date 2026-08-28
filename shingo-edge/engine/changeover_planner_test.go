@@ -280,19 +280,19 @@ func TestPlanNodeAction_Swap_Sequential(t *testing.T) {
 	// of this single diff and assert the cutover wait at index 4. That wait now
 	// belongs to N1B's order, which N1B's own diff builds.
 	steps := action.SupplyOrder.Complex.Steps
-	if len(steps) != 4 {
-		t.Fatalf("expected the 4-step direct trip, got %d: %+v", len(steps), steps)
+	if len(steps) != 5 {
+		t.Fatalf("expected 5 steps (wait, lift, out, refill, deliver), got %d: %+v", len(steps), steps)
 	}
-	if steps[0].Action != "pickup" || steps[0].Node != "N1" {
-		t.Errorf("step 0: expected an immediate pickup at the parked N1, got %+v", steps[0])
+	if steps[0].Action != "wait" || steps[0].Node != "N1" {
+		t.Errorf("step 0: expected a station wait at this position, got %+v", steps[0])
 	}
-	if steps[3].Action != "dropoff" || steps[3].Node != "N1" {
-		t.Errorf("step 3: expected the new bin delivered back to N1, got %+v", steps[3])
+	if steps[1].Action != "pickup" || steps[1].Node != "N1" {
+		t.Errorf("step 1: expected the pickup at N1, got %+v", steps[1])
+	}
+	if steps[4].Action != "dropoff" || steps[4].Node != "N1" {
+		t.Errorf("step 4: expected the new bin delivered back to N1, got %+v", steps[4])
 	}
 	for _, s := range steps {
-		if s.Action == "wait" {
-			t.Errorf("the parked side waits (%+v) — nothing gates it; the line is still on N1B", s)
-		}
 		if s.Node == "N1B" {
 			t.Errorf("this position's order steps on N1B (%+v); that position has its own", s)
 		}
@@ -360,23 +360,25 @@ func assertSequentialPlanRoles(t *testing.T, activePull map[string]bool, wantPar
 		byNode[a.CoreNodeName] = a.SupplyOrder.Complex.Steps
 	}
 
-	parked, ok := byNode[wantParked]
-	if !ok {
-		t.Fatalf("no action for the parked position %s; got %v", wantParked, byNode)
-	}
-	if parked[0].Action != "pickup" || parked[0].Node != wantParked {
-		t.Errorf("the parked position %s opens with %+v, want an immediate pickup at its own node — "+
-			"the line is still running on %s, so nothing gates this side", wantParked, parked[0], wantActive)
-	}
-
-	active, ok := byNode[wantActive]
-	if !ok {
-		t.Fatalf("no action for the active position %s; got %v", wantActive, byNode)
-	}
-	if active[0].Action != "wait" || active[0].Node != wantActive {
-		t.Errorf("the active position %s opens with %+v, want the cutover wait at its own node — this "+
-			"is the side the line is pulling from, and it may not be touched until cutover flips away",
-			wantActive, active[0])
+	// BOTH open with a station wait at their own node. What the active-pull
+	// snapshot still decides is the FLAG, not the shape: only the parked side of
+	// a produce press holds an on-deck empty.
+	for _, pos := range []string{wantParked, wantActive} {
+		steps, ok := byNode[pos]
+		if !ok {
+			t.Fatalf("no action for position %s; got %v", pos, byNode)
+		}
+		if steps[0].Action != "wait" || steps[0].Node != pos {
+			t.Errorf("position %s opens with %+v, want a station wait at its own node — every position "+
+				"is operator-released and the operator sequences them", pos, steps[0])
+		}
+		for _, s := range steps {
+			if s.Node != "" && s.Node != pos && s.Node != "SRC_"+pos && s.Node != "ODST_"+pos {
+				if s.Node == wantParked || s.Node == wantActive {
+					t.Errorf("position %s's order steps on its partner (%+v)", pos, s)
+				}
+			}
+		}
 	}
 }
 
@@ -1099,20 +1101,30 @@ func TestPlanNodeAction_Sequential_IsPerNode(t *testing.T) {
 		}
 	}
 
-	// ── THE PARKED SIDE: immediate, four steps, its own node only ──
+	// ── EACH SIDE: the same five steps, at its own node only ──
+	//
+	// Both positions open with a station wait now (owner ruling 2026-08-28).
+	// The parked side used to run immediately, which made the two sides
+	// different shapes and put the ordering into the choreography. It is the
+	// operator's: one release per node, sequenced as he likes, with the safety
+	// in the release and flip guards rather than in the step list.
 	ps := parkedAction.SupplyOrder.Complex.Steps
-	if got := stepNodesOf(ps, "wait"); len(got) != 0 {
-		t.Errorf("the parked order waits at %v. Nothing gates it — the line is still running on the "+
-			"other position, so this side swaps immediately; that is what makes it safe to cut over to.",
-			got)
+	if len(ps) != 5 {
+		t.Fatalf("parked order has %d steps, want 5 (wait, lift, out, refill, deliver): %+v", len(ps), ps)
 	}
-	if len(ps) != 4 {
-		t.Fatalf("parked order has %d steps, want the 4-step direct trip (lift, out, refill, deliver): %+v",
-			len(ps), ps)
+	if ps[0].Action != "wait" || ps[0].Node != "A_POS" {
+		t.Fatalf("parked order opens with %+v, want a station wait at its OWN position A_POS — every "+
+			"position is operator-released", ps[0])
 	}
-	if ps[0].Action != "pickup" || ps[0].Node != "A_POS" || ps[3].Node != "A_POS" {
-		t.Errorf("parked order opens at %q and ends at %q, want both at its OWN position A_POS: %+v",
-			ps[0].Node, ps[3].Node, ps)
+	if ps[1].Action != "pickup" || ps[1].Node != "A_POS" || ps[4].Node != "A_POS" {
+		t.Errorf("parked order lifts at %q and ends at %q, want both at its OWN position A_POS: %+v",
+			ps[1].Node, ps[4].Node, ps)
+	}
+	// ROBOT ARRIVES EMPTY-HANDED: the new bin is fetched only after the old one
+	// has cleared, so a position whose operator has not pressed anything is not
+	// holding material hostage in the aisle.
+	if ps[3].Action != "pickup" {
+		t.Errorf("step 3 is %+v, want the refill AFTER the old bin's dropoff", ps[3])
 	}
 	for _, s := range ps {
 		if s.Node == "B_POS" {
@@ -1128,8 +1140,7 @@ func TestPlanNodeAction_Sequential_IsPerNode(t *testing.T) {
 		t.Fatalf("active order has %d steps, want 5 (wait + the same 4-step trip): %+v", len(as), as)
 	}
 	if as[0].Action != "wait" || as[0].Node != "B_POS" {
-		t.Fatalf("active order opens with %+v, want a wait at its OWN position B_POS. The robot parks "+
-			"visibly at the position it is about to clear, and the cutover click releases it.", as[0])
+		t.Fatalf("active order opens with %+v, want a station wait at its OWN position B_POS", as[0])
 	}
 	if as[1].Action != "pickup" || as[1].Node != "B_POS" {
 		t.Errorf("active order's first work step is %+v, want the pickup at B_POS", as[1])
@@ -1175,11 +1186,13 @@ func TestPlanNodeAction_Sequential_ParkedProducePicksUpAnEmpty(t *testing.T) {
 			parkedAction := planNodeAction(parked, &processes.Node{ID: 1, Name: "A_POS"}, false, nil)
 			activeAction := planNodeAction(active, &processes.Node{ID: 2, Name: "B_POS"}, false, nil)
 
+			// Step 0 is the station wait on both sides now; step 1 is the lift.
 			ps := parkedAction.SupplyOrder.Complex.Steps
-			if ps[0].Empty != tc.wantEmpty {
+			if ps[1].Empty != tc.wantEmpty {
 				t.Errorf("parked %s order's opening pickup at %q has Empty=%v, want %v. A produce press "+
-					"parks an on-deck EMPTY; a consume press parks a FULL standby.",
-					tc.role, ps[0].Node, ps[0].Empty, tc.wantEmpty)
+					"parks an on-deck EMPTY; a consume press parks a FULL standby of the OLD style, "+
+					"which it lifts like any other old bin.",
+					tc.role, ps[1].Node, ps[1].Empty, tc.wantEmpty)
 			}
 
 			// The ACTIVE side lifts a real full off the line in both roles, so it
