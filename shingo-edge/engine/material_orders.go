@@ -869,9 +869,16 @@ func buildToolingEvacSteps(position, evacDest string, fromClaim, toClaim *proces
 // orders on CoreNodeName. Changeover was the only place the press was treated
 // as one machine, so per-node is a return to the family's own shape rather than
 // a new idea. What the collapsed order encoded and the pair does not is the
-// cross-node dependency (cut over only after the parked side is refilled); that
-// moved to the cutover gate, where it is one per-node task read. See
-// SequentialChangeoverCutover.
+// cross-node dependency (cut over only after the parked side is refilled).
+//
+// That dependency moved to a per-node cutover gate, and then out of the code
+// entirely: SequentialChangeoverCutover is deleted (owner ruling 2026-08-28,
+// recorded at the head of operator_changeover_cutover.go). It bundled "flip the
+// pull, then release the wait" into one changeover-only button that needed a
+// precondition of its own to stop cutting over onto an unstocked position. Both
+// halves already exist as ordinary, mode-agnostic operator controls — the A/B
+// flip and the per-node release — each carrying its own physical guard, so the
+// ordering now lives with the operator and in those two guards.
 //
 // Three consequences, and they are why the ruling is cheaper than the fix it
 // replaces: the double-plan dissolves rather than needing a dedupe pass; each
@@ -880,10 +887,10 @@ func buildToolingEvacSteps(position, evacDest string, fromClaim, toClaim *proces
 // decision, which is what it physically is.
 
 // buildSequentialPerPositionSwap builds ONE position's changeover swap for a
-// sequential A/B press: the four-step direct trip, plus an opening wait when
-// this position is the one still running.
+// sequential A/B press: an opening wait at this position, then the four-step
+// direct trip.
 //
-//	[active only] wait(my position)     — the cutover gate
+//	wait(my position)                   — the operator's release
 //	pickup(my position)                 — lift what is standing here
 //	dropoff(OutboundDestination)
 //	refillPickup(fromClaim, toClaim)    — fetch the incoming style's carrier
@@ -894,19 +901,21 @@ func buildToolingEvacSteps(position, evacDest string, fromClaim, toClaim *proces
 // follows it. The shape is buildPressIndexPerPositionSwap's, which is the same
 // physical choreography for the same reason.
 //
-// ── THE TWO POSITIONS ARE NOT DOING THE SAME THING ────────────────────────
+// ── BOTH POSITIONS WAIT, AND THE OPERATOR SEQUENCES THEM ──────────────────
 //
-// PARKED (inactive) — runs IMMEDIATELY. The line is still pulling from the
-// other position, so nothing gates this one, and finishing it is what makes the
-// cutover safe: the fresh bin is standing on the side the line is about to
-// switch to.
+// This used to be two shapes: the parked side ran IMMEDIATELY while the active
+// side opened with a wait, which put the ordering in the choreography. It is the
+// operator's now (owner ruling 2026-08-28, and the code below says so at the
+// site) — one release per node, sequenced however he likes — and the ordering
+// safety lives in the two guards instead: a robot may not strip a position the
+// line is still pulling from, and the line may not be flipped onto a position
+// that is not ready.
 //
-// ACTIVE — opens with stationWait at its OWN node. The robot drives to the
-// position it will clear and parks there visibly, holding until the operator's
-// cutover click flips the pull away and releases it. Wait-with-node rather than
-// a bare wait so RDS reports WAITING and the order reliably reaches `staged` on
-// Edge — the same fragility fix the two_robot pattern applies to its own
-// mid-sequence wait.
+// So each position opens with stationWait at its OWN node. The robot drives to
+// the position it will clear and parks there visibly, holding until that node's
+// own release. Wait-with-node rather than a bare wait so RDS reports WAITING and
+// the order reliably reaches `staged` on Edge — the same fragility fix the
+// two_robot pattern applies to its own mid-sequence wait.
 //
 // ── AND THEY ARE NOT HOLDING THE SAME THING (the flag split) ──────────────
 //

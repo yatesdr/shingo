@@ -144,6 +144,14 @@ func canCancelStatus(s protocol.Status) bool {
 // An untagged wait (pre-ruling plan, still draining) reads as station-owned and
 // therefore does NOT get the button — the conservative direction, and consistent
 // with dispatch.IsStationWait, which is the single place that rule lives.
+//
+// AND THAT SCOPING IS WHAT KEEPS THE SEQUENTIAL SHAPE OUT OF THIS HATCH. Every
+// position of a sequential A/B changeover opens with a station wait at its own
+// node, held until the operator releases it from the board in front of him —
+// which is the guarded click, the one that refuses to strip a position the line
+// is still pulling from. A Core-side hard release would be that click with the
+// guard removed and the aisle out of sight. Nothing special is written here for
+// it: it is station-owned, so it is already out.
 func canHardReleaseOrder(o *domain.Order) bool {
 	if o == nil || o.Status != protocol.StatusStaged {
 		return false

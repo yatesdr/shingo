@@ -1,6 +1,11 @@
 // handlers_operator_changeover.go — changeover ACTION endpoints
-// (preview, start, cancel, release-wait, cutover, sequential cutover,
-// stage/evac/deliver per-node, switch-to-target).
+// (preview, start, cancel, release-wait, cutover, stage/evac/deliver
+// per-node, switch-to-target).
+//
+// There is no "sequential cutover" endpoint. It was deleted with
+// SequentialChangeoverCutover (owner ruling 2026-08-28): a sequential
+// press cuts over with the two ordinary controls — the A/B flip and the
+// per-node release — each carrying its own physical guard.
 //
 // Distinct from handlers_changeover.go, which renders the changeover
 // PAGE and holds the view-DTO types (changeoverNodeView,
