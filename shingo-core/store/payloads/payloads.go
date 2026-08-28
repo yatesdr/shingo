@@ -51,13 +51,17 @@ func ScanPayloads(rows *sql.Rows) ([]*Payload, error) {
 	return payloads, rows.Err()
 }
 
-// PayloadCATIDs returns each payload's part identity (its single distinct
-// payload_manifest part number) keyed by payload id — but ONLY for payloads
-// whose manifest carries exactly one distinct part number. Payloads with zero
-// or several distinct part numbers are omitted, so the edge auto-fill never
-// guesses which part id a multi-part payload "is".
+// PayloadCATIDs returns payload id → the DISTINCT part numbers in its
+// manifest, comma-joined in part-number order. A single-part payload
+// yields that one value (unchanged behavior); a multi-part payload — a
+// kit bin holding two part numbers — yields the full list, which the
+// edge splits back into the style's part-identity SET (membership
+// semantics, so multi-part is unambiguous by design: the guard accepts
+// any of them). Payloads whose manifest carries no part numbers are
+// omitted, so the edge derives nothing from them.
 func PayloadCATIDs(db *sql.DB) (map[int64]string, error) {
-	rows, err := db.Query(`SELECT payload_id, MIN(part_number), COUNT(DISTINCT part_number)
+	rows, err := db.Query(`SELECT payload_id,
+			string_agg(DISTINCT part_number, ',' ORDER BY part_number)
 		FROM payload_manifest WHERE part_number != ''
 		GROUP BY payload_id`)
 	if err != nil {
@@ -67,14 +71,11 @@ func PayloadCATIDs(db *sql.DB) (map[int64]string, error) {
 	out := make(map[int64]string)
 	for rows.Next() {
 		var payloadID int64
-		var partNumber string
-		var distinct int
-		if err := rows.Scan(&payloadID, &partNumber, &distinct); err != nil {
+		var joined string
+		if err := rows.Scan(&payloadID, &joined); err != nil {
 			return nil, fmt.Errorf("scan payload catid: %w", err)
 		}
-		if distinct == 1 {
-			out[payloadID] = partNumber
-		}
+		out[payloadID] = joined
 	}
 	return out, rows.Err()
 }

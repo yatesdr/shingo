@@ -994,11 +994,12 @@ type CatalogPayloadInfo struct {
 	Code        string `json:"code"`
 	Description string `json:"description"`
 	UOPCapacity int    `json:"uop_capacity"`
-	// CATID is the payload's part identity (from its Core manifest) when it maps
-	// to exactly one part number, else empty. The edge uses it to auto-fill a
-	// style's expected_catid when the payload is chosen for a node claim, so the
-	// PLC part-identity guard configures itself. Empty when the payload's manifest
-	// carries zero or several distinct part numbers — never guess.
+	// CATID is the payload's part identity from its Core manifest: the
+	// DISTINCT part numbers, comma-joined (a single-part payload sends one
+	// value; a multi-part kit sends the full list). The edge splits it back
+	// into the style's part-identity SET — membership semantics, so a
+	// multi-part payload contributes every part it carries rather than
+	// nothing. Empty when the payload's manifest carries no part numbers.
 	CATID string `json:"catid,omitempty"`
 }
 

@@ -48,9 +48,12 @@ func (e *Engine) styleCATIDSet(style *processes.Style) map[string]struct{} {
 }
 
 // derivedCATIDSet unions the CATIDs of a style's PRODUCE claims, each resolved
-// from its payload via the synced payload catalog. A claim whose payload has no
-// catalog CATID contributes nothing (so a partially-configured style yields the
-// subset that is known — never a guess).
+// from its payload via the synced payload catalog. The catalog value is itself
+// a comma-joined list (a multi-part kit payload carries every part it holds —
+// Core sends the distinct set since the multi-part catalog sync), so each
+// value splits into the set. A claim whose payload has no catalog CATID
+// contributes nothing (so a partially-configured style yields the subset that
+// is known — never a guess).
 func (e *Engine) derivedCATIDSet(styleID int64) map[string]struct{} {
 	set := map[string]struct{}{}
 	claims, err := e.db.ListStyleNodeClaims(styleID)
@@ -65,7 +68,11 @@ func (e *Engine) derivedCATIDSet(styleID int64) map[string]struct{} {
 		if err != nil || ce == nil || ce.CATID == "" {
 			continue
 		}
-		set[ce.CATID] = struct{}{}
+		for _, part := range strings.Split(ce.CATID, ",") {
+			if v := strings.TrimSpace(part); v != "" {
+				set[v] = struct{}{}
+			}
+		}
 	}
 	return set
 }

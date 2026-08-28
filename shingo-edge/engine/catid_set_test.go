@@ -109,3 +109,47 @@ func TestStylesForCATID_DetectsAmbiguity(t *testing.T) {
 		t.Errorf("unknown CATID matches = %d, want 0", got)
 	}
 }
+
+// TestDerivedSetSplitsMultiPartCatalog proves the multi-part catalog sync
+// end-to-end on the edge half: Core now sends a multi-part payload's FULL
+// distinct part list comma-joined (e.g. a kit bin), and the derived set must
+// split that value into every member — the same convention a manual
+// expected_catid pin uses. Under the old single-value rule a multi-part
+// payload synced an empty CATID and contributed nothing, silently leaving
+// styles built on it without a part-identity set.
+func TestDerivedSetSplitsMultiPartCatalog(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, _, styleSingle, _ := seedProduceNode(t, db, "two_robot") // produce claim WIDGET-A
+	eng := testEngine(t, db)
+
+	// Single-part payload: unchanged behavior (one-member set).
+	putCatalog(t, db, 1, "WIDGET-A", "40016911")
+	// Multi-part kit: Core sends both distinct parts comma-joined.
+	putCatalog(t, db, 6, "KIT", "40017111,40017112")
+
+	styleKit, err := db.CreateStyle("KIT-STYLE", "", processID)
+	testutil.MustNoErr(t, err, "create kit style")
+	seedProduceClaim(t, db, styleKit, "N-KIT", "KIT")
+
+	sKit, _ := db.GetStyle(styleKit)
+	set := eng.styleCATIDSet(sKit)
+	if len(set) != 2 || !catidSetHas(set, "40017111") || !catidSetHas(set, "40017112") {
+		t.Errorf("multi-part kit set = %v, want both {40017111, 40017112}", set)
+	}
+
+	// Whitespace tolerance: Core trims when joining, but be defensive — a
+	// value like "40017111, 40017112" must still yield two members.
+	putCatalog(t, db, 6, "KIT", "40017111, 40017112")
+	sKit, _ = db.GetStyle(styleKit)
+	set = eng.styleCATIDSet(sKit)
+	if len(set) != 2 || !catidSetHas(set, "40017111") || !catidSetHas(set, "40017112") {
+		t.Errorf("spaced multi-part set = %v, want both members", set)
+	}
+
+	// A single-part catalog value still yields exactly one member.
+	sSingle, _ := db.GetStyle(styleSingle)
+	if got := formatCATIDSet(eng.styleCATIDSet(sSingle)); got != "40016911" {
+		t.Errorf("single-part set after multi-part sync = %q, want 40016911", got)
+	}
+}

@@ -34,9 +34,12 @@ type CatalogEntry struct {
 	Description  string  `json:"description"`
 	UOPCapacity  int     `json:"uop_capacity"`
 	CycleSeconds float64 `json:"cycle_seconds"`
-	// CATID is the payload's part identity, synced from Core (its single distinct
-	// manifest part number, or empty when the payload maps to zero or several).
-	// The claim editor auto-fills a style's expected_catid from this.
+	// CATID is the payload's part identity, synced from Core: the DISTINCT
+	// manifest part numbers comma-joined (a single value for a one-part
+	// payload, the full list for a multi-part kit), empty when the manifest
+	// carries no part numbers. The engine splits it into the style's
+	// part-identity set — the same comma convention as a manual
+	// expected_catid pin.
 	CATID     string    `json:"catid"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
