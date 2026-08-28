@@ -272,14 +272,44 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 	// stage, and every `updated_at` sits in the future and this goes permanently
 	// silent. The one thing that would have said "order 2 has not advanced in
 	// sixteen minutes" was one config flag from saying nothing at all.
+	// ── AND updated_at MEANS TOUCHED, NOT PROGRESSED ─────────────────────
+	//
+	// It is stamped by ~20 writers, and several of them run on the dispatch retry
+	// loop: an order that re-enters the scanner every tick, is refused, and parks
+	// again has its updated_at moved forward every time. So the one order this
+	// detector exists to catch — the one going nowhere fastest — refreshes its own
+	// staleness timer, and the alarm never fires.
+	//
+	// MEASURED, on the sim wedge of 2026-08-28 (main 1a6b6d23): order 143 sat in
+	// `sourcing` behind a leaked lane hold for over two hours of sim time. Its last
+	// real transition was at 19:00:55; its updated_at read 19:16:55 and kept
+	// climbing. Sixteen minutes of "activity" in which nothing happened, against a
+	// thirty-minute bound it would never reach.
+	//
+	// So the clock is the last STATUS TRANSITION — an order_history row, which is
+	// written only when an order actually moves (a re-entry that changes nothing
+	// appends nothing, and setQueueReason short-circuits an unchanged reason). Its
+	// created_at is stamped with clock.Now() by the same writers, so this does not
+	// re-introduce the wall-clock mismatch stage D removed just above.
+	//
+	// COALESCE to the order's own created_at: an order with no history yet has not
+	// progressed since it was born, which is the honest reading and keeps a row
+	// that never transitioned from being invisible forever.
+	//
+	// The POPULATION is untouched — same statuses, same two bounds, same casts.
+	// Only the clock changes.
 	now := clock.Now().UTC()
 	rows, err := db.Query(fmt.Sprintf(`
-		SELECT id, status, updated_at
-		FROM orders
-		WHERE status IN (%s)
-		  AND updated_at < $4::timestamptz - (
-		        CASE WHEN status = $3 THEN $2::int ELSE $1::int END * INTERVAL '1 second')
-		ORDER BY updated_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()),
+		SELECT o.id, o.status, COALESCE(h.last_progress, o.created_at) AS progressed_at
+		FROM orders o
+		LEFT JOIN LATERAL (
+		        SELECT MAX(created_at) AS last_progress
+		        FROM order_history WHERE order_id = o.id
+		) h ON TRUE
+		WHERE o.status IN (%s)
+		  AND COALESCE(h.last_progress, o.created_at) < $4::timestamptz - (
+		        CASE WHEN o.status = $3 THEN $2::int ELSE $1::int END * INTERVAL '1 second')
+		ORDER BY progressed_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()),
 		int(stuckOrderAge.Seconds()), int(queuedOrderAge.Seconds()), string(protocol.StatusQueued), now)
 	if err != nil {
 		return nil, err
@@ -288,8 +318,8 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 	for rows.Next() {
 		var orderID int64
 		var status string
-		var updatedAt time.Time
-		if err := rows.Scan(&orderID, &status, &updatedAt); err != nil {
+		var progressedAt time.Time
+		if err := rows.Scan(&orderID, &status, &progressedAt); err != nil {
 			return nil, err
 		}
 		// ── IT RECOMMENDED THE ONE ACT THIS HOUSE RULED IS NEVER RIGHT ────
@@ -318,10 +348,11 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 			RecommendedAction: "investigate_stuck_order",
 			OrderID:           &orderID,
 			OrderStatus:       status,
-			ObservedAt:        &updatedAt,
-			Detail: "the order has not advanced within the allowed age threshold. Find what its " +
-				"robot is doing before anything else — cancelling clears the row and leaves the " +
-				"plant as it was",
+			ObservedAt:        &progressedAt,
+			Detail: "the order has not CHANGED STATUS within the allowed age threshold — the time " +
+				"shown is its last real transition, not the last time a writer touched the row. " +
+				"Find what its robot is doing before anything else — cancelling clears the row and " +
+				"leaves the plant as it was",
 		})
 	}
 	if err := rows.Err(); err != nil {

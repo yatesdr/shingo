@@ -4,6 +4,7 @@ package reconciliation_test
 
 import (
 	"testing"
+	"time"
 
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
@@ -136,8 +137,16 @@ func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 		if err := orders.Create(db.DB, o); err != nil {
 			t.Fatalf("create %s: %v", uuid, err)
 		}
-		if _, err := db.DB.Exec(`UPDATE orders SET status=$1, updated_at = NOW() - ($2 * INTERVAL '1 second') WHERE id=$3`,
-			status, ageSeconds, o.ID); err != nil {
+		// AGE IS AGE SINCE THE LAST TRANSITION, not since the last row touch —
+		// the detector's clock is an order_history row now, so a fixture that
+		// backdates only updated_at describes an order that HAS progressed
+		// recently and correctly raises nothing. created_at is the COALESCE
+		// fallback for an order that has no history yet, which these are.
+		if _, err := db.DB.Exec(`UPDATE orders
+			SET status=$1,
+			    updated_at = NOW() - ($2 * INTERVAL '1 second'),
+			    created_at = NOW() - ($2 * INTERVAL '1 second')
+			WHERE id=$3`, status, ageSeconds, o.ID); err != nil {
 			t.Fatalf("backdate %s: %v", uuid, err)
 		}
 		return o.ID
@@ -262,4 +271,69 @@ func TestCompletionAnomalies_ACompoundParentIsNotAMissingBin(t *testing.T) {
 			"this anomaly exists for — an order that reached FINISHED with its bin still at source",
 			childless.ID)
 	}
+}
+
+// TestListAnomalies_ARetryingOrderCannotRefreshItsOwnStalenessTimer is the pin
+// on the progress signal.
+//
+// orders.updated_at means TOUCHED, not PROGRESSED. Roughly twenty writers stamp
+// it, and several run on the dispatch retry loop — so an order that re-enters the
+// scanner every tick, is refused, and parks again keeps moving its own updated_at
+// forward. The one order this detector exists to catch is therefore the one it
+// cannot see, and it fails SILENTLY: the board reads "no stuck orders" while a
+// wedged order sits in `sourcing` indefinitely.
+//
+// MEASURED on the sim wedge of 2026-08-28 (main 1a6b6d23): order 143 sat in
+// `sourcing` behind a leaked lane hold for over two hours of sim time. Its last
+// real transition was 19:00:55; its updated_at read 19:16:55 and kept climbing,
+// against a bound it would never reach.
+//
+// The fixture below is that order: a fresh updated_at over an old last
+// transition. Under the updated_at clock it raises nothing.
+func TestListAnomalies_ARetryingOrderCannotRefreshItsOwnStalenessTimer(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	node := &nodes.Node{Name: "RETRY-LINE", Enabled: true}
+	if err := nodes.Create(db.DB, node); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	o := &orders.Order{EdgeUUID: "retry-wedged", StationID: "edge.1", OrderType: "retrieve_empty",
+		Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+	if err := orders.Create(db.DB, o); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	// Parked in `sourcing` an hour ago — that is the last thing that HAPPENED.
+	if _, err := db.DB.Exec(
+		`INSERT INTO order_history (order_id, status, detail, created_at)
+		 VALUES ($1, 'sourcing', 'reserving source bins', NOW() - INTERVAL '1 hour')`, o.ID); err != nil {
+		t.Fatalf("seed the last real transition: %v", err)
+	}
+	// ...and touched one second ago by the retry loop, over and over since.
+	if _, err := db.DB.Exec(
+		`UPDATE orders SET status='sourcing',
+		        created_at = NOW() - INTERVAL '1 hour',
+		        updated_at = NOW() - INTERVAL '1 second'
+		 WHERE id=$1`, o.ID); err != nil {
+		t.Fatalf("touch without progressing: %v", err)
+	}
+
+	anomalies, err := reconciliation.ListAnomalies(db.DB)
+	if err != nil {
+		t.Fatalf("ListAnomalies: %v", err)
+	}
+	for _, a := range anomalies {
+		if a.Issue == "active_order_stuck" && a.OrderID != nil && *a.OrderID == o.ID {
+			if a.ObservedAt == nil || time.Since(*a.ObservedAt) < 30*time.Minute {
+				t.Fatalf("order %d was flagged, but ObservedAt is %v — the row must report the LAST "+
+					"TRANSITION, not the last touch, or the operator reads a fresh timestamp beside a "+
+					"stuck-order alarm and disbelieves the alarm.", o.ID, a.ObservedAt)
+			}
+			return // flagged, and dated honestly
+		}
+	}
+	t.Fatalf("order %d has not changed status in an hour and was NOT flagged. Its updated_at is one "+
+		"second old because the retry loop keeps touching it — which is precisely the order that "+
+		"needs reporting, and precisely the one an updated_at clock cannot see.", o.ID)
 }
