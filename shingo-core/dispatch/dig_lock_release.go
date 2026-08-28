@@ -238,12 +238,13 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 //	                      and the demand has not been handed back to the scanner.
 //	                      KEEP — this is gate 2 doing its job.
 //
-//	DISPATCHED OR BEYOND  its own per-visit release and its terminalization own
-//	                      the row now, exactly as HandOffLaneToPicker's doc says.
-//	                      KEEP.
-//
 //	A BIN OF ITS OWN      legStillNeedsLane — it is coming for something still in
 //	  STILL IN THE LANE   here, or dwelling in it. KEEP.
+//
+//	STILL OWES THIS       holderStillOwesTheLane — its bin is in the GRIPPER and
+//	  LANE A DROP         its destination is inside this corridor, so no
+//	                      claim-keyed read can see it and only DeliveryNode can.
+//	                      KEEP. The same second question the dig arm asks.
 //
 //	PRE-DISPATCH WITH     it has not re-resolved yet and has not chosen. This is
 //	  NO CLAIM ANYWHERE   still the gap. KEEP. ("No claim → release" would be
@@ -252,10 +253,14 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 //	                      scanner tick after the parent left `reshuffling` and
 //	                      undo gate 2 across most of its window.)
 //
+//	FAULTED               RELEASE, and it is asked LOCALLY rather than by widening
+//	                      swapLegCommittedToFleet — gate 3's argument, in gate 3's
+//	                      words, for the reason gate 3 gives.
+//
 //	ANYTHING ELSE         RELEASE. Two shapes reach here and both are stranded:
 //	                      an order that went back through the scanner and resolved
 //	                      onto a bin SOMEWHERE ELSE, and one that has COLLECTED
-//	                      and driven off with its bin.
+//	                      and is no longer coming for what this corridor held.
 //
 // ── THE COLLECTED ARM IS GATE 3, ASKED A SECOND TIME ──────────────────────
 //
@@ -289,7 +294,13 @@ func (d *Dispatcher) maybeReleaseStrandedHandoff(laneID int64) {
 		}
 		holder, hErr := d.db.GetOrder(h.OrderID)
 		if hErr != nil {
-			return // unreadable holder keeps the lane
+			// FAIL CLOSED FOR THE ROW, NOT FOR THE LANE. This used to `return`,
+			// which abandons every other stranded row on the lane over one
+			// unreadable order — a lane can carry several, and the holder-gone arm
+			// two lines down already uses `continue`. Keeping this row is the
+			// fail-closed answer; keeping the ones after it is a second decision
+			// nobody made.
+			continue
 		}
 		if holder == nil {
 			d.releaseStrandedHandoff(laneID, h.OrderID, "its owner no longer exists")
@@ -301,25 +312,68 @@ func (d *Dispatcher) maybeReleaseStrandedHandoff(laneID int64) {
 		if needs, _ := d.legStillNeedsLane(holder, laneID); needs {
 			continue // a bin of its own is still in here, or it is dwelling in it
 		}
+		// AND THE SECOND QUESTION, the one the dig arm asks and this walk did not.
+		//
+		// legStillNeedsLane is claim-keyed, so it is blind to the INBOUND
+		// direction: a holder driving down this corridor to DROP into it carries
+		// its bin in the gripper, and no bin of its own is anywhere in the lane.
+		// It then reads as "committed to the fleet", which the release arm below
+		// treats as "has already collected and left" — exactly backwards for the
+		// robot that is about to arrive. Releasing there opens the lane in the gap
+		// before its own drop, which is the re-burial window entered from the
+		// inbound side (§R.104's acceptance shape).
+		//
+		// Fail-closed on both reads, like every other read in this file.
+		if owes, _ := d.holderStillOwesTheLane(holder, laneID); owes {
+			continue // its bin is in the gripper and its destination is in here
+		}
 		claimed, cErr := d.db.ListBinsByClaim(h.OrderID)
 		if cErr != nil {
-			return // unreadable claims keep the lane
+			continue // unreadable claims keep THIS row; the rest of the lane is still walked
 		}
-		if len(claimed) == 0 && !swapLegCommittedToFleet(holder) {
+		// ── AND `faulted` IS ADDED HERE, NOT IN swapLegCommittedToFleet ───────
+		//
+		// Gate 3 releases a faulted holder and says why: `faulted` is post-dispatch
+		// by construction — every inbound edge comes from acknowledged, dispatched,
+		// in_transit or staged — so a faulted holder that got past the claim walk
+		// has its bin out of this lane, and a jammed aisle is jammed by the ROBOT
+		// rather than by a row. The shared predicate rules it NOT-committed on
+		// purpose, because its swap caller wants a faulted sibling to keep waiting;
+		// so without this conjunct the second asking re-keeps precisely what the
+		// first asking released — on a status that is non-terminal, unreaped, and
+		// outside the runtime-stuck population, where nothing alarms on it.
+		//
+		// Widening swapLegCommittedToFleet would be wrong for the swap caller. The
+		// divergence belongs at the two readers, which is where gate 3 put it.
+		if len(claimed) == 0 && !swapLegCommittedToFleet(holder) && holder.Status != StatusFaulted {
 			continue // pre-dispatch and undecided: it has not chosen yet
 		}
 		d.releaseStrandedHandoff(laneID, h.OrderID, strandedWhy(holder))
 	}
 }
 
-// strandedWhy names which of the two stranded shapes this is, so the log says
-// what happened rather than that something did.
+// strandedWhy names which stranded shape this is, so the log says what happened
+// rather than that something did.
+//
+// THREE SENTENCES, NOT TWO, and `staged` is why the middle one is worded the way
+// it is. swapLegCommittedToFleet is true of a holder parked at a mark holding its
+// bin as well as of one halfway across the plant, and telling a reader that a
+// staged order "drove off" sends him looking for a robot that is standing still.
+// What is true of the whole committed set is that the bin is out of this corridor
+// and nothing is coming back for what the row was protecting.
 func strandedWhy(holder *orders.Order) string {
-	if swapLegCommittedToFleet(holder) {
-		return "its owner has already collected and driven off with its bin, so nothing is coming " +
-			"for what this corridor was protecting (gate 3's rule, asked a second time)"
+	switch {
+	case holder.Status == StatusFaulted:
+		return "its owner is FAULTED — post-dispatch by construction, and past the claim walk, so " +
+			"its bin is already out of this corridor. What jams an aisle here is the robot, not " +
+			"this row (gate 3's rule, asked a second time)"
+	case swapLegCommittedToFleet(holder):
+		return "its owner has already collected: the fleet has the order and the bin is out of this " +
+			"corridor, so nothing is coming for what it was protecting (gate 3's rule, asked a " +
+			"second time)"
+	default:
+		return "its owner went back through the scanner and resolved onto a bin somewhere else"
 	}
-	return "its owner went back through the scanner and resolved onto a bin somewhere else"
 }
 
 // releaseStrandedHandoff drops one stranded handoff row and wakes the lane, the

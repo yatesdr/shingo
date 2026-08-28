@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // THE LANE LIVENESS FLOOR — the periodic pass that wakes a quiesced plant.
@@ -50,7 +51,7 @@ import (
 // should have freed it went missing. It is not how often the system checks
 // whether work exists — events do that, continuously, and on a healthy plant
 // this pass finds nothing and releases nobody. On a plant with no marked lanes
-// and no dig in flight it costs two queries returning zero rows.
+// and no dig in flight it costs three queries returning zero rows.
 
 // floorWaiter is one order the floor found waiting, and enough of its state to
 // tell afterwards whether the pass actually moved it.
@@ -106,6 +107,13 @@ func (d *Dispatcher) refreshWaiterCauses(waiters []floorWaiter, laneID int64) {
 // A pass that frees nobody is the expected outcome and says nothing at all —
 // see recordFloorRelease for why that silence is load-bearing.
 func (d *Dispatcher) SweepLaneWaiters() int {
+	// THE STRANDED-HANDOFF WALK RUNS FIRST, AND IT RUNS UNCONDITIONALLY.
+	//
+	// It is not part of the waiter accounting below — it releases a ROW, not an
+	// order, and it does its own logging — so it sits ahead of the early return
+	// and outside the freed count. See sweepStrandedHandoffs.
+	d.sweepStrandedHandoffs()
+
 	before, err := d.laneWaiters()
 	if err != nil {
 		log.Printf("lane floor: could not read the waiting set: %v (skipping this pass; the next one retries)", err)
@@ -160,6 +168,41 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 		freed++
 	}
 	return freed
+}
+
+// sweepStrandedHandoffs gives maybeReleaseStrandedHandoff the level-triggered
+// door it landed without.
+//
+// ── F-22'S OWN RULE, APPLIED TO THE DOOR THAT MISSED IT ───────────────────
+//
+// Every path into that releaser is a lane-EXIT or teardown event, and the floor
+// reached it only through EvaluateLaneReleases' `if freed` arm. The wedge it
+// exists for is a corridor whose stranded row refuses every inbound comer: no
+// admits, no exits, `freed` false by construction. So the fix was silent in
+// exactly the state it was written for — the measured wedges (orders 163 and
+// 202, eighteen sim-hours) are quiesced lanes, not busy ones. This is the header
+// above's own sentence — "a dropped event costs only latency until the next
+// firing, which assumes a next firing exists" — asked of one more mechanism.
+//
+// THE LANE SET IS DERIVED FROM THE ROWS, not from laneWaiters. The population
+// queued behind a stranded handoff is `sourcing` demands the resolver turned
+// away, which are neither gate-staged dwellers nor held legs; a waiter-derived
+// set would miss the lane and the pass would return before its loop on a plant
+// where nothing else is waiting at all. See reservations.LanesHeldByHandoff.
+//
+// IT DECIDES NOTHING, same as the rest of this file: it calls the same function
+// the event path calls, which re-reads every holder and fails closed on each.
+// On a healthy plant it is one query returning zero rows.
+func (d *Dispatcher) sweepStrandedHandoffs() {
+	lanes, err := reservations.LanesHeldByHandoff(d.db.DB)
+	if err != nil {
+		log.Printf("lane floor: could not read the lanes held by a dig handoff: %v "+
+			"(skipping this pass; the next one retries)", err)
+		return
+	}
+	for _, laneID := range lanes {
+		d.maybeReleaseStrandedHandoff(laneID)
+	}
 }
 
 // laneWaiters is the floor's candidate derivation: every order waiting on a lane

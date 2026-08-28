@@ -574,6 +574,38 @@ func ListDigHolds(q Queryer) ([]DigHold, error) {
 	return out, rows.Err()
 }
 
+// LanesHeldByHandoff returns the distinct lane nodes carrying an active mouth
+// row tagged ByDigHandoff — the population the lane liveness floor visits.
+//
+// KEYED ON THE ROW, NOT ON WHO IS WAITING, and that is the whole reason it
+// exists rather than the floor reusing its own waiter set. The wedge a stranded
+// handoff produces is a corridor that refuses every inbound comer: the orders
+// queued behind it are `sourcing` demands the resolver turned away, not gate
+// dwellers or held legs, so a waiter-derived lane set does not contain the lane
+// and the floor never looks at it. A row-derived one always does.
+//
+// On a healthy plant this returns zero rows and the sweep costs one indexed
+// query (idx_reservations_kind_node).
+func LanesHeldByHandoff(q Queryer) ([]int64, error) {
+	rows, err := q.Query(
+		`SELECT DISTINCT node_id FROM reservations
+		 WHERE resource_kind='mouth' AND reserved_by=$1 AND state IN ('pending','confirmed')
+		 ORDER BY node_id`, ByDigHandoff)
+	if err != nil {
+		return nil, fmt.Errorf("reservations lanes-held-by-handoff: %w", err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var laneID int64
+		if err := rows.Scan(&laneID); err != nil {
+			return nil, fmt.Errorf("reservations lanes-held-by-handoff scan: %w", err)
+		}
+		out = append(out, laneID)
+	}
+	return out, rows.Err()
+}
+
 // HandOff is what HandOffLaneToPicker did. Three outcomes, and only ONE of them
 // leaves the lane free for anybody else to act on.
 //
