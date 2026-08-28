@@ -200,6 +200,93 @@ func binTypesDiffer(from, to *processes.NodeClaim, binTypes map[string]string) b
 	return fromBT != toBT
 }
 
+// binTypesKnownSame is binTypesDiffer's POSITIVE twin: both codes resolved AND
+// equal. It reads the same map, computed by the same binTypeSnapshot call, so
+// the sequential reuse-skip and the press-index fan-out can never disagree about
+// what a style rides.
+//
+// ── IT IS NOT !binTypesDiffer, AND THE UNKNOWN CASE IS WHY ────────────────
+//
+// binTypesDiffer answers "same" when either code is unresolved, because its
+// caller is protected by refusePressIndexWhenCoreUnavailable — a press-index
+// changeover is refused outright when Core cannot answer, so unknown never
+// reaches it in anger, and treating unknown as "same" leaves the position alone.
+//
+// The sequential skip has the opposite exposure. It has no such gate, and acting
+// on unknown means SKIPPING a side — not swapping a carrier that may be wrong.
+// So it demands a positive answer: no catalog, no skip, build both orders. The
+// degraded direction is one redundant carrier swap, never a wrong one.
+func binTypesKnownSame(from, to *processes.NodeClaim, binTypes map[string]string) bool {
+	if from == nil || to == nil {
+		return false
+	}
+	fromBT, toBT := binTypes[from.PayloadCode], binTypes[to.PayloadCode]
+	if fromBT == "" || toBT == "" {
+		return false // no catalog answer — do not skip
+	}
+	return fromBT == toBT
+}
+
+// ApplySequentialReuseShortcut turns a produce sequential press's PARKED-side
+// Swap into SituationUnchanged when the two styles ride the SAME carrier.
+//
+// ── THE INVARIANT CARRIES THE KNOWLEDGE, NOT AN INVENTORY READ ────────────
+//
+// This is press-index's answer to the identical question. A same-carrier
+// press-index produce changeover never asks the floor what is on deck: it asks
+// the CATALOG and leans on the mode's steady-state invariant — on-deck positions
+// hold empties of the running style's carrier, because steady state put them
+// there. Sequential has that invariant exactly: a produce press's parked side
+// holds an empty of the running style's carrier.
+//
+// So if the carrier does not change, the empty already standing on the parked
+// side is the empty the new style wants. Swapping it out and fetching an
+// identical one back is a robot trip that moves nothing. No order, no button,
+// no release for that side.
+//
+// PRODUCE ONLY (owner ruling 2026-08-28). A consume press's parked side holds a
+// FULL standby of the OUTGOING style — material, not an empty carrier — and
+// material is material: it has to leave and be replaced whatever the carrier
+// does. Consume always changes over.
+//
+// Keyed on bin-type fit and never on same-payload: empties have no style, so a
+// payload compare would answer "different" for two styles that ride one carrier,
+// which is the whole population this skips.
+func ApplySequentialReuseShortcut(
+	diffs []ChangeoverNodeDiff, binTypes map[string]string, activePull map[string]bool,
+) []ChangeoverNodeDiff {
+	out := make([]ChangeoverNodeDiff, 0, len(diffs))
+	for _, d := range diffs {
+		if !sequentialParkedSideReuses(d, binTypes, activePull) {
+			out = append(out, d)
+			continue
+		}
+		d.Situation = SituationUnchanged
+		out = append(out, d)
+	}
+	return out
+}
+
+// sequentialParkedSideReuses is the predicate above, as one readable question.
+func sequentialParkedSideReuses(
+	d ChangeoverNodeDiff, binTypes map[string]string, activePull map[string]bool,
+) bool {
+	if d.Situation != SituationSwap || d.FromClaim == nil || d.ToClaim == nil {
+		return false
+	}
+	if d.FromClaim.SwapMode != protocol.SwapModeSequential {
+		return false
+	}
+	if d.FromClaim.Role != protocol.ClaimRoleProduce {
+		return false // consume always changes over
+	}
+	if !binTypesKnownSame(d.FromClaim, d.ToClaim, binTypes) {
+		return false
+	}
+	inactive, _ := resolveSequentialActivePull(d.FromClaim, activePull)
+	return inactive != "" && d.CoreNodeName == inactive
+}
+
 // shouldFanOutPressIndex reports whether the diff is a press-index
 // changeover whose bin types differ between from and to. Only those
 // expand into per-position diffs.

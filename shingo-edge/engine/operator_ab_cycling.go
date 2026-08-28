@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"shingo/protocol"
+	"shingoedge/orders"
 
 	"shingoedge/store/processes"
 )
@@ -13,10 +14,43 @@ import (
 // its paired partner. Used for A/B cycling — operator (or PLC bit) decides when
 // to start pulling from the other side. Triggers auto-reorder on the depleted node
 // if the depleted node's UOP is at or below its reorder point.
-func (e *Engine) FlipABNode(nodeID int64) error {
+// FlipRequest says who is asking to flip and whether they have looked.
+//
+// A PLC bit cannot look at the aisle, so it can never carry Confirm — a flip it
+// asks for onto an unready position is refused loudly rather than overridden
+// (the changeover-53 precedent). An operator can, because he can.
+type FlipRequest struct {
+	Confirm  bool
+	CalledBy string
+	ByPLC    bool
+}
+
+// OperatorFlip is the ordinary unconfirmed operator request, and the zero value
+// most callers want.
+func OperatorFlip(calledBy string) FlipRequest { return FlipRequest{CalledBy: calledBy} }
+
+func (e *Engine) FlipABNode(nodeID int64, req FlipRequest) error {
 	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil {
 		return fmt.Errorf("node not found: %w", err)
+	}
+	// ── DO NOT PUT THE LINE ONTO A POSITION THAT CANNOT FEED IT ───────────
+	//
+	// The flip is what makes the OTHER side releasable, so it is where the
+	// "has the operator got a bin of the new product" question belongs. Every
+	// arm below is answered from state this Edge already owns — no Core call,
+	// no per-node inventory read. See flipTargetReady.
+	if why := e.flipTargetReady(node); why != "" {
+		if req.ByPLC {
+			log.Printf("A/B flip REFUSED (PLC) node=%s: %s — a PLC bit cannot see the aisle, so it "+
+				"cannot override this; a person must look and flip from the board", node.CoreNodeName, why)
+			return fmt.Errorf("flip to %s refused: %s", node.CoreNodeName, why)
+		}
+		if !req.Confirm {
+			return fmt.Errorf("%s; confirm to flip anyway", why)
+		}
+		log.Printf("AUDIT flip-override: node=%s called_by=%q — %s; the operator flipped anyway",
+			node.CoreNodeName, req.CalledBy, why)
 	}
 
 	claim := findActiveClaim(e.db, node)
@@ -100,4 +134,75 @@ func (e *Engine) FlipABNode(nodeID int64) error {
 	}
 
 	return nil
+}
+
+// flipTargetReady returns "" when the line may safely be put onto this position,
+// or an operator-readable reason why not.
+//
+// ── THE INVARIANT CARRIES THE KNOWLEDGE ───────────────────────────────────
+//
+// The Edge holds no bin table: it cannot read the carrier type or the payload of
+// whatever is standing on a position. It does not need to. Each arm below is a
+// fact it already owns, and each leans on the same steady-state invariant the
+// reuse-skip does — a produce press's parked side holds an empty of the running
+// style's carrier, because steady state put it there.
+//
+//	SKIPPED        the reuse-shortcut turned this side's diff Unchanged, which
+//	               it does only when the catalog says both styles ride the SAME
+//	               carrier. The empty already standing there IS the one the new
+//	               style wants. Nothing was ordered because nothing was needed.
+//
+//	DELIVERED      this side's own changeover order reached a terminal status.
+//	               The Edge WATCHED its robot deliver — a new carrier on produce,
+//	               new material on consume. On consume it also checks the runtime
+//	               is pointing at the incoming style's claim with material on it,
+//	               because "an order finished" and "the right stuff is there" are
+//	               two statements and consume is the role where they can differ.
+//
+//	STEADY STATE   no changeover is running, so there is nothing to be ready FOR
+//	               beyond a bin being present — the invariant covers the rest.
+//
+// Every failure to READ answers ready(""). This guard exists to catch the
+// operator's honest mistake, not to wall him out of his own press when a query
+// hiccups; and it is confirm-overridable anyway.
+func (e *Engine) flipTargetReady(node *processes.Node) string {
+	rt, err := e.db.GetProcessNodeRuntime(node.ID)
+	if err != nil || rt == nil {
+		return ""
+	}
+	changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID)
+	if err != nil || changeover == nil {
+		// STEADY STATE.
+		if rt.ActiveBinID == nil {
+			return fmt.Sprintf("%s has no bin on it", node.CoreNodeName)
+		}
+		return ""
+	}
+	task, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, node.ID)
+	if err != nil || task == nil {
+		return ""
+	}
+	if task.Situation == string(SituationUnchanged) {
+		return "" // SKIPPED — same carrier, the resident empty is already correct
+	}
+	if task.NextMaterialOrderID == nil {
+		return ""
+	}
+	order, oErr := e.db.GetOrder(*task.NextMaterialOrderID)
+	if oErr != nil || order == nil {
+		return ""
+	}
+	if !orders.IsTerminal(order.Status) {
+		return fmt.Sprintf("%s's changeover order %d has not delivered (%s) — release it first",
+			node.CoreNodeName, order.ID, order.Status)
+	}
+	// CONSUME's extra conjunct: an empty carrier on a consume position is as bad
+	// as nothing, so the order finishing is not on its own enough.
+	claim := findActiveClaim(e.db, node)
+	if claim != nil && claim.Role == protocol.ClaimRoleConsume {
+		if rt.RemainingUOPCached <= 0 {
+			return fmt.Sprintf("%s holds no material to feed the line", node.CoreNodeName)
+		}
+	}
+	return ""
 }

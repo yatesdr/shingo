@@ -9,6 +9,7 @@ package engine
 import (
 	"database/sql"
 	"fmt"
+	"log"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -249,6 +250,12 @@ func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []Chan
 		return nil, err
 	}
 	binTypes := e.binTypeSnapshot(diffs)
+	// AFTER the snapshot, because it reads the same catalog map the press-index
+	// fan-outs do — one lookup, one answer about what a style rides, so the two
+	// shortcuts cannot disagree. Before the fan-outs only for readability; a
+	// sequential diff is not a press-index diff, so neither pass can see the
+	// other's output.
+	diffs = ApplySequentialReuseShortcut(diffs, binTypes, e.activePullForDiffs(processID))
 	diffs = FanOutPressIndexDifferentBinType(diffs, binTypes)
 	diffs = FanOutPressIndexCrossMode(diffs, binTypes)
 	return diffs, nil
@@ -341,6 +348,19 @@ func (e *Engine) binTypeSnapshot(diffs []ChangeoverNodeDiff) map[string]string {
 		collect(diffs[i].ToClaim)
 	}
 	return out
+}
+
+// activePullForDiffs is activePullSnapshot for a caller that holds a process id
+// rather than the node slice. An unreadable node list yields an empty map, which
+// resolveSequentialActivePull reads as its tie-break — the same degraded answer
+// the planner already takes everywhere else.
+func (e *Engine) activePullForDiffs(processID int64) map[string]bool {
+	nodes, err := e.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		log.Printf("changeover: list process nodes for %d while reading active pull: %v", processID, err)
+		return nil
+	}
+	return e.activePullSnapshot(nodes)
 }
 
 // activePullSnapshot returns a CoreNodeName → bool map from the runtime

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 
+	"shingoedge/engine"
 	"shingoedge/service"
 )
 
@@ -93,7 +94,23 @@ func (h *Handlers) apiFlipABNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.orchestration.FlipABNode(id); err != nil {
+	// The readiness guard refuses an unready target with a reason and asks for
+	// a confirm — the same refuse-then-confirm shape the release prompt uses. A
+	// body is optional so the plain click keeps working; `confirm` is the second
+	// click, and `called_by` names who made it in the audit line.
+	var req struct {
+		Confirm  bool   `json:"confirm"`
+		CalledBy string `json:"called_by"`
+	}
+	if r.ContentLength > 0 {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	if req.CalledBy == "" {
+		req.CalledBy = "operator_station"
+	}
+	if err := h.orchestration.FlipABNode(id, engine.FlipRequest{
+		Confirm: req.Confirm, CalledBy: req.CalledBy,
+	}); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

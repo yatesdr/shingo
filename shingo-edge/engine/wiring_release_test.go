@@ -314,7 +314,7 @@ func TestRegression_ABInactivePairFlush(t *testing.T) {
 		t.Fatalf("pre-flip flushes = %d, want 0", sink.flushes)
 	}
 
-	testutil.MustNoErr(t, eng.FlipABNode(nodeAID), "FlipABNode")
+	testutil.MustNoErr(t, eng.FlipABNode(nodeAID, OperatorFlip("test")), "FlipABNode")
 
 	if sink.flushes == 0 {
 		t.Errorf("Flush() not called during FlipABNode — A/B active-pull state flip is a flush trigger")

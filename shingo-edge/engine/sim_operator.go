@@ -933,7 +933,7 @@ func (op *simOperator) runFlip(nodeID int64) {
 		return
 	}
 	// FlipABNode(x) makes x active and its partner (this node) inactive.
-	if err := op.e.FlipABNode(paired.ID); err != nil {
+	if err := op.e.FlipABNode(paired.ID, OperatorFlip("sim-operator")); err != nil {
 		op.e.debugFn("[sim] A/B cutover %s→%s rejected: %v", node.CoreNodeName, claim.PairedCoreNode, err)
 		return
 	}
