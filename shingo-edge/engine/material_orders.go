@@ -963,10 +963,10 @@ func buildSequentialPerPositionSwap(fromClaim, toClaim *processes.NodeClaim, ina
 	// position whose operator has not pressed anything yet.
 	steps := []protocol.ComplexOrderStep{
 		stationWait(pos),
-		protocol.ComplexOrderStep{Action: "pickup", Node: pos, Empty: onDeckEmpty},
+		{Action: "pickup", Node: pos, Empty: onDeckEmpty},
 		buildStep("dropoff", fromClaim.OutboundDestination),
 		refillPickup(fromClaim, toClaim),
-		protocol.ComplexOrderStep{Action: "dropoff", Node: pos},
+		{Action: "dropoff", Node: pos},
 	}
 	return ChangeoverDispatch{
 		StepsA:        steps,

@@ -1210,14 +1210,3 @@ func TestPlanNodeAction_Sequential_ParkedProducePicksUpAnEmpty(t *testing.T) {
 		})
 	}
 }
-
-// stepNodesOf returns the nodes of every step with the given action.
-func stepNodesOf(steps []protocol.ComplexOrderStep, action string) []string {
-	var out []string
-	for _, s := range steps {
-		if s.Action == action {
-			out = append(out, s.Node)
-		}
-	}
-	return out
-}
