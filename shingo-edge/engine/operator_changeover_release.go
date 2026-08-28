@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -156,6 +157,33 @@ func (e *Engine) releaseSingleLegChangeoverNode(nodeID int64, disp ReleaseDispos
 	if task.OldMaterialReleaseOrderID == nil && task.NextMaterialOrderID == nil {
 		return false, nil // nothing to release; let the pair path say so
 	}
+	// ── AT A SEQUENTIAL SWAP, THIS BUTTON IS THE CUTOVER ──────────────────
+	//
+	// The operator is standing at the press. Their click means "go" — and at
+	// this one position "go" is not a bare permission, it is flip the pull to
+	// the freshly-stocked side and THEN let the robot clear this one. Routing
+	// here rather than adding a second button is the point: one control that
+	// does the correct thing, instead of a real button beside a trap that
+	// releases the wait with the line still pulling from the position.
+	//
+	// The precondition comes along for free — the parked side must have its bin
+	// before the press can be cut onto it — because it lives in the handler this
+	// now calls rather than in the button.
+	//
+	// SCOPED TO THE ACTIVE SIDE. The parked position's order has no wait; it ran
+	// at dispatch. Handing its node id to the cutover would flip the pull and
+	// then fail on a wait that does not exist, so it stays on the ordinary path
+	// below, where an already-running order is simply not releasable.
+	isSeqSwap, isActiveSide, roleErr := e.sequentialSwapRole(task)
+	if roleErr != nil {
+		return true, fmt.Errorf("release node %s: could not tell whether this is a sequential cutover "+
+			"(%w) — refusing rather than risk plain-releasing a cutover wait", node.Name, roleErr)
+	}
+	if isSeqSwap && isActiveSide {
+		e.logFn("release-staged node=%s: sequential swap — routing to cutover (flip pull, then release)",
+			node.Name)
+		return true, e.SequentialChangeoverCutover(node.ProcessID, nodeID, disp.CalledBy)
+	}
 	res, err := e.ReleaseChangeoverWaitForNode(node.ProcessID, nodeID, disp)
 	if err != nil {
 		return true, err
@@ -163,6 +191,91 @@ func (e *Engine) releaseSingleLegChangeoverNode(nodeID int64, disp ReleaseDispos
 	e.logFn("release-staged node=%s: single-leg changeover release — released=%d pending=%d",
 		node.Name, res.Released, res.Pending)
 	return true, nil
+}
+
+// sequentialSwapRole classifies a changeover node task for the two release
+// doors: is it a sequential SWAP — whose releaser is the cutover and not a plain
+// release — and if so, is THIS node the active side, the one whose order carries
+// the cutover wait.
+//
+// ── WHY THE SITUATION AND NOT THE MODE ────────────────────────────────────
+//
+// A sequential EVACUATE also parks a wait on each position, and that one is a
+// BARE wait released by the tooling-done click through the plant-wide fan-out —
+// one click, both positions, which is its entire design. Keying either door on
+// "the mode is sequential" would break every A/B press's tooling changeover. The
+// wait that must not be swept is specifically the SWAP's cutover wait.
+//
+// ── AND WHY THE SIDE MATTERS ──────────────────────────────────────────────
+//
+// Only the active position's order opens with the cutover wait; the parked one
+// dispatches and runs. SequentialChangeoverCutover resolves inactive/active from
+// the snapshot itself, so handing it the PARKED node's id would still flip the
+// pull and then fail releasing an order with no wait — production moved, robot
+// still parked. So the reroute is scoped to the active side and the parked side
+// keeps the ordinary path, where its already-running order is simply not
+// releasable.
+//
+// Errors are returned rather than swallowed because the two callers want
+// opposite things from "I could not tell", and both of those are "do not act":
+// the sweep skips (it must not flip a press on a guess) and the per-node click
+// refuses (it must not plain-release what might be a cutover wait).
+func (e *Engine) sequentialSwapRole(task *processes.NodeTask) (isSeqSwap, isActiveSide bool, err error) {
+	if task == nil || task.Situation != "swap" || task.FromClaimID == nil {
+		return false, false, nil
+	}
+	fromClaim, err := e.db.GetStyleNodeClaim(*task.FromClaimID)
+	if err != nil {
+		return false, false, fmt.Errorf("read from-claim for node task %d: %w", task.ID, err)
+	}
+	if fromClaim == nil || fromClaim.SwapMode != protocol.SwapModeSequential || fromClaim.PairedCoreNode == "" {
+		return false, false, nil
+	}
+	processNode, err := e.db.GetProcessNode(task.ProcessNodeID)
+	if err != nil || processNode == nil {
+		return true, false, fmt.Errorf("read process node %d for sequential task %d: %w",
+			task.ProcessNodeID, task.ID, err)
+	}
+	nodes, err := e.db.ListProcessNodesByProcess(processNode.ProcessID)
+	if err != nil {
+		return true, false, fmt.Errorf("list process nodes for sequential task %d: %w", task.ID, err)
+	}
+	_, active := resolveSequentialActivePull(fromClaim, e.activePullSnapshot(nodes))
+	return true, processNode.CoreNodeName == active, nil
+}
+
+// sweepSkipsSequentialSwap is the plant-wide release's one policy exception, and
+// the caller counts a skip as Pending.
+//
+// At every other mode a release is robot permission, so sweeping it plant-wide
+// is harmless. At a sequential SWAP the wait is the CUTOVER wait: releasing it
+// changes which position the press draws parts from, and releasing it without
+// flipping the pull first sends a robot to clear the position the line is still
+// running on.
+//
+// A supervisor letting robots into six stopped stations has not decided to
+// change what Press 2 is producing. That is a production decision and it belongs
+// to the cutover button at the press — which the per-node click routes to, so
+// the skip costs the operator nothing but a click they were going to make
+// anyway. Skipping on an unreadable role too: a press must not be cut over on a
+// guess.
+//
+// PENDING, NOT A FAILURE. One skipped node must not turn the sweep's response
+// into an error for five unrelated stations, and Pending already means "still
+// waiting on a click".
+func (e *Engine) sweepSkipsSequentialSwap(task *processes.NodeTask) bool {
+	isSeqSwap, _, err := e.sequentialSwapRole(task)
+	if err == nil && !isSeqSwap {
+		return false
+	}
+	why := "its releaser is the cutover"
+	if err != nil {
+		why = fmt.Sprintf("its role could not be read (%v), so it is left alone", err)
+	}
+	log.Printf("release changeover wait: skipping sequential swap at node %s — %s. The cutover "+
+		"button at that press flips the pull and then releases; a sweep that released this wait "+
+		"would send a robot into the position the line is still pulling from", task.NodeName, why)
+	return true
 }
 
 // releaseChangeoverWaitScoped is the shared body. onlyNodeID == 0 means every
@@ -211,6 +324,26 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 			continue
 		}
 		if onlyNodeID != 0 && task.ProcessNodeID != onlyNodeID {
+			continue
+		}
+		// ── THE SWEEP DOES NOT CUT A PRESS OVER ───────────────────────
+		//
+		// At every other mode a release is robot permission, so sweeping it
+		// plant-wide is harmless. At a sequential SWAP the wait is the CUTOVER
+		// wait: releasing it changes which position the press draws parts from,
+		// and releasing it without flipping the pull first sends a robot to
+		// clear the position the line is still running on.
+		//
+		// A supervisor letting robots into six stopped stations has not decided
+		// to change what Press 2 is producing. That is a production decision and
+		// it belongs to the cutover button at the press, which the per-node
+		// click now routes to. So this skips and names it.
+		//
+		// PENDING, NOT A FAILURE: one skipped node must not turn the sweep's
+		// response into an error for five unrelated stations, and Pending is
+		// already the count that means "still waiting on a click".
+		if onlyNodeID == 0 && e.sweepSkipsSequentialSwap(&task) {
+			result.Pending++
 			continue
 		}
 		// Auto-detect evac disposition from the line's runtime cache for
