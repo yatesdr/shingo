@@ -347,6 +347,17 @@ bins:
   - {name: BIN-MT-10, slot: UTN_010}
   - {name: BIN-MT-11, slot: UTN_011}
   - {name: BIN-MT-12, slot: UTN_012}
+  # --- STANDARD-SM empties (MG2/sequential): the SM pool was EIGHT carriers for
+  #     two payloads, and only two of those (BIN-PEB-05/06) were ever free. PANEL-B
+  #     round-trips press → market → weld → return in roughly fifteen sim-minutes
+  #     while PRESS-2 fills one every five, so three carriers are in flight at all
+  #     times and the spare pool was one deep. Any consumer hiccup — a wedged WELD-2
+  #     order, an unlucky reshuffle — and PRESS-2 has nothing to fill and stops,
+  #     which is exactly what stalled the box on 2026-08-28. Lane_19 was the free
+  #     return lane; these three make the SM pool eleven and the spare pool five.
+  - {name: BIN-MT-13, slot: UTN_013, bin_type: STANDARD-SM}
+  - {name: BIN-MT-14, slot: UTN_014, bin_type: STANDARD-SM}
+  - {name: BIN-MT-15, slot: UTN_015, bin_type: STANDARD-SM}
 
 processes:
   - {name: PRESS-1, active_style: PRESS-1-RUN}        # two_robot_press_index → PANEL-A
@@ -397,6 +408,14 @@ styles:
   # (the Hopkinsville 2026-08-27 changeover), which is the one that leaves a bin
   # on the press and therefore forces SituationSwap rather than Add.
   - {name: PRESS-2-ALT,    process: PRESS-2,    payload: PANEL-C}
+  # AND A CARRIER CHANGE, which is the OTHER sequential shape and the only one
+  # that exercises both positions. PANEL-A rides STANDARD where PANEL-B/C ride
+  # STANDARD-SM, so a PRESS-2-ALT → PRESS-2-ALT2 changeover changes WHICH CARRIER
+  # the press asks for: the produce reuse-skip cannot apply (the resident empty is
+  # the wrong shape), both sides get an order, and both wait at their own door
+  # for their own release. PANEL-A already has consumers (WELD-1 and the FGN_002
+  # unloader) and a market lane, so the carrier has somewhere to go.
+  - {name: PRESS-2-ALT2,   process: PRESS-2,    payload: PANEL-A}
   - {name: WELD-1-RUN,     process: WELD-1,     payload: ASSY}
   - {name: WELD-1-ALT,     process: WELD-1,     payload: ASSY}
   - {name: WELD-2-RUN,     process: WELD-2,     payload: ASSY}
@@ -587,6 +606,33 @@ claims:
     role: produce
     swap_mode: sequential
     payload: PANEL-C
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_003
+    active_pull: false
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+
+  # ── PRESS-2-ALT2: the same A/B pair on PANEL-A, i.e. the OTHER carrier ──
+  # Same two positions, same routing; only the payload — and therefore the carrier
+  # type — differs. This is what makes a PRESS-2-ALT → PRESS-2-ALT2 changeover a
+  # two-sided one: the reuse-skip needs the carrier to be unchanged, and here it
+  # is not, so neither position can reuse what is standing on it.
+  - core_node: PLN_003
+    style: PRESS-2-ALT2
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-A
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_004
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+  - core_node: PLN_004
+    style: PRESS-2-ALT2
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-A
     uop_capacity: 30
     auto_reorder: true
     paired_core_node: PLN_003
