@@ -6,6 +6,10 @@
 
   {{if .Authenticated}}
   <div class="mb-1 text-right">
+    <!-- Import: hidden input triggered by the button so the click stays a
+         delegated data-action like every other verb on this page. -->
+    <input type="file" id="pl-import-file" accept=".csv,.xlsx,.xlsm" hidden>
+    <button class="btn btn-sm" data-action="openPayloadImport">Import</button>
     <button class="btn btn-primary btn-sm" data-action="openCreatePayloadModal">+ Payload</button>
   </div>
   {{end}}
@@ -186,6 +190,30 @@
       <button type="submit" class="btn btn-primary">Save Changes</button>
       <button type="button" class="btn ml-05" data-action="closePLEditModal">Cancel</button>
     </form>
+  </div>
+</div>
+
+<!-- Import Results Modal: per-row outcome after a bulk import. Rows stay
+     grouped under the payload's first file line so a multi-part kit reads
+     as one story. -->
+<div id="pl-import-modal" class="modal-overlay" data-backdrop-close>
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header flex flex-between">
+      <h2>Import Results</h2>
+      <button class="modal-close" data-action="closePLImportModal">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="pl-import-summary" class="mb-1" style="font-weight:600"></div>
+      <div id="pl-import-results" style="max-height:320px;overflow-y:auto"></div>
+      <p class="text-muted" style="font-size:0.8rem;margin-top:0.6rem">
+        Expected columns: Payload Code | UoP Capacity | Manifest Part (CATID) | Qty —
+        one row per part, the code repeated. Duplicates are skipped, not overwritten.
+        Bin types, robot group, and load sequence are set per-payload afterward.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" data-action="closePLImportModal">Done</button>
+    </div>
   </div>
 </div>
 {{end}}

@@ -274,6 +274,84 @@ function submitPLEdit(el, evt) {
   return false;
 }
 
+/* --- Import (.csv / .xlsx) --- */
+// One row per manifest part, Payload Code repeated; the server groups,
+// validates, skips duplicates, and reports per-row results. The file is
+// POSTed raw (multipart) — the server owns parsing so both formats share
+// one code path.
+
+function openPayloadImport() {
+  var input = document.getElementById('pl-import-file');
+  if (!input) return;
+  input.value = '';
+  input.click();
+}
+
+function closePLImportModal() {
+  hideModal('pl-import-modal');
+}
+
+// importStatusTone maps a report row status to its display color.
+function importStatusColor(status) {
+  if (status === 'created') return 'var(--success, #198754)';
+  if (status === 'failed') return 'var(--danger, #dc3545)';
+  if (status === 'warning') return 'var(--warning, #b58900)';
+  return 'var(--text-muted)';
+}
+
+function showImportResults(data) {
+  var s = (data && data.summary) || {};
+  var rows = (data && data.rows) || [];
+  document.getElementById('pl-import-summary').textContent =
+    (s.created || 0) + ' created, ' +
+    (s.skipped || 0) + ' skipped, ' +
+    (s.failed || 0) + ' failed' +
+    (s.warnings ? ', ' + s.warnings + ' warnings' : '');
+  var host = document.getElementById('pl-import-results');
+  if (rows.length === 0) {
+    host.innerHTML = '<div class="text-muted" style="padding:0.4rem 0">Nothing to report — the file had no payload rows.</div>';
+  } else {
+    var html = '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">';
+    rows.forEach(function(r) {
+      html += '<tr>' +
+        '<td style="padding:0.2rem 0.5rem 0.2rem 0;color:var(--text-muted);white-space:nowrap">line ' + r.line + '</td>' +
+        '<td style="padding:0.2rem 0.5rem"><code>' + escapeHtml(r.code || '') + '</code></td>' +
+        '<td style="padding:0.2rem 0.5rem;font-weight:600;color:' + importStatusColor(r.status) + '">' + r.status + '</td>' +
+        '<td style="padding:0.2rem 0.5rem">' + escapeHtml(r.reason || '') + '</td>' +
+        '</tr>';
+    });
+    html += '</table>';
+    host.innerHTML = html;
+  }
+  showModal('pl-import-modal');
+}
+
+function uploadPayloadImport(file) {
+  var fd = new FormData();
+  fd.append('file', file, file.name);
+  toast('Importing ' + file.name + '…', 'info');
+  fetch('/api/payloads/templates/import', { method: 'POST', body: fd })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data && data.error) { toast('Import failed: ' + data.error, 'error'); return; }
+      showImportResults(data);
+      // The list is server-rendered; reload so created payloads appear.
+      if (data && data.summary && data.summary.created > 0) window.location.reload();
+    })
+    .catch(function(err) { toast('Import error: ' + err, 'error'); });
+}
+
+// Wire the hidden file input once. The change listener (rather than a
+// delegated data-action-change) is deliberate: file inputs do not fire
+// change through data-action delegation reliably across browsers.
+(function initPayloadImport() {
+  var input = document.getElementById('pl-import-file');
+  if (!input) return;
+  input.addEventListener('change', function() {
+    if (input.files && input.files.length > 0) uploadPayloadImport(input.files[0]);
+  });
+})();
+
 /* --- Keyboard shortcuts --- */
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
@@ -294,10 +372,12 @@ delegateActions(document.body, {
     checkPLEditSequence,
     closePLCreateModal,
     closePLEditModal,
+    closePLImportModal,
     collectManifestRows,
     getSelectedBinTypes,
     openCreatePayloadModal,
     openEditPayloadModal,
+    openPayloadImport,
     removeParentElement,
     submitPLCreate,
     submitPLEdit

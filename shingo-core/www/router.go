@@ -449,6 +449,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				// Payload templates
 				r.Post("/payloads/templates/create", h.apiCreatePayloadTemplate)
 				r.Post("/payloads/templates/update", h.apiUpdatePayloadTemplate)
+				// Bulk import (.csv/.xlsx): one row per manifest part, code
+				// repeated. Skips duplicates, reports per-row results.
+				r.Post("/payloads/templates/import", h.apiImportPayloadTemplates)
 				r.Post("/payloads/templates/manifest", h.apiSavePayloadManifestTemplate)
 				r.Post("/payloads/templates/bin-types", h.apiSavePayloadBinTypes)
 				// Advanced load sequences: dropdown source + on-demand Check.
