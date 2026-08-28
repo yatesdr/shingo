@@ -1210,3 +1210,39 @@ func TestPlanNodeAction_Sequential_ParkedProducePicksUpAnEmpty(t *testing.T) {
 		})
 	}
 }
+
+// TestSequentialReuseSkip_PlansExactlyOneOrder is the accounting half of the
+// reuse-skip, and it is a separate claim from "the diff says unchanged".
+//
+// The changeover episode stamps expected_orders from Plan.OrderCount(), which
+// counts the Supply/Evac orders each action carries. A skipped side must
+// therefore contribute ZERO — if it contributed one, the episode would sit
+// waiting for an order that is never created and never close.
+//
+// Produce same-carrier: ONE order, for the active side only.
+// Consume same-carrier: TWO, because consume never skips.
+func TestSequentialReuseSkip_PlansExactlyOneOrder(t *testing.T) {
+	t.Parallel()
+	sameCarrier := map[string]string{"PART-FROM": "STANDARD-SM", "PART-TO": "STANDARD-SM"}
+	nodes := []processes.Node{
+		{ID: 1, Name: "A_POS", CoreNodeName: "A_POS"},
+		{ID: 2, Name: "B_POS", CoreNodeName: "B_POS"},
+	}
+
+	for _, tc := range []struct {
+		role protocol.ClaimRole
+		want int
+	}{
+		{protocol.ClaimRoleProduce, 1},
+		{protocol.ClaimRoleConsume, 2},
+	} {
+		diffs := ApplySequentialReuseShortcut(seqReuseDiffs(tc.role), sameCarrier, nil)
+		plan := BuildChangeoverPlan(diffs, nodes, false, nil, toolingChangeover{})
+		if got := plan.OrderCount(); got != tc.want {
+			t.Errorf("%s same-carrier changeover plans %d orders, want %d. expected_orders is stamped "+
+				"from this count at episode open and never recomputed, so a skipped side that still "+
+				"contributes one leaves the episode waiting forever for an order nobody creates.",
+				tc.role, got, tc.want)
+		}
+	}
+}

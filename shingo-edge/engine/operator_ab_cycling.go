@@ -196,12 +196,29 @@ func (e *Engine) flipTargetReady(node *processes.Node) string {
 		return fmt.Sprintf("%s's changeover order %d has not delivered (%s) — release it first",
 			node.CoreNodeName, order.ID, order.Status)
 	}
-	// CONSUME's extra conjunct: an empty carrier on a consume position is as bad
-	// as nothing, so the order finishing is not on its own enough.
+	// ── CONSUME'S EXTRA CONJUNCT, AND IT IS TWO QUESTIONS ─────────────────
+	//
+	// "The order finished" is not enough on a consume position: an empty carrier
+	// there feeds the line nothing. So it must also hold MATERIAL, and that
+	// material must be the INCOMING style's — a full bin of the outgoing part is
+	// exactly as useless to a press about to run the new one.
+	//
+	// Both are edge-local. remaining_uop_cached answers "is there material", and
+	// active_claim_id answers "whose" — it names the claim the resident bin was
+	// stocked for, so comparing it against the to-style's claim for this node is
+	// the whole question, with no bin table and no Core call.
+	//
+	// Unreadable to-claim answers ready(""): this guard catches the operator's
+	// honest mistake, not a query hiccup, and it is confirm-overridable anyway.
 	claim := findActiveClaim(e.db, node)
 	if claim != nil && claim.Role == protocol.ClaimRoleConsume {
 		if rt.RemainingUOPCached <= 0 {
 			return fmt.Sprintf("%s holds no material to feed the line", node.CoreNodeName)
+		}
+		toClaim, tErr := e.db.GetStyleNodeClaimByNode(changeover.ToStyleID, node.CoreNodeName)
+		if tErr == nil && toClaim != nil && rt.ActiveClaimID != nil && *rt.ActiveClaimID != toClaim.ID {
+			return fmt.Sprintf("%s still holds the outgoing style's material — release it first",
+				node.CoreNodeName)
 		}
 	}
 	return ""

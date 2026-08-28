@@ -768,10 +768,20 @@ func TestWiring_ABFlip_DuringChangeover(t *testing.T) {
 	// changeover order has delivered. So make the target ready, which is the
 	// state the operator would actually be flipping from; the guard's override
 	// is exercised separately by the flip-guard tests.
+	// AB-NODE-B is a CONSUME position, so "ready" is two facts, not one: its own
+	// order delivered AND the material now on it belongs to the INCOMING style.
+	// A full bin of the outgoing part feeds a press about to run the new one
+	// exactly as well as an empty carrier does — which is nothing. The second
+	// half caught this fixture when the conjunct landed.
 	if co, cErr := db.GetActiveProcessChangeover(processID); cErr == nil && co != nil {
 		if task, tErr := db.GetChangeoverNodeTaskByNode(co.ID, nodeBID); tErr == nil &&
 			task != nil && task.NextMaterialOrderID != nil {
 			markOrderTerminal(db, *task.NextMaterialOrderID)
+		}
+		if toClaim, tcErr := db.GetStyleNodeClaimByNode(co.ToStyleID, "AB-NODE-B"); tcErr == nil &&
+			toClaim != nil {
+			testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeBID, &toClaim.ID, 50),
+				"stock AB-NODE-B with the incoming style's material")
 		}
 	}
 	testutil.MustNoErr(t, eng.FlipABNode(nodeBID, OperatorFlip("test")), "FlipABNode during changeover")

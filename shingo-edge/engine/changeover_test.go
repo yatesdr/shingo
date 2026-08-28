@@ -1993,3 +1993,55 @@ func TestSequentialReuseSkip_LeavesPressIndexAlone(t *testing.T) {
 		}
 	}
 }
+
+// TestFlipGuard_ConsumeWantsTheINCOMINGStylesMaterial is the second half of
+// consume's conjunct, and it is a different question from the first.
+//
+// "The order finished" and "there is material on the position" can both be true
+// while the material is the OUTGOING style's — a full bin of the old part is
+// exactly as useless to a press about to run the new one as an empty carrier is.
+//
+// active_claim_id answers it without a bin table: it names the claim the
+// resident bin was stocked for, so comparing it against the to-style's claim for
+// this node is the whole question, edge-local, no Core call.
+func TestFlipGuard_ConsumeWantsTheIncomingStylesMaterial(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	_, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	markOrderTerminal(db, parkedOrder)
+
+	_, rErr := db.Exec("UPDATE style_node_claims SET role='consume' WHERE core_node_name='SEQ-B'")
+	testutil.MustNoErr(t, rErr, "make SEQ-B consume")
+
+	// Material IS present — but stocked for the OUTGOING style's claim.
+	fromClaimID := claimIDFor(t, db, *co.FromStyleID, "SEQ-B")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(parkedNodeID, &fromClaimID, 40), "outgoing material")
+
+	err := eng.FlipABNode(parkedNodeID, OperatorFlip("op"))
+	if err == nil {
+		t.Fatal("the flip went through onto a consume position holding the OUTGOING style's " +
+			"material. Its order finished and there is material on it, and neither fact makes it " +
+			"able to feed a press that is about to run the new part.")
+	}
+	if !strings.Contains(err.Error(), "outgoing") {
+		t.Errorf("warning = %q, want it to say the material is the wrong style", err.Error())
+	}
+
+	// Re-stock it for the INCOMING style and the same click goes through.
+	toClaimID := claimIDFor(t, db, co.ToStyleID, "SEQ-B")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(parkedNodeID, &toClaimID, 40), "incoming material")
+	if err := eng.FlipABNode(parkedNodeID, OperatorFlip("op")); err != nil {
+		t.Fatalf("flip refused with the incoming style's material on the position: %v", err)
+	}
+}
+
+// claimIDFor returns the claim id for one style at one node.
+func claimIDFor(t *testing.T, db *store.DB, styleID int64, coreNode string) int64 {
+	t.Helper()
+	c, err := db.GetStyleNodeClaimByNode(styleID, coreNode)
+	if err != nil || c == nil {
+		t.Fatalf("get claim for style %d at %s: %v", styleID, coreNode, err)
+	}
+	return c.ID
+}
