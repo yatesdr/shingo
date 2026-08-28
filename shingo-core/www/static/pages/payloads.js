@@ -280,6 +280,11 @@ function submitPLEdit(el, evt) {
 // POSTed raw (multipart) — the server owns parsing so both formats share
 // one code path.
 
+// Set when an import created payloads; the page reloads when the results
+// modal CLOSES, not when it opens — reloading immediately would tear the
+// modal down before the operator has read the report it exists to show.
+var _importReloadPending = false;
+
 function openPayloadImport() {
   var input = document.getElementById('pl-import-file');
   if (!input) return;
@@ -288,10 +293,19 @@ function openPayloadImport() {
 }
 
 function closePLImportModal() {
+  // Only the close that actually hid the modal triggers the pending
+  // reload — a backdrop-close already hid it, and a later Escape must
+  // not fire a surprise reload for a report the operator closed hours ago.
+  var overlay = document.getElementById('pl-import-modal');
+  var wasActive = overlay && overlay.classList.contains('active');
   hideModal('pl-import-modal');
+  if (wasActive && _importReloadPending) {
+    _importReloadPending = false;
+    window.location.reload();
+  }
 }
 
-// importStatusTone maps a report row status to its display color.
+// importStatusColor maps a report row status to its display color.
 function importStatusColor(status) {
   if (status === 'created') return 'var(--success, #198754)';
   if (status === 'failed') return 'var(--danger, #dc3545)';
@@ -335,8 +349,9 @@ function uploadPayloadImport(file) {
     .then(function(data) {
       if (data && data.error) { toast('Import failed: ' + data.error, 'error'); return; }
       showImportResults(data);
-      // The list is server-rendered; reload so created payloads appear.
-      if (data && data.summary && data.summary.created > 0) window.location.reload();
+      // The list is server-rendered; reload when the modal closes (see
+      // _importReloadPending) so created payloads appear.
+      if (data && data.summary && data.summary.created > 0) _importReloadPending = true;
     })
     .catch(function(err) { toast('Import error: ' + err, 'error'); });
 }
@@ -355,7 +370,7 @@ function uploadPayloadImport(file) {
 /* --- Keyboard shortcuts --- */
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
-    closePLCreateModal(); closePLEditModal();
+    closePLCreateModal(); closePLEditModal(); closePLImportModal();
   }
 });
 

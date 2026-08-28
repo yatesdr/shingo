@@ -16,9 +16,12 @@
 package www
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/csv"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -56,6 +59,9 @@ type importReport struct {
 // field ("file") and bulk-creates payloads. Duplicates are SKIPPED and
 // named in the report, not errors.
 func (h *Handlers) apiImportPayloadTemplates(w http.ResponseWriter, r *http.Request) {
+	// ParseMultipartForm's argument is a MEMORY threshold, not a size cap —
+	// the real cap is MaxBytesReader, which errors once the body exceeds it.
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadImportBytes)
 	if err := r.ParseMultipartForm(maxPayloadImportBytes); err != nil {
 		h.jsonError(w, "invalid upload: "+err.Error(), 400)
 		return
@@ -90,10 +96,22 @@ func (h *Handlers) apiImportPayloadTemplates(w http.ResponseWriter, r *http.Requ
 	h.jsonOK(w, report)
 }
 
-// readCSVRows reads all records; FieldsPerRecord is left at the default
-// so a ragged file errors loudly rather than silently mis-parsing.
+// readCSVRows reads all records. Two tolerances the real world demands:
+//
+//   - Excel's "CSV UTF-8" export writes a BOM, which otherwise rides the
+//     first cell and defeats header detection (the header row imports as
+//     a bogus payload whose code starts with \ufeff).
+//   - Ragged rows (fewer cells than the header) read as blank trailing
+//     cells rather than failing the whole file — a missing trailing Qty
+//     is a per-row warning downstream, not a 400.
 func readCSVRows(r io.Reader) ([][]string, error) {
-	return csv.NewReader(r).ReadAll()
+	br := bufio.NewReader(r)
+	if b, err := br.Peek(3); err == nil && bytes.Equal(b, []byte{0xEF, 0xBB, 0xBF}) {
+		br.Discard(3)
+	}
+	cr := csv.NewReader(br)
+	cr.FieldsPerRecord = -1
+	return cr.ReadAll()
 }
 
 // readXLSXRows reads the FIRST worksheet. Trailing empty cells arrive
@@ -120,12 +138,18 @@ func (h *Handlers) importPayloadGroups(rows [][]string) *importReport {
 	}
 
 	// Group rows by code IN FILE ORDER so the report reads top-to-bottom.
+	// Every cell of every row is kept with its own line number so a
+	// validation failure names the exact row that offended.
+	type groupEntry struct {
+		line int
+		uop  string
+		part string
+		qty  string
+	}
 	type group struct {
-		line   int
-		code   string
-		uopRaw string
-		parts  []string
-		qtys   []string
+		code    string
+		line    int // first row — the "home" line for payload-level results
+		entries []groupEntry
 	}
 	var order []string
 	groups := map[string]*group{}
@@ -149,41 +173,64 @@ func (h *Handlers) importPayloadGroups(rows [][]string) *importReport {
 		}
 		g, ok := groups[code]
 		if !ok {
-			g = &group{line: line, code: code, uopRaw: cell(1)}
+			g = &group{code: code, line: line}
 			groups[code] = g
 			order = append(order, code)
 		}
-		if part := cell(2); part != "" {
-			g.parts = append(g.parts, part)
-			g.qtys = append(g.qtys, cell(3))
-		}
+		g.entries = append(g.entries, groupEntry{line: line, uop: cell(1), part: cell(2), qty: cell(3)})
 	}
 
 	for _, code := range order {
 		g := groups[code]
-		// UoP: blank = 0 (legal but flagged); otherwise a whole number ≥ 0.
-		uop := 0
-		if g.uopRaw != "" {
-			v, err := strconv.Atoi(g.uopRaw)
-			if err != nil || v < 0 {
-				report.add(importRowResult{Line: g.line, Code: code, Status: "failed",
-					Reason: fmt.Sprintf("UoP %q must be a whole number ≥ 0", g.uopRaw)})
+		// UoP: the first NON-EMPTY value in the group wins. The common
+		// authoring slip is leaving it blank on a continuation row while
+		// filling it on the first; the inverse (blank first, filled later)
+		// should not silently become UoP 0. A garbage value fails the
+		// payload — falling through to a later row would mask the typo.
+		uop := int64(0)
+		uopFailed := false
+		for _, e := range g.entries {
+			if e.uop == "" {
 				continue
 			}
-			uop = v
+			v, ok := parseImportInt(e.uop)
+			switch {
+			case !ok:
+				report.add(importRowResult{Line: e.line, Code: code, Status: "failed",
+					Reason: fmt.Sprintf("UoP %q must be a whole number ≥ 0", e.uop)})
+				uopFailed = true
+			case v > math.MaxInt32: // payloads.uop_capacity is a Postgres integer
+				report.add(importRowResult{Line: e.line, Code: code, Status: "failed",
+					Reason: fmt.Sprintf("UoP %q is too large", e.uop)})
+				uopFailed = true
+			default:
+				uop = v
+			}
+			break // only the first non-empty UoP is consulted
 		}
-		// Quantities: blank = 0; otherwise a whole number ≥ 0. A part with
-		// zero quantity is warned, not failed — the modal allows it too.
+		if uopFailed {
+			continue
+		}
+		// Quantities: blank = 0; otherwise a whole number ≥ 0. FAIL FAST on
+		// the first bad quantity, reporting ITS row — one failed row per
+		// bad payload, pointing at the line that needs fixing.
 		qtyFail := false
-		for i, q := range g.qtys {
-			if q == "" {
+		for _, e := range g.entries {
+			if e.part == "" {
 				continue
 			}
-			v, err := strconv.Atoi(q)
-			if err != nil || v < 0 {
-				report.add(importRowResult{Line: g.line, Code: code, Status: "failed",
-					Reason: fmt.Sprintf("quantity %q for part %s must be a whole number ≥ 0", q, g.parts[i])})
+			q, ok := parseImportInt(e.qty)
+			if !ok {
+				report.add(importRowResult{Line: e.line, Code: code, Status: "failed",
+					Reason: fmt.Sprintf("quantity %q for part %s must be a whole number ≥ 0", e.qty, e.part)})
 				qtyFail = true
+				break
+			}
+			if q > math.MaxInt64/2 { // absurd guard; bigint holds far more
+				report.add(importRowResult{Line: e.line, Code: code, Status: "failed",
+					Reason: fmt.Sprintf("quantity %q for part %s is too large", e.qty, e.part)})
+				qtyFail = true
+				break
 			}
 		}
 		if qtyFail {
@@ -197,7 +244,7 @@ func (h *Handlers) importPayloadGroups(rows [][]string) *importReport {
 			continue
 		}
 
-		p := &domain.Payload{Code: code, UOPCapacity: uop}
+		p := &domain.Payload{Code: code, UOPCapacity: int(uop)}
 		if err := h.engine.PayloadService().Create(p); err != nil {
 			report.add(importRowResult{Line: g.line, Code: code, Status: "failed",
 				Reason: "create: " + err.Error()})
@@ -206,38 +253,46 @@ func (h *Handlers) importPayloadGroups(rows [][]string) *importReport {
 		report.Summary.Created++
 		report.add(importRowResult{Line: g.line, Code: code, Status: "created"})
 
-		// The warnings ride the payload's FIRST row so each distinct issue
-		// appears once, beside the payload it is about.
+		// Payload-level warnings ride the payload's first row so each
+		// distinct issue appears once, beside the payload it is about.
 		if uop == 0 {
 			report.add(importRowResult{Line: g.line, Code: code, Status: "warning",
 				Reason: "UoP is 0 — the bin cannot hold anything"})
 		}
-		for i, part := range g.parts {
-			q := int64(0)
-			if g.qtys[i] != "" {
-				q, _ = strconv.ParseInt(g.qtys[i], 10, 64)
+		parts := make([]*domain.PayloadManifestItem, 0, len(g.entries))
+		for _, e := range g.entries {
+			if e.part == "" {
+				continue
 			}
+			q, _ := parseImportInt(e.qty) // already validated above
 			if q == 0 {
-				report.add(importRowResult{Line: g.line, Code: code, Status: "warning",
-					Reason: fmt.Sprintf("part %s has quantity 0", part)})
+				report.add(importRowResult{Line: e.line, Code: code, Status: "warning",
+					Reason: fmt.Sprintf("part %s has quantity 0", e.part)})
 			}
+			parts = append(parts, &domain.PayloadManifestItem{PartNumber: e.part, Quantity: q})
 		}
-		if len(g.parts) > 0 {
-			items := make([]*domain.PayloadManifestItem, len(g.parts))
-			for i, part := range g.parts {
-				var q int64
-				if g.qtys[i] != "" {
-					q, _ = strconv.ParseInt(g.qtys[i], 10, 64)
-				}
-				items[i] = &domain.PayloadManifestItem{PartNumber: part, Quantity: q}
-			}
-			if err := h.engine.PayloadService().ReplaceManifest(p.ID, items); err != nil {
+		if len(parts) > 0 {
+			if err := h.engine.PayloadService().ReplaceManifest(p.ID, parts); err != nil {
 				report.add(importRowResult{Line: g.line, Code: code, Status: "failed",
 					Reason: "created, but manifest failed: " + err.Error()})
 			}
 		}
 	}
 	return report
+}
+
+// parseImportInt accepts the spellings a spreadsheet cell produces:
+// "40", "40.0", "40.00" (a 0.00-formatted cell) all mean forty; "40.5",
+// "abc", and negatives are rejected. Blank is zero.
+func parseImportInt(s string) (int64, bool) {
+	if s == "" {
+		return 0, true
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || f < 0 || f != math.Trunc(f) || f > math.MaxInt64 {
+		return 0, false
+	}
+	return int64(f), true
 }
 
 func (rep *importReport) add(res importRowResult) {

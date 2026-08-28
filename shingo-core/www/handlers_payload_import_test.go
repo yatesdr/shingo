@@ -214,3 +214,109 @@ func TestApiImportPayloadTemplates_RejectsUnknownType(t *testing.T) {
 		t.Errorf("error should name the accepted types, got: %s", rec.Body.String())
 	}
 }
+
+// --- Review-fix regression tests -------------------------------------------
+
+// TestReadCSVRows_StripsBOM pins the Excel "CSV UTF-8" trap: that export
+// writes a UTF-8 BOM, which used to ride the first cell, defeat header
+// detection, and import the header as a payload whose code began with
+// an invisible character.
+func TestReadCSVRows_StripsBOM(t *testing.T) {
+	t.Parallel()
+	in := "\ufeffPayload Code,UoP Capacity,Manifest Part (CATID),Qty\nPL-A,10,,\n"
+	rows, err := readCSVRows(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("readCSVRows: %v", err)
+	}
+	if len(rows) != 2 || rows[0][0] != "Payload Code" {
+		t.Fatalf("rows[0] = %q (len %d), want BOM-free header", rows[0], len(rows))
+	}
+	if !isImportHeaderRow(rows[0]) {
+		t.Errorf("BOM-free header not detected as header")
+	}
+}
+
+// TestReadCSVRows_ToleratesRaggedRows: a row with fewer cells than the
+// header is blank trailing cells, not a file-fatal parse error.
+func TestReadCSVRows_RaggedRows(t *testing.T) {
+	t.Parallel()
+	in := "Payload Code,UoP Capacity,Manifest Part (CATID),Qty\nPL-R,10,\n"
+	rows, err := readCSVRows(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("readCSVRows: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+}
+
+// TestParseImportInt_ExcelNumberFormats: a cell formatted 0.00 yields
+// "40.00" — that is forty, not a validation failure. "40.5" and negatives
+// stay rejected.
+func TestParseImportInt_ExcelNumberFormats(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int64
+		ok   bool
+	}{
+		{"40", 40, true},
+		{"40.0", 40, true},
+		{"40.00", 40, true},
+		{" 40 ", 0, false}, // caller trims; raw spaces are not accepted here
+		{"40.5", 0, false},
+		{"abc", 0, false},
+		{"-3", 0, false},
+		{"", 0, true}, // blank is zero
+	}
+	for _, c := range cases {
+		got, ok := parseImportInt(c.in)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Errorf("parseImportInt(%q) = (%d, %v), want (%d, %v)", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// TestImportPayloadGroups_UoPFromLaterRow: the first row's UoP is blank
+// but a continuation row carries it — the payload must not silently land
+// at UoP 0 (and its warning).
+func TestImportPayloadGroups_UoPFromLaterRow(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+
+	rep := h.importPayloadGroups(importRows(
+		[]string{"LATE-UOP", "", "40016911", "2"},
+		[]string{"LATE-UOP", "40", "", ""},
+	))
+	mustEq(t, rep.Summary.Created, 1, "created")
+	mustEq(t, rep.Summary.Warnings, 0, "warnings — UoP was provided, just later")
+
+	got, err := db.GetPayloadByCode("LATE-UOP")
+	testutil.MustNoErr(t, err, "get LATE-UOP")
+	if got.UOPCapacity != 40 {
+		t.Errorf("LATE-UOP UoP = %d, want 40", got.UOPCapacity)
+	}
+}
+
+// TestImportPayloadGroups_FailureNamesItsOwnLine: a bad quantity on a
+// group's SECOND row must report that row's line, and one payload yields
+// ONE failed row — not one per bad cell, all pointing at the first line.
+func TestImportPayloadGroups_FailureNamesItsRow(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlers(t)
+
+	rep := h.importPayloadGroups(importRows(
+		[]string{"MULTI-BAD", "10", "40016911", "1"},
+		[]string{"MULTI", "", "40017250", "oops"}, // line 4: the offender
+		[]string{"MULTI", "", "40017300", "2"},
+	))
+	mustEq(t, rep.Summary.Failed, 1, "failed — one per payload, fail-fast")
+	var failed []importRowResult
+	for _, r := range rep.Rows {
+		if r.Status == "failed" {
+			failed = append(failed, r)
+		}
+	}
+	if len(failed) != 1 || failed[0].Line != 4 {
+		t.Errorf("failed rows = %+v, want exactly one at line 4", failed)
+	}
+}
