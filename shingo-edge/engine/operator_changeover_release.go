@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -188,7 +189,24 @@ func (e *Engine) linePullsFrom(nodeID int64) (pulling bool, own, partner string,
 	}
 	claim := findActiveClaim(e.db, node)
 	if claim == nil || claim.PairedCoreNode == "" {
-		return false, node.CoreNodeName, "", nil // not an A/B pair — nothing to say
+		return false, node.CoreNodeName, "", nil // not a paired position — nothing to say
+	}
+	// ── SEQUENTIAL ONLY, AND NOT AS AN EXCEPTION ──────────────────────────
+	//
+	// This was written mode-agnostically, on "half an A/B pair", and the sim
+	// refused it: TestReleaseStagedOrders went red across two_robot and
+	// press-index because those modes RELEASE AT THE ACTIVE PULL POINT by
+	// design. A press-index front position is the active one AND the one being
+	// swapped — the index motion moves bins between positions with the press
+	// still running — so "do not strip the position the line is pulling from" is
+	// simply not a true statement about that choreography.
+	//
+	// It is true of SEQUENTIAL and only of sequential, because that is the mode
+	// whose whole premise is that the OTHER position takes over first: the flip
+	// is what makes this side safe to clear. The scope is not a carve-out for a
+	// mode; it is the rule being stated about the choreography it describes.
+	if claim.SwapMode != protocol.SwapModeSequential {
+		return false, node.CoreNodeName, claim.PairedCoreNode, nil
 	}
 	rt, err := e.db.GetProcessNodeRuntime(nodeID)
 	if err != nil || rt == nil {
@@ -292,7 +310,12 @@ func (e *Engine) releaseChangeoverWaitScoped(processID, onlyNodeID int64, disp R
 	// Supply leg always rides through with no manifest action regardless of
 	// what the operator chose. Empty Mode → buildProtocolDisposition returns
 	// nil → Core no-op. CalledBy still flows for audit.
-	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
+	// ConfirmActivePull rides along. It is an override of a PHYSICAL guard, not a
+	// manifest instruction, so stripping it with the mode would leave the
+	// operator's confirm answered at this layer and refused one call later by the
+	// trunk guard in ReleaseOrderWithLineside — which is exactly what happened
+	// the first time.
+	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy, ConfirmActivePull: disp.ConfirmActivePull}
 
 	// Collect per-task failures rather than swallowing them. Pre-fix
 	// behaviour was log-and-continue + return nil, which silently recreated
@@ -417,16 +440,19 @@ func evacDispositionForTask(e *Engine, task processes.NodeTask, override Release
 	runtime, err := e.db.GetProcessNodeRuntime(task.ProcessNodeID)
 	if err != nil {
 		log.Printf("release changeover wait node %s: runtime lookup failed (%v); defaulting evac to release_empty", task.NodeName, err)
-		return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}
+		return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy,
+			ConfirmActivePull: override.ConfirmActivePull}
 	}
 
 	if runtime != nil && runtime.RemainingUOPCached > 0 {
 		count := runtime.RemainingUOPCached
 		return ReleaseDisposition{
-			Mode:         DispositionSendPartialBack,
-			PartialCount: &count,
-			CalledBy:     override.CalledBy,
+			Mode:              DispositionSendPartialBack,
+			ConfirmActivePull: override.ConfirmActivePull,
+			PartialCount:      &count,
+			CalledBy:          override.CalledBy,
 		}
 	}
-	return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}
+	return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy,
+		ConfirmActivePull: override.ConfirmActivePull}
 }

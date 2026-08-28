@@ -42,6 +42,7 @@ package engine
 
 import (
 	"fmt"
+	"log"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -117,6 +118,34 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	if err != nil {
 		return fmt.Errorf("get process node %d: %w", *order.ProcessNodeID, err)
 	}
+
+	// ── A ROBOT MAY NOT STRIP A POSITION THE LINE IS PULLING FROM ─────────
+	//
+	// THE GUARD BELONGS ON THE WAIT, NOT ON ONE DOOR, and the sim proved it.
+	// It first went in at releaseChangeoverWaitScoped, which covers the
+	// changeover board's per-node click and the plant-wide sweep. There is a
+	// THIRD door: /orders/{orderID}/release goes straight here, and the sim's
+	// own auto-operator drives it — so on 2026-08-28 the sim released a
+	// sequential press's active side while the line was still pulling from it,
+	// and the guard never saw the call. A real operator has the same button.
+	//
+	// This is the trunk every door runs through, including the changeover path,
+	// so the physical question is asked once here. The scoped path keeps its own
+	// pre-check for a different reason: a SWEEP must decline and NAME the node
+	// rather than attempt and fail, because it carries no per-node intent to
+	// confirm with. Policy there, physics here.
+	//
+	// Same speed-bump rule: refuse with the fact and the next click, and let an
+	// explicit confirm through with an audit line.
+	if pulling, own, partner, pErr := e.linePullsFrom(node.ID); pErr == nil && pulling {
+		if !disp.ConfirmActivePull {
+			return fmt.Errorf("the line is pulling from %s; flip to %s first, or confirm to release anyway",
+				own, partner)
+		}
+		log.Printf("AUDIT release-override: node=%s order=%d called_by=%q — the line was recorded as "+
+			"pulling from this position and the operator released it anyway", own, orderID, disp.CalledBy)
+	}
+
 	runtime, err := e.db.EnsureProcessNodeRuntime(node.ID)
 	if err != nil {
 		return fmt.Errorf("ensure runtime for node %d: %w", node.ID, err)
