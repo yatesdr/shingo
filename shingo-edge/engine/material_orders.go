@@ -560,7 +560,12 @@ func BuildSwapChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inactiveN
 	case protocol.SwapModeTwoRobotPressIndex:
 		return buildPressIndexChangeoverSwap(fromClaim, toClaim, false /* tooling */)
 	case protocol.SwapModeSequential:
-		return buildSequentialChangeoverSwap(fromClaim, toClaim, inactiveNode, activeNode)
+		// Per-node (2026-08-28): this diff's own position only. activeNode is
+		// unused here — which side THIS claim is on is decided by comparing its
+		// own CoreNodeName against the parked one, and the parked one is a
+		// property of the pair rather than of the caller.
+		_ = activeNode
+		return buildSequentialPerPositionSwap(fromClaim, toClaim, inactiveNode)
 	case pressPositionSwapMode:
 		// Synthesized per-position diff from the press-index different-
 		// bin-type fan-out: each position dispatches its own NodeAction
@@ -580,14 +585,16 @@ func BuildSwapChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inactiveN
 //     wait is needed.
 //   - two_robot_press_index: extra wait on R1 between dropoff old at
 //     OutboundDestination and pickup new from InboundSource.
-//   - sequential: paired A/B parallel evac+backfill; single tooling-done
-//     click releases both robots' bare waits.
+//   - sequential: this position's own evac+backfill, gated on the bare
+//     tooling-done wait; the single click still releases both positions
+//     through ReleaseChangeoverWait's per-task fan-out.
 //
-// inactiveNode / activeNode are accepted for signature symmetry with
-// BuildSwapChangeoverSteps; evacuate doesn't read them (both positions
-// come off the line, so the inactive/active distinction is moot).
+// activeNode is accepted for signature symmetry with BuildSwapChangeoverSteps
+// and is unread: evacuate has no cutover gate, because both positions come off
+// the line. inactiveNode IS read now — not for choreography, but because the
+// parked position of a produce press holds an on-deck EMPTY whether the press
+// is changing tools or styles, and its pickup has to say so.
 func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inactiveNode, activeNode string) ChangeoverDispatch {
-	_ = inactiveNode
 	_ = activeNode
 	switch fromClaim.SwapMode {
 	case protocol.SwapModeTwoRobot:
@@ -595,7 +602,7 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inact
 	case protocol.SwapModeTwoRobotPressIndex:
 		return buildPressIndexChangeoverSwap(fromClaim, toClaim, true)
 	case protocol.SwapModeSequential:
-		return buildSequentialChangeoverEvacuate(fromClaim, toClaim)
+		return buildSequentialPerPositionEvacuate(fromClaim, toClaim, inactiveNode)
 	case pressPositionSwapMode:
 		// Per-position dispatch: the parent evacuate situation drives the
 		// "evacuate" semantics, but at the per-position level the robot
@@ -841,138 +848,180 @@ func buildToolingEvacSteps(position, evacDest string, fromClaim, toClaim *proces
 	}
 }
 
-// buildSequentialChangeoverEvacuate handles sequential A/B paired
-// evacuate. Sequential swap_mode is always A/B paired (two physical
-// bins at the line; A/B cycling keeps the line running). Evacuate
-// evacuates BOTH positions in parallel via two robots, AND each robot
-// fetches new material in the same order so the deliver legs are pre-
-// staged and gated on a single tooling-done click.
+// ── SEQUENTIAL CHANGEOVER IS PER-NODE (owner ruling, 2026-08-28) ──────────
 //
-// Shape per robot (no initial wait — start-changeover IS the trigger):
+// "It's not one order for two nodes — sequential just pulls from two nodes."
 //
-//	pickup(my position)               // evac old
+// buildSequentialChangeoverSwap and buildSequentialChangeoverEvacuate used to
+// live here, each returning ONE order (or one pair of orders) spanning BOTH
+// positions of an A/B press, with the cutover wait in the middle of the step
+// list. That was the overbuilt part, and it broke in the way overbuilding
+// usually does — by disagreeing with the thing that calls it.
+//
+// DiffStyleClaims emits one Swap diff PER CLAIMED POSITION, and on an A/B press
+// both positions are claimed in both styles. Two diffs, each handed a builder
+// that covered the whole press, produced TWO identical whole-press orders that
+// then raced for the same two bins: "reserve miss: bins present but none
+// available (claimed/reserved/locked elsewhere)". The press was planned twice.
+//
+// Everything else about sequential was already per-node —
+// BuildSequentialRemovalSteps and BuildSequentialBackfillSteps are per-node
+// orders on CoreNodeName. Changeover was the only place the press was treated
+// as one machine, so per-node is a return to the family's own shape rather than
+// a new idea. What the collapsed order encoded and the pair does not is the
+// cross-node dependency (cut over only after the parked side is refilled); that
+// moved to the cutover gate, where it is one per-node task read. See
+// SequentialChangeoverCutover.
+//
+// Three consequences, and they are why the ruling is cheaper than the fix it
+// replaces: the double-plan dissolves rather than needing a dedupe pass; each
+// position keeps its own changeover task linked to its own order, so board
+// visibility comes free; and the empty/full asymmetry below becomes a per-node
+// decision, which is what it physically is.
+
+// buildSequentialPerPositionSwap builds ONE position's changeover swap for a
+// sequential A/B press: the four-step direct trip, plus an opening wait when
+// this position is the one still running.
+//
+//	[active only] wait(my position)     — the cutover gate
+//	pickup(my position)                 — lift what is standing here
 //	dropoff(OutboundDestination)
-//	pickup(InboundSource)             // fetch new material
-//	wait()                            // tooling-done shared release gate
-//	dropoff(my position)              // deliver new
+//	refillPickup(fromClaim, toClaim)    — fetch the incoming style's carrier
+//	dropoff(my position)                — deliver it
 //
-// The bare wait (no Node) lets a single tooling-done click release both
-// robots' waits via ReleaseChangeoverWait's existing per-task fan-out.
+// Direct trips, no InboundStaging hop — sequential's steady-state backfill
+// fetches InboundSource and drops straight at CoreNodeName, so changeover
+// follows it. The shape is buildPressIndexPerPositionSwap's, which is the same
+// physical choreography for the same reason.
 //
-// The inactive/active distinction doesn't matter for evac — both
-// positions come off the line because production is going down anyway —
-// so the choreography uses the from-claim's CoreNodeName and
-// PairedCoreNode in a stable order regardless of which side is
-// currently active.
+// ── THE TWO POSITIONS ARE NOT DOING THE SAME THING ────────────────────────
 //
-// Empty dispatch (no steps) is the planner's signal to emit NodeAction.Err
-// — sequential without PairedCoreNode is outside the spec'd model.
-func buildSequentialChangeoverEvacuate(fromClaim, toClaim *processes.NodeClaim) ChangeoverDispatch {
-	if fromClaim.PairedCoreNode == "" {
+// PARKED (inactive) — runs IMMEDIATELY. The line is still pulling from the
+// other position, so nothing gates this one, and finishing it is what makes the
+// cutover safe: the fresh bin is standing on the side the line is about to
+// switch to.
+//
+// ACTIVE — opens with stationWait at its OWN node. The robot drives to the
+// position it will clear and parks there visibly, holding until the operator's
+// cutover click flips the pull away and releases it. Wait-with-node rather than
+// a bare wait so RDS reports WAITING and the order reliably reaches `staged` on
+// Edge — the same fragility fix the two_robot pattern applies to its own
+// mid-sequence wait.
+//
+// ── AND THEY ARE NOT HOLDING THE SAME THING (the flag split) ──────────────
+//
+// The ACTIVE position holds the partial FULL of the outgoing style. Its order
+// carries the from-payload, or lookupPayloadMeta backfills it to the INCOMING
+// style and the opening pickup filters for a part the press does not have —
+// the ALN_001 shape (30630c70 / 1a6b6d23).
+//
+// The PARKED position of a PRODUCE press holds an on-deck EMPTY carrier by
+// steady-state design. A payload-matched full retrieve there matches nothing
+// and waits forever on finder-node-empty, which is the second blocker the sim
+// surfaced ("Waiting for material: PANEL-B in PLN_004"). So its pickup is
+// flagged Empty — dropping Core's payload filter but not its bin-type
+// compatibility (N1-c) — and the order carries no from-payload, because there
+// is no outgoing bin here to match. Direct port of markPressIndexOnDeckEmpty,
+// produce-scoped for that rule's own reason: a CONSUME sequential press parks a
+// FULL standby bin and keeps the full-retrieve invariant.
+//
+// inactiveNode is the parked side as resolveSequentialActivePull sees it — a
+// property of the PAIR, so both positions' diffs agree on which is which.
+//
+// Empty dispatch on a malformed claim; the planner turns that into
+// NodeAction.Err. requiredChangeoverFields and (since this ruling) the
+// claim-validation arm both catch the field cases first, with a message naming
+// the field.
+func buildSequentialPerPositionSwap(fromClaim, toClaim *processes.NodeClaim, inactiveNode string) ChangeoverDispatch {
+	if fromClaim == nil || toClaim == nil {
+		return ChangeoverDispatch{}
+	}
+	if fromClaim.PairedCoreNode == "" || inactiveNode == "" {
 		return ChangeoverDispatch{}
 	}
 	if fromClaim.OutboundDestination == "" || toClaim.InboundSource == "" {
 		return ChangeoverDispatch{}
 	}
-	posA := fromClaim.CoreNodeName
-	posB := fromClaim.PairedCoreNode
-	// The bare wait is sequential's own choice — see buildToolingEvacSteps for
-	// why the staged press positions pass a node instead.
-	stepsA := buildToolingEvacSteps(posA, fromClaim.OutboundDestination, fromClaim, toClaim, "")
-	stepsB := buildToolingEvacSteps(posB, fromClaim.OutboundDestination, fromClaim, toClaim, "")
+	pos := fromClaim.CoreNodeName
+	if pos == "" {
+		return ChangeoverDispatch{}
+	}
+	parked := pos == inactiveNode
+	onDeckEmpty := parked && fromClaim.Role == protocol.ClaimRoleProduce
+
+	var steps []protocol.ComplexOrderStep
+	if !parked {
+		steps = append(steps, stationWait(pos)) // the cutover gate
+	}
+	steps = append(steps,
+		protocol.ComplexOrderStep{Action: "pickup", Node: pos, Empty: onDeckEmpty},
+		buildStep("dropoff", fromClaim.OutboundDestination),
+		refillPickup(fromClaim, toClaim),
+		protocol.ComplexOrderStep{Action: "dropoff", Node: pos},
+	)
 	return ChangeoverDispatch{
-		StepsA:        stepsA,
-		DeliveryNodeA: posA,
+		StepsA:        steps,
+		DeliveryNodeA: pos,
 		AutoConfirmA:  true,
-		// Both legs open by lifting the OLD bin off their position, so both carry
-		// the from-style payload. StepsB gets it unconditionally from
-		// assignDispatch's evac arm; StepsA has to say so — see
-		// buildSequentialChangeoverSwap for why this is only safe once
-		// refillPickup names the incoming style on the refill leg.
-		CarriesFromPayloadA: true,
-		StepsB:              stepsB,
-		AutoConfirmB:        true,
+		// Only when this order actually lifts an old bin. The parked produce
+		// position lifts an empty carrier instead, whose payload filter is
+		// dropped — naming the outgoing style there would say something untrue
+		// about a step that is not asking the question.
+		CarriesFromPayloadA: !onDeckEmpty,
+		StepsB:              nil, // per-node: one order, this position's
 	}
 }
 
-// buildSequentialChangeoverSwap is the sequential A/B paired swap:
-// single robot, single complex order, single wait inside.
+// buildSequentialPerPositionEvacuate is the tooling variant of the same split:
+// ONE position's evac-and-backfill, gated on the tooling-done click.
 //
-// SME model:
-//  1. Robot fires immediately, no start-of-order wait.
-//  2. Inactive-side swap (direct trips, no staging hop):
-//     pickup(inactive position) → dropoff(OutboundDestination)
-//     pickup(InboundSource)     → dropoff(inactive position)
-//  3. Robot drives to active position and waits for cutover click.
-//  4. Cutover click flips ActivePull AND releases the wait
-//     (SequentialChangeoverCutover orchestrates both).
-//  5. Active-side swap (same direct-trip pattern):
-//     pickup(active position)   → dropoff(OutboundDestination)
-//     pickup(InboundSource)     → dropoff(active position)
+//	pickup(my position)              — lift what is standing here
+//	dropoff(OutboundDestination)
+//	refillPickup(fromClaim, toClaim) — fetch new material now, hold it
+//	wait("")                         — the tooling-done gate, BARE
+//	dropoff(my position)             — deliver on release
 //
-// Direct trips, no InboundStaging hop. Sequential's steady-state pattern
-// (BuildSequentialBackfillSteps) fetches InboundSource and drops
-// directly at CoreNodeName, so changeover follows the same pattern.
-// Sequential nodes don't need InboundStaging configured for changeover —
-// the only required fields beyond steady-state are OutboundDestination
-// + InboundSource (the same fields steady-state sequential needs).
+// No inactive/active distinction in the CHOREOGRAPHY — both positions come off
+// the line because production is going down anyway, so neither waits for a
+// cutover. The parked/produce EMPTY flag still applies: what is standing on the
+// parked position is an on-deck empty whether the press is changing tools or
+// styles.
 //
-// Active-pull awareness: the planner reads ActivePull at plan time and
-// passes inactive/active node names. The "swap first" side is the
-// inactive one (line keeps running on active during the inactive swap).
-// The "swap second" side is the active one, whose swap is gated by the
-// operator's cutover click. The cutover click flips active-pull TO the
-// freshly-swapped previously-inactive side, making the previously-active
-// side the new inactive — which the robot then proceeds to swap.
-//
-// Empty dispatch when PairedCoreNode is missing or required routing
-// fields are empty — the planner emits NodeAction.Err.
-func buildSequentialChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, inactiveNode, activeNode string) ChangeoverDispatch {
-	if fromClaim.PairedCoreNode == "" {
+// THE BARE WAIT IS WHAT KEEPS THE SINGLE CLICK. One tooling-done click still
+// releases both positions, and it does so the same way it always did — through
+// ReleaseChangeoverWait's per-task fan-out, which walks every node task of the
+// changeover. Under the whole-press builder those two waits were two step-lists
+// in one NodeAction; now they are two orders on two tasks. The fan-out iterates
+// tasks either way, so the operator-facing semantic is unchanged.
+func buildSequentialPerPositionEvacuate(fromClaim, toClaim *processes.NodeClaim, inactiveNode string) ChangeoverDispatch {
+	if fromClaim == nil || toClaim == nil {
+		return ChangeoverDispatch{}
+	}
+	if fromClaim.PairedCoreNode == "" || inactiveNode == "" {
 		return ChangeoverDispatch{}
 	}
 	if fromClaim.OutboundDestination == "" || toClaim.InboundSource == "" {
 		return ChangeoverDispatch{}
 	}
-	if inactiveNode == "" || activeNode == "" {
+	pos := fromClaim.CoreNodeName
+	if pos == "" {
 		return ChangeoverDispatch{}
 	}
-	steps := []protocol.ComplexOrderStep{
-		// Inactive-side swap (line keeps running on active).
-		{Action: "pickup", Node: inactiveNode},              // evac old inactive
-		buildStep("dropoff", fromClaim.OutboundDestination), // old inactive to destination
-		refillPickup(fromClaim, toClaim),                    // fetch new inactive
-		{Action: "dropoff", Node: inactiveNode},             // deliver new inactive
-		// Robot drives to active position and parks (wait-with-node
-		// makes RDS report WAITING so the order reliably transitions to
-		// "staged" on Edge — same fragility-fix the two_robot pattern
-		// applies for its mid-sequence wait).
-		stationWait(activeNode), // cutover gate
-		// Active-side swap (cutover already flipped pull to the
-		// previously-inactive side; this side is now safe to evacuate).
-		{Action: "pickup", Node: activeNode},                // evac old active
-		buildStep("dropoff", fromClaim.OutboundDestination), // old active to destination
-		refillPickup(fromClaim, toClaim),                    // fetch new active
-		{Action: "dropoff", Node: activeNode},               // deliver new active
+	onDeckEmpty := pos == inactiveNode && fromClaim.Role == protocol.ClaimRoleProduce
+
+	steps := buildToolingEvacSteps(pos, fromClaim.OutboundDestination, fromClaim, toClaim, "")
+	if onDeckEmpty {
+		// The opening pickup, and only it: the refill pickup later in the list is
+		// already Empty-by-role through refillPickup, and the dropoffs are not
+		// pickups at all.
+		steps[0].Empty = true
 	}
 	return ChangeoverDispatch{
-		StepsA:        steps,
-		DeliveryNodeA: activeNode, // last dropoff
-		AutoConfirmA:  true,
-		// The order OPENS by lifting the OLD bin off the inactive position, and
-		// lifts the old ACTIVE bin after the cutover wait, so it carries the
-		// from-style payload. Blank, lookupPayloadMeta backfills it to the TARGET
-		// style mid-changeover and both of those pickups then filter for a part
-		// the press does not have — no bin claimed, the ALN_001 shape.
-		//
-		// Safe to state now, and it was not before: this order ALSO fetches two
-		// fresh carriers, and until refillPickup stamped those steps with the
-		// incoming style they resolved bin-type compatibility against the order's
-		// payload. Naming the from-style here would have fetched the carrier type
-		// the press was LEAVING (N1-c). The two halves only work together, which
-		// is why press-index landed them in one commit (30630c70).
-		CarriesFromPayloadA: true,
-		StepsB:              nil, // single-order shape
+		StepsA:              steps,
+		DeliveryNodeA:       pos,
+		AutoConfirmA:        true,
+		CarriesFromPayloadA: !onDeckEmpty,
+		StepsB:              nil,
 	}
 }
 

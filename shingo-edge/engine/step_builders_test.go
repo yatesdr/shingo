@@ -479,7 +479,14 @@ func TestBuildPressIndexPerPositionSwap_MissingConfig_EmptyDispatch(t *testing.T
 // Direct-trip pattern (no InboundStaging hop), mirroring sequential's
 // steady-state choreography (steady-state backfill goes pickup
 // InboundSource → dropoff CoreNodeName, no staging).
-func TestBuildSwapChangeoverSteps_Sequential(t *testing.T) {
+//
+// PER-NODE (2026-08-28): this asserted a NINE-step order covering both
+// positions with the cutover wait in the middle. The builder now returns one
+// position's four-step trip per call, so the same choreography is read as two
+// calls — the parked side here, the active side in the test below. Nothing
+// about the physical route changed; what changed is that each position's steps
+// arrive on their own order, linked to their own node task.
+func TestBuildSwapChangeoverSteps_Sequential_ParkedSideRunsImmediately(t *testing.T) {
 	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-A",
@@ -492,136 +499,142 @@ func TestBuildSwapChangeoverSteps_Sequential(t *testing.T) {
 		InboundSource: "MARKET",
 	}
 
-	// Planner-resolved: line currently pulling from CORE-B → swap CORE-A
-	// (inactive) first, then wait at CORE-B (active) for cutover.
+	// Planner-resolved: the line is pulling from CORE-B, so CORE-A is parked.
+	// This is CORE-A's own diff, so it builds CORE-A's order.
 	disp := BuildSwapChangeoverSteps(from, to, "CORE-A" /* inactive */, "CORE-B" /* active */)
 
 	want := []protocol.ComplexOrderStep{
-		{Action: "pickup", Node: "CORE-A"},  // evac old inactive
-		{Action: "dropoff", Node: "DEST"},   // old inactive to destination
-		{Action: "pickup", Node: "MARKET"},  // fetch new inactive
-		{Action: "dropoff", Node: "CORE-A"}, // deliver new inactive
-		stationWait("CORE-B"),               // cutover gate, parked at active
-		{Action: "pickup", Node: "CORE-B"},  // evac old active (after cutover flip)
-		{Action: "dropoff", Node: "DEST"},   // old active to destination
-		{Action: "pickup", Node: "MARKET"},  // fetch new active
-		{Action: "dropoff", Node: "CORE-B"}, // deliver new active
+		{Action: "pickup", Node: "CORE-A"},  // evac what is standing here
+		{Action: "dropoff", Node: "DEST"},   // old bin to destination
+		{Action: "pickup", Node: "MARKET"},  // fetch new
+		{Action: "dropoff", Node: "CORE-A"}, // deliver new
 	}
 	if len(disp.StepsA) != len(want) {
-		t.Fatalf("StepsA: expected %d steps, got %d", len(want), len(disp.StepsA))
+		t.Fatalf("StepsA: expected %d steps, got %d: %+v", len(want), len(disp.StepsA), disp.StepsA)
 	}
 	for i, s := range disp.StepsA {
 		if s != want[i] {
 			t.Errorf("step %d: got %+v, want %+v", i, s, want[i])
 		}
 	}
-	// Single-order shape — StepsB must be nil.
 	if disp.StepsB != nil {
-		t.Errorf("sequential Swap is single-order; StepsB must be nil, got %+v", disp.StepsB)
+		t.Errorf("per-node sequential is one order per position; StepsB must be nil, got %+v", disp.StepsB)
 	}
-	// Single wait, mid-sequence, at the active position.
-	if w := countWaits(disp.StepsA); w != 1 {
-		t.Fatalf("expected exactly 1 wait, got %d", w)
+	// NO WAIT AT ALL on the parked side. The line is still running on the other
+	// position, so nothing gates this one — and finishing it is precisely what
+	// makes the cutover safe.
+	if w := countWaits(disp.StepsA); w != 0 {
+		t.Errorf("parked side has %d waits, want 0 — it runs immediately", w)
 	}
-	if disp.StepsA[4].Action != "wait" || disp.StepsA[4].Node != "CORE-B" {
-		t.Errorf("step 4: expected wait at active (CORE-B), got %+v", disp.StepsA[4])
+	// And it never touches its partner's position.
+	for _, s := range disp.StepsA {
+		if s.Node == "CORE-B" {
+			t.Errorf("the parked order steps on CORE-B (%+v) — that position has its own order", s)
+		}
 	}
 }
 
-// Swap order respects ActivePull resolution. When the line is currently
-// pulling from CORE-A, the inactive side is CORE-B — swap CORE-B first,
-// wait at CORE-A for cutover.
-func TestBuildSwapChangeoverSteps_Sequential_ActiveOnA_SwapsBFirst(t *testing.T) {
+// The ACTIVE side is the same trip with a cutover gate in front of it. Same
+// press, same changeover, the other diff.
+func TestBuildSwapChangeoverSteps_Sequential_ActiveSideWaitsForCutover(t *testing.T) {
 	t.Parallel()
+	// CORE-B's own claim: its CoreNodeName is CORE-B and it points back at A.
 	from := &processes.NodeClaim{
-		CoreNodeName:        "CORE-A",
-		PairedCoreNode:      "CORE-B",
+		CoreNodeName:        "CORE-B",
+		PairedCoreNode:      "CORE-A",
 		OutboundDestination: "DEST",
 		SwapMode:            "sequential",
 	}
-	to := &processes.NodeClaim{CoreNodeName: "CORE-A", InboundSource: "MARKET"}
+	to := &processes.NodeClaim{CoreNodeName: "CORE-B", InboundSource: "MARKET"}
 
-	disp := BuildSwapChangeoverSteps(from, to, "CORE-B" /* inactive */, "CORE-A" /* active */)
+	disp := BuildSwapChangeoverSteps(from, to, "CORE-A" /* inactive */, "CORE-B" /* active */)
 
-	if len(disp.StepsA) != 9 {
-		t.Fatalf("expected 9 steps, got %d", len(disp.StepsA))
+	want := []protocol.ComplexOrderStep{
+		stationWait("CORE-B"),               // park at my own position, hold for cutover
+		{Action: "pickup", Node: "CORE-B"},  // evac old active, once pull has flipped away
+		{Action: "dropoff", Node: "DEST"},   // old bin to destination
+		{Action: "pickup", Node: "MARKET"},  // fetch new
+		{Action: "dropoff", Node: "CORE-B"}, // deliver new
 	}
-	if disp.StepsA[0].Node != "CORE-B" {
-		t.Errorf("first pickup should target inactive (CORE-B), got %+v", disp.StepsA[0])
+	if len(disp.StepsA) != len(want) {
+		t.Fatalf("StepsA: expected %d steps, got %d: %+v", len(want), len(disp.StepsA), disp.StepsA)
 	}
-	if disp.StepsA[3].Node != "CORE-B" {
-		t.Errorf("first delivery should target inactive (CORE-B), got %+v", disp.StepsA[3])
+	for i, s := range disp.StepsA {
+		if s != want[i] {
+			t.Errorf("step %d: got %+v, want %+v", i, s, want[i])
+		}
 	}
-	if disp.StepsA[4].Node != "CORE-A" {
-		t.Errorf("cutover wait should be at active (CORE-A), got %+v", disp.StepsA[4])
+	// The wait is at THIS position, not at the partner's. The robot parks where
+	// it is about to work, which is what makes it visible to the operator who
+	// clicks cutover.
+	if w := countWaits(disp.StepsA); w != 1 {
+		t.Fatalf("expected exactly 1 wait, got %d", w)
 	}
-	if disp.StepsA[5].Node != "CORE-A" {
-		t.Errorf("post-cutover pickup should target active (CORE-A), got %+v", disp.StepsA[5])
+	if disp.StepsA[0].Action != "wait" || disp.StepsA[0].Node != "CORE-B" {
+		t.Errorf("step 0: expected the cutover wait at this position (CORE-B), got %+v", disp.StepsA[0])
+	}
+	for _, s := range disp.StepsA {
+		if s.Node == "CORE-A" {
+			t.Errorf("the active order steps on CORE-A (%+v) — that position has its own order", s)
+		}
 	}
 }
 
-// Sequential Evacuate emits backfill steps. Each robot:
+// Sequential Evacuate emits one position's evac+backfill per call:
 //
 //	pickup(my position) → dropoff(OutboundDestination)
 //	pickup(InboundSource) → wait() → dropoff(my position)
 //
-// A single tooling-done click releases both bare waits.
+// A single tooling-done click still releases BOTH positions' bare waits — it
+// always did so through ReleaseChangeoverWait's per-task fan-out, which walks
+// every node task of the changeover. Under the whole-press builder the two
+// waits were two step-lists in one action; now they are two orders on two
+// tasks, and the fan-out iterates tasks either way.
 func TestBuildEvacuateChangeoverSteps_Sequential(t *testing.T) {
 	t.Parallel()
-	from := &processes.NodeClaim{
-		CoreNodeName:        "CORE-A",
-		PairedCoreNode:      "CORE-B",
-		OutboundDestination: "DEST",
-		SwapMode:            "sequential",
-	}
 	to := &processes.NodeClaim{CoreNodeName: "CORE-A", InboundSource: "MARKET"}
-
-	disp := BuildEvacuateChangeoverSteps(from, to, "", "" /* evac doesn't use inactive/active */)
-
-	wantA := []protocol.ComplexOrderStep{
-		{Action: "pickup", Node: "CORE-A"},  // evac old A
-		{Action: "dropoff", Node: "DEST"},   // old A to destination
-		{Action: "pickup", Node: "MARKET"},  // fetch new A (during tooling)
-		stationWait(""),                     // bare — tooling-done shared gate
-		{Action: "dropoff", Node: "CORE-A"}, // deliver new A
-	}
-	if len(disp.StepsA) != len(wantA) {
-		t.Fatalf("StepsA: expected %d steps, got %d", len(wantA), len(disp.StepsA))
-	}
-	for i, s := range disp.StepsA {
-		if s != wantA[i] {
-			t.Errorf("StepsA step %d: got %+v, want %+v", i, s, wantA[i])
+	claimAt := func(own, partner string) *processes.NodeClaim {
+		return &processes.NodeClaim{
+			CoreNodeName:        own,
+			PairedCoreNode:      partner,
+			OutboundDestination: "DEST",
+			SwapMode:            "sequential",
 		}
 	}
 
-	wantB := []protocol.ComplexOrderStep{
-		{Action: "pickup", Node: "CORE-B"},
-		{Action: "dropoff", Node: "DEST"},
-		{Action: "pickup", Node: "MARKET"},
-		stationWait(""),
-		{Action: "dropoff", Node: "CORE-B"},
-	}
-	if len(disp.StepsB) != len(wantB) {
-		t.Fatalf("StepsB: expected %d steps, got %d", len(wantB), len(disp.StepsB))
-	}
-	for i, s := range disp.StepsB {
-		if s != wantB[i] {
-			t.Errorf("StepsB step %d: got %+v, want %+v", i, s, wantB[i])
-		}
-	}
+	for _, tc := range []struct {
+		own, partner string
+	}{{"CORE-A", "CORE-B"}, {"CORE-B", "CORE-A"}} {
+		// Evacuate has no cutover, so which side is parked changes nothing about
+		// the route; it is passed because the parked position of a produce press
+		// holds an on-deck empty. These claims carry no role, so neither is flagged.
+		disp := BuildEvacuateChangeoverSteps(claimAt(tc.own, tc.partner), to, "CORE-A", "CORE-B")
 
-	// One bare wait per robot — released by the tooling-done click.
-	if w := countWaits(disp.StepsA); w != 1 {
-		t.Errorf("StepsA: expected 1 wait, got %d", w)
-	}
-	if disp.StepsA[3].Node != "" {
-		t.Errorf("StepsA wait should be bare (no Node), got %q", disp.StepsA[3].Node)
-	}
-	if w := countWaits(disp.StepsB); w != 1 {
-		t.Errorf("StepsB: expected 1 wait, got %d", w)
-	}
-	if disp.StepsB[3].Node != "" {
-		t.Errorf("StepsB wait should be bare (no Node), got %q", disp.StepsB[3].Node)
+		want := []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: tc.own},  // evac old
+			{Action: "dropoff", Node: "DEST"}, // old to destination
+			{Action: "pickup", Node: "MARKET"},
+			stationWait(""), // bare — tooling-done shared gate
+			{Action: "dropoff", Node: tc.own},
+		}
+		if len(disp.StepsA) != len(want) {
+			t.Fatalf("%s: expected %d steps, got %d: %+v", tc.own, len(want), len(disp.StepsA), disp.StepsA)
+		}
+		for i, s := range disp.StepsA {
+			if s != want[i] {
+				t.Errorf("%s step %d: got %+v, want %+v", tc.own, i, s, want[i])
+			}
+		}
+		if disp.StepsB != nil {
+			t.Errorf("%s: per-node evacuate is one order per position; StepsB must be nil", tc.own)
+		}
+		if w := countWaits(disp.StepsA); w != 1 {
+			t.Errorf("%s: expected 1 wait, got %d", tc.own, w)
+		}
+		if disp.StepsA[3].Node != "" {
+			t.Errorf("%s: the wait must be BARE (no Node) so one tooling-done click releases both "+
+				"positions, got %q", tc.own, disp.StepsA[3].Node)
+		}
 	}
 }
 

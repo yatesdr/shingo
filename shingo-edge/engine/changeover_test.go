@@ -1294,21 +1294,26 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	if task.Situation != "evacuate" {
 		t.Fatalf("expected evacuate, got %s", task.Situation)
 	}
-	if task.NextMaterialOrderID == nil || task.OldMaterialReleaseOrderID == nil {
-		t.Fatal("sequential evacuate must populate both order slots")
+	// PER-NODE (2026-08-28): this asserted BOTH order slots, because sequential
+	// evacuate used to return both positions' step lists from one diff — SEQ-A's
+	// task carried SEQ-B's order too. Each position now owns its own task and
+	// its own order, and only SEQ-A's claim is seeded here, so this task has
+	// exactly one. SEQ-B's order lives on SEQ-B's task when SEQ-B is claimed.
+	if task.NextMaterialOrderID == nil {
+		t.Fatal("sequential evacuate must populate this position's order slot")
+	}
+	if task.OldMaterialReleaseOrderID != nil {
+		t.Errorf("this task also carries order %d in the old-material slot. Per-node evacuate emits "+
+			"ONE order per position; a second one here is the whole-press shape, whose two orders "+
+			"then raced for the same bins.", *task.OldMaterialReleaseOrderID)
 	}
 
-	// Complete OrderA. Under the new contract, runtime cache no longer
-	// flips at confirm — only at delivered (active_bin_id /
+	// Complete this position's order. Under the new contract, runtime cache no
+	// longer flips at confirm — only at delivered (active_bin_id /
 	// active_bin_epoch / remaining_uop_cached) and at release-click.
 	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
 	markOrderTerminal(db, orderA.ID)
 	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &primaryID)
-
-	// Complete OrderB.
-	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
-	markOrderTerminal(db, orderB.ID)
-	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &primaryID)
 
 	// State-machine assertion: paired-position behavior previously asserted
 	// here came from resetSequentialEvacOrderBRuntime which is gone. The
@@ -1478,4 +1483,164 @@ func TestChangeoverBlockerNeverSaysInFlightAboutAQueuedOrder(t *testing.T) {
 	if protocol.BlocksChangeoverStart(protocol.StatusQueued) {
 		t.Fatal("queued must not block — the 'in flight (queued)' sentence must be unreachable")
 	}
+}
+
+// TestSequentialCutover_WaitsForTheParkedSideToBeRefilled pins the one
+// guarantee that had to MOVE when sequential changeover went per-node.
+//
+// ── WHAT THE COLLAPSED ORDER USED TO ENFORCE BY BEING ONE ORDER ──────────
+//
+// The whole-press order did the parked side's swap, THEN waited for cutover,
+// THEN did the active side. The cutover wait could not be reached until the
+// parked position had its fresh bin standing on it, because those were earlier
+// steps of the same order. That sequencing was free, and it was load-bearing:
+// cutting over flips the line onto the parked position, so if that position is
+// still empty the line is switched onto nothing.
+//
+// Per-node there are two orders and nothing sequences them, so the guarantee
+// has to be stated. It lives here, in the cutover gate, as one read of the
+// parked node's own task — which is exactly the shape every other cutover
+// precondition in this file already has.
+//
+// ── WAIT, NOT FAIL ────────────────────────────────────────────────────────
+//
+// The refusal names the parked node and the order that will release it. This is
+// the button waiting, not the changeover failing: the operator clicks again
+// when the parked side lands, and the same click goes through.
+func TestSequentialCutover_WaitsForTheParkedSideToBeRefilled(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, processID, activeNodeID, parkedNodeID, co := seedSequentialCutoverScenario(t, db)
+
+	parkedTask, err := db.GetChangeoverNodeTaskByNode(co.ID, parkedNodeID)
+	if err != nil {
+		t.Fatalf("get parked node task: %v", err)
+	}
+	if parkedTask.NextMaterialOrderID == nil {
+		t.Fatal("the parked position got no order; the fixture is wrong, not the gate")
+	}
+	parkedOrderID := *parkedTask.NextMaterialOrderID
+
+	// ── REFUSED: the parked side's robot is still driving ──
+	err = eng.SequentialChangeoverCutover(processID, activeNodeID, "test")
+	if err == nil {
+		t.Fatal("cutover was allowed while the parked position's order was still running. Cutting " +
+			"over flips the line onto that position — if its fresh bin has not landed, the line is " +
+			"switched onto an empty slot and production stops on a press that was running.")
+	}
+	if !strings.Contains(err.Error(), "SEQ-B") {
+		t.Errorf("refusal = %q, want it to name the parked position SEQ-B — the operator has to know "+
+			"which side to look at", err.Error())
+	}
+	if !strings.Contains(err.Error(), fmt.Sprint(parkedOrderID)) {
+		t.Errorf("refusal = %q, want it to name order %d as the releaser — a wait with no named "+
+			"releaser is indistinguishable from a broken button", err.Error(), parkedOrderID)
+	}
+
+	// AND NOTHING MOVED. A refused gate must not have flipped the pull or
+	// released the active order half-way; the next click has to find the same
+	// world it left.
+	activeTask, err := db.GetChangeoverNodeTaskByNode(co.ID, activeNodeID)
+	if err != nil {
+		t.Fatalf("get active node task: %v", err)
+	}
+	if activeTask.NextMaterialOrderID == nil {
+		t.Fatal("the active position got no order")
+	}
+	if pulled := activePullOf(t, db, parkedNodeID); pulled {
+		t.Error("the refused cutover flipped active-pull to the parked position anyway — flip and " +
+			"release are one action, and a gate that half-runs is worse than one that does not run")
+	}
+
+	// ── ALLOWED: the parked side's bin is down ──
+	markOrderTerminal(db, parkedOrderID)
+	if err := eng.SequentialChangeoverCutover(processID, activeNodeID, "test"); err != nil {
+		t.Fatalf("cutover refused after the parked position was refilled: %v", err)
+	}
+	if !activePullOf(t, db, parkedNodeID) {
+		t.Error("cutover did not flip active-pull to the freshly-stocked parked position. The flip " +
+			"is what makes the active side safe to evacuate, and it must happen BEFORE the release.")
+	}
+}
+
+// activePullOf reads one process node's active-pull bit.
+func activePullOf(t *testing.T, db *store.DB, nodeID int64) bool {
+	t.Helper()
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	if err != nil || rt == nil {
+		t.Fatalf("get runtime for node %d: %v", nodeID, err)
+	}
+	return rt.ActivePull
+}
+
+// seedSequentialCutoverScenario builds a two-position sequential press mid
+// changeover: SEQ-A active (the line is pulling from it), SEQ-B parked, both
+// claimed in both styles so each yields its own Swap diff and its own order.
+func seedSequentialCutoverScenario(t *testing.T, db *store.DB) (
+	eng *Engine, processID, activeNodeID, parkedNodeID int64, co *processes.Changeover) {
+	t.Helper()
+
+	processID, err := db.CreateProcess("SEQ-CUT-PROC", "sequential cutover", "active_production", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	activeNodeID, err = db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "SEQ-A", Code: "SCA", Name: "Seq A", Sequence: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create active node: %v", err)
+	}
+	parkedNodeID, err = db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "SEQ-B", Code: "SCB", Name: "Seq B", Sequence: 2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create parked node: %v", err)
+	}
+	// The line is pulling from SEQ-A, so SEQ-B is the parked side and SEQ-A is
+	// the one whose order holds for the cutover click.
+	db.EnsureProcessNodeRuntime(activeNodeID)
+	db.EnsureProcessNodeRuntime(parkedNodeID)
+	testutil.MustNoErr(t, db.SetActivePull(activeNodeID, true), "active pull on SEQ-A")
+	testutil.MustNoErr(t, db.SetActivePull(parkedNodeID, false), "no active pull on SEQ-B")
+
+	fromStyleID, err := db.CreateStyle("SEQ-CUT-FROM", "from", processID)
+	if err != nil {
+		t.Fatalf("create from style: %v", err)
+	}
+	toStyleID, err := db.CreateStyle("SEQ-CUT-TO", "to", processID)
+	if err != nil {
+		t.Fatalf("create to style: %v", err)
+	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
+
+	// Both positions claimed in BOTH styles — the A/B steady state, and what
+	// makes a PRESS-2-RUN → PRESS-2-ALT changeover a Swap on each position
+	// rather than a Drop/Add pair.
+	for _, c := range []struct {
+		style        int64
+		own, partner string
+		payload      string
+	}{
+		{fromStyleID, "SEQ-A", "SEQ-B", "PART-FROM"},
+		{fromStyleID, "SEQ-B", "SEQ-A", "PART-FROM"},
+		{toStyleID, "SEQ-A", "SEQ-B", "PART-TO"},
+		{toStyleID, "SEQ-B", "SEQ-A", "PART-TO"},
+	} {
+		if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+			StyleID: c.style, CoreNodeName: c.own, Role: "produce", SwapMode: "sequential",
+			PayloadCode: c.payload, UOPCapacity: 100,
+			InboundSource: "MARKET", OutboundDestination: "DEST",
+			PairedCoreNode: c.partner,
+		}); err != nil {
+			t.Fatalf("upsert claim %s/%d: %v", c.own, c.style, err)
+		}
+	}
+
+	eng = testEngine(t, db)
+	eng.wireEventHandlers()
+	co, err = eng.StartProcessChangeover(processID, toStyleID, "test", "seq cutover")
+	if err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+	return eng, processID, activeNodeID, parkedNodeID, co
 }

@@ -180,8 +180,36 @@ func TestEveryChangeoverLegThatLiftsAnOldBinCarriesTheFromPayload(t *testing.T) 
 					if !ok || !linePosition[first.Node] {
 						continue // opens at the market/staging — not an old-bin leg
 					}
+					// ── THE CARVE-OUT: AN EMPTY-FLAGGED OPENING ASKS NO PAYLOAD
+					//    QUESTION ──
+					//
+					// The rule this test enforces is really "a leg opening at a press
+					// position must not go hunting the WRONG payload", and there are
+					// two honest ways to satisfy it. Name the outgoing style, which is
+					// what a leg lifting a real full off the line does. Or flag the
+					// pickup Empty, which drops Core's payload filter entirely — and
+					// that is the only correct answer where the position holds an
+					// ON-DECK EMPTY carrier rather than an outgoing bin.
+					//
+					// Sequential's PARKED position on a PRODUCE press is exactly that
+					// (plants/demo.yaml: BIN-ACT-P2B, parked, no payload). Demanding
+					// the from-payload there is what produced `finder-node-empty` —
+					// "Waiting for material: PANEL-B in PLN_004" — a full retrieve
+					// against a carrier with nothing stamped on it.
+					//
+					// So the assertion widens by exactly one alternative rather than
+					// dropping the mode: EITHER the outgoing payload OR an Empty
+					// opening, never neither. The dual below (produce-only) is what
+					// stops "flag everything Empty" from passing this.
+					if first.Empty {
+						if role := from.Role; role != protocol.ClaimRoleProduce {
+							t.Errorf("%s opens at press position %q on an EMPTY-flagged pickup, but this is a %s node. Only a PRODUCE position parks an on-deck empty; a consume position parks a FULL standby and must keep the payload-matched retrieve",
+								label, first.Node, role)
+						}
+						continue
+					}
 					if spec.Complex.PayloadCode != from.PayloadCode {
-						t.Errorf("%s opens by lifting the old bin at %q but carries payload %q; it must carry the OUTGOING style %q or lookupPayloadMeta backfills it to the incoming one and the pickup matches nothing",
+						t.Errorf("%s opens by lifting the old bin at %q but carries payload %q; it must carry the OUTGOING style %q (or open on an Empty-flagged pickup, which only a produce press's parked position does) or lookupPayloadMeta backfills it to the incoming one and the pickup matches nothing",
 							label, first.Node, spec.Complex.PayloadCode, from.PayloadCode)
 					}
 				}

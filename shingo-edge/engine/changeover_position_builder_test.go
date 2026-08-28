@@ -151,24 +151,36 @@ func TestToolingPositionAction_ProduceFetchesAnEmpty(t *testing.T) {
 // buildToolingEvacSteps, and sequential's bare wait is its own deliberate
 // choice — a regression here would be a shared helper quietly changing a mode
 // nobody was working on.
-func TestBuildSequentialChangeoverEvacuate_StillCarriesAcrossABareWait(t *testing.T) {
+//
+// PER-NODE (2026-08-28): this used to call one builder and read StepsA and
+// StepsB, because sequential evacuate returned BOTH positions from a single
+// call. It is now one call per position, each returning its own StepsA. Same
+// two step-lists, same bare wait, same assertion — the shape they arrive in is
+// what changed, so the fixture follows rather than the claim.
+func TestBuildSequentialPerPositionEvacuate_StillCarriesAcrossABareWait(t *testing.T) {
 	t.Parallel()
-	from := &processes.NodeClaim{
-		CoreNodeName: "SEQ-A", PairedCoreNode: "SEQ-B",
-		OutboundDestination: "DEST", SwapMode: protocol.SwapModeSequential,
-	}
 	// InboundStaging IS SET, and unused by this builder. That is the point:
 	// with it blank a staged wait leaking in through the shared helper would
 	// still render as a bare wait and this test could not tell.
 	to := &processes.NodeClaim{CoreNodeName: "SEQ-A", InboundSource: "MARKET", InboundStaging: "SEQ-STAGE"}
-	d := buildSequentialChangeoverEvacuate(from, to)
-
-	wantA := "pickup@SEQ-A dropoff@DEST pickup@MARKET wait@- dropoff@SEQ-A"
-	wantB := "pickup@SEQ-B dropoff@DEST pickup@MARKET wait@- dropoff@SEQ-B"
-	if got := stepTrace(d.StepsA); got != wantA {
-		t.Errorf("A steps =\n  %s\nwant\n  %s", got, wantA)
+	claimAt := func(own, partner string) *processes.NodeClaim {
+		return &processes.NodeClaim{
+			CoreNodeName: own, PairedCoreNode: partner,
+			OutboundDestination: "DEST", SwapMode: protocol.SwapModeSequential,
+		}
 	}
-	if got := stepTrace(d.StepsB); got != wantB {
-		t.Errorf("B steps =\n  %s\nwant\n  %s", got, wantB)
+	for _, tc := range []struct {
+		own, partner, want string
+	}{
+		{"SEQ-A", "SEQ-B", "pickup@SEQ-A dropoff@DEST pickup@MARKET wait@- dropoff@SEQ-A"},
+		{"SEQ-B", "SEQ-A", "pickup@SEQ-B dropoff@DEST pickup@MARKET wait@- dropoff@SEQ-B"},
+	} {
+		d := buildSequentialPerPositionEvacuate(claimAt(tc.own, tc.partner), to, "SEQ-A")
+		if got := stepTrace(d.StepsA); got != tc.want {
+			t.Errorf("%s steps =\n  %s\nwant\n  %s", tc.own, got, tc.want)
+		}
+		if d.StepsB != nil {
+			t.Errorf("%s emitted a second step-list; per-node evacuate is one order per position", tc.own)
+		}
 	}
 }
