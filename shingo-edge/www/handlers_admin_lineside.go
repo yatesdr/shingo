@@ -5,11 +5,17 @@ import (
 	"net/http"
 )
 
-// linesideBucketRow is the per-bucket view-model rendered on the admin
-// "Lineside Buckets" page. One row per node_lineside_bucket entry — the
-// chip the operator HMI shows for parts pulled to lineside during a
-// release. Engineers use this page to clear stuck buckets or correct
-// drifted qtys without restarting the edge service.
+// linesideBucketRow is the per-bucket view-model for the lineside table. One row
+// per node_lineside_bucket entry — the chip the operator HMI shows for parts
+// pulled to lineside during a release. Engineers use it to clear stuck buckets
+// or correct drifted qtys without restarting the edge service.
+//
+// It is built by buildLinesideRows (handlers_production.go) and rendered on the
+// PRODUCTION page. It had a standalone admin page too, whose handler this file
+// still carried after the table moved — routed from nowhere, rendering a
+// template nothing else referenced, and duplicating buildLinesideRows line for
+// line. Both are gone; the two mutating endpoints below are the live half and
+// are routed (router.go, "embedded on Production page").
 type linesideBucketRow struct {
 	BucketID    int64
 	NodeID      int64
@@ -21,60 +27,6 @@ type linesideBucketRow struct {
 	PairKey     string
 	Qty         int
 	State       string
-}
-
-func (h *Handlers) handleLinesideBuckets(w http.ResponseWriter, r *http.Request) {
-	processList, _ := h.engine.ProcessService().List()
-	allNodes, _ := h.engine.ProcessService().ListNodes()
-	stations, _ := h.engine.StationService().List()
-	allStyles, _ := h.engine.StyleService().List()
-
-	processName := make(map[int64]string, len(processList))
-	for _, p := range processList {
-		processName[p.ID] = p.Name
-	}
-	stationName := make(map[int64]string, len(stations))
-	for _, s := range stations {
-		stationName[s.ID] = s.Name
-	}
-	styleName := make(map[int64]string, len(allStyles))
-	for _, s := range allStyles {
-		styleName[s.ID] = s.Name
-	}
-
-	rows := make([]linesideBucketRow, 0)
-	for _, n := range allNodes {
-		buckets, err := h.engine.ProcessService().ListLinesideBucketsForNode(n.ID)
-		if err != nil || len(buckets) == 0 {
-			continue
-		}
-		for _, b := range buckets {
-			row := linesideBucketRow{
-				BucketID:    b.ID,
-				NodeID:      n.ID,
-				NodeName:    n.Name,
-				ProcessName: processName[n.ProcessID],
-				StyleName:   styleName[b.StyleID],
-				PartNumber:  b.PartNumber,
-				PairKey:     b.PairKey,
-				Qty:         b.Qty,
-				State:       b.State,
-			}
-			if n.OperatorStationID != nil {
-				row.StationName = stationName[*n.OperatorStationID]
-			}
-			rows = append(rows, row)
-		}
-	}
-
-	anomalies, rpMap := loadAnomalyData(h)
-	data := map[string]any{
-		"Page":              "lineside-buckets",
-		"Rows":              rows,
-		"Anomalies":         anomalies,
-		"ReportingPointMap": rpMap,
-	}
-	h.renderTemplate(w, r, "lineside-buckets.html", data)
 }
 
 // apiAdminClearLinesideBucket sets the bucket qty to 0, deleting the

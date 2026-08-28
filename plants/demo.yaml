@@ -390,6 +390,13 @@ styles:
   # decides what happens to those bins.
   - {name: PRESS-1-RETOOL, process: PRESS-1,    payload: PANEL-A}
   - {name: PRESS-2-RUN,    process: PRESS-2,    payload: PANEL-B}
+  # SEQUENTIAL A/B WITH A CHANGEOVER. PRESS-2 had one style, so the only
+  # sequential choreography the sim ever exercised was the steady-state swap —
+  # buildSequentialChangeoverSwap had no route into a run. PANEL-C rides the same
+  # STANDARD-SM carrier PANEL-B does, so this is the same-carrier / new-part shape
+  # (the Hopkinsville 2026-08-27 changeover), which is the one that leaves a bin
+  # on the press and therefore forces SituationSwap rather than Add.
+  - {name: PRESS-2-ALT,    process: PRESS-2,    payload: PANEL-C}
   - {name: WELD-1-RUN,     process: WELD-1,     payload: ASSY}
   - {name: WELD-1-ALT,     process: WELD-1,     payload: ASSY}
   - {name: WELD-2-RUN,     process: WELD-2,     payload: ASSY}
@@ -554,6 +561,32 @@ claims:
     role: produce
     swap_mode: sequential
     payload: PANEL-B
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_003
+    active_pull: false
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+
+  # ── PRESS-2-ALT: the same A/B pair running PANEL-C ──
+  # Both nodes appear in both styles, so a PRESS-2-RUN → PRESS-2-ALT changeover
+  # is a Swap on each (not a Drop/Add pair), which is the only situation that
+  # reaches buildSequentialChangeoverSwap.
+  - core_node: PLN_003
+    style: PRESS-2-ALT
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-C
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_004
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+  - core_node: PLN_004
+    style: PRESS-2-ALT
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-C
     uop_capacity: 30
     auto_reorder: true
     paired_core_node: PLN_003

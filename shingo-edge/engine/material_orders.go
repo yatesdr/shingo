@@ -119,6 +119,61 @@ func BuildStagedReleaseSteps(claim *processes.NodeClaim) []protocol.ComplexOrder
 	}
 }
 
+// refillPickup is the ONE way to express "fetch a fresh carrier from the
+// inbound source". Every builder that opens a leg at InboundSource must use it.
+//
+// ── WHY A CONSTRUCTOR, AND NOT A CALL AFTER THE STEP LIST ─────────────────
+//
+// The Empty flag was set by a markInboundEmpty call placed AFTER the builder's
+// step literal, and each builder had to remember it on its own. Eight builders
+// emit an inbound pickup; five of them forgot. The forgetting is invisible:
+// an unflagged pickup is not a compile error and not a test failure anywhere
+// near itself — it is an order that asks Core for a FULL bin of the incoming
+// part number inside the empty-carrier supermarket, which no inventory can
+// satisfy, so the order parks on "no bin of requested payload" and retries
+// until a person cancels it. That is Hopkinsville PLN_03/PLN_06 on 2026-08-26
+// and 2026-08-27: buildTwoRobotChangeoverSwap has never carried the call since
+// it was written (e02a526b, 2026-05-03) and has never produced a working order.
+//
+// git log -S markInboundEmpty tells the rest: ten commits, most of them fixes
+// re-adding the same call to one more builder after it stalled a floor —
+// b62e1552 (sequential backfill), 3832e88d (single_robot backfill), 30630c70
+// (press-index). Same defect, seven times, because the invariant lived at the
+// leaf instead of at the boundary.
+//
+// This is stagingDropoff's remedy applied to the sibling flag: make the wrong
+// step hard to write, so the mistake is "used the wrong constructor" — visible
+// in review, at the line where the step is built — rather than "omitted a call
+// eight lines below". TestEveryChangeoverRefillFetchesAnEmpty walks
+// ConfigurableSwapModes and keeps it that way.
+//
+// ── WHY IT NAMES A PAYLOAD, AND ONLY SOMETIMES ────────────────────────────
+//
+// Empty drops the full-bin CONTENT match but not bin-type compatibility, which
+// still resolves against the ORDER's payload — the OUTGOING style's on a
+// changeover. So a refill leg that changes carrier type has to say which style
+// its carrier is for, or it fetches the type the cell is leaving (N1-c, sim
+// 2026-08-24). refillCarrierPayload answers that and returns "" when the two
+// styles agree, keeping the wire byte-identical for changeovers that do not
+// change carrier type.
+//
+// fromClaim is nil at the call sites that have no outgoing claim to compare
+// against (a bare pre-stage, a keep-staged deliver). Those say nothing about
+// the payload rather than guessing, which is exactly what they said before.
+func refillPickup(fromClaim, toClaim *processes.NodeClaim) protocol.ComplexOrderStep {
+	step := buildStep("pickup", toClaim.InboundSource)
+	if toClaim.Role != protocol.ClaimRoleProduce || toClaim.InboundSource == "" {
+		// A consume node's inbound leg is a payload-matched FULL retrieve —
+		// the dual of this, and the reason the flag is not unconditional.
+		return step
+	}
+	step.Empty = true
+	if fromClaim != nil {
+		step.PayloadCode = refillCarrierPayload(fromClaim, toClaim)
+	}
+	return step
+}
+
 // BuildStageSteps builds steps to pre-stage material at the inbound staging
 // node in preparation for a swap. Material is fetched and placed at the
 // inbound staging node but NOT yet delivered to the production node.
@@ -127,7 +182,7 @@ func BuildStageSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 		return nil // no inbound staging configured, cannot pre-stage
 	}
 	return []protocol.ComplexOrderStep{
-		buildStep("pickup", claim.InboundSource),
+		refillPickup(nil, claim),
 		stagingDropoff(claim.InboundStaging),
 	}
 }
@@ -598,9 +653,9 @@ func buildTwoRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim) Change
 		return ChangeoverDispatch{}
 	}
 	stepsA := []protocol.ComplexOrderStep{
-		buildStep("pickup", toClaim.InboundSource), // pick new from source
-		stagingDropoff(toClaim.InboundStaging),     // stage new
-		stationWait(toClaim.InboundStaging),        // "ready" — shared release gate
+		refillPickup(fromClaim, toClaim),       // fetch a fresh EMPTY carrier
+		stagingDropoff(toClaim.InboundStaging), // stage new
+		stationWait(toClaim.InboundStaging),    // "ready" — shared release gate
 		{Action: "pickup", Node: toClaim.InboundStaging},
 		{Action: "dropoff", Node: toClaim.CoreNodeName},
 	}
@@ -642,7 +697,9 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 	if tooling {
 		r1 = append(r1, stationWait("")) // "tooling done"
 	}
-	r1 = append(r1, buildStep("pickup", toClaim.InboundSource))
+	// R1's other pickup — the old front tote — keeps the from-style payload it
+	// needs (§ carriesFromPayload below); only this leg fetches a fresh carrier.
+	r1 = append(r1, refillPickup(fromClaim, toClaim))
 	if fromClaim.SecondPairedCoreNode != "" {
 		// 3-position: refill back position.
 		r1 = append(r1, protocol.ComplexOrderStep{Action: "dropoff", Node: fromClaim.SecondPairedCoreNode})
@@ -665,20 +722,6 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 			{Action: "pickup", Node: fromClaim.PairedCoreNode},
 			{Action: "dropoff", Node: fromClaim.CoreNodeName},
 		}
-	}
-	// A produce node's refill fetches a fresh EMPTY carrier, not a full
-	// payload-matched bin. R1's pickup at InboundSource defaults to a full
-	// retrieve, so without this a produce press-index changeover hunts a full
-	// bin in the empty pool and the dispatch fails ("no bin of requested
-	// payload"). Flag only the InboundSource pickup Empty; R1's other pickup —
-	// the old front tote — keeps the from-style payload it needs
-	// (§ carriesFromPayload below). Mirrors swap_dispatch.go:71.
-	//
-	// The refill also NAMES the incoming style's payload when it differs, because
-	// Empty drops the full-bin content match but not bin-type compatibility —
-	// see markInboundEmpty and refillCarrierPayload.
-	if toClaim.Role == protocol.ClaimRoleProduce && toClaim.InboundSource != "" {
-		markInboundEmpty(r1, toClaim.InboundSource, refillCarrierPayload(fromClaim, toClaim))
 	}
 	return ChangeoverDispatch{
 		Roles: &changeoverSwapLegs{
@@ -734,24 +777,13 @@ func buildPressIndexPerPositionSwap(fromClaim, toClaim *processes.NodeClaim) Cha
 	steps := []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: pos},                       // evac old bin
 		buildStep("dropoff", fromClaim.OutboundDestination), // old bin to destination
-		buildStep("pickup", toClaim.InboundSource),          // fetch new bin
-		{Action: "dropoff", Node: pos},                      // deliver new bin
-	}
-	// A produce node's refill fetches a fresh EMPTY carrier, not a full
-	// payload-matched bin. Without this the InboundSource pickup defaults to a
-	// full retrieve and hunts a full bin in the empty pool ("no bin of requested
-	// payload"). Mirrors buildPressIndexChangeoverSwap's R1.
-	//
-	// AND IT NAMES THE STYLE THE CARRIER IS FOR. This comment used to claim that
-	// marking the leg Empty "drops that leg's payload filter", so one order could
-	// carry the from-style payload for the evac pickup above and still fetch a
-	// to-style carrier here. The first half is true and the second was not: Empty
-	// drops the full-bin content match, while bin-type compatibility still
-	// resolves against the ORDER's payload (PayloadBinTypeAdvisoryClause). So
-	// this leg fetched a carrier of the type the press was LEAVING, in both
-	// directions, until the step could say otherwise (N1-c, sim 2026-08-24).
-	if toClaim.Role == protocol.ClaimRoleProduce && toClaim.InboundSource != "" {
-		markInboundEmpty(steps, toClaim.InboundSource, refillCarrierPayload(fromClaim, toClaim))
+		// The opening pickup lifts the OLD bin off the position, so the order
+		// carries the from-style payload; this one fetches the carrier the
+		// INCOMING style needs. refillPickup keeps the two from being the same
+		// question — see its doc for why naming the style is load-bearing
+		// (N1-c, sim 2026-08-24).
+		refillPickup(fromClaim, toClaim), // fetch new bin
+		{Action: "dropoff", Node: pos},   // deliver new bin
 	}
 	return ChangeoverDispatch{
 		StepsA:        steps,
@@ -793,11 +825,17 @@ func buildPressIndexPerPositionSwap(fromClaim, toClaim *processes.NodeClaim) Cha
 //
 // Same steps, one parameter, so the difference is legible at both call sites
 // instead of living in two builders that merely look similar.
-func buildToolingEvacSteps(position, evacDest, inboundSource, waitNode string) []protocol.ComplexOrderStep {
+// It takes the CLAIMS rather than a bare inbound-source name so its refill leg
+// goes through refillPickup like every other one. Passing the name was how
+// buildSequentialChangeoverEvacuate — which shares this helper — ended up
+// fetching a full payload-matched bin from the empty pool: the string carried
+// the node but not the produce/empty question, so each caller had to answer it
+// again afterwards, and that caller never did.
+func buildToolingEvacSteps(position, evacDest string, fromClaim, toClaim *processes.NodeClaim, waitNode string) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: position},
 		buildStep("dropoff", evacDest),
-		buildStep("pickup", inboundSource),
+		refillPickup(fromClaim, toClaim),
 		stationWait(waitNode),
 		{Action: "dropoff", Node: position},
 	}
@@ -840,14 +878,20 @@ func buildSequentialChangeoverEvacuate(fromClaim, toClaim *processes.NodeClaim) 
 	posB := fromClaim.PairedCoreNode
 	// The bare wait is sequential's own choice — see buildToolingEvacSteps for
 	// why the staged press positions pass a node instead.
-	stepsA := buildToolingEvacSteps(posA, fromClaim.OutboundDestination, toClaim.InboundSource, "")
-	stepsB := buildToolingEvacSteps(posB, fromClaim.OutboundDestination, toClaim.InboundSource, "")
+	stepsA := buildToolingEvacSteps(posA, fromClaim.OutboundDestination, fromClaim, toClaim, "")
+	stepsB := buildToolingEvacSteps(posB, fromClaim.OutboundDestination, fromClaim, toClaim, "")
 	return ChangeoverDispatch{
 		StepsA:        stepsA,
 		DeliveryNodeA: posA,
 		AutoConfirmA:  true,
-		StepsB:        stepsB,
-		AutoConfirmB:  true,
+		// Both legs open by lifting the OLD bin off their position, so both carry
+		// the from-style payload. StepsB gets it unconditionally from
+		// assignDispatch's evac arm; StepsA has to say so — see
+		// buildSequentialChangeoverSwap for why this is only safe once
+		// refillPickup names the incoming style on the refill leg.
+		CarriesFromPayloadA: true,
+		StepsB:              stepsB,
+		AutoConfirmB:        true,
 	}
 }
 
@@ -897,7 +941,7 @@ func buildSequentialChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, inac
 		// Inactive-side swap (line keeps running on active).
 		{Action: "pickup", Node: inactiveNode},              // evac old inactive
 		buildStep("dropoff", fromClaim.OutboundDestination), // old inactive to destination
-		buildStep("pickup", toClaim.InboundSource),          // fetch new inactive
+		refillPickup(fromClaim, toClaim),                    // fetch new inactive
 		{Action: "dropoff", Node: inactiveNode},             // deliver new inactive
 		// Robot drives to active position and parks (wait-with-node
 		// makes RDS report WAITING so the order reliably transitions to
@@ -908,14 +952,27 @@ func buildSequentialChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, inac
 		// previously-inactive side; this side is now safe to evacuate).
 		{Action: "pickup", Node: activeNode},                // evac old active
 		buildStep("dropoff", fromClaim.OutboundDestination), // old active to destination
-		buildStep("pickup", toClaim.InboundSource),          // fetch new active
+		refillPickup(fromClaim, toClaim),                    // fetch new active
 		{Action: "dropoff", Node: activeNode},               // deliver new active
 	}
 	return ChangeoverDispatch{
 		StepsA:        steps,
 		DeliveryNodeA: activeNode, // last dropoff
 		AutoConfirmA:  true,
-		StepsB:        nil, // single-order shape
+		// The order OPENS by lifting the OLD bin off the inactive position, and
+		// lifts the old ACTIVE bin after the cutover wait, so it carries the
+		// from-style payload. Blank, lookupPayloadMeta backfills it to the TARGET
+		// style mid-changeover and both of those pickups then filter for a part
+		// the press does not have — no bin claimed, the ALN_001 shape.
+		//
+		// Safe to state now, and it was not before: this order ALSO fetches two
+		// fresh carriers, and until refillPickup stamped those steps with the
+		// incoming style they resolved bin-type compatibility against the order's
+		// payload. Naming the from-style here would have fetched the carrier type
+		// the press was LEAVING (N1-c). The two halves only work together, which
+		// is why press-index landed them in one commit (30630c70).
+		CarriesFromPayloadA: true,
+		StepsB:              nil, // single-order shape
 	}
 }
 
@@ -935,7 +992,7 @@ func BuildKeepStagedEvacSteps(fromClaim *processes.NodeClaim) []protocol.Complex
 // operator release to deliver.
 func BuildKeepStagedDeliverSteps(toClaim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
-		buildStep("pickup", toClaim.InboundSource),       // grab new
+		refillPickup(nil, toClaim),                       // grab new
 		stagingDropoff(toClaim.InboundStaging),           // stage new
 		stationWait(""),                                  // "ready"
 		{Action: "pickup", Node: toClaim.InboundStaging}, // grab new
@@ -950,7 +1007,7 @@ func BuildKeepStagedCombinedSteps(fromClaim, toClaim *processes.NodeClaim) []pro
 	return []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: toClaim.InboundStaging}, // grab keep-staged bin
 		buildStep("dropoff", fromClaim.InboundSource),    // return to market/source
-		buildStep("pickup", toClaim.InboundSource),       // grab changeover material
+		refillPickup(fromClaim, toClaim),                 // grab changeover material
 		stagingDropoff(toClaim.InboundStaging),           // stage new
 		stationWait(""),                                  // "ready"
 		{Action: "pickup", Node: toClaim.InboundStaging}, // grab new
