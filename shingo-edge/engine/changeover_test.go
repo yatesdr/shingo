@@ -1622,6 +1622,69 @@ func TestReleaseGuard_ConfirmReleasesAnyway(t *testing.T) {
 	}
 }
 
+// TestReleaseGuard_TheTrunkDeclinesOnAnUnreadPullState is the two doors giving
+// the same answer to the same physical question.
+//
+// The scoped door declines on an unreadable pull state and says why. The trunk
+// — /orders/{id}/release, the door the sim's auto-operator and a real operator
+// both drive — asked `pErr == nil && pulling`, so a runtime row that could not
+// be read sent the robot. The whole guard is confirm-overridable, so failing
+// closed costs one extra click on a flaky read; failing open means the answer to
+// "may a robot strip this position" depends on which button was pressed, in a
+// file whose own banner says "policy there, physics here".
+//
+// The unread state is manufactured the way the plant produces it — the runtime
+// row missing under a sequential paired claim — because that is what a partially
+// applied config or a hand-edited row looks like from here.
+func TestReleaseGuard_TheTrunkDeclinesOnAnUnreadPullState(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage")
+
+	if _, err := db.DB.Exec(
+		`DELETE FROM process_node_runtime_states WHERE process_node_id=?`, activeNodeID); err != nil {
+		t.Fatalf("drop the runtime row: %v", err)
+	}
+
+	err := eng.ReleaseOrderWithLineside(activeOrder, ReleaseDisposition{CalledBy: "op"})
+	if err == nil {
+		t.Fatal("the trunk released SEQ-A on a pull state it could not read. The scoped door declines " +
+			"on exactly this error; the trunk sent the robot. A guard that is confirm-overridable " +
+			"costs one extra click when it fails closed, and costs a stopped press when it fails open.")
+	}
+	if !strings.Contains(err.Error(), "SEQ-A") {
+		t.Errorf("refusal = %q, want it to name SEQ-A — the fact and the next click, or it is just a "+
+			"button that does not work", err.Error())
+	}
+	if got := orderStatusOf(t, db, activeOrder); got != string(orders.StatusStaged) {
+		t.Errorf("the order moved to %q despite the refusal; a declined click must change nothing", got)
+	}
+}
+
+// TestReleaseGuard_TheTrunkStillConfirmsThroughAReadableRefusal is the other
+// half of the same amendment: making the ERROR path decline must not turn the
+// ordinary readable refusal into a wall. The operator can still see the aisle.
+func TestReleaseGuard_TheTrunkStillConfirmsThroughAReadableRefusal(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage")
+
+	if err := eng.ReleaseOrderWithLineside(activeOrder,
+		ReleaseDisposition{CalledBy: "op"}); err == nil {
+		t.Fatal("the fixture is wrong: the line IS pulling from SEQ-A, so the unconfirmed click must " +
+			"be refused")
+	}
+	if err := eng.ReleaseOrderWithLineside(activeOrder,
+		ReleaseDisposition{CalledBy: "op", ConfirmActivePull: true}); err != nil {
+		t.Fatalf("the confirmed release was refused: %v. active_pull was READABLE and said true — the "+
+			"speed bump, which the operator outranks — not an unread state.", err)
+	}
+}
+
 // TestReleaseGuard_SweepDeclinesAndNamesTheNode — a plant-wide click carries no
 // per-node intent, so it can never answer the confirm the guard asks for. It
 // reports the position by name instead of deciding for the operator.

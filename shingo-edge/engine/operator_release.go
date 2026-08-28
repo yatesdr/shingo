@@ -137,11 +137,37 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	//
 	// Same speed-bump rule: refuse with the fact and the next click, and let an
 	// explicit confirm through with an audit line.
-	if pulling, own, partner, pErr := e.linePullsFrom(node.ID); pErr == nil && pulling {
-		if !disp.ConfirmActivePull {
-			return fmt.Errorf("the line is pulling from %s; flip to %s first, or confirm to release anyway",
-				own, partner)
-		}
+	//
+	// ── AN UNREADABLE PULL STATE DECLINES ─────────────────────────────────
+	//
+	// This read `pErr == nil && pulling`, so a runtime row that could not be read
+	// released. The scoped sibling declines on that same error and says why
+	// (activePullGuard), and the asymmetry meant the answer to one PHYSICAL
+	// question — may a robot strip this position — depended on which door the
+	// click came through. In a trunk whose own banner says "policy there, physics
+	// here" that is the wrong half to be inconsistent about.
+	//
+	// The cost of failing closed is one extra click on a flaky read, because the
+	// guard is confirm-overridable. The cost of failing open is a robot lifting
+	// the bin a running press is drawing from.
+	//
+	// A CONFIRM DOES NOT PASS AN UNREAD STATE, again matching the scoped door: the
+	// confirm answers "the bit says pulling and I have looked", which is not an
+	// answer to "nothing could be read". The readable refusal below is unchanged
+	// and still confirms through.
+	pulling, own, partner, pErr := e.linePullsFrom(node.ID)
+	if own == "" {
+		own = node.CoreNodeName // linePullsFrom could not even name it
+	}
+	switch {
+	case pErr != nil:
+		log.Printf("release order %d at node %s: %v — declining rather than releasing on an "+
+			"unread pull state", orderID, own, pErr)
+		return fmt.Errorf("node %s: could not read whether the line is pulling from it (%w)", own, pErr)
+	case pulling && !disp.ConfirmActivePull:
+		return fmt.Errorf("the line is pulling from %s; flip to %s first, or confirm to release anyway",
+			own, partner)
+	case pulling:
 		log.Printf("AUDIT release-override: node=%s order=%d called_by=%q — the line was recorded as "+
 			"pulling from this position and the operator released it anyway", own, orderID, disp.CalledBy)
 	}

@@ -371,6 +371,27 @@ func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingU
 // has one is unaffected, so no existing path changes. It is safe to write
 // through: a position claim carries its PARENT's row id, unlike the loader synth
 // whose ID is 0 (see domain.SynthesizePositionClaim and Loader.SynthClaim).
+//
+// ── THIS DOOR IS NOT LINE-PULL GUARDED, AND THAT IS DELIBERATE ────────────
+//
+// It is the Material page's Release / Release-partial path, and it takes a bin
+// off a position and sends it to the outbound destination WITHOUT asking
+// linePullsFrom — the question the other three doors ask (the trunk
+// ReleaseOrderWithLineside, the changeover board's per-node click, and the
+// plant-wide sweep). Physically it is the same act: a robot lifting the bin a
+// position is holding.
+//
+// OWNER RULING 2026-08-28: it stays unguarded. "It's basically an admin release,
+// not guarded like the line" — this button is the material-management door, not
+// the button somebody at a running press presses, and the guard's own premise
+// (the operator can see the aisle, so the bit never outranks him) is doubly true
+// of the person driving this page.
+//
+// SO THE RULING IS THE THING TO READ FIRST if you are about to wire this into an
+// operator flow on a SEQUENTIAL press, where the whole choreography rests on the
+// other position taking over before this one is cleared. Guarding it then is a
+// change to what the owner decided, not a bug fix — and the guard belongs on the
+// wait, not bolted onto a fourth door, which is the lesson the trunk records.
 func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemainingUOP *int, fallback *processes.NodeClaim) (*storeorders.Order, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
