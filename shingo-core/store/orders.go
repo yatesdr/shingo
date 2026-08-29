@@ -374,10 +374,13 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	// stamped: the pointer wedge, built for the winner. The error aborts the
 	// transaction and everything unwinds on the caller's defer.
 	//
-	// SCOPE: planning-time digs, which is what this transaction is. A GATE-STAGED
-	// dig keeps today's unconditional steal — a robot is at the mark and §R.104
-	// deliberately keeps its lane lock — and its ranked half rides the cordon
-	// beneficiary column (tier step 5).
+	// SCOPE: EVERY dig, gate-staged included. The gate sits in the one
+	// compound-creation door — CreateCompoundOrder → writeCompoundChildren → here
+	// (dispatch/compound.go) — and there is no second one, so a robot standing at
+	// a mark digging its own lane open contests its blockers on the same ranking
+	// as a dig planned from scratch. A gate-staged dig that yields parks under
+	// dig-blocker-promised and KEEPS its lane lock, which §R.104 requires: a
+	// corridor with a robot in its mouth is not released.
 	digRank, err := orders.LoadDemandRank(tx, childID)
 	if err != nil {
 		return nil, err

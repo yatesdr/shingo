@@ -58,10 +58,10 @@ import (
 //     is about to leave on its own. This code does not re-implement that test; it
 //     asks, and takes the answer. (It also pre-checks the same fact one read
 //     earlier, purely to avoid minting a parent order it is about to cancel.)
-//   - SOFT-HELD BLOCKER → THE GUARD'S POLICY, which is that the dig wins and the
-//     holder recalculates: "a blocker is positional — the dig has no choice about
-//     which bins are in its way" (store/orders.go, stealSoftHold). Unchanged, and
-//     deliberately not special-cased here.
+//   - SOFT-HELD BLOCKER → THE RANKED TAKE DECIDES (§7). Positional is an argument
+//     about WHICH bin, not whose turn, so the dig wins only if its demand outranks
+//     the holder's (store/orders.go, stealSoftHolds). Outranked, it backs out whole
+//     and waits under dig-blocker-promised. Asked, not re-implemented here.
 //   - NO FREE SHUFFLE SLOT → WAIT. ErrNoShuffleSlot is congestion, never a fault.
 //   - A DIG ALREADY OWNS THE LANE → do nothing. Its completion re-drives us.
 //
@@ -245,6 +245,15 @@ type laneClearResult struct {
 	// somebody improves the wording.
 	blockerClaimant int64
 	blockerBin      int64
+	// blockerPromised says WHICH refusal this was, and the difference is the
+	// releaser. False: the holder has a hard claim, so a robot is driving the
+	// blocker out and the wait is that drive. True: the ranked take (§7) refused
+	// the steal because the holder's demand outranked the dig — the holder has a
+	// PROMISE and no robot, so nothing is moving and the wait ends when that
+	// demand takes its bin or ends. The callers park under different causes on it,
+	// and the stopped-blocker escalation is for claims only: a promise-holder has
+	// no robot to have stopped.
+	blockerPromised bool
 }
 
 // proposeLaneClearDig is THE ONE WRITER of a lane-clear dig: it takes the lane
@@ -518,7 +527,37 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 		return laneClearResult{outcome: laneClearLaneBusy}
 	}
 	if err := d.CreateCompoundOrder(requester, plan); err != nil {
-		d.laneLock.Unlock(lane.ID, requester.ID)
+		// A WAITING DIG HOLDS NOTHING — UNLESS ITS ROBOT IS ALREADY IN THE MOUTH.
+		//
+		// Backing out whole is the rule for a dig planned from scratch: it leaves
+		// the corridor so whoever can use it may, and that is what makes waiting
+		// cheaper than squatting. A GATE-STAGED requester cannot obey it. Its robot
+		// is standing at the mark holding a bin, so releasing the lane opens a
+		// corridor that is physically blocked to traffic that will queue behind the
+		// machine and wait on it — the deadlock §R.104 keeps the lock to prevent.
+		//
+		// It reached here on every refusal kind, and the ranked take made it
+		// routine: the plan-time pre-check only catches CLAIMED blockers, so a
+		// promised one (claimed_by NULL) always gets past it and lands on this arm.
+		if !IsGateStaged(requester) {
+			d.laneLock.Unlock(lane.ID, requester.ID)
+		}
+		// CARRY WHO AND WHICH REFUSAL, not just "blocked". The typed error holds
+		// both facts and this arm used to drop them: the callers then had no
+		// claimant to name and no way to tell the ranked refusal (§7) from the
+		// claimed one, so every yield parked under dig-blocker-claimed — a wait
+		// whose sentence promises a robot's drive that is not happening. The
+		// pre-check above populates the same fields for the case it catches.
+		var refused *store.BlockerClaimedError
+		if errors.As(err, &refused) {
+			return laneClearResult{
+				outcome:         laneClearBlockerClaimed,
+				err:             err,
+				blockerClaimant: refused.HolderID,
+				blockerBin:      refused.BinID,
+				blockerPromised: refused.Promised,
+			}
+		}
 		if errors.Is(err, store.ErrBlockerClaimed) {
 			return laneClearResult{outcome: laneClearBlockerClaimed, err: err}
 		}

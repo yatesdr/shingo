@@ -972,7 +972,8 @@ func (d *Dispatcher) proposeDigForBuriedPickup(order *orders.Order, laneName str
 		// way joins the list rather than getting its own arm because this caller
 		// reports nothing either way — the demand it is digging on behalf of is
 		// already parked with its own cause, which is what this site's header means
-		// by "one proposer, two reporting policies".
+		// by "one proposer, two reporting policies". The ranked take's promised
+		// refusal (§7) rides this same do-nothing arm for the same reason.
 		d.dbg("complex: no dig for %s yet on behalf of order %d (%v)", lane.Name, order.ID, res.err)
 	case laneClearNoGroup, laneClearSlotNotInLane, laneClearUnplannable:
 		// Geometry. The demand is NOT failed here: admission's refusal is about one

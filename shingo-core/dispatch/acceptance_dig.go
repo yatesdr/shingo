@@ -190,6 +190,22 @@ func (d *Dispatcher) summonOwnDigs(lane *nodes.Node, req acceptanceRequest) {
 		// and the row already carries the classifier's cause saying so.
 		d.dbg("lane gate: order %d cannot dig %s open — the lane is held", req.order.ID, lane.Name)
 	case laneClearBlockerClaimed:
+		if res.blockerPromised {
+			// THE RANKED REFUSAL IS NOT THE CLAIMED ONE (§7), and it must not reach
+			// parkOnClaimedBlocker. That fork asks whether the holder's ROBOT has
+			// stopped and files a RESOLVE-BY-HAND recovery row when it has; a
+			// promise-holder has no robot, so the liveness question is meaningless
+			// and the escalation would call an engineer out on a demand that is
+			// simply ahead in the queue. The wait ends when that demand takes its
+			// bin or ends — which is what dig-blocker-promised's releaser says.
+			log.Printf("lane gate: order %d is walled at %s and yielded the dig — bin %d is promised "+
+				"to order %d, whose demand outranks it. No robot is moving that bin; the wait ends "+
+				"when order %d takes it or ends",
+				req.order.ID, lane.Name, res.blockerBin, res.blockerClaimant, res.blockerClaimant)
+			d.setQueueReason(req.order, protocol.QueueStorageRearranging, CauseDigBlockerPromised,
+				QueueParams{Lane: lane.Name, Payload: req.order.PayloadCode})
+			return
+		}
 		d.parkOnClaimedBlocker(lane, req, res)
 	case laneClearNothingInTheWay:
 		d.dbg("lane gate: order %d needs no dig at %s after all — the lane changed under the verdict",

@@ -350,3 +350,89 @@ func TestRankedTake_ThePromisedCauseSurvivesTheWaitError(t *testing.T) {
 			"never end that way.", got, CauseDigBlockerPromised)
 	}
 }
+
+// TestSummonOwnDigs_AGateStagedDigYieldsWithoutCallingAHuman is the ranked take
+// at the OTHER door: a robot standing at a lane's mark, digging its own corridor
+// open, whose blocker is promised to a demand that outranks it.
+//
+// The gate is in the one compound-creation door (CreateCompoundOrder →
+// writeCompoundChildren → CreateCompoundChildren), and a gate-staged dig goes
+// through it like every other, so §7 governs this shape too — the scope comment
+// that said otherwise was describing a second door that does not exist.
+//
+// Three things have to be true and each one was wrong before:
+//
+//   - THE WAIT NAMES ITS OWN RELEASER. The lane-clear arm dropped the typed
+//     error's fields, so both refusals arrived as bare "blocked" and parked under
+//     dig-blocker-claimed — whose sentence promises a robot carrying the wall out.
+//     No robot is carrying anything here.
+//   - NO HUMAN IS CALLED. parkOnClaimedBlocker asks whether the holder's ROBOT
+//     has stopped and files a RESOLVE-BY-HAND recovery row when it has. A
+//     promise-holder has no robot, so that question is meaningless and its answer
+//     (claimantStopped on an order that has simply been sitting in the queue) is
+//     an engineer called out for a demand that is merely ahead in line.
+//   - THE CORRIDOR IS KEPT (§R.104). Releasing a lane with a robot in its mouth
+//     is the deadlock the lock exists to prevent, and the yield is not a reason to
+//     do it — the dweller is still standing there when the wait ends.
+func TestSummonOwnDigs_AGateStagedDigYieldsWithoutCallingAHuman(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	lane, _, w, _, bp := clearLaneFixture(t, db, "GSYIELD")
+	wall := testdb.CreateBinAtNode(t, db, bp.Code, w[0].ID, "GSYIELD-WALL")
+
+	// The blocker is PROMISED, not claimed: claimed_by is NULL, so the plan-time
+	// pre-check waves it through and the refusal comes from the ranked gate inside
+	// the transaction. Priority 9 against the dweller's 0 — the holder wins.
+	holder := promiseHolder(t, db, "gsyield-holder", 9, wall.ID)
+
+	steps := []resolvedStep{
+		{Action: protocol.ActionWait, Node: "GSYIELD-WALL-WAIT", WaitKind: WaitKindLane, WaitLane: lane.ID},
+		{Action: protocol.ActionPickup, Node: w[1].Name},
+	}
+	dweller := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "gsyield-dweller"
+		o.OrderType = OrderTypeComplex
+		o.Coordinated = true
+		o.Status = StatusStaged
+		o.SourceNode = w[1].Name
+	})
+	dweller = setSteps(t, db, dweller, steps)
+	// wait_index and vendor_order_id are not in orders.Create's column list, so a
+	// fixture that only set them on the struct reloads as NOT gate-staged and the
+	// shape under test quietly is not the shape under test.
+	_, err := db.DB.Exec(`UPDATE orders SET wait_index=0, vendor_order_id=$2 WHERE id=$1`,
+		dweller.ID, "gsyield-vendor")
+	testutil.MustNoErr(t, err, "stage the dweller at its mark")
+	dweller = reloadOrder(t, db, dweller.ID)
+	if !IsGateStaged(dweller) {
+		t.Fatal("fixture: the dweller is not gate-staged, so this is not the acceptance arm's shape")
+	}
+
+	// It took the corridor at RESOLVE (§R.101) and its robot is standing in it.
+	if !d.laneLock.TryLockFor(lane.ID, dweller.ID, digAskerFor(dweller)) {
+		t.Fatal("fixture: the dweller could not take the lane it is standing in")
+	}
+
+	d.summonOwnDigs(lane, acceptanceRequest{order: dweller, entry: w[1]})
+
+	after := reloadOrder(t, db, dweller.ID)
+	if after.QueueCause != string(CauseDigBlockerPromised) {
+		t.Errorf("the wait is %q, want %q. Bin %d is promised to order %d, which outranks this dig "+
+			"and has no robot — dig-blocker-claimed's releaser is a drive that has not started and "+
+			"is not going to.", after.QueueCause, CauseDigBlockerPromised, wall.ID, holder.ID)
+	}
+	if filed := stoppedBlockerAlarms(t, db, holder.ID); len(filed) != 0 {
+		t.Errorf("%d stopped-blocker alarm(s) filed against order %d, which is not stopped and has "+
+			"no robot to have stopped — it is a demand ahead in the queue. RESOLVE-BY-HAND is for a "+
+			"machine that should be moving.", len(filed), holder.ID)
+	}
+	owner, err := d.laneLock.ExcavationOwner(lane.ID)
+	testutil.MustNoErr(t, err, "read the lane's excavation owner")
+	if owner != dweller.ID {
+		t.Errorf("the lane's excavation owner is %d, want the dweller %d — its robot is standing in "+
+			"that corridor's mouth, and §R.104 keeps the lock for exactly that reason. Yielding the "+
+			"take is not a reason to open the lane to traffic the robot is blocking.", owner, dweller.ID)
+	}
+}

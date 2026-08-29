@@ -448,10 +448,12 @@ var causeReleasers = []causeReleaser{
 	},
 	{
 		cause: CauseDigBlockerPromised,
-		// PopAcquiring only: the ranked take is planning-time (the steal inside
-		// CreateCompoundChildren), so a yielding dig has not been dispatched and
-		// cannot be a dweller. A gate-staged dig keeps today's unconditional steal.
-		populations: []WaitPopulation{PopAcquiring},
+		// BOTH, because the ranked gate is in the one compound-creation door and
+		// every dig goes through it. A dig planned from scratch is acquiring; a
+		// summoner standing at a lane's mark digging its own corridor open is a
+		// DWELLER, and the acceptance arm parks it under this cause too. The
+		// lane-gate evaluator releases the second, the scanner the first.
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged},
 		// THE HOLDER HAS NO ROBOT, which is why this is not dig-blocker-claimed:
 		// it holds a promise, not ink, so the wait ends when that demand acts on
 		// its promise or ends.
