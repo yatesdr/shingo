@@ -51,6 +51,12 @@ var writtenByTheWriterItself = map[string]string{
 // struct without doing one or the other fails this test, which is the point —
 // the alternative is a hand-maintained list that quietly stops being total.
 func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
+	// The probe row stamps bin_id because bin_id is a COLUMN, and a status
+	// because status is a column, and the pair happens to spell an acquiring
+	// order pointing at a bin it does not hold. Nothing here is sourcing
+	// anything; the end-of-test wedge sweep would be reading a census as a
+	// scenario.
+	testdb.DisableWedgeSweep(t, "probe values for a column census, not a plant state")
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "RT-BIN-1")

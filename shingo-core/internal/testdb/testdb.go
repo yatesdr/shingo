@@ -727,7 +727,107 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 			atomic.AddInt64(&terminateFired, 1)
 		}
 	})
+
+	// ── THE END-OF-TEST INVARIANT SWEEP ──────────────────────────────────────
+	//
+	// REGISTERED SECOND SO IT RUNS FIRST. Cleanups are LIFO, and the drop above
+	// takes the database with it; a sweep behind it would have nothing to read.
+	//
+	// It is here rather than at each test because the wedge is not a property any
+	// one test is about. It is what happens when a write clears one ownership
+	// book and not another, and the writes that can do that are all over the
+	// tree: a steal, a release, a redirect, a recovery. A test that exercises one
+	// of them pays this automatically, which is the only way an invariant with
+	// that many potential authors gets checked at all.
+	//
+	// SKIPPED FOR A TEST THAT HAS ALREADY FAILED. Its database is mid-scenario by
+	// definition, and a second finding on top of the first is noise pointing at
+	// the wrong write.
+	//
+	// SKIPPED FOR A DATABASE THAT CANNOT ANSWER. A handful of tests break their
+	// own database on purpose — closing the handle, or dropping a column — to prove
+	// a reader fails closed instead of fabricating an answer. A sweep that fataled
+	// on "database is closed" or "column does not exist" would report those as
+	// findings, which is the fastest way to get an invariant check deleted. The
+	// probe below is the difference between "no wedge" and "no answer"; the
+	// exported assertion still fatals, because a caller who asks by name wants to
+	// know its question did not run.
+	//
+	// A test that MANUFACTURES the wedge, or writes an order row that is not a
+	// plant state at all, calls DisableWedgeSweep and says why.
+	t.Cleanup(func() {
+		if t.Failed() || wedgeSweepDisabled(t) {
+			return
+		}
+		if db.DB.Ping() != nil {
+			return
+		}
+		if _, err := db.DB.Exec(`SELECT id, bin_id, status FROM orders LIMIT 1`); err != nil {
+			return
+		}
+		AssertNoPointerWedge(t, db)
+	})
 	return db, cfg
+}
+
+// wedgeSweepOff records the tests that build the pointer wedge on purpose.
+var (
+	wedgeSweepMu  sync.Mutex
+	wedgeSweepOff = map[string]bool{}
+)
+
+// DisableWedgeSweep opts one test out of the end-of-test wedge sweep.
+//
+// FOR A TEST WHOSE ORDER ROWS ARE NOT A PLANT STATE, and nothing else. Three
+// kinds qualify: one that pins the detector itself, one that arranges the broken
+// state so a repair has something to repair, and one whose rows are probe values
+// rather than a scenario (the column round-trip census stamps a bin_id because
+// bin_id is a column, not because anything is sourcing).
+//
+// Every other failure of the sweep is a finding — a write that cleared one
+// ownership book and not another — and silencing it here would delete the only
+// automated notice of the shape.
+func DisableWedgeSweep(t testing.TB, why string) {
+	t.Helper()
+	if why == "" {
+		t.Fatal("DisableWedgeSweep needs a reason: the opt-out is only for a test that builds the wedge deliberately")
+	}
+	wedgeSweepMu.Lock()
+	wedgeSweepOff[t.Name()] = true
+	wedgeSweepMu.Unlock()
+	t.Cleanup(func() {
+		wedgeSweepMu.Lock()
+		delete(wedgeSweepOff, t.Name())
+		wedgeSweepMu.Unlock()
+	})
+}
+
+// KnownPointerWedge quarantines a test whose end state is a REAL wedge produced
+// by production code that has not been fixed yet.
+//
+// SEPARATE FROM DisableWedgeSweep ON PURPOSE, and the separation is the whole
+// value: an opt-out that means "this row is not a plant state" and an opt-out
+// that means "the plant does this and it is wrong" look identical once they are
+// both a skip, and the second kind is a defect nobody can find again. This one
+// is greppable, it takes the finding's name, and every call is an item of work.
+//
+// It exists because an invariant that lands on a tree with pre-existing
+// violations has two options, and "do not land the invariant" is the worse one:
+// everything the gate would have caught from here on goes uncaught while the
+// known defect waits for its owner.
+func KnownPointerWedge(t testing.TB, finding string) {
+	t.Helper()
+	if finding == "" {
+		t.Fatal("KnownPointerWedge needs the finding: a quarantine nobody can name is a skip")
+	}
+	t.Logf("KNOWN POINTER WEDGE (quarantined, not fixed): %s", finding)
+	DisableWedgeSweep(t, finding)
+}
+
+func wedgeSweepDisabled(t testing.TB) bool {
+	wedgeSweepMu.Lock()
+	defer wedgeSweepMu.Unlock()
+	return wedgeSweepOff[t.Name()]
 }
 
 // sharedDBs tracks the per-key databases handed out by OpenShared. One clone

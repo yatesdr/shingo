@@ -68,6 +68,7 @@ func noneLaneWithTwoSlots(t *testing.T, db *store.DB, prefix string) (laneID int
 // lane-target-buried.
 func TestQuestionSet_PlainEntryDoesNotAskReachability(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "the order row is an argument to AcquireLanesForOrder, not a sourcing scenario")
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
 	_, shallow, deep := noneLaneWithTwoSlots(t, db, "QS-PLAIN-REACH")
@@ -208,6 +209,7 @@ func TestQuestionSet_PlainEntryStillAsksOccupancyOnAnUnmarkedLane(t *testing.T) 
 // no setter left — so the mutation now has to put it back before it can be set.)
 func TestQuestionSet_GateStagedRetrieveAsksOccupancy(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "the order row is an argument to AcquireLanesForOrder, not a sourcing scenario")
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	laneID, shallow, _ := noneLaneWithTwoSlots(t, db, "QS-RETR-OCC")
@@ -246,6 +248,7 @@ func TestQuestionSet_GateStagedRetrieveAsksOccupancy(t *testing.T) {
 // asked, with the same two causes.
 func TestQuestionSet_GateStagedRetrieveAsksDigAndReachability(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "the order row is an argument to AcquireLanesForOrder, not a sourcing scenario")
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	laneID, shallow, deep := noneLaneWithTwoSlots(t, db, "QS-RETR-POS")

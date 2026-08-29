@@ -128,6 +128,11 @@ func TestDigSteal_RepairsEveryHolderNotOne(t *testing.T) {
 // construction-bug sentence for an order nobody constructed wrongly.
 func TestDigSteal_LeavesAHandPlacedOrderPointedAndReportsIt(t *testing.T) {
 	t.Parallel()
+	// The store's half of the answer is deliberately half: it leaves the order
+	// pointed and REPORTS it, and the disposition belongs to the dispatch caller,
+	// which is not in this test. So the row this test ends on IS the wedge, on
+	// purpose — dig_hand_placed_docker_test.go is where it gets ended.
+	testdb.DisableWedgeSweep(t, "the store reports the displaced order; the dispatch caller ends it, and is not here")
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "STEAL-HAND")

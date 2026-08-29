@@ -1140,6 +1140,10 @@ func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
 
 func TestDispatcher_FleetFailure(t *testing.T) {
 	t.Parallel()
+	testdb.KnownPointerWedge(t, "the fleet-refusal rollback (ReleaseClaimByOrder, store/orders.go) deletes the order's "+
+		"reservations and leaves orders.bin_id stamped, so the order re-enters through "+
+		"dispatchHeldBin — which never re-acquires — and cannot confirm. Both rollback sites "+
+		"in fulfillment/scanner.go carry a comment saying it re-soft-acquires next tick; nothing does")
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
