@@ -1229,16 +1229,24 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 }
 
 // ListAcquiring returns all orders in an "acquiring" status (queued or
-// sourcing) — the fulfillment scanner's retry set — ordered by priority DESC
-// (highest first) then created_at ASC (FIFO within a priority class).
-// orders.priority is INTEGER NOT NULL DEFAULT 0, so unset orders fall to FIFO
-// naturally.
+// sourcing) — the fulfillment scanner's retry set — IN THE PLANT'S RANKED
+// ORDER. orders.priority is INTEGER NOT NULL DEFAULT 0, so unset orders fall to
+// FIFO naturally.
+//
+// THE ORDER BY IS THE COMPARATOR'S SQL TWIN, not a translation of it. This is
+// one of §9's two callers — the line's ordering — and the other is the steal's
+// under-lock outrank check; they call the same ranking, one in SQL and one in
+// Go, and TestNoThirdSpellingOfTheDemandRanking pins that there is no third.
+// The owner's reason: "one day we'll expand the demand logic from first come
+// first served to like time-to-empty", and that day is a one-spot change only
+// while the ranking is spelled once.
 //
 // Widened from queued-only: the scanner also retries orders sitting in
 // `sourcing`. Once MoveToSourcing moved to the start of the reserve
 // attempt few orders rest there, but the scan set must see them when they do.
 func ListAcquiring(db *sql.DB) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status IN (%s) ORDER BY priority DESC, created_at ASC`, SelectCols, protocol.AcquiringStatusSQLList()))
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status IN (%s) ORDER BY %s`,
+		SelectCols, protocol.AcquiringStatusSQLList(), DemandRankOrderBySQL("")))
 	if err != nil {
 		return nil, err
 	}
