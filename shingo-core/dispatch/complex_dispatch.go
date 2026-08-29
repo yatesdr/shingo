@@ -884,6 +884,21 @@ func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode
 	return true
 }
 
+// SetQueueReason is the exported form, for a door OUTSIDE this package that
+// parks an order and then transitions it.
+//
+// Only the engine's bin-move door needs it, and it needs it for a reason worth
+// stating: it wrote the queue detail STRAIGHT TO THE STORE and then called
+// Queue(). The transition's history row takes its code from the IN-MEMORY order
+// (historyReason), which a direct store write never touches — so the fresh
+// `queued` row was born blank, and the only durable record of what a person's
+// move was waiting for did not exist. The three in-package helpers all write
+// both halves; this makes that shape reachable from outside rather than growing
+// a fourth spelling of it.
+func (d *Dispatcher) SetQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) bool {
+	return d.setQueueReason(order, code, cause, params)
+}
+
 // failOrderInternal is the scanner-path failure helper. Same as
 // failOrder but doesn't take an envelope (no edge-bound reply — the
 // edge already has the queued status from intake; it'll learn about

@@ -367,10 +367,16 @@ func (e *Engine) queueBinMoveForLane(order *orders.Order, bin *bins.Bin, sourceN
 		e.logFn("engine: release lanes for parked bin move %d: %v", order.ID, lerr)
 	}
 
+	// THROUGH THE DISPATCHER'S HELPER, NOT STRAIGHT TO THE STORE, and that is the
+	// whole of this line's history. The store write left order.QueueCode empty on
+	// the struct in hand; Queue()'s history row reads its code off that struct
+	// (dispatch/lifecycle.go historyReason), so the fresh `queued` row was born
+	// blank — and orders.queue_code is overwritten in place, so that row was the
+	// only durable record there was ever going to be of what this person's move
+	// waited for. The helper writes both halves, which is why the three park sites
+	// inside dispatch have never had this problem.
 	reason := dispatch.FormatQueueSentence(code, params)
-	if err := e.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
-		e.logFn("engine: set queue_reason for parked bin move %d: %v", order.ID, err)
-	}
+	e.dispatcher.SetQueueReason(order, code, cause, params)
 	if err := e.dispatcher.Lifecycle().Queue(order, "bin-move", reason); err != nil {
 		// The order is stuck at `pending`, which no scanner pass selects. Say so
 		// loudly and fail it rather than hand back a row nothing will ever drive.
