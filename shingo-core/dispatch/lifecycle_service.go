@@ -501,6 +501,39 @@ func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode 
 	if err != nil {
 		return nil, nil, err
 	}
+	// ── THE OLD DESTINATION IS BEING LEFT, SO ITS SLOT GOES BACK ──────────
+	//
+	// The re-aim below rewrote delivery_node and left the previous
+	// destination's slot claim and reservation standing, with nothing anywhere
+	// that would ever release them: no robot arrives there to clear them, and
+	// the terminal release fires against whatever the order holds at the END,
+	// which by then is the NEW slot. So a live order held a slot it had no
+	// intention of visiting, forever, and every demand that wanted that slot was
+	// refused by a hold nobody could trace to a robot.
+	//
+	// ReleaseSlotClaim is the right primitive and its own doc names this case:
+	// "the coupled inverse of ConfirmSlotClaim ... for a CONFIRMED slot the
+	// reserve reconcile abandons (a re-resolution moved the dropoff)". A redirect
+	// IS a re-resolution that moves the dropoff. Owner-scoped, coupled, and
+	// idempotent, so a destination that was never reserved costs one no-op.
+	//
+	// SCOPED TO A DESTINATION ACTUALLY BEING LEFT. A redirect that names the node
+	// the order already has leaves nothing, and releasing there would drop a hold
+	// the order is still going to use.
+	//
+	// Logged rather than returned, like the delivery_node write below it: the
+	// redirect is the operator's, the vendor order is already cancelled, and
+	// failing the request over a hold that the acquiring-claim backstop also
+	// sweeps would be the worse trade.
+	if oldDeliveryNode := order.DeliveryNode; oldDeliveryNode != "" && oldDeliveryNode != newDeliveryNode {
+		if oldDest, oerr := s.db.GetNodeByDotName(oldDeliveryNode); oerr == nil && oldDest != nil {
+			if rerr := s.db.ReleaseSlotClaim(oldDest.ID, order.ID); rerr != nil {
+				log.Printf("dispatch: release order %d's hold on %s after a redirect to %s: %v "+
+					"(the old slot stays held by an order that is not coming)",
+					order.ID, oldDeliveryNode, newDeliveryNode, rerr)
+			}
+		}
+	}
 	if err := s.db.UpdateOrderDeliveryNode(order.ID, newDeliveryNode); err != nil {
 		log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
 	}
