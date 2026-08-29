@@ -284,9 +284,18 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 // detail to the store, so the categories existed in memory and never reached
 // disk. This is the thread-through.
 //
-// On a →queued row the code is the QUEUE code, not a terminal one: the order
-// is not ending, it is waiting, and orders.queue_code is overwritten in place
-// so the history row is the only place that reason becomes a time series.
+// On a row into the ACQUIRING set the code is the QUEUE code, not a terminal
+// one: the order is not ending, it is waiting, and orders.queue_code is
+// overwritten in place so the history row is the only place that reason becomes
+// a time series.
+//
+// KEYED ON THE PREDICATE, NOT ON `queued`. It was queued-only, which left the
+// other half of the acquiring set uncovered: a door that writes a reason while
+// the order is still `pending` and then moves it to `sourcing` (planning's
+// reserve path) had its code carried nowhere — the fresh sourcing row was born
+// blank, and SetQueueDetail does not stamp a pending row precisely because this
+// carry is supposed to do it. No arm loses anything: MoveToSourcing's Event
+// carries no ErrorCode, so there is nothing here for the queue code to displace.
 //
 // The reference defaults to the order's own node and payload when the call
 // site did not set one. That is not a guess — it is the node and payload the
@@ -294,8 +303,8 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 func (s *LifecycleService) historyReason(ord *orders.Order, to protocol.Status, ev Event) store.HistoryReason {
 	r := store.HistoryReason{Code: ev.ErrorCode, Actor: ev.Actor, Ref: ev.Ref}
 
-	if to == StatusQueued {
-		// A terminal code on a queued row would be a category error.
+	if protocol.IsAcquiring(to) {
+		// A terminal code on a waiting row would be a category error.
 		r.Code = ord.QueueCode
 	}
 

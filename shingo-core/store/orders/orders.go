@@ -395,30 +395,79 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 		return err
 	}
 
-	// Stamp the code onto this queue EPISODE's history row.
+	// ── STAMP THE CODE ONTO THE EPISODE THE ORDER IS RESTING IN ───────────
 	//
 	// orders.queue_code is a live column overwritten in place, so it only ever
 	// answers "why is this order stuck right now" — which is the single reason
 	// starvation-by-cause has been unqueryable. There is no record anywhere of
-	// what an order waited for last Tuesday.
+	// what an order waited for last Tuesday. The history row is what makes the
+	// code a time series, and this is the write that puts it there.
 	//
-	// The code is not known at the moment of the →queued transition (the
-	// scanner discovers the reason on a later pass), so this updates the most
-	// recent queued row rather than inserting a new one. Re-queueing creates a
-	// fresh queued row, so each EPISODE keeps its own reason; successive
-	// updates within one episode overwrite that episode's row, which is
-	// correct — the last known reason is why it was still waiting.
+	// The code is not known at the moment of the transition (the scanner
+	// discovers the reason on a later pass), so this UPDATES the row that opened
+	// the current episode rather than inserting a new one. Each episode keeps its
+	// own reason; successive updates within one episode overwrite that episode's
+	// row, which is correct — the last known reason is why it was still waiting.
+	//
+	// IT USED TO NAME 'queued', AND THAT WAS WRONG TWICE. A complex order is born
+	// `queued` by INSERT and had no queued row at all, so the UPDATE matched
+	// nothing, silently, for the order's whole life — every swap leg's and
+	// changeover leg's wait history, never recorded. And an order parked in
+	// `sourcing` — which is most parks, since the requeue arms all target sourcing
+	// and sourcing→sourcing self-skips — had its cause written onto its LAST
+	// QUEUED ROW: a different, earlier episode. The instrument the whole program
+	// measures by was wrong in both directions.
+	//
+	// The order's own status is the discriminator, read inside this transaction —
+	// which the UPDATE above has already locked the row for, so a concurrent
+	// transition cannot move the target out from under the stamp.
+	//
+	// TWO GUARDS ON WHERE IT MAY LAND:
+	//
+	//   TERMINAL — never. `code` on a terminal row is a protocol.TermCode, the
+	//   record of how the order ENDED; a QueueCode over it is a category error.
+	//   The old spelling could not reach one because it named 'queued'; aiming at
+	//   the current episode can, so the guard becomes explicit.
+	//
+	//   PENDING — never. Pending is the birth certificate, not a wait: the order
+	//   has not entered the ladder, and the doors that write a reason there are
+	//   about to queue it (planning_service, the bin-move door). Their code rides
+	//   the transition onto the new row via lifecycle.historyReason, so stamping
+	//   the birth row too would put one wait on two rows and read every
+	//   intake-side park twice.
+	//
+	// NO ROW FOR THE CURRENT EPISODE means an order created before the birth row
+	// existed — a plant upgrades with live orders on the board. Rather than drop
+	// the cause the way the old stamp dropped every complex order's, the row is
+	// INSERTED. Its created_at is when the cause was written rather than when the
+	// episode began, so a duration measured from it under-reads for exactly that
+	// population, which empties itself within one order lifetime.
 	//
 	// Clearing (empty code, on successful dispatch) deliberately does NOT wipe
 	// the history row: the order waited for that reason, and it having stopped
 	// waiting does not unmake the fact.
 	if code != "" {
-		if _, err := tx.Exec(
-			`UPDATE order_history SET code = $2
-			 WHERE id = (SELECT id FROM order_history
-			             WHERE order_id = $1 AND status = 'queued'
-			             ORDER BY id DESC LIMIT 1)`, id, code); err != nil {
+		var status string
+		if err := tx.QueryRow(`SELECT status FROM orders WHERE id=$1`, id).Scan(&status); err != nil {
 			return err
+		}
+		if s := protocol.Status(status); !protocol.IsTerminal(s) && s != protocol.StatusPending {
+			res, err := tx.Exec(
+				`UPDATE order_history SET code = $2
+				 WHERE id = (SELECT id FROM order_history
+				             WHERE order_id = $1 AND status = $3
+				             ORDER BY id DESC LIMIT 1)`, id, code, status)
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				if _, err := tx.Exec(
+					`INSERT INTO order_history (order_id, status, detail, code, created_at)
+					 VALUES ($1, $2, $3, $4, $5)`,
+					id, status, reason, code, clock.Now().UTC()); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return tx.Commit()
