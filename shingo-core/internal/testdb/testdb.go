@@ -762,10 +762,22 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 		if db.DB.Ping() != nil {
 			return
 		}
-		if _, err := db.DB.Exec(`SELECT id, bin_id, status FROM orders LIMIT 1`); err != nil {
+		// The probe names EVERY column the sweeps below read. It listed three, and
+		// the armor assertion reads two more — so a test that drops
+		// vendor_order_id on purpose (to prove a writer fails closed) passed the
+		// probe and then died inside the sweep on "column does not exist", which
+		// is the exact shape the paragraph above says gets an invariant check
+		// deleted.
+		if _, err := db.DB.Exec(
+			`SELECT id, bin_id, status, vendor_order_id, updated_at FROM orders LIMIT 1`); err != nil {
 			return
 		}
 		AssertNoPointerWedge(t, db)
+		// The armor half of the same question, on the same terms and behind the
+		// same probe: does what an order HOLDS agree with what its status CLAIMS.
+		// It rides the wedge sweep's opt-out because a test whose order rows are
+		// not a plant state is not a plant state for either assertion.
+		AssertArmorMatchesStatus(t, db)
 	})
 	return db, cfg
 }
@@ -787,6 +799,13 @@ var (
 // Every other failure of the sweep is a finding — a write that cleared one
 // ownership book and not another — and silencing it here would delete the only
 // automated notice of the shape.
+//
+// CALL IT BEFORE Open, and the ordering is load-bearing rather than stylistic.
+// Cleanups are LIFO and this function registers one that CLEARS the flag, so a
+// call made after Open has its clear run BEFORE the sweep reads it — the opt-out
+// then does nothing at all, silently, and the test fails on the state it
+// declared it was building on purpose. Every existing caller happens to get this
+// right; nothing enforced it, and it cost a debugging round to find.
 func DisableWedgeSweep(t testing.TB, why string) {
 	t.Helper()
 	if why == "" {

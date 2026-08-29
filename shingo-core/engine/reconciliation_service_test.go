@@ -277,6 +277,7 @@ func TestReconciliationService_Summary_FreshDB(t *testing.T) {
 
 func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -333,6 +334,7 @@ func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 // abandonOrder callback — production wires it to LifecycleService.CancelOrder.
 func TestAbandonStuckOrders(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -467,6 +469,7 @@ func TestAbandonStuckOperatorGatedStaging(t *testing.T) {
 // moved) is still swept.
 func TestPreDispatchNotSwept(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -656,6 +659,7 @@ func TestReconciliationService_ListAnomalies_Empty(t *testing.T) {
 
 func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)

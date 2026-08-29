@@ -124,6 +124,7 @@ func TestCoverage_GetReconciliationSummary(t *testing.T) {
 // executed at all, by the thing that executes it in production.
 func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testdb.Open(t)
 
 	node := &nodes.Node{Name: "STUCK-LINE", Enabled: true}

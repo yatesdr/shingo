@@ -90,9 +90,13 @@ func TestSwapRemovalLegHeld_UntilSupplyClaims(t *testing.T) {
 	// Supply secures a replacement bin (claimed_by supply) → the hold clears.
 	superBin := &bins.Bin{BinTypeID: 1, Label: "SWAP-SUPER-BIN", NodeID: &superNode.ID, Status: "staged"}
 	testutil.MustNoErr(t, db.CreateBin(superBin), "create super bin")
-	if _, err := db.DB.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, supply.ID, superBin.ID); err != nil {
-		t.Fatalf("claim super bin for supply: %v", err)
-	}
+	// THROUGH THE FIXTURE HELPER, not a raw claimed_by write. The raw write left
+	// the supply leg — still `queued` — holding a hard claim with no reservation
+	// of its own behind it, which is the half-confirmed park: a bin taken, and
+	// the reservation book that every rank comparison reads unable to see that it
+	// is. ClaimBinForTest reserves, claims and confirms, which is what the
+	// production confirm does in one step.
+	testdb.ClaimBinForTest(t, db, superBin.ID, supply.ID)
 	removal, _ = db.GetOrderByUUID("swap-removal")
 	if held, _ := d.swapLegHeld(removal, removalSteps); held {
 		t.Error("removal leg should no longer be held once supply has a claimed bin")

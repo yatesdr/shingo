@@ -92,11 +92,16 @@ func TestDigRow_SurvivesChildPickup(t *testing.T) {
 	// slot the first leg just emptied, which is what "the target is still buried"
 	// means and why the lane is still the dig's.
 	target := testdb.CreateBinAtNode(t, db, "PAYLOAD-A", slots[len(slots)-1].ID, "BIN-DIGLIFE-TGT")
-	testdb.CreateOrder(t, db, func(o *orders.Order) {
+	remaining := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.ParentOrderID = &parent.ID
 		o.BinID = &target.ID
 		o.SourceNode = slots[len(slots)-1].Name
 	})
+	// AND IT HOLDS THE BIN IT POINTS AT. CreateCompoundChildren claims a leg's bin
+	// in the same transaction that creates it; a fixture that hand-builds the legs
+	// has to do the same, or it describes a leg dispatched toward a bin nobody
+	// holds — which the shared armor assertion correctly reports.
+	testdb.ClaimBinForTest(t, db, target.ID, remaining.ID)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	ll := NewLaneLockWithDB(db.DB)

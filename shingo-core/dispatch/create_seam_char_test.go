@@ -65,6 +65,12 @@ func TestCharSeam_PlainStore_TakesOccupancyBeforeTheCreate(t *testing.T) {
 		o.DeliveryNode = mouth.Name
 		o.Status = StatusSourcing
 	})
+	// ARMED, NOT JUST POINTED. Production reserves the bin, stamps the pointer and
+	// CONFIRMS (which writes the hard claim) before it asks the fleet — so a
+	// fixture that stamps bin_id alone describes a state the plant cannot be in,
+	// and one that dispatches on it describes a robot committed to a bin nobody
+	// holds. Both assertions in the shared teardown say so.
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
 	order, _ = db.GetOrder(order.ID)
 
@@ -102,19 +108,19 @@ func TestCharSeam_PlainStore_ReleasesOccupancyWhenTheCreateFails(t *testing.T) {
 		o.DeliveryNode = mouth.Name
 		o.Status = StatusSourcing
 	})
-	// THE SOFT HOLD GOES WITH THE POINTER, and this line is a finding rather than
-	// a fixture tidy-up. The fixture stamped orders.bin_id and took no reservation,
+	// THE HOLD GOES WITH THE POINTER, and this line is a finding rather than a
+	// fixture tidy-up. The fixture stamped orders.bin_id and took nothing at all,
 	// which is not a state the plant can be in: bin_id is written at SOFT-RESERVE
-	// time (fulfillment/scanner.go), so a stamped pointer always has paper behind
-	// it. Without it this order was wedged BEFORE the fleet was ever asked —
-	// measured: reservations=0, binClaims=0, bin_id stamped — and the wedge sweep
-	// was correctly reporting a shape the refusal had not produced.
+	// time (fulfillment/scanner.go) and the confirm before dispatch turns it into
+	// a hard claim. Without either, this order was wedged BEFORE the fleet was
+	// ever asked — measured: reservations=0, binClaims=0, bin_id stamped — and the
+	// wedge sweep was correctly reporting a shape the refusal had not produced.
 	//
 	// It matters because this test carried a KnownPointerWedge quarantine blaming
 	// the fleet-refusal rollback for deleting "the order's reservations". This
 	// order never had one. The quarantine was mis-attributed, and fixing the door
 	// alone would have left it red for a reason that had nothing to do with it.
-	testutil.MustNoErr(t, d.binManifest.ReserveForDispatch(bin.ID, order.ID), "soft-reserve the bin")
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
 	order, _ = db.GetOrder(order.ID)
 
@@ -183,6 +189,12 @@ func TestCharSeam_GatedCreate_TakesNoOccupancyUntilTheTail(t *testing.T) {
 		o.DeliveryNode = mouth.Name
 		o.Status = StatusSourcing
 	})
+	// ARMED, NOT JUST POINTED. Production reserves the bin, stamps the pointer and
+	// CONFIRMS (which writes the hard claim) before it asks the fleet — so a
+	// fixture that stamps bin_id alone describes a state the plant cannot be in,
+	// and one that dispatches on it describes a robot committed to a bin nobody
+	// holds. Both assertions in the shared teardown say so.
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
 	order, _ = db.GetOrder(order.ID)
 	_, gErr := d.DispatchDirect(order, srcNode, mouth)

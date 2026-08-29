@@ -167,6 +167,10 @@ func TestAcquiringOrphanClaims_AHealthyClaimSurvives(t *testing.T) {
 // is to leave it visible.
 func TestAcquiringOrphanClaims_ADisagreementAboutWHOIsNotSwept(t *testing.T) {
 	t.Parallel()
+	// This fixture BUILDS the orphan claim on purpose — it is the exact state the
+	// sweep under test exists to clean, so the armor assertion's converse clause is
+	// correctly reporting the thing being arranged. Before Open (LIFO cleanups).
+	testdb.DisableWedgeSweep(t, "this fixture arranges an acquiring order holding a claim with no reservation so ReleaseAcquiringOrphanClaims has something to sweep")
 	db := testdb.Open(t)
 	bin, order := orphanFixture(t, db, "ORPH-WHO", "queued")
 

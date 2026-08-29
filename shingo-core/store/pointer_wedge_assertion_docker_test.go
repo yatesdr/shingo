@@ -87,6 +87,10 @@ func TestPointerWedge_AssertionCatchesIt(t *testing.T) {
 // three ordinary states look superficially like the wedge.
 func TestPointerWedge_AssertionLeavesHealthyOwnershipAlone(t *testing.T) {
 	t.Parallel()
+	// The detector's OWN fixture: these rows are probe values chosen to sit either
+	// side of one predicate, not a plant state. Before Open — cleanups are LIFO
+	// and this registers one that clears the flag.
+	testdb.DisableWedgeSweep(t, "this test pins the ownership assertions themselves; its rows are probe values on both sides of the predicate, not a scenario")
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
 

@@ -123,6 +123,7 @@ func mustRecord(t *testing.T, db *store.DB, orderID int64, cause string) {
 // with a vendor id.
 func TestArmoredWithNoVendorOrder(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testdb.Open(t)
 
 	wedged := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "dispatched" })
