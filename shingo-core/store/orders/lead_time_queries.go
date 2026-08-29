@@ -13,7 +13,7 @@
 //
 // State-transition pairs:
 //
-//	l1_queue_seconds       queued → acknowledged    (mean,   retrieve_empty)
+//	l1_queue_seconds       queued → dispatched      (mean,   retrieve_empty)
 //	l1_transit_seconds     in_transit → delivered   (mean,   retrieve_empty)
 //	l2_load_seconds        delivered → confirmed    (median, retrieve_empty)
 //	market_to_cell_seconds in_transit → delivered   (p95,    retrieve)
@@ -39,10 +39,17 @@ type LeadTimeRange struct {
 	End   time.Time
 }
 
-// AvgL1QueueSeconds returns the mean elapsed seconds from queued → acknowledged
+// AvgL1QueueSeconds returns the mean elapsed seconds from queued → dispatched
 // for L1 retrieve_empty orders in the window. payloadCode "" means all payloads.
+//
+// IT ENDED AT `acknowledged`, AND CORE NEVER WRITES ONE — see FlowDwellPairs in
+// domain/telemetry.go for the arm and why it is dead. This helper was therefore
+// structurally zero, and its zero was not harmless: the threshold calculator
+// adds it to the L1 lead time, so every reorder point in the plant was computed
+// as if waiting in the line took no time at all. `dispatched` is the honest end
+// of that wait — the fleet call made, armor on.
 func AvgL1QueueSeconds(db *sql.DB, payloadCode string, r LeadTimeRange) (float64, error) {
-	return avgTransition(db, "queued", "acknowledged", payloadCode, "retrieve_empty", r)
+	return avgTransition(db, "queued", "dispatched", payloadCode, "retrieve_empty", r)
 }
 
 // AvgL1TransitSeconds returns the mean in_transit → delivered seconds for L1

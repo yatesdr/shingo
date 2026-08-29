@@ -48,12 +48,16 @@ func TestDwellStats_PercentilesAndCounts(t *testing.T) {
 		}
 	}
 
-	// Four orders whose queued→acknowledged durations are 10, 20, 30, 40s.
+	// Four orders whose queued→dispatched durations are 10, 20, 30, 40s.
 	// p50 = 25, p95 = 38.5 (PERCENTILE_CONT interpolates).
+	//
+	// `dispatched`, not `acknowledged`: time_to_dispatch used to name a status
+	// Core never writes, so the pair could only ever report zero — see
+	// FlowDwellPairs. This fixture now walks the ladder a real order walks.
 	for i, gap := range []time.Duration{10 * s, 20 * s, 30 * s, 40 * s} {
 		off := time.Duration(i) * 10 * time.Minute
 		seed(string(rune('a'+i)), "retrieve", "PART-A", []ev{
-			{"queued", off}, {"acknowledged", off + gap},
+			{"queued", off}, {"dispatched", off + gap},
 			{"in_transit", off + gap + 5*s}, {"delivered", off + gap + 65*s},
 		})
 	}
