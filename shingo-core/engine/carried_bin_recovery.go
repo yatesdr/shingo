@@ -147,8 +147,15 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, st
 		// The pin. See dispatch.pinnedVehicleFor for why the intent and not
 		// robot_id alone is what makes this a pin.
 		SourceIntent: dispatch.SourceIntentOnDeck,
-		RobotID:      robotID,
-		EdgeUUID:     recoveryEdgeUUID(binID, robotID),
+		// NO_DEMAND, stamped at the literal like its siblings at the other
+		// caller-less doors. A recovery is Core reconciling its own books with
+		// the floor — it is not a place asking for material, so there is no
+		// episode and its absence is not a finding. Left blank it landed in the
+		// '' vacuum, which is worse than either honest answer: the no_demand
+		// bucket does not count it and the orphan surface does not show it.
+		OriginClass: protocol.OriginClassNoDemand,
+		RobotID:     robotID,
+		EdgeUUID:    recoveryEdgeUUID(binID, robotID),
 	}
 	// FREE THE UUID A DEAD ATTEMPT IS HOLDING.
 	//

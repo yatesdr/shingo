@@ -215,6 +215,20 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 		// deliberate human action in the one bucket that is supposed to mean
 		// "we lost a demand link".
 		OriginClass: protocol.OriginClassNoDemand,
+		// LOCAL, for the same reason and through the same map as every other
+		// door (lifecycle intake, compound children, loader replenish). A move
+		// relocates the physical bin AT its source node, so it carries no
+		// payload key — and the scanner's empty-payload guard exempts exactly
+		// that case by reading THIS FIELD.
+		//
+		// It was missing here, and the gap was invisible while the order kept
+		// its bin_id: a held bin routes straight to dispatch and never reaches
+		// the guard. The day a dig took the bin and cleared the pointer, the
+		// order fell through to a guard that could not recognise the class it
+		// was built to protect, and a person's move died as "order has empty
+		// payload_code" — a construction-bug sentence for an order nobody
+		// constructed wrongly.
+		SourceIntent: dispatch.SourceIntentForType(protocol.OrderTypeMove),
 	}
 	if err := e.db.CreateOrder(order); err != nil {
 		return nil, refuse(BinMoveFault, err, "could not create the order: %v", err)

@@ -583,10 +583,61 @@ func (d *Dispatcher) writeCompoundChildren(parentOrder *orders.Order, plan *Resh
 
 	// %w, not %v: store.BlockerClaimedError has to survive this wrap for the
 	// planners to tell a congestion refusal from a fault.
-	if err := d.db.CreateCompoundChildren(children); err != nil {
+	displaced, err := d.db.CreateCompoundChildren(children)
+	if err != nil {
 		return fmt.Errorf("create compound children: %w", err)
 	}
+	d.failDisplacedByHand(displaced)
 	return nil
+}
+
+// failDisplacedByHand ends the hand-placed orders this dig took bins from.
+//
+// ── WHY THIS IS A FAILURE AND NOT A WAIT ─────────────────────────
+//
+// Congestion waits, and this is not congestion. The steal has committed: the
+// bin's whole reservation book was swept and re-written to the dig's leg, and
+// the order still points at that bin with nothing behind the pointer. Nothing in
+// the tree re-acquires a bin for an order that already names one — dispatchHeldBin
+// confirms by id and the confirm CAS requires the row — so leaving it live is not
+// a wait, it is a queued order with claim-failed on it and no releaser, forever.
+//
+// The two alternatives were both worse and both were ruled out. Un-pointing it
+// re-sources it, and for a node-local move that is Core substituting a different
+// bin for the one a person named. Re-pointing it at the bin's new home keeps the
+// substitution honest but not the hold: it would still have no reservation and
+// would wedge on the same claim, so it needs a re-acquire path that does not
+// exist yet. When one does, this becomes a wait with a named releaser and the
+// terminal goes away.
+//
+// Best-effort per order: one that cannot be read or has already gone terminal is
+// logged and skipped, and the dig is never failed for it — the excavation is a
+// fact by the time this runs.
+func (d *Dispatcher) failDisplacedByHand(displaced []store.DisplacedByHand) {
+	for _, v := range displaced {
+		ord, err := d.db.GetOrder(v.OrderID)
+		if err != nil || ord == nil {
+			log.Printf("dispatch: dig %d took bin %d from hand-placed order %d and that order "+
+				"could not be read back to end it (%v) — it is pointing at a bin it does not hold",
+				v.DigID, v.BinID, v.OrderID, err)
+			continue
+		}
+		if protocol.IsTerminal(ord.Status) {
+			continue
+		}
+		where := v.ParkedAt
+		if where == "" {
+			where = "a shuffle slot in the same group"
+		}
+		detail := fmt.Sprintf("a dig (order %d) had to move bin %d out of its way and parked it at %s. "+
+			"This order was placed by hand and names that bin, so it is not re-aimed at a different "+
+			"one — re-issue it against the bin's new position", v.DigID, v.BinID, where)
+		if fErr := d.lifecycle.FailWithRef(ord, ord.StationID,
+			string(protocol.TermBinDugAway), detail, protocol.TermRef{Node: where}); fErr != nil {
+			log.Printf("dispatch: could not fail hand-placed order %d after dig %d took bin %d (%v)",
+				v.OrderID, v.DigID, v.BinID, fErr)
+		}
+	}
 }
 
 // AdvanceCompoundOrder dispatches the next pending child order in a compound sequence.

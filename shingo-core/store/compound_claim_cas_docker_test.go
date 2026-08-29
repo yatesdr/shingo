@@ -88,7 +88,7 @@ func TestCompoundClaim_RefusesABinHeldOutsideTheCompound(t *testing.T) {
 	claimFor(t, db, bin.ID, stranger.ID)
 
 	parent := compoundParent(t, db, "cas-parent")
-	err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)})
+	_, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)})
 	if err == nil {
 		t.Fatal("CreateCompoundChildren succeeded against a bin held by an unrelated order — the " +
 			"reshuffle would drive to a bin another order is already carrying")
@@ -144,7 +144,7 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 	t.Run("unclaimed", func(t *testing.T) {
 		bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "CAS-FREE")
 		parent := compoundParent(t, db, "cas-free-parent")
-		if err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
+		if _, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
 			t.Fatalf("claiming an unclaimed bin must succeed: %v", err)
 		}
 		assertClaimedByAChildOf(t, db, bin.ID, parent.ID)
@@ -155,7 +155,7 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 		parent := compoundParent(t, db, "cas-parent-holds")
 		claimFor(t, db, bin.ID, parent.ID)
 
-		if err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
+		if _, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
 			t.Fatalf("a child must be able to take a bin its own PARENT holds: %v.\nThe planners emit "+
 				"a retrieve step carrying the buried target — the very bin the parent retrieve exists "+
 				"to fetch — so excluding the parent fails a claim that works today", err)
@@ -169,7 +169,7 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 
 		// Two steps over ONE bin — the unbury-then-retrieve shape.
 		kids := []store.CompoundChild{childFor(parent, bin.ID, 1), childFor(parent, bin.ID, 2)}
-		if err := db.CreateCompoundChildren(kids); err != nil {
+		if _, err := db.CreateCompoundChildren(kids); err != nil {
 			t.Fatalf("a plan that touches one bin twice must be creatable: %v", err)
 		}
 		after, err := db.GetBin(bin.ID)

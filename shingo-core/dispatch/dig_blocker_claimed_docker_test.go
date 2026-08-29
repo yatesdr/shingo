@@ -251,7 +251,7 @@ func TestBlockerClaimedError_CarriesTheHolder(t *testing.T) {
 		o.Status = protocol.StatusReshuffling
 	})
 	pid := parent.ID
-	err := db.CreateCompoundChildren([]store.CompoundChild{{
+	_, err := db.CreateCompoundChildren([]store.CompoundChild{{
 		Order: &orders.Order{
 			EdgeUUID: "holder-id-child", StationID: parent.StationID,
 			OrderType: protocol.OrderTypeMove, Status: protocol.StatusPending,
