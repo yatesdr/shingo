@@ -213,6 +213,11 @@
    * handling) → red (blocked) → green (done). Indigo is deliberately absent —
    * it is the UI accent, never a status. */
   --status-pending-dot:     #8b95a5;   /* slate */
+  /* Sourcing is the MATERIAL HUNT, and it is amber rather than another cool hue
+   * because status-classes.css already made the sourcing BADGE amber and this
+   * palette's whole claim is that one set of hues feeds the dots and the badges.
+   * It had no dot at all until the orders board grew a filter for it. */
+  --status-sourcing-dot:    #d9a441;   /* amber */
   --status-queued-dot:      #7aa2f0;   /* periwinkle */
   --status-dispatched-dot:  #4f9bff;   /* blue */
   --status-in-transit-dot:  #34c3e0;   /* cyan */
