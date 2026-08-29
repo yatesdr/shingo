@@ -1881,6 +1881,60 @@ func TestFlipGuard_WarnsUntilTheTargetsOrderDelivers(t *testing.T) {
 	}
 }
 
+// TestFlipGuard_AFailedOrCancelledOrderIsNotADelivery is arm (b)'s honest
+// predicate, and PRODUCE is where it matters because produce has nothing else.
+//
+// The arm read `!IsTerminal(order.Status)` — "the order is still running, so
+// wait". Terminal is not delivered: `failed`, `cancelled` and `skipped` are
+// terminal too, and each of them means the OPPOSITE of what the guard concluded.
+// The changeover order for this side ended without a carrier arriving, and the
+// flip was permitted onto a position still holding the old one — the exact
+// failure the guard exists to prevent, with the warning switched off.
+//
+// Consume's extra conjuncts (material present, and of the incoming style) catch
+// it by accident. Produce has no second question, so on a produce press this was
+// silent.
+//
+// The sentence has to differ too. "has not delivered (failed)" reads as "wait a
+// bit longer" and there is nothing to wait for: the order is over, and what the
+// operator must do is order another carrier, not stand and watch.
+func TestFlipGuard_AFailedOrCancelledOrderIsNotADelivery(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []protocol.Status{orders.StatusFailed, orders.StatusCancelled} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+			_, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+
+			// Raw, because the point is the STORED status: the lifecycle path to
+			// failed/cancelled is not what is under test, the guard's reading of it is.
+			_, uErr := db.Exec("UPDATE orders SET status=? WHERE id=?", string(status), parkedOrder)
+			testutil.MustNoErr(t, uErr, "end the parked side's order without a delivery")
+
+			err := eng.FlipABNode(parkedNodeID, OperatorFlip("op"))
+			if err == nil {
+				t.Fatalf("the flip onto SEQ-B was allowed with its changeover order %s. The order is "+
+					"terminal, but nothing was delivered — the position is still holding the OLD "+
+					"style's carrier, and the line has just been switched onto it. `terminal` is not "+
+					"`delivered`; the honest predicate is delivered-or-confirmed.", status)
+			}
+			if activePullOf(t, db, parkedNodeID) {
+				t.Error("a refused flip moved the pull anyway")
+			}
+			if !strings.Contains(err.Error(), "SEQ-B") {
+				t.Errorf("warning = %q, want it to name the position", err.Error())
+			}
+			if strings.Contains(err.Error(), "has not delivered") {
+				t.Errorf("warning = %q — that sentence tells the operator to wait, and there is nothing "+
+					"to wait for: the order is over. It has to say the delivery is not coming.",
+					err.Error())
+			}
+		})
+	}
+}
+
 // TestFlipGuard_ConsumeAlsoWantsMaterial — arm (b)'s consume conjunct. An empty
 // carrier on a consume position is as bad as nothing, so "the order finished" is
 // not on its own enough.

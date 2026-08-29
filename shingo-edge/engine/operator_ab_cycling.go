@@ -152,12 +152,19 @@ func (e *Engine) FlipABNode(nodeID int64, req FlipRequest) error {
 //	               carrier. The empty already standing there IS the one the new
 //	               style wants. Nothing was ordered because nothing was needed.
 //
-//	DELIVERED      this side's own changeover order reached a terminal status.
-//	               The Edge WATCHED its robot deliver — a new carrier on produce,
-//	               new material on consume. On consume it also checks the runtime
-//	               is pointing at the incoming style's claim with material on it,
-//	               because "an order finished" and "the right stuff is there" are
-//	               two statements and consume is the role where they can differ.
+//	DELIVERED      this side's own changeover order reached `delivered` or
+//	               `confirmed`. The Edge WATCHED its robot deliver — a new carrier
+//	               on produce, new material on consume. On consume it also checks
+//	               the runtime is pointing at the incoming style's claim with
+//	               material on it, because "an order finished" and "the right stuff
+//	               is there" are two statements and consume is the role where they
+//	               can differ.
+//
+//	ENDED WITHOUT  `failed`, `cancelled` or `skipped`. Terminal, and the opposite
+//	  A DELIVERY   of ready: the order is over and no carrier came, so the position
+//	               still holds the OLD style's. It gets its own sentence because
+//	               "has not delivered yet" tells the operator to wait and there is
+//	               nothing to wait for — the fix is another order, not patience.
 //
 //	STEADY STATE   no changeover is running, so there is nothing to be ready FOR
 //	               beyond a bin being present — the invariant covers the rest.
@@ -192,7 +199,26 @@ func (e *Engine) flipTargetReady(node *processes.Node) string {
 	if oErr != nil || order == nil {
 		return ""
 	}
-	if !orders.IsTerminal(order.Status) {
+	// ── TERMINAL IS NOT DELIVERED ─────────────────────────────────────────
+	//
+	// This asked !IsTerminal, which reads a CANCELLED or FAILED changeover order
+	// as "the Edge watched its robot deliver". Those statuses are terminal and
+	// mean the opposite: the order ended with no carrier delivered, so the
+	// position is still holding the outgoing style's, and the flip was permitted
+	// onto it with the warning off. Consume's extra conjuncts below catch that by
+	// accident; produce has no second question, so on a produce press it was
+	// silent — the exact failure this guard exists to prevent.
+	//
+	// So the arm tests the two statuses that actually mean delivered, and the
+	// unready shapes each get the sentence that names what the operator has to do.
+	switch order.Status {
+	case orders.StatusDelivered, orders.StatusConfirmed:
+		// The delivery happened. Fall through to consume's own questions.
+	case orders.StatusFailed, orders.StatusCancelled, orders.StatusSkipped:
+		return fmt.Sprintf("%s's changeover order %d ended %s — no new carrier was delivered, so this "+
+			"position still holds the outgoing style's; order another before flipping",
+			node.CoreNodeName, order.ID, order.Status)
+	default:
 		return fmt.Sprintf("%s's changeover order %d has not delivered (%s) — release it first",
 			node.CoreNodeName, order.ID, order.Status)
 	}
