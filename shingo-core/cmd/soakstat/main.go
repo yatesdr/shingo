@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"shingo/protocol"
 	"shingocore/config"
@@ -565,6 +566,7 @@ var invariantChecks = []struct {
 	{"two legs traversing one lane at once", checkTraversalOverlap},
 	{"a reservation still held by a terminal order", checkTerminalOrderReservations},
 	{"an order queued five minutes with no cause on the row", checkQueuedWithoutCause},
+	{"an order wearing armor the fleet never took", checkArmoredWithNoVendorOrder},
 	{"how orders were freed by the periodic floor release", checkFloorReleaseHistogram},
 	{"orders waiting under a cause nothing declares", checkUndeclaredWaits},
 	{"orders that have not moved for their population's budget", checkStalledOrders},
@@ -1156,6 +1158,62 @@ func checkQueuedWithoutCause(db *store.DB) []string {
 		  AND (queue_cause IS NULL OR queue_cause = '')
 		  AND created_at < now() - interval '5 minutes'`); n > 0 {
 		out = append(out, fmt.Sprintf("%d order(s) queued 5min+ with NO cause on the row", n))
+	}
+	return out
+}
+
+// checkArmoredWithNoVendorOrder reports an order wearing armor the fleet never
+// took: the crash sliver.
+//
+// ── THE CASE NOTHING IN THIS FILE ASKED ABOUT ─────────────────────────────
+//
+// Every dispatched-family check above filters for a NON-EMPTY vendor_order_id, and the
+// filter is right for what those checks measure — they judge a leg the fleet is
+// carrying, and a leg with no vendor id is not one. But it means the empty case
+// was never asked anywhere, and nothing else asks it either: the poller's own
+// re-registration query selects non-empty ids only (store/orders/orders.go
+// ListTrackedVendorOrderIDs), so an order in this state is watched by nothing at
+// all.
+//
+// It is reachable. Core writes `dispatched` and then creates the vendor order —
+// the CAS-before-create ordering, kept deliberately because it is the
+// racing-dispatchers lock — so there is a window, and a crash inside it leaves an
+// order armored, claimed, holding its lane, and invisible to the one loop that
+// would have noticed it stopped moving.
+//
+// THE AGE BOUND IS WHAT MAKES IT A FINDING rather than a race report. Inside the
+// window the state is correct and expected; minutes later it is a wedge. Five
+// minutes is the same bound checkQueuedWithoutCause uses for the same reason —
+// long enough that a transient cannot reach it, short enough to catch the wedge
+// inside a shift.
+//
+// Reported with the order id and status, because what to do about one of these
+// is the reader's judgement: the bin and lane it holds have to go somewhere, and
+// no sweep in this house cancels an order on a timer.
+func checkArmoredWithNoVendorOrder(db *store.DB) []string {
+	var out []string
+	rows, err := db.DB.Query(fmt.Sprintf(`
+		SELECT id, status, EXTRACT(EPOCH FROM (now() - updated_at))::bigint
+		FROM orders
+		WHERE status IN (%s)
+		  AND (vendor_order_id IS NULL OR vendor_order_id = '')
+		  AND updated_at < now() - interval '5 minutes'
+		ORDER BY id LIMIT 12`, protocol.VendorActiveStatusSQLList()))
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, ageSec int64
+		var status string
+		if err := rows.Scan(&id, &status, &ageSec); err != nil {
+			continue
+		}
+		out = append(out, fmt.Sprintf(
+			"ARMORED, NO FLEET ORDER: order %d has been %s for %s with an empty vendor_order_id — "+
+				"Core wrote the status and the create never landed, so it holds its claims and its "+
+				"lane while nothing polls it (the poller's re-registration selects non-empty ids only)",
+			id, status, protocol.FormatDuration(time.Duration(ageSec)*time.Second)))
 	}
 	return out
 }

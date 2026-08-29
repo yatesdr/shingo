@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -103,5 +104,65 @@ func mustRecord(t *testing.T, db *store.DB, orderID int64, cause string) {
 		cause + `"). the event that should have ended it: something`
 	if err := db.RecordRecoveryAction(dispatch.FloorReleaseAction, "order", orderID, detail, "system"); err != nil {
 		t.Fatalf("seed floor-release record: %v", err)
+	}
+}
+
+// TestArmoredWithNoVendorOrder proves the crash sliver's instrument, and proves
+// it is selective — the whole value of the check is that it is the one question
+// nothing else in this file, or in Core, asks.
+//
+// Every other dispatched-family check filters for a NON-EMPTY vendor_order_id, correctly
+// for what it measures. So the empty case had no reader at all: the poller's
+// re-registration selects non-empty ids only, which means an order in this state
+// is watched by nothing. Core writes `dispatched` and then creates the vendor
+// order — the racing-dispatchers lock, kept deliberately — so a crash inside
+// that window leaves an order armored, claimed, holding its lane, and silent.
+//
+// Three rows: the wedge, a fresh one inside the window that must NOT be reported
+// (or the check fires on every ordinary dispatch), and a normal armored order
+// with a vendor id.
+func TestArmoredWithNoVendorOrder(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	wedged := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "dispatched" })
+	if _, err := db.Exec(
+		`UPDATE orders SET vendor_order_id = '', updated_at = now() - interval '30 minutes' WHERE id = $1`,
+		wedged.ID); err != nil {
+		t.Fatalf("seed the wedge: %v", err)
+	}
+
+	fresh := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "dispatched" })
+	if _, err := db.Exec(
+		`UPDATE orders SET vendor_order_id = '', updated_at = now() WHERE id = $1`, fresh.ID); err != nil {
+		t.Fatalf("seed the in-window order: %v", err)
+	}
+
+	healthy := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "dispatched" })
+	if _, err := db.Exec(
+		`UPDATE orders SET vendor_order_id = 'RDS-1', updated_at = now() - interval '30 minutes' WHERE id = $1`,
+		healthy.ID); err != nil {
+		t.Fatalf("seed the healthy order: %v", err)
+	}
+
+	v := checkInvariants(db)
+
+	if !hasLine(v, "ARMORED, NO FLEET ORDER") {
+		t.Fatalf("an order dispatched half an hour ago with an empty vendor_order_id was NOT reported. "+
+			"It holds its claims and its lane and nothing polls it — the poller's re-registration "+
+			"selects non-empty ids only.\n%s", strings.Join(v, "\n"))
+	}
+	for _, l := range v {
+		if !strings.Contains(l, "ARMORED, NO FLEET ORDER") {
+			continue
+		}
+		if strings.Contains(l, fmt.Sprintf("order %d ", fresh.ID)) {
+			t.Errorf("an order dispatched a moment ago was reported. Inside the create window that "+
+				"state is correct and expected, and a check that fires on every ordinary dispatch "+
+				"says nothing: %s", l)
+		}
+		if strings.Contains(l, fmt.Sprintf("order %d ", healthy.ID)) {
+			t.Errorf("an order the fleet actually took was reported: %s", l)
+		}
 	}
 }
