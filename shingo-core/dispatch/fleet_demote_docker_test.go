@@ -78,11 +78,12 @@ func armedOrderAwaitingFleet(t *testing.T, db *store.DB, d *Dispatcher, uuid str
 // §8 in one test: "this is a blip failure — everything fired, it got all its
 // claims, the failure just landed with RDS."
 //
-// Today's rollback releases the armor AND DELETES the reservation while leaving
-// orders.bin_id stamped. That is the pointer wedge: the order re-enters through
-// dispatchHeldBin, which confirms by id and never re-acquires, and the confirm
-// underneath requires the pending reservation that was just deleted. It parks
-// under claim-failed and retries forever, alive so no sweep touches it.
+// The rollback this replaced released the armor AND DELETED the reservation
+// while leaving orders.bin_id stamped. That is the pointer wedge: the order
+// re-enters through dispatchHeldBin, which confirms by id and never re-acquires,
+// and the confirm underneath requires the pending reservation that was just
+// deleted. It parked under claim-failed and retried forever, alive so no sweep
+// touched it.
 //
 // The undo removes only what claimed a robot that never came. The paper is
 // DEMOTED confirmed→pending, never deleted; the pointer and the junction rows
@@ -188,6 +189,14 @@ func TestFleetRefusal_TheJunctionRowsSurvive(t *testing.T) {
 // release-my-lanes on a leg's fleet refusal tears that corridor out from under a
 // live dig: the parent's other legs lose their admission and another order walks
 // into the lane the dig is working.
+//
+// THE LEG HOLDS A ROW OF ITS OWN, and without it this test cannot fail. The
+// door's DELETE is order-keyed — `WHERE order_id = <the refused order>` — so a
+// leg with no mouth row of its own deletes nothing whatever the clause answers,
+// and the parent's corridor survives a release the clause never refused. The
+// leg's own inbound hold is the row the clause actually protects, and a leg does
+// hold one: lane_gate's acquire writes order_id = the LEG's id and carries the
+// parent only as the admission asker.
 func TestFleetRefusal_ACompoundLegLeavesItsParentsCorridorAlone(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -199,6 +208,11 @@ func TestFleetRefusal_ACompoundLegLeavesItsParentsCorridorAlone(t *testing.T) {
 	testutil.MustNoErr(t,
 		reservations.AcquireLanes(db.DB, parent.ID, reservations.ModeDig, "test-dig", laneID),
 		"the parent takes its corridor")
+	// And the leg holds its own inbound hold on the lane it is dropping into.
+	dropLane := mirrorLane(t, db, "DEMOLEG-DROP", 2)
+	testutil.MustNoErr(t,
+		reservations.AcquireLanes(db.DB, leg.ID, reservations.ModeInbound, "test-leg", dropLane),
+		"the leg takes its own dropoff lane")
 
 	legRow, gerr := db.GetOrder(leg.ID)
 	testutil.MustNoErr(t, gerr, "read the leg")
@@ -207,15 +221,26 @@ func TestFleetRefusal_ACompoundLegLeavesItsParentsCorridorAlone(t *testing.T) {
 
 	d.DemoteAfterFleetRefusal(legRow, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
 
-	var lanes int
-	testutil.MustNoErr(t, db.DB.QueryRow(
-		`SELECT COUNT(*) FROM reservations WHERE order_id=$1 AND resource_kind='mouth'`,
-		parent.ID).Scan(&lanes), "count the parent's lane rows")
-	if lanes != 1 {
+	mouthRows := func(owner int64) int {
+		t.Helper()
+		var n int
+		testutil.MustNoErr(t, db.DB.QueryRow(
+			`SELECT COUNT(*) FROM reservations WHERE order_id=$1 AND resource_kind='mouth'`,
+			owner).Scan(&n), "count lane rows")
+		return n
+	}
+	if n := mouthRows(parent.ID); n != 1 {
 		t.Errorf("the parent holds %d lane row(s) after its LEG was refused, want 1.\n"+
 			"A leg's lane rows belong to its parent. Releasing them on the leg's refusal tears the "+
 			"corridor out from under a live dig — the parent's other legs lose their admission and "+
-			"anybody may walk in.", lanes)
+			"anybody may walk in.", n)
+	}
+	if n := mouthRows(leg.ID); n != 1 {
+		t.Errorf("the leg holds %d lane row(s) after its own refusal, want 1 — this is the row the "+
+			"ownership clause decides about.\n"+
+			"laneOwnerFor(leg) is the PARENT, so the door releases no lane rows for a leg at all: "+
+			"its holds are entangled with the chapter its parent is running, and the leg is not "+
+			"leaving that chapter over a fleet blip.", n)
 	}
 }
 

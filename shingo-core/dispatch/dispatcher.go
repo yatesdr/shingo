@@ -738,7 +738,12 @@ func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, code protocol.
 		}
 	}
 	// The books, after the status, and only the armor.
-	if err := d.db.DemoteHoldsAfterFleetRefusal(order.ID, d.laneOwnerFor(order.ID) == order.ID); err != nil {
+	// FAIL CLOSED ON AN UNREADABLE PARENT. This flag gates a DELETE of the order's
+	// lane rows, and a leg's rows belong to its parent — so an unanswered question
+	// here must mean "keep the lane", not "it must be mine". A kept lane costs the
+	// next pass; a wrong release tears the corridor out from under a live dig.
+	laneOwner, resolved := d.laneOwnerFor(order.ID)
+	if err := d.db.DemoteHoldsAfterFleetRefusal(order.ID, resolved && laneOwner == order.ID); err != nil {
 		log.Printf("dispatch: order %d — could not demote its holds after a fleet refusal: %v "+
 			"(it keeps armor it has no robot for; the acquiring-claim backstop sweeps it)", order.ID, err)
 	}

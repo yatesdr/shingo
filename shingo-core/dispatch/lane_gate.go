@@ -455,7 +455,8 @@ func (d *Dispatcher) acquireOrderLanes(orderID int64, holds []laneHold) (admitte
 	// laneOwnerFor, not the raw id: a compound leg's holds belong to its parent,
 	// so a leg working inside the lane its own demand locked must not be refused
 	// by it. That routing already exists for every other lane question.
-	asker := reservations.AskerFor(orderID, d.laneOwnerFor(orderID))
+	owner, _ := d.laneOwnerFor(orderID)
+	asker := reservations.AskerFor(orderID, owner)
 	for mode, lanes := range byMode {
 		if aErr := reservations.AcquireLanesFor(d.db.DB, orderID, mode, asker, laneGateReservedBy, lanes...); aErr != nil {
 			if errors.Is(aErr, reservations.ErrReservationConflict) {
@@ -1002,12 +1003,25 @@ func (d *Dispatcher) ReleaseLanesForOrder(orderID int64) error {
 // order itself for a plain order, or its complex parent for a compound child
 // (children never own rows, §2). So a child's block progress releases the
 // parent-owned hold.
-func (d *Dispatcher) laneOwnerFor(orderID int64) int64 {
+//
+// THE SECOND RETURN IS "I ANSWERED", and it exists for the one caller that sits
+// beside a destructive write. The owner-scoped releases can take the fallback
+// safely — aimed at the wrong order their WHERE matches nothing — but the fleet
+// demote door turns this into "may I DELETE this order's lane rows", and there
+// the fallback answers YES for a leg whose parent simply could not be read. That
+// tears the corridor out from under a live dig. Beside a destructive write an
+// unreadable answer is "no", and the next pass re-asks.
+func (d *Dispatcher) laneOwnerFor(orderID int64) (int64, bool) {
 	o, err := d.db.GetOrder(orderID)
-	if err != nil || o == nil || o.ParentOrderID == nil {
-		return orderID
+	if err != nil || o == nil {
+		log.Printf("lanegate: could not read order %d to resolve its lane owner: %v (assuming it "+
+			"owns nothing it has not proved it owns)", orderID, err)
+		return orderID, false
 	}
-	return *o.ParentOrderID
+	if o.ParentOrderID == nil {
+		return orderID, true
+	}
+	return *o.ParentOrderID, true
 }
 
 // HandleTransitForLaneGate releases BOTH of the owner's holds on the lane a
@@ -1058,7 +1072,7 @@ func (d *Dispatcher) HandleTransitForLaneGate(orderID, fromNodeID int64) {
 	if fromNodeID == 0 {
 		return
 	}
-	owner := d.laneOwnerFor(orderID)
+	owner, _ := d.laneOwnerFor(orderID)
 	node, err := d.db.GetNode(fromNodeID)
 	if err != nil || node == nil {
 		return
@@ -1201,7 +1215,7 @@ func (d *Dispatcher) ReleaseInboundLaneForOrder(orderID int64, dropNodeName stri
 	if dropNodeName == "" {
 		return
 	}
-	owner := d.laneOwnerFor(orderID)
+	owner, _ := d.laneOwnerFor(orderID)
 	node, err := d.db.GetNodeByDotName(dropNodeName)
 	if err != nil || node == nil {
 		return
