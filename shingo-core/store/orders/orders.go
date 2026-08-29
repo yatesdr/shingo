@@ -390,7 +390,15 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
 
-	if _, err := tx.Exec(`UPDATE orders SET queue_reason=$1, queue_code=$4, queue_cause=$5, updated_at=$3 WHERE id=$2`,
+	// NOT ONTO A TERMINAL ORDER. The history stamp below already refuses one — a
+	// QueueCode over a TermCode is a category error — but the live columns had no
+	// such guard, so a park racing a cancel could leave a finished order wearing
+	// "waiting for material" on every board that reads the row. The two halves of
+	// one write now answer the same question. Clearing is caught by the same
+	// clause and is a no-op there, which is what it was already worth.
+	if _, err := tx.Exec(fmt.Sprintf(
+		`UPDATE orders SET queue_reason=$1, queue_code=$4, queue_cause=$5, updated_at=$3
+		 WHERE id=$2 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()),
 		reason, id, clock.Now().UTC(), helpers.NullableText(code), helpers.NullableText(cause)); err != nil {
 		return err
 	}
@@ -409,14 +417,9 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	// own reason; successive updates within one episode overwrite that episode's
 	// row, which is correct — the last known reason is why it was still waiting.
 	//
-	// IT USED TO NAME 'queued', AND THAT WAS WRONG TWICE. A complex order is born
-	// `queued` by INSERT and had no queued row at all, so the UPDATE matched
-	// nothing, silently, for the order's whole life — every swap leg's and
-	// changeover leg's wait history, never recorded. And an order parked in
-	// `sourcing` — which is most parks, since the requeue arms all target sourcing
-	// and sourcing→sourcing self-skips — had its cause written onto its LAST
-	// QUEUED ROW: a different, earlier episode. The instrument the whole program
-	// measures by was wrong in both directions.
+	// IT USED TO NAME 'queued', which missed in both directions: a complex order
+	// born `queued` matched no row at all, and a `sourcing` park landed its cause
+	// on an earlier queued episode (76d1d6e5).
 	//
 	// The order's own status is the discriminator, read inside this transaction —
 	// which the UPDATE above has already locked the row for, so a concurrent
@@ -1246,7 +1249,7 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 // attempt few orders rest there, but the scan set must see them when they do.
 func ListAcquiring(db *sql.DB) ([]*Order, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status IN (%s) ORDER BY %s`,
-		SelectCols, protocol.AcquiringStatusSQLList(), DemandRankOrderBySQL("")))
+		SelectCols, protocol.AcquiringStatusSQLList(), DemandRankOrderBySQL()))
 	if err != nil {
 		return nil, err
 	}

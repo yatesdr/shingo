@@ -30,12 +30,12 @@ import (
 // claimBinAt puts a bin at a slot and hard-claims it for a fresh live order,
 // returning the claiming order — the state a bin is in between
 // ConfirmForDispatch and arrival, which is exactly what the guard respects.
-func claimBinAt(t *testing.T, db *store.DB, label string, slotID int64) *orders.Order {
+func claimBinAt(t *testing.T, db *store.DB, label string, slotID int64) (*orders.Order, int64) {
 	t.Helper()
 	bin := testdb.CreateBinAtNode(t, db, "PART-A", slotID, label)
 	owner := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
 	testdb.ClaimBinForTest(t, db, bin.ID, owner.ID)
-	return owner
+	return owner, bin.ID
 }
 
 // TestBurialGuard_RefusesInFrontOfAHardClaim is the guard itself.
@@ -113,7 +113,7 @@ func TestBurialGuard_OrderPlacesRelativeToItsOwnClaim(t *testing.T) {
 	testdb.SetupStandardData(t, db)
 	laneID, _, slot2ID, slot3ID := laneFixture(t, db, "BG-SELF")
 
-	owner := claimBinAt(t, db, "BIN-BG-SELF", slot3ID)
+	owner, _ := claimBinAt(t, db, "BIN-BG-SELF", slot3ID)
 
 	if _, err := db.FindStoreSlotInLane(laneID); err == nil {
 		t.Fatal("fixture: the blind form must refuse, or the exemption below proves nothing")
@@ -186,13 +186,15 @@ func TestBurialGuard_ClearedClaimReopensTheLane(t *testing.T) {
 	testdb.SetupStandardData(t, db)
 	laneID, _, slot2ID, slot3ID := laneFixture(t, db, "BG-CLEAR")
 
-	owner := claimBinAt(t, db, "BIN-BG-CLEAR", slot3ID)
+	owner, claimed := claimBinAt(t, db, "BIN-BG-CLEAR", slot3ID)
 	if _, err := db.FindStoreSlotInLane(laneID); err == nil {
 		t.Fatal("fixture: the lane must be closed while the claim is held")
 	}
 
-	// The claim clears the way arrival clears it: claimed_by goes to NULL.
-	if err := db.ReleaseClaimByOrder(owner.ID); err != nil {
+	// The claim clears the way arrival clears it: claimed_by goes to NULL, and
+	// the reservation under it goes with it — ReleaseClaimForBin is that coupled
+	// pair, which is what arrival runs.
+	if err := db.ReleaseClaimForBin(claimed, owner.ID); err != nil {
 		t.Fatalf("release claim: %v", err)
 	}
 

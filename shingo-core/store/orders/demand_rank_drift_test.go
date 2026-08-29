@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"shingocore/store/orders"
 )
 
 // rankHome is the one file allowed to spell the plant's demand ordering: the
@@ -81,6 +83,29 @@ func TestNoThirdSpellingOfTheDemandRanking(t *testing.T) {
 			"The ranking has exactly two callers by ruling — the line's ORDER BY and the steal's "+
 			"outrank check — because the day it becomes time-to-empty it has to change in one place.",
 			len(found), strings.Join(found, "\n  "))
+	}
+}
+
+// TestDemandRankOrderBySQL_IsTotal pins the tiebreak, which the source scan
+// above cannot see: it counts SPELLINGS, and a spelling that stops at
+// (priority, created_at) is still exactly one.
+//
+// Without a total order the scan hands back tied rows in whatever sequence
+// Postgres chose that call, so the line's order is not a fact about the plant —
+// and TestDemandRank_TheScanOrderIsTheComparator, which walks the result
+// pairwise against the comparator, has no answer for a pair neither side
+// outranks. The tiebreak is the row id because ids ascend with creation, so it
+// agrees with the ageing guarantee instead of cutting across it.
+func TestDemandRankOrderBySQL_IsTotal(t *testing.T) {
+	t.Parallel()
+	got := orders.DemandRankOrderBySQL()
+	for _, want := range []string{"priority DESC", "created_at ASC", "id ASC"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the line's ORDER BY is %q, and it is missing %q. "+
+				"Priority, then age, then the row id — the last one is what makes the ranking TOTAL, "+
+				"so two demands the plant cannot otherwise separate still come back in one order "+
+				"every time.", got, want)
+		}
 	}
 }
 

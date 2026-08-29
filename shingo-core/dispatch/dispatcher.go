@@ -673,14 +673,8 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 // On a blip it re-wins its own uncontested bin seconds later; in a real outage
 // the paper yields by rank like everyone else's (§8).
 //
-// ── WHAT IT REPLACED ──────────────────────────────────────────────────────
-//
-// Four rollback arms with three different release policies. Two called
-// ReleaseClaimByOrder, which DELETES the reservations and the order_bins rows
-// while leaving orders.bin_id stamped — the pointer wedge AssertNoPointerWedge
-// found and three tests were quarantined under. One released nothing and wrote
-// no cause. One released nothing and wrote a cause. A burst of 23-41 refusals
-// (SPR's own history) went through all of them.
+// It replaced four rollback arms with three release policies between them, one
+// of which built the pointer wedge AssertNoPointerWedge found (4be94aaa).
 //
 // ── THE CLAUSES ───────────────────────────────────────────────────────────
 //

@@ -241,6 +241,14 @@ type DwellStat struct {
 // population still missing is orders created before Core wrote a birth history
 // row: born `queued` by INSERT, they have no queued row to measure from. They
 // age out.
+//
+// A SECOND POPULATION MOVED WITH §8's DEMOTE DOOR, and it moved INTO this number
+// rather than out of it: a fleet-refused order parks in `sourcing`, so it writes
+// no new `queued` row, and the pair takes MAX(queued) → MAX(dispatched). Its
+// re-dispatch therefore pairs against its ORIGINAL queued row and the whole
+// outage lands inside time_to_dispatch. That is the honest reading — the order
+// really did wait that long for a robot — but a refusal burst (SPR's run 23-41)
+// shows up here as a lead-time spike, not as a separate fault count.
 func FlowDwellPairs() []DwellPair {
 	return []DwellPair{
 		{Key: "time_to_dispatch", From: "queued", To: "dispatched"},

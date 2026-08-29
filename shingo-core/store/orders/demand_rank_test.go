@@ -149,13 +149,75 @@ func TestDemandRank_TheScanOrderIsTheComparator(t *testing.T) {
 
 	// And the comparator agrees with the order the SQL produced, pairwise. This is
 	// the half that catches a change to one and not the other.
+	//
+	// PRECEDES, NOT OUTRANKS: the SQL is a TOTAL order, so its twin has to be one
+	// too. Outranks returns false both ways on a tie — which is what the steal
+	// wants and what would make this loop report a disagreement that is really
+	// two demands the plant cannot separate.
 	for i := 0; i+1 < len(scanned); i++ {
-		a := orders.DemandRank{Priority: scanned[i].Priority, CreatedAt: scanned[i].CreatedAt}
-		b := orders.DemandRank{Priority: scanned[i+1].Priority, CreatedAt: scanned[i+1].CreatedAt}
-		if !a.Outranks(b) {
+		a := rankOf(scanned[i])
+		b := rankOf(scanned[i+1])
+		if !a.Precedes(b) {
 			t.Errorf("the scan put order %d ahead of %d, and the comparator disagrees. One ranking, "+
 				"two spellings — the day this becomes time-to-empty it changes in one and not the other",
 				scanned[i].ID, scanned[i+1].ID)
 		}
+	}
+}
+
+// rankOf reads a scanned row's rank the way the twin check compares it.
+func rankOf(o *orders.Order) orders.DemandRank {
+	return orders.DemandRank{Priority: o.Priority, CreatedAt: o.CreatedAt, ID: o.ID}
+}
+
+// TestDemandRank_ATieIsBrokenTheSameWayInBothSpellings is the tiebreak driven
+// through the database, which is the only place the two halves can disagree.
+//
+// Two demands at one priority and the SAME created_at are not exotic: the sim
+// clock is clamped, and orders born in one tick share an instant to the
+// microsecond. Stopping at (priority, created_at) leaves those rows in whatever
+// sequence Postgres returned that call — so the line's order stops being a fact
+// about the plant, and the pairwise twin check above has nothing to assert.
+//
+// The steal is deliberately NOT part of this. Outranks still refuses a tie both
+// ways, so a contested bin stays with its incumbent rather than being decided by
+// a row id.
+func TestDemandRank_ATieIsBrokenTheSameWayInBothSpellings(t *testing.T) {
+	t.Parallel()
+	d := testdb.Open(t)
+	db := d.DB
+
+	same := time.Now().UTC().Add(-90 * time.Minute)
+	mk := func(uuid string) *orders.Order {
+		o := newPendingOrder(uuid)
+		o.Status = protocol.StatusQueued
+		testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)
+		_, err := db.Exec(`UPDATE orders SET created_at=$2 WHERE id=$1`, o.ID, same)
+		testutil.MustNoErr(t, err, "age "+uuid)
+		return o
+	}
+	first := mk("tie-first")
+	second := mk("tie-second")
+
+	scanned, err := orders.ListAcquiring(db)
+	testutil.MustNoErr(t, err, "ListAcquiring")
+	if len(scanned) != 2 {
+		t.Fatalf("the scan returned %d orders, want the two seeded", len(scanned))
+	}
+	if scanned[0].ID != first.ID || scanned[1].ID != second.ID {
+		t.Fatalf("the line's order is [%d %d], want [%d %d] — two demands the plant cannot separate "+
+			"still have to come back in ONE order, or the scan is not a fact about the plant",
+			scanned[0].ID, scanned[1].ID, first.ID, second.ID)
+	}
+
+	a, b := rankOf(scanned[0]), rankOf(scanned[1])
+	if !a.Precedes(b) {
+		t.Errorf("the scan put order %d ahead of %d and Precedes disagrees — the SQL broke the tie "+
+			"and its Go twin did not", scanned[0].ID, scanned[1].ID)
+	}
+	if a.Outranks(b) || b.Outranks(a) {
+		t.Errorf("Outranks separated two demands with equal priority and equal created_at. The steal " +
+			"reads it, and a tie must leave the bin with the incumbent rather than handing it to " +
+			"whichever row id happens to be lower.")
 	}
 }

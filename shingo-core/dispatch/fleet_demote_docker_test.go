@@ -158,7 +158,7 @@ func TestFleetRefusal_TheOrderKeepsItsPaperAndRetries(t *testing.T) {
 }
 
 // TestFleetRefusal_TheJunctionRowsSurvive pins the fourth book the enumeration
-// missed. Today's ReleaseClaimByOrder deletes order_bins; the re-dispatch reads
+// missed. The release this replaced deleted order_bins; the re-dispatch reads
 // those rows to answer which bin a STEP is about (dispatch/bin_for_step.go), and
 // bin_id cannot answer it for a multi-bin order.
 func TestFleetRefusal_TheJunctionRowsSurvive(t *testing.T) {

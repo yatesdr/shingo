@@ -511,21 +511,17 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		return false
 	}
 
-	// Dispatch to fleet — use DispatchDirect which handles fleet creation.
-	// On failure the order stays where it is and we move it back to sourcing: a
-	// fleet that will not take an order right now is a transient robot-system
-	// issue, not a permanent failure. The hard claim is released so the requeue
-	// re-soft-acquires next tick.
-	//
-	// This rollback did not work for as long as DispatchDirect terminalized first:
-	// `failed` has no outgoing edges, so the MoveToSourcing below was an illegal
-	// transition, logged and dropped, and every fleet rejection killed the order
-	// under a comment saying it did not.
+	// Dispatch to fleet — use DispatchDirect which handles fleet creation. A fleet
+	// that will not take an order right now is a transient robot-system issue, not
+	// a permanent failure, so the refusal goes through the one demote door below:
+	// armor off, paper DEMOTED rather than deleted, pointer kept. The retry
+	// re-confirms the pending row it kept — it does not re-acquire, which is why
+	// deleting the paper here wedged the order (§8).
 	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
 		s.logFn("fulfillment: fleet dispatch failed for order %d, re-queuing: %v", order.ID, err)
-		// ONE DOOR. This arm used to call ReleaseClaimByOrder, which DELETES the
-		// reservations and the order_bins rows while leaving orders.bin_id
+		// ONE DOOR. This arm used to call a release that DELETES the reservations
+		// and the order_bins rows while leaving orders.bin_id
 		// stamped — and the comment beside it said the order "re-soft-acquires
 		// next tick", which nothing did. It re-entered through dispatchHeldBin,
 		// which confirms by id and never re-acquires, and parked under

@@ -5,9 +5,13 @@
 // ClaimForDispatch (Acquire -> claim -> Confirm) leaves a CONFIRMED reservation
 // on success. Its inverse must release that reservation too, or a
 // dispatch-failure rollback that only clears claimed_by orphans the confirmed
-// row and bricks the bin via uq_reservations_bin_active. These tests assert
+// row and bricks the bin via uq_reservations_bin_active. This test asserts
 // RE-ACQUIRABILITY after rollback — not just claimed_by IS NULL — because a
 // claimed_by-only rollback passes the latter while the bin stays bricked.
+//
+// The by-order twin went with ReleaseClaimByOrder, which lost its last caller to
+// the fleet-refusal demote door. The order-grain release set is TerminalizeOrder's
+// now, and it is pinned where it lives.
 
 package service
 
@@ -47,21 +51,4 @@ func TestReleaseClaim_ClearsClaimAndReservation(t *testing.T) {
 		reAcquirable(t, bin.ID)
 	})
 
-	t.Run("ByOrder_multiBin", func(t *testing.T) {
-		bin1 := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-RC-BYORD-1")
-		bin2 := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-RC-BYORD-2")
-		order := testdb.CreateOrder(t, db)
-		testutil.MustNoErr(t, svc.ClaimForDispatch(bin1.ID, order.ID, nil), "ClaimForDispatch bin1")
-		testutil.MustNoErr(t, svc.ClaimForDispatch(bin2.ID, order.ID, nil), "ClaimForDispatch bin2")
-
-		testutil.MustNoErr(t, db.ReleaseClaimByOrder(order.ID), "ReleaseClaimByOrder")
-
-		for _, b := range []int64{bin1.ID, bin2.ID} {
-			got, _ := db.GetBin(b)
-			if got.ClaimedBy != nil {
-				t.Errorf("bin %d claimed_by = %v, want nil after ReleaseClaimByOrder", b, got.ClaimedBy)
-			}
-			reAcquirable(t, b)
-		}
-	})
 }

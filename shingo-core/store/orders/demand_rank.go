@@ -26,12 +26,18 @@ import (
 type DemandRank struct {
 	Priority  int
 	CreatedAt time.Time
+	// ID breaks an exact (priority, created_at) tie so the ranking is TOTAL.
+	// Only Precedes reads it; see both methods below.
+	ID int64
 }
 
-// Outranks reports whether a ranks ahead of b.
+// Outranks reports whether a ranks strictly ahead of b on the demand itself.
 //
-// A tie returns false both ways and the caller decides. The steal gate treats
-// "does not outrank" as a refusal, so a tie leaves the bin with the incumbent.
+// A TIE RETURNS FALSE BOTH WAYS, and that is what the steal gate wants: it
+// treats "does not outrank" as a refusal, so two demands the plant cannot
+// separate leave the bin with the incumbent rather than taking it from each
+// other. Adding the id tiebreak here would make an arbitrary row id decide who
+// gets dug out from under whom.
 func (a DemandRank) Outranks(b DemandRank) bool {
 	if a.Priority != b.Priority {
 		return a.Priority > b.Priority
@@ -39,18 +45,30 @@ func (a DemandRank) Outranks(b DemandRank) bool {
 	return a.CreatedAt.Before(b.CreatedAt)
 }
 
-// DemandRankOrderBySQL is the comparator's SQL twin — the same ranking in the
-// language the line is served in. It and Outranks are the only two places the
-// ordering exists.
+// Precedes is the TOTAL order: Outranks, then the older row id.
 //
-// alias is the table qualifier ("o" → "o.priority DESC, o.created_at ASC");
-// empty for an unqualified query.
-func DemandRankOrderBySQL(alias string) string {
-	q := ""
-	if alias != "" {
-		q = alias + "."
+// The line needs one and the contest does not. An ORDER BY that stops at
+// (priority, created_at) leaves tied rows in whatever order Postgres returns
+// them, so the scan can hand back a different sequence per call for the same
+// board — and the pairwise twin check has no answer for a pair neither side
+// outranks. Ids ascend with creation, so the tiebreak agrees with the ageing
+// guarantee rather than cutting across it.
+func (a DemandRank) Precedes(b DemandRank) bool {
+	if a.Priority != b.Priority || !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.Outranks(b)
 	}
-	return fmt.Sprintf("%spriority DESC, %screated_at ASC", q, q)
+	return a.ID < b.ID
+}
+
+// DemandRankOrderBySQL is Precedes' SQL twin — the same total order in the
+// language the line is served in. It and the two methods above are the only
+// places the ordering exists.
+//
+// NO ALIAS PARAMETER. It had one, and one caller passing "": every reader of
+// this ordering selects from `orders` unqualified, so the qualified branch was
+// shaped for a second caller that does not exist and was never exercised.
+func DemandRankOrderBySQL() string {
+	return "priority DESC, created_at ASC, id ASC"
 }
 
 // LoadDemandRank resolves the demand an order presents at a rank comparison.
@@ -72,11 +90,15 @@ func DemandRankOrderBySQL(alias string) string {
 // outside the lock can be stale by the time of the grab.
 func LoadDemandRank(db helpers.QueryRower, orderID int64) (DemandRank, error) {
 	var r DemandRank
+	// The ID travels with the demand it belongs to — the PARENT's for a leg, like
+	// the other two columns — so Precedes breaks a tie between the two demands
+	// rather than between two pieces of paperwork.
 	err := db.QueryRow(`
-		SELECT COALESCE(p.priority, o.priority), COALESCE(p.created_at, o.created_at)
+		SELECT COALESCE(p.priority, o.priority), COALESCE(p.created_at, o.created_at),
+		       COALESCE(p.id, o.id)
 		  FROM orders o
 		  LEFT JOIN orders p ON p.id = o.parent_order_id
-		 WHERE o.id = $1`, orderID).Scan(&r.Priority, &r.CreatedAt)
+		 WHERE o.id = $1`, orderID).Scan(&r.Priority, &r.CreatedAt, &r.ID)
 	if err != nil {
 		return DemandRank{}, fmt.Errorf("load demand rank for order %d: %w", orderID, err)
 	}

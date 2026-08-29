@@ -997,53 +997,13 @@ func (db *DB) ReleaseClaimForBin(binID, orderID int64) error {
 	return tx.Commit()
 }
 
-// ReleaseClaimByOrder is the multi-resource inverse: it clears claimed_by for
-// every bin AND every slot this order holds, deletes its order_bins junction rows,
-// and releases all its reservations (both kinds) in one transaction. The coupled
-// replacement for UnclaimOrderBins on rollback / re-queue paths that abandon an
-// order's claims without going terminal (which would otherwise leak the confirmed
-// reservations). Idempotent.
-//
-// Release-set unification: this now releases the SAME set as
-// TerminalizeOrder (minus the terminal-only _TRANSIT anomaly stamp). Before the
-// slot substrate it cleared only bins + reservations; once slots are
-// reservation-backed and hard-claimed via ConfirmSlotClaim, dropping the bin
-// claims without the slot claims + order_bins would strand them — the gap this
-// commit makes real, so it closes it.
-func (db *DB) ReleaseClaimByOrder(orderID int64) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
-		return err
-	}
-	// Slot claims too (store dual of the bin release above).
-	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
-		return err
-	}
-	// Both reservation kinds — ReleaseByOrder is order-keyed and kind-agnostic.
-	if err := reservations.ReleaseByOrder(tx, orderID); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 // DemoteHoldsAfterFleetRefusal takes the ARMOR off an order and leaves its PAPER
 // standing, in one transaction. It is the store half of the one fleet-refusal
 // door (dispatch.Dispatcher.DemoteAfterFleetRefusal) and has no other caller.
 //
-// ── WHY IT IS NOT ReleaseClaimByOrder ─────────────────────────────────────
-//
-// The release beside it does the right thing for a rollback that ABANDONS an
-// order's claims. A fleet refusal abandons nothing: the order got everything it
-// asked for and the failure landed with the robot system (§8).
-//
-// So the undo removes only what claimed a robot that never came:
+// A release is right for a rollback that ABANDONS an order's claims; a fleet
+// refusal abandons nothing (§8). So the undo removes only what claimed a robot
+// that never came:
 //
 //	ARMOR OFF. A hard claim means "a robot is committed", and keeping one through
 //	a fleet refusal makes the books lie — a rank-proof squatter with no wheels,
@@ -1059,8 +1019,8 @@ func (db *DB) ReleaseClaimByOrder(orderID int64) error {
 //
 //	POINTER AND JUNCTION KEPT. orders.bin_id is untouched: the bin is still spoken
 //	for, and on a blip the order re-wins its own uncontested bin seconds later.
-//	order_bins is untouched too — the fourth book. ReleaseClaimByOrder deletes
-//	those rows; the re-dispatch reads them to answer which bin a STEP is about
+//	order_bins is untouched too — the fourth book. A release deletes those rows;
+//	the re-dispatch reads them to answer which bin a STEP is about
 //	(dispatch/bin_for_step.go), which bin_id cannot answer for a multi-bin order.
 //
 // releaseLanes is the CALLER's answer to "do these lane rows belong to this

@@ -54,10 +54,6 @@ type Store interface {
 
 	// Mutations performed on the order during fulfillment.
 	//
-	// ReleaseClaimByOrder is the coupled rollback (clears claimed_by AND releases
-	// reservations); re-queue paths that abandon a HARD claim without going terminal
-	// use it so a re-routed reserve-then-claim can't leak a confirmed reservation.
-	ReleaseClaimByOrder(orderID int64) error
 	// ReleaseReservation releases the order's SOFT pending bin reservation only —
 	// the rollback for a bin soft-acquired but not yet hard-claimed at dispatch
 	// (Rule 1: soft until complete). No claimed_by column is touched because none
@@ -76,8 +72,9 @@ type Store interface {
 // surface shrank:
 //   - SourceFinder collapse: ClaimBin, UnclaimOrderBins, UpdateOrderStatus,
 //     FailOrderAtomic — the scanner claims via the Claimer (soft reserve then
-//     confirm at dispatch), rolls back via ReleaseClaimByOrder (hard) or
-//     ReleaseReservation (soft), transitions via Lifecycle, fails via failFn.
+//     confirm at dispatch), rolls back via the dispatcher's fleet-refusal door
+//     (hard — armor off, paper demoted) or ReleaseReservation (soft),
+//     transitions via Lifecycle, fails via failFn.
 //   - 3-cleanup: FindSourceBinFIFO + FindEmptyCompatibleBin (the finder owns
 //     source lookup now), GetNode (the finder returns the bin's node), and the
 //     non-excluding in-flight count (only the self-excluding

@@ -209,13 +209,6 @@ func (f *fakeStore) ReleaseReservation(orderID, _ int64) error {
 	return nil
 }
 
-// ReleaseClaimByOrder is the coupled rollback; record it under the unclaim signal
-// so rollback assertions on unclaimedOrderIDs keep working after the re-route.
-func (f *fakeStore) ReleaseClaimByOrder(orderID int64) error {
-	f.unclaimedOrderIDs = append(f.unclaimedOrderIDs, orderID)
-	return nil
-}
-
 func (f *fakeStore) UpdateOrderBinID(orderID, binID int64) error {
 	f.binIDUpdates = append(f.binIDUpdates, [2]int64{orderID, binID})
 	return nil

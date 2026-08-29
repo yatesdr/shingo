@@ -157,9 +157,9 @@ linters:
         # the definition file (declarations don't match a `pkg.Fn` selector) and
         # tests (the blanket _test.go carveout under exclusions.rules).
         - pattern: 'bins\.Unclaim'
-          msg: "Direct bins.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation, orphaning a confirmed reservation and bricking the bin (uq_reservations_bin_active). Use the coupled inverse db.ReleaseClaimForBin / db.ReleaseClaimByOrder (store/orders.go)."
+          msg: "Direct bins.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation, orphaning a confirmed reservation and bricking the bin (uq_reservations_bin_active). Use the coupled inverse db.ReleaseClaimForBin (store/orders.go); for the whole of an order's holds, db.TerminalizeOrder."
         - pattern: 'binsstore\.Unclaim'
-          msg: "Direct binsstore.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation. Use db.ReleaseClaimForBin / db.ReleaseClaimByOrder (store/orders.go)."
+          msg: "Direct binsstore.Unclaim(ByOrder) clears claimed_by WITHOUT releasing the coupled reservation. Use db.ReleaseClaimForBin (store/orders.go); for the whole of an order's holds, db.TerminalizeOrder."
         # Slot-claim seatbelt guard. nodes.ClaimSlot / db.ClaimSlot — the
         # un-seatbelted slot CAS — were deleted (the hard slot loop, their only
         # production caller, was removed). The live slot claim is the

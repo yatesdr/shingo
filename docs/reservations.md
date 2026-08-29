@@ -280,8 +280,9 @@ run *inside* a caller's transaction, which is what makes reserve+confirm atomic.
 set `bins.claimed_by` — see the one recorded exception below. Its CAS keeps an
 `EXISTS(pending reservation)` clause: you cannot claim a bin you have not
 reserved. The inverse — clearing `claimed_by` — is coupled to releasing the
-reservation in the same transaction (`ReleaseClaimByOrder` /
-`ReleaseClaimByBin`), so the hard column and the soft row can never drift apart.
+reservation in the same transaction (`ReleaseClaimForBin`, and `TerminalizeOrder`
+for the whole of an order's holds), so the hard column and the soft row can never
+drift apart.
 
 A `forbidigo` rule in `.golangci.yml` rejects any direct `db.ClaimBin` call
 outside `ClaimForDispatch` (and test fixtures). An identical rule guards slots:

@@ -174,4 +174,18 @@ func TestSetQueueDetail_LeavesATerminalRowAlone(t *testing.T) {
 			t.Errorf("history[%d] = %v, want %v — a terminal row records how the order ENDED and a queue code must not overwrite it", i, got[i], want[i])
 		}
 	}
+
+	// AND THE LIVE COLUMNS TOO, which is the half that had no guard. The history
+	// stamp refused, and the row itself still went on to read "waiting for
+	// material" on every board that shows queue_reason — a finished order wearing
+	// a wait. Both halves of one write answer the same question now.
+	var reason, code, cause sql.NullString
+	testutil.MustNoErr(t, db.QueryRow(
+		`SELECT queue_reason, queue_code, queue_cause FROM orders WHERE id=$1`, o.ID).
+		Scan(&reason, &code, &cause), "read the live columns")
+	if reason.String != "" || code.String != "" || cause.String != "" {
+		t.Errorf("a terminal order carries queue_reason=%q code=%q cause=%q, want all empty. "+
+			"The order has ENDED; a wait sentence on its row tells every board it is still waiting "+
+			"for something.", reason.String, code.String, cause.String)
+	}
 }
