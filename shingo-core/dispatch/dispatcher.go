@@ -168,7 +168,7 @@ func (d *Dispatcher) PlanBuriedReshuffle(order *orders.Order, buried *BuriedErro
 	if _, pe := d.planner.planBuriedReshuffle(order, buried); pe != nil {
 		if pe.Transient() {
 			return &ReshuffleWaitError{
-				Cause:  reshuffleWaitCause(pe.Code),
+				Cause:  reshuffleWaitCause(pe),
 				Detail: pe.Detail,
 				// THE PARAMS ARE ATTACHED HERE BECAUSE HERE IS WHERE THEY ARE
 				// KNOWN. The scanner writes this park and holds neither the lane
@@ -260,18 +260,46 @@ func ReshuffleWaitParams(err error, fallbackPayload string) QueueParams {
 // on the row. A code with no mapping falls back to the blanket tag rather than
 // writing a blank — but adding a transient code and not adding it here is a gap,
 // not a default.
-func reshuffleWaitCause(code string) QueueCause {
-	switch code {
+func reshuffleWaitCause(pe *planningError) QueueCause {
+	switch pe.Code {
 	case codeLaneLocked:
 		return CauseLaneLocked
 	case codeNoShuffleSlot:
 		return CauseNoShuffleSlot
 	case codeBlockerClaimed:
-		return CauseDigBlockerClaimed
+		// TAKES THE ERROR, NOT JUST THE CODE. One code carries both blocker
+		// refusals, so the code alone cannot answer this — see digBlockerCause.
+		return digBlockerCause(pe.Err)
 	case codeReadFailed:
 		return CauseReadFailed
 	}
 	return CauseReshuffleCongestion
+}
+
+// digBlockerCause picks between the two blocker waits. They share a planning
+// code and differ in the only thing a wait is FOR: its releaser. A CLAIMED
+// blocker has a robot driving it out, so the wait is that drive. A PROMISED one
+// (§7's ranked take) was kept by a holder that outranked the dig and has no
+// robot at all, so the wait ends when that demand takes its bin or ends.
+//
+// THE DISTINCTION TRAVELS ON THE ERROR, not on the code: codeBlockerClaimed is
+// the same string as protocol.TermBlockerClaimed and serializes verbatim into
+// orders.queue_reason, which is a persisted, compared contract — splitting it
+// is a vocabulary change, not a bug fix.
+//
+// ONE SPELLING, TWO CALLERS, and that is the whole reason it is a function.
+// planBuriedReshuffle parks with this cause directly; the scanner parks from the
+// ReshuffleWaitError instead, re-deriving the cause and landing it on top of
+// what the planner wrote. Forking in the planner alone left the plain path
+// overwriting every promised park with dig-blocker-claimed — telling an operator
+// to wait for a drive that had not started, which is exactly the wrong-name
+// defect the cause vocabulary exists to prevent.
+func digBlockerCause(err error) QueueCause {
+	var refused *store.BlockerClaimedError
+	if errors.As(err, &refused) && refused.Promised {
+		return CauseDigBlockerPromised
+	}
+	return CauseDigBlockerClaimed
 }
 
 // ErrReshuffleWait reports planning-time CONGESTION rather than a fault: the

@@ -68,7 +68,7 @@ func TestReadFailure_IsTransientAndCarriesItsOwnCause(t *testing.T) {
 	if !pe.Transient() {
 		t.Fatal("a failed read is terminal — one unanswered SELECT kills the order")
 	}
-	if got := reshuffleWaitCause(codeReadFailed); got != CauseReadFailed {
+	if got := reshuffleWaitCause(pe); got != CauseReadFailed {
 		t.Errorf("wait cause = %q, want %q", got, CauseReadFailed)
 	}
 	for _, laneBusy := range []QueueCause{CauseLaneOccupied, CauseLaneDigActive, CauseLaneLocked, CauseLaneTargetBuried} {

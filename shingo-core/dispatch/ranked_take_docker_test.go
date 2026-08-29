@@ -301,3 +301,52 @@ func TestRankedTake_TheParkNamesItsOwnCause(t *testing.T) {
 	}
 	_ = holder
 }
+
+// TestRankedTake_ThePromisedCauseSurvivesTheWaitError is the SAME park as the
+// test above, taken through the door the plant actually uses.
+//
+// planBuriedReshuffle writes the promised cause itself, so a test that calls the
+// planner directly sees the right answer and stops. The scanner does not call
+// the planner: it calls Dispatcher.PlanBuriedReshuffle, and parks from the
+// ReshuffleWaitError that comes back (fulfillment/scanner.go:349) — re-deriving
+// the cause and OVERWRITING what the planner just wrote. That rebuild reads the
+// planning CODE, and both refusals carry codeBlockerClaimed because the code
+// serializes into orders.queue_reason and is a persisted contract that cannot
+// split. So the promise/claim distinction has to travel on the error.
+//
+// Without that, the whole unit is undone one layer out: the operator is told to
+// wait for a robot's drive that has not started and is not coming, which is the
+// wrong-name defect class the cause vocabulary exists to prevent.
+func TestRankedTake_ThePromisedCauseSurvivesTheWaitError(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	blocker := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "RANKWAIT-BLK")
+	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "RANKWAIT-TGT")
+	promiseHolder(t, db, "rankwait-holder", 9, blocker.ID)
+
+	demand := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "rankwait-demand"
+		o.OrderType = OrderTypeRetrieve
+		o.PayloadCode = bp.Code
+		o.Status = StatusQueued
+	})
+
+	err := d.PlanBuriedReshuffle(demand, &BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID})
+	if err == nil {
+		t.Fatal("an outranked dig must come back as a wait, not a success")
+	}
+	if !errors.Is(err, ErrReshuffleWait) {
+		t.Fatalf("the refusal came back as %v, want a transient reshuffle wait — a park that reads "+
+			"as structural fails the demand instead of queueing it", err)
+	}
+	if got := ReshuffleWaitCause(err); got != CauseDigBlockerPromised {
+		t.Errorf("the wait error carries cause %q, want %q.\n"+
+			"This is the value fulfillment/scanner.go parks from, and it lands on top of the cause "+
+			"the planner wrote. dig-blocker-claimed's releaser is a robot finishing its drive; the "+
+			"holder here has a promise and no robot, so the operator is pointed at a wait that will "+
+			"never end that way.", got, CauseDigBlockerPromised)
+	}
+}
