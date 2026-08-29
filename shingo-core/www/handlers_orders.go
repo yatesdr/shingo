@@ -33,6 +33,7 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		"QueueCodeLabels":    queueCodeLabels(),
 		"FaultLines":         faultLines,
 		"FaultedNoticeCount": noticeCount,
+		"WaitSince":          h.waitSinceFor(orders),
 	}
 	h.render(w, r, "orders.html", data)
 }
@@ -74,6 +75,7 @@ func (h *Handlers) handleOrdersRows(w http.ResponseWriter, r *http.Request) {
 	if err := tmpl.ExecuteTemplate(w, "orders-rows", map[string]any{
 		"Orders":        orders,
 		"FaultLines":    faultLines,
+		"WaitSince":     h.waitSinceFor(orders),
 		"Authenticated": h.isAuthenticated(r),
 	}); err != nil {
 		log.Printf("orders rows: %v", err)
@@ -143,6 +145,57 @@ func (h *Handlers) faultLinesFor(orders []*domain.Order) (map[int64]template.HTM
 		lines[o.ID] = template.HTML(line.HTML())
 	}
 	return lines, notice
+}
+
+// waitSinceFor answers "how long has this order been waiting" for every order on
+// the page that is still acquiring, as the RFC3339 instant its current wait
+// began. Keyed by order id; absent means no clock, which is the honest rendering
+// for an order that is not waiting and for one whose episode row could not be
+// read.
+//
+// ── WHY THE HISTORY ROW AND NOT orders.updated_at ─────────────────────────
+//
+// updated_at means TOUCHED, not PROGRESSED. About twenty writers move it and
+// several of them run on the dispatch retry loop, so an order that re-enters the
+// scanner every tick, is refused, and parks again refreshes its own clock — the
+// order going nowhere fastest is the one that looks busiest.
+// store/reconciliation's stuck detector was measured making exactly that mistake
+// (order 143, sixteen minutes of "activity" in which nothing happened) and moved
+// onto the same instrument this uses.
+//
+// The row is the one that opened the episode the order is resting in — the row
+// SetQueueDetail stamps the wait's cause onto. That is what makes this the start
+// of THIS wait rather than of the order.
+//
+// ONE BATCH READ PER STATUS PRESENT, and the statuses come from the orders
+// themselves rather than from a list: the acquiring set is spelled in exactly
+// one place (protocol.IsAcquiring) and a page handler is not going to be the
+// second. Two round trips at the very most, against a hundred-row page.
+func (h *Handlers) waitSinceFor(orders []*domain.Order) map[int64]string {
+	byStatus := map[protocol.Status][]int64{}
+	for _, o := range orders {
+		if protocol.IsAcquiring(o.Status) {
+			byStatus[o.Status] = append(byStatus[o.Status], o.ID)
+		}
+	}
+	if len(byStatus) == 0 {
+		return nil
+	}
+	svc := h.engine.OrderService()
+	out := make(map[int64]string)
+	for status, ids := range byStatus {
+		times, err := svc.LatestOrderHistoryTimesForStatus(ids, status)
+		if err != nil {
+			// The sentence still renders and simply has no duration under it —
+			// the same trade faultLinesFor makes with the fault clock.
+			log.Printf("orders page: wait clock for %d %s order(s): %v", len(ids), status, err)
+			continue
+		}
+		for id, at := range times {
+			out[id] = at.UTC().Format(time.RFC3339)
+		}
+	}
+	return out
 }
 
 // countQueueCodes tallies the active orders by their structured queue_code so the

@@ -153,6 +153,12 @@ func (db *DB) InsertOrderHistory(orderID int64, oldStatus, newStatus, detail str
 	return orders.InsertHistory(db.DB, orderID, oldStatus, newStatus, detail)
 }
 
+// LatestOrderHistoryTimesForStatus is the batch "when did each of these orders
+// most recently enter this status" read — see orders.LatestHistoryTimesForStatus.
+func (db *DB) LatestOrderHistoryTimesForStatus(orderIDs []int64, status string) (map[int64]time.Time, error) {
+	return orders.LatestHistoryTimesForStatus(db.DB, orderIDs, status)
+}
+
 // ListStagedOrdersByProcessNode returns staged orders linked to a
 // specific process_node.
 func (db *DB) ListStagedOrdersByProcessNode(processNodeID int64) ([]orders.Order, error) {

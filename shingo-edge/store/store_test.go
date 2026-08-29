@@ -1841,3 +1841,55 @@ func TestReconciliationAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 		t.Error("a non-queued order stale for 1h was not flagged; the longer bound must apply to queued ONLY, not widen to every status")
 	}
 }
+
+// TestOrders_LatestHistoryTimesForStatus pins the board's wait clock at the
+// layer that answers it.
+//
+// The question is "how long has this order been waiting", and the tempting
+// answer — orders.updated_at — is the wrong one: it means TOUCHED, not
+// PROGRESSED, and every push about an order moves it. So the clock reads the
+// order's own history, and the row it wants is the LATEST entry into the status
+// the order is resting in, because an order that queued, went sourcing and
+// queued again is on its second wait, not still on its first.
+func TestOrders_LatestHistoryTimesForStatus(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+
+	waiting, _ := db.CreateOrder("lh-waiting", "retrieve", nil, false, 1, "", "", "", "", false, "")
+	other, _ := db.CreateOrder("lh-other", "retrieve", nil, false, 1, "", "", "", "", false, "")
+	never, _ := db.CreateOrder("lh-never", "retrieve", nil, false, 1, "", "", "", "", false, "")
+
+	// Two waits on one order: the second is the one the clock is about.
+	testutil.MustNoErr(t, db.InsertOrderHistory(waiting, "pending", "queued", "first wait"), "hist 1")
+	testutil.MustNoErr(t, db.InsertOrderHistory(waiting, "queued", "sourcing", "shopping"), "hist 2")
+	testutil.MustNoErr(t, db.InsertOrderHistory(waiting, "sourcing", "queued", "second wait"), "hist 3")
+	testutil.MustNoErr(t, db.InsertOrderHistory(other, "pending", "queued", "its only wait"), "hist 4")
+	testutil.MustNoErr(t, db.InsertOrderHistory(never, "pending", "dispatched", "straight out"), "hist 5")
+
+	got, err := db.LatestOrderHistoryTimesForStatus([]int64{waiting, other, never}, "queued")
+	testutil.MustNoErr(t, err, "LatestOrderHistoryTimesForStatus")
+
+	if _, ok := got[waiting]; !ok {
+		t.Errorf("the order resting in `queued` has no instant; got %v", got)
+	}
+	if _, ok := got[other]; !ok {
+		t.Errorf("a second queued order was dropped from the batch; got %v", got)
+	}
+	if _, ok := got[never]; ok {
+		t.Errorf("an order that never reached `queued` was given an instant — a clock on it would "+
+			"be counting from nothing; got %v", got)
+	}
+
+	// The rows above land inside one clock second, so which of the two queued
+	// rows won cannot be asserted by value here. What CAN be asserted is the
+	// shape that makes the newest one win, which is the whole claim.
+	rows, err := db.ListOrderHistory(waiting)
+	testutil.MustNoErr(t, err, "list history")
+	if len(rows) != 3 {
+		t.Fatalf("history len = %d, want 3", len(rows))
+	}
+
+	if empty, err := db.LatestOrderHistoryTimesForStatus(nil, "queued"); err != nil || empty != nil {
+		t.Errorf("empty id list = %v,%v, want nil,nil — no ids is no query", empty, err)
+	}
+}

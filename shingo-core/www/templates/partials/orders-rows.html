@@ -19,9 +19,22 @@
   </td>
   <td data-sort-value="{{.Status}}">
     <span class="badge badge-{{.Status}}">{{.Status}}</span>
-    {{/* Same slot, either reason: a queued order explains its wait, a faulted
-         one explains its fault. The fault line ticks its own clock. */}}
-    {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}</div>{{end}}
+    {{/* Same slot, either reason: an order still acquiring its material explains
+         its wait, a faulted one explains its fault. The fault line ticks its own
+         clock; the wait ticks this one.
+
+         THE WAIT CLOCK IS THE THIRD PART OF THE SENTENCE. A cause with no
+         duration beside it cannot tell an operator whether the plant is busy or
+         wedged — "waiting for material" reads the same at forty seconds and at
+         four hours, and those are different days. Its instant is the history row
+         of the episode the order is resting in (WaitSince, handlers_orders.go),
+         so it measures THIS wait rather than the order's age or its last touch.
+
+         Absent for anything not waiting, which is what keeps a ticking duration
+         off an order the fleet is already carrying. data-since is the contract
+         shared/utils.js installLiveDurations reads — the same one the fault line
+         and the staged countdown use. */}}
+    {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}{{with index $.WaitSince .ID}} · <span class="tnum orders-wait-since" data-since="{{.}}"></span>{{end}}</div>{{end}}
     {{if $.FaultLines}}{{with index $.FaultLines .ID}}<div class="orders-subtext orders-reason">{{.}}</div>{{end}}{{end}}
   </td>
   <td class="orders-robot">{{.RobotID}}</td>

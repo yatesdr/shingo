@@ -35,7 +35,11 @@
   {{$labels := .QueueCodeLabels}}
   {{if or .QueueCodeCounts .FaultedNoticeCount}}
   <div class="queue-why">
-    {{if .QueueCodeCounts}}<span class="text-muted-xs">Why queued:</span>{{end}}
+    {{/* "Why waiting", not "Why queued": countQueueCodes tallies the whole
+         ACQUIRING set (protocol.IsAcquiring — queued and sourcing), so a label
+         naming one rung describes the wrong number. An operator asking what is
+         sourcing and why reads these chips. */}}
+    {{if .QueueCodeCounts}}<span class="text-muted-xs">Why waiting:</span>{{end}}
     {{range $code, $count := .QueueCodeCounts}}
       {{if and $code (gt $count 0)}}
       <span class="chip chip-muted">{{$label := index $labels $code}}{{if $label}}{{$label}}{{else}}{{$code}}{{end}}: <span class="tnum">{{$count}}</span></span>

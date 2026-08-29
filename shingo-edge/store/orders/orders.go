@@ -511,6 +511,60 @@ func InsertHistory(db *sql.DB, orderID int64, oldStatus, newStatus, detail strin
 	return err
 }
 
+// LatestHistoryTimesForStatus returns, for each of orderIDs, when it most
+// recently ENTERED status — order id -> instant, in one round trip. Orders that
+// never reached the status are absent from the map.
+//
+// It answers "how long has this order been waiting", for the board. The Edge
+// writes one of these rows on every transition it applies, Core's pushes
+// included, so the wait's own start is a LOCAL fact: nothing has to be added to
+// the wire to render it.
+//
+// orders.updated_at is the wrong clock and would have needed no query at all,
+// which is exactly why it is worth saying: it means TOUCHED, not PROGRESSED, and
+// every push about an order moves it. An order Core re-parks under the same
+// cause every tick would show a clock that keeps resetting — the order going
+// nowhere fastest looking the busiest.
+//
+// MAX(created_at) rather than a row read: only the instant is wanted, and the
+// column is written by the same statement that appends the row, so the newest
+// value for a status is the start of the episode the order is in now.
+//
+// An empty id list is a nil map and no query.
+func LatestHistoryTimesForStatus(db *sql.DB, orderIDs []int64, status string) (map[int64]time.Time, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(orderIDs))
+	args := make([]any, 0, len(orderIDs)+1)
+	for i, id := range orderIDs {
+		ph[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, status)
+	rows, err := db.Query(`SELECT order_id, MAX(created_at) FROM order_history
+		WHERE order_id IN (`+strings.Join(ph, ",")+`) AND new_status = ?
+		GROUP BY order_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("latest %s history for %d orders: %w", status, len(orderIDs), err)
+	}
+	defer rows.Close()
+	out := make(map[int64]time.Time, len(orderIDs))
+	for rows.Next() {
+		var id int64
+		var at string
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		// An unparseable timestamp is left out rather than rendered as a
+		// year-2026 duration: the row still shows its cause, with no clock.
+		if t := helpers.ScanTime(at); !t.IsZero() {
+			out[id] = t
+		}
+	}
+	return out, rows.Err()
+}
+
 // ListStagedByProcessNode returns staged orders linked to a specific
 // process_node.
 func ListStagedByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {
