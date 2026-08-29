@@ -125,34 +125,38 @@ func readXLSXRows(r io.Reader) ([][]string, error) {
 	return f.GetRows(f.GetSheetName(0))
 }
 
-// importPayloadGroups is the parse → group → validate → create pipeline,
-// separated from HTTP so the tests can drive it with plain rows.
-func (h *Handlers) importPayloadGroups(rows [][]string) *importReport {
-	report := &importReport{Rows: []importRowResult{}}
+// importEntry is one FILE ROW belonging to a payload's group, carrying its
+// own line number so a validation failure names the exact row that offended
+// rather than the payload's first row.
+type importEntry struct {
+	line int
+	uop  string
+	part string
+	qty  string
+}
 
+// importGroup is every row that shares one payload code, in file order.
+type importGroup struct {
+	code    string
+	line    int // first row — the "home" line for payload-level results
+	entries []importEntry
+}
+
+// groupImportRows folds the file into one group per payload code, IN FILE
+// ORDER so the report reads top-to-bottom.
+//
+// It also owns the two per-row verdicts that can be reached before a payload
+// exists at all: a wholly blank row is skipped (spreadsheets have them) and a
+// row with cells but no code is failed where it sits.
+func groupImportRows(rows [][]string, report *importReport) []*importGroup {
 	// Header detection: a first row whose first cell names the code column
 	// is a header, not a payload whose code is "Payload Code".
 	start := 0
 	if len(rows) > 0 && isImportHeaderRow(rows[0]) {
 		start = 1
 	}
-
-	// Group rows by code IN FILE ORDER so the report reads top-to-bottom.
-	// Every cell of every row is kept with its own line number so a
-	// validation failure names the exact row that offended.
-	type groupEntry struct {
-		line int
-		uop  string
-		part string
-		qty  string
-	}
-	type group struct {
-		code    string
-		line    int // first row — the "home" line for payload-level results
-		entries []groupEntry
-	}
-	var order []string
-	groups := map[string]*group{}
+	var order []*importGroup
+	groups := map[string]*importGroup{}
 	for i := start; i < len(rows); i++ {
 		line := i + 1
 		cells := rows[i]
@@ -173,67 +177,86 @@ func (h *Handlers) importPayloadGroups(rows [][]string) *importReport {
 		}
 		g, ok := groups[code]
 		if !ok {
-			g = &group{code: code, line: line}
+			g = &importGroup{code: code, line: line}
 			groups[code] = g
-			order = append(order, code)
+			order = append(order, g)
 		}
-		g.entries = append(g.entries, groupEntry{line: line, uop: cell(1), part: cell(2), qty: cell(3)})
+		g.entries = append(g.entries, importEntry{line: line, uop: cell(1), part: cell(2), qty: cell(3)})
 	}
+	return order
+}
 
-	for _, code := range order {
-		g := groups[code]
-		// UoP: the first NON-EMPTY value in the group wins. The common
-		// authoring slip is leaving it blank on a continuation row while
-		// filling it on the first; the inverse (blank first, filled later)
-		// should not silently become UoP 0. A garbage value fails the
-		// payload — falling through to a later row would mask the typo.
-		uop := int64(0)
-		uopFailed := false
-		for _, e := range g.entries {
-			if e.uop == "" {
-				continue
-			}
-			v, ok := parseImportInt(e.uop)
-			switch {
-			case !ok:
-				report.add(importRowResult{Line: e.line, Code: code, Status: "failed",
-					Reason: fmt.Sprintf("UoP %q must be a whole number ≥ 0", e.uop)})
-				uopFailed = true
-			case v > math.MaxInt32: // payloads.uop_capacity is a Postgres integer
-				report.add(importRowResult{Line: e.line, Code: code, Status: "failed",
-					Reason: fmt.Sprintf("UoP %q is too large", e.uop)})
-				uopFailed = true
-			default:
-				uop = v
-			}
-			break // only the first non-empty UoP is consulted
-		}
-		if uopFailed {
+// resolveGroupUoP returns the group's UoP capacity and whether it validated.
+//
+// The first NON-EMPTY value in the group wins. The common authoring slip is
+// leaving it blank on a continuation row while filling it on the first; the
+// inverse (blank first, filled later) must not silently become UoP 0. A garbage
+// value fails the payload — falling through to a later row would mask the typo.
+func resolveGroupUoP(g *importGroup, report *importReport) (int64, bool) {
+	for _, e := range g.entries {
+		if e.uop == "" {
 			continue
 		}
-		// Quantities: blank = 0; otherwise a whole number ≥ 0. FAIL FAST on
-		// the first bad quantity, reporting ITS row — one failed row per
-		// bad payload, pointing at the line that needs fixing.
-		qtyFail := false
-		for _, e := range g.entries {
-			if e.part == "" {
-				continue
-			}
-			q, ok := parseImportInt(e.qty)
-			if !ok {
-				report.add(importRowResult{Line: e.line, Code: code, Status: "failed",
-					Reason: fmt.Sprintf("quantity %q for part %s must be a whole number ≥ 0", e.qty, e.part)})
-				qtyFail = true
-				break
-			}
-			if q > math.MaxInt64/2 { // absurd guard; bigint holds far more
-				report.add(importRowResult{Line: e.line, Code: code, Status: "failed",
-					Reason: fmt.Sprintf("quantity %q for part %s is too large", e.qty, e.part)})
-				qtyFail = true
-				break
-			}
+		v, ok := parseImportInt(e.uop)
+		switch {
+		case !ok:
+			report.add(importRowResult{Line: e.line, Code: g.code, Status: "failed",
+				Reason: fmt.Sprintf("UoP %q must be a whole number ≥ 0", e.uop)})
+			return 0, false
+		case v > math.MaxInt32: // payloads.uop_capacity is a Postgres integer
+			report.add(importRowResult{Line: e.line, Code: g.code, Status: "failed",
+				Reason: fmt.Sprintf("UoP %q is too large", e.uop)})
+			return 0, false
+		default:
+			return v, true
 		}
-		if qtyFail {
+	}
+	return 0, true // no row carried one: UoP 0, which earns a warning downstream
+}
+
+// validateGroupQuantities reports whether every part row's quantity parses.
+//
+// Blank = 0; otherwise a whole number ≥ 0. FAILS FAST on the first bad
+// quantity, reporting ITS row — one failed row per bad payload, pointing at
+// the line that needs fixing rather than one per bad cell.
+func validateGroupQuantities(g *importGroup, report *importReport) bool {
+	for _, e := range g.entries {
+		if e.part == "" {
+			continue
+		}
+		q, ok := parseImportInt(e.qty)
+		if !ok {
+			report.add(importRowResult{Line: e.line, Code: g.code, Status: "failed",
+				Reason: fmt.Sprintf("quantity %q for part %s must be a whole number ≥ 0", e.qty, e.part)})
+			return false
+		}
+		if q > math.MaxInt64/2 { // absurd guard; bigint holds far more
+			report.add(importRowResult{Line: e.line, Code: g.code, Status: "failed",
+				Reason: fmt.Sprintf("quantity %q for part %s is too large", e.qty, e.part)})
+			return false
+		}
+	}
+	return true
+}
+
+// importPayloadGroups is the parse → group → validate → create pipeline,
+// separated from HTTP so the tests can drive it with plain rows.
+//
+// The three validation phases are their own functions above. They were
+// extracted rather than baselined when funlen caught this at 85 statements:
+// the ceiling exists so the NEXT oversized function fails CI, and the
+// characterization suite in handlers_payload_import_test.go is the behavioural
+// evidence the ratchet requires for a body move.
+func (h *Handlers) importPayloadGroups(rows [][]string) *importReport {
+	report := &importReport{Rows: []importRowResult{}}
+
+	for _, g := range groupImportRows(rows, report) {
+		code := g.code
+		uop, ok := resolveGroupUoP(g, report)
+		if !ok {
+			continue
+		}
+		if !validateGroupQuantities(g, report) {
 			continue
 		}
 

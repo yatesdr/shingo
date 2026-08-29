@@ -336,3 +336,38 @@ func TestImportPayloadGroups_FailureNamesItsRow(t *testing.T) {
 			"the group's home line 2", failed)
 	}
 }
+
+// TestImportPayloadGroups_OverflowGuards pins the two ceiling arms, which had
+// no coverage before the funlen extraction moved them into their own functions.
+//
+// Both are real: uop_capacity is a Postgres integer, so a spreadsheet holding a
+// part number in the UoP column would otherwise be handed to the driver and come
+// back as an opaque write error instead of a named row. The quantity guard is
+// looser (bigint holds far more) and exists so an absurd cell is reported as a
+// row the operator can find rather than stored.
+func TestImportPayloadGroups_OverflowGuards(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlers(t)
+
+	rep := h.importPayloadGroups(importRows(
+		[]string{"BIG-UOP", "3000000000", "", ""},                   // line 2: > int32
+		[]string{"BIG-QTY", "5", "40016911", "9000000000000000000"}, // line 3: absurd
+	))
+	mustEq(t, rep.Summary.Created, 0, "created — neither payload may be written")
+	mustEq(t, rep.Summary.Failed, 2, "failed (BIG-UOP, BIG-QTY)")
+
+	want := map[int]string{2: "UoP", 3: "quantity"}
+	for _, r := range rep.Rows {
+		if r.Status != "failed" {
+			continue
+		}
+		if w, ok := want[r.Line]; !ok || !strings.Contains(r.Reason, w) ||
+			!strings.Contains(r.Reason, "too large") {
+			t.Errorf("failed row %+v does not name its own line and what overflowed", r)
+		}
+		delete(want, r.Line)
+	}
+	if len(want) != 0 {
+		t.Errorf("no failure reported for line(s) %v: %+v", want, rep.Rows)
+	}
+}
