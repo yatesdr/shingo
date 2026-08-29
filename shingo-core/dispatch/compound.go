@@ -66,9 +66,8 @@ const reshuffleDissolveDetail = ReshuffleDissolveDetail
 // the still-buried bin the rationale was worried about is exactly what the new
 // plan digs out.
 //
-// The owner's sentence is the rule: "the demand still exists — isn't this the
-// point of heal?" A dig failing is the plant being congested. Only the demand's
-// OWN work failing fails the demand.
+// The rule: a dig failing is the plant being congested, and the demand still
+// exists. Only the demand's OWN work failing fails the demand.
 //
 // AND IT IS THE SAME ENDING AS A DISSOLVE, deliberately, with a different
 // STRING. The machinery is one path — close the chapter, dispose of the parent —

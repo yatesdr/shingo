@@ -291,10 +291,10 @@ func (e *LaneRevisitError) Error() string {
 // at all, so the entire mouth mechanism was reachable only from the plain path.
 // That is not a small gap: complex is the bulk of both plants' lane traffic, and
 // the tree says so at complex_dispatch.go's ungated arm. §R.101's rule is written
-// about complex orders in the owner's own words — "if a complex order resolves on
-// an open or shallow bin: proceed as normal, lane locks, lane clears on the
-// pickup" — so a source lock that only plain orders take is the rule applied to
-// the smaller half of the plant.
+// about complex orders — a complex order resolving on an open or shallow bin
+// proceeds as normal, the lane locks, and the lane clears on the pickup — so a
+// source lock that only plain orders take is the rule applied to the smaller
+// half of the plant.
 //
 // ONE PLAN CAN NAME ONE LANE TWICE and legitimately: a step picks from a lane the
 // same plan later drops into, or two pickups come from one lane. The holds are
@@ -375,9 +375,8 @@ func (d *Dispatcher) resolvePlanLaneHolds(steps []resolvedStep) ([]laneHold, err
 		// robot in the corridor is appended later, when the evaluator says the
 		// lane is safe. Taking the lane here would refuse the order BEFORE
 		// DISPATCH and waste every step in front of the lane — which is the exact
-		// thing the splice exists to stop, in the owner's words: "I don't want a
-		// compound order which may have 5, 7, 10 steps to queue because a lane
-		// block. It should do all the work it can up until the lane."
+		// thing the splice exists to stop: a compound of 5, 7 or 10 steps must not
+		// queue on a lane block. It does all the work it can up to the lane.
 		//
 		// It is the same rule enteredAtDispatch states for occupancy and
 		// entryDeferredToGate states for admission, now said a third time for the

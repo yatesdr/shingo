@@ -26,9 +26,10 @@ import (
 // a robot was in the act of removing. The blocker is ceasing to exist; that is
 // the purest congestion in the system, and congestion waits (D18-Q4).
 //
-// The soft case is pinned as-is at the bottom, deliberately: a dig still steals
-// an unclaimed-but-soft-held bin, and whether it should is the open dig/
-// soft-holder contract question. A test, so the decision has something to flip.
+// The soft case at the bottom used to pin the unconditional steal against the
+// open dig/soft-holder contract question. That question is settled (§7): a soft
+// hold is a promise, and the take goes by the demand ranking — so the dig yields
+// to a holder it does not outrank.
 
 // mkDigOrder is the retrieve that wants the deep bin.
 func mkDigOrder(t *testing.T, db *store.DB, uuid, payloadCode, delivery string) *orders.Order {
@@ -187,27 +188,19 @@ func TestDig_BlockerLeavesTheLane_ThenDigs(t *testing.T) {
 	testdb.AssertNoOrphanedHolds(t, db)
 }
 
-// TestDig_BlockerSoftHeld_YieldsToAnOlderHolder IS THE FLIP THIS TEST ASKED FOR.
+// TestDig_BlockerSoftHeld_YieldsToAnOlderHolder is the flip this test asked for.
 //
-// It used to be TestDig_BlockerSoftHeld_StillSteals, pinning today's behaviour
-// with its own instruction attached: "the underlying question, what a dig owes
-// an order that soft-holds a bin in its way, is the open dig/soft-holder
-// contract (plan §12.17, FINDINGS-compound-child-ledger-row-2026-08-09.md) ...
-// It is pinned rather than fixed because every exit moves someone's semantics
-// and the decision has not been made. When it is, THIS TEST IS THE THING TO
-// FLIP."
+// It was TestDig_BlockerSoftHeld_StillSteals, pinning the unconditional steal
+// against the open dig/soft-holder contract (plan §12.17,
+// FINDINGS-compound-child-ledger-row-2026-08-09.md) and saying in its own doc
+// that it was the thing to flip once that question was settled.
 //
-// The decision is made — owner ruling §7: "digs aren't some special move. if a
-// dig operation has to wait for a complex or move, they have to wait. it
-// actually helps them because the complex or move would clear a dig for them,
-// ironically." A soft hold is a PROMISE, and the take at a positional blocker
-// goes by the plant's demand ranking like every other take.
-//
-// So the old assertion is inverted, on the fixture it always had: the holder is
-// seeded first and both demands are priority 0, so the holder is the OLDER
-// demand and keeps its bin. What this used to prove — that the dig steals — is
-// now conditional on the dig outranking, and is pinned on that condition by the
-// ranked-take suite (ranked_take_docker_test.go).
+// It is settled (§7): a soft hold is a PROMISE, and the take at a positional
+// blocker goes by the demand ranking. So the assertion is inverted on the
+// fixture it always had — the holder is seeded first and both demands are
+// priority 0, so the holder is older and keeps its bin. What this used to prove
+// is now conditional on the dig outranking, and is pinned on that condition in
+// ranked_take_docker_test.go.
 func TestDig_BlockerSoftHeld_YieldsToAnOlderHolder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

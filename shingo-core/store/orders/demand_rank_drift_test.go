@@ -21,13 +21,12 @@ var rankSpelling = regexp.MustCompile(`(?i)priority\s+DESC`)
 // TestNoThirdSpellingOfTheDemandRanking is blocking_drift_test's guard applied
 // to §9's seam.
 //
-// The owner's ruling is one sentence: "the demand ranking is one seam ... one
-// day we'll expand the demand logic from first come first served to like
-// time-to-empty for demand", and the whole value of that is that the change
-// lands in ONE place. Round 6 sharpened it: the seam is one comparator with
-// exactly TWO callers — the scan's ORDER BY and the steal's under-lock outrank
-// check — and "nothing else may spell priority-then-oldest, or time-to-empty
-// lands in one site and silently not the other."
+// The demand ranking is one seam (§9): first-come-first-served today,
+// time-to-empty later, and the whole value of that is that the change lands in
+// ONE place. Round 6 sharpened it to a shape — one comparator with exactly TWO
+// callers, the scan's ORDER BY and the steal's under-lock outrank check.
+// Anything else that spells priority-then-oldest is a site time-to-empty would
+// silently not reach.
 //
 // A source scan rather than a behaviour test, because the claim is about how the
 // ordering is SPELLED. One spelling exists today; that is the dangerous moment

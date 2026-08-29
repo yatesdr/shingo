@@ -103,7 +103,7 @@ func TestSplice_ComplexStoreDoesItsPreLaneWorkThenDwells(t *testing.T) {
 		t.Error("the create sealed the order; a gated order ships UNSEALED")
 	}
 	if n := len(creates[0].Blocks); n != 2 {
-		t.Fatalf("create carried %d blocks, want 2 (pickup + wait). This is the owner's requirement: "+
+		t.Fatalf("create carried %d blocks, want 2 (pickup + wait). The requirement: "+
 			"the order does all the work it can before it dwells", n)
 	}
 	if creates[0].Blocks[0].Location != sd.StorageNode.Name {

@@ -13,10 +13,9 @@ import (
 
 // ── THE MUTUAL DIG HOLD HAS TO APPEAR SOMEWHERE AS ITSELF (§R.75/§R.76) ────
 //
-// The owner's complaint, and it was exactly right: "dig vs dig not showing locks
-// against each other". Every wait in a standoff is recorded correctly and
-// individually — dig A parked naming lane Y, dig B parked naming lane X — and
-// nowhere does anything say that A and B are holding each other. The shape only
+// A dig-vs-dig standoff does not show as one. Every wait in it is recorded
+// correctly and individually — dig A parked naming lane Y, dig B parked naming
+// lane X — and nowhere does anything say that A and B are holding each other. The shape only
 // becomes visible when a human reads three rows side by side and notices the
 // names close a loop, which on the rig took a slot-by-slot walk of a frozen
 // database to establish.

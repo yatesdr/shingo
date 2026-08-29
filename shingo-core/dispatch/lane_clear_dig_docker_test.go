@@ -196,7 +196,7 @@ func TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking(t *testing.T) {
 			parent.Status)
 	}
 
-	// 2. THE DIG CLAIMED THE BLOCKER AT CREATION — the owner's requirement.
+	// 2. THE DIG CLAIMED THE BLOCKER AT CREATION.
 	claimed, err := db.GetBin(blocker.ID)
 	testutil.MustNoErr(t, err, "reload blocker")
 	if claimed.ClaimedBy == nil {

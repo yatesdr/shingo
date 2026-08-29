@@ -42,16 +42,14 @@ func claimFor(t *testing.T, db *store.DB, binID, orderID int64) {
 // compoundParent is a dig's parent — the order whose demand the excavation
 // serves, and therefore the demand its legs present at a rank comparison.
 //
-// IT CARRIES A PRIORITY, and that is not fixture decoration: since ruling §7 the
-// steal at a positional blocker goes by the plant's demand ranking, so "the dig
-// wins this blocker" is a PRECONDITION of every test below rather than a
-// property of digs. Priority is dormant at both plants today (Edge writes none;
-// only the Core manual doors do), which means a real contest is settled by age
-// alone — and a holder seeded before the parent, as these fixtures seed it, is
-// the OLDER demand and correctly keeps its bin. Stating the precondition as a
-// priority makes it visible and independent of seeding order.
+// IT CARRIES A PRIORITY, which is not decoration. Since §7 the steal goes by the
+// demand ranking, so "the dig wins this blocker" is a precondition of the tests
+// below rather than a property of digs. Priority is dormant at both plants, so a
+// real contest is settled by age — and these fixtures seed the holder first,
+// making it the older demand. Stating the precondition as a priority makes it
+// visible and independent of seeding order.
 //
-// A test about the LOSING path sets its own ranks; see the ranked-take suite.
+// A test about the losing path sets its own ranks; see the ranked-take suite.
 func compoundParent(t *testing.T, db *store.DB, uuid string) *orders.Order {
 	t.Helper()
 	return testdb.CreateOrder(t, db, func(o *orders.Order) {

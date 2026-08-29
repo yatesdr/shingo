@@ -639,11 +639,11 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 //
 // DemoteAfterFleetRefusal is THE ONE DOOR every fleet refusal goes through.
 //
-// Owner ruling §8: "this is a blip failure — everything fired, it got all its
-// claims, the failure just landed with RDS." So the order is not failed and its
-// paper is not burned. Armor off, paper demoted, pointer kept, back in the line
-// under a named cause; on a blip it re-wins its own uncontested bin seconds
-// later, and in a real outage the paper yields by rank like everyone else's.
+// A fleet refusal is a blip: everything fired, the order got all its claims, and
+// the failure landed with RDS. So it is not failed and its paper is not burned —
+// armor off, paper demoted, pointer kept, back in the line under a named cause.
+// On a blip it re-wins its own uncontested bin seconds later; in a real outage
+// the paper yields by rank like everyone else's (§8).
 //
 // ── WHAT IT REPLACED ──────────────────────────────────────────────────────
 //

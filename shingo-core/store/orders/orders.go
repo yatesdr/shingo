@@ -1237,9 +1237,9 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 // one of §9's two callers — the line's ordering — and the other is the steal's
 // under-lock outrank check; they call the same ranking, one in SQL and one in
 // Go, and TestNoThirdSpellingOfTheDemandRanking pins that there is no third.
-// The owner's reason: "one day we'll expand the demand logic from first come
-// first served to like time-to-empty", and that day is a one-spot change only
-// while the ranking is spelled once.
+// The ranking is expected to become time-to-empty rather than
+// first-come-first-served, and that is a one-spot change only while it is
+// spelled once.
 //
 // Widened from queued-only: the scanner also retries orders sitting in
 // `sourcing`. Once MoveToSourcing moved to the start of the reserve

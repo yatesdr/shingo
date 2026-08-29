@@ -348,44 +348,31 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	}
 	rows.Close()
 
-	// ── THE RANKED TAKE (ruling §7): DIGS ARE NOT SPECIAL ─────────────────
-	//
-	// The owner's words: "digs aren't some special move. if a dig operation has to
-	// wait for a complex or move, they have to wait. it actually helps them
-	// because the complex or move would clear a dig for them, ironically."
+	// ── THE RANKED TAKE (§7): A DIG IS NOT A PRIVILEGED MOVE ──────────────
 	//
 	// A blocker is POSITIONAL — the dig has no choice about which bins are in its
 	// way — and that has always been the argument for the steal. It is an argument
-	// about WHICH bin. It was never an argument about WHOSE TURN. So the take goes
-	// by the plant's demand ranking like every other take, and the irony is
-	// structural: a promise on a bin is always a plan to REMOVE that bin (stores
-	// promise slots, not bins), so waiting always ends with the blocker walking out
-	// of the lane on the winner's drive.
+	// about WHICH bin, not about whose turn. So the take goes by the demand
+	// ranking like every other take, and yielding costs less than it looks: a
+	// promise on a bin is always a plan to REMOVE it (stores promise slots, not
+	// bins), so the wait ends with the blocker leaving on the winner's drive.
 	//
-	// THE DIG'S DEMAND IS THE PARENT'S, and the holder's is its own parent's if it
-	// has one — orders.LoadDemandRank resolves both. A leg ranked on its own row is
-	// priority 0 and the plant's youngest timestamp; it would lose every contest
-	// forever, and the only non-zero priorities today belong to the hand-placed
-	// class, which would then hold a permanent veto over every excavation (trap T2).
+	// BOTH SIDES RESOLVE THROUGH LoadDemandRank, so a leg presents its parent's
+	// demand — its own row is priority 0 and the plant's youngest timestamp, and
+	// would lose every contest (T2).
 	//
-	// A REFUSAL IS AN ERROR, NOT A SKIP, and this is the trap that makes the whole
-	// gate worth writing (T3). The claim CAS below only refuses bins whose
-	// claimed_by is set; a PROMISE-holder has none. So a gate that merely declined
-	// to un-point one holder would fall through: the CAS would pass, and
-	// supersedeBinLedger — three statements later — evicts the whole bin's ledger,
-	// shredding the book of the order that WON the contest and leaving its pointer
-	// stamped. That is the pointer wedge, manufactured for the winner. Losing has
-	// to mean the demolition never happened, so the error aborts this transaction
-	// and everything unwinds on the caller's defer.
+	// A REFUSAL IS AN ERROR, NOT A SKIP (T3). The claim CAS below only refuses
+	// bins whose claimed_by is set, and a promise-holder has none — so a gate that
+	// merely declined to un-point a holder would fall through: the CAS passes and
+	// supersedeBinLedger, three statements later, evicts the whole bin's ledger.
+	// That shreds the book of the order that WON while leaving its pointer
+	// stamped: the pointer wedge, built for the winner. The error aborts the
+	// transaction and everything unwinds on the caller's defer.
 	//
-	// SCOPE: this governs PLANNING-TIME digs, which is what this transaction is.
-	// The GATE-STAGED dig — a robot already standing at the lane's mark — keeps
-	// today's unconditional steal, because §R.104 deliberately keeps its lane lock
-	// (releasing a corridor with a robot in its mouth is the deadlock the lock
-	// prevents) and its dig-mode hold refuses the very holder it would be waiting
-	// on. That half of the ranked take rides the cordon beneficiary column (design
-	// record §7 / tier step 5). The population hole is named here rather than left
-	// silent.
+	// SCOPE: planning-time digs, which is what this transaction is. A GATE-STAGED
+	// dig keeps today's unconditional steal — a robot is at the mark and §R.104
+	// deliberately keeps its lane lock — and its ranked half rides the cordon
+	// beneficiary column (tier step 5).
 	digRank, err := orders.LoadDemandRank(tx, childID)
 	if err != nil {
 		return nil, err
@@ -1010,9 +997,7 @@ func (db *DB) ReleaseClaimByOrder(orderID int64) error {
 //
 // The release beside it does the right thing for a rollback that ABANDONS an
 // order's claims. A fleet refusal abandons nothing: the order got everything it
-// asked for and the failure landed with the robot system. Owner ruling: "this is
-// a blip failure — everything fired, it got all its claims, the failure just
-// landed with RDS."
+// asked for and the failure landed with the robot system (§8).
 //
 // So the undo removes only what claimed a robot that never came:
 //

@@ -93,19 +93,12 @@ func blockerBin(t *testing.T, db *store.DB, prefix string) *bins.Bin {
 	return testdb.CreateBinAtNode(t, db, sd.Payload.Code, node.ID, prefix+"-BLOCKER")
 }
 
-// TestRankedTake_AnOutrankedDigBacksOutWhole is ruling §7 in one test.
+// TestRankedTake_AnOutrankedDigBacksOutWhole is §7: a dig is not a privileged
+// move, and one that has to wait for a complex or a move waits.
 //
-// The owner's words: "digs aren't some special move. if a dig operation has to
-// wait for a complex or move, they have to wait. it actually helps them because
-// the complex or move would clear a dig for them, ironically."
-//
-// The steal was UNCONDITIONAL: a dig took any softly-held bin from anybody,
-// because a blocker is positional and the dig has no choice about which bins are
-// in its way. That is still true of WHICH bin; it was never an argument about
-// WHOSE turn. So the take goes by the plant's ranking like every other take, and
-// a dig that loses backs out whole and waits — which ends with the blocker
-// walking out of the lane on the winner's drive, because a promise on a bin is
-// always a plan to REMOVE that bin.
+// The steal was unconditional, on the reasoning that a blocker is positional.
+// That is an argument about WHICH bin, not about whose turn — so the take now
+// goes by the demand ranking and a dig that loses backs out whole.
 func TestRankedTake_AnOutrankedDigBacksOutWhole(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -164,13 +157,10 @@ func TestRankedTake_AnOutrankedDigBacksOutWhole(t *testing.T) {
 	}
 }
 
-// TestRankedTake_TheWinningPathIsUnchanged is the other half, and it matters as
-// much: the ranked take must not become a reason digs stop happening.
-//
-// An outranking dig steals exactly as it did before — set-valued, pointer
-// cleared, ledger superseded — which is the behaviour every existing dig test
-// pins. This asserts it from the rank gate's side so a future tightening of the
-// comparator cannot quietly stop digs plant-wide.
+// TestRankedTake_TheWinningPathIsUnchanged is the other half: an outranking dig
+// steals exactly as before — set-valued, pointer cleared, ledger superseded.
+// Asserted from the gate's side so a future tightening of the comparator cannot
+// quietly stop digs plant-wide.
 func TestRankedTake_TheWinningPathIsUnchanged(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -196,14 +186,10 @@ func TestRankedTake_TheWinningPathIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestRankedTake_ALegRanksOnItsParent is trap T2 proved at the gate rather than
-// at the comparator: the same leg wins or loses depending on whose demand it
-// presents, and the gate must read the parent's.
-//
-// Ranked on its own row a dig leg is priority 0 and the youngest timestamp in
-// the plant, so it loses to any promise-holder with a priority — and every
-// non-zero priority today belongs to the hand-placed class, which would give
-// exactly those orders a permanent veto over every excavation.
+// TestRankedTake_ALegRanksOnItsParent is T2 proved at the gate: the same leg
+// wins or loses depending on whose demand it presents. On its own row a leg is
+// priority 0 and the youngest timestamp in the plant, so it loses to any
+// promise-holder with a priority.
 func TestRankedTake_ALegRanksOnItsParent(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -223,14 +209,10 @@ func TestRankedTake_ALegRanksOnItsParent(t *testing.T) {
 	}
 }
 
-// TestRankedTake_EqualRankGoesToTheOlder pins the tie-break, which is the half
-// that makes progress a guarantee rather than a hope.
-//
-// orders.created_at is stamped once by the INSERT and no writer restamps it —
-// not the steal's un-point, not a re-source, not the fleet demote (verified: no
-// production UPDATE touches the column). So a demand that keeps losing strictly
-// ages toward the front of its class instead of two demands trading one bin
-// forever.
+// TestRankedTake_EqualRankGoesToTheOlder pins the tie-break, which is what makes
+// progress a guarantee: created_at is stamped once by the INSERT and no writer
+// restamps it, so a demand that keeps losing ages toward the front of its class
+// instead of two demands trading one bin forever.
 func TestRankedTake_EqualRankGoesToTheOlder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -249,10 +231,9 @@ func TestRankedTake_EqualRankGoesToTheOlder(t *testing.T) {
 	}
 }
 
-// TestRankedTake_AnEqualAndYoungerDigYields is the tie's other side: equal
-// priority and the dig is the newer demand, so the incumbent keeps the bin.
-// A tie that went to the challenger would let two demands at the same priority
-// take the bin from each other on alternate passes.
+// TestRankedTake_AnEqualAndYoungerDigYields is the tie's other side: at equal
+// priority the newer dig yields. A tie going to the challenger would let two
+// demands take the bin from each other on alternate passes.
 func TestRankedTake_AnEqualAndYoungerDigYields(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -273,11 +254,9 @@ func TestRankedTake_AnEqualAndYoungerDigYields(t *testing.T) {
 // TestRankedTake_TheParkNamesItsOwnCause pins the outranked disposition end to
 // end, through the real planner.
 //
-// The cause must NOT be dig-blocker-claimed. That cause's releaser is "the
-// holder's robot finishes carrying the blocker out" — a drive-time wait — and a
-// promise-holder has no robot. A wait naming the wrong releaser is worse than
-// one naming none: it tells an operator to wait for something that is not
-// coming.
+// The cause must not be dig-blocker-claimed: that releaser is a robot finishing
+// its drive, and a promise-holder has none. A wait naming the wrong releaser is
+// worse than one naming none.
 func TestRankedTake_TheParkNamesItsOwnCause(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
