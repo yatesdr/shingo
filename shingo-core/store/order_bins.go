@@ -18,6 +18,13 @@ func (db *DB) InsertOrderBin(orderID, binID int64, stepIndex int, action, nodeNa
 	return orders.InsertOrderBin(db.DB, orderID, binID, stepIndex, action, nodeName, destNode)
 }
 
+// ReplaceOrderBins makes an order's junction rows say exactly what the current
+// allocation claimed — the set is replaced, not merged into. See the orders-package
+// doc for the stale-row failure this closes.
+func (db *DB) ReplaceOrderBins(orderID int64, rows []orders.OrderBinRow) error {
+	return orders.ReplaceOrderBins(db.DB, orderID, rows)
+}
+
 // ListOrderBins returns all junction rows for an order, ordered by step_index.
 func (db *DB) ListOrderBins(orderID int64) ([]*orders.OrderBin, error) {
 	return orders.ListOrderBins(db.DB, orderID)

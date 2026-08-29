@@ -390,49 +390,22 @@ function buildManifest(data, opts) {
 
   // ── TIMELINE ──
   //
-  // ── IT STARTS AT THE ORDER, NOT AT THE FIRST ROW ──────────────────────────
+  // ── THE TIMELINE STARTS AT THE BIRTH ROW, WHICH NOW EXISTS ────────────────
   //
-  // order_history records status CHANGES, and a row is written in the same
-  // transaction as every change — so nothing is ever lost. But an order's
-  // CREATION writes no row, and a gate that parks a blocked order in its ENTRY
-  // status changes nothing, so it writes none either. The result was a panel
-  // that began at whatever happened first and silently dropped everything
-  // before it.
+  // This block used to synthesise a "created" line from orders.created_at, on
+  // the premise that "an order's CREATION writes no row" — true when it was
+  // written, and measured: 34 of 110 Springfield complex orders in two days
+  // began at whatever happened first, average gap 28 MINUTES, worst 7h42m.
   //
-  // Measured at Springfield 2026-08-11: 34 of 110 complex orders in two days had
-  // a gap between created_at and their first history row; the average was 28
-  // MINUTES and the worst 7h42m. Every other order type was a clean zero — which
-  // is why the panel looks trustworthy right up until the order where it isn't,
-  // and the orders it truncates are the interesting ones: the ones that WAITED.
-  //
-  // Both facts are already in the database, so this is a read-side fix and it
-  // works on every order already stored. What is NOT stored is what the order was
-  // DOING in that window — queue_cause is a current-value column that gets
-  // overwritten — so the gap is marked as unaccounted rather than guessed at. A
-  // panel that admits what it does not know beats one that implies nothing
-  // happened.
+  // orders.Create writes a real birth row now (7e03fb34), in the order's own
+  // transaction, for every door — carrying the same words this synthesised. So
+  // the lead entry printed the creation TWICE, and the unaccounted-gap line
+  // under it was dead by construction: the gap it measures is now the two
+  // statements of one transaction. Both are gone; the row they stood in for is
+  // the first thing the list renders.
   if (data.history && data.history.length > 0) {
     out += '<div class="manifest-section">History</div>';
-    var lead = '';
-    if (o && o.created_at) {
-      lead = h`<li>
-          <span class="tl-time">${{__html:true, value: formatTime(o.created_at)}}</span>
-          <span class="badge badge-xs">created</span>
-          <span class="tl-detail">order created</span>
-        </li>`;
-      var gapSecs = Math.round(
-        (new Date(data.history[0].created_at).getTime() - new Date(o.created_at).getTime()) / 1000);
-      // 60s, matching the threshold the Springfield measurement used. Below that
-      // is transaction timing, not a wait worth a line.
-      if (isFinite(gapSecs) && gapSecs > 60) {
-        lead += h`<li class="tl-unaccounted">
-            <span class="tl-time">—</span>
-            <span class="badge badge-xs">unaccounted</span>
-            <span class="tl-detail">${durationText(gapSecs) + ' before the first recorded change — the order existed and nothing was written for it'}</span>
-          </li>`;
-      }
-    }
-    out += h`<ul class="timeline-list">${{__html:true, value: lead}}${
+    out += h`<ul class="timeline-list">${
       data.history.map(function(ev, i) {
         var extra = timelineExtra(ev, data.history[i + 1]);
         return h`<li>

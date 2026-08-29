@@ -746,11 +746,22 @@ func (a *Allocator) confirmComplexPlan(order *orders.Order, plan *ComplexPlan, a
 			claimedMap[cb.nodeName] = cb.binID
 		}
 		destinations := resolvePerBinDestinations(steps, claimedMap)
+		// REPLACE THE SET, DO NOT MERGE INTO IT. This allocation is the whole
+		// answer to "which bins is this order carrying"; per-bin upserts left the
+		// rows of every bin an earlier attempt claimed and then rolled back, and
+		// the arrival check FAILS an order on a junction row it does not hold.
+		rows := make([]orders.OrderBinRow, 0, len(claimed))
 		for _, cb := range claimed {
-			destNode := destinations[cb.binID]
-			if err := a.db.InsertOrderBin(order.ID, cb.binID, cb.stepIndex, protocol.ActionPickup, cb.nodeName, destNode); err != nil {
-				log.Printf("dispatch: insert order_bin for order %d bin %d: %v", order.ID, cb.binID, err)
-			}
+			rows = append(rows, orders.OrderBinRow{
+				BinID:     cb.binID,
+				StepIndex: cb.stepIndex,
+				Action:    string(protocol.ActionPickup),
+				NodeName:  cb.nodeName,
+				DestNode:  destinations[cb.binID],
+			})
+		}
+		if err := a.db.ReplaceOrderBins(order.ID, rows); err != nil {
+			log.Printf("dispatch: record order_bins for order %d: %v", order.ID, err)
 		}
 		log.Printf("dispatch: complex order %d has %d pickups — per-bin destinations recorded in order_bins",
 			order.ID, len(claimed))

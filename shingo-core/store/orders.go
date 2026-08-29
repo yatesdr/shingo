@@ -900,7 +900,19 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 	// terminal-volume histogram buckets on COALESCE(completed_at, updated_at),
 	// so a DB-clock stamp here puts a sim order's terminal in a different
 	// (real-time) day from its creation.
-	res, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$5
+	// THE WAIT GOES WITH THE ORDER. queue_reason/code/cause are a LIVE answer to
+	// "what is this order waiting for right now", and nothing cleared them at the
+	// end — so an order cancelled or failed while parked kept its last wait on the
+	// row and every board went on saying a finished order was still waiting for a
+	// slot. Seen in the sim: a dig leg dissolved mid-park, terminal, still reading
+	// "Waiting for a slot". SetQueueDetail refuses to WRITE onto a terminal order;
+	// this is the other half — the reason does not outlive the order.
+	//
+	// The history row keeps it. The order waited for that reason, and ending does
+	// not unmake the fact; what is cleared is only the live column that claims it
+	// is STILL waiting.
+	res, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$5,
+		queue_reason='', queue_code=NULL, queue_cause=NULL
 		WHERE id=$3 AND status <> ALL($4)`, string(status), errDetail, orderID, terminalNames, clock.Now().UTC())
 	if err != nil {
 		return false, err
