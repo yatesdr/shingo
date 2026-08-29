@@ -834,10 +834,10 @@ func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy 
 func AcquireOccupancy(db Execer, owner, nodeID int64) (bool, error) {
 	res, err := db.Exec(
 		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by)
-		 SELECT $1, 'occupancy', $2, 'confirmed', $3
+		 SELECT $1, `+OccupancyKindSQL()+`, $2, 'confirmed', $3
 		 WHERE NOT EXISTS (
 		   SELECT 1 FROM reservations
-		   WHERE order_id=$1 AND resource_kind='occupancy' AND node_id=$2
+		   WHERE order_id=$1 AND resource_kind=`+OccupancyKindSQL()+` AND node_id=$2
 		     AND state IN ('pending','confirmed')
 		 )`,
 		owner, nodeID, "lane-occupancy",
@@ -857,7 +857,7 @@ func AcquireOccupancy(db Execer, owner, nodeID int64) (bool, error) {
 // entered — is a no-op.
 func ReleaseOccupancy(db Execer, owner, nodeID int64) error {
 	_, err := db.Exec(
-		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind='occupancy' AND node_id=$2`,
+		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind=`+OccupancyKindSQL()+` AND node_id=$2`,
 		owner, nodeID,
 	)
 	if err != nil {
@@ -871,7 +871,7 @@ func ReleaseOccupancy(db Execer, owner, nodeID int64) error {
 // inside any lane, however it got there.
 func ReleaseAllOccupancy(db Execer, owner int64) error {
 	_, err := db.Exec(
-		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind='occupancy'`, owner)
+		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind=`+OccupancyKindSQL(), owner)
 	if err != nil {
 		return fmt.Errorf("reservations release-all-occupancy: %w", err)
 	}
@@ -891,7 +891,7 @@ func ReleaseAllOccupancy(db Execer, owner int64) error {
 func ReleaseOccupancyForLane(db Execer, owner, laneID int64) error {
 	_, err := db.Exec(
 		`DELETE FROM reservations
-		 WHERE order_id=$1 AND resource_kind='occupancy' AND node_id=$2`, owner, laneID)
+		 WHERE order_id=$1 AND resource_kind=`+OccupancyKindSQL()+` AND node_id=$2`, owner, laneID)
 	if err != nil {
 		return fmt.Errorf("reservations release-occupancy-for-lane: %w", err)
 	}
@@ -903,7 +903,7 @@ func ReleaseOccupancyForLane(db Execer, owner, laneID int64) error {
 func OccupantsOf(q Queryer, nodeID int64) ([]int64, error) {
 	rows, err := q.Query(
 		`SELECT order_id FROM reservations
-		 WHERE resource_kind='occupancy' AND node_id=$1 AND state IN ('pending','confirmed')
+		 WHERE resource_kind=`+OccupancyKindSQL()+` AND node_id=$1 AND state IN ('pending','confirmed')
 		 ORDER BY order_id`, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("reservations occupants-of: %w", err)

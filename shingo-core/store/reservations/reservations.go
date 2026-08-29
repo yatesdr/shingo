@@ -84,7 +84,28 @@ const (
 	// when one is written it is pinned to resource_kind IN ('bin','slot'). This
 	// comment is the pin until that helper exists.
 	KindMouth Kind = "mouth"
+	// KindOccupancy is the PRESENCE WITNESS: it records a robot physically inside
+	// a corridor. Excluded from every strength decision, every wants-per-resource
+	// count, and every sweep scope — it reports, it does not promise or protect.
+	// It lives in the reservations table as a storage convenience only, which is
+	// why naming it here closes the taxonomy rather than forcing it into one of
+	// the drawers above.
+	//
+	// The schema CHECK has carried the value since v76 (store/migrations.go) and
+	// the writers spelled it as a raw literal, so the one place a typo could not
+	// be caught was the only place it mattered — an occupancy row written under a
+	// misspelled kind is a robot in a lane that no admission query can see.
+	KindOccupancy Kind = "occupancy"
 )
+
+// OccupancyKindSQL renders the presence witness's resource_kind as a quoted SQL
+// literal, so a query composes the value from the constant instead of typing it
+// out beside it. Splice it into `resource_kind = ` + OccupancyKindSQL().
+//
+// A function rather than an exported string because it is spliced into SQL: a
+// call site reads as a fragment being composed, which is the same shape as
+// ActiveStateSQL and OnTheBooksSQL beside it.
+func OccupancyKindSQL() string { return "'" + string(KindOccupancy) + "'" }
 
 // Ref is the kind-agnostic identity of a reserved resource: a bin (Kind=bin,
 // ID=bins.id) or a slot (Kind=slot, ID=nodes.id). Every primitive keys on a Ref —

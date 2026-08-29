@@ -310,7 +310,7 @@ func (db *DB) LanesOccupiedInGroup(groupID int64) (map[int64]bool, error) {
 		SELECT DISTINCT r.node_id
 		FROM reservations r
 		JOIN nodes lane ON lane.id = r.node_id
-		WHERE r.resource_kind = 'occupancy'
+		WHERE r.resource_kind = `+reservations.OccupancyKindSQL()+`
 		  AND `+reservations.ActiveStateSQL("r.")+`
 		  AND lane.parent_id = $1`, groupID)
 	if err != nil {
