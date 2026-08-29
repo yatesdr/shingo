@@ -155,6 +155,7 @@ type EngineOrchestration interface {
 	SwitchOperatorStationToTarget(processID, stationID int64) error
 	SyncProcessCounter(processID int64) error
 	FlipABNode(nodeID int64, req engine.FlipRequest) error
+	SetActivePullSide(nodeID int64, req engine.FlipRequest) error
 
 	// ── UOP backfill (admin) ───────────────────────────────────────
 	// Item 3: seeds Core's lineside_buckets from Edge state. Auto-fires

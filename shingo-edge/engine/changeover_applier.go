@@ -322,6 +322,16 @@ func (e *Engine) clearActivePullForEvacuate(nodeID int64) {
 			log.Printf("changeover: evacuate could not clear active_pull on node %d: %v", id, err)
 		}
 	}
+	// BOTH SIDES ARE NOW DARK, AND THEY STAY DARK UNTIL SOMEBODY SAYS OTHERWISE.
+	//
+	// That is correct while the press is down — the line really is pulling from
+	// nothing — and it is deliberate that nothing here schedules the bit's return.
+	// The A/B flip is the canonical writer of active_pull and lights it as part of
+	// moving the line; the operator can also state it outright when the press comes
+	// back up on the side it was already on (SetActivePullSide). Owner ruling
+	// 2026-08-28. Until one of those two clicks lands, the release guard has
+	// nothing to protect here, which is the honest reading of a stopped press.
 	log.Printf("changeover: tooling evacuate at node %s — active_pull cleared on %d position(s); the "+
-		"press is down, so the line is pulling from nothing", node.CoreNodeName, len(ids))
+		"press is down, so the line is pulling from nothing. It stays dark until the flip or an "+
+		"operator says otherwise", node.CoreNodeName, len(ids))
 }

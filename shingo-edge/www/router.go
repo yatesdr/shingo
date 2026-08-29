@@ -270,6 +270,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/process-nodes/{id}/request-full", h.apiRequestFullBin)
 			r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
 			r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
+			r.Post("/process-nodes/{id}/set-active-pull", h.apiSetActivePullSide)
 
 			// Changeover lifecycle
 			// Read-only gate status behind the live "waiting on:" panel.

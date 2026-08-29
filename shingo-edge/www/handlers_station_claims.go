@@ -88,6 +88,42 @@ func (h *Handlers) apiSetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+// apiSetActivePullSide is the operator's declaration of which side of an A/B
+// pair the line is drawing from — the second door onto active_pull, beside the
+// flip.
+//
+// It sits next to apiFlipABNode because that is where the fact lives, and the
+// two are not the same click: the flip MOVES the line and writes the bit as part
+// of doing so; this one only records what is already true. The state it exists
+// for is a tooling evacuate, which darkens both sides correctly and leaves
+// nothing to light either again — see engine.SetActivePullSide.
+//
+// No `confirm` field: there is nothing to override. The operator's statement IS
+// the input, and it is audited by name at the engine.
+func (h *Handlers) apiSetActivePullSide(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	var req struct {
+		CalledBy string `json:"called_by"`
+	}
+	if r.ContentLength > 0 {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	if req.CalledBy == "" {
+		req.CalledBy = "operator_station"
+	}
+	if err := h.orchestration.SetActivePullSide(id, engine.FlipRequest{
+		CalledBy: req.CalledBy,
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
 func (h *Handlers) apiFlipABNode(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
