@@ -280,7 +280,10 @@ func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bi
 // Best-effort: a failed write is logged and swallowed.
 func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) {
 	reason := FormatQueueSentence(code, params)
-	if order.QueueReason == reason && order.QueueCode == string(code) {
+	// The cause is part of a wait's identity, not a decoration on it: two causes
+	// can share one code and render one sentence (the two blocker refusals do),
+	// so comparing without it keeps the stale cause on the row forever.
+	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == string(cause) {
 		return
 	}
 	if err := s.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
