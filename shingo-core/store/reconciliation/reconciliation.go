@@ -16,6 +16,7 @@ package reconciliation
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	"shingo/protocol"
@@ -654,4 +655,146 @@ func ReleaseOrphanedClaims(db *sql.DB) (int, error) {
 	}
 	sn, _ := slotRes.RowsAffected()
 	return int(n + sn), nil
+}
+
+// acquiringStatusSQL is the SQL literal list for the two statuses this sweep
+// covers: an order that is still ACQUIRING its material.
+//
+// Not derived from a protocol helper because there is no predicate for "still
+// acquiring" — `queued` and `sourcing` are named here on purpose, as the two
+// states where holding a claim without a reservation is drift rather than a
+// stage of some longer transaction. A dispatched order mid-handoff is a
+// different question and is deliberately outside this sweep.
+const acquiringStatusSQL = `'queued','sourcing'`
+
+// ReleaseAcquiringOrphanClaims is the claim-side backstop's SECOND arm: it
+// clears a claim held by a LIVE acquiring order that has no reservation behind
+// it, and says so loudly.
+//
+// ── THE DRIFT, AND WHY NOTHING ELSE SWEEPS IT ─────────────────────────────
+//
+// Ownership of a bin is written in two books — bins.claimed_by and the
+// reservations row — coupled by convention rather than by schema. A release that
+// drops one and not the other leaves a bin claimed by an order that holds
+// nothing on it. Every availability predicate is owner-blind, so from that
+// moment the bin is invisible to EVERYBODY, including the order whose name is on
+// the claim: its own demand waits forever on material it already owns, and the
+// existing sweep cannot help because that order is not terminal. Observed on the
+// sim 2026-08-28 (order 109 / bin 10).
+//
+// ── IT IS INSURANCE, AND IT IS DELIBERATELY LOUD ──────────────────────────
+//
+// Owner ruling 2026-08-28: take it as a minutes-scale self-heal while the
+// ownership conversion lands, knowing Stage 3 obsoletes it. So every clear is
+// logged with the bin, the order, and the sentence saying this is the two books
+// having come apart — NOT normal operation. A sweep that fires often is telling
+// you the conversion is overdue, and that signal only exists if it shouts. Same
+// rule the floor's own recovery records obey: somebody is going to count these.
+//
+// ── THE PRECISION RULES, EACH OF WHICH IS A REFUSAL ───────────────────────
+//
+//	ANY LIVE RESERVATION ON THE RESOURCE and the claim is never touched. That is
+//	what every healthy order in the plant looks like, and taking one would strip
+//	a bin off a robot. The predicate is resource-keyed, not owner-keyed, on
+//	purpose: a reservation held by somebody ELSE means the two books disagree
+//	about WHO, which is a different defect with a different fix, and guessing
+//	here would resolve it by deletion.
+//
+//	orders.bin_id IS NEVER TOUCHED. A third book, already ruled: different fix.
+//
+//	TERMINAL ORDERS stay with ReleaseOrphanedClaims. Two sweeps, two
+//	populations, two log lines — a merged count could not tell a leak past a
+//	terminal transition from ownership drift on a live order, and they send the
+//	reader to different files.
+//
+// Rides the existing reconciliation interval; no cadence of its own.
+func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
+	// THE OWNER IS READ IN A CTE, NOT IN RETURNING. An UPDATE's RETURNING sees
+	// the NEW row, where claimed_by has just been set to NULL — so the log line
+	// could name the bin and never the order that was holding it, which is half
+	// of what makes this line chaseable. The victim set is selected first and
+	// joined back to what the UPDATE actually changed, so the two cannot disagree
+	// about which rows were swept.
+	binRows, err := db.Query(fmt.Sprintf(`
+		WITH victims AS (
+		  SELECT b.id, b.claimed_by AS owner FROM bins b
+		  WHERE b.claimed_by IS NOT NULL
+		    AND EXISTS (
+		      SELECT 1 FROM orders o
+		      WHERE o.id = b.claimed_by AND o.status IN (%s)
+		    )
+		    AND NOT EXISTS (
+		      SELECT 1 FROM reservations r
+		      WHERE r.resource_kind = 'bin' AND r.bin_id = b.id
+		        AND r.state IN ('pending','confirmed')
+		    )
+		), swept AS (
+		  UPDATE bins SET claimed_by = NULL, updated_at = NOW()
+		  WHERE id IN (SELECT id FROM victims)
+		  RETURNING id
+		)
+		SELECT v.id, v.owner FROM victims v JOIN swept s ON s.id = v.id`,
+		acquiringStatusSQL))
+	if err != nil {
+		return 0, fmt.Errorf("reconciliation acquiring-orphan-bin-claims: %w", err)
+	}
+	n := 0
+	for binRows.Next() {
+		var binID, orderID int64
+		if err := binRows.Scan(&binID, &orderID); err != nil {
+			binRows.Close()
+			return n, fmt.Errorf("reconciliation acquiring-orphan-bin-claims scan: %w", err)
+		}
+		n++
+		log.Printf("RECONCILIATION: cleared an ORPHANED CLAIM — bin %d was claimed by order %d, which "+
+			"is still acquiring and holds no reservation on it. Ownership is written in two books and "+
+			"they have come apart: the claim made the bin invisible to every demand INCLUDING its own "+
+			"owner's. This is drift being swept, not normal operation — if it recurs, the ownership "+
+			"conversion is overdue", binID, orderID)
+	}
+	if err := binRows.Err(); err != nil {
+		binRows.Close()
+		return n, fmt.Errorf("reconciliation acquiring-orphan-bin-claims rows: %w", err)
+	}
+	binRows.Close()
+
+	// The node dual — a destination slot held the same way, by the same orders,
+	// with the same consequence: the slot is unavailable to everybody, so no
+	// demand can resolve onto it and the holder cannot progress toward it.
+	slotRows, err := db.Query(fmt.Sprintf(`
+		WITH victims AS (
+		  SELECT nd.id, nd.claimed_by AS owner FROM nodes nd
+		  WHERE nd.claimed_by IS NOT NULL
+		    AND EXISTS (
+		      SELECT 1 FROM orders o
+		      WHERE o.id = nd.claimed_by AND o.status IN (%s)
+		    )
+		    AND NOT EXISTS (
+		      SELECT 1 FROM reservations r
+		      WHERE r.resource_kind = 'slot' AND r.node_id = nd.id
+		        AND r.state IN ('pending','confirmed')
+		    )
+		), swept AS (
+		  UPDATE nodes SET claimed_by = NULL, updated_at = NOW()
+		  WHERE id IN (SELECT id FROM victims)
+		  RETURNING id
+		)
+		SELECT v.id, v.owner FROM victims v JOIN swept s ON s.id = v.id`,
+		acquiringStatusSQL))
+	if err != nil {
+		return n, fmt.Errorf("reconciliation acquiring-orphan-slot-claims: %w", err)
+	}
+	defer slotRows.Close()
+	for slotRows.Next() {
+		var nodeID, orderID int64
+		if err := slotRows.Scan(&nodeID, &orderID); err != nil {
+			return n, fmt.Errorf("reconciliation acquiring-orphan-slot-claims scan: %w", err)
+		}
+		n++
+		log.Printf("RECONCILIATION: cleared an ORPHANED CLAIM — slot node %d was claimed by order %d, "+
+			"which is still acquiring and holds no slot reservation on it. Same two-books drift as the "+
+			"bin arm, on the destination side: the slot was unavailable to every demand including the "+
+			"holder's own. Not normal operation", nodeID, orderID)
+	}
+	return n, slotRows.Err()
 }

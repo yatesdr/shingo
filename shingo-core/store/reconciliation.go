@@ -25,6 +25,14 @@ func (db *DB) ReleaseOrphanedClaims() (int, error) {
 	return reconciliation.ReleaseOrphanedClaims(db.DB)
 }
 
+// ReleaseAcquiringOrphanClaims is the same backstop's live-order arm — a claim
+// held by a queued/sourcing order with no reservation behind it. See
+// reconciliation.ReleaseAcquiringOrphanClaims for why it is a separate sweep
+// with a separate count.
+func (db *DB) ReleaseAcquiringOrphanClaims() (int, error) {
+	return reconciliation.ReleaseAcquiringOrphanClaims(db.DB)
+}
+
 // ReapOrphanedReservations reaps reservation rows whose owning order is terminal
 // or gone (owner-liveness, never age) — the replacement for the retired age-based Expire.
 func (db *DB) ReapOrphanedReservations() (int, error) {
