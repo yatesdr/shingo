@@ -1149,19 +1149,28 @@ func checkTerminalOrderReservations(db *store.DB) []string {
 	return out
 }
 
-// checkQueuedWithoutCause reports an order queued five minutes with no cause on the row.
+// checkQueuedWithoutCause reports an order waiting five minutes with no cause on
+// the row.
+//
+// THE WHOLE ACQUIRING SET, not the `queued` literal it used to name. The fleet
+// demote door parks its refusals in `sourcing` — deliberately, and for the whole
+// of the meaning migration — and its undo-only arm writes no cause at all,
+// leaving the caller to choose one. So the one instrument that asks "is anybody
+// parked with nothing to explain it" was blind to the population most likely to
+// be in that state, and to every other sourcing park besides.
 func checkQueuedWithoutCause(db *store.DB) []string {
 	var out []string
 
 	// A wait with no cause on the row. The operator sentence is the whole point
 	// of parking rather than failing; a parked order nobody can explain is the
 	// shape this stream exists to refuse.
-	if n := scalar(db, `
+	if n := scalar(db, fmt.Sprintf(`
 		SELECT COUNT(*) FROM orders
-		WHERE status = 'queued'
+		WHERE status IN (%s)
 		  AND (queue_cause IS NULL OR queue_cause = '')
-		  AND created_at < now() - interval '5 minutes'`); n > 0 {
-		out = append(out, fmt.Sprintf("%d order(s) queued 5min+ with NO cause on the row", n))
+		  AND created_at < now() - interval '5 minutes'`,
+		protocol.AcquiringStatusSQLList())); n > 0 {
+		out = append(out, fmt.Sprintf("%d order(s) waiting 5min+ with NO cause on the row", n))
 	}
 	return out
 }

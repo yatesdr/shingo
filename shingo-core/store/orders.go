@@ -128,6 +128,7 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) ([]DisplacedByHan
 	}
 	defer tx.Rollback()
 	var displaced []DisplacedByHand
+	var stolen []stolenBin
 
 	for _, c := range children {
 		o := c.Order
@@ -201,11 +202,12 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) ([]DisplacedByHan
 			// on claim_failed forever, which is the opposite of recalculating. Cleared
 			// together, the holder re-enters through the finder and re-resolves: it
 			// finds its bin at the shuffle slot the dig parked it in, or a better one.
-			byHand, err := stealSoftHolds(tx, *o.BinID, o.ID, parentID, o.DeliveryNode)
+			byHand, took, err := stealSoftHolds(tx, *o.BinID, o.ID, parentID, o.DeliveryNode)
 			if err != nil {
 				return nil, err
 			}
 			displaced = append(displaced, byHand...)
+			stolen = append(stolen, took...)
 			res, err := tx.Exec(`UPDATE bins SET claimed_by=$1
 				WHERE id=$2
 				  AND (claimed_by IS NULL
@@ -266,7 +268,10 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) ([]DisplacedByHan
 	// AFTER THE COMMIT, and only after it. A displaced order is a consequence of
 	// a steal that HAPPENED; reporting one out of a transaction that then rolls
 	// back would have the caller terminate a person's order over a dig that
-	// never took anything.
+	// never took anything. The LOG is the same fact and now keeps the same rule:
+	// a steal reported from inside the transaction is a theft that a later
+	// child's refusal can un-do, and soakstat counts those lines.
+	logSteals(stolen)
 	return displaced, nil
 }
 
@@ -314,7 +319,7 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) ([]DisplacedByHan
 // survived unexamined for so long: the holder limped after its bin by id, it
 // usually worked, and nothing anywhere said a dig had taken somebody's bin. Now
 // it says so, by name, once per victim, at the moment it happens.
-func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string) ([]DisplacedByHand, error) {
+func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string) ([]DisplacedByHand, []stolenBin, error) {
 	type victim struct {
 		orderID    int64
 		handPlaced bool
@@ -329,7 +334,7 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		  AND r.order_id NOT IN (SELECT id FROM orders WHERE parent_order_id = $3)
 		ORDER BY r.order_id`, binID, childID, parentID)
 	if err != nil {
-		return nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
+		return nil, nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
 	}
 	// READ THE WHOLE SET BEFORE WRITING ANY OF IT. A transaction runs one
 	// statement at a time, so an UPDATE issued while these rows are open kills
@@ -341,7 +346,7 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		var pointsAt int64
 		if err := rows.Scan(&v.orderID, &originClass, &pointsAt); err != nil {
 			rows.Close()
-			return nil, fmt.Errorf("scan soft hold on bin %d: %w", binID, err)
+			return nil, nil, fmt.Errorf("scan soft hold on bin %d: %w", binID, err)
 		}
 		v.handPlaced = originClass == protocol.OriginClassNoDemand
 		v.pointsHere = pointsAt == binID
@@ -349,7 +354,7 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
+		return nil, nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
 	}
 	rows.Close()
 
@@ -383,12 +388,12 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	// corridor with a robot in its mouth is not released.
 	digRank, err := orders.LoadDemandRank(tx, childID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, v := range victims {
 		holderRank, rerr := orders.LoadDemandRank(tx, v.orderID)
 		if rerr != nil {
-			return nil, rerr
+			return nil, nil, rerr
 		}
 		if digRank.Outranks(holderRank) {
 			continue
@@ -402,7 +407,7 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 			"for it", parentID, binID, v.orderID,
 			holderRank.Priority, holderRank.CreatedAt.Format(time.RFC3339),
 			digRank.Priority, digRank.CreatedAt.Format(time.RFC3339))
-		return nil, &BlockerClaimedError{
+		return nil, nil, &BlockerClaimedError{
 			BinID:    binID,
 			ChildID:  childID,
 			ParentID: parentID,
@@ -412,12 +417,12 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	}
 
 	var displaced []DisplacedByHand
+	var stolen []stolenBin
 	for _, v := range victims {
 		if v.handPlaced && v.pointsHere {
-			log.Printf("dispatch: dig %d took bin %d from HAND-PLACED order %d — the dig outranked "+
-				"the holder on a positional blocker, but a person named this bin, so the order keeps its "+
-				"pointer and is failed by name rather than re-aimed at whatever is standing there "+
-				"next", parentID, binID, v.orderID)
+			stolen = append(stolen, stolenBin{
+				binID: binID, holderID: v.orderID, digID: parentID, handPlaced: true,
+			})
 			displaced = append(displaced, DisplacedByHand{
 				OrderID: v.orderID, BinID: binID, DigID: parentID, ParkedAt: parkedAt,
 			})
@@ -444,14 +449,44 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		if _, err := tx.Exec(
 			`UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2`,
 			v.orderID, binID, clock.Now().UTC()); err != nil {
-			return nil, fmt.Errorf("clear bin %d off holder %d: %w", binID, v.orderID, err)
+			return nil, nil, fmt.Errorf("clear bin %d off holder %d: %w", binID, v.orderID, err)
+		}
+		stolen = append(stolen, stolenBin{binID: binID, holderID: v.orderID, digID: parentID})
+	}
+	return displaced, stolen, nil
+}
+
+// stolenBin is one steal, held back for the log that runs AFTER the commit.
+//
+// The log lines used to fire inside the transaction, at the moment of the write,
+// which reported steals that a later rollback un-did — the ranked gate refusing
+// a LATER child is enough, and every one of those printed a theft that never
+// happened. soakstat counts one line per steal, so an over-count there is a
+// measurement of a shape the plant is not in.
+type stolenBin struct {
+	binID      int64
+	holderID   int64
+	digID      int64
+	handPlaced bool
+}
+
+// logSteals emits the steal lines once the transaction they describe has
+// committed. The sentences are unchanged: soakstat matches "outranked the holder
+// on a positional blocker" across both, one line per event.
+func logSteals(stolen []stolenBin) {
+	for _, s := range stolen {
+		if s.handPlaced {
+			log.Printf("dispatch: dig %d took bin %d from HAND-PLACED order %d — the dig outranked "+
+				"the holder on a positional blocker, but a person named this bin, so the order keeps its "+
+				"pointer and is failed by name rather than re-aimed at whatever is standing there "+
+				"next", s.digID, s.binID, s.holderID)
+			continue
 		}
 		log.Printf("dispatch: dig %d took bin %d from order %d — the dig outranked the holder on a "+
 			"positional blocker; order %d keeps its demand and re-resolves (the bin is findable at "+
 			"its new home)",
-			parentID, binID, v.orderID, v.orderID)
+			s.digID, s.binID, s.holderID, s.holderID)
 	}
-	return displaced, nil
 }
 
 // supersedeBinLedger makes the reservation books say what the claim says: one
