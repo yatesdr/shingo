@@ -29,10 +29,17 @@ import (
 const criticalOutboxAge = 5 * time.Minute
 const stuckOrderAge = 30 * time.Minute
 
-// queuedOrderAge is the SEPARATE, longer staleness bound for an order that is
-// still acquiring (queued or sourcing). Waiting is what these statuses are FOR,
-// so they need a different threshold from the ones where the fleet already has
-// the order and nothing is moving.
+// queuedOrderAge is the SEPARATE, longer staleness bound for a `queued` order.
+// Waiting is what that status is FOR, so it needs a different threshold from the
+// ones where the fleet already has the order and nothing is moving.
+//
+// QUEUED ONLY, and this comment said "queued or sourcing" while the SQL it
+// describes has always applied it to queued alone — see the note at the CASE,
+// which states the reason: `sourcing` is meant to be transient, so half an hour
+// resting there is a real signal and the longer bound would silence a working
+// alarm. The Edge's mirror of this bound argues the same thing from its side.
+// The SQL is right; the comment was describing the acquiring set because that is
+// the set the two statuses usually travel in.
 //
 // 30 minutes is the right question to ask of a `dispatched` leg — a robot that
 // has not moved in half an hour has been forgotten. It is the wrong question to
@@ -658,16 +665,6 @@ func ReleaseOrphanedClaims(db *sql.DB) (int, error) {
 	return int(n + sn), nil
 }
 
-// acquiringStatusSQL is the SQL literal list for the two statuses this sweep
-// covers: an order that is still ACQUIRING its material.
-//
-// Not derived from a protocol helper because there is no predicate for "still
-// acquiring" — `queued` and `sourcing` are named here on purpose, as the two
-// states where holding a claim without a reservation is drift rather than a
-// stage of some longer transaction. A dispatched order mid-handoff is a
-// different question and is deliberately outside this sweep.
-const acquiringStatusSQL = `'queued','sourcing'`
-
 // ReleaseAcquiringOrphanClaims is the claim-side backstop's SECOND arm: it
 // clears a claim held by a LIVE acquiring order that has no reservation behind
 // it, and says so loudly.
@@ -731,7 +728,7 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 		  RETURNING id
 		)
 		SELECT v.id, v.owner FROM victims v JOIN swept s ON s.id = v.id`,
-		acquiringStatusSQL))
+		protocol.AcquiringStatusSQLList()))
 	if err != nil {
 		return 0, fmt.Errorf("reconciliation acquiring-orphan-bin-claims: %w", err)
 	}
@@ -773,7 +770,7 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 		  RETURNING id
 		)
 		SELECT v.id, v.owner FROM victims v JOIN swept s ON s.id = v.id`,
-		acquiringStatusSQL))
+		protocol.AcquiringStatusSQLList()))
 	if err != nil {
 		return n, fmt.Errorf("reconciliation acquiring-orphan-slot-claims: %w", err)
 	}
