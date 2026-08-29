@@ -436,3 +436,102 @@ func TestSummonOwnDigs_AGateStagedDigYieldsWithoutCallingAHuman(t *testing.T) {
 			"take is not a reason to open the lane to traffic the robot is blocking.", owner, dweller.ID)
 	}
 }
+
+// TestRankedTake_TheHoldersPickupWakesTheParkedDig is the releaser half of §7,
+// and the twin of TestDig_BlockerLeavesTheLane_ThenDigs one file over.
+//
+// The unit tests above prove a dig YIELDS: it backs out whole, holds nothing,
+// and parks under dig-blocker-promised. None of them proves the wait ENDS, and a
+// wait with no releaser is a stall wearing a queue reason. The releaser row for
+// this cause promises two machine arms — "the demand holding the promise takes
+// its bin (pickup → _TRANSIT, arrival clears the hold) or ends" — so both are
+// driven here.
+//
+// SAME LEVEL AS THE TWIN: the planner is called, the state the releaser event
+// announces is written, and the planner is called again with no reset. No engine
+// is started. The subscriptions themselves are pinned elsewhere
+// (engine's TestDeclaredReleaserEventsAreSubscribed, and engine/wiring.go
+// registers triggerFulfillment on EventBinEnteredTransit, EventBinUpdated and
+// the order-terminal events); what is unproven without this is that the state
+// those events announce actually unblocks the plan.
+func TestRankedTake_TheHoldersPickupWakesTheParkedDig(t *testing.T) {
+	t.Parallel()
+
+	// parkedOnAPromise builds the yield: a promise-holder that outranks the dig,
+	// a first attempt that refuses, and the cause on the row to prove WHICH
+	// refusal it was. Returns the pieces the releaser arms need.
+	parkedOnAPromise := func(t *testing.T, tag string) (
+		d *Dispatcher, db *store.DB, dig, holder *orders.Order,
+		blocker *bins.Bin, buried *BuriedError, shuffle []*nodes.Node) {
+		t.Helper()
+		db = testDB(t)
+		_, lane, slots, shuffle, bp := setupNodeGroupWithShuffle(t, db)
+		blocker = createTestBinAtNode(t, db, bp.Code, slots[0].ID, tag+"-BLK")
+		target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, tag+"-TGT")
+		holder = promiseHolder(t, db, tag+"-holder", 9, blocker.ID)
+		d, _ = newTestDispatcher(t, db, testdb.NewSuccessBackend())
+		dig = mkDigOrder(t, db, tag+"-dig", bp.Code, "LINE-"+tag)
+		buried = &BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID}
+
+		if _, pe := d.planner.planBuriedReshuffle(dig, buried); pe == nil || pe.Code != codeBlockerClaimed {
+			t.Fatalf("fixture: the first attempt must yield to the ranked holder, got %v", pe)
+		}
+		if got := reloadOrder(t, db, dig.ID).QueueCause; got != string(CauseDigBlockerPromised) {
+			t.Fatalf("fixture: parked under %q, want %q — this test is about the promised wait, and "+
+				"if the park is the claimed one it is proving somebody else's releaser",
+				got, CauseDigBlockerPromised)
+		}
+		return d, db, dig, holder, blocker, buried, shuffle
+	}
+
+	// digsClean re-asks the SAME question with no state reset: only the holder
+	// changed. A plan with legs is the wait having ended.
+	digsClean := func(t *testing.T, d *Dispatcher, db *store.DB, dig *orders.Order, buried *BuriedError) {
+		t.Helper()
+		if _, pe := d.planner.planBuriedReshuffle(dig, buried); pe != nil {
+			t.Fatalf("the dig still will not plan after its releaser fired: %s: %s.\n"+
+				"dig-blocker-promised names the holder taking its bin or ending as what ends this "+
+				"wait. If neither does, the cause is pointing at a releaser that does not release "+
+				"and the dig waits on the 60s floor forever.", pe.Code, pe.Detail)
+		}
+		kids, err := db.ListChildOrders(dig.ID)
+		testutil.MustNoErr(t, err, "list the dig's legs")
+		if len(kids) == 0 {
+			t.Fatal("the dig reported success and created no legs")
+		}
+		testdb.AssertNoOrphanedHolds(t, db)
+	}
+
+	t.Run("the holder takes its bin", func(t *testing.T) {
+		t.Parallel()
+		d, db, dig, holder, blocker, buried, shuffle := parkedOnAPromise(t, "WAKEPICK")
+
+		// THE PICKUP, at the grain the planner reads: the bin leaves the lane. The
+		// holder is NOT terminalized — it is mid-job, still holding its paper — so
+		// this arm proves the wait ends on the bin moving alone, which is what the
+		// releaser sentence claims and the weaker of the two to rely on.
+		testutil.MustNoErr(t, db.MoveBinClearingStaging(blocker.ID, shuffle[3].ID, false),
+			"the holder picks its bin out of the lane")
+		if after := reloadOrder(t, db, holder.ID); protocol.IsTerminal(after.Status) {
+			t.Fatalf("fixture: the holder went terminal (%s); this arm is about the pickup alone",
+				after.Status)
+		}
+
+		digsClean(t, d, db, dig, buried)
+	})
+
+	t.Run("the holder ends", func(t *testing.T) {
+		t.Parallel()
+		d, db, dig, holder, _, buried, _ := parkedOnAPromise(t, "WAKEEND")
+
+		// THE OTHER ARM, and the stronger one: the bin does not move at all. The
+		// blocker is still sitting in the lane, so the dig re-plans against the same
+		// geometry and the only thing that changed is that the promise is gone —
+		// TerminalizeOrder releases the holder's reservations in its own
+		// transaction. That isolates the RANK contest as what was refusing the dig.
+		_, err := db.TerminalizeOrder(holder.ID, protocol.StatusConfirmed, "delivered")
+		testutil.MustNoErr(t, err, "the holder's demand ends")
+
+		digsClean(t, d, db, dig, buried)
+	})
+}
