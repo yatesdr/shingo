@@ -329,12 +329,15 @@ export function renderModal(entry) {
                 html += '</div>';
             }
             if (queued.length > 0) {
-                // "2 orders queued" tells the loader operator nothing they can
+                // "2 orders waiting" tells the loader operator nothing they can
                 // act on. Core's cause sentence does — and it is already on the
                 // row. One line per distinct cause so a pair parked for the
                 // same reason does not print it twice.
+                //
+                // WAITING, NOT QUEUED: this set is isPreDispatch — pending,
+                // sourcing and queued — so naming one rung mislabels the other two.
                 var causes = distinctQueueCauses(queued);
-                html += '<div style="color:#999;font-size:12px;margin-bottom:10px">' + queued.length + ' order' + (queued.length > 1 ? 's' : '') + ' queued</div>';
+                html += '<div style="color:#999;font-size:12px;margin-bottom:10px">' + queued.length + ' order' + (queued.length > 1 ? 's' : '') + ' waiting</div>';
                 causes.forEach(function(c) {
                     html += '<div style="color:#999;font-size:12px;margin-bottom:10px;padding-left:8px;border-left:2px solid #444">' + esc(c) + '</div>';
                 });

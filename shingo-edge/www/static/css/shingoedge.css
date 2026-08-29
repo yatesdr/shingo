@@ -1515,6 +1515,7 @@ textarea.form-input {
 /* Dot hues mirror the badge palette in shared/status-classes.css. */
 .ofilter-dot[data-status="faulted"]    { background: var(--warning); }
 .ofilter-dot[data-status="failed"]     { background: var(--danger); }
+.ofilter-dot[data-status="sourcing"]   { background: var(--status-sourcing-dot, #d9a441); }
 .ofilter-dot[data-status="queued"]     { background: var(--status-queued-dot, #7aa2f0); }
 .ofilter-dot[data-status="in_transit"] { background: var(--status-in-transit-dot, #34c3e0); }
 .ofilter-dot[data-status="confirmed"]  { background: var(--status-delivered-dot, #3fb950); }

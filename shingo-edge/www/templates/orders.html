@@ -10,6 +10,13 @@
         {{/* Status pills — each dot carries the same hue as the badge in the table. */}}
         <a href="/orders?status=faulted&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "faulted"}} is-active{{end}}"><span class="ofilter-dot" data-status="faulted"></span>Faulted</a>
         <a href="/orders?status=failed&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "failed"}} is-active{{end}}"><span class="ofilter-dot" data-status="failed"></span>Failed</a>
+        {{/* BOTH WAITING RUNGS. The filter is an exact status match, so a board
+             with only a Queued pill hid every SOURCING park behind it — half the
+             waiting set, on the board a floor operator reads. Sourcing is the
+             material hunt (the hand is short), queued is the line (the hand is
+             whole and only the turn is missing): two questions, two pills, the
+             same pair Core's board carries. */}}
+        <a href="/orders?status=sourcing&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "sourcing"}} is-active{{end}}"><span class="ofilter-dot" data-status="sourcing"></span>Sourcing</a>
         <a href="/orders?status=queued&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "queued"}} is-active{{end}}"><span class="ofilter-dot" data-status="queued"></span>Queued</a>
         <a href="/orders?status=in_transit&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "in_transit"}} is-active{{end}}"><span class="ofilter-dot" data-status="in_transit"></span>In Transit</a>
         <a href="/orders?status=confirmed&process={{.ActiveProcessID}}" class="ofilter{{if eq .FilterStatus "confirmed"}} is-active{{end}}"><span class="ofilter-dot" data-status="confirmed"></span>Confirmed</a>
