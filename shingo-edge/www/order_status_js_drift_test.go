@@ -36,6 +36,13 @@ func TestOrderStatusJSAgreesWithProtocol(t *testing.T) {
 	}{
 		{"TERMINAL_STATUSES", protocol.TerminalStatusSQLList},
 		{"OPERATOR_VISIBLE_STATUSES", protocol.OperatorVisibleStatusSQLList},
+		// PRE_DISPATCH_STATUSES is the demand-card question — "waiting, nothing is
+		// moving yet". It is pinned here because the operator station used to ask it
+		// with literals (`'queued' || 'pending'`) and so left `sourcing` out: a
+		// station hunting for material showed no demand card and no cause, on the
+		// screen a floor operator actually uses. A hand-list is exactly how that
+		// happened, which is why the replacement is a pinned one.
+		{"PRE_DISPATCH_STATUSES", protocol.PreDispatchStatusSQLList},
 	}
 
 	for _, tc := range cases {
