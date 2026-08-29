@@ -524,31 +524,14 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
 		s.logFn("fulfillment: fleet dispatch failed for order %d, re-queuing: %v", order.ID, err)
-		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
-			s.logFn("fulfillment: release claim for order %d on fleet-fail rollback: %v", order.ID, rerr)
-		}
-		// The robot never committed — drop any lane mouth hold so it doesn't linger.
-		if lerr := s.dispatcher.ReleaseLanesForOrder(order.ID); lerr != nil {
-			s.logFn("fulfillment: release lanes for order %d on fleet-fail rollback: %v", order.ID, lerr)
-		}
-		// Fleet rejected the dispatch — a transient robot-system issue. Park under
-		// fleet_unavailable so the row carries that code.
-		//
-		// UNLESS THE FLEET WAS NEVER ASKED. A synthetic destination is refused at
-		// the commit seam BEFORE any create, so fleet_unavailable would state a
-		// robot-system outage that is not happening and send whoever reads the row
-		// to the wrong system entirely. It is the blank-wait problem one level up:
-		// not an absent cause, a confidently wrong one. Name the real fact, under
-		// the cause planning already writes for it, so the two cannot drift.
-		if dispatch.IsSyntheticLocation(err) {
-			s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.CauseNGRPResolve,
-				dispatch.QueueParams{Destination: order.DeliveryNode})
-		} else {
-			s.setQueueReason(order, protocol.QueueFleetUnavailable, dispatch.CauseFleetRefusedCreate, dispatch.QueueParams{})
-		}
-		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
-			s.logTransition(order.ID, "→ sourcing after fleet fail", err)
-		}
+		// ONE DOOR. This arm used to call ReleaseClaimByOrder, which DELETES the
+		// reservations and the order_bins rows while leaving orders.bin_id
+		// stamped — and the comment beside it said the order "re-soft-acquires
+		// next tick", which nothing did. It re-entered through dispatchHeldBin,
+		// which confirms by id and never re-acquires, and parked under
+		// claim-failed forever. Armor off, paper demoted, pointer kept.
+		code, cause, params := dispatch.FleetRefusalCause(err, order.DeliveryNode)
+		s.dispatcher.DemoteAfterFleetRefusal(order, code, cause, params)
 		return false
 	}
 
@@ -664,27 +647,12 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	}
 	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
-		s.logFn("fulfillment: held-bin order %d fleet dispatch failed, re-queuing (claim released): %v", order.ID, err)
-		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
-			s.logFn("fulfillment: release claim for held-bin order %d on fleet-fail rollback: %v", order.ID, rerr)
-		}
-		if lerr := s.dispatcher.ReleaseLanesForOrder(order.ID); lerr != nil {
-			s.logFn("fulfillment: release lanes for held-bin order %d on fleet-fail rollback: %v", order.ID, lerr)
-		}
-		// Same fleet_unavailable code as the plain-path fleet failure; both are
-		// transient robot-system issues. The hard claim is released so the order
-		// re-soft-acquires next tick. And the same synthetic-destination carve-out,
-		// for the same reason — this arm reaches the same commit seam, so it can be
-		// refused before any create just as the plain path can.
-		if dispatch.IsSyntheticLocation(err) {
-			s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.CauseNGRPResolve,
-				dispatch.QueueParams{Destination: order.DeliveryNode})
-		} else {
-			s.setQueueReason(order, protocol.QueueFleetUnavailable, dispatch.CauseFleetRefusedCreate, dispatch.QueueParams{})
-		}
-		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
-			s.logTransition(order.ID, "held-bin → sourcing after fleet fail", err)
-		}
+		s.logFn("fulfillment: held-bin order %d fleet dispatch failed, re-queuing (paper kept): %v", order.ID, err)
+		// The same one door as the fresh-bin arm above, and this arm needed it
+		// more: an order that is ALREADY holding its bin is the exact shape the
+		// pointer wedge traps, because dispatchHeldBin is where it comes back to.
+		code, cause, params := dispatch.FleetRefusalCause(err, order.DeliveryNode)
+		s.dispatcher.DemoteAfterFleetRefusal(order, code, cause, params)
 		return false
 	}
 	s.logFn("fulfillment: held-bin order %d fulfilled — bin %d (%s -> %s) vendor=%s",

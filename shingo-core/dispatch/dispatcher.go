@@ -637,6 +637,109 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 // Used for orders created internally (e.g. direct orders from the UI) and
 // from the fulfillment scanner after a bin claim resolves.
 //
+// DemoteAfterFleetRefusal is THE ONE DOOR every fleet refusal goes through.
+//
+// Owner ruling §8: "this is a blip failure — everything fired, it got all its
+// claims, the failure just landed with RDS." So the order is not failed and its
+// paper is not burned. Armor off, paper demoted, pointer kept, back in the line
+// under a named cause; on a blip it re-wins its own uncontested bin seconds
+// later, and in a real outage the paper yields by rank like everyone else's.
+//
+// ── WHAT IT REPLACED ──────────────────────────────────────────────────────
+//
+// Four rollback arms with three different release policies. Two called
+// ReleaseClaimByOrder, which DELETES the reservations and the order_bins rows
+// while leaving orders.bin_id stamped — the pointer wedge AssertNoPointerWedge
+// found and three tests were quarantined under. One released nothing and wrote
+// no cause. One released nothing and wrote a cause. A burst of 23-41 refusals
+// (SPR's own history) went through all of them.
+//
+// ── THE CLAUSES ───────────────────────────────────────────────────────────
+//
+// LOST CAS TOUCHES NOTHING. IsConcurrentTransition means another caller owns
+// this order and is dispatching it; rolling back its status or releasing its
+// holds would describe the loser's failure on the winner's live row. Same rule,
+// same reason, as the occupancy release in commitToFleet.
+//
+// STATUS FIRST, THEN THE BOOKS, and the order matters. A crash between them
+// leaves an order in `sourcing` still holding its armor and its confirmed paper
+// — legal (a hard claim beside its own live reservation) and re-dispatchable.
+// The other order leaves `dispatched` with no armor at all, which is the state
+// the two-clause assertion exists to call a violation.
+//
+// PARKS IN `sourcing`, NOT `queued`, and this is deliberate rather than
+// inherited. A demoted order KEEPS its confirmed destination slot, and
+// CountInFlightByDeliveryNode excludes `queued` on the stated grounds that a
+// queued order holds no destination. Park the burst in queued today and the gate
+// that stops two orders being sent to one node counts zero: 23-41 double-booked
+// dropoffs the minute the fleet recovers. The rung move rides the meaning
+// migration, after that reader is re-homed onto a fact.
+//
+// IDEMPOTENT, because the plain path invokes it TWICE per refusal —
+// DispatchDirect undoes its own CAS, then the caller parks. MoveToSourcing
+// self-skips on sourcing→sourcing, the store half is idempotent by construction,
+// and setQueueReason short-circuits an unchanged cause. So the second call is a
+// no-op rather than a second wait in the record.
+//
+// THE CAUSE IS THE CALLER'S. An EMPTY cause means "write none", which is what
+// the undo-only caller passes: whether this refusal is a wait or the end of a
+// request is not the undo's to say — the scanner parks and retries, the bin-move
+// door has a person waiting and fails the row itself. A caller that parks passes
+// its own; the scanner's synthetic-destination carve-out passes ngrp-resolve,
+// because a destination that was never resolved must not report a robot-system
+// outage that is not happening.
+//
+// The cause is FLOORED, NOT EVENTED. causeReleasers records a reasoned absence
+// for fleet-error — "the fleet became willing" is not an event — so nothing here
+// subscribes anything, and the releaser is the ordinary scanner pass.
+func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) {
+	if order == nil {
+		return
+	}
+	if order.Status == protocol.StatusDispatched {
+		if err := d.lifecycle.MoveToSourcing(order, "dispatcher", "fleet refused the create"); err != nil {
+			if IsConcurrentTransition(err) {
+				// Another caller owns it now. Nothing of ours to undo.
+				log.Printf("dispatch: order %d — fleet refusal lost the CAS: %v (another caller owns "+
+					"this order; leaving it alone)", order.ID, err)
+				return
+			}
+			log.Printf("dispatch: order %d could not be moved back to sourcing after a fleet refusal: "+
+				"%v (it is `dispatched` with no vendor order; the armor is dropped below and the "+
+				"crash-sliver assertion is the backstop)", order.ID, err)
+		}
+	}
+	// The books, after the status, and only the armor.
+	if err := d.db.DemoteHoldsAfterFleetRefusal(order.ID, d.laneOwnerFor(order.ID) == order.ID); err != nil {
+		log.Printf("dispatch: order %d — could not demote its holds after a fleet refusal: %v "+
+			"(it keeps armor it has no robot for; the acquiring-claim backstop sweeps it)", order.ID, err)
+	}
+	if cause != "" {
+		d.setQueueReason(order, code, cause, params)
+	}
+}
+
+// FleetRefusalCause names the wait a fleet-refused order is about to park under,
+// for a caller that parks. It is the shared spelling of one carve-out.
+//
+// A refusal is `fleet-error` — "Robot system not responding — retrying" — UNLESS
+// THE FLEET WAS NEVER ASKED. A synthetic destination is refused at the commit
+// seam before any create, so fleet_unavailable there would state a robot-system
+// outage that is not happening and send whoever reads the row to the wrong system
+// entirely. That is the blank-wait problem one level up: not an absent cause, a
+// confidently wrong one. It parks under the cause planning already writes for the
+// same fact, so the two cannot drift.
+//
+// It is a function rather than a comment repeated at each park because it WAS a
+// comment repeated at each park — the two scanner arms carried the carve-out
+// separately, and the door's other two callers carried neither.
+func FleetRefusalCause(err error, destination string) (protocol.QueueCode, QueueCause, QueueParams) {
+	if IsSyntheticLocation(err) {
+		return protocol.QueueWaitingForSlot, CauseNGRPResolve, QueueParams{Destination: destination}
+	}
+	return protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{}
+}
+
 // Callers reach this function with the order in one of three states:
 //   - pending  — direct creation paths (engine.CreateBinMove, reached from the
 //     operator's manual-order screen and the /test-orders direct tab) jump
@@ -694,12 +797,16 @@ func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *n
 		// order now; rolling back its status would clobber whatever it is doing.
 		// Same rule, for the same reason, as the occupancy release in
 		// dispatchToFleetCore.
-		if !IsConcurrentTransition(err) && order.Status == protocol.StatusDispatched {
-			if rbErr := d.lifecycle.MoveToSourcing(order, "dispatcher", "fleet refused the create"); rbErr != nil {
-				log.Printf("dispatch: order %d could not be moved back to sourcing after a fleet "+
-					"refusal: %v (it is `dispatched` with no vendor order; the stuck sweep is the backstop)",
-					order.ID, rbErr)
-			}
+		//
+		// THROUGH THE ONE DOOR, AND WITH NO CAUSE. The undo is this function's;
+		// the disposition is the caller's, and the callers differ — the scanner
+		// parks and retries under a cause it chooses, the bin-move door has a
+		// person waiting and fails the row itself. Writing a cause here would put
+		// "robot system not responding" on a row that is about to go terminal for
+		// a person, and would overwrite the scanner's carve-out a moment before it
+		// is written. So: armor off, paper kept, no sentence.
+		if !IsConcurrentTransition(err) {
+			d.DemoteAfterFleetRefusal(order, "", "", QueueParams{})
 		}
 		return "", err
 	}

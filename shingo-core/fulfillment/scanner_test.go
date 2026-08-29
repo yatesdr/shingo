@@ -103,6 +103,17 @@ type recordingDispatcher struct {
 	buriedErr        error // makes BuriedForHeldBin fail (cannot describe the dig)
 	laneBuried       bool  // admission reports the order's source bin walled
 	entryKinds       []dispatch.EntryKind
+
+	// demoteCalls records each trip through the one fleet-refusal door.
+	demoteCalls []demoteCall
+}
+
+// demoteCall records one fleet refusal reaching the door: whose, and under what
+// name it was parked.
+type demoteCall struct {
+	orderID int64
+	code    string
+	cause   string
 }
 
 // confirmCall records one Rule-1 confirm-at-dispatch: the order, the bin, and the
@@ -164,7 +175,16 @@ func (d *recordingDispatcher) AcquireLanesForOrder(_ *orders.Order, _, _ *nodes.
 	return true, "", "", nil
 }
 func (d *recordingDispatcher) ReleaseLanesForOrder(int64) error { d.releaseLaneCalls++; return nil }
-func (d *recordingDispatcher) PostFindHook()                    {}
+
+// DemoteAfterFleetRefusal records the one door a fleet refusal goes through. The
+// scanner carries no release logic of its own any more, so what these tests can
+// assert about a refusal is that the door was called, with which cause.
+func (d *recordingDispatcher) DemoteAfterFleetRefusal(o *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, _ dispatch.QueueParams) {
+	d.demoteCalls = append(d.demoteCalls, demoteCall{orderID: o.ID, code: string(code), cause: string(cause)})
+	o.Status = protocol.StatusSourcing
+	o.QueueCode, o.QueueCause = string(code), string(cause)
+}
+func (d *recordingDispatcher) PostFindHook() {}
 
 // BuriedForHeldBin: the held-bin burial route. buriedErr drives the "cannot
 // describe the dig" arm; otherwise a minimal BuriedError is enough, since

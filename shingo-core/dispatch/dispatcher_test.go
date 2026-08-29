@@ -272,23 +272,19 @@ func dispatchSimpleViaScanner(t *testing.T, d *Dispatcher, db *store.DB, orderUU
 		t.Fatalf("scanner-mirror reserve dropoff %s: %v", orderUUID, err)
 	}
 	if _, err := d.DispatchDirect(o, sourceNode, destNode); err != nil {
-		// Mirror the scanner's fleet-failure rollback (fulfillment/scanner.go), not
-		// a shortcut: a fleet refusal is a real disposition, and the scanner's is to
-		// release the claim and the lane holds, park under fleet_unavailable, and
-		// retry from sourcing. This helper used to lean on DispatchDirect
-		// terminalizing and just re-read the row; when that stopped being the
-		// contract, the mirror stopped mirroring and three tests were asserting a
-		// disposition production no longer produces.
-		if rerr := db.ReleaseClaimByOrder(o.ID); rerr != nil {
-			t.Fatalf("scanner-mirror release claim after fleet fail %s: %v", orderUUID, rerr)
-		}
-		if lerr := d.ReleaseLanesForOrder(o.ID); lerr != nil {
-			t.Fatalf("scanner-mirror release lanes after fleet fail %s: %v", orderUUID, lerr)
-		}
-		d.setQueueReason(o, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
-		if qerr := d.lifecycle.MoveToSourcing(o, "test-scanner", "fleet unavailable, retrying"); qerr != nil {
-			t.Fatalf("scanner-mirror park after fleet fail %s: %v", orderUUID, qerr)
-		}
+		// Mirror the scanner's fleet-failure disposition (fulfillment/scanner.go),
+		// not a shortcut: a fleet refusal is a real disposition, and the scanner's
+		// is to name the wait and hand it to the one door.
+		//
+		// It used to spell the rollback out here — release the claim, release the
+		// lanes, write the cause, move to sourcing — which was a fourth copy of a
+		// policy that existed in three versions. The copy is what let it drift:
+		// the helper leaned on DispatchDirect terminalizing, and when that stopped
+		// being the contract the mirror stopped mirroring and three tests were
+		// asserting a disposition production no longer produced. Calling the door
+		// means it cannot drift again.
+		code, cause, params := FleetRefusalCause(err, o.DeliveryNode)
+		d.DemoteAfterFleetRefusal(o, code, cause, params)
 		o, _ = db.GetOrderByUUID(orderUUID)
 		return o
 	}

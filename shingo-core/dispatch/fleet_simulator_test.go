@@ -8,7 +8,6 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
-	"shingocore/internal/testdb"
 )
 
 // =============================================================================
@@ -271,10 +270,6 @@ func TestSimulator_StateMapping(t *testing.T) {
 // that failed before the fleet accepted them (empty VendorOrderID).
 func TestSimulator_FleetFailure_NoVendorOrderID(t *testing.T) {
 	t.Parallel()
-	testdb.KnownPointerWedge(t, "the fleet-refusal rollback (ReleaseClaimByOrder, store/orders.go) deletes the order's "+
-		"reservations and leaves orders.bin_id stamped, so the order re-enters through "+
-		"dispatchHeldBin — which never re-acquires — and cannot confirm. Both rollback sites "+
-		"in fulfillment/scanner.go carry a comment saying it re-soft-acquires next tick; nothing does")
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC5")

@@ -88,10 +88,6 @@ func TestCharSeam_PlainStore_TakesOccupancyBeforeTheCreate(t *testing.T) {
 // happened wedges the lane forever, with nothing alive to release it.
 func TestCharSeam_PlainStore_ReleasesOccupancyWhenTheCreateFails(t *testing.T) {
 	t.Parallel()
-	testdb.KnownPointerWedge(t, "the fleet-refusal rollback (ReleaseClaimByOrder, store/orders.go) deletes the order's "+
-		"reservations and leaves orders.bin_id stamped, so the order re-enters through "+
-		"dispatchHeldBin — which never re-acquires — and cannot confirm. Both rollback sites "+
-		"in fulfillment/scanner.go carry a comment saying it re-soft-acquires next tick; nothing does")
 	db := testDB(t)
 	srcNode, _, bp := setupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "CSEAM-FAIL")
@@ -106,6 +102,19 @@ func TestCharSeam_PlainStore_ReleasesOccupancyWhenTheCreateFails(t *testing.T) {
 		o.DeliveryNode = mouth.Name
 		o.Status = StatusSourcing
 	})
+	// THE SOFT HOLD GOES WITH THE POINTER, and this line is a finding rather than
+	// a fixture tidy-up. The fixture stamped orders.bin_id and took no reservation,
+	// which is not a state the plant can be in: bin_id is written at SOFT-RESERVE
+	// time (fulfillment/scanner.go), so a stamped pointer always has paper behind
+	// it. Without it this order was wedged BEFORE the fleet was ever asked —
+	// measured: reservations=0, binClaims=0, bin_id stamped — and the wedge sweep
+	// was correctly reporting a shape the refusal had not produced.
+	//
+	// It matters because this test carried a KnownPointerWedge quarantine blaming
+	// the fleet-refusal rollback for deleting "the order's reservations". This
+	// order never had one. The quarantine was mis-attributed, and fixing the door
+	// alone would have left it red for a reason that had nothing to do with it.
+	testutil.MustNoErr(t, d.binManifest.ReserveForDispatch(bin.ID, order.ID), "soft-reserve the bin")
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
 	order, _ = db.GetOrder(order.ID)
 

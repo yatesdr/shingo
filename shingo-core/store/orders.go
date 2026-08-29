@@ -921,6 +921,75 @@ func (db *DB) ReleaseClaimByOrder(orderID int64) error {
 	return tx.Commit()
 }
 
+// DemoteHoldsAfterFleetRefusal takes the ARMOR off an order and leaves its PAPER
+// standing, in one transaction. It is the store half of the one fleet-refusal
+// door (dispatch.Dispatcher.DemoteAfterFleetRefusal) and has no other caller.
+//
+// ── WHY IT IS NOT ReleaseClaimByOrder ─────────────────────────────────────
+//
+// The release beside it does the right thing for a rollback that ABANDONS an
+// order's claims. A fleet refusal abandons nothing: the order got everything it
+// asked for and the failure landed with the robot system. Owner ruling: "this is
+// a blip failure — everything fired, it got all its claims, the failure just
+// landed with RDS."
+//
+// So the undo removes only what claimed a robot that never came:
+//
+//	ARMOR OFF. A hard claim means "a robot is committed", and keeping one through
+//	a fleet refusal makes the books lie — a rank-proof squatter with no wheels,
+//	and a dead corridor for the length of the outage. Owner-scoped both sides.
+//
+//	PAPER DEMOTED, NEVER DELETED. confirmed → pending, which is exactly what the
+//	re-dispatch's confirm needs (it flips pending → confirmed and refuses without
+//	a pending row). Deleting it while orders.bin_id stays stamped IS the pointer
+//	wedge: the order re-enters through dispatchHeldBin, which confirms by id and
+//	never re-acquires, so it parks under claim-failed and retries forever with a
+//	live owner no sweep will touch. Bin and slot only — a mouth row has no pending
+//	phase and an occupancy row is a measurement, not a promise.
+//
+//	POINTER AND JUNCTION KEPT. orders.bin_id is untouched: the bin is still spoken
+//	for, and on a blip the order re-wins its own uncontested bin seconds later.
+//	order_bins is untouched too — the fourth book. ReleaseClaimByOrder deletes
+//	those rows; the re-dispatch reads them to answer which bin a STEP is about
+//	(dispatch/bin_for_step.go), which bin_id cannot answer for a multi-bin order.
+//
+// releaseLanes is the CALLER's answer to "do these lane rows belong to this
+// order", because the store cannot tell: a compound child's mouth rows are held
+// by its PARENT (dispatch.laneOwnerFor), and releasing them on a leg's refusal
+// tears the corridor out from under a live dig. The door asks laneOwnerFor and
+// passes the answer.
+//
+// Occupancy is NOT touched: commitToFleet's failure arm already released it on
+// every arm but a lost CAS, and a lost CAS is refused before this is reached.
+//
+// Idempotent — the plain path invokes the door twice per refusal — and returns
+// the first error rather than logging and continuing, because a half-applied
+// demote is the two-books drift this exists to prevent.
+func (db *DB) DemoteHoldsAfterFleetRefusal(orderID int64, releaseLanes bool) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
+		return fmt.Errorf("demote: release bin claims for order %d: %w", orderID, err)
+	}
+	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
+		return fmt.Errorf("demote: release slot claims for order %d: %w", orderID, err)
+	}
+	if err := reservations.DemoteConfirmedByOrder(tx, orderID); err != nil {
+		return fmt.Errorf("demote: demote paper for order %d: %w", orderID, err)
+	}
+	if releaseLanes {
+		if _, err := tx.Exec(
+			`DELETE FROM reservations WHERE order_id=$1 AND resource_kind=$2`,
+			orderID, string(reservations.KindMouth)); err != nil {
+			return fmt.Errorf("demote: release lane holds for order %d: %w", orderID, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // CountInFlightOrdersByDeliveryNodeExcluding counts in-flight orders for a
 // delivery node, excluding a specific order ID (the caller's own row).
 // Phase 4c of bin-transit-state: planning-time capacity gates need to

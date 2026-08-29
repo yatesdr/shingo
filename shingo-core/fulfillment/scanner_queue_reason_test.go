@@ -26,6 +26,13 @@ var (
 //   - fleet dispatch failure (plain + held-bin)  → fleet_unavailable
 //   - claim contention requeue                    → waiting_for_material
 //   - destination slot reserve conflict           → waiting_for_slot
+//
+// THE TWO FLEET ARMS ASSERT THE DOOR, not the store. A fleet refusal goes
+// through one place now (Dispatcher.DemoteAfterFleetRefusal), which writes the
+// cause in the same breath as it takes the armor off and demotes the paper — the
+// scanner's part is to NAME the wait and hand it over. So what these two prove
+// is that the scanner still names it correctly; that the name reaches the row is
+// the door's own test (dispatch/fleet_demote_docker_test.go).
 func TestScanner_RequeuePaths_SetQueueCode(t *testing.T) {
 	t.Parallel()
 
@@ -44,9 +51,8 @@ func TestScanner_RequeuePaths_SetQueueCode(t *testing.T) {
 		s := newScannerWith(t, f, finder, failDispatch, nil)
 		s.RunOnce()
 
-		want := queueReasonUpdate{OrderID: 10, Reason: "Robot system not responding — retrying",
-			Code: string(protocol.QueueFleetUnavailable), Cause: "fleet-error"}
-		assertQueueReason(t, f, want)
+		assertDemoted(t, failDispatch, demoteCall{orderID: 10,
+			code: string(protocol.QueueFleetUnavailable), cause: "fleet-error"})
 	})
 
 	// --- Held-bin path: order already holding a bin, fleet dispatch fails ---
@@ -63,9 +69,8 @@ func TestScanner_RequeuePaths_SetQueueCode(t *testing.T) {
 		s := newScannerWith(t, f, foundFinderWith(30, "SRC-B"), failDispatch, nil)
 		s.RunOnce()
 
-		want := queueReasonUpdate{OrderID: 11, Reason: "Robot system not responding — retrying",
-			Code: string(protocol.QueueFleetUnavailable), Cause: "fleet-error"}
-		assertQueueReason(t, f, want)
+		assertDemoted(t, failDispatch, demoteCall{orderID: 11,
+			code: string(protocol.QueueFleetUnavailable), cause: "fleet-error"})
 	})
 
 	// --- Bin soft-acquire race: ReserveForDispatch fails (another order reserved
@@ -118,26 +123,6 @@ func TestScanner_RequeuePaths_SetQueueCode(t *testing.T) {
 	})
 }
 
-// assertQueueReason finds the LAST recorded queue-reason write for the order
-// (the requeue writes after any earlier gate write) and checks all four fields.
-func assertQueueReason(t *testing.T, f *fakeStore, want queueReasonUpdate) {
-	t.Helper()
-	var last queueReasonUpdate
-	found := false
-	for _, qr := range f.queueReasons {
-		if qr.OrderID == want.OrderID {
-			last = qr
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("no queue_reason recorded for order %d; writes were %v", want.OrderID, f.queueReasons)
-	}
-	if last.Reason != want.Reason || last.Code != want.Code || last.Cause != want.Cause {
-		t.Errorf("queue_reason = %+v, want %+v", last, want)
-	}
-}
-
 // foundFinderWith returns a finder that reports a found bin at the given node.
 func foundFinderWith(binID int64, nodeName string) BinFinder {
 	return &fakeFinder{result: dispatch.SourceResult{
@@ -145,4 +130,19 @@ func foundFinderWith(binID int64, nodeName string) BinFinder {
 		Bin:     &bins.Bin{ID: binID},
 		Node:    &nodes.Node{ID: 900, Name: nodeName},
 	}}
+}
+
+// assertDemoted checks that a fleet refusal reached the one door for this order,
+// under the expected name. It reports what the door DID see, because "the wait
+// was never named" and "the wait was named wrongly" are different defects and a
+// bare "not found" cannot tell them apart.
+func assertDemoted(t *testing.T, d *recordingDispatcher, want demoteCall) {
+	t.Helper()
+	for _, got := range d.demoteCalls {
+		if got == want {
+			return
+		}
+	}
+	t.Errorf("order %d did not reach the fleet-refusal door as %+v; the door saw %+v",
+		want.orderID, want, d.demoteCalls)
 }

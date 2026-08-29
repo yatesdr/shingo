@@ -80,9 +80,8 @@ const (
 	// legal. A mouth hold is per-visit and released by its own owner, so the G3
 	// foreign-release class is structurally dead for it.
 	//
-	// Steal (Rule 2) must NEVER select a mouth row. No steal predicate exists yet;
-	// when one is written it is pinned to resource_kind IN ('bin','slot'). This
-	// comment is the pin until that helper exists.
+	// Steal (Rule 2) must NEVER select a mouth row. The helper that comment asked
+	// for is BinAndSlotKindsSQL below; compose it rather than typing the pair.
 	KindMouth Kind = "mouth"
 	// KindOccupancy is the PRESENCE WITNESS: it records a robot physically inside
 	// a corridor. Excluded from every strength decision, every wants-per-resource
@@ -106,6 +105,21 @@ const (
 // call site reads as a fragment being composed, which is the same shape as
 // ActiveStateSQL and OnTheBooksSQL beside it.
 func OccupancyKindSQL() string { return "'" + string(KindOccupancy) + "'" }
+
+// BinAndSlotKindsSQL returns 'bin','slot' — the two kinds on which a hold has a
+// STRENGTH, for `resource_kind IN (` + BinAndSlotKindsSQL() + `)`.
+//
+// The other two kinds are not weaker holds, they are different things, and that
+// is why a query about strength must not sweep them up. A mouth row is a
+// per-visit hold or a cordon and is inserted 'confirmed' with no pending phase —
+// there is no such thing as demoting one. An occupancy row is a presence
+// witness: it reports where a robot IS, so a query that changed its state would
+// be editing a measurement.
+//
+// KindMouth's doc asked for this helper by name ("when one is written it is
+// pinned to resource_kind IN ('bin','slot')") for the steal predicate that does
+// not exist yet. The fleet-refusal demote is the first caller.
+func BinAndSlotKindsSQL() string { return "'" + string(KindBin) + "','" + string(KindSlot) + "'" }
 
 // Ref is the kind-agnostic identity of a reserved resource: a bin (Kind=bin,
 // ID=bins.id) or a slot (Kind=slot, ID=nodes.id). Every primitive keys on a Ref —
@@ -218,6 +232,36 @@ func confirm(db Execer, orderID int64, ref Ref) error {
 	)
 	if err != nil {
 		return fmt.Errorf("reservations confirm: %w", err)
+	}
+	return nil
+}
+
+// DemoteConfirmedByOrder flips every one of an order's CONFIRMED bin and slot
+// rows back to pending — the paper half of a fleet refusal.
+//
+// It is the inverse of confirm above, and it lives beside it for the reason the
+// blocking drift guard exists: a reservation's state is spelled in this package
+// and nowhere else. A caller that wrote `SET state='pending'` into its own query
+// would be the second definition of what a hold's state means, on the day the
+// tier work changes it.
+//
+// BIN AND SLOT ONLY. A mouth row is inserted 'confirmed' with no pending phase,
+// so demoting one would invent a state it has never had; an occupancy row is a
+// presence witness, and rewriting it would be editing a measurement rather than
+// a promise. See BinAndSlotKindsSQL.
+//
+// The row is DEMOTED, NOT DELETED, and that distinction is the whole ruling:
+// the bin stays spoken for, the re-dispatch's confirm has the pending row it
+// requires, and nothing else can take the resource without outranking the order
+// that still holds it. Idempotent — a second call finds nothing confirmed.
+func DemoteConfirmedByOrder(db Execer, orderID int64) error {
+	_, err := db.Exec(
+		`UPDATE reservations SET state=$2
+		 WHERE order_id=$1 AND state=$3
+		   AND resource_kind IN (`+BinAndSlotKindsSQL()+`)`,
+		orderID, string(StatePending), string(StateConfirmed))
+	if err != nil {
+		return fmt.Errorf("reservations demote-confirmed-by-order: %w", err)
 	}
 	return nil
 }

@@ -1491,20 +1491,23 @@ func (d *Dispatcher) parkLegOnFleetRefusal(parentOrderID int64, leg *orders.Orde
 	log.Printf("dispatch: compound %d child %d — the fleet refused the create: %v (parking the leg; "+
 		"the dig waits and the demand survives)", parentOrderID, leg.ID, cause)
 
-	if leg.Status == StatusDispatched {
-		if rbErr := d.lifecycle.MoveToSourcing(leg, "dispatcher", "fleet refused the create"); rbErr != nil {
-			log.Printf("dispatch: compound %d child %d could not be rolled back after a fleet refusal: %v "+
-				"(it is `dispatched` with no vendor order; the stuck sweep is the backstop)",
-				parentOrderID, leg.ID, rbErr)
-			return
-		}
-	}
-
 	dest := ""
 	if destNode != nil {
 		dest = destNode.Name
 	}
-	d.setQueueReason(leg, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate,
+	// THROUGH THE ONE DOOR. This arm used to roll the status back and write the
+	// cause and release nothing at all, which left the leg holding a hard claim
+	// for a robot that never came — armor outliving its robot, on the arm that
+	// runs during an excavation.
+	//
+	// The door's LANE clause is the one that matters here and it is why the
+	// release could not simply be added: a leg's mouth rows belong to its PARENT
+	// (laneOwnerFor), because one dig chapter holds one corridor for the whole
+	// excavation. A blind release-my-lanes on a leg's refusal tears that corridor
+	// out from under the dig — its other legs lose their admission and anybody may
+	// walk into the lane being worked. The door asks laneOwnerFor and releases
+	// nothing here.
+	d.DemoteAfterFleetRefusal(leg, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate,
 		QueueParams{Destination: dest})
 }
 
