@@ -12,12 +12,16 @@ import (
 	"shingocore/store/reservations"
 )
 
-// dig_steal_contract_docker_test.go — the dig always wins, and the books say so.
+// dig_steal_contract_docker_test.go — when a dig takes a soft-held blocker, the
+// books say so.
 //
-// A blocker is positional. The dig has no choice about which bins are in its way,
-// so a soft reservation cannot stop it and never did: the claim CAS admits any
-// bin whose claimed_by is NULL, including one another order has promised itself.
-// That behaviour is the contract, now ruled explicitly.
+// A blocker is positional: the dig has no choice about which bins are in its
+// way, and the claim CAS admits any bin whose claimed_by is NULL, including one
+// another order has promised itself. Positional is an argument about WHICH bin
+// though, not about whose turn, so since §7 the take goes by the demand ranking
+// and a soft hold CAN stop it — see compoundParent, which states "this dig wins"
+// as a priority rather than leaving it to seeding order, and the ranked-take
+// suite for the losing path. Everything below is the winning path.
 //
 // What was missing was the bookkeeping. The holder's reservation survived the
 // steal and was deleted much later, at the dig leg's ARRIVAL — so for the whole

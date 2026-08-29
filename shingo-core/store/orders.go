@@ -173,12 +173,17 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) ([]DisplacedByHan
 			if o.ParentOrderID != nil {
 				parentID = *o.ParentOrderID
 			}
-			// THE STEAL, MADE EXPLICIT. A blocker is positional: the dig has no
-			// choice about which bins are in its way, so it always wins, and a soft
-			// reservation never stops it — the claim CAS below admits any bin whose
-			// claimed_by is NULL, including one another order has softly promised
-			// itself. That has always happened. What has not happened is the
-			// bookkeeping.
+			// THE STEAL, MADE EXPLICIT. A blocker is POSITIONAL — the dig has no
+			// choice about which bins are in its way — and the claim CAS below
+			// admits any bin whose claimed_by is NULL, including one another order
+			// has softly promised itself. That has always happened; what had not
+			// happened is the bookkeeping.
+			//
+			// IT IS NO LONGER UNCONDITIONAL. Positional is an argument about WHICH
+			// bin, never about whose turn, so stealSoftHolds ranks the two demands
+			// first and REFUSES when the holder wins (§7). That refusal is an error
+			// and it aborts this transaction before the claim below — the gate
+			// carries the reasoning.
 			//
 			// The holder's row used to survive the steal and get deleted much later,
 			// at the dig leg's ARRIVAL (ReleaseByBin in ApplyArrival), which left a
@@ -406,8 +411,8 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	var displaced []DisplacedByHand
 	for _, v := range victims {
 		if v.handPlaced && v.pointsHere {
-			log.Printf("dispatch: dig %d took bin %d from HAND-PLACED order %d — the dig always wins "+
-				"on a positional blocker, but a person named this bin, so the order keeps its "+
+			log.Printf("dispatch: dig %d took bin %d from HAND-PLACED order %d — the dig outranked "+
+				"the holder on a positional blocker, but a person named this bin, so the order keeps its "+
 				"pointer and is failed by name rather than re-aimed at whatever is standing there "+
 				"next", parentID, binID, v.orderID)
 			displaced = append(displaced, DisplacedByHand{
@@ -438,8 +443,9 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 			v.orderID, binID, clock.Now().UTC()); err != nil {
 			return nil, fmt.Errorf("clear bin %d off holder %d: %w", binID, v.orderID, err)
 		}
-		log.Printf("dispatch: dig %d took bin %d from order %d — the dig always wins on a positional "+
-			"blocker; order %d keeps its demand and re-resolves (the bin is findable at its new home)",
+		log.Printf("dispatch: dig %d took bin %d from order %d — the dig outranked the holder on a "+
+			"positional blocker; order %d keeps its demand and re-resolves (the bin is findable at "+
+			"its new home)",
 			parentID, binID, v.orderID, v.orderID)
 	}
 	return displaced, nil

@@ -16,8 +16,9 @@ import (
 // dig_hand_placed_docker_test.go — what happens to a person's order when a dig
 // takes the bin they named.
 //
-// The dig always wins: a blocker is positional and there is nothing to
-// negotiate. What was wrong was everything after that. The steal cleared the
+// This is the path where the dig WON the blocker — since §7 that is a rank
+// contest rather than a property of digs, and the fixture below says so. What
+// was wrong was everything after that. The steal cleared the
 // holder's bin_id, which for an ordinary demand is a recalculation and for a
 // HAND-PLACED one is Core quietly re-aiming somebody's instruction at whatever
 // bin happens to be standing at that node next. And because the bin-move door

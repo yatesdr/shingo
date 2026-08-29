@@ -647,8 +647,12 @@ func readLog(source string) *logStats {
 			if n, ok := tallyValue(line, "soft-hold burials "); ok {
 				s.softN = n
 			}
-		case strings.Contains(line, "the dig always wins on a positional blocker"):
-			// This one IS per-event — one line per steal, at the steal.
+		case strings.Contains(line, "outranked the holder on a positional blocker"):
+			// This one IS per-event — one line per steal, at the steal. The phrase
+			// is the substring both steal logs share (the ordinary un-point and the
+			// hand-placed one), and it moved with them when the take became ranked:
+			// reaching either log now means the dig WON the rank contest, where
+			// before it always did.
 			s.stealN++
 		}
 	}
