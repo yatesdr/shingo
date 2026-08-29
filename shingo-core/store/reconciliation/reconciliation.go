@@ -23,6 +23,7 @@ import (
 	"shingo/protocol/clock"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/messaging"
+	"shingocore/store/reservations"
 )
 
 const criticalOutboxAge = 5 * time.Minute
@@ -723,11 +724,7 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 		      SELECT 1 FROM orders o
 		      WHERE o.id = b.claimed_by AND o.status IN (%s)
 		    )
-		    AND NOT EXISTS (
-		      SELECT 1 FROM reservations r
-		      WHERE r.resource_kind = 'bin' AND r.bin_id = b.id
-		        AND r.state IN ('pending','confirmed')
-		    )
+		    AND NOT `+reservations.OnTheBooksSQL(reservations.KindBin, "b.id")+`
 		), swept AS (
 		  UPDATE bins SET claimed_by = NULL, updated_at = NOW()
 		  WHERE id IN (SELECT id FROM victims)
@@ -769,11 +766,7 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 		      SELECT 1 FROM orders o
 		      WHERE o.id = nd.claimed_by AND o.status IN (%s)
 		    )
-		    AND NOT EXISTS (
-		      SELECT 1 FROM reservations r
-		      WHERE r.resource_kind = 'slot' AND r.node_id = nd.id
-		        AND r.state IN ('pending','confirmed')
-		    )
+		    AND NOT `+reservations.OnTheBooksSQL(reservations.KindSlot, "nd.id")+`
 		), swept AS (
 		  UPDATE nodes SET claimed_by = NULL, updated_at = NOW()
 		  WHERE id IN (SELECT id FROM victims)

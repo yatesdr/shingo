@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingocore/store/plantclaims"
+	"shingocore/store/reservations"
 )
 
 // BuildInputs assembles the plant snapshot Compute consumes: the mirrored styles
@@ -104,7 +105,7 @@ func availablePoolByPayload(db *sql.DB) (map[string]int, error) {
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
 		  AND b.status NOT IN ('staged', 'maintenance', 'flagged', 'retired', 'quality_hold')
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
+		  AND NOT ` + reservations.BinSpokenForSQL + `
 		GROUP BY b.payload_code`)
 	if err != nil {
 		return nil, fmt.Errorf("sourceability: available pool: %w", err)
@@ -166,7 +167,7 @@ func onLinePoolByProcess(db *sql.DB) (map[string]map[string]int, error) {
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
 		  AND b.status = 'staged'
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
+		  AND NOT ` + reservations.BinSpokenForSQL + `
 		GROUP BY sc.process_id, b.payload_code`)
 	if err != nil {
 		return nil, fmt.Errorf("sourceability: on-line pool: %w", err)

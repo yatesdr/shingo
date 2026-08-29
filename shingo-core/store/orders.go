@@ -219,7 +219,7 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 func stealSoftHold(tx *sql.Tx, binID, childID, parentID int64) error {
 	var holder sql.NullInt64
 	err := tx.QueryRow(`SELECT order_id FROM reservations
-		WHERE bin_id=$1 AND resource_kind='bin' AND state IN ('pending','confirmed')
+		WHERE bin_id=$1 AND resource_kind='bin' AND `+reservations.ActiveStateSQL("")+`
 		  AND order_id <> $2
 		  AND order_id <> $3
 		  AND order_id NOT IN (SELECT id FROM orders WHERE parent_order_id = $3)`,

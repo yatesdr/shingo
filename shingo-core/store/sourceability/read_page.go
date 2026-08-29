@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"shingocore/store/plantclaims"
+	"shingocore/store/reservations"
 )
 
 // Extra reads for the Core sourcing PAGE's drill-in. The page's verdicts come
@@ -56,7 +57,7 @@ func PoolBreakdownByPayload(db *sql.DB) (map[string]PoolBreakdown, error) {
 		       COUNT(*) FILTER (
 		         WHERE b.claimed_by IS NULL
 		           AND b.locked = false
-		           AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
+		           AND NOT ` + reservations.BinSpokenForSQL + `
 		       ) AS free
 		FROM bins b
 		JOIN nodes n ON n.id = b.node_id
@@ -120,7 +121,7 @@ func OnLineBreakdownByProcess(db *sql.DB) (map[string]map[string][]NodeCount, er
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
 		  AND b.status = 'staged'
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
+		  AND NOT ` + reservations.BinSpokenForSQL + `
 		GROUP BY sc.process_id, b.payload_code, n.name
 		ORDER BY sc.process_id, b.payload_code, n.name`)
 	if err != nil {

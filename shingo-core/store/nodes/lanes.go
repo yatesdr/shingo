@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/store/internal/helpers"
+	"shingocore/store/reservations"
 )
 
 // ListLaneSlots returns all child nodes of a lane, ordered by depth (ascending).
@@ -276,13 +277,7 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		  AND n.is_synthetic = false
 		  AND (n.claimed_by IS NULL OR n.claimed_by = $2)
 		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)
-		  AND NOT EXISTS (
-			SELECT 1 FROM reservations r
-			WHERE r.node_id = n.id
-			  AND r.resource_kind = 'slot'
-			  AND r.state IN ('pending','confirmed')
-			  AND r.order_id <> $2
-		  )
+		  AND NOT `+reservations.SlotSpokenForByStrangerSQL("r", "n.id", "$2")+`
 		  AND NOT EXISTS (
 			SELECT 1 FROM orders o
 			WHERE o.delivery_node = n.name

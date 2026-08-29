@@ -41,12 +41,22 @@ type Bin = domain.Bin
 // Pending-ONLY is sufficient: a confirmed reservation coincides with a hard
 // claimed_by (structural, since the one-tx claim+confirm moves them together),
 // which b.claimed_by already covers — so this projector never needs to see 'confirmed'.
+//
+// ── THE SEAM ──────────────────────────────────────────────────────────────────
+//
+// The column is reservations.BinSpokenForSQL, the same fragment every bin
+// finder composes — carried across a join boundary as a boolean because its
+// only consumer, binresolver.BinUnavailableReason, is a pure function over a
+// scanned row and cannot reach the table. So this projector and that function
+// are the two ends of ONE predicate, and the day BinSpokenForSQL's meaning
+// changes they both change with it without either being edited. That is the
+// whole reason the fragment is named.
 const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node_id, b.status, b.claimed_by, b.staged_at, b.staged_expires_at,
 	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.delta_epoch, b.manifest_confirmed,
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
 	b.loaded_at, b.anomaly_at, COALESCE(b.anomaly_note, ''), b.created_at, b.updated_at,
 	bt.code, COALESCE(n.name, ''), COALESCE(p.uop_capacity, 0),
-	EXISTS(SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending') AS has_pending_reservation
+	` + reservations.BinSpokenForSQL + ` AS has_pending_reservation
 	` + BinFromClause
 
 // BinFromClause is the FROM/JOIN half of every bin-reading query, split out of
@@ -121,7 +131,7 @@ func NotForeignDugArm(modeParam, askerParam, laneOwnerParam int) string {
 		SELECT 1 FROM reservations dig_hold
 		 WHERE dig_hold.resource_kind = 'mouth'
 		   AND dig_hold.node_id = n.parent_id
-		   AND dig_hold.state IN ('pending','confirmed')
+		   AND `+reservations.ActiveStateSQL("dig_hold.")+`
 		   AND dig_hold.mode = $%d
 		   AND %s
 	  )`, modeParam, reservations.DigExclusionSQL("dig_hold.order_id", askerParam, laneOwnerParam))
@@ -302,7 +312,7 @@ const EmptyCarrierWhere = `
 	  AND n.enabled = true
 	  AND n.is_synthetic = false
 	  AND COALESCE(b.payload_code, '') = ''
-	  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')`
+	  AND NOT ` + reservations.BinSpokenForSQL
 
 // OfTypeArm narrows to ONE carrier type, matched on CODE.
 //
@@ -933,7 +943,7 @@ func ClaimTx(tx *sql.Tx, binID, orderID int64) error {
 func claimBin(db binExecer, binID, orderID int64) error {
 	res, err := db.Exec(`UPDATE bins SET claimed_by=$1, updated_at=$3
 		WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
-		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$1 AND bin_id=$2 AND state='pending')`,
+		  AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 1, 2),
 		orderID, binID, clock.Now().UTC())
 	if err != nil {
 		return err

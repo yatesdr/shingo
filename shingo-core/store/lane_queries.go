@@ -268,7 +268,7 @@ func (db *DB) ListChildNodesUnlocked(parentID int64, asker reservations.DigAsker
 			SELECT 1 FROM reservations dig_hold
 			WHERE dig_hold.resource_kind = 'mouth'
 			  AND dig_hold.node_id = n.id
-			  AND dig_hold.state IN ('pending','confirmed')
+			  AND `+reservations.ActiveStateSQL("dig_hold.")+`
 			  AND dig_hold.mode = $2
 			  AND %s
 		  )
@@ -311,7 +311,7 @@ func (db *DB) LanesOccupiedInGroup(groupID int64) (map[int64]bool, error) {
 		FROM reservations r
 		JOIN nodes lane ON lane.id = r.node_id
 		WHERE r.resource_kind = 'occupancy'
-		  AND r.state IN ('pending','confirmed')
+		  AND `+reservations.ActiveStateSQL("r.")+`
 		  AND lane.parent_id = $1`, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("list occupied lanes in group %d: %w", groupID, err)
@@ -346,7 +346,7 @@ func (db *DB) ListOutstandingDigClaims(groupID int64, asker reservations.DigAske
 		JOIN nodes lane ON lane.id = dig_hold.node_id
 		WHERE dig_hold.resource_kind = 'mouth'
 		  AND dig_hold.mode = $1
-		  AND dig_hold.state IN ('pending','confirmed')
+		  AND `+reservations.ActiveStateSQL("dig_hold.")+`
 		  AND lane.parent_id = $2
 		  AND %s
 		  AND EXISTS (
@@ -414,7 +414,7 @@ func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND `+bins.SourceableStatusSQL+`
 		  AND b.status <> 'staged'
 		  AND ($2 = '' OR b.payload_code = $2)
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
+		  AND NOT `+reservations.BinSpokenForSQL+`
 		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC
 		LIMIT 1`, bins.BinJoinQuery, helpers.ReachableSQL("n"))
@@ -572,7 +572,7 @@ func (db *DB) SpokenForBinsBehind(placedNodeID int64) ([]SpokenForBin, error) {
 		JOIN bins b ON b.node_id = held.id AND b.status <> 'retired'
 		LEFT JOIN reservations r
 		       ON r.bin_id = b.id AND r.resource_kind = 'bin'
-		      AND r.state IN ('pending','confirmed')
+		      AND `+reservations.ActiveStateSQL("r.")+`
 		JOIN orders o ON o.id = COALESCE(b.claimed_by, r.order_id)
 		WHERE %s
 		  AND COALESCE(held.is_synthetic, false) = false

@@ -526,7 +526,7 @@ func (s *BinManifestService) clearAndClaimTx(tx *sql.Tx, binID, orderID int64) e
 			manifest_confirmed=false, loaded_at=NULL,
 			claimed_by=$1, updated_at=NOW()
 		WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
-		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$1 AND bin_id=$2 AND state='pending')`,
+		  AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 1, 2),
 		orderID, binID)
 	if err != nil {
 		return fmt.Errorf("clear+claim bin %d: %w", binID, err)
@@ -572,7 +572,7 @@ func (s *BinManifestService) syncUOPAndClaimTx(tx *sql.Tx, binID, orderID int64,
 		UPDATE bins SET
 			uop_remaining=$1, claimed_by=$2, updated_at=NOW()
 		WHERE id=$3 AND locked=false AND (claimed_by IS NULL OR claimed_by=$2)
-		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$2 AND bin_id=$3 AND state='pending')`,
+		  AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 2, 3),
 		remainingUOP, orderID, binID)
 	if err != nil {
 		return fmt.Errorf("sync+claim bin %d: %w", binID, err)

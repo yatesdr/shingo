@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol/clock"
 	"shingocore/domain"
+	"shingocore/store/reservations"
 )
 
 // ManifestEntry is the bin-manifest line-item domain type — one CatID
@@ -171,7 +172,7 @@ func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, 
 		  AND `+SourceableStatusSQL+`
 		  AND b.status <> 'staged'
 		  AND ($2 = 0 OR b.node_id != $2)
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s
+		  AND NOT `+reservations.BinSpokenForSQL+`%s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
 		LIMIT 1`, BinJoinQuery, PayloadBinTypeAdvisoryClause), payloadCode, excludeNodeID)
 	return ScanBin(row)

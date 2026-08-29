@@ -1,6 +1,10 @@
 package helpers
 
-import "fmt"
+import (
+	"fmt"
+
+	"shingocore/store/reservations"
+)
 
 // ── Reachability: one definition ──────────────────────────────────────────
 //
@@ -166,17 +170,14 @@ func EntombsASpokenForSlotSQL(candidate, ownerParam, terminalStatusList string) 
 			   AND NOT EXISTS (SELECT 1 FROM bins spoken_bin WHERE spoken_bin.node_id = spoken.id)
 			   AND (
 			        (spoken.claimed_by IS NOT NULL AND spoken.claimed_by <> %[2]s)
-			     OR EXISTS (SELECT 1 FROM reservations spoken_res
-			                 WHERE spoken_res.node_id = spoken.id
-			                   AND spoken_res.resource_kind = 'slot'
-			                   AND spoken_res.state IN ('pending','confirmed')
-			                   AND spoken_res.order_id <> %[2]s)
+			     OR %[4]s
 			     OR EXISTS (SELECT 1 FROM orders spoken_ord
 			                 WHERE spoken_ord.delivery_node = spoken.name
 			                   AND spoken_ord.status NOT IN (%[3]s)
 			                   AND spoken_ord.id <> %[2]s)
 			   )
-		  )`, ShallowerInSameLane(candidate, "spoken"), ownerParam, terminalStatusList)
+		  )`, ShallowerInSameLane(candidate, "spoken"), ownerParam, terminalStatusList,
+		reservations.SlotSpokenForByStrangerSQL("spoken_res", "spoken.id", ownerParam))
 }
 
 // ── ONE SPELLING FOR "DOES THIS ORDER MOVE A BIN OF ITS OWN?" ─────────────
