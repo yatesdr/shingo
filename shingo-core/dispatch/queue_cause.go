@@ -207,6 +207,26 @@ const (
 	// real breakdown, and dissolving it automatically is the machine guessing at
 	// something it cannot classify.
 	CauseDigBlockerStopped QueueCause = "dig-blocker-order-stopped"
+	// CauseDigBlockerPromised — the third fact about the same wall, and the one
+	// ruling §7 created: a bin the dig must move is PROMISED to another demand
+	// that OUTRANKS this dig, so the dig yielded and is waiting its turn.
+	//
+	// IT IS A SEPARATE CAUSE BECAUSE IT HAS A SEPARATE RELEASER, which is the only
+	// thing this vocabulary is for. dig-blocker-claimed's releaser is a robot
+	// finishing its drive; dig-blocker-order-stopped's is a person. This one's
+	// holder has NO ROBOT — it holds a promise, not ink — so the wait ends when
+	// that demand takes its bin or ends. Filing this population under
+	// dig-blocker-claimed would tell an operator to wait for a drive that has not
+	// started and may never start, which is the wrong-name defect class the two
+	// causes above already split once.
+	//
+	// THE WAIT IS SHORTER THAN IT LOOKS, and that is the owner's own argument for
+	// the ruling: "it actually helps them because the complex or move would clear
+	// a dig for them, ironically." A promise on a bin is always a plan to REMOVE
+	// that bin — stores promise slots, not bins — so waiting ends with the blocker
+	// walking out of the lane on somebody else's drive. The dig gets its lane
+	// cleared for free.
+	CauseDigBlockerPromised QueueCause = "dig-blocker-promised"
 	// CauseStagedOwnDig — a robot is standing at a lane's mark while the order it
 	// belongs to digs that lane open with its OWN children (§R.104).
 	//

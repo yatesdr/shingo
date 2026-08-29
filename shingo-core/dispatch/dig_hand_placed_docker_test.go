@@ -53,9 +53,17 @@ func TestDigTakesAHandPlacedBin_FailsLoudlyWithItsOwnCode(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(byHand), "create hand-placed move")
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, byHand.ID, blocker.ID, "test"), "reserve blocker")
 
+	// THE DIG OUTRANKS, and since ruling §7 that is a stated precondition rather
+	// than a property of digs: the take at a positional blocker goes by the plant's
+	// demand ranking. Without it the hand-placed move — seeded first, so the older
+	// demand at equal priority — simply keeps its bin and this test never reaches
+	// the disposition it is about. What happens to a hand-placed order whose bin a
+	// dig CAN take is still the question here; whether the dig can take it is now
+	// the ranked take's, pinned in ranked_take_docker_test.go.
 	parent := &orders.Order{
 		EdgeUUID: "uuid-hand-placed-dig", StationID: "line-1",
 		OrderType: OrderTypeComplex, Status: StatusReshuffling,
+		Priority: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create dig parent")
 

@@ -187,21 +187,28 @@ func TestDig_BlockerLeavesTheLane_ThenDigs(t *testing.T) {
 	testdb.AssertNoOrphanedHolds(t, db)
 }
 
-// TestDig_BlockerSoftHeld_StillSteals pins TODAY'S behaviour, which is not
-// obviously the behaviour we want.
+// TestDig_BlockerSoftHeld_YieldsToAnOlderHolder IS THE FLIP THIS TEST ASKED FOR.
 //
-// A soft hold is a pending reservation with no claimed_by, so the CAS sees no
-// name and admits the claim: the dig fires and relocates a bin some parked order
-// is holding. It survives by accident — the holder follows its bin by id — and
-// the underlying question, what a dig owes an order that soft-holds a bin in its
-// way, is the open dig/soft-holder contract (plan §12.17,
-// FINDINGS-compound-child-ledger-row-2026-08-09.md).
-//
+// It used to be TestDig_BlockerSoftHeld_StillSteals, pinning today's behaviour
+// with its own instruction attached: "the underlying question, what a dig owes
+// an order that soft-holds a bin in its way, is the open dig/soft-holder
+// contract (plan §12.17, FINDINGS-compound-child-ledger-row-2026-08-09.md) ...
 // It is pinned rather than fixed because every exit moves someone's semantics
-// and the decision has not been made. When it is, this test is the thing to
-// flip — which is the point of writing it now rather than leaving the branch
-// untested and the behaviour undiscoverable.
-func TestDig_BlockerSoftHeld_StillSteals(t *testing.T) {
+// and the decision has not been made. When it is, THIS TEST IS THE THING TO
+// FLIP."
+//
+// The decision is made — owner ruling §7: "digs aren't some special move. if a
+// dig operation has to wait for a complex or move, they have to wait. it
+// actually helps them because the complex or move would clear a dig for them,
+// ironically." A soft hold is a PROMISE, and the take at a positional blocker
+// goes by the plant's demand ranking like every other take.
+//
+// So the old assertion is inverted, on the fixture it always had: the holder is
+// seeded first and both demands are priority 0, so the holder is the OLDER
+// demand and keeps its bin. What this used to prove — that the dig steals — is
+// now conditional on the dig outranking, and is pinned on that condition by the
+// ranked-take suite (ranked_take_docker_test.go).
+func TestDig_BlockerSoftHeld_YieldsToAnOlderHolder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
@@ -226,11 +233,32 @@ func TestDig_BlockerSoftHeld_StillSteals(t *testing.T) {
 	orderB := mkDigOrder(t, db, "dig-soft-b", bp.Code, "LINE-SOFT")
 
 	_, pe := d.planner.planBuriedReshuffle(orderB, &BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID})
-	if pe != nil {
-		t.Fatalf("the soft arm changed: the dig now refuses (%s: %s).\n"+
-			"That may well be right — but it is the dig/soft-holder contract decision (§12.17), "+
-			"and this test is the record that it was made deliberately rather than fallen into",
-			pe.Code, pe.Detail)
+	if pe == nil {
+		t.Fatal("the dig took a bin promised to an OLDER demand at the same priority. Ruling §7 " +
+			"makes the take a ranked one: a dig that does not outrank the holder backs out and " +
+			"waits, and the holder removing that bin is what clears the lane for it")
+	}
+	if pe.Code != codeBlockerClaimed {
+		t.Errorf("the refusal came back as %q (%s), want the congestion code — an outranked dig is "+
+			"a WAIT, and any other code fails the demand over somebody else's turn", pe.Code, pe.Detail)
+	}
+	after, aerr := db.GetOrder(orderB.ID)
+	testutil.MustNoErr(t, aerr, "re-read the yielding dig")
+	if after.QueueCause != string(CauseDigBlockerPromised) {
+		t.Errorf("the yielding dig parked under %q, want %q — the holder has no robot, so the "+
+			"releaser is not a drive", after.QueueCause, CauseDigBlockerPromised)
+	}
+	// And the holder kept its BOOK — the T3 shape on the real planner path. (This
+	// fixture reserves without stamping bin_id, so the pointer half of the wedge
+	// is asserted in the store-level suite where the holder carries one.)
+	var res int
+	testutil.MustNoErr(t, db.DB.QueryRow(
+		`SELECT COUNT(*) FROM reservations WHERE order_id=$1 AND bin_id=$2`,
+		holder.ID, blocker.ID).Scan(&res), "count the winner's reservations")
+	if res != 1 {
+		t.Errorf("the winner holds %d reservation(s) on the contested bin, want 1. A refusal that "+
+			"let the transaction continue falls through to supersedeBinLedger, which evicts the "+
+			"whole bin's ledger — shredding the book of the order that WON.", res)
 	}
 }
 

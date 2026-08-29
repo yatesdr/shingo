@@ -447,6 +447,38 @@ var causeReleasers = []causeReleaser{
 			"has already ended, the reconciliation sweep releases the claim it left behind",
 	},
 	{
+		cause: CauseDigBlockerPromised,
+		// PopAcquiring only. The ranked take is PLANNING-TIME — it lives in the
+		// steal inside CreateCompoundChildren's transaction — so the dig that
+		// yields has not been dispatched and cannot be a dweller. The gate-staged
+		// dig keeps today's unconditional steal (a robot is already at the mark and
+		// §R.104 keeps its lane lock); its ranked half rides the cordon beneficiary
+		// column, and until then no gate-staged order can carry this cause.
+		populations: []WaitPopulation{PopAcquiring},
+		// THE HOLDER HAS NO ROBOT, which is the whole reason this is not
+		// dig-blocker-claimed. That cause's releaser is a robot finishing a drive;
+		// here the winner holds a PROMISE — a pending reservation and a pointer,
+		// no claim — so what ends the wait is that demand acting on its promise or
+		// ending.
+		//
+		// Both arms are already wired and nothing new is subscribed: the winner
+		// picking its bin up moves it to _TRANSIT and its arrival clears the hold,
+		// both bin events the fulfillment scanner listens on; the winner going
+		// terminal releases through TerminalizeOrder and emits as well. The next
+		// lane pass re-plans the dig against a lane the bin has left.
+		//
+		// THE GAP, NAMED RATHER THAN HIDDEN: a holder that RE-SOURCES AWAY from
+		// this bin — picks a different one and drops this promise — is not today an
+		// event any third party keys on. Nothing emits "I stopped wanting that
+		// bin". The 60s floor is what covers it, which means the dig waits up to a
+		// pass longer in that case than it strictly needs to. Recorded here because
+		// the floor's histogram will show it, and a reader should know the count is
+		// a missing event rather than a missing releaser.
+		what: "the demand holding the promise takes its bin (pickup → _TRANSIT, arrival clears the " +
+			"hold) or ends — and, when it instead re-sources away from the bin, the periodic floor, " +
+			"because a holder abandoning a promise emits nothing anyone listens for",
+	},
+	{
 		cause: CauseDigBlockerStopped,
 		// PopGateStaged only, and by construction rather than by policy: the
 		// acceptance arm is the one caller that asks the liveness question before

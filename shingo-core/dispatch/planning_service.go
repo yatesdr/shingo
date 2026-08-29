@@ -639,7 +639,22 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 		// well. The next scan re-runs findBuriedBlockers against a lane that no
 		// longer contains the bin, and the dig plans clean.
 		if errors.Is(err, store.ErrBlockerClaimed) {
-			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
+			// TWO REFUSALS, TWO RELEASERS, and the cause has to say which.
+			//
+			// A CLAIMED blocker means a robot is committed to it — the wait is that
+			// robot's drive time, and dig-blocker-claimed's releaser sentence says
+			// so. A PROMISED one (ruling §7's ranked take) means the holder outranked
+			// this dig and has no robot at all: nothing is driving, and the wait ends
+			// when that demand takes its bin or ends. Filing the second under the
+			// first would tell an operator to wait for a drive that has not started,
+			// which is the wrong-name defect class the vocabulary exists to prevent —
+			// and it is the same split dig-blocker-order-stopped already made once.
+			cause := CauseDigBlockerClaimed
+			var refused *store.BlockerClaimedError
+			if errors.As(err, &refused) && refused.Promised {
+				cause = CauseDigBlockerPromised
+			}
+			s.setQueueReason(order, protocol.QueueStorageRearranging, cause,
 				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
 			return nil, &planningError{
 				Code:   codeBlockerClaimed,

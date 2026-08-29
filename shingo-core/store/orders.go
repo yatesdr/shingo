@@ -73,9 +73,22 @@ type BlockerClaimedError struct {
 	ChildID  int64 // the leg that wanted it
 	ParentID int64 // the compound the leg belongs to
 	HolderID int64 // the order actually holding the claim, or 0 if unreadable
+	// Promised distinguishes the RANKED refusal from the claimed one, and the
+	// distinction is a releaser rather than a nuance. False: the holder has a hard
+	// claim, so a robot is committed and the wait ends when it finishes its drive.
+	// True: the holder has a PROMISE — a pending reservation, no robot — and it
+	// outranked this dig, so the wait ends when that demand takes its bin or ends.
+	// The dispatch caller reads this to pick between two queue causes; telling an
+	// operator to wait for a drive that has not started is the wrong-name defect
+	// class the cause vocabulary exists to prevent.
+	Promised bool
 }
 
 func (e *BlockerClaimedError) Error() string {
+	if e.Promised {
+		return fmt.Sprintf("claim bin %d for child %d: promised to order %d, whose demand outranks "+
+			"compound %d", e.BinID, e.ChildID, e.HolderID, e.ParentID)
+	}
 	if e.HolderID != 0 {
 		return fmt.Sprintf("claim bin %d for child %d: held by order %d, outside compound %d",
 			e.BinID, e.ChildID, e.HolderID, e.ParentID)
@@ -334,6 +347,74 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		return nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
 	}
 	rows.Close()
+
+	// ── THE RANKED TAKE (ruling §7): DIGS ARE NOT SPECIAL ─────────────────
+	//
+	// The owner's words: "digs aren't some special move. if a dig operation has to
+	// wait for a complex or move, they have to wait. it actually helps them
+	// because the complex or move would clear a dig for them, ironically."
+	//
+	// A blocker is POSITIONAL — the dig has no choice about which bins are in its
+	// way — and that has always been the argument for the steal. It is an argument
+	// about WHICH bin. It was never an argument about WHOSE TURN. So the take goes
+	// by the plant's demand ranking like every other take, and the irony is
+	// structural: a promise on a bin is always a plan to REMOVE that bin (stores
+	// promise slots, not bins), so waiting always ends with the blocker walking out
+	// of the lane on the winner's drive.
+	//
+	// THE DIG'S DEMAND IS THE PARENT'S, and the holder's is its own parent's if it
+	// has one — orders.LoadDemandRank resolves both. A leg ranked on its own row is
+	// priority 0 and the plant's youngest timestamp; it would lose every contest
+	// forever, and the only non-zero priorities today belong to the hand-placed
+	// class, which would then hold a permanent veto over every excavation (trap T2).
+	//
+	// A REFUSAL IS AN ERROR, NOT A SKIP, and this is the trap that makes the whole
+	// gate worth writing (T3). The claim CAS below only refuses bins whose
+	// claimed_by is set; a PROMISE-holder has none. So a gate that merely declined
+	// to un-point one holder would fall through: the CAS would pass, and
+	// supersedeBinLedger — three statements later — evicts the whole bin's ledger,
+	// shredding the book of the order that WON the contest and leaving its pointer
+	// stamped. That is the pointer wedge, manufactured for the winner. Losing has
+	// to mean the demolition never happened, so the error aborts this transaction
+	// and everything unwinds on the caller's defer.
+	//
+	// SCOPE: this governs PLANNING-TIME digs, which is what this transaction is.
+	// The GATE-STAGED dig — a robot already standing at the lane's mark — keeps
+	// today's unconditional steal, because §R.104 deliberately keeps its lane lock
+	// (releasing a corridor with a robot in its mouth is the deadlock the lock
+	// prevents) and its dig-mode hold refuses the very holder it would be waiting
+	// on. That half of the ranked take rides the cordon beneficiary column (design
+	// record §7 / tier step 5). The population hole is named here rather than left
+	// silent.
+	digRank, err := orders.LoadDemandRank(tx, childID)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range victims {
+		holderRank, rerr := orders.LoadDemandRank(tx, v.orderID)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if digRank.Outranks(holderRank) {
+			continue
+		}
+		// Outranked, or tied and younger: the incumbent keeps the bin. A tie going
+		// to the challenger would let two demands at one priority take the bin from
+		// each other on alternate passes.
+		log.Printf("dispatch: dig %d YIELDED bin %d to order %d — the holder's demand outranks it "+
+			"(holder priority %d since %s, dig priority %d since %s). Digs are not special: the dig "+
+			"backs out whole and waits, and the holder taking that bin out is what clears the lane "+
+			"for it", parentID, binID, v.orderID,
+			holderRank.Priority, holderRank.CreatedAt.Format(time.RFC3339),
+			digRank.Priority, digRank.CreatedAt.Format(time.RFC3339))
+		return nil, &BlockerClaimedError{
+			BinID:    binID,
+			ChildID:  childID,
+			ParentID: parentID,
+			HolderID: v.orderID,
+			Promised: true,
+		}
+	}
 
 	var displaced []DisplacedByHand
 	for _, v := range victims {
