@@ -10,9 +10,16 @@ import (
 // the two-doors-into-one merge had to make for itself.
 //
 // The doors did this at opposite points and neither said why. The status column
-// already says pending — the INSERT sets it — so what MarkPending is really for
-// is the HISTORY row, which transitions write and inserts do not. Without it an
-// order created directly at pending has no entry saying it ever started.
+// already says pending — the INSERT sets it — so what the hand-rolled MarkPending
+// call was really for is the HISTORY row, which transitions write and inserts did
+// not. Without it an order created directly at pending has no entry saying it
+// ever started.
+//
+// THE STAMP IS THE INSERT NOW. orders.Create writes the birth row in the same
+// transaction as the order row, for every door — so this test asks the same
+// question of the call that actually creates the order. The claim it defends is
+// unchanged; only the statement that satisfies it moved, and it moved somewhere
+// no call site can reorder it away from.
 //
 // So the order matters for exactly one class of order: the ones that fail at
 // the reservation, having lost the bin to another person in the moment between
@@ -34,9 +41,9 @@ func TestBinMove_StampsCreationBeforeTakingTheBin(t *testing.T) {
 	t.Parallel()
 	body := binMoveBody(t)
 
-	stamp := strings.Index(body, "MarkPending(")
+	stamp := strings.Index(body, "CreateOrder(")
 	if stamp < 0 {
-		t.Fatal("CreateBinMove no longer calls MarkPending. An order created straight at pending has no history entry saying it was ever created, so its timeline starts at whatever happened next.")
+		t.Fatal("CreateBinMove no longer calls CreateOrder. The birth history row rides that INSERT (orders.Create); without it an order created straight at pending has no entry saying it was ever created, so its timeline starts at whatever happened next.")
 	}
 	reserve := strings.Index(body, "ReserveForDispatch(")
 	if reserve < 0 {
@@ -44,7 +51,7 @@ func TestBinMove_StampsCreationBeforeTakingTheBin(t *testing.T) {
 	}
 
 	if stamp > reserve {
-		t.Errorf("MarkPending now runs AFTER ReserveForDispatch.\n" +
+		t.Errorf("CreateOrder now runs AFTER ReserveForDispatch.\n" +
 			"That was one of the two doors' orderings and it was not the one chosen: an order that loses the bin race is then failed without ever having been recorded as created, so its history reads as a failure with no beginning.\n" +
 			"If the order is being changed on purpose, change this test and say why in the commit.")
 	}

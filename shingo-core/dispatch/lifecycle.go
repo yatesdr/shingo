@@ -628,16 +628,20 @@ func (s *LifecycleService) ResumeCompound(ord *orders.Order) error {
 	return nil
 }
 
-// MarkPending writes the initial Pending status for a freshly-created
-// order. Entry-point write — no source status, bypasses transition
-// validation. Used only by Create*Order methods at order intake.
-func (s *LifecycleService) MarkPending(ord *orders.Order, reason string) error {
-	if err := s.db.UpdateOrderStatus(ord.ID, string(StatusPending), reason); err != nil {
-		return fmt.Errorf("mark pending order %d: %w", ord.ID, err)
-	}
-	ord.Status = StatusPending
-	return nil
-}
+// MarkPending IS DELETED. It wrote Pending as an INITIAL status, bypassing
+// transition() and its validity check, for three doors that were already AT
+// pending — the INSERT set the column. Their own comments said what the call was
+// actually for: "what this call is really for is the HISTORY row, which
+// transitions write and inserts do not" (engine/bin_move.go).
+//
+// orders.Create writes that row now, in the same statement's transaction, for
+// every door including the two that never had one (complex intake, compound
+// children). So the pending→pending status write had nothing left to do, and
+// keeping it would have put a second `pending` row on every order that used it.
+//
+// Worth stating rather than deleting silently, for the same reason MarkReshuffling
+// below is: an entry-point write that skips the state machine is what a caller
+// reaches for when a transition is refused, and the refusal is usually right.
 
 // MarkReshuffling IS DELETED. It wrote Reshuffling as an INITIAL status,
 // bypassing transition() and its validity check, for exactly one caller: the

@@ -302,6 +302,14 @@ func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 		                   created_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
 		t.Fatalf("backdate order: %v", err)
 	}
+	// The birth row too. orders.Create writes one from the INSERT, so the
+	// COALESCE fallback to created_at no longer reaches — an un-backdated birth
+	// row makes the order's newest transition its own creation, a second ago.
+	if _, err := db.Exec(
+		`UPDATE order_history SET created_at = NOW() - INTERVAL '2 hours' WHERE order_id = $1`,
+		order.ID); err != nil {
+		t.Fatalf("backdate birth row: %v", err)
+	}
 
 	summary, err := svc.Summary()
 	if err != nil {
@@ -669,6 +677,12 @@ func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 		`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours',
 		                   created_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
 		t.Fatalf("backdate: %v", err)
+	}
+	// And the birth row the INSERT wrote — see the sibling fixture above.
+	if _, err := db.Exec(
+		`UPDATE order_history SET created_at = NOW() - INTERVAL '2 hours' WHERE order_id = $1`,
+		order.ID); err != nil {
+		t.Fatalf("backdate birth row: %v", err)
 	}
 
 	anomalies, err := svc.ListAnomalies()

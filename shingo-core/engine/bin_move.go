@@ -234,11 +234,12 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 		return nil, refuse(BinMoveFault, err, "could not create the order: %v", err)
 	}
 
-	// BEFORE the reservation, and that is the deliberate half of this merge.
+	// THE CREATION ENTRY IS THE INSERT'S NOW, and it still lands before the
+	// reservation — which was the deliberate half of this merge.
 	//
-	// The two doors did this at opposite points and neither said why. The status
-	// column already says pending — the INSERT set it — so what this call is
-	// really for is the HISTORY row, which transitions write and inserts do not.
+	// The two doors stamped at opposite points and neither said why. The status
+	// column already says pending — the INSERT set it — so what the stamp was
+	// really for is the HISTORY row, which transitions write and inserts did not.
 	// Without it an order created directly at pending has no entry saying it
 	// ever started, and its timeline begins at whatever happened next.
 	//
@@ -246,14 +247,10 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 	// for exactly the orders that fail at the reservation — the ones that lost a
 	// race with another person, whose history would then read as a failure with
 	// no beginning. Those are the ones somebody is most likely to go and read.
-	// So: stamp first, and every order has a start, including the ones that do
-	// not get far.
 	//
-	// Logged rather than returned: the order is real and dispatchable either
-	// way, and failing the request over a missing audit line is the worse trade.
-	if err := e.dispatcher.Lifecycle().MarkPending(order, req.Desc); err != nil {
-		e.logFn("engine: mark bin move %d pending: %v", order.ID, err)
-	}
+	// orders.Create writes the birth row inside the INSERT's own transaction, so
+	// that ordering is now structural rather than a call site anyone can move:
+	// the row exists before this function can reach the acquire below.
 
 	// Soft-acquire the bin now, hard-claim it at dispatch. Another order can
 	// take it in the gap between the check above and this call — that is a race

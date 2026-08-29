@@ -220,9 +220,11 @@ func (s *LifecycleService) admitOrder(order *orders.Order) *lifecycleError {
 				"(the burial tripwire falls back to fleet-commit for this order)", order.ID, err)
 		}
 	}
-	if err := s.db.UpdateOrderStatus(order.ID, string(StatusPending), "order received"); err != nil {
-		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
-	}
+	// The pending→pending status write that stood here is gone. The order was
+	// already at pending — the INSERT set it — and the write's only product was
+	// the history row saying the order began, which orders.Create now writes in
+	// the INSERT's own transaction for every door. Keeping it would have put a
+	// second `pending` row on every wire-intake order.
 	return nil
 }
 

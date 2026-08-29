@@ -19,7 +19,25 @@ import (
 	"shingocore/store/reservations"
 )
 
-func (db *DB) CreateOrder(o *orders.Order) error { return orders.Create(db.DB, o) }
+// CreateOrder is the ordinary door onto orders.Create — every creator except the
+// compound one, which has a transaction of its own (CreateCompoundChildren).
+//
+// IT OPENS A TRANSACTION BECAUSE Create WRITES TWO ROWS: the order and its birth
+// history row. Handed a *sql.DB those are separate autocommits, so a failure
+// between them leaves either an order with no birth certificate — nowhere for
+// SetQueueDetail to stamp a cause — or a committed order the caller was told did
+// not get created. Both rows, or neither.
+func (db *DB) CreateOrder(o *orders.Order) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	if err := orders.Create(tx, o); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
 // CompoundChild describes a child order to create in a compound order
 // transaction. Declared here (not in the orders sub-package) because

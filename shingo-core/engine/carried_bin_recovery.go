@@ -252,9 +252,11 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 		}
 		return &CarriedBinNotRecoverable{BinID: binID, Reason: detail}
 	}
-	if err := e.dispatcher.Lifecycle().MarkPending(order, "carried-bin recovery"); err != nil {
-		e.dbg("engine: carried bin recovery: mark order %d pending: %v", order.ID, err)
-	}
+	// The creation entry this used to stamp by hand is written by orders.Create,
+	// in the INSERT's own transaction — see the note there. What named this door
+	// on the timeline was never that row's detail anyway: it is the audit row at
+	// the tail of the caller, whose action name says a robot was ASKED to set the
+	// bin down rather than that Core worked out where it probably is.
 	if err := e.binManifest.ReserveForDispatch(binID, order.ID); err != nil {
 		return fail("bin_taken", fmt.Sprintf("bin %d was taken by another order: %v", binID, err), err)
 	}

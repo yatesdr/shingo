@@ -139,6 +139,38 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 //
 // open_for_children is deliberately NOT bound here: it CHANGES over a compound's
 // life and has exactly one writer for that reason.
+//
+// ── THE BIRTH HISTORY ROW IS WRITTEN HERE, NOT AT THE DOORS ───────────────
+//
+// order_history is written by status TRANSITIONS, and the INSERT is not one. So
+// an order whose first status came from this statement had no row saying it ever
+// began, and its timeline started at whatever happened next. Two doors were in
+// that state: complex intake, which births at `queued` (dispatch/complex_intake.go
+// — every swap leg and every changeover leg), and compound children, which birth
+// at `pending` inside CreateCompoundChildren (every dig leg).
+//
+// It is not cosmetic. SetQueueDetail stamps a wait's cause onto the history row
+// of the episode the order is RESTING IN; an order born into an episode with no
+// row has nowhere for its cause to land, and the stamp went silently nowhere for
+// the order's whole life.
+//
+// Written HERE rather than at each door because doors are counted by a census
+// and a census can be incomplete — this one has been wrong before. There is
+// exactly one INSERT INTO orders statement (TestCensus_OrdersTableInsertStatements
+// pins that), so hanging the birth row off it makes "every order has a start"
+// structural rather than a property of a list somebody keeps up to date.
+//
+// The detail is uniform. Three doors used to write their own words in a
+// redundant pending→pending status write whose only product was this row
+// (bin_move's move description, "order received", "carried-bin recovery"); those
+// calls are gone and nothing an operator reads went with them — the move's
+// description is payload_desc on the order row itself, and carried-bin recovery
+// writes its own audit row naming the action.
+//
+// THE CALLER SUPPLIES THE TRANSACTION, and both do: CreateCompoundChildren
+// passes its own (so a rolled-back compound takes its children's birth rows with
+// it), and db.CreateOrder opens one for every other door. Handed a bare *sql.DB
+// the two inserts are separate autocommits and the invariant is only a hope.
 func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
 	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $24) RETURNING id`,
@@ -154,6 +186,15 @@ func Create(db helpers.QueryRower, o *Order) error {
 		return fmt.Errorf("create order: %w", err)
 	}
 	o.ID = id
+	// InsertID rather than Exec: Create takes a QueryRower so it can run inside
+	// CreateCompoundChildren's transaction, and RETURNING id is how a QueryRower
+	// executes an INSERT. The id is discarded.
+	if _, err := helpers.InsertID(db,
+		`INSERT INTO order_history (order_id, status, detail, created_at)
+		 VALUES ($1, $2, 'order created', $3) RETURNING id`,
+		id, o.Status, now); err != nil {
+		return fmt.Errorf("create order %d birth history: %w", id, err)
+	}
 	return nil
 }
 

@@ -138,16 +138,27 @@ func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 			t.Fatalf("create %s: %v", uuid, err)
 		}
 		// AGE IS AGE SINCE THE LAST TRANSITION, not since the last row touch —
-		// the detector's clock is an order_history row now, so a fixture that
+		// the detector's clock is an order_history row, so a fixture that
 		// backdates only updated_at describes an order that HAS progressed
-		// recently and correctly raises nothing. created_at is the COALESCE
-		// fallback for an order that has no history yet, which these are.
+		// recently and correctly raises nothing.
+		//
+		// THE BIRTH ROW IS BACKDATED TOO. Every order now gets a history row from
+		// the INSERT (orders.Create), so the COALESCE fallback to orders.created_at
+		// no longer reaches — leaving the birth row at NOW would describe an order
+		// created a second ago, which is not the order this fixture is about. In
+		// production the two instants are the same value, which is why this changes
+		// no reading of a real plant.
 		if _, err := db.DB.Exec(`UPDATE orders
 			SET status=$1,
 			    updated_at = NOW() - ($2 * INTERVAL '1 second'),
 			    created_at = NOW() - ($2 * INTERVAL '1 second')
 			WHERE id=$3`, status, ageSeconds, o.ID); err != nil {
 			t.Fatalf("backdate %s: %v", uuid, err)
+		}
+		if _, err := db.DB.Exec(
+			`UPDATE order_history SET created_at = NOW() - ($1 * INTERVAL '1 second') WHERE order_id=$2`,
+			ageSeconds, o.ID); err != nil {
+			t.Fatalf("backdate %s birth row: %v", uuid, err)
 		}
 		return o.ID
 	}
@@ -303,6 +314,14 @@ func TestListAnomalies_ARetryingOrderCannotRefreshItsOwnStalenessTimer(t *testin
 		Status: "pending", Quantity: 1, DeliveryNode: node.Name}
 	if err := orders.Create(db.DB, o); err != nil {
 		t.Fatalf("create order: %v", err)
+	}
+	// Born an hour and a bit ago. The INSERT writes a birth history row
+	// (orders.Create), and leaving it at NOW would make the plant's newest
+	// transition this order's own creation — which is not the order under test.
+	if _, err := db.DB.Exec(
+		`UPDATE order_history SET created_at = NOW() - INTERVAL '65 minutes' WHERE order_id=$1`,
+		o.ID); err != nil {
+		t.Fatalf("backdate the birth row: %v", err)
 	}
 	// Parked in `sourcing` an hour ago — that is the last thing that HAPPENED.
 	if _, err := db.DB.Exec(

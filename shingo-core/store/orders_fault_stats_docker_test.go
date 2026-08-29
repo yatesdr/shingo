@@ -39,6 +39,20 @@ func seedFaultOrder(t *testing.T, db *store.DB, uuid, robot string, rows []struc
 	// column, not the struct.
 	_, rerr := db.DB.Exec(`UPDATE orders SET robot_id=$1 WHERE id=$2`, robot, o.ID)
 	testutil.MustNoErr(t, rerr, "set robot_id")
+	// THE BIRTH ROW GOES FIRST. orders.Create writes one from the INSERT, at
+	// clock-now, and the seeded fault rows are in the past — so left alone the
+	// order's newest transition would be its own creation, and an open fault
+	// would read as one a later transition had resolved. Pushed behind the
+	// earliest seeded row, which is what a real order's timeline looks like.
+	earliest := rows[0].at
+	for _, r := range rows {
+		if r.at.Before(earliest) {
+			earliest = r.at
+		}
+	}
+	_, berr := db.DB.Exec(`UPDATE order_history SET created_at=$1 WHERE order_id=$2`,
+		earliest.Add(-time.Minute), o.ID)
+	testutil.MustNoErr(t, berr, "backdate birth row")
 	for _, r := range rows {
 		_, err := db.DB.Exec(
 			`INSERT INTO order_history (order_id, status, detail, actor, ref, created_at)
