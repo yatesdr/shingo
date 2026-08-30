@@ -285,6 +285,29 @@ const (
 	// that was refusing them (§12.49). Nothing was refusing them; nothing could
 	// see them.
 	CauseStationWait QueueCause = "station-wait"
+	// CauseSwapPartnerFinished — a station wait held by the SURVIVOR of a swap
+	// whose other half has already completed successfully. A narrowing of
+	// CauseStationWait, and the whole reason it is worth a name of its own is
+	// that the generic sentence sends a reader to the wrong place.
+	//
+	// "the station releases it" is true of both, but under CauseStationWait the
+	// implied picture is a pair mid-choreography: the other robot is still coming,
+	// the line has not cleared, and waiting is the system working. Here the other
+	// robot has been and gone. Nothing further is coming, nobody is going to
+	// arrive and make room, and the wait will not end on its own — which makes it
+	// a DWELL to surface rather than a wait to explain.
+	//
+	// MEASURED, run 12d (2026-08-31). Order 84 stood `staged` under a bare
+	// `station-wait` while its partner 85 had confirmed a minute earlier; it held
+	// AMR-15 for the rest of the run. The row was not blank and was not wrong —
+	// it simply did not say the one fact that made the wait terminal, and two
+	// rounds of investigation went looking for a fence that was refusing it.
+	//
+	// CORE STILL DOES NOT RELEASE IT. PopStationWait is deliberately unfloored
+	// (see waitPopulations) and this changes nothing about that: the releaser is
+	// the station — the Edge's own swap-survivor arm, or a person. This cause is
+	// board truth, not a new mechanism.
+	CauseSwapPartnerFinished QueueCause = "swap-partner-finished"
 	// CauseGateReleaseFailed — the classifier ADMITTED this dweller and the release
 	// itself then failed: the re-bind found no slot, the segment could not be
 	// built, the append errored below the retry threshold. The order stays a

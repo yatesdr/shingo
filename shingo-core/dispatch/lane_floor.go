@@ -283,8 +283,43 @@ func (d *Dispatcher) MarkStationWaitIfOwned(orderID int64) {
 	if !ok || !IsStationWait(w.WaitKind) {
 		return
 	}
-	d.setQueueReason(order, protocol.QueueWaitingForPartner, CauseStationWait,
+	cause := CauseStationWait
+	if d.swapPartnerAlreadyFinished(order) {
+		cause = CauseSwapPartnerFinished
+	}
+	d.setQueueReason(order, protocol.QueueWaitingForPartner, cause,
 		QueueParams{Destination: w.Node})
+}
+
+// swapPartnerAlreadyFinished reports whether this leg is the SURVIVOR of a swap
+// whose other half already ran and confirmed.
+//
+// It narrows CauseStationWait to CauseSwapPartnerFinished, and the narrowing is
+// the whole point: both waits end the same way (the station releases) but they
+// read completely differently to whoever is looking. An ordinary station wait
+// means the choreography is mid-flight. This one means it is over on one side
+// and stalled on the other, with nothing further coming.
+//
+// SUCCESS ONLY, and the asymmetry is deliberate. A partner that FAILED, was
+// cancelled, or was skipped is HandleSwapPeerTerminal's business: that handler
+// unwinds the survivor, and stamping a "your partner finished" sentence on a leg
+// about to be cancelled would be a worse row than the generic one. Only
+// StatusConfirmed reaches here, which is exactly the terminal swapTerminalKind
+// returns "" for — the gap the whole swap-orphan round is about.
+//
+// Best-effort like its caller: an unreadable sibling, or no sibling at all,
+// leaves the generic cause. This decides which SENTENCE a board renders. It
+// releases nothing, terminalizes nothing, and is not a floor.
+func (d *Dispatcher) swapPartnerAlreadyFinished(order *orders.Order) bool {
+	sibUUID, err := d.db.OrderSiblingUUID(order.ID)
+	if err != nil || sibUUID == "" {
+		return false
+	}
+	peer, err := d.db.GetOrderByUUID(sibUUID)
+	if err != nil || peer == nil {
+		return false
+	}
+	return peer.Status == protocol.StatusConfirmed
 }
 
 // laneOfGateWait returns the lane an order is parked at, or 0.

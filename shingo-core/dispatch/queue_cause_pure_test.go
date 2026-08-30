@@ -49,6 +49,17 @@ func TestQueueCause_ValuesAreUnchanged(t *testing.T) {
 		{CauseGateRebindUnavailable, "gate-rebind-unavailable"},
 		{CauseGateAppendFailed, "gate-append-failed"},
 		{CauseLaneAcquireError, "lane-acquire-error"},
+		// These two are read BY VALUE outside this module: store/reconciliation
+		// classifies a dwelling station wait by the cause string on the row, and
+		// it cannot import this package (dispatch imports store, so the reverse
+		// is a cycle). Its copies are causeStationWaitLiteral and
+		// causeSwapPartnerFinishedLiteral, pinned to the same strings by
+		// TestStationDwellCauseLiteralsMatchDispatch. A rename that touches only
+		// one side does not fail to compile — it silently stops classifying, and
+		// the anomaly board goes back to telling an operator to investigate a
+		// robot fault that does not exist.
+		{CauseStationWait, "station-wait"},
+		{CauseSwapPartnerFinished, "swap-partner-finished"},
 	} {
 		if string(tc.got) != tc.want {
 			t.Errorf("queue cause = %q, want %q — this value is already written on rows in the "+

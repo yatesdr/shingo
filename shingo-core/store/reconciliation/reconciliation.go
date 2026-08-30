@@ -309,7 +309,8 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 	// Only the clock changes.
 	now := clock.Now().UTC()
 	rows, err := db.Query(fmt.Sprintf(`
-		SELECT o.id, o.status, COALESCE(h.last_progress, o.created_at) AS progressed_at
+		SELECT o.id, o.status, COALESCE(h.last_progress, o.created_at) AS progressed_at,
+		       COALESCE(o.queue_cause, '') AS queue_cause
 		FROM orders o
 		LEFT JOIN LATERAL (
 		        SELECT MAX(created_at) AS last_progress
@@ -328,8 +329,43 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 		var orderID int64
 		var status string
 		var progressedAt time.Time
-		if err := rows.Scan(&orderID, &status, &progressedAt); err != nil {
+		var queueCause string
+		if err := rows.Scan(&orderID, &status, &progressedAt, &queueCause); err != nil {
 			return nil, err
+		}
+		// ── THE STATION-DWELL ARM ────────────────────────────────────────
+		//
+		// A NARROWING of this same row, not a second detector, and that is
+		// deliberate: the population is identical (a staged order past the
+		// bound), so a separate query would put the same order on the board
+		// twice and make the count wrong in the one direction that matters.
+		//
+		// What it changes is the sentence. Every other row here means "find
+		// out what its robot is doing" — the generic advice is right because
+		// the cause is unknown. For a station wait it is known, and the
+		// generic advice sends the reader to look for a machine fault that
+		// does not exist: Core is deliberately not advancing this one, and
+		// nothing in Core ever will (PopStationWait is unfloored by ruling —
+		// see dispatch/queue_releasers.go, which asks for exactly this
+		// surface: "a row standing under this cause for a long time is a DWELL
+		// to surface to a human, not a wait to re-drive").
+		//
+		// Order 84 of run 12d stood four sim-hours holding AMR-15 under a bare
+		// `station-wait`, and two investigation rounds went looking for a fence
+		// that was refusing it. Nothing was refusing it. Nobody had been told
+		// it was their turn.
+		if issue, action, detail, ok := stationDwellRow(status, queueCause); ok {
+			anomalies = append(anomalies, &Anomaly{
+				Category:          "order_runtime",
+				Severity:          "degraded",
+				Issue:             issue,
+				RecommendedAction: action,
+				OrderID:           &orderID,
+				OrderStatus:       status,
+				ObservedAt:        &progressedAt,
+				Detail:            detail,
+			})
+			continue
 		}
 		// ── IT RECOMMENDED THE ONE ACT THIS HOUSE RULED IS NEVER RIGHT ────
 		//
@@ -787,4 +823,50 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 			"holder's own. Not normal operation", nodeID, orderID)
 	}
 	return n, slotRows.Err()
+}
+
+// Queue causes this package must recognise by VALUE, because it cannot import
+// the package that declares them: dispatch imports store, so store importing
+// dispatch is a cycle. Same shape as every other cross-module constant in this
+// repo, and pinned the same way — TestStationWaitCauseLiteralsMatchDispatch
+// fails if either string drifts from its dispatch constant.
+const (
+	causeStationWaitLiteral         = "station-wait"
+	causeSwapPartnerFinishedLiteral = "swap-partner-finished"
+)
+
+// stationDwellRow decides whether a stuck-order row is really a STATION DWELL,
+// and returns the sentence that says so. ok=false means the caller writes its
+// ordinary active_order_stuck row.
+//
+// STAGED ONLY. The causes below are written when an order stages at a wait the
+// station owns; the same string on any other status would be stale metadata
+// from an earlier leg, and reading it there would mislabel a genuinely stuck
+// robot as somebody's missing click.
+//
+// The two causes get DIFFERENT sentences because they are different situations
+// wearing the same status. Under station-wait, the choreography may still be
+// mid-flight and the honest ask is "does somebody know it is their turn". Under
+// swap-partner-finished, the other half already ran and confirmed: nothing is
+// coming, no line is going to clear, and the wait cannot end on its own.
+func stationDwellRow(status, queueCause string) (issue, action, detail string, ok bool) {
+	if protocol.Status(status) != protocol.StatusStaged {
+		return "", "", "", false
+	}
+	switch queueCause {
+	case causeStationWaitLiteral:
+		return "station_wait_dwelling", "tell_the_station",
+			"a robot is parked at a wait the STATION owns and Core is deliberately not advancing it — " +
+				"the precondition is a fact only the station can observe (the line has cleared, the " +
+				"tooling is done, somebody is ready). Nothing here is faulted and no sweep will move " +
+				"it. The usual cause is that nobody knows it is their turn: find the station and ask", true
+	case causeSwapPartnerFinishedLiteral:
+		return "swap_survivor_dwelling", "tell_the_station",
+			"a robot is parked at a station wait and its SWAP PARTNER HAS ALREADY COMPLETED — so no " +
+				"second robot is coming, no line is going to clear, and this wait cannot end on its " +
+				"own. The Edge releases this population automatically when it sees the partner " +
+				"finish; a row still standing here means that did not fire. Release it from the " +
+				"station, or use Core's hard release", true
+	}
+	return "", "", "", false
 }

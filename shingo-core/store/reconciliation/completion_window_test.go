@@ -63,3 +63,33 @@ func TestCountRecent_BoundaryAndMissingTimestamp(t *testing.T) {
 		t.Fatalf("anomaly with no timestamp: got %d, want 1 (unknown must not read as healthy)", got)
 	}
 }
+
+// TestStationDwellCauseLiteralsMatchDispatch pins this package's copies of two
+// queue-cause strings it must recognise but cannot import.
+//
+// dispatch imports store, so store importing dispatch is a cycle — the same
+// reason the Edge duplicates waitKindStation. The literals are therefore the
+// contract, and the contract is only kept if BOTH sides are pinned to it: the
+// dispatch constants are asserted against these same strings in
+// TestQueueCause_ValuesAreUnchanged.
+//
+// What a silent drift costs: stationDwellRow stops matching, every dwelling
+// station wait falls back to the generic active_order_stuck row, and the board
+// tells an operator to go and find out what a robot is doing when the answer is
+// that somebody needs to press Release. That is the exact confusion the sharper
+// row was added to end (run 12d, order 84), and nothing about it would fail.
+//
+// MUTATION (verified): change causeStationWaitLiteral to "station_wait". This
+// fires naming both spellings.
+func TestStationDwellCauseLiteralsMatchDispatch(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ got, want string }{
+		{causeStationWaitLiteral, "station-wait"},
+		{causeSwapPartnerFinishedLiteral, "swap-partner-finished"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("cause literal = %q, want %q — this must equal the dispatch constant of the "+
+				"same name, which is what actually gets written on the order row", tc.got, tc.want)
+		}
+	}
+}

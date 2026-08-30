@@ -652,6 +652,19 @@ var causeReleasers = []causeReleaser{
 			"not a wait to re-drive; Core's hard release is the escape hatch until that exists",
 	},
 	{
+		cause:       CauseSwapPartnerFinished,
+		populations: []WaitPopulation{PopStationWait},
+		what: "the STATION releases it, exactly as for station-wait — but unlike an ordinary station " +
+			"wait, nothing further is COMING: this leg's swap partner already ran its half and " +
+			"confirmed, so no second robot will arrive and no line will clear. The Edge's " +
+			"swap-survivor arm releases this population without a click when it sees the partner " +
+			"terminal-succeed; when that cannot fire, a person acts and Core's hard release is the " +
+			"escape hatch. Core does not advance it and must not — a station wait is unfloored by " +
+			"ruling, and a partner that finished does not change whose fact the precondition is. A " +
+			"row standing under THIS cause is a dwell to surface immediately rather than a wait to " +
+			"wonder about",
+	},
+	{
 		cause:       CauseGateReleaseFailed,
 		populations: []WaitPopulation{PopGateStaged},
 		what: "whatever the release tripped on clears — most often a slot in the lane frees so the " +
