@@ -183,8 +183,9 @@ func (d *Dispatcher) PlanBuriedReshuffle(order *orders.Order, buried *BuriedErro
 				// THE HOLDER RIDES HERE TOO, and it has to: the planner's own park
 				// names it directly, but the SCANNER parks from this error and its
 				// write lands on top. Without it the same wait read one way from the
-				// planner and another from the plain path — the split 88410799 closed
-				// for the cause, reopened one field over.
+				// planner and another from the plain path — reopening, one field
+				// over, the split that "the promised cause survives the trip through
+				// the wait error" closed for the CAUSE.
 				Params: buriedWaitParams(d.db, d.laneLock, order, buried).withHolder(promisedHolder(pe.Err)),
 			}
 		}
@@ -704,7 +705,8 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 // the paper yields by rank like everyone else's (§8).
 //
 // It replaced four rollback arms with three release policies between them, one
-// of which built the pointer wedge AssertNoPointerWedge found (4be94aaa).
+// of which built the pointer wedge AssertNoPointerWedge found — see "one door
+// for every fleet refusal, armor off, paper kept".
 //
 // ── THE CLAUSES ───────────────────────────────────────────────────────────
 //

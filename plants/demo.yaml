@@ -27,7 +27,7 @@
 #   PLK_X1     (CLIP, single-window) ├─→ SYN_SM_Comp (shared, BRKT + CLIP + STUD) ─→ WELD-2 (BRKT), WELD-3 (CLIP), WELD-4 (STUD)
 #   PLK_X2     (STUD, single-window) ┘                                                ↓
 #                                                                                     ↓ SYN_SM_FG (ASSY)
-#                                            UNLOADER-A (drains ASSY) ──────────────→ SYN_MT_Return (empties cycle back)
+#                                            UNLOADER-A (drains ASSY) ──────────────→ SYN_MARKET (empties cycle back, Lane_11-13)
 #
 # Shared markets = shared inventory + dynamic reshuffling: a CLIP retrieve can reshuffle
 # past a buried BRKT bin in the same market, and the multi-payload lanes exercise the
@@ -87,15 +87,24 @@ payloads:
 # Pass 2 walks those empty mouths across the zone. A uniform grid also rides out the 85%
 # downtime variance better than tiny buffers. LKND self-segregates by payload, so a shared
 # market with N lanes cleanly holds N payloads; extra lanes are shared turnover headroom.
-# Empty carriers live in SYN_MT_Return, never in supermarket lanes.
+#
+# EMPTY CARRIERS LIVE IN SYN_MARKET, IN LANES LIKE EVERYTHING ELSE. This said they
+# live in SYN_MT_Return and never in supermarket lanes, and the zone three lines
+# below says the opposite: SYN_MT_Return was FOLDED INTO SYN_MARKET (2026-07-12),
+# empty is one of its payload segments, and Lane_11-13 hold the empties. There is no
+# SYN_MT_Return zone in this file. Anybody reading the old sentence and then looking
+# for a separate empties bank finds nothing and concludes the spec is broken.
 zones:
   # Stamping supermarket — PANEL-A + PANEL-B + 1 turnover lane, all depth-3. The reshuffle zone.
   # COMBINED MARKET (SB 2026-07-12): empties + partials + fulls all live in ONE mixed-fill
   # market, self-segregated by payload under LKND (same mechanism the shared component market
   # already used). Kills the empty/full split that stranded partials in the old SYN_MT_Return.
   # Producers retrieve empties (payload_code=""), consumers retrieve their material -- all from
-  # this one group. UNTESTED (no sim run per SB). Watch: enough lanes for 7 payload segments
-  # (PANEL-A/B, BRKT, CLIP, STUD, ASSY, empty) to self-segregate + leave reshuffle headroom.
+  # this one group. UNTESTED (no sim run per SB). Watch: enough lanes for NINE payload
+  # segments -- the eight declared payloads (PANEL-A, PANEL-B, PANEL-C, BRKT, CLIP, STUD,
+  # SHIM, ASSY) plus empty -- to self-segregate + leave reshuffle headroom. This said
+  # seven and listed six: PANEL-C and SHIM were added later and nobody re-counted, so the
+  # headroom sum a reader would do from this line was short by two whole segments.
   - name: SYN_MARKET
     retrieve_algorithm: FIFO
     store_algorithm: LKND
@@ -124,8 +133,13 @@ zones:
   # so it doesn't need deep buffer — 3 lanes was oversized. Freed nodes go to the tight markets.
       # -- finished-goods ASSY (folded from SYN_SM_FG into SYN_MARKET) --
       - {name: Lane_08, slots: [{name: SMN_022, depth: 1}, {name: SMN_023, depth: 2}, {name: SMN_024, depth: 3}]}
-  # Empty-carrier return bank. Empties cycle unloader→here→press/loader. 4 lanes all depth-3,
-  # DPTH store (fill shallow-first) so the mouth is the next empty picked.
+  # Empty-carrier segment. Empties cycle unloader→here→press/loader. FIVE lanes
+  # (Lane_11-14 plus Lane_19's headroom), all depth-3, and they store LKND like every other
+  # lane in this zone -- this said "4 lanes" and "DPTH store (fill shallow-first)", both
+  # left over from the standalone SYN_MT_Return zone that was folded into SYN_MARKET
+  # (2026-07-12). The store algorithm is a property of the GROUP, and SYN_MARKET's is LKND,
+  # so no lane in it can be DPTH; and Lane_19 was added afterwards without the count above
+  # being touched.
       # -- empties/returns (folded from SYN_MT_Return into SYN_MARKET; now LKND like the rest) --
       - {name: Lane_11, slots: [{name: UTN_001, depth: 1}, {name: UTN_002, depth: 2}, {name: UTN_003, depth: 3}]}
       - {name: Lane_12, slots: [{name: UTN_004, depth: 1}, {name: UTN_005, depth: 2}, {name: UTN_006, depth: 3}]}
@@ -285,7 +299,8 @@ stations:
 # Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
 # (incl. A/B parked side + press-index back) seeded with EMPTY active carriers. Consume
 # nodes seeded ABOVE reorder so flow establishes before the first reorder. Empties pool in
-# SYN_MT_Return. Bin LABELS are a separate namespace from node names.
+# SYN_MARKET's empties lanes (Lane_11-14, Lane_19) -- there is no SYN_MT_Return zone in
+# this file. Bin LABELS are a separate namespace from node names.
 bins:
   # --- SYN_SM_Stamp: Lane_01 full (3 PANEL-A), Lane_02 full (3 PANEL-B) ---
   - {name: BIN-PA-01, slot: SMN_001, payload: PANEL-A, uop: 30}                          # Lane_01 mouth
@@ -334,7 +349,7 @@ bins:
   - {name: BIN-PEB-04, slot: PEB_004}
   - {name: BIN-PEB-05, slot: PEB_005, bin_type: STANDARD-SM}
   - {name: BIN-PEB-06, slot: PEB_006, bin_type: STANDARD-SM}
-  # --- Empty carriers in SYN_MT_Return (prime the pump: presses + loaders draw from here) ---
+  # --- Empty carriers in SYN_MARKET's empties lanes (prime the pump: presses + loaders draw from here) ---
   - {name: BIN-MT-01, slot: UTN_001}
   - {name: BIN-MT-02, slot: UTN_002}
   - {name: BIN-MT-03, slot: UTN_003}

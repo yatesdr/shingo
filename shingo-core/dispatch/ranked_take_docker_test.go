@@ -553,7 +553,8 @@ func TestRankedTake_TheHoldersPickupWakesTheParkedDig(t *testing.T) {
 // acceptance arm when a gate-staged dweller yields, and the complex reshuffle
 // arm. They build their params separately, and a field that reaches three of
 // them is a wait that reads differently depending on which code path parked it —
-// the same split 88410799 closed for the CAUSE, one field over.
+// the same split that "the promised cause survives the trip through the wait
+// error" closed for the CAUSE, one field over.
 //
 // The holder is the field that matters here: it is the one fact this wait has
 // that the claimed one does not, so a door that drops it renders a sentence

@@ -419,7 +419,8 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	//
 	// IT USED TO NAME 'queued', which missed in both directions: a complex order
 	// born `queued` matched no row at all, and a `sourcing` park landed its cause
-	// on an earlier queued episode (76d1d6e5).
+	// on an earlier queued episode. Fixed by "a wait's cause lands on that
+	// wait's own history row".
 	//
 	// The order's own status is the discriminator, read inside this transaction —
 	// which the UPDATE above has already locked the row for, so a concurrent

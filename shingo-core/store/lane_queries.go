@@ -902,11 +902,19 @@ func (db *DB) LiveServiceDigInEpisode(originID string) (digID int64, asked bool,
 // must not park a blocker in, because doing so would seal an EMPTY slot deeper
 // in the same lane that a live order is coming to fill.
 //
-// It is the dig's half of EntombsASpokenForSlotSQL; the store selector asks the
-// same question inline, of one candidate, which is exactly how the two halves of
-// the burial guard beside it are already arranged. Group-scoped and read once
-// per pass, for the same reason the burial set is: it is asked per candidate and
-// the answer cannot change mid-pass without the pass being wrong anyway.
+// IT IS THE DIG'S HALF OF EntombsASpokenForSlotSQL AND THERE IS NO OTHER HALF.
+// This said the store selector asks the same question inline, of one candidate,
+// "exactly how the two halves of the burial guard beside it are already
+// arranged". The burial guard does have two halves; this does not.
+// findStoreSlot carries no entombment term at all — and deliberately, because
+// one there refuses the legitimate five-store burst that packs a lane
+// back-to-front (see the long note in store/nodes/lanes.go, and the ten pins it
+// names). A reader who went looking for the store-side half found nothing and
+// had no way to tell "deleted" from "never existed".
+//
+// Group-scoped and read once per pass, for the same reason the burial set is: it
+// is asked per candidate and the answer cannot change mid-pass without the pass
+// being wrong anyway.
 //
 // OWNER-BLIND, and that is the load-bearing half. A dig is exempt from its own
 // dig lock everywhere else, and the exemption here would let a compound entomb a

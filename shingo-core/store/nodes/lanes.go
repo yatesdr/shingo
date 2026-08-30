@@ -298,16 +298,31 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		  -- (TestStoreBurst_FiveAtOneDugLane, TestGateRelease_DeepestFirstAndTier1,
 		  -- eight more).
 		  --
-		  -- SEQUENCING IS ALREADY THIS PATH'S ANSWER. laneEntryCause's tiers hold
-		  -- a shallower store until the deeper one has PLACED, so the ordinary
-		  -- burst never entombs anything — the deep slot is filled first and the
-		  -- shallow one lands behind a bin, not in front of a hole. What produced
-		  -- the rig's bubble was the deeper order DYING mid-sequence (order 7,
-		  -- cancelled by the claim-wipe defect), which no placement rule can see
-		  -- coming.
+		  -- SEQUENCING IS THE ANSWER ON A GATED LANE, AND ON NO OTHER. This
+		  -- paragraph used to say that laneEntryCause's tiers hold a shallower
+		  -- store until the deeper one has PLACED, so the ordinary burst never
+		  -- entombs anything, flat. That is true only where the tiers RUN.
+		  -- laneEntryCause has one production caller — gateEntryVerdict, inside
+		  -- the gated release path — and a lane is gated only when a human has
+		  -- placed its mark (lane_gate_point). plants/demo.yaml declares
+		  -- gate_point on no lane, only the two lane-stress specs do, and
+		  -- lane_gate.go records that no marks exist at either plant. The
+		  -- pre-dispatch tiered park was deleted, so on an ungated lane nothing
+		  -- sequences a burst at all: three stores select the three deepest
+		  -- slots correctly and then ARRIVE in whatever order the fleet gives
+		  -- them, and a mouth-first arrival seals the two behind it.
 		  --
-		  -- The dig's shuffle search has no tiers and no sequencing, which is why
-		  -- it carries the guard instead: see SlotsThatWouldEntombASpokenForSlot.
+		  -- So the omission is still a decision — refusing the mirror here
+		  -- refuses the legitimate five-store burst, and that is not negotiable
+		  -- — but the mitigation is NOT plant-wide today. Entombment on an
+		  -- ungated lane is arrival-order, and no clause in this query can see
+		  -- it coming. A deeper order dying mid-sequence (the rig's order 7,
+		  -- cancelled by the claim-wipe defect) is a second way to the same
+		  -- bubble, not the only one.
+		  --
+		  -- The dig's shuffle search has no tiers and no sequencing either,
+		  -- which is why it carries the guard: see
+		  -- SlotsThatWouldEntombASpokenForSlot.
 		  -- Accessibility guard: a slot is only a valid pick if no OCCUPIED slot
 		  -- sits shallower in the same lane. The deepest-empty slot can otherwise
 		  -- be stranded behind a shallow bubble (an occupied slot with empties

@@ -276,7 +276,10 @@ stations:
 # Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
 # (incl. A/B parked side + press-index back) seeded with EMPTY active carriers. Consume
 # nodes seeded ABOVE reorder so flow establishes before the first reorder. Empties pool in
-# SYN_MT_Return. Bin LABELS are a separate namespace from node names.
+# the SAME zones as everything else, self-segregated by payload under LKND -- there is no
+# SYN_MT_Return zone in this file, and this line said there was (carried over from
+# demo.yaml before the 2026-07-12 fold, which demo.yaml has since had corrected).
+# Bin LABELS are a separate namespace from node names.
 
 # Bins. Two jobs: prime the cells exactly as demo.yaml does (so cell behaviour is not a
 # variable), and set up the digs the rig exists to run.

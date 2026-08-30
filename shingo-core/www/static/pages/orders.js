@@ -426,7 +426,8 @@ function buildManifest(data, opts) {
   // written, and measured: 34 of 110 Springfield complex orders in two days
   // began at whatever happened first, average gap 28 MINUTES, worst 7h42m.
   //
-  // orders.Create writes a real birth row now (7e03fb34), in the order's own
+  // orders.Create writes a real birth row now ("every order's timeline starts
+  // at its own creation"), in the order's own
   // transaction, for every door — carrying the same words this synthesised. So
   // the lead entry printed the creation TWICE, and the unaccounted-gap line
   // under it was dead by construction: the gap it measures is now the two
