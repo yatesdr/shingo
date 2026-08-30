@@ -187,8 +187,19 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 	}
 	if !v.Admitted() {
 		d.dbg("complex: order %d held at lane %s (%s)", order.ID, v.Lane(), v.Cause())
-		d.setQueueReason(order, protocol.QueueWaitingForSlot, v.Cause(),
-			QueueParams{Destination: v.Lane()})
+		// A LANE REFUSAL IS NOT A SLOT REFUSAL. Every cause this arm can carry is a
+		// fact about a corridor — dig-active, held-source, occupied, target-buried,
+		// pickup-elsewhere — and the same causes are filed under
+		// QueueStorageRearranging by every other door (complex_reshuffle,
+		// planning_service, compound). Filed as QueueWaitingForSlot they rendered
+		// "Waiting for a slot" for an order that is waiting for a lane, and one
+		// cause read two ways depending on which door parked it.
+		//
+		// The params move with the code: rearrangingSentence reads Lane and Payload,
+		// slotSentence read Destination, so leaving them would have dropped the lane
+		// name out of the sentence entirely.
+		d.setQueueReason(order, protocol.QueueStorageRearranging, v.Cause(),
+			QueueParams{Lane: v.Lane(), Payload: order.PayloadCode})
 		// THE REFUSAL ASKS FOR THE CORRIDOR TO BE OPENED, which is what made it
 		// safe to ask the reachability question here at all.
 		//
@@ -264,7 +275,13 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 		cause := d.causeForLaneHolds(order.ID, holds)
 		laneName := d.laneDisplayName(holds)
 		d.dbg("complex: order %d could not take the mouth on lane %s (%s)", order.ID, laneName, cause)
-		d.setQueueReason(order, protocol.QueueWaitingForSlot, cause, QueueParams{Destination: laneName})
+		// The mouth refusal is the same family as the admission one above, and its
+		// causes (held-dig, held-source, held-traffic, held-unreadable) are filed
+		// under QueueStorageRearranging by planning_service. Same reasoning, same
+		// params. The two ACQUIRE-ERROR arms above keep QueueWaitingForSlot: those
+		// are Core declining to answer, not a lane saying no.
+		d.setQueueReason(order, protocol.QueueStorageRearranging, cause,
+			QueueParams{Lane: laneName, Payload: order.PayloadCode})
 		return dispatchStep{done: true, err: fmt.Errorf("complex order %d could not take lane %s: %s",
 			order.ID, laneName, cause)}
 	}

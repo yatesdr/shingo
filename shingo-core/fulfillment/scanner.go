@@ -682,8 +682,15 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 		return false, dispatch.CauseLaneAcquireError
 	}
 	if !admitted {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
-			dispatch.QueueParams{Destination: lane})
+		// A LANE REFUSAL IS A LANE WAIT — the fourth arm of the same family. Every
+		// cause AcquireLanesForOrder can return is a fact about a corridor (the
+		// admission verdict, or causeForLaneHolds), and the three complex/compound
+		// arms file them as QueueStorageRearranging. Filed here as a slot wait, a
+		// plain retrieve held out of a busy lane read "Waiting for a slot at
+		// Lane_16" — seen on the sim board, order 162, cause lane-held-traffic.
+		// Lane and Payload because rearrangingSentence reads those.
+		s.setQueueReason(order, protocol.QueueStorageRearranging, cause,
+			dispatch.QueueParams{Lane: lane, Payload: order.PayloadCode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane contended"); qerr != nil {
 			s.logFn("fulfillment: order %d → sourcing after lane conflict: %v", order.ID, qerr)
 		}

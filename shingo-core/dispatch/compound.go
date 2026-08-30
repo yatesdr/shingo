@@ -856,8 +856,13 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// re-drivable — GetNextChildOrder selects it, and no transition out of
 		// sourcing goes back — so the cause is written ALONGSIDE the status rather
 		// than instead of it. Advisory metadata, never a gate.
-		d.setQueueReason(next, protocol.QueueWaitingForSlot, v.Cause(),
-			QueueParams{Destination: destName})
+		//
+		// FILED AS A LANE WAIT, like the same verdict at the two complex doors: every
+		// cause this arm can carry is a fact about a corridor, and QueueWaitingForSlot
+		// rendered "Waiting for a slot" for a leg waiting on a lane. Lane and Payload
+		// because rearrangingSentence reads those; Destination was slotSentence's.
+		d.setQueueReason(next, protocol.QueueStorageRearranging, v.Cause(),
+			QueueParams{Lane: destName, Payload: next.PayloadCode})
 		return nil
 	}
 

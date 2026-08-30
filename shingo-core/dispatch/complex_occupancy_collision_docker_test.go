@@ -201,6 +201,21 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 		t.Errorf("the complex order is %q — a busy lane is congestion, so it waits rather than "+
 			"dying of it", after.Status)
 	}
+
+	// AND A GENUINE SLOT REFUSAL KEEPS ITS SLOT CODE. This order is stopped at the
+	// dropoff-capacity gate before the lane is ever asked, and that is a slot fact:
+	// the destination has no room. When the lane-family causes moved off
+	// QueueWaitingForSlot, this is the half that had to stay put — the code is
+	// wrong for a corridor and right for a full destination.
+	if after.QueueCause != string(CauseDropoffCapacity) {
+		t.Fatalf("queue_cause = %q, want %q — this fixture is refused at the capacity gate, and "+
+			"the assertion below is about what a SLOT refusal is filed as",
+			after.QueueCause, CauseDropoffCapacity)
+	}
+	if after.QueueCode != string(protocol.QueueWaitingForSlot) {
+		t.Errorf("queue_code = %q, want %q. A full destination IS a missing slot; only the lane "+
+			"family moved to QueueStorageRearranging.", after.QueueCode, protocol.QueueWaitingForSlot)
+	}
 }
 
 // TestSeamGuard_UnderDeclaringALaneRefusesTheDispatch pins the invariant at the
