@@ -228,7 +228,10 @@ func (s *BinService) NoteBurialShadow(binID, toNodeID, placedBy int64) {
 	if lane == nil {
 		return // not a lane slot — nothing can be behind it
 	}
-	buried, err := s.db.SpokenForBinsBehind(toNodeID)
+	// One reading of the clock for the whole event, taken before the age query so
+	// every line of one burial is dated from the same instant.
+	now := clock.Now().UTC()
+	buried, err := s.db.SpokenForBinsBehind(toNodeID, now)
 	if err != nil {
 		log.Printf("%s: read spoken-for bins in lane %s: %v (not counted)", burialShadowTag, lane.Name, err)
 		return
@@ -254,17 +257,17 @@ func (s *BinService) NoteBurialShadow(binID, toNodeID, placedBy int64) {
 		slotName = slot.Name
 	}
 
-	now := clock.Now().UTC()
 	at := burialSite{lane: lane.Name, slot: slotName, placedBin: binID, placedBy: placedBy}
 	for _, b := range buried {
-		// THE AGE COMES FROM THE DATABASE, NOT FROM A SUBTRACTION HERE.
-		//
-		// This read `now.Sub(b.HeldSince.UTC())` with `now = clock.Now()`, and
-		// HeldSince is a DB-default `created_at`. Two clocks, one subtraction: under
-		// the honest running clock sim runs a year ahead of wall and an eight-second
-		// hold printed as `held_for=7355h32m48s` — in the single line an engineer
-		// reads to judge whether a burial mattered. The old negative-clamp was the
-		// same defect wearing a guard; it caught the sign and not the magnitude.
+		// THE AGE IS ALREADY IN ONE CLOCK, and getting it there took three goes.
+		// First it was `clock.Now().Sub(HeldSince)` with HeldSince coming off a
+		// DB-default column — sim minus wall, and an eight-second hold printed as
+		// `held_for=7355h32m48s`. Then the subtraction moved into SQL, which swapped
+		// which end was wrong: SQL now() is wall and HeldSince was usually sim, so
+		// every order-clock hold came out ~15 months negative, hit the clamp, and
+		// printed `held_for=0s` on every line of two full runs. Now both ends are
+		// the order clock — `now` is passed in from here — and neither clamp nor
+		// COALESCE stands between the reader and the number.
 		heldFor := b.HeldFor
 		if b.HardClaim {
 			s.noteHardBurial(at, b, heldFor, digPlacement, now)
