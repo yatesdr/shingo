@@ -204,14 +204,78 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 	// still goes where it was already pointed, which is the home just found
 	// occupied, and what changes is only that somebody can find out.
 	//
+	// ── WHAT ACTUALLY HAPPENS NEXT, BECAUSE TWO SENTENCES HAVE BEEN WRONG ──
+	//
+	// This branch has now carried two different false endings, in opposite
+	// directions, and the truth is that there are TWO outcomes and which one you
+	// get depends on something this function cannot see: whether the fleet ever
+	// reports the arrival.
+	//
+	//   ARRIVAL REPORTED. helpers.PlaceBinTx reconciles occupancy before placing
+	//   the newcomer (place_bin.go:119 → EvictStaleGhostBinsTx), so the RECORD
+	//   standing on the home is thrown to _TRANSIT. The record moves; the carrier
+	//   does not. That is what happened at SMN_016 and SMN_035 on 2026-08-26 and
+	//   it is written up sixty lines below — two carriers lost their placement to
+	//   a delivery that landed on top of them.
+	//
+	//   ARRIVAL NEVER REPORTED. A robot cannot physically lower a carrier onto an
+	//   occupied position, so it stands there holding it. Sim 2026-08-30: order
+	//   297 took this branch on PLK_H1 and AMR-11 stood at the home for the rest
+	//   of the run. Nothing was evicted, because nothing arrived.
+	//
+	// So "the record already there is evicted to _TRANSIT on arrival" was true of
+	// the first outcome and read as if it were the only one — and as if a record
+	// moving were a recovery, which it is not. The correction that replaced it
+	// ("a robot cannot lower onto an occupied position, so nothing was evicted")
+	// was true of the second and false of the first. Both are reachable. Neither
+	// is good.
+	//
+	// AND THE CELL STAYS PINNED EITHER WAY, which is the part that makes this
+	// worth a WARN rather than a fix here: the Edge writes its runtime pointers at
+	// order creation, so the consuming cell holds this order in its slot whether
+	// the leg drives, stands, or waits.
+	//
+	// ── WHY THIS IS NOT CLOSED BY GATING THE HOME ─────────────────────────
+	//
+	// It was tried (b4fa8d6e, reverted 2026-08-31): make a loader home part of the
+	// drop-off capacity gate's role test so a leg pointed at an occupied home
+	// queues instead of driving. It makes this worse. Holding the home is what
+	// makes the return leg IN-FLIGHT to it, and in-flight is the only state the
+	// replenishment loop's yield check can see — both in-flight counts carry
+	// `AND status != 'queued'` (store/orders/orders.go:1292, :1303), and the
+	// Springfield incident test says so in one sentence
+	// (loader_place_docker_test.go:711-713). A queued leg is invisible, the loop
+	// refills the home, and the gate then refuses on the carrier it caused to be
+	// put there.
+	//
+	// THE THIRD BRANCH IS THE FIX, and this file's header has promised it from the
+	// start: home, then buffer, then DRAIN — decided at release rather than here,
+	// carried to the fleet by patchRedirectSegments (see the header). That is
+	// group-mouth work, not a gate.
+	//
+	// ── ONE ARGUMENT WORTH KEEPING FROM THE REVERTED ATTEMPT ──────────────
+	//
+	// SPEC-intermediate-dropoff-capacity-2026-08-15 §4 is headed "Why it cannot be
+	// fixed by widening the predicate", and it is right about the widening it
+	// names: "also accept parentless STATION nodes" sweeps in every LINE node, and
+	// gating a line dropoff re-creates the 2b05dce deadlock where a two-robot
+	// supply leg is held on the node its own sibling evac is coming to clear.
+	//
+	// A loader home is NOT that widening, and the next person to weigh this should
+	// start from that rather than re-deriving it. bin_loader_homes is a CORE table
+	// keyed on position_node_id, so a home is distinguishable by a lookup, and no
+	// line node has a row in it. The spec's objection does not reach it. That does
+	// not make gating the home correct — see the paragraph above, which is a
+	// different objection the spec never considered — but it does mean the spec is
+	// not the reason to refuse it.
+	//
 	// LOUD, because dbg is debug-only. Without --log-debug this branch said
-	// nothing at all, and the arrival that follows evicts whatever the home was
-	// holding: on 2026-08-26 that deleted the records for CARRIER-0003 and
-	// CARRIER-0052, and the only trace was a debug line nobody reads.
+	// nothing at all, and the only trace of either outcome was a line nobody reads.
 	log.Printf("WARN: loader %d home %s is occupied and no buffer is free — order %d keeps %s as its "+
-		"destination and will be delivered onto an occupied position; the record already there is "+
-		"evicted to _TRANSIT on arrival. The pool is out of room, or a return leg yielded a home it "+
-		"should have held (see legReturnsToHome).",
+		"destination and is dispatched anyway. If the robot reports arrival the occupant's RECORD is "+
+		"evicted to _TRANSIT while the carrier stays put; if it cannot lower, it stands at the home "+
+		"holding its bin. Either way the cell stays pinned. The pool is out of room, or a return leg "+
+		"yielded a home it should have held (see legReturnsToHome).",
 		loaderID, homeName, order.ID, order.DeliveryNode)
 	if err := d.db.RecordRecoveryAction("loader_park_no_slot", "order", order.ID,
 		fmt.Sprintf("home %s occupied and every buffer full — delivering onto an occupied position", homeName),
