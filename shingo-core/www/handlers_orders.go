@@ -19,7 +19,7 @@ import (
 )
 
 func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
-	orders, err := h.listOrdersForPage(r)
+	orders, limit, err := h.listOrdersForPageWithLimit(r)
 	if err != nil {
 		log.Printf("orders page: list orders: %v", err)
 	}
@@ -34,6 +34,7 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		"FaultLines":         faultLines,
 		"FaultedNoticeCount": noticeCount,
 		"WaitSince":          h.waitSinceFor(orders),
+		"TruncationNotice":   h.truncationNotice(r, len(orders), limit),
 	}
 	h.render(w, r, "orders.html", data)
 }
@@ -85,6 +86,14 @@ func (h *Handlers) handleOrdersRows(w http.ResponseWriter, r *http.Request) {
 // listOrdersForPage is the order list behind both the page and the row
 // fragment. One function so the two cannot answer the same query differently.
 func (h *Handlers) listOrdersForPage(r *http.Request) ([]*domain.Order, error) {
+	list, _, err := h.listOrdersForPageWithLimit(r)
+	return list, err
+}
+
+// listOrdersForPageWithLimit is listOrdersForPage plus the limit it applied, or
+// 0 when the view is unlimited (the default "Active" one). The caller needs it
+// to tell a full page from a truncated one — see truncationNotice.
+func (h *Handlers) listOrdersForPageWithLimit(r *http.Request) ([]*domain.Order, int, error) {
 	status := r.URL.Query().Get("status")
 	limit := 100
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -95,12 +104,48 @@ func (h *Handlers) listOrdersForPage(r *http.Request) ([]*domain.Order, error) {
 	svc := h.engine.OrderService()
 	switch {
 	case status == "":
-		return svc.ListActiveOrders()
+		list, err := svc.ListActiveOrders()
+		return list, 0, err
 	case status == "all":
-		return svc.ListOrders("", limit)
+		list, err := svc.ListOrders("", limit)
+		return list, limit, err
 	default:
-		return svc.ListOrders(status, limit)
+		list, err := svc.ListOrders(status, limit)
+		return list, limit, err
 	}
+}
+
+// truncationNotice returns "showing N of M" when the board is not showing
+// everything the filter matches, and "" when it is.
+//
+// THE BOARD USED TO TRUNCATE IN SILENCE. status=all is ORDER BY id DESC LIMIT
+// 100, so on a plant with more than that the oldest orders simply were not
+// there — no control, no count, nothing to tell an operator looking for order 1
+// that it existed. `?limit=` has always worked and nobody could know.
+//
+// It only counts when the page came back FULL, which is the only case that can
+// be truncated; a short page is the whole answer and costs no query. Paging is
+// deliberately not built here: this is the display step's honesty fix, and a
+// number an operator can act on beats a control nobody asked for.
+func (h *Handlers) truncationNotice(r *http.Request, shown, limit int) string {
+	if limit == 0 || shown < limit {
+		return ""
+	}
+	status := r.URL.Query().Get("status")
+	if status == "all" {
+		status = ""
+	}
+	total, err := h.engine.OrderService().CountOrdersForList(status)
+	if err != nil {
+		// The board still renders; it simply does not claim a total it could not
+		// read. Saying nothing beats saying a wrong number.
+		log.Printf("orders page: count for the truncation notice: %v", err)
+		return ""
+	}
+	if total <= shown {
+		return ""
+	}
+	return fmt.Sprintf("showing %d of %d — add ?limit=%d to see them all", shown, total, total)
 }
 
 // faultLinesFor builds the rendered fault line for each faulted order on the

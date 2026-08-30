@@ -41,6 +41,11 @@
     {{if .Authenticated}}<button class="btn btn-primary btn-sm ml-auto" data-action="openManualOrderModal">Manual Order</button>{{end}}
   </div>
 
+  {{/* WHAT THE BOARD IS NOT SHOWING. status=all is capped, and it used to
+       truncate in silence — the oldest orders simply were not there, with no
+       control and no count to say so. Absent when the page holds everything. */}}
+  {{if .TruncationNotice}}<div class="text-muted-xs orders-truncation">{{.TruncationNotice}}</div>{{end}}
+
   {{$labels := .QueueCodeLabels}}
   {{if or .QueueCodeCounts .FaultedNoticeCount}}
   <div class="queue-why">

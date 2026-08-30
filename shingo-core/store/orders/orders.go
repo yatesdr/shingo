@@ -654,6 +654,24 @@ func GetByVendorID(db *sql.DB, vendorOrderID string) (*Order, error) {
 	return ScanOrder(row)
 }
 
+// CountForList returns how many orders List would return with no limit — the
+// same status filter, without the LIMIT. It exists so the board can say "showing
+// 100 of 213" rather than truncating in silence, and it takes the status the
+// same way List does so the two cannot answer about different sets.
+func CountForList(db *sql.DB, status string) (int, error) {
+	var n int
+	var err error
+	if status != "" {
+		err = db.QueryRow(`SELECT COUNT(*) FROM orders WHERE status=$1`, status).Scan(&n)
+	} else {
+		err = db.QueryRow(`SELECT COUNT(*) FROM orders`).Scan(&n)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("count orders for list: %w", err)
+	}
+	return n, nil
+}
+
 // List returns up to `limit` orders, optionally filtered by status.
 func List(db *sql.DB, status string, limit int) ([]*Order, error) {
 	var rows *sql.Rows

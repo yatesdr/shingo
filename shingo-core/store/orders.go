@@ -669,6 +669,12 @@ func (db *DB) ListOrders(status string, limit int) ([]*orders.Order, error) {
 	return orders.List(db.DB, status, limit)
 }
 
+// CountOrdersForList is ListOrders' unlimited count — how many rows the same
+// status filter matches — so a truncated board can say how much it is not showing.
+func (db *DB) CountOrdersForList(status string) (int, error) {
+	return orders.CountForList(db.DB, status)
+}
+
 func (db *DB) ListActiveOrders() ([]*orders.Order, error) { return orders.ListActive(db.DB) }
 
 // ListActiveBoardOrdersFiltered scopes the board to a set of station IDs.

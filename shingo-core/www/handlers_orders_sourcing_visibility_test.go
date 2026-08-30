@@ -3,6 +3,7 @@
 package www
 
 import (
+	"fmt"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -146,5 +147,40 @@ func TestOrdersPage_ADispatchedOrderCarriesNoWaitClock(t *testing.T) {
 	if strings.Contains(body, "orders-wait-since") {
 		t.Errorf("a dispatched order carries a wait clock. The clock is for an order that is "+
 			"waiting; on one the fleet is already carrying it reads as a stall.\nPage:\n%s", body)
+	}
+}
+
+// TestOrdersPage_ATruncatedBoardSaysSo is the honesty half of the display step.
+//
+// `status=all` is `ORDER BY id DESC LIMIT 100`, and it truncated in SILENCE:
+// on a plant with more orders than that the oldest ones simply were not on the
+// board, with no paging control and no count to say they existed. `?limit=` has
+// always worked, and there was no way for an operator to know that either — the
+// page looked like the whole answer.
+//
+// Both directions are asserted, because a notice that is always there is as
+// useless as one that never is: it appears when the page is holding back, and
+// it does not when the page is complete.
+func TestOrdersPage_ATruncatedBoardSaysSo(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersWithSim(t, simulator.New())
+
+	for i := range 5 {
+		parkOrder(t, db, fmt.Sprintf("trunc-%d", i), protocol.StatusQueued,
+			protocol.QueueWaitingForMaterial, "Waiting for material: PART-A")
+	}
+
+	// Held back: five exist, the page is asked for three.
+	body := renderOrdersPage(t, h, "?status=all&limit=3")
+	if !strings.Contains(body, "showing 3 of 5") {
+		t.Errorf("a board showing 3 of 5 orders says nothing about the other 2.\n" +
+			"An operator looking for an order that IS there reads an empty answer as the truth.")
+	}
+
+	// Complete: the page holds everything the filter matches.
+	body = renderOrdersPage(t, h, "?status=all&limit=50")
+	if strings.Contains(body, "showing") {
+		t.Errorf("the board claims to be truncated while showing every order the filter matches — " +
+			"a notice that is always on is one nobody reads.")
 	}
 }
