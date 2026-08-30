@@ -53,6 +53,23 @@ import (
 // evaluator lands in increment 4. That is expected behavior for this increment,
 // asserted as such in the harness, and it is why the arm ships inert: no plant
 // sets a gate mark.
+//
+// ── "SHIPS INERT" IS NOT FREE, AND THE PARAGRAPH ABOVE READS AS IF IT IS ──
+//
+// Inert is the right word for the WAIT: with no mark, nothing dwells and nothing
+// is left un-appended, so the increment is genuinely safe unfinished. It is the
+// wrong word for what the same flag also switches off. The gated arm is the only
+// caller of rebindGatedDropoff, which is the only place a dropoff slot is
+// re-resolved after the order was planned — so "no plant sets a gate mark" also
+// says, without meaning to, that no plant has ever late-bound a dropoff.
+//
+// What an unmarked lane does instead is bind at dispatch and drive. The slot is
+// then as old as the trip, and the plant wears the two consequences that shows
+// up as: an order queued on `dropoff-occupied`, and an air bubble (an empty slot
+// sealed behind a shallower one, because several stores each picked correctly
+// and then arrived in an order nobody chose). Neither is a fault in this file.
+// Both are the cost of the sentence above, and it should be read as a cost
+// rather than as a reassurance.
 
 // PropLaneGatePoint is the node-property key, read on the LANE node, naming the
 // RDS map point where a robot dwells while Core decides whether it may enter.

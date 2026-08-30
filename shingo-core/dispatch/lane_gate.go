@@ -18,16 +18,39 @@ import (
 // one fact, set by the person who knows the aisle, and the thing they set IS the
 // thing that makes it true.
 //
-// Collision safety does not live on it. The physical questions — is a foreign
-// dig holding this lane, is a robot inside it, is the target reachable — are
-// asked on every lane-entry path unconditionally, and occupancy rows are written
-// unconditionally. The mark chooses only the WAITING ROOM: park before dispatch,
-// or drive out and dwell at a point.
+// ── THE MARK BUYS TWO THINGS AND THIS COMMENT USED TO NAME ONE ────────────
 //
-// So enablement is per-lane and incremental. No marks exist at either plant, so
-// every lane parks orders pre-dispatch today; a lane goes gated the day a human
+// It said the mark "chooses only the WAITING ROOM: park before dispatch, or
+// drive out and dwell at a point", and closed with "Both are safe; the mark
+// chooses which one the waiting happens in." The first half is true. The last
+// sentence is not, and it cost a diagnosis round: it reads as though the two
+// arms differ in comfort, when they differ in WHEN THE DESTINATION IS CHOSEN.
+//
+//	THE WAIT    where a robot stands while Core decides. This is the part the
+//	            mark is named for, and the part that needs a real map point.
+//	THE ORACLE  rebindGatedDropoff — the dropoff slot resolved AT RELEASE
+//	            against the lane as it stands, through the owner-aware selector.
+//	            It is reachable from the gated arm and from nowhere else.
+//
+// An UNMARKED lane binds its slot at dispatch and drives. Nothing re-asks. The
+// robot arrives minutes later at a lane that has changed underneath it, and the
+// two outcomes are `dropoff-occupied` and the air bubble — three stores each
+// correctly picking the three deepest free slots, then ARRIVING in whatever
+// order the fleet gives them, whoever lands first sealing the rest in. Neither
+// is a collision, so "both are safe" was true in the narrow sense the paragraph
+// above means it; both are also stale, which is what the old sentence hid.
+//
+// Collision safety genuinely does not live on the mark. The physical questions —
+// is a foreign dig holding this lane, is a robot inside it, is the target
+// reachable — are asked on every lane-entry path unconditionally, and occupancy
+// rows are written unconditionally. That is why an unmarked lane is safe to run
+// and still wrong about where the bin goes.
+//
+// So enablement is per-lane and incremental. A lane goes gated the day a human
 // places its mark, and rollback is clearing it (robots already dwelling complete
-// under the old rules).
+// under the old rules). No marks existed at either plant as of 2026-08-31, which
+// means THE ORACLE HAD NEVER RUN IN PRODUCTION — every lane-bound store at every
+// plant has always used a slot chosen before the drive.
 //
 // (A three-valued `lane_enforcement` group property and a hardcoded
 // `laneShareBasePriority` both stood here and are gone. Neither was ever set or
@@ -45,10 +68,12 @@ const laneGateReservedBy = reservations.BySourceLock
 // laneWaitPoint returns the map point a lane's robots dwell at while Core decides
 // whether they may enter, or "" when the lane has none.
 //
-// It is the whole of the gate's configuration. A non-empty value means: ship
-// lane-bound orders unsealed to this point and append their tail when the lane is
-// safe. Empty means: decide before dispatch and park the order if the answer is
-// no. Both are safe; the mark chooses which one the waiting happens in.
+// It is the whole of the gate's configuration, and it decides two things, not
+// one — see the header. A non-empty value means: ship lane-bound orders UNSEALED
+// to this point and append their tail when the lane is safe, which is also the
+// only moment the dropoff slot is re-resolved (rebindGatedDropoff). Empty means:
+// choose the slot before dispatch, park the order if the answer is no, and never
+// ask again — so the slot the robot drives to is as old as the drive.
 func (d *Dispatcher) laneWaitPoint(laneID int64) string {
 	return d.db.GetNodeProperty(laneID, PropLaneGatePoint)
 }
@@ -56,6 +81,11 @@ func (d *Dispatcher) laneWaitPoint(laneID int64) string {
 // laneIsGated reports whether Core stages robots at this lane rather than parking
 // their orders before dispatch. Derived, never configured separately: the
 // existence of the mark IS the answer.
+//
+// It is ALSO the answer to "does this lane get a late-bound dropoff", because the
+// two ride one flag. If you are here asking the second question, that coupling is
+// the thing to know: the header says why, and it is not obviously the right
+// design — it is simply the design.
 func (d *Dispatcher) laneIsGated(laneID int64) bool {
 	return d.laneWaitPoint(laneID) != ""
 }

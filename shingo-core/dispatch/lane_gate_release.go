@@ -994,6 +994,24 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, en
 // rebindGatedDropoff re-resolves the order's dropoff against the lane AS IT
 // STANDS, at the moment of append. Returns the node the tail will target.
 //
+// ── THIS IS THE ORACLE, AND IT IS THE ONLY ONE ────────────────────────────
+//
+// It is the single place in the tree where a dropoff slot chosen earlier gets
+// asked again, and the only production caller of the owner-aware selector
+// (nodes.FindStoreSlotInLaneExcluding). Every other destination writer — intake,
+// planning, the complex step resolver, ReserveStorageDropoff — binds ONCE and
+// drives; the census of 2026-08-31 counted twenty such sites.
+//
+// So its reachability is worth knowing before reading anything else here: it is
+// called only from releaseGatedOrder, which only sees orders spliceLaneWait
+// staged, which only happens on a lane carrying a mark (lane_gate.go). No mark
+// existed at either plant as of 2026-08-31. On an unmarked lane the slot a robot
+// drives to is the slot chosen before the drive, and this function does not run.
+//
+// If you arrived here from a `dropoff-occupied` row, or from a lane with an
+// empty slot walled in behind a full one, that is the reason: not that this
+// resolved wrongly, but that nothing asked it.
+//
 // This is the bind-at-release property, and it is the reason a gated create
 // carries no dropoff block at all: there is no committed binding to go stale, so
 // there is nothing to re-confirm — only something to resolve, once, late.
