@@ -204,7 +204,11 @@ func TestPositionGate_OccupancyCoreExcludesTheOrdersOwnBin(t *testing.T) {
 		t.Errorf("forOrderID=0 means 'obstructed by anything' and must not excuse a claimed bin")
 	}
 
-	// A retired bin is a row kept for audit; the carrier is off the floor.
+	// A retired bin is a row kept for audit; the carrier is off the floor. The
+	// exclusion is bins.ListByNode's own WHERE, not an arm in the gate — there
+	// used to be one, skipping a status the query had already dropped. Pinned
+	// here because deleting the dead arm means the SQL is now the only thing
+	// holding this up.
 	mustExec(t, db, `UPDATE bins SET status='retired' WHERE id=$1`, mine.ID)
 	if _, occupied := eng.positionOccupiedBy(press.Name, 0); occupied {
 		t.Errorf("a RETIRED bin obstructed %s. The row survives for audit; the carrier does not "+

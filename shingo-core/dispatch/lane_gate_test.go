@@ -320,7 +320,8 @@ func TestLaneGate_AcquireAdmitsFreeAndSharesSameMode(t *testing.T) {
 	b := testdb.CreateOrder(t, db)
 
 	holdsA, _ := d.resolveOrderLaneHolds(line, slot) // inbound
-	admitted, err := d.acquireOrderLanes(a.ID, holdsA)
+	adm := d.acquireOrderLanes(a.ID, holdsA)
+	admitted, err := adm.admitted, adm.err
 	if err != nil || !admitted {
 		t.Fatalf("A acquire: admitted=%v err=%v, want admitted", admitted, err)
 	}
@@ -329,7 +330,8 @@ func TestLaneGate_AcquireAdmitsFreeAndSharesSameMode(t *testing.T) {
 	}
 	// B, same mode (inbound), shares.
 	holdsB, _ := d.resolveOrderLaneHolds(line, slot)
-	admitted, err = d.acquireOrderLanes(b.ID, holdsB)
+	adm = d.acquireOrderLanes(b.ID, holdsB)
+	admitted, err = adm.admitted, adm.err
 	if err != nil || !admitted {
 		t.Fatalf("B acquire same-mode: admitted=%v err=%v, want admitted (share)", admitted, err)
 	}
@@ -349,12 +351,13 @@ func TestLaneGate_AcquireConflictRequeues(t *testing.T) {
 
 	// A holds inbound.
 	holdsA, _ := d.resolveOrderLaneHolds(line, slot)
-	if admitted, _ := d.acquireOrderLanes(a.ID, holdsA); !admitted {
+	if !d.acquireOrderLanes(a.ID, holdsA).admitted {
 		t.Fatal("A must be admitted")
 	}
 	// B wants outbound (retrieve from the same lane) — different mode → conflict.
 	holdsB, _ := d.resolveOrderLaneHolds(slot, line)
-	admitted, err := d.acquireOrderLanes(b.ID, holdsB)
+	adm := d.acquireOrderLanes(b.ID, holdsB)
+	admitted, err := adm.admitted, adm.err
 	if err != nil {
 		t.Fatalf("B acquire err: %v", err)
 	}
@@ -386,7 +389,8 @@ func TestLaneGate_AcquireAllOrNothingAcrossModes(t *testing.T) {
 	// mover wants a move: outbound on laneA + inbound on laneB → laneB conflicts
 	// with the dig.
 	holds, _ := d.resolveOrderLaneHolds(slotA, slotB)
-	admitted, err := d.acquireOrderLanes(mover.ID, holds)
+	adm := d.acquireOrderLanes(mover.ID, holds)
+	admitted, err := adm.admitted, adm.err
 	if err != nil {
 		t.Fatalf("mover acquire err: %v", err)
 	}
@@ -439,7 +443,8 @@ func TestLaneGate_SameLaneSourceAndDest_OneHoldStrongestMode(t *testing.T) {
 
 	// And the acquire admits: one row, no self-conflict, no wedge.
 	mover := testdb.CreateOrder(t, db)
-	admitted, err := d.acquireOrderLanes(mover.ID, holds)
+	adm := d.acquireOrderLanes(mover.ID, holds)
+	admitted, err := adm.admitted, adm.err
 	if err != nil || !admitted {
 		t.Fatalf("same-lane acquire: admitted=%v err=%v — the deduped hold set must acquire "+
 			"cleanly; before the fix this was the wedge (the order's own committed row refusing "+
@@ -459,7 +464,7 @@ func TestLaneGate_ReleaseDropsHold(t *testing.T) {
 	a := testdb.CreateOrder(t, db)
 
 	holds, _ := d.resolveOrderLaneHolds(line, slot) // inbound on the lane
-	if admitted, _ := d.acquireOrderLanes(a.ID, holds); !admitted {
+	if !d.acquireOrderLanes(a.ID, holds).admitted {
 		t.Fatal("A must be admitted")
 	}
 	if gateMouthRows(t, db, laneID) != 1 {
@@ -533,7 +538,8 @@ func TestLaneGate_UnmarkedLaneSerializesOpposingModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve A: %v", err)
 	}
-	admitted, err := d.acquireOrderLanes(a.ID, holdsA)
+	adm := d.acquireOrderLanes(a.ID, holdsA)
+	admitted, err := adm.admitted, adm.err
 	if err != nil || !admitted {
 		t.Fatalf("A acquire: admitted=%v err=%v, want admitted on a free lane", admitted, err)
 	}
@@ -544,7 +550,8 @@ func TestLaneGate_UnmarkedLaneSerializesOpposingModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve B: %v", err)
 	}
-	admitted, err = d.acquireOrderLanes(b.ID, holdsB)
+	adm = d.acquireOrderLanes(b.ID, holdsB)
+	admitted, err = adm.admitted, adm.err
 	if err != nil {
 		t.Fatalf("B acquire: %v", err)
 	}
@@ -557,7 +564,8 @@ func TestLaneGate_UnmarkedLaneSerializesOpposingModes(t *testing.T) {
 	if _, err := reservations.ReleaseLanesByOwner(db.DB, a.ID); err != nil {
 		t.Fatalf("release A: %v", err)
 	}
-	admitted, err = d.acquireOrderLanes(b.ID, holdsB)
+	adm = d.acquireOrderLanes(b.ID, holdsB)
+	admitted, err = adm.admitted, adm.err
 	if err != nil || !admitted {
 		t.Fatalf("B after A released: admitted=%v err=%v — a refusal with no releaser is not a wait", admitted, err)
 	}

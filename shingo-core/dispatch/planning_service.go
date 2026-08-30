@@ -268,7 +268,7 @@ func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bi
 		s.dbg("plan: order %d structural — %s: %s", order.ID, res.TermCode, res.Err)
 		return nil, nil, nil, &planningError{Code: res.TermCode, Detail: res.Err.Error(), Err: res.Err}, false
 	default: // OutcomeWait — the only remaining member
-		s.setQueueReason(order, res.QueueCode, QueueCause(res.QueueCause), res.QueueParams)
+		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
 		return nil, nil, &PlanningResult{Queued: true}, nil, false
 	}
 }
@@ -357,7 +357,7 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 	// compound machinery. Gate first, then resolve.
 	if blocked, cap := CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
 		s.dbg("transport: order %d queued — %s", order.ID, cap.Cause)
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, QueueCause(cap.Cause), cap.Params)
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 		return &PlanningResult{Queued: true}, nil
 	}
 
@@ -632,10 +632,21 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 		if errors.Is(err, store.ErrBlockerClaimed) {
 			// TWO REFUSALS, TWO RELEASERS, and the cause has to say which: a claimed
 			// blocker is waiting out a robot's drive, a promised one (§7's ranked
-			// take) is waiting on a holder that has no robot at all. digBlockerCause
-			// is the one place that reads them apart — the scanner re-derives this
-			// same cause off the wait error and writes it over the top, so a fork
-			// spelled only here is a fork the plain path undoes.
+			// take) is waiting on a holder that has no robot at all.
+			//
+			// digBlockerCause IS THE ONE PLACE THAT READS THEM APART. It used to be
+			// four: this site, the lane-gate acceptance path, the complex reshuffle
+			// path, and parkOnClaimedBlocker each wrote the same `promised ?
+			// promised : claimed` fork in its own words, off the same fact. The
+			// three that hold a laneClearResult now read the cause the producer
+			// decided (laneClearResult.blockerCause, itself set from this
+			// function); this path has no such result — its input is the typed
+			// error straight from the store — so it calls the decider directly.
+			// One decision, one function, one field carrying it.
+			//
+			// The scanner re-derives this same cause off the wait error and writes
+			// it over the top, so a fork spelled only here is a fork the plain path
+			// undoes.
 			s.setQueueReason(order, protocol.QueueStorageRearranging, digBlockerCause(err),
 				QueueParams{Lane: lane.Name, Payload: order.PayloadCode,
 					HolderOrderID: promisedHolder(err)})

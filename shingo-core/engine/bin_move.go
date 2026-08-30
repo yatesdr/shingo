@@ -375,9 +375,21 @@ func (e *Engine) queueBinMoveForLane(order *orders.Order, bin *bins.Bin, sourceN
 	// only durable record there was ever going to be of what this person's move
 	// waited for. The helper writes both halves, which is why no park site that
 	// goes through dispatch.WriteQueueDetail has ever had this problem.
-	reason := dispatch.FormatQueueSentence(code, params)
+	//
+	// ONE COMPUTATION OF THE SENTENCE, not two. SetQueueReason formats it from
+	// code+params and mirrors it back onto the order, so the FormatQueueSentence
+	// call that used to stand here built the identical string a second time from
+	// the identical inputs — and would have gone on agreeing with the stored one
+	// only for as long as nobody changed the formatter's inputs at one of the two
+	// sites. Reading it back off the order makes the sentence in the history row
+	// the sentence on the row BY CONSTRUCTION.
+	//
+	// If the column write failed, the mirror did not happen and this passes the
+	// blank the row actually carries. That is the honest pairing: the durable
+	// record and the live column say the same thing, and the write failure is
+	// already logged one layer down.
 	e.dispatcher.SetQueueReason(order, code, cause, params)
-	if err := e.dispatcher.Lifecycle().Queue(order, "bin-move", reason); err != nil {
+	if err := e.dispatcher.Lifecycle().Queue(order, "bin-move", order.QueueReason); err != nil {
 		// The order is stuck at `pending`, which no scanner pass selects. Say so
 		// loudly and fail it rather than hand back a row nothing will ever drive.
 		e.logFn("engine: parked bin move %d could not be queued: %v", order.ID, err)
@@ -400,7 +412,7 @@ func (e *Engine) queueBinMoveForLane(order *orders.Order, bin *bins.Bin, sourceN
 		ToNode:      destNode.Name,
 		BinLabel:    bin.Label,
 		Queued:      true,
-		QueueReason: reason,
+		QueueReason: order.QueueReason,
 	}, nil
 }
 

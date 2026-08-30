@@ -41,7 +41,7 @@ type Dispatcher interface {
 	// re-aiming off a dug lane both rewrite order.DeliveryNode — so the returned
 	// node, not one the caller read earlier, is where the order is going. Nil
 	// error ⇒ non-nil node.
-	ReserveStorageDropoff(order *orders.Order) (*nodes.Node, error)
+	ReserveStorageDropoff(order *orders.Order) dispatch.StorageDropoff
 
 	// ConfirmForDispatch is the Rule-1 confirm-at-dispatch step: hard-claim the
 	// destination slot (if a storage dropoff) AND the source bin, in one step,

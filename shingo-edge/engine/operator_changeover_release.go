@@ -52,10 +52,16 @@ type ReleaseChangeoverWaitResult struct {
 //     send_partial_back with that exact count — Core syncs the bin's
 //     manifest to the partial value at release time, and the bin arrives at
 //     the supermarket flagged as partial with the right qty. If the line is
-//     empty (RemainingUOPCached == 0), the evac is release_empty — manifest
+//     DRAINED (RemainingUOPCached == 0), the evac is release_empty — manifest
 //     cleared, preserving the 2026-04 ALN_001 fix intent (bin can't land at
 //     OutboundDestination tagged with stale payload). The operator never
 //     types a number; the system already knows it.
+//
+//     DRAINED IS THE EDGE COUNT, "EMPTY" IS WHAT THE RELEASE MAKES IT. The bin
+//     still carries its payload and its manifest while the counter reads zero;
+//     clearing the manifest is what turns it into the empty carrier Core's own
+//     vocabulary means by that word. The mode is named release_empty because it
+//     describes the outcome, not the precondition.
 //
 //     The caller's disposition (passed in `disp`) acts as an override: if
 //     they supplied Mode=send_partial_back with a PartialCount, that count

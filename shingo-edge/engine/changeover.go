@@ -574,18 +574,24 @@ func FanOutPressIndexCrossMode(diffs []ChangeoverNodeDiff, binTypes map[string]s
 // ApplyReuseCompatibleBinsShortcut rewrites Swap / Evacuate diffs to
 // Unchanged when the from-claim is press-index, the to-claim shares the
 // same payload, the from-claim opted in via ReuseCompatibleBins, AND the
-// physical bin at the node is empty (per the runtime check).
+// physical bin at the node has been DRAINED (per the runtime check).
 //
 // Press-index hardware can keep the same bin between styles when the
 // next style produces the same payload — no robot trip needed. Lives
 // as a post-processor over DiffStyleClaims so the planner stays pure
 // (no runtime-state dependency leaking into pure step builders).
 //
-// isEmpty is a runtime accessor: given a CoreNodeName, returns true if
-// the physical bin at the slot is empty. nil isEmpty short-circuits to
-// "not empty" → no shortcut applied (defensive default).
-func ApplyReuseCompatibleBinsShortcut(diffs []ChangeoverNodeDiff, isEmpty func(coreNodeName string) bool) []ChangeoverNodeDiff {
-	if isEmpty == nil {
+// isDrained is a runtime accessor: given a CoreNodeName, returns true when the
+// bin at the slot has no parts left to count. nil isDrained short-circuits to
+// "not drained" → no shortcut applied (defensive default).
+//
+// DRAINED IS NOT EMPTY. Core's "empty" means a carrier with no payload code;
+// this reads an Edge counter on a bin that still carries its payload and its
+// manifest. See binDrainedAtCoreNode, which also records the live caveat: an
+// unwired press counter reads zero always, so at such a press this predicate
+// answers "drained" everywhere.
+func ApplyReuseCompatibleBinsShortcut(diffs []ChangeoverNodeDiff, isDrained func(coreNodeName string) bool) []ChangeoverNodeDiff {
+	if isDrained == nil {
 		return diffs
 	}
 	for i := range diffs {
@@ -605,7 +611,7 @@ func ApplyReuseCompatibleBinsShortcut(diffs []ChangeoverNodeDiff, isEmpty func(c
 		if d.FromClaim.PayloadCode != d.ToClaim.PayloadCode {
 			continue
 		}
-		if !isEmpty(d.CoreNodeName) {
+		if !isDrained(d.CoreNodeName) {
 			continue
 		}
 		d.Situation = SituationUnchanged

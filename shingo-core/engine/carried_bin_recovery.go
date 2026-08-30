@@ -270,12 +270,20 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 	// It also SETTLES the destination (group → child, off a dug lane), so the
 	// node it returns is the one to dispatch against and the earlier read is
 	// stale from here on.
-	settled, rerr := e.dispatcher.ReserveStorageDropoff(order)
-	if rerr != nil {
-		return fail("slot_unavailable", fmt.Sprintf("no slot at %s right now: %v", order.DeliveryNode, rerr), rerr)
+	// THE THIRD CALLER OF THIS DOOR, AND IT HAD THE SAME SIN AS THE OTHER TWO —
+	// one door over and OPERATOR-FACING. Every refusal collapsed into
+	// "slot_unavailable / no slot at X right now", so a failed database read told
+	// the person holding the tablet to go and look at a slot that was probably
+	// empty, and an unresolved GROUP told them to look at one slot out of a set.
+	// The verdict names the cause; this maps it to the code and the sentence the
+	// operator sees.
+	dest := e.dispatcher.ReserveStorageDropoff(order)
+	if dest.Refused() {
+		code, sentence := recoveryDropoffRefusal(dest.Cause, order.DeliveryNode)
+		return fail(code, fmt.Sprintf("%s: %v", sentence, dest.Err), dest.Err)
 	}
-	if settled != nil {
-		destNode = settled
+	if dest.Node != nil {
+		destNode = dest.Node
 	}
 	// The lane question, asked for the same reason the bin-move door asks it: a
 	// robot driving to the destination is a robot in a lane. EntryHeldBin
@@ -471,4 +479,29 @@ func (e *Engine) liveRecoveryOrderForBin(binID int64) (*orders.Order, error) {
 // good error message.
 func recoveryEdgeUUID(binID int64, robotID string) string {
 	return fmt.Sprintf("recovery-bin-%d-%s", binID, robotID)
+}
+
+// recoveryDropoffRefusal turns a ReserveStorageDropoff cause into the code and
+// the sentence the operator recovering a carried bin sees.
+//
+// THREE ANSWERS, THREE DIFFERENT THINGS TO DO. "No slot at X right now" is only
+// true for one of them, and it was printed for all three:
+//
+//	contended   a carrier is in the slot. Go and look; it will clear.
+//	unresolved  the destination is a GROUP and nothing in it can take the bin.
+//	            Looking at any one slot tells them nothing.
+//	unreadable  a read failed. Nothing about the slot is known, and telling
+//	            somebody it is occupied is inventing a fact.
+//
+// The default is the undetermined reading rather than the contended one: an
+// unrecognised cause has not earned a confident sentence.
+func recoveryDropoffRefusal(cause dispatch.QueueCause, deliveryNode string) (code, sentence string) {
+	switch cause {
+	case dispatch.CauseStoreSlotContended:
+		return "slot_unavailable", fmt.Sprintf("no slot at %s right now", deliveryNode)
+	case dispatch.CauseNGRPResolve:
+		return "dest_unresolved", fmt.Sprintf("%s is a set of positions and none of them can take this bin right now", deliveryNode)
+	default:
+		return "dest_check_failed", fmt.Sprintf("could not read whether %s can take this bin", deliveryNode)
+	}
 }

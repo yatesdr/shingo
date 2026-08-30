@@ -2,6 +2,7 @@ package fulfillment
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"shingo/protocol"
@@ -12,9 +13,17 @@ import (
 
 // Sentinel errors injected into the fakes to drive each requeue path.
 var (
-	errFleet   = errors.New("fleet create failed")
-	errClaim   = errors.New("claim race")
-	errReserve = errors.New("slot reserve conflict")
+	errFleet = errors.New("fleet create failed")
+	errClaim = errors.New("claim race")
+	// errReserve is a GENUINE slot-contention refusal, wrapping the sentinel the
+	// reserve arm tags contention with. It used to be a bare errors.New, which is
+	// what let a hard database error read as contention: every failure classified
+	// the same way, so a test that injected "anything at all" and asserted
+	// "slot-reserved" was passing on the defect.
+	errReserve = fmt.Errorf("%w: another order holds it", dispatch.ErrSlotContended)
+	// errReserveRead is the OTHER shape at the same door: the reserve could not be
+	// evaluated at all. Nothing is known about the slot.
+	errReserveRead = fmt.Errorf("count bins at LINE-D: %w", dispatch.ErrSlotUnreadable)
 )
 
 // TestScanner_RequeuePaths_SetQueueCode covers the four requeue paths that used
@@ -120,6 +129,73 @@ func TestScanner_RequeuePaths_SetQueueCode(t *testing.T) {
 		if !found {
 			t.Fatalf("the store's destination-slot conflict did not record waiting_for_slot/slot-reserved; got %v", f.queueReasons)
 		}
+	})
+
+	// --- An UNREADABLE destination is not a contended one ---
+	//
+	// THE LIVE MIS-CLASSIFICATION. Both scanner sites derived this cause
+	// themselves, from the same four lines: unresolved-group if
+	// IsSyntheticUnresolved, otherwise slot-contended. So a failed database read
+	// — the count, the reserve write, the settle read — parked as "the
+	// destination slot is contended", which sends an operator to a slot that is
+	// probably empty, to wait for a carrier that is not there, on a wait that
+	// will not clear until a database does.
+	//
+	// TEST-CERTIFIED, NOT RUN-CERTIFIED: a hard DB error is not producible by any
+	// fixture, which is why this seam exists at all.
+	t.Run("unreadable destination is not contention", func(t *testing.T) {
+		f := newFakeStore()
+		order := seedQueuedRetrieve(f, 14, "LINE-E")
+		order.PayloadCode = "PN-READ"
+		f.nodesByDot["LINE-E"] = &nodes.Node{ID: 105, Name: "LINE-E"}
+		finder := foundFinderWith(51, "SRC-E")
+		d := &recordingDispatcher{reserveErr: errReserveRead}
+		s := newScannerWith(t, f, finder, d, nil)
+		s.RunOnce()
+
+		for _, qr := range f.queueReasons {
+			if qr.OrderID != 14 {
+				continue
+			}
+			if qr.Cause == string(dispatch.CauseStoreSlotContended) {
+				t.Fatalf("a failed READ parked as %q. Nothing about the slot was established — "+
+					"telling an operator it is contended invents a fact and points them at the "+
+					"wrong end of the plant", qr.Cause)
+			}
+			if qr.Cause != string(dispatch.CauseCapacityCheckFailed) {
+				t.Fatalf("an unreadable destination parked under %q, want %q — the undetermined "+
+					"family", qr.Cause, dispatch.CauseCapacityCheckFailed)
+			}
+			return
+		}
+		t.Fatalf("order 14 recorded no queue reason at all; got %v", f.queueReasons)
+	})
+
+	// --- An UNRESOLVED GROUP is not a contended slot either ---
+	t.Run("unresolved group names the resolution, not the slot", func(t *testing.T) {
+		f := newFakeStore()
+		order := seedQueuedRetrieve(f, 15, "SYN-GRP")
+		order.PayloadCode = "PN-GRP"
+		f.nodesByDot["SYN-GRP"] = &nodes.Node{ID: 106, Name: "SYN-GRP", IsSynthetic: true}
+		finder := foundFinderWith(52, "SRC-G")
+		unresolved := dispatch.SyntheticUnresolved{OrderID: 15, Group: "SYN-GRP",
+			Err: errors.New("no available slot in node group SYN-GRP")}
+		d := &recordingDispatcher{reserveErr: unresolved}
+		s := newScannerWith(t, f, finder, d, nil)
+		s.RunOnce()
+
+		for _, qr := range f.queueReasons {
+			if qr.OrderID != 15 {
+				continue
+			}
+			if qr.Cause != string(dispatch.CauseNGRPResolve) {
+				t.Fatalf("a destination that was never narrowed to one position parked under %q, "+
+					"want %q — the row blames the slot layer for a resolution that never ran",
+					qr.Cause, dispatch.CauseNGRPResolve)
+			}
+			return
+		}
+		t.Fatalf("order 15 recorded no queue reason at all; got %v", f.queueReasons)
 	})
 }
 

@@ -887,7 +887,18 @@ func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
 	})
 
 	t.Run("GetManifest_on_empty_bin_returns_empty", func(t *testing.T) {
-		// `bin` was just cleared.
+		// EMPTY THE BIN HERE rather than relying on a previous subtest to have
+		// done it. It used to lean on a ClearManifest_empties_bin subtest above,
+		// which was the only caller of bins.ClearManifest anywhere — so the
+		// function existed to keep this subtest's premise true and for nothing
+		// else. Deleting the dead function left this one reading a bin that still
+		// held two items, and the failure named the manifest rather than the
+		// coupling. A subtest that needs a state should establish it.
+		if _, err := db.DB.Exec(
+			`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0,
+			     manifest_confirmed=false, loaded_at=NULL WHERE id=$1`, bin.ID); err != nil {
+			t.Fatalf("empty the bin: %v", err)
+		}
 		m, err := bins.GetManifest(db.DB, bin.ID)
 		if err != nil {
 			t.Fatalf("bins.GetManifest empty: %v", err)

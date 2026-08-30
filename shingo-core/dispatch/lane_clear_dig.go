@@ -245,6 +245,23 @@ type laneClearResult struct {
 	// somebody improves the wording.
 	blockerClaimant int64
 	blockerBin      int64
+	// blockerCause is the CAUSE the refusal parks under, decided HERE, once, by
+	// the arm that read the refusal.
+	//
+	// FOUR ARMS USED TO DECIDE IT AND THEY DECIDED IT FROM THE SAME FACT. The
+	// lane-gate acceptance path, the complex reshuffle path and the planner path
+	// each wrote `if promised { promised } else { claimed }` in their own words,
+	// and digBlockerCause re-derived the same fork from the typed error a fourth
+	// time. Four spellings of one branch is four places to add the next refusal
+	// shape to, and three of them to forget.
+	//
+	// NOT the whole answer at every consumer, and that is deliberate rather than a
+	// gap: parkOnClaimedBlocker narrows `claimed` to dig-blocker-STOPPED when the
+	// holder's order turns out not to be moving. That is a live liveness read
+	// taken at park time, about a fact this producer cannot see, so it stays with
+	// the reader that takes it. What is centralized is the fork this struct
+	// already had the input for.
+	blockerCause QueueCause
 	// blockerPromised says WHICH refusal this was, and the difference is the
 	// releaser. False: the holder has a hard claim, so a robot is driving the
 	// blocker out and the wait is that drive. True: the ranked take (§7) refused
@@ -489,6 +506,10 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 				err:             fmt.Errorf("blocker bin %d is claimed by order %d", step.BinID, *b.ClaimedBy),
 				blockerClaimant: *b.ClaimedBy,
 				blockerBin:      step.BinID,
+				// A HARD CLAIM, so a robot is carrying the blocker out. The
+				// pre-check only ever catches this shape — binIsUnclaimed reads a
+				// claim, and a promise is not one.
+				blockerCause: CauseDigBlockerClaimed,
 			}
 		}
 	}
@@ -556,10 +577,16 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 				blockerClaimant: refused.HolderID,
 				blockerBin:      refused.BinID,
 				blockerPromised: refused.Promised,
+				blockerCause:    digBlockerCause(err),
 			}
 		}
 		if errors.Is(err, store.ErrBlockerClaimed) {
-			return laneClearResult{outcome: laneClearBlockerClaimed, err: err}
+			// The untyped sentinel: a claim refused the dig and nothing said which
+			// kind. digBlockerCause answers `claimed` for it, which is both the
+			// commoner shape and the one whose sentence describes a drive already
+			// under way rather than a queue position.
+			return laneClearResult{outcome: laneClearBlockerClaimed, err: err,
+				blockerCause: digBlockerCause(err)}
 		}
 		return laneClearResult{outcome: laneClearUnplannable, err: err}
 	}

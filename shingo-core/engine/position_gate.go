@@ -105,8 +105,12 @@ func (e *Engine) CanEnterPosition(vendorOrderID, location, binTask string) (bool
 // reader that wants occupancy gets occupancy; a reader that wants the gate's
 // full decision calls the gate.
 //
-// Retired bins are not obstructions: the row survives for audit, the carrier is
-// gone from the floor.
+// Retired bins are not obstructions — the row survives for audit, the carrier is
+// gone from the floor — and there is no arm here for them because there does not
+// need to be: bins.ListByNode's own WHERE carries `b.status != 'retired'`, so
+// they never arrive. There WAS one, skipping a status the query had already
+// excluded, and the exclusion is stated here rather than re-implemented so a
+// reader is not left thinking the guard is load-bearing.
 func (e *Engine) positionOccupiedBy(location string, forOrderID int64) (*bins.Bin, bool) {
 	node, err := e.db.GetNodeByDotName(location)
 	if err != nil || node == nil || node.IsSynthetic {
@@ -117,9 +121,6 @@ func (e *Engine) positionOccupiedBy(location string, forOrderID int64) (*bins.Bi
 		return nil, false
 	}
 	for _, b := range residents {
-		if b.Status == "retired" {
-			continue
-		}
 		if forOrderID != 0 && b.ClaimedBy != nil && *b.ClaimedBy == forOrderID {
 			continue
 		}

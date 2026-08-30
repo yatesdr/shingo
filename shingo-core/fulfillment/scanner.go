@@ -248,7 +248,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// order.ID self-exclusion (A7): the in-flight tally counts `sourcing` orders,
 	// so a self-retrying order must not count its own row.
 	if blocked, cap := dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.QueueCause(cap.Cause), cap.Params)
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 		return false
 	}
 
@@ -304,7 +304,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// unknown outcome instead of letting a default arm mis-file it.
 	switch dispatch.MapFinderOutcome(res) {
 	case dispatch.OutcomeWait:
-		s.setQueueReason(order, res.QueueCode, dispatch.QueueCause(res.QueueCause), res.QueueParams)
+		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
 		return false
 	case dispatch.OutcomeReshuffle:
 		// Plan the reshuffle HERE, not only at intake. planTransport runs once, at
@@ -440,22 +440,20 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		return false
 	}
 	// destNode comes from the settle, not from a read taken before it.
-	destNode, rErr := s.dispatcher.ReserveStorageDropoff(order)
-	if rErr != nil {
-		// An unresolved group is not slot contention — it is a destination that
-		// was never narrowed to one. Name it, or the row blames the slot layer for
-		// a resolution that never ran.
-		cause := dispatch.CauseStoreSlotContended
-		if dispatch.IsSyntheticUnresolved(rErr) {
-			cause = dispatch.CauseNGRPResolve
-		}
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
+	// THE CAUSE COMES FROM THE VERDICT. This site and the held-bin one below used
+	// to derive it themselves, from the same four lines, and both got a hard read
+	// failure wrong the same way — parking it as "the destination slot is
+	// contended", which sends an operator to a slot that is probably empty.
+	dest := s.dispatcher.ReserveStorageDropoff(order)
+	if dest.Refused() {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, dest.Cause,
 			dispatch.QueueParams{Destination: order.DeliveryNode})
-		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "destination slot contended"); qerr != nil {
-			s.logTransition(order.ID, "→ sourcing after reserve conflict", qerr)
+		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "destination not secured"); qerr != nil {
+			s.logTransition(order.ID, "→ sourcing after reserve refusal", qerr)
 		}
 		return false
 	}
+	destNode := dest.Node
 
 	// Bin SOFT-acquire: a pending reservation (no hard claim). On a lost race the
 	// bin was reserved by a concurrent order — park under waiting_for_material and
@@ -595,19 +593,17 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// a no-op for non-storage dests). Owner-idempotent, so a store that reserved at
 	// intake passes through; a loser (or a slot that filled) requeues holding its
 	// bin, never dropping into an occupied slot (#115/#117, generalized).
-	destNode, rErr := s.dispatcher.ReserveStorageDropoff(order)
-	if rErr != nil {
-		cause := dispatch.CauseStoreSlotContended
-		if dispatch.IsSyntheticUnresolved(rErr) {
-			cause = dispatch.CauseNGRPResolve
-		}
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
+	dest := s.dispatcher.ReserveStorageDropoff(order)
+	if dest.Refused() {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, dest.Cause,
 			dispatch.QueueParams{Destination: order.DeliveryNode})
 		if s.debugLog != nil {
-			s.debugLog("fulfillment: held-bin order %d holding — destination slot not secured: %v", order.ID, rErr)
+			s.debugLog("fulfillment: held-bin order %d holding — destination not secured (%s): %v",
+				order.ID, dest.Cause, dest.Err)
 		}
 		return false
 	}
+	destNode := dest.Node
 	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dispatching held bin"); err != nil {
 		// Same yield as the fresh-bin path: ConfirmForDispatch and
 		// DispatchDirect follow, and DispatchDirect commits a robot.

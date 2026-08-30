@@ -99,6 +99,17 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 	// and a cold press with a bare paired position is exactly the cell that
 	// needs priming. Ordering these the other way makes the fix unreachable on
 	// the plant it was written for.
+	//
+	// THE UNWIRED COUNTER HAS A SECOND READER, and this is the place a person
+	// looking at RemainingUOPCached will be standing. binDrainedAtCoreNode asks
+	// the same field whether a press position has been drained, and the
+	// reuse-compatible-bins shortcut skips a press-index swap when it says yes.
+	// At a press whose counter is not wired that predicate answers "drained" for
+	// every position. It gates nothing at Springfield today — ReuseCompatibleBins
+	// has no plantspec key and no fixture sets it, so it takes an operator
+	// flipping the Edge column AND running a changeover — but enabling that flag
+	// before wiring the counter would skip swaps that need to happen. Wire the
+	// counter first.
 	// primedPositions gates the ORDER, not the suppression. A position that is
 	// still physically bare cannot be indexed from, whether or not the empty
 	// filling it is already on its way — so the swap stays suppressed for as

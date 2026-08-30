@@ -245,7 +245,7 @@ func (e *Engine) planChangeover(processID, toStyleID int64, materializePositions
 // no tooling at all. A pass that cannot be reached by another pass's
 // output does not need a slot in this ordering.
 func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []ChangeoverNodeDiff) ([]ChangeoverNodeDiff, error) {
-	diffs = ApplyReuseCompatibleBinsShortcut(diffs, e.binEmptyAtCoreNode(processID))
+	diffs = ApplyReuseCompatibleBinsShortcut(diffs, e.binDrainedAtCoreNode(processID))
 	if err := e.refusePressIndexWhenCoreUnavailable(diffs); err != nil {
 		return nil, err
 	}

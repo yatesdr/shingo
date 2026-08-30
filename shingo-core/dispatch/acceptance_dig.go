@@ -202,7 +202,7 @@ func (d *Dispatcher) summonOwnDigs(lane *nodes.Node, req acceptanceRequest) {
 				"to order %d, whose demand outranks it. No robot is moving that bin; the wait ends "+
 				"when order %d takes it or ends",
 				req.order.ID, lane.Name, res.blockerBin, res.blockerClaimant, res.blockerClaimant)
-			d.setQueueReason(req.order, protocol.QueueStorageRearranging, CauseDigBlockerPromised,
+			d.setQueueReason(req.order, protocol.QueueStorageRearranging, res.blockerCause,
 				QueueParams{Lane: lane.Name, Payload: req.order.PayloadCode,
 					HolderOrderID: res.blockerClaimant})
 			return
@@ -293,8 +293,11 @@ func (d *Dispatcher) parkOnClaimedBlocker(lane *nodes.Node, req acceptanceReques
 		stopped = false
 	}
 	if !stopped {
-		// A robot is already carrying the wall out. The wait ends when it does.
-		d.setQueueReason(req.order, protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
+		// A robot is already carrying the wall out. The wait ends when it does —
+		// which is what the producer's cause says, and this arm does not re-decide
+		// it. What this arm decides is the NARROWING below: the holder is not
+		// moving, so the wait is not a drive at all.
+		d.setQueueReason(req.order, protocol.QueueStorageRearranging, res.blockerCause,
 			QueueParams{Lane: lane.Name})
 		return
 	}

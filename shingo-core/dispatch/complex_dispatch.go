@@ -264,15 +264,19 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 			QueueParams{Destination: order.DeliveryNode})
 		return dispatchStep{done: true, err: hErr}
 	}
-	admitted, aErr := d.acquireOrderLanes(order.ID, holds)
-	if aErr != nil {
-		log.Printf("dispatch: acquiring lanes for complex order %d: %v (holding)", order.ID, aErr)
+	adm := d.acquireOrderLanes(order.ID, holds)
+	if adm.err != nil {
+		log.Printf("dispatch: acquiring lanes for complex order %d: %v (holding)", order.ID, adm.err)
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLaneAcquireError,
 			QueueParams{Destination: order.DeliveryNode})
-		return dispatchStep{done: true, err: aErr}
+		return dispatchStep{done: true, err: adm.err}
 	}
-	if !admitted {
-		cause := d.causeForLaneHolds(order.ID, holds)
+	if !adm.admitted {
+		// THE CAUSE COMES FROM THE VERDICT. This site used to re-query every lane's
+		// mouth rows after the refusal, which is a second read of the state that
+		// just decided — and lane mouths move between two reads, because what
+		// refuses this order is another order finishing with the lane.
+		cause := adm.cause
 		laneName := d.laneDisplayName(holds)
 		d.dbg("complex: order %d could not take the mouth on lane %s (%s)", order.ID, laneName, cause)
 		// The mouth refusal is the same family as the admission one above, and its
@@ -363,7 +367,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 	if hold != nil {
 		switch MapFinderOutcome(*hold) {
 		case OutcomeWait:
-			d.setQueueReason(order, hold.QueueCode, QueueCause(hold.QueueCause), hold.QueueParams)
+			d.setQueueReason(order, hold.QueueCode, hold.QueueCause, hold.QueueParams)
 			d.dbg("complex: order %d supply pickup waiting for material (%s)", order.ID, hold.QueueCause)
 			return nil, dispatchStep{done: true, err: fmt.Errorf("supply pickup waiting for material: %s", hold.QueueCause)}
 		case OutcomeReshuffle:

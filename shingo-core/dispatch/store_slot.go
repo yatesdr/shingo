@@ -13,6 +13,86 @@ import (
 	"shingocore/store/reservations"
 )
 
+// ── THE REFUSAL NAMES ITS OWN CAUSE ───────────────────────────────────────
+//
+// ReserveStorageDropoff can refuse for three reasons that look identical to a
+// caller reading a bare error, and they are three different waits:
+//
+//	CONTENDED    a carrier stands in the slot, or another order reserved it
+//	             first. Clears when that carrier leaves. Genuine backpressure.
+//	UNRESOLVED   the destination still names a GROUP and no child of it can
+//	             take the bin. Clears when the group frees up — and the operator
+//	             has to look at the group, not at any one slot.
+//	UNREADABLE   a database read failed. Clears when the database answers, and
+//	             NOTHING about the slot is known.
+//
+// Both scanner call sites classified this with the same four hand-written lines
+// — unresolved-group if IsSyntheticUnresolved, otherwise slot-contended — so
+// every hard read failure parked as "the destination slot is contended". That
+// sends an operator to a slot that is probably empty, to wait for a carrier that
+// is not there, on a wait that will not clear until a database does.
+//
+// The decision moves to the arm that made it. Callers read StorageDropoff.Cause
+// and write it; they no longer re-derive it, and a fourth refusal shape added
+// here cannot be silently absorbed into "contended".
+//
+// The two sentinels are wrapped rather than returned bare so the message keeps
+// the node, the count and the order id it always carried — the log line is what
+// somebody reads at three in the morning, and it is not made better by being
+// shorter.
+
+// ErrSlotContended marks a refusal caused by the slot being taken — a carrier
+// standing in it, or another order's reservation. It is the only shape that is
+// honest backpressure.
+var ErrSlotContended = errors.New("store slot contended")
+
+// ErrSlotUnreadable marks a refusal caused by a failed read rather than by any
+// fact about the slot.
+var ErrSlotUnreadable = errors.New("store slot state unreadable")
+
+// errRead wraps a read failure so classification survives the message wrap. A
+// nil err still yields a non-nil sentinel: the two call sites that use it both
+// fire on `err != nil || node == nil`, and a missing node with no error is
+// exactly as unreadable as an error is.
+func errRead(err error) error {
+	if err == nil {
+		return ErrSlotUnreadable
+	}
+	return fmt.Errorf("%w: %v", ErrSlotUnreadable, err)
+}
+
+// StorageDropoff is one ReserveStorageDropoff decision: where the order is
+// actually going, or why it cannot go yet and under which cause it parks.
+//
+// Node is non-nil exactly when Err is nil, and it is the SETTLED destination —
+// a group resolved to a child, a store re-aimed off a dug lane. It is the only
+// node a caller may use afterwards; the one it read before calling is stale.
+type StorageDropoff struct {
+	Node  *nodes.Node
+	Cause QueueCause
+	Err   error
+}
+
+// Refused reports whether the reserve failed. Callers park on true.
+func (r StorageDropoff) Refused() bool { return r.Err != nil }
+
+// causeForStorageDropoff maps a refusal to the cause its wait parks under.
+//
+// The default is the UNDETERMINED reading, not the contended one, and that
+// direction is the whole point: an unrecognised refusal is a refusal nobody has
+// classified, and calling it contention is a confident claim the code has not
+// earned. CauseCapacityCheckFailed is the existing member of that family.
+func causeForStorageDropoff(err error) QueueCause {
+	switch {
+	case IsSyntheticUnresolved(err):
+		return CauseNGRPResolve
+	case errors.Is(err, ErrSlotContended):
+		return CauseStoreSlotContended
+	default:
+		return CauseCapacityCheckFailed
+	}
+}
+
 // claimStoreSlot atomically secures `node` as a store order's destination slot
 // (#115/#117). Two concurrent stores that resolve the same destination used to
 // both pass a capacity READ and both dispatch, dropping two bins into one
@@ -46,10 +126,15 @@ func claimStoreSlot(db *store.DB, order *orders.Order, node *nodes.Node) error {
 	// Occupancy guard: never dispatch a store into an occupied single-bin node.
 	cnt, err := db.CountBinsByNode(node.ID)
 	if err != nil {
-		return fmt.Errorf("store order %d: count bins at %s: %w", order.ID, node.Name, err)
+		// UNREADABLE IS NOT CONTENDED. The caller parks either way, but under
+		// different causes and with different releasers: a contended slot clears
+		// when a carrier leaves, and an unreadable one clears when the database
+		// answers. Collapsing them told an operator to go and look at a slot that
+		// was probably empty.
+		return fmt.Errorf("store order %d: count bins at %s: %w", order.ID, node.Name, errRead(err))
 	}
 	if cnt > 0 {
-		return fmt.Errorf("store slot %s occupied (%d bin(s))", node.Name, cnt)
+		return fmt.Errorf("%w: store slot %s occupied (%d bin(s))", ErrSlotContended, node.Name, cnt)
 	}
 	// Cross-order exclusivity via a pending slot reservation. Owner-aware: reuse
 	// one this order already holds so a replay tick doesn't self-conflict.
@@ -58,9 +143,15 @@ func claimStoreSlot(db *store.DB, order *orders.Order, node *nodes.Node) error {
 	}
 	if err := db.ReserveSlot(node.ID, order.ID); err != nil {
 		// ErrReservationConflict here means another store already reserved this
-		// slot — the caller requeues and waits. A hard DB error is likewise not
-		// safe to dispatch on, so surface both.
-		return fmt.Errorf("reserve store slot %s for order %d: %w", node.Name, order.ID, err)
+		// slot — the caller requeues and waits, and that IS contention. A hard DB
+		// error is likewise not safe to dispatch on, but it is a different wait
+		// with a different releaser, so the two are tagged apart rather than
+		// surfaced as one.
+		if errors.Is(err, reservations.ErrReservationConflict) {
+			return fmt.Errorf("%w: reserve store slot %s for order %d: %v",
+				ErrSlotContended, node.Name, order.ID, err)
+		}
+		return fmt.Errorf("reserve store slot %s for order %d: %w", node.Name, order.ID, errRead(err))
 	}
 	return nil
 }
@@ -117,7 +208,7 @@ func reserveStorageDropoff(db *store.DB, order *orders.Order) error {
 	}
 	node, err := db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil || node == nil {
-		return fmt.Errorf("plain order %d delivery node %q not found: %w", order.ID, order.DeliveryNode, err)
+		return fmt.Errorf("plain order %d delivery node %q not found: %w", order.ID, order.DeliveryNode, errRead(err))
 	}
 	return claimStoreSlot(db, order, node)
 }
@@ -137,22 +228,27 @@ func reserveStorageDropoff(db *store.DB, order *orders.Order) error {
 // into the lane declaration, the slot confirm, and the transport plan: the
 // record was right and the robot still drove into the dug lane. Nil error ⇒ the
 // returned node is where the order is going, and the only one a caller may use.
-func (d *Dispatcher) ReserveStorageDropoff(order *orders.Order) (*nodes.Node, error) {
+func (d *Dispatcher) ReserveStorageDropoff(order *orders.Order) StorageDropoff {
+	refuse := func(err error) StorageDropoff {
+		return StorageDropoff{Cause: causeForStorageDropoff(err), Err: err}
+	}
 	if err := d.resolveSyntheticDropoff(order); err != nil {
-		return nil, err
+		return refuse(err)
 	}
 	d.redirectStoreOffDugLane(order)
 	if err := reserveStorageDropoff(d.db, order); err != nil {
-		return nil, err
+		return refuse(err)
 	}
 	node, err := d.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
-		return nil, fmt.Errorf("read settled destination %q for order %d: %w", order.DeliveryNode, order.ID, err)
+		return refuse(fmt.Errorf("read settled destination %q for order %d: %w",
+			order.DeliveryNode, order.ID, errRead(err)))
 	}
 	if node == nil {
-		return nil, fmt.Errorf("settled destination %q for order %d does not exist", order.DeliveryNode, order.ID)
+		return refuse(fmt.Errorf("settled destination %q for order %d does not exist: %w",
+			order.DeliveryNode, order.ID, ErrSlotUnreadable))
 	}
-	return node, nil
+	return StorageDropoff{Node: node}
 }
 
 // SyntheticUnresolved is the refusal when a destination still names a synthetic
@@ -349,4 +445,18 @@ func (d *Dispatcher) confirmDropoffSlot(order *orders.Order, destNode *nodes.Nod
 		return d.db.ConfirmSlotReservation(destNode.ID, order.ID)
 	}
 	return d.db.ConfirmSlotClaim(destNode.ID, order.ID)
+}
+
+// RefuseStorageDropoffForTest builds the refusal a real ReserveStorageDropoff
+// would return for err, so a test seam standing in for the Dispatcher classifies
+// through the SAME mapper production uses.
+//
+// EXPORTED FOR TESTS AND SAID SO IN THE NAME. A stub that picked its own cause
+// could not tell a test anything about which cause a given failure earns — and
+// "which cause does this failure earn" is precisely the question a hard database
+// error being parked as `store-slot-contended` got wrong. Routing the seam
+// through causeForStorageDropoff makes the fulfillment tests assertions about
+// production behaviour rather than about the stub.
+func RefuseStorageDropoffForTest(err error) StorageDropoff {
+	return StorageDropoff{Cause: causeForStorageDropoff(err), Err: err}
 }

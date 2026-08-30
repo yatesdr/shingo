@@ -424,19 +424,46 @@ func (d *Dispatcher) resolvePlanLaneHolds(steps []resolvedStep) ([]laneHold, err
 	return holds, nil
 }
 
+// laneAdmission is one acquireOrderLanes decision, carrying the cause the park
+// needs.
+//
+// ── THE REFUSAL AND ITS LABEL ARE ONE READ ────────────────────────────────
+//
+// Both callers used to refuse here and then call causeForLaneHolds separately,
+// which re-queries ActiveMouthRows for every lane the order wanted. That is a
+// SECOND read of the same state, taken after the first one had already decided —
+// and lane mouths are exactly the state that moves between two reads, because
+// the thing that refuses this order is another order finishing with the lane.
+// The two answers disagreeing is invisible at a park: the row would carry a
+// cause describing a hold that had already cleared, and the operator would be
+// sent to a lane nobody is in.
+//
+// One refusal, one classification, one value. Same shape as the swap gate's
+// verdict and the storage-dropoff verdict: the arm that made the decision is the
+// only thing that can name it.
+type laneAdmission struct {
+	admitted bool
+	cause    QueueCause // zero when admitted
+	err      error
+}
+
 // acquireOrderLanes takes every hold the order needs, all-or-nothing across
-// modes. It returns admitted=false on a mode conflict (the caller requeues the
-// order in sourcing under WAITING_FOR_SLOT, per Rule 1); a non-nil error is a
-// transient DB failure. With no holds (the common, unconfigured case) it admits
-// immediately.
+// modes, and on a refusal names the cause the caller parks under. A non-nil
+// verdict.err is a transient DB failure; the caller requeues the order in
+// sourcing under WAITING_FOR_SLOT, per Rule 1. With no holds (the common,
+// unconfigured case) it admits immediately.
 //
 // AcquireLanes is per-mode all-or-nothing; an order picking from one lane and
 // dropping into another needs one call per mode, so a conflict on the second
 // mode rolls back the first via the order-scoped ReleaseLanesByOwner. All rows
 // are owned by the order, so that release reclaims exactly this gate's takes.
-func (d *Dispatcher) acquireOrderLanes(orderID int64, holds []laneHold) (admitted bool, err error) {
+//
+// THE CLASSIFICATION IS TAKEN AFTER THE ROLLBACK, which is where it always
+// happened — the callers ran it later still. Classifying before would read this
+// order's own rows as competing traffic and label its wait after itself.
+func (d *Dispatcher) acquireOrderLanes(orderID int64, holds []laneHold) laneAdmission {
 	if len(holds) == 0 {
-		return true, nil
+		return laneAdmission{admitted: true}
 	}
 	byMode := map[reservations.Mode][]int64{}
 	for _, h := range holds {
@@ -466,12 +493,12 @@ func (d *Dispatcher) acquireOrderLanes(orderID int64, holds []laneHold) (admitte
 				// dweller is waiting on this release — the caller parks and the
 				// ordinary triggers re-ask.
 				_, _ = reservations.ReleaseLanesByOwner(d.db.DB, orderID)
-				return false, nil
+				return laneAdmission{cause: d.causeForLaneHolds(orderID, holds)}
 			}
-			return false, aErr
+			return laneAdmission{err: aErr}
 		}
 	}
-	return true, nil
+	return laneAdmission{admitted: true}
 }
 
 // releaseOrderLaneFor releases the order's mouth hold on the lane that contains
@@ -922,14 +949,15 @@ func (d *Dispatcher) AcquireLanesForOrder(order *orders.Order, sourceNode, destN
 	if len(holds) == 0 {
 		return true, "", "", nil // nothing gated by the MOUTH — the dig is answered above
 	}
-	admitted, err = d.acquireOrderLanes(order.ID, holds)
-	if err != nil {
-		return false, "", "", err
+	adm := d.acquireOrderLanes(order.ID, holds)
+	if adm.err != nil {
+		return false, "", "", adm.err
 	}
-	if admitted {
+	if adm.admitted {
 		return true, "", "", nil
 	}
-	return false, d.causeForLaneHolds(order.ID, holds), d.laneDisplayName(holds), nil
+	// THE CAUSE COMES FROM THE VERDICT, not from a second read taken here.
+	return false, adm.cause, d.laneDisplayName(holds), nil
 }
 
 // BuriedForHeldBin builds the BuriedError for an order whose HELD bin has become

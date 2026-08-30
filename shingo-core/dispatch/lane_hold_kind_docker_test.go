@@ -72,7 +72,8 @@ func TestLaneHoldKind_ASourceLockIsNotAnExcavation(t *testing.T) {
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 		demand := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "hkind-src" })
-		admitted, err := d.acquireOrderLanes(demand.ID, []laneHold{{laneID: laneID, mode: reservations.ModeDig}})
+		adm := d.acquireOrderLanes(demand.ID, []laneHold{{laneID: laneID, mode: reservations.ModeDig}})
+		admitted, err := adm.admitted, adm.err
 		if err != nil || !admitted {
 			t.Fatalf("the demand could not take its own source hold: admitted=%v err=%v", admitted, err)
 		}
@@ -134,7 +135,8 @@ func TestLaneHoldKind_ASourceLockIsNotAnExcavation(t *testing.T) {
 
 		demand := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "hkind-self" })
 		// 1. The §R.101 source hold, exactly as resolveOrderLaneHolds takes it.
-		admitted, err := d.acquireOrderLanes(demand.ID, []laneHold{{laneID: laneID, mode: reservations.ModeDig}})
+		adm := d.acquireOrderLanes(demand.ID, []laneHold{{laneID: laneID, mode: reservations.ModeDig}})
+		admitted, err := adm.admitted, adm.err
 		if err != nil || !admitted {
 			t.Fatalf("source hold not admitted: admitted=%v err=%v", admitted, err)
 		}
