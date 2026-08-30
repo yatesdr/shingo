@@ -776,6 +776,36 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	finalChecked := isConcreteStorageDropoff(d.db, order.DeliveryNode)
 	if finalChecked {
 		if blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
+			// ── A FUNGIBLE DROPOFF RE-ASKS RATHER THAN WAITING ON ONE SLOT ────
+			//
+			// The step remembers the group it was resolved from, and resolvedStep.Group
+			// says why in as many words: "Retained so a store drop-off that loses the
+			// dispatch-time slot claim can revert Node->Group and be re-resolved to a
+			// free slot on the next scanner tick." The allocator already does exactly
+			// that when a slot RESERVATION conflicts (allocator.go, the escape valve).
+			// This arm — the CAPACITY block — did not, and the difference is the whole
+			// defect: an occupied slot parked the order on that one slot forever while
+			// its siblings stood empty.
+			//
+			// GATED SIM 2026-08-31, order 227. A CLIP evac out of ALN_006 was bound to
+			// SMN_015, which held an unrelated STUD bin. SMN_013 and SMN_014, the same
+			// lane, were EMPTY the whole time. The order re-queued 4,520 times — 96% of
+			// every dropoff-occupied event in the run — and never re-asked. Worse than
+			// the spin: it was the evac for ALN_006, so the cell kept the bin nobody was
+			// coming for, and the supply leg (order 225) stood HOLDING at that cell
+			// unable to place. One un-re-asked slot pinned two orders and a machine.
+			//
+			// Reverting the node to its group is not a new destination-picking path; it
+			// is handing the question back to the one that already exists. If the whole
+			// group is genuinely full, reResolveComplexSteps parks the order on
+			// ngrp-resolve next tick — a wait whose releaser is "any slot in the group
+			// frees", which is true, instead of "this one slot frees", which was not.
+			if reverted := d.revertFungibleDropoffToGroup(order, resolvedSteps); reverted {
+				d.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
+				d.dbg("complex: order %d dropoff %s blocked (%s) — reverted to its group so the next "+
+					"tick re-resolves", order.ID, order.DeliveryNode, cap.Cause)
+				return dispatchStep{done: true, err: fmt.Errorf("dropoff capacity: %s (re-asking the group)", cap.Cause)}
+			}
 			// cap.Cause, not the coarse tag — see CauseDropoffCapacity's own note.
 			d.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 			d.dbg("complex: order %d queued — concrete storage dropoff %s blocked: %s", order.ID, order.DeliveryNode, cap.Cause)
@@ -1024,4 +1054,42 @@ func (d *Dispatcher) persistWidenedPlan(order *orders.Order, newSteps []resolved
 			order.DeliveryNode = newDelivery
 		}
 	}
+}
+
+// revertFungibleDropoffToGroup puts a blocked dropoff step back to the node
+// group it was resolved from, so the next tick re-resolves it against a lane
+// that can actually take the bin. Reports whether it changed anything.
+//
+// It is the CAPACITY-block twin of the allocator's reservation-conflict escape
+// valve, and it uses the same field for the same reason (resolvedStep.Group).
+// The two are deliberately separate call sites rather than one shared helper:
+// they fire on different facts — "somebody else reserved the slot" and "there is
+// a bin standing on it" — and the allocator's arm has a partial-reserve rollback
+// around it that this one must not inherit.
+//
+// ONLY THE FINAL DROPOFF, and only when it is fungible. A step with no Group was
+// named concretely by whoever authored the plan (a loader home, a staging node, a
+// line position) and re-picking it would be Core overruling the author — the same
+// rule redirectStoreOffDugLane states for an operator's choice. Those keep the
+// old behaviour: hold, and retry the one slot.
+func (d *Dispatcher) revertFungibleDropoffToGroup(order *orders.Order, steps []resolvedStep) bool {
+	idx := -1
+	for i, s := range steps {
+		if s.Action != protocol.ActionDropoff || s.Node != order.DeliveryNode || s.Group == "" {
+			continue
+		}
+		idx = i // the LAST matching dropoff is the final one, which is what DeliveryNode names
+	}
+	if idx < 0 {
+		return false
+	}
+	group := steps[idx].Group
+	if group == steps[idx].Node {
+		return false // already sitting at the group; nothing to revert
+	}
+	log.Printf("dispatch: complex order %d dropoff %s is occupied — reverting to group %s so the next "+
+		"tick picks a slot that can take it", order.ID, steps[idx].Node, group)
+	steps[idx].Node = group
+	d.persistWidenedPlan(order, steps)
+	return true
 }
