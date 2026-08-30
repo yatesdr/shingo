@@ -313,6 +313,13 @@ func digClause(p QueueParams) string {
 // holding removal leg until supply sibling claims a bin" — it explained WHICH
 // leg this is and what it is waiting for. Sibling was passed all along and
 // never read.
+//
+// Both faces of the swap gate wait on the same thing — the partner committing —
+// so one sentence serves both. A face whose wait ended somewhere else would need
+// a sentence that REPLACES this one rather than extending it (the call
+// slotSentence makes for DestUnresolved and AtLevel): "holding until the partner
+// secures a bin" would be false, not merely vague, and a clause bolted onto a
+// false base is a false sentence.
 func partnerSentence(p QueueParams) string {
 	if p.Sibling == "" {
 		return "Waiting for partner robot"

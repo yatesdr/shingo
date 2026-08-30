@@ -7,11 +7,57 @@ import (
 	"shingocore/store/orders"
 )
 
-// swapLegHeld reports whether a coordinated-swap leg must stay queued because its
-// commit on the shared LINE node is unsafe until its sibling has done its part.
+// swapHoldVerdict is one swap-gate decision, carrying everything the park needs.
+//
+// ── WHY THE DECISION AND THE PARK ARE ONE VALUE ───────────────────────────
+//
+// The arm that made the decision is the only thing that knows what the wait is,
+// so it is the only thing that can name it. Today both faces park under
+// `swap-hold` and the caller could in principle hardcode that — but hardcoding
+// it at the call site is how a cause and its arm drift apart: the next face
+// added here gets its cause written by a line that never saw the decision. The
+// verdict carries the cause so that adding an arm cannot silently mis-label a
+// park, which is the same "the verdict names the cause" shape the reserve and
+// lane-clear doors use.
+//
+// Re-asking the gate at the park would be a second evaluation of the same
+// question against a database that may have moved between them — and a park is
+// exactly where the two answers disagreeing is invisible. One decision, one
+// value, one write.
+type swapHoldVerdict struct {
+	held   bool
+	reason string     // the engineer-facing log line
+	cause  QueueCause // zero when not held
+	params QueueParams
+}
+
+// swapHold is the verdict for both faces, which share a cause and a params
+// shape. An arm whose wait ends on something other than the sibling committing
+// would build its own verdict rather than call this — the cause is what the
+// releaser row is keyed on.
+func swapHold(order *orders.Order, reason string) swapHoldVerdict {
+	return swapHoldVerdict{
+		held:   true,
+		reason: reason,
+		cause:  CauseSwapHold,
+		params: QueueParams{Sibling: order.SiblingOrderUUID},
+	}
+}
+
+// swapLegHeld is the BOOLEAN VIEW of the gate, for callers that only need the
+// answer — which is every test that pins a face, and nothing in production.
+// Kept so those pins keep asking the gate the way they always have.
+func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (bool, string) {
+	v := d.swapLegHoldVerdict(order, steps)
+	return v.held, v.reason
+}
+
+// swapLegHoldVerdict reports whether a coordinated-swap leg must stay queued
+// because its commit on the shared LINE node is unsafe until its sibling has done
+// its part, and under which cause it parks if so.
 // One gate, two faces of the same invariant — never let one leg physically commit
 // on the shared node while its partner cannot satisfy the precondition that makes
-// that commit safe. Returns (false, "") for non-swap orders and any leg whose
+// that commit safe. Returns the zero verdict for non-swap orders and any leg whose
 // commit is already safe. Fail-open on lookup errors: never freeze a robot on a
 // transient failure.
 //
@@ -31,6 +77,20 @@ import (
 //     two_robot supply's sibling is a plain evac already held on the supply, and
 //     holding both would deadlock.
 //
+// A THIRD FACE WAS BUILT AND BURIED, 2026-08-31 — read this before building it
+// again. It would have held a two_robot supply while its evac sibling was parked
+// pre-dispatch on a destination-capacity cause. It carried a same-resource
+// exemption: when the supply's own pickup is in the same room the evac is
+// blocked on, the supply IS the thing that frees that slot, so holding it
+// deadlocks the pair. That exemption is what emptied the face — every two_robot
+// claim in all three RUNNABLE plant specs has inbound_source equal to
+// outbound_destination (demo ALN_001/002/006/007 SYN_MARKET, ALN_008 PLK_H1;
+// lane-stress and lane-stress-packed ALN_001 SYN_STAMP, ALN_002/006/007
+// SYN_COMP), so every reachable claim is always exempt and the face can never
+// fire. Zero fires in a sim run was read as the arm working; it is the same
+// board a completely broken arm produces. The design record and SYNTH-round8
+// carry the incident and the full argument.
+//
 // The directions are asymmetric on purpose. A press-index evac (R1) stages the
 // fresh carrier the index leg (R2) later collects, so R1 must be free to run
 // first — holding R1 on R2 is the permanent deadlock
@@ -42,13 +102,13 @@ import (
 // from the steps (extractEndpoints = last pickup-or-dropoff), so a press-index R1
 // — ending by staging a carrier at the index node — looked like a removal leg
 // needing help. It isn't; it fetches that carrier itself.
-func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (bool, string) {
+func (d *Dispatcher) swapLegHoldVerdict(order *orders.Order, steps []resolvedStep) swapHoldVerdict {
 	sibUUID, err := d.db.OrderSiblingUUID(order.ID)
 	if err != nil {
 		// Transient DB read error — fail OPEN. Never freeze a robot on a flaky
 		// read; the next scanner tick re-evaluates.
 		log.Printf("dispatch: swap-hold sibling lookup for order %d: %v", order.ID, err)
-		return false, ""
+		return swapHoldVerdict{}
 	}
 	if sibUUID == "" {
 		// Not a swap leg. The sibling pointer is written ATOMICALLY in the
@@ -75,7 +135,7 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 		// drops at OutboundDestination, not the line) which legitimately has no
 		// supply sibling — failing it closed would freeze every sequential removal
 		// forever.
-		return false, ""
+		return swapHoldVerdict{}
 	}
 	sib, sibErr := d.db.GetOrderByUUID(sibUUID)
 
@@ -105,15 +165,15 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 		if sibErr != nil || sib == nil {
 			// Supply row should exist (created first, linked at intake); hold
 			// rather than strand the line if it is somehow missing.
-			return true, "swap: awaiting supply sibling"
+			return swapHold(order, "swap: awaiting supply sibling")
 		}
 		claimed, err := d.db.ListBinsByClaim(sib.ID)
 		if err != nil {
 			log.Printf("dispatch: swap-hold claim check for order %d sib %d: %v", order.ID, sib.ID, err)
-			return false, ""
+			return swapHoldVerdict{}
 		}
 		if len(claimed) > 0 {
-			return false, "" // supply is holding a replacement right now — release
+			return swapHoldVerdict{} // supply is holding a replacement right now — release
 		}
 		// ── AND A SUPPLY THAT HAS ALREADY DELIVERED ITS REPLACEMENT COUNTS ──
 		//
@@ -147,9 +207,9 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 		// was written for (ALN_003, 2026-06-03: never pull the line bin while the
 		// supermarket might be empty).
 		if swapLegCommittedToFleet(sib) {
-			return false, "" // supply already secured and staged/delivered it — release
+			return swapHoldVerdict{} // supply already secured and staged/delivered it — release
 		}
-		return true, "swap: holding removal leg until supply sibling secures a bin"
+		return swapHold(order, "swap: holding removal leg until supply sibling secures a bin")
 	}
 
 	// INDEX anti-collision: a leg that drops a bin onto the line waits until its
@@ -162,7 +222,7 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 			// first on this path, so it is normally present; never freeze on a
 			// flaky read, and never hold a filler we cannot confirm is paired with
 			// a self-sufficient evac.
-			return false, ""
+			return swapHoldVerdict{}
 		}
 		// A clearer that DIED never cleared the line, so its resident bin is still
 		// sitting there and this filler must not drive onto it. Checked before the
@@ -198,23 +258,23 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 			// happened. Observed the moment the moot narrowing started skipping these
 			// evacs at all: order 64 skipped, order 65 held on it indefinitely.
 			if kind == SwapTerminalSkipped {
-				return false, ""
+				return swapHoldVerdict{}
 			}
-			return true, "swap: holding filler — clearer sibling died without clearing the line"
+			return swapHold(order, "swap: holding filler — clearer sibling died without clearing the line")
 		}
 		sibSteps, ok := decodeSteps(sib.StepsJSON)
 		if !ok || !legSecuresOwnReplacement(sibSteps) {
 			// Sibling is not a self-sufficient evac (the two_robot supply case, or
 			// an unreadable peer) — its evac sibling is held on us; do not mutual-hold.
-			return false, ""
+			return swapHoldVerdict{}
 		}
 		if swapLegCommittedToFleet(sib) {
-			return false, "" // evac is committed to clearing the line — release
+			return swapHoldVerdict{} // evac is committed to clearing the line — release
 		}
-		return true, "swap: holding index leg until evac sibling clears the line"
+		return swapHold(order, "swap: holding index leg until evac sibling clears the line")
 	}
 
-	return false, ""
+	return swapHoldVerdict{}
 }
 
 // swapLegCommittedToFleet reports whether a swap sibling has committed to the

@@ -705,10 +705,16 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 	// Reads the RESOLVED steps, not the raw ones: NGRP names have been resolved
 	// to concrete nodes by now, and the line node is concrete either way, so the
 	// pickup/dropoff shape the gate depends on is stable across resolution.
-	if held, reason := d.swapLegHeld(order, resolvedSteps); held {
-		d.setQueueReason(order, protocol.QueueWaitingForPartner, CauseSwapHold, QueueParams{Sibling: order.SiblingOrderUUID})
-		d.dbg("complex: order %d held — %s", order.ID, reason)
-		return dispatchStep{done: true, err: fmt.Errorf("swap hold: %s", reason)}
+	// THE CAUSE COMES FROM THE VERDICT, not from this call site. Both faces park
+	// under `swap-hold` today, so this site could hardcode it — and that is
+	// exactly how a cause and the arm that earned it drift apart: a face added
+	// later gets its cause written by a line that never saw the decision. The arm
+	// that made the decision is the only thing that can name it — see
+	// swapHoldVerdict.
+	if v := d.swapLegHoldVerdict(order, resolvedSteps); v.held {
+		d.setQueueReason(order, protocol.QueueWaitingForPartner, v.cause, v.params)
+		d.dbg("complex: order %d held — %s", order.ID, v.reason)
+		return dispatchStep{done: true, err: fmt.Errorf("swap hold: %s", v.reason)}
 	}
 
 	return dispatchStep{}
