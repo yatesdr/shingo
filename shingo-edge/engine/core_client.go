@@ -385,10 +385,44 @@ type BinLoadRequest struct {
 	Manifest    []ManifestItem `json:"manifest"`
 }
 
+// coreErrorText picks the readable half of a failed Core reply.
+//
+// ── WHY THIS EXISTS, AND WHAT IT COST NOT TO ──────────────────────────────
+//
+// Core answers a failure in TWO shapes and these structs only knew one. The
+// success-shaped handlers reply {"status":"error","detail":"..."} and the
+// generic refusals go through www.jsonError, which writes {"error":"..."} —
+// a field none of the three response types declared. So every jsonError
+// refusal decoded into a zero struct, `detail` came out empty, and the caller
+// logged the status code alone.
+//
+// MEASURED, sim 2026-08-30: the sim operator's auto-clear failed 115 times in
+// one run, eight retries each, and every line said `clear bin: core returned
+// 400`. The actual sentence Core sent — "no bin at node FGN_001" — was decoded
+// into a field that did not exist and thrown away. A carrier that is never
+// cleared is a carrier that never rejoins the empty pool, so this is the
+// diagnostic half of the empties famine, and it was invisible for as long as
+// the reason was.
+//
+// Order matters: detail first (the richer, deliberate field), then error, then
+// the bare status code so a caller always gets SOMETHING.
+func coreErrorText(detail, errText string, statusCode int) string {
+	if detail != "" {
+		return detail
+	}
+	if errText != "" {
+		return errText
+	}
+	return fmt.Sprintf("core returned %d", statusCode)
+}
+
 // BinLoadResponse is Core's response after loading a bin.
 type BinLoadResponse struct {
-	Status       string `json:"status"`
-	Detail       string `json:"detail,omitempty"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+	// Error is the OTHER shape Core answers a failure in, and not having it
+	// here cost 115 unattributable log lines in one sim run. See coreErrorText.
+	Error        string `json:"error,omitempty"`
 	BinID        int64  `json:"bin_id,omitempty"`
 	BinLabel     string `json:"bin_label,omitempty"`
 	PayloadCode  string `json:"payload_code,omitempty"`
@@ -419,11 +453,7 @@ func (c *CoreClient) LoadBin(req *BinLoadRequest) (*BinLoadResponse, error) {
 		return nil, fmt.Errorf("decode bin-load response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK || result.Status == "error" {
-		detail := result.Detail
-		if detail == "" {
-			detail = fmt.Sprintf("core returned %d", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("%s", detail)
+		return nil, fmt.Errorf("%s", coreErrorText(result.Detail, result.Error, resp.StatusCode))
 	}
 	return &result, nil
 }
@@ -549,8 +579,11 @@ type PayloadSystemCount struct {
 // its own view of the node, so it is not automatically the carrier the Edge
 // believes is there; the stamp is only adopted when the two agree.
 type BinClearResponse struct {
-	Status     string `json:"status"`
-	Detail     string `json:"detail,omitempty"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+	// Error is the OTHER shape Core answers a failure in, and not having it
+	// here cost 115 unattributable log lines in one sim run. See coreErrorText.
+	Error      string `json:"error,omitempty"`
 	BinID      int64  `json:"bin_id,omitempty"`
 	BinLabel   string `json:"bin_label,omitempty"`
 	DeltaEpoch int64  `json:"delta_epoch,omitempty"`
@@ -558,8 +591,11 @@ type BinClearResponse struct {
 
 // BinCountResponse is Core's reply to a count declared from the line.
 type BinCountResponse struct {
-	Status       string `json:"status"`
-	Detail       string `json:"detail,omitempty"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+	// Error is the OTHER shape Core answers a failure in, and not having it
+	// here cost 115 unattributable log lines in one sim run. See coreErrorText.
+	Error        string `json:"error,omitempty"`
 	BinID        int64  `json:"bin_id,omitempty"`
 	BinLabel     string `json:"bin_label,omitempty"`
 	Expected     int    `json:"expected"`
@@ -603,11 +639,7 @@ func (c *CoreClient) RecordBinCount(nodeName string, actualUOP int, actor string
 		return nil, fmt.Errorf("decode bin-count response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK || result.Status == "error" {
-		detail := result.Detail
-		if detail == "" {
-			detail = fmt.Sprintf("core returned %d", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("%s", detail)
+		return nil, fmt.Errorf("%s", coreErrorText(result.Detail, result.Error, resp.StatusCode))
 	}
 	return &result, nil
 }
@@ -634,11 +666,7 @@ func (c *CoreClient) ClearBin(nodeName, binTypeCode string) (*BinClearResponse, 
 		return nil, fmt.Errorf("decode bin-clear response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK || result.Status == "error" {
-		detail := result.Detail
-		if detail == "" {
-			detail = fmt.Sprintf("core returned %d", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("%s", detail)
+		return nil, fmt.Errorf("%s", coreErrorText(result.Detail, result.Error, resp.StatusCode))
 	}
 	return &result, nil
 }
