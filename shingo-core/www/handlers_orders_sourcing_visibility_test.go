@@ -87,8 +87,9 @@ func TestOrdersPage_ASourcingOrderSaysWhyItIsWaiting(t *testing.T) {
 			"writer as a queued order's, and the operator has no way to see what is sourcing or why")
 	}
 
-	// The summary chips count the whole acquiring set (countQueueCodes keys on
-	// IsAcquiring), so a label naming one half of it describes the wrong number.
+	// The summary chips count every order that is WAITING (countQueueCodes keys on
+	// orderIsWaiting — a live cause, in a status where a cause means a present
+	// wait), so a label naming one rung of that set describes the wrong number.
 	if strings.Contains(body, "Why queued:") {
 		t.Error("the wait summary still calls itself \"Why queued\" while counting sourcing orders " +
 			"too — the label names one rung of the set it is a summary of")

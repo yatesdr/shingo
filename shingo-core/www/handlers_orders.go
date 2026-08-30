@@ -213,13 +213,12 @@ func (h *Handlers) faultLinesFor(orders []*domain.Order) (map[int64]template.HTM
 // of THIS wait rather than of the order.
 //
 // ONE BATCH READ PER STATUS PRESENT, and the statuses come from the orders
-// themselves rather than from a list: the acquiring set is spelled in exactly
-// one place (protocol.IsAcquiring) and a page handler is not going to be the
-// second. Two round trips at the very most, against a hundred-row page.
+// themselves rather than from a list. Two round trips at the very most on the
+// acquiring pair, one more for each waiting runtime status actually on the page.
 func (h *Handlers) waitSinceFor(orders []*domain.Order) map[int64]string {
 	byStatus := map[protocol.Status][]int64{}
 	for _, o := range orders {
-		if protocol.IsAcquiring(o.Status) {
+		if orderIsWaiting(o) {
 			byStatus[o.Status] = append(byStatus[o.Status], o.ID)
 		}
 	}
@@ -243,16 +242,66 @@ func (h *Handlers) waitSinceFor(orders []*domain.Order) map[int64]string {
 	return out
 }
 
-// countQueueCodes tallies the active orders by their structured queue_code so the
-// orders page can show, at a glance, WHY the queued set is stuck — e.g. "3
-// waiting for material, 2 waiting for a slot". The code is the analytic dimension
-// behind the free-text queue_reason sentence; grouping here (rather than a SQL
-// GROUP BY) reuses the order list already loaded for the page. Empty/blank codes
-// (non-queued or pre-schema rows) bucket as "" and are omitted from the display.
+// orderIsWaiting reports whether an order is waiting RIGHT NOW, for the two
+// display seams on this page.
+//
+// ── IT IS NOT protocol.IsAcquiring, AND THAT WAS A LIVE HOLE ──────────────
+//
+// Both seams asked IsAcquiring, which is {queued, sourcing}: pre-dispatch, no
+// robot committed. Three of the five wait populations in dispatch's mechanism
+// table sit OUTSIDE that set — PopGateStaged and PopStationWait are `staged`,
+// PopCompoundParent is `reshuffling` — and eight causes can land ONLY there
+// (the staged dig-blocker refusals, the four gate causes, station-wait). Every
+// order parked under one of those rendered with no duration at all and was
+// missing from the queue-code summary entirely: a robot physically parked at a
+// lane's mark, which is the most expensive wait in the system, was the one the
+// page said least about. PopStationWait's own doc records three robots sitting
+// in exactly this gap for a whole soak while people looked for the fence that
+// was refusing them.
+//
+// ── AND IT IS NOT "CARRIES A CAUSE" EITHER ───────────────────────────────
+//
+// The obvious widening — any row with a queue_cause — is wrong, because a cause
+// is cleared ONLY on terminalize (store/orders.go) and on ResumeCompound.
+// Nothing clears it when a park ENDS successfully, so an order that waited for a
+// slot and then dispatched carries that cause all the way to delivery. Selecting
+// on the cause alone would print a wait clock beside a robot that is driving.
+//
+// So it is BOTH: a cause on the row, AND a status in which a cause means a
+// present wait. The status list is LOCAL to this page on purpose —
+// protocol.IsAcquiring feeds live order queries, soakstat and a drift pin, and
+// widening it there would change what "acquiring" means for machinery that has
+// nothing to do with rendering a page.
+func orderIsWaiting(o *domain.Order) bool {
+	if o.QueueCause == "" {
+		return false
+	}
+	switch o.Status {
+	case protocol.StatusStaged, protocol.StatusReshuffling:
+		// A robot parked at a lane's mark, or a compound parent whose chapter has
+		// stopped with a leg still open. Both carry causes no acquiring order can.
+		return true
+	default:
+		return protocol.IsAcquiring(o.Status)
+	}
+}
+
+// countQueueCodes tallies the WAITING orders by their structured queue_code so
+// the orders page can show, at a glance, WHY the set is stuck — e.g. "3 waiting
+// for material, 2 waiting for a slot". The code is the analytic dimension behind
+// the free-text queue_reason sentence; grouping here (rather than a SQL GROUP BY)
+// reuses the order list already loaded for the page.
+//
+// SELECTED ON THE CAUSE, COUNTED BY THE CODE. The selection has to be the fine
+// value because that is the one that says a wait is live (see orderIsWaiting);
+// the tally has to be the coarse one because the code is what queueCodeLabels
+// renders and what an operator can act on. Selecting on the code would readmit
+// every dispatched order that ever parked, since neither column is cleared when
+// a park ends well.
 func countQueueCodes(orders []*domain.Order) map[string]int {
 	counts := make(map[string]int)
 	for _, o := range orders {
-		if !protocol.IsAcquiring(o.Status) {
+		if !orderIsWaiting(o) {
 			continue
 		}
 		counts[o.QueueCode]++
