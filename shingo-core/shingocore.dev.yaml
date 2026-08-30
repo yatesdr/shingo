@@ -60,17 +60,31 @@ staging:
   sweep_interval: 2s            # wall-clock ticker for the reconciliation + staged-bin sweeps
   auto_confirm_delivered: 2s    # sim-clock age after which a stuck `delivered` order is confirmed
   abandon_stuck: 0s             # sim: disable the >1h stuck-order abandonment sweep (0 = off)
-  # ttl (sim): finite staging expiry so lineside bins auto-unstage. The PRODUCTION
-  # default is 0 (permanent — staged bins release only when a claim picks them).
-  # In the sim that gridlocks: swap/complex deliveries land bins `staged` at lineside
-  # nodes with staged_expires_at=NULL, the stagedBinSweepLoop skips NULL-expiry bins,
-  # and if no claim grabs them they freeze staged forever — choking the node (6/9
-  # machines idle, ~23/96 bins frozen, reconciliation "critical"). A finite TTL gives
-  # the existing sweep (ReleaseExpiredStagedBins, every sweep_interval) a deadline to
-  # act on, so a staged bin reverts to `available` if no claim picks it within 30s
-  # (~3s wall at 10×). 30s is short enough to clear a stall, long enough that a bin
-  # genuinely mid-swap (picked within 30s) isn't yanked.
-  ttl: 30s
+  # ttl: 0s = PERMANENT, and permanent is what production runs (config.go
+  # StagingConfig.TTL: "0 (the default) means permanent"). The sim runs production
+  # staging semantics. Owner ruling 2026-08-31; this line is not a knob to try.
+  #
+  # IT USED TO SAY 30s, AND THE REASON WAS REAL BUT THE CURE WAS WORSE. Swap and
+  # complex deliveries land bins `staged` at lineside nodes with
+  # staged_expires_at=NULL, and ReleaseExpiredStaged (store/bins/bins.go:1202)
+  # skips NULL-expiry rows by construction — so nothing ever unstages them. That is
+  # the freeze the 30s value was added to drive the sim past, and it is a real skip
+  # you can still go and read.
+  #
+  # WHAT TWO DIAGNOSTIC PASSES FOUND, 2026-08-30/31, independently and agreeing: at
+  # ttl 0s the freeze blocks ZERO orders. Every starved order in the run is refused
+  # by the `COALESCE(b.payload_code,'') = ''` clause of EmptyCarrierWhere
+  # (bins.go:314) — the carrier still carries a payload — and not by the
+  # `b.status <> 'staged'` clause sitting right next to it. Frozen carriers are an
+  # amplifier, not a wedge.
+  #
+  # AND THE 30s VALUE MANUFACTURED A WEDGE OF ITS OWN. It flips a lineside carrier
+  # back to `available` while it is still sitting at the cell, where
+  # AccessibleEmptyOrder ranks it ahead of every lane mouth for being the least work
+  # to reach — the keeper theft the P0-1 design was built on. At 0s that theft
+  # happens zero times in a full run. A sim that reproduces a defect its own config
+  # invented is not evidence about the plant.
+  ttl: 0s
 
 sim:
   enabled: true
