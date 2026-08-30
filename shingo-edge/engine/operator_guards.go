@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"log"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -40,6 +41,89 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 		return fmt.Errorf("node %s: two-robot swap already in progress — wait for the current cycle to complete or abort it before requesting more material", node.Name)
 	}
 	return nil
+}
+
+// guardPositionSpokenFor refuses the node-empty DOWNGRADE while this position is
+// still mid-cycle.
+//
+// "Core reports no bin on it" and "this position is bare" are different
+// sentences, and the downgrade in BuildConsumePlan reads the first as the
+// second. They agree whenever a person has pulled a carrier off by hand, which
+// is the case the downgrade was written for. They stop agreeing during a swap:
+// between the robot lifting the old carrier and setting the new one down, the
+// position genuinely holds no bin AND already has one on its way. Core, asked
+// in that window, correctly says empty.
+//
+// SIM 2026-08-31, ALN_004, four cells dead in one run. The swap's own pickup
+// nulled the runtime's ActiveOrderID at 05:51:45 — correct, for its own reasons
+// (handler_bin_picked_up.go). Core's intermediate-store dropoff re-bound a bin
+// at 05:51:50, which re-armed the consume tick's evaluator. At 05:51:52 the
+// cell asked for material with both runtime pointers empty and Core reporting
+// the position free, so Edge downgraded to a bare delivery. Two seconds later
+// the in-flight swap set its own bin down, and the second robot arrived at a
+// full position it could not place onto. That second order then sat in the
+// cell's ActiveOrderID, so the removal that would have freed the position could
+// never be raised: machine, robot and carrier locked together until a person
+// intervenes. Same family as the Hopkinsville swap deadlock.
+//
+// TWO ARMS, BECAUSE THE POINTER ALONE IS NOT ENOUGH:
+//
+//  1. guardNoActiveSwap — the Bug 3 guard, "refuse to start a second swap on
+//     top of an in-flight one", written for exactly this failure and until now
+//     unreachable from the one path that causes it. The downgrade returns from
+//     BuildConsumePlan before plan.Dispatch exists, and requestNodeFromClaim
+//     runs the guard only when it does.
+//  2. THE ORDER ROW, NOT THE POINTER. A swap's own pickup nulls ActiveOrderID
+//     mid-cycle, so at the moment that matters most the pointer says nothing
+//     while orders.process_node_id still names this cell. It is also the only
+//     witness a single_robot swap leaves here: that swap is ONE complex order
+//     whose delivery_node is the supermarket the old carrier ends at, and the
+//     new carrier lands at this position as an intermediate dropoff — so a
+//     delivery-node lookup finds nothing. Asking the durable row rather than a
+//     pointer scoped to a moment is the same reading outboundMoveInFlight takes.
+//
+// LOADERS ARE EXEMPT (manual_swap), the same exemption guardStyleTransition and
+// guardCatidMismatch carry. A loader window runs a multi-order queue on purpose
+// — CanAcceptOrders returns true for one while its orders are in flight — and
+// holding it to a one-bin-at-a-time rule would stall the empties it exists to
+// supply.
+//
+// FAILS CLOSED on a read error, unlike hasActiveSwap. The two wrong answers do
+// not cost the same: a wrong "wait" delays supply by one tick and the next tick
+// re-asks, while a wrong "go" mints the second delivery this guard exists to
+// prevent, and that one never clears itself.
+//
+// SCOPE IS THE DOWNGRADE. A plan that is SimpleMove because the claim's mode is
+// "simple", and a plan that carries a Dispatch, both reach their own gates and
+// are not this function's business.
+func (e *Engine) guardPositionSpokenFor(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) error {
+	if node == nil || claim == nil {
+		return nil
+	}
+	if claim.SwapMode == protocol.SwapModeManualSwap {
+		return nil
+	}
+	if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+		log.Printf("[request-material] node %s reads empty but its runtime still names an in-flight order — "+
+			"refusing the simple-delivery downgrade", node.Name)
+		return err
+	}
+	active, err := e.db.ListActiveOrdersByProcessNode(node.ID)
+	if err != nil {
+		log.Printf("[request-material] node %s: could not read in-flight orders (%v) — "+
+			"refusing the simple-delivery downgrade", node.Name, err)
+		return fmt.Errorf("node %s: cannot tell whether a bin is already on its way (%w) — the next tick will re-ask", node.Name, err)
+	}
+	if len(active) == 0 {
+		return nil
+	}
+	// Oldest first (the query orders by created_at), so the sentence names the
+	// order the cell has been waiting on rather than whichever one sorted last.
+	o := active[0]
+	log.Printf("[request-material] node %s reads empty but order %d (%s, %s) is still working this position — "+
+		"refusing the simple-delivery downgrade", node.Name, o.ID, o.OrderType, o.Status)
+	return fmt.Errorf("node %s: order %d is still working this position — a bin is already on its way; wait for it to land",
+		node.Name, o.ID)
 }
 
 // guardStyleTransition refuses a material request for the OUTGOING style while a

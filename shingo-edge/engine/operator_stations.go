@@ -128,6 +128,18 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 		return nil, err
 	}
 	if plan.DowngradedFromSwapMode != "" {
+		// THE DOWNGRADE IS THE ONE DECISION THAT IGNORES WHAT THIS CELL ALREADY
+		// HAS IN FLIGHT, and it is the decision that mints a second delivery into
+		// a position a robot is on its way to fill. Gate it here, before the log
+		// line below, so "downgrading … to simple delivery" keeps meaning what it
+		// says: the position is bare AND nothing is coming.
+		//
+		// Here and not in BuildConsumePlan because the planner is pure over
+		// (node, runtime, claim, occupancy) and the witness is a DB read. This
+		// function already holds what the guard needs.
+		if err := e.guardPositionSpokenFor(node, runtime, claim); err != nil {
+			return nil, err
+		}
 		if len(plan.PrimePairedPositions) > 0 {
 			dests := make([]string, 0, len(plan.PrimePairedPositions))
 			for _, p := range plan.PrimePairedPositions {
