@@ -3,6 +3,7 @@ package fulfillment
 import (
 	"errors"
 	"log"
+	"shingocore/store/reservations"
 	"sync"
 	"time"
 
@@ -629,6 +630,52 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// step, before the fleet call — same Rule-1 step as the fresh path. On failure
 	// keep the soft holds and park in sourcing; next tick re-confirms.
 	if err := s.dispatcher.ConfirmForDispatch(order, *order.BinID, sourceNode, destNode); err != nil {
+		// ── "KEEP THE HOLD AND RETRY" NEEDS THERE TO STILL BE A HOLD ──────
+		//
+		// The sentence above is the whole premise of this arm, and when it is false
+		// the retry is not a wait — it is a loop with no releaser. ConfirmForDispatch
+		// runs the claim seatbelt (reservations.HeldByOwnerSQL): a hard claim may
+		// only land where THIS order already holds a live reservation. So an order
+		// whose soft hold has been reaped, but whose orders.bin_id survived, fails
+		// the seatbelt on every tick, forever, and never shops for another bin —
+		// dispatchHeldBin never re-finds, by design.
+		//
+		// SIM 2026-08-31, order 22. Fifty-two sim-minutes in `sourcing` under
+		// claim-failed, logging this line several times a second:
+		//
+		//	confirm bin 4 for order 22: bin 4 is locked, already claimed,
+		//	or does not exist
+		//
+		// Bin 4 was none of those things. It was `available`, unclaimed, unlocked,
+		// and carried NO reservation at all — and neither did order 22. The message
+		// lists the three conditions the SQL tests and omits the fourth, which was
+		// the one that failed. compound.go names this shape exactly: "a wait, it is
+		// a queued order with claim-failed on it and no releaser, forever."
+		//
+		// So ask which failure this is. A hold that still exists is the transient
+		// case the arm was written for — somebody else got the bin first, retry,
+		// the world changes. A hold that is GONE cannot come back on its own: the
+		// pointer is the only thing keeping the order in this arm, and dropping it
+		// routes the order through the finder next tick, which is the releaser.
+		//
+		// FAIL TOWARD THE RETRY on an unreadable reservations table. A wrong "keep"
+		// costs a tick and asks again; a wrong "forget" throws away a live soft hold
+		// and shops for a second bin the order does not need.
+		if !s.stillHoldsBin(order) {
+			s.logFn("fulfillment: held-bin order %d no longer holds a reservation on bin %d — its soft "+
+				"hold was reaped and only the pointer survived, so the claim seatbelt can never open. "+
+				"Forgetting the bin so the finder picks again.", order.ID, *order.BinID)
+			if cerr := s.db.ClearOrderBinID(order.ID); cerr != nil {
+				// Keep the old disposition: it retries, which is where it already was.
+				s.logFn("fulfillment: order %d could not forget its stale bin pointer: %v", order.ID, cerr)
+			}
+			s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseHeldBinMissing,
+				dispatch.QueueParams{Payload: order.PayloadCode})
+			if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "held bin lost, re-finding"); qerr != nil {
+				s.logTransition(order.ID, "held-bin → sourcing after losing the hold", qerr)
+			}
+			return false
+		}
 		s.logFn("fulfillment: held-bin order %d confirm-at-dispatch failed, re-queuing (hold kept): %v", order.ID, err)
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseClaimFailed,
 			dispatch.QueueParams{Payload: order.PayloadCode})
@@ -651,6 +698,36 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		order.ID, *order.BinID, sourceNode.Name, destNode.Name, vendorOrderID)
 	s.notifyEdgeDispatched(order, sourceNode, vendorOrderID)
 	return true
+}
+
+// stillHoldsBin reports whether this order still has a live reservation on the
+// bin its pointer names.
+//
+// It is the question "is the premise of the retry above still true". Release
+// DELETES the row rather than marking it, so any bin row returned for this order
+// is a live hold — pending or confirmed, both of which satisfy the claim
+// seatbelt.
+//
+// TRUE ON A READ ERROR, deliberately, and it is the only direction that is safe
+// here: the caller uses a false answer to THROW AWAY a soft hold, and doing that
+// because the database blinked would send an order shopping for a second bin
+// while it still owns the first.
+func (s *Scanner) stillHoldsBin(order *orders.Order) bool {
+	if order == nil || order.BinID == nil {
+		return false
+	}
+	held, err := s.db.ListReservationsByOrder(order.ID)
+	if err != nil {
+		s.logFn("fulfillment: order %d — could not read its reservations (%v); assuming the hold "+
+			"stands and retrying", order.ID, err)
+		return true
+	}
+	for _, r := range held {
+		if r.Kind == reservations.KindBin && r.BinID == *order.BinID {
+			return true
+		}
+	}
+	return false
 }
 
 // admitLanes takes the order's lane mouth holds before dispatch (P4). Returns

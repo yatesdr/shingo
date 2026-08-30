@@ -161,6 +161,12 @@ func TestRule1_ConfirmFailKeepsSoftHold(t *testing.T) {
 	f.ordersByID[203] = order
 	f.nodesByDot["SRC-04"] = &nodes.Node{ID: 904, Name: "SRC-04"}
 	storageDest(f, "STOR-04", 2004)
+	// THE SOFT HOLD HAS TO EXIST FOR "KEEPS SOFT HOLD" TO MEAN ANYTHING. The
+	// fixture did not seed one, so the order under test held nothing and the case
+	// it was named for was not the case it ran. It passed anyway, because the arm
+	// it asserted was the only arm there was. See
+	// TestRule1_ConfirmFailWithNoHoldForgetsTheBin for the other one.
+	f.reservedBins = append(f.reservedBins, [2]int64{heldBin, order.ID})
 	dispatcher := &recordingDispatcher{confirmErr: errors.New("pending reservation reaped")}
 	s := newScannerWith(t, f, foundFinderFor(204, "SRC-04"), dispatcher, func(int64, string, string) {
 		t.Errorf("confirm failure must requeue, not fail the order")
@@ -183,5 +189,87 @@ func TestRule1_ConfirmFailKeepsSoftHold(t *testing.T) {
 		if u.Status != string(protocol.StatusSourcing) {
 			t.Fatalf("a confirm-failed order stays in sourcing, got %v", f.statusUpdates)
 		}
+	}
+}
+
+// TestRule1_ConfirmFailWithNoHoldForgetsTheBin is order 22, and it is the
+// difference between a wait and a loop.
+//
+// "Keep the hold and retry" is the right disposition for a LOST RACE — somebody
+// else got the bin, the world moves, ask again. It is the wrong one when the
+// hold is gone: ConfirmForDispatch runs the claim seatbelt, which only lets a
+// hard claim land where this order already holds a live reservation, so an order
+// whose soft hold was reaped can never confirm. And dispatchHeldBin never
+// re-finds, by design — the pointer is the only thing keeping it in that arm.
+//
+// SIM 2026-08-31: order 22 sat in `sourcing` under claim-failed for 52
+// sim-minutes, logging several times a second
+//
+//	confirm bin 4 for order 22: bin 4 is locked, already claimed, or does not exist
+//
+// while bin 4 was available, unclaimed, unlocked and carried no reservation at
+// all. The message lists the three conditions the SQL tests and omits the one
+// that failed.
+func TestRule1_ConfirmFailWithNoHoldForgetsTheBin(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	heldBin := int64(304)
+	order := &orders.Order{
+		ID: 303, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeRetrieve,
+		BinID: &heldBin, SourceNode: "SRC-05", DeliveryNode: "STOR-05", PayloadCode: "PN-R1E",
+	}
+	f.queued = append(f.queued, order)
+	f.ordersByID[303] = order
+	f.nodesByDot["SRC-05"] = &nodes.Node{ID: 905, Name: "SRC-05"}
+	storageDest(f, "STOR-05", 2005)
+	// NO reservation for this order: the hold was reaped and only the pointer is left.
+	dispatcher := &recordingDispatcher{confirmErr: errors.New("bin is locked, already claimed, or does not exist")}
+	s := newScannerWith(t, f, foundFinderFor(304, "SRC-05"), dispatcher, func(int64, string, string) {
+		t.Errorf("a lost hold must re-find, not fail the order")
+	})
+
+	if got := s.RunOnce(); got != 0 {
+		t.Fatalf("RunOnce: got %d, want 0", got)
+	}
+	if len(f.clearedBinIDs) != 1 || f.clearedBinIDs[0] != order.ID {
+		t.Fatalf("the stale bin pointer was not forgotten (%v). Without that the order stays in the "+
+			"held-bin arm retrying a seatbelt that can never open — order 22, 52 minutes", f.clearedBinIDs)
+	}
+	last := f.queueReasons[len(f.queueReasons)-1]
+	if last.Cause == "claim-failed" {
+		t.Errorf("cause = %+v, want something other than claim-failed: the bin is not claimed by "+
+			"anyone, and that cause sends a reader looking for the order that took it", last)
+	}
+}
+
+// TestRule1_ConfirmFailUnreadableReservationsKeepsTheHold pins the direction of
+// the doubt. The caller uses a false answer to THROW AWAY a soft hold, so an
+// unreadable reservations table must read as "the hold stands" — otherwise a
+// database blink sends an order shopping for a second bin while it owns the
+// first.
+func TestRule1_ConfirmFailUnreadableReservationsKeepsTheHold(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	heldBin := int64(404)
+	order := &orders.Order{
+		ID: 403, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeRetrieve,
+		BinID: &heldBin, SourceNode: "SRC-06", DeliveryNode: "STOR-06", PayloadCode: "PN-R1F",
+	}
+	f.queued = append(f.queued, order)
+	f.ordersByID[403] = order
+	f.nodesByDot["SRC-06"] = &nodes.Node{ID: 906, Name: "SRC-06"}
+	storageDest(f, "STOR-06", 2006)
+	f.errListReservations = errors.New("reservations table unreadable")
+	dispatcher := &recordingDispatcher{confirmErr: errors.New("confirm refused")}
+	s := newScannerWith(t, f, foundFinderFor(404, "SRC-06"), dispatcher, func(int64, string, string) {
+		t.Errorf("must not fail the order")
+	})
+
+	if got := s.RunOnce(); got != 0 {
+		t.Fatalf("RunOnce: got %d, want 0", got)
+	}
+	if len(f.clearedBinIDs) != 0 {
+		t.Fatalf("a hold was thrown away because the reservations read failed (%v) — the doubt must "+
+			"fall toward keeping it", f.clearedBinIDs)
 	}
 }

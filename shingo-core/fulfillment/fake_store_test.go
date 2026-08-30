@@ -3,6 +3,7 @@ package fulfillment
 import (
 	"database/sql"
 	"errors"
+	"shingocore/store/reservations"
 
 	"shingo/protocol"
 	"shingocore/store/nodes"
@@ -51,6 +52,8 @@ type fakeStore struct {
 	confirmedBins        [][2]int64 // (binID, orderID) — confirm-at-dispatch (ConfirmClaim)
 	confirmedSlots       [][2]int64 // (nodeID, orderID) — confirm-at-dispatch slot claim (ConfirmSlotClaim)
 	releasedReservations []int64    // orderIDs whose soft bin reservation was released
+	clearedBinIDs        []int64    // orderIDs that FORGOT a stale held-bin pointer
+	errListReservations  error      // inject to make the reservations read fail
 	unclaimedOrderIDs    []int64
 	binIDUpdates         [][2]int64 // (orderID, binID)
 	sourceNodeUpdates    []sourceNodeUpdate
@@ -212,6 +215,34 @@ func (f *fakeStore) ReleaseReservation(orderID, _ int64) error {
 func (f *fakeStore) UpdateOrderBinID(orderID, binID int64) error {
 	f.binIDUpdates = append(f.binIDUpdates, [2]int64{orderID, binID})
 	return nil
+}
+
+// ClearOrderBinID records a forgotten held-bin pointer. Recorded as binID 0 in
+// the same slice the updates use, because a test asserting "the order gave its
+// bin up" wants the ordering against the updates, not a second list to correlate.
+func (f *fakeStore) ClearOrderBinID(orderID int64) error {
+	f.clearedBinIDs = append(f.clearedBinIDs, orderID)
+	return nil
+}
+
+// ListReservationsByOrder answers the held-bin arm's "do I still hold this bin".
+// Derived from the SAME reservedBins the soft-acquire path writes, so a fake that
+// has reserved a bin reports holding it and one that has not does not — the
+// alternative, a second field the tests must remember to set, is how a fixture
+// starts disagreeing with itself.
+func (f *fakeStore) ListReservationsByOrder(orderID int64) ([]reservations.Reservation, error) {
+	if f.errListReservations != nil {
+		return nil, f.errListReservations
+	}
+	var out []reservations.Reservation
+	for _, rb := range f.reservedBins {
+		if rb[1] == orderID {
+			out = append(out, reservations.Reservation{
+				Kind: reservations.KindBin, BinID: rb[0], State: reservations.StatePending,
+			})
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) UpdateOrderSourceNode(id int64, sourceNode string) error {

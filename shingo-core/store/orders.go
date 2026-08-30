@@ -801,6 +801,12 @@ func (db *DB) UpdateOrderBinID(orderID, binID int64) error {
 	return orders.UpdateBinID(db.DB, orderID, binID)
 }
 
+// ClearOrderBinID forgets which bin an order was going to take, so the scanner
+// routes it back through the finder instead of the held-bin arm.
+func (db *DB) ClearOrderBinID(orderID int64) error {
+	return orders.ClearBinID(db.DB, orderID)
+}
+
 // ListOrdersByBin returns recent orders involving a specific bin.
 // Cross-aggregate entry point: the query lives in orders/ (returns *orders.Order)
 // but callers reach it via the bins-side delegate name.

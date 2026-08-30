@@ -5,6 +5,7 @@ import (
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // Store is the narrow DB surface the fulfillment scanner depends on.
@@ -60,6 +61,12 @@ type Store interface {
 	// was written yet.
 	ReleaseReservation(orderID, binID int64) error
 	UpdateOrderBinID(orderID, binID int64) error
+	// ClearOrderBinID forgets a stale held-bin pointer so the order re-finds.
+	ClearOrderBinID(orderID int64) error
+	// ListReservationsByOrder is how the held-bin arm asks whether the soft hold
+	// it is retrying against still exists. Release DELETES the row, so any row
+	// returned here is a live hold.
+	ListReservationsByOrder(orderID int64) ([]reservations.Reservation, error)
 	UpdateOrderSourceNode(id int64, sourceNode string) error
 	// SetOrderQueueDetail records why an order is sitting queued — the generated
 	// sentence, its structured queue code, and the engineer-only cause — together.

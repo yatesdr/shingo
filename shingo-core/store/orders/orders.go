@@ -1535,6 +1535,18 @@ func UpdateRobotID(db *sql.DB, id int64, robotID string) error {
 // UpdateBinID sets the bin_id on an order.
 // (Junction-style write against the orders table; bins-aggregate readers
 // live at outer store/ as composition.)
+// ClearBinID forgets which bin an order was going to take.
+//
+// SEPARATE FROM UpdateBinID because the column is NULLABLE and "no bin" is not
+// bin zero: the plain scanner routes on `order.BinID != nil`, so a 0 would keep
+// the order in the held-bin arm forever, pointed at a bin that does not exist.
+// The one caller is the held-bin path giving up a stale pointer whose
+// reservation has been reaped — see fulfillment.dispatchHeldBin.
+func ClearBinID(db *sql.DB, orderID int64) error {
+	_, err := db.Exec(`UPDATE orders SET bin_id=NULL, updated_at=$2 WHERE id=$1`, orderID, clock.Now().UTC())
+	return err
+}
+
 func UpdateBinID(db *sql.DB, orderID, binID int64) error {
 	_, err := db.Exec(`UPDATE orders SET bin_id=$1, updated_at=$3 WHERE id=$2`, binID, orderID, clock.Now().UTC())
 	return err
