@@ -388,8 +388,16 @@ func (e *Engine) resolveCarriedBinDestination(bin *bins.Bin, robot fleet.RobotSt
 		e.logFn("engine: carried bin recovery: tier 2 storage-slot lookup for %q failed: %v — "+
 			"falling through to tier 3, which is NOT the same as there being no slot",
 			bin.PayloadCode, err)
-	} else if node != nil {
-		return node, "tier 2: a free storage slot for " + bin.PayloadCode, nil
+	} else if usable := e.usableDropPoint(node); usable != nil {
+		// THROUGH THE SAME GATE AS THE OTHER TWO. This tier used to return the
+		// query's answer directly, which made usableDropPoint's "one place so a
+		// tier cannot forget one" false of the tier most likely to need it: the
+		// other two name a node somebody already had in mind, this one picks a
+		// stranger. The query asks the same questions now, so this is
+		// defence-in-depth against the two drifting apart rather than a second
+		// opinion — and it costs two reads on a path that runs when a robot is
+		// already stopped.
+		return usable, "tier 2: a free storage slot for " + bin.PayloadCode, nil
 	}
 	if node := e.tierRobotsCurrentStation(robot); node != nil {
 		return node, "tier 3: the node the robot is parked at", nil
@@ -442,14 +450,47 @@ func (e *Engine) tierRobotsCurrentStation(robot fleet.RobotStatus) *nodes.Node {
 }
 
 // usableDropPoint returns the node if a bin can actually be set down on it, and
-// nil otherwise. One place for the three conditions every tier needs, so a tier
-// added later cannot forget one.
+// nil otherwise. One place for the conditions every tier needs, so a tier added
+// later cannot forget one.
+//
+// ── IT HAD THREE CONDITIONS AND A DEEP LANE NEEDS FIVE ────────────────────
+//
+// "Enabled, not synthetic, unclaimed, empty" is the whole question for a FLAT
+// position and only half of it for a lane slot — and every tier here can return
+// a lane slot, because `STOR` is the class of both (30 of demo.yaml's SMN_*
+// slots carry it). Two things were never asked:
+//
+//	REACHABLE  — a slot with an occupied slot in front of it is a slot no robot
+//	             can lower a bin onto. An unattended recovery sent there ends
+//	             with the robot standing in the aisle holding the bin, which is
+//	             the exact state this whole path exists to end.
+//	UNSPOKEN-FOR — another live order's delivery_node may already name it. Two
+//	             bins, one slot, and the second robot cannot place either.
+//
+// Same two predicates, in the same words, as every other destination reader:
+// IsSlotAccessible and the delivery_node proxy. A flat position answers both
+// trivially, so nothing changes for the population the original three were
+// written against.
+//
+// FAILS CLOSED, and that is not the usual direction for this file. Elsewhere a
+// recovery prefers a worse answer to no answer, because leaving a bin on the
+// deck is the failure. Here an unreadable slot is not a worse answer, it is an
+// unknown one — and the tier below is a real alternative, so a doubt costs a
+// fallback rather than a stranded carrier.
 func (e *Engine) usableDropPoint(node *nodes.Node) *nodes.Node {
 	if node == nil || !node.Enabled || node.IsSynthetic || node.ClaimedBy != nil {
 		return nil
 	}
 	cnt, err := e.db.CountBinsByNode(node.ID)
 	if err != nil || cnt > 0 {
+		return nil
+	}
+	reachable, err := e.db.IsSlotAccessible(node.ID)
+	if err != nil || !reachable {
+		return nil
+	}
+	inbound, err := e.db.CountActiveOrdersByDeliveryNode(node.Name)
+	if err != nil || inbound > 0 {
 		return nil
 	}
 	return node
