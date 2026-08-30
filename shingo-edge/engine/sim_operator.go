@@ -118,8 +118,57 @@ func (op *simOperator) onDelivered(ev Event) {
 	if !ok || d.ProcessNodeID == nil {
 		return
 	}
+	if !op.deliveryLandedHere(d) {
+		// The bin this order was carrying came to rest somewhere else. Scheduling
+		// a LOAD/CLEAR here would act on a node the delivery did not fill.
+		op.e.debugFn("[sim] operator: order %d is tracked at node %d but its bin landed elsewhere — no LOAD/CLEAR",
+			d.OrderID, *d.ProcessNodeID)
+		return
+	}
 	op.schedule(*d.ProcessNodeID)                   // LOAD/CLEAR for manual_swap nodes
 	op.scheduleConfirm(d.OrderID, *d.ProcessNodeID) // sign off swap legs delivered to a line node
+}
+
+// deliveryLandedHere reports whether the delivered order actually left a bin at
+// the process node it is tracked against.
+//
+// ── AN UNLOADER'S OWN EMPTY-OUT WAS SCHEDULING ITS CLEAR ──────────────────
+//
+// A manual_swap unloader's U2 leg carries the drained carrier AWAY — source
+// FGN_001, destination SYN_PRESS_EMPTIES — and it is tracked at FGN_001's
+// process node. So its delivery scheduled a CLEAR at a node the same order had
+// just emptied. The worker waited its 8s, found nothing, burned all eight
+// retries in about three sim-seconds, and gave up nine sim-seconds before the
+// NEXT carrier arrived:
+//
+//	08:21:35  bin_picked_up bin=21 at FGN_001            <- U2 lifts the carrier
+//	08:21:38  auto-clear node 21 attempt 1..8: no bin at node FGN_001
+//	08:21:47  delivered fallback: bound bin 20 to node FGN_001   <- the real arrival
+//
+// AND THE DEDUPE MADE IT WORSE, because `schedule` drops a second call while one
+// is pending: a spurious run from the outbound leg could swallow the genuine one
+// from the inbound arrival. Sim 2026-08-30 measured 115 give-ups in a single run
+// — every one of them a clear that never happened, on a fixture whose empty pool
+// only refills when carriers ARE cleared.
+//
+// The test is the one outboundMoveInFlight already uses on the order side: a
+// move whose SOURCE is this slot is this slot's bin LEAVING. Anything else —
+// a delivery to here, a complex leg with no delivery_node, an unreadable row —
+// schedules as before, which keeps this a narrowing of a known-noisy trigger
+// rather than a new gate with its own failure mode.
+func (op *simOperator) deliveryLandedHere(d OrderDeliveredEvent) bool {
+	if op.e == nil || op.e.db == nil {
+		return true // no store wired (unit fixtures) — behave exactly as before
+	}
+	node, err := op.e.db.GetProcessNode(*d.ProcessNodeID)
+	if err != nil || node == nil || node.CoreNodeName == "" {
+		return true // cannot tell — behave exactly as before
+	}
+	order, err := op.e.db.GetOrder(d.OrderID)
+	if err != nil || order == nil {
+		return true
+	}
+	return !(order.SourceNode == node.CoreNodeName && order.DeliveryNode != node.CoreNodeName)
 }
 
 // confirmDelay is the operator's reaction time before signing off a delivered
