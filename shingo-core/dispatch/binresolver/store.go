@@ -64,6 +64,15 @@ type Store interface {
 	CountBinsInLane(laneID int64) (int, error)
 	FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, error)
 	FindStoreSlotInLane(laneID int64) (*nodes.Node, error)
+	// FindStoreSlotInLaneExcluding is the OWNER-AWARE form, and the group
+	// resolvers use it so a re-resolve can see the slot the asking order already
+	// holds. excludeOrderID 0 reproduces the blind form exactly (order ids are
+	// positive), which is why reservations.Anyone leaves every existing caller
+	// byte-identical. See nodes.FindStoreSlotInLaneExcluding for why the blind
+	// form is unusable on a re-resolve: an order matches its own claim, its own
+	// reservation and its own delivery_node, so its slot is invisible to it and
+	// the resolver hands back the next-best one, which is SHALLOWER.
+	FindStoreSlotInLaneExcluding(laneID, excludeOrderID int64) (*nodes.Node, error)
 	FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error)
 	FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error)
 

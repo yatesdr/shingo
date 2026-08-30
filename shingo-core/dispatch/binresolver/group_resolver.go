@@ -440,6 +440,25 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binT
 	}
 }
 
+// ── THE STORE RESOLVERS ARE OWNER-AWARE, AND THE OWNER WAS ALREADY IN HAND ──
+//
+// Both arms below ask the slot selector through FindStoreSlotInLaneExcluding
+// with asker.OrderID, not the blind FindStoreSlotInLane. The asker was already a
+// parameter — it was threaded for the dig-lock question — so this costs nothing
+// and closes a trap that is documented at the selector and was reachable here.
+//
+// The blind form's guards are owner-BLIND: an order that already holds a slot in
+// a lane matches its own claim, its own reservation AND its own delivery_node, so
+// its own slot is invisible to it and the resolver returns the next-best one,
+// which is SHALLOWER. Any re-resolve through here therefore walked an order
+// forward out of the slot it was holding and toward the mouth, which is the
+// motion that builds a lane bubble.
+//
+// reservations.Anyone carries OrderID 0, and order ids are positive, so every
+// call site that has no order in hand keeps exactly the behaviour it had. This
+// is the same convention nodes.FindStoreSlotInLaneExcluding documents for its own
+// exclude parameter.
+
 // resolveStoreLKND consolidates matching payload codes first, then picks the emptiest slot.
 func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
 	// Lanes that had a usable slot and were refused by the burial guard. Kept so
@@ -478,7 +497,7 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 				}
 			}
 
-			slot, err := r.DB.FindStoreSlotInLane(child.ID)
+			slot, err := r.DB.FindStoreSlotInLaneExcluding(child.ID, asker.OrderID)
 			if err != nil {
 				if errors.Is(err, nodes.ErrLaneClosedByClaim) {
 					closedByClaim = append(closedByClaim, child.Name)
@@ -600,7 +619,7 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 			}
 		}
 
-		slot, err := r.DB.FindStoreSlotInLane(child.ID)
+		slot, err := r.DB.FindStoreSlotInLaneExcluding(child.ID, asker.OrderID)
 		if err != nil {
 			if errors.Is(err, nodes.ErrLaneClosedByClaim) {
 				closedByClaim = append(closedByClaim, child.Name)
