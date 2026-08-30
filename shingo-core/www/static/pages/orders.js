@@ -133,9 +133,7 @@ function openOrderModal(id, el, evt) {
   content.classList.add('hide');
   errEl.classList.add('hide');
   showModal('order-modal-overlay');
-  // Reflect the open order in the URL so it is linkable and survives a
-  // refresh; /orders/detail?id=N redirects here.
-  try { history.replaceState(null, '', '/orders?open=' + id); } catch (e) { /* non-fatal */ }
+  syncModalURL(id);
 
   apiGet('/api/orders/enriched?id=' + id)
     .then(function(data) {
@@ -152,21 +150,52 @@ function openOrderModal(id, el, evt) {
     });
 }
 
+// syncModalURL is the ONE writer of the ?open= parameter, and it is keyed on
+// state rather than on an event: pass an id when a modal is open, null when none
+// is.
+//
+// ── WHY ONE WRITER ────────────────────────────────────────────────────────
+//
+// The open path used to write `/orders?open=N` as a hardcoded string, which
+// DESTROYED the rest of the query — open a modal from ?status=all and the filter
+// was gone, so closeOrderModal's promise to keep "whatever status filter you
+// were browsing" could not be kept: there was nothing left to keep. It edits the
+// CURRENT url now, so every other parameter survives both ways.
+//
+// And openOrderModal is not only an open — refreshVisibleManifest and the SSE
+// order-update handler both call it to RE-RENDER a modal that is already open.
+// Each of those re-wrote the URL as a side effect of drawing. Whether that ever
+// raced a close (a closed modal coming back with ?open= still on the URL was
+// reported and not reproduced) stops being a question with one writer: a
+// re-render passes the id of a modal that IS open, and the only thing that
+// writes null is the close.
+function syncModalURL(id) {
+  try {
+    var u = new URL(location.href);
+    if (id == null) u.searchParams.delete('open');
+    else u.searchParams.set('open', id);
+    history.replaceState(null, '', u.pathname + (u.search || '') + (u.hash || ''));
+  } catch (e) { /* non-fatal */ }
+}
+
 function closeOrderModal() {
   _orderModalID = null;
   hideModal('order-modal-overlay');
-  // Drop ?open= so a refresh doesn't reopen what you just closed, keeping
-  // whatever status filter you were browsing.
-  try {
-    var u = new URL(location.href);
-    u.searchParams.delete('open');
-    history.replaceState(null, '', u.pathname + (u.search || ''));
-  } catch (e) { /* non-fatal */ }
+  syncModalURL(null);
 }
 
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape' && _orderModalID) closeOrderModal();
 });
+
+// The backdrop dismiss is a CLOSE, not a hide. installBackdropClose strips the
+// overlay's `active` class for every modal that opts in, which is the whole job
+// for a stateless one — this modal also owns _orderModalID and the ?open=
+// parameter, and both have to come down with it.
+(function () {
+  var overlay = document.getElementById('order-modal-overlay');
+  if (overlay) overlay.addEventListener('backdropclose', function () { closeOrderModal(); });
+})();
 
 // The label is NOT bold. It used to be, which inverted the hierarchy on
 // every field in the manifest: the caption "VENDOR ORDER" carried more

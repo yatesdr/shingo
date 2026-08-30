@@ -755,6 +755,18 @@ export function installBackdropClose() {
         const t = evt.target;
         if (t && t instanceof Element && t.hasAttribute('data-backdrop-close') && downTarget === t) {
             t.classList.remove('active');
+            // AND TELL THE PAGE, because hiding is not closing. Stripping the
+            // class is the whole close for a modal that carries no state; a
+            // modal that ALSO owns state — an id, a URL parameter, a
+            // subscription — was left believing it was still open. The order
+            // modal was: the overlay went away, _orderModalID stayed set and
+            // ?open=N stayed on the URL, so a refresh reopened what the
+            // operator had just dismissed, and an SSE update could re-show it
+            // without one.
+            //
+            // An event rather than a callback registry: every existing user
+            // keeps working untouched, and a page with state listens for it.
+            t.dispatchEvent(new CustomEvent('backdropclose', { bubbles: true }));
         }
     });
 }

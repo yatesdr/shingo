@@ -103,7 +103,16 @@
             {{if .PayloadDesc}}<div class="text-muted" style="font-size:0.8rem">{{.PayloadDesc}}</div>{{end}}
             {{if and (not .PayloadCode) (not .PayloadDesc)}}<span class="text-muted">-</span>{{end}}
           </td>
-          <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+          {{/* THE WALL SHOULD NOT KNOW LESS THAN THE BOARD. This cell rendered
+               the status word alone, so an order reading "queued — Waiting for
+               material: PANEL-A in SYN_MARKET · 32m" on /orders read just
+               "queued" here — on the Operations Overview, which is the page a
+               wall display shows. Same slot, same markup, same data-since
+               contract as partials/orders-rows.html. */}}
+          <td>
+            <span class="badge badge-{{.Status}}">{{.Status}}</span>
+            {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}{{with index $.WaitSince .ID}} · <span class="tnum orders-wait-since" data-since="{{.}}"></span>{{end}}</div>{{end}}
+          </td>
           <td>{{.RobotID}}</td>
           <td>{{formatTime .CreatedAt}}</td>
         </tr>
