@@ -427,52 +427,51 @@ const (
 
 func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Node, count int, asker reservations.DigAsker, askTheMouth bool, exclude map[int64]bool) ([]*nodes.Node, error) {
 
-	// A GATED DIG DOES NOT PARK ITS BLOCKER IN A DIFFERENT GATED LANE.
+	// A GATED DIG MAY PARK ITS BLOCKER IN ANOTHER GATED LANE. IT USED NOT TO.
 	//
-	// ── THE REASON THIS WAS ADDED IS GONE; THE EXCLUSION IS KEPT ANYWAY ───
+	// ── WHY THE EXCLUSION EXISTED, AND WHY IT IS GONE ────────────────────
 	//
-	// It was added because spliceLaneWait REFUSED a plan touching two gated lanes,
-	// so such a leg could not be dispatched at all. Multi-gate plans are built now
-	// (lane_gate_dispatch.go rule 2), and that leg would dispatch cleanly: a wait
-	// at each mark, each released by its own lane.
+	// It was added on the lane-stress rig 2026-08-09, and the failure was real:
+	// spliceLaneWait then allowed ONE gated lane per plan and refused a second
+	// outright, so a dig out of a marked lane whose blocker landed in a marked
+	// empty lane failed at the splice — which failed the parent, the two-robot
+	// swap it was supplying, and the evac. Four terminal orders from one
+	// unexpressible plan, and nothing self-cleared: both marks stay where they
+	// are, so the re-plan picks the same slot and fails the same way.
 	//
-	// What survives the change is a different objection, and it is about the DIG
-	// rather than about the plan. A dig holds its lane EXCLUSIVELY for the whole
-	// excavation. Sending one of its legs to dwell at another lane's mark makes
-	// the dug lane's exclusive hold last as long as a SECOND lane's congestion —
-	// a wait, lawful and self-clearing, but one that keeps a whole corridor shut
-	// while it lasts and blocks every unrelated order aimed at it. Parking in an
-	// ungated slot costs the dig nothing and takes no second lane hostage.
+	// THAT PLAN IS EXPRESSIBLE NOW. lane_gate_dispatch.go rule 2 became "a wait
+	// per gated lane the plan enters" — the leg dispatches cleanly with a wait at
+	// each mark, each released by its own lane's admission. The exclusion has
+	// outlived the refusal that forced it, and the comment that stood here said
+	// so, in these words: "this is now a CONSERVATISM rather than an
+	// impossibility … the next person to widen the shuffle pool will come looking
+	// here … Neither is guessed at cheaply — measure it."
 	//
-	// So this is now a CONSERVATISM rather than an impossibility, and it is worth
-	// saying which, because the next person to widen the shuffle pool will come
-	// looking here: the constraint that forced it has been lifted, and lifting
-	// this too is a real option with a measurable cost on both sides. What it
-	// buys is pool width, which the dig cascade (F-10) is sensitive to. What it
-	// risks is lane-hold duration. Neither is guessed at cheaply — measure it.
+	// ── SO IT WAS MEASURED, AND THE CONSERVATISM COSTS MORE THAN IT SAVES ─
 	//
-	// Found on the lane-stress rig 2026-08-09, within minutes of it coming up:
-	// every dig out of a marked lane whose blocker landed in the marked empty
-	// lane failed at the splice, which failed the parent, which failed the
-	// two-robot swap the parent was supplying, which cancelled the evac. One
-	// unexpressible plan, and the line was starved. Nothing self-clears either --
-	// both marks stay where they are, so the re-plan picks the same slot and
-	// fails the same way.
+	// demo.yaml 2026-08-31, all 16 lanes marked for the first time (no plant and
+	// no fixture had ever carried a mark, which is why nothing had met this).
+	// With every lane gated, "park in an ungated lane" names no slot in the
+	// plant, so EVERY dig held:
 	//
-	// This is the same shape as the dug-lane exclusion below, and lands here for
-	// the same reason: a slot the plan cannot legally use is not a candidate, and
-	// plan-time is where a candidate list belongs. The alternative -- letting the
-	// splice refuse and dispositioning the refusal better -- treats the symptom;
-	// the dig never wanted that slot, it wanted A slot.
+	//	complex: could not read Lane_01 while planning a dig for demand 9
+	//	  (find shuffle slots: ... this dig is 2 slot(s) short) — holding
 	//
-	// Running out because of this WAITS. ErrNoShuffleSlot is transient and
-	// retries, which is exactly the disposition the last tightening of this
-	// function relied on (see shuffleSlotFree). A dig that can only reach gated
-	// lanes waits for an ungated slot to free rather than dying.
+	// Six digs stuck from the first minute of the run, each with a partner leg
+	// stuck behind it, and the lines starved behind those. The refusal is a wait
+	// and it is honest, but a wait whose releaser is "somebody un-marks a lane"
+	// has no releaser at all.
 	//
-	// Only when the DUG lane is itself gated: a plan touching one gated lane is
-	// fine, and so is one touching the same gated lane twice.
-	dugLaneGated := db.GetNodeProperty(laneID, PropLaneGatePoint) != ""
+	// What the exclusion was protecting is written down and stays true: a dig
+	// holds its lane EXCLUSIVELY, so a leg dwelling at a second lane's mark keeps
+	// the dug corridor shut for as long as the second lane is congested. That is a
+	// real cost. It is bounded, lawful, and self-clearing — the second lane's own
+	// admission releases it — where the cost of keeping the exclusion is a dig
+	// that never starts. Pool width wins; the dig cascade (F-10) is sensitive to
+	// it and the hold duration is not unbounded.
+	//
+	// The dug-lane exclusion below is NOT this one and stays: never park a blocker
+	// back into the lane being dug out of.
 
 	// NEVER RE-BURY A BIN AN EXPOSE HOLD IS PROTECTING — NOT EVEN YOUR OWN.
 	//
@@ -701,9 +700,6 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 				mouthHeld = append(mouthHeld, c)
 				continue
 			}
-		}
-		if dugLaneGated && db.GetNodeProperty(c.ID, PropLaneGatePoint) != "" {
-			continue // a dig leg dwelling at a second mark holds two lanes at once
 		}
 		slots, err := db.ListLaneSlots(c.ID)
 		if err != nil {

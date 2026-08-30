@@ -62,43 +62,38 @@ func setupGatedDigGroup(t *testing.T, db *store.DB, withOpenLane bool) (grp, dug
 	return
 }
 
-// TestGatedDig_BlockerNeverGoesToAnotherGatedLane pins the defect the lane-stress
-// rig surfaced on 2026-08-09, minutes after it came up.
+// TestGatedDig_BlockerMayGoToAnotherGatedLane pins the LIFTING of an exclusion
+// that had outlived its reason.
 //
-// THE FAILURE, END TO END. A dig out of a MARKED lane picked its shuffle slot in
-// a different MARKED lane. The leg's plan therefore touched two gated lanes, and
-// spliceLaneWait refuses that outright -- one wait per plan, because releasing
-// per-wait is machinery the transform deliberately does not build
-// (lane_gate_dispatch.go rule 2). The refusal is a bare error, so:
+// -- WHAT THIS TEST USED TO ASSERT, AND WHY THAT EXPIRED -------------------
 //
-//	leg fails -> parent fails ("child order N failed during reshuffle")
-//	          -> the two-robot swap the parent was supplying fails
-//	          -> the evac is cancelled so it cannot strand the line
-//	          -> the line is starved, and the demand is gone.
+// It was TestGatedDig_BlockerNeverGoesToAnotherGatedLane, and it was right when
+// it was written (lane-stress rig, 2026-08-09). spliceLaneWait then allowed ONE
+// gated lane per plan and refused a second outright, so a dig out of a marked
+// lane whose blocker landed in a marked lane failed at the splice -- failing the
+// parent, the swap it supplied, and the evac. Four terminal orders, and nothing
+// self-cleared, because both marks stay where they are.
 //
-// Four terminal orders from one unexpressible plan. Worse than the cascade is
-// that NOTHING SELF-CLEARS: both marks stay where they are, so the re-plan picks
-// the same slot and fails the same way, forever. This is the wedge shape the
-// stream refuses to build, arrived at from a direction nobody had walked --
-// demo.yaml has zero marks, so no sim before this one could reach it.
+// lane_gate_dispatch.go rule 2 is now "A WAIT PER GATED LANE THE PLAN ENTERS".
+// The plan this test was built to prevent is expressible: it dispatches with a
+// wait at each mark, each released by its own lane's admission. The refusal that
+// forced the exclusion is gone, and findShuffleSlots' own comment said so and
+// asked for a measurement before lifting it.
 //
-// THE FIX IS PLAN-TIME AVOIDANCE, not a better refusal. The dig never wanted that
-// particular slot; it wanted A slot. So the candidate list drops slots the plan
-// could not legally use, which is the same shape as the exclusion immediately
-// below it in findShuffleSlots -- never park a blocker back into the lane being
-// dug out of.
+// -- THE MEASUREMENT -------------------------------------------------------
 //
-// DESIGN 16 rule 7: the shuffle-slot pick is the first thing that can go wrong
-// here. The lane is buried, the group resolves, the lock is free, and the
-// blocker count is 1 -- so the candidate list is what the test is looking at.
+// demo.yaml 2026-08-31, all 16 lanes marked for the first time anywhere. With
+// every lane gated, "park in an ungated lane" named no slot in the plant, so
+// every dig held from the first minute of the run -- six of them, each with a
+// partner leg behind it and a starved line behind that. A wait whose releaser is
+// "somebody un-marks a lane" is not a wait.
 //
-// MUTATION (verified 2026-08-09): delete the `dugLaneGated && ...` skip in
-// findShuffleSlots' Pass 2. This fires -- the blocker is planned into GD-GATED,
-// and the plan it produces is one spliceLaneWait refuses.
-func TestGatedDig_BlockerNeverGoesToAnotherGatedLane(t *testing.T) {
+// So the blocker may now land in GD-GATED, and the geometry that used to be a
+// trap is just another candidate.
+func TestGatedDig_BlockerMayGoToAnotherGatedLane(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_, dug, gated, open, dugSlots, bp := setupGatedDigGroup(t, db, true)
+	_, dug, gated, _, dugSlots, bp := setupGatedDigGroup(t, db, false)
 
 	createTestBinAtNode(t, db, bp.Code, dugSlots[0].ID, "BIN-GD-BLK")
 	target := createTestBinAtNode(t, db, bp.Code, dugSlots[1].ID, "BIN-GD-TGT")
@@ -109,78 +104,72 @@ func TestGatedDig_BlockerNeverGoesToAnotherGatedLane(t *testing.T) {
 		Status: StatusPending, Quantity: 1, PayloadCode: bp.Code, DeliveryNode: "LINE-GD"}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
+	// NO UNGATED LANE EXISTS IN THIS FIXTURE, deliberately: under the old
+	// exclusion this is the shape that had no candidates at all and waited
+	// forever. It must now plan.
 	_, pe := d.planner.planBuriedReshuffle(order, &BuriedError{Bin: target, Slot: dugSlots[1], LaneID: dug.ID})
 	if pe != nil {
-		t.Fatalf("the dig had an ungated lane to park its blocker in and must have planned: %s: %s", pe.Code, pe.Detail)
+		t.Fatalf("the only free slots are in the other MARKED lane %s and the dig refused to plan "+
+			"(%s: %s). That is the exclusion still in place -- and with every lane marked it means no "+
+			"dig anywhere can ever start.", gated.Name, pe.Code, pe.Detail)
 	}
 
-	// WHERE THE BLOCKER WENT, READ AT THE MOMENT IT IS DECIDED.
-	//
-	// This used to read delivery_node straight off the leg after planning, because
-	// planning is where the slot was picked. Under the outbound dwell the leg is
-	// dispatched with no destination and stands in GD-DUG holding the blocker until
-	// Core chooses — so the read moves to after the release, which is the same fact
-	// one moment later. The exclusion being pinned (never park into a second gated
-	// lane) is unchanged and still lives in findShuffleSlots; only the caller moved.
 	legs := legsOf(t, db, order.ID)
 	if len(legs) == 0 {
 		t.Fatal("the dig wrote no legs")
 	}
 	released := releaseDwell(t, d, db, legs[0])
-	dest := released.DeliveryNode
-
-	destNode, err := db.GetNodeByDotName(dest)
+	destNode, err := db.GetNodeByDotName(released.DeliveryNode)
 	if err != nil || destNode == nil {
-		t.Fatalf("resolve the leg's delivery node %q: %v", dest, err)
+		t.Fatalf("resolve the leg's delivery node %q: %v", released.DeliveryNode, err)
 	}
 	destLane, err := db.LaneForNode(destNode.ID)
 	if err != nil {
-		t.Fatalf("lane for %q: %v", dest, err)
+		t.Fatalf("lane for %q: %v", released.DeliveryNode, err)
 	}
 	if destLane == nil {
-		return // a direct group child is not in a lane at all, and cannot collide
+		return // a direct group child is in no lane and cannot collide
 	}
-	if destLane.ID == gated.ID {
-		t.Fatalf("the dig out of MARKED lane %s parked its blocker in %s, which is ALSO marked.\n"+
-			"spliceLaneWait refuses a plan touching two gated lanes, so this leg fails, which fails "+
-			"the parent, which fails whatever the parent was supplying. Nothing clears it either -- "+
-			"both marks stay put, so the re-plan picks this slot again. %s was free and ungated.",
-			dug.Name, destLane.Name, open.Name)
+	if destLane.ID == dug.ID {
+		t.Fatalf("the blocker was parked back into %s, the lane being dug out of -- that exclusion "+
+			"is a different one and it stays", dug.Name)
 	}
-	if destLane.ID != open.ID {
-		t.Errorf("blocker went to lane %s, want the ungated %s", destLane.Name, open.Name)
+	if destLane.ID != gated.ID {
+		t.Errorf("blocker went to lane %s, want the other marked lane %s", destLane.Name, gated.Name)
 	}
 }
 
-// TestGatedDig_NoUngatedSlotWaitsRatherThanPickingOne is the other half, and it
-// is the half that makes the exclusion safe to add.
+// TestGatedDig_NoSlotAnywhereWaitsRatherThanFailing is the other half, and it is
+// the half that keeps the whole thing safe.
 //
-// Tightening a candidate list makes "nothing available" more frequent, which is
-// only acceptable because that outcome WAITS. ErrNoShuffleSlot is transient and
-// retries; a slot frees the moment any other order clears one. Without this arm
-// the fix above would trade a wedge for a different wedge -- a dig that can only
-// reach gated lanes would have no candidates and no story about what happens
-// next.
+// A candidate list can always come up empty, and that outcome must WAIT:
+// ErrNoShuffleSlot is transient and retries, and a slot frees the moment any
+// other order clears one. What changed when the gated-lane exclusion came out is
+// only WHEN empty happens -- it used to include "the only free slots are behind
+// another mark", a condition nothing in the plant clears, and now it means what
+// it says.
 //
-// The same reasoning is written next to shuffleSlotFree for the previous
-// tightening of this function. It is load-bearing both times.
+// The same reasoning is written next to shuffleSlotFree for an earlier
+// tightening of this function. It is load-bearing every time.
 //
-// TWO MUTATIONS, both run 2026-08-09, because this test carries two claims.
-//
-//  1. Neuter the exclusion in findShuffleSlots (`if false && dugLaneGated`). The
-//     FIRST arm fires: the dig plans into the other marked lane even though that
-//     plan cannot be spliced.
-//  2. Drop codeNoShuffleSlot from the transient set in planning_service.go's
-//     classifier. The Transient() assertion fires -- and on the rig that is the
-//     difference between a dig that resumes when a slot frees and a demand that
-//     is gone.
-func TestGatedDig_NoUngatedSlotWaitsRatherThanPickingOne(t *testing.T) {
+// MUTATION: drop codeNoShuffleSlot from the transient set in
+// planning_service.go's classifier. The Transient() assertion fires -- the
+// difference between a dig that resumes when a slot frees and a demand that is
+// gone.
+func TestGatedDig_NoSlotAnywhereWaitsRatherThanFailing(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, dug, gated, _, dugSlots, bp := setupGatedDigGroup(t, db, false)
 
 	createTestBinAtNode(t, db, bp.Code, dugSlots[0].ID, "BIN-GD-BLK")
 	target := createTestBinAtNode(t, db, bp.Code, dugSlots[1].ID, "BIN-GD-TGT")
+	// FILL THE OTHER MARKED LANE. It is a legal candidate now, so the only way to
+	// reach "no slot anywhere" is for there to genuinely be none.
+	gatedSlots, gsErr := db.ListLaneSlots(gated.ID)
+	testutil.MustNoErr(t, gsErr, "list the other marked lane slots")
+	for gi, gs := range gatedSlots {
+		createTestBinAtNode(t, db, bp.Code, gs.ID, fmt.Sprintf("BIN-GD-FILL%d", gi))
+	}
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
@@ -282,30 +271,42 @@ func TestDig_NeverParksIntoALaneAnotherDigIsHolding(t *testing.T) {
 	exposed := createTestBinAtNode(t, db, bp.Code, openSlots[len(openSlots)-1].ID, "BIN-F19-EXPOSED")
 	testdb.ClaimBinForTest(t, db, exposed.ID, order.ID)
 
+	// -- WHAT THIS TEST ASSERTED BEFORE, AND WHY THE ASSERTION MOVED -------
+	//
+	// It used to expect a REFUSAL here: GD-OPEN was excluded by the claim, GD-GATED
+	// was excluded for being a second marked lane, so nothing was left and the dig
+	// waited on no-shuffle-slot. The second of those exclusions is gone (see
+	// findShuffleSlots), so this fixture now has a legal answer and the dig must
+	// take it.
+	//
+	// The F-19 claim itself is untouched and is what the assertions below still
+	// pin: whatever the pool contains, the blocker must never land in the lane a
+	// dig is holding open. "No slot anywhere still waits" moved to
+	// TestGatedDig_NoSlotAnywhereWaitsRatherThanFailing, which builds a fixture
+	// where there genuinely is none.
 	_, pe := d.planner.planBuriedReshuffle(order, &BuriedError{Bin: target, Slot: dugSlots[1], LaneID: dug.ID})
-	if pe == nil {
-		var dest string
-		_ = db.DB.QueryRow(
-			`SELECT delivery_node FROM orders WHERE parent_order_id = $1 ORDER BY sequence LIMIT 1`,
-			order.ID).Scan(&dest)
-		destNode, _ := db.GetNodeByDotName(dest)
-		destLane, _ := db.LaneForNode(destNode.ID)
-		if destLane != nil && destLane.ID == open.ID {
-			t.Fatalf("the dig parked its blocker into %s, which THIS SAME ORDER is holding under a "+
-				"dig lock. That lane's free slots are the product of an excavation somebody is still "+
-				"waiting on; filling them re-buries the bin the lock exists to protect. Deepest-first "+
-				"packing means it fills from the back, so the exposed bin ends up behind a full lane. "+
-				"That is the cascade that stopped the plant at order 70.", open.Name)
-		}
-		t.Fatalf("blocker went to %q — the only free slots were in a dig-locked lane, so this must "+
-			"have waited with no-shuffle-slot instead of planning", dest)
+	if pe != nil {
+		t.Fatalf("the dig refused (%s: %s), but the other marked lane was free and is a legal "+
+			"candidate now -- only %s is off-limits, because this same order holds it under a dig "+
+			"lock", pe.Code, pe.Detail, open.Name)
 	}
-	if pe.Code != codeNoShuffleSlot {
-		t.Fatalf("refused with %q (%s), want %q — every candidate lane was dig-locked, which is "+
-			"congestion and must WAIT, not geometry", pe.Code, pe.Detail, codeNoShuffleSlot)
+
+	legs := legsOf(t, db, order.ID)
+	if len(legs) == 0 {
+		t.Fatal("the dig wrote no legs")
 	}
-	if !pe.Transient() {
-		t.Errorf("no-shuffle-slot came back NON-transient, which terminates the demand. A lock frees "+
-			"as soon as any dig completes. Detail: %s", pe.Detail)
+	released := releaseDwell(t, d, db, legs[0])
+	destNode, err := db.GetNodeByDotName(released.DeliveryNode)
+	if err != nil || destNode == nil {
+		t.Fatalf("resolve the leg delivery node %q: %v", released.DeliveryNode, err)
+	}
+	destLane, err := db.LaneForNode(destNode.ID)
+	testutil.MustNoErr(t, err, "lane for the leg destination")
+	if destLane != nil && destLane.ID == open.ID {
+		t.Fatalf("the dig parked its blocker into %s, which THIS SAME ORDER is holding under a "+
+			"dig lock. That lane free slots are the product of an excavation somebody is still "+
+			"waiting on; filling them re-buries the bin the lock exists to protect. Deepest-first "+
+			"packing means it fills from the back, so the exposed bin ends up behind a full lane. "+
+			"That is the cascade that stopped the plant at order 70.", open.Name)
 	}
 }
