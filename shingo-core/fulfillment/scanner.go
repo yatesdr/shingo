@@ -771,13 +771,6 @@ func (s *Scanner) digForBuriedHeldBin(order *orders.Order) bool {
 	return false
 }
 
-// setQueueReason is the scanner's one door onto the queue-reason columns. It
-// generates the operator sentence from code+params (via the shared formatter),
-// then writes sentence+code+cause together — so a wait parked here always
-// records the structured code, never free text. No-ops when the sentence is
-// unchanged (avoids a re-touch every tick a wait persists, which can re-trigger
-// the scanner). cause is the engineer-only call-site tag; params carries the
-// values the sentence is built from and is discarded after formatting.
 // logTransition reports a failed lifecycle transition from the scanner.
 //
 // A refused compare-and-swap (ConcurrentTransition) is not a failure — it is
@@ -798,18 +791,15 @@ func (s *Scanner) logTransition(orderID int64, what string, err error) {
 	s.logFn("fulfillment: order %d %s: %v", orderID, what, err)
 }
 
+// setQueueReason is the scanner's door onto the queue-reason columns — the
+// package-local name for dispatch.WriteQueueDetail, which holds the decision.
+//
+// s.logFn IS A STRUCT FIELD, NOT AN INJECTED PARAMETER, and that is what the
+// door's log-sink argument exists for: the scanner writes to the plant log
+// through a sink the process wires up, and the dispatch side writes through the
+// standard logger. One body, two destinations.
 func (s *Scanner) setQueueReason(order *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams) {
-	reason := dispatch.FormatQueueSentence(code, params)
-	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == string(cause) {
-		return
-	}
-	if err := s.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
-		s.logFn("fulfillment: set queue_reason for order %d: %v", order.ID, err)
-		return
-	}
-	order.QueueReason = reason
-	order.QueueCode = string(code)
-	order.QueueCause = string(cause)
+	dispatch.WriteQueueDetail(s.db, s.logFn, "fulfillment", order, code, cause, params)
 }
 
 // notifyEdgeDispatched sends the ack + waybill to Edge after a successful

@@ -373,8 +373,8 @@ func (e *Engine) queueBinMoveForLane(order *orders.Order, bin *bins.Bin, sourceN
 	// (dispatch/lifecycle.go historyReason), so the fresh `queued` row was born
 	// blank — and orders.queue_code is overwritten in place, so that row was the
 	// only durable record there was ever going to be of what this person's move
-	// waited for. The helper writes both halves, which is why the three park sites
-	// inside dispatch have never had this problem.
+	// waited for. The helper writes both halves, which is why no park site that
+	// goes through dispatch.WriteQueueDetail has ever had this problem.
 	reason := dispatch.FormatQueueSentence(code, params)
 	e.dispatcher.SetQueueReason(order, code, cause, params)
 	if err := e.dispatcher.Lifecycle().Queue(order, "bin-move", reason); err != nil {

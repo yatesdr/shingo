@@ -273,26 +273,14 @@ func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bi
 	}
 }
 
-// setQueueReason is the planning side's one door onto the queue-reason columns:
-// it generates the operator sentence from code+params (via the shared formatter)
-// and writes sentence+code+cause together. Mirrors the Dispatcher and Scanner
-// helpers so every intake path parks through the same formatter, never free text.
-// Best-effort: a failed write is logged and swallowed.
+// setQueueReason is the planning side's door onto the queue-reason columns —
+// the package-local name for WriteQueueDetail, which holds the decision.
+//
+// NO BOOL HERE, deliberately: nothing on the planning path asks whether a wait
+// was new. The door returns one and this drops it, rather than every planning
+// call site growing a discard.
 func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) {
-	reason := FormatQueueSentence(code, params)
-	// The cause is part of a wait's identity, not a decoration on it: two causes
-	// can share one code and render one sentence (the two blocker refusals do),
-	// so comparing without it keeps the stale cause on the row forever.
-	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == string(cause) {
-		return
-	}
-	if err := s.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
-		log.Printf("dispatch: set queue_reason (%s) for order %d: %v", cause, order.ID, err)
-		return
-	}
-	order.QueueReason = reason
-	order.QueueCode = string(code)
-	order.QueueCause = string(cause)
+	WriteQueueDetail(s.db, log.Printf, "dispatch", order, code, cause, params)
 }
 
 // planTransport is the single planner for the three "simple" transport families —

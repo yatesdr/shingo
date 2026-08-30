@@ -868,45 +868,16 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	return dispatchStep{}
 }
 
-// setQueueReason is the dispatch side's one door onto the queue-reason columns.
-// It generates the operator sentence from code+params (via the shared formatter),
-// then writes sentence+code+cause together — so a wait parked here always records
-// the structured code, never free text. No-ops when the sentence AND code are
-// unchanged: the unchanged short-circuit is load-bearing (rewriting the same
-// reason re-touches the row and can re-trigger the very scanner tick that just
-// parked the order — an event loop). cause is the engineer-only call-site tag
-// (the `where` of older callers); params carries the values the sentence is built
-// from and is discarded after formatting. Best-effort: a failed write is logged
-// and swallowed (queue_reason is advisory HMI/queue metadata, never a correctness
-// gate), leaving the in-memory fields matching the persisted values.
+// setQueueReason is the dispatch side's door onto the queue-reason columns —
+// the package-local name for WriteQueueDetail, which holds the decision.
 //
-// RETURNS WHETHER THIS CALL ACTUALLY WROTE A NEW WAIT, which is a fact only this
-// function holds and which one caller needs: the stopped-blocker alarm
-// (parkOnClaimedBlocker) fires on the EDGE of a wait rather than on every pass
-// that re-asserts it, and the unchanged short-circuit below is exactly that edge.
-// A false is either "the row already said this" or "the write failed" — neither
-// is a new wait, and both are already logged or harmless. Callers that do not
-// care ignore it, which is every other one.
+// A METHOD RATHER THAN THE BARE CALL, at ~40 sites, because the store handle,
+// the log sink and the subsystem name are the same every time here and are not
+// what any of those call sites is about. The body that must not be re-spelled
+// lives once, in queue_detail.go, along with the account of what the bool and
+// the short-circuit are load-bearing for.
 func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) bool {
-	reason := FormatQueueSentence(code, params)
-	// The cause is part of what this writes, so it is part of what makes a
-	// second call redundant. Comparing only reason and code meant a call that
-	// changed nothing but the cause was skipped — which matters where a general
-	// reason is set first and a more specific call follows with the same
-	// sentence: the buried path sets "storage is being rearranged" on arrival
-	// and then narrows the cause to lane-locked or lock-race. Without the cause
-	// in this comparison, the narrower tag never lands.
-	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == string(cause) {
-		return false
-	}
-	if err := d.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
-		log.Printf("dispatch: set queue_reason (%s) for order %d: %v", cause, order.ID, err)
-		return false
-	}
-	order.QueueReason = reason
-	order.QueueCode = string(code)
-	order.QueueCause = string(cause)
-	return true
+	return WriteQueueDetail(d.db, log.Printf, "dispatch", order, code, cause, params)
 }
 
 // SetQueueReason is the exported form, for a door OUTSIDE this package that
@@ -917,9 +888,9 @@ func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode
 // Queue(). The transition's history row takes its code from the IN-MEMORY order
 // (historyReason), which a direct store write never touches — so the fresh
 // `queued` row was born blank, and the only durable record of what a person's
-// move was waiting for did not exist. The three in-package helpers all write
-// both halves; this makes that shape reachable from outside rather than growing
-// a fourth spelling of it.
+// move was waiting for did not exist. WriteQueueDetail writes both halves; this
+// makes that shape reachable from outside rather than growing another spelling
+// of it.
 func (d *Dispatcher) SetQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) bool {
 	return d.setQueueReason(order, code, cause, params)
 }
