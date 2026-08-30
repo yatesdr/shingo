@@ -164,7 +164,24 @@ func FindStoreSlotInLaneExcluding(db *sql.DB, laneID, excludeOrderID int64) (*No
 // lane is closed to stores right now" (rare, watchable, and self-clearing when
 // the claim clears). Both are the same disposition — try the next lane — so the
 // sentinel changes reporting, never control flow.
-var ErrLaneClosedByClaim = errors.New("lane closed to stores: a claimed bin sits deeper")
+//
+// ── THE SENTENCE NAMES BOTH SPELLINGS, AND IT USED TO NAME ONE ────────────
+//
+// It read "a claimed bin sits deeper", and the guard has TWO ways of deciding
+// somebody is coming for a bin (see findStoreSlot's burial clause): the bin is
+// CLAIMED, or an order AIMS at it — `holder.bin_id = bin AND holder.source_node
+// = the slot` — with no claim on the bin at all. The aim arm is not an edge
+// case; a demand that has resolved onto a bin and is waiting to dispatch holds
+// no claim for most of its life, which is exactly why the arm was added.
+//
+// The old sentence sent a reader who hit the aim arm to the bins table to find a
+// claim that was never there. Measured cost: one wedge diagnosis on 2026-08-31,
+// Lane_08 — the bin at SMN_023 was unclaimed and the lane was closed by order 23
+// aiming at it. The sentence now says what the guard tests rather than one of
+// the two ways it can be true. Every caller matches with errors.Is, so the text
+// is reporting only.
+var ErrLaneClosedByClaim = errors.New(
+	"lane closed to stores: an order is coming for a bin deeper in this lane (claimed, or aimed at by bin_id+source_node)")
 
 // findStoreSlot is the selector body. `guard` toggles THE BURIAL CLAUSE, and the
 // off form exists only to attribute a miss (see the caller); nothing in
