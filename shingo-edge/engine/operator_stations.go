@@ -791,20 +791,64 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		supplyReleased = released
 	}
 
-	// hop A4-ii: if exactly one leg released and its sibling was deferred
-	// (Core would refuse it right now), remember the deferred leg so it fires
-	// when it later reaches staged — its sibling having already gone. The
-	// operator's single click expressed "go" for the whole pair; deferring is
-	// not dropping. Nothing is recorded when BOTH released (nothing to re-fire)
-	// or NEITHER released (no sibling went — re-firing would auto-release with
-	// no operator intent behind it).
-	if evacReleased && !supplyReleased && supplyOrderID != nil {
-		e.rememberDeferredSiblingRelease(*supplyOrderID, supplyDisp)
-	}
-	if supplyReleased && !evacReleased && evacOrderID != nil {
-		e.rememberDeferredSiblingRelease(*evacOrderID, disp)
-	}
+	// hop A4-ii: if a leg did not go and its sibling DID, remember the deferred
+	// leg so it fires when it later reaches staged. The operator's single click
+	// expressed "go" for the whole pair; deferring is not dropping. Nothing is
+	// recorded when both went (nothing to re-fire) or when neither did and
+	// neither ever had (no sibling went — re-firing would auto-release with no
+	// operator intent behind it).
+	//
+	// "ITS SIBLING WENT" HAS TWO SPELLINGS AND THIS USED TO READ ONLY ONE.
+	// The arms below were `evacReleased && !supplyReleased` — released ON THIS
+	// CLICK — so a sibling that had ALREADY run its half and confirmed before
+	// the click arrived scored the same as a sibling that never went at all.
+	// Both make releaseIfReleasable return false, and only the second justifies
+	// dropping the deferral. See siblingAlreadyWent for the run that measured it.
+	e.deferReleaseIfSiblingWent(supplyOrderID, evacOrderID, supplyReleased, evacReleased, supplyDisp)
+	e.deferReleaseIfSiblingWent(evacOrderID, supplyOrderID, evacReleased, supplyReleased, disp)
 	return nil
+}
+
+// deferReleaseIfSiblingWent records the pair-release deferral for one leg of the
+// pair when that leg did not go on this click and its partner did — by either
+// spelling of "did" (see siblingAlreadyWent).
+func (e *Engine) deferReleaseIfSiblingWent(
+	legID, siblingID *int64, legReleased, siblingReleased bool, disp ReleaseDisposition,
+) {
+	if legID == nil || legReleased {
+		return
+	}
+	if !e.siblingAlreadyWent(siblingID, siblingReleased) {
+		return
+	}
+	e.rememberDeferredSiblingRelease(*legID, disp)
+}
+
+// siblingAlreadyWent reports whether this leg's partner has gone: either it
+// released on this same click, or it had already run its half to a SUCCESSFUL
+// terminal before the click arrived.
+//
+// The second arm is the swap-orphan fix. A partner that failed, was cancelled,
+// or was skipped is NOT "gone" for this purpose — that is
+// HandleSwapPeerTerminal's territory on the Core side and it unwinds the
+// survivor rather than releasing it. See orders.IsTerminalSuccess.
+//
+// An unreadable sibling answers NO. The deferral only ever ADDS a release the
+// operator already asked for, so failing to record one costs a click; recording
+// one on a guess would release a leg whose partner may still be coming, which is
+// the collision refusePlacingLegWhileSiblingPending exists to prevent.
+func (e *Engine) siblingAlreadyWent(siblingID *int64, siblingReleased bool) bool {
+	if siblingReleased {
+		return true
+	}
+	if siblingID == nil {
+		return false
+	}
+	sibling, err := e.db.GetOrder(*siblingID)
+	if err != nil {
+		return false
+	}
+	return orders.IsTerminalSuccess(sibling.Status)
 }
 
 // SwapPairNotReadyError refuses a RELEASE that would drop a bin onto a press

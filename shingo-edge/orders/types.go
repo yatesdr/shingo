@@ -63,6 +63,33 @@ func IsTerminal(status protocol.Status) bool {
 	return protocol.IsTerminal(status)
 }
 
+// IsTerminalSuccess reports whether a terminal order RAN ITS HALF — as opposed
+// to dying (failed/cancelled) or being found unnecessary (skipped).
+//
+// THE DISTINCTION IS THE WHOLE SWAP-ORPHAN FIX, and it did not exist because
+// nothing needed it. Every arm that reacts to a swap peer going terminal reacts
+// to a DEATH: HandleSwapPeerTerminal unwinds the survivor, and Core's
+// swapTerminalKind maps skipped/failed/cancelled and deliberately returns "" for
+// confirmed. That asymmetry is correct as far as it goes — the unwind exists to
+// clean up after a death, and a completed peer did its half. What it leaves
+// uncovered is the survivor of a SUCCESSFUL half-swap, which needs no unwind and
+// does need a release.
+//
+// MEASURED, run 12d (order 84 / peer 85, 2026-08-31). The legs were created
+// 0.754s apart — a normal paired mint, not an intake defect — and 85 ran its
+// whole leg and confirmed at 23:55:20. 84 was released past its first wait at
+// 23:55:21 and re-staged at its SECOND wait 58 seconds later, by which time its
+// partner had been terminal for a minute. Nothing fires on a peer's SUCCESS, so
+// nothing looked at it again.
+//
+// Confirmed is the only member. Skipped is deliberately excluded even though it
+// is not a failure: a skipped leg is one Core found MOOT, so its partner is in
+// HandleSwapPeerTerminal's territory (it cancels, correctly) rather than waiting
+// for a release. Delivered is not here because it is not terminal at all.
+func IsTerminalSuccess(status protocol.Status) bool {
+	return status == StatusConfirmed
+}
+
 // ReleasableAtCore reports whether Core will ACCEPT an OrderRelease for an
 // order in this status. It mirrors Core's precondition verbatim — see
 // shingo-core/dispatch/complex_release.go, which rejects anything that is
