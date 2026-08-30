@@ -20,6 +20,10 @@ func newTestSimOperator(clk clock.Clock) *simOperator {
 		clk:     clk,
 		ctx:     context.Background(),
 		pending: make(map[int64]bool),
+		// The cap's backoff state. A fixture that leaves it nil panics the moment
+		// an order reaches the cap, which is exactly the path several of these
+		// tests drive — construct the type fully rather than partially.
+		cappedAt: make(map[int64]time.Time),
 	}
 }
 

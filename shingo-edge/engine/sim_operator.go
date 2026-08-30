@@ -5,12 +5,15 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingoedge/config"
+	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -50,6 +53,9 @@ type simOperator struct {
 	// See maxReleaseTries: the Edge cannot see a Core-owned lane wait, so the only
 	// signal that a button is not ours to push is the order coming back `staged`.
 	releaseTries map[int64]int
+	// cappedAt records when an order hit maxReleaseTries, so the cap can be
+	// re-armed instead of becoming a permanent give-up. See releaseCapReArm.
+	cappedAt map[int64]time.Time
 
 	// marketSlots caches the combined market's storage-slot node names for the
 	// negative-bin sweep (clearNegativeBins). Populated lazily; read only by the
@@ -72,6 +78,7 @@ func (e *Engine) StartSimOperator(ctx context.Context, simCfg config.SimConfig, 
 		flipping:     make(map[int64]bool),
 		confirming:   make(map[int64]bool),
 		releaseTries: make(map[int64]int),
+		cappedAt:     make(map[int64]time.Time),
 	}
 	op.classify = op.classifyFromClaim
 	// The bus is synchronous (D4): handlers must not block — they dedupe and
@@ -440,6 +447,33 @@ func (op *simOperator) onStatusChanged(ev Event) {
 // not a tuned number.
 const maxReleaseTries = 3
 
+// releaseCapReArm is how long a capped order is left alone before the sim
+// operator gives it another round of tries.
+//
+// ── WHY THE CAP RE-ARMS, AND WHY IT USED NOT TO ───────────────────────────
+//
+// The cap's premise was that a capped order is CORE's to release: "a lane-waiting
+// order stays staged and stays capped until Core lets it in, at which point it
+// leaves and the count is dropped." That is true of a LANE wait and false of a
+// STATION wait — and Core is explicit that it must never advance one of those
+// ("the precondition is a fact only the station can observe", queue_releasers.go).
+// The station, in the sim, IS this operator. So a station-waiting order that hit
+// the cap had its only possible releaser go quiet for good.
+//
+// MEASURED, 12e run 2026-08-31. Order 91 took three pair-releases inside ONE
+// SECOND (15:25:31, :32, :32), hit the cap, and was abandoned holding AMR-15 for
+// the rest of the run under the message above — which told the reader it was
+// "most likely parked on a LANE wait" when its own plan says
+// `wait SLN_010 wait_kind=station`. 24 orders hit the cap in that run.
+//
+// A BOUNDED BACKOFF, NOT A RETRY LOOP. The original incident this cap was written
+// for (lane-stress 2026-08-10: 240 refusals in five minutes, one every 1.25s,
+// 1796 outbox rows for 46 completed orders) stays fixed: three tries per re-arm
+// window is ~3/minute against ~48/minute measured then, a 16x reduction, and a
+// genuinely lane-waiting order simply re-caps each window until Core lets it in.
+// What it stops being is permanent.
+const releaseCapReArm = time.Minute
+
 func (op *simOperator) scheduleRelease(orderID int64) {
 	op.mu.Lock()
 	if op.releasing[orderID] {
@@ -449,10 +483,17 @@ func (op *simOperator) scheduleRelease(orderID int64) {
 	if op.releaseTries[orderID] >= maxReleaseTries {
 		if op.releaseTries[orderID] == maxReleaseTries {
 			op.releaseTries[orderID]++ // once past the cap, say so once and go quiet
+			// UNDER THE LOCK. cappedAt is read and deleted by
+			// reArmExpiredReleaseCaps from the reconcile goroutine, which holds
+			// op.mu to do it; this write was outside the mutex when the re-arm
+			// landed, which is a concurrent map write — a panic, not a stale
+			// read. The race detector never saw it: gate.sh's race step runs
+			// shingo-core only and passes no `sim` tag, so nothing in this file
+			// is ever built under -race.
+			op.cappedAt[orderID] = op.clk.Now()
 			op.mu.Unlock()
-			op.e.logFn("[sim] operator: order %d has refused release %d times — leaving it alone. "+
-				"It is most likely parked on a LANE wait, which only Core's lane evaluator can "+
-				"advance; the Edge cannot see that from here.", orderID, maxReleaseTries)
+			op.e.logFn("[sim] operator: order %d has refused release %d times — backing off for %s. %s",
+				orderID, maxReleaseTries, releaseCapReArm, op.releaseCapDiagnosis(orderID))
 			return
 		}
 		op.mu.Unlock()
@@ -519,13 +560,7 @@ func (op *simOperator) reconcile() {
 			live[active[i].ID] = true
 		}
 	}
-	op.mu.Lock()
-	for id := range op.releaseTries {
-		if !live[id] { // delivered, or gone from the active set entirely (terminal)
-			delete(op.releaseTries, id)
-		}
-	}
-	op.mu.Unlock()
+	op.reArmExpiredReleaseCaps(live)
 
 	pending := 0
 	for i := range active {
@@ -1058,4 +1093,106 @@ func (op *simOperator) loadBin(nodeID int64, claim *processes.NodeClaim) error {
 	}
 	manifest := []protocol.IngestManifestItem{{PartNumber: payload, Quantity: capacity}}
 	return op.e.LoadBin(nodeID, payload, capacity, manifest)
+}
+
+// reArmExpiredReleaseCaps drops the release cap for orders that have progressed
+// (or gone) and for those that have sat under it longer than releaseCapReArm.
+//
+// The first half is the original clearing rule and its reasoning is above: the
+// release from the cap cannot be a state the refusal-flap passes through, so it
+// keys on `delivered` rather than on "not currently staged".
+//
+// The second half is the re-arm, and it exists because the cap's premise is only
+// half true. See releaseCapReArm.
+func (op *simOperator) reArmExpiredReleaseCaps(live map[int64]bool) {
+	now := op.clk.Now()
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	for id := range op.releaseTries {
+		if !live[id] { // delivered, or gone from the active set entirely (terminal)
+			delete(op.releaseTries, id)
+			delete(op.cappedAt, id)
+			continue
+		}
+		at, capped := op.cappedAt[id]
+		if !capped || now.Sub(at) < releaseCapReArm {
+			continue
+		}
+		delete(op.releaseTries, id)
+		delete(op.cappedAt, id)
+		op.e.logFn("[sim] operator: order %d has waited %s under the release cap — trying again in "+
+			"case the button was mine to push all along", id, releaseCapReArm)
+	}
+}
+
+// releaseCapDiagnosis is what the sim operator can HONESTLY say about an order
+// it has just stopped pushing Release on.
+//
+// ── WHAT IT REPLACED, AND WHY THAT MATTERED ───────────────────────────────
+//
+// The cap's announcement used to assert the order was "most likely parked on a
+// LANE wait, which only Core's lane evaluator can advance". Order 91 in the 12e
+// run took three pair-releases inside one second, hit the cap, held AMR-15 for
+// the rest of the run, and printed that sentence — while its own plan said
+// `wait SLN_010 wait_kind=station`. The sentence sent every reader looking for a
+// lane fence that was not refusing anything, and it was the reason the whole
+// population was filed as a swap peer-terminal orphan for two rounds.
+//
+// ── WHAT THE EDGE ACTUALLY KNOWS, WHICH IS LESS THAN IT WANTED TO SAY ─────
+//
+// It knows its OWN plan, and every wait the Edge authors is station-owned by
+// construction (material_orders.go stationWait). It knows the sibling's status.
+// It does NOT know which wait the robot is standing at: Core splices its lane
+// waits into ITS copy of the plan and never sends them back, and
+// protocol.OrderStaged carries a uuid and a detail string — no wait index, no
+// wait kind. So the honest report is the two facts plus the missing one, and
+// naming the gap is the part that stops the next reader repeating order 91's
+// investigation.
+func (op *simOperator) releaseCapDiagnosis(orderID int64) string {
+	order, err := op.e.db.GetOrder(orderID)
+	if err != nil {
+		return "The Edge cannot read the order to say more about what it is waiting on."
+	}
+
+	partner := "It has no swap partner."
+	if order.SiblingOrderID != nil {
+		if sib, sErr := op.e.db.GetOrder(*order.SiblingOrderID); sErr == nil {
+			partner = fmt.Sprintf("Its swap partner %d is %s.", sib.ID, sib.Status)
+			if orders.IsTerminalSuccess(sib.Status) {
+				partner += " That partner already ran its half, so nothing is coming for this leg" +
+					" to make room for — see releaseSurvivorOfFinishedPartner, which releases this" +
+					" population without a click."
+			}
+		} else {
+			partner = fmt.Sprintf("Its swap partner %d could not be read.", *order.SiblingOrderID)
+		}
+	}
+
+	plan := "Its plan declares no waits."
+	if stepsJSON, sErr := op.e.db.GetOrderStepsJSON(orderID); sErr == nil {
+		if steps, dErr := decodeSteps(stepsJSON); dErr == nil {
+			kinds := make([]string, 0, len(steps))
+			for _, s := range steps {
+				if s.Action != protocol.ActionWait {
+					continue
+				}
+				kind := s.WaitKind
+				if kind == "" {
+					kind = "station (untagged)"
+				}
+				node := s.Node
+				if node == "" {
+					node = "(no node)"
+				}
+				kinds = append(kinds, node+"="+kind)
+			}
+			if len(kinds) > 0 {
+				plan = "Its own plan's waits are " + strings.Join(kinds, ", ") + "."
+			}
+		}
+	}
+
+	return partner + " " + plan +
+		" Which of them it is standing at is not knowable from the Edge: Core splices its lane" +
+		" waits into its own copy of the plan and the staged notification carries no wait index."
 }
