@@ -99,13 +99,6 @@ func ConfirmManifestTx(tx *sql.Tx, binID int64, producedAt string) (loadedAt tim
 	return loadedAt, uop, payloadCode, err
 }
 
-// ClearManifest empties a bin's manifest (bin is now empty).
-func ClearManifest(db *sql.DB, binID int64) error {
-	_, err := db.Exec(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0, manifest_confirmed=false, loaded_at=NULL, updated_at=$2 WHERE id=$1`,
-		binID, clock.Now().UTC())
-	return err
-}
-
 // GetManifest fetches a bin and parses its manifest. The Bin type
 // owns the JSON-decoding logic (domain.Bin.ParseManifest); this
 // helper just stitches a DB read to that pure-data step.

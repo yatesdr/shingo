@@ -873,39 +873,6 @@ func move(db *sql.DB, binID, toNodeID int64, clearStaging, clearAnomaly bool) er
 	return tx.Commit()
 }
 
-// ListAvailable returns bins with no payload (empty, available for loading).
-//
-// Empty-bin definition: COALESCE(b.payload_code, ”) = ”. Same NULL-safe
-// form FindEmptyCompatible uses post-2026-04-27. The previous filter
-// `(manifest IS NULL OR payload_code = ”)` was the same bug class as
-// the FindEmptyCompatible bug fixed in 7c274ac/4337344: a bin with
-// payload_code=NULL evaluates `payload_code = ”` to NULL (falsy in
-// WHERE), but the OR-clause `manifest IS NULL` could rescue it. The
-// COALESCE form is unambiguous about the NULL case.
-//
-// SetManifest and ClearManifest always set payload_code and manifest
-// together, so under normal operation the two columns are correlated
-// and the simpler payload_code-only filter produces identical results.
-// In partial-write/legacy states where manifest is NULL but payload_code
-// is non-empty, this filter correctly treats the bin as NOT available
-// (it has a payload, even without a manifest blob).
-func ListAvailable(db *sql.DB) ([]*Bin, error) {
-	// Exclude bins parked at synthetic nodes (notably _TRANSIT). An empty
-	// bin in transit can match COALESCE(payload_code, '') = '' but it is
-	// NOT available — its physical location is mid-flight. Without this
-	// filter, a claim-finding caller could pick an in-flight bin and
-	// double-claim it, the exact failure mode the synthetic node was
-	// introduced to prevent.
-	rows, err := db.Query(fmt.Sprintf(`%s WHERE COALESCE(b.payload_code, '') = ''
-		  AND COALESCE(n.is_synthetic, false) = false
-		ORDER BY b.id`, BinJoinQuery))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanBins(rows)
-}
-
 // binExecer is satisfied by both *sql.DB and *sql.Tx, so the claim primitive can
 // run standalone (Claim) or inside a caller's transaction (ClaimTx) — the latter
 // lets the hard claim commit atomically with the reservation confirm.
