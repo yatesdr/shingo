@@ -8,8 +8,10 @@ import (
 	"sync"
 
 	"shingo/protocol"
+	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // The lane-gate RELEASE EVALUATOR — Core as traffic cop.
@@ -542,6 +544,129 @@ type gateCandidate struct {
 // appending to it would race the recovery; the operator-release path refuses a
 // faulted order for the same reason (complex_release.go). It re-enters the set
 // on its own once it recovers, because nothing about its row changed.
+// stagedAtMarkOnLane is the set of orders parked at laneID's MARK — the rows a
+// dig may ignore, because their robots are standing outside the corridor.
+//
+// ── IT IS NOT gateStagedForLane, AND THE DIFFERENCE IS THE POINT ──────────
+//
+// The two ask different questions off the same rows. gateStagedForLane asks who
+// is RELEASABLE, so it goes on to resolve each candidate's entry step and drops
+// anyone whose tail cannot be built (a mis-spliced plan, an unresolvable wait
+// node). This asks who is STANDING OUTSIDE, and an order whose tail cannot be
+// built is standing outside exactly like one whose tail can. Forcing the two
+// sets to be equal would mean a robot at a mark started refusing excavations the
+// moment its own plan went unreadable, which is the wrong direction on both
+// counts. They share the primitives — IsGateStaged, waitAt, WaitLane — so the
+// definition of "at this lane's mark" has one spelling; only the follow-on
+// differs.
+//
+// FAULTED IS EXCLUDED, matching gateStagedForLane. A faulted leg is mid-recovery
+// and Core does not know where its robot will be when the recovery resolves, so
+// its row keeps refusing — over-restrictive, never under, which is the direction
+// enteredAtDispatch already argues for by name.
+//
+// ON A READ ERROR IT RETURNS NOTHING, which exempts nobody and leaves the
+// refusal exactly as it is today. A dig that cannot be admitted retries on the
+// next lane event; a dig admitted past a robot that turns out to be in the
+// corridor does not have a next anything.
+//
+// COST: one ActiveGateCandidates scan per dig-lock decision. Digs are rare
+// (35 hold events in the whole gated sim run of 2026-08-30) and this is not on
+// the per-order dispatch path. It is deliberately NOT called from
+// shuffleSlotsFrom's candidate loop, which would make it per-candidate-lane.
+func stagedAtMarkOnLane(db *store.DB, laneID int64) reservations.StagedOutside {
+	return stagedAtMarkByLane(db, laneID).On(laneID)
+}
+
+// stagedAtMarkByLane answers, for each named lane, which orders are standing at
+// its GROUP's wait points. stagedAtMarkOnLane is the single-lane spelling of it.
+//
+// ── THE MEMBERSHIP IS GROUP-SCOPED, AND THAT IS THE WHOLE POINT ───────────
+//
+// A wait point is staging for the node group, not a doorway onto the lane whose
+// name it happens to carry (reservations.StagedOutside says why). A robot at
+// "Lane_01-WAIT" has not entered a corridor and has not been committed to one —
+// the oracle can still send it to lane 10 — so it obstructs an excavation in
+// NONE of that group's lanes, and it is exempt on all of them.
+//
+// Matching on w.WaitLane == laneID instead would be reading the paint on the
+// floor rather than the geometry: it would go on refusing a dig on lane 10 for
+// a robot that is standing in the same staging area, doing nothing, several
+// lanes away.
+//
+// ONE scan, bucketed. The alternative is a scan per lane, and a multi-lane
+// acquire would pay for each. Only the named lanes get a bucket, and each is
+// resolved against ITS OWN group — which is what keeps a plan spanning two
+// groups from exempting an order across the boundary.
+func stagedAtMarkByLane(db *store.DB, laneIDs ...int64) reservations.StagedOutsideByLane {
+	if len(laneIDs) == 0 {
+		return nil
+	}
+	// groupOfLane, and the reverse index the match actually uses: for each lane
+	// asked about, every lane sharing its group. A dweller's wait names SOME lane
+	// in the group; the question is whether that lane and the one being dug are
+	// siblings.
+	siblings := make(map[int64]map[int64]bool, len(laneIDs)) // laneID -> set of lanes in its group
+	for _, id := range laneIDs {
+		if _, done := siblings[id]; done {
+			continue
+		}
+		lane, err := db.GetNode(id)
+		if err != nil || lane == nil || lane.ParentID == nil {
+			// Unreadable, or a lane with no group. Exempt nobody for it: a doubt
+			// here must refuse the dig, never wave it through.
+			siblings[id] = nil
+			continue
+		}
+		kin, kErr := db.ListChildNodes(*lane.ParentID)
+		if kErr != nil {
+			log.Printf("lane gate: could not list the group of lane %d (%v) — exempting nobody there, "+
+				"so a dig-mode acquire is refused on any ordinary row exactly as before", id, kErr)
+			siblings[id] = nil
+			continue
+		}
+		set := make(map[int64]bool, len(kin))
+		for _, k := range kin {
+			set[k.ID] = true
+		}
+		siblings[id] = set
+	}
+
+	active, err := db.ActiveGateCandidates()
+	if err != nil {
+		log.Printf("lane gate: could not read who is standing at the marks for %v (%v) — exempting "+
+			"nobody, so a dig-mode acquire is refused on any ordinary row exactly as before",
+			laneIDs, err)
+		return nil
+	}
+	out := reservations.StagedOutsideByLane{}
+	for _, o := range active {
+		if !IsGateStaged(o) || o.Status == StatusFaulted {
+			continue
+		}
+		var steps []resolvedStep
+		if uErr := json.Unmarshal([]byte(o.StepsJSON), &steps); uErr != nil {
+			continue // IsGateStaged already parsed and logged; defensive only
+		}
+		w, ok := waitAt(steps, o.WaitIndex)
+		if !ok {
+			continue // parked at no wait at all
+		}
+		for laneID, kin := range siblings {
+			if kin == nil || !kin[w.WaitLane] {
+				continue // staged in a different group, or this lane is unreadable
+			}
+			set := out[laneID]
+			if set == nil {
+				set = reservations.StagedOutside{}
+				out[laneID] = set
+			}
+			set[o.ID] = true
+		}
+	}
+	return out
+}
+
 func (d *Dispatcher) gateStagedForLane(lane *nodes.Node) ([]gateCandidate, error) {
 	active, err := d.db.ActiveGateCandidates()
 	if err != nil {

@@ -610,7 +610,10 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 	// hold could never dig the lane it was holding, and the answer would never
 	// change. Unreachable while the lane gate yields no holds; reachable the
 	// moment it does (§R.96 stage 2), which is why it is closed first.
-	if !s.laneLock.TryLockFor(buried.LaneID, order.ID, digAskerFor(order)) {
+	// Orders parked at this lane's mark do not refuse the excavation: their robots
+	// are outside the corridor. Same set, same reason as the heal path — see
+	// stagedAtMarkOnLane.
+	if !s.laneLock.TryLockFor(buried.LaneID, order.ID, digAskerFor(order), stagedAtMarkOnLane(s.db, buried.LaneID)) {
 		return nil, &planningError{Code: codeLaneLocked, Detail: "lane locked concurrently"}
 	}
 	if err := s.createCompound(order, plan); err != nil {

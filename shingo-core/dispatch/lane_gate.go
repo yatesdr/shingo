@@ -515,7 +515,38 @@ func (d *Dispatcher) acquireOrderLanes(orderID int64, holds []laneHold) laneAdmi
 	owner, _ := d.laneOwnerFor(orderID)
 	asker := reservations.AskerFor(orderID, owner)
 	for mode, lanes := range byMode {
-		if aErr := reservations.AcquireLanesFor(d.db.DB, orderID, mode, asker, laneGateReservedBy, lanes...); aErr != nil {
+		// ── THE MARK EXEMPTION APPLIES HERE TOO, AND IT USED NOT TO ───────
+		//
+		// This site passed nil, on the reasoning that §R.101 made an ordinary
+		// demand's SOURCE hold ModeDig so the mode alone does not make it an
+		// excavation, and that the exemption was a statement about excavations.
+		// That was right about the vocabulary and wrong about the physics, and a
+		// whole sim run paid for the distinction.
+		//
+		// GATED SIM, 2026-08-31, ~4,158 orders in. Order 22 gate-staged at
+		// Lane_08's mark holding that lane's inbound row. Order 23, a RETRIEVE,
+		// wanted the bin one slot deeper; its §R.101 source hold takes Lane_08 in
+		// ModeDig and was refused here — `lane-held-traffic`. Order 22's own
+		// re-bind was then refused BECAUSE order 23 was coming for that bin:
+		// storing at the mouth would seal it in. Each was the other's only
+		// releaser and the plant stopped.
+		//
+		// That is the order-22 deadlock with the requester's costume changed. The
+		// arm protects the CORRIDOR, and a corridor does not care whether the
+		// robot asking for it is an excavation compound or a plain retrieve — only
+		// that it is coming in, and that the holder is standing outside. So every
+		// ModeDig acquire gets the exemption, and the set's own membership rule is
+		// untouched: staged at this lane's GROUP's wait points.
+		//
+		// Computed only for the dig-mode lanes, because that is the only mode
+		// admitMouth consults it for, and it costs a scan of the live gate
+		// candidates. Resolved per lane, since a coordinated plan's lanes can
+		// belong to different groups (reservations.StagedOutsideByLane).
+		var staged reservations.StagedOutsideByLane
+		if mode == reservations.ModeDig {
+			staged = stagedAtMarkByLane(d.db, lanes...)
+		}
+		if aErr := reservations.AcquireLanesFor(d.db.DB, orderID, mode, asker, staged, laneGateReservedBy, lanes...); aErr != nil {
 			if errors.Is(aErr, reservations.ErrReservationConflict) {
 				// Roll back any holds taken for an earlier mode so the acquire is
 				// all-or-nothing across the order's lanes. The freed lanes are

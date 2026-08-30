@@ -420,7 +420,7 @@ func TestSummonOwnDigs_AGateStagedDigYieldsWithoutCallingAHuman(t *testing.T) {
 	}
 
 	// It took the corridor at RESOLVE (§R.101) and its robot is standing in it.
-	if !d.laneLock.TryLockFor(lane.ID, dweller.ID, digAskerFor(dweller)) {
+	if !d.laneLock.TryLockFor(lane.ID, dweller.ID, digAskerFor(dweller), stagedAtMarkOnLane(d.db, lane.ID)) {
 		t.Fatal("fixture: the dweller could not take the lane it is standing in")
 	}
 

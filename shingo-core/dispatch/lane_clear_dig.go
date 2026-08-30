@@ -344,7 +344,13 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// gets out of it. The requester's own hold is not an obstacle to the
 	// requester's own rescue; everybody else's still is.
 	digFor := digAskerFor(requester)
-	if !d.laneLock.CanTakeFor(lane.ID, digFor) {
+	// AND A ROBOT AT THE MARK IS NOT IN THE CORRIDOR. Rows belonging to orders
+	// parked at this lane's own mark do not refuse the excavation either — they
+	// are standing outside it. This is the pre-check half; the acquire below takes
+	// the SAME set, computed the same way, because a pre-check and an acquire that
+	// disagree is the 16,947 shape (CanTakeFor's own note).
+	atMark := stagedAtMarkOnLane(d.db, lane.ID)
+	if !d.laneLock.CanTakeFor(lane.ID, digFor, atMark) {
 		return laneClearResult{outcome: laneClearLaneBusy}
 	}
 
@@ -544,7 +550,12 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// ResumeCompound — Reshuffling → Queued — rather than confirming it. Its own
 	// work is still owed and the scanner re-resolves it against the corridor the
 	// dig just opened. No new status edge: both transitions already exist.
-	if !d.laneLock.TryLockFor(lane.ID, requester.ID, digFor) {
+	// The same exemption the pre-check used, re-read rather than carried: the
+	// two are separated by the parent INSERT above, so a dweller that walked in
+	// between must be seen by this half. Re-reading can only ever REFUSE a dig the
+	// pre-check allowed, which is the safe direction and the one the acquire is
+	// the arbiter of anyway.
+	if !d.laneLock.TryLockFor(lane.ID, requester.ID, digFor, stagedAtMarkOnLane(d.db, lane.ID)) {
 		return laneClearResult{outcome: laneClearLaneBusy}
 	}
 	if err := d.CreateCompoundOrder(requester, plan); err != nil {

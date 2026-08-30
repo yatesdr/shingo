@@ -493,7 +493,7 @@ func TestMouth_BeneficiaryOwnHoldDoesNotRefuseItsOwnDig(t *testing.T) {
 
 	// On the dweller's behalf, it admits.
 	benef := reservations.AskerFor(dweller.ID, dweller.ID)
-	if err := reservations.AcquireLanesFor(db.DB, digParent.ID, reservations.ModeDig, benef, "test", lane); err != nil {
+	if err := reservations.AcquireLanesFor(db.DB, digParent.ID, reservations.ModeDig, benef, nil, "test", lane); err != nil {
 		t.Fatalf("dig raised FOR the dweller must admit past the dweller's own row, got: %v", err)
 	}
 	if got := mouthCount(t, db, lane); got != 2 {
@@ -508,7 +508,7 @@ func TestMouth_BeneficiaryOwnHoldDoesNotRefuseItsOwnDig(t *testing.T) {
 		t.Fatalf("dweller acquire outbound on second lane: %v", err)
 	}
 	if err := reservations.AcquireLanesFor(db.DB, digParent.ID, reservations.ModeDig,
-		reservations.AskerFor(stranger.ID, stranger.ID), "test", other); err != reservations.ErrReservationConflict {
+		reservations.AskerFor(stranger.ID, stranger.ID), nil, "test", other); err != reservations.ErrReservationConflict {
 		t.Fatalf("dig for an unrelated order: want conflict, got %v — only the rescued order's own "+
 			"holds are exempt", err)
 	}
@@ -548,7 +548,7 @@ func TestMouth_PlainDigUpgradesTheOwnersOwnHold(t *testing.T) {
 	}
 
 	self := reservations.AskerFor(demand.ID, demand.ID)
-	if err := reservations.AcquireLanesFor(db.DB, demand.ID, reservations.ModeDig, self, "lanelock", lane); err != nil {
+	if err := reservations.AcquireLanesFor(db.DB, demand.ID, reservations.ModeDig, self, nil, "lanelock", lane); err != nil {
 		t.Fatalf("a demand digging the lane it holds must upgrade its own row, got: %v", err)
 	}
 	rows, err := reservations.ActiveMouthRows(db.DB, lane)
@@ -590,7 +590,7 @@ func TestDigAdmissible_AgreesWithTheAcquireAboutTheBeneficiary(t *testing.T) {
 		t.Fatalf("dweller acquire outbound: %v", err)
 	}
 
-	blind, err := reservations.DigAdmissible(db.DB, lane, reservations.Anyone)
+	blind, err := reservations.DigAdmissible(db.DB, lane, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("DigAdmissible(Anyone): %v", err)
 	}
@@ -598,7 +598,7 @@ func TestDigAdmissible_AgreesWithTheAcquireAboutTheBeneficiary(t *testing.T) {
 		t.Error("Anyone must keep the owner-blind answer: a held lane is not admissible")
 	}
 
-	forDweller, err := reservations.DigAdmissible(db.DB, lane, reservations.AskerFor(dweller.ID, dweller.ID))
+	forDweller, err := reservations.DigAdmissible(db.DB, lane, reservations.AskerFor(dweller.ID, dweller.ID), nil)
 	if err != nil {
 		t.Fatalf("DigAdmissible(dweller): %v", err)
 	}
@@ -607,7 +607,7 @@ func TestDigAdmissible_AgreesWithTheAcquireAboutTheBeneficiary(t *testing.T) {
 			"pre-check half of the LS_C5 two-cycle")
 	}
 
-	forStranger, err := reservations.DigAdmissible(db.DB, lane, reservations.AskerFor(stranger.ID, stranger.ID))
+	forStranger, err := reservations.DigAdmissible(db.DB, lane, reservations.AskerFor(stranger.ID, stranger.ID), nil)
 	if err != nil {
 		t.Fatalf("DigAdmissible(stranger): %v", err)
 	}

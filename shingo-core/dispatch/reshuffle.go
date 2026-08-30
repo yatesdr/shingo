@@ -707,7 +707,28 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		//
 		// SKIPPED on the shortfall re-walk, and only there — see consultTheMouth.
 		if askTheMouth {
-			admissible, mErr := reservations.DigAdmissible(db.DB, c.ID, asker)
+			// NIL IS RIGHT HERE, AND IT IS A DIFFERENT QUESTION — but the physics
+			// argue the other way, so the reason is recorded rather than assumed.
+			// The dig-lock sites ask "may this excavation take the lane it must dig";
+			// this asks "is lane c a good place to PARK A BLOCKER", and a lane with a
+			// robot queued at its mark is a worse parking spot whether or not that
+			// robot is in the corridor yet. Exempting here would widen the shuffle
+			// pool, which is e2352c32's subject and carries its own measurement.
+			//
+			// This is NOT the pre-check half of a pre-check/acquire pair, which is
+			// what would make a disagreement the 16,947 shape: the acquire that
+			// follows takes the PARK lane as ModeInbound, a mode admitMouth never
+			// consults the exemption for. The two answers are about different lanes
+			// and different modes, so they cannot contradict each other here.
+			//
+			// The honest counter-argument, left for whoever measures it: a robot in
+			// the group's staging area obstructs a blocker being parked exactly as
+			// little as it obstructs an excavation, so the same fact says the same
+			// thing here. Threading it would only ADD candidates, and this function's
+			// own note says a refusal costs a worse slot rather than a wedge. It is
+			// left nil because widening the pool is a change with its own population
+			// and its own run, not because the physics differ.
+			admissible, mErr := reservations.DigAdmissible(db.DB, c.ID, asker, nil)
 			switch {
 			case mErr != nil:
 				// ── FAIL CLOSED, AND "CANNOT SEE" IS NOT "FULL" ───────────

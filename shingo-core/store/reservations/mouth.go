@@ -130,7 +130,11 @@ type MouthHold struct {
 // every dispatch path already implements); any other error is a transient DB
 // failure.
 func AcquireLanes(db *sql.DB, owner int64, mode Mode, reservedBy string, laneIDs ...int64) error {
-	return AcquireLanesFor(db, owner, mode, Anyone, reservedBy, laneIDs...)
+	// NIL IS RIGHT HERE: this is the beneficiary-less form, and a caller with no
+	// order in hand has no basis to exempt anyone either. Anyone and nil are the
+	// same convention twice — keep the owner-blind behaviour, and let only the
+	// sites that thread a real asker change.
+	return AcquireLanesFor(db, owner, mode, Anyone, nil, reservedBy, laneIDs...)
 }
 
 // AcquireLanesFor is AcquireLanes for a hold taken ON BEHALF OF another order:
@@ -193,7 +197,7 @@ func AcquireLanes(db *sql.DB, owner int64, mode Mode, reservedBy string, laneIDs
 // dweller re-asking for its own outbound hold is refused by the dig raised to
 // rescue it. The durable form of the fix is still a beneficiary column on the
 // row, not a second exemption written somewhere else.
-func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, reservedBy string, laneIDs ...int64) error {
+func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, stagedOutside StagedOutsideByLane, reservedBy string, laneIDs ...int64) error {
 	lanes := sortedUniqueLanes(laneIDs)
 	if len(lanes) == 0 {
 		return nil
@@ -210,7 +214,9 @@ func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, r
 		if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, lane); err != nil {
 			return fmt.Errorf("reservations acquire-lanes: lock lane %d: %w", lane, err)
 		}
-		verdict, err := admitMouth(tx, lane, owner, mode, beneficiary)
+		// PER LANE, not once for the call: "standing outside" is true of one
+		// corridor at a time. See StagedOutsideByLane.
+		verdict, err := admitMouth(tx, lane, owner, mode, beneficiary, stagedOutside.On(lane))
 		if err != nil {
 			return err
 		}
@@ -293,7 +299,7 @@ const (
 // for (owner, mode), on behalf of beneficiary. It must be called with the lane's
 // advisory lock held. Pass Anyone for a hold taken for nobody in particular,
 // which is the owner-blind rule this had before beneficiaries existed.
-func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode, beneficiary DigAsker) (mouthVerdict, error) {
+func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode, beneficiary DigAsker, stagedOutside StagedOutside) (mouthVerdict, error) {
 	holders, err := activeMouthRows(tx, laneID)
 	if err != nil {
 		return admitConflict, err
@@ -318,6 +324,29 @@ func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode, beneficiary DigAsker
 			// The order this hold is being taken FOR. Its own row is not an
 			// obstacle to its own rescue — see AcquireLanesFor's header for the
 			// two-cycle this arm exists to break.
+			continue
+		}
+		// ── A ROBOT AT THE MARK IS NOT IN THE CORRIDOR ────────────────────
+		//
+		// An EXCAVATION is not refused by an ordinary row whose owner is parked
+		// at this lane's mark. The row stays and keeps doing its other job (the
+		// release pass reads it as "still coming", so a shallower store cannot
+		// wall the dweller in); what it stops doing is turning away the dig that
+		// would clear the lane the dweller is waiting for. See StagedOutside for
+		// the deadlock this closes and for why it is not a DigAsker field.
+		//
+		// THREE CONDITIONS, ALL NECESSARY. The incoming mode must be dig (an
+		// ordinary order still shares or conflicts by the rule below, unchanged);
+		// the HOLDER's row must not itself be a dig (two excavations never share
+		// a lane, and a dig's owner is inside the corridor by definition); and
+		// the holder must be staged for THIS lane, which is the caller's fact to
+		// establish per-lane and never a property of the order alone.
+		//
+		// It keys on a FACT — where the robot is standing — and on nothing else.
+		// Not on age, not on priority, not on id ordering: the loop above already
+		// records what it cost to let a refusal depend on which row came back
+		// first.
+		if mode == ModeDig && h.Mode != ModeDig && stagedOutside.Has(h.OrderID) {
 			continue
 		}
 		// A different owner holds the lane. dig excludes everyone (either side);
@@ -385,15 +414,23 @@ func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode, beneficiary DigAsker
 //
 // Pass Anyone for a dig serving nobody in particular: Owns matches no row, so
 // the rule collapses to the len()==0 it was.
-func DigAdmissible(q Queryer, laneID int64, beneficiary DigAsker) (bool, error) {
+func DigAdmissible(q Queryer, laneID int64, beneficiary DigAsker, stagedOutside StagedOutside) (bool, error) {
 	holders, err := activeMouthRows(q, laneID)
 	if err != nil {
 		return false, err
 	}
 	for _, h := range holders {
-		if !beneficiary.Owns(h.OrderID) {
-			return false, nil
+		if beneficiary.Owns(h.OrderID) {
+			continue
 		}
+		// The same mark exemption admitMouth applies, asked off the same rows —
+		// see StagedOutside. It MUST be here too: CanTakeFor's own note records
+		// that a pre-check answering differently from the acquire is the 16,947
+		// runaway, and this is that pair.
+		if h.Mode != ModeDig && stagedOutside.Has(h.OrderID) {
+			continue
+		}
+		return false, nil
 	}
 	return true, nil
 }

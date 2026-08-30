@@ -813,7 +813,15 @@ func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T
 	}
 
 	// (d) the pre-check refuses...
-	if d.laneLock.CanTakeFor(wall2.ID, digAskerFor(requester2)) {
+	//
+	// The mark-exemption set is the REAL one, not a hardcoded nil, and that is
+	// deliberate: the stranger above is `in_transit` with no vendor and no plan,
+	// so it is not gate-staged, so the set is empty for this lane and this
+	// assertion means exactly what it meant before. Passing the production value
+	// makes it also pin that the exemption does not leak to an ordinary holder —
+	// if stagedAtMarkOnLane ever started answering for an in-transit robot, this
+	// line goes red, which is where it should go red.
+	if d.laneLock.CanTakeFor(wall2.ID, digAskerFor(requester2), stagedAtMarkOnLane(d.db, wall2.ID)) {
 		t.Error("a lane held by an unrelated order was reported admissible to a dig for a different " +
 			"order — the exemption is meant to be the requester's own holds and nobody else's")
 	}
@@ -880,7 +888,7 @@ func TestWindow3_ADigIsNotStartedIntoALaneWithARobotInIt(t *testing.T) {
 	})
 	_, occErr := reservations.AcquireOccupancy(db.DB, inside.ID, wall.ID)
 	testutil.MustNoErr(t, occErr, "put a robot in the lane")
-	if !d.laneLock.CanTakeFor(wall.ID, digAskerFor(requester)) {
+	if !d.laneLock.CanTakeFor(wall.ID, digAskerFor(requester), stagedAtMarkOnLane(d.db, wall.ID)) {
 		t.Fatal("precondition: the MOUTH is takeable — this test is about the INSIDE, and a mouth-level " +
 			"refusal would let it pass with the fix reverted")
 	}
