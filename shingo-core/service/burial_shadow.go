@@ -335,7 +335,7 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 		return
 	}
 
-	if s.burialWasApprovedThenInvalidated(at.placedBy, b.HeldSince) {
+	if s.burialWasApprovedThenInvalidated(at.placedBy, s.hardHoldBeganAt(b)) {
 		log.Printf("%s: %s — order %d's destination was approved and a later claim invalidated it. "+
 			"Order %d claimed the buried bin at %s, AFTER the selector was consulted for order %d, so "+
 			"no check at any Core moment could have seen it — the window runs from the resolve to the "+
@@ -354,6 +354,44 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 		"route it through nodes.FindStoreSlotInLaneExcluding. %s",
 		burialShadowTag, BurialBypassMarker, at.placedBy, where)
 	s.burials.recordHard(hardNeverAsked, now)
+}
+
+// hardHoldBeganAt dates the hold THE GUARD ACTUALLY RESPECTS, which is not the
+// same instant as the holder order coming into existence.
+//
+// ── WHY THE HOLDER'S created_at IS THE WRONG MOMENT FOR A HARD CLAIM ──────
+//
+// findStoreSlot's burial clause consults bins.claimed_by and nothing else, and
+// that asymmetry is the whole design: a soft reservation deeper in the lane is a
+// PLAN and does not refuse a placement, because plans get recalculated into digs.
+// So the question "would the selector have refused?" is about when the claim went
+// HARD — and claimed_by is written at ConfirmForDispatch, immediately before the
+// fleet call, which is typically minutes after the order was created.
+//
+// Dating it by created_at accuses the selector of ignoring something it was
+// designed to ignore. Sim 2026-08-30, run 3: order 243 was created at 10:52:14
+// and was still `sourcing` — a soft hold — when order 256's destination was
+// resolved. By the time 256 ARRIVED, 243's claim had hardened, so the burial read
+// hold=hard-claim and the comparison used 10:52:14 and called it a bypass. The
+// selector saw a soft hold and correctly walked past it.
+//
+// bins has no claimed_at column, so the moment is taken from the holder's own
+// commit-to-fleet history — the same read, and the same function, the placer side
+// already uses. Unreadable falls back to created_at, which is the LOUD direction
+// and keeps the tripwire's over-report bias.
+//
+// A COMPOUND LEG IS EXEMPT AND KEEPS created_at. Its claim is stamped in the
+// transaction that inserts it (CreateCompoundChildren), so for a dig leg the two
+// instants are the same one and created_at is exact.
+func (s *BinService) hardHoldBeganAt(b store.SpokenForBin) time.Time {
+	if !b.HardClaim || b.HolderIsChild {
+		return b.HeldSince
+	}
+	at, ok, err := s.db.OrderCommittedToFleetAt(b.HolderID)
+	if err != nil || !ok {
+		return b.HeldSince
+	}
+	return at
 }
 
 // burialWasApprovedThenInvalidated answers PLAN §R.4's question: did this claim
