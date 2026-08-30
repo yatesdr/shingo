@@ -98,8 +98,8 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 			// saturated dropoff (slot) and a dry empty pool (material) park
 			// under the right operator category without re-sniffing the error.
 			resolvedSteps = stepsAsResolved(p.Steps)
-			queueCause = CauseIntakeResolve
 			capDetail := capacityDetailFrom(payload)
+			queueCause = causeForCapacity(capDetail.kindOf(), CauseIntakeResolve)
 			queueCode = queueCodeForCapacity(capDetail.kindOf())
 			_, intakeDelivery := extractEndpoints(resolvedSteps)
 			queueReason = FormatQueueSentence(queueCode,

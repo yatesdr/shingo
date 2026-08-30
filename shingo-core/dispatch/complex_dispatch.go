@@ -330,7 +330,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 		case ResolutionCapacity:
 			capDetail := capacityDetailFrom(payload)
 			code := queueCodeForCapacity(capDetail.kindOf())
-			d.setQueueReason(order, code, CauseNGRPResolve,
+			d.setQueueReason(order, code, causeForCapacity(capDetail.kindOf(), CauseNGRPResolve),
 				queueParamsForCapacity(capDetail, order.PayloadCode, order.DeliveryNode))
 			d.dbg("complex: order %d still capacity-blocked at NGRP resolution: %s", order.ID, code)
 			return nil, dispatchStep{done: true, err: rerr}

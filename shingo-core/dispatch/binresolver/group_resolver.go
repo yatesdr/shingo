@@ -390,7 +390,42 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binT
 	// EVALUATED PER RESOLVE, NOT PER CHILD. The level is a property of the GROUP
 	// — four carriers across it, wherever they stand — so a per-child evaluation
 	// would be asking a question the configuration does not answer.
-	if full, err := r.atDeclaredLevel(group, binTypeID); err != nil {
+	levels, err := r.DB.ListMaintainLevels(group.ID)
+	if err != nil {
+		return nil, fmt.Errorf("read declared level for %s: %w", group.Name, err)
+	}
+
+	// ── A DECLARED LEVEL SAYS WHAT THE GROUP HOLDS, AND IT IS EMPTIES ───────
+	//
+	// Every maintain level counts EMPTY carriers of a bin type
+	// (CountEmptyBinsOfTypeInGroup) and the keeper tops the group up with empty
+	// carriers. Declaring one is therefore a declaration that the group is an
+	// empties bank, and a store carrying a payload does not belong in it — it is
+	// not merely a poor fit, it is a carrier the keeper's own count cannot see,
+	// occupying a slot the keeper will then try to refill.
+	//
+	// FAIL-SAFE, AND SAID PLAINLY. The path that produced labelled stores into a
+	// press empties bank was an ordering race at the operator's CLEAR
+	// (shingo-edge operator_bin_ops.go), and that race is closed. So this arm's
+	// runtime population may well be empty, and a run that never fires it has
+	// proved nothing about it either way — it is certified by a unit test, not by
+	// a board read. It is here because the refusal is one line and the failure it
+	// catches is a payload-bearing carrier parked in an empties bank, where
+	// nothing looks for it.
+	//
+	// CAPACITY-SHAPED ON PURPOSE, so the maintained group's configured overflow
+	// destination catches it at admission and the carrier goes somewhere real
+	// instead of parking (LifecycleService.tryOverflow). A group with no overflow
+	// configured parks under its own cause, which names the condition rather than
+	// reading as a slot shortage.
+	//
+	// THE KEEPER CANNOT BE REFUSED BY THIS. Its own stores pass an empty
+	// payloadCode (maintainer.go), which is what an empties bank is for.
+	if payloadCode != "" && len(levels) > 0 {
+		return nil, fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
+	}
+
+	if full, err := r.atDeclaredLevel(group, binTypeID, levels); err != nil {
 		return nil, err
 	} else if full {
 		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
@@ -432,20 +467,8 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 
 		if child.NodeTypeCode == protocol.NodeClassLANE {
 			// Skip lanes with payload restrictions that don't match
-			if payloadCode != "" {
-				lanePayloads, _ := r.DB.GetEffectivePayloads(child.ID)
-				if len(lanePayloads) > 0 {
-					match := false
-					for _, lp := range lanePayloads {
-						if lp.Code == payloadCode {
-							match = true
-							break
-						}
-					}
-					if !match {
-						continue
-					}
-				}
+			if !r.payloadAllowedAt(child.ID, payloadCode) {
+				continue
 			}
 
 			// Skip lanes with bin type restrictions that don't match
@@ -499,6 +522,15 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 		} else if !child.IsSynthetic {
 			if child.ClaimedBy != nil {
 				continue // slot already claimed by another order's dispatch
+			}
+			// Skip flat slots with payload restrictions that don't match — the
+			// SAME refusal the lane branch above makes, and it was missing here.
+			// A flat child can carry node_payloads exactly as a lane can, and
+			// this branch read only the bin type, so a group of flat slots that
+			// declared what each slot holds would accept anything into any of
+			// them and then consolidate the wrong payloads together.
+			if !r.payloadAllowedAt(child.ID, payloadCode) {
+				continue
 			}
 			count, err := r.DB.CountBinsByNode(child.ID)
 			if err != nil {
@@ -557,20 +589,8 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 		}
 
 		// Skip lanes with payload restrictions that don't match
-		if payloadCode != "" {
-			lanePayloads, _ := r.DB.GetEffectivePayloads(child.ID)
-			if len(lanePayloads) > 0 {
-				match := false
-				for _, lp := range lanePayloads {
-					if lp.Code == payloadCode {
-						match = true
-						break
-					}
-				}
-				if !match {
-					continue
-				}
-			}
+		if !r.payloadAllowedAt(child.ID, payloadCode) {
+			continue
 		}
 
 		// Skip lanes with bin type restrictions that don't match
@@ -598,6 +618,14 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 		}
 		if child.ClaimedBy != nil {
 			continue // slot already claimed by another order's dispatch
+		}
+
+		// Skip flat slots with payload restrictions that don't match — see the
+		// same call in resolveStoreLKND's flat branch. DPTH packs back-to-front
+		// "regardless of payload", but that is about ORDERING preference, not
+		// about ignoring a slot that declared what it holds.
+		if !r.payloadAllowedAt(child.ID, payloadCode) {
+			continue
 		}
 
 		// Skip nodes with bin type restrictions that don't match
@@ -664,6 +692,44 @@ func (r *GroupResolver) binTypeAllowed(nodeID int64, binTypeID int64) bool {
 	return false
 }
 
+// payloadAllowedAt reports whether a store of payloadCode may land at a child
+// node — lane or flat slot alike.
+//
+// ONE SPELLING FOR FOUR SITES. This was written out four times, and only twice:
+// both lane branches carried it and neither flat branch did, so a group of flat
+// slots that declared its payloads had those declarations ignored for stores
+// while an identically-configured laned group honoured them. The asymmetry was
+// not a decision anybody recorded; the flat branches simply never grew the
+// clause the lane branches have.
+//
+// AN UNDECLARED NODE ACCEPTS EVERYTHING. node_payloads is a restriction, not a
+// whitelist that defaults closed — a node with no rows takes any payload, which
+// is every node in every plant that has not been configured otherwise. Reversing
+// that would close every default slot in the system.
+//
+// AN UNTYPED STORE IS NOT REFUSED EITHER. payloadCode == "" is an empty carrier,
+// and an empty carrier has no payload to check against a declaration.
+//
+// A READ FAILURE ALLOWS. GetEffectivePayloads' error is dropped here, matching
+// what all four sites did before: refusing on a transient read would close a
+// group's slots for as long as the read failed, and the store has other gates
+// (bin type, capacity, the mouth) behind this one.
+func (r *GroupResolver) payloadAllowedAt(nodeID int64, payloadCode string) bool {
+	if payloadCode == "" {
+		return true
+	}
+	declared, _ := r.DB.GetEffectivePayloads(nodeID)
+	if len(declared) == 0 {
+		return true
+	}
+	for _, p := range declared {
+		if p.Code == payloadCode {
+			return true
+		}
+	}
+	return false
+}
+
 // atDeclaredLevel reports whether a maintained group is already holding what it
 // was told to hold.
 //
@@ -692,11 +758,11 @@ func (r *GroupResolver) binTypeAllowed(nodeID int64, binTypeID int64) bool {
 // nothing later corrects, while refusing means the push parks and retries. The
 // error propagates rather than being swallowed into "not full" — MG3-1a's rule
 // applies here too.
-func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, binTypeID *int64) (bool, error) {
-	levels, err := r.DB.ListMaintainLevels(group.ID)
-	if err != nil {
-		return false, fmt.Errorf("read declared level for %s: %w", group.Name, err)
-	}
+//
+// The levels are READ BY THE CALLER and passed in, because ResolveStore needs
+// the same list one line earlier to decide whether the group is an empties bank
+// at all. One read, two questions.
+func (r *GroupResolver) atDeclaredLevel(group *nodes.Node, binTypeID *int64, levels []nodes.MaintainLevel) (bool, error) {
 	if len(levels) == 0 {
 		return false, nil
 	}

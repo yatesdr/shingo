@@ -471,6 +471,22 @@ const (
 	// carrier leaves, this clears when a carrier leaves OR when somebody raises
 	// the level.
 	CauseNGRPAtLevel QueueCause = "ngrp-at-level"
+	// CauseGroupHoldsEmptiesOnly — a store carrying a payload named a group that
+	// declares a maintain level, which makes it an empties bank.
+	//
+	// NOT CauseNGRPAtLevel and not CauseNGRPFull, and the difference is what an
+	// operator does next. Those two say the group is holding enough; both clear
+	// on their own when a carrier leaves. This one clears on NOTHING the group
+	// does — the group could be entirely empty and the answer would be the same,
+	// because the refusal is about what this carrier IS, not about how much room
+	// there is. What clears it is somebody naming an overflow destination for the
+	// group, or the carrier being aimed somewhere else.
+	//
+	// It is a fail-safe: the ordering race that produced labelled carriers into a
+	// press empties bank is closed at the operator's CLEAR, so a park under this
+	// cause means a path nobody has found yet is still aiming one here. Treat a
+	// row carrying it as a lead, not as routine backpressure.
+	CauseGroupHoldsEmptiesOnly QueueCause = "group-holds-empties-only"
 	// CauseFinderGroupFenced — the need named a STRICT maintained group it is not
 	// supported at. The group holds carriers; they are not this asker's.
 	//

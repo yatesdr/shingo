@@ -229,6 +229,15 @@ const (
 	capacityPayload
 	// capacityBin: empty-fetch pool is dry (no empty carrier available).
 	capacityBin
+	// capacityEmptiesOnly: the destination group declares a maintain level, which
+	// makes it an empties bank, and this store carries a payload. Grouped with
+	// the capacity shapes because it must reach the SAME disposition they do —
+	// queue rather than terminal-fail, and let the group's configured overflow
+	// destination catch it at admission. It is not a shortage of anything, so it
+	// gets its own kind rather than borrowing capacitySlot's: an operator told
+	// "waiting for a slot" would go looking for a full group and find an empty
+	// one.
+	capacityEmptiesOnly
 )
 
 // capacityDetail is the ResolutionCapacity payload: the shape that matched plus
@@ -342,6 +351,12 @@ func classifyResolutionError(err error) (ResolutionErrorClass, any) {
 		d.Step, d.HasStep = stepFromResolutionError(msg)
 		return ResolutionCapacity, d
 	}
+	// EMPTIES-ONLY: a labelled store aimed at a group that declares a maintain
+	// level. Checked before the slot shape because it is the more specific
+	// statement about the same destination — the group may well have free slots.
+	if strings.Contains(msg, "empties-only node group") {
+		return detail(capacityEmptiesOnly)
+	}
 	// SLOT: the group has room-for-nothing. A genuine dropoff-capacity wait.
 	if strings.Contains(msg, "no available slot in node group") {
 		return detail(capacitySlot)
@@ -373,11 +388,31 @@ func classifyResolutionError(err error) (ResolutionErrorClass, any) {
 // specificity the classifier did not earn.
 func queueCodeForCapacity(k capacityKind) protocol.QueueCode {
 	switch k {
-	case capacitySlot:
+	case capacitySlot, capacityEmptiesOnly:
+		// capacityEmptiesOnly waits on a DESTINATION, not on material: the
+		// carrier is in hand and has nowhere to go. Nothing anybody brings to
+		// the plant releases it.
 		return protocol.QueueWaitingForSlot
 	default:
 		return protocol.QueueWaitingForMaterial
 	}
+}
+
+// causeForCapacity gives a classified capacity shape its own queue cause, or
+// zero to keep the call site's coarse cause.
+//
+// ONLY THE NEW SHAPE OVERRIDES. The two call sites write CauseIntakeResolve and
+// CauseNGRPResolve — the site's own name for "resolution could not place this",
+// which is honest for the shortage shapes, where the group really is short.
+// Rewriting those would re-code rows at both plants for no gain. The
+// empties-only refusal is a different question with a different answer ("this
+// will never fit, look at the overflow"), so it names itself and the rest are
+// left alone.
+func causeForCapacity(k capacityKind, siteCause QueueCause) QueueCause {
+	if k == capacityEmptiesOnly {
+		return CauseGroupHoldsEmptiesOnly
+	}
+	return siteCause
 }
 
 // queueParamsForCapacity builds the sentence params for a classified capacity
@@ -399,8 +434,8 @@ func queueParamsForCapacity(d *capacityDetail, payloadCode, deliveryNode string)
 	}
 	p := QueueParams{Step: d.Step, HasStep: d.HasStep}
 	switch d.Kind {
-	case capacitySlot:
-		// A genuine dropoff-capacity wait: the group IS the destination here.
+	case capacitySlot, capacityEmptiesOnly:
+		// A destination-side wait: the group IS the destination here.
 		p.Destination = d.Group
 		if p.Destination == "" {
 			p.Destination = deliveryNode

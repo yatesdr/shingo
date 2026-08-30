@@ -376,9 +376,19 @@ func (e *Engine) confirmLoaderL1OnLoad(coreNodeName string, uopCount int64) (int
 // the U2 for an AMR-fed unloader (which still confirms its U1 here, receipt-ack style)
 // and a directly-fed drain alike — one path, no double-fire.
 //
-// The empty-out is created BEFORE the manifest clear, while Core's bin record is still
-// coherent (same timing the old completion handler relied on). It's gated on a bin
-// actually being present, so clearing an already-empty window creates nothing.
+// The empty-out is created AFTER the manifest clear has committed on Core. It used to
+// be created before, on the reasoning that Core's bin record was "still coherent" — but
+// what the U2 needs from that record is captured into locals first (clearedPayload,
+// hadBin), so the ordering bought nothing and cost a race: between the create and the
+// clear, the bin Core hands the U2 still carries its payload, and a mover that reads it
+// in that window carries a labelled carrier to the empty-totes destination. Creating it
+// after the clear commits means the carrier a U2 ever names is already empty.
+//
+// It is still gated on a bin actually being present at the tap, so clearing an
+// already-empty window creates nothing — and it still fires for EVERY consume drain,
+// not just AMR-fed ones, which was the reason the create sat on the CLEAR in the first
+// place. That property is preserved by capturing hadBin before the clear rather than
+// re-reading the window after it.
 //
 // Post-clear, if the claim has AutoPush enabled, MaybePushUnloader offers the next pull
 // to the reservation seam — a no-inbound drain is gated there too, so it's a no-op.
@@ -413,16 +423,41 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 		if u1ID, ok := e.confirmUnloaderU1OnClear(node.CoreNodeName); ok {
 			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %s", u1ID, node.CoreNodeName)
 		}
-		// Empty-out (U2): send the now-empty bin to the unloader's outbound (empty
-		// totes). Created here, before the manifest clear, so it fires off the CLEAR
-		// for every consume drain — not just ones an AMR fed.
-		if hadBin {
-			e.createUnloaderEmptyOut(node, claim, clearedPayload)
-		}
 	}
 	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, binTypeCode)
 	if err != nil {
 		return fmt.Errorf("clear bin: %w", err)
+	}
+	// Empty-out (U2): send the now-empty bin to the unloader's outbound (empty
+	// totes). Fired off the CLEAR — so it runs for every consume drain, not just
+	// ones an AMR fed — but only after the clear has COMMITTED on Core, so the
+	// carrier the U2 names is empty on Core's side too and not merely about to be.
+	// Gated on hadBin, captured above while the window still held the bin.
+	if claim.Role == protocol.ClaimRoleConsume && hadBin {
+		// Double-tap guard, the same one PushEmptyOut carries: the order layer has
+		// no dedup for move orders, so a second CLEAR tap on the same window would
+		// mint a second U2 for one physical carrier. Moving the create after the
+		// clear widened the window for that, because the clear is a round trip to
+		// Core.
+		//
+		// It SKIPS the U2 rather than failing, which is where it differs from
+		// PushEmptyOut. There the empty-out IS the operation, so refusing it is the
+		// honest answer. Here the clear has already committed; returning an error
+		// would tell the operator their CLEAR failed when it did not, and a retry
+		// would then find no bin and create nothing at all.
+		//
+		// A read error skips the U2 too, matching PushEmptyOut's direction. A
+		// missed empty-out strands one carrier at a window the operator can still
+		// tap PUSH EMPTY on; a duplicate sends two robots for one bin, and the
+		// second finds nothing there.
+		if existing, lerr := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, protocol.OrderTypeMove); lerr != nil {
+			log.Printf("bin_ops: check in-flight move for node %s: %v", node.Name, lerr)
+		} else if len(existing) > 0 {
+			log.Printf("bin_ops: skipping empty-out at node %s — order %d is already moving this carrier out",
+				node.Name, existing[0].ID)
+		} else {
+			e.createUnloaderEmptyOut(node, claim, clearedPayload)
+		}
 	}
 	// claim.ID is 0 for a synthesized Core-loader claim — pass nil, not a 0 FK.
 	var claimIDPtr *int64
@@ -494,6 +529,14 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	if len(existing) > 0 {
 		return fmt.Errorf("node %s already has an empty-out in flight", node.Name)
 	}
+	// THE EMPTY PAYLOAD HERE IS NOT AN OVERSIGHT, and the two doors into
+	// createUnloaderEmptyOut are both telling the truth about their own bin.
+	// This door has already REFUSED a payload-bearing bin twenty lines up, so
+	// the carrier it is pushing has no payload to name and "" is the fact.
+	// ClearBin's door passes the payload it just cleared, because there the
+	// carrier did hold something and the operator board routes the move to that
+	// payload's tile — a multi-payload drain mis-renders without it. Unifying
+	// them would mean one of the two sites lying about its own carrier.
 	e.createUnloaderEmptyOut(node, claim, "")
 	// Re-arm the delivery seam so the next full bin is requested after the
 	// empty departs — mirrors ClearBin's gated MaybePushUnloader at its tail.
