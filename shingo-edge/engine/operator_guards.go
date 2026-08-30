@@ -93,6 +93,22 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 // re-asks, while a wrong "go" mints the second delivery this guard exists to
 // prevent, and that one never clears itself.
 //
+// THE RELEASER IS THE BLOCKING ORDER GOING TERMINAL, AND "ONE TICK" ASSUMES IT
+// DOES. Arm 2 refuses on ANY non-terminal order at this process node
+// (ListActiveOrdersByProcessNode — `status NOT IN (terminal)`, which includes
+// `queued`), so the cost is one tick only while the blocker is moving. An order
+// that is stuck — a robot HOLDING at an occupied position, a dead robot pinning
+// the runtime slot — refuses supply here for as long as it stays non-terminal,
+// and nothing in this guard will time it out.
+//
+// THAT INCLUDES THE OPERATOR'S OWN REQUEST. This runs on the downgrade path in
+// requestNodeFromClaim regardless of trigger (operator_stations.go:131), so a
+// person pressing REQUEST at the HMI is refused by the same arm, with the same
+// releaser. It is the right refusal — a second carrier into a position a robot
+// is standing at is the failure this exists to stop — but it means the floor's
+// escape from a stuck cell is terminalizing that order (abandon / force-complete
+// / cancel), not re-asking. Say so if this ever reads as "the button is dead".
+//
 // SCOPE IS THE DOWNGRADE. A plan that is SimpleMove because the claim's mode is
 // "simple", and a plan that carries a Dispatch, both reach their own gates and
 // are not this function's business.

@@ -265,9 +265,20 @@ func (s *BinService) NoteBurialShadow(binID, toNodeID, placedBy int64) {
 		// `held_for=7355h32m48s`. Then the subtraction moved into SQL, which swapped
 		// which end was wrong: SQL now() is wall and HeldSince was usually sim, so
 		// every order-clock hold came out ~15 months negative, hit the clamp, and
-		// printed `held_for=0s` on every line of two full runs. Now both ends are
-		// the order clock — `now` is passed in from here — and neither clamp nor
-		// COALESCE stands between the reader and the number.
+		// printed `held_for=0s` on every line of two full runs.
+		//
+		// NOW EACH SUBTRACTION IS INSIDE ONE CLOCK — which is not the same thing as
+		// "both ends are the order clock", which this used to say and which is true
+		// of only one of the two arms. The SQL branches (lane_queries.go:592-595):
+		//
+		//	reservation present → now() − reservations.created_at   (wall, wall)
+		//	otherwise           → $2     − orders.created_at        (order, order)
+		//
+		// Two domains, each self-consistent, because the two sources genuinely live
+		// in two clocks and a single `now` cannot be right for both. The invariant
+		// to preserve is per-arm, not global: never mix the ends of one
+		// subtraction. Neither clamp nor COALESCE stands between the reader and the
+		// number.
 		heldFor := b.HeldFor
 		if b.HardClaim {
 			s.noteHardBurial(at, b, heldFor, digPlacement, now)
@@ -335,7 +346,15 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 		return
 	}
 
-	if s.burialWasApprovedThenInvalidated(at.placedBy, s.hardHoldBeganAt(b)) {
+	// PRINT THE INSTANT THE VERDICT USED. This computed hardHoldBeganAt for the
+	// decision and then printed b.HeldSince in the sentence explaining it — the
+	// holder's CREATION, which for a hard claim is typically minutes earlier than
+	// the moment claimed_by was written. So the line said "claimed the buried bin
+	// at 10:52:14" about a claim that hardened at 11:20, on exactly the population
+	// ec0cf36f exists to reclassify: an order whose soft hold was still soft when
+	// the selector looked. One instant, read once, used for both.
+	began := s.hardHoldBeganAt(b)
+	if s.burialWasApprovedThenInvalidated(at.placedBy, began) {
 		log.Printf("%s: %s — order %d's destination was approved and a later claim invalidated it. "+
 			"Order %d claimed the buried bin at %s, AFTER the selector was consulted for order %d, so "+
 			"no check at any Core moment could have seen it — the window runs from the resolve to the "+
@@ -343,7 +362,7 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 			"capacity before dispatching). Accepted and healed: the cascade dissolves and re-plans, "+
 			"~2.5 min of re-work. This is the measured price of law 6, not a defect. %s",
 			burialShadowTag, BurialChurnMarker, at.placedBy,
-			b.HolderID, b.HeldSince.UTC().Format(time.RFC3339), at.placedBy, where)
+			b.HolderID, began.UTC().Format(time.RFC3339), at.placedBy, where)
 		s.burials.recordHard(hardApprovedThenInvalidated, now)
 		return
 	}

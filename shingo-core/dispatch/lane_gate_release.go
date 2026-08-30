@@ -33,14 +33,37 @@ import (
 //
 // So the evaluator is a loop, an ordering, and two guards.
 //
-// WHY THE `others` SET IS STABLE ACROSS A PASS. A gate-staged candidate holds its
-// inbound mouth row from dispatch (admitLanes runs before the fleet commit) and
-// keeps it until it places — which is long after release. So releasing an order
-// does NOT remove it from the blocker set: a shallower cross-origin candidate
-// still sees it and still parks, exactly as it should. What DOES change mid-pass
-// is a re-bind (§ rebindGatedDropoff), which moves a candidate's depth. That is
-// why each candidate is evaluated against a freshly read view rather than one
-// snapshot taken up front.
+// WHY THE `others` SET IS STABLE ACROSS A PASS — AND FOR WHICH ORDERS.
+//
+// A gate-staged PLAIN candidate holds its inbound mouth row from dispatch
+// (AcquireLanesForOrder → resolveOrderLaneHolds, lane_gate.go:224-273, called
+// from fulfillment/scanner.go:494 before the fleet commit) and keeps it until it
+// places — which is long after release. So releasing one does NOT remove it from
+// the blocker set: a shallower cross-origin candidate still sees it and still
+// parks, exactly as it should.
+//
+// THIS PARAGRAPH USED TO SAY THAT OF EVERY CANDIDATE, AND IT IS FALSE FOR THE
+// COMPLEX ARM. resolvePlanLaneHolds skips the hold for a gated lane on purpose
+// (lane_gate.go:399-421 — "A GATED LANE'S ENTRY IS NOT THIS MOMENT … the tail
+// append is the moment it goes in"), so a gate-staged COMPLEX order holds no
+// mouth row while it dwells. It was believable because both arms look alike from
+// here and the plain arm is the one this evaluator was written against.
+//
+// WHAT THAT COSTS, NAMED RATHER THAN LEFT TO BE FOUND. stillWorkingLaneMouth
+// (lane_entry.go:212-231) reads "dispatched and no longer holding the mouth" as
+// "it has placed". A dwelling complex candidate satisfies both halves, so it is
+// already filtered OUT of the blocker set while it is still very much coming.
+// The mouth row is doing two jobs — corridor mutex, and the sequencing token the
+// deeper-first tiers read — and only the first was deferred. Deferring the plain
+// arm too (which is what removing the gated hold-and-wait requires) makes this
+// universal, so the sequencing token has to come from somewhere else first:
+// IsGateStaged + WaitLane is already how this file derives its candidate set
+// (gateStagedForLane), and is the obvious source. Do not defer the plain arm
+// without moving that signal.
+//
+// What DOES change mid-pass is a re-bind (§ rebindGatedDropoff), which moves a
+// candidate's depth. That is why each candidate is evaluated against a freshly
+// read view rather than one snapshot taken up front.
 
 // laneGateRetryQueueThreshold is how many consecutive append failures on one
 // order are tolerated before the wait becomes operator-visible. Below it a
@@ -994,13 +1017,39 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, en
 // rebindGatedDropoff re-resolves the order's dropoff against the lane AS IT
 // STANDS, at the moment of append. Returns the node the tail will target.
 //
-// ── THIS IS THE ORACLE, AND IT IS THE ONLY ONE ────────────────────────────
+// ── THIS IS THE ORACLE, AND HERE IS THE EXACT CLAIM ───────────────────────
 //
-// It is the single place in the tree where a dropoff slot chosen earlier gets
-// asked again, and the only production caller of the owner-aware selector
-// (nodes.FindStoreSlotInLaneExcluding). Every other destination writer — intake,
-// planning, the complex step resolver, ReserveStorageDropoff — binds ONCE and
-// drives; the census of 2026-08-31 counted twenty such sites.
+// It is the only RELEASE-TIME re-ask of a store destination on the gated path:
+// the one place where a slot chosen before the drive is asked again after the
+// robot has driven, against the lane as it now stands.
+//
+// IT USED TO SAY "THE ONLY ONE", FULL STOP, AND THAT WAS TOO BROAD IN TWO WAYS.
+//
+// Three other sites re-ask a concrete destination today, all of them before the
+// drive rather than after it, which is why they are not oracles and why the
+// distinction is worth keeping sharp:
+//
+//	redirectStoreOffDugLane (store_slot.go:354)  a plain store whose lane was
+//	    taken by a dig re-resolves GROUP-WIDE at dispatch. Its own header says it
+//	    exists for orders that "chose EARLIER" — a patch on an early bind.
+//	allocator.go:429-432                         the escape valve: on a slot
+//	    conflict a fungible NGRP dropoff step is REVERTED to its group name so
+//	    reResolveComplexSteps re-picks next tick. Precedent that a step holding a
+//	    group name is an expressible state.
+//	placeForDedicatedLoader (loader_place.go:61) re-decides home vs buffer on
+//	    every dispatch tick.
+//
+// And it is no longer the only production caller of the owner-aware selector.
+// Since e7db1e60 the group store resolvers pass asker.OrderID through
+// FindStoreSlotInLaneExcluding as well (binresolver/group_resolver.go:500 and
+// :622), which is what makes a group-scoped oracle possible at all. What is
+// still true here: this is the only owner-aware re-ask that happens AT RELEASE,
+// and the only one whose answer the robot has not already driven toward.
+//
+// Every other destination writer — intake, planning, the complex step resolver,
+// ReserveStorageDropoff — binds ONCE and drives. The census of 2026-08-31 put
+// that at roughly twenty destination CHOICES across ~41 write sites; the exact
+// number depends on what you count as one decision, and the shape does not.
 //
 // So its reachability is worth knowing before reading anything else here: it is
 // called only from releaseGatedOrder, which only sees orders spliceLaneWait

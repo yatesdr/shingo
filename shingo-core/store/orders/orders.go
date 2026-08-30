@@ -1532,9 +1532,6 @@ func UpdateRobotID(db *sql.DB, id int64, robotID string) error {
 	return err
 }
 
-// UpdateBinID sets the bin_id on an order.
-// (Junction-style write against the orders table; bins-aggregate readers
-// live at outer store/ as composition.)
 // ClearBinID forgets which bin an order was going to take.
 //
 // SEPARATE FROM UpdateBinID because the column is NULLABLE and "no bin" is not
@@ -1547,6 +1544,9 @@ func ClearBinID(db *sql.DB, orderID int64) error {
 	return err
 }
 
+// UpdateBinID sets the bin_id on an order.
+// (Junction-style write against the orders table; bins-aggregate readers
+// live at outer store/ as composition.)
 func UpdateBinID(db *sql.DB, orderID, binID int64) error {
 	_, err := db.Exec(`UPDATE orders SET bin_id=$1, updated_at=$3 WHERE id=$2`, binID, orderID, clock.Now().UTC())
 	return err

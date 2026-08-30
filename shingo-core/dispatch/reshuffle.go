@@ -449,10 +449,9 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 	//
 	// ── SO IT WAS MEASURED, AND THE CONSERVATISM COSTS MORE THAN IT SAVES ─
 	//
-	// demo.yaml 2026-08-31, all 16 lanes marked for the first time (no plant and
-	// no fixture had ever carried a mark, which is why nothing had met this).
-	// With every lane gated, "park in an ungated lane" names no slot in the
-	// plant, so EVERY dig held:
+	// demo.yaml 2026-08-31, all 16 lanes marked for the first time IN THIS
+	// FIXTURE. With every lane gated, "park in an ungated lane" names no slot in
+	// the plant, so EVERY dig held:
 	//
 	//	complex: could not read Lane_01 while planning a dig for demand 9
 	//	  (find shuffle slots: ... this dig is 2 slot(s) short) — holding
@@ -462,13 +461,40 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 	// and it is honest, but a wait whose releaser is "somebody un-marks a lane"
 	// has no releaser at all.
 	//
-	// What the exclusion was protecting is written down and stays true: a dig
-	// holds its lane EXCLUSIVELY, so a leg dwelling at a second lane's mark keeps
-	// the dug corridor shut for as long as the second lane is congested. That is a
-	// real cost. It is bounded, lawful, and self-clearing — the second lane's own
-	// admission releases it — where the cost of keeping the exclusion is a dig
-	// that never starts. Pool width wins; the dig cascade (F-10) is sensitive to
-	// it and the hold duration is not unbounded.
+	// ── AND "NO FIXTURE HAD EVER CARRIED A MARK" WAS FALSE WHEN IT WAS WRITTEN ─
+	//
+	// This paragraph used to say that, and it was believable because the fixture
+	// in front of the author had none. plants/lane-stress.yaml and
+	// plants/lane-stress-packed.yaml each declare six lane gate_points and have
+	// since before this exclusion existed — which is the whole reason the
+	// lane-stress rig could meet the two-gated-lane plan on 2026-08-09 and find
+	// the defect the exclusion was added for. store/nodes/lanes.go:307-308 has the
+	// fact stated correctly: "plants/demo.yaml declares gate_point on no lane,
+	// only the two lane-stress specs do."
+	//
+	// The plant half is now DATA rather than inference: Springfield and
+	// Hopkinsville were queried directly on 2026-08-31 and carry ZERO
+	// lane_gate_point rows. That is a read of both plant cores, not a comment
+	// quoting another comment.
+	//
+	// ── WHAT THE EXCLUSION WAS PROTECTING, AND WHICH HALF IS STILL UNMEASURED ─
+	//
+	// The objection stands and is real: a dig holds its lane EXCLUSIVELY, so a leg
+	// dwelling at a second lane's mark keeps the dug corridor shut for as long as
+	// the second lane is congested. It is lawful and self-clearing — the second
+	// lane's own admission releases it.
+	//
+	// It is NOT known to be bounded, and this paragraph used to say it was. The
+	// owed measurement had two halves. Pool width was measured, above: six stuck
+	// digs, decisive. LANE-HOLD DURATION — the old comment's actual objection —
+	// was never measured, and the all-16-marked demo run is the one fixture shape
+	// that cannot answer it, because when every lane is gated there is no ungated
+	// control to compare against. It runs on plants/lane-stress.yaml, which exists
+	// for exactly this and is already marked.
+	//
+	// So: pool width wins on evidence, because a dig that never starts is
+	// unconditional and a longer hold is conditional on congestion. The trade is
+	// argued, not measured, and the second number is still owed.
 	//
 	// The dug-lane exclusion below is NOT this one and stays: never park a blocker
 	// back into the lane being dug out of.
