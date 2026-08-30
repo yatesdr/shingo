@@ -57,8 +57,16 @@ func (d *Dispatcher) swapLegHeld(order *orders.Order, steps []resolvedStep) (boo
 		// can no longer reach here with an empty pointer because a post-create
 		// link step failed — an empty pointer now reliably means "no sibling".
 		//
-		// (Which leg is created second is a per-mode detail and NOT a role:
-		// two_robot creates the supply first, press-index creates the evac first.
+		// (Which leg is created second is a per-mode AND per-DOOR detail, and NOT
+		// a role. On the produce/swap door it follows StepsA/StepsB — Edge's
+		// applier creates SupplyOrder before EvacOrder, and BuildSwapDispatch puts
+		// two_robot's supply in the A slot and press-index's R1 EVAC in it. On the
+		// CHANGEOVER door it does not: assignDispatch takes the role-declared
+		// branch (changeover_planner.go, `if d.Roles != nil`) and fills
+		// SupplyOrder from the declared supply for BOTH modes, so a press-index
+		// changeover creates the supply first — the opposite order. This used to
+		// read "press-index creates the evac first" flat, which is true of one
+		// door and false of the other.
 		// Roles come from the steps — see legTakesLineBin.)
 		//
 		// We deliberately do NOT fall back to a fail-closed on the step shape

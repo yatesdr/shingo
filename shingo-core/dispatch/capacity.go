@@ -71,10 +71,23 @@ type CapacityBlock struct {
 	Params QueueParams
 }
 
-// CheckDropoffCapacity returns (false, "") when the named delivery node
-// can accept a bin right now, or (true, reason) when it can't. The
-// reason string is suitable for storing on orders.queue_reason and
-// rendering to operators.
+// CheckDropoffCapacity returns (false, zero) when the named delivery node can
+// accept a bin right now, and (true, block) when it cannot — where block names
+// WHICH shape of refusal it was (block.Cause) and carries the values the
+// operator sentence is generated from (block.Params).
+//
+// IT RETURNS NO SENTENCE, and this comment used to say it did: "(true, reason)
+// … the reason string is suitable for storing on orders.queue_reason and
+// rendering to operators". That stopped being true when the pre-formatted string
+// became a CapacityBlock so callers would park through the shared formatter door
+// — which the CapacityBlock doc twelve lines above already says. Two comments in
+// one file, disagreeing about this function's own return type.
+//
+// CALLERS MUST WRITE block.Cause THROUGH, not a coarse tag of their own. The
+// four causes below have four different releasers, and the two complex arms
+// substituted CauseDropoffCapacity for all of them until 2026-08-30 — passing
+// block.Params so the SENTENCE was right while the column an engineer groups by
+// was wrong. See CauseDropoffCapacity's own note.
 //
 // excludeOrderID is the caller's own order — its in-flight status is
 // excluded from the count to prevent self-collision when a gate checks

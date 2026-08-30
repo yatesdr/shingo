@@ -398,6 +398,32 @@ const (
 	CauseComplexSlotReserve QueueCause = "complex-slot-reserve"
 	// CauseDropoffCapacity — a concrete storage dropoff is full or has inbound
 	// traffic already committed to it.
+	//
+	// ── IT HAS NO LIVE WRITER, AND IT IS KEPT ANYWAY ──────────────────────
+	//
+	// It was the COARSE tag the two complex capacity arms wrote while throwing
+	// away the answer they had just computed: CheckDropoffCapacity returns a
+	// CapacityBlock whose Cause is one of dropoff-occupied / dropoff-inflight /
+	// ngrp-full / capacity-check-failed, and both arms passed cap.Params through
+	// while substituting this constant for cap.Cause — so the discriminator
+	// survived into the operator SENTENCE and was erased from the column an
+	// engineer groups by. The plain path (fulfillment/scanner.go) and the
+	// planning service had always written the fine cause; only complex did not,
+	// so one physical fact was filed two ways depending on which door parked it.
+	//
+	// The four causes have four different releasers — a bin leaving, another
+	// order placing, a child of the group freeing, and a read succeeding — and
+	// the inventory carries a row for each. Collapsing them cost the releaser.
+	//
+	// NOT DELETED, and the difference from CauseLaneLockRace is the whole reason
+	// this paragraph exists. That constant was deleted because the census proved
+	// it had NEVER had a production writer, so removing it reinterpreted no row
+	// in any plant. This one HAS been written, for as long as complex orders have
+	// queued on a full dropoff, so rows carrying "dropoff-capacity" exist at both
+	// plants and mean exactly what they meant. Deleting the constant would orphan
+	// them. It stays declared, with its releaser row, as a LEGACY value: read it
+	// in a histogram as "a complex dropoff refusal from before the split", and do
+	// not write it from new code.
 	CauseDropoffCapacity QueueCause = "dropoff-capacity"
 	// CauseSwapHold — a two-robot swap leg is waiting on its sibling.
 	CauseSwapHold QueueCause = "swap-hold"

@@ -766,7 +766,8 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	finalChecked := isConcreteStorageDropoff(d.db, order.DeliveryNode)
 	if finalChecked {
 		if blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
-			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseDropoffCapacity, cap.Params)
+			// cap.Cause, not the coarse tag — see CauseDropoffCapacity's own note.
+			d.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 			d.dbg("complex: order %d queued — concrete storage dropoff %s blocked: %s", order.ID, order.DeliveryNode, cap.Cause)
 			return dispatchStep{done: true, err: fmt.Errorf("dropoff capacity: %s", cap.Cause)}
 		}
@@ -819,7 +820,8 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 			continue
 		}
 		if blocked, cap := CheckDropoffCapacity(d.db, s.Node, order.ID); blocked {
-			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseDropoffCapacity, cap.Params)
+			// cap.Cause, not the coarse tag — see CauseDropoffCapacity's own note.
+			d.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 			d.dbg("complex: order %d queued — declared-exclusive dropoff %s blocked: %s", order.ID, s.Node, cap.Cause)
 			return dispatchStep{done: true, err: fmt.Errorf("dropoff capacity: %s", cap.Cause)}
 		}

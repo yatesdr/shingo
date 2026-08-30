@@ -781,12 +781,37 @@ var causeReleasers = []causeReleaser{
 	{
 		cause:       CauseDropoffCapacity,
 		populations: []WaitPopulation{PopAcquiring},
-		what:        "the storage dropoff frees, or its committed inbound traffic lands",
+		// LEGACY VALUE, NO LIVE WRITER. The two complex arms that wrote it now
+		// write the fine cause CheckDropoffCapacity actually computed
+		// (dropoff-occupied / dropoff-inflight / ngrp-full / capacity-check-failed),
+		// each of which has its own row below with its own releaser. This row
+		// stays because plant rows carrying "dropoff-capacity" exist and still
+		// mean what they meant — see the constant's own note for why it was kept
+		// rather than deleted. The sentence is the disjunction of the two
+		// releasers it used to cover, which is the honest reading of an old row.
+		what: "the storage dropoff frees, or its committed inbound traffic lands — a pre-split " +
+			"row, so which of the two it was waiting for is not recoverable from the cause alone",
 	},
 	{
 		cause:       CauseSwapHold,
 		populations: []WaitPopulation{PopAcquiring},
-		what:        "the sibling swap leg claims its bin, clearing the gate",
+		// IT USED TO NAME THE PREDICATE THAT DEADLOCKED. The row read "the sibling
+		// swap leg claims its bin, clearing the gate", which describes the
+		// live-claim test swapLegHeld ran until 2026-08-11 — the one that hung the
+		// ASSY pair when the supply STAGED its replacement, the store unclaimed the
+		// bin, and the claim the evac was waiting for disappeared having already
+		// done its job (swap_hold.go, the arm's own scar). swapLegCommittedToFleet
+		// replaced it precisely so the hold reads dispatch state instead of a live
+		// claim. A releaser row naming a dead mechanism as live is worse than a
+		// blank one: it sends the reader to look for a claim that is not the gate.
+		//
+		// BOTH FACES, because one predicate serves both directions and the row is
+		// keyed by the cause, not by which arm wrote it.
+		what: "the sibling leg commits to the fleet — it holds a vendor order and is en route or " +
+			"done (swapLegCommittedToFleet). For an evac that means its supply secured a " +
+			"replacement; for a filler it means its clearer is committed to clearing the line. " +
+			"NOT a live claim: a supply that has already staged its replacement holds none, and " +
+			"reading for one is what deadlocked this gate on 2026-08-11",
 	},
 
 	// ── The finder's tiers ────────────────────────────────────────────────

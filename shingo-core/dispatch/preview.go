@@ -13,8 +13,15 @@ import "shingo/protocol"
 
 // DropoffCapacityPreview is the read-only result of asking the dispatcher
 // whether a given delivery node would accept a fresh order right now.
-// Fields mirror CheckDropoffCapacity's return tuple in JSON-friendly
-// form so the UI can serialize and display directly.
+//
+// IT RENDERS THE GATE'S ANSWER, IT DOES NOT MIRROR IT. This said "fields mirror
+// CheckDropoffCapacity's return tuple in JSON-friendly form", and they do not:
+// that tuple is (bool, CapacityBlock{Cause, Params}), and what leaves here is
+// Blocked plus a SENTENCE this file generates from Params through the shared
+// formatter. Cause is dropped on purpose — it is the engineer-only tag and does
+// not cross the wire (see the QueueCause type doc) — so a reader who believed
+// the old sentence would go looking for a cause field that was never meant to
+// exist here.
 type DropoffCapacityPreview struct {
 	Blocked      bool   `json:"blocked"`
 	Reason       string `json:"reason,omitempty"`

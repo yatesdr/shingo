@@ -207,10 +207,21 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 	// the destination has no room. When the lane-family causes moved off
 	// QueueWaitingForSlot, this is the half that had to stay put — the code is
 	// wrong for a corridor and right for a full destination.
-	if after.QueueCause != string(CauseDropoffCapacity) {
-		t.Fatalf("queue_cause = %q, want %q — this fixture is refused at the capacity gate, and "+
-			"the assertion below is about what a SLOT refusal is filed as",
-			after.QueueCause, CauseDropoffCapacity)
+	//
+	// THE CAUSE IS THE FINE ONE NOW, AND THE FIXTURE IS WHY IT IS THIS ONE. The
+	// plain store is already dispatched and inbound to the mouth, so nothing is
+	// physically sitting there — the refusal is CheckDropoffCapacity's in-flight
+	// arm, dropoff-inflight, not dropoff-occupied. This asserted the coarse
+	// CauseDropoffCapacity until 2026-08-30, when both complex arms started
+	// writing cap.Cause through instead of substituting one tag for four; the
+	// change of expectation here IS that fix observed. "A bin is sitting there"
+	// and "an order is already on its way" want different operator responses and
+	// have different releasers, and this fixture is unambiguously the second.
+	if after.QueueCause != string(CauseDropoffInflight) {
+		t.Fatalf("queue_cause = %q, want %q — this fixture is refused at the capacity gate by the "+
+			"IN-FLIGHT arm (the plain store is en route to this node, nothing is parked on it), "+
+			"and the assertion below is about what a SLOT refusal is filed as",
+			after.QueueCause, CauseDropoffInflight)
 	}
 	if after.QueueCode != string(protocol.QueueWaitingForSlot) {
 		t.Errorf("queue_code = %q, want %q. A full destination IS a missing slot; only the lane "+
