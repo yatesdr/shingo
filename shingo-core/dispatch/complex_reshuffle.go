@@ -143,7 +143,8 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 			// would point the operator at an excavation that is not what they are
 			// waiting for.
 			park(protocol.QueueStorageRearranging, CauseDigBlockerPromised,
-				QueueParams{Lane: lane.Name, Payload: payloadCode})
+				QueueParams{Lane: lane.Name, Payload: payloadCode,
+					HolderOrderID: res.blockerClaimant})
 			return
 		}
 		// The commonest holder is a robot already carrying that bin out of the lane.

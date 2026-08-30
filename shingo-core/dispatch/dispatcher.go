@@ -179,7 +179,13 @@ func (d *Dispatcher) PlanBuriedReshuffle(order *orders.Order, buried *BuriedErro
 				//
 				// The complex path has named them since it existed
 				// (complex_reshuffle.go). The plain path is what was thin.
-				Params: buriedWaitParams(d.laneLock, order, buried),
+				//
+				// THE HOLDER RIDES HERE TOO, and it has to: the planner's own park
+				// names it directly, but the SCANNER parks from this error and its
+				// write lands on top. Without it the same wait read one way from the
+				// planner and another from the plain path — the split 88410799 closed
+				// for the cause, reopened one field over.
+				Params: buriedWaitParams(d.db, d.laneLock, order, buried).withHolder(promisedHolder(pe.Err)),
 			}
 		}
 		return pe
@@ -212,7 +218,7 @@ type ReshuffleWaitError struct {
 // hold is a demand's, not a dig's. A zero there says "nothing is digging this
 // lane on anybody's behalf", which is exactly the situation the releaser
 // sentence had been lying about.
-func buriedWaitParams(laneLock *LaneLock, order *orders.Order, buried *BuriedError) QueueParams {
+func buriedWaitParams(db *store.DB, laneLock *LaneLock, order *orders.Order, buried *BuriedError) QueueParams {
 	p := QueueParams{}
 	if order != nil {
 		p.Payload = order.PayloadCode
@@ -220,10 +226,19 @@ func buriedWaitParams(laneLock *LaneLock, order *orders.Order, buried *BuriedErr
 	if buried == nil {
 		return p
 	}
-	// BuriedError carries the lane's ID, not its name — so the name comes from
-	// digWaitByLaneName's sibling read rather than off the error. A lane whose
-	// name cannot be read still gets its dig id, because the two facts fail
-	// independently and half an answer beats none.
+	// THE LANE NAME, WHICH THIS DID NOT CARRY. BuriedError holds the lane's ID,
+	// not its name, and the name was simply left out — so every wait the SCANNER
+	// parked read "Rearranging storage to reach PART-A" while the planner's own
+	// park of the same wait read "Rearranging lane LSD_01 to reach PART-A". The
+	// scanner's write lands on top, so the weaker sentence is the one an operator
+	// sees, and the corridor — the single most useful fact in the wait — was
+	// missing from the plain path entirely.
+	//
+	// A lane whose name cannot be read still gets its dig id and its holder: the
+	// facts fail independently and half an answer beats none.
+	if n, err := db.GetNode(buried.LaneID); err == nil && n != nil {
+		p.Lane = n.Name
+	}
 	p.DigOrderID = digWaitFor(laneLock, buried.LaneID)
 	return p
 }
@@ -300,6 +315,21 @@ func digBlockerCause(err error) QueueCause {
 		return CauseDigBlockerPromised
 	}
 	return CauseDigBlockerClaimed
+}
+
+// promisedHolder is digBlockerCause's other half: WHO the dig is waiting behind,
+// or 0 when this refusal is not the ranked one.
+//
+// Only the promised park names a holder. A claimed blocker's wait is a robot's
+// drive and its sentence says so; naming the claimant there would change a
+// sentence that is already true, for no gain. Zero is "not known", and the
+// clause renders nothing — the same rule DigOrderID follows.
+func promisedHolder(err error) int64 {
+	var refused *store.BlockerClaimedError
+	if errors.As(err, &refused) && refused.Promised {
+		return refused.HolderID
+	}
+	return 0
 }
 
 // ErrReshuffleWait reports planning-time CONGESTION rather than a fault: the

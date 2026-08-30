@@ -4,6 +4,8 @@ package dispatch
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -299,7 +301,14 @@ func TestRankedTake_TheParkNamesItsOwnCause(t *testing.T) {
 			"want none. A dig that waits while squatting on the corridor is a deadlock with extra "+
 			"steps: the holder cannot get in to remove the very bin the dig is waiting on.", mouths)
 	}
-	_ = holder
+	// AND IT SAYS WHO IS AHEAD. The promised wait's whole distinction from the
+	// claimed one is that nothing is moving, so "rearranging lane X" is true and
+	// useless on its own — the holder's id is what an operator can act on.
+	if want := FormatQueueSentence(protocol.QueueStorageRearranging,
+		QueueParams{Lane: lane.Name, Payload: bp.Code, HolderOrderID: holder.ID}); got.QueueReason != want {
+		t.Errorf("the planner's park reads %q, want %q — the holder is the one fact this wait has "+
+			"that the claimed one does not.", got.QueueReason, want)
+	}
 }
 
 // TestRankedTake_ThePromisedCauseSurvivesTheWaitError is the SAME park as the
@@ -534,4 +543,57 @@ func TestRankedTake_TheHoldersPickupWakesTheParkedDig(t *testing.T) {
 
 		digsClean(t, d, db, dig, buried)
 	})
+}
+
+// TestRankedTake_ThePromisedSentenceIsTheSameFromEveryDoor is the "one cause,
+// one sentence" pin for the wait §7 created.
+//
+// dig-blocker-promised is written by FOUR sites: the planner's own park, the
+// wait error the SCANNER parks from (which lands on top of the planner's), the
+// acceptance arm when a gate-staged dweller yields, and the complex reshuffle
+// arm. They build their params separately, and a field that reaches three of
+// them is a wait that reads differently depending on which code path parked it —
+// the same split 88410799 closed for the CAUSE, one field over.
+//
+// The holder is the field that matters here: it is the one fact this wait has
+// that the claimed one does not, so a door that drops it renders a sentence
+// indistinguishable from "some lane is being rearranged".
+func TestRankedTake_ThePromisedSentenceIsTheSameFromEveryDoor(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
+
+	blocker := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "SAMEDOOR-BLK")
+	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "SAMEDOOR-TGT")
+	holder := promiseHolder(t, db, "samedoor-holder", 9, blocker.ID)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	dig := mkDigOrder(t, db, "samedoor-dig", bp.Code, "LINE-SAMEDOOR")
+	buried := &BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID}
+
+	// Door 1: the planner parks directly.
+	if _, pe := d.planner.planBuriedReshuffle(dig, buried); pe == nil {
+		t.Fatal("fixture: the dig must yield to the ranked holder")
+	}
+	fromPlanner := reloadOrder(t, db, dig.ID).QueueReason
+
+	// Door 2: the scanner parks from the wait error, on top of what door 1 wrote.
+	// This is the plain path a buried retrieve actually takes.
+	err := d.PlanBuriedReshuffle(reloadOrder(t, db, dig.ID), buried)
+	if err == nil {
+		t.Fatal("fixture: the door must come back as a wait")
+	}
+	fromWaitError := FormatQueueSentence(protocol.QueueStorageRearranging,
+		ReshuffleWaitParams(err, bp.Code))
+
+	if fromPlanner != fromWaitError {
+		t.Errorf("the planner renders %q and the wait error renders %q.\n"+
+			"The scanner's park lands ON TOP of the planner's, so the operator sees the second one — "+
+			"and the two describing one wait differently is the defect, whichever is right.",
+			fromPlanner, fromWaitError)
+	}
+	if !strings.Contains(fromWaitError, fmt.Sprintf("order %d", holder.ID)) {
+		t.Errorf("the wait reads %q and never names order %d, which is the demand ahead of it. "+
+			"Without the id this is indistinguishable from any other lane wait.",
+			fromWaitError, holder.ID)
+	}
 }

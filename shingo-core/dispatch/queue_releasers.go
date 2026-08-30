@@ -467,6 +467,9 @@ var causeReleasers = []causeReleaser{
 		// a pass longer than it needs to. Recorded because the floor's histogram
 		// will show it, and the count there is a missing event, not a missing
 		// releaser.
+		//
+		// The wait's own sentence NAMES that holder (QueueParams.HolderOrderID), so
+		// a reader who wants to know when this ends has the order to go and look at.
 		what: "the demand holding the promise takes its bin (pickup → _TRANSIT, arrival clears the " +
 			"hold) or ends — and, when it instead re-sources away from the bin, the periodic floor, " +
 			"because a holder abandoning a promise emits nothing anyone listens for",

@@ -203,7 +203,8 @@ func (d *Dispatcher) summonOwnDigs(lane *nodes.Node, req acceptanceRequest) {
 				"when order %d takes it or ends",
 				req.order.ID, lane.Name, res.blockerBin, res.blockerClaimant, res.blockerClaimant)
 			d.setQueueReason(req.order, protocol.QueueStorageRearranging, CauseDigBlockerPromised,
-				QueueParams{Lane: lane.Name, Payload: req.order.PayloadCode})
+				QueueParams{Lane: lane.Name, Payload: req.order.PayloadCode,
+					HolderOrderID: res.blockerClaimant})
 			return
 		}
 		d.parkOnClaimedBlocker(lane, req, res)

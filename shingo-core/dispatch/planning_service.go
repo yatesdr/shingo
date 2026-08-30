@@ -649,7 +649,8 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 			// same cause off the wait error and writes it over the top, so a fork
 			// spelled only here is a fork the plain path undoes.
 			s.setQueueReason(order, protocol.QueueStorageRearranging, digBlockerCause(err),
-				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
+				QueueParams{Lane: lane.Name, Payload: order.PayloadCode,
+					HolderOrderID: promisedHolder(err)})
 			return nil, &planningError{
 				Code:   codeBlockerClaimed,
 				Detail: fmt.Sprintf("cannot dig yet: %v", err),
