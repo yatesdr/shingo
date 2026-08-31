@@ -901,22 +901,89 @@ func (op *simOperator) runRelease(orderID int64) {
 	// Sequential / single-robot modes stay on the per-leg path: ReleaseStagedOrders
 	// rejects non-two-robot modes, and forcing it would wedge A/B nodes (the
 	// pair_release trap documented in the sim-traps memory).
+	// A CONSUME NODE GETS ITS FORM FILLED IN ON THIS PATH TOO. The two-robot check
+	// above routes the PAIR MECHANISM, which is genuinely two-robot-only; the
+	// disposition is not, and used to be reachable only through it. See
+	// consumeDisposition for the run that cost — a single_robot consume node whose
+	// carriers left unsettled and never came back as empties.
+	//
+	// Produce keeps the blank disposition it has always sent here; the note above
+	// on why two-robot produce is routed to the pair path applies unchanged.
+	disp := ReleaseDisposition{}
 	if order, err := op.e.db.GetOrder(orderID); err == nil && order != nil && order.ProcessNodeID != nil {
 		if _, _, claim, lerr := loadActiveNode(op.e.db, *order.ProcessNodeID); lerr == nil && claim != nil &&
 			claim.SwapMode.IsTwoRobot() {
 			op.releaseAsPair(orderID)
 			return
 		}
+		if d, ok := op.consumeDisposition(*order.ProcessNodeID); ok {
+			disp = d
+		}
 	}
-	// Empty disposition: release the swap without touching the bin manifest. The
-	// sim isn't modeling SEND PARTIAL / RELEASE EMPTY accounting -- just the
-	// "operator pushed Release" transition that lets the staged swap finish.
 	// Tolerated failure (order already advanced/cancelled): log at debug.
-	if err := op.e.ReleaseOrderWithLineside(orderID, ReleaseDisposition{}); err != nil {
+	if err := op.e.ReleaseOrderWithLineside(orderID, disp); err != nil {
 		op.e.debugFn("[sim] operator auto-release order %d rejected: %v", orderID, err)
 		return
 	}
 	op.e.logFn("[sim] operator auto-release order %d (swap-ready)", orderID)
+}
+
+// consumeDisposition returns the disposition a real operator would declare for
+// the carrier leaving a CONSUME node, and whether this node is a consume node at
+// all. It lives outside releaseAsPair because the ANSWER IS NOT ABOUT ROBOTS: it
+// is a property of what is physically left in the bin, and both release paths owe
+// it.
+//
+// ── WHY THIS IS SHARED, AND WHAT IT COST TO BE UNSHARED ───────────────────
+//
+// Core settles a count at RELEASE and nowhere else (SyncOrClearForReleased writes
+// uop 0 and the released_empty / released_underpack audit row). A release that
+// sends a blank disposition leaves the departing carrier's count unsettled and its
+// manifest untouched, so the carrier rides into the pool still labelled — and a
+// labelled carrier never satisfies EmptyCarrierWhere's blank-payload_code test
+// again. It is empty, and invisible.
+//
+// This logic used to sit inside releaseAsPair, which is reached only when
+// claim.SwapMode.IsTwoRobot(). That gate is correct FOR THE PAIR MECHANISM —
+// ReleaseStagedOrders rejects non-two-robot modes and forcing it wedges A/B nodes
+// — but the disposition rode along with it, so every single-robot and sequential
+// consume node kept sending a blank form.
+//
+// MEASURED, demo.yaml 2026-08-31. ALN_003 (WELD-2, PANEL-B) is the plant's only
+// single_robot CONSUME node, and PANEL-B is the payload that rides STANDARD-SM.
+// Eleven SM carriers ended a run all labelled, ZERO manifest-clear operations in
+// the whole run, and PRESS-2 dead waiting for an empty that could not exist. The
+// fixture's answer was to bolt an unloader onto PANEL-B purely to wipe labels —
+// which, because a drain window must be handed a FULL carrier, then destroyed 450
+// UOP of PANEL-B in 81 sim-minutes while WELD-2 got none.
+//
+// A real operator declares what is PHYSICALLY there, so the sim reads the carrier
+// and declares the same thing:
+//
+//	tracked <= 0  -> RELEASE UNDERPACK. The carrier is empty; the tracked count
+//	                 disagreeing (negative, from an over-count) is exactly what
+//	                 this disposition is for — same wire shape as release-empty,
+//	                 and the tag carries the "physical inventory was less than
+//	                 tracked" signal so Core records released_underpack.
+//	tracked >  0  -> SEND PARTIAL BACK. Stock is left; the bin returns to the pool
+//	                 with its count and manifest intact, which is what makes it
+//	                 re-sourceable oldest-first.
+//
+// PRODUCE is deliberately NOT handled here. The per-leg path's produce-role branch
+// skips manifest sync (see the caller's note on why two-robot produce is routed to
+// the pair path instead), and sequential A/B produce nodes stay per-leg on purpose.
+// Declaring capture_lineside for them is a separate change with separate evidence.
+func (op *simOperator) consumeDisposition(nodeID int64) (ReleaseDisposition, bool) {
+	node, _, claim, err := loadActiveNode(op.e.db, nodeID)
+	if err != nil || claim == nil || claim.Role != protocol.ClaimRoleConsume {
+		return ReleaseDisposition{}, false
+	}
+	disp := ReleaseDisposition{CalledBy: "sim-operator", Mode: DispositionSendPartialBack}
+	if bins, _, ferr := op.e.coreClient.FetchNodeBins([]string{node.CoreNodeName}); ferr == nil &&
+		len(bins) > 0 && bins[0].Occupied && bins[0].UOPRemaining <= 0 {
+		disp.Mode = DispositionReleaseUnderpack
+	}
+	return disp, true
 }
 
 // releaseAsPair pushes the operator's RELEASE BUTTON for the node this order
@@ -946,38 +1013,12 @@ func (op *simOperator) releaseAsPair(orderID int64) {
 		return
 	}
 	nodeID := *order.ProcessNodeID
-	disp := ReleaseDisposition{CalledBy: "sim-operator"}
-	if node, _, claim, lerr := loadActiveNode(op.e.db, nodeID); lerr == nil && claim != nil {
-		switch claim.Role {
-		case protocol.ClaimRoleProduce:
+	disp, isConsume := op.consumeDisposition(nodeID)
+	if !isConsume {
+		disp = ReleaseDisposition{CalledBy: "sim-operator"}
+		if _, _, claim, lerr := loadActiveNode(op.e.db, nodeID); lerr == nil && claim != nil &&
+			claim.Role == protocol.ClaimRoleProduce {
 			disp.Mode = DispositionCaptureLineside
-		case protocol.ClaimRoleConsume:
-			// THE CONSUME MIRROR, and it was missing. A consume claim fell through
-			// to the zero value, which means "release the swap without touching the
-			// bin manifest" — so the departing carrier's count was never settled and
-			// rode into the pool as-is. A carrier over-consumed to -6 stayed at -6 in
-			// a buffer, and nothing downstream would ever zero it: Core settles a
-			// count at RELEASE (SyncOrClearForReleased writes uop 0 and the
-			// released_empty / released_underpack audit row), and release is the only
-			// place it does.
-			//
-			// A real operator declares what is PHYSICALLY there, so the sim reads the
-			// carrier and declares the same thing:
-			//
-			//   tracked <= 0  -> RELEASE UNDERPACK. The carrier is empty; the tracked
-			//                    count disagreeing (negative, from an over-count) is
-			//                    exactly what this disposition is for — same wire
-			//                    shape as release-empty, and the tag carries the
-			//                    "physical inventory was less than tracked" signal so
-			//                    Core records released_underpack.
-			//   tracked >  0  -> SEND PARTIAL BACK. Stock is left; the bin returns to
-			//                    the pool with its count and manifest intact, which is
-			//                    what makes it re-sourceable oldest-first.
-			disp.Mode = DispositionSendPartialBack
-			if bins, _, ferr := op.e.coreClient.FetchNodeBins([]string{node.CoreNodeName}); ferr == nil &&
-				len(bins) > 0 && bins[0].Occupied && bins[0].UOPRemaining <= 0 {
-				disp.Mode = DispositionReleaseUnderpack
-			}
 		}
 	}
 	if err := op.e.ReleaseStagedOrders(nodeID, disp); err != nil {
@@ -1176,8 +1217,24 @@ func (op *simOperator) reArmExpiredReleaseCaps(live map[int64]bool) {
 // naming the gap is the part that stops the next reader repeating order 91's
 // investigation.
 func (op *simOperator) releaseCapDiagnosis(orderID int64) string {
+	// A DIAGNOSTIC MUST NOT KILL THE RUN IT IS DESCRIBING. This is reached only
+	// on the cap announcement, where the sole remaining job is to explain a
+	// refusal; an unreadable store is a reason to say less, never to panic.
+	//
+	// b3cb1d82 added this call without the guard, and it has panicked the
+	// plant-agnostic harness ever since — newTestSimOperator builds an Engine with
+	// no db, which is deliberate (it tests the cap's counting, not its prose), and
+	// scheduleRelease drives straight through here on the twentieth firing.
+	//
+	// It went unseen because NOTHING IN scripts/gate.sh COMPILES THE `sim` TAG:
+	// the unit step builds untagged, and the race step is shingo-core only. The
+	// same blind spot hid a concurrent map write on this type. Whatever else
+	// changes, a nil-safe diagnostic is the cheap half of that lesson.
+	if op.e == nil || op.e.db == nil {
+		return "The Edge cannot read the order to say more about what it is waiting on."
+	}
 	order, err := op.e.db.GetOrder(orderID)
-	if err != nil {
+	if err != nil || order == nil {
 		return "The Edge cannot read the order to say more about what it is waiting on."
 	}
 

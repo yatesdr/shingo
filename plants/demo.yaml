@@ -367,6 +367,30 @@ stations:
   # a replacement. Every unloader in this scenario consumed ASSY, so a press-index
   # release had no unloader to ask and the trigger was unobservable on any sim run.
   - {name: FGN_002, kind: unloader, changeover_load_directive: true}  # drains PANEL-A; its card takes the changeover instruction
+  # THERE IS NO FGN_003, AND THE SM FAMINE IT WAS ADDED FOR HAD A DIFFERENT CAUSE.
+  #
+  # The note here read: "A carrier's label is cleared on capture-reduction, on a
+  # release with 0, or by an operator/unloader CLEAR — never by being consumed to
+  # zero (applier.go, and that is deliberate and SME-locked). PANEL-B rides
+  # STANDARD-SM and had no unloader, so every SM carrier PRESS-2 filled was drained
+  # by WELD-2 and then sat labelled PANEL-B at 0 UOP forever." Eleven SM carriers,
+  # all labelled, zero manifest-clears in a whole run, PRESS-2 dead at 05:56
+  # waiting for an empty that could not exist. That famine was real, and it reached
+  # WELD-4 four hops away through a held lane.
+  #
+  # But "release with 0" IS one of the three clear paths, and it was never firing.
+  # ALN_003 (WELD-2, PANEL-B) is this plant's only single_robot CONSUME node, and
+  # the sim operator computed a disposition only inside releaseAsPair — reachable
+  # only when SwapMode.IsTwoRobot(). Every PANEL-B release therefore sent a blank
+  # form, Core never settled the count, and the label stayed on. An unloader was
+  # added to wipe labels instead, and because a drain window must be handed a FULL
+  # carrier (11b935ab), each wipe destroyed a full load: 15 carriers, 450 UOP of
+  # PANEL-B in 81 sim-minutes, while WELD-2 got none.
+  #
+  # The release now declares what is physically in the bin on every swap mode, so
+  # carriers clear themselves and the SM pool is a circle without an unloader in it.
+  # If SM empties ever stop regenerating again, look at the RELEASE PATH first —
+  # this fixture already paid once for treating the symptom.
   # ── PRESS-1 changeover clearance ──
   # SHINGO DOES NOT TOUCH TOOLING. The tool change is human work at the press;
   # what the changeover owes it is floor space and timing. So a marked position is
@@ -998,6 +1022,30 @@ claims:
     outbound_destination: SYN_PRESS_EMPTIES
     auto_push: true
 
+  # UNLOADER-C IS GONE, AND ITS REASONING WAS A BUG'S SHADOW. It drained PANEL-B,
+  # and the note here argued it "has to exist… arithmetic rather than a feature:
+  # PANEL-B is the only STANDARD-SM payload in steady production, so with no
+  # unloader for it the SM empties are consumed once and never regenerate."
+  #
+  # The observation was right and the cause was wrong. SM carriers did not
+  # regenerate because ALN_003 — WELD-2's PANEL-B consume node — is the plant's
+  # only single_robot CONSUME node, and the sim operator declared a disposition
+  # only on the two-robot path. Its carriers were released with a blank form, so
+  # Core never settled their count, their manifest never cleared, and a labelled
+  # carrier never matches EmptyCarrierWhere again. Fixed in the commit that
+  # removed this: the release now declares what is in the bin on every swap mode.
+  #
+  # What the workaround cost, measured over 81 sim-minutes before the fix: a drain
+  # window must be handed a FULL carrier (11b935ab), so every label reset burned a
+  # full load of PANEL-B. FGN_003 took 15 carriers — 450 UOP — while WELD-2, the
+  # cell that actually eats PANEL-B, received NONE. That is what made the press
+  # look outpaced by the line, and it is why order 65 sat on "waiting for material".
+  #
+  # THE RULE THIS RESTORES: an unloader takes FINISHED GOODS out of the system.
+  # ASSY, which the weld cells produce, is the only correct target in this plant.
+  # PANEL-A and PANEL-B are work-in-progress that a cell consumes; an unloader on
+  # either competes with the line for its own feedstock. UNLOADER-A/FGN_001 is now
+  # the only unloader here, and that is the whole intended population.
 demands:
   # Loader demands key on the loader identity (synthetic PLK_LOADER, or the single-window
   # anchor node). The seed derives demand_registry from the loader aggregate; these
