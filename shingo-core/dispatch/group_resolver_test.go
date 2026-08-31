@@ -89,7 +89,7 @@ func TestGroupResolveRetrieve_AccessibleFIFO(t *testing.T) {
 	// Place bin at lane 1, slot depth 1 (front/accessible) — newer
 	createTestBinAtNode(t, db, bp.Code, slots[1][0].ID, "BIN-FIFO-NEW")
 
-	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
+	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("ResolveRetrieve: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestGroupResolveRetrieve_BuriedFails(t *testing.T) {
 	// Place target at lane 0, slot depth 3 (back — buried)
 	buried := createTestBinAtNode(t, db, bp.Code, slots[0][2].ID, "BIN-BURIED")
 
-	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
+	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone, nil)
 	if err == nil {
 		t.Fatal("expected error for buried bin, got nil")
 	}
@@ -219,7 +219,7 @@ func TestGroupResolveRetrieve_LockedLaneSkipped(t *testing.T) {
 	}
 
 	// Should fail since lane 0 is locked and lane 1 has no bins
-	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
+	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone, nil)
 	if err == nil {
 		t.Fatal("expected error when lane is locked and no other bins available, got nil")
 	}
@@ -257,7 +257,7 @@ func TestNodeGroupResolveRetrieve_DirectChildren(t *testing.T) {
 	b := createTestBinAtNode(t, db, bp.Code, child2.ID, "BIN-DC")
 
 	gr := &GroupResolver{DB: db}
-	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
+	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("ResolveRetrieve: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestNodeGroupResolveRetrieve_Mixed(t *testing.T) {
 	createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-MIX-NEW")
 
 	gr := &GroupResolver{DB: db}
-	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
+	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("ResolveRetrieve: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestFIFOSelection_BuriedOlderThanAccessible(t *testing.T) {
 	binNew := createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-NEW")
 	setBinLoadedAt(t, db, binNew.ID, baseTime.Add(2*time.Second))
 
-	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
+	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone, nil)
 	if err == nil {
 		t.Fatal("expected BuriedError for oldest buried bin, got nil")
 	}
@@ -511,7 +511,7 @@ func TestFIFOSelection_AccessibleOlderThanBuried(t *testing.T) {
 	// Blocker in lane 3
 	createTestBinAtNode(t, db, blkPayload.Code, slots[2][0].ID, "BLK-1")
 
-	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
+	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("expected accessible result, got error: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestCOSTSelection_IgnoresBuriedWhenAccessible(t *testing.T) {
 	binNew := createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-NEW")
 	setBinLoadedAt(t, db, binNew.ID, baseTime.Add(2*time.Second))
 
-	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
+	result, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("COST mode should return accessible bin, got error: %v", err)
 	}
@@ -580,7 +580,7 @@ func TestCOSTSelection_FallsToBuriedWhenNoneAccessible(t *testing.T) {
 	buried := createTestBinAtNode(t, db, bp.Code, slots[0][2].ID, "BIN-BURIED")
 	createTestBinAtNode(t, db, blkPayload.Code, slots[0][0].ID, "BLK-FRONT")
 
-	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone)
+	_, err := gr.ResolveRetrieve(grp, bp.Code, reservations.Anyone, nil)
 	if err == nil {
 		t.Fatal("expected BuriedError when no accessible bins exist in COST mode")
 	}

@@ -38,7 +38,7 @@ func TestFIFO_PicksOldestAcrossLanes(t *testing.T) {
 	f.sourceInLane[laneB.ID] = binB
 
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone)
+	got, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestFIFO_BuriedOlderThanAccessibleTriggersReshuffle(t *testing.T) {
 	f.oldestBuried[lane.ID] = laneBuried{bin: buried, slot: buriedSlot}
 
 	gr := &GroupResolver{DB: f}
-	_, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone)
+	_, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone, nil)
 	var bErr *BuriedError
 	if !errors.As(err, &bErr) {
 		t.Fatalf("expected *BuriedError, got %T: %v", err, err)
@@ -109,7 +109,7 @@ func TestFIFO_SkipsLockedLanes(t *testing.T) {
 	f.lockLaneForDig(locked.ID)
 
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone)
+	got, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestCOST_PrefersAccessibleOverOlderBuried(t *testing.T) {
 	f.buriedAny[lane.ID] = laneBuried{bin: buried, slot: buriedSlot}
 
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone)
+	got, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestCOST_FallsBackToBuriedWhenNoAccessible(t *testing.T) {
 	// "no accessible" and falls through to the burial scan.
 
 	gr := &GroupResolver{DB: f}
-	_, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone)
+	_, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone, nil)
 	var bErr *BuriedError
 	if !errors.As(err, &bErr) {
 		t.Fatalf("expected *BuriedError, got %T: %v", err, err)
@@ -216,7 +216,7 @@ func TestFAVL_FirstAvailableNoReshuffle(t *testing.T) {
 	}
 
 	gr := &GroupResolver{DB: f}
-	got, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone)
+	got, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone, nil)
 	// Any error here — BuriedError included — counts as failure: the
 	// whole point of FAVL is to skip the burial-detection code path.
 	if err != nil {
@@ -424,7 +424,7 @@ func TestClassifyEmpty_NoEnabledChildren_Structural(t *testing.T) {
 	f.children[group.ID] = []*nodes.Node{disabledChild(10, "off")}
 
 	gr := &GroupResolver{DB: f}
-	_, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone)
+	_, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone, nil)
 	var sErr *StructuralError
 	if !errors.As(err, &sErr) {
 		t.Fatalf("expected *StructuralError, got %T: %v", err, err)
@@ -447,7 +447,7 @@ func TestClassifyEmpty_NoChildAcceptsPayload_Structural(t *testing.T) {
 	f.effPayloads[child.ID] = []*payloads.Payload{payload("OTHER")}
 
 	gr := &GroupResolver{DB: f}
-	_, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone)
+	_, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone, nil)
 	var sErr *StructuralError
 	if !errors.As(err, &sErr) {
 		t.Fatalf("expected *StructuralError, got %T: %v", err, err)
@@ -467,7 +467,7 @@ func TestClassifyEmpty_Transient_WhenGroupStructurallyCapable(t *testing.T) {
 	// No bins at the child -> nothing to retrieve.
 
 	gr := &GroupResolver{DB: f}
-	_, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone)
+	_, err := gr.ResolveRetrieve(group, "P1", reservations.Anyone, nil)
 	if err == nil {
 		t.Fatal("expected transient error when no bin available")
 	}

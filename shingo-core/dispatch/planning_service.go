@@ -421,7 +421,7 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 		// NGRPs), so the concrete resolution must land on the order here. On a
 		// still-full group this is a TOCTOU race — re-queue and let the scanner retry.
 		if destNode.IsSynthetic && destNode.NodeTypeCode == protocol.NodeClassNGRP && s.resolver != nil {
-			result, rErr := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, payloadCode, nil, digAskerFor(order))
+			result, rErr := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, payloadCode, nil, digAskerFor(order), nil)
 			if rErr != nil {
 				s.dbg("move: dest group %s unresolved (%v), queuing order %d", order.DeliveryNode, rErr, order.ID)
 				// AND THE ROW SAYS WHY. This queued the order and wrote nothing, so a

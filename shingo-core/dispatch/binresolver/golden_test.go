@@ -190,7 +190,7 @@ func TestGolden_RetrieveAlgorithms(t *testing.T) {
 				f.lockLaneForDig(sc.lockLane) // a dig holds it, owned by some other order
 			}
 			gr := &GroupResolver{DB: f}
-			got, err := gr.ResolveRetrieve(group, payload, reservations.Anyone)
+			got, err := gr.ResolveRetrieve(group, payload, reservations.Anyone, nil)
 
 			gs := goldenScenario{
 				Name:      sc.name,

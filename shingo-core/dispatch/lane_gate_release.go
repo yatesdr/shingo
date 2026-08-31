@@ -1681,7 +1681,7 @@ func (d *Dispatcher) widenDropoffToGroup(order *orders.Order, lane *nodes.Node, 
 	if err != nil || group == nil {
 		return nil, err
 	}
-	result, err := d.resolver.Resolve(group, binresolver.ResolveModeStore, order.PayloadCode, nil, digAskerFor(order))
+	result, err := d.resolver.Resolve(group, binresolver.ResolveModeStore, order.PayloadCode, nil, digAskerFor(order), nil)
 	if err != nil || result == nil || result.Node == nil {
 		d.dbg("lane gate: order %d has nowhere in %s and its group %s has nowhere either — waiting",
 			order.ID, lane.Name, group.Name)

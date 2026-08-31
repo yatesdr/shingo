@@ -248,7 +248,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, orderPayloa
 			if step.Action == protocol.ActionDropoff {
 				mode = binresolver.ResolveModeStore
 			}
-			result, err := d.resolver.Resolve(node, mode, payloadCode, nil, asker)
+			result, err := d.resolver.Resolve(node, mode, payloadCode, nil, asker, nil)
 			if err != nil {
 				return "", "", fmt.Errorf("cannot resolve group %s: %w", step.Node, err)
 			}

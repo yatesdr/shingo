@@ -313,7 +313,7 @@ func (s *LifecycleService) resolveSyntheticDestination(order *orders.Order, dest
 		}
 	}
 
-	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, binTypeID, digAskerFor(order))
+	result, err := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, order.PayloadCode, binTypeID, digAskerFor(order), nil)
 	if err != nil {
 		// A full group (ResolutionCapacity — "no available slot in node group
 		// X") must NOT fail the operator's action. Leave the synthetic
@@ -600,7 +600,7 @@ func (s *LifecycleService) tryOverflow(order *orders.Order, group *nodes.Node) (
 		}
 	}
 	result, err := s.resolver.Resolve(dest, binresolver.ResolveModeStore, order.PayloadCode,
-		binTypeID, digAskerFor(order))
+		binTypeID, digAskerFor(order), nil)
 	if err != nil || result == nil || result.Node == nil {
 		s.dbg("intake: overflow %s of %s has no room either (%v) — parking",
 			overflow, group.Name, err)

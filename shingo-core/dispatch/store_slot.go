@@ -352,7 +352,7 @@ func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) error {
 		// the order id attached rather than swallowing it here.
 		return nil
 	}
-	result, rErr := d.resolver.Resolve(node, binresolver.ResolveModeStore, order.PayloadCode, nil, digAskerFor(order))
+	result, rErr := d.resolver.Resolve(node, binresolver.ResolveModeStore, order.PayloadCode, nil, digAskerFor(order), nil)
 	if rErr != nil || result == nil || result.Node == nil {
 		if rErr == nil {
 			rErr = fmt.Errorf("resolver returned no node")
@@ -423,7 +423,7 @@ func (d *Dispatcher) redirectStoreOffDugLane(order *orders.Order) {
 	// The resolver's candidate read drops dig-locked lanes, so this either comes
 	// back with somewhere else or comes back empty — and empty means every lane in
 	// the group is locked or full, which is the existing park.
-	result, err := d.resolver.Resolve(group, binresolver.ResolveModeStore, order.PayloadCode, nil, digAskerFor(order))
+	result, err := d.resolver.Resolve(group, binresolver.ResolveModeStore, order.PayloadCode, nil, digAskerFor(order), nil)
 	if err != nil || result == nil || result.Node == nil || result.Node.ID == node.ID {
 		d.dbg("store: order %d is aimed at %s in dug lane %s and the group has nowhere else — waiting",
 			order.ID, node.Name, lane.Name)

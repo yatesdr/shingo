@@ -24,7 +24,7 @@ func TestDefaultResolver_Retrieve_PicksFirstChildWithAvailableBin(t *testing.T) 
 	f.bins[childB.ID] = []*bins.Bin{availBin(101, "P1", time.Now())}
 
 	r := &DefaultResolver{DB: f}
-	got, err := r.Resolve(parent, "retrieve", "P1", nil, reservations.Anyone)
+	got, err := r.Resolve(parent, "retrieve", "P1", nil, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestDefaultResolver_Retrieve_NoAvailableBins(t *testing.T) {
 	f.bins[child.ID] = []*bins.Bin{claimedBin(100, "P1", 7)}
 
 	r := &DefaultResolver{DB: f}
-	if _, err := r.Resolve(parent, "retrieve", "P1", nil, reservations.Anyone); err == nil {
+	if _, err := r.Resolve(parent, "retrieve", "P1", nil, reservations.Anyone, nil); err == nil {
 		t.Fatal("expected error when no child has an available bin")
 	}
 }
@@ -146,7 +146,7 @@ func TestDefaultResolver_Retrieve_PayloadFilter(t *testing.T) {
 	f.bins[child.ID] = []*bins.Bin{availBin(100, "OTHER", time.Now())}
 
 	r := &DefaultResolver{DB: f}
-	if _, err := r.Resolve(parent, "retrieve", "P1", nil, reservations.Anyone); err == nil {
+	if _, err := r.Resolve(parent, "retrieve", "P1", nil, reservations.Anyone, nil); err == nil {
 		t.Fatal("expected error when no bin matches requested payload")
 	}
 }
@@ -169,7 +169,7 @@ func TestDefaultResolver_Store_PicksConsolidationCandidate(t *testing.T) {
 	f.binCounts[b.ID] = 0
 
 	r := &DefaultResolver{DB: f}
-	got, err := r.Resolve(parent, "store", "P1", nil, reservations.Anyone)
+	got, err := r.Resolve(parent, "store", "P1", nil, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestDefaultResolver_Store_SkipsOccupiedAndSynthetic(t *testing.T) {
 	f.binCounts[empty.ID] = 0
 
 	r := &DefaultResolver{DB: f}
-	got, err := r.Resolve(parent, "store", "P1", nil, reservations.Anyone)
+	got, err := r.Resolve(parent, "store", "P1", nil, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestDefaultResolver_Store_NoCandidate(t *testing.T) {
 	f.binCounts[full.ID] = 1
 
 	r := &DefaultResolver{DB: f}
-	if _, err := r.Resolve(parent, "store", "P1", nil, reservations.Anyone); err == nil {
+	if _, err := r.Resolve(parent, "store", "P1", nil, reservations.Anyone, nil); err == nil {
 		t.Fatal("expected error when no child has room")
 	}
 }
@@ -224,7 +224,7 @@ func TestDefaultResolver_UnknownOrderType_FirstEnabled(t *testing.T) {
 	f.children[parent.ID] = []*nodes.Node{disabled, on}
 
 	r := &DefaultResolver{DB: f}
-	got, err := r.Resolve(parent, "weird", "", nil, reservations.Anyone)
+	got, err := r.Resolve(parent, "weird", "", nil, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestDefaultResolver_NoChildren(t *testing.T) {
 	parent := directChild(1, "lonely")
 
 	r := &DefaultResolver{DB: f}
-	if _, err := r.Resolve(parent, "retrieve", "", nil, reservations.Anyone); err == nil {
+	if _, err := r.Resolve(parent, "retrieve", "", nil, reservations.Anyone, nil); err == nil {
 		t.Fatal("expected error for parent with no children")
 	}
 }
@@ -259,7 +259,7 @@ func TestDefaultResolver_Retrieve_NGRPDelegatesToGroupResolver(t *testing.T) {
 	f.sourceInLane[lane.ID] = bin
 
 	r := &DefaultResolver{DB: f}
-	got, err := r.Resolve(ngrp, "retrieve", "P1", nil, reservations.Anyone)
+	got, err := r.Resolve(ngrp, "retrieve", "P1", nil, reservations.Anyone, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

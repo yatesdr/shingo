@@ -94,10 +94,11 @@ func (r *GroupResolver) getGroupAlgorithm(groupID int64, key, defaultVal string)
 // hiding a lane from the order the dig was RUN for — pass reservations.Anyone
 // only when there is genuinely no order behind the call, which reproduces the
 // owner-blind behaviour this parameter was added to end.
-func (r *GroupResolver) ResolveRetrieve(group *nodes.Node, payloadCode string, asker reservations.DigAsker) (*ResolveResult, error) {
+func (r *GroupResolver) ResolveRetrieve(group *nodes.Node, payloadCode string, asker reservations.DigAsker,
+	accept BinFilter) (*ResolveResult, error) {
 	algo := r.getGroupAlgorithm(group.ID, "retrieve_algorithm", RetrieveFIFO)
 	strategy := retrieveStrategies[algo]
-	return r.scanForBestBin(group, payloadCode, strategy, asker)
+	return r.scanForBestBin(group, payloadCode, strategy, asker, accept)
 }
 
 // retrieveStrategy controls how a retrieve algorithm scores accessible bins,
@@ -110,7 +111,7 @@ type retrieveStrategy struct {
 	// accessible bin exists; FIFO clears it because it reshuffles even when
 	// an accessible bin is found if the buried bin is older.
 	skipBuriedIfAccessible bool
-	checkBuried            func(r *GroupResolver, children []*nodes.Node, payloadCode string) (buried *bins.Bin, slot *nodes.Node, laneID int64)
+	checkBuried            func(r *GroupResolver, children []*nodes.Node, payloadCode string, accept BinFilter) (buried *bins.Bin, slot *nodes.Node, laneID int64)
 	shouldTriggerBuried    func(buried *bins.Bin, buriedTime time.Time, accessible *bins.Bin, accessibleTime time.Time) bool
 }
 
@@ -139,7 +140,19 @@ var retrieveStrategies = map[string]retrieveStrategy{
 }
 
 // checkOldestBuried scans all lanes for the globally oldest buried bin.
-func checkOldestBuried(r *GroupResolver, children []*nodes.Node, payloadCode string) (*bins.Bin, *nodes.Node, int64) {
+// THE FILTER RIDES HERE TOO, AND THE CODE SAID SO BEFORE IT WAS WRITTEN.
+// requiresFullCarrier's own note warned that teaching the resolver to prefer
+// fulls would need the fullness rule inside it AND INSIDE THE BURIED-BIN
+// LOOKUPS BEHIND IT, or a dig would be spent exposing a carrier that check then
+// declines. (That note has since been rewritten to record the surgery as done —
+// dispatch/source_finder.go, at the requiresFullCarrier guard — so it no longer
+// reads as a warning against doing it.) Filtering only the accessible scan is
+// precisely the half-fix it described: the
+// accessible partials vanish, bestBin goes nil, the buried arm fires on an
+// UNFILTERED lookup, and a whole excavation is spent exposing a carrier the
+// caller refuses on arrival. A dig is the largest action this system takes; it
+// must not be spent on a bin nobody can use.
+func checkOldestBuried(r *GroupResolver, children []*nodes.Node, payloadCode string, accept BinFilter) (*bins.Bin, *nodes.Node, int64) {
 	var best *bins.Bin
 	var bestSlot *nodes.Node
 	var bestLaneID int64
@@ -150,7 +163,7 @@ func checkOldestBuried(r *GroupResolver, children []*nodes.Node, payloadCode str
 			continue
 		}
 		buried, slot, err := r.DB.FindOldestBuriedBin(child.ID, payloadCode)
-		if err != nil || buried == nil {
+		if err != nil || buried == nil || !accept.accepts(buried) {
 			continue
 		}
 		bTime := binTimestamp(buried)
@@ -165,13 +178,13 @@ func checkOldestBuried(r *GroupResolver, children []*nodes.Node, payloadCode str
 }
 
 // checkShallowestBuried scans lanes for the shallowest buried bin (cheapest to unblock).
-func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode string) (*bins.Bin, *nodes.Node, int64) {
+func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode string, accept BinFilter) (*bins.Bin, *nodes.Node, int64) {
 	for _, child := range children {
 		if !child.Enabled || child.NodeTypeCode != protocol.NodeClassLANE {
 			continue
 		}
 		buried, slot, err := r.DB.FindBuriedBin(child.ID, payloadCode)
-		if err == nil && buried != nil {
+		if err == nil && buried != nil && accept.accepts(buried) {
 			return buried, slot, child.ID
 		}
 	}
@@ -205,7 +218,8 @@ func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode
 // other group in the plant still lives with the disagreement, so the first
 // person who needs nested sourcing to behave one specific way has to get that
 // ruling rather than fix whichever site they happened to open.
-func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s retrieveStrategy, asker reservations.DigAsker) (*ResolveResult, error) {
+func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s retrieveStrategy,
+	asker reservations.DigAsker, accept BinFilter) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodesUnlocked(group.ID, asker)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
@@ -224,6 +238,15 @@ func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s 
 			b, err := r.DB.FindSourceBinInLane(child.ID, payloadCode)
 			if err != nil {
 				r.dbg("%s: FindSourceBinInLane lane=%s: %v", s.label, child.Name, err)
+				continue
+			}
+			// A bin the caller cannot use is not a candidate. Skipping the LANE
+			// rather than looking deeper in it is deliberate: anything behind
+			// this bin is buried, and exposing it is an excavation, which is a
+			// different decision made somewhere else. See BinFilter.
+			if !accept.accepts(b) {
+				r.dbg("%s: lane=%s holds bin %d, which this caller cannot use — looking elsewhere",
+					s.label, child.Name, b.ID)
 				continue
 			}
 
@@ -249,7 +272,7 @@ func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s 
 				continue
 			}
 			for _, b := range nodeBins {
-				if !isBinAvailableForRetrieve(b, payloadCode) {
+				if !isBinAvailableForRetrieve(b, payloadCode) || !accept.accepts(b) {
 					continue
 				}
 				if s.firstMatch {
@@ -266,7 +289,7 @@ func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s 
 	}
 
 	if s.checkBuried != nil && !(s.skipBuriedIfAccessible && bestBin != nil) {
-		buried, buriedSlot, buriedLaneID := s.checkBuried(r, children, payloadCode)
+		buried, buriedSlot, buriedLaneID := s.checkBuried(r, children, payloadCode, accept)
 		if buried != nil && s.shouldTriggerBuried(buried, binTimestamp(buried), bestBin, bestTime) {
 			r.dbg("%s: buried bin %d (%s) triggers reshuffle in lane %d",
 				s.label, buried.ID, binTimestamp(buried).Format(time.RFC3339), buriedLaneID)
