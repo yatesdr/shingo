@@ -608,6 +608,7 @@ delegateActions(document.body, {
     renderChipDropdown,
     renderChips,
     clearGatePoint,
+    clearGroupWaitPoints,
     onGatePointSearch,
     pickGatePoint,
     saveAlgorithmProperties,
@@ -622,18 +623,22 @@ document.addEventListener('keydown', function(e) {
 
 // ── Waiting points ─────────────────────────────────────────────────────────
 //
-// ON THE GROUP, one row per lane. The property lives on the LANE — each lane has
-// its own point — but the place a human goes to configure a supermarket is the
-// group: you want the aisles side by side, so which are gated is one glance
-// rather than five modals.
+// ON THE GROUP, and now the PROPERTY is the group's too. One field lists the
+// spots a robot with work anywhere in this block may stand at; the per-lane rows
+// below it are the legacy override, kept working while plants migrate and
+// scheduled for deletion.
 //
-// One row per lane today. When multi-point staging is built a lane grows more
-// rows and nothing here changes shape.
+// The place a human goes to configure a supermarket was always the group — you
+// want the aisles side by side, so which are gated is one glance rather than five
+// modals. What changed is that the answer is now one field instead of five,
+// because a robot at a waiting spot owns nothing and never needed a spot of its
+// lane's own.
 //
-// There is no enable switch. A lane with a point stages robots there; a lane
-// without one holds its orders before dispatch. A switch and a point could
+// There is no enable switch. A block with spots stages robots at them; a block
+// without any holds its orders before dispatch. A switch and a spot could
 // disagree, and only one of them can be right.
 
+var _gateGroupID = 0;          // the group whose section is open, 0 when none
 var _gateMarks = [];           // last search result, for round-trip validation
 var _gateMarksLoaded = false;  // false until a search has answered at least once
 var _gateSearchTimer = null;
@@ -650,19 +655,94 @@ function renderLaneGate(isGroup, groupID) {
   list.innerHTML = '';
   _gateMarks = [];
   _gateMarksLoaded = false;
+  _gateGroupID = 0;
   if (!isGroup) { box.classList.add('hide'); return; }
 
-  // ONE call for the whole section — lanes and their current points together.
+  // ONE call for the whole section — the group's spots and its lanes' overrides
+  // together. Two calls would let the overrides render before the thing they
+  // override.
   apiGet('/api/nodes/lane-gate-points?group_id=' + groupID)
     .then(function(data) {
       var lanes = (data && data.lanes) || [];
       box.classList.toggle('hide', lanes.length === 0);
+      if (lanes.length === 0) return;
+      _gateGroupID = groupID;
+      list.appendChild(groupWaitRow(groupID, (data && data.group_wait_points) || ''));
       lanes.forEach(function(lane) { list.appendChild(gateRow(lane)); });
     })
     .catch(function(err) {
       console.warn('lane gate: list lanes', err);
       box.classList.add('hide');
     });
+}
+
+// groupWaitRow is the PRIMARY control: the block's waiting spots, comma
+// separated. It carries data-group-id rather than data-lane-id so the save walk
+// can tell the two rows apart and post each against the right node.
+//
+// A plain text field rather than the lane rows' mark picker. The picker searches
+// one name at a time and this is a list; a multi-select widget for a value an
+// engineer types once at commissioning is machinery nobody asked for. The save
+// still round-trips against the known marks, one entry at a time.
+function groupWaitRow(groupID, value) {
+  var row = document.createElement('div');
+  row.className = 'form-group';
+  row.style.marginBottom = '14px';
+  row.dataset.groupId = groupID;
+  row.dataset.saved = value || '';
+  row.innerHTML =
+    '<label class="text-sm" style="font-weight:600">Waiting spots for this block</label>' +
+    '<input type="text" class="text-sm group-wait-input" style="width:100%"' +
+    ' value="' + escapeHtml(value || '') + '"' +
+    ' placeholder="Comma-separated map points, e.g. AISLE-A-WAIT, AISLE-B-WAIT" autocomplete="off">' +
+    '<div class="flex flex-between" style="margin-top:4px;align-items:center">' +
+      '<span class="text-muted group-wait-state" style="font-size:0.75rem"></span>' +
+      '<button type="button" class="btn btn-sm" data-action="clearGroupWaitPoints">Clear</button>' +
+    '</div>';
+  renderGroupWaitState(row, value || '');
+  return row;
+}
+
+// renderGroupWaitState says what the value MEANS. The count matters on its own:
+// a robot that arrives when every spot is taken queues on the floor, and that is
+// the fleet's business rather than Core's — but a person choosing the number
+// should be told that is the trade they are making.
+function renderGroupWaitState(row, value) {
+  var s = row.querySelector('.group-wait-state');
+  if (!s) return;
+  var pts = String(value || '').split(',').map(function(p) { return p.trim(); })
+              .filter(function(p) { return p.length > 0; });
+  s.textContent = pts.length
+    ? 'Gated — ' + pts.length + ' spot' + (pts.length === 1 ? '' : 's') +
+      ' for every lane in this block. Orders ship unsealed and their slot is chosen on arrival.'
+    : 'Not gated — every lane here decides its slot before dispatch and holds the order if the answer is no.';
+}
+
+// clearGroupWaitPoints stands down the WHOLE block, so the confirmation counts
+// the whole block. A per-lane number here would quote an interruption far
+// smaller than the one about to happen.
+async function clearGroupWaitPoints(el) {
+  var row = el.closest('[data-group-id]');
+  if (!row) return;
+  var input = row.querySelector('.group-wait-input');
+  if (!input.value.trim()) { renderGroupWaitState(row, ''); return; }
+
+  var waiting = 0;
+  try {
+    var data = await apiGet('/api/nodes/lane-waiting?group_id=' + row.dataset.groupId);
+    waiting = (data && data.waiting) || 0;
+  } catch (e) {
+    console.warn('group wait: waiting count', e);
+  }
+  if (waiting > 0) {
+    var ok = await uiConfirm(waiting + ' robot' + (waiting === 1 ? ' is' : 's are') +
+      ' waiting in this block. ' + (waiting === 1 ? 'It' : 'They') +
+      ' will complete under the old rules; new orders for EVERY lane here will wait before ' +
+      'dispatch instead. Clear the spots?');
+    if (!ok) return;
+  }
+  input.value = '';
+  renderGroupWaitState(row, '');
 }
 
 function gateRow(lane) {
@@ -674,7 +754,8 @@ function gateRow(lane) {
   row.dataset.laneName = lane.name;
   row.dataset.saved = lane.point || '';
   row.innerHTML =
-    '<label class="text-sm" style="font-weight:600">' + escapeHtml(lane.name) + '</label>' +
+    '<label class="text-sm" style="font-weight:600">' + escapeHtml(lane.name) +
+      ' <span class="text-muted" style="font-weight:400">— legacy override</span></label>' +
     '<div class="tag-field" style="position:relative">' +
       '<input type="text" class="text-sm gate-point-input" id="' + id + '" style="width:100%"' +
       ' value="' + escapeHtml(lane.point || '') + '"' +
@@ -798,6 +879,40 @@ export async function clearGatePoint(el) {
 async function saveLaneGatePoints() {
   var box = document.getElementById('lane-gate');
   if (!box || box.classList.contains('hide')) return;
+
+  // THE GROUP ROW FIRST, and against the GROUP's node id. The per-lane rows post
+  // against laneId; posting the block's spots against a lane id would write the
+  // list onto one lane as a legacy override — which reads as saved, gates that
+  // one aisle, and leaves the rest of the block ungated with nothing to say so.
+  var groupRow = box.querySelector('[data-group-id]');
+  if (groupRow) {
+    var groupInput = groupRow.querySelector('.group-wait-input');
+    var groupValue = groupInput.value.trim();
+    if (groupValue !== (groupRow.dataset.saved || '')) {
+      var unknown = [];
+      if (_gateMarksLoaded && _gateMarks.length) {
+        groupValue.split(',').forEach(function(p) {
+          var v = p.trim();
+          if (v && !_gateMarks.some(function(m) { return m.name === v; })) unknown.push(v);
+        });
+      }
+      var proceed = true;
+      if (unknown.length) {
+        proceed = await uiConfirm(unknown.join(', ') + (unknown.length === 1 ? ' is' : ' are') +
+          ' not a location mark on the current map. A point the fleet cannot find kills the ' +
+          'waybill when the robot is already committed. Save anyway?');
+      }
+      if (proceed) {
+        try {
+          await apiPost('/api/nodes/properties/set',
+            {node_id: parseInt(groupRow.dataset.groupId, 10), key: 'group_wait_points', value: groupValue});
+          groupRow.dataset.saved = groupValue;
+        } catch (err) {
+          toast('Could not save the waiting spots for this block: ' + err, 'error');
+        }
+      }
+    }
+  }
 
   var rows = box.querySelectorAll('[data-lane-id]');
   for (var i = 0; i < rows.length; i++) {

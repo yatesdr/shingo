@@ -65,8 +65,8 @@ import (
 // reservations.IsExcavation.
 const laneGateReservedBy = reservations.BySourceLock
 
-// laneWaitPoint returns the map point a lane's robots dwell at while Core decides
-// whether they may enter, or "" when the lane has none.
+// laneWaitPoint returns ONE map point a lane's robots may dwell at while Core
+// decides whether they may enter, or "" when the lane is ungated.
 //
 // It is the whole of the gate's configuration, and it decides two things, not
 // one — see the header. A non-empty value means: ship lane-bound orders UNSEALED
@@ -74,8 +74,60 @@ const laneGateReservedBy = reservations.BySourceLock
 // only moment the dropoff slot is re-resolved (rebindGatedDropoff). Empty means:
 // choose the slot before dispatch, park the order if the answer is no, and never
 // ask again — so the slot the robot drives to is as old as the drive.
+//
+// ── ONE POINT, WHICH IS NO LONGER THE WHOLE ANSWER ────────────────────────
+//
+// The waiting spots belong to the GROUP now (laneWaitPoints), so a lane can have
+// several. This returns the first, and it stays because every one of its callers
+// is asking the BOOLEAN question — is this lane gated — through laneIsGated, and
+// for that question any point answers it. The caller that needs the whole set is
+// gateTargetForLane, and it asks for the set.
 func (d *Dispatcher) laneWaitPoint(laneID int64) string {
-	return d.db.GetNodeProperty(laneID, PropLaneGatePoint)
+	lane, err := d.db.GetNode(laneID)
+	if err != nil || lane == nil {
+		// UNREADABLE IS UNGATED, which is the direction this already had: the old
+		// body read one property and a failed read returned "". Every caller is
+		// laneIsGated, and answering "not gated" there parks the order before
+		// dispatch instead of staging it — the pre-mark behaviour, which is the
+		// conservative half.
+		return ""
+	}
+	points, _ := d.laneWaitPoints(lane)
+	if len(points) == 0 {
+		return ""
+	}
+	return points[0]
+}
+
+// laneWaitPoints returns every point this lane's robots may dwell at, and
+// whether they came from the lane's own legacy key.
+//
+// ── THE ORDER OF RESOLUTION IS THE MIGRATION ──────────────────────────────
+//
+//  1. the LANE's own `lane_gate_point`, if set. Legacy, logged as such, and
+//     scheduled for deletion — an override is a set-of-one, which silently
+//     disables the group's benefit for that lane and makes a part-migrated rig
+//     the worst possible regression fixture.
+//  2. otherwise the GROUP's `group_wait_points`.
+//  3. otherwise the lane is ungated.
+//
+// It reads and never refuses. A duplicate point across two groups is a real
+// configuration error and it is caught at the two doors where a person is
+// writing it — the seeder and the UI save — plus reported by the startup census.
+// It is NOT caught here, deliberately: this runs on the dispatch hot path, and a
+// config check that refuses here would strand every robot already standing at
+// that point rather than the person who typed it.
+func (d *Dispatcher) laneWaitPoints(lane *nodes.Node) ([]string, bool) {
+	if lane == nil {
+		return nil, false
+	}
+	if legacy := d.db.GetNodeProperty(lane.ID, PropLaneGatePoint); legacy != "" {
+		return []string{legacy}, true
+	}
+	if lane.ParentID == nil {
+		return nil, false
+	}
+	return ParseWaitPoints(d.db.GetNodeProperty(*lane.ParentID, PropGroupWaitPoints)), false
 }
 
 // laneIsGated reports whether Core stages robots at this lane rather than parking

@@ -47,6 +47,7 @@ import (
 	"strings"
 	"time"
 
+	"shingocore/dispatch"
 	"shingocore/plantspec"
 )
 
@@ -335,11 +336,20 @@ func computeHeadroom(plant *plantspec.Plant) []zoneHeadroom {
 	var out []zoneHeadroom
 	for _, z := range plant.Zones {
 		zh := zoneHeadroom{name: z.Name}
+		// THE ZONE'S OWN WAIT POINTS GATE EVERY LANE IN IT. Read here rather
+		// than per lane because that is where the property lives now; a lane's
+		// own gate_point is the legacy override and still wins for that lane.
+		// Reading only the lane key — which is what this did — scores a
+		// group-gated plant as ENTIRELY UNGATED, and simcalc's blindness has
+		// already cost one round: its "verdict unchanged" on the PANEL-B
+		// unloader was read as evidence when the model had no term for it.
+		zoneGated := len(dispatch.ParseWaitPoints(strings.Join(z.WaitPoints, ","))) > 0
 		// Flat positions first: a zone that holds its slots directly has no lane
 		// to walk, and a maintained group is always that shape. They are never
-		// gated (a mark is a lane property) and they can never be dug (there is
-		// nothing in front of anything), so they contribute free UNGATED slots
-		// and leave deepestDig alone.
+		// gated (a gate is a lane's admission, and a flat position has no lane
+		// to be admitted to) and they can never be dug (there is nothing in
+		// front of anything), so they contribute free UNGATED slots and leave
+		// deepestDig alone.
 		for _, s := range z.Positions {
 			zh.slots++
 			if seededIn[s.Name] > 0 {
@@ -349,7 +359,7 @@ func computeHeadroom(plant *plantspec.Plant) []zoneHeadroom {
 			}
 		}
 		for _, l := range z.Lanes {
-			gated := l.GatePoint != ""
+			gated := l.GatePoint != "" || zoneGated
 			free := 0
 			for _, s := range l.Slots {
 				zh.slots++

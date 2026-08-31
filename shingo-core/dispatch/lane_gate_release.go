@@ -1453,6 +1453,38 @@ func (d *Dispatcher) GateStagedCount(laneID int64) (int, error) {
 	return len(staged), nil
 }
 
+// GroupGateStagedCount is GateStagedCount for a whole node group: everybody
+// dwelling anywhere in it.
+//
+// ── THE CONFIRMATION HAD TO WIDEN WITH THE PROPERTY ───────────────────────
+//
+// The waiting spots belong to the GROUP now, so clearing them stands down every
+// lane in the block at once. A confirmation that counted one lane's dwellers
+// would report a number far smaller than the interruption it is about to cause —
+// which is worse than no confirmation, because the person reads it and proceeds.
+//
+// Same derivation as the per-lane count, summed over the group's lanes, for the
+// same reason: one answer, so the number shown and the number acted on cannot
+// disagree.
+func (d *Dispatcher) GroupGateStagedCount(groupID int64) (int, error) {
+	children, err := d.db.ListChildNodes(groupID)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, c := range children {
+		if c == nil || c.NodeTypeCode != protocol.NodeClassLANE {
+			continue
+		}
+		staged, err := d.gateStagedForLane(c)
+		if err != nil {
+			return 0, err
+		}
+		total += len(staged)
+	}
+	return total, nil
+}
+
 // releaseDweller resolves where a dwelling dig leg's blocker goes and releases
 // it, or records why it is still holding. Reports whether it drove out.
 //

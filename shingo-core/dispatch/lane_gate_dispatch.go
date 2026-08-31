@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"shingo/protocol"
 	"shingocore/fleet"
@@ -81,11 +82,89 @@ import (
 // never resolved against nodes; only the fleet has to know it exists.
 const PropLaneGatePoint = "lane_gate_point"
 
-// laneGateTarget describes a destination that the valve owns: the lane node and
-// the wait point its robots stage at.
+// PropGroupWaitPoints is the node-property key, read on the NODE GROUP, naming
+// the map points where robots with work anywhere in that group stand while Core
+// decides which of its lanes they may enter. Comma-separated; blanks dropped.
+//
+// ── WHY THE GROUP AND NOT THE LANE ────────────────────────────────────────
+//
+// A robot standing at a waiting spot owns NOTHING — no lane, no slot, no row
+// that refuses anybody. So the spot never needed to belong to the lane the plan
+// happened to name, and tying it there is what made the oracle unable to widen:
+// a robot parked at lane A's own mark has already committed to lane A before
+// anybody asked whether lane A was the right answer.
+//
+// Group-owned spots are what let the release re-ask the WHOLE group. Sharing
+// them BETWEEN groups is refused (the census and both write doors say so),
+// because a spot is a physical place near one block of lanes and a robot
+// standing at the wrong block's spot is in somebody's aisle.
+//
+// A PROPERTY, not Core nodes, for the same reason PropLaneGatePoint is one: the
+// values are RDS map points passed to the fleet verbatim, and they never hold a
+// bin. See that constant for the full argument.
+//
+// N POINTS PER GROUP IS NOT A CAPACITY MODEL. Core allocates none of them,
+// counts nobody standing at one, and refuses nothing when more robots want to
+// wait than there are spots. If that happens the fleet queues them, which is
+// what fleets do. See the splicer's pick for how one is chosen.
+const PropGroupWaitPoints = "group_wait_points"
+
+// ParseWaitPoints splits a group's configured wait points, dropping blanks and
+// surrounding space. Exported so the seeder and the UI validate what they are
+// about to write with the SAME parse the dispatcher will read it back with — a
+// door that accepts a value the reader then drops is a door that reports success
+// for a lane that comes up ungated.
+func ParseWaitPoints(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// laneGateTarget describes a destination that the valve owns: the lane node, the
+// points its robots may stage at, and — once the splicer has chosen — the one it
+// picked.
 type laneGateTarget struct {
-	lane      *nodes.Node
+	lane *nodes.Node
+	// gatePoint is the CHOSEN point. The splicer fills it via pointFor; the dig
+	// dwell sets it directly, because a dwell slot is a specific place rather
+	// than one of a group's spots.
 	gatePoint string
+	// points are the candidates gatePoint is chosen from, group order preserved.
+	points []string
+	// legacy records that these came from the LANE's own lane_gate_point rather
+	// than its group's list. Reported, not acted on: the key keeps working for
+	// one green cycle and is then deleted.
+	legacy bool
+}
+
+// pointFor picks this target's wait point for one order.
+//
+// order.ID % len(points) — DETERMINISTIC, and that is the requirement rather
+// than a nicety. Two runs of the same seed must stage the same robots at the
+// same marks or their throughput numbers are not comparable, which is the whole
+// basis of the three-arm measurement the points exist to make possible. A random
+// or round-robin pick would put the fixture's variance inside the thing being
+// measured.
+//
+// It is NOT load balancing and must not become it. Core does not know how many
+// robots are standing where, does not want to, and the moment this starts
+// consulting occupancy it becomes Core allocating floor traffic.
+func (t laneGateTarget) pointFor(orderID int64) string {
+	if len(t.points) == 0 {
+		return t.gatePoint // a dwell slot, set directly
+	}
+	if orderID <= 0 {
+		return t.points[0]
+	}
+	return t.points[int(orderID%int64(len(t.points)))]
 }
 
 // gateTargetForLane reports whether this LANE is gated, and if so returns it with
@@ -112,11 +191,21 @@ func (d *Dispatcher) gateTargetForLane(lane *nodes.Node) (laneGateTarget, bool, 
 	// configured as gated, and does the lane have a wait point — and had
 	// to treat "configured but no point" as a misconfiguration error, because the
 	// two could disagree. They cannot disagree now: there is one fact.
-	gatePoint := d.laneWaitPoint(lane.ID)
-	if gatePoint == "" {
+	//
+	// The fact moved to the GROUP (PropGroupWaitPoints) and the lane's own key is
+	// a logged legacy override on its way out; laneWaitPoints is the resolution
+	// order. Nothing about the gate's meaning changed — a lane is gated iff there
+	// is somewhere for its robots to stand.
+	points, legacy := d.laneWaitPoints(lane)
+	if len(points) == 0 {
 		return laneGateTarget{}, false, nil
 	}
-	return laneGateTarget{lane: lane, gatePoint: gatePoint}, true, nil
+	if legacy {
+		d.dbg("lane gate: %s is gated by its OWN lane_gate_point (%s) rather than its group's wait "+
+			"points — legacy, and the key is scheduled for deletion; move the point to the group",
+			lane.Name, points[0])
+	}
+	return laneGateTarget{lane: lane, points: points, legacy: legacy}, true, nil
 }
 
 // spliceLaneWait is THE TRANSFORM: it takes whatever plan an order already has
@@ -179,7 +268,12 @@ func (d *Dispatcher) gateTargetForLane(lane *nodes.Node) (laneGateTarget, bool, 
 // which is every order at both plants today. The laneGateTarget returned is the
 // FIRST gate — the one the create sends the robot to, and the only one the
 // dispatch-time valve is about.
-func (d *Dispatcher) spliceLaneWait(steps []resolvedStep) ([]resolvedStep, laneGateTarget, bool, error) {
+//
+// orderID chooses among a group's wait points (laneGateTarget.pointFor) and is
+// the only thing this function does with it. A zero is legal and takes the first
+// point: a plan being shaped before its order has an id is choosing a place to
+// stand, not making a decision that has to be stable across runs.
+func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]resolvedStep, laneGateTarget, bool, error) {
 	// gate is one inserted wait: where it goes, and which lane it guards.
 	type gate struct {
 		idx    int
@@ -264,6 +358,7 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep) ([]resolvedStep, laneG
 	next := 0
 	for i, s := range steps {
 		if next < len(gates) && gates[next].idx == i {
+			gates[next].target.gatePoint = gates[next].target.pointFor(orderID)
 			out = append(out, resolvedStep{
 				Action:   protocol.ActionWait,
 				Node:     gates[next].target.gatePoint,

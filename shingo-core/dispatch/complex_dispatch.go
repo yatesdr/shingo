@@ -534,7 +534,7 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	// successful dispatch leaves the order `dispatched`, so this phase cannot
 	// re-enter and re-splice. An earlier phase parking the order means this never
 	// ran and nothing was persisted.
-	spliced, target, gated, err := d.spliceLaneWait(resolvedSteps)
+	spliced, target, gated, err := d.spliceLaneWait(resolvedSteps, order.ID)
 	if err != nil {
 		// A refusal here is structural: a lane entry that is not concrete yet, or a
 		// wait that would gate nothing. Both are plans Core cannot gate safely, and

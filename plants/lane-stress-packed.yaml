@@ -100,9 +100,11 @@ headroom:
 #   docker compose -f docker-compose.dev.yml run --build --rm \
 #     -e SEED_PLANT=plants/lane-stress.yaml seed
 #
-# Marks are seeded from the `gate_point` field on each lane, so the rig comes up gated
-# with no post-seed API calls. Clearing one at runtime is
-# POST /api/nodes/properties/set {node_id, key: lane_gate_point, value: ""}.
+# Waiting spots are seeded from each ZONE's `wait_points`, so the rig comes up gated
+# with no post-seed API calls. Clearing a zone's at runtime is
+# POST /api/nodes/properties/set {node_id: <zone>, key: group_wait_points, value: ""}.
+# The per-lane `gate_point` still works and still wins the resolution — see SYN_STAMP
+# for the three measurement arms and how each is produced.
 #
 # Gate-point VALUES are RDS map point names, handed to the fleet as a block location
 # verbatim and never resolved against nodes. Under the simulator nothing resolves them
@@ -128,17 +130,42 @@ zones:
   - name: SYN_STAMP
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    # ── THE WAITING SPOTS, AND WHAT MOVING THEM COST THIS RIG ────────────
+    #
+    # Three painted spots beside this block. A robot with work anywhere in
+    # SYN_STAMP stands at one of them owning NOTHING — no lane, no slot, no row
+    # that refuses anybody — which is what lets the release re-ask the whole
+    # group instead of the one lane the plan happened to name.
+    #
+    # THE PER-LANE MARKS ARE GONE AND SO IS THE WITHIN-ZONE A/B. D1 vs D3 and
+    # M1 vs M2 were "same depth, same fill, one marked and one not" — a gated /
+    # ungated comparison INSIDE one run. Wait points are the group's, so every
+    # lane in this zone is gated now and that comparison cannot be expressed
+    # here any more. It is a real loss and it is not an accident: the three-arm
+    # measurement this rig now serves is a BETWEEN-RUN comparison of the same
+    # seed, and the arms are produced as
+    #
+    #   ungated       clear the group property:
+    #                 POST /api/nodes/properties/set {node_id: <zone>, key: group_wait_points, value: ""}
+    #   lane-gated    restore per-lane `gate_point` (the legacy key still wins
+    #                 the resolution and is logged as such), or set it at runtime:
+    #                 POST /api/nodes/properties/set {node_id: <lane>, key: lane_gate_point, value: "LSD-D1-WAIT"}
+    #   group-gated   this file as it stands
+    #
+    # THREE SPOTS FOR ELEVEN LANES IS THE MEASUREMENT, NOT AN OVERSIGHT. The
+    # sim's position gate treats a wait point as an exclusive place, so a fourth
+    # robot wanting to wait holds until a spot frees. Whether that binds is
+    # exactly what phase 5 is for; Core allocates none of it and counts nobody.
+    wait_points: [LSD-D1-WAIT, LSD-D2-WAIT, LSD-M1-WAIT]
     lanes:
       # D1 — depth 5, MARKED. Seeded full PANEL-A, oldest at the bottom: the headline
       # four-blocker dig, run through the gate.
       - name: LS_D1
-        gate_point: LSD-D1-WAIT
         slots: [{name: LSD_001, depth: 1}, {name: LSD_002, depth: 2}, {name: LSD_003, depth: 3}, {name: LSD_004, depth: 4}, {name: LSD_005, depth: 5}]
       # D2 — depth 5, MARKED, starts EMPTY. Shuffle headroom that is also gated, so a
       # blocker parked here has to pass the mouth like anything else. Without a gated
       # empty lane the rig would only ever exercise the gate on the retrieve side.
       - name: LS_D2
-        gate_point: LSD-D2-WAIT
         slots: [{name: LSD_006, depth: 1}, {name: LSD_007, depth: 2}, {name: LSD_008, depth: 3}, {name: LSD_009, depth: 4}, {name: LSD_010, depth: 5}]
       # D3 — depth 5, UNMARKED. D1's twin: same depth, same fill, same buried-oldest.
       # The controlled arm of the gated-vs-ungated comparison.
@@ -149,7 +176,6 @@ zones:
         slots: [{name: LSD_016, depth: 1}, {name: LSD_017, depth: 2}, {name: LSD_018, depth: 3}, {name: LSD_019, depth: 4}, {name: LSD_020, depth: 5}]
       # M1 — depth 3, MARKED. PANEL-B, buried oldest at depth 3.
       - name: LS_M1
-        gate_point: LSD-M1-WAIT
         slots: [{name: LSD_021, depth: 1}, {name: LSD_022, depth: 2}, {name: LSD_023, depth: 3}]
       # M2 — depth 3, UNMARKED. PANEL-B, full, no backdating: ordinary FIFO turnover.
       - name: LS_M2
@@ -202,11 +228,15 @@ zones:
   - name: SYN_COMP
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    # Three spots beside the component block, and NOT shared with SYN_STAMP's —
+    # a wait point is a physical place beside ONE block of lanes, and the seeder
+    # refuses a point another zone already owns. See SYN_STAMP for how the three
+    # measurement arms are produced from this file.
+    wait_points: [LSC-C1-WAIT, LSC-C5-WAIT, LSC-C8-WAIT]
     lanes:
       # C1 — depth 4, MARKED. BRKT, full, oldest at the bottom: a three-blocker dig
       # through the gate.
       - name: LS_C1
-        gate_point: LSC-C1-WAIT
         slots: [{name: LSC_001, depth: 1}, {name: LSC_002, depth: 2}, {name: LSC_003, depth: 3}, {name: LSC_004, depth: 4}]
       # C2 — depth 4, UNMARKED. C1's twin, one payload apart.
       - name: LS_C2
@@ -222,7 +252,6 @@ zones:
       # C5 — depth 3, MARKED. Finished goods; the unloader drains it, so this is the
       # gate on an EGRESS lane rather than a supermarket lane.
       - name: LS_C5
-        gate_point: LSC-C5-WAIT
         slots: [{name: LSC_017, depth: 1}, {name: LSC_018, depth: 2}, {name: LSC_019, depth: 3}]
       - name: LS_C6
         slots: [{name: LSC_020, depth: 1}, {name: LSC_021, depth: 2}, {name: LSC_022, depth: 3}]
@@ -232,7 +261,6 @@ zones:
       # gate's overhead is at its least justified here. If marks cost throughput anywhere,
       # this is where the soak should see it.
       - name: LS_C8
-        gate_point: LSC-C8-WAIT
         slots: [{name: LSC_026, depth: 1}, {name: LSC_027, depth: 2}]
       - name: LS_C9
         slots: [{name: LSC_028, depth: 1}, {name: LSC_029, depth: 2}]

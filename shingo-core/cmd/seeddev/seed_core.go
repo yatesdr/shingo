@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -77,20 +78,59 @@ func seedCore(db *store.DB, p *plantspec.Plant, binIDByNode map[string]int64) er
 			return err
 		}
 		nodeIDs[z.Name] = zID
+		// The zone's wait points, same MOVE-and-REMOVE rule as the lane mark
+		// below, and refused outright if another zone already owns one of them.
+		// Refusing at the SEED is half of the pair the read path deliberately
+		// does not do: a person editing a spec can be told, and a robot already
+		// standing at the point cannot.
+		if points := dispatch.ParseWaitPoints(strings.Join(z.WaitPoints, ",")); len(points) > 0 {
+			conflicts, err := dispatch.DuplicateWaitPointsAcrossGroups(db, zID, points)
+			if err != nil {
+				return fmt.Errorf("zone %s wait points: %w", z.Name, err)
+			}
+			if len(conflicts) > 0 {
+				return fmt.Errorf("zone %s wait points: %s — a wait point is a physical place beside "+
+					"ONE block of lanes, and a robot sent to another block's spot is standing in "+
+					"somebody's aisle", z.Name, strings.Join(conflicts, "; "))
+			}
+			if err := db.SetNodeProperty(zID, dispatch.PropGroupWaitPoints, strings.Join(points, ",")); err != nil {
+				return fmt.Errorf("zone %s wait points: %w", z.Name, err)
+			}
+		} else if err := db.DeleteNodeProperty(zID, dispatch.PropGroupWaitPoints); err != nil {
+			return fmt.Errorf("zone %s clear stale wait points: %w", z.Name, err)
+		}
 		for _, ln := range z.Lanes {
 			lnID, err := ensureNode(db, ln.Name, ptr(laneType), ptr(zID), z.Name, nil, true)
 			if err != nil {
 				return err
 			}
 			nodeIDs[ln.Name] = lnID
-			// The mark, if the spec placed one. Written unconditionally rather
-			// than only-when-absent: re-seeding an edited spec has to be able to
-			// MOVE a mark, and a lane's gate point is spec-owned state, not
-			// operator-owned state that a seed should preserve.
+			// ── THE MARK, AND THE REMOVAL TRAP ───────────────────────────
+			//
+			// Written unconditionally rather than only-when-absent: re-seeding an
+			// edited spec has to be able to MOVE a mark, and a lane's gate point
+			// is spec-owned state, not operator-owned state a seed should
+			// preserve.
+			//
+			// AND IT HAS TO BE ABLE TO REMOVE ONE, which is what the `else`
+			// branch is for and what this seeder could not do. A spec that MOVED
+			// a mark took effect; a spec that DELETED one did not, because
+			// SetNodeProperty was only ever reached with a non-empty value. So a
+			// rig migrated from per-lane marks to group wait points came up still
+			// lane-gated — the legacy key wins the resolution — and the whole
+			// point of the migration run was to measure the group arm. The run
+			// would be green, the numbers would be the OLD behaviour's, and
+			// nothing would say so.
+			//
+			// Deleting rather than writing "" because the reader treats a blank
+			// as absent either way, and a row that exists holding nothing is a
+			// third state for the census to have an opinion about.
 			if ln.GatePoint != "" {
 				if err := db.SetNodeProperty(lnID, dispatch.PropLaneGatePoint, ln.GatePoint); err != nil {
 					return fmt.Errorf("lane %s gate point: %w", ln.Name, err)
 				}
+			} else if err := db.DeleteNodeProperty(lnID, dispatch.PropLaneGatePoint); err != nil {
+				return fmt.Errorf("lane %s clear stale gate point: %w", ln.Name, err)
 			}
 			for _, s := range ln.Slots {
 				depth := s.Depth

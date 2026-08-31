@@ -365,7 +365,7 @@ func laneShapes(db *store.DB) []laneShape {
 	rows, err := db.DB.Query(`
 		SELECT g.name                                            AS grp,
 		       l.name                                            AS lane,
-		       (p.value IS NOT NULL AND p.value <> '')            AS marked,
+		       (COALESCE(NULLIF(p.value, ''), NULLIF(gp.value, '')) IS NOT NULL) AS marked,
 		       COUNT(s.id)                                        AS depth,
 		       COUNT(b.id)                                        AS occupied,
 		       COALESCE(MAX(s.depth) FILTER (WHERE b.id IS NOT NULL), 0) AS deepest_full
@@ -373,10 +373,16 @@ func laneShapes(db *store.DB) []laneShape {
 		JOIN nodes g            ON g.id = l.parent_id
 		LEFT JOIN nodes s       ON s.parent_id = l.id
 		LEFT JOIN bins  b       ON b.node_id = s.id
-		LEFT JOIN node_properties p ON p.node_id = l.id AND p.key = $1
+		LEFT JOIN node_properties p  ON p.node_id  = l.id AND p.key = $1
+		-- THE GROUP'S LIST IS THE OTHER HALF. The wait points moved to the NGRP;
+		-- the lane key is the legacy override and still wins for its own lane.
+		-- Reading only the lane key reports a group-gated plant as ungated, which
+		-- makes the whole gated-vs-ungated comparison this file exists for read
+		-- zero in the gated column and every lane in the ungated one.
+		LEFT JOIN node_properties gp ON gp.node_id = g.id AND gp.key = $2
 		WHERE l.node_type_id = (SELECT id FROM node_types WHERE code = 'LANE')
 		GROUP BY g.name, l.name, marked
-		ORDER BY g.name, l.name`, dispatch.PropLaneGatePoint)
+		ORDER BY g.name, l.name`, dispatch.PropLaneGatePoint, dispatch.PropGroupWaitPoints)
 	if err != nil {
 		return nil
 	}
@@ -406,11 +412,13 @@ func gatedVsUngated(db *store.DB) map[bool]flowStats {
 			       o.status,
 			       o.queue_cause,
 			       EXTRACT(EPOCH FROM (o.completed_at - o.created_at)) AS cycle_s,
-			       (p.value IS NOT NULL AND p.value <> '')             AS marked
+			       (COALESCE(NULLIF(p.value, ''), NULLIF(gp.value, '')) IS NOT NULL) AS marked
 			FROM orders o
 			JOIN nodes s  ON s.name = COALESCE(NULLIF(o.source_node, ''), o.delivery_node)
 			JOIN nodes l  ON l.id = s.parent_id
-			LEFT JOIN node_properties p ON p.node_id = l.id AND p.key = $1
+			LEFT JOIN node_properties p  ON p.node_id  = l.id AND p.key = $1
+			-- Same two-key read as laneShapes; see the note there.
+			LEFT JOIN node_properties gp ON gp.node_id = l.parent_id AND gp.key = $3
 			WHERE l.node_type_id = (SELECT id FROM node_types WHERE code = 'LANE')
 		)
 		SELECT marked,
@@ -418,7 +426,8 @@ func gatedVsUngated(db *store.DB) map[bool]flowStats {
 		       COUNT(*) FILTER (WHERE queue_cause IS NOT NULL
 		                          AND queue_cause <> '')             AS waits,
 		       COALESCE(AVG(cycle_s) FILTER (WHERE status = $2), 0)  AS avg_cycle
-		FROM touched GROUP BY marked`, dispatch.PropLaneGatePoint, string(protocol.StatusConfirmed))
+		FROM touched GROUP BY marked`, dispatch.PropLaneGatePoint, string(protocol.StatusConfirmed),
+		dispatch.PropGroupWaitPoints)
 	if err != nil {
 		return out
 	}

@@ -94,6 +94,37 @@ payloads:
 # empty is one of its payload segments, and Lane_11-13 hold the empties. There is no
 # SYN_MT_Return zone in this file. Anybody reading the old sentence and then looking
 # for a separate empties bank finds nothing and concludes the spec is broken.
+# ── EVERY ZONE CARRIES WAIT POINTS, WHICH IS HOW EVERY LANE GETS AN ORACLE ──
+#
+# `wait_points` reads like a traffic feature and is really two things welded to one
+# switch (gateTargetForLane: "THE MARK IS THE WHOLE ANSWER"):
+#
+#   the WAIT    the robot dwells at the named point before entering the lane
+#   the ORACLE  the order ships UNSEALED, and its dropoff slot is resolved at
+#               release against the lane AS IT STANDS (rebindGatedDropoff)
+#
+# Only the second one is interesting here, and without a spot you cannot have it.
+# An unmarked lane binds its slot at dispatch and drives; by the time the robot
+# arrives, minutes later, the lane has changed and nothing re-asks. That is where
+# `dropoff-occupied` comes from, and it is where an air bubble comes from — three
+# stores each correctly pick the three deepest slots, then ARRIVE in whatever
+# order the fleet gives them, and whoever gets there first seals the rest in.
+#
+# THIS FILE HAD NO MARKS AT ALL, and neither plant does, so the oracle had never
+# run anywhere. It is not a coincidence that this fixture grows bubbles.
+#
+# THE SPOTS BELONG TO THE ZONE, not to each lane, and that move is what lets the
+# release re-ask the whole group: a robot at one of them owns nothing, so it has
+# not committed to a lane by standing there. `gate_point` on a lane still works
+# and still wins, logged as legacy and counted per group by the startup census —
+# it is scheduled for deletion and no new spec should set it.
+#
+# Wait-point VALUES are RDS map point names, handed to the fleet verbatim and
+# never resolved against nodes; under the simulator nothing resolves them, which
+# is what lets them be named freely here. On a real plant each one has to exist
+# in the map — so switching a plant on is a commissioning task, not a config edit,
+# and that cost is the honest reason to measure the benefit here first.
+
 zones:
   # Stamping supermarket — PANEL-A + PANEL-B + 1 turnover lane, all depth-3. The reshuffle zone.
   # COMBINED MARKET (SB 2026-07-12): empties + partials + fulls all live in ONE mixed-fill
@@ -109,6 +140,29 @@ zones:
     retrieve_algorithm: FIFO
     store_algorithm: LKND
     reshuffle_restore_blockers: on
+    # ── THE WAITING SPOTS, AND WHY THEY ARE THE ZONE'S AND NOT EACH LANE'S ──
+    #
+    # A robot standing at one of these owns NOTHING — no lane, no slot, no row
+    # that refuses anybody — so the spot never belonged to the lane the plan
+    # happened to name. Tying it there is what stopped the release re-asking the
+    # whole group: a robot parked at Lane_05's own mark had already committed to
+    # Lane_05 before anybody asked whether Lane_05 was the right answer.
+    #
+    # FIFTEEN, one per lane, and the count is deliberate for this migration
+    # rather than a model of anything. It preserves the fixture's total waiting
+    # capacity so a run here stays comparable to the per-lane runs before it —
+    # the sim's position gate treats a wait point as an exclusive place (one
+    # robot at a time, the rest hold), so cutting the count would change
+    # throughput and hide the config move inside a capacity change. Whether a
+    # plant needs fifteen spots for fifteen lanes is the question the three-arm
+    # lane-stress measurement exists to answer; it is not answered here.
+    #
+    # THE NAMES ARE HISTORICAL. `Lane_05-WAIT` no longer means "Lane_05's spot",
+    # it means "the fifth painted spot beside this block", and it keeps the name
+    # it had so runs before and after this migration can be read side by side.
+    # On a real plant these are RDS map points that physically exist and are not
+    # a spec's to rename.
+    wait_points: [Lane_01-WAIT, Lane_02-WAIT, Lane_03-WAIT, Lane_04-WAIT, Lane_05-WAIT, Lane_06-WAIT, Lane_07-WAIT, Lane_08-WAIT, Lane_11-WAIT, Lane_12-WAIT, Lane_13-WAIT, Lane_14-WAIT, Lane_15-WAIT, Lane_16-WAIT, Lane_19-WAIT]
     lanes:
       # Lane_01 = PANEL-A, seeded full (3 bins). Depth-3 bin backdated oldest → FIFO must
       # reshuffle to it once the mouth drains (the headline reshuffle driver).
@@ -191,6 +245,12 @@ zones:
   - name: SYN_CLEAR
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    # One lane, one spot. Kept as its own zone's point rather than shared with
+    # SYN_MARKET's: a wait point is a physical place beside ONE block of lanes,
+    # and sharing one between two blocks sends a robot to stand in the other
+    # block's aisle. The seeder and the UI both refuse a shared point, and the
+    # startup census names both zones when it finds one.
+    wait_points: [Lane_20-WAIT]
     lanes:
       - {name: Lane_20, slots: [{name: CLR_001, depth: 1}, {name: CLR_002, depth: 2}]}
 

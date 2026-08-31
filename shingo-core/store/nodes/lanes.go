@@ -320,11 +320,18 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		  -- store until the deeper one has PLACED, so the ordinary burst never
 		  -- entombs anything, flat. That is true only where the tiers RUN.
 		  -- laneEntryCause has one production caller — gateEntryVerdict, inside
-		  -- the gated release path — and a lane is gated only when a human has
-		  -- placed its mark (lane_gate_point). plants/demo.yaml declares
-		  -- gate_point on no lane, only the two lane-stress specs do, and
-		  -- lane_gate.go records that no marks exist at either plant. The
-		  -- pre-dispatch tiered park was deleted, so on an ungated lane nothing
+		  -- the gated release path — and a lane is gated only when there is
+		  -- somewhere for its robots to stand. NO PLANT SPEC IN THIS REPO CARRIES
+		  -- A PER-LANE gate_point ANY MORE: the waiting spots moved to the group
+		  -- (wait_points on the NGRP — plants/demo.yaml:165 lists fifteen for
+		  -- SYN_MARKET), and the per-lane key survives in Go only as the
+		  -- documented legacy fallback that still wins the resolution where a
+		  -- human sets it through the API. Springfield and Hopkinsville were
+		  -- queried on 2026-08-31 (WALL) and carry zero lane_gate_point rows. So
+		  -- demo.yaml IS gated today, by the group key rather than the lane one;
+		  -- the two real plants are not gated at all.
+		  --
+		  -- The pre-dispatch tiered park was deleted, so on an ungated lane nothing
 		  -- sequences a burst at all: three stores select the three deepest
 		  -- slots correctly and then ARRIVE in whatever order the fleet gives
 		  -- them, and a mouth-first arrival seals the two behind it.

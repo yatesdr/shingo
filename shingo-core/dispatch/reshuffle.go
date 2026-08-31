@@ -464,13 +464,19 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 	// ── AND "NO FIXTURE HAD EVER CARRIED A MARK" WAS FALSE WHEN IT WAS WRITTEN ─
 	//
 	// This paragraph used to say that, and it was believable because the fixture
-	// in front of the author had none. plants/lane-stress.yaml and
-	// plants/lane-stress-packed.yaml each declare six lane gate_points and have
-	// since before this exclusion existed — which is the whole reason the
-	// lane-stress rig could meet the two-gated-lane plan on 2026-08-09 and find
-	// the defect the exclusion was added for. store/nodes/lanes.go:307-308 has the
-	// fact stated correctly: "plants/demo.yaml declares gate_point on no lane,
-	// only the two lane-stress specs do."
+	// in front of the author had none. The two lane-stress rigs each declared six
+	// lane gate_points and had since before this exclusion existed — which is the
+	// whole reason the rig could meet the two-gated-lane plan on 2026-08-09 (WALL)
+	// and find the defect the exclusion was added for.
+	//
+	// THE KEY HAS SINCE MOVED, AND THE MARKS WITH IT. No plant spec in this repo
+	// declares a per-lane gate_point any more: the waiting spots belong to the
+	// GROUP (`wait_points` on the NGRP), and all three specs migrated — demo.yaml
+	// included, which lists fifteen for SYN_MARKET at plants/demo.yaml:165. So the
+	// shipped demo fixture IS gated today; what changed is only which key says so.
+	// The per-lane key still resolves first where a human sets it through the API,
+	// as the documented legacy fallback. store/nodes/lanes.go carries the same
+	// fact at the query that depends on it.
 	//
 	// The plant half is now DATA rather than inference: Springfield and
 	// Hopkinsville were queried directly on 2026-08-31 and carry ZERO
