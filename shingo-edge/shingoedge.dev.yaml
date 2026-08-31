@@ -65,23 +65,35 @@ sim:
       tag_name: PRESS-2_COUNTER
       tick_interval: 10s
       uop_per_tick: 1
-    # PANEL-A is consumed by TWO drains against ONE press: WELD-1 (this PLC) and
-    # the FGN_002 unloader, which pulls PANEL-A straight to the market (demo.yaml
-    # line ~231: "FGN_002 drains PANEL-A -- PRESS-1's OWN payload, and that is the
-    # point"). Live run 2026-08-25: FGN_002 drew 15 PANEL-A bins, WELD-1 drew 12 --
-    # so the unloader alone out-drew the welder, and together they pull ~2x the
-    # 6/min the press makes (minus 15% downtime). That empties the market and
-    # wedges every PANEL-A order (193, 194, 200 all queued).
+    # WELD-1 IS BACK TO THE LINE RATE, and the halving it carried was compensation
+    # for a drain that no longer exists.
     #
-    # Halving WELD-1 (10s -> 20s, 6/min -> 3/min) per the "slow the consumers so
-    # the press keeps up" decision: 3 (WELD-1) + ~3 (FGN_002) ~= 6 ~= effective
-    # press output. The unloader_auto_clear knob is GLOBAL (config.go:340), so it
-    # cannot selectively slow FGN_002 without also starving ASSY's already-piled
-    # unloader -- the per-PLC tick is the only clean lever. Same reasoning as the
-    # WELD-3/4 slowdown below, just larger because PANEL-A has two consumers.
+    # It used to read: "PANEL-A is consumed by TWO drains against ONE press: WELD-1
+    # and the FGN_002 unloader... Halving WELD-1 (10s -> 20s, 6/min -> 3/min) per
+    # the 'slow the consumers so the press keeps up' decision: 3 (WELD-1) + ~3
+    # (FGN_002) ~= 6 ~= effective press output."
+    #
+    # The arithmetic was right for the plant it described. But FGN_002 was a TEST
+    # SCAFFOLD -- it existed only so the U1 changeover trigger had an unloader to
+    # resolve -- and an unloader on PANEL-A was never legitimate: an unloader takes
+    # FINISHED GOODS out, and PANEL-A is work-in-progress that WELD-1 consumes.
+    # Measured before its removal, over 81 sim-minutes, it took 16 PANEL-A carriers
+    # against WELD-1's 4. So a real weld cell was throttled to half rate to make
+    # room for a prop that then out-drew it four to one.
+    #
+    # With FGN_002 deleted (3f4a0d40) the compensation is stranded, and simcalc says
+    # so: PANEL-A went to OVERFILL +3.0/min, PRESS-1 making 6 against WELD-1's 3
+    # with nothing else on the payload. Restoring 10s puts the cell back on the
+    # plant's reference line rate and squares PANEL-A with PANEL-B, which has always
+    # run press 6 / weld 6.
+    #
+    # THE LESSON WORTH KEEPING: this rate was tuned around a fixture artifact, and
+    # the tuning outlived the artifact by looking like a deliberate decision. Before
+    # slowing a cell to fix a shortage, check what else is drinking from the payload
+    # and whether it has any business being there.
     - plc_name: WELD-1
       tag_name: WELD-1_COUNTER
-      tick_interval: 20s
+      tick_interval: 10s
       uop_per_tick: 1
     - plc_name: WELD-2
       tag_name: WELD-2_COUNTER
