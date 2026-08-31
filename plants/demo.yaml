@@ -307,11 +307,44 @@ stations:
   # loop wants the same position the moment it reads empty. Whether the return
   # HOLDS that home or yields it is the whole question the rig exists to answer.
   #
-  # No buffer position, deliberately: seeddev only ever writes home_kind='home'
-  # (UpsertLoaderHome takes no kind), so a yielded home has nowhere to fall back to
-  # and goes straight to drain. That makes the two behaviours maximally distinct.
-  - {name: PLK_H1, kind: loader}     # PLK_HOMES dedicated position 1 (SHIM, pinned)
-  - {name: PLK_H2, kind: loader}     # PLK_HOMES dedicated position 2 (SHIM, pinned)
+  # ONE HOME PER PART. THIS RIG USED TO HAVE TWO HOMES ON THE SAME PART, and
+  # that single fact manufactured a plant-wide deadlock. Read this before adding
+  # a second home for any payload here.
+  #
+  # SPRINGFIELD, loader 7 "Supermarket Dedicated Locations", read live
+  # 2026-08-31 (same layout=dedicated_positions, replenishment=threshold):
+  #
+  #   homes    SMN_014..SMN_035   22 positions, 22 DISTINCT part numbers, one
+  #                               part each, per-part thresholds (350, 800,
+  #                               1201, 4500, 217, 5000, ...)
+  #   buffers  SMN_003..SMN_0013  11 positions, payload '', threshold 0
+  #
+  # Zero duplicate-payload homes, and roughly two homes per buffer. The real
+  # "home loader" IS a supermarket: dedicated locations for named parts plus
+  # free buffer space, feeding weld cells that pull from ~30 spots.
+  #
+  # WHAT THE DUPLICATE DID. With H1 and H2 both pinned to SHIM the two are
+  # interchangeable to the SUPPLY side, which widens across the pool — measured:
+  # "widen: order 16 supply pickup PLK_H1 -> PLK_H2 (pool hit, anchor PLK_H1)".
+  # So pickups drained BOTH homes while returns, which scan HomeKindBuffer only
+  # (loader_place.go), could land in just two places. At SPR that is impossible:
+  # a pickup for part X has exactly ONE home to widen from, so the pool cannot
+  # eat its own return capacity.
+  #
+  # Order 111 hit the moment the return set was empty — H1 held stock, B1 held
+  # stock, B2 was busy for the one second order 110 took to lift from it. It
+  # took loader_place.go's WARN branch, was dispatched onto the occupied home
+  # anyway, and stood at PLK_H1 for 42 sim-hours holding AMR-10. ALN_008 drained
+  # to -3 UOP, the PLC readiness gate took WELD-5 dark, and because that gate is
+  # all-or-nothing per process and a dark line raises no drawdown, five of seven
+  # payloads raised ZERO orders for the rest of the run. One misconfigured home
+  # stopped the plant.
+  #
+  # H2 is therefore a BUFFER: one SHIM home, three buffers, which is Springfield's
+  # shape at this plant's scale. The home-return question the rig exists to answer
+  # is unchanged — a return still finds its home occupied and must yield or hold.
+  - {name: PLK_H1, kind: loader}     # PLK_HOMES home — the ONE dedicated SHIM position
+  - {name: PLK_H2, kind: loader}     # PLK_HOMES buffer 3 (was a second SHIM home — see above)
   - {name: PLK_B1, kind: loader}     # PLK_HOMES buffer 1 (no payload — takes whatever returns)
   - {name: PLK_B2, kind: loader}     # PLK_HOMES buffer 2
   - {name: ALN_008, kind: weld}      # WELD-5 consume SHIM, swaps against PLK_H1
@@ -394,9 +427,9 @@ bins:
   - {name: BIN-ACT-W2-BR, slot: ALN_004, payload: BRKT,     uop: 40}  # WELD-2 BRKT consume
   - {name: BIN-ACT-W3-CL, slot: ALN_006, payload: CLIP,     uop: 40}  # WELD-3 CLIP consume
   - {name: BIN-ACT-W4-ST, slot: ALN_007, payload: STUD,     uop: 40}  # WELD-4 STUD consume
-  # --- The home-return rig: a full carrier on each home, one consuming at the line ---
-  - {name: BIN-SHIM-01, slot: PLK_H1, payload: SHIM, uop: 40}         # PLK_H1 home stock
-  - {name: BIN-SHIM-02, slot: PLK_H2, payload: SHIM, uop: 40}         # PLK_H2 home stock
+  # --- The home-return rig: the home stocked, a spare parked, one at the line ---
+  - {name: BIN-SHIM-01, slot: PLK_H1, payload: SHIM, uop: 40}         # PLK_H1 home stock (the one SHIM home)
+  - {name: BIN-SHIM-02, slot: PLK_H2, payload: SHIM, uop: 40}         # parked on a buffer, as a returned carrier would be
   - {name: BIN-ACT-W5-SH, slot: ALN_008, payload: SHIM,     uop: 40}  # WELD-5 SHIM consume
   # --- The maintained group, seeded AT its declared level (4 STANDARD + 2 SM) ---
   #     Six of eight positions, so the keeper starts settled and the first thing a
@@ -442,7 +475,7 @@ processes:
   - {name: WELD-3,  active_style: WELD-3-RUN}         # two_robot consume CLIP (single-window loader leg)
   - {name: WELD-4,  active_style: WELD-4-RUN}         # two_robot consume STUD (second single-window loader leg)
   - {name: WELD-5,  active_style: WELD-5-RUN}          # two_robot consume SHIM, swapping against a dedicated loader home
-  - {name: LOADER-SHIM, active_style: LOADER-SHIM-RUN}   # manual_swap DEDICATED-POSITIONS SHIM (PLK_H1+PLK_H2)
+  - {name: LOADER-SHIM, active_style: LOADER-SHIM-RUN}   # manual_swap DEDICATED-POSITIONS SHIM (home PLK_H1 + 3 buffers)
   - {name: LOADER-COMP, active_style: LOADER-COMP-RUN}   # manual_swap multi-window BRKT (no PLC; sim-operator-driven)
   - {name: LOADER-CLIP, active_style: LOADER-CLIP-RUN}   # manual_swap single-window CLIP
   - {name: LOADER-STUD, active_style: LOADER-STUD-RUN}   # manual_swap single-window STUD
@@ -854,10 +887,15 @@ claims:
     inbound_staging: SLN_016
     outbound_staging: SLN_017
 
-  # ── PLK_HOMES (manual_swap, DEDICATED-POSITIONS): SHIM on two pinned homes ──
-  # home_of groups both positions under one dedicated_positions loader keyed on the
-  # synthetic identity PLK_HOMES. Each position is pinned to SHIM, which is what puts
+  # ── PLK_HOMES (manual_swap, DEDICATED-POSITIONS): SHIM on ONE pinned home ──
+  # home_of groups all four positions under one dedicated_positions loader keyed on
+  # the synthetic identity PLK_HOMES. The HOME is pinned to SHIM, which is what puts
   # it in InSourcePool() — an unpinned home is excluded from the pool entirely.
+  # Buffers are admitted on kind alone, so they need no pin.
+  #
+  # ONE home per payload, matching Springfield (22 homes, 22 distinct parts). A
+  # second SHIM home let the supply pool widen across both and drained the return
+  # capacity with it — see the WELD-5 node block for the run that killed.
   # NO outbound_destination — this is Springfield's shape, and the park side exists
   # to serve it. A produce loader pushes every carrier it fills to its outbound
   # (createLoaderOutbound, unconditional at the tail of LoadBin). A dedicated home
@@ -875,12 +913,24 @@ claims:
   #
   # inbound_source stays SYN_MARKET as a top-up path if a carrier is lost out of the
   # loop; in steady state it should not be needed.
+  # THE ONE SHIM HOME. Springfield has 22 homes on this loader and no two share a
+  # part; a second SHIM home here let the supply pool widen across both and drain
+  # the return capacity with it. See the WELD-5 node block above for the run it
+  # killed. One home per payload — do not add another.
   - {core_node: PLK_H1, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, operator_station: PLK_H1-OPS}
-  - {core_node: PLK_H2, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, operator_station: PLK_H2-OPS}
   # The buffers. home_kind: buffer carries no payload and no threshold — it is
   # spare parking, and it is the fallback placeForLoader walks when a returning
-  # partial finds its home busy. Two of them against two homes, so the loop always
-  # has somewhere to put a carrier that arrives while its home is occupied.
+  # partial finds its home busy.
+  #
+  # THREE, AND THE COUNT IS LOAD-BEARING. This said "two of them against two
+  # homes, so the loop always has somewhere to put a carrier that arrives while
+  # its home is occupied" — and that was simply false. Order 111 arrived with H1
+  # stocked, B1 stocked and B2 busy for the one second order 110 took to lift
+  # from it, found nowhere to go, and pinned the cell for the rest of the run.
+  # Springfield carries eleven buffers against twenty-two homes; three against
+  # one home is that ratio with headroom, and a run that still exhausts them is
+  # reporting a real shortage rather than a fixture artifact.
+  - {core_node: PLK_H2, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, home_kind: buffer, operator_station: PLK_H2-OPS}
   - {core_node: PLK_B1, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, home_kind: buffer, operator_station: PLK_B1-OPS}
   - {core_node: PLK_B2, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, home_kind: buffer, operator_station: PLK_B2-OPS}
 
