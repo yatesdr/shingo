@@ -496,6 +496,27 @@ bins:
   - {name: BIN-MT-13, slot: UTN_013, bin_type: STANDARD-SM}
   - {name: BIN-MT-14, slot: UTN_014, bin_type: STANDARD-SM}
   - {name: BIN-MT-15, slot: UTN_015, bin_type: STANDARD-SM}
+  # TWO MORE, AND WHERE THEY SIT IS THE WHOLE DECISION. `simcalc -carriers` puts
+  # the plant floor at 29 empties against 27 seeded, and the observed shortage is
+  # STANDARD-SM: the 2026-08-31 run ended with 0 blank SM carriers, 11 holding
+  # stock, and two retrieve_empty orders standing 32 and 37 sim-minutes on
+  # finder-no-empty-of-type.
+  #
+  # Lane_16's DEPTH 2 AND 3, mouth left free. Every free slot left in SYN_MARKET
+  # belongs to a lane this fixture deliberately keeps empty for reshuffle room, so
+  # there is no placement here that costs nothing. Lane_15/16's note says what the
+  # room is actually for — "empty MOUTHS let findShuffleSlots Pass 2 unbury
+  # without air bubbles" — so filling behind the mouth and leaving SMN_034 open
+  # preserves the property that comment names while still banking the carriers.
+  #
+  # THIS DOES NOT CURE THE MARKET POOL, and nothing about a count could.
+  # SYN_MARKET reads RATE DEFICIT 0.45/min — it spends empties faster than they
+  # come back — and the tool says so in as many words: "drains regardless of
+  # size". Carriers buy time against that, not a fix. Its floor of 23 against 15
+  # seeded is unreachable anyway without eating the reshuffle headroom above,
+  # which is the trade this comment exists to stop somebody making silently.
+  - {name: BIN-MT-16, slot: SMN_035, bin_type: STANDARD-SM}
+  - {name: BIN-MT-17, slot: SMN_036, bin_type: STANDARD-SM}
 
 processes:
   - {name: PRESS-1, active_style: PRESS-1-RUN}        # two_robot_press_index → PANEL-A
