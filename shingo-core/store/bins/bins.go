@@ -301,7 +301,40 @@ func NotFencedArm() string {
 //   - staged and pending-reservation carriers are spoken for;
 //   - claimed and locked ones likewise;
 //   - synthetic and disabled nodes hold nothing anybody can act on;
-//   - anything carrying a payload has left the empty population entirely.
+//   - anything carrying a payload has left the empty population entirely;
+//   - a carrier standing on a CELL'S OWN POSITION is that cell's working stock.
+//
+// ── THE LAST ONE COST A WHOLE PLANT, AND IT IS THE SUBTLE ONE ─────────────
+//
+// A sequential A/B press keeps a fresh EMPTY on its parked side, ready for the
+// next flip. That carrier is unclaimed, unlocked, unstaged, carries no payload
+// and stands at an enabled physical node — so it matched every clause above and
+// the plant-wide empty scan happily harvested it.
+//
+// MEASURED, 2026-08-30 demo.yaml:
+//
+//	order 144  retrieve_empty  PLN_004 -> PEB_003   confirmed
+//
+// PLN_004 is PRESS-2's parked side. Nothing ever delivered to it again — the
+// sequential backfill targets claim.CoreNodeName and only the ACTIVE side
+// carries the claim the backfill is built from — so the cell could never flip
+// again, and it deadlocked the first time the active side filled:
+//
+//	PLN_004 empty  ->  "A/B cutover rejected: PLN_004 has no bin on it"
+//	no flip        ->  "the line is pulling from PLN_003; flip to PLN_004 first"
+//	no evac        ->  PLN_003 stays full, its robot pinned
+//	no place       ->  "HOLDING at PLN_003", a second robot pinned
+//
+// Three robots and the whole PANEL-B chain behind them.
+//
+// The rule is one sentence: A CARRIER ON A CELL'S OWN POSITION BELONGS TO THAT
+// CELL. It is not free inventory, and the cell's own orders are how it leaves —
+// a complex leg naming that node in a `pickup` step, never this scan. The same
+// reasoning covers a consume position holding a just-emptied carrier, which was
+// harvestable for the same reason and is the same mistake.
+//
+// A plant whose claims have not synced has an empty style_claims table and this
+// arm excludes nothing, which is the pre-existing behaviour.
 //
 // It opens the WHERE. Arms append to it; nothing composes in front of it.
 const EmptyCarrierWhere = `
@@ -312,6 +345,7 @@ const EmptyCarrierWhere = `
 	  AND n.enabled = true
 	  AND n.is_synthetic = false
 	  AND COALESCE(b.payload_code, '') = ''
+	  AND NOT EXISTS (SELECT 1 FROM style_claims sc WHERE sc.core_node_name = n.name)
 	  AND NOT ` + reservations.BinSpokenForSQL
 
 // OfTypeArm narrows to ONE carrier type, matched on CODE.
