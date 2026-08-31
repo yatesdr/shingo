@@ -305,6 +305,37 @@ func (d *Dispatcher) resolveOrderLaneHolds(sourceNode, destNode *nodes.Node) ([]
 		// an order that both picks from and drops into a lane owns it for the
 		// whole visit, and dig is the stronger mode. Reachable through the
 		// operator bin-move door, which is how it surfaced.
+		// ── A GATED LANE'S ENTRY IS NOT THIS MOMENT, ON THE DESTINATION SIDE ─
+		//
+		// The same rule resolvePlanLaneHolds states for a coordinated plan, said
+		// here for the plain path, and narrowed to the arm it is true of.
+		//
+		// A plain store bound for a MARKED lane stops at the mark. Its dropoff is
+		// not chosen yet — that is the whole of what the gate buys, the slot
+		// resolved at release against the lane as it stands — so an INBOUND row
+		// taken here reserves the mouth for a destination the order has not
+		// committed to. The robot then stands at the spot holding a corridor it
+		// is not in, against a lane it may not even end up entering. That row is
+		// a signal wearing a mutex's clothes: the thing that actually serialises
+		// the corridor is the OCCUPANCY row, taken at the append when the robot
+		// really goes in.
+		//
+		// THE SOURCE HOLD IS UNTOUCHED AND MUST BE. §R.101's ModeDig lock says a
+		// demand that resolves onto a bin owns that lane until the bin leaves by
+		// its mover, and that is a real lock about a real commitment: the bin is
+		// chosen, it is in that lane, and no gate changes which lane it is in. It
+		// is also what the five `lane-held-source` refusals of run 12f were, and
+		// every one of them was correct.
+		//
+		// AN UNMARKED LANE IS BYTE-IDENTICAL. entryDeferredToGate is false
+		// without a wait point, so every lane at both plants today yields exactly
+		// the holds it yielded before.
+		if mode == reservations.ModeInbound && d.entryDeferredToGate(skipsForPlainEntry, lane) {
+			d.dbg("lane mouth: this order's entry to %s stops at its mark and its slot is not chosen "+
+				"yet, so no destination hold is taken here; the tail append is the moment it goes in",
+				lane.Name)
+			return nil
+		}
 		if i, ok := seen[lane.ID]; ok {
 			if holds[i].mode != reservations.ModeDig && mode == reservations.ModeDig {
 				holds[i].mode = reservations.ModeDig

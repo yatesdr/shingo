@@ -257,21 +257,32 @@ func stagedDwellerHoldingItsRow(t *testing.T, db *store.DB, d *Dispatcher, name 
 	wall, line *nodes.Node, w []*nodes.Node) *orders.Order {
 	t.Helper()
 
-	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.DeliveryNode = w[2].Name
-		o.Status = "in_transit"
-	})
-	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
-		t.Fatalf("fixture: the deeper store must take its mouth row: adm=%v err=%v", adm, err)
-	}
-	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, name+"-deep", "RUNNING", ""), "deep vendor")
+	deep := stageDeeperBlocker(t, db, d, line, w[2], name+"-deep")
 
 	o := testdb.CreateOrder(t, db, func(ord *orders.Order) {
 		ord.DeliveryNode = w[1].Name
 		ord.Status = "sourcing"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(o, line, w[1], EntryFreshBin); err != nil || !adm {
-		t.Fatalf("fixture: the dweller must take its own inbound mouth row: adm=%v err=%v", adm, err)
+	// STATED, NOT PRODUCED, and the reason is the whole subject of this file.
+	//
+	// The dweller's inbound row used to come from AcquireLanesForOrder. It cannot
+	// any more: a gated lane defers its destination hold to the mark
+	// (resolveOrderLaneHolds), precisely because a robot standing at a group's
+	// waiting spot has not chosen a slot yet. So the deadlock this exemption was
+	// built for — a dweller's own row excluding the digs that would free it — is
+	// no longer CONSTRUCTIBLE through any plain door.
+	//
+	// The exemption is kept and kept pinned anyway. It is recent code, its
+	// property is correct, and "I believe this population is now empty" is a
+	// claim for an owner to retire rather than for a test to assume: an
+	// unpinned exemption is one nobody notices going wrong if a door ever
+	// produces the shape again. So the fixture asserts the row as a fact and
+	// asks admitMouth what it does with it, which is what the test was always
+	// really about.
+	if adm := d.acquireOrderLanes(o.ID,
+		[]laneHold{{laneID: wall.ID, mode: reservations.ModeInbound}}); adm.err != nil || !adm.admitted {
+		t.Fatalf("fixture: the dweller must take its own inbound mouth row: adm=%v err=%v",
+			adm.admitted, adm.err)
 	}
 	if _, err := d.DispatchDirect(o, line, w[1]); err != nil {
 		t.Fatalf("fixture: DispatchDirect for %s: %v", w[1].Name, err)

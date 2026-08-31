@@ -205,7 +205,12 @@ func (d *Dispatcher) gateTargetForLane(lane *nodes.Node) (laneGateTarget, bool, 
 			"points — legacy, and the key is scheduled for deletion; move the point to the group",
 			lane.Name, points[0])
 	}
-	return laneGateTarget{lane: lane, points: points, legacy: legacy}, true, nil
+	// gatePoint is pre-filled with the first candidate so a target is never
+	// half-built: every reader that just wants "where does this lane's robot
+	// stand" gets an answer, and the splicer overwrites it with the per-order
+	// pick. A struct whose meaning depends on whether somebody has called
+	// pointFor yet is a struct that will be read before somebody has.
+	return laneGateTarget{lane: lane, gatePoint: points[0], points: points, legacy: legacy}, true, nil
 }
 
 // spliceLaneWait is THE TRANSFORM: it takes whatever plan an order already has

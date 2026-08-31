@@ -33,14 +33,7 @@ func stageDwellerBehindAWall(t *testing.T, db *store.DB, d *Dispatcher, tag stri
 	wallLane, _, w, _, bp := clearLaneFixture(t, db, tag)
 	line := lineNode(t, db, tag+"-LINE")
 
-	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.DeliveryNode = w[2].Name
-		o.Status = "in_transit"
-	})
-	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
-		t.Fatalf("the deeper store must take its mouth row: adm=%v err=%v", adm, err)
-	}
-	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, tag+"-deep", "RUNNING", ""), "deep vendor")
+	deep := stageDeeperBlocker(t, db, d, line, w[2], tag+"-deep")
 
 	dweller = stageGatedStore(t, db, d, line, w[1], nil)
 	if !IsGateStaged(dweller) {
@@ -52,7 +45,7 @@ func stageDwellerBehindAWall(t *testing.T, db *store.DB, d *Dispatcher, tag stri
 	if blocker.ClaimedBy != nil {
 		t.Fatal("fixture bug: the walling bin must be UNCLAIMED")
 	}
-	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
+	placeDeeperBlocker(t, db, d, deep.ID, w[2].Name)
 	return wallLane, dweller, blocker
 }
 

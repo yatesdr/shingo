@@ -27,41 +27,45 @@ import (
 //              function the dispatch-time valve calls. Tier-1 same-origin
 //              co-release, Tier-2 cross-origin deepest-first, Tier-3 group wait
 //              are not re-expressed here; they ARE the classifier.
-//   OCCUPANCY  the A′ predicate (stillWorkingLaneMouth): a store blocks until it
-//              PLACES, which is when ReleaseInboundLaneForOrder deletes its
-//              inbound mouth row. Nothing new is read.
+//   OCCUPANCY  the A′ predicate (stillComingToLane): a store blocks until it
+//              PLACES, DERIVED from three facts something else already
+//              maintains — not dispatched, standing at this lane's mark, or
+//              inside the corridor. Nothing new is written.
 //   APPEND     appendSegmentAndAdvance — the one fleet-append path, shared with
 //              operator release, vehicle pinned.
 //
 // So the evaluator is a loop, an ordering, and two guards.
 //
-// WHY THE `others` SET IS STABLE ACROSS A PASS — AND FOR WHICH ORDERS.
+// WHY THE `others` SET IS STABLE ACROSS A PASS — AND IT NO LONGER DEPENDS ON A ROW.
 //
-// A gate-staged PLAIN candidate holds its inbound mouth row from dispatch
-// (AcquireLanesForOrder → resolveOrderLaneHolds, lane_gate.go:224-273, called
-// from fulfillment/scanner.go:494 before the fleet commit) and keeps it until it
-// places — which is long after release. So releasing one does NOT remove it from
-// the blocker set: a shallower cross-origin candidate still sees it and still
-// parks, exactly as it should.
+// This used to say: a gate-staged PLAIN candidate holds its inbound mouth row
+// from dispatch and keeps it until it places, so releasing one does not remove it
+// from the blocker set. True of the plain arm, and FALSE of the complex arm —
+// resolvePlanLaneHolds skipped the hold for a gated lane on purpose, so a
+// gate-staged COMPLEX order held no mouth row while it dwelled, and the old
+// predicate read "dispatched and no longer holding the mouth" as "it has placed".
+// A dwelling complex candidate satisfied both halves and was filtered OUT of the
+// blocker set while it was still very much coming. That was a live latent defect,
+// invisible only because nothing dwelled.
 //
-// THIS PARAGRAPH USED TO SAY THAT OF EVERY CANDIDATE, AND IT IS FALSE FOR THE
-// COMPLEX ARM. resolvePlanLaneHolds skips the hold for a gated lane on purpose
-// (lane_gate.go:399-421 — "A GATED LANE'S ENTRY IS NOT THIS MOMENT … the tail
-// append is the moment it goes in"), so a gate-staged COMPLEX order holds no
-// mouth row while it dwells. It was believable because both arms look alike from
-// here and the plain arm is the one this evaluator was written against.
-//
-// WHAT THAT COSTS, NAMED RATHER THAN LEFT TO BE FOUND. stillWorkingLaneMouth
-// (lane_entry.go:212-231) reads "dispatched and no longer holding the mouth" as
-// "it has placed". A dwelling complex candidate satisfies both halves, so it is
-// already filtered OUT of the blocker set while it is still very much coming.
-// The mouth row is doing two jobs — corridor mutex, and the sequencing token the
-// deeper-first tiers read — and only the first was deferred. Deferring the plain
-// arm too (which is what removing the gated hold-and-wait requires) makes this
-// universal, so the sequencing token has to come from somewhere else first:
+// THE PARAGRAPH ALSO CARRIED THE INSTRUCTION FOR FIXING IT, AND THIS IS THAT FIX
+// LANDING: "the sequencing token has to come from somewhere else first:
 // IsGateStaged + WaitLane is already how this file derives its candidate set
 // (gateStagedForLane), and is the obvious source. Do not defer the plain arm
-// without moving that signal.
+// without moving that signal."
+//
+// Both halves landed together, in one commit, because either alone is broken.
+// resolveOrderLaneHolds now defers the plain arm's DESTINATION hold on a gated
+// lane — the row reserved a mouth for a slot the dweller had not chosen yet —
+// and stillComingToLane no longer asks about rows at all. It keeps a candidate
+// that is not dispatched, one standing at THIS lane's mark (IsGateStaged +
+// WaitLane), or one holding lane occupancy. The mouth row was doing two jobs,
+// corridor mutex and sequencing token; the mutex was always the OCCUPANCY row,
+// and the token is now derived. Both arms read the same way, and the complex
+// defect closes as a consequence rather than as a separate fix.
+//
+// The SOURCE hold is untouched and still held from dispatch: §R.101's lock is
+// about a bin that has already been chosen in a lane, which no gate changes.
 //
 // What DOES change mid-pass is a re-bind (§ rebindGatedDropoff), which moves a
 // candidate's depth. That is why each candidate is evaluated against a freshly

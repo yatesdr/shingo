@@ -213,15 +213,14 @@ func TestMultiGate_SecondGateGetsWindow3sRescue(t *testing.T) {
 
 	// A deeper store in the wall lane, holding its mouth — the Tier-2 reason our
 	// order will still be at B's mark when the wall appears.
-	line := lineNode(t, db, "MG2-LINE")
 	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = w[2].Name
-		o.Status = "in_transit"
+		// STILL COMING, NOT YET DISPATCHED. See stageDeeperBlocker: a gated
+		// lane no longer writes a destination mouth row, so a blocker states
+		// itself through stillComingToLane's not-dispatched arm instead of
+		// through a row. Same order, same depth, same Tier-2 wall.
+		o.Status = "queued"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
-		t.Fatalf("the deeper store must take its mouth row: adm=%v err=%v", adm, err)
-	}
-	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, "mg2-deep", "RUNNING", ""), "deep vendor")
 
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.SourceNode = a0.Name
@@ -251,7 +250,7 @@ func TestMultiGate_SecondGateGetsWindow3sRescue(t *testing.T) {
 
 	// The wall arrives at the second lane's mouth, unclaimed, wanted by nobody.
 	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-MG2-WALL")
-	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
+	placeDeeperBlocker(t, db, d, deep.ID, w[2].Name)
 
 	d.EvaluateLaneReleases(wall.ID)
 

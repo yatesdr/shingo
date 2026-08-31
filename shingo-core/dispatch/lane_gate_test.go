@@ -22,7 +22,7 @@ func TestAcquireLanesForOrder_GatedByConfig(t *testing.T) {
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	_, _, slot := gatedLane(t, db, "AFO-MOUTH", "mouth")
+	_, _, slot := gatedLane(t, db, "AFO-MOUTH", "")
 	line := lineNode(t, db, "AFO-LINE")
 	a := testdb.CreateOrder(t, db)
 	b := testdb.CreateOrder(t, db)
@@ -73,7 +73,7 @@ func TestLaneGateRelease_InboundAndOutbound(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	_, laneID, slot := gatedLane(t, db, "RELG", "mouth")
+	_, laneID, slot := gatedLane(t, db, "RELG", "")
 	line := lineNode(t, db, "RELG-LINE")
 	store := testdb.CreateOrder(t, db)
 	retrieve := testdb.CreateOrder(t, db)
@@ -84,7 +84,7 @@ func TestLaneGateRelease_InboundAndOutbound(t *testing.T) {
 	if gateMouthRows(t, db, laneID) != 1 {
 		t.Fatal("inbound row must exist after acquire")
 	}
-	d.ReleaseInboundLaneForOrder(store.ID, slot.Name)
+	placeDeeperBlocker(t, db, d, store.ID, slot.Name)
 	if n := gateMouthRows(t, db, laneID); n != 0 {
 		t.Fatalf("inbound row not released on dropoff = %d, want 0", n)
 	}
@@ -107,7 +107,7 @@ func TestLaneGateRelease_ChildRoutesToParent(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	_, laneID, slot := gatedLane(t, db, "RELG-CHILD", "mouth")
+	_, laneID, slot := gatedLane(t, db, "RELG-CHILD", "")
 	line := lineNode(t, db, "RELG-CHILD-LINE")
 	parent := testdb.CreateOrder(t, db)
 	child := testdb.CreateOrder(t, db, func(o *orders.Order) { o.ParentOrderID = &parent.ID })
@@ -120,7 +120,7 @@ func TestLaneGateRelease_ChildRoutesToParent(t *testing.T) {
 		t.Fatal("parent inbound row must exist")
 	}
 	// The CHILD drops; the release must route to the parent's row.
-	d.ReleaseInboundLaneForOrder(child.ID, slot.Name)
+	placeDeeperBlocker(t, db, d, child.ID, slot.Name)
 	if n := gateMouthRows(t, db, laneID); n != 0 {
 		t.Fatalf("child dropoff did not release the parent-owned hold = %d, want 0", n)
 	}
@@ -254,7 +254,7 @@ func TestLaneGate_ResolveHolds(t *testing.T) {
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	_, mouthLaneID, mouthSlot := gatedLane(t, db, "RES-MOUTH", "mouth")
+	_, mouthLaneID, mouthSlot := gatedLane(t, db, "RES-MOUTH", "")
 	_, _, noneSlot := gatedLane(t, db, "RES-NONE", "")
 	line := lineNode(t, db, "RES-LINE")
 
@@ -300,7 +300,7 @@ func TestLaneGate_ResolveHolds(t *testing.T) {
 	}
 
 	// Two mouth lanes (a move) → two holds, one per direction.
-	_, _, mouthSlotB := gatedLane(t, db, "RES-MOUTH-B", "mouth")
+	_, _, mouthSlotB := gatedLane(t, db, "RES-MOUTH-B", "")
 	holds, err = d.resolveOrderLaneHolds(mouthSlot, mouthSlotB)
 	if err != nil {
 		t.Fatalf("resolve (move): %v", err)
@@ -314,7 +314,7 @@ func TestLaneGate_AcquireAdmitsFreeAndSharesSameMode(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	_, laneID, slot := gatedLane(t, db, "ACQ", "mouth")
+	_, laneID, slot := gatedLane(t, db, "ACQ", "")
 	line := lineNode(t, db, "ACQ-LINE")
 	a := testdb.CreateOrder(t, db)
 	b := testdb.CreateOrder(t, db)
@@ -344,7 +344,7 @@ func TestLaneGate_AcquireConflictRequeues(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	_, laneID, slot := gatedLane(t, db, "CONF", "mouth")
+	_, laneID, slot := gatedLane(t, db, "CONF", "")
 	line := lineNode(t, db, "CONF-LINE")
 	a := testdb.CreateOrder(t, db)
 	b := testdb.CreateOrder(t, db)
@@ -377,8 +377,8 @@ func TestLaneGate_AcquireAllOrNothingAcrossModes(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	_, laneA, slotA := gatedLane(t, db, "AON-A", "mouth")
-	_, laneB, slotB := gatedLane(t, db, "AON-B", "mouth")
+	_, laneA, slotA := gatedLane(t, db, "AON-A", "")
+	_, laneB, slotB := gatedLane(t, db, "AON-B", "")
 	holder := testdb.CreateOrder(t, db)
 	mover := testdb.CreateOrder(t, db)
 
@@ -428,7 +428,7 @@ func TestLaneGate_SameLaneSourceAndDest_OneHoldStrongestMode(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	_, laneID, slot := gatedLane(t, db, "SAME-LANE", "mouth")
+	_, laneID, slot := gatedLane(t, db, "SAME-LANE", "")
 
 	// Same node is both source and destination: the operator bin-move shape.
 	holds, err := d.resolveOrderLaneHolds(slot, slot)
@@ -459,7 +459,7 @@ func TestLaneGate_ReleaseDropsHold(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	_, laneID, slot := gatedLane(t, db, "REL", "mouth")
+	_, laneID, slot := gatedLane(t, db, "REL", "")
 	line := lineNode(t, db, "REL-LINE")
 	a := testdb.CreateOrder(t, db)
 
@@ -483,7 +483,7 @@ func TestLaneGate_CauseDig(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	_, laneID, slot := gatedLane(t, db, "CAUSE-DIG", "mouth")
+	_, laneID, slot := gatedLane(t, db, "CAUSE-DIG", "")
 	line := lineNode(t, db, "CAUSE-DIG-LINE")
 	digger := testdb.CreateOrder(t, db)
 	waiter := testdb.CreateOrder(t, db)

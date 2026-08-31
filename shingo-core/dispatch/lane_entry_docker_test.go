@@ -6,9 +6,11 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // TestLaneEntryTiers_ParksDeeperPending is the end-to-end ON test: a shallow store parks behind a deeper active
@@ -67,13 +69,22 @@ func TestLaneEntryTiers_ParksDeeperPending(t *testing.T) {
 // behind a deeper one only until the deeper store PLACES its bin — not until the
 // deeper ORDER completes.
 //
-// Placement is observed exactly as production observes it: the deeper store holds
-// an inbound mouth row from its fleet commit (AcquireLanesForOrder) until its
-// dropoff block reports FINISHED, at which point ReleaseInboundLaneForOrder deletes
-// the row (the §4 early handoff, fired from handleStoreBlockCompleted BEFORE the
-// delivery-node early-return). The deeper order stays `in_transit` throughout, so
-// the only thing that changes between the two AdmitLaneEntry calls is the mouth row
-// — which is precisely the claim under test.
+// Placement is observed exactly as production observes it ON AN UNMARKED LANE:
+// the deeper store holds an inbound mouth row from its fleet commit
+// (AcquireLanesForOrder) until its dropoff block reports FINISHED, at which point
+// ReleaseInboundLaneForOrder deletes the row (the §4 early handoff, fired from
+// handleStoreBlockCompleted BEFORE the delivery-node early-return). The deeper
+// order stays `in_transit` throughout, so the only thing that changes between the
+// two AdmitLaneEntry calls is the mouth row — which is precisely the claim under
+// test.
+//
+// UNMARKED, and it used to be marked. A gated lane defers its destination hold to
+// the mark (resolveOrderLaneHolds), so on one of those there is no row for this
+// test to watch appear and disappear — placement is DERIVED there instead
+// (stillComingToLane), and the F-11 fixtures are what exercise that arm. The
+// tiers this test is about are identical on both, so it moved to the lane whose
+// mechanism it actually describes rather than having its assertions rewritten
+// into a mechanism it does not.
 //
 // The third leg pins the half A′ deliberately does NOT change: a deeper store that
 // has not been dispatched yet (no vendor_order_id, hence no mouth row it could have
@@ -84,7 +95,7 @@ func TestLaneEntryTiers_ReleasesOnPlacement(t *testing.T) {
 	db := testdb.Open(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	_, laneID, s0 := gatedLane(t, db, "TEPLACE", "TEPLACE-WAIT")
+	_, laneID, s0 := gatedLane(t, db, "TEPLACE", "")
 	laneNode, err := db.GetNode(laneID)
 	if err != nil {
 		t.Fatalf("get lane: %v", err)
@@ -133,7 +144,7 @@ func TestLaneEntryTiers_ReleasesOnPlacement(t *testing.T) {
 
 	// The deeper store's dropoff block completes — the bin is DOWN. Its order is
 	// still in_transit (not completed, not terminal).
-	d.ReleaseInboundLaneForOrder(deep.ID, s1.Name)
+	placeDeeperBlocker(t, db, d, deep.ID, s1.Name)
 	if n := gateMouthRows(t, db, laneID); n != 0 {
 		t.Fatalf("inbound row after placement = %d, want 0", n)
 	}
@@ -194,5 +205,104 @@ func TestLaneEntryTiers_OffIsAdmit(t *testing.T) {
 	}
 	if got := d.laneWaitPoint(unmarked); got != "" {
 		t.Errorf("unmarked lane reports wait point %q", got)
+	}
+}
+
+// TestLaneEntry_DwellingCandidateStillBlocks is the latent defect the release
+// pass's own header named, made visible and then closed.
+//
+// ── THE DEFECT ────────────────────────────────────────────────────────────
+//
+// A gate-staged order is STANDING AT A MARK with its bin still on the robot's
+// deck. It has not placed. It is as much of a blocker as a robot driving down
+// the aisle — more, in one sense, because it has not even started.
+//
+// The old witness could not see that. It asked "dispatched, and holding no
+// inbound mouth row?" and called the answer "it has placed". A dwelling COMPLEX
+// candidate satisfied both halves — resolvePlanLaneHolds has always deferred a
+// gated lane's hold — so it was filtered OUT of the blocker set while it was
+// still very much coming, and a shallower entrant walked past it. The release
+// pass header recorded this in as many words and told whoever removed the plain
+// arm to move the signal first.
+//
+// It stayed latent because nothing dwelled: no plant sets a mark, so the gated
+// arm never ran anywhere. Group wait points make dwelling the ordinary case,
+// which is what turns a latent defect into a live one.
+//
+// ── WHY IT IS THIS SHAPE AND NOT A UNIT TEST ──────────────────────────────
+//
+// The claim is about what the CLASSIFIER sees, so the dweller has to be a real
+// one: dispatched through the valve, refused entry, parked at its mark with a
+// lane wait in its own plan. A hand-built row would let the fixture assert
+// something the plant cannot produce.
+//
+// RED WITHOUT THE GATE-STAGED ARM (verified by deleting the
+// `IsGateStaged(o) && gateWaitLane(o) == laneID` case from stillComingToLane):
+// the shallow store is ADMITTED with no cause, i.e. sent into a lane a robot is
+// about to enter ahead of it, at a depth that seals the dweller's slot in.
+func TestLaneEntry_DwellingCandidateStillBlocks(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	wall, _, w, _, _ := clearLaneFixture(t, db, "DWBLK")
+	line := lineNode(t, db, "DWBLK-LINE")
+
+	// A REAL DWELLER at the deep slot: parked behind a deeper-still blocker, then
+	// left standing at the mark when that blocker places. Its bin is on the deck
+	// and its lane wait is un-appended.
+	deeper := stageDeeperBlocker(t, db, d, line, w[2], "dwblk-deeper")
+	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	if !IsGateStaged(dweller) {
+		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d vendor=%q)",
+			dweller.WaitIndex, dweller.VendorOrderID)
+	}
+	markStaged(t, db, dweller.ID)
+	placeDeeperBlocker(t, db, d, deeper.ID, w[2].Name)
+
+	// It is dispatched, it holds no inbound mouth row, and it is not in the
+	// corridor — the exact three facts the OLD witness read as "it has placed".
+	reloaded, err := db.GetOrder(dweller.ID)
+	testutil.MustNoErr(t, err, "reload dweller")
+	if reloaded.VendorOrderID == "" {
+		t.Fatal("fixture: the dweller must be dispatched, or the not-dispatched arm carries this " +
+			"test and it proves nothing about dwelling")
+	}
+	rows, err := reservations.ActiveMouthRows(db.DB, wall.ID)
+	testutil.MustNoErr(t, err, "read mouth rows")
+	for _, r := range rows {
+		if r.OrderID == dweller.ID && r.Mode == reservations.ModeInbound {
+			t.Fatal("fixture: the dweller must hold NO inbound mouth row — if it does, the row arm " +
+				"carries this test and the gate-staged arm is untested")
+		}
+	}
+	occupants, err := reservations.OccupantsOf(db.DB, wall.ID)
+	testutil.MustNoErr(t, err, "read occupancy")
+	for _, id := range occupants {
+		if id == dweller.ID {
+			t.Fatal("fixture: the dweller must NOT hold lane occupancy — it is outside the corridor, " +
+				"which is what dwelling means")
+		}
+	}
+
+	// THE CLAIM: a SHALLOWER store is refused, deepest-first, because the dweller
+	// is still coming.
+	shallow := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[0].Name
+		o.Status = "queued"
+	})
+	laneNode, err := db.GetNode(wall.ID)
+	testutil.MustNoErr(t, err, "reload lane")
+
+	v, err := d.laneEntryCause(laneNode, shallow, w[0])
+	testutil.MustNoErr(t, err, "classify the shallow entrant")
+	if v.Admitted() {
+		t.Fatalf("the shallow store was ADMITTED while a robot dwells at the mark holding a bin for "+
+			"%s — it would drive in ahead of the dweller and seal its slot in. That is the latent "+
+			"defect the release pass header named", w[1].Name)
+	}
+	if v.Cause() != CauseLaneDeeperPending {
+		t.Errorf("cause = %q, want %q — a dweller is a deeper store that has not placed, and the "+
+			"row an engineer reads has to say so", v.Cause(), CauseLaneDeeperPending)
 	}
 }
