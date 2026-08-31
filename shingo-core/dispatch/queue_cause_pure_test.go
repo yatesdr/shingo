@@ -1,6 +1,8 @@
 package dispatch
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,6 +121,45 @@ func TestQueueCause_NoFamilyLiteralsRemain(t *testing.T) {
 						"enumerable", path, v)
 				}
 			}
+		}
+	}
+}
+
+// TestCauseForGateRebind_DefersToTheCallee is the observability fix at the
+// release-time re-bind.
+//
+// Both release arms used to stamp CauseGateRebindUnavailable on ANY error out of
+// the re-bind. That cause means one specific thing — "there is no slot in this
+// lane to rebind to" — and the callee distinguishes several others properly,
+// because they end differently: a CONTENDED slot clears when a carrier drives
+// away, and an UNREADABLE one clears when the database answers. claimStoreSlot's
+// own comment says exactly that, and then the caller flattened both into a third
+// thing and told an engineer to go and look at a lane.
+//
+// MEASURED, 12c snapshot: the specific answer survived only in the reservation
+// layer's error, and the ORDER ROW — what a board renders and what a forensic
+// query groups by — carried the generic one.
+//
+// The right-hand sides are literals on purpose. Deriving them from the mapper
+// would be the vacuous form: it would pass for any mapping at all.
+//
+// MUTATION (verified): return CauseGateRebindUnavailable unconditionally. The
+// contended and unreadable rows both fire.
+func TestCauseForGateRebind_DefersToTheCallee(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"a carrier is standing on the slot", fmt.Errorf("%w: occupied", ErrSlotContended), "slot-reserved"},
+		{"the database did not answer", errRead(errors.New("conn reset")), "read-failed"},
+		{"no slot at all — the cause this was written for", errors.New("no reachable empty slot"), "gate-rebind-unavailable"},
+		{"no error is not a refusal", nil, "gate-rebind-unavailable"},
+	} {
+		if got := string(causeForGateRebind(tc.err)); got != tc.want {
+			t.Errorf("%s: cause = %q, want %q — a wait whose releaser differs must not be reported "+
+				"under a name that names a different releaser", tc.name, got, tc.want)
 		}
 	}
 }

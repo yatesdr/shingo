@@ -1030,13 +1030,13 @@ func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node, en
 		return nil
 	}
 
-	dest, err := d.rebindGatedDropoff(fresh, lane, entryIndex)
+	dest, cause, err := d.rebindGatedDropoff(fresh, lane, entryIndex)
 	if err != nil {
 		// The lane moved against this order and no reachable slot is available.
 		// Refusing is the safe disposition: appending into an occupied or walled
 		// slot is the exact failure the bind-at-release rule exists to prevent.
 		// The order stays staged and the next firing re-tries.
-		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, CauseGateRebindUnavailable,
+		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, cause,
 			QueueParams{Destination: lane.Name})
 		return err
 	}
@@ -1070,14 +1070,14 @@ func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node,
 		return nil
 	}
 
-	src, err := d.rebindGatedPickup(fresh, lane, entryIndex)
+	src, cause, err := d.rebindGatedPickup(fresh, lane, entryIndex)
 	if err != nil {
 		// The bin moved (a dig relocated it) and its current location is not the lane
 		// slot the order holds, or the slot is no longer reachable. Refusing is safe:
 		// appending a pickup against a slot the bin left would pick the wrong bin (or
 		// none). The order stays staged; the dig/reshuffle machinery updates the bin's
 		// location and the next firing re-tries once the lane is consistent.
-		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, CauseGateRebindUnavailable,
+		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, cause,
 			QueueParams{Destination: lane.Name})
 		return err
 	}
@@ -1110,10 +1110,10 @@ func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node,
 // The resolution itself is pickupSlotNow, shared with the classifier, because the
 // classifier's burial test had the same stale-slot bug and fixing one without the
 // other leaves the order parked before it ever reaches this function.
-func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, entryIndex int) (*nodes.Node, error) {
+func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, entryIndex int) (*nodes.Node, QueueCause, error) {
 	at, moved, err := d.pickupSlotNow(order, lane)
 	if err != nil {
-		return nil, err
+		return nil, causeForGateRebind(err), err
 	}
 	if !moved {
 		// Unchanged. The emptiness check survives for the bin_id-less fallback, where
@@ -1121,12 +1121,13 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, en
 		// whether anything is still in it — refusing beats picking nothing.
 		bins, bErr := d.db.ListBinsByNode(at.ID)
 		if bErr != nil {
-			return nil, bErr
+			return nil, causeForGateRebind(bErr), bErr
 		}
 		if len(bins) == 0 {
-			return nil, fmt.Errorf("rebind pickup: source slot %s is empty — the bin moved; refusing to release", at.Name)
+			return nil, CauseGateRebindUnavailable,
+				fmt.Errorf("rebind pickup: source slot %s is empty — the bin moved; refusing to release", at.Name)
 		}
-		return at, nil
+		return at, "", nil
 	}
 
 	// applySourceNodeAtStep, not a raw source_node write: it patches the deferred
@@ -1136,11 +1137,11 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, en
 	// a spliced plan has an earlier pickup that belongs to another leg.
 	was := order.SourceNode
 	if err := applySourceNodeAtStep(d.db, order, at.Name, entryIndex); err != nil {
-		return nil, err
+		return nil, causeForGateRebind(err), err
 	}
 	log.Printf("lane gate: retrieve %d re-bound at release %s → %s (lane %s, bin %d)",
 		order.ID, was, at.Name, lane.Name, *order.BinID)
-	return at, nil
+	return at, "", nil
 }
 
 // rebindGatedDropoff re-resolves the order's dropoff against the lane AS IT
@@ -1206,24 +1207,31 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, en
 // The move takes the new slot BEFORE releasing the old one, so a failure part-way
 // leaves the order holding exactly what it held before. Holding two slot rows for
 // the instant between is legal: the uniqueness index is per NODE, not per order.
-func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node, entryIndex int) (*nodes.Node, error) {
+func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node, entryIndex int) (*nodes.Node, QueueCause, error) {
 	current, err := d.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
-		return nil, err
+		return nil, causeForGateRebind(err), err
 	}
 	best, err := d.db.FindStoreSlotInLaneExcluding(lane.ID, order.ID)
 	if err != nil {
-		return nil, err // no reachable empty slot right now — refuse to release
+		// No reachable empty slot right now — refuse to release. THIS is the
+		// refusal CauseGateRebindUnavailable was written for, and the only one.
+		return nil, CauseGateRebindUnavailable, err
 	}
 	if current != nil && best.ID == current.ID {
-		return current, nil // still the right slot; no writes at all
+		return current, "", nil // still the right slot; no writes at all
 	}
 
+	// THE CAUSE IS DETERMINED AT THE REFUSAL, beside the error, and returned with
+	// it — the shape ReserveStorageDropoff already uses and that
+	// TestRefusalClassifiersAreNotReimplementedScan exists to keep. A caller that
+	// re-derives a classification from a store it has to read again is how a
+	// failed database read got parked as slot contention.
 	if err := claimStoreSlot(d.db, order, best); err != nil {
-		return nil, err
+		return nil, causeForGateRebind(err), err
 	}
 	if err := d.confirmDropoffSlot(order, best); err != nil {
-		return nil, err
+		return nil, causeForGateRebind(err), err
 	}
 	if current != nil {
 		if rErr := d.db.ReleaseSlotClaim(current.ID, order.ID); rErr != nil {
@@ -1245,7 +1253,7 @@ func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node, e
 	// empty into the lane and put both of the order's bins in one slot — see
 	// applyPlanNode for the full failure and PLAN §R.5 for the specimens.
 	if err := applyDeliveryNodeAtStep(d.db, order, best.Name, entryIndex); err != nil {
-		return nil, err
+		return nil, causeForGateRebind(err), err
 	}
 	// AND THE PER-BIN LEDGER FOLLOWS THE PLAN. The two lines above move the two
 	// copies the robot is driven from; order_bins.dest_node is the third, and until
@@ -1257,7 +1265,7 @@ func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node, e
 	d.refreshOrderBinDestinations(order)
 	log.Printf("lane gate: order %d re-bound at release %s → %s (lane %s)",
 		order.ID, nodeName(current), best.Name, lane.Name)
-	return best, nil
+	return best, "", nil
 }
 
 func nodeName(n *nodes.Node) string {

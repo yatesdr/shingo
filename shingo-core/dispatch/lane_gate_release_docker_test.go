@@ -794,7 +794,7 @@ func TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff(t *testing.T) {
 			"the candidate walk no longer names the leg the gate speaks for", entryIdx)
 	}
 
-	rebound, err := d.rebindGatedDropoff(swap, lane, entryIdx)
+	rebound, _, err := d.rebindGatedDropoff(swap, lane, entryIdx)
 	if err != nil {
 		t.Fatalf("rebind: %v", err)
 	}

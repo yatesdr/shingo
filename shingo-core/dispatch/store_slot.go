@@ -93,6 +93,52 @@ func causeForStorageDropoff(err error) QueueCause {
 	}
 }
 
+// causeForGateRebind names why a release-time re-bind refused, from the typed
+// error the callee already produced.
+//
+// ── IT USED TO STAMP ONE CAUSE OVER EVERY ANSWER ──────────────────────────
+//
+// Both release arms wrote CauseGateRebindUnavailable on ANY re-bind error. That
+// cause means one specific thing — "this order's bin has no slot in this lane to
+// rebind to" — and the callee already distinguishes the others properly, because
+// they END DIFFERENTLY. claimStoreSlot says so in as many words: "a contended
+// slot clears when a carrier leaves, and an unreadable one clears when the
+// database answers. Collapsing them told an operator to go and look at a slot
+// that was probably empty." The caller then collapsed them anyway, into a third
+// name that describes neither.
+//
+// MEASURED, 12c snapshot: the specific answer survived only in the reservation
+// layer's error. The ORDER ROW — what a board renders and what a forensic query
+// groups by — carried the generic one.
+//
+// ── WHY IT MAPS DIRECTLY RATHER THAN DELEGATING ───────────────────────────
+//
+// causeForStorageDropoff is its sibling and folds the unreadable case into its
+// CauseCapacityCheckFailed default, which is right THERE — that site's default
+// is the undetermined answer for a capacity decision. Here the undetermined
+// answer is "the re-bind failed", and a failed READ has its own name already
+// (CauseReadFailed: "NOT lane-busy, and the separation is the point — during a
+// database outage dozens of orders park at once, and a surface that renders that
+// as congestion sends someone to look at the wrong thing"). Delegating and then
+// re-mapping the default would launder a classified error back into an
+// unclassified one.
+//
+// The default arm is CauseGateRebindUnavailable, and it is honest: it is reached
+// when FindStoreSlotInLaneExcluding found nothing at all, which is the refusal
+// that cause was written for.
+func causeForGateRebind(err error) QueueCause {
+	switch {
+	case err == nil:
+		return CauseGateRebindUnavailable
+	case errors.Is(err, ErrSlotContended):
+		return CauseStoreSlotContended
+	case errors.Is(err, ErrSlotUnreadable):
+		return CauseReadFailed
+	default:
+		return CauseGateRebindUnavailable
+	}
+}
+
 // claimStoreSlot atomically secures `node` as a store order's destination slot
 // (#115/#117). Two concurrent stores that resolve the same destination used to
 // both pass a capacity READ and both dispatch, dropping two bins into one
