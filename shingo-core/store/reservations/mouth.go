@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"slices"
+
+	"shingo/protocol/clock"
 )
 
 // Mode is a mouth reservation's work direction — the reservations.mode column
@@ -272,9 +274,9 @@ func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, s
 			}
 		case admitFresh:
 			if _, err := tx.Exec(
-				`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode)
-				 VALUES ($1, 'mouth', $2, 'confirmed', $3, $4)`,
-				owner, lane, reservedBy, string(mode),
+				`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode, created_at)
+				 VALUES ($1, 'mouth', $2, 'confirmed', $3, $4, $5)`,
+				owner, lane, reservedBy, string(mode), clock.Now().UTC(),
 			); err != nil {
 				return fmt.Errorf("reservations acquire-lanes: insert lane %d: %w", lane, err)
 			}
@@ -798,9 +800,9 @@ func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy 
 		return HandOffPickerNotCollector, tx.Commit()
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode)
-		 VALUES ($1, 'mouth', $2, 'confirmed', $3, $4)`,
-		picker, laneID, reservedBy, string(ModeOutbound)); err != nil {
+		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode, created_at)
+		 VALUES ($1, 'mouth', $2, 'confirmed', $3, $4, $5)`,
+		picker, laneID, reservedBy, string(ModeOutbound), clock.Now().UTC()); err != nil {
 		return HandOffNoDigRow, fmt.Errorf("reservations hand-off-lane: insert outbound row: %w", err)
 	}
 	return HandOffConverted, tx.Commit()
@@ -870,14 +872,14 @@ func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy 
 // of the row rather than of the interleaving.
 func AcquireOccupancy(db Execer, owner, nodeID int64) (bool, error) {
 	res, err := db.Exec(
-		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by)
-		 SELECT $1, `+OccupancyKindSQL()+`, $2, 'confirmed', $3
+		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, created_at)
+		 SELECT $1, `+OccupancyKindSQL()+`, $2, 'confirmed', $3, $4
 		 WHERE NOT EXISTS (
 		   SELECT 1 FROM reservations
 		   WHERE order_id=$1 AND resource_kind=`+OccupancyKindSQL()+` AND node_id=$2
 		     AND state IN ('pending','confirmed')
 		 )`,
-		owner, nodeID, "lane-occupancy",
+		owner, nodeID, "lane-occupancy", clock.Now().UTC(),
 	)
 	if err != nil {
 		return false, fmt.Errorf("reservations acquire-occupancy: %w", err)

@@ -503,9 +503,9 @@ func supersedeBinLedger(tx *sql.Tx, binID, childID int64) error {
 		return fmt.Errorf("clear bin ledger for bin %d: %w", binID, err)
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO reservations (order_id, resource_kind, bin_id, state, reserved_by)
-		 VALUES ($1, 'bin', $2, 'confirmed', 'compound-child')`,
-		childID, binID); err != nil {
+		`INSERT INTO reservations (order_id, resource_kind, bin_id, state, reserved_by, created_at)
+		 VALUES ($1, 'bin', $2, 'confirmed', 'compound-child', $3)`,
+		childID, binID, clock.Now().UTC()); err != nil {
 		return fmt.Errorf("write bin ledger for bin %d child %d: %w", binID, childID, err)
 	}
 	return nil

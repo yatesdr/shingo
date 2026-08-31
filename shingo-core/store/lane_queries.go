@@ -589,8 +589,15 @@ func (db *DB) SpokenForBinsBehind(placedNodeID int64, now time.Time) ([]SpokenFo
 		       (b.claimed_by IS NOT NULL) AS hard_claim,
 		       o.id, o.status, (o.parent_order_id IS NOT NULL) AS is_child,
 		       o.created_at AS held_since,
+		       -- ONE CLOCK FOR BOTH ARMS. These two branches produce values that
+		       -- land in the same column and are compared against each other, so
+		       -- measuring them against different clocks makes the column mean two
+		       -- things. reservations.created_at is now stamped from the app clock
+		       -- like orders.created_at, so $2 is the right reference for both;
+		       -- SQL now() is the DATABASE's wall clock and is months away from it
+		       -- under the sim's fast-forward.
 		       EXTRACT(EPOCH FROM CASE
-		           WHEN r.created_at IS NOT NULL THEN now() - r.created_at
+		           WHEN r.created_at IS NOT NULL THEN $2::timestamptz - r.created_at
 		           ELSE $2::timestamptz - o.created_at
 		       END) AS held_secs
 		FROM nodes held

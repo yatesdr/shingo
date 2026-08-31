@@ -92,13 +92,19 @@ func UpsertMission(db *sql.DB, t *Mission) error {
 	if robotAlarms == "" {
 		robotAlarms = "[]"
 	}
+	// created_at explicit from clock.Now(), for the reason InsertEvent states one
+	// function up: a DDL NOW() stamps the DATABASE's wall clock, and every other
+	// row this one is read beside — orders, order_history, mission_events — is
+	// stamped with the app clock. Under the sim's fast-forward clock the two are
+	// months apart, so a telemetry row lands in a different year from the order
+	// it describes and every duration computed across the pair is nonsense.
 	_, err := db.Exec(`INSERT INTO mission_telemetry
 		(order_id, vendor_order_id, robot_id, station_id, order_type,
 		 source_node, delivery_node, terminal_state,
 		 vendor_created, vendor_completed, core_created, core_completed,
 		 duration_ms, vendor_duration_ms,
-		 blocks_json, errors_json, warnings_json, notices_json, robot_alarms_json)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		 blocks_json, errors_json, warnings_json, notices_json, robot_alarms_json, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		ON CONFLICT (order_id) DO UPDATE SET
 		 robot_id=EXCLUDED.robot_id, terminal_state=EXCLUDED.terminal_state,
 		 vendor_created=EXCLUDED.vendor_created, vendor_completed=EXCLUDED.vendor_completed,
@@ -111,7 +117,7 @@ func UpsertMission(db *sql.DB, t *Mission) error {
 		t.SourceNode, t.DeliveryNode, t.TerminalState,
 		t.VendorCreated, t.VendorCompleted, t.CoreCreated, t.CoreCompleted,
 		t.DurationMS, t.VendorDurationMS,
-		t.BlocksJSON, t.ErrorsJSON, t.WarningsJSON, t.NoticesJSON, robotAlarms)
+		t.BlocksJSON, t.ErrorsJSON, t.WarningsJSON, t.NoticesJSON, robotAlarms, clock.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("upsert mission telemetry: %w", err)
 	}

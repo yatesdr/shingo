@@ -267,17 +267,22 @@ func (s *BinService) NoteBurialShadow(binID, toNodeID, placedBy int64) {
 		// every order-clock hold came out ~15 months negative, hit the clamp, and
 		// printed `held_for=0s` on every line of two full runs.
 		//
-		// NOW EACH SUBTRACTION IS INSIDE ONE CLOCK — which is not the same thing as
-		// "both ends are the order clock", which this used to say and which is true
-		// of only one of the two arms. The SQL branches (lane_queries.go:592-595):
+		// NOW BOTH ARMS ARE IN THE ORDER CLOCK, and the SQL says so in as many
+		// words (store/lane_queries.go, the held_secs CASE):
 		//
-		//	reservation present → now() − reservations.created_at   (wall, wall)
-		//	otherwise           → $2     − orders.created_at        (order, order)
+		//	reservation present → $2::timestamptz − reservations.created_at
+		//	otherwise           → $2::timestamptz − orders.created_at
 		//
-		// Two domains, each self-consistent, because the two sources genuinely live
-		// in two clocks and a single `now` cannot be right for both. The invariant
-		// to preserve is per-arm, not global: never mix the ends of one
-		// subtraction. Neither clamp nor COALESCE stands between the reader and the
+		// $2 is the app clock, the one that writes orders.created_at. This
+		// paragraph used to describe the reservation arm as wall-minus-wall, which
+		// WAS true when it was written and stopped being true once
+		// reservations.created_at started being stamped from the app clock rather
+		// than taking the database default. One reference for both arms is only
+		// correct BECAUSE both columns are now written by the same clock — the
+		// invariant is still "never mix the ends of one subtraction", and the way
+		// it is met is that there is one clock here, not two. SQL now() is the
+		// DATABASE's wall clock and is months from the sim's; it must not come
+		// back. Neither clamp nor COALESCE stands between the reader and the
 		// number.
 		heldFor := b.HeldFor
 		if b.HardClaim {

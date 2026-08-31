@@ -30,6 +30,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 )
 
 // Execer is the minimal interface all functions in this package need.
@@ -188,13 +189,13 @@ func AcquireSlot(db Execer, orderID, nodeID int64, reservedBy string) error {
 // ErrReservationConflict — handle such a constraint's conflict deliberately.
 func acquire(db Execer, orderID int64, ref Ref, reservedBy string) error {
 	result, err := db.Exec(
-		`INSERT INTO reservations (order_id, resource_kind, bin_id, node_id, state, reserved_by)
+		`INSERT INTO reservations (order_id, resource_kind, bin_id, node_id, state, reserved_by, created_at)
 		 VALUES ($1, $2,
 		   CASE WHEN $2 = 'bin' THEN $3::bigint END,
 		   CASE WHEN $2 <> 'bin' THEN $3::bigint END,
-		   'pending', $4)
+		   'pending', $4, $5)
 		 ON CONFLICT DO NOTHING`,
-		orderID, string(ref.Kind), ref.ID, reservedBy,
+		orderID, string(ref.Kind), ref.ID, reservedBy, clock.Now().UTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("reservations acquire: %w", err)
