@@ -220,6 +220,35 @@ const (
 	// The wait is shorter than it looks: a promise on a bin is a plan to remove
 	// it, so the dig's lane is cleared by the holder's own drive.
 	CauseDigBlockerPromised QueueCause = "dig-blocker-promised"
+	// CauseDigBlockerWaitsOnThisDig — the bin the dig must move is held by an
+	// order THIS DIG IS ITSELF REFUSING. A circular wait, not a stalled holder.
+	//
+	// A SEPARATE CAUSE BECAUSE THE ACTION DIFFERS, which is what the releaser
+	// vocabulary is actually for. dig-blocker-order-stopped sends an engineer to
+	// resolve the holder, on §R.115's reading that it "is usually a configuration
+	// fault or a genuine breakdown". Here the holder is FINE: it has a robot, it
+	// is refused with lane-dig-active, and the lane it cannot enter is the one
+	// this dig holds. An engineer sent to fix it finds nothing to fix, and the
+	// thing that has to move is the DIG.
+	//
+	// MEASURED, demo.yaml 2026-08-31. Order 42 took MOUTH/dig on Lane_03 at
+	// 20:00:27.583; order 43 was granted bin 21 — the blocker at that lane's
+	// mouth, and its own pickup target — 27ms later. 42 then waited for 43 to
+	// move a bin 43 could not reach. Both stood 122 sim-minutes holding AMR-04
+	// and AMR-02, and BRKT raised nothing for the rest of the run while the board
+	// told an operator to go and sort out an order that was working correctly.
+	//
+	// §R.115a NAMED THIS TRIGGER IN ADVANCE: "IF ORDER n TURNS OUT TO BE FINE,
+	// that is the named watch item… ONE confirmed false alarm re-opens the split."
+	// This is that split — the false-alarm half of the population, given its own
+	// name so the true half keeps its meaning.
+	//
+	// THE POPULATION SHOULD NOW BE NEARLY EMPTY. reservations.acquire refuses a
+	// bin claim inside a foreign dug lane, so the grant that creates this shape
+	// cannot normally happen. What survives is the mutual-miss window that arm
+	// documents — two overlapping transactions neither of which sees the other's
+	// row — which is why this is a cause and not an assertion.
+	CauseDigBlockerWaitsOnThisDig QueueCause = "dig-blocker-waits-on-this-dig"
 	// CauseStagedOwnDig — a robot is standing at a lane's mark while the order it
 	// belongs to digs that lane open with its OWN children (§R.104).
 	//

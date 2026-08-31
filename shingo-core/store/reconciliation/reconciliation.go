@@ -460,6 +460,12 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 	}
 	anomalies = append(anomalies, orphanManifestAnomalies...)
 
+	dugLaneClaims, err := listClaimsInsideForeignDugLanes(db)
+	if err != nil {
+		return nil, err
+	}
+	anomalies = append(anomalies, dugLaneClaims...)
+
 	return anomalies, nil
 }
 
@@ -869,4 +875,86 @@ func stationDwellRow(status, queueCause string) (issue, action, detail string, o
 				"station, or use Core's hard release", true
 	}
 	return "", "", "", false
+}
+
+// listClaimsInsideForeignDugLanes counts the one state that can now only be
+// reached by a MUTUAL MISS, which is what makes it worth a row.
+//
+// ── WHY THIS IS AN INSTRUMENT AND NOT A GUARD ─────────────────────────────
+//
+// A bin or slot claimed by one order, inside a lane another order's dig holds,
+// is a circular wait: the dig waits for the holder to move its resource, and the
+// dig's own lock is what refuses the holder entry. Measured on demo.yaml
+// 2026-08-31, two robots stood 122 sim-minutes in exactly that shape and the
+// payload behind the digger raised nothing for the rest of the run.
+//
+// reservations.acquire now refuses to create it. What survives is the window that
+// arm documents: a dig lock and a foreign claim in genuinely overlapping
+// transactions cannot see each other's uncommitted rows, so both commit. A
+// SYMMETRIC check does not close that — two parties looking for each other is not
+// serialization — and the real repair is a shared serialization point
+// (pg_advisory_xact_lock on the lane being the cheapest).
+//
+// THAT REPAIR IS NOT BUILT, DELIBERATELY, and this row is why. The 105ms window
+// the acquire closed was measured and routine; this one is a statement wide and
+// has never been observed on any run. Building a serialization primitive for a
+// population no run has produced is the shape this house refuses — so the
+// population is COUNTED instead, and with the acquire arm in place any non-zero
+// reading here is by definition a mutual miss, because that is the only route
+// left. One confirmed occurrence earns the advisory lock, with an incident
+// attached rather than an argument.
+//
+// SEVERITY IS `warning` AND THE ACTION IS A HUMAN'S. It is not `error`, because
+// the plant is not wrong — it is wedged, and the wedge is two healthy orders
+// refusing each other. Releasing the dig's lane frees both, which is what the
+// dispatch-side wait (dig-blocker-waits-on-this-dig) tells the operator.
+func listClaimsInsideForeignDugLanes(db *sql.DB) ([]*Anomaly, error) {
+	var anomalies []*Anomaly
+	rows, err := db.Query(`
+		SELECT r.order_id, r.resource_kind, r.bin_id, n.name, lane.name, dig_hold.order_id
+		  FROM reservations r
+		  JOIN nodes n
+		    ON n.id = COALESCE((SELECT b.node_id FROM bins b WHERE b.id = r.bin_id), r.node_id)
+		  JOIN nodes lane ON lane.id = n.parent_id
+		  JOIN reservations dig_hold
+		    ON dig_hold.resource_kind = 'mouth'
+		   AND dig_hold.node_id = lane.id
+		   AND dig_hold.mode = 'dig'
+		   AND ` + reservations.ActiveStateSQL("dig_hold.") + `
+		 WHERE r.resource_kind IN ('bin','slot')
+		   AND ` + reservations.ActiveStateSQL("r.") + `
+		   AND dig_hold.order_id <> r.order_id
+		   AND dig_hold.order_id <> COALESCE(
+		         (SELECT o.parent_order_id FROM orders o WHERE o.id = r.order_id), r.order_id)
+		 ORDER BY r.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var holderID, diggerID int64
+		var kind, nodeName, laneName string
+		var binID *int64
+		if err := rows.Scan(&holderID, &kind, &binID, &nodeName, &laneName, &diggerID); err != nil {
+			return nil, err
+		}
+		holder := holderID
+		anomalies = append(anomalies, &Anomaly{
+			Category:          "lane_coordination",
+			Severity:          "warning",
+			Issue:             "claim_inside_foreign_dug_lane",
+			RecommendedAction: "release_the_dig_lane",
+			OrderID:           &holder,
+			BinID:             binID,
+			StationID:         nodeName,
+			Detail: fmt.Sprintf("order %d holds a %s at %s, inside lane %s which order %d's dig holds. "+
+				"Neither can proceed: the dig waits for this %s to move, and the dig's own lock is "+
+				"what refuses order %d entry. Release order %d's lane. NOTE: reservations.acquire "+
+				"refuses to create this, so reaching it means two overlapping transactions missed "+
+				"each other — the first confirmed occurrence is the trigger to serialize the lane "+
+				"(pg_advisory_xact_lock), which is deliberately not built until one is seen",
+				holderID, kind, nodeName, laneName, diggerID, kind, holderID, diggerID),
+		})
+	}
+	return anomalies, rows.Err()
 }

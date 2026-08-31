@@ -265,7 +265,7 @@ func TestAcquiringOrphanClaims_SweepsTheSlotDual(t *testing.T) {
 // testutilAcquire is reservations.Acquire with the fixture's error handling.
 func testutilAcquire(t *testing.T, db *store.DB, orderID, binID int64) {
 	t.Helper()
-	if err := reservations.Acquire(db, orderID, binID, "test"); err != nil {
+	if err := reservations.Acquire(db, orderID, orderID, binID, "test"); err != nil {
 		t.Fatalf("acquire bin %d for order %d: %v", binID, orderID, err)
 	}
 }

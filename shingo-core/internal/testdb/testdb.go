@@ -54,6 +54,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/config"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -1249,7 +1250,10 @@ func CreateOrder(t *testing.T, db *store.DB, opts ...func(*orders.Order)) *order
 // order. orderID must reference a real order (see CreateOrder).
 func ClaimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
 	t.Helper()
-	if err := reservations.Acquire(db, orderID, binID, "test"); err != nil {
+	// laneOwner = orderID: fixtures build plain orders, and an order with no
+	// compound parent owns its own lane rows. A fixture that needs the CHILD
+	// exemption must pass the parent, which is what production does.
+	if err := reservations.Acquire(db, orderID, orderID, binID, "test"); err != nil {
 		t.Fatalf("testdb.ClaimBinForTest Acquire(bin=%d order=%d): %v", binID, orderID, err)
 	}
 	if err := db.ClaimBin(binID, orderID); err != nil {
@@ -1280,7 +1284,7 @@ func ClaimSlotForTest(t *testing.T, db *store.DB, nodeID, orderID int64) {
 // a real order (see CreateOrder).
 func ReserveBin(t *testing.T, db *store.DB, orderID, binID int64) {
 	t.Helper()
-	if err := reservations.Acquire(db, orderID, binID, "test"); err != nil {
+	if err := reservations.Acquire(db, orderID, orderID, binID, "test"); err != nil {
 		t.Fatalf("testdb.ReserveBin Acquire(bin=%d order=%d): %v", binID, orderID, err)
 	}
 }
@@ -1305,5 +1309,42 @@ func Envelope() *protocol.Envelope {
 	return &protocol.Envelope{
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-1"},
 		Dst: protocol.Address{Role: protocol.RoleCore},
+	}
+}
+
+// ClaimBinInDugLaneForTest is ClaimBinForTest for the ONE state production now
+// refuses: a bin hard-claimed by a foreign order INSIDE a lane that another
+// order's dig holds.
+//
+// reservations.Acquire's dig arm exists to stop that state being CREATED, and it
+// stops these fixtures creating it too — which is the arm working. But the state
+// is still REACHABLE: a mouth row has no unique index, so a dig lock and a
+// foreign bin claim committing in overlapping transactions can miss each other.
+// The stale-dig arms are what the plant does once it is already in that state, so
+// they still have to be able to build it.
+//
+// It writes the reservation row directly — the same sanctioned-bypass shape as
+// ClaimSlotForTest. Use it ONLY where the dug-lane collision IS the subject of
+// the test. Everywhere else ClaimBinForTest is the right call, and its refusal is
+// a real signal rather than an obstacle: if an ordinary fixture starts failing on
+// ErrLaneDugByAnother, the fixture is building a state the plant now prevents.
+func ClaimBinInDugLaneForTest(t *testing.T, db *store.DB, binID, orderID int64) {
+	t.Helper()
+	// PENDING, then claim, then confirm — the same three steps ClaimBinForTest
+	// runs. Only the first is bypassed: the claim primitives carry a demoted-CAS
+	// guard that requires a PENDING reservation for this order+bin, so inserting a
+	// confirmed row directly fails the claim with "bin is locked, already claimed,
+	// or does not exist".
+	if _, err := db.DB.Exec(
+		`INSERT INTO reservations (order_id, resource_kind, bin_id, state, reserved_by, created_at)
+		 VALUES ($1, 'bin', $2, 'pending', 'test-dug-lane-bypass', $3)`,
+		orderID, binID, clock.Now().UTC()); err != nil {
+		t.Fatalf("testdb.ClaimBinInDugLaneForTest reserve(bin=%d order=%d): %v", binID, orderID, err)
+	}
+	if err := db.ClaimBin(binID, orderID); err != nil {
+		t.Fatalf("testdb.ClaimBinInDugLaneForTest ClaimBin(bin=%d order=%d): %v", binID, orderID, err)
+	}
+	if err := reservations.Confirm(db, orderID, binID); err != nil {
+		t.Fatalf("testdb.ClaimBinInDugLaneForTest Confirm(bin=%d order=%d): %v", binID, orderID, err)
 	}
 }

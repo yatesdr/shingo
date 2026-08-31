@@ -28,7 +28,7 @@ func TestDeliveryReleasesReservationAndSlot(t *testing.T) {
 	reAcquirable := func(t *testing.T, binID int64) {
 		t.Helper()
 		probe := testdb.CreateOrder(t, db)
-		if err := reservations.Acquire(db, probe.ID, binID, "test"); err != nil {
+		if err := reservations.Acquire(db, probe.ID, probe.ID, binID, "test"); err != nil {
 			t.Errorf("bin %d not re-acquirable after delivery: %v (reservation leaked?)", binID, err)
 		}
 	}

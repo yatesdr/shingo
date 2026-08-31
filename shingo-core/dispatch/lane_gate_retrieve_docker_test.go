@@ -364,7 +364,10 @@ func TestGateChoreo_RetrieveRebindsWhenItsBinMoved(t *testing.T) {
 	// The claim + bin_id stamp the scanner writes before it dispatches a plain
 	// order (fulfillment/scanner.go). The rebind resolves through bin_id, so an
 	// unclaimed retrieve would be a fixture that dodges the mechanism under test.
-	testdb.ClaimBinForTest(t, db, target.ID, order.ID)
+	// Bypass, because the lane is already dug above and reservations.Acquire now
+	// refuses a foreign claim inside one. The collision is this fixture's premise,
+	// not an accident — see ClaimBinInDugLaneForTest.
+	testdb.ClaimBinInDugLaneForTest(t, db, target.ID, order.ID)
 	if err := db.UpdateOrderBinID(order.ID, target.ID); err != nil {
 		t.Fatalf("stamp bin_id: %v", err)
 	}

@@ -502,6 +502,35 @@ var causeReleasers = []causeReleaser{
 			"cannot classify",
 	},
 	{
+		cause: CauseDigBlockerWaitsOnThisDig,
+		// Same door as CauseDigBlockerStopped, and for the same structural reason:
+		// the acceptance arm is the only caller that asks the liveness question
+		// before it summons, so it is the only one that can tell this shape from a
+		// genuinely stalled holder.
+		populations: []WaitPopulation{PopGateStaged},
+		// A PERSON AGAIN, BUT A DIFFERENT INSTRUCTION, which is the whole reason
+		// this is not filed under dig-blocker-order-stopped. That cause tells an
+		// engineer to go and resolve the holder. Here the holder is working
+		// correctly and the deadlock is the dig's; telling somebody to fix the
+		// holder sends them to a row with nothing wrong in it, and §R.115a called
+		// exactly that out as the false-alarm class worth splitting.
+		//
+		// It is NOT resolved automatically, and that is a scope statement rather
+		// than a claim that it could not be. Releasing the dig's lane so the holder
+		// can take its bin is the obvious repair and the machinery exists
+		// (dissolveCompound already drops the lock and keeps the demand alive), but
+		// §R.115 refused automatic dissolve for this family by name and the owner
+		// has not re-ruled it. So the wait says who has to act and what the act is.
+		//
+		// The floor re-asks every 60s, so the moment the lane frees — by hand, or
+		// because the holder's claim goes away — the next pass plans the dig.
+		what: "the deadlock is broken by hand: this dig's lane is released so the order holding the " +
+			"blocker can reach it, after which the blocker leaves and the dig re-plans. Do NOT go " +
+			"looking for a fault in the holding order — it is refused on THIS dig's own lane lock " +
+			"and is behaving correctly. Core does not break the cycle itself: §R.115 refused " +
+			"automatic dissolve for this family and that ruling stands",
+	},
+	{
 		// THE ROBOT IS AT THE MARK AND THE DIGGING IS ITS OWN (§R.104).
 		//
 		// PopGateStaged, and only that: the waiter is a dweller, and it stays one

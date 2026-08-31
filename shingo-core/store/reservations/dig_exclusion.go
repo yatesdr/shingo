@@ -21,6 +21,14 @@ import "fmt"
 //     either, and was the unlisted FOURTH reader. Added in MG3-1b, through
 //     NotForeignDugArm, which renders the predicate below rather than spelling
 //     it — so the count went from three answers to four readers of ONE.
+//   - THE BIN CLAIM (reservations.acquire) is the FIFTH, and the only one that is
+//     not a filter. The four above all answer at FIND time, and a find-time answer
+//     cannot hold: measured 2026-08-31, order 43 resolved a lane at :27.505 while
+//     it carried no dig row, order 42 took MOUTH/dig on it at :27.583, and 43 was
+//     granted a bin inside that lane at :27.610. 43 then owned the one bin 42's
+//     dig had to move, in a corridor 43 could never enter — two robots stood 122
+//     sim-minutes and the payload behind 42 went dark. The acquire is the
+//     serialization point, so it asks there, against the insert's own snapshot.
 //
 // The empty finders are the reason this list is worth keeping accurate. This
 // file declared the dig-lock question closed at exactly three readers; a closed

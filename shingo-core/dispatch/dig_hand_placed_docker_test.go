@@ -52,7 +52,7 @@ func TestDigTakesAHandPlacedBin_FailsLoudlyWithItsOwnCode(t *testing.T) {
 		SourceIntent: SourceIntentForType(OrderTypeMove),
 	}
 	testutil.MustNoErr(t, db.CreateOrder(byHand), "create hand-placed move")
-	testutil.MustNoErr(t, reservations.Acquire(db.DB, byHand.ID, blocker.ID, "test"), "reserve blocker")
+	testutil.MustNoErr(t, reservations.Acquire(db.DB, byHand.ID, byHand.ID, blocker.ID, "test"), "reserve blocker")
 
 	// THE DIG OUTRANKS, a stated precondition since §7 rather than a property of
 	// digs. Without it the hand-placed move — seeded first, so older at equal

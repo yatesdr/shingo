@@ -252,7 +252,7 @@ func TestWidenSupplyPickups_OwnHoldSkipsFinder(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: "WHOLD-LINE"},
 	}
 	owner := mkWidenOrder(t, db, "widen-hold-owner", "PART-H", "WHOLD-A", "WHOLD-LINE", "", steps)
-	testutil.MustNoErr(t, reservations.Acquire(db.DB, owner.ID, bin.ID, "test"), "acquire own hold")
+	testutil.MustNoErr(t, reservations.Acquire(db.DB, owner.ID, owner.ID, bin.ID, "test"), "acquire own hold")
 
 	widened, changed, hold := d.widenSupplyPickups(owner, steps)
 	if hold != nil {

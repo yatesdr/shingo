@@ -248,7 +248,10 @@ func TestStaleDig_HardClaimedObstruction_Waits(t *testing.T) {
 		o.EdgeUUID = "sd-wait-hauler"
 		o.Status = protocol.StatusDispatched
 	})
-	testdb.ClaimBinForTest(t, db, wall.ID, hauler.ID)
+	// The dug-lane collision IS this test's subject, and reservations.Acquire now
+	// refuses to create it — see ClaimBinInDugLaneForTest for why the state stays
+	// reachable and therefore still worth an arm.
+	testdb.ClaimBinInDugLaneForTest(t, db, wall.ID, hauler.ID)
 
 	before, err := db.ListChildOrders(parent.ID)
 	testutil.MustNoErr(t, err, "list legs before")
@@ -674,7 +677,10 @@ func TestStaleDig_DeadClaimantObstruction_Dissolves(t *testing.T) {
 				o.EdgeUUID = tc.tag + "-hauler"
 				o.Status = protocol.StatusDispatched
 			})
-			testdb.ClaimBinForTest(t, db, wall.ID, hauler.ID)
+			// The dug-lane collision IS this test's subject, and reservations.Acquire now
+			// refuses to create it — see ClaimBinInDugLaneForTest for why the state stays
+			// reachable and therefore still worth an arm.
+			testdb.ClaimBinInDugLaneForTest(t, db, wall.ID, hauler.ID)
 
 			// PRECONDITION, or the assertion below is vacuous: while the claimant is
 			// alive this must WAIT, so the dissolve that follows is attributable to

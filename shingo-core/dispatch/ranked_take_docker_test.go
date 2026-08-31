@@ -31,7 +31,7 @@ func promiseHolder(t *testing.T, db *store.DB, uuid string, priority int, binID 
 		o.Status = StatusSourcing
 		o.Priority = priority
 	})
-	testutil.MustNoErr(t, reservations.Acquire(db.DB, o.ID, binID, "test-promise"), "the holder's promise")
+	testutil.MustNoErr(t, reservations.Acquire(db.DB, o.ID, o.ID, binID, "test-promise"), "the holder's promise")
 	testutil.MustNoErr(t, db.UpdateOrderBinID(o.ID, binID), "the holder's pointer")
 	got, err := db.GetOrder(o.ID)
 	testutil.MustNoErr(t, err, "re-read the holder")

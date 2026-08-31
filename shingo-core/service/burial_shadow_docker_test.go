@@ -62,7 +62,7 @@ func binAt(t *testing.T, db *store.DB, label string, slot *nodes.Node) *bins.Bin
 func softHold(t *testing.T, db *store.DB, b *bins.Bin, age time.Duration) *orders.Order {
 	t.Helper()
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "sourcing" })
-	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, b.ID, "test"), "acquire soft hold")
+	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, b.ID, "test"), "acquire soft hold")
 	_, err := db.Exec(`UPDATE reservations SET created_at = NOW() - $1::interval WHERE order_id=$2 AND bin_id=$3`,
 		age.String(), holder.ID, b.ID)
 	testutil.MustNoErr(t, err, "backdate hold")

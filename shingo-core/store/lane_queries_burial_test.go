@@ -87,7 +87,7 @@ func TestBurialGuard_SoftHoldIsBuriable(t *testing.T) {
 
 	deep := testdb.CreateBinAtNode(t, db, "BIN-BG-SOFT", slot3ID, "BIN-BG-SOFT")
 	parked := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "sourcing" })
-	if err := reservations.Acquire(db.DB, parked.ID, deep.ID, "test"); err != nil {
+	if err := reservations.Acquire(db.DB, parked.ID, parked.ID, deep.ID, "test"); err != nil {
 		t.Fatalf("acquire soft hold: %v", err)
 	}
 
