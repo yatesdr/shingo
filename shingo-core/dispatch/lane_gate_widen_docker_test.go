@@ -266,3 +266,163 @@ func binsIn(t *testing.T, db *store.DB, slots ...*nodes.Node) int {
 	}
 	return n
 }
+
+// TestWiden_ATierTwoWallIsAReasonToReAim is the shape the whole oracle round is
+// for, and it is the one the widening could not reach until it moved.
+//
+// ── THE SHAPE, FROM THE PLANT ─────────────────────────────────────────────
+//
+// demo.yaml 2026-08-30, Lane_06:
+//
+//	134  complex ASSY  staged  lane-deeper-pending  AMR-03  -> SMN_016 (depth 1)
+//	132  move    ASSY  staged  lane-deeper-pending  AMR-02  -> SMN_017 (depth 2)
+//	128  complex PANEL-A queued  swap-hold                  -> SMN_018 (depth 3)
+//
+// 128 is the deepest and cannot move: it waits on a swap partner that waits on
+// PANEL-A the plant does not have. stillComingToLane counts it — correctly, it
+// is not dispatched and is genuinely still coming — so 132 is walled by Tier 2,
+// and 134 is walled behind 132. Two robots stood 39 minutes while their group
+// had free lanes.
+//
+// ── WHY IT WAS UNREACHABLE ────────────────────────────────────────────────
+//
+// The widening lived inside rebindGatedDropoff, which runs only after the
+// classifier ADMITS a candidate. So it could answer "this lane has no free slot
+// for me" and could not answer "this lane has a slot with my name on it and it
+// is not my turn" — which returns from the refusal arm and never reaches a
+// re-bind. The run reported `WIDENED: 0`, and the reason was not that the
+// population is rare.
+//
+// RED before the move: the dweller keeps its lane-deeper-pending refusal and its
+// destination, pass after pass, for as long as the deeper store cannot place.
+func TestWiden_ATierTwoWallIsAReasonToReAim(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcherWithResolver(t, db)
+
+	wall, park, w, p, bp := clearLaneFixture(t, db, "WIDEN4")
+	line := lineNode(t, db, "WIDEN4-LINE")
+
+	// THE DEEPER STORE THAT CANNOT PLACE. Not dispatched — which is exactly what
+	// makes it a legitimate blocker (stillComingToLane's first arm) and exactly
+	// what makes the wait it creates unbounded.
+	stuck := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[2].Name
+		o.Status = "queued"
+		o.PayloadCode = bp.Code
+	})
+
+	// The dweller, aimed at the shallower slot, walled by Tier 2.
+	dweller := stageGatedStore(t, db, d, line, w[1], func(o *orders.Order) { o.PayloadCode = bp.Code })
+	if !IsGateStaged(dweller) {
+		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
+	}
+	markStaged(t, db, dweller.ID)
+
+	// The refusal really is Tier 2 and not something else — if it were, this test
+	// would be about a different arm and would pass for the wrong reason.
+	laneNode, err := db.GetNode(wall.ID)
+	testutil.MustNoErr(t, err, "reload the lane")
+	fresh, err := db.GetOrder(dweller.ID)
+	testutil.MustNoErr(t, err, "reload the dweller")
+	slot, err := db.GetNodeByDotName(fresh.DeliveryNode)
+	testutil.MustNoErr(t, err, "resolve its slot")
+	v, err := d.gateEntryVerdict(laneNode, fresh, slot, false)
+	testutil.MustNoErr(t, err, "classify the dweller")
+	if v.Admitted() || v.Cause() != CauseLaneDeeperPending {
+		t.Fatalf("fixture: want a %q refusal, got admitted=%v cause=%q — this test is about the "+
+			"ordering wall, not whichever refusal happened instead",
+			CauseLaneDeeperPending, v.Admitted(), v.Cause())
+	}
+
+	// The sibling lane is empty and stays that way.
+	if n := binsIn(t, db, p...); n != 0 {
+		t.Fatalf("fixture: the sibling lane must be empty, has %d bins", n)
+	}
+	_ = stuck
+
+	// ONE PASS of the evaluator — the same call the event wiring makes.
+	d.EvaluateLaneReleases(wall.ID)
+
+	after, err := db.GetOrder(dweller.ID)
+	testutil.MustNoErr(t, err, "reload after the pass")
+	landed, err := db.GetNodeByDotName(after.DeliveryNode)
+	testutil.MustNoErr(t, err, "resolve where it is aimed now")
+	newLane, err := db.LaneForNode(landed.ID)
+	testutil.MustNoErr(t, err, "lane of that destination")
+	if newLane == nil || newLane.ID != park.ID {
+		t.Fatalf("delivery_node = %q (lane %s), want a slot in the free sibling %s. It is walled by a "+
+			"deeper store that cannot place, no dig would help, and its group has an empty aisle — "+
+			"standing there is the 39-minute wait this round exists to end",
+			after.DeliveryNode, nodeName(newLane), park.Name)
+	}
+
+	// AND THE WAIT MOVED WITH IT, or the append takes the wrong lane's occupancy.
+	// The plan's LANE WAIT, found by walking rather than by WaitIndex: the pass
+	// evaluates the new lane straight after the re-aim, so a re-aimed order is
+	// frequently already released and indexed past its wait — which is the
+	// outcome we want, not a reason to look at the wrong step.
+	var steps []resolvedStep
+	testutil.MustNoErr(t, json.Unmarshal([]byte(after.StepsJSON), &steps), "parse the patched plan")
+	sawLaneWait := false
+	for _, st := range steps {
+		if st.Action == protocol.ActionWait && st.WaitKind == WaitKindLane {
+			sawLaneWait = true
+			if st.WaitLane != park.ID {
+				t.Errorf("the lane wait names lane %d, want %d — the wait and the entry it gates must "+
+					"name one corridor, or the append takes the wrong lane's occupancy",
+					st.WaitLane, park.ID)
+			}
+		}
+	}
+	if !sawLaneWait {
+		t.Error("the patched plan has no lane wait at all — the re-aim dropped the gate")
+	}
+	if aErr := d.assertEachWaitGatesItsEntry(steps); aErr != nil {
+		t.Errorf("the patched plan does not satisfy the splice-time guard: %v", aErr)
+	}
+}
+
+// TestWiden_ATransientRefusalIsNotReAimed is the other half, and it is what
+// keeps the widened trigger from becoming churn.
+//
+// A lane-occupied refusal means a robot is INSIDE the corridor right now.
+// Occupancy is transient by construction — it ends when that robot drives out,
+// which is at most a pass or two away — so re-aiming for it spends a drive to
+// avoid a wait that was already ending. The named set in refusalCanWiden is what
+// draws that line, and this asserts the line is where it is claimed to be.
+func TestWiden_ATransientRefusalIsNotReAimed(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcherWithResolver(t, db)
+
+	wall, _, w, _, bp := clearLaneFixture(t, db, "WIDEN5")
+	line := lineNode(t, db, "WIDEN5-LINE")
+
+	// SOMEBODY IS IN THE CORRIDOR FIRST — otherwise nothing refuses the dweller
+	// and it is released rather than left standing, which is a different test.
+	occupant := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = w[0].Name
+		o.Status = "in_transit"
+	})
+	if ok, oErr := reservations.AcquireOccupancy(db.DB, occupant.ID, wall.ID); oErr != nil || !ok {
+		t.Fatalf("fixture: put a robot inside the lane: ok=%v err=%v", ok, oErr)
+	}
+
+	dweller := stageGatedStore(t, db, d, line, w[1], func(o *orders.Order) { o.PayloadCode = bp.Code })
+	if !IsGateStaged(dweller) {
+		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
+	}
+	markStaged(t, db, dweller.ID)
+	was := dweller.DeliveryNode
+
+	d.EvaluateLaneReleases(wall.ID)
+
+	after, err := db.GetOrder(dweller.ID)
+	testutil.MustNoErr(t, err, "reload after the pass")
+	if after.DeliveryNode != was {
+		t.Errorf("delivery_node = %q, want it unchanged at %q — a robot in the corridor leaves on its "+
+			"own, and re-aiming for that spends a drive to skip a wait that was already ending",
+			after.DeliveryNode, was)
+	}
+}

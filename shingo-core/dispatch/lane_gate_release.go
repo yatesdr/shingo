@@ -206,7 +206,7 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 	//
 	// Outside it, the nested pass is harmless and bounded: it finds the dig lock
 	// held, refuses everyone with lane-dig-active, and returns.
-	acceptance, wanted, freed := d.evaluateLaneReleasesPass(lane)
+	acceptance, wanted, freed, widened := d.evaluateLaneReleasesPass(lane)
 	// AND THE SAME SPLIT COVERS THE DWELL'S EXIT. A released dweller drives out of
 	// this lane and drops its occupancy row inside the pass, where the fact becomes
 	// true — but the re-drive that fact enables cannot run there: it dispatches,
@@ -229,6 +229,15 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 	if wanted {
 		d.summonOwnDigs(lane, acceptance)
 	}
+	// AND THE LANES CANDIDATES WERE RE-AIMED INTO, for the same reason and by the
+	// same split. A re-aimed order is a candidate of its NEW lane now, and nothing
+	// else is going to say so: the event that would have woken that lane already
+	// happened, before the order was pointed at it. Without this the robot stands
+	// until the next unrelated event there or the 60-second floor — which is most
+	// of the latency the re-aim was supposed to remove.
+	for _, laneID := range widened {
+		d.EvaluateLaneReleases(laneID)
+	}
 }
 
 // evaluateLaneReleasesPass is the pass proper — everything that happens under the
@@ -240,7 +249,7 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 // excavation frees them all; a second request would find the lane locked by the
 // first and do nothing. Returning one keeps that obvious instead of relying on the
 // lock to absorb the duplicates.
-func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceRequest, bool, bool) {
+func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceRequest, bool, bool, []int64) {
 	laneID := lane.ID
 	unlock := d.laneGates.lock(laneID)
 	defer unlock()
@@ -248,6 +257,11 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 	var (
 		acceptance acceptanceRequest
 		digWanted  bool
+		// widened collects the sibling lanes candidates were re-aimed into, for
+		// the caller to evaluate once the mutex is gone. Same split as the heal
+		// and the dwell exit: evaluating a lane dispatches, which emits, which
+		// re-enters this evaluator on this goroutine.
+		widened []int64
 		// freedLane records that a dweller drove out of this lane during the pass,
 		// so the caller can wake whatever was queued behind it once the mutex is
 		// gone. See EvaluateLaneReleases for why it cannot be woken from in here.
@@ -257,7 +271,7 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 	candidates, err := d.gateStagedForLane(lane)
 	if err != nil {
 		log.Printf("lane gate: list staged orders for lane %s: %v", lane.Name, err)
-		return acceptance, false, false
+		return acceptance, false, false, nil
 	}
 
 	// Deepest first — but be clear about what this sort does and does not buy,
@@ -445,6 +459,14 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 				QueueParams{Lane: lane.Name})
 			d.dbg("lane gate: order %d still held at %s (%s)", c.order.ID, lane.Name, v.Cause())
 			propose(c, v.Cause())
+			// AND THEN ASK WHETHER ANOTHER AISLE WOULD DO. This is where the
+			// oracle belongs for the common case: the widening inside
+			// rebindGatedDropoff only ever sees candidates the classifier
+			// ADMITTED, so it answers "this lane has no slot for me" and never
+			// "it is not my turn here and never will be". See refusalCanWiden.
+			if to := d.widenRefusedDropoff(c, lane, v.Cause()); to != 0 {
+				widened = append(widened, to)
+			}
 			continue
 		}
 		var rErr error
@@ -485,7 +507,7 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 	if released > 0 {
 		log.Printf("lane gate: released %d order(s) into lane %s", released, lane.Name)
 	}
-	return acceptance, digWanted, freedLane
+	return acceptance, digWanted, freedLane, widened
 }
 
 // gateCandidate is one gate-staged order with the destination and depth the
@@ -1787,4 +1809,105 @@ func (d *Dispatcher) rebindWaitLane(order *orders.Order, laneID int64) error {
 		seen++
 	}
 	return fmt.Errorf("rebind wait lane: order %d has no wait at index %d", order.ID, order.WaitIndex)
+}
+
+// refusalCanWiden reports whether a lane refusal is one a SIBLING LANE could
+// answer, so the oracle should re-aim rather than let the robot keep standing.
+//
+// ── THE ORACLE WAS BEHIND THE WRONG DOOR ──────────────────────────────────
+//
+// The widening began life inside rebindGatedDropoff, which runs only after the
+// classifier ADMITS a candidate — so it could only ever fire on "this lane has
+// no free slot for me". That is the rarest way a dweller gets stuck. The common
+// way is "this lane has a slot with my name on it and it is not my turn", which
+// returns from the refusal arm above and never reaches a re-bind at all.
+//
+// MEASURED, demo.yaml 2026-08-30, and it is the shape the whole round is for:
+//
+//	134  complex ASSY  staged  lane-deeper-pending  AMR-03  -> SMN_016 (depth 1)
+//	132  move    ASSY  staged  lane-deeper-pending  AMR-02  -> SMN_017 (depth 2)
+//	128  complex PANEL-A queued  swap-hold                  -> SMN_018 (depth 3)
+//
+// All three in Lane_06. 128 is the deepest and cannot move — it waits on a
+// partner that waits on PANEL-A the plant does not have — and stillComingToLane
+// correctly counts it as a deeper store still coming, so 132 is walled, and 134
+// is walled behind 132. Two robots stood there 39 minutes while the group had
+// room. The run reported `WIDENED: 0` and the reason was not that the population
+// is rare; it was that the population could not reach the code.
+//
+// ── WHICH REFUSALS, AND WHY NOT ALL OF THEM ───────────────────────────────
+//
+// A refusal that clears ON ITS OWN IN A PASS OR TWO must not re-aim: moving a
+// robot to another aisle costs a drive, and doing it for a wait that was about
+// to end is churn dressed as progress. So this is a NAMED SET with a reason per
+// member rather than "anything that refused".
+//
+//	lane-deeper-pending   the ordering wall. Clears when a deeper store places —
+//	                      and when the deeper store CANNOT place, never. A sibling
+//	                      lane carries no such ordering, so it is a real answer.
+//	lane-dig-active       an excavation owns the corridor for a whole reshuffle:
+//	                      several legs, a teardown, minutes. redirectStoreOffDugLane
+//	                      already re-aims this shape BEFORE dispatch; this is the
+//	                      same decision for a robot that is already standing.
+//	lane-held-dig         same fact, read at the mouth instead of the lock.
+//
+// DELIBERATELY OUT, each because its releaser is one robot-movement away:
+// lane-occupied (a robot is inside and occupancy is transient by construction),
+// lane-held-source (§R.101's lock ends when one robot carries one bin out),
+// lane-target-buried and the dig-blocker family (a dig would help, so the heal
+// is the answer and propose is what gives it), and every read-failure cause (an
+// undetermined answer means do LESS, not re-aim on no evidence).
+func refusalCanWiden(cause QueueCause) bool {
+	switch cause {
+	case CauseLaneDeeperPending, CauseLaneDigActive, CauseLaneHeldDig:
+		return true
+	default:
+		return false
+	}
+}
+
+// widenRefusedDropoff re-aims a REFUSED store dweller into a sibling lane of its
+// own group, when no dig would help it where it is.
+//
+// Reports the lane it moved to, or 0. The caller collects those and evaluates
+// them AFTER the mutex — the same split the heal and the dwell exit already use,
+// and for the same reason: evaluating a lane dispatches, which emits, which
+// re-enters the evaluator on this goroutine.
+//
+// HEAL FIRST, unchanged. acceptanceDigNeeded is asked per candidate rather than
+// read off the pass's digWanted flag, because that flag is "somebody already got
+// this pass's dig" — an earlier candidate consuming it must not turn this one's
+// diggable wall into a re-aim.
+//
+// RETRIEVES AND DWELLERS ARE OUT. A retrieve's lane is where its BIN is, which
+// no re-aim can change; a dweller is already inside the corridor holding a
+// blocker, and its destination question is redirectStoreOffDugLane's.
+func (d *Dispatcher) widenRefusedDropoff(c gateCandidate, lane *nodes.Node, cause QueueCause) int64 {
+	if c.retrieve || c.dwell || !refusalCanWiden(cause) {
+		return 0
+	}
+	if _, wouldHelp := d.acceptanceDigNeeded(lane, c); wouldHelp {
+		return 0 // a dig opens this lane — propose() summons it, and the plan's lane is kept
+	}
+	moved, err := d.widenDropoffToGroup(c.order, lane, c.entryIndex)
+	if err != nil {
+		d.dbg("lane gate: order %d refused on %s (%s) and could not be re-aimed: %v",
+			c.order.ID, lane.Name, cause, err)
+		return 0
+	}
+	if moved == nil {
+		return 0 // the group has nowhere either — the refusal stands, unchanged
+	}
+	newLane, err := d.db.LaneForNode(moved.ID)
+	if err != nil || newLane == nil {
+		return 0
+	}
+	// The cause described a wait in a lane this order has left. Clearing it stops
+	// the board explaining the old lane's queue to somebody looking at a robot
+	// now bound for a different one; the next pass writes whatever is true there.
+	d.setQueueReason(c.order, "", "", QueueParams{})
+	log.Printf("lane gate: order %d re-aimed off %s to %s — refused there (%s), no dig would help, "+
+		"and its group had room",
+		c.order.ID, lane.Name, moved.Name, cause)
+	return newLane.ID
 }
