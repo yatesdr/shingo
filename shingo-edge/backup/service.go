@@ -30,6 +30,9 @@ type Service struct {
 	wg             sync.WaitGroup
 	storageFactory func(config.BackupS3Config) (Storage, error)
 	runFlag        atomic.Bool
+	// debounceDelay is how long triggered requests wait for siblings before
+	// running. A field only so tests can shorten it; production value is 10s.
+	debounceDelay time.Duration
 }
 
 func NewService(db *store.DB, cfg *config.Config, configPath, appVersion string, logf func(string, ...any)) *Service {
@@ -47,6 +50,7 @@ func NewService(db *store.DB, cfg *config.Config, configPath, appVersion string,
 		storageFactory: func(cfg config.BackupS3Config) (Storage, error) {
 			return NewS3Storage(cfg)
 		},
+		debounceDelay: 10 * time.Second,
 	}
 	svc.refreshStaticStatus()
 	if marker, err := PendingRestore(configPath); err == nil && marker != nil {
@@ -191,19 +195,31 @@ func (s *Service) loop() {
 	pendingReasons := make(map[string]struct{})
 	var debounce <-chan time.Time
 	var debounceTimer *time.Timer
+	// Backups are off (no S3 endpoint, or Enabled=false): drop edit-triggered
+	// requests the same way the scheduled path silently skips, instead of
+	// debouncing and failing run after run. One line, once per state flip.
+	warnedDisabled := false
 
 	for {
 		select {
 		case <-s.stopCh:
 			return
 		case reason := <-s.triggerCh:
+			if !s.backupsConfigured() {
+				if !warnedDisabled {
+					warnedDisabled = true
+					s.logf("backup: edit-triggered backups skipped: backup storage not configured (no endpoint/bucket/keys or enabled=false)")
+				}
+				continue
+			}
+			warnedDisabled = false
 			if reason == "" {
 				reason = "manual"
 			}
 			pendingReasons[reason] = struct{}{}
 			s.setPending(true, reasonSetToSlice(pendingReasons))
 			if debounceTimer == nil {
-				debounceTimer = time.NewTimer(10 * time.Second)
+				debounceTimer = time.NewTimer(s.debounceDelay)
 				debounce = debounceTimer.C
 			} else {
 				if !debounceTimer.Stop() {
@@ -212,7 +228,7 @@ func (s *Service) loop() {
 					default:
 					}
 				}
-				debounceTimer.Reset(10 * time.Second)
+				debounceTimer.Reset(s.debounceDelay)
 			}
 		case <-ticker.C:
 			if !s.shouldRunScheduled() {
@@ -235,6 +251,9 @@ func (s *Service) loop() {
 }
 
 func (s *Service) shouldRunScheduled() bool {
+	if !s.backupsConfigured() {
+		return false
+	}
 	s.cfg.RLock()
 	enabled := s.cfg.Backup.Enabled
 	interval := s.cfg.Backup.ScheduleInterval
@@ -325,6 +344,24 @@ func (s *Service) prune(ctx context.Context, storage Storage, backupCfg config.B
 		}
 	}
 	return nil
+}
+
+// backupsConfigured reports whether a backup run could actually store its
+// archive. Mirrors the same fields the config handler validates when enabling
+// automatic backups (handlers_backup.go): Enabled plus a complete S3 target.
+// RunNow (the admin "run now" button) deliberately does NOT consult this —
+// an explicit operator request should surface its real error.
+func (s *Service) backupsConfigured() bool {
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
+	b := s.cfg.Backup
+	if !b.Enabled {
+		return false
+	}
+	return strings.TrimSpace(b.S3.Endpoint) != "" &&
+		strings.TrimSpace(b.S3.Bucket) != "" &&
+		strings.TrimSpace(b.S3.AccessKey) != "" &&
+		strings.TrimSpace(b.S3.SecretKey) != ""
 }
 
 func (s *Service) storageFromConfig() (Storage, string, config.BackupConfig, error) {
