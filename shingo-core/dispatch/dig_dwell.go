@@ -737,11 +737,24 @@ func (d *Dispatcher) DwellerLanesSharingGroupWith(nodeID int64) []int64 {
 		if json.Unmarshal([]byte(o.StepsJSON), &steps) != nil {
 			continue
 		}
-		if !waitGatesAnAppend(steps, o.WaitIndex) {
-			continue
-		}
+		// EVERY DWELLER, NOT ONLY THE OUTBOUND ONES. This used to skip any wait
+		// that was not `waitGatesAnAppend` — a dig leg whose tail is unchosen —
+		// which is the population the dwell was built for and not the population
+		// this trigger serves.
+		//
+		// An INBOUND dweller is a robot standing at a spot waiting to be let into
+		// a lane, and once the release can re-ask the whole GROUP its answer
+		// changes when a SIBLING lane frees. Filtered out, it was not woken by
+		// that event at all and waited for unrelated traffic or for the 60-second
+		// floor — a robot standing still for a minute beside a lane that had been
+		// ready for it the whole time.
+		//
+		// Widening the trigger cannot admit anybody: EvaluateLaneReleases re-asks
+		// the question and every refusal still applies. The cost is one extra
+		// pass over a lane that may have nothing to release, which is the same
+		// cost the floor already pays once a minute.
 		w, ok := waitAt(steps, o.WaitIndex)
-		if !ok || w.WaitLane == 0 || seen[w.WaitLane] {
+		if !ok || w.WaitKind != WaitKindLane || w.WaitLane == 0 || seen[w.WaitLane] {
 			continue
 		}
 		lane, lErr := d.db.GetNode(w.WaitLane)

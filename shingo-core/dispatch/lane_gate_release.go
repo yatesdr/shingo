@@ -1384,8 +1384,22 @@ func (d *Dispatcher) LaneIDsForOrder(orderID int64) []int64 {
 // without ever getting there — no bin moves, no lane clears, and a slot the
 // capacity gate was counting as spoken for becomes free.
 //
-// Names, not ids, are what the row carries, so this resolves them; an
-// unresolvable name contributes nothing rather than a zero.
+// ── AND THE LANES ITS PLAN WAS WAITING ON ────────────────────────────────
+//
+// Endpoints alone are not everything an order was working. A gate-staged order's
+// own terminal event is exactly the moment its lane becomes interesting to
+// everybody else standing outside it — and its WaitLane is not necessarily
+// either endpoint: a spliced plan can wait on a lane it picks from on the way to
+// a destination somewhere else entirely. So a dweller that failed or was
+// cancelled woke the lanes at the ends of its plan and NOT the lane its robot
+// was parked outside, which is the one whose queue just got shorter.
+//
+// The wait steps carry the lane id directly (WaitLane), so this is a walk over
+// the plan rather than a second resolution: no names, no lookups, nothing that
+// can fail. Same class of gap as the LaneIDsForOrder fix already in the tree.
+//
+// Names, not ids, are what the row carries for the endpoints, so those are
+// resolved; an unresolvable name contributes nothing rather than a zero.
 func (d *Dispatcher) NodeIDsForOrder(orderID int64) []int64 {
 	order, err := d.db.GetOrder(orderID)
 	if err != nil || order == nil {
@@ -1393,16 +1407,30 @@ func (d *Dispatcher) NodeIDsForOrder(orderID int64) []int64 {
 	}
 	seen := map[int64]bool{}
 	var out []int64
+	add := func(id int64) {
+		if id == 0 || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
 	for _, name := range []string{order.DeliveryNode, order.SourceNode} {
 		if name == "" {
 			continue
 		}
 		node, nErr := d.db.GetNodeByDotName(name)
-		if nErr != nil || node == nil || seen[node.ID] {
+		if nErr != nil || node == nil {
 			continue
 		}
-		seen[node.ID] = true
-		out = append(out, node.ID)
+		add(node.ID)
+	}
+	var steps []resolvedStep
+	if json.Unmarshal([]byte(order.StepsJSON), &steps) == nil {
+		for _, s := range steps {
+			if s.Action == protocol.ActionWait && s.WaitKind == WaitKindLane {
+				add(s.WaitLane)
+			}
+		}
 	}
 	return out
 }

@@ -1425,3 +1425,105 @@ func TestDwell_TheDigReleaseWakesTheDwellerItWasBlocking(t *testing.T) {
 	}
 	_ = dug
 }
+
+// TestGroupTrigger_EntrantDwellerIsWokenBySiblingLane pins the widened fan-out.
+//
+// ── THE GAP ───────────────────────────────────────────────────────────────
+//
+// DwellerLanesSharingGroupWith is what turns "something changed at node N" into
+// "re-ask every lane in N's group that has somebody standing outside it". It
+// used to keep only dwellers whose wait `waitGatesAnAppend` — a dig leg whose
+// tail Core has not chosen — which is the population the dwell was BUILT for and
+// not the population this trigger SERVES.
+//
+// An ENTRANT dweller is a robot standing at a spot waiting to be let into a
+// lane. Once the release can re-ask the whole group, its answer changes when a
+// SIBLING lane frees. Filtered out, it was not woken by that event at all: it
+// waited for unrelated traffic, or for the 60-second floor. A robot standing
+// still for a minute beside a lane that had been ready for it the whole time.
+//
+// MUTATION (verified): restore the `if !waitGatesAnAppend(...) { continue }`
+// skip. The dweller's lane is not returned and this fires naming it.
+func TestGroupTrigger_EntrantDwellerIsWokenBySiblingLane(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	// Two lanes in ONE group: the dweller waits outside the wall lane, and the
+	// event happens over in the park lane.
+	wall, park, w, p, _ := clearLaneFixture(t, db, "GTRIG")
+	line := lineNode(t, db, "GTRIG-LINE")
+
+	deep := stageDeeperBlocker(t, db, d, line, w[2], "gtrig-deep")
+	_ = deep
+	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	if !IsGateStaged(dweller) {
+		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
+	}
+	markStaged(t, db, dweller.ID)
+
+	// IT IS AN ENTRANT, NOT AN OUTBOUND DWELL. Asserted, because the whole claim
+	// is about the population the old filter excluded — if this dweller happened
+	// to be an outbound one the test would pass with the filter restored and
+	// prove nothing.
+	var steps []resolvedStep
+	testutil.MustNoErr(t, json.Unmarshal([]byte(dweller.StepsJSON), &steps), "parse the dweller's plan")
+	if waitGatesAnAppend(steps, dweller.WaitIndex) {
+		t.Fatal("fixture: this dweller gates an APPEND, so it is an outbound dwell — the old filter " +
+			"would have kept it and this test would not be about the gap")
+	}
+
+	// A slot frees in the SIBLING lane. That is the event, and its node is in the
+	// park lane, nowhere near the dweller's.
+	lanes := d.DwellerLanesSharingGroupWith(p[0].ID)
+
+	found := false
+	for _, id := range lanes {
+		if id == wall.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a change at %s (lane %s) did not re-ask %s, where a robot is standing outside "+
+			"waiting to get in — got lanes %v. An entrant dweller waits for the 60-second floor "+
+			"instead of for the event that actually changed its answer",
+			p[0].Name, park.Name, wall.Name, lanes)
+	}
+}
+
+// TestNodeIDsForOrder_IncludesTheLaneItWaitedOn pins the second trigger gap.
+//
+// A gate-staged order's own terminal event is exactly the moment its lane
+// becomes interesting to everybody else standing outside it. Its WaitLane is not
+// necessarily either endpoint — a spliced plan can wait on a lane it picks from
+// on the way to a destination somewhere else — so a dweller that failed or was
+// cancelled woke the lanes at the ENDS of its plan and not the lane its robot
+// was parked outside, which is the one whose queue just got shorter.
+//
+// MUTATION (verified): delete the wait-step walk. The dweller's own lane is
+// absent and this fires.
+func TestNodeIDsForOrder_IncludesTheLaneItWaitedOn(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	wall, _, w, _, _ := clearLaneFixture(t, db, "NIDW")
+	line := lineNode(t, db, "NIDW-LINE")
+
+	deep := stageDeeperBlocker(t, db, d, line, w[2], "nidw-deep")
+	_ = deep
+	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	if !IsGateStaged(dweller) {
+		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
+	}
+
+	got := d.NodeIDsForOrder(dweller.ID)
+	for _, id := range got {
+		if id == wall.ID {
+			return
+		}
+	}
+	t.Errorf("NodeIDsForOrder(%d) = %v, which omits lane %s (%d) — the lane this order's robot is "+
+		"parked outside. When it goes terminal, the one place that certainly wants re-asking is "+
+		"the lane whose queue just got shorter", dweller.ID, got, wall.Name, wall.ID)
+}
