@@ -568,6 +568,33 @@ func (op *simOperator) reconcile() {
 		switch o.Status {
 		case protocol.StatusStaged:
 			op.scheduleRelease(o.ID)
+			// ── AND THE A/B CUTOVER, WHICH THIS LOOP DID NOT DRIVE ────────
+			//
+			// scheduleFlip had exactly ONE caller — onOrderCreated — so the
+			// cutover was LIVE-EVENT-ONLY. That is a hole shaped precisely like
+			// a deadlock, and the fixture found it:
+			//
+			//	[sim] operator auto-release order 164 rejected: the line is
+			//	      pulling from PLN_003; flip to PLN_004 first
+			//
+			// The evac at a sequential press cannot release until the line
+			// flips to the paired side. Nothing flips unless an order is
+			// CREATED against that node. No order can be created for a cell
+			// whose swap is stuck. Measured 2026-08-30: 444 refusals of that one
+			// message, 500 release-cap announcements, five robots pinned, and
+			// PANEL-B production stopped for four sim-hours — with the operator
+			// retrying an action that could not succeed until it took a
+			// different one first.
+			//
+			// This loop exists to "re-derive pending operator actions from
+			// current state" so a live-only trigger cannot strand the plant. It
+			// re-derived three of the four. runFlip is already idempotent and
+			// already short-circuits on !ActivePull and on a non-sequential
+			// claim, so asking it once per staged order per sweep costs a read
+			// and answers nothing new when there is nothing to flip.
+			if o.ProcessNodeID != nil {
+				op.scheduleFlip(*o.ProcessNodeID)
+			}
 			pending++
 		case protocol.StatusDelivered:
 			if o.ProcessNodeID != nil {

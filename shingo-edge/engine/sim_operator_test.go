@@ -4,6 +4,10 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -133,5 +137,81 @@ func TestSimOperator_OutboundDeliveryDoesNotScheduleAClear(t *testing.T) {
 	missing := int64(999999)
 	if !op.deliveryLandedHere(OrderDeliveredEvent{OrderID: in, ProcessNodeID: &missing}) {
 		t.Error("an unresolvable process node must schedule as before, not be silently skipped")
+	}
+}
+
+// TestSimOperator_ReconcileDrivesEveryScheduler is the restart-safety net's own
+// totality check, and it exists because the net had a hole exactly the shape of
+// a deadlock.
+//
+// ── WHAT IT MISSED ────────────────────────────────────────────────────────
+//
+// reconcile's whole job is stated in its doc: "re-derive pending operator
+// actions from current state … so any order already mid-choreography when this
+// operator starts is not invisible to the live-only handlers". It drove three of
+// the four schedulers. scheduleFlip — the A/B cutover — had exactly ONE caller,
+// onOrderCreated, so the cutover was live-event-only.
+//
+// MEASURED 2026-08-30, and it is not a corner case. A sequential press's evac
+// cannot release until the line flips to the paired side:
+//
+//	[sim] operator auto-release order 164 rejected: the line is pulling from
+//	      PLN_003; flip to PLN_004 first, or confirm to release anyway
+//
+// Nothing flips unless an order is CREATED against that node, and no order can
+// be created for a cell whose swap is stuck. 444 refusals of that one message,
+// 500 release-cap announcements, five robots pinned, and PANEL-B production
+// stopped for four sim-hours — the operator retrying an action that could not
+// succeed until it took a different one first.
+//
+// ── WHY A SOURCE SCAN AND NOT A BEHAVIOUR TEST ────────────────────────────
+//
+// The behaviour needs a seeded sequential press, a runtime with ActivePull, a
+// paired node and a live claim — a fixture that would pin THIS deadlock and
+// nothing about the next one. The property that actually failed is narrower and
+// general: the restart-safety net must cover EVERY action the live handlers
+// drive. A fifth scheduler added tomorrow with a live-only trigger is the same
+// bug again, and this fires for it too.
+//
+// MUTATION (verified): remove the scheduleFlip call from reconcile. This names
+// it and says what a live-only trigger costs.
+func TestSimOperator_ReconcileDrivesEveryScheduler(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile(filepath.Clean("sim_operator.go"))
+	if err != nil {
+		t.Fatalf("read sim_operator.go: %v", err)
+	}
+	body := string(src)
+
+	// Every scheduler the operator declares.
+	decl := regexp.MustCompile(`func \(op \*simOperator\) (schedule\w*)\(`)
+	var schedulers []string
+	for _, m := range decl.FindAllStringSubmatch(body, -1) {
+		schedulers = append(schedulers, m[1])
+	}
+	if len(schedulers) < 4 {
+		t.Fatalf("found %d schedule* helpers (%v) — the scan has drifted from the file and this test "+
+			"is checking nothing", len(schedulers), schedulers)
+	}
+
+	// reconcile's body, from its declaration to the next top-level func.
+	start := strings.Index(body, "func (op *simOperator) reconcile()")
+	if start < 0 {
+		t.Fatal("reconcile() not found — this test has drifted from the file")
+	}
+	rest := body[start+1:]
+	end := strings.Index(rest, "\nfunc ")
+	if end < 0 {
+		end = len(rest)
+	}
+	reconcileBody := rest[:end]
+
+	for _, s := range schedulers {
+		if !strings.Contains(reconcileBody, "op."+s+"(") {
+			t.Errorf("reconcile() never calls %s, so that action fires ONLY on a live event. An "+
+				"operator restart, or a cell whose state needs the action before any new order "+
+				"arrives, strands it forever — which is the A/B cutover deadlock this test was "+
+				"written for. The restart-safety net has to cover every action, not most of them.", s)
+		}
 	}
 }
