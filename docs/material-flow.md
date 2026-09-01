@@ -27,7 +27,7 @@ Fields:
 - **Label**: unique identifier (e.g., `SHG:0042`)
 - **Bin Type**: physical container class (determines size and compatibility)
 - **Node**: current floor location
-- **Status**: `available`, `staged`, `flagged`, `maintenance`, `retired`
+- **Status**: `available`, `staged`, `flagged`, `maintenance`, `quality_hold`, `retired`
 - **Payload Code**: assigned payload template (empty if unloaded)
 - **Manifest**: JSON parts list (actual contents)
 - **Manifest Confirmed**: whether the operator has verified contents
@@ -53,7 +53,7 @@ A single storage position within a lane, holding exactly one bin. Each slot has 
 
 Holding slots used during retrieval reshuffles. When a target bin is blocked, the system parks the blocking bins elsewhere and retrieves the target. **The blockers are not moved back** — see *Retrieve — Reshuffle* below.
 
-The shuffle row must have at least as many slots as the deepest lane minus one. Shuffle slots are fully accessible (no blocking between them). The shuffle row is a synthetic node of type `SHF`.
+The shuffle row must have at least as many slots as the deepest lane minus one. Shuffle slots are fully accessible (no blocking between them). (The synthetic `SHF` node type was deleted — its nodes were reassigned to `LANE`; blockers park in any child slot of the group, per the next paragraph.)
 
 A blocker is not restricted to the shuffle row. Parking searches the children of the whole node group (`findShuffleSlots`), so a blocker may be parked in another lane in the same supermarket if that is the better slot.
 
@@ -125,7 +125,9 @@ it was off — empty slots buried behind bins, reachable by nothing.
 
 A dig holds its lane through a **mouth reservation** row (`resource_kind='mouth'`,
 `mode='dig'`), which is exclusive: a dig admits no other holder and no other
-holder admits a dig. The rows own the hold — it is durable state in Postgres, not
+holder admits a dig — one carve-out: a non-dig holder parked at the lane
+group's wait points (the "staged outside" set) does not refuse an incoming dig.
+The rows own the hold — it is durable state in Postgres, not
 a lock in process memory, so it survives a Core restart.
 
 The claim does **not** drop when the compound terminates. It drops when the last

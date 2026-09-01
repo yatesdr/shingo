@@ -1,11 +1,13 @@
 # Bin & Slot Reservations
 
-**Source of truth:** `shingo-core/store/reservations/reservations.go`,
+**Source of truth:** `shingo-core/store/reservations/` (`reservations.go` for the
+bin/slot lifecycle, `mouth.go` for lane holds and occupancy, `blocking.go` and
+`dig_exclusion.go` for the shared predicates),
 `shingo-core/dispatch/allocator.go`, and `shingo-core/fulfillment/scanner.go`.
 This document is the human-readable rendering; if they diverge, the code wins.
 
 Related: `[[order-builder-dispatch]]`, `[[storage-protections]]`,
-`[[bin-transit-state]]`, `[[reservation-decision-glossary]]`.
+`[[bin-transit-state]]`.
 
 ---
 
@@ -83,6 +85,14 @@ Acquire  →  Confirm  →  Release
   every row on disk is `pending` or `confirmed`, which is why the partial
   indexes' `state IN ('pending','confirmed')` predicate matches every row.
 
+There is one backward edge: a **fleet refusal demotes**. `DemoteConfirmedByOrder`
+flips the order's confirmed bin and slot rows back to `pending` — "armor off,
+paper kept." The bin stays spoken for, the re-dispatch's confirm has the pending
+row the seatbelt requires, and nothing else can take the resource without
+outranking the order that still holds it. The row is demoted, never deleted, and
+never leaves the `pending`/`confirmed` domain. Mouth rows have no pending phase
+and occupancy is a measurement, so neither is ever demoted.
+
 Both halves are **owner-idempotent**. An order re-confirming a resource it
 already hard-claimed (a retry after a crash between the two writes, say) heals
 in place rather than failing. That is what makes the split safe across scanner
@@ -138,8 +148,8 @@ and the reaper. See *The lane mouth* below and `[[lanes]]` for the full model.
 ## The lane mouth
 
 A mouth row is one hold per (lane, order), `node_id` = the lane. It carries a
-`mode` — the work direction, and the only kinds that use the `mode` column
-(`bin` and `slot` rows leave it NULL):
+`mode` — the work direction, and the only kind that uses the `mode` column
+(bin, slot and occupancy rows leave it NULL):
 
 | Mode | Meaning |
 |------|---------|
@@ -155,10 +165,26 @@ it is. Any other pair is admitted only on an exact same-mode share.** So two
 inbound orders can work a lane together; an inbound and an outbound cannot; and a
 dig shares with nobody.
 
-An order holds **one mode per lane**. If it already holds the lane in a different
-mode that is a refusal — but a foreign conflict is the stronger refusal and wins
-regardless of which row is read first, which is why the verdict is decided after
-the scan rather than inside it.
+Two exemptions cut into that rule, both narrow:
+
+- **The dig's beneficiary.** A hold taken on behalf of another order
+  (`AcquireLanesFor`) ignores the beneficiary's own rows — a dig raised to
+  rescue a gate-staged dweller is not refused by the dweller's own hold.
+- **The mark.** An ordinary (non-dig) holder parked at one of its node GROUP's
+  wait points does not refuse an incoming dig. The row stays and keeps its
+  other job ("still coming"); it stops turning away the robot that needs to
+  work the corridor. Membership is group-scoped (`StagedOutside`,
+  `dig_exclusion.go`): the wait points are a shared staging area in front of
+  ALL the group's lanes, so staged at any of them is standing outside every
+  lane in that group. The arm keys on where the robot is standing, never on
+  whether the dig row is an excavation or a source lock.
+
+An order holds **one mode per lane** (one row). Re-asking the lane in a
+different mode is a refusal — except the sanctioned upgrade: an order digging
+the lane for itself while holding it in a weaker mode has its row upgraded in
+place, because a second row would put one owner on one lane twice. A foreign
+conflict is the stronger refusal and wins regardless of which row is read
+first, which is why the verdict is decided after the scan rather than inside it.
 
 ### `mode='dig'` is not the same question as "an excavation is running"
 
@@ -190,12 +216,22 @@ the mouth's equivalent of the slots-before-bins rule, not a variant of it.
 An occupancy row says a robot is physically inside the lane right now, which is a
 different fact from the claim on the work. It is an **idempotent insert** keyed
 on `(order_id, node_id)`: it de-dupes one order's repeat takes and says nothing
-about a different order on the same node. Arbitration is the caller's read, not
-this write.
+about a different order on the same node.
 
-That is deliberate but not settled — making the write itself the arbiter would
-mean a partial unique index on `(node_id) WHERE resource_kind='occupancy'`. Do
-not read the idempotent-insert shape as a decision against it.
+**The row now arbitrates.** When the compound scheduler's sibling-in-flight
+guard was removed, this table became the only thing keeping two legs of one
+reshuffle out of one lane: `dispatch.admit` reads `OccupantsOf` and refuses a
+leg while a different order is recorded inside (`CauseLaneOccupied`), and
+`TakeLaneOccupancy` returns the write's error rather than logging it — a take
+that failed silently would declare an occupied corridor empty to the next
+entrant. The SQL is still permissive (`NOT EXISTS` on `(order_id, node_id)`);
+at-most-one-inside rests on the caller's read plus the write succeeding, not on
+a unique index.
+
+That last step — a partial unique index on `(node_id) WHERE
+resource_kind='occupancy'` with an insert that reports the conflict — remains a
+real option and is deliberately not built. Do not read the idempotent-insert
+shape as a decision against it.
 
 ## Where it happens in the code
 
@@ -263,16 +299,27 @@ uniform — no hard claim before the dispatch step on any path.
 
 | Function | Effect |
 |----------|--------|
-| `Acquire(db, orderID, binID, reservedBy)` | pending bin reservation; exactly-one-winner via the partial unique index |
+| `Acquire(db, orderID, laneOwner, binID, reservedBy)` | pending bin reservation; exactly-one-winner via the partial unique index. Also runs the dig arm: a bin standing in a lane a FOREIGN dig holds returns `ErrLaneDugByAnother` instead of inserting — asked against the insert's own snapshot. `laneOwner` is the order that would hold a lane row on orderID's behalf (its compound parent, or orderID itself); callers with no compound context pass orderID twice |
 | `AcquireSlot(db, orderID, nodeID, reservedBy)` | pending slot reservation |
 | `Confirm(db, orderID, binID)` / `ConfirmSlot(...)` | `pending → confirmed`, paired with the hard-column write in the caller's tx |
 | `Release` / `ReleaseSlot` / `ReleaseByOrder` / `ReleaseByBin` / `ReleaseByNode` | hard `DELETE` the row(s) |
 | `ListByOrder(db, orderID)` | read an order's pending+confirmed holds (used by the reconcile — see above) |
 | `ReapOrphaned(db)` | reclaim rows whose owning order is terminal or gone |
+| `DemoteConfirmedByOrder(db, orderID)` | fleet refusal: flips every confirmed bin/slot row of the order back to pending — paper kept, armor off (see the lifecycle above) |
 
 The package takes the `Execer`/`Queryer` it's handed (`*sql.DB`, `*sql.Tx`, or
 a store interface) rather than threading a concrete DB — so Acquire/Confirm can
 run *inside* a caller's transaction, which is what makes reserve+confirm atomic.
+
+This table is the bin/slot substrate only. The package also carries, in
+`mouth.go`, `blocking.go` and `dig_exclusion.go`: the mouth and occupancy
+families (the `AcquireLanes`/`HandOffLaneToPicker`/`OccupantsOf` set), the
+shared SQL predicate renderers (`BinSpokenForSQL`, `HeldByOwnerSQL`,
+`OnTheBooksSQL`, `DigExclusionSQL` — one spelling each, kept honest by drift
+tests), and the asker/exemption types (`DigAsker`, `StagedOutside`). `Acquire`
+takes a `RowExecer` rather than the `Execer` below — it writes and reads back
+in one statement, because the dig arm must be evaluated against the insert's
+own snapshot.
 
 ## The claim seatbelt
 
@@ -288,10 +335,10 @@ A `forbidigo` rule in `.golangci.yml` rejects any direct `db.ClaimBin` call
 outside `ClaimForDispatch` (and test fixtures). An identical rule guards slots:
 direct `nodes.ClaimSlot` is forbidden in favour of `db.ConfirmSlotClaim`.
 
-This is what the code comments call the **atomicity wedge** fix (glossary:
-`D45`): the original `ApplyComplexPlan` claimed a bin and confirmed its
-reservation in separate statements, so a crash between them left the wedge.
-Reserve+confirm share one transaction; the CAS seatbelt never weakens.
+This is what the code comments call the **atomicity wedge** fix: the original
+`ApplyComplexPlan` claimed a bin and confirmed its reservation in separate
+statements, so a crash between them left the wedge. Reserve+confirm share one
+transaction; the CAS seatbelt never weakens.
 
 ### The one recorded exception: compound reshuffle children
 
@@ -299,13 +346,25 @@ A compound reshuffle order is a parent that spawns child legs to dig a buried
 bin out of a lane. Those children are created and sequenced by the compound
 machinery in `CreateCompoundChildren` (`store/orders.go`), not by the scanner,
 and the bin each child moves is assigned by the reshuffle plan — not found. At
-creation, each child takes a **raw bin claim** (a direct
-`UPDATE bins SET claimed_by`, with no reservation row) so the sequenced legs
-don't race each other for the same bin.
+creation each child takes a **direct bin claim** (an `UPDATE bins SET
+claimed_by` that bypasses `ClaimForDispatch`) so the sequenced legs don't race
+each other for the same bin — but the claim no longer stands alone. The same
+transaction writes a **confirmed reservation row** behind it
+(`supersedeBinLedger`: delete the bin's rows, insert
+`state='confirmed', reserved_by='compound-child'`), so a hard claim never
+exists without a ledger row, even here. That row is also the one exception to
+"Confirm runs at dispatch, never earlier".
 
-This is the one place a hard claim exists on an order that has not reached its
-own dispatch step. It is keyed on the data: a compound child is the only order
-that carries a `parent_order_id`.
+Two arms surround the claim. The CAS is sibling-scoped — it refuses a bin held
+by an order outside this compound — and a foreign *pending* soft hold is
+stolen: `stealSoftHolds` ranks the two demands, releases the loser's row,
+clears its `bin_id` pointer so it re-finds, and reports the theft (a person's
+hand-placed order is displaced out loud, never quietly re-aimed). Any refusal
+rolls the whole compound back.
+
+This is still the one place a hard claim exists on an order that has not
+reached its own dispatch step. It is keyed on the data: a compound child is the
+only order that carries a `parent_order_id`.
 
 ### The invariant, and the fence that enforces it
 
@@ -341,6 +400,12 @@ holds a bin (its `BinID` is set from soft-acquire) short-circuits straight to th
 held-bin dispatch path and never consults the finder. Its own bin is reused; the
 owner-blind exclusion only ever affects *other* orders' holds.
 
+One exception: if the soft hold was reaped while the `BinID` pointer survived,
+the confirm seatbelt can never open and the retry has no releaser — so the
+held-bin arm checks whether the order still holds the bin and, if not, forgets
+the pointer (`ClearOrderBinID`) and lets the next tick re-find. Safe precisely
+because with no hold there is nothing to double-source over.
+
 ## Reaping — owner-liveness, not age
 
 `ReapOrphaned` reclaims reservation rows whose **owning order is terminal or
@@ -351,13 +416,13 @@ order reaches a terminal status (`confirmed`/`failed`/`cancelled`) or no longer
 exists.
 
 Consequently pre-dispatch orders (`queued`, `sourcing`) are **exempt** from the
-stuck-order sweep — `AbandonStuckOrders` is restricted to runtime states
-(`dispatched`). There is no timer that abandons a sourcing order. (An older
+stuck-order sweep — `AbandonStuckOrders` is restricted to the runtime states
+(`dispatched`, `staged`). There is no timer that abandons a sourcing order. (An older
 age-based reaper was retired when reserve-at-plan-time made the soft window
 long; do not reintroduce one.)
 
-The `expires_at` column is still stamped at Acquire (NOT NULL) but is no longer
-read by any reaper — vestigial pending a schema drop.
+The `expires_at` column is fully retired as of v44: made nullable, no longer
+written by Acquire, and read by no reaper — vestigial pending a schema drop.
 
 ## The Allocator
 
@@ -417,10 +482,10 @@ subject. The mouth is summarized above and documented in full in `[[lanes]]`.
 ## Design history
 
 The reservation substrate was built in stages out of the earlier plan/apply
-dispatch work. The staged implementation briefs and review rounds live outside
-the repo, at the GitHub workspace root under
-`reservation-lifecycle-design-2026-06-30/` and
-`slot-reservations-design-2026-07-03/`. They are build-process scratch — the
-reasoning behind specific decisions — and are intentionally not checked in.
+dispatch work. The staged implementation briefs and review rounds lived outside
+the repo at the GitHub workspace root; the round-1 contract review survives as
+`reservation-contract-review-2026-07-17/` (the earlier design directories are
+gone). They are build-process scratch — the reasoning behind specific decisions
+— and are intentionally not checked in.
 This document is the canonical in-repo description; if the two ever disagree,
 **this document (and the code) win** and the briefs are stale.
