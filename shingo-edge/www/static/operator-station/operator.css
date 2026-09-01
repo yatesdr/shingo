@@ -197,9 +197,25 @@ body {
     position: fixed; inset: 0; background: rgba(0,0,0,0.7);
     display: flex; align-items: center; justify-content: center; z-index: var(--z-modal);
 }
+/* A PICKER MUST FIT THE SCREEN IT OPENS ON. This panel once had no
+ * max-height while its overlay is position:fixed and centered, so a plant
+ * with many styles grew it past the viewport — both ends bled off-screen
+ * with nothing able to scroll, and styles past ~thirteen (and the CANCEL
+ * button) were unreachable. The title and CANCEL hold their size; the
+ * .os-co-picker-list between them takes the remainder and scrolls.
+ * min-height:0 on the list is load-bearing: a flex item defaults to
+ * min-height:auto, which refuses to shrink below its content and would
+ * reinstate the overflow this is removing. */
 .os-co-picker {
     background: var(--os-surface, #1a1f2e); border-radius: 16px; padding: 24px;
-    min-width: 300px; max-width: 90vw; display: flex; flex-direction: column; gap: 12px;
+    min-width: 300px; max-width: 90vw; max-height: 85vh;
+    display: flex; flex-direction: column; gap: 12px;
+}
+.os-co-picker-list {
+    display: flex; flex-direction: column; gap: 12px;
+    overflow-y: auto; flex: 1 1 auto; min-height: 0;
+    -webkit-overflow-scrolling: touch; /* momentum scroll on shop tablets */
+    padding-right: 2px; /* keep button focus rings off the scrollbar */
 }
 .os-co-picker-title {
     font-size: 18px; font-weight: 700; text-align: center; color: #fff; margin-bottom: 4px;

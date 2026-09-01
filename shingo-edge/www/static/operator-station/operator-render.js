@@ -149,6 +149,15 @@ function openChangeoverPicker() {
     const panel = el('div', { className: 'os-co-picker' });
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Change over to:' }));
 
+    // The style buttons live in their own scrolling region. A plant can
+    // configure far more styles than fit a screen at 70px a button; the
+    // panel used to grow unbounded, the centered overlay pushed both ends
+    // off-screen, and nothing could scroll — styles past ~13 were simply
+    // unreachable, and CANCEL with them. The list scrolls; the title and
+    // CANCEL stay put.
+    const list = el('div', { className: 'os-co-picker-list' });
+    panel.appendChild(list);
+
     const sourcing = view.sourcing_by_style || {};
     for (const s of others) {
         // Core's sourceability verdict for this style, keyed by style NAME (that is
@@ -168,7 +177,7 @@ function openChangeoverPicker() {
             overlay.remove();
             startChangeover(s.id, s.name);
         });
-        panel.appendChild(btn);
+        list.appendChild(btn);
     }
 
     const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
