@@ -134,6 +134,17 @@ func placeDeeperBlocker(t *testing.T, db *store.DB, d *Dispatcher, orderID int64
 	}
 }
 
+// candidateFor builds the gateCandidate a direct releaseGatedOrder call needs,
+// from the same durable state the evaluator's own walk reads. It exists because
+// the release now takes the whole candidate rather than an index: the widening
+// asks acceptanceDigNeeded, which needs the lane-relevant node and the direction.
+func candidateFor(t *testing.T, db *store.DB, o *orders.Order, entryIndex int) gateCandidate {
+	t.Helper()
+	node, err := db.GetNodeByDotName(o.DeliveryNode)
+	testutil.MustNoErr(t, err, "resolve the candidate's node")
+	return gateCandidate{order: o, node: node, entryIndex: entryIndex}
+}
+
 // markStaged puts a dispatched gated order into `staged`, the status the poller
 // writes when RDS reports the robot WAITING at the gate.
 func markStaged(t *testing.T, db *store.DB, orderID int64) {
@@ -315,14 +326,14 @@ func TestGateRelease_StaleCopyCannotDoubleAppend(t *testing.T) {
 	entryIdx := gateEntryIndexFor(t, stale)
 
 	// Pass A releases it.
-	if err := d.releaseGatedOrder(stale, lane, entryIdx); err != nil {
+	if err := d.releaseGatedOrder(stale, lane, candidateFor(t, db, stale, entryIdx)); err != nil {
 		t.Fatalf("first release: %v", err)
 	}
 	// Pass B, holding the SAME struct it loaded before pass A ran, must not append.
 	staleCopy := *stale
 	staleCopy.WaitIndex = 0 // what pass B still believes, having never re-read
 	staleCopy.Status = StatusStaged
-	if err := d.releaseGatedOrder(&staleCopy, lane, entryIdx); err != nil {
+	if err := d.releaseGatedOrder(&staleCopy, lane, candidateFor(t, db, &staleCopy, entryIdx)); err != nil {
 		t.Fatalf("second release should be a silent no-op, got: %v", err)
 	}
 
@@ -794,7 +805,7 @@ func TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff(t *testing.T) {
 			"the candidate walk no longer names the leg the gate speaks for", entryIdx)
 	}
 
-	rebound, _, err := d.rebindGatedDropoff(swap, lane, entryIdx)
+	rebound, _, err := d.rebindGatedDropoff(swap, lane, candidateFor(t, db, swap, entryIdx))
 	if err != nil {
 		t.Fatalf("rebind: %v", err)
 	}
@@ -883,7 +894,7 @@ func TestGateRelease_SwapBlocksKeepPressAsFinalDropoff(t *testing.T) {
 	tc := swapGateFixture(t, db, "SWAPWIRE")
 	swap, lane, press, emptySrc := tc.order, tc.lane, tc.press, tc.emptySrc
 
-	if err := d.releaseGatedOrder(swap, lane, gateEntryIndexFor(t, swap)); err != nil {
+	if err := d.releaseGatedOrder(swap, lane, candidateFor(t, db, swap, gateEntryIndexFor(t, swap))); err != nil {
 		t.Fatalf("gated release: %v", err)
 	}
 
