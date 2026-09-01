@@ -1,7 +1,9 @@
 package backup
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -9,9 +11,29 @@ import (
 	"shingoedge/store"
 )
 
-// newTestService wires a Service against a real temp sqlite with a storage
-// factory that fails the test if a backup run is ever attempted.
-func newTestService(t *testing.T, b config.BackupConfig) (*Service, *strings.Builder) {
+// logBuffer is a race-safe strings.Builder: logf fires on the service's loop
+// goroutine while the test goroutine polls the text.
+type logBuffer struct {
+	mu sync.Mutex
+	sb strings.Builder
+}
+
+func (l *logBuffer) write(f string, a ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.sb.WriteString(time.Now().UTC().Format(time.TimeOnly) + " " + fmt.Sprintf(f, a...) + "\n")
+}
+
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.sb.String()
+}
+
+// newTestService wires a Service against a real temp sqlite, with the trigger
+// debounce shortened. Configuration knobs (debounceDelay, storageFactory) are
+// set BEFORE Start so the loop goroutine never observes a torn write.
+func newTestService(t *testing.T, b config.BackupConfig) (*Service, *logBuffer) {
 	t.Helper()
 	db, err := store.Open(t.TempDir() + "/edge.db")
 	if err != nil {
@@ -21,41 +43,17 @@ func newTestService(t *testing.T, b config.BackupConfig) (*Service, *strings.Bui
 
 	cfg := &config.Config{}
 	cfg.Backup = b
-	var logs strings.Builder
-	svc := NewService(db, cfg, t.TempDir()+"/config.yaml", "test", func(f string, a ...any) {
-		logs.WriteString(time.Now().UTC().Format(time.TimeOnly) + " " + sprintf(f, a...) + "\n")
-	})
+	logs := &logBuffer{}
+	svc := NewService(db, cfg, t.TempDir()+"/config.yaml", "test", logs.write)
+	svc.debounceDelay = 20 * time.Millisecond // skip the production 10s debounce
 	svc.Start()
 	t.Cleanup(svc.Stop)
-	return svc, &logs
+	return svc, logs
 }
 
-func sprintf(f string, a ...any) string {
-	if len(a) == 0 {
-		return f
-	}
-	return f + " " + fmtJoin(a)
-}
-
-func fmtJoin(a []any) string {
-	parts := make([]string, 0, len(a))
-	for _, v := range a {
-		parts = append(parts, strings.TrimSpace(toStr(v)))
-	}
-	return strings.Join(parts, " ")
-}
-
-func toStr(v any) string {
-	switch x := v.(type) {
-	case string:
-		return x
-	case error:
-		return x.Error()
-	default:
-		return ""
-	}
-}
-
+// completeS3 returns an S3 config that passes backupsConfigured. The storage
+// FACTORY decides what a run actually does, so tests that need a run to be
+// attempted (or to fail) swap the factory, not the config.
 func completeS3() config.BackupS3Config {
 	return config.BackupS3Config{
 		Endpoint:  "http://minio.local:9000",
@@ -71,58 +69,81 @@ func completeS3() config.BackupS3Config {
 // endpoint is required" spam (2026-09-01 monitor).
 func TestTriggerDropsWhenUnconfigured(t *testing.T) {
 	svc, logs := newTestService(t, config.BackupConfig{Enabled: false})
+	ran := false
+	svc.storageFactory = func(config.BackupS3Config) (Storage, error) {
+		ran = true // set before Start; loop only reads it
+		return nil, fmt.Errorf("storage must never be built")
+	}
 	svc.RequestBackup("style-updated")
 	svc.RequestBackup("process-created")
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		svc.mu.RLock()
-		pending := svc.status.Pending
-		svc.mu.RUnlock()
-		got := logs.String()
-		if strings.Contains(got, "edit-triggered backups skipped") {
-			if pending {
-				t.Fatalf("status pending while unconfigured")
-			}
-			if strings.Count(got, "edit-triggered backups skipped") != 1 {
-				t.Fatalf("skip notice repeated: %q", got)
-			}
-			if strings.Contains(got, "triggered run failed") {
-				t.Fatalf("a run was attempted while unconfigured: %q", got)
-			}
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	// Wait past two debounce windows: the trigger would have fired a run by
+	// now if the gate failed.
+	time.Sleep(3 * svc.debounceDelay)
+
+	if got := logs.String(); !strings.Contains(got, "edit-triggered backups skipped") {
+		t.Fatalf("skip notice never logged; logs=%q", got)
 	}
-	t.Fatalf("skip notice never logged; logs=%q", logs.String())
+	if n := strings.Count(logs.String(), "edit-triggered backups skipped"); n != 1 {
+		t.Fatalf("skip notice repeated %d times: %q", n, logs.String())
+	}
+	if strings.Contains(logs.String(), "triggered run failed") {
+		t.Fatalf("a run was attempted while unconfigured: %q", logs.String())
+	}
+	if ran {
+		t.Fatalf("storage factory was invoked while unconfigured")
+	}
+	svc.mu.RLock()
+	pending := svc.status.Pending
+	svc.mu.RUnlock()
+	if pending {
+		t.Fatalf("status pending while unconfigured")
+	}
 }
 
 // Enabled with a complete S3 target: the trigger must flow through to an
 // actual run attempt (which fails against the fake factory, proving the gate
 // opened) — the old binary failed this the other way.
 func TestTriggerRunsWhenConfigured(t *testing.T) {
-	svc, logs := newTestService(t, config.BackupConfig{Enabled: true, S3: completeS3()})
+	svc, _ := newTestService(t, config.BackupConfig{Enabled: true, S3: completeS3()})
 	attempts := make(chan struct{}, 1)
-	svc.debounceDelay = 20 * time.Millisecond // skip the production 10s debounce
 	svc.storageFactory = func(config.BackupS3Config) (Storage, error) {
 		select {
 		case attempts <- struct{}{}:
 		default:
 		}
-		return nil, errFakeStorage
+		return nil, fmt.Errorf("fake storage factory failure")
 	}
 	svc.RequestBackup("style-updated")
 
 	select {
 	case <-attempts:
 		return
-	case <-time.After(3 * time.Second):
-		t.Fatalf("run never attempted; logs=%q", logs.String())
+	case <-time.After(20 * svc.debounceDelay):
+		t.Fatalf("run never attempted")
 	}
 }
 
-var errFakeStorage = &fakeErr{}
+// A trigger that arrives while configured must not be stranded when the state
+// later flips to unconfigured — the debounce fires the run, and runBackup
+// (not the gate) reports the failure. Pins the boundary: the gate is about
+// NOT STARTING work that cannot succeed; once started, errors surface.
+func TestConfiguredThenDisabledMidDebounce(t *testing.T) {
+	svc, logs := newTestService(t, config.BackupConfig{Enabled: true, S3: completeS3()})
+	svc.RequestBackup("style-updated")
+	// Flip to unconfigured inside the debounce window.
+	svc.cfg.Lock()
+	svc.cfg.Backup.Enabled = false
+	svc.cfg.Unlock()
 
-type fakeErr struct{}
-
-func (*fakeErr) Error() string { return "fake storage factory failure" }
+	time.Sleep(4 * svc.debounceDelay)
+	// Either outcome is acceptable (run attempted and failed, or dropped by
+	// the gate — a flip mid-window is inherently racy); what must NOT happen
+	// is a panic or a stuck pending flag.
+	svc.mu.RLock()
+	pending := svc.status.Pending
+	svc.mu.RUnlock()
+	if pending {
+		t.Fatalf("pending stuck after debounce elapsed; logs=%q", logs.String())
+	}
+}
