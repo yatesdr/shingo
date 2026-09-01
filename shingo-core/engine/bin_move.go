@@ -215,16 +215,31 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 		// deliberate human action in the one bucket that is supposed to mean
 		// "we lost a demand link".
 		OriginClass: protocol.OriginClassNoDemand,
+		// LOCAL, for the same reason and through the same map as every other
+		// door (lifecycle intake, compound children, loader replenish). A move
+		// relocates the physical bin AT its source node, so it carries no
+		// payload key — and the scanner's empty-payload guard exempts exactly
+		// that case by reading THIS FIELD.
+		//
+		// It was missing here, and the gap was invisible while the order kept
+		// its bin_id: a held bin routes straight to dispatch and never reaches
+		// the guard. The day a dig took the bin and cleared the pointer, the
+		// order fell through to a guard that could not recognise the class it
+		// was built to protect, and a person's move died as "order has empty
+		// payload_code" — a construction-bug sentence for an order nobody
+		// constructed wrongly.
+		SourceIntent: dispatch.SourceIntentForType(protocol.OrderTypeMove),
 	}
 	if err := e.db.CreateOrder(order); err != nil {
 		return nil, refuse(BinMoveFault, err, "could not create the order: %v", err)
 	}
 
-	// BEFORE the reservation, and that is the deliberate half of this merge.
+	// THE CREATION ENTRY IS THE INSERT'S NOW, and it still lands before the
+	// reservation — which was the deliberate half of this merge.
 	//
-	// The two doors did this at opposite points and neither said why. The status
-	// column already says pending — the INSERT set it — so what this call is
-	// really for is the HISTORY row, which transitions write and inserts do not.
+	// The two doors stamped at opposite points and neither said why. The status
+	// column already says pending — the INSERT set it — so what the stamp was
+	// really for is the HISTORY row, which transitions write and inserts did not.
 	// Without it an order created directly at pending has no entry saying it
 	// ever started, and its timeline begins at whatever happened next.
 	//
@@ -232,14 +247,10 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 	// for exactly the orders that fail at the reservation — the ones that lost a
 	// race with another person, whose history would then read as a failure with
 	// no beginning. Those are the ones somebody is most likely to go and read.
-	// So: stamp first, and every order has a start, including the ones that do
-	// not get far.
 	//
-	// Logged rather than returned: the order is real and dispatchable either
-	// way, and failing the request over a missing audit line is the worse trade.
-	if err := e.dispatcher.Lifecycle().MarkPending(order, req.Desc); err != nil {
-		e.logFn("engine: mark bin move %d pending: %v", order.ID, err)
-	}
+	// orders.Create writes the birth row inside the INSERT's own transaction, so
+	// that ordering is now structural rather than a call site anyone can move:
+	// the row exists before this function can reach the acquire below.
 
 	// Soft-acquire the bin now, hard-claim it at dispatch. Another order can
 	// take it in the gap between the check above and this call — that is a race
@@ -356,11 +367,29 @@ func (e *Engine) queueBinMoveForLane(order *orders.Order, bin *bins.Bin, sourceN
 		e.logFn("engine: release lanes for parked bin move %d: %v", order.ID, lerr)
 	}
 
-	reason := dispatch.FormatQueueSentence(code, params)
-	if err := e.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
-		e.logFn("engine: set queue_reason for parked bin move %d: %v", order.ID, err)
-	}
-	if err := e.dispatcher.Lifecycle().Queue(order, "bin-move", reason); err != nil {
+	// THROUGH THE DISPATCHER'S HELPER, NOT STRAIGHT TO THE STORE, and that is the
+	// whole of this line's history. The store write left order.QueueCode empty on
+	// the struct in hand; Queue()'s history row reads its code off that struct
+	// (dispatch/lifecycle.go historyReason), so the fresh `queued` row was born
+	// blank — and orders.queue_code is overwritten in place, so that row was the
+	// only durable record there was ever going to be of what this person's move
+	// waited for. The helper writes both halves, which is why no park site that
+	// goes through dispatch.WriteQueueDetail has ever had this problem.
+	//
+	// ONE COMPUTATION OF THE SENTENCE, not two. SetQueueReason formats it from
+	// code+params and mirrors it back onto the order, so the FormatQueueSentence
+	// call that used to stand here built the identical string a second time from
+	// the identical inputs — and would have gone on agreeing with the stored one
+	// only for as long as nobody changed the formatter's inputs at one of the two
+	// sites. Reading it back off the order makes the sentence in the history row
+	// the sentence on the row BY CONSTRUCTION.
+	//
+	// If the column write failed, the mirror did not happen and this passes the
+	// blank the row actually carries. That is the honest pairing: the durable
+	// record and the live column say the same thing, and the write failure is
+	// already logged one layer down.
+	e.dispatcher.SetQueueReason(order, code, cause, params)
+	if err := e.dispatcher.Lifecycle().Queue(order, "bin-move", order.QueueReason); err != nil {
 		// The order is stuck at `pending`, which no scanner pass selects. Say so
 		// loudly and fail it rather than hand back a row nothing will ever drive.
 		e.logFn("engine: parked bin move %d could not be queued: %v", order.ID, err)
@@ -383,7 +412,7 @@ func (e *Engine) queueBinMoveForLane(order *orders.Order, bin *bins.Bin, sourceN
 		ToNode:      destNode.Name,
 		BinLabel:    bin.Label,
 		Queued:      true,
-		QueueReason: reason,
+		QueueReason: order.QueueReason,
 	}, nil
 }
 

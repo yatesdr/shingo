@@ -215,6 +215,16 @@ const (
 	// TermNotNeeded: the work turned out to be unnecessary (the skip case —
 	// every pickup node was already empty).
 	TermNotNeeded TermCode = "not_needed"
+	// TermBinDugAway: a dig took the bin a HAND-PLACED order was pointed at.
+	//
+	// It is its own code and not TermClaimFailed or TermStructural, because it is
+	// neither: nothing raced and nothing is malformed. A person named a bin at a
+	// Core door, a positional blocker made that bin non-negotiable, and Core will
+	// not re-aim somebody's instruction at a different bin. The order ends here
+	// so the person can decide, and the detail names the bin and where the dig
+	// parked it. Reading either of the other two codes on this event would send
+	// an engineer looking for a race or a construction bug that never happened.
+	TermBinDugAway TermCode = "bin_dug_away"
 )
 
 // AllTermCodes returns every terminal code defined in this module. Used by the
@@ -244,6 +254,7 @@ func AllTermCodes() []TermCode {
 		TermOperatorCancelled,
 		TermPeerTerminal,
 		TermNotNeeded,
+		TermBinDugAway,
 	}
 }
 

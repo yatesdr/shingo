@@ -187,8 +187,19 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 	}
 	if !v.Admitted() {
 		d.dbg("complex: order %d held at lane %s (%s)", order.ID, v.Lane(), v.Cause())
-		d.setQueueReason(order, protocol.QueueWaitingForSlot, v.Cause(),
-			QueueParams{Destination: v.Lane()})
+		// A LANE REFUSAL IS NOT A SLOT REFUSAL. Every cause this arm can carry is a
+		// fact about a corridor — dig-active, held-source, occupied, target-buried,
+		// pickup-elsewhere — and the same causes are filed under
+		// QueueStorageRearranging by every other door (complex_reshuffle,
+		// planning_service, compound). Filed as QueueWaitingForSlot they rendered
+		// "Waiting for a slot" for an order that is waiting for a lane, and one
+		// cause read two ways depending on which door parked it.
+		//
+		// The params move with the code: rearrangingSentence reads Lane and Payload,
+		// slotSentence read Destination, so leaving them would have dropped the lane
+		// name out of the sentence entirely.
+		d.setQueueReason(order, protocol.QueueStorageRearranging, v.Cause(),
+			QueueParams{Lane: v.Lane(), Payload: order.PayloadCode})
 		// THE REFUSAL ASKS FOR THE CORRIDOR TO BE OPENED, which is what made it
 		// safe to ask the reachability question here at all.
 		//
@@ -227,24 +238,54 @@ func (d *Dispatcher) admitComplexLanes(order *orders.Order, resolvedSteps []reso
 	// named and the ordinary triggers re-ask; nothing it holds is given up, which
 	// is Rule 1 exactly as the plain path applies it.
 	holds, hErr := d.resolvePlanLaneHolds(resolvedSteps)
+	// ── ONE OF THESE ERRORS IS NOT A WAIT ─────────────────────────────────
+	//
+	// Everything else here fails closed into a hold, because an unreadable lane is
+	// a busy lane and retrying is the right response. A LaneRevisitError is the
+	// opposite kind of thing: the PLAN is malformed — it picks from a lane, leaves,
+	// and comes back — and no amount of retrying changes a step list. Parking it
+	// would hide a producer nobody knew existed behind a queue reason that says
+	// "waiting for a slot", which is how a shape like this stays invisible.
+	//
+	// So it terminates, with `structural` (the code whose own doc is "malformed in
+	// a way retrying cannot fix") and the tripwire's sentence as the detail, which
+	// names the lane and both steps. It is deliberately loud: the shape has no
+	// producer today, and the first one to appear should arrive as a failed order
+	// somebody reads, not as a corridor quietly held for the life of an order.
+	var revisit *LaneRevisitError
+	if errors.As(hErr, &revisit) {
+		log.Printf("dispatch: REFUSING complex order %d — %v", order.ID, revisit)
+		d.failOrderInternal(order, codeStructural, revisit.Error())
+		return dispatchStep{done: true, err: hErr}
+	}
 	if hErr != nil {
 		log.Printf("dispatch: resolving lane holds for complex order %d: %v (holding)", order.ID, hErr)
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLaneAcquireError,
 			QueueParams{Destination: order.DeliveryNode})
 		return dispatchStep{done: true, err: hErr}
 	}
-	admitted, aErr := d.acquireOrderLanes(order.ID, holds)
-	if aErr != nil {
-		log.Printf("dispatch: acquiring lanes for complex order %d: %v (holding)", order.ID, aErr)
+	adm := d.acquireOrderLanes(order.ID, holds)
+	if adm.err != nil {
+		log.Printf("dispatch: acquiring lanes for complex order %d: %v (holding)", order.ID, adm.err)
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLaneAcquireError,
 			QueueParams{Destination: order.DeliveryNode})
-		return dispatchStep{done: true, err: aErr}
+		return dispatchStep{done: true, err: adm.err}
 	}
-	if !admitted {
-		cause := d.causeForLaneHolds(order.ID, holds)
+	if !adm.admitted {
+		// THE CAUSE COMES FROM THE VERDICT. This site used to re-query every lane's
+		// mouth rows after the refusal, which is a second read of the state that
+		// just decided — and lane mouths move between two reads, because what
+		// refuses this order is another order finishing with the lane.
+		cause := adm.cause
 		laneName := d.laneDisplayName(holds)
 		d.dbg("complex: order %d could not take the mouth on lane %s (%s)", order.ID, laneName, cause)
-		d.setQueueReason(order, protocol.QueueWaitingForSlot, cause, QueueParams{Destination: laneName})
+		// The mouth refusal is the same family as the admission one above, and its
+		// causes (held-dig, held-source, held-traffic, held-unreadable) are filed
+		// under QueueStorageRearranging by planning_service. Same reasoning, same
+		// params. The two ACQUIRE-ERROR arms above keep QueueWaitingForSlot: those
+		// are Core declining to answer, not a lane saying no.
+		d.setQueueReason(order, protocol.QueueStorageRearranging, cause,
+			QueueParams{Lane: laneName, Payload: order.PayloadCode})
 		return dispatchStep{done: true, err: fmt.Errorf("complex order %d could not take lane %s: %s",
 			order.ID, laneName, cause)}
 	}
@@ -293,7 +334,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 		case ResolutionCapacity:
 			capDetail := capacityDetailFrom(payload)
 			code := queueCodeForCapacity(capDetail.kindOf())
-			d.setQueueReason(order, code, CauseNGRPResolve,
+			d.setQueueReason(order, code, causeForCapacity(capDetail.kindOf(), CauseNGRPResolve),
 				queueParamsForCapacity(capDetail, order.PayloadCode, order.DeliveryNode))
 			d.dbg("complex: order %d still capacity-blocked at NGRP resolution: %s", order.ID, code)
 			return nil, dispatchStep{done: true, err: rerr}
@@ -326,7 +367,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order) ([]resolvedStep, d
 	if hold != nil {
 		switch MapFinderOutcome(*hold) {
 		case OutcomeWait:
-			d.setQueueReason(order, hold.QueueCode, QueueCause(hold.QueueCause), hold.QueueParams)
+			d.setQueueReason(order, hold.QueueCode, hold.QueueCause, hold.QueueParams)
 			d.dbg("complex: order %d supply pickup waiting for material (%s)", order.ID, hold.QueueCause)
 			return nil, dispatchStep{done: true, err: fmt.Errorf("supply pickup waiting for material: %s", hold.QueueCause)}
 		case OutcomeReshuffle:
@@ -493,7 +534,7 @@ func (d *Dispatcher) dispatchComplexToFleet(order *orders.Order, resolvedSteps [
 	// successful dispatch leaves the order `dispatched`, so this phase cannot
 	// re-enter and re-splice. An earlier phase parking the order means this never
 	// ran and nothing was persisted.
-	spliced, target, gated, err := d.spliceLaneWait(resolvedSteps)
+	spliced, target, gated, err := d.spliceLaneWait(resolvedSteps, order.ID)
 	if err != nil {
 		// A refusal here is structural: a lane entry that is not concrete yet, or a
 		// wait that would gate nothing. Both are plans Core cannot gate safely, and
@@ -668,10 +709,16 @@ func (d *Dispatcher) applySwapGates(order *orders.Order, resolvedSteps []resolve
 	// Reads the RESOLVED steps, not the raw ones: NGRP names have been resolved
 	// to concrete nodes by now, and the line node is concrete either way, so the
 	// pickup/dropoff shape the gate depends on is stable across resolution.
-	if held, reason := d.swapLegHeld(order, resolvedSteps); held {
-		d.setQueueReason(order, protocol.QueueWaitingForPartner, CauseSwapHold, QueueParams{Sibling: order.SiblingOrderUUID})
-		d.dbg("complex: order %d held — %s", order.ID, reason)
-		return dispatchStep{done: true, err: fmt.Errorf("swap hold: %s", reason)}
+	// THE CAUSE COMES FROM THE VERDICT, not from this call site. Both faces park
+	// under `swap-hold` today, so this site could hardcode it — and that is
+	// exactly how a cause and the arm that earned it drift apart: a face added
+	// later gets its cause written by a line that never saw the decision. The arm
+	// that made the decision is the only thing that can name it — see
+	// swapHoldVerdict.
+	if v := d.swapLegHoldVerdict(order, resolvedSteps); v.held {
+		d.setQueueReason(order, protocol.QueueWaitingForPartner, v.cause, v.params)
+		d.dbg("complex: order %d held — %s", order.ID, v.reason)
+		return dispatchStep{done: true, err: fmt.Errorf("swap hold: %s", v.reason)}
 	}
 
 	return dispatchStep{}
@@ -729,7 +776,38 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	finalChecked := isConcreteStorageDropoff(d.db, order.DeliveryNode)
 	if finalChecked {
 		if blocked, cap := CheckDropoffCapacity(d.db, order.DeliveryNode, order.ID); blocked {
-			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseDropoffCapacity, cap.Params)
+			// ── A FUNGIBLE DROPOFF RE-ASKS RATHER THAN WAITING ON ONE SLOT ────
+			//
+			// The step remembers the group it was resolved from, and resolvedStep.Group
+			// says why in as many words: "Retained so a store drop-off that loses the
+			// dispatch-time slot claim can revert Node->Group and be re-resolved to a
+			// free slot on the next scanner tick." The allocator already does exactly
+			// that when a slot RESERVATION conflicts (allocator.go, the escape valve).
+			// This arm — the CAPACITY block — did not, and the difference is the whole
+			// defect: an occupied slot parked the order on that one slot forever while
+			// its siblings stood empty.
+			//
+			// GATED SIM 2026-08-31, order 227. A CLIP evac out of ALN_006 was bound to
+			// SMN_015, which held an unrelated STUD bin. SMN_013 and SMN_014, the same
+			// lane, were EMPTY the whole time. The order re-queued 4,520 times — 96% of
+			// every dropoff-occupied event in the run — and never re-asked. Worse than
+			// the spin: it was the evac for ALN_006, so the cell kept the bin nobody was
+			// coming for, and the supply leg (order 225) stood HOLDING at that cell
+			// unable to place. One un-re-asked slot pinned two orders and a machine.
+			//
+			// Reverting the node to its group is not a new destination-picking path; it
+			// is handing the question back to the one that already exists. If the whole
+			// group is genuinely full, reResolveComplexSteps parks the order on
+			// ngrp-resolve next tick — a wait whose releaser is "any slot in the group
+			// frees", which is true, instead of "this one slot frees", which was not.
+			if reverted := d.revertFungibleDropoffToGroup(order, resolvedSteps); reverted {
+				d.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
+				d.dbg("complex: order %d dropoff %s blocked (%s) — reverted to its group so the next "+
+					"tick re-resolves", order.ID, order.DeliveryNode, cap.Cause)
+				return dispatchStep{done: true, err: fmt.Errorf("dropoff capacity: %s (re-asking the group)", cap.Cause)}
+			}
+			// cap.Cause, not the coarse tag — see CauseDropoffCapacity's own note.
+			d.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 			d.dbg("complex: order %d queued — concrete storage dropoff %s blocked: %s", order.ID, order.DeliveryNode, cap.Cause)
 			return dispatchStep{done: true, err: fmt.Errorf("dropoff capacity: %s", cap.Cause)}
 		}
@@ -782,7 +860,8 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 			continue
 		}
 		if blocked, cap := CheckDropoffCapacity(d.db, s.Node, order.ID); blocked {
-			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseDropoffCapacity, cap.Params)
+			// cap.Cause, not the coarse tag — see CauseDropoffCapacity's own note.
+			d.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 			d.dbg("complex: order %d queued — declared-exclusive dropoff %s blocked: %s", order.ID, s.Node, cap.Cause)
 			return dispatchStep{done: true, err: fmt.Errorf("dropoff capacity: %s", cap.Cause)}
 		}
@@ -823,45 +902,31 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	return dispatchStep{}
 }
 
-// setQueueReason is the dispatch side's one door onto the queue-reason columns.
-// It generates the operator sentence from code+params (via the shared formatter),
-// then writes sentence+code+cause together — so a wait parked here always records
-// the structured code, never free text. No-ops when the sentence AND code are
-// unchanged: the unchanged short-circuit is load-bearing (rewriting the same
-// reason re-touches the row and can re-trigger the very scanner tick that just
-// parked the order — an event loop). cause is the engineer-only call-site tag
-// (the `where` of older callers); params carries the values the sentence is built
-// from and is discarded after formatting. Best-effort: a failed write is logged
-// and swallowed (queue_reason is advisory HMI/queue metadata, never a correctness
-// gate), leaving the in-memory fields matching the persisted values.
+// setQueueReason is the dispatch side's door onto the queue-reason columns —
+// the package-local name for WriteQueueDetail, which holds the decision.
 //
-// RETURNS WHETHER THIS CALL ACTUALLY WROTE A NEW WAIT, which is a fact only this
-// function holds and which one caller needs: the stopped-blocker alarm
-// (parkOnClaimedBlocker) fires on the EDGE of a wait rather than on every pass
-// that re-asserts it, and the unchanged short-circuit below is exactly that edge.
-// A false is either "the row already said this" or "the write failed" — neither
-// is a new wait, and both are already logged or harmless. Callers that do not
-// care ignore it, which is every other one.
+// A METHOD RATHER THAN THE BARE CALL, at ~40 sites, because the store handle,
+// the log sink and the subsystem name are the same every time here and are not
+// what any of those call sites is about. The body that must not be re-spelled
+// lives once, in queue_detail.go, along with the account of what the bool and
+// the short-circuit are load-bearing for.
 func (d *Dispatcher) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) bool {
-	reason := FormatQueueSentence(code, params)
-	// The cause is part of what this writes, so it is part of what makes a
-	// second call redundant. Comparing only reason and code meant a call that
-	// changed nothing but the cause was skipped — which matters where a general
-	// reason is set first and a more specific call follows with the same
-	// sentence: the buried path sets "storage is being rearranged" on arrival
-	// and then narrows the cause to lane-locked or lock-race. Without the cause
-	// in this comparison, the narrower tag never lands.
-	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == string(cause) {
-		return false
-	}
-	if err := d.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
-		log.Printf("dispatch: set queue_reason (%s) for order %d: %v", cause, order.ID, err)
-		return false
-	}
-	order.QueueReason = reason
-	order.QueueCode = string(code)
-	order.QueueCause = string(cause)
-	return true
+	return WriteQueueDetail(d.db, log.Printf, "dispatch", order, code, cause, params)
+}
+
+// SetQueueReason is the exported form, for a door OUTSIDE this package that
+// parks an order and then transitions it.
+//
+// Only the engine's bin-move door needs it, and it needs it for a reason worth
+// stating: it wrote the queue detail STRAIGHT TO THE STORE and then called
+// Queue(). The transition's history row takes its code from the IN-MEMORY order
+// (historyReason), which a direct store write never touches — so the fresh
+// `queued` row was born blank, and the only durable record of what a person's
+// move was waiting for did not exist. WriteQueueDetail writes both halves; this
+// makes that shape reachable from outside rather than growing another spelling
+// of it.
+func (d *Dispatcher) SetQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) bool {
+	return d.setQueueReason(order, code, cause, params)
 }
 
 // failOrderInternal is the scanner-path failure helper. Same as
@@ -937,7 +1002,8 @@ func (d *Dispatcher) proposeDigForBuriedPickup(order *orders.Order, laneName str
 		// way joins the list rather than getting its own arm because this caller
 		// reports nothing either way — the demand it is digging on behalf of is
 		// already parked with its own cause, which is what this site's header means
-		// by "one proposer, two reporting policies".
+		// by "one proposer, two reporting policies". The ranked take's promised
+		// refusal (§7) rides this same do-nothing arm for the same reason.
 		d.dbg("complex: no dig for %s yet on behalf of order %d (%v)", lane.Name, order.ID, res.err)
 	case laneClearNoGroup, laneClearSlotNotInLane, laneClearUnplannable:
 		// Geometry. The demand is NOT failed here: admission's refusal is about one
@@ -988,4 +1054,42 @@ func (d *Dispatcher) persistWidenedPlan(order *orders.Order, newSteps []resolved
 			order.DeliveryNode = newDelivery
 		}
 	}
+}
+
+// revertFungibleDropoffToGroup puts a blocked dropoff step back to the node
+// group it was resolved from, so the next tick re-resolves it against a lane
+// that can actually take the bin. Reports whether it changed anything.
+//
+// It is the CAPACITY-block twin of the allocator's reservation-conflict escape
+// valve, and it uses the same field for the same reason (resolvedStep.Group).
+// The two are deliberately separate call sites rather than one shared helper:
+// they fire on different facts — "somebody else reserved the slot" and "there is
+// a bin standing on it" — and the allocator's arm has a partial-reserve rollback
+// around it that this one must not inherit.
+//
+// ONLY THE FINAL DROPOFF, and only when it is fungible. A step with no Group was
+// named concretely by whoever authored the plan (a loader home, a staging node, a
+// line position) and re-picking it would be Core overruling the author — the same
+// rule redirectStoreOffDugLane states for an operator's choice. Those keep the
+// old behaviour: hold, and retry the one slot.
+func (d *Dispatcher) revertFungibleDropoffToGroup(order *orders.Order, steps []resolvedStep) bool {
+	idx := -1
+	for i, s := range steps {
+		if s.Action != protocol.ActionDropoff || s.Node != order.DeliveryNode || s.Group == "" {
+			continue
+		}
+		idx = i // the LAST matching dropoff is the final one, which is what DeliveryNode names
+	}
+	if idx < 0 {
+		return false
+	}
+	group := steps[idx].Group
+	if group == steps[idx].Node {
+		return false // already sitting at the group; nothing to revert
+	}
+	log.Printf("dispatch: complex order %d dropoff %s is occupied — reverting to group %s so the next "+
+		"tick picks a slot that can take it", order.ID, steps[idx].Node, group)
+	steps[idx].Node = group
+	d.persistWidenedPlan(order, steps)
+	return true
 }

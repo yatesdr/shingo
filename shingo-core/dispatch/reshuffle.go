@@ -427,52 +427,83 @@ const (
 
 func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Node, count int, asker reservations.DigAsker, askTheMouth bool, exclude map[int64]bool) ([]*nodes.Node, error) {
 
-	// A GATED DIG DOES NOT PARK ITS BLOCKER IN A DIFFERENT GATED LANE.
+	// A GATED DIG MAY PARK ITS BLOCKER IN ANOTHER GATED LANE. IT USED NOT TO.
 	//
-	// ── THE REASON THIS WAS ADDED IS GONE; THE EXCLUSION IS KEPT ANYWAY ───
+	// ── WHY THE EXCLUSION EXISTED, AND WHY IT IS GONE ────────────────────
 	//
-	// It was added because spliceLaneWait REFUSED a plan touching two gated lanes,
-	// so such a leg could not be dispatched at all. Multi-gate plans are built now
-	// (lane_gate_dispatch.go rule 2), and that leg would dispatch cleanly: a wait
-	// at each mark, each released by its own lane.
+	// It was added on the lane-stress rig 2026-08-09, and the failure was real:
+	// spliceLaneWait then allowed ONE gated lane per plan and refused a second
+	// outright, so a dig out of a marked lane whose blocker landed in a marked
+	// empty lane failed at the splice — which failed the parent, the two-robot
+	// swap it was supplying, and the evac. Four terminal orders from one
+	// unexpressible plan, and nothing self-cleared: both marks stay where they
+	// are, so the re-plan picks the same slot and fails the same way.
 	//
-	// What survives the change is a different objection, and it is about the DIG
-	// rather than about the plan. A dig holds its lane EXCLUSIVELY for the whole
-	// excavation. Sending one of its legs to dwell at another lane's mark makes
-	// the dug lane's exclusive hold last as long as a SECOND lane's congestion —
-	// a wait, lawful and self-clearing, but one that keeps a whole corridor shut
-	// while it lasts and blocks every unrelated order aimed at it. Parking in an
-	// ungated slot costs the dig nothing and takes no second lane hostage.
+	// THAT PLAN IS EXPRESSIBLE NOW. lane_gate_dispatch.go rule 2 became "a wait
+	// per gated lane the plan enters" — the leg dispatches cleanly with a wait at
+	// each mark, each released by its own lane's admission. The exclusion has
+	// outlived the refusal that forced it, and the comment that stood here said
+	// so, in these words: "this is now a CONSERVATISM rather than an
+	// impossibility … the next person to widen the shuffle pool will come looking
+	// here … Neither is guessed at cheaply — measure it."
 	//
-	// So this is now a CONSERVATISM rather than an impossibility, and it is worth
-	// saying which, because the next person to widen the shuffle pool will come
-	// looking here: the constraint that forced it has been lifted, and lifting
-	// this too is a real option with a measurable cost on both sides. What it
-	// buys is pool width, which the dig cascade (F-10) is sensitive to. What it
-	// risks is lane-hold duration. Neither is guessed at cheaply — measure it.
+	// ── SO IT WAS MEASURED, AND THE CONSERVATISM COSTS MORE THAN IT SAVES ─
 	//
-	// Found on the lane-stress rig 2026-08-09, within minutes of it coming up:
-	// every dig out of a marked lane whose blocker landed in the marked empty
-	// lane failed at the splice, which failed the parent, which failed the
-	// two-robot swap the parent was supplying, which cancelled the evac. One
-	// unexpressible plan, and the line was starved. Nothing self-clears either --
-	// both marks stay where they are, so the re-plan picks the same slot and
-	// fails the same way.
+	// demo.yaml 2026-08-31, all 16 lanes marked for the first time IN THIS
+	// FIXTURE. With every lane gated, "park in an ungated lane" names no slot in
+	// the plant, so EVERY dig held:
 	//
-	// This is the same shape as the dug-lane exclusion below, and lands here for
-	// the same reason: a slot the plan cannot legally use is not a candidate, and
-	// plan-time is where a candidate list belongs. The alternative -- letting the
-	// splice refuse and dispositioning the refusal better -- treats the symptom;
-	// the dig never wanted that slot, it wanted A slot.
+	//	complex: could not read Lane_01 while planning a dig for demand 9
+	//	  (find shuffle slots: ... this dig is 2 slot(s) short) — holding
 	//
-	// Running out because of this WAITS. ErrNoShuffleSlot is transient and
-	// retries, which is exactly the disposition the last tightening of this
-	// function relied on (see shuffleSlotFree). A dig that can only reach gated
-	// lanes waits for an ungated slot to free rather than dying.
+	// Six digs stuck from the first minute of the run, each with a partner leg
+	// stuck behind it, and the lines starved behind those. The refusal is a wait
+	// and it is honest, but a wait whose releaser is "somebody un-marks a lane"
+	// has no releaser at all.
 	//
-	// Only when the DUG lane is itself gated: a plan touching one gated lane is
-	// fine, and so is one touching the same gated lane twice.
-	dugLaneGated := db.GetNodeProperty(laneID, PropLaneGatePoint) != ""
+	// ── AND "NO FIXTURE HAD EVER CARRIED A MARK" WAS FALSE WHEN IT WAS WRITTEN ─
+	//
+	// This paragraph used to say that, and it was believable because the fixture
+	// in front of the author had none. The two lane-stress rigs each declared six
+	// lane gate_points and had since before this exclusion existed — which is the
+	// whole reason the rig could meet the two-gated-lane plan on 2026-08-09 (WALL)
+	// and find the defect the exclusion was added for.
+	//
+	// THE KEY HAS SINCE MOVED, AND THE MARKS WITH IT. No plant spec in this repo
+	// declares a per-lane gate_point any more: the waiting spots belong to the
+	// GROUP (`wait_points` on the NGRP), and all three specs migrated — demo.yaml
+	// included, which lists fifteen for SYN_MARKET at plants/demo.yaml:165. So the
+	// shipped demo fixture IS gated today; what changed is only which key says so.
+	// The per-lane key still resolves first where a human sets it through the API,
+	// as the documented legacy fallback. store/nodes/lanes.go carries the same
+	// fact at the query that depends on it.
+	//
+	// The plant half is now DATA rather than inference: Springfield and
+	// Hopkinsville were queried directly on 2026-08-31 and carry ZERO
+	// lane_gate_point rows. That is a read of both plant cores, not a comment
+	// quoting another comment.
+	//
+	// ── WHAT THE EXCLUSION WAS PROTECTING, AND WHICH HALF IS STILL UNMEASURED ─
+	//
+	// The objection stands and is real: a dig holds its lane EXCLUSIVELY, so a leg
+	// dwelling at a second lane's mark keeps the dug corridor shut for as long as
+	// the second lane is congested. It is lawful and self-clearing — the second
+	// lane's own admission releases it.
+	//
+	// It is NOT known to be bounded, and this paragraph used to say it was. The
+	// owed measurement had two halves. Pool width was measured, above: six stuck
+	// digs, decisive. LANE-HOLD DURATION — the old comment's actual objection —
+	// was never measured, and the all-16-marked demo run is the one fixture shape
+	// that cannot answer it, because when every lane is gated there is no ungated
+	// control to compare against. It runs on plants/lane-stress.yaml, which exists
+	// for exactly this and is already marked.
+	//
+	// So: pool width wins on evidence, because a dig that never starts is
+	// unconditional and a longer hold is conditional on congestion. The trade is
+	// argued, not measured, and the second number is still owed.
+	//
+	// The dug-lane exclusion below is NOT this one and stays: never park a blocker
+	// back into the lane being dug out of.
 
 	// NEVER RE-BURY A BIN AN EXPOSE HOLD IS PROTECTING — NOT EVEN YOUR OWN.
 	//
@@ -682,7 +713,29 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		//
 		// SKIPPED on the shortfall re-walk, and only there — see consultTheMouth.
 		if askTheMouth {
-			admissible, mErr := reservations.DigAdmissible(db.DB, c.ID, asker)
+			// NIL IS RIGHT HERE, AND IT IS A DIFFERENT QUESTION — but the physics
+			// argue the other way, so the reason is recorded rather than assumed.
+			// The dig-lock sites ask "may this excavation take the lane it must dig";
+			// this asks "is lane c a good place to PARK A BLOCKER", and a lane with a
+			// robot queued at its mark is a worse parking spot whether or not that
+			// robot is in the corridor yet. Exempting here would widen the shuffle
+			// pool, which is the subject of the gated-dig blocker-park change and
+			// carries its own measurement there.
+			//
+			// This is NOT the pre-check half of a pre-check/acquire pair, which is
+			// what would make a disagreement the 16,947 shape: the acquire that
+			// follows takes the PARK lane as ModeInbound, a mode admitMouth never
+			// consults the exemption for. The two answers are about different lanes
+			// and different modes, so they cannot contradict each other here.
+			//
+			// The honest counter-argument, left for whoever measures it: a robot in
+			// the group's staging area obstructs a blocker being parked exactly as
+			// little as it obstructs an excavation, so the same fact says the same
+			// thing here. Threading it would only ADD candidates, and this function's
+			// own note says a refusal costs a worse slot rather than a wedge. It is
+			// left nil because widening the pool is a change with its own population
+			// and its own run, not because the physics differ.
+			admissible, mErr := reservations.DigAdmissible(db.DB, c.ID, asker, nil)
 			switch {
 			case mErr != nil:
 				// ── FAIL CLOSED, AND "CANNOT SEE" IS NOT "FULL" ───────────
@@ -701,9 +754,6 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 				mouthHeld = append(mouthHeld, c)
 				continue
 			}
-		}
-		if dugLaneGated && db.GetNodeProperty(c.ID, PropLaneGatePoint) != "" {
-			continue // a dig leg dwelling at a second mark holds two lanes at once
 		}
 		slots, err := db.ListLaneSlots(c.ID)
 		if err != nil {

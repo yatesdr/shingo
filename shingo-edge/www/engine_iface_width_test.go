@@ -84,8 +84,15 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Edge's wide surface at 72 methods —
-// ServiceAccess's 20 embedded, plus 52 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Edge's wide surface at 71 methods —
+// ServiceAccess's 20 embedded, plus 51 orchestration verbs of its own.
+//
+// The 51st is SetActivePullSide, added 2026-08-28 under the owner ruling that
+// the operator gets an explicit set/change control for which side of an A/B pair
+// the line is pulling from (the flip stays its canonical writer). The header's
+// own rule applied: the want-list edit follows the conversation, not the other
+// way round. The stated numbers were also two out before this — the list was 70,
+// not 72 — so they are counted rather than carried forward.
 func TestEngineOrchestrationWidth(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -151,7 +158,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"RequestProduceSwap",
 		"ScenePointNames",
 		"SendEnvelope",
-		"SequentialChangeoverCutover",
+		"SetActivePullSide",
 		"ShiftService",
 		"SourcingStateForProcess",
 		"StageNodeChangeoverMaterial",

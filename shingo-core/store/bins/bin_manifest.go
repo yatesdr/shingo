@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol/clock"
 	"shingocore/domain"
+	"shingocore/store/reservations"
 )
 
 // ManifestEntry is the bin-manifest line-item domain type — one CatID
@@ -98,13 +99,6 @@ func ConfirmManifestTx(tx *sql.Tx, binID int64, producedAt string) (loadedAt tim
 	return loadedAt, uop, payloadCode, err
 }
 
-// ClearManifest empties a bin's manifest (bin is now empty).
-func ClearManifest(db *sql.DB, binID int64) error {
-	_, err := db.Exec(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0, manifest_confirmed=false, loaded_at=NULL, updated_at=$2 WHERE id=$1`,
-		binID, clock.Now().UTC())
-	return err
-}
-
 // GetManifest fetches a bin and parses its manifest. The Bin type
 // owns the JSON-decoding logic (domain.Bin.ParseManifest); this
 // helper just stitches a DB read to that pure-data step.
@@ -171,7 +165,7 @@ func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, 
 		  AND `+SourceableStatusSQL+`
 		  AND b.status <> 'staged'
 		  AND ($2 = 0 OR b.node_id != $2)
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')%s
+		  AND NOT `+reservations.BinSpokenForSQL+`%s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
 		LIMIT 1`, BinJoinQuery, PayloadBinTypeAdvisoryClause), payloadCode, excludeNodeID)
 	return ScanBin(row)

@@ -52,7 +52,7 @@ func TestRightOfWay_NamesTheKindOfHolderItWasRefusedBy(t *testing.T) {
 		digger := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "rowsrc-dig" })
 		holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "rowsrc-holder" })
 		if err := reservations.AcquireLanesFor(db.DB, holder.ID, reservations.ModeDig,
-			reservations.Anyone, reservations.BySourceLock, park.ID); err != nil {
+			reservations.Anyone, nil, reservations.BySourceLock, park.ID); err != nil {
 			t.Fatalf("plant the source lock: %v", err)
 		}
 

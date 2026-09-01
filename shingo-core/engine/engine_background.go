@@ -191,6 +191,21 @@ func (e *Engine) stagedBinSweepLoop() {
 			} else if orphaned > 0 {
 				e.logFn("engine: released %d orphaned bin claims from terminal orders", orphaned)
 			}
+			// AND THE LIVE-ORDER ARM, on the same tick and with its own count.
+			//
+			// Kept separate from the sweep above because the two are different
+			// defects: that one heals a claim that leaked past a terminal
+			// transition, this one heals ownership drift under an order that is
+			// still running. A merged number could not tell them apart, and they
+			// send the reader to different files. Each row is also logged
+			// individually and loudly by the sweep itself — this line is the count.
+			drifted, err := e.db.ReleaseAcquiringOrphanClaims()
+			if err != nil {
+				e.logFn("engine: acquiring-order orphan claim sweep error: %v", err)
+			} else if drifted > 0 {
+				e.logFn("engine: cleared %d orphaned claim(s) held by live acquiring orders — "+
+					"two-books ownership drift, see the RECONCILIATION lines for which", drifted)
+			}
 		}
 	}
 }

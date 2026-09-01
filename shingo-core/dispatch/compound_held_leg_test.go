@@ -63,8 +63,22 @@ func TestCompound_HeldLegResumesWhenTheLaneClears(t *testing.T) {
 	if held.QueueCause != string(CauseLaneOccupied) {
 		t.Errorf("queue_cause = %q, want %q", held.QueueCause, CauseLaneOccupied)
 	}
-	if held.QueueCode != string(protocol.QueueWaitingForSlot) {
-		t.Errorf("queue_code = %q, want %q", held.QueueCode, protocol.QueueWaitingForSlot)
+	// A LANE WAIT, not a slot wait. This filed under QueueWaitingForSlot, so a leg
+	// held out of an occupied corridor read "Waiting for a slot" — and the same
+	// cause from the complex and reshuffle doors read "Rearranging lane X". One
+	// cause must render one sentence whichever door parked it.
+	if held.QueueCode != string(protocol.QueueStorageRearranging) {
+		t.Errorf("queue_code = %q, want %q — the leg is waiting on a corridor, not a slot",
+			held.QueueCode, protocol.QueueStorageRearranging)
+	}
+	// ONE CAUSE, ONE SENTENCE. planning_service and complex_reshuffle write this
+	// same cause with these same params; if a door renders differently, an operator
+	// reading the board learns which code path parked the order rather than what
+	// the plant is doing.
+	if want := FormatQueueSentence(protocol.QueueStorageRearranging,
+		QueueParams{Lane: held.DeliveryNode, Payload: held.PayloadCode}); held.QueueReason != want {
+		t.Errorf("the compound door renders %q; the reshuffle door renders %q for the same cause, "+
+			"lane and payload. One cause, one sentence.", held.QueueReason, want)
 	}
 
 	// THE LANE CLEARS — the foreign order places its bin and leaves.

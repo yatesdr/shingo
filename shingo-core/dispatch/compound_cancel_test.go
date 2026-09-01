@@ -112,9 +112,8 @@ func TestAdvanceCompoundOrder_AllChildrenConfirmed_Completes(t *testing.T) {
 	}
 }
 
-// TestGate1_TheDemandSurvivesItsDigsFailure is gate 1 end to end, on the shape
-// the owner asked about: "the demand still exists — isn't this the point of
-// heal?"
+// TestGate1_TheDemandSurvivesItsDigsFailure is gate 1 end to end: a dig failing
+// is congestion, and the demand it serves survives it. That is what heal is for.
 //
 // ── WHAT USED TO HAPPEN ───────────────────────────────────────────────────
 //

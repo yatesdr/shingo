@@ -5,12 +5,15 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingoedge/config"
+	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -50,6 +53,9 @@ type simOperator struct {
 	// See maxReleaseTries: the Edge cannot see a Core-owned lane wait, so the only
 	// signal that a button is not ours to push is the order coming back `staged`.
 	releaseTries map[int64]int
+	// cappedAt records when an order hit maxReleaseTries, so the cap can be
+	// re-armed instead of becoming a permanent give-up. See releaseCapReArm.
+	cappedAt map[int64]time.Time
 
 	// marketSlots caches the combined market's storage-slot node names for the
 	// negative-bin sweep (clearNegativeBins). Populated lazily; read only by the
@@ -72,6 +78,7 @@ func (e *Engine) StartSimOperator(ctx context.Context, simCfg config.SimConfig, 
 		flipping:     make(map[int64]bool),
 		confirming:   make(map[int64]bool),
 		releaseTries: make(map[int64]int),
+		cappedAt:     make(map[int64]time.Time),
 	}
 	op.classify = op.classifyFromClaim
 	// The bus is synchronous (D4): handlers must not block — they dedupe and
@@ -118,8 +125,57 @@ func (op *simOperator) onDelivered(ev Event) {
 	if !ok || d.ProcessNodeID == nil {
 		return
 	}
+	if !op.deliveryLandedHere(d) {
+		// The bin this order was carrying came to rest somewhere else. Scheduling
+		// a LOAD/CLEAR here would act on a node the delivery did not fill.
+		op.e.debugFn("[sim] operator: order %d is tracked at node %d but its bin landed elsewhere — no LOAD/CLEAR",
+			d.OrderID, *d.ProcessNodeID)
+		return
+	}
 	op.schedule(*d.ProcessNodeID)                   // LOAD/CLEAR for manual_swap nodes
 	op.scheduleConfirm(d.OrderID, *d.ProcessNodeID) // sign off swap legs delivered to a line node
+}
+
+// deliveryLandedHere reports whether the delivered order actually left a bin at
+// the process node it is tracked against.
+//
+// ── AN UNLOADER'S OWN EMPTY-OUT WAS SCHEDULING ITS CLEAR ──────────────────
+//
+// A manual_swap unloader's U2 leg carries the drained carrier AWAY — source
+// FGN_001, destination SYN_PRESS_EMPTIES — and it is tracked at FGN_001's
+// process node. So its delivery scheduled a CLEAR at a node the same order had
+// just emptied. The worker waited its 8s, found nothing, burned all eight
+// retries in about three sim-seconds, and gave up nine sim-seconds before the
+// NEXT carrier arrived:
+//
+//	08:21:35  bin_picked_up bin=21 at FGN_001            <- U2 lifts the carrier
+//	08:21:38  auto-clear node 21 attempt 1..8: no bin at node FGN_001
+//	08:21:47  delivered fallback: bound bin 20 to node FGN_001   <- the real arrival
+//
+// AND THE DEDUPE MADE IT WORSE, because `schedule` drops a second call while one
+// is pending: a spurious run from the outbound leg could swallow the genuine one
+// from the inbound arrival. Sim 2026-08-30 measured 115 give-ups in a single run
+// — every one of them a clear that never happened, on a fixture whose empty pool
+// only refills when carriers ARE cleared.
+//
+// The test is the one outboundMoveInFlight already uses on the order side: a
+// move whose SOURCE is this slot is this slot's bin LEAVING. Anything else —
+// a delivery to here, a complex leg with no delivery_node, an unreadable row —
+// schedules as before, which keeps this a narrowing of a known-noisy trigger
+// rather than a new gate with its own failure mode.
+func (op *simOperator) deliveryLandedHere(d OrderDeliveredEvent) bool {
+	if op.e == nil || op.e.db == nil {
+		return true // no store wired (unit fixtures) — behave exactly as before
+	}
+	node, err := op.e.db.GetProcessNode(*d.ProcessNodeID)
+	if err != nil || node == nil || node.CoreNodeName == "" {
+		return true // cannot tell — behave exactly as before
+	}
+	order, err := op.e.db.GetOrder(d.OrderID)
+	if err != nil || order == nil {
+		return true
+	}
+	return !(order.SourceNode == node.CoreNodeName && order.DeliveryNode != node.CoreNodeName)
 }
 
 // confirmDelay is the operator's reaction time before signing off a delivered
@@ -391,6 +447,33 @@ func (op *simOperator) onStatusChanged(ev Event) {
 // not a tuned number.
 const maxReleaseTries = 3
 
+// releaseCapReArm is how long a capped order is left alone before the sim
+// operator gives it another round of tries.
+//
+// ── WHY THE CAP RE-ARMS, AND WHY IT USED NOT TO ───────────────────────────
+//
+// The cap's premise was that a capped order is CORE's to release: "a lane-waiting
+// order stays staged and stays capped until Core lets it in, at which point it
+// leaves and the count is dropped." That is true of a LANE wait and false of a
+// STATION wait — and Core is explicit that it must never advance one of those
+// ("the precondition is a fact only the station can observe", queue_releasers.go).
+// The station, in the sim, IS this operator. So a station-waiting order that hit
+// the cap had its only possible releaser go quiet for good.
+//
+// MEASURED, 12e run 2026-08-31. Order 91 took three pair-releases inside ONE
+// SECOND (15:25:31, :32, :32), hit the cap, and was abandoned holding AMR-15 for
+// the rest of the run under the message above — which told the reader it was
+// "most likely parked on a LANE wait" when its own plan says
+// `wait SLN_010 wait_kind=station`. 24 orders hit the cap in that run.
+//
+// A BOUNDED BACKOFF, NOT A RETRY LOOP. The original incident this cap was written
+// for (lane-stress 2026-08-10: 240 refusals in five minutes, one every 1.25s,
+// 1796 outbox rows for 46 completed orders) stays fixed: three tries per re-arm
+// window is ~3/minute against ~48/minute measured then, a 16x reduction, and a
+// genuinely lane-waiting order simply re-caps each window until Core lets it in.
+// What it stops being is permanent.
+const releaseCapReArm = time.Minute
+
 func (op *simOperator) scheduleRelease(orderID int64) {
 	op.mu.Lock()
 	if op.releasing[orderID] {
@@ -400,10 +483,17 @@ func (op *simOperator) scheduleRelease(orderID int64) {
 	if op.releaseTries[orderID] >= maxReleaseTries {
 		if op.releaseTries[orderID] == maxReleaseTries {
 			op.releaseTries[orderID]++ // once past the cap, say so once and go quiet
+			// UNDER THE LOCK. cappedAt is read and deleted by
+			// reArmExpiredReleaseCaps from the reconcile goroutine, which holds
+			// op.mu to do it; this write was outside the mutex when the re-arm
+			// landed, which is a concurrent map write — a panic, not a stale
+			// read. The race detector never saw it: gate.sh's race step runs
+			// shingo-core only and passes no `sim` tag, so nothing in this file
+			// is ever built under -race.
+			op.cappedAt[orderID] = op.clk.Now()
 			op.mu.Unlock()
-			op.e.logFn("[sim] operator: order %d has refused release %d times — leaving it alone. "+
-				"It is most likely parked on a LANE wait, which only Core's lane evaluator can "+
-				"advance; the Edge cannot see that from here.", orderID, maxReleaseTries)
+			op.e.logFn("[sim] operator: order %d has refused release %d times — backing off for %s. %s",
+				orderID, maxReleaseTries, releaseCapReArm, op.releaseCapDiagnosis(orderID))
 			return
 		}
 		op.mu.Unlock()
@@ -470,13 +560,7 @@ func (op *simOperator) reconcile() {
 			live[active[i].ID] = true
 		}
 	}
-	op.mu.Lock()
-	for id := range op.releaseTries {
-		if !live[id] { // delivered, or gone from the active set entirely (terminal)
-			delete(op.releaseTries, id)
-		}
-	}
-	op.mu.Unlock()
+	op.reArmExpiredReleaseCaps(live)
 
 	pending := 0
 	for i := range active {
@@ -484,6 +568,33 @@ func (op *simOperator) reconcile() {
 		switch o.Status {
 		case protocol.StatusStaged:
 			op.scheduleRelease(o.ID)
+			// ── AND THE A/B CUTOVER, WHICH THIS LOOP DID NOT DRIVE ────────
+			//
+			// scheduleFlip had exactly ONE caller — onOrderCreated — so the
+			// cutover was LIVE-EVENT-ONLY. That is a hole shaped precisely like
+			// a deadlock, and the fixture found it:
+			//
+			//	[sim] operator auto-release order 164 rejected: the line is
+			//	      pulling from PLN_003; flip to PLN_004 first
+			//
+			// The evac at a sequential press cannot release until the line
+			// flips to the paired side. Nothing flips unless an order is
+			// CREATED against that node. No order can be created for a cell
+			// whose swap is stuck. Measured 2026-08-30: 444 refusals of that one
+			// message, 500 release-cap announcements, five robots pinned, and
+			// PANEL-B production stopped for four sim-hours — with the operator
+			// retrying an action that could not succeed until it took a
+			// different one first.
+			//
+			// This loop exists to "re-derive pending operator actions from
+			// current state" so a live-only trigger cannot strand the plant. It
+			// re-derived three of the four. runFlip is already idempotent and
+			// already short-circuits on !ActivePull and on a non-sequential
+			// claim, so asking it once per staged order per sweep costs a read
+			// and answers nothing new when there is nothing to flip.
+			if o.ProcessNodeID != nil {
+				op.scheduleFlip(*o.ProcessNodeID)
+			}
 			pending++
 		case protocol.StatusDelivered:
 			if o.ProcessNodeID != nil {
@@ -790,22 +901,89 @@ func (op *simOperator) runRelease(orderID int64) {
 	// Sequential / single-robot modes stay on the per-leg path: ReleaseStagedOrders
 	// rejects non-two-robot modes, and forcing it would wedge A/B nodes (the
 	// pair_release trap documented in the sim-traps memory).
+	// A CONSUME NODE GETS ITS FORM FILLED IN ON THIS PATH TOO. The two-robot check
+	// above routes the PAIR MECHANISM, which is genuinely two-robot-only; the
+	// disposition is not, and used to be reachable only through it. See
+	// consumeDisposition for the run that cost — a single_robot consume node whose
+	// carriers left unsettled and never came back as empties.
+	//
+	// Produce keeps the blank disposition it has always sent here; the note above
+	// on why two-robot produce is routed to the pair path applies unchanged.
+	disp := ReleaseDisposition{}
 	if order, err := op.e.db.GetOrder(orderID); err == nil && order != nil && order.ProcessNodeID != nil {
 		if _, _, claim, lerr := loadActiveNode(op.e.db, *order.ProcessNodeID); lerr == nil && claim != nil &&
 			claim.SwapMode.IsTwoRobot() {
 			op.releaseAsPair(orderID)
 			return
 		}
+		if d, ok := op.consumeDisposition(*order.ProcessNodeID); ok {
+			disp = d
+		}
 	}
-	// Empty disposition: release the swap without touching the bin manifest. The
-	// sim isn't modeling SEND PARTIAL / RELEASE EMPTY accounting -- just the
-	// "operator pushed Release" transition that lets the staged swap finish.
 	// Tolerated failure (order already advanced/cancelled): log at debug.
-	if err := op.e.ReleaseOrderWithLineside(orderID, ReleaseDisposition{}); err != nil {
+	if err := op.e.ReleaseOrderWithLineside(orderID, disp); err != nil {
 		op.e.debugFn("[sim] operator auto-release order %d rejected: %v", orderID, err)
 		return
 	}
 	op.e.logFn("[sim] operator auto-release order %d (swap-ready)", orderID)
+}
+
+// consumeDisposition returns the disposition a real operator would declare for
+// the carrier leaving a CONSUME node, and whether this node is a consume node at
+// all. It lives outside releaseAsPair because the ANSWER IS NOT ABOUT ROBOTS: it
+// is a property of what is physically left in the bin, and both release paths owe
+// it.
+//
+// ── WHY THIS IS SHARED, AND WHAT IT COST TO BE UNSHARED ───────────────────
+//
+// Core settles a count at RELEASE and nowhere else (SyncOrClearForReleased writes
+// uop 0 and the released_empty / released_underpack audit row). A release that
+// sends a blank disposition leaves the departing carrier's count unsettled and its
+// manifest untouched, so the carrier rides into the pool still labelled — and a
+// labelled carrier never satisfies EmptyCarrierWhere's blank-payload_code test
+// again. It is empty, and invisible.
+//
+// This logic used to sit inside releaseAsPair, which is reached only when
+// claim.SwapMode.IsTwoRobot(). That gate is correct FOR THE PAIR MECHANISM —
+// ReleaseStagedOrders rejects non-two-robot modes and forcing it wedges A/B nodes
+// — but the disposition rode along with it, so every single-robot and sequential
+// consume node kept sending a blank form.
+//
+// MEASURED, demo.yaml 2026-08-31. ALN_003 (WELD-2, PANEL-B) is the plant's only
+// single_robot CONSUME node, and PANEL-B is the payload that rides STANDARD-SM.
+// Eleven SM carriers ended a run all labelled, ZERO manifest-clear operations in
+// the whole run, and PRESS-2 dead waiting for an empty that could not exist. The
+// fixture's answer was to bolt an unloader onto PANEL-B purely to wipe labels —
+// which, because a drain window must be handed a FULL carrier, then destroyed 450
+// UOP of PANEL-B in 81 sim-minutes while WELD-2 got none.
+//
+// A real operator declares what is PHYSICALLY there, so the sim reads the carrier
+// and declares the same thing:
+//
+//	tracked <= 0  -> RELEASE UNDERPACK. The carrier is empty; the tracked count
+//	                 disagreeing (negative, from an over-count) is exactly what
+//	                 this disposition is for — same wire shape as release-empty,
+//	                 and the tag carries the "physical inventory was less than
+//	                 tracked" signal so Core records released_underpack.
+//	tracked >  0  -> SEND PARTIAL BACK. Stock is left; the bin returns to the pool
+//	                 with its count and manifest intact, which is what makes it
+//	                 re-sourceable oldest-first.
+//
+// PRODUCE is deliberately NOT handled here. The per-leg path's produce-role branch
+// skips manifest sync (see the caller's note on why two-robot produce is routed to
+// the pair path instead), and sequential A/B produce nodes stay per-leg on purpose.
+// Declaring capture_lineside for them is a separate change with separate evidence.
+func (op *simOperator) consumeDisposition(nodeID int64) (ReleaseDisposition, bool) {
+	node, _, claim, err := loadActiveNode(op.e.db, nodeID)
+	if err != nil || claim == nil || claim.Role != protocol.ClaimRoleConsume {
+		return ReleaseDisposition{}, false
+	}
+	disp := ReleaseDisposition{CalledBy: "sim-operator", Mode: DispositionSendPartialBack}
+	if bins, _, ferr := op.e.coreClient.FetchNodeBins([]string{node.CoreNodeName}); ferr == nil &&
+		len(bins) > 0 && bins[0].Occupied && bins[0].UOPRemaining <= 0 {
+		disp.Mode = DispositionReleaseUnderpack
+	}
+	return disp, true
 }
 
 // releaseAsPair pushes the operator's RELEASE BUTTON for the node this order
@@ -835,38 +1013,12 @@ func (op *simOperator) releaseAsPair(orderID int64) {
 		return
 	}
 	nodeID := *order.ProcessNodeID
-	disp := ReleaseDisposition{CalledBy: "sim-operator"}
-	if node, _, claim, lerr := loadActiveNode(op.e.db, nodeID); lerr == nil && claim != nil {
-		switch claim.Role {
-		case protocol.ClaimRoleProduce:
+	disp, isConsume := op.consumeDisposition(nodeID)
+	if !isConsume {
+		disp = ReleaseDisposition{CalledBy: "sim-operator"}
+		if _, _, claim, lerr := loadActiveNode(op.e.db, nodeID); lerr == nil && claim != nil &&
+			claim.Role == protocol.ClaimRoleProduce {
 			disp.Mode = DispositionCaptureLineside
-		case protocol.ClaimRoleConsume:
-			// THE CONSUME MIRROR, and it was missing. A consume claim fell through
-			// to the zero value, which means "release the swap without touching the
-			// bin manifest" — so the departing carrier's count was never settled and
-			// rode into the pool as-is. A carrier over-consumed to -6 stayed at -6 in
-			// a buffer, and nothing downstream would ever zero it: Core settles a
-			// count at RELEASE (SyncOrClearForReleased writes uop 0 and the
-			// released_empty / released_underpack audit row), and release is the only
-			// place it does.
-			//
-			// A real operator declares what is PHYSICALLY there, so the sim reads the
-			// carrier and declares the same thing:
-			//
-			//   tracked <= 0  -> RELEASE UNDERPACK. The carrier is empty; the tracked
-			//                    count disagreeing (negative, from an over-count) is
-			//                    exactly what this disposition is for — same wire
-			//                    shape as release-empty, and the tag carries the
-			//                    "physical inventory was less than tracked" signal so
-			//                    Core records released_underpack.
-			//   tracked >  0  -> SEND PARTIAL BACK. Stock is left; the bin returns to
-			//                    the pool with its count and manifest intact, which is
-			//                    what makes it re-sourceable oldest-first.
-			disp.Mode = DispositionSendPartialBack
-			if bins, _, ferr := op.e.coreClient.FetchNodeBins([]string{node.CoreNodeName}); ferr == nil &&
-				len(bins) > 0 && bins[0].Occupied && bins[0].UOPRemaining <= 0 {
-				disp.Mode = DispositionReleaseUnderpack
-			}
 		}
 	}
 	if err := op.e.ReleaseStagedOrders(nodeID, disp); err != nil {
@@ -933,7 +1085,7 @@ func (op *simOperator) runFlip(nodeID int64) {
 		return
 	}
 	// FlipABNode(x) makes x active and its partner (this node) inactive.
-	if err := op.e.FlipABNode(paired.ID); err != nil {
+	if err := op.e.FlipABNode(paired.ID, OperatorFlip("sim-operator")); err != nil {
 		op.e.debugFn("[sim] A/B cutover %s→%s rejected: %v", node.CoreNodeName, claim.PairedCoreNode, err)
 		return
 	}
@@ -1009,4 +1161,122 @@ func (op *simOperator) loadBin(nodeID int64, claim *processes.NodeClaim) error {
 	}
 	manifest := []protocol.IngestManifestItem{{PartNumber: payload, Quantity: capacity}}
 	return op.e.LoadBin(nodeID, payload, capacity, manifest)
+}
+
+// reArmExpiredReleaseCaps drops the release cap for orders that have progressed
+// (or gone) and for those that have sat under it longer than releaseCapReArm.
+//
+// The first half is the original clearing rule and its reasoning is above: the
+// release from the cap cannot be a state the refusal-flap passes through, so it
+// keys on `delivered` rather than on "not currently staged".
+//
+// The second half is the re-arm, and it exists because the cap's premise is only
+// half true. See releaseCapReArm.
+func (op *simOperator) reArmExpiredReleaseCaps(live map[int64]bool) {
+	now := op.clk.Now()
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	for id := range op.releaseTries {
+		if !live[id] { // delivered, or gone from the active set entirely (terminal)
+			delete(op.releaseTries, id)
+			delete(op.cappedAt, id)
+			continue
+		}
+		at, capped := op.cappedAt[id]
+		if !capped || now.Sub(at) < releaseCapReArm {
+			continue
+		}
+		delete(op.releaseTries, id)
+		delete(op.cappedAt, id)
+		op.e.logFn("[sim] operator: order %d has waited %s under the release cap — trying again in "+
+			"case the button was mine to push all along", id, releaseCapReArm)
+	}
+}
+
+// releaseCapDiagnosis is what the sim operator can HONESTLY say about an order
+// it has just stopped pushing Release on.
+//
+// ── WHAT IT REPLACED, AND WHY THAT MATTERED ───────────────────────────────
+//
+// The cap's announcement used to assert the order was "most likely parked on a
+// LANE wait, which only Core's lane evaluator can advance". Order 91 in the 12e
+// run took three pair-releases inside one second, hit the cap, held AMR-15 for
+// the rest of the run, and printed that sentence — while its own plan said
+// `wait SLN_010 wait_kind=station`. The sentence sent every reader looking for a
+// lane fence that was not refusing anything, and it was the reason the whole
+// population was filed as a swap peer-terminal orphan for two rounds.
+//
+// ── WHAT THE EDGE ACTUALLY KNOWS, WHICH IS LESS THAN IT WANTED TO SAY ─────
+//
+// It knows its OWN plan, and every wait the Edge authors is station-owned by
+// construction (material_orders.go stationWait). It knows the sibling's status.
+// It does NOT know which wait the robot is standing at: Core splices its lane
+// waits into ITS copy of the plan and never sends them back, and
+// protocol.OrderStaged carries a uuid and a detail string — no wait index, no
+// wait kind. So the honest report is the two facts plus the missing one, and
+// naming the gap is the part that stops the next reader repeating order 91's
+// investigation.
+func (op *simOperator) releaseCapDiagnosis(orderID int64) string {
+	// A DIAGNOSTIC MUST NOT KILL THE RUN IT IS DESCRIBING. This is reached only
+	// on the cap announcement, where the sole remaining job is to explain a
+	// refusal; an unreadable store is a reason to say less, never to panic.
+	//
+	// The release-cap diagnosis added this call without the guard, and it panicked the
+	// plant-agnostic harness ever since — newTestSimOperator builds an Engine with
+	// no db, which is deliberate (it tests the cap's counting, not its prose), and
+	// scheduleRelease drives straight through here on the twentieth firing.
+	//
+	// It went unseen because NOTHING IN scripts/gate.sh COMPILES THE `sim` TAG:
+	// the unit step builds untagged, and the race step is shingo-core only. The
+	// same blind spot hid a concurrent map write on this type. Whatever else
+	// changes, a nil-safe diagnostic is the cheap half of that lesson.
+	if op.e == nil || op.e.db == nil {
+		return "The Edge cannot read the order to say more about what it is waiting on."
+	}
+	order, err := op.e.db.GetOrder(orderID)
+	if err != nil || order == nil {
+		return "The Edge cannot read the order to say more about what it is waiting on."
+	}
+
+	partner := "It has no swap partner."
+	if order.SiblingOrderID != nil {
+		if sib, sErr := op.e.db.GetOrder(*order.SiblingOrderID); sErr == nil {
+			partner = fmt.Sprintf("Its swap partner %d is %s.", sib.ID, sib.Status)
+			if orders.IsTerminalSuccess(sib.Status) {
+				partner += " That partner already ran its half, so nothing is coming for this leg" +
+					" to make room for — see releaseSurvivorOfFinishedPartner, which releases this" +
+					" population without a click."
+			}
+		} else {
+			partner = fmt.Sprintf("Its swap partner %d could not be read.", *order.SiblingOrderID)
+		}
+	}
+
+	plan := "Its plan declares no waits."
+	if stepsJSON, sErr := op.e.db.GetOrderStepsJSON(orderID); sErr == nil {
+		if steps, dErr := decodeSteps(stepsJSON); dErr == nil {
+			kinds := make([]string, 0, len(steps))
+			for _, s := range steps {
+				if s.Action != protocol.ActionWait {
+					continue
+				}
+				kind := s.WaitKind
+				if kind == "" {
+					kind = "station (untagged)"
+				}
+				node := s.Node
+				if node == "" {
+					node = "(no node)"
+				}
+				kinds = append(kinds, node+"="+kind)
+			}
+			if len(kinds) > 0 {
+				plan = "Its own plan's waits are " + strings.Join(kinds, ", ") + "."
+			}
+		}
+	}
+
+	return partner + " " + plan +
+		" Which of them it is standing at is not knowable from the Edge: Core splices its lane" +
+		" waits into its own copy of the plan and the staged notification carries no wait index."
 }

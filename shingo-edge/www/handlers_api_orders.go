@@ -312,7 +312,17 @@ func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 // Phase 0b: threads through the override-audit fields (qty_by_part_suggested,
 // partial_count, partial_count_suggested) so Core can record any divergence
 // between the operator's submission and the system-suggested baseline.
+// buildReleaseDisposition adds the mode-orthogonal fields to the per-mode
+// disposition below. ConfirmActivePull is one: it is an override of a physical
+// guard, not a manifest instruction, so it rides on every mode rather than
+// being repeated in four branches where the fifth would forget it.
 func buildReleaseDisposition(req releaseRequest) engine.ReleaseDisposition {
+	disp := releaseDispositionForMode(req)
+	disp.ConfirmActivePull = req.ConfirmActivePull
+	return disp
+}
+
+func releaseDispositionForMode(req releaseRequest) engine.ReleaseDisposition {
 	switch engine.ReleaseDispositionMode(req.Disposition) {
 	case engine.DispositionCaptureLineside:
 		return engine.ReleaseDisposition{

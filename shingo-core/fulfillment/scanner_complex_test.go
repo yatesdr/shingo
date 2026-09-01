@@ -24,8 +24,8 @@ func (s *stubDispatcher) DispatchPreparedComplex(o *orders.Order) error {
 	s.preparedCalls = append(s.preparedCalls, o.ID)
 	return s.preparedErr
 }
-func (s *stubDispatcher) ReserveStorageDropoff(o *orders.Order) (*nodes.Node, error) {
-	return &nodes.Node{Name: o.DeliveryNode}, nil
+func (s *stubDispatcher) ReserveStorageDropoff(o *orders.Order) dispatch.StorageDropoff {
+	return dispatch.StorageDropoff{Node: &nodes.Node{Name: o.DeliveryNode}}
 }
 func (s *stubDispatcher) ConfirmForDispatch(*orders.Order, int64, *nodes.Node, *nodes.Node) error {
 	panic("scanner complex-order branch should not call ConfirmForDispatch")
@@ -34,7 +34,10 @@ func (s *stubDispatcher) AcquireLanesForOrder(*orders.Order, *nodes.Node, *nodes
 	return true, "", "", nil // gate off — the complex branch does not gate lanes here
 }
 func (s *stubDispatcher) ReleaseLanesForOrder(int64) error { return nil }
-func (s *stubDispatcher) PostFindHook()                    {}
+func (s *stubDispatcher) DemoteAfterFleetRefusal(*orders.Order, protocol.QueueCode, dispatch.QueueCause, dispatch.QueueParams) {
+	panic("scanner complex-order branch never reaches the fleet, so it never demotes")
+}
+func (s *stubDispatcher) PostFindHook() {}
 func (s *stubDispatcher) BuriedForHeldBin(*orders.Order) (*dispatch.BuriedError, error) {
 	panic("scanner complex-order branch should not describe a held-bin burial")
 }

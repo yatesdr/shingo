@@ -1,6 +1,7 @@
 package testdb
 
 import (
+	"fmt"
 	"testing"
 
 	"shingo/protocol"
@@ -229,5 +230,85 @@ func assertNoOrphanedClaims(t *testing.T, db *store.DB, table, dead string) {
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("AssertNoOrphanedHolds: %s: %v", table, err)
+	}
+}
+
+// --- The pointer wedge (contract-v2 clause (iii)) ---
+
+// AssertNoPointerWedge sweeps for the shape the whole ownership stream exists to
+// kill: an order still trying to acquire, pointing at a bin, holding NEITHER a
+// reservation on it NOR a claim of it.
+//
+// ── WHY THAT SHAPE IS TERMINAL AND SILENT ────────────────────────
+//
+// bin_id is stamped at SOFT-RESERVE time, not at claim time, and the scanner
+// routes on it: an order with a bin_id goes to dispatchHeldBin, which never
+// re-finds and never re-acquires — by design, because re-finding would shop a
+// second bin. The confirm below it requires a live reservation row for exactly
+// (this order, this bin). So an order in this state confirms by id against a row
+// that is not there, parks under claim-failed, and comes back next tick to do it
+// again. Nothing ages it out (reaping is owner-liveness, never age) and its owner
+// is alive, so no sweep touches it. It waits forever, and the board says
+// "claim-failed", which reads as a race that will resolve.
+//
+// Ownership is written in three books — the reservation ledger, bins.claimed_by,
+// and this pointer — and this is what it looks like when the third disagrees
+// with the other two. It is the only shape of that disagreement that cannot heal
+// itself, which is why it is the one with an assertion.
+//
+// ── SCOPE ─────────────────────────────────────────────
+//
+// The ACQUIRING set only (queued, sourcing) — the population the scanner retries,
+// and the only one for which "has not got its bin yet" is a live claim about the
+// future. A dispatched order legitimately points at a bin it has already handed
+// to a robot; a pending one has not reached intake; a terminal one is finished
+// and AssertNoOrphanedHolds covers what it left behind.
+//
+// EITHER book clears it. A confirmed hold coincides with a hard claim and the
+// claim can outlive the row (the dig's supersede rewrites the ledger under a
+// claim that stands), so requiring both would report healthy orders.
+//
+// Safe from any package's docker tests: testdb.Open gives every test its own
+// database, so the sweep sees this test's rows and nothing else.
+func AssertNoPointerWedge(t testing.TB, db *store.DB) {
+	t.Helper()
+	rows, err := db.DB.Query(`
+		SELECT o.id, o.bin_id, o.status, COALESCE(o.order_type, ''), COALESCE(b.claimed_by, 0)
+		  FROM orders o
+		  LEFT JOIN bins b ON b.id = o.bin_id
+		 WHERE o.bin_id IS NOT NULL
+		   AND o.status IN (` + protocol.AcquiringStatusSQLList() + `)
+		   AND (b.claimed_by IS NULL OR b.claimed_by <> o.id)
+		   AND NOT EXISTS (
+		       SELECT 1 FROM reservations r
+		        WHERE r.order_id = o.id AND r.resource_kind = 'bin' AND r.bin_id = o.bin_id
+		   )
+		 ORDER BY o.id`)
+	if err != nil {
+		t.Fatalf("AssertNoPointerWedge: scan orders: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var orderID, binID, claimedBy int64
+		var status, orderType string
+		if err := rows.Scan(&orderID, &binID, &status, &orderType, &claimedBy); err != nil {
+			t.Fatalf("AssertNoPointerWedge: scan row: %v", err)
+		}
+		held := "nobody"
+		if claimedBy != 0 {
+			held = fmt.Sprintf("order %d", claimedBy)
+		}
+		t.Errorf("POINTER WEDGE: order %d (%s, %s) points at bin %d and holds neither a reservation "+
+			"nor the claim (bin is claimed by %s).\n"+
+			"    This order will never move. bin_id routes it to dispatchHeldBin, which never "+
+			"re-acquires, and the confirm underneath requires the reservation row that is missing — "+
+			"so it parks under claim-failed and retries forever, with a live owner no sweep will "+
+			"touch and no age-based reap to end it.\n"+
+			"    Find the write that cleared one book and not the other: a hold released without "+
+			"its pointer, or a pointer stamped without a hold.",
+			orderID, orderType, status, binID, held)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("AssertNoPointerWedge: orders: %v", err)
 	}
 }

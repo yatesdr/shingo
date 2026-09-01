@@ -27,7 +27,7 @@ entry guard both gate on it. See `[[order-builder-dispatch]]`.
 
 ## New Status: `queued`
 
-- Protocol: `StatusQueued = "queued"` in `protocol/types.go`
+- Protocol: `StatusQueued = "queued"` in `protocol/status.go`
 - Meaning: Core accepted the order, cannot fulfill it now, will fulfill it when inventory is available
 - Persistence: stored in orders table, survives Core restarts
 
@@ -74,6 +74,9 @@ File: `fulfillment/scanner.go`
 - `EventOrderCompleted` -- completing an order releases a bin's reservation
 - `EventOrderCancelled` -- reservation released
 - `EventOrderFailed` -- reservation released
+- `EventOrderSkipped` -- reservation released
+- `EventBinEnteredTransit` -- a move committed, freeing upstream state
+- plus the synchronous `EventOrderQueued` trigger at queue time
 
 **Safety sweep:** Every 60 seconds, full scan. Catches anything events missed.
 
@@ -103,7 +106,7 @@ scratch. See `[[reservations]]`.
 3. Return count fulfilled
 ```
 
-**Node vacancy check:** Before fulfilling, verify the delivery node doesn't already have an active non-queued delivery in flight.
+**Node vacancy check:** Before fulfilling, verify the delivery node doesn't already have an active non-queued delivery in flight. Known blind spot (the incident family): `CountInFlight` excludes `queued`, so a queued order already holding the destination is invisible and two queued orders can both pass the vacancy check — the check is not complete.
 
 ### 5. Reply to Edge on Queue
 

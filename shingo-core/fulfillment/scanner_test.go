@@ -103,6 +103,17 @@ type recordingDispatcher struct {
 	buriedErr        error // makes BuriedForHeldBin fail (cannot describe the dig)
 	laneBuried       bool  // admission reports the order's source bin walled
 	entryKinds       []dispatch.EntryKind
+
+	// demoteCalls records each trip through the one fleet-refusal door.
+	demoteCalls []demoteCall
+}
+
+// demoteCall records one fleet refusal reaching the door: whose, and under what
+// name it was parked.
+type demoteCall struct {
+	orderID int64
+	code    string
+	cause   string
 }
 
 // confirmCall records one Rule-1 confirm-at-dispatch: the order, the bin, and the
@@ -132,15 +143,20 @@ func (d *recordingDispatcher) DispatchPreparedComplex(*orders.Order) error {
 	panic("recordingDispatcher: complex path not expected in this test")
 }
 
-// ReserveStorageDropoff honors reserveErr so the slot-reserve conflict requeue
-// is exercisable here; the node-driven reserve is also covered end-to-end in the
+// ReserveStorageDropoff honors reserveErr so the reserve-refusal requeue is
+// exercisable here; the node-driven reserve is also covered end-to-end in the
 // dispatch package's docker tests. On success it returns the destination the
-// order names, which is the real contract: nil error ⇒ non-nil settled node.
-func (d *recordingDispatcher) ReserveStorageDropoff(o *orders.Order) (*nodes.Node, error) {
+// order names, which is the real contract: not refused ⇒ non-nil settled node.
+//
+// THE SEAM CLASSIFIES reserveErr THROUGH THE REAL MAPPER rather than picking a
+// cause of its own. A stub that returned a hardcoded cause could not tell a test
+// anything about which cause a given failure earns — which is exactly what a
+// hard DB error getting parked as "slot contended" was.
+func (d *recordingDispatcher) ReserveStorageDropoff(o *orders.Order) dispatch.StorageDropoff {
 	if d.reserveErr != nil {
-		return nil, d.reserveErr
+		return dispatch.RefuseStorageDropoffForTest(d.reserveErr)
 	}
-	return &nodes.Node{Name: o.DeliveryNode}, nil
+	return dispatch.StorageDropoff{Node: &nodes.Node{Name: o.DeliveryNode}}
 }
 
 // ConfirmForDispatch records the Rule-1 confirm-at-dispatch step and honors
@@ -164,7 +180,16 @@ func (d *recordingDispatcher) AcquireLanesForOrder(_ *orders.Order, _, _ *nodes.
 	return true, "", "", nil
 }
 func (d *recordingDispatcher) ReleaseLanesForOrder(int64) error { d.releaseLaneCalls++; return nil }
-func (d *recordingDispatcher) PostFindHook()                    {}
+
+// DemoteAfterFleetRefusal records the one door a fleet refusal goes through. The
+// scanner carries no release logic of its own any more, so what these tests can
+// assert about a refusal is that the door was called, with which cause.
+func (d *recordingDispatcher) DemoteAfterFleetRefusal(o *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, _ dispatch.QueueParams) {
+	d.demoteCalls = append(d.demoteCalls, demoteCall{orderID: o.ID, code: string(code), cause: string(cause)})
+	o.Status = protocol.StatusSourcing
+	o.QueueCode, o.QueueCause = string(code), string(cause)
+}
+func (d *recordingDispatcher) PostFindHook() {}
 
 // BuriedForHeldBin: the held-bin burial route. buriedErr drives the "cannot
 // describe the dig" arm; otherwise a minimal BuriedError is enough, since

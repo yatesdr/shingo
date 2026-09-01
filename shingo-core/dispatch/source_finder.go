@@ -118,6 +118,21 @@ func (f *SourceFinder) requiresFullCarrier(need SourceNeed) bool {
 	return l.Role == loaders.RoleConsume
 }
 
+// acceptableSourceFor returns the filter this need imposes on candidate bins,
+// or nil when it imposes none.
+//
+// It is the SAME question requiresFullCarrier answers, asked one step earlier —
+// at selection instead of after it. The late check stays where it is as a
+// seatbelt for the tiers that do not go through the resolver; what changes is
+// that the resolver-backed tier no longer picks a bin this need cannot use and
+// then throws the whole resolution away.
+func (f *SourceFinder) acceptableSourceFor(need SourceNeed) binresolver.BinFilter {
+	if !f.requiresFullCarrier(need) {
+		return nil
+	}
+	return isFullCarrier
+}
+
 func (f *SourceFinder) debug(format string, args ...any) {
 	if f.dbg != nil {
 		f.dbg(format, args...)
@@ -324,7 +339,19 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// fell through to plant-wide FIFO on a capacity/buried error).
 	if intent == IntentFull && srcNode != nil && srcNode.IsSynthetic &&
 		srcNode.NodeTypeCode == protocol.NodeClassNGRP && f.resolver != nil {
-		result, err := f.resolver.Resolve(srcNode, binresolver.ResolveModeRetrieve, payloadCode, nil, need.Asker)
+		// THE ONE CALLER WITH A REAL CONSTRAINT. A drain window can only use a
+		// FULL carrier, so a partial is not a candidate for it — it must lose the
+		// FIFO comparison rather than win it and be refused afterwards.
+		//
+		// The live window is FGN_001 / UNLOADER-A — `role: consume`, `payload:
+		// ASSY`, plants/demo.yaml:1015-1025 — the plant's only unloader.
+		// binresolver.BinFilter carries the 1,715-refusal deadlock that taught
+		// this rule; it was measured on FGN_003, a PANEL-B drain that has since
+		// been deleted, so the rule is what carries forward and not the fixture.
+		//
+		// Every other need passes nil and gets the oldest bin exactly as before.
+		result, err := f.resolver.Resolve(srcNode, binresolver.ResolveModeRetrieve, payloadCode, nil,
+			need.Asker, f.acceptableSourceFor(need))
 		if err != nil {
 			switch class, payload := classifyResolutionError(err); class {
 			case ResolutionBuried:
@@ -620,13 +647,19 @@ func (f *SourceFinder) FindSourceForNeed(need SourceNeed) SourceResult {
 	// Waiting rather than refusing: the order queues for material the same way
 	// an empty plant does, which is a visible state carrying a reason.
 	//
-	// KNOWN LIMIT, and it errs the safe way: this declines a partial the tiers
-	// already chose, so a full sitting BEHIND a partial in a lane is not dug
-	// for — the pull waits instead of reshuffling. Teaching the group resolver
-	// to prefer fulls would need the fullness rule inside it and inside the
-	// buried-bin lookups behind it, or it would dig to expose a carrier this
-	// check then declines. Worth doing if a plant ever stacks partials in front
-	// of fulls; not worth the surgery before that.
+	// THE LIMIT THIS ONCE DECLARED IS CLOSED. It used to say that a full sitting
+	// BEHIND a partial was not dug for, and that teaching the group resolver to
+	// prefer fulls would need the fullness rule inside it AND inside the
+	// buried-bin lookups behind it — or a dig would be spent exposing a carrier
+	// this check then declines. That surgery has since been done: the filter is
+	// passed into the group resolver and rides the buried lookups too
+	// (binresolver.checkOldestBuried / checkShallowestBuried, which quote the
+	// warning above as the thing they are honouring).
+	//
+	// So this check is now the LAST line rather than the only one. It still earns
+	// its place: the plant-wide scan and any caller that resolves without a filter
+	// both arrive here, and a partial that reaches this point must still wait
+	// rather than be handed to a drain window.
 	if bin != nil && f.requiresFullCarrier(need) && !isFullCarrier(bin) {
 		f.debug("finder: %s is a drain window and bin %d is a partial (%d of %d) — waiting for a full",
 			need.DeliveryNode, bin.ID, bin.UOPRemaining, bin.UOPCapacity)

@@ -132,8 +132,23 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 				DigOrderID: digWaitByLaneName(d.db, d.laneLock, parkingLane)})
 
 	case laneClearBlockerClaimed:
+		if res.blockerPromised {
+			// The ranked take (§7) refused the steal: the holder's demand outranked
+			// this dig, and it holds a PROMISE — no robot, nothing driving that bin
+			// anywhere. The claimed cause would promise a drive that has not started.
+			//
+			// AND NO DigOrderID. That pointer names whoever holds the lane's
+			// excavation lock, and on this arm creation failed and the lock was
+			// dropped — so there is no dig of ours to name. Naming somebody else's
+			// would point the operator at an excavation that is not what they are
+			// waiting for.
+			park(protocol.QueueStorageRearranging, res.blockerCause,
+				QueueParams{Lane: lane.Name, Payload: payloadCode,
+					HolderOrderID: res.blockerClaimant})
+			return
+		}
 		// The commonest holder is a robot already carrying that bin out of the lane.
-		park(protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
+		park(protocol.QueueStorageRearranging, res.blockerCause,
 			QueueParams{Lane: lane.Name, Payload: payloadCode,
 				DigOrderID: digWaitFor(d.laneLock, lane.ID)})
 

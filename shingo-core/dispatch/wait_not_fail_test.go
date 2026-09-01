@@ -111,7 +111,10 @@ func TestPlanningError_TransientCodesAreNotSilentlyTerminal(t *testing.T) {
 		if !pe.Transient() {
 			t.Errorf("code %q dropped out of Transient() — every caller now terminal-fails it", code)
 		}
-		if reshuffleWaitCause(code) == CauseReshuffleCongestion && code != codeClaimFailed {
+		// A bare planningError, which is the point: with no wrapped error
+		// codeBlockerClaimed must still resolve to the claimed cause rather than
+		// falling through to the blanket tag.
+		if reshuffleWaitCause(pe) == CauseReshuffleCongestion && code != codeClaimFailed {
 			t.Errorf("code %q has no specific wait cause, so its park is indistinguishable from the "+
 				"other two reshuffle waits on the row", code)
 		}

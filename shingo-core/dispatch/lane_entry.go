@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -175,41 +176,80 @@ func (d *Dispatcher) laneEntryCause(lane *nodes.Node, order *orders.Order, destN
 	return Admitted(), nil
 }
 
-// stillWorkingLaneMouth filters the active-store set down to the orders that can
-// still BLOCK an entrant — the placement-aware release signal (A′).
+// stillComingToLane filters the active-store set down to the orders that can
+// still BLOCK an entrant — the placement-aware release signal (A'), DERIVED
+// rather than read off a reservation row.
 //
 // The active-set query returns every non-terminal order whose delivery_node is a
 // slot in this lane (ActiveByDeliveryNodes), which is COMPLETION-coarse: a store
 // that has already dropped its bin keeps blocking until its whole order goes
-// terminal, though physically the lane is clear behind it. The finer truth is
-// already on disk: a store holds an inbound MOUTH ROW from the fleet commit
-// (AcquireLanesForOrder, scanner.go) until its dropoff block reports FINISHED,
-// where ReleaseInboundLaneForOrder deletes the row BEFORE the delivery-node
-// early-return (lane_gate.go / wiring_block_completed.go). So for a DISPATCHED
-// order:
+// terminal, though physically the lane is clear behind it. What is needed is the
+// finer question — is this order still COMING to my lane with a bin — and the
+// three facts that answer it were all already on disk.
 //
-//	holds an inbound mouth row on lane L  ⟺  has not yet placed its bin in L
+// ── IT USED TO ASK THE MOUTH ROW, AND THE ROW IS GOING AWAY ───────────────
 //
-// Hence the rule, in two halves:
+// The old rule was "dispatched AND holding no inbound mouth row → it has placed".
+// That was true, and it was true only because a gated store held an inbound row
+// from the fleet commit until its dropoff reported FINISHED. The gated
+// destination hold is retired (resolveOrderLaneHolds): a robot standing at a
+// group's waiting spot has not chosen its slot yet, so a row taken on its behalf
+// reserved a mouth for a destination it had not committed to. Reading placement
+// off a row that is no longer written would have quietly answered "everybody has
+// placed" and let entrants walk past real blockers — which is 12b's failure
+// exactly, and why the retire and this derivation land in ONE commit.
 //
-//   - NOT yet dispatched (vendor_order_id == "") → KEEP as a blocker. It has not
-//     reached the fleet, so it cannot have a mouth row yet, and dropping it would
-//     silently stop a queued/sourcing deeper store from holding its place — a
-//     behavior change well outside placement-release, and one that would widen the
-//     one-sided deeper-later residual (F2).
-//   - dispatched AND holding no inbound row → DROP. It has placed (or otherwise
-//     finished with this mouth), so it blocks nobody.
+// ── THE THREE KEEP-ARMS, EACH A FACT SOMETHING ELSE ALREADY MAINTAINS ─────
 //
-// Modes other than inbound are not blockers for a store's depth ordering: an
-// outbound holder removes a bin rather than adding one, and a dig excludes every
-// other holder at the mouth gate itself (reservations/mouth.go admitMouth), which
-// parks the entrant at admitLanes with the more accurate lane-held-dig cause.
+//   - NOT yet dispatched (vendor_order_id == "") → KEEP. It has not reached the
+//     fleet, so it is certainly still coming. Dropping it would silently stop a
+//     queued/sourcing deeper store from holding its place — a behaviour change
+//     well outside placement-release, and one that would widen the one-sided
+//     deeper-later residual (F2). Unchanged from the old first half.
 //
-// Transient note: an order dispatched BEFORE the group was switched to mouth
-// enforcement carries a vendor id and never took a mouth row, so it stops being a
-// blocker as soon as the config flips. That window closes when it completes, and
-// it is the same class of transient a mid-flight config change already implies.
-func (d *Dispatcher) stillWorkingLaneMouth(laneID int64, active []*orders.Order) ([]*orders.Order, error) {
+//   - GATE-STAGED at a wait whose lane is this one → KEEP. The robot is standing
+//     at a spot with its tail un-appended: it is coming, it just has not been let
+//     in. IsGateStaged reads the wait the order is parked AT, and WaitLane names
+//     which lane that wait gates, so "coming HERE" is answered without a row.
+//     This arm ALSO closes a live latent defect the release pass header already
+//     names: a dwelling COMPLEX candidate held no inbound row of its own, so the
+//     old rule read it as PLACED while it was still standing outside the lane
+//     holding its bin. It was invisible while nothing dwelled; the group mouth
+//     makes dwelling ordinary.
+//
+//   - HOLDING LANE OCCUPANCY → KEEP. The robot is physically in the corridor.
+//     That row is taken at the append (takeLaneOccupancyByID) and released when
+//     the robot leaves, and it is the mutex the mouth row was mistaken for.
+//
+//   - HOLDING AN INBOUND MOUTH ROW → KEEP. The old rule, unchanged, for the
+//     population that still writes one: an UNMARKED lane takes its destination
+//     hold at the fleet commit and drops it when the dropoff reports FINISHED,
+//     so on those the row is direct evidence of "has not placed yet". Every lane
+//     at both plants is one of those today, and keeping this arm is what makes
+//     "an unmarked lane behaves byte-identically" true rather than aspirational.
+//
+// Anything else DROPS: dispatched, not standing at this lane's mark, not in the
+// corridor, holding nothing — it has placed, or it is somewhere else entirely,
+// and either way it blocks nobody.
+//
+// THE SET ONLY GREW. Three of the four arms were already the rule or already
+// implied by it; what is new is that a dweller and a robot in the corridor are
+// named explicitly instead of being inferred from a row that a gated lane no
+// longer writes. A witness that keeps MORE candidates parks an entrant it need
+// not have; one that keeps fewer walks it into a lane somebody is still in. The
+// direction of the change is the safe one, deliberately.
+//
+// Depth order is untouched: it is derived from the plan (GetSlotDepth) and never
+// came from a reservation.
+func (d *Dispatcher) stillComingToLane(laneID int64, active []*orders.Order) ([]*orders.Order, error) {
+	occupied, err := reservations.OccupantsOf(d.db.DB, laneID)
+	if err != nil {
+		return nil, err
+	}
+	inCorridor := make(map[int64]bool, len(occupied))
+	for _, id := range occupied {
+		inCorridor[id] = true
+	}
 	holds, err := reservations.ActiveMouthRows(d.db.DB, laneID)
 	if err != nil {
 		return nil, err
@@ -222,19 +262,45 @@ func (d *Dispatcher) stillWorkingLaneMouth(laneID int64, active []*orders.Order)
 	}
 	kept := make([]*orders.Order, 0, len(active))
 	for _, o := range active {
-		if o.VendorOrderID != "" && !inbound[o.ID] {
-			continue // dispatched and no longer holding the mouth → it has placed
+		switch {
+		case o.VendorOrderID == "": // not dispatched — certainly still coming
+		case inCorridor[o.ID]: // physically inside the lane
+		case inbound[o.ID]: // an unmarked lane's destination hold: not placed yet
+		case IsGateStaged(o) && gateWaitLane(o) == laneID: // standing at THIS lane's mark
+		default:
+			continue
 		}
 		kept = append(kept, o)
 	}
 	return kept, nil
 }
 
+// gateWaitLane names the lane the order's current wait gates, or 0.
+//
+// Same walk laneOfGateWait does in lane_floor.go, and the duplication is worth
+// the note: that one is keyed to the floor's needs and this one to the witness's,
+// and collapsing them would give a widely-used predicate a second return value
+// almost every caller discards. The parse is over a string already in memory.
+func gateWaitLane(o *orders.Order) int64 {
+	if o == nil || o.StepsJSON == "" {
+		return 0
+	}
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(o.StepsJSON), &steps); err != nil {
+		return 0
+	}
+	w, ok := waitAt(steps, o.WaitIndex)
+	if !ok {
+		return 0
+	}
+	return w.WaitLane
+}
+
 // buildLaneEntryView resolves the classifier inputs: the self order and every other
 // active store in the lane, each with its slot depth, origin key, and whether it is
 // a member of an active same-origin group (≥2 same-origin stores in the lane).
 //
-// The active set is first narrowed by stillWorkingLaneMouth, so an order that has
+// The active set is first narrowed by stillComingToLane, so an order that has
 // already PLACED its bin is neither a blocker nor a group member — the release
 // signal is placement, not completion.
 func (d *Dispatcher) buildLaneEntryView(order *orders.Order, destNode *nodes.Node, laneID int64, active []*orders.Order, depthByName map[string]int) (self laneEntryOrder, others []laneEntryOrder, err error) {
@@ -244,7 +310,7 @@ func (d *Dispatcher) buildLaneEntryView(order *orders.Order, destNode *nodes.Nod
 	}
 	self = laneEntryOrder{id: order.ID, depth: depthByName[destNode.Name], origin: selfOrigin}
 
-	active, err = d.stillWorkingLaneMouth(laneID, active)
+	active, err = d.stillComingToLane(laneID, active)
 	if err != nil {
 		return self, nil, err
 	}

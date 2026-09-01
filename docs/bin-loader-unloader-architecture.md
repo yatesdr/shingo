@@ -171,7 +171,7 @@ How it works:
   - *Why no tx (unsoundness):* `CreateRetrieveOrder` is not transaction-pure — it enqueues to Core and fires a synchronous `EmitOrderCreated` mid-write. A surrounding tx could roll back the DB rows while those side effects already happened, manufacturing the Core/Edge divergence it was meant to prevent.
 - **One set query.** In-flight is counted across the loader's whole delivery-node set in a single `ListActiveOrdersByDeliveryNodeSet` (one snapshot), giving both the per-payload dedup and the loader-capacity cap.
 - **The Loader owns the reservation shape.** `withLoaderBudget` takes a `*domain.Loader`; the delivery-node set and the budget come from `loader.ReservationTarget(member, payload, multiWindow)`, which encodes the per-layout semantics so the seam stays layout-agnostic: a dedicated position maps to its one independent slot (budget 1); a shared loader funnels to its anchor (budget 1) **unless** multi-window is enabled, in which case it spreads to its windows (budget = `SlotCount`). The seam keys its mutex on `loader.ID()`.
-- **Multi-window delivery (flag-gated).** With config `loaders_multi_window` on, a shared loader's bins spread **one per free window** — the seam computes the windows with none in flight and assigns each new order to a distinct one (round-robin), so a demand of N at an N-window loader fires exactly N, one per window, never two at the same window. DEFAULT ON (an unset flag means enabled); set `loaders_multi_window: false` to funnel to the first window with budget 1 instead. The never-2N budget is per-loader (keyed on `loader.ID()`), so it is not fragmented by spreading.
+- **Multi-window delivery (per-loader, Core-owned).** Multi-window is per-loader on the Core `bin_loaders.funnel_windows` field; the edge `loaders_multi_window` key is deprecated and only acts as a plant-wide OFF brake. With it on, a shared loader's bins spread **one per free window** — the seam computes the windows with none in flight and assigns each new order to a distinct one (round-robin), so a demand of N at an N-window loader fires exactly N, one per window, never two at the same window; with it off, the loader funnels to the first window with budget 1. The never-2N budget is per-loader (keyed on `loader.ID()`), so it is not fragmented by spreading.
 - **One physical check the seam does NOT subsume.** The seam counts in-flight *orders*, not parked *bins*. The loader side relies purely on the order count because its `want` is demand-netted by the threshold monitor; the unloader's full-in is event-driven (`want=1`), so it keeps a physical "is a full already parked at the window?" check (`unloaderHasUsableFullPresent`) ahead of the seam.
 - **Fails closed.** A count read error fires nothing; the next signal retries.
 
@@ -286,11 +286,11 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 |------|------|
 | `store/core_loaders.go`, `engine/loader_store.go` | `core_loaders` cache + `aggregateLoaderStore` — an immutable in-memory snapshot of the Core loader config, swapped atomically on each node-list sync. |
 | `engine/core_loaders.go` | `SetCoreLoaders` / `Refresh` — ingest `NodeListResponse.Loaders` into the cache. |
-| `engine/operator_demand_loader.go`, `operator_demand_unloader.go` | The operator push / release-triggered paths; the `withLoaderBudget` never-2N seam; `funnel_windows` on the loader row (default OFF — i.e. spread). (DemandSignal handling deleted — see above.) |
+| `engine/operator_demand_loader.go`, `operator_demand_unloader.go` | The operator push / release-triggered paths; the `withLoaderBudget` never-2N seam; `funnel_windows` on the Core loader row (multi-window is per-loader on that field — the edge `loaders_multi_window` key is deprecated and only acts as a plant-wide OFF brake). (DemandSignal handling deleted — see above.) |
 | `domain/loader.go` | The `Loader` type, layouts (`shared_window` / `dedicated_positions`), `SlotCount`, `ReservationTarget`. |
 | `service/station_service.go` | `BuildView` resolves a node's parent loader + windows from the aggregate for the operator HMI. |
 | `messaging/edge_handler.go` | Node-list handler feeds `SetCoreLoaders`. (`onDemandSignal` callback deleted with the demand-signal route.) |
-| `config/config.go` | `LoadersMultiWindow` (`loaders_multi_window`, default ON). |
+| `config/config.go` | `LoadersMultiWindow` (`loaders_multi_window`) — DEPRECATED, plant-wide OFF brake only. |
 | `www/static/operator-station/*` | Demand-queue payload board + per-window state. |
 | `engine/*` (retired) | `SendClaimSync` deleted; no `processes.js` loader-mode selector; `transitional_loaders` → `operator_driven_loaders` flag. |
 
@@ -349,8 +349,7 @@ the as-built summary. ("Transitional" was renamed "operator-driven"; the per-bin
 `operator` (this mode) or `threshold` (UOP-auto). Core owns it, so it rides the
 node-list sync into the Edge cache; there is no separate edge flag to author. (The
 legacy Edge-only `operator_driven_loaders` table — renamed from `transitional_loaders`
-— survives as a fallback read keyed by `core_node_name`, failing open to
-non-operator-driven on a DB error, but the Core replenishment field is authoritative.)
+— was dropped; Core's replenishment field is the only source.)
 
 **What it changes.** For an operator-driven loader the market-accounting automatic L1
 path is suppressed — the UOP-threshold C-push is Core-owned and checks the
@@ -363,7 +362,9 @@ payload-specific demand behind it; the operator binds the real payload at load.
 Triggered on L2/clear completion and a startup sweep. (Single-carrier assumption: a
 blank order sources any compatible empty, correct only when the loader uses one carrier
 type — `OrderRequest` carries no bin-type field, so `payload_code` is the only carrier
-proxy on the wire. A multi-carrier loader needs a bin-type field added first.)
+proxy on the wire. The blank-order path is still type-blind; the quota tables
+(`core_loader_window_bin_types` / `core_loader_quotas`) and the source finder already
+speak bin type — the gap is the OrderRequest wire field.)
 
 **The board.** The HMI gains a PRELOAD / ACTIVE-ONLY toggle. ACTIVE-ONLY shows only
 what the running styles need; PRELOAD shows the full covered list and enables manual

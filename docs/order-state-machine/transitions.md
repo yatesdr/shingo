@@ -64,28 +64,30 @@ The couplings worth knowing:
 
 ## What bypasses `transition()`
 
-Three things write an order's status without going through the state machine.
+Two things write an order's status without going through the state machine.
 Described by what they are rather than by line number, because line numbers were
 the other half of why this document rotted.
 
 1. **The driver itself** — `dispatch/lifecycle.go`. `transition()` has to call the
    underlying store methods to do its job.
-2. **`MarkPending`** — the initial write at intake. There is no source status to
-   validate against. Its real product is the `order_history` row, since the INSERT
-   has already set the column.
-3. **The INSERT** — `orders.Create` binds the struct's `Status` field directly.
+2. **The INSERT** — `orders.Create` binds the struct's `Status` field directly,
+   and writes the birth `order_history` row in the same transaction
+   (`db.CreateOrder` opens one for every non-compound door;
+   `CreateCompoundChildren` passes its own).
 
-**Number three is the one to know about.** Movement is governed; *entry* is not.
+**Number two is the one to know about.** Movement is governed; *entry* is not.
 There is no CHECK constraint on `orders.status` in either schema, `Scan`
 deliberately does not validate on read, and the lint guard matches selector
 expressions like `db.UpdateOrderStatus` — it cannot see `Status:` in a struct
-literal. Three statuses are used at creation today. That is convention, not
-enforcement.
+literal. Two statuses are used at creation today — `pending` (intake, bin-move,
+carried-bin recovery, compound children, loader replenishment) and `queued`
+(complex intake, which births status-first so the scanner picks the order up).
+That is convention, not enforcement.
 
-Related: the two writes that bypass `transition()` are also the two with no
-compare-and-swap. `UpdateStatus` writes by id alone. There is a recorded incident
-— a stale scanner snapshot wrote `queued → sourcing` over a cancel and
-resurrected a cancelled order — which is why the other paths CAS.
+Related: the plain `UpdateStatus` write has no compare-and-swap — it writes by id
+alone. There is a recorded incident — a stale scanner snapshot wrote
+`queued → sourcing` over a cancel and resurrected a cancelled order — which is
+why the transition paths CAS (`UpdateStatusFrom`).
 
 The authoritative carveout list is `.golangci.yml`, in the `exclusions.rules`
 block. Read it there; it is maintained, and a copy here would not be.

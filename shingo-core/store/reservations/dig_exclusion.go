@@ -21,6 +21,14 @@ import "fmt"
 //     either, and was the unlisted FOURTH reader. Added in MG3-1b, through
 //     NotForeignDugArm, which renders the predicate below rather than spelling
 //     it — so the count went from three answers to four readers of ONE.
+//   - THE BIN CLAIM (reservations.acquire) is the FIFTH, and the only one that is
+//     not a filter. The four above all answer at FIND time, and a find-time answer
+//     cannot hold: measured 2026-08-31, order 43 resolved a lane at :27.505 while
+//     it carried no dig row, order 42 took MOUTH/dig on it at :27.583, and 43 was
+//     granted a bin inside that lane at :27.610. 43 then owned the one bin 42's
+//     dig had to move, in a corridor 43 could never enter — two robots stood 122
+//     sim-minutes and the payload behind 42 went dark. The acquire is the
+//     serialization point, so it asks there, against the insert's own snapshot.
 //
 // The empty finders are the reason this list is worth keeping accurate. This
 // file declared the dig-lock question closed at exactly three readers; a closed
@@ -60,6 +68,102 @@ type DigAsker struct {
 	// its compound parent, or OrderID itself when it has none.
 	LaneOwner int64
 }
+
+// StagedOutside is the set of orders whose robots are parked at one of a node
+// GROUP's wait points rather than inside any of its corridors — gate-staged, in
+// the dispatch layer's vocabulary.
+//
+// ── A WAIT POINT IS GROUP STAGING, NOT A LANE'S DOORWAY (owner, 2026-08-31) ─
+//
+// This is the fact the whole predicate rests on and it is easy to get backwards,
+// because the marks have lane-shaped NAMES. "Lane_01-WAIT" is a map point that
+// happens to be painted near lane 1. It is not lane 1's doorway. The wait points
+// of a group are a shared staging area in front of ALL its lanes, and a robot
+// standing at any of them has not entered a corridor and has not been committed
+// to one — the oracle can still send it to lane 10.
+//
+// So membership is scoped to the GROUP: an order staged at any of a group's wait
+// points is standing outside every lane in that group, and obstructs an
+// excavation in none of them. Scoping it to "the lane whose name the mark
+// carries" would be reading the paint rather than the geometry.
+//
+// ── WHAT IT IS FOR: THE ARM PROTECTS THE CORRIDOR ─────────────────────────
+//
+// A robot waiting at a mark holds its lane's inbound mouth row, and that row is
+// doing honest work: it is what tells the release pass "this one is still
+// coming", so a shallower store cannot wall it in. What it must NOT do is turn
+// away a robot that needs to WORK the corridor, because the robot holding it is
+// standing outside that corridor. The two do not physically contend.
+//
+// THE ARM DOES NOT CARE WHICH KIND OF DIG-MODE ROW IS ASKING, and getting that
+// wrong cost a whole run. What matters is that the requester needs the corridor
+// and the holder is standing outside it. An excavation compound and a §R.101
+// source-lock retrieve are the same case here: both are ModeDig, both are a
+// robot about to drive into the lane, and a robot at the mark obstructs neither.
+//
+// Both halves were measured, one run apart, on the same lane:
+//
+//	2026-08-30, gated sim. Three EXCAVATIONS raised for orders 23, 62 and 76
+//	were refused on Lane_08's mouth, held by order 22 — gate-staged at that
+//	lane's mark, waiting for exactly those digs. The plant went 7 machines to 3.
+//
+//	2026-08-31, the same sim with the exemption scoped to excavations only.
+//	Order 22 staged at Lane_08's mark again; order 23, a RETRIEVE whose §R.101
+//	source hold takes Lane_08 in ModeDig for the bin one slot deeper, refused
+//	`lane-held-traffic`. Order 22's own re-bind was then refused BECAUSE order 23
+//	was coming for that bin — storing at the mouth would seal it in. Each was the
+//	other's only releaser; the plant stopped at ~4,158 orders.
+//
+// The second is the first with the requester's costume changed. Scoping by what
+// the row is CALLED (excavation vs source lock) rather than by what it NEEDS
+// (the corridor) is what left the second one open.
+//
+// ── WHY THIS IS NOT A FIELD ON DigAsker ───────────────────────────────────
+//
+// It looks like it belongs there — DigAsker already carries the one exemption
+// admitMouth honours — and folding it in would be a bug in two directions at
+// once. DigAsker.Owns is read by ExcludedBy in the OPPOSITE direction ("does
+// this excavation keep me out"), and by DigExclusionSQL, which is a literal
+// transcription of the same two comparisons into SQL. Widening Owns would
+// therefore also stop a running dig from excluding the dweller — and keeping the
+// dweller out while the dig works is the whole reason the dig takes the lane
+// exclusively. Two facts, two carriers.
+//
+// A nil set exempts nobody, so every call site that does not pass one keeps
+// exactly the behaviour it had. That is the same adoption property DigAsker's
+// Anyone documents for itself.
+type StagedOutside map[int64]bool
+
+// Has reports whether orderID is parked at the mark rather than in the corridor.
+//
+// Order id 0 is never a member: it is the zero value a failed read leaves
+// behind, and a row whose owner could not be read must refuse a dig rather than
+// be waved through — the same direction every other doubt in this package takes.
+func (s StagedOutside) Has(orderID int64) bool {
+	return orderID != 0 && s[orderID]
+}
+
+// StagedOutsideByLane carries the exemption for an acquire that spans SEVERAL
+// lanes, keyed by the lane each set was resolved for.
+//
+// ── WHY THE KEYING EXISTS, AND IT IS NOT "ONE CORRIDOR AT A TIME" ─────────
+//
+// Membership is group-scoped (see StagedOutside), so within a single group the
+// answer is the same for every lane and a flat set would do. The keying is here
+// because AcquireLanesFor takes every lane a plan needs in ONE transaction, and
+// resolvePlanLaneHolds can hand it lanes belonging to DIFFERENT GROUPS. A flat
+// set across that loop would exempt an order staged in group A on a lane in
+// group B, which is a corridor it has never been near. Each lane therefore
+// resolves against its own group.
+//
+// admitMouth and DigAdmissible keep the FLAT set, because each is asked about
+// exactly one lane and the caller has already resolved that lane's group. A nil
+// map answers nil for every lane, which exempts nobody — the same adoption
+// property the flat set has.
+type StagedOutsideByLane map[int64]StagedOutside
+
+// On returns the set for one lane, or nil when the map has nothing for it.
+func (m StagedOutsideByLane) On(laneID int64) StagedOutside { return m[laneID] }
 
 // Anyone is the asker for a question with no particular order behind it.
 //

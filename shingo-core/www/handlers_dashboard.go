@@ -8,6 +8,10 @@ import (
 func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	activeOrders, _ := h.engine.OrderService().ListActiveOrders()
 	nodes, _ := h.engine.NodeService().ListNodes()
+	// The wait clock, from the same reader the orders board uses — one
+	// instrument, so the wall and the board cannot disagree about how long an
+	// order has been waiting.
+	waitSince := h.waitSinceFor(activeOrders)
 
 	// Count orders by status
 	statusCounts := map[string]int{}
@@ -46,6 +50,7 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		// flashing empty until the first poll lands.
 		"Health":       h.coreHealth(depsOK, depReasons),
 		"ActiveOrders": activeOrders,
+		"WaitSince":    waitSince,
 		"StatusCounts": statusCounts,
 		"TotalOrders":  len(activeOrders),
 		"TotalNodes":   len(nodes),

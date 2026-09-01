@@ -226,9 +226,32 @@ type DwellStat struct {
 // staged has two exits in the state machine (staged→in_transit when the wait
 // is released, staged→delivered when the staged leg IS the last one), and they
 // answer different questions, so both are measured rather than merged.
+//
+// time_to_dispatch ENDED AT `acknowledged`, AND CORE NEVER WRITES ONE. That
+// status reaches the ladder from exactly one arm, and the arm is documented dead
+// in as many words: fleet.MapState never returns it (engine/wiring_vendor_status.go
+// — a never-fires guard against a future adapter). So the number was not "no
+// signal in this window", it was no signal possible, on any plant, ever. It now
+// ends at `dispatched`: the fleet call made, armor on — the honest end of the
+// wait in the line, and a transition every order that reaches a robot writes.
+//
+// Reading a mixed window: nothing was ever measured under the old pair, so there
+// is no discontinuity to reason about — the series goes from structurally empty
+// to real, retroactively, over whatever history the window covers. The one
+// population still missing is orders created before Core wrote a birth history
+// row: born `queued` by INSERT, they have no queued row to measure from. They
+// age out.
+//
+// A SECOND POPULATION MOVED WITH §8's DEMOTE DOOR, and it moved INTO this number
+// rather than out of it: a fleet-refused order parks in `sourcing`, so it writes
+// no new `queued` row, and the pair takes MAX(queued) → MAX(dispatched). Its
+// re-dispatch therefore pairs against its ORIGINAL queued row and the whole
+// outage lands inside time_to_dispatch. That is the honest reading — the order
+// really did wait that long for a robot — but a refusal burst (SPR's run 23-41)
+// shows up here as a lead-time spike, not as a separate fault count.
 func FlowDwellPairs() []DwellPair {
 	return []DwellPair{
-		{Key: "time_to_dispatch", From: "queued", To: "acknowledged"},
+		{Key: "time_to_dispatch", From: "queued", To: "dispatched"},
 		{Key: "transit", From: "in_transit", To: "delivered"},
 		{Key: "staged_release", From: "staged", To: "in_transit"},
 		{Key: "staged_delivery", From: "staged", To: "delivered"},

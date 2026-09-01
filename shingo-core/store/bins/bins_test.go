@@ -417,82 +417,6 @@ func TestNodeTileStates(t *testing.T) {
 	}
 }
 
-func TestListAvailable(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	std := testdb.SetupStandardData(t, db)
-
-	empty := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-AVAIL-EMPTY", NodeID: &std.StorageNode.ID, Status: "available"}
-	testutil.MustNoErr(t, bins.Create(db.DB, empty), "bins.Create empty")
-	loaded := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-AVAIL-LOADED", NodeID: &std.StorageNode.ID, Status: "available"}
-	testutil.MustNoErr(t, bins.Create(db.DB, loaded), "bins.Create loaded")
-	testutil.MustNoErr(t, bins.SetManifest(db.DB, loaded.ID, `{"items":[]}`, std.Payload.Code, 50), "bins.SetManifest")
-
-	got, err := bins.ListAvailable(db.DB)
-	if err != nil {
-		t.Fatalf("bins.ListAvailable: %v", err)
-	}
-	// `empty` (no manifest) must show; `loaded` (has manifest + payload_code) must not.
-	foundEmpty, foundLoaded := false, false
-	for _, b := range got {
-		if b.ID == empty.ID {
-			foundEmpty = true
-		}
-		if b.ID == loaded.ID {
-			foundLoaded = true
-		}
-	}
-	if !foundEmpty {
-		t.Error("empty bin missing from bins.ListAvailable")
-	}
-	if foundLoaded {
-		t.Error("loaded bin should be excluded from bins.ListAvailable")
-	}
-}
-
-// TestListAvailable_NULLPayloadCode regression-tests that a bin with
-// payload_code=NULL (rather than ”) still appears in ListAvailable.
-// Pre-fix the filter was `(b.manifest IS NULL OR b.payload_code = ”)`
-// where `payload_code = ”` evaluates to NULL when payload_code is NULL
-// (falsy in WHERE), so a bin with payload_code=NULL only made it through
-// when manifest was also NULL. Post-fix the filter uses
-// COALESCE(payload_code, ”) = ” which handles NULL unambiguously.
-//
-// Same bug class as the original FindEmptyCompatible NULL-safety fix
-// (7c274ac / 4337344). Aligned in 2026-04-27 v2.
-func TestListAvailable_NULLPayloadCode(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	std := testdb.SetupStandardData(t, db)
-
-	// The schema declares payload_code NOT NULL, so we must drop the
-	// constraint to inject a legacy/historical row where payload_code is
-	// NULL — the COALESCE filter must still handle it correctly.
-	if _, err := db.DB.Exec(`ALTER TABLE bins ALTER COLUMN payload_code DROP NOT NULL`); err != nil {
-		t.Fatalf("alter bins.payload_code: %v", err)
-	}
-
-	var binID int64
-	err := db.DB.QueryRow(
-		`INSERT INTO bins (bin_type_id, label, description, node_id, status, payload_code, manifest) VALUES ($1, $2, '', $3, 'available', NULL, NULL) RETURNING id`,
-		std.BinType.ID, "BIN-AVAIL-NULL-PC", std.StorageNode.ID,
-	).Scan(&binID)
-	if err != nil {
-		t.Fatalf("insert NULL payload_code bin: %v", err)
-	}
-
-	got, err := bins.ListAvailable(db.DB)
-	if err != nil {
-		t.Fatalf("bins.ListAvailable: %v", err)
-	}
-	for _, b := range got {
-		if b.ID == binID {
-			return // pass
-		}
-	}
-	t.Errorf("bin %d (NULL payload_code) missing from ListAvailable — NULL-safety regression", binID)
-}
-
 func TestFindEmptyCompatible(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -962,28 +886,19 @@ func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
 		}
 	})
 
-	t.Run("ClearManifest_empties_bin", func(t *testing.T) {
-		testutil.MustNoErr(t, bins.ClearManifest(db.DB, bin.ID), "bins.ClearManifest")
-		got, _ := bins.Get(db.DB, bin.ID)
-		if got.PayloadCode != "" {
-			t.Errorf("PayloadCode = %q, want empty", got.PayloadCode)
-		}
-		if got.Manifest != nil {
-			t.Errorf("bins.Manifest = %v, want nil", got.Manifest)
-		}
-		if got.UOPRemaining != 0 {
-			t.Errorf("UOPRemaining = %d, want 0", got.UOPRemaining)
-		}
-		if got.ManifestConfirmed {
-			t.Error("ManifestConfirmed = true, want false")
-		}
-		if got.LoadedAt != nil {
-			t.Errorf("LoadedAt = %v, want nil", got.LoadedAt)
-		}
-	})
-
 	t.Run("GetManifest_on_empty_bin_returns_empty", func(t *testing.T) {
-		// `bin` was just cleared.
+		// EMPTY THE BIN HERE rather than relying on a previous subtest to have
+		// done it. It used to lean on a ClearManifest_empties_bin subtest above,
+		// which was the only caller of bins.ClearManifest anywhere — so the
+		// function existed to keep this subtest's premise true and for nothing
+		// else. Deleting the dead function left this one reading a bin that still
+		// held two items, and the failure named the manifest rather than the
+		// coupling. A subtest that needs a state should establish it.
+		if _, err := db.DB.Exec(
+			`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0,
+			     manifest_confirmed=false, loaded_at=NULL WHERE id=$1`, bin.ID); err != nil {
+			t.Fatalf("empty the bin: %v", err)
+		}
 		m, err := bins.GetManifest(db.DB, bin.ID)
 		if err != nil {
 			t.Fatalf("bins.GetManifest empty: %v", err)

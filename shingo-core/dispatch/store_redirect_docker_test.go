@@ -123,7 +123,8 @@ func TestStoreRedirect_DugLaneWithAFreeSibling_ReSelects(t *testing.T) {
 	}
 
 	// The re-entry every dispatch attempt makes.
-	settled, rErr := d.ReserveStorageDropoff(order)
+	sd := d.ReserveStorageDropoff(order)
+	settled, rErr := sd.Node, sd.Err
 	testutil.MustNoErr(t, rErr, "re-entry")
 
 	after, err := db.GetOrder(order.ID)
@@ -189,7 +190,7 @@ func TestStoreRedirect_EveryLaneDug_ParksUnderTheExistingShape(t *testing.T) {
 		t.Fatal("both lanes must lock")
 	}
 
-	_, nowhereErr := d.ReserveStorageDropoff(order)
+	nowhereErr := d.ReserveStorageDropoff(order).Err
 	testutil.MustNoErr(t, nowhereErr, "re-entry with nowhere to go")
 
 	after, err := db.GetOrder(order.ID)
@@ -209,7 +210,7 @@ func TestStoreRedirect_EveryLaneDug_ParksUnderTheExistingShape(t *testing.T) {
 	// AND THE DIG COMPLETING RE-DRIVES IT. Releasing the lane is what the compound
 	// terminal does; the next re-entry then finds its own lane usable again.
 	d.laneLock.Unlock(laneA.ID, digA.ID)
-	_, clearedErr := d.ReserveStorageDropoff(order)
+	clearedErr := d.ReserveStorageDropoff(order).Err
 	testutil.MustNoErr(t, clearedErr, "re-entry after the dig cleared")
 	reloaded, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload after the clear")
@@ -247,7 +248,7 @@ func TestStoreRedirect_LeavesAnOperatorsChoiceAlone(t *testing.T) {
 		t.Fatal("TryLock must succeed")
 	}
 
-	_, _ = d.ReserveStorageDropoff(order)
+	_ = d.ReserveStorageDropoff(order)
 
 	after, err := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, err, "reload order")
@@ -287,7 +288,8 @@ func TestSettle_ResolvesASyntheticDestinationToAChild(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp bin_id")
 	order, _ = db.GetOrder(order.ID)
 
-	settled, rErr := d.ReserveStorageDropoff(order)
+	sd := d.ReserveStorageDropoff(order)
+	settled, rErr := sd.Node, sd.Err
 	testutil.MustNoErr(t, rErr, "settle a group with free children")
 
 	if settled == nil || settled.IsSynthetic {
@@ -331,7 +333,8 @@ func TestSettle_AFullGroupIsAWaitNotAFailure(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp bin_id")
 	order, _ = db.GetOrder(order.ID)
 
-	settled, rErr := d.ReserveStorageDropoff(order)
+	sd := d.ReserveStorageDropoff(order)
+	settled, rErr := sd.Node, sd.Err
 	if rErr == nil {
 		t.Fatalf("a full group settled to %v — proceeding is what sent group names to the fleet", settled)
 	}

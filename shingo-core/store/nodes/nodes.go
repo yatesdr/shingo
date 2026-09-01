@@ -19,6 +19,7 @@ import (
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/internal/nodetree"
+	"shingocore/store/reservations"
 )
 
 // Node is the node domain entity. The struct lives in shingocore/domain
@@ -94,9 +95,7 @@ func ClaimSlotTx(tx *sql.Tx, nodeID, orderID int64) error {
 	res, err := tx.Exec(`UPDATE nodes SET claimed_by=$1, updated_at=NOW()
 		WHERE id=$2 AND (claimed_by IS NULL OR claimed_by=$1)
 		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = $2)
-		  AND EXISTS (SELECT 1 FROM reservations
-		              WHERE order_id=$1 AND node_id=$2
-		                AND resource_kind='slot' AND state='pending')`, orderID, nodeID)
+		  AND `+reservations.HeldByOwnerSQL(reservations.KindSlot, 1, 2), orderID, nodeID)
 	if err != nil {
 		return err
 	}

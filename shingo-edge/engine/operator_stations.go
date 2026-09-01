@@ -128,6 +128,18 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 		return nil, err
 	}
 	if plan.DowngradedFromSwapMode != "" {
+		// THE DOWNGRADE IS THE ONE DECISION THAT IGNORES WHAT THIS CELL ALREADY
+		// HAS IN FLIGHT, and it is the decision that mints a second delivery into
+		// a position a robot is on its way to fill. Gate it here, before the log
+		// line below, so "downgrading … to simple delivery" keeps meaning what it
+		// says: the position is bare AND nothing is coming.
+		//
+		// Here and not in BuildConsumePlan because the planner is pure over
+		// (node, runtime, claim, occupancy) and the witness is a DB read. This
+		// function already holds what the guard needs.
+		if err := e.guardPositionSpokenFor(node, runtime, claim); err != nil {
+			return nil, err
+		}
 		if len(plan.PrimePairedPositions) > 0 {
 			dests := make([]string, 0, len(plan.PrimePairedPositions))
 			for _, p := range plan.PrimePairedPositions {
@@ -371,6 +383,27 @@ func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingU
 // has one is unaffected, so no existing path changes. It is safe to write
 // through: a position claim carries its PARENT's row id, unlike the loader synth
 // whose ID is 0 (see domain.SynthesizePositionClaim and Loader.SynthClaim).
+//
+// ── THIS DOOR IS NOT LINE-PULL GUARDED, AND THAT IS DELIBERATE ────────────
+//
+// It is the Material page's Release / Release-partial path, and it takes a bin
+// off a position and sends it to the outbound destination WITHOUT asking
+// linePullsFrom — the question the other three doors ask (the trunk
+// ReleaseOrderWithLineside, the changeover board's per-node click, and the
+// plant-wide sweep). Physically it is the same act: a robot lifting the bin a
+// position is holding.
+//
+// OWNER RULING 2026-08-28: it stays unguarded. "It's basically an admin release,
+// not guarded like the line" — this button is the material-management door, not
+// the button somebody at a running press presses, and the guard's own premise
+// (the operator can see the aisle, so the bit never outranks him) is doubly true
+// of the person driving this page.
+//
+// SO THE RULING IS THE THING TO READ FIRST if you are about to wire this into an
+// operator flow on a SEQUENTIAL press, where the whole choreography rests on the
+// other position taking over before this one is cleared. Guarding it then is a
+// change to what the owner decided, not a bug fix — and the guard belongs on the
+// wait, not bolted onto a fourth door, which is the lesson the trunk records.
 func (e *Engine) releaseNodeWithClaim(nodeID int64, qty int64, overrideRemainingUOP *int, fallback *processes.NodeClaim) (*storeorders.Order, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
@@ -758,20 +791,64 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		supplyReleased = released
 	}
 
-	// hop A4-ii: if exactly one leg released and its sibling was deferred
-	// (Core would refuse it right now), remember the deferred leg so it fires
-	// when it later reaches staged — its sibling having already gone. The
-	// operator's single click expressed "go" for the whole pair; deferring is
-	// not dropping. Nothing is recorded when BOTH released (nothing to re-fire)
-	// or NEITHER released (no sibling went — re-firing would auto-release with
-	// no operator intent behind it).
-	if evacReleased && !supplyReleased && supplyOrderID != nil {
-		e.rememberDeferredSiblingRelease(*supplyOrderID, supplyDisp)
-	}
-	if supplyReleased && !evacReleased && evacOrderID != nil {
-		e.rememberDeferredSiblingRelease(*evacOrderID, disp)
-	}
+	// hop A4-ii: if a leg did not go and its sibling DID, remember the deferred
+	// leg so it fires when it later reaches staged. The operator's single click
+	// expressed "go" for the whole pair; deferring is not dropping. Nothing is
+	// recorded when both went (nothing to re-fire) or when neither did and
+	// neither ever had (no sibling went — re-firing would auto-release with no
+	// operator intent behind it).
+	//
+	// "ITS SIBLING WENT" HAS TWO SPELLINGS AND THIS USED TO READ ONLY ONE.
+	// The arms below were `evacReleased && !supplyReleased` — released ON THIS
+	// CLICK — so a sibling that had ALREADY run its half and confirmed before
+	// the click arrived scored the same as a sibling that never went at all.
+	// Both make releaseIfReleasable return false, and only the second justifies
+	// dropping the deferral. See siblingAlreadyWent for the run that measured it.
+	e.deferReleaseIfSiblingWent(supplyOrderID, evacOrderID, supplyReleased, evacReleased, supplyDisp)
+	e.deferReleaseIfSiblingWent(evacOrderID, supplyOrderID, evacReleased, supplyReleased, disp)
 	return nil
+}
+
+// deferReleaseIfSiblingWent records the pair-release deferral for one leg of the
+// pair when that leg did not go on this click and its partner did — by either
+// spelling of "did" (see siblingAlreadyWent).
+func (e *Engine) deferReleaseIfSiblingWent(
+	legID, siblingID *int64, legReleased, siblingReleased bool, disp ReleaseDisposition,
+) {
+	if legID == nil || legReleased {
+		return
+	}
+	if !e.siblingAlreadyWent(siblingID, siblingReleased) {
+		return
+	}
+	e.rememberDeferredSiblingRelease(*legID, disp)
+}
+
+// siblingAlreadyWent reports whether this leg's partner has gone: either it
+// released on this same click, or it had already run its half to a SUCCESSFUL
+// terminal before the click arrived.
+//
+// The second arm is the swap-orphan fix. A partner that failed, was cancelled,
+// or was skipped is NOT "gone" for this purpose — that is
+// HandleSwapPeerTerminal's territory on the Core side and it unwinds the
+// survivor rather than releasing it. See orders.IsTerminalSuccess.
+//
+// An unreadable sibling answers NO. The deferral only ever ADDS a release the
+// operator already asked for, so failing to record one costs a click; recording
+// one on a guess would release a leg whose partner may still be coming, which is
+// the collision refusePlacingLegWhileSiblingPending exists to prevent.
+func (e *Engine) siblingAlreadyWent(siblingID *int64, siblingReleased bool) bool {
+	if siblingReleased {
+		return true
+	}
+	if siblingID == nil {
+		return false
+	}
+	sibling, err := e.db.GetOrder(*siblingID)
+	if err != nil {
+		return false
+	}
+	return orders.IsTerminalSuccess(sibling.Status)
 }
 
 // SwapPairNotReadyError refuses a RELEASE that would drop a bin onto a press

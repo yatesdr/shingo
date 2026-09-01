@@ -211,7 +211,7 @@ func TestCreateBinMove_FleetDispatchFails(t *testing.T) {
 		t.Errorf("bin claimed_by = %v after dispatch-failure rollback, want nil", got.ClaimedBy)
 	}
 	probe := testdb.CreateOrder(t, db)
-	if err := reservations.Acquire(db, probe.ID, bin.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, probe.ID, probe.ID, bin.ID, "test"); err != nil {
 		t.Errorf("bin not re-acquirable after dispatch-failure rollback: %v (reservation leaked?)", err)
 	}
 }

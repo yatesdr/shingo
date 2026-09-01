@@ -48,18 +48,22 @@ func TestLeadTimeHelpers_Fidelity(t *testing.T) {
 	}
 
 	s := time.Second
+	// THE QUEUE SEGMENT ENDS AT `dispatched`, not at `acknowledged`: Core writes
+	// no acknowledged row on any plant (see AvgL1QueueSeconds), so a fixture that
+	// seeded one was measuring a shape the system does not produce.
+	//
 	// retrieve_empty A: queue 10s, L1 transit 10s, L2 load 20s.
 	seed("A", "retrieve_empty", "PART-A", []ev{
-		{"queued", 0}, {"acknowledged", 10 * s}, {"in_transit", 15 * s}, {"delivered", 25 * s}, {"confirmed", 45 * s},
+		{"queued", 0}, {"dispatched", 10 * s}, {"in_transit", 15 * s}, {"delivered", 25 * s}, {"confirmed", 45 * s},
 	})
 	// retrieve_empty B: queue 20s, L1 transit 20s, L2 load 35s.
 	seed("B", "retrieve_empty", "PART-A", []ev{
-		{"queued", 100 * s}, {"acknowledged", 120 * s}, {"in_transit", 125 * s}, {"delivered", 145 * s}, {"confirmed", 180 * s},
+		{"queued", 100 * s}, {"dispatched", 120 * s}, {"in_transit", 125 * s}, {"delivered", 145 * s}, {"confirmed", 180 * s},
 	})
 	// retrieve D: market→cell 40s.
 	seed("D", "retrieve", "PART-A", []ev{{"in_transit", 300 * s}, {"delivered", 340 * s}})
 	// a different payload that must NOT leak into PART-A results.
-	seed("E", "retrieve_empty", "PART-Z", []ev{{"queued", 0}, {"acknowledged", 999 * s}})
+	seed("E", "retrieve_empty", "PART-Z", []ev{{"queued", 0}, {"dispatched", 999 * s}})
 
 	check := func(name string, got float64, err error, want float64) {
 		t.Helper()

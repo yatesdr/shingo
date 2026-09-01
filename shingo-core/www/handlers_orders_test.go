@@ -295,7 +295,7 @@ func TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim(t *testing.T) 
 	// released too, not just claimed_by — else the confirmed row bricks the bin).
 	testdb.RequireBinUnclaimed(t, db, bin.ID)
 	probe := testdb.CreateOrder(t, db)
-	if err := reservations.Acquire(db, probe.ID, bin.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, probe.ID, probe.ID, bin.ID, "test"); err != nil {
 		t.Errorf("bin not re-acquirable after spot-submit rollback: %v (reservation leaked?)", err)
 	}
 }

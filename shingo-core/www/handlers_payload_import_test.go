@@ -106,7 +106,12 @@ func TestImportPayloadGroups_ValidatesAndWarns(t *testing.T) {
 		[]string{"BAD-QTY", "5", "40016911", "x"}, // failed: qty not a number
 	))
 	mustEq(t, rep.Summary.Created, 2, "created (ZERO-UOP, ZERO-QTY)")
-	mustEq(t, rep.Summary.Failed, 3, "failed (BAD-UOP, NEG-UOP, BAD-QTY, no-code)")
+	// FOUR, and the label above is the count: BAD-UOP and NEG-UOP fail on the
+	// UoP cell, the code-less row fails before it is ever grouped, and BAD-QTY
+	// fails on the quantity. Every one of them is a failure this fixture asks
+	// for on purpose — see the row comments — so if this number ever needs
+	// lowering, a row has to leave the fixture with it.
+	mustEq(t, rep.Summary.Failed, 4, "failed (BAD-UOP, NEG-UOP, no-code, BAD-QTY)")
 
 	// Every failure names its file line so the operator can find the row.
 	for _, r := range rep.Rows {
@@ -300,14 +305,24 @@ func TestImportPayloadGroups_UoPFromLaterRow(t *testing.T) {
 // TestImportPayloadGroups_FailureNamesItsOwnLine: a bad quantity on a
 // group's SECOND row must report that row's line, and one payload yields
 // ONE failed row — not one per bad cell, all pointing at the first line.
+//
+// ONE PAYLOAD, THREE ROWS. The fixture used to carry two codes (MULTI-BAD
+// then MULTI), which grouped into two payloads — a healthy one and a
+// single-row one whose offending cell was its FIRST row. That is not the
+// shape the sentence above describes and it could not fail the way this
+// test is meant to fail. The three rows are one code now.
+//
+// LINE 3 IS THE DISCRIMINATOR. The group's home line — what the report
+// would name if it regressed to reporting g.line for every failure — is
+// line 2. Asserting the offender's own line 3 is what separates the two.
 func TestImportPayloadGroups_FailureNamesItsRow(t *testing.T) {
 	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rep := h.importPayloadGroups(importRows(
-		[]string{"MULTI-BAD", "10", "40016911", "1"},
-		[]string{"MULTI", "", "40017250", "oops"}, // line 4: the offender
-		[]string{"MULTI", "", "40017300", "2"},
+		[]string{"MULTI-BAD", "10", "40016911", "1"},  // line 2: the group's home row, fine
+		[]string{"MULTI-BAD", "", "40017250", "oops"}, // line 3: the offender
+		[]string{"MULTI-BAD", "", "40017300", "2"},    // line 4: never reached — fail-fast
 	))
 	mustEq(t, rep.Summary.Failed, 1, "failed — one per payload, fail-fast")
 	var failed []importRowResult
@@ -316,7 +331,43 @@ func TestImportPayloadGroups_FailureNamesItsRow(t *testing.T) {
 			failed = append(failed, r)
 		}
 	}
-	if len(failed) != 1 || failed[0].Line != 4 {
-		t.Errorf("failed rows = %+v, want exactly one at line 4", failed)
+	if len(failed) != 1 || failed[0].Line != 3 {
+		t.Errorf("failed rows = %+v, want exactly one at line 3 — the offending row's OWN line, not "+
+			"the group's home line 2", failed)
+	}
+}
+
+// TestImportPayloadGroups_OverflowGuards pins the two ceiling arms, which had
+// no coverage before the funlen extraction moved them into their own functions.
+//
+// Both are real: uop_capacity is a Postgres integer, so a spreadsheet holding a
+// part number in the UoP column would otherwise be handed to the driver and come
+// back as an opaque write error instead of a named row. The quantity guard is
+// looser (bigint holds far more) and exists so an absurd cell is reported as a
+// row the operator can find rather than stored.
+func TestImportPayloadGroups_OverflowGuards(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlers(t)
+
+	rep := h.importPayloadGroups(importRows(
+		[]string{"BIG-UOP", "3000000000", "", ""},                   // line 2: > int32
+		[]string{"BIG-QTY", "5", "40016911", "9000000000000000000"}, // line 3: absurd
+	))
+	mustEq(t, rep.Summary.Created, 0, "created — neither payload may be written")
+	mustEq(t, rep.Summary.Failed, 2, "failed (BIG-UOP, BIG-QTY)")
+
+	want := map[int]string{2: "UoP", 3: "quantity"}
+	for _, r := range rep.Rows {
+		if r.Status != "failed" {
+			continue
+		}
+		if w, ok := want[r.Line]; !ok || !strings.Contains(r.Reason, w) ||
+			!strings.Contains(r.Reason, "too large") {
+			t.Errorf("failed row %+v does not name its own line and what overflowed", r)
+		}
+		delete(want, r.Line)
+	}
+	if len(want) != 0 {
+		t.Errorf("no failure reported for line(s) %v: %+v", want, rep.Rows)
 	}
 }

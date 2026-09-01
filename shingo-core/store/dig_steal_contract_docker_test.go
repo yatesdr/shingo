@@ -12,12 +12,16 @@ import (
 	"shingocore/store/reservations"
 )
 
-// dig_steal_contract_docker_test.go — the dig always wins, and the books say so.
+// dig_steal_contract_docker_test.go — when a dig takes a soft-held blocker, the
+// books say so.
 //
-// A blocker is positional. The dig has no choice about which bins are in its way,
-// so a soft reservation cannot stop it and never did: the claim CAS admits any
-// bin whose claimed_by is NULL, including one another order has promised itself.
-// That behaviour is the contract, now ruled explicitly.
+// A blocker is positional: the dig has no choice about which bins are in its
+// way, and the claim CAS admits any bin whose claimed_by is NULL, including one
+// another order has promised itself. Positional is an argument about WHICH bin
+// though, not about whose turn, so since §7 the take goes by the demand ranking
+// and a soft hold CAN stop it — see compoundParent, which states "this dig wins"
+// as a priority rather than leaving it to seeding order, and the ranked-take
+// suite for the losing path. Everything below is the winning path.
 //
 // What was missing was the bookkeeping. The holder's reservation survived the
 // steal and was deleted much later, at the dig leg's ARRIVAL — so for the whole
@@ -27,6 +31,14 @@ import (
 // Three things become true here: the holder's row is released AT the steal, the
 // holder's bin_id goes with it so it recalculates instead of following a plan
 // that is no longer true, and the dig's own claim finally has a ledger row.
+//
+// THE ONE-VICTIM SHAPE OF THESE TESTS IS THE INDEX, NOT THE CONTRACT.
+// uq_reservations_bin_active allows a single active row per bin, so every case
+// below has exactly one holder to steal from and cannot distinguish "repairs the
+// holder" from "repairs A holder". The set-valued contract — every holder, and
+// never a hand-placed one this way — is pinned next door in
+// dig_steal_setvalued_docker_test.go, which manufactures the multi-holder state
+// the narrowing will make ordinary.
 
 // activeBinReservations returns the active reservation rows on a bin, as
 // (orderID, state) pairs.
@@ -88,7 +100,7 @@ func TestDigSteal_ReleasesTheHolderAndClearsItsPointer(t *testing.T) {
 
 	// The dig claims it as a blocker.
 	parent := compoundParent(t, db, "steal-parent")
-	if err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
+	if _, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
 		t.Fatalf("the dig must win a soft-held blocker: %v", err)
 	}
 
@@ -130,7 +142,7 @@ func TestDigSteal_LedgerRowFollowsTheClaim(t *testing.T) {
 
 	parent := compoundParent(t, db, "ledger-parent")
 	child := childFor(parent, bin.ID, 1)
-	if err := db.CreateCompoundChildren([]store.CompoundChild{child}); err != nil {
+	if _, err := db.CreateCompoundChildren([]store.CompoundChild{child}); err != nil {
 		t.Fatalf("create compound: %v", err)
 	}
 
@@ -173,7 +185,7 @@ func TestDigSteal_OneBinTwiceKeepsOneRow(t *testing.T) {
 
 	parent := compoundParent(t, db, "twice-parent")
 	kids := []store.CompoundChild{childFor(parent, bin.ID, 1), childFor(parent, bin.ID, 2)}
-	if err := db.CreateCompoundChildren(kids); err != nil {
+	if _, err := db.CreateCompoundChildren(kids); err != nil {
 		t.Fatalf("a plan that touches one bin twice must be creatable: %v", err)
 	}
 
@@ -207,7 +219,7 @@ func TestDigSteal_TheCompoundsOwnRowIsSupersededNotStolen(t *testing.T) {
 	}
 
 	child := childFor(parent, bin.ID, 1)
-	if err := db.CreateCompoundChildren([]store.CompoundChild{child}); err != nil {
+	if _, err := db.CreateCompoundChildren([]store.CompoundChild{child}); err != nil {
 		t.Fatalf("a child must be able to take a bin its own parent holds: %v", err)
 	}
 

@@ -270,6 +270,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/process-nodes/{id}/request-full", h.apiRequestFullBin)
 			r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
 			r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
+			r.Post("/process-nodes/{id}/set-active-pull", h.apiSetActivePullSide)
 
 			// Changeover lifecycle
 			// Read-only gate status behind the live "waiting on:" panel.
@@ -298,7 +299,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// finished, and it is the only door that expresses what the floor
 			// actually does: one click, every leg of the press moves in.
 			r.Post("/processes/{id}/changeover/release", h.apiReleaseChangeoverProcess)
-			r.Post("/processes/{id}/changeover/sequential-cutover/{nodeID}", h.apiSequentialChangeoverCutover)
 
 			// Orders — LIFECYCLE ONLY here. These act on an order that already
 			// exists and are driven by the operator station, which is a shop-floor

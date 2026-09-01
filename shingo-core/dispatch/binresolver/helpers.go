@@ -148,6 +148,30 @@ type storageCandidate struct {
 // wins, never in whether the deepest slot is preferred. Before, LKND dropped
 // bins in the emptiest lane regardless of depth, which read on the floor as
 // "picks the most-open spot instead of packing to the back."
+//
+// ── ARM 2 IS INERT IN EVERY PLANT SPEC IN THE REPO, AND THAT IS NOT A BUG ──
+//
+// It ranks whatever nodeDepth returns for the CANDIDATE this loop built, and in
+// both branches that value ties today:
+//
+//   - LANE branch: the candidate's depth is the LANE's, and seeddev creates
+//     lanes with a nil depth (seed_core.go's ensureNode call for ln.Name), so
+//     every lane ranks 0. The comment three lines above already says this.
+//   - FLAT branch: the candidate is the slot itself, and the only flat group in
+//     any spec is demo.yaml's SYN_PRESS_EMPTIES, whose eight positions are all
+//     `depth: 1`.
+//
+// SO THE REAL DEEPEST-FIRST IS NOT HERE. It is findStoreSlot's own
+// `ORDER BY COALESCE(n.depth,0) DESC` (store/nodes/lanes.go), which ranks SLOTS
+// inside the lane this function has already chosen. Two different questions —
+// which lane, then which slot in it — and only the second one currently
+// discriminates. Somebody debugging a store that packed to the wrong place needs
+// to know which of the two they are looking at.
+//
+// The arm stays. It is correct, it is free, and it becomes live the day a spec
+// gives its lanes depths or a flat group varies them — which is a configuration
+// change, not a code change, so deleting the arm would silently change behaviour
+// on a plant nobody rebuilt.
 func bestStorageCandidate(candidates []storageCandidate) *nodes.Node {
 	if len(candidates) == 0 {
 		return nil

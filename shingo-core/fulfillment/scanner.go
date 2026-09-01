@@ -3,6 +3,7 @@ package fulfillment
 import (
 	"errors"
 	"log"
+	"shingocore/store/reservations"
 	"sync"
 	"time"
 
@@ -248,7 +249,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// order.ID self-exclusion (A7): the in-flight tally counts `sourcing` orders,
 	// so a self-retrying order must not count its own row.
 	if blocked, cap := dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.QueueCause(cap.Cause), cap.Params)
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 		return false
 	}
 
@@ -304,7 +305,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// unknown outcome instead of letting a default arm mis-file it.
 	switch dispatch.MapFinderOutcome(res) {
 	case dispatch.OutcomeWait:
-		s.setQueueReason(order, res.QueueCode, dispatch.QueueCause(res.QueueCause), res.QueueParams)
+		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
 		return false
 	case dispatch.OutcomeReshuffle:
 		// Plan the reshuffle HERE, not only at intake. planTransport runs once, at
@@ -440,22 +441,20 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		return false
 	}
 	// destNode comes from the settle, not from a read taken before it.
-	destNode, rErr := s.dispatcher.ReserveStorageDropoff(order)
-	if rErr != nil {
-		// An unresolved group is not slot contention — it is a destination that
-		// was never narrowed to one. Name it, or the row blames the slot layer for
-		// a resolution that never ran.
-		cause := dispatch.CauseStoreSlotContended
-		if dispatch.IsSyntheticUnresolved(rErr) {
-			cause = dispatch.CauseNGRPResolve
-		}
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
+	// THE CAUSE COMES FROM THE VERDICT. This site and the held-bin one below used
+	// to derive it themselves, from the same four lines, and both got a hard read
+	// failure wrong the same way — parking it as "the destination slot is
+	// contended", which sends an operator to a slot that is probably empty.
+	dest := s.dispatcher.ReserveStorageDropoff(order)
+	if dest.Refused() {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, dest.Cause,
 			dispatch.QueueParams{Destination: order.DeliveryNode})
-		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "destination slot contended"); qerr != nil {
-			s.logTransition(order.ID, "→ sourcing after reserve conflict", qerr)
+		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "destination not secured"); qerr != nil {
+			s.logTransition(order.ID, "→ sourcing after reserve refusal", qerr)
 		}
 		return false
 	}
+	destNode := dest.Node
 
 	// Bin SOFT-acquire: a pending reservation (no hard claim). On a lost race the
 	// bin was reserved by a concurrent order — park under waiting_for_material and
@@ -511,44 +510,23 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		return false
 	}
 
-	// Dispatch to fleet — use DispatchDirect which handles fleet creation.
-	// On failure the order stays where it is and we move it back to sourcing: a
-	// fleet that will not take an order right now is a transient robot-system
-	// issue, not a permanent failure. The hard claim is released so the requeue
-	// re-soft-acquires next tick.
-	//
-	// This rollback did not work for as long as DispatchDirect terminalized first:
-	// `failed` has no outgoing edges, so the MoveToSourcing below was an illegal
-	// transition, logged and dropped, and every fleet rejection killed the order
-	// under a comment saying it did not.
+	// Dispatch to fleet — use DispatchDirect which handles fleet creation. A fleet
+	// that will not take an order right now is a transient robot-system issue, not
+	// a permanent failure, so the refusal goes through the one demote door below:
+	// armor off, paper DEMOTED rather than deleted, pointer kept. The retry
+	// re-confirms the pending row it kept — it does not re-acquire, which is why
+	// deleting the paper here wedged the order (§8).
 	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
 		s.logFn("fulfillment: fleet dispatch failed for order %d, re-queuing: %v", order.ID, err)
-		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
-			s.logFn("fulfillment: release claim for order %d on fleet-fail rollback: %v", order.ID, rerr)
-		}
-		// The robot never committed — drop any lane mouth hold so it doesn't linger.
-		if lerr := s.dispatcher.ReleaseLanesForOrder(order.ID); lerr != nil {
-			s.logFn("fulfillment: release lanes for order %d on fleet-fail rollback: %v", order.ID, lerr)
-		}
-		// Fleet rejected the dispatch — a transient robot-system issue. Park under
-		// fleet_unavailable so the row carries that code.
-		//
-		// UNLESS THE FLEET WAS NEVER ASKED. A synthetic destination is refused at
-		// the commit seam BEFORE any create, so fleet_unavailable would state a
-		// robot-system outage that is not happening and send whoever reads the row
-		// to the wrong system entirely. It is the blank-wait problem one level up:
-		// not an absent cause, a confidently wrong one. Name the real fact, under
-		// the cause planning already writes for it, so the two cannot drift.
-		if dispatch.IsSyntheticLocation(err) {
-			s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.CauseNGRPResolve,
-				dispatch.QueueParams{Destination: order.DeliveryNode})
-		} else {
-			s.setQueueReason(order, protocol.QueueFleetUnavailable, dispatch.CauseFleetRefusedCreate, dispatch.QueueParams{})
-		}
-		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
-			s.logTransition(order.ID, "→ sourcing after fleet fail", err)
-		}
+		// ONE DOOR. This arm used to call a release that DELETES the reservations
+		// and the order_bins rows while leaving orders.bin_id
+		// stamped — and the comment beside it said the order "re-soft-acquires
+		// next tick", which nothing did. It re-entered through dispatchHeldBin,
+		// which confirms by id and never re-acquires, and parked under
+		// claim-failed forever. Armor off, paper demoted, pointer kept.
+		code, cause, params := dispatch.FleetRefusalCause(err, order.DeliveryNode)
+		s.dispatcher.DemoteAfterFleetRefusal(order, code, cause, params)
 		return false
 	}
 
@@ -616,19 +594,17 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// a no-op for non-storage dests). Owner-idempotent, so a store that reserved at
 	// intake passes through; a loser (or a slot that filled) requeues holding its
 	// bin, never dropping into an occupied slot (#115/#117, generalized).
-	destNode, rErr := s.dispatcher.ReserveStorageDropoff(order)
-	if rErr != nil {
-		cause := dispatch.CauseStoreSlotContended
-		if dispatch.IsSyntheticUnresolved(rErr) {
-			cause = dispatch.CauseNGRPResolve
-		}
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
+	dest := s.dispatcher.ReserveStorageDropoff(order)
+	if dest.Refused() {
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, dest.Cause,
 			dispatch.QueueParams{Destination: order.DeliveryNode})
 		if s.debugLog != nil {
-			s.debugLog("fulfillment: held-bin order %d holding — destination slot not secured: %v", order.ID, rErr)
+			s.debugLog("fulfillment: held-bin order %d holding — destination not secured (%s): %v",
+				order.ID, dest.Cause, dest.Err)
 		}
 		return false
 	}
+	destNode := dest.Node
 	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dispatching held bin"); err != nil {
 		// Same yield as the fresh-bin path: ConfirmForDispatch and
 		// DispatchDirect follow, and DispatchDirect commits a robot.
@@ -654,6 +630,52 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	// step, before the fleet call — same Rule-1 step as the fresh path. On failure
 	// keep the soft holds and park in sourcing; next tick re-confirms.
 	if err := s.dispatcher.ConfirmForDispatch(order, *order.BinID, sourceNode, destNode); err != nil {
+		// ── "KEEP THE HOLD AND RETRY" NEEDS THERE TO STILL BE A HOLD ──────
+		//
+		// The sentence above is the whole premise of this arm, and when it is false
+		// the retry is not a wait — it is a loop with no releaser. ConfirmForDispatch
+		// runs the claim seatbelt (reservations.HeldByOwnerSQL): a hard claim may
+		// only land where THIS order already holds a live reservation. So an order
+		// whose soft hold has been reaped, but whose orders.bin_id survived, fails
+		// the seatbelt on every tick, forever, and never shops for another bin —
+		// dispatchHeldBin never re-finds, by design.
+		//
+		// SIM 2026-08-31, order 22. Fifty-two sim-minutes in `sourcing` under
+		// claim-failed, logging this line several times a second:
+		//
+		//	confirm bin 4 for order 22: bin 4 is locked, already claimed,
+		//	or does not exist
+		//
+		// Bin 4 was none of those things. It was `available`, unclaimed, unlocked,
+		// and carried NO reservation at all — and neither did order 22. The message
+		// lists the three conditions the SQL tests and omits the fourth, which was
+		// the one that failed. compound.go names this shape exactly: "a wait, it is
+		// a queued order with claim-failed on it and no releaser, forever."
+		//
+		// So ask which failure this is. A hold that still exists is the transient
+		// case the arm was written for — somebody else got the bin first, retry,
+		// the world changes. A hold that is GONE cannot come back on its own: the
+		// pointer is the only thing keeping the order in this arm, and dropping it
+		// routes the order through the finder next tick, which is the releaser.
+		//
+		// FAIL TOWARD THE RETRY on an unreadable reservations table. A wrong "keep"
+		// costs a tick and asks again; a wrong "forget" throws away a live soft hold
+		// and shops for a second bin the order does not need.
+		if !s.stillHoldsBin(order) {
+			s.logFn("fulfillment: held-bin order %d no longer holds a reservation on bin %d — its soft "+
+				"hold was reaped and only the pointer survived, so the claim seatbelt can never open. "+
+				"Forgetting the bin so the finder picks again.", order.ID, *order.BinID)
+			if cerr := s.db.ClearOrderBinID(order.ID); cerr != nil {
+				// Keep the old disposition: it retries, which is where it already was.
+				s.logFn("fulfillment: order %d could not forget its stale bin pointer: %v", order.ID, cerr)
+			}
+			s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseHeldBinMissing,
+				dispatch.QueueParams{Payload: order.PayloadCode})
+			if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "held bin lost, re-finding"); qerr != nil {
+				s.logTransition(order.ID, "held-bin → sourcing after losing the hold", qerr)
+			}
+			return false
+		}
 		s.logFn("fulfillment: held-bin order %d confirm-at-dispatch failed, re-queuing (hold kept): %v", order.ID, err)
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseClaimFailed,
 			dispatch.QueueParams{Payload: order.PayloadCode})
@@ -664,33 +686,48 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	}
 	vendorOrderID, err := s.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
-		s.logFn("fulfillment: held-bin order %d fleet dispatch failed, re-queuing (claim released): %v", order.ID, err)
-		if rerr := s.db.ReleaseClaimByOrder(order.ID); rerr != nil {
-			s.logFn("fulfillment: release claim for held-bin order %d on fleet-fail rollback: %v", order.ID, rerr)
-		}
-		if lerr := s.dispatcher.ReleaseLanesForOrder(order.ID); lerr != nil {
-			s.logFn("fulfillment: release lanes for held-bin order %d on fleet-fail rollback: %v", order.ID, lerr)
-		}
-		// Same fleet_unavailable code as the plain-path fleet failure; both are
-		// transient robot-system issues. The hard claim is released so the order
-		// re-soft-acquires next tick. And the same synthetic-destination carve-out,
-		// for the same reason — this arm reaches the same commit seam, so it can be
-		// refused before any create just as the plain path can.
-		if dispatch.IsSyntheticLocation(err) {
-			s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.CauseNGRPResolve,
-				dispatch.QueueParams{Destination: order.DeliveryNode})
-		} else {
-			s.setQueueReason(order, protocol.QueueFleetUnavailable, dispatch.CauseFleetRefusedCreate, dispatch.QueueParams{})
-		}
-		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "fleet unavailable, retrying"); err != nil {
-			s.logTransition(order.ID, "held-bin → sourcing after fleet fail", err)
-		}
+		s.logFn("fulfillment: held-bin order %d fleet dispatch failed, re-queuing (paper kept): %v", order.ID, err)
+		// The same one door as the fresh-bin arm above, and this arm needed it
+		// more: an order that is ALREADY holding its bin is the exact shape the
+		// pointer wedge traps, because dispatchHeldBin is where it comes back to.
+		code, cause, params := dispatch.FleetRefusalCause(err, order.DeliveryNode)
+		s.dispatcher.DemoteAfterFleetRefusal(order, code, cause, params)
 		return false
 	}
 	s.logFn("fulfillment: held-bin order %d fulfilled — bin %d (%s -> %s) vendor=%s",
 		order.ID, *order.BinID, sourceNode.Name, destNode.Name, vendorOrderID)
 	s.notifyEdgeDispatched(order, sourceNode, vendorOrderID)
 	return true
+}
+
+// stillHoldsBin reports whether this order still has a live reservation on the
+// bin its pointer names.
+//
+// It is the question "is the premise of the retry above still true". Release
+// DELETES the row rather than marking it, so any bin row returned for this order
+// is a live hold — pending or confirmed, both of which satisfy the claim
+// seatbelt.
+//
+// TRUE ON A READ ERROR, deliberately, and it is the only direction that is safe
+// here: the caller uses a false answer to THROW AWAY a soft hold, and doing that
+// because the database blinked would send an order shopping for a second bin
+// while it still owns the first.
+func (s *Scanner) stillHoldsBin(order *orders.Order) bool {
+	if order == nil || order.BinID == nil {
+		return false
+	}
+	held, err := s.db.ListReservationsByOrder(order.ID)
+	if err != nil {
+		s.logFn("fulfillment: order %d — could not read its reservations (%v); assuming the hold "+
+			"stands and retrying", order.ID, err)
+		return true
+	}
+	for _, r := range held {
+		if r.Kind == reservations.KindBin && r.BinID == *order.BinID {
+			return true
+		}
+	}
+	return false
 }
 
 // admitLanes takes the order's lane mouth holds before dispatch (P4). Returns
@@ -718,8 +755,15 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 		return false, dispatch.CauseLaneAcquireError
 	}
 	if !admitted {
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, cause,
-			dispatch.QueueParams{Destination: lane})
+		// A LANE REFUSAL IS A LANE WAIT — the fourth arm of the same family. Every
+		// cause AcquireLanesForOrder can return is a fact about a corridor (the
+		// admission verdict, or causeForLaneHolds), and the three complex/compound
+		// arms file them as QueueStorageRearranging. Filed here as a slot wait, a
+		// plain retrieve held out of a busy lane read "Waiting for a slot at
+		// Lane_16" — seen on the sim board, order 162, cause lane-held-traffic.
+		// Lane and Payload because rearrangingSentence reads those.
+		s.setQueueReason(order, protocol.QueueStorageRearranging, cause,
+			dispatch.QueueParams{Lane: lane, Payload: order.PayloadCode})
 		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane contended"); qerr != nil {
 			s.logFn("fulfillment: order %d → sourcing after lane conflict: %v", order.ID, qerr)
 		}
@@ -800,13 +844,6 @@ func (s *Scanner) digForBuriedHeldBin(order *orders.Order) bool {
 	return false
 }
 
-// setQueueReason is the scanner's one door onto the queue-reason columns. It
-// generates the operator sentence from code+params (via the shared formatter),
-// then writes sentence+code+cause together — so a wait parked here always
-// records the structured code, never free text. No-ops when the sentence is
-// unchanged (avoids a re-touch every tick a wait persists, which can re-trigger
-// the scanner). cause is the engineer-only call-site tag; params carries the
-// values the sentence is built from and is discarded after formatting.
 // logTransition reports a failed lifecycle transition from the scanner.
 //
 // A refused compare-and-swap (ConcurrentTransition) is not a failure — it is
@@ -827,18 +864,15 @@ func (s *Scanner) logTransition(orderID int64, what string, err error) {
 	s.logFn("fulfillment: order %d %s: %v", orderID, what, err)
 }
 
+// setQueueReason is the scanner's door onto the queue-reason columns — the
+// package-local name for dispatch.WriteQueueDetail, which holds the decision.
+//
+// s.logFn IS A STRUCT FIELD, NOT AN INJECTED PARAMETER, and that is what the
+// door's log-sink argument exists for: the scanner writes to the plant log
+// through a sink the process wires up, and the dispatch side writes through the
+// standard logger. One body, two destinations.
 func (s *Scanner) setQueueReason(order *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams) {
-	reason := dispatch.FormatQueueSentence(code, params)
-	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == string(cause) {
-		return
-	}
-	if err := s.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
-		s.logFn("fulfillment: set queue_reason for order %d: %v", order.ID, err)
-		return
-	}
-	order.QueueReason = reason
-	order.QueueCode = string(code)
-	order.QueueCause = string(cause)
+	dispatch.WriteQueueDetail(s.db, s.logFn, "fulfillment", order, code, cause, params)
 }
 
 // notifyEdgeDispatched sends the ack + waybill to Edge after a successful

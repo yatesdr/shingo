@@ -62,8 +62,8 @@ func TestCompoundChild_PersistsEveryFieldSetOnIt(t *testing.T) {
 		SourceIntent:     SourceIntentLocal,
 		Coordinated:      true,
 	}
-	testutil.MustNoErr(t, db.CreateCompoundChildren(
-		[]store.CompoundChild{{Order: child, BinID: childBin.ID}}), "create child")
+	_, ccErr := db.CreateCompoundChildren([]store.CompoundChild{{Order: child, BinID: childBin.ID}})
+	testutil.MustNoErr(t, ccErr, "create child")
 
 	kids, err := db.ListChildOrders(parent.ID)
 	testutil.MustNoErr(t, err, "list children")

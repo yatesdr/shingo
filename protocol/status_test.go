@@ -476,3 +476,35 @@ func TestAcquiringStatusesRaiseAnAnomalyButAreNeverSwept(t *testing.T) {
 		t.Fatal("no status is sweep-eligible; the never-swept assertion above proves nothing")
 	}
 }
+
+// TestAcquiringStatusSQLListIsByteUnchanged pins the exact string, not just the
+// predicate that builds it.
+//
+// ── WHY THIS ONE GETS A LITERAL AND THE OTHER NINE DO NOT ─────────────────
+//
+// The display seams on Core's orders page ask "is this order waiting" and used to
+// answer with IsAcquiring. That was too narrow — three of the five wait
+// populations are `staged` or `reshuffling` — and the obvious repair is to widen
+// IsAcquiring so the page sees them. It must not be widened. This value is
+// interpolated into a live order query (store/orders/orders.go, the demand-ranked
+// selection), into soakstat's unattributed-wait count, and into two testdb
+// assertions; those readers mean "pre-dispatch, no robot committed", which is
+// what acquiring IS. A page that wants a broader set widens LOCALLY, and
+// handlers_orders.go's orderIsWaiting does.
+//
+// The pair table above already asserts that the projector and the predicate
+// agree. That catches a drift between them; it cannot catch both being widened
+// together, which is exactly the change this exists to refuse. So the string is
+// spelled out here, and a genuine widening has to come and delete a paragraph.
+func TestAcquiringStatusSQLListIsByteUnchanged(t *testing.T) {
+	t.Parallel()
+	const want = `'queued','sourcing'`
+	if got := AcquiringStatusSQLList(); got != want {
+		t.Errorf("AcquiringStatusSQLList() = %s, want %s.\n"+
+			"Acquiring means PRE-DISPATCH, NO ROBOT COMMITTED, and four readers depend on that "+
+			"meaning: the demand-ranked live order query, soakstat's unattributed-wait count, and "+
+			"two testdb assertions. If a display needs a wider set — and the orders page does, "+
+			"because staged and reshuffling orders carry causes acquiring ones cannot — widen it "+
+			"AT THE CALL SITE, not here.", got, want)
+	}
+}

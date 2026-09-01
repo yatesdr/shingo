@@ -66,9 +66,8 @@ const reshuffleDissolveDetail = ReshuffleDissolveDetail
 // the still-buried bin the rationale was worried about is exactly what the new
 // plan digs out.
 //
-// The owner's sentence is the rule: "the demand still exists — isn't this the
-// point of heal?" A dig failing is the plant being congested. Only the demand's
-// OWN work failing fails the demand.
+// The rule: a dig failing is the plant being congested, and the demand still
+// exists. Only the demand's OWN work failing fails the demand.
 //
 // AND IT IS THE SAME ENDING AS A DISSOLVE, deliberately, with a different
 // STRING. The machinery is one path — close the chapter, dispose of the parent —
@@ -583,10 +582,61 @@ func (d *Dispatcher) writeCompoundChildren(parentOrder *orders.Order, plan *Resh
 
 	// %w, not %v: store.BlockerClaimedError has to survive this wrap for the
 	// planners to tell a congestion refusal from a fault.
-	if err := d.db.CreateCompoundChildren(children); err != nil {
+	displaced, err := d.db.CreateCompoundChildren(children)
+	if err != nil {
 		return fmt.Errorf("create compound children: %w", err)
 	}
+	d.failDisplacedByHand(displaced)
 	return nil
+}
+
+// failDisplacedByHand ends the hand-placed orders this dig took bins from.
+//
+// ── WHY THIS IS A FAILURE AND NOT A WAIT ─────────────────────────
+//
+// Congestion waits, and this is not congestion. The steal has committed: the
+// bin's whole reservation book was swept and re-written to the dig's leg, and
+// the order still points at that bin with nothing behind the pointer. Nothing in
+// the tree re-acquires a bin for an order that already names one — dispatchHeldBin
+// confirms by id and the confirm CAS requires the row — so leaving it live is not
+// a wait, it is a queued order with claim-failed on it and no releaser, forever.
+//
+// The two alternatives were both worse and both were ruled out. Un-pointing it
+// re-sources it, and for a node-local move that is Core substituting a different
+// bin for the one a person named. Re-pointing it at the bin's new home keeps the
+// substitution honest but not the hold: it would still have no reservation and
+// would wedge on the same claim, so it needs a re-acquire path that does not
+// exist yet. When one does, this becomes a wait with a named releaser and the
+// terminal goes away.
+//
+// Best-effort per order: one that cannot be read or has already gone terminal is
+// logged and skipped, and the dig is never failed for it — the excavation is a
+// fact by the time this runs.
+func (d *Dispatcher) failDisplacedByHand(displaced []store.DisplacedByHand) {
+	for _, v := range displaced {
+		ord, err := d.db.GetOrder(v.OrderID)
+		if err != nil || ord == nil {
+			log.Printf("dispatch: dig %d took bin %d from hand-placed order %d and that order "+
+				"could not be read back to end it (%v) — it is pointing at a bin it does not hold",
+				v.DigID, v.BinID, v.OrderID, err)
+			continue
+		}
+		if protocol.IsTerminal(ord.Status) {
+			continue
+		}
+		where := v.ParkedAt
+		if where == "" {
+			where = "a shuffle slot in the same group"
+		}
+		detail := fmt.Sprintf("a dig (order %d) had to move bin %d out of its way and parked it at %s. "+
+			"This order was placed by hand and names that bin, so it is not re-aimed at a different "+
+			"one — re-issue it against the bin's new position", v.DigID, v.BinID, where)
+		if fErr := d.lifecycle.FailWithRef(ord, ord.StationID,
+			string(protocol.TermBinDugAway), detail, protocol.TermRef{Node: where}); fErr != nil {
+			log.Printf("dispatch: could not fail hand-placed order %d after dig %d took bin %d (%v)",
+				v.OrderID, v.DigID, v.BinID, fErr)
+		}
+	}
 }
 
 // AdvanceCompoundOrder dispatches the next pending child order in a compound sequence.
@@ -806,8 +856,13 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		// re-drivable — GetNextChildOrder selects it, and no transition out of
 		// sourcing goes back — so the cause is written ALONGSIDE the status rather
 		// than instead of it. Advisory metadata, never a gate.
-		d.setQueueReason(next, protocol.QueueWaitingForSlot, v.Cause(),
-			QueueParams{Destination: destName})
+		//
+		// FILED AS A LANE WAIT, like the same verdict at the two complex doors: every
+		// cause this arm can carry is a fact about a corridor, and QueueWaitingForSlot
+		// rendered "Waiting for a slot" for a leg waiting on a lane. Lane and Payload
+		// because rearrangingSentence reads those; Destination was slotSentence's.
+		d.setQueueReason(next, protocol.QueueStorageRearranging, v.Cause(),
+			QueueParams{Lane: destName, Payload: next.PayloadCode})
 		return nil
 	}
 
@@ -1440,20 +1495,23 @@ func (d *Dispatcher) parkLegOnFleetRefusal(parentOrderID int64, leg *orders.Orde
 	log.Printf("dispatch: compound %d child %d — the fleet refused the create: %v (parking the leg; "+
 		"the dig waits and the demand survives)", parentOrderID, leg.ID, cause)
 
-	if leg.Status == StatusDispatched {
-		if rbErr := d.lifecycle.MoveToSourcing(leg, "dispatcher", "fleet refused the create"); rbErr != nil {
-			log.Printf("dispatch: compound %d child %d could not be rolled back after a fleet refusal: %v "+
-				"(it is `dispatched` with no vendor order; the stuck sweep is the backstop)",
-				parentOrderID, leg.ID, rbErr)
-			return
-		}
-	}
-
 	dest := ""
 	if destNode != nil {
 		dest = destNode.Name
 	}
-	d.setQueueReason(leg, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate,
+	// THROUGH THE ONE DOOR. This arm used to roll the status back and write the
+	// cause and release nothing at all, which left the leg holding a hard claim
+	// for a robot that never came — armor outliving its robot, on the arm that
+	// runs during an excavation.
+	//
+	// The door's LANE clause is the one that matters here and it is why the
+	// release could not simply be added: a leg's mouth rows belong to its PARENT
+	// (laneOwnerFor), because one dig chapter holds one corridor for the whole
+	// excavation. A blind release-my-lanes on a leg's refusal tears that corridor
+	// out from under the dig — its other legs lose their admission and anybody may
+	// walk into the lane being worked. The door asks laneOwnerFor and releases
+	// nothing here.
+	d.DemoteAfterFleetRefusal(leg, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate,
 		QueueParams{Destination: dest})
 }
 

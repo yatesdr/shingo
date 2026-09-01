@@ -447,6 +447,34 @@ var causeReleasers = []causeReleaser{
 			"has already ended, the reconciliation sweep releases the claim it left behind",
 	},
 	{
+		cause: CauseDigBlockerPromised,
+		// BOTH, because the ranked gate is in the one compound-creation door and
+		// every dig goes through it. A dig planned from scratch is acquiring; a
+		// summoner standing at a lane's mark digging its own corridor open is a
+		// DWELLER, and the acceptance arm parks it under this cause too. The
+		// lane-gate evaluator releases the second, the scanner the first.
+		populations: []WaitPopulation{PopAcquiring, PopGateStaged},
+		// THE HOLDER HAS NO ROBOT, which is why this is not dig-blocker-claimed:
+		// it holds a promise, not ink, so the wait ends when that demand acts on
+		// its promise or ends.
+		//
+		// Both arms are already wired: the pickup moves the bin to _TRANSIT and
+		// its arrival clears the hold (bin events the scanner listens on), and a
+		// terminal releases through TerminalizeOrder and emits too.
+		//
+		// THE GAP, NAMED: a holder that re-sources AWAY from the bin emits nothing
+		// anyone keys on, so the 60s floor covers that case and the dig waits up to
+		// a pass longer than it needs to. Recorded because the floor's histogram
+		// will show it, and the count there is a missing event, not a missing
+		// releaser.
+		//
+		// The wait's own sentence NAMES that holder (QueueParams.HolderOrderID), so
+		// a reader who wants to know when this ends has the order to go and look at.
+		what: "the demand holding the promise takes its bin (pickup → _TRANSIT, arrival clears the " +
+			"hold) or ends — and, when it instead re-sources away from the bin, the periodic floor, " +
+			"because a holder abandoning a promise emits nothing anyone listens for",
+	},
+	{
 		cause: CauseDigBlockerStopped,
 		// PopGateStaged only, and by construction rather than by policy: the
 		// acceptance arm is the one caller that asks the liveness question before
@@ -472,6 +500,35 @@ var causeReleasers = []causeReleaser{
 			"does NOT resolve it automatically: an order stopped without terminating is a config " +
 			"fault or a breakdown, and dissolving it would be the machine guessing at something it " +
 			"cannot classify",
+	},
+	{
+		cause: CauseDigBlockerWaitsOnThisDig,
+		// Same door as CauseDigBlockerStopped, and for the same structural reason:
+		// the acceptance arm is the only caller that asks the liveness question
+		// before it summons, so it is the only one that can tell this shape from a
+		// genuinely stalled holder.
+		populations: []WaitPopulation{PopGateStaged},
+		// A PERSON AGAIN, BUT A DIFFERENT INSTRUCTION, which is the whole reason
+		// this is not filed under dig-blocker-order-stopped. That cause tells an
+		// engineer to go and resolve the holder. Here the holder is working
+		// correctly and the deadlock is the dig's; telling somebody to fix the
+		// holder sends them to a row with nothing wrong in it, and §R.115a called
+		// exactly that out as the false-alarm class worth splitting.
+		//
+		// It is NOT resolved automatically, and that is a scope statement rather
+		// than a claim that it could not be. Releasing the dig's lane so the holder
+		// can take its bin is the obvious repair and the machinery exists
+		// (dissolveCompound already drops the lock and keeps the demand alive), but
+		// §R.115 refused automatic dissolve for this family by name and the owner
+		// has not re-ruled it. So the wait says who has to act and what the act is.
+		//
+		// The floor re-asks every 60s, so the moment the lane frees — by hand, or
+		// because the holder's claim goes away — the next pass plans the dig.
+		what: "the deadlock is broken by hand: this dig's lane is released so the order holding the " +
+			"blocker can reach it, after which the blocker leaves and the dig re-plans. Do NOT go " +
+			"looking for a fault in the holding order — it is refused on THIS dig's own lane lock " +
+			"and is behaving correctly. Core does not break the cycle itself: §R.115 refused " +
+			"automatic dissolve for this family and that ruling stands",
 	},
 	{
 		// THE ROBOT IS AT THE MARK AND THE DIGGING IS ITS OWN (§R.104).
@@ -624,6 +681,19 @@ var causeReleasers = []causeReleaser{
 			"not a wait to re-drive; Core's hard release is the escape hatch until that exists",
 	},
 	{
+		cause:       CauseSwapPartnerFinished,
+		populations: []WaitPopulation{PopStationWait},
+		what: "the STATION releases it, exactly as for station-wait — but unlike an ordinary station " +
+			"wait, nothing further is COMING: this leg's swap partner already ran its half and " +
+			"confirmed, so no second robot will arrive and no line will clear. The Edge's " +
+			"swap-survivor arm releases this population without a click when it sees the partner " +
+			"terminal-succeed; when that cannot fire, a person acts and Core's hard release is the " +
+			"escape hatch. Core does not advance it and must not — a station wait is unfloored by " +
+			"ruling, and a partner that finished does not change whose fact the precondition is. A " +
+			"row standing under THIS cause is a dwell to surface immediately rather than a wait to " +
+			"wonder about",
+	},
+	{
 		cause:       CauseGateReleaseFailed,
 		populations: []WaitPopulation{PopGateStaged},
 		what: "whatever the release tripped on clears — most often a slot in the lane frees so the " +
@@ -681,6 +751,23 @@ var causeReleasers = []causeReleaser{
 			"NO OVERFLOW CONFIGURED IS THE UNCOMFORTABLE CASE, and it is stated rather than " +
 			"solved: the push parks holding its bin, which is backpressure into whatever was " +
 			"pushing. That is the residual MG6-1 names and does not remove.",
+	},
+	{
+		cause:       CauseGroupHoldsEmptiesOnly,
+		populations: []WaitPopulation{PopAcquiring, PopCompoundLeg},
+		what: "somebody names an overflow destination for the group, or the carrier is aimed " +
+			"at a group that takes payloads. NOT a carrier leaving — the group emptying " +
+			"changes nothing here",
+		finding: "THE GROUP FREEING UP IS NOT THE RELEASER, which is what separates this from " +
+			"ngrp-at-level and ngrp-full. Those two are about how much room there is and " +
+			"clear when a carrier leaves. This is about what the arriving carrier IS: a " +
+			"payload-bearing bin aimed at a bank whose declared level counts empties, so an " +
+			"empty group refuses it exactly as a full one does. " +
+			"MOST ROWS SHOULD NEVER REACH THE PARK. Admission tries the group's configured " +
+			"overflow first, so a group with an overflow diverts and never queues; only a " +
+			"group without one parks. A run of these is therefore two findings at once — an " +
+			"unconfigured overflow, and a path still aiming labelled carriers at an empties " +
+			"bank after the operator-CLEAR ordering race was closed.",
 	},
 	{
 		cause:       CauseFinderGroupFenced,
@@ -753,12 +840,37 @@ var causeReleasers = []causeReleaser{
 	{
 		cause:       CauseDropoffCapacity,
 		populations: []WaitPopulation{PopAcquiring},
-		what:        "the storage dropoff frees, or its committed inbound traffic lands",
+		// LEGACY VALUE, NO LIVE WRITER. The two complex arms that wrote it now
+		// write the fine cause CheckDropoffCapacity actually computed
+		// (dropoff-occupied / dropoff-inflight / ngrp-full / capacity-check-failed),
+		// each of which has its own row below with its own releaser. This row
+		// stays because plant rows carrying "dropoff-capacity" exist and still
+		// mean what they meant — see the constant's own note for why it was kept
+		// rather than deleted. The sentence is the disjunction of the two
+		// releasers it used to cover, which is the honest reading of an old row.
+		what: "the storage dropoff frees, or its committed inbound traffic lands — a pre-split " +
+			"row, so which of the two it was waiting for is not recoverable from the cause alone",
 	},
 	{
 		cause:       CauseSwapHold,
 		populations: []WaitPopulation{PopAcquiring},
-		what:        "the sibling swap leg claims its bin, clearing the gate",
+		// IT USED TO NAME THE PREDICATE THAT DEADLOCKED. The row read "the sibling
+		// swap leg claims its bin, clearing the gate", which describes the
+		// live-claim test swapLegHeld ran until 2026-08-11 — the one that hung the
+		// ASSY pair when the supply STAGED its replacement, the store unclaimed the
+		// bin, and the claim the evac was waiting for disappeared having already
+		// done its job (swap_hold.go, the arm's own scar). swapLegCommittedToFleet
+		// replaced it precisely so the hold reads dispatch state instead of a live
+		// claim. A releaser row naming a dead mechanism as live is worse than a
+		// blank one: it sends the reader to look for a claim that is not the gate.
+		//
+		// BOTH FACES, because one predicate serves both directions and the row is
+		// keyed by the cause, not by which arm wrote it.
+		what: "the sibling leg commits to the fleet — it holds a vendor order and is en route or " +
+			"done (swapLegCommittedToFleet). For an evac that means its supply secured a " +
+			"replacement; for a filler it means its clearer is committed to clearing the line. " +
+			"NOT a live claim: a supply that has already staged its replacement holds none, and " +
+			"reading for one is what deadlocked this gate on 2026-08-11",
 	},
 
 	// ── The finder's tiers ────────────────────────────────────────────────

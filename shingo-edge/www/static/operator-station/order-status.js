@@ -24,6 +24,17 @@ export const OPERATOR_VISIBLE_STATUSES = [
     'staged', 'submitted',
 ];
 
+// PRE-DISPATCH: born, waiting, and no robot committed yet. Mirrors
+// protocol.IsPreDispatch / PreDispatchStatusSQLList, and the Go drift test pins
+// it like the two lists above.
+//
+// It exists because the operator station was asking this question with literals
+// — `status === 'queued' || status === 'pending'` — which silently EXCLUDED
+// `sourcing`. So a station whose order was out hunting for material showed no
+// demand card and no cause on the one screen a floor operator actually uses,
+// which is the screen the visibility requirement is about.
+export const PRE_DISPATCH_STATUSES = ['pending', 'queued', 'sourcing'];
+
 export function isTerminal(status) {
     return TERMINAL_STATUSES.includes(status);
 }
@@ -33,6 +44,11 @@ export function isTerminal(status) {
 // helper makes the intent explicit at the call site.
 export function isActive(status) {
     return !isTerminal(status);
+}
+
+// isPreDispatch is "waiting, nothing is moving yet" — the demand-card question.
+export function isPreDispatch(status) {
+    return PRE_DISPATCH_STATUSES.includes(status);
 }
 
 export function isOperatorVisible(status) {

@@ -223,7 +223,7 @@ type pinResolver struct {
 }
 
 func (r *pinResolver) Resolve(_ *nodes.Node, _ binresolver.ResolveMode, _ string,
-	_ *int64, _ reservations.DigAsker) (*binresolver.ResolveResult, error) {
+	_ *int64, _ reservations.DigAsker, _ binresolver.BinFilter) (*binresolver.ResolveResult, error) {
 	if r.err != nil {
 		return nil, r.err
 	}

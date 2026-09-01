@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 )
 
@@ -263,85 +264,130 @@ func TestPlanNodeAction_Swap_Sequential(t *testing.T) {
 		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
 	if action.SupplyOrder == nil {
-		t.Fatal("expected single-order supply order at plan time")
+		t.Fatal("expected this position's order at plan time")
 	}
 	if action.EvacOrder != nil {
-		t.Error("evac order must be nil — sequential SWAP is a single-order shape")
+		t.Error("evac order must be nil — per-node sequential is ONE order per position")
 	}
 	if action.LogTag != "swap_sequential" {
 		t.Errorf("LogTag = %q, want swap_sequential", action.LogTag)
 	}
-	// Tie-break: empty active-pull snapshot → CoreNodeName=inactive.
-	// First pickup in supply order's steps should target N1 (inactive); the
-	// cutover wait should target N1B (active).
+	// Tie-break on an empty active-pull snapshot is canonical by name, so of
+	// {N1, N1B} the parked side is N1 — this diff's own position. The parked
+	// side runs immediately: four steps, no wait, all at its own node.
+	//
+	// PER-NODE (2026-08-28): this used to read a NINE-step whole-press order out
+	// of this single diff and assert the cutover wait at index 4. That wait now
+	// belongs to N1B's order, which N1B's own diff builds.
 	steps := action.SupplyOrder.Complex.Steps
-	if len(steps) < 5 {
-		t.Fatalf("expected at least 5 steps, got %d", len(steps))
+	if len(steps) != 5 {
+		t.Fatalf("expected 5 steps (wait, lift, out, refill, deliver), got %d: %+v", len(steps), steps)
 	}
-	if steps[0].Action != "pickup" || steps[0].Node != "N1" {
-		t.Errorf("step 0: expected pickup at inactive N1, got %+v", steps[0])
+	if steps[0].Action != "wait" || steps[0].Node != "N1" {
+		t.Errorf("step 0: expected a station wait at this position, got %+v", steps[0])
 	}
-	if steps[4].Action != "wait" || steps[4].Node != "N1B" {
-		t.Errorf("step 4: expected cutover wait at active N1B, got %+v", steps[4])
+	if steps[1].Action != "pickup" || steps[1].Node != "N1" {
+		t.Errorf("step 1: expected the pickup at N1, got %+v", steps[1])
+	}
+	if steps[4].Action != "dropoff" || steps[4].Node != "N1" {
+		t.Errorf("step 4: expected the new bin delivered back to N1, got %+v", steps[4])
+	}
+	for _, s := range steps {
+		if s.Node == "N1B" {
+			t.Errorf("this position's order steps on N1B (%+v); that position has its own", s)
+		}
 	}
 }
 
-// Active-pull awareness: when the runtime says the line is currently
-// pulling from PairedCoreNode (N1B active), the planner should swap N1
-// (the inactive side) FIRST. Mirror test asserts the inverse direction.
-func TestBuildChangeoverPlan_Sequential_ActiveOnB_SwapsAFirst(t *testing.T) {
+// Active-pull awareness: the runtime snapshot decides which position is parked,
+// and each position's diff builds only its own order.
+//
+// PER-NODE (2026-08-28): these two used to plan ONE diff and read a nine-step
+// whole-press order out of it, asserting "swap the inactive side FIRST" by step
+// index. Ordering between the positions is no longer expressed inside a step
+// list — it is expressed by which order WAITS. So the same claim is asserted as:
+// the parked side's order has no wait, the active side's opens with one.
+//
+// Both diffs are planned here, because that is what BuildChangeoverPlan
+// actually receives for an A/B press: DiffStyleClaims emits one per claimed
+// position, and both positions are claimed in both styles.
+func TestBuildChangeoverPlan_Sequential_ActiveOnB_ParksA(t *testing.T) {
 	t.Parallel()
-	from := fullSwapClaim("N1", "PART-A", "consume")
-	from.SwapMode = "sequential"
-	from.PairedCoreNode = "N1B"
-	to := fullSwapClaim("N1", "PART-B", "consume")
-	diffs := []ChangeoverNodeDiff{
-		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
+	assertSequentialPlanRoles(t, map[string]bool{"N1": false, "N1B": true},
+		"N1" /* parked */, "N1B" /* active */)
+}
+
+func TestBuildChangeoverPlan_Sequential_ActiveOnA_ParksB(t *testing.T) {
+	t.Parallel()
+	assertSequentialPlanRoles(t, map[string]bool{"N1": true, "N1B": false},
+		"N1B" /* parked */, "N1" /* active */)
+}
+
+// assertSequentialPlanRoles plans both positions of one A/B press under the
+// given active-pull snapshot and checks each got the right half of the
+// choreography.
+func assertSequentialPlanRoles(t *testing.T, activePull map[string]bool, wantParked, wantActive string) {
+	t.Helper()
+	mk := func(own, partner, payload string) processes.NodeClaim {
+		c := fullSwapClaim(own, payload, "consume")
+		c.SwapMode = "sequential"
+		c.PairedCoreNode = partner
+		return c
 	}
-	nodes := []processes.Node{{ID: 42, Name: "N1", CoreNodeName: "N1"}}
-	activePull := map[string]bool{"N1": false, "N1B": true}
+	fromA, toA := mk("N1", "N1B", "PART-A"), mk("N1", "N1B", "PART-B")
+	fromB, toB := mk("N1B", "N1", "PART-A"), mk("N1B", "N1", "PART-B")
+	diffs := []ChangeoverNodeDiff{
+		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &fromA, ToClaim: &toA},
+		{CoreNodeName: "N1B", Situation: SituationSwap, FromClaim: &fromB, ToClaim: &toB},
+	}
+	nodes := []processes.Node{
+		{ID: 42, Name: "N1", CoreNodeName: "N1"},
+		{ID: 43, Name: "N1B", CoreNodeName: "N1B"},
+	}
 
 	plan := BuildChangeoverPlan(diffs, nodes, false, activePull, toolingChangeover{})
-	if len(plan.Actions) != 1 || plan.Actions[0].Err != nil {
-		t.Fatalf("unexpected plan: %+v", plan)
+	if len(plan.Actions) != 2 {
+		t.Fatalf("an A/B press yields %d actions, want one per position: %+v", len(plan.Actions), plan.Actions)
 	}
-	steps := plan.Actions[0].SupplyOrder.Complex.Steps
-	if steps[0].Node != "N1" {
-		t.Errorf("active=N1B → swap N1 (inactive) first; got first pickup at %q", steps[0].Node)
+	byNode := map[string][]protocol.ComplexOrderStep{}
+	for _, a := range plan.Actions {
+		if a.Err != nil {
+			t.Fatalf("action for %s failed: %v", a.CoreNodeName, a.Err)
+		}
+		if a.SupplyOrder == nil || a.SupplyOrder.Complex == nil {
+			t.Fatalf("action for %s produced no order", a.CoreNodeName)
+		}
+		byNode[a.CoreNodeName] = a.SupplyOrder.Complex.Steps
 	}
-	if steps[4].Node != "N1B" {
-		t.Errorf("cutover wait should be at active N1B, got %q", steps[4].Node)
+
+	// BOTH open with a station wait at their own node. What the active-pull
+	// snapshot still decides is the FLAG, not the shape: only the parked side of
+	// a produce press holds an on-deck empty.
+	for _, pos := range []string{wantParked, wantActive} {
+		steps, ok := byNode[pos]
+		if !ok {
+			t.Fatalf("no action for position %s; got %v", pos, byNode)
+		}
+		if steps[0].Action != "wait" || steps[0].Node != pos {
+			t.Errorf("position %s opens with %+v, want a station wait at its own node — every position "+
+				"is operator-released and the operator sequences them", pos, steps[0])
+		}
+		for _, s := range steps {
+			if s.Node != "" && s.Node != pos && s.Node != "SRC_"+pos && s.Node != "ODST_"+pos {
+				if s.Node == wantParked || s.Node == wantActive {
+					t.Errorf("position %s's order steps on its partner (%+v)", pos, s)
+				}
+			}
+		}
 	}
 }
 
-func TestBuildChangeoverPlan_Sequential_ActiveOnA_SwapsBFirst(t *testing.T) {
-	t.Parallel()
-	from := fullSwapClaim("N1", "PART-A", "consume")
-	from.SwapMode = "sequential"
-	from.PairedCoreNode = "N1B"
-	to := fullSwapClaim("N1", "PART-B", "consume")
-	diffs := []ChangeoverNodeDiff{
-		{CoreNodeName: "N1", Situation: SituationSwap, FromClaim: &from, ToClaim: &to},
-	}
-	nodes := []processes.Node{{ID: 42, Name: "N1", CoreNodeName: "N1"}}
-	activePull := map[string]bool{"N1": true, "N1B": false}
-
-	plan := BuildChangeoverPlan(diffs, nodes, false, activePull, toolingChangeover{})
-	if len(plan.Actions) != 1 || plan.Actions[0].Err != nil {
-		t.Fatalf("unexpected plan: %+v", plan)
-	}
-	steps := plan.Actions[0].SupplyOrder.Complex.Steps
-	if steps[0].Node != "N1B" {
-		t.Errorf("active=N1 → swap N1B (inactive) first; got first pickup at %q", steps[0].Node)
-	}
-	if steps[4].Node != "N1" {
-		t.Errorf("cutover wait should be at active N1, got %q", steps[4].Node)
-	}
-}
-
-// Sequential Evacuate emits both supply order and evac order at plan time
-// (each robot evacs its position then fetches new + waits + delivers).
-// LogTag = "evacuate_sequential".
+// Sequential Evacuate emits ONE order for this position — evac, fetch new, hold
+// on the bare tooling-done wait, deliver. LogTag = "evacuate_sequential".
+//
+// PER-NODE (2026-08-28): this asserted both SupplyOrder and EvacOrder, because
+// the whole-press builder returned both positions' step lists from one diff.
+// The partner position now gets its own action from its own diff.
 func TestPlanNodeAction_Evacuate_Sequential(t *testing.T) {
 	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
@@ -361,18 +407,27 @@ func TestPlanNodeAction_Evacuate_Sequential(t *testing.T) {
 	if action.Err != nil {
 		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
-	if action.SupplyOrder == nil || action.EvacOrder == nil {
-		t.Fatal("sequential evacuate emits both supply order and evac order at plan time")
+	if action.SupplyOrder == nil {
+		t.Fatal("sequential evacuate emits this position's order at plan time")
+	}
+	if action.EvacOrder != nil {
+		t.Error("per-node evacuate is ONE order per position; the partner has its own diff and action")
 	}
 	if action.LogTag != "evacuate_sequential" {
 		t.Errorf("LogTag = %q, want evacuate_sequential", action.LogTag)
 	}
-	// Each robot's order has 5 steps with a bare wait at index 3.
-	if len(action.SupplyOrder.Complex.Steps) != 5 {
-		t.Errorf("supply order: expected 5 steps (backfill shape), got %d", len(action.SupplyOrder.Complex.Steps))
+	steps := action.SupplyOrder.Complex.Steps
+	if len(steps) != 5 {
+		t.Fatalf("expected 5 steps (evac, out, fetch, wait, deliver), got %d: %+v", len(steps), steps)
 	}
-	if len(action.EvacOrder.Complex.Steps) != 5 {
-		t.Errorf("evac order: expected 5 steps (backfill shape), got %d", len(action.EvacOrder.Complex.Steps))
+	if steps[3].Action != "wait" || steps[3].Node != "" {
+		t.Errorf("step 3 = %+v, want the BARE tooling-done wait — one click releases every position "+
+			"through the per-task fan-out", steps[3])
+	}
+	for _, s := range steps {
+		if s.Node == "N1B" {
+			t.Errorf("this position's evacuate order steps on N1B (%+v); that position has its own", s)
+		}
 	}
 }
 
@@ -979,5 +1034,215 @@ func TestPlanNodeAction_MissingFieldDiagnostic(t *testing.T) {
 	}
 	if !strings.Contains(msg, "Outbound Destination") {
 		t.Errorf("err must name the missing field: %q", msg)
+	}
+}
+
+// sequentialPairDiffs builds the two diffs a sequential A/B press produces —
+// one per position, each with its own claim pointing back at the other. That
+// pairing is the whole point of the per-node design: DiffStyleClaims already
+// emits one Swap diff per claimed position, and under per-node orders that is
+// correct rather than a double-plan.
+func sequentialPairDiffs(role protocol.ClaimRole) (parked, active ChangeoverNodeDiff) {
+	mk := func(own, partner, payload string) processes.NodeClaim {
+		c := fullSwapClaim(own, payload, role)
+		c.SwapMode = protocol.SwapModeSequential
+		c.PairedCoreNode = partner
+		return c
+	}
+	// Tie-break on an empty active-pull snapshot is canonical by name, so with
+	// A_POS / B_POS the parked side is A_POS.
+	fromA, toA := mk("A_POS", "B_POS", "PART-FROM"), mk("A_POS", "B_POS", "PART-TO")
+	fromB, toB := mk("B_POS", "A_POS", "PART-FROM"), mk("B_POS", "A_POS", "PART-TO")
+	parked = ChangeoverNodeDiff{CoreNodeName: "A_POS", Situation: SituationSwap, FromClaim: &fromA, ToClaim: &toA}
+	active = ChangeoverNodeDiff{CoreNodeName: "B_POS", Situation: SituationSwap, FromClaim: &fromB, ToClaim: &toB}
+	return parked, active
+}
+
+// TestPlanNodeAction_Sequential_IsPerNode is the owner's ruling of 2026-08-28
+// as an assertion: sequential is not one order for two nodes; it just pulls
+// from two nodes.
+//
+// ── WHAT THE WHOLE-PRESS ORDER COST ───────────────────────────────────────
+//
+// buildSequentialChangeoverSwap returned ONE nine-step order spanning both
+// positions, with the cutover wait in the middle of it. But DiffStyleClaims
+// emits one Swap diff PER CLAIMED POSITION, and on an A/B press both positions
+// are claimed in both styles — so the press was planned twice, producing two
+// identical whole-press orders that deadlocked on the same bins ("reserve miss:
+// bins present but none available"). Every other sequential path is already
+// per-node (BuildSequentialRemovalSteps, BuildSequentialBackfillSteps);
+// changeover was the only place the press was treated as one machine, and that
+// is exactly where it broke.
+//
+// Per-node: each diff builds only its OWN position's four-step direct trip, the
+// same shape buildPressIndexPerPositionSwap uses. The parked side runs
+// immediately; the active side opens with a wait at its own node and holds for
+// the cutover click. No shared bins, so no dedupe and no collapse pass.
+func TestPlanNodeAction_Sequential_IsPerNode(t *testing.T) {
+	t.Parallel()
+	parked, active := sequentialPairDiffs(protocol.ClaimRoleProduce)
+
+	parkedAction := planNodeAction(parked, &processes.Node{ID: 1, Name: "A_POS"}, false, nil)
+	activeAction := planNodeAction(active, &processes.Node{ID: 2, Name: "B_POS"}, false, nil)
+
+	for _, tc := range []struct {
+		label  string
+		action changeover.NodeAction
+	}{{"parked", parkedAction}, {"active", activeAction}} {
+		if tc.action.Err != nil {
+			t.Fatalf("%s side failed to plan: %v", tc.label, tc.action.Err)
+		}
+		if tc.action.SupplyOrder == nil || tc.action.SupplyOrder.Complex == nil {
+			t.Fatalf("%s side produced no order", tc.label)
+		}
+		if tc.action.EvacOrder != nil {
+			t.Errorf("%s side produced a second order; per-node sequential is ONE order per position",
+				tc.label)
+		}
+	}
+
+	// ── EACH SIDE: the same five steps, at its own node only ──
+	//
+	// Both positions open with a station wait now (owner ruling 2026-08-28).
+	// The parked side used to run immediately, which made the two sides
+	// different shapes and put the ordering into the choreography. It is the
+	// operator's: one release per node, sequenced as he likes, with the safety
+	// in the release and flip guards rather than in the step list.
+	ps := parkedAction.SupplyOrder.Complex.Steps
+	if len(ps) != 5 {
+		t.Fatalf("parked order has %d steps, want 5 (wait, lift, out, refill, deliver): %+v", len(ps), ps)
+	}
+	if ps[0].Action != "wait" || ps[0].Node != "A_POS" {
+		t.Fatalf("parked order opens with %+v, want a station wait at its OWN position A_POS — every "+
+			"position is operator-released", ps[0])
+	}
+	if ps[1].Action != "pickup" || ps[1].Node != "A_POS" || ps[4].Node != "A_POS" {
+		t.Errorf("parked order lifts at %q and ends at %q, want both at its OWN position A_POS: %+v",
+			ps[1].Node, ps[4].Node, ps)
+	}
+	// ROBOT ARRIVES EMPTY-HANDED: the new bin is fetched only after the old one
+	// has cleared, so a position whose operator has not pressed anything is not
+	// holding material hostage in the aisle.
+	if ps[3].Action != "pickup" {
+		t.Errorf("step 3 is %+v, want the refill AFTER the old bin's dropoff", ps[3])
+	}
+	for _, s := range ps {
+		if s.Node == "B_POS" {
+			t.Errorf("the parked order touches B_POS (%+v). Each position's order is its own — a step "+
+				"at the partner's node is the whole-press shape coming back, and two of these orders "+
+				"exist, so they would race for the same bins.", s)
+		}
+	}
+
+	// ── THE ACTIVE SIDE: opens with a wait at its own node ──
+	as := activeAction.SupplyOrder.Complex.Steps
+	if len(as) != 5 {
+		t.Fatalf("active order has %d steps, want 5 (wait + the same 4-step trip): %+v", len(as), as)
+	}
+	if as[0].Action != "wait" || as[0].Node != "B_POS" {
+		t.Fatalf("active order opens with %+v, want a station wait at its OWN position B_POS", as[0])
+	}
+	if as[1].Action != "pickup" || as[1].Node != "B_POS" {
+		t.Errorf("active order's first work step is %+v, want the pickup at B_POS", as[1])
+	}
+	for _, s := range as {
+		if s.Node == "A_POS" {
+			t.Errorf("the active order touches A_POS (%+v) — same whole-press regression, other side", s)
+		}
+	}
+}
+
+// TestPlanNodeAction_Sequential_ParkedProducePicksUpAnEmpty pins the asymmetry
+// that per-node makes expressible: the two positions of a produce press hold
+// physically different things at changeover time.
+//
+// The ACTIVE position holds the partial FULL of the outgoing style — a
+// payload-matched retrieve, so its order carries the from-payload.
+//
+// The PARKED position holds an ON-DECK EMPTY carrier by steady-state design
+// (plants/demo.yaml: BIN-ACT-P2B, parked, no payload). A from-style full
+// retrieve there matches nothing and waits forever on `finder-node-empty` —
+// "Waiting for material: PANEL-B in PLN_004" — which is the second of the two
+// blockers the sim surfaced. Flagging the pickup Empty drops Core's payload
+// filter (not its bin-type compatibility, N1-c), so it takes the on-deck
+// carrier whatever is stamped on it. Direct port of markPressIndexOnDeckEmpty,
+// which solved this same asymmetry for press-index's paired positions.
+//
+// Produce-only, for press-index's reason: a CONSUME sequential press parks a
+// FULL standby bin, and consume keeps its full-retrieve invariant.
+func TestPlanNodeAction_Sequential_ParkedProducePicksUpAnEmpty(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		role      protocol.ClaimRole
+		wantEmpty bool
+	}{
+		{protocol.ClaimRoleProduce, true},
+		{protocol.ClaimRoleConsume, false},
+	} {
+		t.Run(string(tc.role), func(t *testing.T) {
+			t.Parallel()
+			parked, active := sequentialPairDiffs(tc.role)
+			parkedAction := planNodeAction(parked, &processes.Node{ID: 1, Name: "A_POS"}, false, nil)
+			activeAction := planNodeAction(active, &processes.Node{ID: 2, Name: "B_POS"}, false, nil)
+
+			// Step 0 is the station wait on both sides now; step 1 is the lift.
+			ps := parkedAction.SupplyOrder.Complex.Steps
+			if ps[1].Empty != tc.wantEmpty {
+				t.Errorf("parked %s order's opening pickup at %q has Empty=%v, want %v. A produce press "+
+					"parks an on-deck EMPTY; a consume press parks a FULL standby of the OLD style, "+
+					"which it lifts like any other old bin.",
+					tc.role, ps[1].Node, ps[1].Empty, tc.wantEmpty)
+			}
+
+			// The ACTIVE side lifts a real full off the line in both roles, so it
+			// is never flagged and always carries the outgoing style.
+			as := activeAction.SupplyOrder.Complex.Steps
+			if as[1].Empty {
+				t.Errorf("active %s order's pickup at %q is flagged Empty — that position is running "+
+					"production and holds the outgoing style's bin", tc.role, as[1].Node)
+			}
+			if got := activeAction.SupplyOrder.Complex.PayloadCode; got != "PART-FROM" {
+				t.Errorf("active %s order carries payload %q, want the OUTGOING style PART-FROM — "+
+					"blank lets lookupPayloadMeta backfill it to the incoming style and the pickup "+
+					"then matches nothing (the ALN_001 shape)", tc.role, got)
+			}
+		})
+	}
+}
+
+// TestSequentialReuseSkip_PlansExactlyOneOrder is the accounting half of the
+// reuse-skip, and it is a separate claim from "the diff says unchanged".
+//
+// The changeover episode stamps expected_orders from Plan.OrderCount(), which
+// counts the Supply/Evac orders each action carries. A skipped side must
+// therefore contribute ZERO — if it contributed one, the episode would sit
+// waiting for an order that is never created and never close.
+//
+// Produce same-carrier: ONE order, for the active side only.
+// Consume same-carrier: TWO, because consume never skips.
+func TestSequentialReuseSkip_PlansExactlyOneOrder(t *testing.T) {
+	t.Parallel()
+	sameCarrier := map[string]string{"PART-FROM": "STANDARD-SM", "PART-TO": "STANDARD-SM"}
+	nodes := []processes.Node{
+		{ID: 1, Name: "A_POS", CoreNodeName: "A_POS"},
+		{ID: 2, Name: "B_POS", CoreNodeName: "B_POS"},
+	}
+
+	for _, tc := range []struct {
+		role protocol.ClaimRole
+		want int
+	}{
+		{protocol.ClaimRoleProduce, 1},
+		{protocol.ClaimRoleConsume, 2},
+	} {
+		diffs := ApplySequentialReuseShortcut(seqReuseDiffs(tc.role), sameCarrier, nil)
+		plan := BuildChangeoverPlan(diffs, nodes, false, nil, toolingChangeover{})
+		if got := plan.OrderCount(); got != tc.want {
+			t.Errorf("%s same-carrier changeover plans %d orders, want %d. expected_orders is stamped "+
+				"from this count at episode open and never recomputed, so a skipped side that still "+
+				"contributes one leaves the episode waiting forever for an order nobody creates.",
+				tc.role, got, tc.want)
+		}
 	}
 }

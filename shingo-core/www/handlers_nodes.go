@@ -68,9 +68,22 @@ func (h *Handlers) apiNodeState(w http.ResponseWriter, r *http.Request) {
 // (Dispatcher.GateStagedCount), so the number the human is shown is the number
 // the machine is acting on.
 func (h *Handlers) apiLaneWaiting(w http.ResponseWriter, r *http.Request) {
+	// GROUP FIRST, because the waiting spots are the group's and clearing them
+	// stands down every lane in the block. A confirmation scoped to one lane
+	// would quote a number far smaller than the interruption it is about to
+	// cause, which is worse than not asking: the person reads it and proceeds.
+	if groupID, err := strconv.ParseInt(r.URL.Query().Get("group_id"), 10, 64); err == nil && groupID != 0 {
+		n, cErr := h.engine.Dispatcher().GroupGateStagedCount(groupID)
+		if cErr != nil {
+			h.jsonError(w, cErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		h.jsonOK(w, map[string]any{"waiting": n})
+		return
+	}
 	laneID, err := strconv.ParseInt(r.URL.Query().Get("lane_id"), 10, 64)
 	if err != nil || laneID == 0 {
-		h.jsonError(w, "lane_id is required", http.StatusBadRequest)
+		h.jsonError(w, "lane_id or group_id is required", http.StatusBadRequest)
 		return
 	}
 	n, err := h.engine.Dispatcher().GateStagedCount(laneID)
@@ -113,7 +126,13 @@ func (h *Handlers) apiLaneGatePoints(w http.ResponseWriter, r *http.Request) {
 			Point:  h.engine.NodeService().GetNodeProperty(c.ID, dispatch.PropLaneGatePoint),
 		})
 	}
-	h.jsonOK(w, map[string]any{"lanes": out})
+	// THE GROUP'S OWN LIST, in the same call, because it is the primary control
+	// now and the per-lane rows are the legacy override beside it. Two calls
+	// would let the section render the overrides before the thing they override.
+	h.jsonOK(w, map[string]any{
+		"lanes":             out,
+		"group_wait_points": h.engine.NodeService().GetNodeProperty(groupID, dispatch.PropGroupWaitPoints),
+	})
 }
 func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
 	pd, err := getNodesPageData(&nodesPageDataAdapter{ns: h.engine.NodeService(), bs: h.engine.BinService()})
@@ -410,6 +429,27 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 	if req.NodeID == 0 || req.Key == "" {
 		h.jsonError(w, "node_id and key are required", http.StatusBadRequest)
 		return
+	}
+	// A WAIT POINT MAY NOT BE SHARED BETWEEN GROUPS, and this is one of the two
+	// doors where a person is typing one and can be told. The READ path refuses
+	// nothing on purpose: a config check on the dispatch hot path strands every
+	// robot already standing at that point rather than the person who typed it.
+	// The other door is the seeder; the startup census reports what got through.
+	if req.Key == dispatch.PropGroupWaitPoints {
+		conflicts, err := h.engine.Dispatcher().DuplicateWaitPoints(
+			req.NodeID, dispatch.ParseWaitPoints(req.Value))
+		if err != nil {
+			h.jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(conflicts) > 0 {
+			// BOTH GROUPS NAMED. "duplicate wait point" tells the person nothing
+			// they can act on; the second name is the whole of what they need.
+			h.jsonError(w, strings.Join(conflicts, "; ")+" — a wait point is a physical place beside "+
+				"ONE block of lanes, and a robot sent to another block's spot is standing in "+
+				"somebody's aisle", http.StatusBadRequest)
+			return
+		}
 	}
 	if err := h.setNodePropertyAudited(req.NodeID, req.Key, req.Value); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)

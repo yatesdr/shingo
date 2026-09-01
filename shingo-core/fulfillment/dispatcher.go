@@ -1,6 +1,7 @@
 package fulfillment
 
 import (
+	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -40,7 +41,7 @@ type Dispatcher interface {
 	// re-aiming off a dug lane both rewrite order.DeliveryNode — so the returned
 	// node, not one the caller read earlier, is where the order is going. Nil
 	// error ⇒ non-nil node.
-	ReserveStorageDropoff(order *orders.Order) (*nodes.Node, error)
+	ReserveStorageDropoff(order *orders.Order) dispatch.StorageDropoff
 
 	// ConfirmForDispatch is the Rule-1 confirm-at-dispatch step: hard-claim the
 	// destination slot (if a storage dropoff) AND the source bin, in one step,
@@ -61,10 +62,18 @@ type Dispatcher interface {
 	// have to re-read on the hottest path in the system.
 	AcquireLanesForOrder(order *orders.Order, sourceNode, destNode *nodes.Node, kind dispatch.EntryKind) (admitted bool, cause dispatch.QueueCause, laneName string, err error)
 
-	// ReleaseLanesForOrder drops all of an order's lane mouth holds — used on a
-	// fleet-dispatch failure rollback so a hold from AcquireLanesForOrder does not
-	// linger after the robot failed to commit.
+	// ReleaseLanesForOrder drops all of an order's lane mouth holds.
 	ReleaseLanesForOrder(orderID int64) error
+
+	// DemoteAfterFleetRefusal is the ONE door every fleet refusal goes through —
+	// armor off, paper demoted confirmed→pending, pointer and junction rows kept,
+	// back to `sourcing` under the caller's cause. See dispatch/dispatcher.go for
+	// the ruling and the clauses; the scanner's part is only to name the wait.
+	//
+	// The scanner used to release the claim and the lanes here itself, through a
+	// primitive that also deleted the reservations — the pointer wedge. It carries
+	// no release logic of its own now, which is the point of there being a door.
+	DemoteAfterFleetRefusal(order *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams)
 
 	// PlanBuriedReshuffle plans the reshuffle compound for a source that resolved
 	// BURIED on replay, making the order its own compound parent (→ reshuffling).

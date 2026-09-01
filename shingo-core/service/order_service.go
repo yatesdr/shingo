@@ -148,6 +148,11 @@ func (s *OrderService) ListOrders(status string, limit int) ([]*orders.Order, er
 	return s.db.ListOrders(status, limit)
 }
 
+// CountOrdersForList is ListOrders' unlimited count for the same status filter.
+func (s *OrderService) CountOrdersForList(status string) (int, error) {
+	return s.db.CountOrdersForList(status)
+}
+
 // ListOrderHistory returns the historical status transitions for a
 // single order. Absorbed from engine_db_methods.go as part of the
 // www-handler service migration (PR 3a.3a).

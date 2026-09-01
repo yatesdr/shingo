@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -52,6 +53,96 @@ func stageGatedStore(t *testing.T, db *store.DB, d *Dispatcher, line, slot *node
 		t.Fatalf("reload: %v", err)
 	}
 	return reloaded
+}
+
+// stageDeeperBlocker forms the DEEPER store that walls a shallower one — the
+// fixture half of F-11, and the one thing in these tests that had to change when
+// the gated destination mouth row was retired.
+//
+// ── WHAT IT REPLACED ──────────────────────────────────────────────────────
+//
+// Every one of these fixtures used to build the blocker as
+//
+//	deep := CreateOrder(delivery=<deep slot>, status=in_transit)
+//	d.AcquireLanesForOrder(deep, line, <deep slot>, EntryFreshBin)   // takes the row
+//	db.UpdateOrderVendor(deep.ID, ...)                               // now dispatched
+//
+// which worked because the old witness read "dispatched AND holding no inbound
+// mouth row" as "it has placed": take the row, and the blocker counts. A gated
+// lane no longer WRITES that row — a robot at its group's waiting spot has not
+// chosen a slot, so a mouth reserved on its behalf holds a corridor against a
+// destination nobody committed to.
+//
+// ── WHY THE BLOCKER IS NOW UNDISPATCHED, AND WHAT THAT DOES NOT COVER ─────
+//
+// stillComingToLane keeps three kinds of order: not dispatched, standing at this
+// lane's mark, or inside the corridor. The blocker these fixtures need is one
+// that is still coming and is NOT in anybody's way yet, and only the first arm
+// is that: occupancy would wall the dig too (it refuses everything, which is
+// what it is for), and gate-staging cannot be arranged here because nothing
+// refuses the FIRST store into an empty lane — it is admitted immediately and
+// the append puts it in the corridor.
+//
+// So these fixtures state the blocker as a deeper store that has not reached the
+// fleet, which is an ordinary and frequent shape, and their assertions are
+// UNCHANGED: the same order at the same depth walls the same entrant for the
+// same Tier-2 reason.
+//
+// THE ARM THIS NO LONGER EXERCISES IS PINNED SEPARATELY. "Dispatched, still
+// coming, not in the corridor" is exactly a DWELLER, and that arm is what closes
+// the complex latent defect — see TestLaneEntry_DwellingCandidateStillBlocks,
+// which builds a real dwelling candidate and is RED without the gate-staged arm.
+// Splitting them is deliberate: one fixture that tries to be both ends up
+// asserting neither.
+func stageDeeperBlocker(t *testing.T, db *store.DB, d *Dispatcher, line, deepSlot *nodes.Node, vendor string) *orders.Order {
+	t.Helper()
+	_ = d
+	_ = line
+	_ = vendor
+	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.DeliveryNode = deepSlot.Name
+		o.Status = "queued"
+	})
+	return deep
+}
+
+// placeDeeperBlocker is the fixture's "it put its bin down" step, translated for
+// the derived witness.
+//
+// It used to be `d.ReleaseInboundLaneForOrder(deep.ID, slot)`: delete the mouth
+// row, and the old predicate's "dispatched AND no row" arm reads the order as
+// placed. A gated lane writes no such row now, so the fixture says the same
+// thing in the vocabulary stillComingToLane actually reads — the order is
+// DISPATCHED and is neither standing at a mark nor inside the corridor, which is
+// exactly what "it has placed" means to the witness.
+//
+// The order stays NON-TERMINAL, which is the property every caller is really
+// asserting: this is placement-release, not completion-release. A blocker that
+// went terminal would clear the lane for a reason the tests are not about.
+func placeDeeperBlocker(t *testing.T, db *store.DB, d *Dispatcher, orderID int64, slotName string) {
+	t.Helper()
+	// The row deletion stays, harmless and honest: an UNMARKED lane still writes
+	// one, and a fixture that skipped it would stop covering that half.
+	d.ReleaseInboundLaneForOrder(orderID, slotName)
+	testutil.MustNoErr(t, db.UpdateOrderVendor(orderID, fmt.Sprintf("sg-placed-%d", orderID), "RUNNING", ""),
+		"the blocker reaches the fleet and places")
+	o, err := db.GetOrder(orderID)
+	testutil.MustNoErr(t, err, "reload placed blocker")
+	if protocol.IsTerminal(o.Status) {
+		t.Fatalf("fixture: the blocker went terminal (%s) — that would prove completion-release, "+
+			"not placement-release", o.Status)
+	}
+}
+
+// candidateFor builds the gateCandidate a direct releaseGatedOrder call needs,
+// from the same durable state the evaluator's own walk reads. It exists because
+// the release now takes the whole candidate rather than an index: the widening
+// asks acceptanceDigNeeded, which needs the lane-relevant node and the direction.
+func candidateFor(t *testing.T, db *store.DB, o *orders.Order, entryIndex int) gateCandidate {
+	t.Helper()
+	node, err := db.GetNodeByDotName(o.DeliveryNode)
+	testutil.MustNoErr(t, err, "resolve the candidate's node")
+	return gateCandidate{order: o, node: node, entryIndex: entryIndex}
 }
 
 // markStaged puts a dispatched gated order into `staged`, the status the poller
@@ -123,14 +214,12 @@ func TestGateRelease_ReleasesWhenLaneClears(t *testing.T) {
 	// Deeper blocker: dispatched, holding its inbound mouth row, not yet placed.
 	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = s1.Name
-		o.Status = "in_transit"
+		// STILL COMING, NOT YET DISPATCHED. See stageDeeperBlocker: a gated
+		// lane no longer writes a destination mouth row, so a blocker states
+		// itself through stillComingToLane's not-dispatched arm instead of
+		// through a row. Same order, same depth, same Tier-2 wall.
+		o.Status = "queued"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, s1, EntryFreshBin); err != nil || !adm {
-		t.Fatalf("blocker must take its mouth row: adm=%v err=%v", adm, err)
-	}
-	if err := db.UpdateOrderVendor(deep.ID, "sg-grclear-deep", "RUNNING", ""); err != nil {
-		t.Fatalf("blocker vendor: %v", err)
-	}
 
 	shallow := stageGatedStore(t, db, d, line, s0, nil)
 	if !IsGateStaged(shallow) {
@@ -148,7 +237,7 @@ func TestGateRelease_ReleasesWhenLaneClears(t *testing.T) {
 	}
 
 	// The blocker PLACES. Its order stays non-terminal — only the mouth row goes.
-	d.ReleaseInboundLaneForOrder(deep.ID, s1.Name)
+	placeDeeperBlocker(t, db, d, deep.ID, s1.Name)
 	stillDeep, _ := db.GetOrder(deep.ID)
 	if protocol.IsTerminal(stillDeep.Status) {
 		t.Fatalf("blocker went terminal (%s) — the test would prove completion-release, not placement-release", stillDeep.Status)
@@ -237,14 +326,14 @@ func TestGateRelease_StaleCopyCannotDoubleAppend(t *testing.T) {
 	entryIdx := gateEntryIndexFor(t, stale)
 
 	// Pass A releases it.
-	if err := d.releaseGatedOrder(stale, lane, entryIdx); err != nil {
+	if err := d.releaseGatedOrder(stale, lane, candidateFor(t, db, stale, entryIdx)); err != nil {
 		t.Fatalf("first release: %v", err)
 	}
 	// Pass B, holding the SAME struct it loaded before pass A ran, must not append.
 	staleCopy := *stale
 	staleCopy.WaitIndex = 0 // what pass B still believes, having never re-read
 	staleCopy.Status = StatusStaged
-	if err := d.releaseGatedOrder(&staleCopy, lane, entryIdx); err != nil {
+	if err := d.releaseGatedOrder(&staleCopy, lane, candidateFor(t, db, &staleCopy, entryIdx)); err != nil {
 		t.Fatalf("second release should be a silent no-op, got: %v", err)
 	}
 
@@ -292,7 +381,7 @@ func TestGateRelease_DoubleFireAppendsOnce(t *testing.T) {
 		t.Fatalf("DispatchDirect: %v", err)
 	}
 	markStaged(t, db, o.ID)
-	d.ReleaseInboundLaneForOrder(blocker.ID, deepSlot.Name)
+	placeDeeperBlocker(t, db, d, blocker.ID, deepSlot.Name)
 
 	for range 5 {
 		d.EvaluateLaneReleases(laneID)
@@ -328,7 +417,6 @@ func TestGateRelease_DeepestFirstAndTier1(t *testing.T) {
 
 	laneID, _, _ := gateChoreoLane(t, db, "GRORD", "GRORD-WAIT")
 	slots := laneSlotsByDepth(t, db, laneID) // S0 shallow, S1 deep
-	line := lineNode(t, db, "GRORD-LINE")
 
 	// A press node whose (process, style) claim gives both partners one origin.
 	press := lineNode(t, db, "GRORD-PRESS")
@@ -344,14 +432,12 @@ func TestGateRelease_DeepestFirstAndTier1(t *testing.T) {
 	// The blocker occupies the deepest slot and has not placed.
 	blocker := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = slots[1].Name
-		o.Status = "in_transit"
+		// STILL COMING, NOT YET DISPATCHED. See stageDeeperBlocker: a gated
+		// lane no longer writes a destination mouth row, so a blocker states
+		// itself through stillComingToLane's not-dispatched arm instead of
+		// through a row. Same order, same depth, same Tier-2 wall.
+		o.Status = "queued"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(blocker, line, slots[1], EntryFreshBin); err != nil || !adm {
-		t.Fatalf("blocker mouth row: adm=%v err=%v", adm, err)
-	}
-	if err := db.UpdateOrderVendor(blocker.ID, "sg-grord-blocker", "RUNNING", ""); err != nil {
-		t.Fatalf("blocker vendor: %v", err)
-	}
 
 	// The pair stages behind it, both bound to the one remaining slot's lane. Use
 	// the shallow slot for one and let the other re-bind — both share an origin.
@@ -362,7 +448,7 @@ func TestGateRelease_DeepestFirstAndTier1(t *testing.T) {
 	markStaged(t, db, pairA.ID)
 
 	before := len(backend.ReleaseCalls())
-	d.ReleaseInboundLaneForOrder(blocker.ID, slots[1].Name)
+	placeDeeperBlocker(t, db, d, blocker.ID, slots[1].Name)
 	d.EvaluateLaneReleases(laneID)
 	after := backend.ReleaseCalls()
 
@@ -410,14 +496,12 @@ func TestGateRelease_RebindKeepsItsOwnSlot(t *testing.T) {
 	// slot) is gated behind it and must survive a re-bind when it is released.
 	blocker := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = slots[2].Name
-		o.Status = "in_transit"
+		// STILL COMING, NOT YET DISPATCHED. See stageDeeperBlocker: a gated
+		// lane no longer writes a destination mouth row, so a blocker states
+		// itself through stillComingToLane's not-dispatched arm instead of
+		// through a row. Same order, same depth, same Tier-2 wall.
+		o.Status = "queued"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(blocker, line, slots[2], EntryFreshBin); err != nil || !adm {
-		t.Fatalf("blocker mouth row: adm=%v err=%v", adm, err)
-	}
-	if err := db.UpdateOrderVendor(blocker.ID, "sg-grbind-blocker", "RUNNING", ""); err != nil {
-		t.Fatalf("blocker vendor: %v", err)
-	}
 
 	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = slots[1].Name
@@ -425,8 +509,8 @@ func TestGateRelease_RebindKeepsItsOwnSlot(t *testing.T) {
 	})
 	// Give it the real holds a dispatched store carries, so the resolver has
 	// something to be confused by.
-	if _, err := d.ReserveStorageDropoff(deep); err != nil {
-		t.Fatalf("reserve deep slot: %v", err)
+	if dest := d.ReserveStorageDropoff(deep); dest.Refused() {
+		t.Fatalf("reserve deep slot: %v (%s)", dest.Err, dest.Cause)
 	}
 	if err := d.confirmDropoffSlot(deep, slots[1]); err != nil {
 		t.Fatalf("confirm deep slot: %v", err)
@@ -458,7 +542,7 @@ func TestGateRelease_RebindKeepsItsOwnSlot(t *testing.T) {
 			stagedDeep.WaitIndex)
 	}
 	markStaged(t, db, deep.ID)
-	d.ReleaseInboundLaneForOrder(blocker.ID, slots[2].Name)
+	placeDeeperBlocker(t, db, d, blocker.ID, slots[2].Name)
 	d.EvaluateLaneReleases(laneID)
 
 	rel, _ := db.GetOrder(deep.ID)
@@ -497,20 +581,18 @@ func TestGateRelease_AppendFailureStaysStaged(t *testing.T) {
 
 	blocker := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = s1.Name
-		o.Status = "in_transit"
+		// STILL COMING, NOT YET DISPATCHED. See stageDeeperBlocker: a gated
+		// lane no longer writes a destination mouth row, so a blocker states
+		// itself through stillComingToLane's not-dispatched arm instead of
+		// through a row. Same order, same depth, same Tier-2 wall.
+		o.Status = "queued"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(blocker, line, s1, EntryFreshBin); err != nil || !adm {
-		t.Fatalf("blocker mouth row: adm=%v err=%v", adm, err)
-	}
-	if err := db.UpdateOrderVendor(blocker.ID, "sg-grfail-blocker", "RUNNING", ""); err != nil {
-		t.Fatalf("blocker vendor: %v", err)
-	}
 	staged := stageGatedStore(t, db, d, line, s0, nil)
 	if !IsGateStaged(staged) {
 		t.Fatal("order must be gate-staged")
 	}
 	markStaged(t, db, staged.ID)
-	d.ReleaseInboundLaneForOrder(blocker.ID, s1.Name)
+	placeDeeperBlocker(t, db, d, blocker.ID, s1.Name)
 
 	// Swap in a fleet that rejects everything, then fire past the queue threshold.
 	failing := testdb.NewFailingBackend()
@@ -723,7 +805,7 @@ func TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff(t *testing.T) {
 			"the candidate walk no longer names the leg the gate speaks for", entryIdx)
 	}
 
-	rebound, err := d.rebindGatedDropoff(swap, lane, entryIdx)
+	rebound, _, err := d.rebindGatedDropoff(swap, lane, candidateFor(t, db, swap, entryIdx))
 	if err != nil {
 		t.Fatalf("rebind: %v", err)
 	}
@@ -812,7 +894,7 @@ func TestGateRelease_SwapBlocksKeepPressAsFinalDropoff(t *testing.T) {
 	tc := swapGateFixture(t, db, "SWAPWIRE")
 	swap, lane, press, emptySrc := tc.order, tc.lane, tc.press, tc.emptySrc
 
-	if err := d.releaseGatedOrder(swap, lane, gateEntryIndexFor(t, swap)); err != nil {
+	if err := d.releaseGatedOrder(swap, lane, candidateFor(t, db, swap, gateEntryIndexFor(t, swap))); err != nil {
 		t.Fatalf("gated release: %v", err)
 	}
 

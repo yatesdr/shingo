@@ -26,9 +26,10 @@ import (
 // a robot was in the act of removing. The blocker is ceasing to exist; that is
 // the purest congestion in the system, and congestion waits (D18-Q4).
 //
-// The soft case is pinned as-is at the bottom, deliberately: a dig still steals
-// an unclaimed-but-soft-held bin, and whether it should is the open dig/
-// soft-holder contract question. A test, so the decision has something to flip.
+// The soft case at the bottom used to pin the unconditional steal against the
+// open dig/soft-holder contract question. That question is settled (§7): a soft
+// hold is a promise, and the take goes by the demand ranking — so the dig yields
+// to a holder it does not outrank.
 
 // mkDigOrder is the retrieve that wants the deep bin.
 func mkDigOrder(t *testing.T, db *store.DB, uuid, payloadCode, delivery string) *orders.Order {
@@ -187,21 +188,20 @@ func TestDig_BlockerLeavesTheLane_ThenDigs(t *testing.T) {
 	testdb.AssertNoOrphanedHolds(t, db)
 }
 
-// TestDig_BlockerSoftHeld_StillSteals pins TODAY'S behaviour, which is not
-// obviously the behaviour we want.
+// TestDig_BlockerSoftHeld_YieldsToAnOlderHolder is the flip this test asked for.
 //
-// A soft hold is a pending reservation with no claimed_by, so the CAS sees no
-// name and admits the claim: the dig fires and relocates a bin some parked order
-// is holding. It survives by accident — the holder follows its bin by id — and
-// the underlying question, what a dig owes an order that soft-holds a bin in its
-// way, is the open dig/soft-holder contract (plan §12.17,
-// FINDINGS-compound-child-ledger-row-2026-08-09.md).
+// It was TestDig_BlockerSoftHeld_StillSteals, pinning the unconditional steal
+// against the open dig/soft-holder contract (plan §12.17,
+// FINDINGS-compound-child-ledger-row-2026-08-09.md) and saying in its own doc
+// that it was the thing to flip once that question was settled.
 //
-// It is pinned rather than fixed because every exit moves someone's semantics
-// and the decision has not been made. When it is, this test is the thing to
-// flip — which is the point of writing it now rather than leaving the branch
-// untested and the behaviour undiscoverable.
-func TestDig_BlockerSoftHeld_StillSteals(t *testing.T) {
+// It is settled (§7): a soft hold is a PROMISE, and the take at a positional
+// blocker goes by the demand ranking. So the assertion is inverted on the
+// fixture it always had — the holder is seeded first and both demands are
+// priority 0, so the holder is older and keeps its bin. What this used to prove
+// is now conditional on the dig outranking, and is pinned on that condition in
+// ranked_take_docker_test.go.
+func TestDig_BlockerSoftHeld_YieldsToAnOlderHolder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
@@ -226,11 +226,32 @@ func TestDig_BlockerSoftHeld_StillSteals(t *testing.T) {
 	orderB := mkDigOrder(t, db, "dig-soft-b", bp.Code, "LINE-SOFT")
 
 	_, pe := d.planner.planBuriedReshuffle(orderB, &BuriedError{Bin: target, Slot: slots[1], LaneID: lane.ID})
-	if pe != nil {
-		t.Fatalf("the soft arm changed: the dig now refuses (%s: %s).\n"+
-			"That may well be right — but it is the dig/soft-holder contract decision (§12.17), "+
-			"and this test is the record that it was made deliberately rather than fallen into",
-			pe.Code, pe.Detail)
+	if pe == nil {
+		t.Fatal("the dig took a bin promised to an OLDER demand at the same priority. Ruling §7 " +
+			"makes the take a ranked one: a dig that does not outrank the holder backs out and " +
+			"waits, and the holder removing that bin is what clears the lane for it")
+	}
+	if pe.Code != codeBlockerClaimed {
+		t.Errorf("the refusal came back as %q (%s), want the congestion code — an outranked dig is "+
+			"a WAIT, and any other code fails the demand over somebody else's turn", pe.Code, pe.Detail)
+	}
+	after, aerr := db.GetOrder(orderB.ID)
+	testutil.MustNoErr(t, aerr, "re-read the yielding dig")
+	if after.QueueCause != string(CauseDigBlockerPromised) {
+		t.Errorf("the yielding dig parked under %q, want %q — the holder has no robot, so the "+
+			"releaser is not a drive", after.QueueCause, CauseDigBlockerPromised)
+	}
+	// And the holder kept its BOOK — the T3 shape on the real planner path. (This
+	// fixture reserves without stamping bin_id, so the pointer half of the wedge
+	// is asserted in the store-level suite where the holder carries one.)
+	var res int
+	testutil.MustNoErr(t, db.DB.QueryRow(
+		`SELECT COUNT(*) FROM reservations WHERE order_id=$1 AND bin_id=$2`,
+		holder.ID, blocker.ID).Scan(&res), "count the winner's reservations")
+	if res != 1 {
+		t.Errorf("the winner holds %d reservation(s) on the contested bin, want 1. A refusal that "+
+			"let the transaction continue falls through to supersedeBinLedger, which evicts the "+
+			"whole bin's ledger — shredding the book of the order that WON.", res)
 	}
 }
 
@@ -251,7 +272,7 @@ func TestBlockerClaimedError_CarriesTheHolder(t *testing.T) {
 		o.Status = protocol.StatusReshuffling
 	})
 	pid := parent.ID
-	err := db.CreateCompoundChildren([]store.CompoundChild{{
+	_, err := db.CreateCompoundChildren([]store.CompoundChild{{
 		Order: &orders.Order{
 			EdgeUUID: "holder-id-child", StationID: parent.StationID,
 			OrderType: protocol.OrderTypeMove, Status: protocol.StatusPending,

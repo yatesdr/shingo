@@ -204,37 +204,7 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 		add("payload_code", "Select a payload")
 	}
 
-	switch in.SwapMode {
-	case protocol.SwapModeSingleRobot:
-		// One robot does the whole swap, so it needs somewhere to park the
-		// incoming bin AND somewhere to put the outgoing one.
-		if in.InboundStaging == "" {
-			add("inbound_staging", "Single-robot swap requires inbound staging")
-		}
-		if in.OutboundStaging == "" {
-			add("outbound_staging", "Single-robot swap requires outbound staging")
-		}
-	case protocol.SwapModeTwoRobot:
-		// Robot A waits at the staging node until Robot B clears the line.
-		// Without it BuildTwoRobotSwapSteps returns nil silently and the
-		// operator's RELEASE click does nothing.
-		if in.InboundStaging == "" {
-			add("inbound_staging", "Two-robot swap requires inbound staging")
-		}
-	case protocol.SwapModeManualSwap:
-		// Without it the post-swap bin has nowhere to go and the node
-		// deadlocks.
-		if in.OutboundDestination == "" {
-			add("outbound_destination", "Loader/unloader claims require an outbound destination")
-		}
-	case protocol.SwapModeTwoRobotPressIndex:
-		if in.PairedCoreNode == "" {
-			add("paired_core_node", "2-Robot Press Index requires a Back Press Node")
-		}
-		if in.OutboundDestination == "" {
-			add("outbound_destination", "2-Robot Press Index requires an Outbound Destination")
-		}
-	}
+	validateSwapModeRouting(in, add)
 
 	// A MARKED NODE MUST BE ONE THIS CLAIM OCCUPIES.
 	//
@@ -309,10 +279,20 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	// The front/back pair is checked here for the first time: the browser
 	// compared the THIRD position against both others and never the back
 	// against the front, and neither did the store.
-	if in.SwapMode == protocol.SwapModeTwoRobotPressIndex {
+	//
+	// SEQUENTIAL IS THE SECOND MODE THAT PAIRS, and the paragraph above already
+	// said "whatever the mode names them" while the guard named one mode. An A/B
+	// pair whose two positions are the same node is a press with one position
+	// pretending to be two: resolveSequentialActivePull hands back that name for
+	// both sides, and the parked order and the active order then evacuate and
+	// refill the SAME slot — two robots, one bin, and a cutover gated on an
+	// order that is clearing the position it is waiting for.
+	if in.SwapMode == protocol.SwapModeTwoRobotPressIndex || in.SwapMode == protocol.SwapModeSequential {
 		if in.PairedCoreNode != "" && in.PairedCoreNode == in.CoreNodeName {
-			add("paired_core_node", "Back Press Node must differ from the front (Core Node)")
+			add("paired_core_node", "Paired position must differ from this claim's own (Core Node)")
 		}
+	}
+	if in.SwapMode == protocol.SwapModeTwoRobotPressIndex {
 		if in.SecondPairedCoreNode != "" {
 			if in.SecondPairedCoreNode == in.CoreNodeName {
 				add("second_paired_core_node", "Third press position must differ from the front (Core Node)")
@@ -364,5 +344,75 @@ func describeProcessIDs(ids []int64) string {
 		return fmt.Sprintf("process %d", ids[0])
 	default:
 		return fmt.Sprintf("processes %v", ids)
+	}
+}
+
+// validateSwapModeRouting refuses a claim whose ROUTING does not match the
+// choreography its swap mode will run. One arm per mode, and a mode with no arm
+// is a mode whose missing fields are only discovered mid-changeover — which is
+// how sequential went for as long as it had none.
+//
+// Split out of ValidateNodeClaim for length, and it is the right seam anyway:
+// everything left there is invariant over every claim (a style, a node, a legal
+// mode, a non-negative board order), while this is the per-mode half. It takes
+// the caller's `add` so findings keep their original order.
+func validateSwapModeRouting(in NodeClaimInput, add func(field, msg string)) {
+	switch in.SwapMode {
+	case protocol.SwapModeSingleRobot:
+		// One robot does the whole swap, so it needs somewhere to park the
+		// incoming bin AND somewhere to put the outgoing one.
+		if in.InboundStaging == "" {
+			add("inbound_staging", "Single-robot swap requires inbound staging")
+		}
+		if in.OutboundStaging == "" {
+			add("outbound_staging", "Single-robot swap requires outbound staging")
+		}
+	case protocol.SwapModeTwoRobot:
+		// Robot A waits at the staging node until Robot B clears the line.
+		// Without it BuildTwoRobotSwapSteps returns nil silently and the
+		// operator's RELEASE click does nothing.
+		if in.InboundStaging == "" {
+			add("inbound_staging", "Two-robot swap requires inbound staging")
+		}
+	case protocol.SwapModeManualSwap:
+		// Without it the post-swap bin has nowhere to go and the node
+		// deadlocks.
+		if in.OutboundDestination == "" {
+			add("outbound_destination", "Loader/unloader claims require an outbound destination")
+		}
+	case protocol.SwapModeTwoRobotPressIndex:
+		if in.PairedCoreNode == "" {
+			add("paired_core_node", "2-Robot Press Index requires a Back Press Node")
+		}
+		if in.OutboundDestination == "" {
+			add("outbound_destination", "2-Robot Press Index requires an Outbound Destination")
+		}
+	case protocol.SwapModeSequential:
+		// ── THIS ARM DID NOT EXIST, AND SEQUENTIAL IS THE MODE THAT NEEDS
+		//    IT MOST ──
+		//
+		// Every other mode's routing is refused here, at save time, by the
+		// person who can fix it. Sequential fell straight through the switch:
+		// a claim with no partner, no destination or no source saved clean and
+		// failed much later as an EMPTY DISPATCH — the builder returns a zero
+		// ChangeoverDispatch, the planner turns that into a generic "cannot
+		// build swap steps for node X", and the node task lands in error
+		// naming a builder instead of a field. The operator is told the
+		// changeover failed, not which box to fill in.
+		//
+		// The three fields are the ones the per-node builder actually reads:
+		// the partner position (A/B is two positions by definition), where the
+		// old bin goes, and where the new carrier comes from. They are the same
+		// three requiredChangeoverFields already demands at plan time — this
+		// arm moves the discovery from mid-changeover to the save button.
+		if in.PairedCoreNode == "" {
+			add("paired_core_node", "Sequential A/B requires a Paired Position")
+		}
+		if in.OutboundDestination == "" {
+			add("outbound_destination", "Sequential A/B requires an Outbound Destination")
+		}
+		if in.InboundSource == "" {
+			add("inbound_source", "Sequential A/B requires an Inbound Source")
+		}
 	}
 }

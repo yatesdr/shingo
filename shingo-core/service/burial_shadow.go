@@ -228,7 +228,10 @@ func (s *BinService) NoteBurialShadow(binID, toNodeID, placedBy int64) {
 	if lane == nil {
 		return // not a lane slot — nothing can be behind it
 	}
-	buried, err := s.db.SpokenForBinsBehind(toNodeID)
+	// One reading of the clock for the whole event, taken before the age query so
+	// every line of one burial is dated from the same instant.
+	now := clock.Now().UTC()
+	buried, err := s.db.SpokenForBinsBehind(toNodeID, now)
 	if err != nil {
 		log.Printf("%s: read spoken-for bins in lane %s: %v (not counted)", burialShadowTag, lane.Name, err)
 		return
@@ -254,17 +257,33 @@ func (s *BinService) NoteBurialShadow(binID, toNodeID, placedBy int64) {
 		slotName = slot.Name
 	}
 
-	now := clock.Now().UTC()
 	at := burialSite{lane: lane.Name, slot: slotName, placedBin: binID, placedBy: placedBy}
 	for _, b := range buried {
-		// THE AGE COMES FROM THE DATABASE, NOT FROM A SUBTRACTION HERE.
+		// THE AGE IS ALREADY IN ONE CLOCK, and getting it there took three goes.
+		// First it was `clock.Now().Sub(HeldSince)` with HeldSince coming off a
+		// DB-default column — sim minus wall, and an eight-second hold printed as
+		// `held_for=7355h32m48s`. Then the subtraction moved into SQL, which swapped
+		// which end was wrong: SQL now() is wall and HeldSince was usually sim, so
+		// every order-clock hold came out ~15 months negative, hit the clamp, and
+		// printed `held_for=0s` on every line of two full runs.
 		//
-		// This read `now.Sub(b.HeldSince.UTC())` with `now = clock.Now()`, and
-		// HeldSince is a DB-default `created_at`. Two clocks, one subtraction: under
-		// the honest running clock sim runs a year ahead of wall and an eight-second
-		// hold printed as `held_for=7355h32m48s` — in the single line an engineer
-		// reads to judge whether a burial mattered. The old negative-clamp was the
-		// same defect wearing a guard; it caught the sign and not the magnitude.
+		// NOW BOTH ARMS ARE IN THE ORDER CLOCK, and the SQL says so in as many
+		// words (store/lane_queries.go, the held_secs CASE):
+		//
+		//	reservation present → $2::timestamptz − reservations.created_at
+		//	otherwise           → $2::timestamptz − orders.created_at
+		//
+		// $2 is the app clock, the one that writes orders.created_at. This
+		// paragraph used to describe the reservation arm as wall-minus-wall, which
+		// WAS true when it was written and stopped being true once
+		// reservations.created_at started being stamped from the app clock rather
+		// than taking the database default. One reference for both arms is only
+		// correct BECAUSE both columns are now written by the same clock — the
+		// invariant is still "never mix the ends of one subtraction", and the way
+		// it is met is that there is one clock here, not two. SQL now() is the
+		// DATABASE's wall clock and is months from the sim's; it must not come
+		// back. Neither clamp nor COALESCE stands between the reader and the
+		// number.
 		heldFor := b.HeldFor
 		if b.HardClaim {
 			s.noteHardBurial(at, b, heldFor, digPlacement, now)
@@ -332,7 +351,16 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 		return
 	}
 
-	if s.burialWasApprovedThenInvalidated(at.placedBy, b.HeldSince) {
+	// PRINT THE INSTANT THE VERDICT USED. This computed hardHoldBeganAt for the
+	// decision and then printed b.HeldSince in the sentence explaining it — the
+	// holder's CREATION, which for a hard claim is typically minutes earlier than
+	// the moment claimed_by was written. So the line said "claimed the buried bin
+	// at 10:52:14" about a claim that hardened at 11:20, on exactly the population
+	// the hard-claim dating fix exists to reclassify: an order whose soft hold was
+	// still soft when
+	// the selector looked. One instant, read once, used for both.
+	began := s.hardHoldBeganAt(b)
+	if s.burialWasApprovedThenInvalidated(at.placedBy, began) {
 		log.Printf("%s: %s — order %d's destination was approved and a later claim invalidated it. "+
 			"Order %d claimed the buried bin at %s, AFTER the selector was consulted for order %d, so "+
 			"no check at any Core moment could have seen it — the window runs from the resolve to the "+
@@ -340,7 +368,7 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 			"capacity before dispatching). Accepted and healed: the cascade dissolves and re-plans, "+
 			"~2.5 min of re-work. This is the measured price of law 6, not a defect. %s",
 			burialShadowTag, BurialChurnMarker, at.placedBy,
-			b.HolderID, b.HeldSince.UTC().Format(time.RFC3339), at.placedBy, where)
+			b.HolderID, began.UTC().Format(time.RFC3339), at.placedBy, where)
 		s.burials.recordHard(hardApprovedThenInvalidated, now)
 		return
 	}
@@ -351,6 +379,44 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 		"route it through nodes.FindStoreSlotInLaneExcluding. %s",
 		burialShadowTag, BurialBypassMarker, at.placedBy, where)
 	s.burials.recordHard(hardNeverAsked, now)
+}
+
+// hardHoldBeganAt dates the hold THE GUARD ACTUALLY RESPECTS, which is not the
+// same instant as the holder order coming into existence.
+//
+// ── WHY THE HOLDER'S created_at IS THE WRONG MOMENT FOR A HARD CLAIM ──────
+//
+// findStoreSlot's burial clause consults bins.claimed_by and nothing else, and
+// that asymmetry is the whole design: a soft reservation deeper in the lane is a
+// PLAN and does not refuse a placement, because plans get recalculated into digs.
+// So the question "would the selector have refused?" is about when the claim went
+// HARD — and claimed_by is written at ConfirmForDispatch, immediately before the
+// fleet call, which is typically minutes after the order was created.
+//
+// Dating it by created_at accuses the selector of ignoring something it was
+// designed to ignore. Sim 2026-08-30, run 3: order 243 was created at 10:52:14
+// and was still `sourcing` — a soft hold — when order 256's destination was
+// resolved. By the time 256 ARRIVED, 243's claim had hardened, so the burial read
+// hold=hard-claim and the comparison used 10:52:14 and called it a bypass. The
+// selector saw a soft hold and correctly walked past it.
+//
+// bins has no claimed_at column, so the moment is taken from the holder's own
+// commit-to-fleet history — the same read, and the same function, the placer side
+// already uses. Unreadable falls back to created_at, which is the LOUD direction
+// and keeps the tripwire's over-report bias.
+//
+// A COMPOUND LEG IS EXEMPT AND KEEPS created_at. Its claim is stamped in the
+// transaction that inserts it (CreateCompoundChildren), so for a dig leg the two
+// instants are the same one and created_at is exact.
+func (s *BinService) hardHoldBeganAt(b store.SpokenForBin) time.Time {
+	if !b.HardClaim || b.HolderIsChild {
+		return b.HeldSince
+	}
+	at, ok, err := s.db.OrderCommittedToFleetAt(b.HolderID)
+	if err != nil || !ok {
+		return b.HeldSince
+	}
+	return at
 }
 
 // burialWasApprovedThenInvalidated answers PLAN §R.4's question: did this claim

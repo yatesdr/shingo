@@ -207,6 +207,48 @@ const (
 	// real breakdown, and dissolving it automatically is the machine guessing at
 	// something it cannot classify.
 	CauseDigBlockerStopped QueueCause = "dig-blocker-order-stopped"
+	// CauseDigBlockerPromised — the third fact about the same wall (§7): a bin the
+	// dig must move is PROMISED to a demand that OUTRANKS it, so the dig yielded.
+	//
+	// A SEPARATE CAUSE BECAUSE IT HAS A SEPARATE RELEASER, which is the only thing
+	// this vocabulary is for. dig-blocker-claimed's is a robot finishing its
+	// drive; dig-blocker-order-stopped's is a person. This holder has no robot at
+	// all — it holds a promise, not ink — so the wait ends when that demand takes
+	// its bin or ends. Filing it under dig-blocker-claimed would tell an operator
+	// to wait for a drive that has not started.
+	//
+	// The wait is shorter than it looks: a promise on a bin is a plan to remove
+	// it, so the dig's lane is cleared by the holder's own drive.
+	CauseDigBlockerPromised QueueCause = "dig-blocker-promised"
+	// CauseDigBlockerWaitsOnThisDig — the bin the dig must move is held by an
+	// order THIS DIG IS ITSELF REFUSING. A circular wait, not a stalled holder.
+	//
+	// A SEPARATE CAUSE BECAUSE THE ACTION DIFFERS, which is what the releaser
+	// vocabulary is actually for. dig-blocker-order-stopped sends an engineer to
+	// resolve the holder, on §R.115's reading that it "is usually a configuration
+	// fault or a genuine breakdown". Here the holder is FINE: it has a robot, it
+	// is refused with lane-dig-active, and the lane it cannot enter is the one
+	// this dig holds. An engineer sent to fix it finds nothing to fix, and the
+	// thing that has to move is the DIG.
+	//
+	// MEASURED, demo.yaml 2026-08-31. Order 42 took MOUTH/dig on Lane_03 at
+	// 20:00:27.583; order 43 was granted bin 21 — the blocker at that lane's
+	// mouth, and its own pickup target — 27ms later. 42 then waited for 43 to
+	// move a bin 43 could not reach. Both stood 122 sim-minutes holding AMR-04
+	// and AMR-02, and BRKT raised nothing for the rest of the run while the board
+	// told an operator to go and sort out an order that was working correctly.
+	//
+	// §R.115a NAMED THIS TRIGGER IN ADVANCE: "IF ORDER n TURNS OUT TO BE FINE,
+	// that is the named watch item… ONE confirmed false alarm re-opens the split."
+	// This is that split — the false-alarm half of the population, given its own
+	// name so the true half keeps its meaning.
+	//
+	// THE POPULATION SHOULD NOW BE NEARLY EMPTY. reservations.acquire refuses a
+	// bin claim inside a foreign dug lane, so the grant that creates this shape
+	// cannot normally happen. What survives is the mutual-miss window that arm
+	// documents — two overlapping transactions neither of which sees the other's
+	// row — which is why this is a cause and not an assertion.
+	CauseDigBlockerWaitsOnThisDig QueueCause = "dig-blocker-waits-on-this-dig"
 	// CauseStagedOwnDig — a robot is standing at a lane's mark while the order it
 	// belongs to digs that lane open with its OWN children (§R.104).
 	//
@@ -272,6 +314,29 @@ const (
 	// that was refusing them (§12.49). Nothing was refusing them; nothing could
 	// see them.
 	CauseStationWait QueueCause = "station-wait"
+	// CauseSwapPartnerFinished — a station wait held by the SURVIVOR of a swap
+	// whose other half has already completed successfully. A narrowing of
+	// CauseStationWait, and the whole reason it is worth a name of its own is
+	// that the generic sentence sends a reader to the wrong place.
+	//
+	// "the station releases it" is true of both, but under CauseStationWait the
+	// implied picture is a pair mid-choreography: the other robot is still coming,
+	// the line has not cleared, and waiting is the system working. Here the other
+	// robot has been and gone. Nothing further is coming, nobody is going to
+	// arrive and make room, and the wait will not end on its own — which makes it
+	// a DWELL to surface rather than a wait to explain.
+	//
+	// MEASURED, run 12d (2026-08-31). Order 84 stood `staged` under a bare
+	// `station-wait` while its partner 85 had confirmed a minute earlier; it held
+	// AMR-15 for the rest of the run. The row was not blank and was not wrong —
+	// it simply did not say the one fact that made the wait terminal, and two
+	// rounds of investigation went looking for a fence that was refusing it.
+	//
+	// CORE STILL DOES NOT RELEASE IT. PopStationWait is deliberately unfloored
+	// (see waitPopulations) and this changes nothing about that: the releaser is
+	// the station — the Edge's own swap-survivor arm, or a person. This cause is
+	// board truth, not a new mechanism.
+	CauseSwapPartnerFinished QueueCause = "swap-partner-finished"
 	// CauseGateReleaseFailed — the classifier ADMITTED this dweller and the release
 	// itself then failed: the re-bind found no slot, the segment could not be
 	// built, the append errored below the retry threshold. The order stays a
@@ -385,6 +450,32 @@ const (
 	CauseComplexSlotReserve QueueCause = "complex-slot-reserve"
 	// CauseDropoffCapacity — a concrete storage dropoff is full or has inbound
 	// traffic already committed to it.
+	//
+	// ── IT HAS NO LIVE WRITER, AND IT IS KEPT ANYWAY ──────────────────────
+	//
+	// It was the COARSE tag the two complex capacity arms wrote while throwing
+	// away the answer they had just computed: CheckDropoffCapacity returns a
+	// CapacityBlock whose Cause is one of dropoff-occupied / dropoff-inflight /
+	// ngrp-full / capacity-check-failed, and both arms passed cap.Params through
+	// while substituting this constant for cap.Cause — so the discriminator
+	// survived into the operator SENTENCE and was erased from the column an
+	// engineer groups by. The plain path (fulfillment/scanner.go) and the
+	// planning service had always written the fine cause; only complex did not,
+	// so one physical fact was filed two ways depending on which door parked it.
+	//
+	// The four causes have four different releasers — a bin leaving, another
+	// order placing, a child of the group freeing, and a read succeeding — and
+	// the inventory carries a row for each. Collapsing them cost the releaser.
+	//
+	// NOT DELETED, and the difference from CauseLaneLockRace is the whole reason
+	// this paragraph exists. That constant was deleted because the census proved
+	// it had NEVER had a production writer, so removing it reinterpreted no row
+	// in any plant. This one HAS been written, for as long as complex orders have
+	// queued on a full dropoff, so rows carrying "dropoff-capacity" exist at both
+	// plants and mean exactly what they meant. Deleting the constant would orphan
+	// them. It stays declared, with its releaser row, as a LEGACY value: read it
+	// in a histogram as "a complex dropoff refusal from before the split", and do
+	// not write it from new code.
 	CauseDropoffCapacity QueueCause = "dropoff-capacity"
 	// CauseSwapHold — a two-robot swap leg is waiting on its sibling.
 	CauseSwapHold QueueCause = "swap-hold"
@@ -432,6 +523,22 @@ const (
 	// carrier leaves, this clears when a carrier leaves OR when somebody raises
 	// the level.
 	CauseNGRPAtLevel QueueCause = "ngrp-at-level"
+	// CauseGroupHoldsEmptiesOnly — a store carrying a payload named a group that
+	// declares a maintain level, which makes it an empties bank.
+	//
+	// NOT CauseNGRPAtLevel and not CauseNGRPFull, and the difference is what an
+	// operator does next. Those two say the group is holding enough; both clear
+	// on their own when a carrier leaves. This one clears on NOTHING the group
+	// does — the group could be entirely empty and the answer would be the same,
+	// because the refusal is about what this carrier IS, not about how much room
+	// there is. What clears it is somebody naming an overflow destination for the
+	// group, or the carrier being aimed somewhere else.
+	//
+	// It is a fail-safe: the ordering race that produced labelled carriers into a
+	// press empties bank is closed at the operator's CLEAR, so a park under this
+	// cause means a path nobody has found yet is still aiming one here. Treat a
+	// row carrying it as a lead, not as routine backpressure.
+	CauseGroupHoldsEmptiesOnly QueueCause = "group-holds-empties-only"
 	// CauseFinderGroupFenced — the need named a STRICT maintained group it is not
 	// supported at. The group holds carriers; they are not this asker's.
 	//

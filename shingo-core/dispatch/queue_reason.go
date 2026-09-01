@@ -25,7 +25,7 @@ import (
 //   - QueueWaitingForMaterial: Payload + Kind + Partial + Group (+ Step)
 //   - QueueWaitingForSlot:     Destination + BlockingBins/InboundOrders +
 //     DestUnresolved (+ Step)
-//   - QueueStorageRearranging: Lane + Payload + DigOrderID + StoppedOrderID (+ Step)
+//   - QueueStorageRearranging: Lane + Payload + DigOrderID + HolderOrderID + StoppedOrderID (+ Step)
 //   - QueueWaitingForPartner:  Sibling
 //   - QueueFleetUnavailable:   none
 type QueueParams struct {
@@ -80,6 +80,11 @@ type QueueParams struct {
 	// Zero means not known, and then the sentence says less rather than inventing
 	// a number — the same rule DigOrderID follows.
 	StoppedOrderID int64
+	// HolderOrderID names the demand that is AHEAD of this one on a bin — the
+	// ranked take's winner (§7). Set only on a dig-blocker-promised park, where
+	// the wait is on another order's turn rather than on any machine, so the
+	// operator can look up who it is waiting behind.
+	HolderOrderID int64
 	// Sibling is the partner order's edge UUID in a two-robot swap.
 	Sibling string
 
@@ -127,6 +132,14 @@ type QueueParams struct {
 	// this wait is a carrier leaving OR the level being raised, and neither is
 	// findable from a sentence about slots.
 	AtLevel bool
+}
+
+// withHolder returns p with the holder named. A fluent setter rather than a
+// field write at each site, because the holder is threaded onto params built
+// elsewhere and the callers read better for it.
+func (p QueueParams) withHolder(orderID int64) QueueParams {
+	p.HolderOrderID = orderID
+	return p
 }
 
 // FormatQueueSentence renders the operator-visible sentence for a queue code +
@@ -247,7 +260,24 @@ func rearrangingSentence(p QueueParams) string {
 	case p.Payload != "":
 		s = fmt.Sprintf("Rearranging storage to reach %s", p.Payload)
 	}
-	return s + digClause(p) + stoppedOrderClause(p)
+	return s + digClause(p) + holderClause(p) + stoppedOrderClause(p)
+}
+
+// holderClause names the demand that is ahead on the bin.
+//
+// The promised wait's whole distinction from the claimed one is that nothing is
+// MOVING — the holder has a promise, not a robot — so "waiting for a lane to be
+// rearranged" is true and useless on its own. The id is what makes it
+// actionable: an operator can look up that order and see what it is waiting for
+// in turn.
+//
+// Empty when no holder is named, so every other rearranging sentence is
+// byte-identical to what it was.
+func holderClause(p QueueParams) string {
+	if p.HolderOrderID == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" — order %d is ahead of it on that bin", p.HolderOrderID)
 }
 
 // stoppedOrderClause is the one wait sentence that names a PERSON'S job.
@@ -283,6 +313,13 @@ func digClause(p QueueParams) string {
 // holding removal leg until supply sibling claims a bin" — it explained WHICH
 // leg this is and what it is waiting for. Sibling was passed all along and
 // never read.
+//
+// Both faces of the swap gate wait on the same thing — the partner committing —
+// so one sentence serves both. A face whose wait ended somewhere else would need
+// a sentence that REPLACES this one rather than extending it (the call
+// slotSentence makes for DestUnresolved and AtLevel): "holding until the partner
+// secures a bin" would be false, not merely vague, and a clause bolted onto a
+// false base is a false sentence.
 func partnerSentence(p QueueParams) string {
 	if p.Sibling == "" {
 		return "Waiting for partner robot"

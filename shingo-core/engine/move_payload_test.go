@@ -8,6 +8,7 @@ import (
 	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
 )
@@ -130,6 +131,10 @@ func TestRetrieveEmpty_StaysPayloadAgnostic(t *testing.T) {
 	eng := newTestEngine(t, db, sim)
 
 	order := emptyIntentMoveOrder(t, db, bin.ID, storageNode.Name, lineNode.Name)
+	// Armed before the fleet is asked, as the scanner arms it: reserve, stamp,
+	// confirm. Dispatching on a bare pointer describes a robot committed to a bin
+	// nobody holds, which the shared armor assertion reports.
+	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	vendorID, err := eng.Dispatcher().DispatchDirect(order, storageNode, lineNode)
 	if err != nil {
 		t.Fatalf("DispatchDirect: %v", err)

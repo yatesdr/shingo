@@ -9,7 +9,7 @@ import {
 import { openLoadBin } from './operator-load-bin.js';
 import { openKeypad } from './operator-keypad.js';
 import { openReleasePrompt, openStrandedStub } from './operator-release.js';
-import { isActive } from './order-status.js';
+import { isActive, isPreDispatch } from './order-status.js';
 
 const nodeModal = document.getElementById('node-modal');
 const nodeModalContent = document.getElementById('node-modal-content');
@@ -280,7 +280,12 @@ export function renderModal(entry) {
             // pre-sourcing) is NOT in transit and gets its own summary line.
             const inTransit = activeOrders.find(o => o.status === 'in_transit');
             const acknowledged = activeOrders.find(o => o.status === 'acknowledged');
-            const queued = activeOrders.filter(o => o.status === 'queued' || o.status === 'pending');
+            // PRE-DISPATCH, not two literals. This read `'queued' || 'pending'`
+            // and so left SOURCING out — an order out hunting for material showed
+            // no demand card and no cause here, on the one screen a floor
+            // operator actually uses. The boards were fixed for the acquiring set
+            // and this was the screen after them.
+            const queued = activeOrders.filter(o => isPreDispatch(o.status));
             // Loader can fill a parked empty bin even without a delivered L1
             // order. Post-2026-05-12, L1 retrieve_empty IS created when demand
             // fires but Core queues it (dropoff-capacity gate) until the
@@ -324,12 +329,15 @@ export function renderModal(entry) {
                 html += '</div>';
             }
             if (queued.length > 0) {
-                // "2 orders queued" tells the loader operator nothing they can
+                // "2 orders waiting" tells the loader operator nothing they can
                 // act on. Core's cause sentence does — and it is already on the
                 // row. One line per distinct cause so a pair parked for the
                 // same reason does not print it twice.
+                //
+                // WAITING, NOT QUEUED: this set is isPreDispatch — pending,
+                // sourcing and queued — so naming one rung mislabels the other two.
                 var causes = distinctQueueCauses(queued);
-                html += '<div style="color:#999;font-size:12px;margin-bottom:10px">' + queued.length + ' order' + (queued.length > 1 ? 's' : '') + ' queued</div>';
+                html += '<div style="color:#999;font-size:12px;margin-bottom:10px">' + queued.length + ' order' + (queued.length > 1 ? 's' : '') + ' waiting</div>';
                 causes.forEach(function(c) {
                     html += '<div style="color:#999;font-size:12px;margin-bottom:10px;padding-left:8px;border-left:2px solid #444">' + esc(c) + '</div>';
                 });
@@ -350,7 +358,12 @@ export function renderModal(entry) {
                 // its own ACKNOWLEDGED step, not a moving robot.
                 var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit'; });
                 var payloadAcknowledged = payloadOrders.find(function(o) { return o.status === 'acknowledged'; });
-                var payloadQueued = payloadOrders.find(function(o) { return o.status === 'queued' || o.status === 'pending' || o.status === 'submitted'; });
+                // Same widening as the summary block above, and `submitted` stays
+                // beside the predicate rather than inside it: it is an Edge-lifecycle
+                // word with no member in Core's pre-dispatch chapter, so folding it
+                // into the shared list would put a status in a drift-pinned array
+                // that the Go projector does not have.
+                var payloadQueued = payloadOrders.find(function(o) { return isPreDispatch(o.status) || o.status === 'submitted'; });
 
                 var parkedFullThisCode = parkedFullPayload === code;
                 // BANDAID — pull this manual-request path when proper demand

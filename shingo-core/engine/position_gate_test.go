@@ -123,3 +123,95 @@ func TestPositionGate_ExemptsSyntheticNodes(t *testing.T) {
 		t.Fatalf("_TRANSIT is synthetic and holds many bins by design, but the gate held: %s", why)
 	}
 }
+
+// TestPositionGate_HoldsWhenTheOrderIsUnresolvable pins the ONE arm in this gate
+// that fails CLOSED, against a header two lines above it that says lookup
+// failures never block.
+//
+// It reads backwards from every other read failure here and it is right.
+// Occupancy is a fact ALREADY READ by the time this arm is reached; the only
+// unknown left is whether the resident belongs to the arriving order. Passing
+// would let a robot lower a bin onto an occupied node, which is the impossible
+// event the whole gate exists to keep out of Core's model. Every other failure
+// in this function leaves occupancy itself unknown, where inventing a stall out
+// of a missing row is the worse error.
+//
+// TEST-CERTIFIED, NOT RUN-CERTIFIED. The population is an order the fleet knows
+// and Core cannot look up by vendor id. No fixture produces one and the
+// simulator never will, so a clean run says nothing about this arm either way.
+// It also means the arm must be carved OUT of the extracted occupancy core, or
+// anything that later reuses that core inherits a fail-closed decision it never
+// asked for.
+func TestPositionGate_HoldsWhenTheOrderIsUnresolvable(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
+
+	press := &nodes.Node{Name: "PLN-UNRESOLVABLE", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(press), "create press node")
+	bt := &bins.BinType{Code: "BT-UNRES", Description: "unresolvable-order test"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
+	resident := &bins.Bin{BinTypeID: bt.ID, Label: "UNRES-RESIDENT", NodeID: &press.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(resident), "create resident bin")
+
+	drop := seerrds.BinTaskForAction(protocol.ActionDropoff)
+	// No order carries this vendor id.
+	if ok, _ := eng.CanEnterPosition("sim-no-such-vendor-order", press.Name, drop); ok {
+		t.Fatalf("the gate PASSED a placement onto %s, which holds bin %d, because it could not "+
+			"resolve the order. Occupancy was already established; only ownership was unknown, "+
+			"and the safe answer to an unknown owner is not 'drop onto it anyway'", press.Name, resident.ID)
+	}
+
+	// And the extracted occupancy core does NOT carry that decision: asked on its
+	// own it reports the plain physical fact, with no order in the question.
+	if _, occupied := eng.positionOccupiedBy(press.Name, 0); !occupied {
+		t.Errorf("positionOccupiedBy said %s is free while bin %d stands on it", press.Name, resident.ID)
+	}
+	if _, occupied := eng.positionOccupiedBy("PLN-NO-SUCH-NODE", 0); occupied {
+		t.Errorf("positionOccupiedBy reported a MISSING node as occupied. The core fails OPEN on " +
+			"every read: it is a physics model, not a validator, and the gate's fail-closed arm " +
+			"lives at the call site precisely so it does not ride along here")
+	}
+}
+
+// TestPositionGate_OccupancyCoreExcludesTheOrdersOwnBin pins the multi-bin case
+// through the extracted core, so the sim's physics and any later reader of
+// "is this position obstructed" cannot answer it two different ways.
+func TestPositionGate_OccupancyCoreExcludesTheOrdersOwnBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
+
+	press := &nodes.Node{Name: "PLN-OWNBIN", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(press), "create press node")
+	bt := &bins.BinType{Code: "BT-OWNBIN", Description: "own-bin test"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
+
+	owner := &orders.Order{EdgeUUID: "ownbin-order", StationID: "line-1", OrderType: "complex", Status: "in_transit", Quantity: 1}
+	testutil.MustNoErr(t, db.CreateOrder(owner), "create order")
+	mine := &bins.Bin{BinTypeID: bt.ID, Label: "OWNBIN-MINE", NodeID: &press.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(mine), "create bin")
+	mustExec(t, db, `UPDATE bins SET claimed_by=$1 WHERE id=$2`, owner.ID, mine.ID)
+
+	if _, occupied := eng.positionOccupiedBy(press.Name, owner.ID); occupied {
+		t.Errorf("a bin order %d already owns read as an obstruction TO ITSELF at %s — a multi-bin "+
+			"order placing beside its own load would hold against itself forever", owner.ID, press.Name)
+	}
+	if _, occupied := eng.positionOccupiedBy(press.Name, owner.ID+1000); !occupied {
+		t.Errorf("the same bin did NOT obstruct a different order at %s", press.Name)
+	}
+	if _, occupied := eng.positionOccupiedBy(press.Name, 0); !occupied {
+		t.Errorf("forOrderID=0 means 'obstructed by anything' and must not excuse a claimed bin")
+	}
+
+	// A retired bin is a row kept for audit; the carrier is off the floor. The
+	// exclusion is bins.ListByNode's own WHERE, not an arm in the gate — there
+	// used to be one, skipping a status the query had already dropped. Pinned
+	// here because deleting the dead arm means the SQL is now the only thing
+	// holding this up.
+	mustExec(t, db, `UPDATE bins SET status='retired' WHERE id=$1`, mine.ID)
+	if _, occupied := eng.positionOccupiedBy(press.Name, 0); occupied {
+		t.Errorf("a RETIRED bin obstructed %s. The row survives for audit; the carrier does not "+
+			"survive on the floor, and holding a robot against it stalls a real placement", press.Name)
+	}
+}

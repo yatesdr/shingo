@@ -418,14 +418,37 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	return final, nil
 }
 
-// binEmptyAtCoreNode returns a closure that reports whether the physical
-// bin at a CoreNodeName is empty (RemainingUOPCached == 0) for nodes in
-// the given process. The reuse-compatible-bins shortcut uses this to
-// skip press-index swaps when the next style produces the same payload
-// and reuse_compatible_bins is opted in. Errors collapse to "not empty"
-// — defensive, never auto-skip a swap on the basis of a runtime read
-// failure.
-func (e *Engine) binEmptyAtCoreNode(processID int64) func(coreNodeName string) bool {
+// binDrainedAtCoreNode returns a closure that reports whether the physical bin
+// at a CoreNodeName has been DRAINED — its counter says no parts remain
+// (RemainingUOPCached == 0) — for nodes in the given process. The
+// reuse-compatible-bins shortcut uses it to skip press-index swaps when the next
+// style produces the same payload and reuse_compatible_bins is opted in. Errors
+// collapse to "not drained" — defensive, never auto-skip a swap on the basis of
+// a runtime read failure.
+//
+// ── DRAINED, NOT EMPTY, AND THE TWO WORDS MEAN DIFFERENT THINGS ───────────
+//
+// This was binEmptyAtCoreNode, and "empty" is Core's word for a carrier with NO
+// PAYLOAD CODE — the thing EmptyCarrierWhere selects, the thing a maintained
+// group's level counts, the thing a retrieve_empty fetches. What this reads is
+// an EDGE runtime counter: how many parts the operator (or a PLC tick) says are
+// left in a bin that still carries its payload and its manifest. A drained bin
+// is not an empty carrier; Core would refuse to call it one.
+//
+// The two are on opposite sides of the Core/Edge seam and the shortcut sits
+// exactly on it: it decides, from an Edge count, whether to skip moving a
+// physical carrier Core is tracking.
+//
+// THE ADJACENT CAVEAT, WHICH IS LIVE AND IS NOT ABOUT THE NAME. A press counter
+// that is not wired reads RemainingUOPCached == 0 ALWAYS — that is the case at
+// Springfield today, and produce_plan.go's prime branch is ordered around it. So
+// this predicate answers "drained" for every position at such a press. It gates
+// nothing there yet, because ReuseCompatibleBins has no plantspec key at all and
+// no fixture sets it: it takes an operator flipping the Edge column AND running
+// a changeover. If that flag is ever enabled at a press whose counter is not
+// wired, this closure will report every position drained and the shortcut will
+// skip swaps that need to happen. Wire the counter before enabling the flag.
+func (e *Engine) binDrainedAtCoreNode(processID int64) func(coreNodeName string) bool {
 	nodes, err := e.db.ListProcessNodesByProcess(processID)
 	if err != nil {
 		return func(string) bool { return false }

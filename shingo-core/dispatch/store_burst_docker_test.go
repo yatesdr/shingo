@@ -136,7 +136,7 @@ func TestStoreBurst_FiveAtOneDugLane_DivertToDistinctSlots(t *testing.T) {
 
 	// The re-entry every dispatch attempt makes, once per store.
 	for _, o := range flock {
-		_, rErr := d.ReserveStorageDropoff(o)
+		rErr := d.ReserveStorageDropoff(o).Err
 		testutil.MustNoErr(t, rErr, "re-entry for "+o.EdgeUUID)
 	}
 
@@ -185,7 +185,7 @@ func TestStoreBurst_FiveAtOneDugLane_DivertToDistinctSlots(t *testing.T) {
 	// already exists rather than half-re-aimed.
 	extraBin := createTestBinAtNode(t, db, bp.Code, grp.ID, "SB-BIN-EXTRA")
 	extra := parkedStore(t, db, d, "sb-extra", dugSlots[0], extraBin.ID)
-	_, extraErr := d.ReserveStorageDropoff(extra)
+	extraErr := d.ReserveStorageDropoff(extra).Err
 	testutil.MustNoErr(t, extraErr, "re-entry with nowhere to go")
 
 	stuck, err := db.GetOrder(extra.ID)
@@ -244,7 +244,7 @@ func TestStoreBurst_DivertedOntoAMarkedLane_StagesInsteadOfParking(t *testing.T)
 
 	// Divert, then admit, then dispatch — the scanner's own order.
 	for i, o := range flock {
-		_, dErr := d.ReserveStorageDropoff(o)
+		dErr := d.ReserveStorageDropoff(o).Err
 		testutil.MustNoErr(t, dErr, "divert")
 		after, err := db.GetOrder(o.ID)
 		testutil.MustNoErr(t, err, "reload after the divert")

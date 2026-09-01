@@ -458,10 +458,20 @@ const (
 	EntryFreshBin EntryKind = iota
 	// EntryHeldBin is the caller that reuses a bin claimed on an EARLIER tick
 	// and never calls the finder (fulfillment/scanner.go dispatchHeldBin). Nothing
-	// looked, so nothing answered, and a store can bury the held bin in between —
-	// the slot selector has no guard against placing in front of a claimed bin
-	// (store/nodes/lanes.go FindStoreSlotInLaneExcluding: its accessibility clause
-	// asks whether the CANDIDATE is reachable, never what sits behind it).
+	// looked, so nothing answered, and a store can bury the held bin in between.
+	//
+	// NARROWED — the selector DOES guard the hard-claim case now. This said the
+	// slot selector has no guard against placing in front of a claimed bin at
+	// all, and that was true when it was written. findStoreSlot's burial clause
+	// (store/nodes/lanes.go) refuses a candidate that sits shallower in the same
+	// lane than a bin claimed by a live order, matched on either spelling of
+	// ownership and filtered on the holder being non-terminal.
+	//
+	// What is still unguarded is the SOFT hold: a bin promised by a pending
+	// reservation rather than hard-claimed has no claimed_by and no holder row
+	// to join, so nothing shallower is refused on its account. That is the
+	// window this entry kind exists for, and it is narrower than the sentence
+	// used to claim.
 	EntryHeldBin
 )
 

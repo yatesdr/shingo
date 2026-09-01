@@ -190,6 +190,23 @@ func (d *Dispatcher) summonOwnDigs(lane *nodes.Node, req acceptanceRequest) {
 		// and the row already carries the classifier's cause saying so.
 		d.dbg("lane gate: order %d cannot dig %s open — the lane is held", req.order.ID, lane.Name)
 	case laneClearBlockerClaimed:
+		if res.blockerPromised {
+			// THE RANKED REFUSAL IS NOT THE CLAIMED ONE (§7), and it must not reach
+			// parkOnClaimedBlocker. That fork asks whether the holder's ROBOT has
+			// stopped and files a RESOLVE-BY-HAND recovery row when it has; a
+			// promise-holder has no robot, so the liveness question is meaningless
+			// and the escalation would call an engineer out on a demand that is
+			// simply ahead in the queue. The wait ends when that demand takes its
+			// bin or ends — which is what dig-blocker-promised's releaser says.
+			log.Printf("lane gate: order %d is walled at %s and yielded the dig — bin %d is promised "+
+				"to order %d, whose demand outranks it. No robot is moving that bin; the wait ends "+
+				"when order %d takes it or ends",
+				req.order.ID, lane.Name, res.blockerBin, res.blockerClaimant, res.blockerClaimant)
+			d.setQueueReason(req.order, protocol.QueueStorageRearranging, res.blockerCause,
+				QueueParams{Lane: lane.Name, Payload: req.order.PayloadCode,
+					HolderOrderID: res.blockerClaimant})
+			return
+		}
 		d.parkOnClaimedBlocker(lane, req, res)
 	case laneClearNothingInTheWay:
 		d.dbg("lane gate: order %d needs no dig at %s after all — the lane changed under the verdict",
@@ -265,6 +282,24 @@ const StoppedBlockerAction = "dig_blocker_order_stopped"
 // the durable, timestamped row that says a person was told. A wait that flips to
 // another cause and back re-alarms, which is honest: it is a new wait.
 func (d *Dispatcher) parkOnClaimedBlocker(lane *nodes.Node, req acceptanceRequest, res laneClearResult) {
+	// IS THE HOLDER STOPPED, OR ARE WE THE REASON IT STOPPED? Asked BEFORE the
+	// liveness question, because the stall window cannot tell them apart: a holder
+	// refused at our own lane gate is never touched, so its updated_at freezes and
+	// it ages into "stopped" no matter how healthy it is. §R.115a named that false
+	// alarm as the trigger to split this population, and this is the split.
+	if d.blockerIsWalledByThisDig(lane, res.blockerClaimant) {
+		if d.setQueueReason(req.order, protocol.QueueStorageRearranging, CauseDigBlockerWaitsOnThisDig,
+			QueueParams{Lane: lane.Name, HolderOrderID: res.blockerClaimant}) {
+			log.Printf("lane gate: !! DEADLOCK on %s: order %d holds this dig's lane and waits for "+
+				"order %d to move bin %d — but order %d is refused on THIS lane by THIS dig's own "+
+				"lock, so neither can proceed. Order %d is NOT faulty; the lane has to be released "+
+				"for it. No stopped-blocker alarm is filed: it would name a healthy order.",
+				lane.Name, req.order.ID, res.blockerClaimant, res.blockerBin, res.blockerClaimant,
+				res.blockerClaimant)
+		}
+		return
+	}
+
 	stopped, still, err := d.claimantStopped(res.blockerClaimant)
 	if err != nil {
 		// Unreadable answers "congestion", which is the direction that costs
@@ -276,8 +311,11 @@ func (d *Dispatcher) parkOnClaimedBlocker(lane *nodes.Node, req acceptanceReques
 		stopped = false
 	}
 	if !stopped {
-		// A robot is already carrying the wall out. The wait ends when it does.
-		d.setQueueReason(req.order, protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
+		// A robot is already carrying the wall out. The wait ends when it does —
+		// which is what the producer's cause says, and this arm does not re-decide
+		// it. What this arm decides is the NARROWING below: the holder is not
+		// moving, so the wait is not a drive at all.
+		d.setQueueReason(req.order, protocol.QueueStorageRearranging, res.blockerCause,
 			QueueParams{Lane: lane.Name})
 		return
 	}
@@ -306,4 +344,53 @@ func (d *Dispatcher) parkOnClaimedBlocker(lane *nodes.Node, req acceptanceReques
 		log.Printf("lane gate: could not record the stopped blocker %d for order %d: %v",
 			res.blockerClaimant, req.order.ID, err)
 	}
+}
+
+// blockerIsWalledByThisDig reports whether the order holding our blocker is
+// itself refused at the lane THIS dig holds — the circular wait behind
+// CauseDigBlockerWaitsOnThisDig.
+//
+// TWO FACTS, BOTH ALREADY ON THE ROWS. The holder's queue_cause is a lane-gate
+// refusal produced by an exclusive mouth hold, and the exclusive hold on the lane
+// its blocker sits in is OURS. Neither is inferred from timing, which is what
+// separates this from claimantStopped's age test: that one asks "has it been
+// still for a while", this one asks "is it standing there because of us".
+//
+// CONSERVATIVE ON EVERY UNREADABLE ANSWER, and the direction is deliberate.
+// Returning false hands the decision back to the stall window, which is exactly
+// today's behaviour — at worst a healthy order is named, which is the pre-existing
+// accepted risk. Returning true on a guess would suppress a REAL stopped-blocker
+// alarm and leave a genuine fault unreported, which is strictly worse than the
+// false alarm this exists to remove.
+func (d *Dispatcher) blockerIsWalledByThisDig(lane *nodes.Node, claimantID int64) bool {
+	if lane == nil || claimantID == 0 {
+		return false
+	}
+	claimant, err := d.db.GetOrder(claimantID)
+	if err != nil || claimant == nil {
+		return false
+	}
+	// A refusal produced by an exclusive mouth hold. Any other cause — a station
+	// wait, a slot shortage, a fleet fault, or none at all — means the holder is
+	// stopped for a reason that is not us, and the stall window is the right
+	// question for it.
+	switch QueueCause(claimant.QueueCause) {
+	case CauseLaneDigActive, CauseLaneHeldSource:
+	default:
+		return false
+	}
+	// And the exclusive hold on this lane is ours. laneOwnerFor resolves a child
+	// to its compound parent, which is who actually owns the row.
+	owner, ok := d.laneOwnerFor(claimantID)
+	if !ok {
+		return false
+	}
+	excavator, xErr := d.laneLock.ExcavationOwner(lane.ID)
+	if xErr != nil || excavator == 0 {
+		return false
+	}
+	// The holder must not be the excavation's own family — a child working inside
+	// its parent's dig is not walled by it, and reporting a deadlock there would
+	// hide a real stall inside a compound.
+	return excavator != claimantID && excavator != owner
 }

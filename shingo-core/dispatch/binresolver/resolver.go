@@ -45,8 +45,51 @@ const (
 // the order in hand is out here — every production call site has one. Pass
 // reservations.Anyone where none exists.
 type NodeResolver interface {
-	Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error)
+	Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64,
+		asker reservations.DigAsker, accept BinFilter) (*ResolveResult, error)
 }
+
+// BinFilter says which candidate bins the CALLER can actually use. nil accepts
+// everything, which is every caller but one and is byte-identical to the old
+// behaviour.
+//
+// ── WHY THE FILTER BELONGS HERE AND NOT AFTER THE ANSWER ──────────────────
+//
+// A destination that can only accept some bins used to let the resolver pick
+// its single favourite and then VETO it. That is not a filter, it is a
+// deadlock: the scan re-picks the same favourite every time, the veto refuses
+// it every time, and nothing ever looks at the next candidate.
+//
+// THE LIVE POPULATION IS FGN_001 / UNLOADER-A — `role: consume`, `payload:
+// ASSY`, plants/demo.yaml:1015-1025. It is the only unloader the plant has, and
+// requiresFullCarrier (dispatch/source_finder.go) fires on it, so the deadlock
+// below is reachable today and this filter is load-bearing.
+//
+// THE DEADLOCK ITSELF WAS MEASURED ON A FIXTURE THAT NO LONGER EXISTS — run of
+// 2026-08-30, WALL. The drain was FGN_003 on PANEL-B. The FIFO-oldest PANEL-B
+// carrier was bin 19, holding 3 of 30, at Lane_01's mouth: the scan named it
+// 1,715 times, the veto refused it 1,715 times, and three FULL carriers stood at
+// the mouths of Lane_04, Lane_07 and Lane_15 with nothing in front of them and
+// were never once considered. That unloader has since been deleted for eating
+// the line's own feedstock, so read those numbers as the SHAPE of the bug rather
+// than as a description of the plant. What survives them is the rule.
+//
+// FGN_003 NAMES TWO DIFFERENT THINGS IN THIS REPO, and the one above is the
+// deleted PANEL-B drain. cmd/seeddev/testdata/seed-fixture.yaml still declares an
+// FGN_003 and that one is CORRECT: it drains ASSY-C, a finished good nobody
+// consumes, which is the shape an unloader is supposed to have.
+//
+// A bin the caller cannot use is not a candidate, so it must lose the
+// comparison rather than win it and be thrown away afterwards.
+//
+// FIFO IS UNTOUCHED, WHICH IS THE POINT. Demand passes no filter and gets the
+// oldest bin exactly as before — rotation matters when a line is being fed.
+// What changes is only that a caller with a real constraint gets the oldest bin
+// IT CAN USE instead of a refusal.
+type BinFilter func(*bins.Bin) bool
+
+// accepts is nil-safe: no filter means every bin is a candidate.
+func (f BinFilter) accepts(b *bins.Bin) bool { return f == nil || b == nil || f(b) }
 
 // DefaultResolver resolves synthetic nodes using the database.
 // For NGRP (node group) nodes, it delegates to the GroupResolver for two-level resolution.
@@ -70,7 +113,8 @@ func (r *DefaultResolver) dbg(format string, args ...any) {
 
 // Resolve selects the best physical child of a synthetic node for the given
 // direction of travel.
-func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64, asker reservations.DigAsker) (*ResolveResult, error) {
+func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, payloadCode string, binTypeID *int64,
+	asker reservations.DigAsker, accept BinFilter) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(syntheticNode.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", syntheticNode.Name, err)
@@ -84,7 +128,7 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 		gr := &GroupResolver{DB: r.DB, DebugLog: r.DebugLog}
 		switch mode {
 		case ResolveModeRetrieve:
-			return gr.ResolveRetrieve(syntheticNode, payloadCode, asker)
+			return gr.ResolveRetrieve(syntheticNode, payloadCode, asker, accept)
 		case ResolveModeStore:
 			return gr.ResolveStore(syntheticNode, payloadCode, binTypeID, asker)
 		}

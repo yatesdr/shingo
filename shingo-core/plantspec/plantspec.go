@@ -124,6 +124,32 @@ type Zone struct {
 	// They carry a Depth like any other slot, and it should be 1 on all of them:
 	// nothing can be buried behind anything when there is no lane to bury it in.
 	Positions []Slot `yaml:"positions,omitempty"`
+	// WaitPoints are the RDS map points where a robot with work ANYWHERE in this
+	// zone stands while Core decides which of its lanes it may enter. They become
+	// the group node's group_wait_points property, and their existence is the
+	// enablement for every lane in the zone at once.
+	//
+	// ── THIS REPLACED Lane.GatePoint, AND THE MOVE IS THE POINT ───────────
+	//
+	// A robot at a waiting spot owns nothing, so the spot never belonged to one
+	// lane. Tying it there is what stopped the release from re-asking the whole
+	// group: a robot standing at lane A's own mark had already committed to lane
+	// A before anybody asked whether A was the right answer.
+	//
+	// MORE THAN ONE IS ALLOWED AND MODELS NOTHING IN CORE. The splicer picks one
+	// per order deterministically; Core allocates none of them and counts nobody
+	// standing at one. If more robots want to wait than there are spots, the
+	// fleet queues them.
+	//
+	// The values are handed to the fleet as block locations verbatim and are
+	// never resolved against nodes, so on a real plant they must exist in the RDS
+	// map. Empty means an ungated zone, which is a POSITION rather than an
+	// oversight: a rig that gates every zone cannot show the two dispositions
+	// side by side, and that is most of what a lane-stress seed is for.
+	//
+	// A point may not be shared with another zone — seeding refuses it, naming
+	// both zones. The spot is a physical place beside ONE block of lanes.
+	WaitPoints []string `yaml:"wait_points,omitempty"`
 }
 
 // Lane is a LANE node under a zone; its slots carry an explicit depth so buried
@@ -131,12 +157,16 @@ type Zone struct {
 type Lane struct {
 	Name  string `yaml:"name"`
 	Slots []Slot `yaml:"slots"`
-	// GatePoint places the lane's waiting-point mark: the RDS map point a
-	// lane-bound robot dwells at until Core says the lane is safe to enter. It
-	// becomes the lane node's lane_gate_point property, and its EXISTENCE is the
-	// enablement — a lane with a mark ships unsealed orders and gets its tail
-	// appended at the gate, a lane without one is decided before dispatch and
-	// parks. There is no mode to set alongside it.
+	// GatePoint is the LEGACY per-lane mark, superseded by Zone.WaitPoints and
+	// scheduled for deletion after one green cycle. It still becomes the lane
+	// node's lane_gate_point property and still wins over the zone's list, so a
+	// plant mid-migration keeps working — Core logs each read as legacy and the
+	// startup census counts them per group.
+	//
+	// DO NOT SET IT IN A NEW SPEC. An override is a set-of-one: it silently
+	// disables the group's widening for that lane, which makes a part-migrated
+	// zone the worst possible regression fixture — its numbers are an average of
+	// two behaviours and belong to neither.
 	//
 	// The value is handed to the fleet as a block location verbatim and is never
 	// resolved against nodes, so on a real plant it must exist in the RDS map.

@@ -66,7 +66,7 @@ func (db *DB) ClaimBin(binID, orderID int64) error { return bins.Claim(db.DB, bi
 // The bare db.UnclaimBin / db.UnclaimOrderBins wrappers were removed:
 // clearing claimed_by WITHOUT releasing the coupled reservation orphans a
 // confirmed reservation and bricks the bin via uq_reservations_bin_active. Use
-// the coupled inverses ReleaseClaimForBin / ReleaseClaimByOrder (store/orders.go)
+// the coupled inverse ReleaseClaimForBin (store/orders.go)
 // instead — a forbidigo rule now guards the surviving bins.Unclaim primitives.
 
 // FindEmptyCompatibleBin finds an unclaimed, available bin compatible with

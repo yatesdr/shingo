@@ -106,7 +106,7 @@ func TestRegression_TickDuringABFlip(t *testing.T) {
 	// Flip A → B. FlipABNode flushes before swapping active-pull; the
 	// flush ensures any pre-flip deltas are sealed against the old
 	// active context.
-	testutil.MustNoErr(t, eng.FlipABNode(nodeBID), "FlipABNode")
+	testutil.MustNoErr(t, eng.FlipABNode(nodeBID, OperatorFlip("test")), "FlipABNode")
 
 	// Post-flip tick → B's bin.
 	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{

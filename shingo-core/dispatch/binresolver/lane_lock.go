@@ -79,7 +79,9 @@ const mirrorReservedBy = reservations.ByExcavation
 // recoverable (the caller queues and retries); starting one on a lane whose
 // state could not be established is not.
 func (l *LaneLock) TryLock(laneID, orderID int64) bool {
-	return l.TryLockFor(laneID, orderID, reservations.Anyone)
+	// nil beside Anyone, and for the same reason: no asker, so no exemption. A
+	// fixture parking a foreign dig means the owner-blind question.
+	return l.TryLockFor(laneID, orderID, reservations.Anyone, nil)
 }
 
 // TryLockFor is TryLock for a dig raised to rescue a particular order:
@@ -94,8 +96,12 @@ func (l *LaneLock) TryLock(laneID, orderID int64) bool {
 //
 // The rule and its limits live on reservations.AcquireLanesFor; this only
 // carries the asker down to it.
-func (l *LaneLock) TryLockFor(laneID, orderID int64, beneficiary reservations.DigAsker) bool {
-	err := reservations.AcquireLanesFor(l.db, orderID, reservations.ModeDig, beneficiary, mirrorReservedBy, laneID)
+func (l *LaneLock) TryLockFor(laneID, orderID int64, beneficiary reservations.DigAsker, stagedOutside reservations.StagedOutside) bool {
+	// Single-lane by construction, so the by-lane map is this one entry. Keeping
+	// the flat set in this signature is deliberate: a caller that has one lane in
+	// hand should not have to build a map to say something about it.
+	err := reservations.AcquireLanesFor(l.db, orderID, reservations.ModeDig, beneficiary,
+		reservations.StagedOutsideByLane{laneID: stagedOutside}, mirrorReservedBy, laneID)
 	if err == nil {
 		return true
 	}
@@ -228,7 +234,9 @@ func (l *LaneLock) IsLocked(laneID int64) bool {
 // under the lane's advisory lock is still the arbiter, and the window between
 // this and that is real. What it removes is the certainty of losing.
 func (l *LaneLock) CanTake(laneID int64) bool {
-	return l.CanTakeFor(laneID, reservations.Anyone)
+	// nil beside Anyone — see TryLock. The pre-check and the acquire keep the
+	// same pairing in their blind forms as in their aware ones.
+	return l.CanTakeFor(laneID, reservations.Anyone, nil)
 }
 
 // CanTakeFor is CanTake for a dig raised to rescue a particular order — the
@@ -236,8 +244,14 @@ func (l *LaneLock) CanTake(laneID int64) bool {
 // exemption. Asking the blind one here and the aware one at the acquire would
 // leave the pre-check refusing digs the acquire would have admitted, which is
 // the 16,947 shape with the two answers swapped round.
-func (l *LaneLock) CanTakeFor(laneID int64, beneficiary reservations.DigAsker) bool {
-	ok, err := reservations.DigAdmissible(l.db, laneID, beneficiary)
+//
+// THAT IS WHY stagedOutside IS A PARAMETER HERE AND NOT A LOOKUP INSIDE. Both
+// halves of the pair take the set from the SAME caller, computed once for the
+// lane in question, so the pre-check and the acquire cannot be looking at two
+// different answers to "who is standing at the mark" — which is the same
+// drift, one layer down, that the paragraph above is about.
+func (l *LaneLock) CanTakeFor(laneID int64, beneficiary reservations.DigAsker, stagedOutside reservations.StagedOutside) bool {
+	ok, err := reservations.DigAdmissible(l.db, laneID, beneficiary, stagedOutside)
 	if err != nil {
 		log.Printf("lanelock: dig-admissible read failed for lane %d: %v (treated as held)", laneID, err)
 		return false

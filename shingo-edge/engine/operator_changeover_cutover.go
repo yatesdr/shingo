@@ -1,10 +1,16 @@
-// operator_changeover_cutover.go — sequential per-node cutover and
-// process-wide cutover/completion.
+// operator_changeover_cutover.go — process-wide cutover/completion.
 //
-// SequentialChangeoverCutover handles the mid-order flip during a
-// sequential SWAP. CompleteProcessProductionCutover (and its PLC twin)
-// gate, flip active style, and finalize. tryCompleteProcessChangeover
-// is the auto-completion path triggered by terminal-state events.
+// CompleteProcessProductionCutover (and its PLC twin) gate, flip active style,
+// and finalize. tryCompleteProcessChangeover is the auto-completion path
+// triggered by terminal-state events.
+//
+// SequentialChangeoverCutover USED TO LIVE HERE and is gone (owner ruling
+// 2026-08-28). It bundled "flip the pull, then release the wait" into one
+// changeover-only button, and then needed a precondition of its own to stop
+// itself cutting over onto an unstocked position. Both halves already exist as
+// ordinary, mode-agnostic operator controls — FlipABNode and the per-node
+// release — so the cutover is those two clicks, each carrying its own physical
+// guard. A changeover needs no ceremony the steady state does not.
 
 package engine
 
@@ -19,103 +25,6 @@ import (
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
-
-// SequentialChangeoverCutover is the per-node operator action that gates
-// the active-side swap during a sequential SWAP changeover.
-//
-// Sequential SWAP ships a single complex order with a mid-sequence wait
-// at the active position. The robot has finished swapping the inactive
-// side and is parked at the active position. The operator clicks
-// "cutover" to:
-//
-//  1. Flip ActivePull to the previously-inactive (now freshly-stocked)
-//     side. The line starts pulling from the new bin immediately.
-//  2. Release the wait inside the running complex order so the robot
-//     proceeds to evac the now-inactive side and deliver the new bin.
-//
-// Order matters: flip BEFORE release. If the wait released first, the
-// robot could begin pickup at a position the line is still pulling
-// from. Atomic from the operator's POV (one HTTP call, server-side
-// sequence is internal).
-//
-// nodeID is the changeover task's primary process node (CoreNodeName).
-// The cutover handler re-reads ActivePull at the moment of the click to
-// find which physical side is inactive — the planner-time resolution is
-// not persisted, but ActivePull doesn't change between plan and cutover
-// (the changeover itself doesn't flip; only this handler does).
-func (e *Engine) SequentialChangeoverCutover(processID, nodeID int64, calledBy string) error {
-	changeover, err := e.db.GetActiveProcessChangeover(processID)
-	if err != nil {
-		return fmt.Errorf("sequential cutover: no active changeover for process %d: %w", processID, err)
-	}
-	task, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if err != nil {
-		return fmt.Errorf("sequential cutover: get node task: %w", err)
-	}
-	if task.Situation != "swap" {
-		return fmt.Errorf("sequential cutover: node task situation is %q, not swap", task.Situation)
-	}
-	if task.FromClaimID == nil {
-		return fmt.Errorf("sequential cutover: node task has no from-claim id")
-	}
-	fromClaim, err := e.db.GetStyleNodeClaim(*task.FromClaimID)
-	if err != nil || fromClaim == nil {
-		return fmt.Errorf("sequential cutover: get from-claim: %w", err)
-	}
-	if fromClaim.SwapMode != protocol.SwapModeSequential {
-		return fmt.Errorf("sequential cutover: from-claim swap_mode is %q, not sequential", fromClaim.SwapMode)
-	}
-	if fromClaim.PairedCoreNode == "" {
-		return fmt.Errorf("sequential cutover: from-claim has no paired_core_node")
-	}
-	if task.NextMaterialOrderID == nil {
-		return fmt.Errorf("sequential cutover: node task has no tracked complex order")
-	}
-
-	// Resolve inactive/active using the same logic the planner ran. The
-	// inactive-node CoreNodeName names the physical node we're flipping
-	// pull TO (it's been freshly stocked by the pre-cutover steps).
-	processNode, err := e.db.GetProcessNode(task.ProcessNodeID)
-	if err != nil {
-		return fmt.Errorf("sequential cutover: get process node: %w", err)
-	}
-	nodes, err := e.db.ListProcessNodesByProcess(processNode.ProcessID)
-	if err != nil {
-		return fmt.Errorf("sequential cutover: list process nodes: %w", err)
-	}
-	activePull := e.activePullSnapshot(nodes)
-	inactive, _ := resolveSequentialActivePull(fromClaim, activePull)
-	if inactive == "" {
-		return fmt.Errorf("sequential cutover: could not resolve inactive node from active-pull snapshot")
-	}
-	var inactivePhysical *processes.Node
-	for i := range nodes {
-		if nodes[i].CoreNodeName == inactive {
-			inactivePhysical = &nodes[i]
-			break
-		}
-	}
-	if inactivePhysical == nil {
-		return fmt.Errorf("sequential cutover: inactive node %q not found in process %d", inactive, processNode.ProcessID)
-	}
-
-	// 1. Flip first (so when the robot wakes, the line is already pulling
-	// from the freshly-stocked side and the robot can safely evac the
-	// now-stale active side).
-	if err := e.FlipABNode(inactivePhysical.ID); err != nil {
-		return fmt.Errorf("sequential cutover: flip active-pull to %s: %w", inactive, err)
-	}
-
-	// 2. Release the wait. The complex order's mid-sequence wait is at
-	// the active position; releasing it lets the robot proceed.
-	disp := ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: calledBy}
-	if err := e.ReleaseOrderWithLineside(*task.NextMaterialOrderID, disp); err != nil {
-		return fmt.Errorf("sequential cutover: release wait on order %d: %w", *task.NextMaterialOrderID, err)
-	}
-	log.Printf("sequential changeover: cutover at node %s (process=%d task=%d) — flipped pull to %s, released order %d",
-		task.NodeName, processID, task.ID, inactive, *task.NextMaterialOrderID)
-	return nil
-}
 
 // canCompleteChangeover reports whether a changeover row may transition to
 // "completed". Both checks are required:

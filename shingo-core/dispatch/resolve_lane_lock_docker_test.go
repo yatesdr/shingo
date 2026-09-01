@@ -128,7 +128,7 @@ func TestResolveLock_ClearsOnThePickupAndNotBefore(t *testing.T) {
 // mouth mechanism was reachable only from the plain path — on the traffic class
 // that carries both plants.
 //
-// §R.101's rule is written about complex orders in the owner's own words, so a
+// §R.101's rule is written about complex orders, so a
 // source lock only plain orders take is the rule applied to the smaller half.
 //
 // MUTATION (verified): delete the acquireOrderLanes call from admitComplexLanes.

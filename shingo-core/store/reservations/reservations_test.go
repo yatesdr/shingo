@@ -3,12 +3,16 @@
 package reservations_test
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/bins"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -23,11 +27,11 @@ func TestReservations_AcquireConflict(t *testing.T) {
 
 	o1 := testdb.CreateOrder(t, db)
 	o2 := testdb.CreateOrder(t, db)
-	if err := reservations.Acquire(db, o1.ID, bin.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, o1.ID, o1.ID, bin.ID, "test"); err != nil {
 		t.Fatalf("first Acquire: %v", err)
 	}
 	// A different order acquiring the same bin must conflict.
-	if err := reservations.Acquire(db, o2.ID, bin.ID, "test"); err != reservations.ErrReservationConflict {
+	if err := reservations.Acquire(db, o2.ID, o2.ID, bin.ID, "test"); err != reservations.ErrReservationConflict {
 		t.Fatalf("second Acquire: wanted ErrReservationConflict, got %v", err)
 	}
 	_ = reservations.Release(db, o1.ID, bin.ID)
@@ -43,21 +47,21 @@ func TestReservations_AcquireConfirmRelease(t *testing.T) {
 
 	o1 := testdb.CreateOrder(t, db)
 	o2 := testdb.CreateOrder(t, db)
-	if err := reservations.Acquire(db, o1.ID, bin.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, o1.ID, o1.ID, bin.ID, "test"); err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
 	if err := reservations.Confirm(db, o1.ID, bin.ID); err != nil {
 		t.Fatalf("Confirm: %v", err)
 	}
 	// Confirmed row still blocks a new order.
-	if err := reservations.Acquire(db, o2.ID, bin.ID, "test"); err != reservations.ErrReservationConflict {
+	if err := reservations.Acquire(db, o2.ID, o2.ID, bin.ID, "test"); err != reservations.ErrReservationConflict {
 		t.Fatalf("Acquire after Confirm: wanted ErrReservationConflict, got %v", err)
 	}
 	if err := reservations.Release(db, o1.ID, bin.ID); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 	// After release the bin is acquirable.
-	if err := reservations.Acquire(db, o2.ID, bin.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, o2.ID, o2.ID, bin.ID, "test"); err != nil {
 		t.Fatalf("Acquire after Release: %v", err)
 	}
 	_ = reservations.Release(db, o2.ID, bin.ID)
@@ -86,7 +90,7 @@ func TestReservations_ConcurrentAcquire(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-ready
-			errs[i] = reservations.Acquire(db, orderIDs[i], bin.ID, "test")
+			errs[i] = reservations.Acquire(db, orderIDs[i], orderIDs[i], bin.ID, "test")
 		}()
 	}
 	close(ready)
@@ -131,10 +135,10 @@ func TestReapOrphaned_OwnerLiveness(t *testing.T) {
 	// An order legitimately in sourcing, holding one pending + one confirmed bin, both
 	// stamped with an expiry an hour in the PAST — far beyond the retired 60s TTL.
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusSourcing })
-	if err := reservations.Acquire(db, o.ID, binPending.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, o.ID, o.ID, binPending.ID, "test"); err != nil {
 		t.Fatalf("acquire pending: %v", err)
 	}
-	if err := reservations.Acquire(db, o.ID, binConfirmed.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, o.ID, o.ID, binConfirmed.ID, "test"); err != nil {
 		t.Fatalf("acquire confirmed: %v", err)
 	}
 	if err := reservations.Confirm(db, o.ID, binConfirmed.ID); err != nil {
@@ -172,10 +176,10 @@ func TestReapOrphaned_OwnerLiveness(t *testing.T) {
 
 	// Both bins are re-acquirable — no active reservation lingers to brick them.
 	other := testdb.CreateOrder(t, db)
-	if err := reservations.Acquire(db, other.ID, binPending.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, other.ID, other.ID, binPending.ID, "test"); err != nil {
 		t.Fatalf("re-acquire previously-pending bin: %v", err)
 	}
-	if err := reservations.Acquire(db, other.ID, binConfirmed.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, other.ID, other.ID, binConfirmed.ID, "test"); err != nil {
 		t.Fatalf("re-acquire previously-confirmed bin: %v", err)
 	}
 }
@@ -195,7 +199,7 @@ func TestReservations_HasPendingReservation(t *testing.T) {
 		t.Fatal("HasPendingReservation should be false before any Acquire")
 	}
 
-	if err := reservations.Acquire(db, o.ID, bin.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, o.ID, o.ID, bin.ID, "test"); err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
 
@@ -236,7 +240,7 @@ func TestReservations_ReleaseByOrder(t *testing.T) {
 	bin2 := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-ROB-2")
 
 	for _, b := range []*bins.Bin{bin1, bin2} {
-		if err := reservations.Acquire(db, orderID, b.ID, "test"); err != nil {
+		if err := reservations.Acquire(db, orderID, orderID, b.ID, "test"); err != nil {
 			t.Fatalf("Acquire bin %d: %v", b.ID, err)
 		}
 	}
@@ -297,10 +301,10 @@ func TestReservations_SwapSiblingCancel(t *testing.T) {
 	binSupply := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-SWP-SUPPLY")
 	binEvac := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-SWP-EVAC")
 
-	if err := reservations.Acquire(db, supply.ID, binSupply.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, supply.ID, supply.ID, binSupply.ID, "test"); err != nil {
 		t.Fatalf("Acquire supply: %v", err)
 	}
-	if err := reservations.Acquire(db, evac.ID, binEvac.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, evac.ID, evac.ID, binEvac.ID, "test"); err != nil {
 		t.Fatalf("Acquire evac: %v", err)
 	}
 
@@ -499,7 +503,7 @@ func TestReleaseByOrder_DropsBothKindsOneCall(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-BOTHKINDS")
 	o := testdb.CreateOrder(t, db)
 
-	if err := reservations.Acquire(db, o.ID, bin.ID, "test"); err != nil {
+	if err := reservations.Acquire(db, o.ID, o.ID, bin.ID, "test"); err != nil {
 		t.Fatalf("Acquire bin: %v", err)
 	}
 	if err := reservations.AcquireSlot(db, o.ID, sd.StorageNode.ID, "test"); err != nil {
@@ -552,4 +556,129 @@ func TestReleaseByNode_DropsSlotReservation(t *testing.T) {
 	if len(held) != 0 {
 		t.Fatalf("after ReleaseByNode, held %d, want 0", len(held))
 	}
+}
+
+// digRaceLane builds a group + one lane with `depth` slots. There is no shared
+// lane fixture in testdb, and the dig hold sits on a bin's PARENT node, so a bin
+// at a bare station could never collide with one — the lane is load-bearing.
+func digRaceLane(t *testing.T, db *store.DB, name string, depth int) (*nodes.Node, []*nodes.Node) {
+	t.Helper()
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "NGRP type")
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "LANE type")
+	grp := &nodes.Node{Name: name + "-GRP", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
+	lane := &nodes.Node{Name: name, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
+	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
+
+	slots := make([]*nodes.Node, 0, depth)
+	for i := 1; i <= depth; i++ {
+		d := i
+		// Slots carry no node type in this tree — a slot IS a depth-bearing child
+		// of a lane, which is what every lane fixture here builds.
+		s := &nodes.Node{Name: fmt.Sprintf("%s-S%d", name, i),
+			ParentID: &lane.ID, Enabled: true, IsSynthetic: true, Depth: &d}
+		testutil.MustNoErr(t, db.CreateNode(s), "create slot")
+		slots = append(slots, s)
+	}
+	return lane, slots
+}
+
+// TestAcquire_RefusesABinInsideAForeignDugLane is the 27-millisecond window that
+// wedged demo.yaml on 2026-08-31, and the reason the dig-lock question needed a
+// FIFTH reader that is not a filter.
+//
+// ── THE MEASURED SEQUENCE ─────────────────────────────────────────────────
+//
+//	20:00:27.505  order 43 resolves Lane_03; it carries no dig row yet
+//	20:00:27.583  order 42 takes MOUTH/dig on Lane_03
+//	20:00:27.610  order 43 is GRANTED bin 21, which stands in Lane_03
+//
+// Every dig-lock reader before this one answers at FIND time, so all of them
+// answered correctly at :505 and none of them could speak at :610. Order 43 then
+// owned the one bin 42's dig had to relocate, inside a corridor 43 could never be
+// admitted to (lane-dig-active). 42 waited for 43; 42's own lock was what stopped
+// 43. Both robots stood 122 sim-minutes and BRKT — the only payload behind order
+// 42 — raised nothing for the rest of the run.
+//
+// The test drives that order exactly: lock FIRST, claim SECOND. Reversing the two
+// is the case the find-time filters already covered.
+//
+// MUTATION (verified): drop the `dug` CTE from acquire and this returns nil.
+func TestAcquire_RefusesABinInsideAForeignDugLane(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	testdb.SetupStandardData(t, db)
+
+	// A bin in a LANE — the dig hold sits on the bin's parent node, so a bin at a
+	// bare station could never collide and would prove nothing.
+	lane, slots := digRaceLane(t, db, "LANE-DIGRACE", 2)
+	blocker := testdb.CreateBinAtNode(t, db, "PART-A", slots[0].ID, "BIN-DIGRACE-BLOCKER")
+
+	digger := testdb.CreateOrder(t, db)
+	foreigner := testdb.CreateOrder(t, db)
+
+	// THE LOCK LANDS FIRST. This is the whole point: at the moment the foreigner
+	// asks, the lane is already dug and every find-time filter would have hidden
+	// it — but the foreigner did its finding before this line.
+	if err := reservations.AcquireLanes(db.DB, digger.ID, reservations.ModeDig,
+		reservations.ByExcavation, lane.ID); err != nil {
+		t.Fatalf("acquire the dig lock: %v", err)
+	}
+
+	err := reservations.Acquire(db, foreigner.ID, foreigner.ID, blocker.ID, "test")
+	if err != reservations.ErrLaneDugByAnother {
+		t.Fatalf("Acquire = %v, want ErrLaneDugByAnother. A foreign order holding the one bin an "+
+			"excavation must move, inside a corridor it cannot enter, is the 122-minute deadlock "+
+			"this arm exists to prevent", err)
+	}
+
+	// AND IT IS NOT REPORTED AS A CONFLICT. The two have different releasers — a
+	// conflict ends when the winning order lets go of the BIN, this ends when the
+	// dig lets go of the LANE — and nobody holds a reservation on this bin at all.
+	if err == reservations.ErrReservationConflict {
+		t.Errorf("the refusal came back as ErrReservationConflict, which sends a reader looking " +
+			"for an owner of a bin that has none")
+	}
+
+	// THE DIGGER ITSELF IS NOT REFUSED, or the arm would wedge every excavation at
+	// its own first blocker.
+	if err := reservations.Acquire(db, digger.ID, digger.ID, blocker.ID, "test"); err != nil {
+		t.Fatalf("the digger's own claim on its own blocker: %v — a dig must be able to take the "+
+			"bins it is relocating", err)
+	}
+	_ = reservations.Release(db, digger.ID, blocker.ID)
+}
+
+// TestAcquire_ADigsOwnChildMayClaimInsideItsParentsLane is the exemption that
+// keeps the arm above from wedging the thing it protects.
+//
+// A compound dig's lane row is owned by the PARENT (children never own rows), and
+// the legs that actually move the blockers are the CHILDREN. An arm that compared
+// only the claiming order against the lock owner would refuse every one of them
+// and stop excavations dead — which is why Acquire takes a laneOwner rather than
+// deriving it, and why DigAsker carries two ids rather than one.
+func TestAcquire_ADigsOwnChildMayClaimInsideItsParentsLane(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	testdb.SetupStandardData(t, db)
+
+	lane, slots := digRaceLane(t, db, "LANE-DIGCHILD", 2)
+	blocker := testdb.CreateBinAtNode(t, db, "PART-A", slots[0].ID, "BIN-DIGCHILD-BLOCKER")
+
+	parent := testdb.CreateOrder(t, db)
+	child := testdb.CreateOrder(t, db, func(o *orders.Order) { o.ParentOrderID = &parent.ID })
+
+	if err := reservations.AcquireLanes(db.DB, parent.ID, reservations.ModeDig,
+		reservations.ByExcavation, lane.ID); err != nil {
+		t.Fatalf("acquire the parent's dig lock: %v", err)
+	}
+
+	// laneOwner is the PARENT — what laneOwnerFor resolves for a compound child.
+	if err := reservations.Acquire(db, child.ID, parent.ID, blocker.ID, "test"); err != nil {
+		t.Fatalf("the dig child's claim inside its parent's lane: %v — children are the legs that "+
+			"move the blockers; refusing them stops every excavation at its first bin", err)
+	}
+	_ = reservations.Release(db, child.ID, blocker.ID)
 }

@@ -212,6 +212,20 @@ func auditLaneGeometry(db *store.DB) {
 	for _, w := range depthWarnings {
 		log.Printf("shingocore: lane-depth audit: %s", w)
 	}
+
+	// THE GATE CENSUS, and unlike the two audits above it prints on a CLEAN
+	// scene too. "No plant sets a gate mark" was true for a year and was
+	// discovered by reading code — an enablement fact that only appears when
+	// something is wrong is an enablement fact nobody can check. See
+	// dispatch.CensusGateConfig for the three jobs the line does.
+	census, err := dispatch.CensusGateConfig(db)
+	if err != nil {
+		log.Printf("shingocore: gate census failed: %v", err)
+		return
+	}
+	for _, l := range census {
+		log.Printf("shingocore: gate census: %s", l)
+	}
 }
 
 func startHTTPServer(addr string, handler http.Handler) *http.Server {

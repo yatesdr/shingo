@@ -3,6 +3,69 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-08-31 — Wait causes and their releasers, the lane gate's group model, and a fixture that had been lying
+
+**Every wait names its own releaser.** The through-line of this range: an order
+that is waiting should say what it is waiting for and what will end it, and the
+arm that DECIDES a refusal should be the arm that NAMES it. Causes stopped being
+hardcoded at call sites, refusals stopped being flattened to "blocked" on the way
+up, and the boards learned to show what is sourcing rather than only what is
+moving.
+
+**The waiting spots moved from the lane to the group.** A robot standing at a
+lane's own mark has committed to that lane before anybody asked whether it was
+the right answer. Moving the marks to the zone is what lets a gated release
+re-ask the whole group — and it is the plumbing under the widen and the oracle.
+No plant carries a per-lane `gate_point` any more; the key survives in Go as the
+documented legacy fallback.
+
+**The fixture was the bug, four times out of five.** A duplicate loader home, a
+halved WELD-1 rate, two unloaders eating the line's own feedstock — all of it
+config, most of it inherited, and 96 commits were spent diagnosing production
+against it. The last eleven correct the fixture and write down what it cost. The
+release-disposition fix is the one that mattered: a consume node's release now
+declares what is physically in the bin on every swap mode, so carriers clear
+themselves and the SM pool is a circle without an unloader in it. One PANEL-B
+failure remains open at this tip — a recurrence of the known tick-gated-reorder
+family (W3), not a new wedge — see
+`FINDING-W3-recurrence-tick-gated-reorder-2026-08-31.md`.
+
+- Every order's timeline starts at its own creation, atomically
+- A wait's cause lands on that wait's own history row
+- One door for every fleet refusal — armor off, paper kept
+- Operators see what is sourcing, why, and for how long
+- The demand ranking becomes one comparator, and the take at a blocker uses it
+- The board can be narrowed to what is waiting, and says what it holds back
+- The promised cause survives the trip through the wait error
+- A lane refusal reads as a lane wait, from every door
+- The complex capacity arms write the cause they computed
+- The swap gate's verdict carries its cause — a third face was built and buried
+- The empty-out is minted after the clear commits
+- The arm that decides a refusal is the arm that names it
+- The burial tripwire stops dating holds with two different clocks
+- A hard claim is dated by when it HARDENED, not when its order was created
+- The carried-bin recovery cannot send a robot to a slot it cannot reach
+- A gated dig may park its blocker in another gated lane
+- The group store resolvers are owner-aware
+- The mark exemption covers every dig-mode acquire
+- An occupied fungible dropoff re-asks its group instead of waiting on one slot
+- A swap survivor whose partner already finished gets released, from either order
+- The waiting spots belong to the group, not to each lane
+- A gated release widens to the group when its own lane will not open
+- The oracle widens on "not my turn", not only on "no slot"
+- The finder looks PAST a bin the caller cannot use, accessible and buried
+- A bin inside another order's dug lane cannot be claimed
+- A dig does not accuse the order its own lock is holding
+- Every lane dweller is woken; a terminal order wakes the lane it stood outside
+- A carrier on a cell's own position is not the plant's to take
+- A consume node's release declares what is in the bin, on every swap mode
+- UNLOADER-B and UNLOADER-C deleted — an unloader takes finished goods only
+- WELD-1 restored to the line rate; its halving compensated a deleted drain
+- simcalc counts flat positions, and judges a drained payload on more than ticks
+- The restart-safety sweep drives the A/B cutover too
+- The gate runs the sim-tagged tests, with the race detector
+- No source comment cites a commit SHA from this branch
+
 ## 2026-08-25 — Cancelled-order bin placement, changeover tooling, claim routing
 
 **Where a cancelled order's bin went.** The deployed build could not name the

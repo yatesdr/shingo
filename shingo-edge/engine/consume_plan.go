@@ -97,7 +97,10 @@ func (p *ConsumePlan) OrderCount() int {
 // node (claim.CoreNodeName) is reported empty, the planner downgrades
 // any non-simple swap mode to a SimpleMove — matching the existing
 // operator_stations.go behavior — so a manually removed bin doesn't
-// strand the operator behind a swap that has nothing to swap out.
+// strand the operator behind a swap that has nothing to swap out. That
+// downgrade is a PROPOSAL, not a decision: telemetry alone cannot tell a
+// bare position from one a robot is mid-swap on, so the caller gates it
+// with guardPositionSpokenFor. See the branch comment below.
 //
 // For two_robot_press_index downgrades, the planner also consults
 // occupancy for PairedCoreNode and SecondPairedCoreNode and emits one
@@ -126,8 +129,27 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		AutoConfirm: autoConfirm,
 	}
 
-	// Node-empty downgrade: nothing physically present to swap out, so the
-	// swap collapses to a plain delivery move regardless of mode.
+	// Node-empty downgrade: Core reports no bin on the head position, so there
+	// is nothing to swap out and the swap collapses to a plain delivery move
+	// regardless of mode.
+	//
+	// THE MAP ANSWERS A NARROWER QUESTION THAN THIS BRANCH ASKS. It was read for
+	// a long time as "nothing physically present to swap out", and the sentence
+	// was believable because it is true in the case the downgrade was written
+	// for: somebody pulled the carrier off by hand, and the position will still
+	// be bare when a robot gets there. It is false during a swap. Between the
+	// robot lifting the old carrier and setting the new one down, the position
+	// genuinely holds no bin AND already has one on its way, and Core — honest
+	// and instantaneous — correctly answers empty. Downgrading in that window
+	// mints a second delivery into a position that is about to be occupied, and
+	// the robot carrying it can never put it down (sim 2026-08-31, ALN_004:
+	// four cells locked in one run).
+	//
+	// THIS FUNCTION CANNOT TELL THE TWO APART and must not try: the witness is
+	// the cell's own in-flight orders, which live in the DB, and the planner is
+	// pure. requestNodeFromClaim gates this outcome with guardPositionSpokenFor
+	// before applying it. A caller that applies a downgraded plan without that
+	// gate is reintroducing the race.
 	headOccupied := isOccupied(occupancy, claim.CoreNodeName)
 	if !headOccupied {
 		if claim.InboundSource == "" {

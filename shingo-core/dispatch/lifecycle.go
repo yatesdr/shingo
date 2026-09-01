@@ -2,7 +2,7 @@
 //
 // LifecycleService gains typed methods (CancelOrder, ConfirmReceipt,
 // Release, MarkInTransit, MarkStaged, MarkDelivered, Queue,
-// MoveToSourcing, Dispatch, Fail, BeginReshuffle, MarkPending) that
+// MoveToSourcing, Dispatch, Fail, BeginReshuffle) that
 // follow Derek's existing parameter pattern: caller supplies the loaded
 // *orders.Order; the lifecycle validates the transition against
 // protocol.validTransitions, persists atomically, then fires actions
@@ -284,9 +284,18 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 // detail to the store, so the categories existed in memory and never reached
 // disk. This is the thread-through.
 //
-// On a →queued row the code is the QUEUE code, not a terminal one: the order
-// is not ending, it is waiting, and orders.queue_code is overwritten in place
-// so the history row is the only place that reason becomes a time series.
+// On a row into the ACQUIRING set the code is the QUEUE code, not a terminal
+// one: the order is not ending, it is waiting, and orders.queue_code is
+// overwritten in place so the history row is the only place that reason becomes
+// a time series.
+//
+// KEYED ON THE PREDICATE, NOT ON `queued`. It was queued-only, which left the
+// other half of the acquiring set uncovered: a door that writes a reason while
+// the order is still `pending` and then moves it to `sourcing` (planning's
+// reserve path) had its code carried nowhere — the fresh sourcing row was born
+// blank, and SetQueueDetail does not stamp a pending row precisely because this
+// carry is supposed to do it. No arm loses anything: MoveToSourcing's Event
+// carries no ErrorCode, so there is nothing here for the queue code to displace.
 //
 // The reference defaults to the order's own node and payload when the call
 // site did not set one. That is not a guess — it is the node and payload the
@@ -294,8 +303,8 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 func (s *LifecycleService) historyReason(ord *orders.Order, to protocol.Status, ev Event) store.HistoryReason {
 	r := store.HistoryReason{Code: ev.ErrorCode, Actor: ev.Actor, Ref: ev.Ref}
 
-	if to == StatusQueued {
-		// A terminal code on a queued row would be a category error.
+	if protocol.IsAcquiring(to) {
+		// A terminal code on a waiting row would be a category error.
 		r.Code = ord.QueueCode
 	}
 
@@ -628,28 +637,18 @@ func (s *LifecycleService) ResumeCompound(ord *orders.Order) error {
 	return nil
 }
 
-// MarkPending writes the initial Pending status for a freshly-created
-// order. Entry-point write — no source status, bypasses transition
-// validation. Used only by Create*Order methods at order intake.
-func (s *LifecycleService) MarkPending(ord *orders.Order, reason string) error {
-	if err := s.db.UpdateOrderStatus(ord.ID, string(StatusPending), reason); err != nil {
-		return fmt.Errorf("mark pending order %d: %w", ord.ID, err)
-	}
-	ord.Status = StatusPending
-	return nil
-}
-
-// MarkReshuffling IS DELETED. It wrote Reshuffling as an INITIAL status,
-// bypassing transition() and its validity check, for exactly one caller: the
-// synthetic restore-blockers parent. That subsystem is gone — v70 dropped its
-// table, a regression test keeps it dropped, and a boot one-shot cancels any
-// leftover rows — so the bypass had no caller and existed only as an offer.
+// MarkPending AND MarkReshuffling ARE BOTH DELETED, and the SHAPE is why this
+// says so rather than saying nothing: an entry-point write that sets a status as
+// an INITIAL value skips transition() and its validity check, and it is exactly
+// what a caller reaches for when a transition is refused. The refusal is usually
+// right.
 //
-// Worth stating rather than deleting silently, because the SHAPE is the thing:
-// an entry-point write that skips the state machine is exactly what a future
-// caller reaches for when a transition is refused, and the refusal is usually
-// right. Every live path into Reshuffling goes through BeginReshuffle, from
-// Pending / Sourcing / Queued, which the transition table allows.
+// MarkPending served three doors that were already AT pending — the INSERT set
+// the column — so what it was really for was the history row. orders.Create
+// writes that now, in the order's own transaction, for every door including the
+// two that never had one. MarkReshuffling served one caller, the synthetic
+// restore-blockers parent, and that subsystem is gone; every live path into
+// Reshuffling goes through BeginReshuffle, which the transition table allows.
 
 // ── Action implementations ──────────────────────────────────────────────
 

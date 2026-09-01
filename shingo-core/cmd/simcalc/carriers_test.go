@@ -296,3 +296,67 @@ func TestHeadroom_GatedFreeSlotsDoNotCount(t *testing.T) {
 			"is the shape that waits forever while the free-slot total looks healthy")
 	}
 }
+
+// TestFlatPositionsAreCountedAsSlots pins the shape a MAINTAINED group is
+// always in: a zone that holds its slots DIRECTLY, with no lane between.
+//
+// THE TOOL WALKED z.Lanes AND NOTHING ELSE, so such a zone contributed zero
+// slots and its seeded carriers were attributed to no pool. On demo.yaml that
+// made SYN_PRESS_EMPTIES — eight positions, six of them seeded — report as a
+// zone with no capacity holding nothing, and the per-pool check said "SHORT BY
+// 6" about a bank that was exactly at its level. A tool that raises a false
+// alarm on the healthiest pool in the plant is worse than one that says nothing:
+// the next real shortage reads as more of the same noise.
+//
+// The save-time rules REFUSE a maintained group with lanes, so this is not an
+// exotic shape the tool could reasonably not know about — it is the only shape
+// a maintained group can have.
+func TestFlatPositionsAreCountedAsSlots(t *testing.T) {
+	t.Parallel()
+	p := carrierPlant(30, 30)
+	p.Zones = []plantspec.Zone{{
+		Name: "FLATBANK",
+		Positions: []plantspec.Slot{
+			{Name: "P1", Depth: 1}, {Name: "P2", Depth: 1},
+			{Name: "P3", Depth: 1}, {Name: "P4", Depth: 1},
+		},
+	}}
+	p.Bins = []plantspec.Bin{
+		{Name: "B1", Slot: "P1"}, // empty carrier, in the flat bank
+		{Name: "B2", Slot: "P2"},
+	}
+
+	plan := computeCarriers(p, map[string]float64{}, 0, 0)
+	if plan.totalSlots != 4 {
+		t.Errorf("totalSlots = %d, want 4. A zone that holds its positions directly has no "+
+			"lane to walk, and walking only z.Lanes counts its whole capacity as zero",
+			plan.totalSlots)
+	}
+	if plan.slotsUsed != 2 {
+		t.Errorf("slotsUsed = %d, want 2 — the two seeded carriers stand in real slots",
+			plan.slotsUsed)
+	}
+	pool := plan.pools["FLATBANK"]
+	if pool == nil {
+		t.Fatalf("no pool for FLATBANK: a seeded empty in a flat zone was attributed to no " +
+			"pool at all, so the per-pool stock check judged the bank as holding nothing")
+	}
+	if pool.seededEmpty != 2 {
+		t.Errorf("FLATBANK seededEmpty = %d, want 2", pool.seededEmpty)
+	}
+
+	hs := computeHeadroom(p)
+	if len(hs) != 1 {
+		t.Fatalf("computeHeadroom returned %d zones, want 1", len(hs))
+	}
+	zh := hs[0]
+	if zh.slots != 4 || zh.seeded != 2 || zh.freeUngated != 2 {
+		t.Errorf("headroom = {slots:%d seeded:%d freeUngated:%d}, want {4 2 2}",
+			zh.slots, zh.seeded, zh.freeUngated)
+	}
+	if zh.deepestDig != 0 {
+		t.Errorf("deepestDig = %d, want 0. Flat positions have nothing in front of anything, "+
+			"so no dig can be raised against them and they must not inflate the depth a zone "+
+			"needs shuffle room for", zh.deepestDig)
+	}
+}

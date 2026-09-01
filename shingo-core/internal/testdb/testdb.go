@@ -54,6 +54,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/config"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -727,7 +728,126 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 			atomic.AddInt64(&terminateFired, 1)
 		}
 	})
+
+	// ── THE END-OF-TEST INVARIANT SWEEP ──────────────────────────────────────
+	//
+	// REGISTERED SECOND SO IT RUNS FIRST. Cleanups are LIFO, and the drop above
+	// takes the database with it; a sweep behind it would have nothing to read.
+	//
+	// It is here rather than at each test because the wedge is not a property any
+	// one test is about. It is what happens when a write clears one ownership
+	// book and not another, and the writes that can do that are all over the
+	// tree: a steal, a release, a redirect, a recovery. A test that exercises one
+	// of them pays this automatically, which is the only way an invariant with
+	// that many potential authors gets checked at all.
+	//
+	// SKIPPED FOR A TEST THAT HAS ALREADY FAILED. Its database is mid-scenario by
+	// definition, and a second finding on top of the first is noise pointing at
+	// the wrong write.
+	//
+	// SKIPPED FOR A DATABASE THAT CANNOT ANSWER. A handful of tests break their
+	// own database on purpose — closing the handle, or dropping a column — to prove
+	// a reader fails closed instead of fabricating an answer. A sweep that fataled
+	// on "database is closed" or "column does not exist" would report those as
+	// findings, which is the fastest way to get an invariant check deleted. The
+	// probe below is the difference between "no wedge" and "no answer"; the
+	// exported assertion still fatals, because a caller who asks by name wants to
+	// know its question did not run.
+	//
+	// A test that MANUFACTURES the wedge, or writes an order row that is not a
+	// plant state at all, calls DisableWedgeSweep and says why.
+	t.Cleanup(func() {
+		if t.Failed() || wedgeSweepDisabled(t) {
+			return
+		}
+		if db.DB.Ping() != nil {
+			return
+		}
+		// The probe names EVERY column the sweeps below read. It listed three, and
+		// the armor assertion reads two more — so a test that drops
+		// vendor_order_id on purpose (to prove a writer fails closed) passed the
+		// probe and then died inside the sweep on "column does not exist", which
+		// is the exact shape the paragraph above says gets an invariant check
+		// deleted.
+		if _, err := db.DB.Exec(
+			`SELECT id, bin_id, status, vendor_order_id, updated_at FROM orders LIMIT 1`); err != nil {
+			return
+		}
+		AssertNoPointerWedge(t, db)
+		// The armor half of the same question, on the same terms and behind the
+		// same probe: does what an order HOLDS agree with what its status CLAIMS.
+		// It rides the wedge sweep's opt-out because a test whose order rows are
+		// not a plant state is not a plant state for either assertion.
+		AssertArmorMatchesStatus(t, db)
+	})
 	return db, cfg
+}
+
+// wedgeSweepOff records the tests that build the pointer wedge on purpose.
+var (
+	wedgeSweepMu  sync.Mutex
+	wedgeSweepOff = map[string]bool{}
+)
+
+// DisableWedgeSweep opts one test out of the end-of-test wedge sweep.
+//
+// FOR A TEST WHOSE ORDER ROWS ARE NOT A PLANT STATE, and nothing else. Three
+// kinds qualify: one that pins the detector itself, one that arranges the broken
+// state so a repair has something to repair, and one whose rows are probe values
+// rather than a scenario (the column round-trip census stamps a bin_id because
+// bin_id is a column, not because anything is sourcing).
+//
+// Every other failure of the sweep is a finding — a write that cleared one
+// ownership book and not another — and silencing it here would delete the only
+// automated notice of the shape.
+//
+// CALL IT BEFORE Open, and the ordering is load-bearing rather than stylistic.
+// Cleanups are LIFO and this function registers one that CLEARS the flag, so a
+// call made after Open has its clear run BEFORE the sweep reads it — the opt-out
+// then does nothing at all, silently, and the test fails on the state it
+// declared it was building on purpose. Every existing caller happens to get this
+// right; nothing enforced it, and it cost a debugging round to find.
+func DisableWedgeSweep(t testing.TB, why string) {
+	t.Helper()
+	if why == "" {
+		t.Fatal("DisableWedgeSweep needs a reason: the opt-out is only for a test that builds the wedge deliberately")
+	}
+	wedgeSweepMu.Lock()
+	wedgeSweepOff[t.Name()] = true
+	wedgeSweepMu.Unlock()
+	t.Cleanup(func() {
+		wedgeSweepMu.Lock()
+		delete(wedgeSweepOff, t.Name())
+		wedgeSweepMu.Unlock()
+	})
+}
+
+// KnownPointerWedge quarantines a test whose end state is a REAL wedge produced
+// by production code that has not been fixed yet.
+//
+// SEPARATE FROM DisableWedgeSweep ON PURPOSE, and the separation is the whole
+// value: an opt-out that means "this row is not a plant state" and an opt-out
+// that means "the plant does this and it is wrong" look identical once they are
+// both a skip, and the second kind is a defect nobody can find again. This one
+// is greppable, it takes the finding's name, and every call is an item of work.
+//
+// It exists because an invariant that lands on a tree with pre-existing
+// violations has two options, and "do not land the invariant" is the worse one:
+// everything the gate would have caught from here on goes uncaught while the
+// known defect waits for its owner.
+func KnownPointerWedge(t testing.TB, finding string) {
+	t.Helper()
+	if finding == "" {
+		t.Fatal("KnownPointerWedge needs the finding: a quarantine nobody can name is a skip")
+	}
+	t.Logf("KNOWN POINTER WEDGE (quarantined, not fixed): %s", finding)
+	DisableWedgeSweep(t, finding)
+}
+
+func wedgeSweepDisabled(t testing.TB) bool {
+	wedgeSweepMu.Lock()
+	defer wedgeSweepMu.Unlock()
+	return wedgeSweepOff[t.Name()]
 }
 
 // sharedDBs tracks the per-key databases handed out by OpenShared. One clone
@@ -1130,7 +1250,10 @@ func CreateOrder(t *testing.T, db *store.DB, opts ...func(*orders.Order)) *order
 // order. orderID must reference a real order (see CreateOrder).
 func ClaimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
 	t.Helper()
-	if err := reservations.Acquire(db, orderID, binID, "test"); err != nil {
+	// laneOwner = orderID: fixtures build plain orders, and an order with no
+	// compound parent owns its own lane rows. A fixture that needs the CHILD
+	// exemption must pass the parent, which is what production does.
+	if err := reservations.Acquire(db, orderID, orderID, binID, "test"); err != nil {
 		t.Fatalf("testdb.ClaimBinForTest Acquire(bin=%d order=%d): %v", binID, orderID, err)
 	}
 	if err := db.ClaimBin(binID, orderID); err != nil {
@@ -1161,7 +1284,7 @@ func ClaimSlotForTest(t *testing.T, db *store.DB, nodeID, orderID int64) {
 // a real order (see CreateOrder).
 func ReserveBin(t *testing.T, db *store.DB, orderID, binID int64) {
 	t.Helper()
-	if err := reservations.Acquire(db, orderID, binID, "test"); err != nil {
+	if err := reservations.Acquire(db, orderID, orderID, binID, "test"); err != nil {
 		t.Fatalf("testdb.ReserveBin Acquire(bin=%d order=%d): %v", binID, orderID, err)
 	}
 }
@@ -1186,5 +1309,42 @@ func Envelope() *protocol.Envelope {
 	return &protocol.Envelope{
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-1"},
 		Dst: protocol.Address{Role: protocol.RoleCore},
+	}
+}
+
+// ClaimBinInDugLaneForTest is ClaimBinForTest for the ONE state production now
+// refuses: a bin hard-claimed by a foreign order INSIDE a lane that another
+// order's dig holds.
+//
+// reservations.Acquire's dig arm exists to stop that state being CREATED, and it
+// stops these fixtures creating it too — which is the arm working. But the state
+// is still REACHABLE: a mouth row has no unique index, so a dig lock and a
+// foreign bin claim committing in overlapping transactions can miss each other.
+// The stale-dig arms are what the plant does once it is already in that state, so
+// they still have to be able to build it.
+//
+// It writes the reservation row directly — the same sanctioned-bypass shape as
+// ClaimSlotForTest. Use it ONLY where the dug-lane collision IS the subject of
+// the test. Everywhere else ClaimBinForTest is the right call, and its refusal is
+// a real signal rather than an obstacle: if an ordinary fixture starts failing on
+// ErrLaneDugByAnother, the fixture is building a state the plant now prevents.
+func ClaimBinInDugLaneForTest(t *testing.T, db *store.DB, binID, orderID int64) {
+	t.Helper()
+	// PENDING, then claim, then confirm — the same three steps ClaimBinForTest
+	// runs. Only the first is bypassed: the claim primitives carry a demoted-CAS
+	// guard that requires a PENDING reservation for this order+bin, so inserting a
+	// confirmed row directly fails the claim with "bin is locked, already claimed,
+	// or does not exist".
+	if _, err := db.DB.Exec(
+		`INSERT INTO reservations (order_id, resource_kind, bin_id, state, reserved_by, created_at)
+		 VALUES ($1, 'bin', $2, 'pending', 'test-dug-lane-bypass', $3)`,
+		orderID, binID, clock.Now().UTC()); err != nil {
+		t.Fatalf("testdb.ClaimBinInDugLaneForTest reserve(bin=%d order=%d): %v", binID, orderID, err)
+	}
+	if err := db.ClaimBin(binID, orderID); err != nil {
+		t.Fatalf("testdb.ClaimBinInDugLaneForTest ClaimBin(bin=%d order=%d): %v", binID, orderID, err)
+	}
+	if err := reservations.Confirm(db, orderID, binID); err != nil {
+		t.Fatalf("testdb.ClaimBinInDugLaneForTest Confirm(bin=%d order=%d): %v", binID, orderID, err)
 	}
 }

@@ -268,7 +268,7 @@ func (db *DB) ListChildNodesUnlocked(parentID int64, asker reservations.DigAsker
 			SELECT 1 FROM reservations dig_hold
 			WHERE dig_hold.resource_kind = 'mouth'
 			  AND dig_hold.node_id = n.id
-			  AND dig_hold.state IN ('pending','confirmed')
+			  AND `+reservations.ActiveStateSQL("dig_hold.")+`
 			  AND dig_hold.mode = $2
 			  AND %s
 		  )
@@ -310,8 +310,8 @@ func (db *DB) LanesOccupiedInGroup(groupID int64) (map[int64]bool, error) {
 		SELECT DISTINCT r.node_id
 		FROM reservations r
 		JOIN nodes lane ON lane.id = r.node_id
-		WHERE r.resource_kind = 'occupancy'
-		  AND r.state IN ('pending','confirmed')
+		WHERE r.resource_kind = `+reservations.OccupancyKindSQL()+`
+		  AND `+reservations.ActiveStateSQL("r.")+`
 		  AND lane.parent_id = $1`, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("list occupied lanes in group %d: %w", groupID, err)
@@ -346,7 +346,7 @@ func (db *DB) ListOutstandingDigClaims(groupID int64, asker reservations.DigAske
 		JOIN nodes lane ON lane.id = dig_hold.node_id
 		WHERE dig_hold.resource_kind = 'mouth'
 		  AND dig_hold.mode = $1
-		  AND dig_hold.state IN ('pending','confirmed')
+		  AND `+reservations.ActiveStateSQL("dig_hold.")+`
 		  AND lane.parent_id = $2
 		  AND %s
 		  AND EXISTS (
@@ -414,7 +414,7 @@ func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, 
 		  AND `+bins.SourceableStatusSQL+`
 		  AND b.status <> 'staged'
 		  AND ($2 = '' OR b.payload_code = $2)
-		  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')
+		  AND NOT `+reservations.BinSpokenForSQL+`
 		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC
 		LIMIT 1`, bins.BinJoinQuery, helpers.ReachableSQL("n"))
@@ -520,29 +520,50 @@ type SpokenForBin struct {
 	// the SOFT hold -- a plan, not a robot, and the class the burial guard
 	// deliberately does not respect.
 	HardClaim bool
-	// HeldSince is when the hold started: the reservation row's created_at, or the
-	// holder order's own created_at for a compound leg whose claim is stamped in
-	// the same transaction that inserts it (store/orders.go CreateCompoundChildren)
-	// and so shares its timestamp exactly.
+	// HeldSince is when the HOLDER ORDER came into existence — orders.created_at,
+	// and deliberately nothing else. An order cannot hold a bin before it exists,
+	// so this is a sound lower bound for every hold class, and for a soft hold the
+	// reservation is written by that order anyway.
+	//
+	// IT USED TO BE COALESCE(reservations.created_at, orders.created_at) AND THAT
+	// STRADDLED TWO CLOCKS. orders.created_at is written explicitly from
+	// clock.Now() (store/orders/orders.go Create); reservations.created_at has no
+	// explicit write and takes the database default, which is wall time. On the
+	// sim those are fifteen months apart — orders at 2027-11-16, reservations at
+	// 2026-08-30 — so whenever a reservation row existed the COALESCE returned a
+	// WALL timestamp that the burial classifier then compared against
+	// destination_resolved_at, which is a SIM one. "Did this hold exist when the
+	// selector looked?" answered no every single time, and every such burial was
+	// filed as the should-be-zero GUARD BYPASS with a log line telling the reader
+	// to go find a placement path that does not exist. Measured on the demo.yaml
+	// runs of 2026-08-30/31: BYPASS=10 and BYPASS=7, every event a false one.
+	//
+	// The rule is COMPARE A COLUMN AGAINST THE CLOCK THAT WROTE IT. Every value
+	// this is compared with — destination_resolved_at, order_history.created_at —
+	// is written from clock.Now(), so the hold's timestamp has to come from the
+	// same place. One source, one clock, no COALESCE to get wrong.
 	HeldSince time.Time
-	// HeldFor is that hold's AGE, computed IN THE DATABASE (§R.98 stage D).
+	// HeldFor is that hold's AGE, and it is computed PER SOURCE so that both ends
+	// of the subtraction always come from the clock that wrote them:
 	//
-	// It is not derivable in Go from HeldSince, and the burial shadow spent a
-	// soak proving it: HeldSince comes from a DB-default `created_at` (wall) and
-	// the caller subtracted it from `clock.Now()` (sim). Under the honest running
-	// clock, sim runs a year ahead of wall, so an eight-second hold rendered as
-	// `held_for=7355h32m48s` in the one line an engineer reads to judge whether a
-	// burial mattered.
+	//	reservation present → now() − reservations.created_at   (both wall)
+	//	otherwise           → $2     − orders.created_at        (both order clock)
 	//
-	// The house rule is compare a column against the clock that WROTE it. Both
-	// ends of this subtraction are now the database's, so the domains cannot be
-	// crossed by a caller who does not know which clock stamped what — which is
-	// the only durable form of the fix, since HeldSince's two sources are both
-	// DB-stamped and every Go caller's `now` is not.
+	// THE HOUSE RULE IS "COMPARE A COLUMN AGAINST THE CLOCK THAT WROTE IT", AND
+	// IT HAS BEEN GOT WRONG TWICE HERE IN OPPOSITE DIRECTIONS. First the caller
+	// did `clock.Now().Sub(HeldSince)` on a DB-default column — sim minus wall,
+	// and an eight-second hold printed as `held_for=7355h32m48s`. Then the
+	// subtraction moved into SQL under a comment claiming that settled it because
+	// "both ends are now the database's": only one end was, because
+	// orders.created_at is not DB-stamped at all — orders.Create writes it from
+	// clock.Now(). So SQL now() − orders.created_at ran wall − sim ≈ −15 months,
+	// hit the negative clamp below, and printed `held_for=0s` on every hard-claim
+	// line of two full demo.yaml runs. The clamp was the same defect wearing a
+	// guard, which is precisely what that comment accused ITS predecessor of.
 	//
-	// The old code clamped a negative result and blamed "clock skew". That
-	// clamp was the same defect wearing a guard: it caught the sign and not the
-	// magnitude, so the direction that actually occurred sailed through.
+	// A single `now` cannot fix this, because the two sources genuinely live in
+	// two clocks. Splitting the subtraction is the only form that is right for
+	// both.
 	HeldFor time.Duration
 }
 
@@ -559,27 +580,39 @@ type SpokenForBin struct {
 // LIVE HOLDER ONLY. A hold whose order is terminal is not a hold -- the terminal
 // chokepoint releases it in the same transaction as the status write. Filtering
 // here means the instrument never reports a burial of a bin nobody is waiting for.
-func (db *DB) SpokenForBinsBehind(placedNodeID int64) ([]SpokenForBin, error) {
+// `now` must be the caller's clock.Now() — the clock that wrote
+// orders.created_at. See SpokenForBin.HeldFor for what happens when it is not.
+func (db *DB) SpokenForBinsBehind(placedNodeID int64, now time.Time) ([]SpokenForBin, error) {
 	rows, err := db.Query(fmt.Sprintf(`
 		WITH placed AS (SELECT id, parent_id, depth FROM nodes WHERE id = $1)
 		SELECT b.id, b.label, held.name, held.depth,
 		       (b.claimed_by IS NOT NULL) AS hard_claim,
 		       o.id, o.status, (o.parent_order_id IS NOT NULL) AS is_child,
-		       COALESCE(r.created_at, o.created_at) AS held_since,
-		       EXTRACT(EPOCH FROM now() - COALESCE(r.created_at, o.created_at)) AS held_secs
+		       o.created_at AS held_since,
+		       -- ONE CLOCK FOR BOTH ARMS. These two branches produce values that
+		       -- land in the same column and are compared against each other, so
+		       -- measuring them against different clocks makes the column mean two
+		       -- things. reservations.created_at is now stamped from the app clock
+		       -- like orders.created_at, so $2 is the right reference for both;
+		       -- SQL now() is the DATABASE's wall clock and is months away from it
+		       -- under the sim's fast-forward.
+		       EXTRACT(EPOCH FROM CASE
+		           WHEN r.created_at IS NOT NULL THEN $2::timestamptz - r.created_at
+		           ELSE $2::timestamptz - o.created_at
+		       END) AS held_secs
 		FROM nodes held
 		CROSS JOIN placed
 		JOIN bins b ON b.node_id = held.id AND b.status <> 'retired'
 		LEFT JOIN reservations r
 		       ON r.bin_id = b.id AND r.resource_kind = 'bin'
-		      AND r.state IN ('pending','confirmed')
+		      AND `+reservations.ActiveStateSQL("r.")+`
 		JOIN orders o ON o.id = COALESCE(b.claimed_by, r.order_id)
 		WHERE %s
 		  AND COALESCE(held.is_synthetic, false) = false
 		  AND (b.claimed_by IS NOT NULL OR r.order_id IS NOT NULL)
 		  AND o.status NOT IN (%s)
 		ORDER BY held.depth ASC`,
-		helpers.ShallowerInSameLane("placed", "held"), protocol.TerminalStatusSQLList()), placedNodeID)
+		helpers.ShallowerInSameLane("placed", "held"), protocol.TerminalStatusSQLList()), placedNodeID, now.UTC())
 	if err != nil {
 		return nil, fmt.Errorf("spoken-for bins behind node %d: %w", placedNodeID, err)
 	}
@@ -902,11 +935,19 @@ func (db *DB) LiveServiceDigInEpisode(originID string) (digID int64, asked bool,
 // must not park a blocker in, because doing so would seal an EMPTY slot deeper
 // in the same lane that a live order is coming to fill.
 //
-// It is the dig's half of EntombsASpokenForSlotSQL; the store selector asks the
-// same question inline, of one candidate, which is exactly how the two halves of
-// the burial guard beside it are already arranged. Group-scoped and read once
-// per pass, for the same reason the burial set is: it is asked per candidate and
-// the answer cannot change mid-pass without the pass being wrong anyway.
+// IT IS THE DIG'S HALF OF EntombsASpokenForSlotSQL AND THERE IS NO OTHER HALF.
+// This said the store selector asks the same question inline, of one candidate,
+// "exactly how the two halves of the burial guard beside it are already
+// arranged". The burial guard does have two halves; this does not.
+// findStoreSlot carries no entombment term at all — and deliberately, because
+// one there refuses the legitimate five-store burst that packs a lane
+// back-to-front (see the long note in store/nodes/lanes.go, and the ten pins it
+// names). A reader who went looking for the store-side half found nothing and
+// had no way to tell "deleted" from "never existed".
+//
+// Group-scoped and read once per pass, for the same reason the burial set is: it
+// is asked per candidate and the answer cannot change mid-pass without the pass
+// being wrong anyway.
 //
 // OWNER-BLIND, and that is the load-bearing half. A dig is exempt from its own
 // dig lock everywhere else, and the exemption here would let a compound entomb a

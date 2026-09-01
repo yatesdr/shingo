@@ -49,7 +49,7 @@ func TestEveryTerminalTransitionReleasesReservations(t *testing.T) {
 			// An order at `from`, holding a reservation on its own bin.
 			ord := makeOrderAt(t, db, "term-"+label, from)
 			bin := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-"+label)
-			if err := reservations.Acquire(db, ord.ID, bin.ID, "test"); err != nil {
+			if err := reservations.Acquire(db, ord.ID, ord.ID, bin.ID, "test"); err != nil {
 				t.Fatalf("%s: Acquire: %v", label, err)
 			}
 
@@ -68,7 +68,7 @@ func TestEveryTerminalTransitionReleasesReservations(t *testing.T) {
 
 			// (b) the freed bin is re-acquirable by a fresh order.
 			probe := makeOrderAt(t, db, "probe-"+label, protocol.StatusQueued)
-			if err := reservations.Acquire(db, probe.ID, bin.ID, "test"); err != nil {
+			if err := reservations.Acquire(db, probe.ID, probe.ID, bin.ID, "test"); err != nil {
 				t.Errorf("%s: bin not re-acquirable after terminal transition: %v", label, err)
 			}
 		}

@@ -16,6 +16,15 @@
       <a href="/orders" class="ofilter{{if not .FilterStatus}} is-active{{end}}">Active</a>
       <span class="ofilter-sep" aria-hidden="true"></span>
       <a href="/orders?status=pending" class="ofilter{{if eq .FilterStatus "pending"}} is-active{{end}}"><span class="ofilter-dot" data-status="pending"></span>Pending</a>
+      {{/* THE TWO WAITING RUNGS, which this row did not have. An operator asking
+           "what is waiting, and why" had no way to narrow the board to it: both
+           statuses appeared only under Active or All, mixed in with everything
+           the fleet is already carrying. Sourcing is the material hunt — the hand
+           is short — and queued is the line, where the hand is complete and only
+           the turn is missing; they are different questions and different
+           answers, which is why they are two pills and not one. */}}
+      <a href="/orders?status=sourcing" class="ofilter{{if eq .FilterStatus "sourcing"}} is-active{{end}}"><span class="ofilter-dot" data-status="sourcing"></span>Sourcing</a>
+      <a href="/orders?status=queued" class="ofilter{{if eq .FilterStatus "queued"}} is-active{{end}}"><span class="ofilter-dot" data-status="queued"></span>Queued</a>
       <a href="/orders?status=dispatched" class="ofilter{{if eq .FilterStatus "dispatched"}} is-active{{end}}"><span class="ofilter-dot" data-status="dispatched"></span>Dispatched</a>
       <a href="/orders?status=in_transit" class="ofilter{{if eq .FilterStatus "in_transit"}} is-active{{end}}"><span class="ofilter-dot" data-status="in_transit"></span>In Transit</a>
       <a href="/orders?status=faulted" class="ofilter{{if eq .FilterStatus "faulted"}} is-active{{end}}"><span class="ofilter-dot" data-status="faulted"></span>Faulted</a>
@@ -32,10 +41,19 @@
     {{if .Authenticated}}<button class="btn btn-primary btn-sm ml-auto" data-action="openManualOrderModal">Manual Order</button>{{end}}
   </div>
 
+  {{/* WHAT THE BOARD IS NOT SHOWING. status=all is capped, and it used to
+       truncate in silence — the oldest orders simply were not there, with no
+       control and no count to say so. Absent when the page holds everything. */}}
+  {{if .TruncationNotice}}<div class="text-muted-xs orders-truncation">{{.TruncationNotice}}</div>{{end}}
+
   {{$labels := .QueueCodeLabels}}
   {{if or .QueueCodeCounts .FaultedNoticeCount}}
   <div class="queue-why">
-    {{if .QueueCodeCounts}}<span class="text-muted-xs">Why queued:</span>{{end}}
+    {{/* "Why waiting", not "Why queued": countQueueCodes tallies the whole
+         ACQUIRING set (protocol.IsAcquiring — queued and sourcing), so a label
+         naming one rung describes the wrong number. An operator asking what is
+         sourcing and why reads these chips. */}}
+    {{if .QueueCodeCounts}}<span class="text-muted-xs">Why waiting:</span>{{end}}
     {{range $code, $count := .QueueCodeCounts}}
       {{if and $code (gt $count 0)}}
       <span class="chip chip-muted">{{$label := index $labels $code}}{{if $label}}{{$label}}{{else}}{{$code}}{{end}}: <span class="tnum">{{$count}}</span></span>

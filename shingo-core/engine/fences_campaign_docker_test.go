@@ -220,6 +220,7 @@ func TestFences_F7_AtLevelPushParksWithItsOwnCause(t *testing.T) {
 // exercised end to end.
 func TestFences_F9_ComingIsSubtracted(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "the inbound push is a row the keeper COUNTS; nothing dispatches it")
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	grpID, btID := fenceGroup(t, db, "F9-GRP", "F9-45x58", 2, 4, false)

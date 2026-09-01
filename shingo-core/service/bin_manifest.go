@@ -526,7 +526,7 @@ func (s *BinManifestService) clearAndClaimTx(tx *sql.Tx, binID, orderID int64) e
 			manifest_confirmed=false, loaded_at=NULL,
 			claimed_by=$1, updated_at=NOW()
 		WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
-		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$1 AND bin_id=$2 AND state='pending')`,
+		  AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 1, 2),
 		orderID, binID)
 	if err != nil {
 		return fmt.Errorf("clear+claim bin %d: %w", binID, err)
@@ -572,7 +572,7 @@ func (s *BinManifestService) syncUOPAndClaimTx(tx *sql.Tx, binID, orderID int64,
 		UPDATE bins SET
 			uop_remaining=$1, claimed_by=$2, updated_at=NOW()
 		WHERE id=$3 AND locked=false AND (claimed_by IS NULL OR claimed_by=$2)
-		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$2 AND bin_id=$3 AND state='pending')`,
+		  AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 2, 3),
 		remainingUOP, orderID, binID)
 	if err != nil {
 		return fmt.Errorf("sync+claim bin %d: %w", binID, err)
@@ -619,8 +619,10 @@ func (s *BinManifestService) syncUOPAndClaimTx(tx *sql.Tx, binID, orderID int64,
 //     docs/reservations.md).
 //  3. On ANY failure after Acquire → Release (best-effort; Expire is the backstop).
 func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP *int) error {
-	if err := reservations.Acquire(s.db, orderID, binID, "ClaimForDispatch"); err != nil {
-		return err // ErrReservationConflict or transient DB error — both surface as codeClaimFailed
+	if err := reservations.Acquire(s.db, orderID, s.laneOwnerOf(orderID), binID, "ClaimForDispatch"); err != nil {
+		// ErrReservationConflict, ErrLaneDugByAnother, or a transient DB error —
+		// all three surface as codeClaimFailed and all three retry next tick.
+		return err
 	}
 	if err := s.claimAndConfirm(binID, orderID, remainingUOP); err != nil {
 		if rErr := reservations.Release(s.db, orderID, binID); rErr != nil {
@@ -716,7 +718,30 @@ func (s *BinManifestService) ConfirmHeldReservation(orderID, binID int64) error 
 // partial survives across ticks until the order sources or terminalizes
 // (demand is operator-driven, never aged out).
 func (s *BinManifestService) ReserveForDispatch(binID, orderID int64) error {
-	return reservations.Acquire(s.db, orderID, binID, "reserveComplexPlan")
+	return reservations.Acquire(s.db, orderID, s.laneOwnerOf(orderID), binID, "reserveComplexPlan")
+}
+
+// laneOwnerOf resolves the order that would hold a lane mouth row on orderID's
+// behalf: its compound parent, or orderID itself when it has none. It mirrors
+// dispatch.laneOwnerFor — children never own rows, so a child working inside its
+// parent's dug lane is exempted through the parent.
+//
+// UNREADABLE ANSWERS ITSELF, and the direction matters. Returning orderID for an
+// order that DOES have a parent only makes the dig arm stricter: the child loses
+// its parent's exemption, fails to claim, and retries next tick. Guessing a
+// parent that is not there would hand an unrelated order a dig's exemption, which
+// is the direction that lets a foreigner claim inside an excavation — the exact
+// collision reservations.Acquire's dig arm exists to stop.
+func (s *BinManifestService) laneOwnerOf(orderID int64) int64 {
+	var parent sql.NullInt64
+	if err := s.db.QueryRow(
+		`SELECT parent_order_id FROM orders WHERE id = $1`, orderID).Scan(&parent); err != nil {
+		return orderID
+	}
+	if parent.Valid {
+		return parent.Int64
+	}
+	return orderID
 }
 
 // SyncOrClearForReleased applies the operator's release-time remainingUOP value

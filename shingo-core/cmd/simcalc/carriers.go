@@ -47,6 +47,7 @@ import (
 	"strings"
 	"time"
 
+	"shingocore/dispatch"
 	"shingocore/plantspec"
 )
 
@@ -170,6 +171,20 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 			}
 			p.totalSlots += len(l.Slots)
 		}
+		// FLAT POSITIONS COUNT TOO, and they were invisible. A zone can hold its
+		// slots directly, with no lane between — that is the shape a MAINTAINED
+		// group must be in, because the save-time rules refuse a group with lanes
+		// — and demo.yaml's SYN_PRESS_EMPTIES is exactly that: EIGHT POSITIONS,
+		// SIX OF THEM SEEDED, two left free (plants/demo.yaml, BIN-PEB-01..06 on
+		// PEB_001..006; PEB_007/008 stay open as the spare positions the
+		// pre-resolve loop needs). Walking only z.Lanes counted its slot capacity
+		// as zero and attributed its seeded empties to no pool, so the tool
+		// reported a plant short of the eight slots and six carriers it actually
+		// has, and reported the press empties bank as holding nothing.
+		for _, s := range z.Positions {
+			slotZone[s.Name] = z.Name
+		}
+		p.totalSlots += len(z.Positions)
 	}
 	for _, b := range plant.Bins {
 		if b.Payload == "" {
@@ -321,8 +336,30 @@ func computeHeadroom(plant *plantspec.Plant) []zoneHeadroom {
 	var out []zoneHeadroom
 	for _, z := range plant.Zones {
 		zh := zoneHeadroom{name: z.Name}
+		// THE ZONE'S OWN WAIT POINTS GATE EVERY LANE IN IT. Read here rather
+		// than per lane because that is where the property lives now; a lane's
+		// own gate_point is the legacy override and still wins for that lane.
+		// Reading only the lane key — which is what this did — scores a
+		// group-gated plant as ENTIRELY UNGATED, and simcalc's blindness has
+		// already cost one round: its "verdict unchanged" on the PANEL-B
+		// unloader was read as evidence when the model had no term for it.
+		zoneGated := len(dispatch.ParseWaitPoints(strings.Join(z.WaitPoints, ","))) > 0
+		// Flat positions first: a zone that holds its slots directly has no lane
+		// to walk, and a maintained group is always that shape. They are never
+		// gated (a gate is a lane's admission, and a flat position has no lane
+		// to be admitted to) and they can never be dug (there is nothing in
+		// front of anything), so they contribute free UNGATED slots and leave
+		// deepestDig alone.
+		for _, s := range z.Positions {
+			zh.slots++
+			if seededIn[s.Name] > 0 {
+				zh.seeded++
+			} else {
+				zh.freeUngated++
+			}
+		}
 		for _, l := range z.Lanes {
-			gated := l.GatePoint != ""
+			gated := l.GatePoint != "" || zoneGated
 			free := 0
 			for _, s := range l.Slots {
 				zh.slots++

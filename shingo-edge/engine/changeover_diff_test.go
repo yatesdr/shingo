@@ -360,8 +360,13 @@ func TestDiffStyleClaims_EvacuateFlagIgnoredOnPayloadChange(t *testing.T) {
 // ApplyReuseCompatibleBinsShortcut
 // ---------------------------------------------------------------------------
 
-// Press-index Swap with matching payload + reuse flag set + empty bin →
+// Press-index Swap with matching payload + reuse flag set + DRAINED bin →
 // Unchanged (skip the swap entirely).
+//
+// DRAINED, NOT EMPTY: the accessor reads an Edge counter (RemainingUOPCached ==
+// 0) on a bin that still carries its payload and its manifest. Core's "empty"
+// means a carrier with no payload code, which is a different fact about a
+// different thing. See binDrainedAtCoreNode.
 func TestApplyReuseCompatibleBinsShortcut_SkipsWhenAllConditionsMet(t *testing.T) {
 	t.Parallel()
 	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}
@@ -391,8 +396,8 @@ func TestApplyReuseCompatibleBinsShortcut_FlagFalseStillSwaps(t *testing.T) {
 	}
 }
 
-// Bin not empty → no shortcut.
-func TestApplyReuseCompatibleBinsShortcut_BinNotEmptyStillSwaps(t *testing.T) {
+// Bin not drained → no shortcut.
+func TestApplyReuseCompatibleBinsShortcut_BinNotDrainedStillSwaps(t *testing.T) {
 	t.Parallel()
 	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}
 	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index"}
@@ -436,7 +441,7 @@ func TestApplyReuseCompatibleBinsShortcut_DifferentPayloadStillSwaps(t *testing.
 	}
 }
 
-// nil isEmpty accessor → defensive default, no shortcut applied.
+// nil isDrained accessor → defensive default, no shortcut applied.
 func TestApplyReuseCompatibleBinsShortcut_NilAccessorPreservesSwap(t *testing.T) {
 	t.Parallel()
 	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}

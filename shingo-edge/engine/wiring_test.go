@@ -591,7 +591,7 @@ func TestWiring_FlipABNode_SwitchesActivePull(t *testing.T) {
 	eng := testEngine(t, db)
 
 	// Initially A=active, B=inactive. Flip to B.
-	testutil.MustNoErr(t, eng.FlipABNode(nodeBID), "FlipABNode to B")
+	testutil.MustNoErr(t, eng.FlipABNode(nodeBID, OperatorFlip("test")), "FlipABNode to B")
 
 	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
 	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
@@ -604,7 +604,7 @@ func TestWiring_FlipABNode_SwitchesActivePull(t *testing.T) {
 	}
 
 	// Flip back to A
-	testutil.MustNoErr(t, eng.FlipABNode(nodeAID), "FlipABNode to A")
+	testutil.MustNoErr(t, eng.FlipABNode(nodeAID, OperatorFlip("test")), "FlipABNode to A")
 
 	rtA, _ = db.GetProcessNodeRuntime(nodeAID)
 	rtB, _ = db.GetProcessNodeRuntime(nodeBID)
@@ -628,7 +628,7 @@ func TestWiring_FlipABNode_RejectsUnpairedNode(t *testing.T) {
 
 	eng := testEngine(t, db)
 
-	err := eng.FlipABNode(nodeID)
+	err := eng.FlipABNode(nodeID, OperatorFlip("test"))
 	if err == nil {
 		t.Fatal("FlipABNode should reject a node without PairedCoreNode")
 	}
@@ -762,8 +762,29 @@ func TestWiring_ABFlip_DuringChangeover(t *testing.T) {
 		t.Fatalf("start changeover: %v", err)
 	}
 
-	// Flip should succeed (FlipABNode doesn't check changeover state)
-	testutil.MustNoErr(t, eng.FlipABNode(nodeBID), "FlipABNode during changeover")
+	// A CHANGEOVER DOES NOT BLOCK THE FLIP — that is still what this asserts.
+	// What changed (owner ruling 2026-08-28) is that the flip now asks whether
+	// the TARGET can feed the line, and during a changeover that means its own
+	// changeover order has delivered. So make the target ready, which is the
+	// state the operator would actually be flipping from; the guard's override
+	// is exercised separately by the flip-guard tests.
+	// AB-NODE-B is a CONSUME position, so "ready" is two facts, not one: its own
+	// order delivered AND the material now on it belongs to the INCOMING style.
+	// A full bin of the outgoing part feeds a press about to run the new one
+	// exactly as well as an empty carrier does — which is nothing. The second
+	// half caught this fixture when the conjunct landed.
+	if co, cErr := db.GetActiveProcessChangeover(processID); cErr == nil && co != nil {
+		if task, tErr := db.GetChangeoverNodeTaskByNode(co.ID, nodeBID); tErr == nil &&
+			task != nil && task.NextMaterialOrderID != nil {
+			markOrderTerminal(db, *task.NextMaterialOrderID)
+		}
+		if toClaim, tcErr := db.GetStyleNodeClaimByNode(co.ToStyleID, "AB-NODE-B"); tcErr == nil &&
+			toClaim != nil {
+			testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeBID, &toClaim.ID, 50),
+				"stock AB-NODE-B with the incoming style's material")
+		}
+	}
+	testutil.MustNoErr(t, eng.FlipABNode(nodeBID, OperatorFlip("test")), "FlipABNode during changeover")
 
 	// Verify flip happened
 	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
@@ -828,7 +849,7 @@ func TestWiring_ABFlip_ImmediateDelta(t *testing.T) {
 	eng.wireEventHandlers()
 
 	// Flip then immediately send delta — Node B should get the decrement
-	eng.FlipABNode(nodeBID)
+	eng.FlipABNode(nodeBID, OperatorFlip("test"))
 
 	eng.handleCounterDelta(CounterDeltaEvent{
 		ProcessID: processID,

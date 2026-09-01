@@ -17,7 +17,7 @@ A physical location in the facility where bins can be stored, picked up, or deli
 | 6 River Systems | Destination |
 | VDA 5050 | Node (same) |
 
-Node types include `NGRP` (node group), `LANE` (lane), `SHF` (shuffle row), plus physical nodes for storage, line-side, and staging.
+Node types include `NGRP` (node group), `LANE` (lane), plus physical nodes for storage, line-side, and staging. (The old `SHF` shuffle-row type was deleted — its nodes were reassigned to `LANE`; reshuffle parking is described by behavior, children of the group, not by a node type.)
 
 ### Bin
 
@@ -31,7 +31,7 @@ A physical container that holds materials and is tracked as it moves between nod
 | Locus Robotics | Tote / Cart |
 | VDA 5050 | Load |
 
-Bin statuses: `available`, `staged`, `flagged`, `maintenance`, `retired`.
+Bin statuses: `available`, `staged`, `flagged`, `maintenance`, `quality_hold`, `retired`.
 
 ### Payload
 
@@ -67,7 +67,7 @@ A transport request to move a bin between nodes. Orders flow from Shingo Edge to
 | 6 River Systems | Task |
 | VDA 5050 | Order (same) |
 
-Order statuses: `pending`, `sourcing`, `queued`, `dispatched`, `in_transit`, `delivered`, `confirmed`, `completed`, `failed`, `cancelled`.
+Order statuses: `pending`, `sourcing`, `queued`, `dispatched`, `in_transit`, `delivered`, `confirmed`, `failed`, `cancelled`. (There is no `completed` status — terminal completion is `confirmed`.)
 
 ### Reservation
 
@@ -242,7 +242,7 @@ The decision "may this move happen at all", asked in one place (`dispatch/admiss
 
 ### Gate / Mark
 
-A lane is **gated** iff it carries a dwell point (`PropLaneGatePoint`) — the **mark**. The mark chooses only where an order waits: parked pre-dispatch, or dwelling at a point. It is not a safety setting, and no marks are set at either plant today.
+A lane is **gated** iff its node group carries a dwell point (`PropGroupWaitPoints` on the NGRP) — the **mark**. The per-lane `PropLaneGatePoint` is a legacy key that still wins when set, but no plant uses it. The mark chooses where an order waits: parked pre-dispatch, or dwelling at a point. It is not a safety setting, and no lane-level marks are set at either plant today (group-level wait points are in use). See [lanes.md](lanes.md).
 
 ### Chapter
 

@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
+	"shingocore/store/bins"
 )
 
 // CanEnterPosition implements fleet.PositionGate: the plant's one-bin-per-node
@@ -40,8 +41,26 @@ import (
 //     for the full-out to lift its bin clear, which is the real choreography.
 //
 // Synthetic nodes (LANE / NGRP / _TRANSIT) hold many bins by design and are exempt.
-// A lookup failure never blocks: this is a physics model, not a validator, and it
-// must not invent a stall out of a missing row.
+//
+// A LOOKUP FAILURE NEVER BLOCKS — with ONE exception, and the exception is stated
+// here because it contradicts the sentence before it. When the position is
+// occupied and the ORDER cannot be resolved from its vendor id, the gate holds.
+// It reads the other way round from every other failure in this function, and it
+// is right: at that point occupancy is a FACT already read, and the only unknown
+// is whether the resident belongs to the arriving order. Passing would let a
+// robot lower a bin onto an occupied node, which is the impossible event this
+// gate exists to keep out of Core's model. Every other read failure leaves
+// occupancy itself unknown, and inventing a stall out of a missing row is the
+// worse error.
+//
+// The arm's population is the vendor order — an order the fleet knows and Core
+// cannot look up. The simulator does not produce one, so no fixture reaches it;
+// it is pinned by a unit test rather than by a run.
+//
+// THE OCCUPANCY QUESTION IS SPLIT OUT (positionOccupiedBy) so a reader that wants
+// "is this position obstructed" gets exactly that, without the gate's fail-closed
+// arm riding along. A second spelling of the occupancy rule is how the simulator's
+// physics and anything that later reports on it drift apart.
 func (e *Engine) CanEnterPosition(vendorOrderID, location, binTask string) (bool, string) {
 	// Only a placement can be obstructed. Anything else — pickup, wait, or a task
 	// we do not recognise — passes untouched.
@@ -49,34 +68,65 @@ func (e *Engine) CanEnterPosition(vendorOrderID, location, binTask string) (bool
 		return true, ""
 	}
 
-	node, err := e.db.GetNodeByDotName(location)
-	if err != nil || node == nil || node.IsSynthetic {
+	blocker, occupied := e.positionOccupiedBy(location, 0)
+	if !occupied {
 		return true, ""
-	}
-
-	residents, err := e.db.ListBinsByNode(node.ID)
-	if err != nil || len(residents) == 0 {
-		return true, "" // position is free
 	}
 
 	order, err := e.db.GetOrderByVendorID(vendorOrderID)
 	if err != nil || order == nil {
-		return false, fmt.Sprintf("%s holds bin %d and the order is unresolvable", location, residents[0].ID)
+		return false, fmt.Sprintf("%s holds bin %d and the order is unresolvable", location, blocker.ID)
 	}
 
-	for _, b := range residents {
-		if b.Status == "retired" {
-			continue
-		}
-		// A bin this order already owns is not an obstruction to itself (a multi-bin
-		// order placing beside its own load).
-		if b.ClaimedBy != nil && *b.ClaimedBy == order.ID {
-			continue
-		}
-		return false, fmt.Sprintf("%s holds bin %d (claimed by %s), order %d cannot place onto it",
-			location, b.ID, claimOwner(b.ClaimedBy), order.ID)
+	// Re-ask with the order's identity: a bin this order already owns is not an
+	// obstruction to itself (a multi-bin order placing beside its own load).
+	blocker, occupied = e.positionOccupiedBy(location, order.ID)
+	if !occupied {
+		return true, ""
 	}
-	return true, ""
+	return false, fmt.Sprintf("%s holds bin %d (claimed by %s), order %d cannot place onto it",
+		location, blocker.ID, claimOwner(blocker.ClaimedBy), order.ID)
+}
+
+// positionOccupiedBy is the occupancy half of CanEnterPosition, on its own so
+// there is ONE spelling of "this position is physically obstructed".
+//
+// forOrderID, when non-zero, excludes bins that order already owns — the
+// multi-bin case where a leg places beside its own load. Zero means "obstructed
+// by anything", which is the question to ask when the order is not known.
+//
+// ── IT FAILS OPEN, ALWAYS, AND THAT IS NOT THE GATE'S WHOLE ANSWER ────────
+//
+// Every read failure here reports NOT occupied. This is a physics model, not a
+// validator: a missing node row or an unreadable bin list must not invent a
+// stall. CanEnterPosition's fail-CLOSED arm lives at the call site above,
+// deliberately outside this function, because it fires on a DIFFERENT unknown —
+// occupancy is already established there and only ownership is in doubt. A
+// reader that wants occupancy gets occupancy; a reader that wants the gate's
+// full decision calls the gate.
+//
+// Retired bins are not obstructions — the row survives for audit, the carrier is
+// gone from the floor — and there is no arm here for them because there does not
+// need to be: bins.ListByNode's own WHERE carries `b.status != 'retired'`, so
+// they never arrive. There WAS one, skipping a status the query had already
+// excluded, and the exclusion is stated here rather than re-implemented so a
+// reader is not left thinking the guard is load-bearing.
+func (e *Engine) positionOccupiedBy(location string, forOrderID int64) (*bins.Bin, bool) {
+	node, err := e.db.GetNodeByDotName(location)
+	if err != nil || node == nil || node.IsSynthetic {
+		return nil, false
+	}
+	residents, err := e.db.ListBinsByNode(node.ID)
+	if err != nil {
+		return nil, false
+	}
+	for _, b := range residents {
+		if forOrderID != 0 && b.ClaimedBy != nil && *b.ClaimedBy == forOrderID {
+			continue
+		}
+		return b, true
+	}
+	return nil, false
 }
 
 func claimOwner(claimedBy *int64) string {

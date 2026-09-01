@@ -16,21 +16,30 @@ package reconciliation
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/messaging"
+	"shingocore/store/reservations"
 )
 
 const criticalOutboxAge = 5 * time.Minute
 const stuckOrderAge = 30 * time.Minute
 
-// queuedOrderAge is the SEPARATE, longer staleness bound for an order that is
-// still acquiring (queued or sourcing). Waiting is what these statuses are FOR,
-// so they need a different threshold from the ones where the fleet already has
-// the order and nothing is moving.
+// queuedOrderAge is the SEPARATE, longer staleness bound for a `queued` order.
+// Waiting is what that status is FOR, so it needs a different threshold from the
+// ones where the fleet already has the order and nothing is moving.
+//
+// QUEUED ONLY, and this comment said "queued or sourcing" while the SQL it
+// describes has always applied it to queued alone — see the note at the CASE,
+// which states the reason: `sourcing` is meant to be transient, so half an hour
+// resting there is a real signal and the longer bound would silence a working
+// alarm. The Edge's mirror of this bound argues the same thing from its side.
+// The SQL is right; the comment was describing the acquiring set because that is
+// the set the two statuses usually travel in.
 //
 // 30 minutes is the right question to ask of a `dispatched` leg — a robot that
 // has not moved in half an hour has been forgotten. It is the wrong question to
@@ -272,14 +281,45 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 	// stage, and every `updated_at` sits in the future and this goes permanently
 	// silent. The one thing that would have said "order 2 has not advanced in
 	// sixteen minutes" was one config flag from saying nothing at all.
+	// ── AND updated_at MEANS TOUCHED, NOT PROGRESSED ─────────────────────
+	//
+	// It is stamped by ~20 writers, and several of them run on the dispatch retry
+	// loop: an order that re-enters the scanner every tick, is refused, and parks
+	// again has its updated_at moved forward every time. So the one order this
+	// detector exists to catch — the one going nowhere fastest — refreshes its own
+	// staleness timer, and the alarm never fires.
+	//
+	// MEASURED, on the sim wedge of 2026-08-28 (main 1a6b6d23): order 143 sat in
+	// `sourcing` behind a leaked lane hold for over two hours of sim time. Its last
+	// real transition was at 19:00:55; its updated_at read 19:16:55 and kept
+	// climbing. Sixteen minutes of "activity" in which nothing happened, against a
+	// thirty-minute bound it would never reach.
+	//
+	// So the clock is the last STATUS TRANSITION — an order_history row, which is
+	// written only when an order actually moves (a re-entry that changes nothing
+	// appends nothing, and setQueueReason short-circuits an unchanged reason). Its
+	// created_at is stamped with clock.Now() by the same writers, so this does not
+	// re-introduce the wall-clock mismatch stage D removed just above.
+	//
+	// COALESCE to the order's own created_at: an order with no history yet has not
+	// progressed since it was born, which is the honest reading and keeps a row
+	// that never transitioned from being invisible forever.
+	//
+	// The POPULATION is untouched — same statuses, same two bounds, same casts.
+	// Only the clock changes.
 	now := clock.Now().UTC()
 	rows, err := db.Query(fmt.Sprintf(`
-		SELECT id, status, updated_at
-		FROM orders
-		WHERE status IN (%s)
-		  AND updated_at < $4::timestamptz - (
-		        CASE WHEN status = $3 THEN $2::int ELSE $1::int END * INTERVAL '1 second')
-		ORDER BY updated_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()),
+		SELECT o.id, o.status, COALESCE(h.last_progress, o.created_at) AS progressed_at,
+		       COALESCE(o.queue_cause, '') AS queue_cause
+		FROM orders o
+		LEFT JOIN LATERAL (
+		        SELECT MAX(created_at) AS last_progress
+		        FROM order_history WHERE order_id = o.id
+		) h ON TRUE
+		WHERE o.status IN (%s)
+		  AND COALESCE(h.last_progress, o.created_at) < $4::timestamptz - (
+		        CASE WHEN o.status = $3 THEN $2::int ELSE $1::int END * INTERVAL '1 second')
+		ORDER BY progressed_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()),
 		int(stuckOrderAge.Seconds()), int(queuedOrderAge.Seconds()), string(protocol.StatusQueued), now)
 	if err != nil {
 		return nil, err
@@ -288,9 +328,44 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 	for rows.Next() {
 		var orderID int64
 		var status string
-		var updatedAt time.Time
-		if err := rows.Scan(&orderID, &status, &updatedAt); err != nil {
+		var progressedAt time.Time
+		var queueCause string
+		if err := rows.Scan(&orderID, &status, &progressedAt, &queueCause); err != nil {
 			return nil, err
+		}
+		// ── THE STATION-DWELL ARM ────────────────────────────────────────
+		//
+		// A NARROWING of this same row, not a second detector, and that is
+		// deliberate: the population is identical (a staged order past the
+		// bound), so a separate query would put the same order on the board
+		// twice and make the count wrong in the one direction that matters.
+		//
+		// What it changes is the sentence. Every other row here means "find
+		// out what its robot is doing" — the generic advice is right because
+		// the cause is unknown. For a station wait it is known, and the
+		// generic advice sends the reader to look for a machine fault that
+		// does not exist: Core is deliberately not advancing this one, and
+		// nothing in Core ever will (PopStationWait is unfloored by ruling —
+		// see dispatch/queue_releasers.go, which asks for exactly this
+		// surface: "a row standing under this cause for a long time is a DWELL
+		// to surface to a human, not a wait to re-drive").
+		//
+		// Order 84 of run 12d stood four sim-hours holding AMR-15 under a bare
+		// `station-wait`, and two investigation rounds went looking for a fence
+		// that was refusing it. Nothing was refusing it. Nobody had been told
+		// it was their turn.
+		if issue, action, detail, ok := stationDwellRow(status, queueCause); ok {
+			anomalies = append(anomalies, &Anomaly{
+				Category:          "order_runtime",
+				Severity:          "degraded",
+				Issue:             issue,
+				RecommendedAction: action,
+				OrderID:           &orderID,
+				OrderStatus:       status,
+				ObservedAt:        &progressedAt,
+				Detail:            detail,
+			})
+			continue
 		}
 		// ── IT RECOMMENDED THE ONE ACT THIS HOUSE RULED IS NEVER RIGHT ────
 		//
@@ -318,10 +393,11 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 			RecommendedAction: "investigate_stuck_order",
 			OrderID:           &orderID,
 			OrderStatus:       status,
-			ObservedAt:        &updatedAt,
-			Detail: "the order has not advanced within the allowed age threshold. Find what its " +
-				"robot is doing before anything else — cancelling clears the row and leaves the " +
-				"plant as it was",
+			ObservedAt:        &progressedAt,
+			Detail: "the order has not CHANGED STATUS within the allowed age threshold — the time " +
+				"shown is its last real transition, not the last time a writer touched the row. " +
+				"Find what its robot is doing before anything else — cancelling clears the row and " +
+				"leaves the plant as it was",
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -383,6 +459,12 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 		return nil, err
 	}
 	anomalies = append(anomalies, orphanManifestAnomalies...)
+
+	dugLaneClaims, err := listClaimsInsideForeignDugLanes(db)
+	if err != nil {
+		return nil, err
+	}
+	anomalies = append(anomalies, dugLaneClaims...)
 
 	return anomalies, nil
 }
@@ -623,4 +705,256 @@ func ReleaseOrphanedClaims(db *sql.DB) (int, error) {
 	}
 	sn, _ := slotRes.RowsAffected()
 	return int(n + sn), nil
+}
+
+// ReleaseAcquiringOrphanClaims is the claim-side backstop's SECOND arm: it
+// clears a claim held by a LIVE acquiring order that has no reservation behind
+// it, and says so loudly.
+//
+// ── THE DRIFT, AND WHY NOTHING ELSE SWEEPS IT ─────────────────────────────
+//
+// Ownership of a bin is written in two books — bins.claimed_by and the
+// reservations row — coupled by convention rather than by schema. A release that
+// drops one and not the other leaves a bin claimed by an order that holds
+// nothing on it. Every availability predicate is owner-blind, so from that
+// moment the bin is invisible to EVERYBODY, including the order whose name is on
+// the claim: its own demand waits forever on material it already owns, and the
+// existing sweep cannot help because that order is not terminal. Observed on the
+// sim 2026-08-28 (order 109 / bin 10).
+//
+// ── IT IS INSURANCE, AND IT IS DELIBERATELY LOUD ──────────────────────────
+//
+// Owner ruling 2026-08-28: take it as a minutes-scale self-heal while the
+// ownership conversion lands, knowing Stage 3 obsoletes it. So every clear is
+// logged with the bin, the order, and the sentence saying this is the two books
+// having come apart — NOT normal operation. A sweep that fires often is telling
+// you the conversion is overdue, and that signal only exists if it shouts. Same
+// rule the floor's own recovery records obey: somebody is going to count these.
+//
+// ── THE PRECISION RULES, EACH OF WHICH IS A REFUSAL ───────────────────────
+//
+//	ANY LIVE RESERVATION ON THE RESOURCE and the claim is never touched. That is
+//	what every healthy order in the plant looks like, and taking one would strip
+//	a bin off a robot. The predicate is resource-keyed, not owner-keyed, on
+//	purpose: a reservation held by somebody ELSE means the two books disagree
+//	about WHO, which is a different defect with a different fix, and guessing
+//	here would resolve it by deletion.
+//
+//	orders.bin_id IS NEVER TOUCHED. A third book, already ruled: different fix.
+//
+//	TERMINAL ORDERS stay with ReleaseOrphanedClaims. Two sweeps, two
+//	populations, two log lines — a merged count could not tell a leak past a
+//	terminal transition from ownership drift on a live order, and they send the
+//	reader to different files.
+//
+// Rides the existing reconciliation interval; no cadence of its own.
+func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
+	// THE OWNER IS READ IN A CTE, NOT IN RETURNING. An UPDATE's RETURNING sees
+	// the NEW row, where claimed_by has just been set to NULL — so the log line
+	// could name the bin and never the order that was holding it, which is half
+	// of what makes this line chaseable. The victim set is selected first and
+	// joined back to what the UPDATE actually changed, so the two cannot disagree
+	// about which rows were swept.
+	binRows, err := db.Query(fmt.Sprintf(`
+		WITH victims AS (
+		  SELECT b.id, b.claimed_by AS owner FROM bins b
+		  WHERE b.claimed_by IS NOT NULL
+		    AND EXISTS (
+		      SELECT 1 FROM orders o
+		      WHERE o.id = b.claimed_by AND o.status IN (%s)
+		    )
+		    AND NOT `+reservations.OnTheBooksSQL(reservations.KindBin, "b.id")+`
+		), swept AS (
+		  UPDATE bins SET claimed_by = NULL, updated_at = NOW()
+		  WHERE id IN (SELECT id FROM victims)
+		  RETURNING id
+		)
+		SELECT v.id, v.owner FROM victims v JOIN swept s ON s.id = v.id`,
+		protocol.AcquiringStatusSQLList()))
+	if err != nil {
+		return 0, fmt.Errorf("reconciliation acquiring-orphan-bin-claims: %w", err)
+	}
+	n := 0
+	for binRows.Next() {
+		var binID, orderID int64
+		if err := binRows.Scan(&binID, &orderID); err != nil {
+			binRows.Close()
+			return n, fmt.Errorf("reconciliation acquiring-orphan-bin-claims scan: %w", err)
+		}
+		n++
+		log.Printf("RECONCILIATION: cleared an ORPHANED CLAIM — bin %d was claimed by order %d, which "+
+			"is still acquiring and holds no reservation on it. Ownership is written in two books and "+
+			"they have come apart: the claim made the bin invisible to every demand INCLUDING its own "+
+			"owner's. This is drift being swept, not normal operation — if it recurs, the ownership "+
+			"conversion is overdue", binID, orderID)
+	}
+	if err := binRows.Err(); err != nil {
+		binRows.Close()
+		return n, fmt.Errorf("reconciliation acquiring-orphan-bin-claims rows: %w", err)
+	}
+	binRows.Close()
+
+	// The node dual — a destination slot held the same way, by the same orders,
+	// with the same consequence: the slot is unavailable to everybody, so no
+	// demand can resolve onto it and the holder cannot progress toward it.
+	slotRows, err := db.Query(fmt.Sprintf(`
+		WITH victims AS (
+		  SELECT nd.id, nd.claimed_by AS owner FROM nodes nd
+		  WHERE nd.claimed_by IS NOT NULL
+		    AND EXISTS (
+		      SELECT 1 FROM orders o
+		      WHERE o.id = nd.claimed_by AND o.status IN (%s)
+		    )
+		    AND NOT `+reservations.OnTheBooksSQL(reservations.KindSlot, "nd.id")+`
+		), swept AS (
+		  UPDATE nodes SET claimed_by = NULL, updated_at = NOW()
+		  WHERE id IN (SELECT id FROM victims)
+		  RETURNING id
+		)
+		SELECT v.id, v.owner FROM victims v JOIN swept s ON s.id = v.id`,
+		protocol.AcquiringStatusSQLList()))
+	if err != nil {
+		return n, fmt.Errorf("reconciliation acquiring-orphan-slot-claims: %w", err)
+	}
+	defer slotRows.Close()
+	for slotRows.Next() {
+		var nodeID, orderID int64
+		if err := slotRows.Scan(&nodeID, &orderID); err != nil {
+			return n, fmt.Errorf("reconciliation acquiring-orphan-slot-claims scan: %w", err)
+		}
+		n++
+		log.Printf("RECONCILIATION: cleared an ORPHANED CLAIM — slot node %d was claimed by order %d, "+
+			"which is still acquiring and holds no slot reservation on it. Same two-books drift as the "+
+			"bin arm, on the destination side: the slot was unavailable to every demand including the "+
+			"holder's own. Not normal operation", nodeID, orderID)
+	}
+	return n, slotRows.Err()
+}
+
+// Queue causes this package must recognise by VALUE, because it cannot import
+// the package that declares them: dispatch imports store, so store importing
+// dispatch is a cycle. Same shape as every other cross-module constant in this
+// repo, and pinned the same way — TestStationWaitCauseLiteralsMatchDispatch
+// fails if either string drifts from its dispatch constant.
+const (
+	causeStationWaitLiteral         = "station-wait"
+	causeSwapPartnerFinishedLiteral = "swap-partner-finished"
+)
+
+// stationDwellRow decides whether a stuck-order row is really a STATION DWELL,
+// and returns the sentence that says so. ok=false means the caller writes its
+// ordinary active_order_stuck row.
+//
+// STAGED ONLY. The causes below are written when an order stages at a wait the
+// station owns; the same string on any other status would be stale metadata
+// from an earlier leg, and reading it there would mislabel a genuinely stuck
+// robot as somebody's missing click.
+//
+// The two causes get DIFFERENT sentences because they are different situations
+// wearing the same status. Under station-wait, the choreography may still be
+// mid-flight and the honest ask is "does somebody know it is their turn". Under
+// swap-partner-finished, the other half already ran and confirmed: nothing is
+// coming, no line is going to clear, and the wait cannot end on its own.
+func stationDwellRow(status, queueCause string) (issue, action, detail string, ok bool) {
+	if protocol.Status(status) != protocol.StatusStaged {
+		return "", "", "", false
+	}
+	switch queueCause {
+	case causeStationWaitLiteral:
+		return "station_wait_dwelling", "tell_the_station",
+			"a robot is parked at a wait the STATION owns and Core is deliberately not advancing it — " +
+				"the precondition is a fact only the station can observe (the line has cleared, the " +
+				"tooling is done, somebody is ready). Nothing here is faulted and no sweep will move " +
+				"it. The usual cause is that nobody knows it is their turn: find the station and ask", true
+	case causeSwapPartnerFinishedLiteral:
+		return "swap_survivor_dwelling", "tell_the_station",
+			"a robot is parked at a station wait and its SWAP PARTNER HAS ALREADY COMPLETED — so no " +
+				"second robot is coming, no line is going to clear, and this wait cannot end on its " +
+				"own. The Edge releases this population automatically when it sees the partner " +
+				"finish; a row still standing here means that did not fire. Release it from the " +
+				"station, or use Core's hard release", true
+	}
+	return "", "", "", false
+}
+
+// listClaimsInsideForeignDugLanes counts the one state that can now only be
+// reached by a MUTUAL MISS, which is what makes it worth a row.
+//
+// ── WHY THIS IS AN INSTRUMENT AND NOT A GUARD ─────────────────────────────
+//
+// A bin or slot claimed by one order, inside a lane another order's dig holds,
+// is a circular wait: the dig waits for the holder to move its resource, and the
+// dig's own lock is what refuses the holder entry. Measured on demo.yaml
+// 2026-08-31, two robots stood 122 sim-minutes in exactly that shape and the
+// payload behind the digger raised nothing for the rest of the run.
+//
+// reservations.acquire now refuses to create it. What survives is the window that
+// arm documents: a dig lock and a foreign claim in genuinely overlapping
+// transactions cannot see each other's uncommitted rows, so both commit. A
+// SYMMETRIC check does not close that — two parties looking for each other is not
+// serialization — and the real repair is a shared serialization point
+// (pg_advisory_xact_lock on the lane being the cheapest).
+//
+// THAT REPAIR IS NOT BUILT, DELIBERATELY, and this row is why. The 105ms window
+// the acquire closed was measured and routine; this one is a statement wide and
+// has never been observed on any run. Building a serialization primitive for a
+// population no run has produced is the shape this house refuses — so the
+// population is COUNTED instead, and with the acquire arm in place any non-zero
+// reading here is by definition a mutual miss, because that is the only route
+// left. One confirmed occurrence earns the advisory lock, with an incident
+// attached rather than an argument.
+//
+// SEVERITY IS `warning` AND THE ACTION IS A HUMAN'S. It is not `error`, because
+// the plant is not wrong — it is wedged, and the wedge is two healthy orders
+// refusing each other. Releasing the dig's lane frees both, which is what the
+// dispatch-side wait (dig-blocker-waits-on-this-dig) tells the operator.
+func listClaimsInsideForeignDugLanes(db *sql.DB) ([]*Anomaly, error) {
+	var anomalies []*Anomaly
+	rows, err := db.Query(`
+		SELECT r.order_id, r.resource_kind, r.bin_id, n.name, lane.name, dig_hold.order_id
+		  FROM reservations r
+		  JOIN nodes n
+		    ON n.id = COALESCE((SELECT b.node_id FROM bins b WHERE b.id = r.bin_id), r.node_id)
+		  JOIN nodes lane ON lane.id = n.parent_id
+		  JOIN reservations dig_hold
+		    ON dig_hold.resource_kind = 'mouth'
+		   AND dig_hold.node_id = lane.id
+		   AND dig_hold.mode = 'dig'
+		   AND ` + reservations.ActiveStateSQL("dig_hold.") + `
+		 WHERE r.resource_kind IN ('bin','slot')
+		   AND ` + reservations.ActiveStateSQL("r.") + `
+		   AND dig_hold.order_id <> r.order_id
+		   AND dig_hold.order_id <> COALESCE(
+		         (SELECT o.parent_order_id FROM orders o WHERE o.id = r.order_id), r.order_id)
+		 ORDER BY r.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var holderID, diggerID int64
+		var kind, nodeName, laneName string
+		var binID *int64
+		if err := rows.Scan(&holderID, &kind, &binID, &nodeName, &laneName, &diggerID); err != nil {
+			return nil, err
+		}
+		holder := holderID
+		anomalies = append(anomalies, &Anomaly{
+			Category:          "lane_coordination",
+			Severity:          "warning",
+			Issue:             "claim_inside_foreign_dug_lane",
+			RecommendedAction: "release_the_dig_lane",
+			OrderID:           &holder,
+			BinID:             binID,
+			StationID:         nodeName,
+			Detail: fmt.Sprintf("order %d holds a %s at %s, inside lane %s which order %d's dig holds. "+
+				"Neither can proceed: the dig waits for this %s to move, and the dig's own lock is "+
+				"what refuses order %d entry. Release order %d's lane. NOTE: reservations.acquire "+
+				"refuses to create this, so reaching it means two overlapping transactions missed "+
+				"each other — the first confirmed occurrence is the trigger to serialize the lane "+
+				"(pg_advisory_xact_lock), which is deliberately not built until one is seen",
+				holderID, kind, nodeName, laneName, diggerID, kind, holderID, diggerID),
+		})
+	}
+	return anomalies, rows.Err()
 }

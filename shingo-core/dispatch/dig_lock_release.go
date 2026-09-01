@@ -101,8 +101,15 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 		return
 	}
 	digOwner, err := d.laneLock.DigOwner(laneID)
-	if err != nil || digOwner == 0 {
-		return // no dig holds this lane, or the row could not be read: keep whatever is there
+	if err != nil {
+		return // the row could not be read: keep whatever is there
+	}
+	if digOwner == 0 {
+		// NO DIG — but there may be a converted handoff row that nothing else
+		// will ever look at again. This is the only walk that visits a lane on
+		// an ordinary exit event, so it is the only place that can notice.
+		d.maybeReleaseStrandedHandoff(laneID)
+		return
 	}
 	children, err := d.db.ListChildOrders(digOwner)
 	if err != nil {
@@ -130,7 +137,12 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 	// clears on the pickup. A BURIED resolve re-parents (§R.91), so the legs hold it
 	// through the excavation and the parent's own row holds it afterwards until the
 	// target is collected — which is "clears after it achieves the target", with no
-	// handoff anywhere, because the collector was the holder all along.
+	// CHANGE OF OWNER, because the collector was the holder all along.
+	//
+	// That last clause used to read "with no handoff anywhere", and it was read as
+	// a statement about reachability rather than about ownership. handOffDugLane
+	// does run in this shape — it converts the holder's own dig row to the holder's
+	// own outbound row. What does not happen is the corridor changing hands.
 	//
 	// FAIL CLOSED, like every read in this file: an unreadable holder keeps the lane.
 	holder, hErr := d.db.GetOrder(digOwner)
@@ -192,6 +204,193 @@ func (d *Dispatcher) maybeReleaseDigOnLastBlockerOut(laneID int64) {
 	d.EvaluateDwellersSharingGroupWith(laneID)
 }
 
+// maybeReleaseStrandedHandoff gives the converted naked-target row the releaser
+// it never had.
+//
+// ── THE ROW LEAVES THE MACHINERY THE MOMENT IT IS CREATED ─────────────────
+//
+// handOffDugLane converts the dig row to an OUTBOUND row so the uncovered bin
+// cannot be re-buried before its demand dispatches. That conversion also takes
+// the row OUT OF THIS WALK: the walk opens on DigOwner, which reads mode='dig',
+// and returns the moment there is none. From then on the row's only releasers
+// are its owner's own block progress (releaseOrderLaneFor) and its
+// terminalization.
+//
+// For a demand that dispatches shortly that is exactly right, and the row lives
+// seconds. For one that goes back to the scanner and RE-RESOLVES ONTO A BIN
+// SOMEWHERE ELSE, nothing looks at the row again and the corridor stays shut for
+// the rest of that order's life. Flip 2's own header records five of those
+// wedging five lanes on the lane-stress rig 2026-08-13 — "no live order wanted
+// any of the five slots they were holding for" — and the same shape wedged the
+// sim on 2026-08-28: order 202 held Lane_03 as `dighandoff` while its own route
+// had re-resolved to SMN_001 → SMN_008, and the evac that needed a slot in
+// Lane_03 queued behind it until three cells had stopped.
+//
+// It was survivable before only by accident. A second blocker-out pass used to
+// read "the dig row is already gone" as permission to release, and ReleaseLane
+// is mode-blind, so it deleted the fresh handoff row — the race graphite-finch
+// found and 9466f086 closed. That bug was sweeping these rows away constantly.
+// Closing it was right; it exposed the hole underneath, which is this one.
+//
+// ── WHAT DECIDES IT, AND WHY IT IS NOT A ROUTE READ ───────────────────────
+//
+//	RESHUFFLING           the gap the row exists for. The dig is still finishing
+//	                      and the demand has not been handed back to the scanner.
+//	                      KEEP — this is gate 2 doing its job.
+//
+//	A BIN OF ITS OWN      legStillNeedsLane — it is coming for something still in
+//	  STILL IN THE LANE   here, or dwelling in it. KEEP.
+//
+//	STILL OWES THIS       holderStillOwesTheLane — its bin is in the GRIPPER and
+//	  LANE A DROP         its destination is inside this corridor, so no
+//	                      claim-keyed read can see it and only DeliveryNode can.
+//	                      KEEP. The same second question the dig arm asks.
+//
+//	PRE-DISPATCH WITH     it has not re-resolved yet and has not chosen. This is
+//	  NO CLAIM ANYWHERE   still the gap. KEEP. ("No claim → release" would be
+//	                      wrong for exactly this reason: a naked target holds no
+//	                      claim BY DEFINITION, so that rule would drop the row one
+//	                      scanner tick after the parent left `reshuffling` and
+//	                      undo gate 2 across most of its window.)
+//
+//	FAULTED               RELEASE, and it is asked LOCALLY rather than by widening
+//	                      swapLegCommittedToFleet — gate 3's argument, in gate 3's
+//	                      words, for the reason gate 3 gives.
+//
+//	ANYTHING ELSE         RELEASE. Two shapes reach here and both are stranded:
+//	                      an order that went back through the scanner and resolved
+//	                      onto a bin SOMEWHERE ELSE, and one that has COLLECTED
+//	                      and is no longer coming for what this corridor held.
+//
+// ── THE COLLECTED ARM IS GATE 3, ASKED A SECOND TIME ──────────────────────
+//
+// It was tempting — and wrong, and the sim said so — to treat "dispatched or
+// beyond" as KEEP on the grounds that the demand's own per-visit release owns
+// the row from then on. That is what HandOffLaneToPicker's doc claims, and it
+// holds only while the lane is ON THE DEMAND'S ROUTE: releaseOrderLaneFor fires
+// on block progress AT A NODE IN THIS LANE, so an order whose route never
+// returns here produces no such progress and the row lives to terminalization.
+//
+// Measured (run C, 2026-08-28): order 260 sat `in_transit`, "Waiting for partner
+// robot", bin already at _TRANSIT, holding Lane_15 as `dighandoff` — while its
+// own route was SMN_023 → ALN_001, which never touches Lane_15. Gate 3 had
+// already ruled that shape at conversion time ("a demand that has already
+// collected releases its corridor"); a row converted while the demand was still
+// a naked target simply never got asked again. So this asks it.
+//
+// No step list is read: later visits belong to the lane's own state.
+//
+// FAIL CLOSED on every read, like the rest of this file. A row kept one pass too
+// long costs a wait; a row released while its demand is walking to the bin is
+// the re-burial this whole seam exists to prevent.
+func (d *Dispatcher) maybeReleaseStrandedHandoff(laneID int64) {
+	rows, err := reservations.ActiveMouthRows(d.db.DB, laneID)
+	if err != nil {
+		return
+	}
+	for _, h := range rows {
+		if h.ReservedBy != digHandoffReservedBy {
+			continue
+		}
+		holder, hErr := d.db.GetOrder(h.OrderID)
+		if hErr != nil {
+			// FAIL CLOSED FOR THE ROW, NOT FOR THE LANE. This used to `return`,
+			// which abandons every other stranded row on the lane over one
+			// unreadable order — a lane can carry several, and the holder-gone arm
+			// two lines down already uses `continue`. Keeping this row is the
+			// fail-closed answer; keeping the ones after it is a second decision
+			// nobody made.
+			continue
+		}
+		if holder == nil {
+			d.releaseStrandedHandoff(laneID, h.OrderID, "its owner no longer exists")
+			continue
+		}
+		if holder.Status == StatusReshuffling {
+			continue // the gap the row exists for: the dig is still finishing
+		}
+		if needs, _ := d.legStillNeedsLane(holder, laneID); needs {
+			continue // a bin of its own is still in here, or it is dwelling in it
+		}
+		// AND THE SECOND QUESTION, the one the dig arm asks and this walk did not.
+		//
+		// legStillNeedsLane is claim-keyed, so it is blind to the INBOUND
+		// direction: a holder driving down this corridor to DROP into it carries
+		// its bin in the gripper, and no bin of its own is anywhere in the lane.
+		// It then reads as "committed to the fleet", which the release arm below
+		// treats as "has already collected and left" — exactly backwards for the
+		// robot that is about to arrive. Releasing there opens the lane in the gap
+		// before its own drop, which is the re-burial window entered from the
+		// inbound side (§R.104's acceptance shape).
+		//
+		// Fail-closed on both reads, like every other read in this file.
+		if owes, _ := d.holderStillOwesTheLane(holder, laneID); owes {
+			continue // its bin is in the gripper and its destination is in here
+		}
+		claimed, cErr := d.db.ListBinsByClaim(h.OrderID)
+		if cErr != nil {
+			continue // unreadable claims keep THIS row; the rest of the lane is still walked
+		}
+		// ── AND `faulted` IS ADDED HERE, NOT IN swapLegCommittedToFleet ───────
+		//
+		// Gate 3 releases a faulted holder and says why: `faulted` is post-dispatch
+		// by construction — every inbound edge comes from acknowledged, dispatched,
+		// in_transit or staged — so a faulted holder that got past the claim walk
+		// has its bin out of this lane, and a jammed aisle is jammed by the ROBOT
+		// rather than by a row. The shared predicate rules it NOT-committed on
+		// purpose, because its swap caller wants a faulted sibling to keep waiting;
+		// so without this conjunct the second asking re-keeps precisely what the
+		// first asking released — on a status that is non-terminal, unreaped, and
+		// outside the runtime-stuck population, where nothing alarms on it.
+		//
+		// Widening swapLegCommittedToFleet would be wrong for the swap caller. The
+		// divergence belongs at the two readers, which is where gate 3 put it.
+		if len(claimed) == 0 && !swapLegCommittedToFleet(holder) && holder.Status != StatusFaulted {
+			continue // pre-dispatch and undecided: it has not chosen yet
+		}
+		d.releaseStrandedHandoff(laneID, h.OrderID, strandedWhy(holder))
+	}
+}
+
+// strandedWhy names which stranded shape this is, so the log says what happened
+// rather than that something did.
+//
+// THREE SENTENCES, NOT TWO, and `staged` is why the middle one is worded the way
+// it is. swapLegCommittedToFleet is true of a holder parked at a mark holding its
+// bin as well as of one halfway across the plant, and telling a reader that a
+// staged order "drove off" sends him looking for a robot that is standing still.
+// What is true of the whole committed set is that the bin is out of this corridor
+// and nothing is coming back for what the row was protecting.
+func strandedWhy(holder *orders.Order) string {
+	switch {
+	case holder.Status == StatusFaulted:
+		return "its owner is FAULTED — post-dispatch by construction, and past the claim walk, so " +
+			"its bin is already out of this corridor. What jams an aisle here is the robot, not " +
+			"this row (gate 3's rule, asked a second time)"
+	case swapLegCommittedToFleet(holder):
+		return "its owner has already collected: the fleet has the order and the bin is out of this " +
+			"corridor, so nothing is coming for what it was protecting (gate 3's rule, asked a " +
+			"second time)"
+	default:
+		return "its owner went back through the scanner and resolved onto a bin somewhere else"
+	}
+}
+
+// releaseStrandedHandoff drops one stranded handoff row and wakes the lane, the
+// same three wakes the ordinary release arm performs.
+func (d *Dispatcher) releaseStrandedHandoff(laneID, owner int64, why string) {
+	if err := reservations.ReleaseLaneHandoff(d.db.DB, owner, laneID); err != nil {
+		log.Printf("dig lock: could not release order %d's stranded handoff row on lane %d: %v",
+			owner, laneID, err)
+		return
+	}
+	log.Printf("dig lock: released order %d's stranded handoff hold on lane %d — %s",
+		owner, laneID, why)
+	d.EvaluateLaneReleases(laneID)
+	d.RedriveHeldCompoundLegs(laneID)
+	d.EvaluateDwellersSharingGroupWith(laneID)
+}
+
 // handOffDugLane keeps the corridor a demand just excavated, as that demand's own
 // OUTBOUND hold, and reports whether it did. False means the lane is the caller's
 // to release: this demand's fetch was one of its own legs, so nothing is left
@@ -247,14 +446,90 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 	// convert. HandOffLaneToPicker's own picker-already-holds arm covers the
 	// remaining shape: it returns true and keeps what is there.
 	//
-	// SCOPED TO A PARENT THAT STILL OWES ITS OWN WORK. A plain retrieve's fetch is
-	// one of its own legs — the bin leaves the lane inside the compound — so there
-	// is nothing standing at the mouth to protect and legStillNeedsLane already
-	// covered it.
+	// SCOPED TO A COORDINATED PARENT. A plain retrieve's fetch is one of its own
+	// legs — the bin leaves the lane inside the compound — so there is nothing
+	// standing at the mouth to protect and legStillNeedsLane already covered it.
+	//
+	// THE HEADER HERE USED TO SAY "a parent that still owes its own work", and this
+	// check does not ask that. IsCoordinated is provenance (hasEvacLeg); it says
+	// nothing about whether the parent has already been to the lane. The gap
+	// between the two readings is exactly where the handoff leak lived: every
+	// coordinated demand passed this arm, including the ones that had already
+	// collected and left. "Still owes its own work" is now a real gate, and it is
+	// gate 3 below.
 	if !IsCoordinated(parent) {
 		return false // its fetch was one of its own legs; nothing is left standing
 	}
-	handed, hErr := reservations.HandOffLaneToPicker(
+
+	// ── GATE 3: THE HOLDER HAS ALREADY COLLECTED ──────────────────────────
+	//
+	// THE NAKED TARGET IS THE WHOLE JUSTIFICATION ABOVE, AND IT IS A STATE, NOT A
+	// SHAPE. Gate 2 protects a bin standing at an open mouth with its demand not
+	// yet dispatched. Once the demand HAS dispatched and lifted, that bin is on a
+	// robot: there is nothing at the mouth to re-bury, and converting the dig row
+	// hands the corridor to an order that has already left it.
+	//
+	// What that costs is not theoretical. The row then excludes every inbound
+	// comer for the whole transport leg — minutes of driving that has nothing to
+	// do with this lane — and it becomes PERMANENT whenever the holder cannot
+	// terminate. The single-position swap race supplies exactly that: the holder
+	// waits at the station for its evac partner, the partner needs to drop INTO
+	// this lane, and the partner is refused by this row. Neither can finish.
+	// Observed on the sim 2026-08-28 (main 1a6b6d23): order 142 held Lane_15
+	// outbound with its bin already at _TRANSIT while sibling 143 sat in
+	// `sourcing` under `lane-held-traffic`, and Lane_15's only reservation was
+	// that one row — a corridor shut with nothing inside it.
+	//
+	// ── WHY NOT ASK legStillNeedsLane, WHICH IS RIGHT THERE ───────────────
+	//
+	// Because it is INERT here, and believing otherwise already cost one revision.
+	// Control only reaches this function because that predicate returned false,
+	// and being claim-keyed it returns false for BOTH arrivals — the naked target
+	// (no claim yet) and the collected demand (claim lifted out). It cannot tell
+	// them apart, so no amount of asking it again will.
+	//
+	// The discriminator is DISPATCH STATE. swapLegCommittedToFleet is that
+	// question already asked and already argued, for this same mistake in the
+	// mirror direction, and its `reshuffling` arm rules a mid-dig holder
+	// NOT-committed — which is the answer this gate needs too, since a demand
+	// still digging has not collected anything. It is inherited rather than
+	// re-decided so the two cannot drift apart.
+	//
+	// ── AND `faulted` IS ADDED HERE, NOT THERE ────────────────────────────
+	//
+	// The shared predicate's `default` arm means "not committed", and the two
+	// callers read that answer with OPPOSITE consequences: for the swap hold it
+	// means keep waiting, which is safe; here it means convert, which is the leak.
+	// So the one status where they must differ is fixed locally. Widening
+	// swapLegCommittedToFleet would be wrong for the swap caller, which genuinely
+	// wants a faulted sibling to read not-committed because it may yet recover and
+	// do its part.
+	//
+	// `faulted` is POST-DISPATCH BY CONSTRUCTION — every inbound edge to it comes
+	// from acknowledged, dispatched, in_transit or staged — so a faulted holder
+	// standing here has been handed to the fleet and, having passed the claim
+	// walk, has its bin out of this lane. A jammed aisle is jammed by the ROBOT,
+	// not by a row; an empty aisle held for a faulted order is the same leak
+	// wearing a different status, and a worse one, because `faulted` sits outside
+	// the runtime-stuck population and nothing alarms on it.
+	//
+	// THE BIN THAT COMES BACK IS ALREADY COVERED. A dropped load set down again in
+	// this lane is a bin sitting in this lane, which legStillNeedsLane sees on the
+	// next evaluation — before control can reach this function at all. The order
+	// re-owing the lane after a recovery is likewise a fresh acquire, not this row.
+	//
+	// The drop-back shape — a plan that picks from this lane and later drops back
+	// into it — is NOT released here: holderStillOwesTheLane answers that from the
+	// lane's own state before the caller ever reaches this function.
+	if swapLegCommittedToFleet(parent) || parent.Status == StatusFaulted {
+		log.Printf("dig lock: demand %d has already collected from lane %d (status %s) — releasing the "+
+			"corridor rather than converting its dig row. Nothing is standing at the mouth to protect, "+
+			"and a hold taken here would outlast the demand's own visit",
+			parent.ID, laneID, parent.Status)
+		return false
+	}
+
+	outcome, hErr := reservations.HandOffLaneToPicker(
 		d.db.DB, laneID, parent.ID, parent.ID, digHandoffReservedBy)
 	if hErr != nil {
 		log.Printf("dig lock: could not convert dig %d's own claim on lane %d to its outbound "+
@@ -262,12 +537,32 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 			parent.ID, laneID, hErr)
 		return true // the row may or may not have moved: do not release on top of a failed write
 	}
-	if !handed {
-		return false
+
+	// ── PAST THIS POINT THE LANE IS NEVER THE CALLER'S TO RELEASE ─────────
+	//
+	// All three outcomes report true, and that is the correction rather than a
+	// shortcut. Two of them are "nothing was converted", and the old bool said so
+	// in a way the caller read as PERMISSION — whereupon its mode-blind release
+	// deleted whatever row it found for this owner, including the outbound row a
+	// concurrent pass had just created. See reservations.HandOff.
+	//
+	// The two gates above are where false comes from now, and both of them decide
+	// BEFORE touching the row. That is the honest shape: a release is authorized
+	// by what the holder is, never by what a write happened to find.
+	switch outcome {
+	case reservations.HandOffConverted:
+		log.Printf("dig lock: demand %d finished its own excavation of lane %d and kept the corridor "+
+			"as an OUTBOUND hold. Nothing may drop into it until the demand has its bin, and the "+
+			"hold ends with the demand however it ends", parent.ID, laneID)
+	case reservations.HandOffNoDigRow:
+		log.Printf("dig lock: lane %d had no dig row left for demand %d when the handoff ran — a "+
+			"concurrent pass already converted or released it, under the same lane lock. Standing "+
+			"down: releasing on top of that would delete whatever it just put there", laneID, parent.ID)
+	case reservations.HandOffPickerNotCollector:
+		log.Printf("dig lock: demand %d holds lane %d INBOUND, so it is dropping into the lane rather "+
+			"than collecting from it and the corridor is not its hold to take. The dig row is gone; "+
+			"its own inbound row stays", parent.ID, laneID)
 	}
-	log.Printf("dig lock: demand %d finished its own excavation of lane %d and kept the corridor "+
-		"as an OUTBOUND hold. Nothing may drop into it until the demand has its bin, and the "+
-		"hold ends with the demand however it ends", parent.ID, laneID)
 	return true
 }
 
@@ -289,6 +584,37 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 // ASKED ONLY OF THE HOLDER, not of legs. A dig leg's business in a lane is its
 // bin, and legStillNeedsLane is right about it and mutation-pinned; widening that
 // predicate would answer a question the legs are not being asked.
+//
+// ── IT READS LANE STATE, AND IT DOES NOT READ THE ROUTE ───────────────────
+//
+// This briefly grew a second arm that parsed the holder's remaining steps looking
+// for a LATER dropoff back into a lane it had already picked from. That arm is
+// gone, and the ruling behind its removal is the useful part:
+//
+//	A LATER VISIT IS THE LANE'S OWN BUSINESS. Every shape the plant actually
+//	builds announces itself in state that is already read here. An IN-LANE MOVE
+//	names the lane in DeliveryNode — the arm above. A RELAY parks its bin IN the
+//	lane between visits, claimed, where legStillNeedsLane sees it. A PICK-ONLY
+//	visit is over at the lift. Three shapes, three lane-state answers, and the
+//	release timing falls out of each without anybody consulting a step list.
+//
+//	THE SHAPE THAT NEEDED THE ROUTE HAS NO PRODUCER. Pick from a lane, leave,
+//	come back later, finish elsewhere: not the operator bin-move door (two steps,
+//	so its in-lane form finishes in the lane), not the relay (its dropoff comes
+//	BEFORE its pickup), not anything five readers or the owner could name. It is
+//	refused at plan time instead — see LaneRevisitError — so if a door ever starts
+//	emitting one we hear about it rather than mis-holding a corridor quietly.
+//
+//	AND A ROUTE READ CANNOT BE MADE EXACT HERE ANYWAY. "Which steps are still
+//	ahead" has no reliable answer at this seam: wait_index advances when a segment
+//	is APPENDED, one gate ahead of the robot, so a positioned scan skips the
+//	segment being executed, and the fallback — read every step — cannot tell a
+//	completed drop from a pending one and holds the lane, as a DIG, through
+//	transport it owes nothing to. Both regimes were wrong in opposite directions.
+//
+// A RE-ENTRY IS NOT THIS FUNCTION'S PROBLEM either. An order that comes back to a
+// lane acquires it again through the ordinary mouth gate, with its own admission
+// and its own spliced wait; it does not ride a row taken for an earlier visit.
 //
 // FAIL CLOSED, like every read in this file.
 func (d *Dispatcher) holderStillOwesTheLane(holder *orders.Order, laneID int64) (bool, string) {

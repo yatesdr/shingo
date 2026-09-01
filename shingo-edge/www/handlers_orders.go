@@ -79,6 +79,10 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		"KnownNodes":        knownNodes,
 		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
+		// How long each still-acquiring order has been waiting. The board has
+		// always shown WHY a parked order waits; without a duration beside it the
+		// sentence reads the same at forty seconds and at four hours.
+		"WaitSince": h.engine.OrderService().WaitSince(orders),
 	}
 
 	h.renderTemplate(w, r, "orders.html", data)
@@ -125,6 +129,9 @@ func (h *Handlers) handleOrdersPartial(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]any{
 		"ActiveOrders": orders,
+		// Same map the page builds — the partial IS the page's rows, and a
+		// refresh that dropped the clock would blank it every three seconds.
+		"WaitSince": h.engine.OrderService().WaitSince(orders),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "orders-body", data); err != nil {

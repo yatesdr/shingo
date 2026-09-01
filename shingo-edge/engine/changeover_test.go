@@ -1294,21 +1294,26 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	if task.Situation != "evacuate" {
 		t.Fatalf("expected evacuate, got %s", task.Situation)
 	}
-	if task.NextMaterialOrderID == nil || task.OldMaterialReleaseOrderID == nil {
-		t.Fatal("sequential evacuate must populate both order slots")
+	// PER-NODE (2026-08-28): this asserted BOTH order slots, because sequential
+	// evacuate used to return both positions' step lists from one diff — SEQ-A's
+	// task carried SEQ-B's order too. Each position now owns its own task and
+	// its own order, and only SEQ-A's claim is seeded here, so this task has
+	// exactly one. SEQ-B's order lives on SEQ-B's task when SEQ-B is claimed.
+	if task.NextMaterialOrderID == nil {
+		t.Fatal("sequential evacuate must populate this position's order slot")
+	}
+	if task.OldMaterialReleaseOrderID != nil {
+		t.Errorf("this task also carries order %d in the old-material slot. Per-node evacuate emits "+
+			"ONE order per position; a second one here is the whole-press shape, whose two orders "+
+			"then raced for the same bins.", *task.OldMaterialReleaseOrderID)
 	}
 
-	// Complete OrderA. Under the new contract, runtime cache no longer
-	// flips at confirm — only at delivered (active_bin_id /
+	// Complete this position's order. Under the new contract, runtime cache no
+	// longer flips at confirm — only at delivered (active_bin_id /
 	// active_bin_epoch / remaining_uop_cached) and at release-click.
 	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
 	markOrderTerminal(db, orderA.ID)
 	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &primaryID)
-
-	// Complete OrderB.
-	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
-	markOrderTerminal(db, orderB.ID)
-	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &primaryID)
 
 	// State-machine assertion: paired-position behavior previously asserted
 	// here came from resetSequentialEvacOrderBRuntime which is gone. The
@@ -1478,4 +1483,682 @@ func TestChangeoverBlockerNeverSaysInFlightAboutAQueuedOrder(t *testing.T) {
 	if protocol.BlocksChangeoverStart(protocol.StatusQueued) {
 		t.Fatal("queued must not block — the 'in flight (queued)' sentence must be unreachable")
 	}
+}
+
+// seedSequentialScenario builds a two-position sequential press mid changeover:
+// SEQ-A active (the line is pulling from it), SEQ-B parked, both claimed in both
+// styles so each yields its own Swap diff and its own order.
+//
+// evacuate=true makes it a tooling EVACUATE instead of a SWAP (same payload in
+// both styles + the marker on the outgoing claims).
+func seedSequentialScenario(t *testing.T, db *store.DB, evacuate bool) (
+	eng *Engine, processID, activeNodeID, parkedNodeID int64, co *processes.Changeover) {
+	t.Helper()
+
+	processID, err := db.CreateProcess("SEQ-CUT-PROC", "sequential cutover", "active_production", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	activeNodeID, err = db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "SEQ-A", Code: "SCA", Name: "Seq A", Sequence: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create active node: %v", err)
+	}
+	parkedNodeID, err = db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "SEQ-B", Code: "SCB", Name: "Seq B", Sequence: 2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create parked node: %v", err)
+	}
+	// The line is pulling from SEQ-A, so SEQ-B is the parked side and SEQ-A is
+	// the one whose order holds for the cutover click.
+	db.EnsureProcessNodeRuntime(activeNodeID)
+	db.EnsureProcessNodeRuntime(parkedNodeID)
+	testutil.MustNoErr(t, db.SetActivePull(activeNodeID, true), "active pull on SEQ-A")
+	testutil.MustNoErr(t, db.SetActivePull(parkedNodeID, false), "no active pull on SEQ-B")
+
+	fromStyleID, err := db.CreateStyle("SEQ-CUT-FROM", "from", processID)
+	if err != nil {
+		t.Fatalf("create from style: %v", err)
+	}
+	toStyleID, err := db.CreateStyle("SEQ-CUT-TO", "to", processID)
+	if err != nil {
+		t.Fatalf("create to style: %v", err)
+	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
+
+	// Both positions claimed in BOTH styles — the A/B steady state, and what
+	// makes a PRESS-2-RUN → PRESS-2-ALT changeover a Swap on each position
+	// rather than a Drop/Add pair.
+	toPayload := "PART-TO"
+	if evacuate {
+		toPayload = "PART-FROM" // same payload both sides → SituationEvacuate, not Swap
+	}
+	for _, c := range []struct {
+		style        int64
+		own, partner string
+		payload      string
+		isFrom       bool
+	}{
+		{fromStyleID, "SEQ-A", "SEQ-B", "PART-FROM", true},
+		{fromStyleID, "SEQ-B", "SEQ-A", "PART-FROM", true},
+		{toStyleID, "SEQ-A", "SEQ-B", toPayload, false},
+		{toStyleID, "SEQ-B", "SEQ-A", toPayload, false},
+	} {
+		if _, err := upsertClaimLegacySimple(db, processes.NodeClaimInput{
+			StyleID: c.style, CoreNodeName: c.own, Role: "produce", SwapMode: "sequential",
+			PayloadCode: c.payload, UOPCapacity: 100,
+			InboundSource: "MARKET", OutboundDestination: "DEST",
+			PairedCoreNode:       c.partner,
+			EvacuateOnChangeover: evacuate && c.isFrom, // the outgoing claim owns the marker
+		}); err != nil {
+			t.Fatalf("upsert claim %s/%d: %v", c.own, c.style, err)
+		}
+	}
+
+	eng = testEngine(t, db)
+	eng.wireEventHandlers()
+	co, err = eng.StartProcessChangeover(processID, toStyleID, "test", "seq cutover")
+	if err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+	return eng, processID, activeNodeID, parkedNodeID, co
+}
+
+// ── THE RELEASE GUARD: A SPEED BUMP, NOT A WALL ───────────────────────────
+//
+// A robot may not strip a position the line is drawing from. That is physical
+// and mode-agnostic — it is equally true in steady state — so the guard reads
+// one fact (`active_pull` on an A/B position) and nothing about changeovers.
+//
+// It is refuse-by-DEFAULT and override-by-CONFIRM, because `active_pull` is a
+// bit and bits go stale: a PLC that missed an edge, a runtime row written
+// before someone moved a bin by hand. The operator can see the aisle; the
+// system cannot. So the guard states the fact, names the next click, and gets
+// out of the way when he insists.
+
+// TestReleaseGuard_WarnsWhileTheLineIsPullingFromThePosition is the per-node
+// door: the click is refused with the fact and the flip that fixes it.
+func TestReleaseGuard_WarnsWhileTheLineIsPullingFromThePosition(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, processID, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage")
+
+	_, err := eng.ReleaseChangeoverWaitForNode(processID, activeNodeID, ReleaseDisposition{CalledBy: "op"})
+	if err == nil {
+		t.Fatal("the release went through while the line was still pulling from SEQ-A. A robot sent " +
+			"to lift that bin stops production on a press that was running.")
+	}
+	for _, want := range []string{"SEQ-A", "SEQ-B"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("warning = %q, want it to name %q — the fact and the next click, or it is just "+
+				"a button that does not work", err.Error(), want)
+		}
+	}
+	if got := orderStatusOf(t, db, activeOrder); got != string(orders.StatusStaged) {
+		t.Errorf("the order moved to %q despite the warning; a refused click must change nothing", got)
+	}
+}
+
+// TestReleaseGuard_ConfirmReleasesAnyway — the operator outranks the bit.
+func TestReleaseGuard_ConfirmReleasesAnyway(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, processID, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage")
+
+	res, err := eng.ReleaseChangeoverWaitForNode(processID, activeNodeID,
+		ReleaseDisposition{CalledBy: "op", ConfirmActivePull: true})
+	if err != nil {
+		t.Fatalf("the confirmed release was refused: %v. The guard is a speed bump — the person at "+
+			"the press can see the aisle and the system cannot.", err)
+	}
+	if res.Released != 1 {
+		t.Errorf("released=%d, want 1 — the confirm must actually release", res.Released)
+	}
+}
+
+// TestReleaseGuard_TheTrunkDeclinesOnAnUnreadPullState is the two doors giving
+// the same answer to the same physical question.
+//
+// The scoped door declines on an unreadable pull state and says why. The trunk
+// — /orders/{id}/release, the door the sim's auto-operator and a real operator
+// both drive — asked `pErr == nil && pulling`, so a runtime row that could not
+// be read sent the robot. The whole guard is confirm-overridable, so failing
+// closed costs one extra click on a flaky read; failing open means the answer to
+// "may a robot strip this position" depends on which button was pressed, in a
+// file whose own banner says "policy there, physics here".
+//
+// The unread state is manufactured the way the plant produces it — the runtime
+// row missing under a sequential paired claim — because that is what a partially
+// applied config or a hand-edited row looks like from here.
+func TestReleaseGuard_TheTrunkDeclinesOnAnUnreadPullState(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage")
+
+	if _, err := db.DB.Exec(
+		`DELETE FROM process_node_runtime_states WHERE process_node_id=?`, activeNodeID); err != nil {
+		t.Fatalf("drop the runtime row: %v", err)
+	}
+
+	err := eng.ReleaseOrderWithLineside(activeOrder, ReleaseDisposition{CalledBy: "op"})
+	if err == nil {
+		t.Fatal("the trunk released SEQ-A on a pull state it could not read. The scoped door declines " +
+			"on exactly this error; the trunk sent the robot. A guard that is confirm-overridable " +
+			"costs one extra click when it fails closed, and costs a stopped press when it fails open.")
+	}
+	if !strings.Contains(err.Error(), "SEQ-A") {
+		t.Errorf("refusal = %q, want it to name SEQ-A — the fact and the next click, or it is just a "+
+			"button that does not work", err.Error())
+	}
+	if got := orderStatusOf(t, db, activeOrder); got != string(orders.StatusStaged) {
+		t.Errorf("the order moved to %q despite the refusal; a declined click must change nothing", got)
+	}
+}
+
+// TestReleaseGuard_TheTrunkStillConfirmsThroughAReadableRefusal is the other
+// half of the same amendment: making the ERROR path decline must not turn the
+// ordinary readable refusal into a wall. The operator can still see the aisle.
+func TestReleaseGuard_TheTrunkStillConfirmsThroughAReadableRefusal(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage")
+
+	if err := eng.ReleaseOrderWithLineside(activeOrder,
+		ReleaseDisposition{CalledBy: "op"}); err == nil {
+		t.Fatal("the fixture is wrong: the line IS pulling from SEQ-A, so the unconfirmed click must " +
+			"be refused")
+	}
+	if err := eng.ReleaseOrderWithLineside(activeOrder,
+		ReleaseDisposition{CalledBy: "op", ConfirmActivePull: true}); err != nil {
+		t.Fatalf("the confirmed release was refused: %v. active_pull was READABLE and said true — the "+
+			"speed bump, which the operator outranks — not an unread state.", err)
+	}
+}
+
+// TestReleaseGuard_SweepDeclinesAndNamesTheNode — a plant-wide click carries no
+// per-node intent, so it can never answer the confirm the guard asks for. It
+// reports the position by name instead of deciding for the operator.
+func TestReleaseGuard_SweepDeclinesAndNamesTheNode(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, processID, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	activeOrder, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	for _, id := range []int64{activeOrder, parkedOrder} {
+		testutil.MustNoErr(t, db.UpdateOrderStatus(id, string(orders.StatusStaged)), "stage")
+	}
+
+	res, err := eng.ReleaseChangeoverWait(processID, ReleaseDisposition{CalledBy: "supervisor"})
+	if err != nil {
+		t.Fatalf("the sweep errored; declining one node must not fail it for the others: %v", err)
+	}
+	if got := orderStatusOf(t, db, activeOrder); got != string(orders.StatusStaged) {
+		t.Errorf("the sweep released the position the line is pulling from (status %q)", got)
+	}
+	if got := orderStatusOf(t, db, parkedOrder); got == string(orders.StatusStaged) {
+		t.Error("the sweep declined the PARKED side too — nothing is pulling from it, so it should " +
+			"have released; the guard must key on the pull bit, not on being sequential")
+	}
+	if len(res.NeedsFlip) != 1 || res.NeedsFlip[0] != "SEQ-A" {
+		t.Errorf("NeedsFlip = %v, want exactly [SEQ-A] — the operator has to know which press still "+
+			"wants a click", res.NeedsFlip)
+	}
+}
+
+// TestReleaseGuard_SweepNeverAutoConfirms pins the thing that would quietly
+// undo the whole guard: a sweep carrying a confirm.
+func TestReleaseGuard_SweepNeverAutoConfirms(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, processID, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	activeOrder, _ := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	testutil.MustNoErr(t, db.UpdateOrderStatus(activeOrder, string(orders.StatusStaged)), "stage")
+
+	// Even handed a confirm, the SWEEP must not use it: the confirm is an
+	// answer about one aisle, and a plant-wide click was not aimed at one.
+	res, err := eng.ReleaseChangeoverWait(processID,
+		ReleaseDisposition{CalledBy: "supervisor", ConfirmActivePull: true})
+	if err != nil {
+		t.Fatalf("sweep errored: %v", err)
+	}
+	if got := orderStatusOf(t, db, activeOrder); got != string(orders.StatusStaged) {
+		t.Errorf("a plant-wide sweep carrying a confirm released the pulling position (status %q). "+
+			"A confirm answers for ONE press; a sweep was not aimed at one, so it may not spend it "+
+			"on every press at once.", got)
+	}
+	if len(res.NeedsFlip) == 0 {
+		t.Error("the sweep reported no NeedsFlip — it must still name what it declined")
+	}
+}
+
+// TestReleaseGuard_IgnoresNodesThatAreNotHalfOfAPair — the guard is about A/B
+// geometry, not about changeovers, and a single-position node has no partner to
+// flip to. It must not become a wall in front of every ordinary release.
+func TestReleaseGuard_IgnoresNodesThatAreNotHalfOfAPair(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+	if _, err := eng.StartProcessChangeover(processID, toStyleID, "test", "single node"); err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+	db.EnsureProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, db.SetActivePull(nodeID, true), "active pull on the single node")
+
+	// Whatever this release does about staging, it must not be refused BY THE
+	// PULL GUARD: CO-NODE has no PairedCoreNode, so there is no partner to flip
+	// to and the fact the guard reports would be meaningless.
+	_, err := eng.ReleaseChangeoverWaitForNode(processID, nodeID, ReleaseDisposition{CalledBy: "op"})
+	if err != nil && strings.Contains(err.Error(), "the line is pulling from") {
+		t.Fatalf("the pull guard fired on a node with no A/B partner: %v", err)
+	}
+}
+
+// seqTaskOrders returns the (active, parked) positions' changeover order ids.
+func seqTaskOrders(t *testing.T, db *store.DB, changeoverID, activeNodeID, parkedNodeID int64) (active, parked int64) {
+	t.Helper()
+	get := func(nodeID int64) int64 {
+		task, err := db.GetChangeoverNodeTaskByNode(changeoverID, nodeID)
+		if err != nil {
+			t.Fatalf("get node task %d: %v", nodeID, err)
+		}
+		if task.NextMaterialOrderID == nil {
+			t.Fatalf("node task %d has no order; the fixture is wrong", nodeID)
+		}
+		return *task.NextMaterialOrderID
+	}
+	return get(activeNodeID), get(parkedNodeID)
+}
+
+func orderStatusOf(t *testing.T, db *store.DB, orderID int64) string {
+	t.Helper()
+	o, err := db.GetOrder(orderID)
+	if err != nil {
+		t.Fatalf("get order %d: %v", orderID, err)
+	}
+	return string(o.Status)
+}
+
+// activePullOf reads one process node's active-pull bit.
+func activePullOf(t *testing.T, db *store.DB, nodeID int64) bool {
+	t.Helper()
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	if err != nil || rt == nil {
+		t.Fatalf("get runtime for node %d: %v", nodeID, err)
+	}
+	return rt.ActivePull
+}
+
+// ── THE FLIP GUARD: DO NOT PUT THE LINE ONTO A POSITION THAT CANNOT FEED IT ──
+//
+// The flip is what makes the other side releasable, so it is where "has the
+// operator got a bin of the new product" belongs. Every arm is answered from
+// state this Edge already owns — it holds no bin table, and needs none, because
+// the same steady-state invariant the reuse-skip leans on carries the knowledge:
+// a produce press's parked side holds an empty of the running style's carrier.
+//
+//	SKIPPED       the reuse shortcut turned this side Unchanged, which happens
+//	              only when the catalog says both styles ride the same carrier.
+//	DELIVERED     this side's own changeover order is terminal — the Edge watched
+//	              its robot deliver.
+//	STEADY STATE  no changeover; a bin is present.
+
+// TestFlipGuard_SkippedSideIsReadyImmediately — arm (a). The reuse shortcut
+// already decided the resident empty is the right carrier, so there is no order
+// to wait for and the flip must not invent one.
+func TestFlipGuard_SkippedSideIsReadyImmediately(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, _, _, parkedNodeID, co := seedSequentialScenario(t, db, false)
+
+	// Stand in for the shortcut having fired on this side.
+	task, err := db.GetChangeoverNodeTaskByNode(co.ID, parkedNodeID)
+	testutil.MustNoErr(t, err, "get parked task")
+	_, uErr := db.Exec("UPDATE changeover_node_tasks SET situation=? WHERE id=?",
+		string(SituationUnchanged), task.ID)
+	testutil.MustNoErr(t, uErr, "mark the parked side skipped")
+
+	if err := eng.FlipABNode(parkedNodeID, OperatorFlip("op")); err != nil {
+		t.Fatalf("flip onto the skipped side was refused: %v. The catalog said both styles ride the "+
+			"same carrier, so the empty already standing there IS the one the new style wants — "+
+			"there is nothing to deliver and nothing to wait for.", err)
+	}
+	if !activePullOf(t, db, parkedNodeID) {
+		t.Error("the flip reported success but did not move the pull")
+	}
+}
+
+// TestFlipGuard_WarnsUntilTheTargetsOrderDelivers — arm (b), produce. A
+// different-carrier side has a real order; until it lands, the position cannot
+// feed the line.
+func TestFlipGuard_WarnsUntilTheTargetsOrderDelivers(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	_, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+
+	err := eng.FlipABNode(parkedNodeID, OperatorFlip("op"))
+	if err == nil {
+		t.Fatal("the flip went through while the parked side's changeover order was still running. " +
+			"The line would be switched onto a position whose new carrier has not arrived.")
+	}
+	for _, want := range []string{"SEQ-B", fmt.Sprint(parkedOrder)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("warning = %q, want it to name %q — the operator needs the position and the "+
+				"order that fixes it", err.Error(), want)
+		}
+	}
+	if activePullOf(t, db, parkedNodeID) {
+		t.Error("a refused flip moved the pull anyway")
+	}
+
+	// CONFIRM OVERRIDES. The bit is the system's belief; the operator can see
+	// the aisle and may know better.
+	if err := eng.FlipABNode(parkedNodeID, FlipRequest{Confirm: true, CalledBy: "op"}); err != nil {
+		t.Fatalf("the confirmed flip was refused: %v — the guard is a speed bump, not a wall", err)
+	}
+	if !activePullOf(t, db, parkedNodeID) {
+		t.Error("the confirmed flip did not move the pull")
+	}
+
+	// AND ONCE IT DELIVERS, no warning at all.
+	db2 := testEngineDB(t)
+	eng2, _, activeB, parkedB, co2 := seedSequentialScenario(t, db2, false)
+	_, parkedOrder2 := seqTaskOrders(t, db2, co2.ID, activeB, parkedB)
+	markOrderTerminal(db2, parkedOrder2)
+	if err := eng2.FlipABNode(parkedB, OperatorFlip("op")); err != nil {
+		t.Fatalf("flip refused after the parked side's order delivered: %v", err)
+	}
+}
+
+// TestFlipGuard_AFailedOrCancelledOrderIsNotADelivery is arm (b)'s honest
+// predicate, and PRODUCE is where it matters because produce has nothing else.
+//
+// The arm read `!IsTerminal(order.Status)` — "the order is still running, so
+// wait". Terminal is not delivered: `failed`, `cancelled` and `skipped` are
+// terminal too, and each of them means the OPPOSITE of what the guard concluded.
+// The changeover order for this side ended without a carrier arriving, and the
+// flip was permitted onto a position still holding the old one — the exact
+// failure the guard exists to prevent, with the warning switched off.
+//
+// Consume's extra conjuncts (material present, and of the incoming style) catch
+// it by accident. Produce has no second question, so on a produce press this was
+// silent.
+//
+// The sentence has to differ too. "has not delivered (failed)" reads as "wait a
+// bit longer" and there is nothing to wait for: the order is over, and what the
+// operator must do is order another carrier, not stand and watch.
+func TestFlipGuard_AFailedOrCancelledOrderIsNotADelivery(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []protocol.Status{orders.StatusFailed, orders.StatusCancelled} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+			_, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+
+			// Raw, because the point is the STORED status: the lifecycle path to
+			// failed/cancelled is not what is under test, the guard's reading of it is.
+			_, uErr := db.Exec("UPDATE orders SET status=? WHERE id=?", string(status), parkedOrder)
+			testutil.MustNoErr(t, uErr, "end the parked side's order without a delivery")
+
+			err := eng.FlipABNode(parkedNodeID, OperatorFlip("op"))
+			if err == nil {
+				t.Fatalf("the flip onto SEQ-B was allowed with its changeover order %s. The order is "+
+					"terminal, but nothing was delivered — the position is still holding the OLD "+
+					"style's carrier, and the line has just been switched onto it. `terminal` is not "+
+					"`delivered`; the honest predicate is delivered-or-confirmed.", status)
+			}
+			if activePullOf(t, db, parkedNodeID) {
+				t.Error("a refused flip moved the pull anyway")
+			}
+			if !strings.Contains(err.Error(), "SEQ-B") {
+				t.Errorf("warning = %q, want it to name the position", err.Error())
+			}
+			if strings.Contains(err.Error(), "has not delivered") {
+				t.Errorf("warning = %q — that sentence tells the operator to wait, and there is nothing "+
+					"to wait for: the order is over. It has to say the delivery is not coming.",
+					err.Error())
+			}
+		})
+	}
+}
+
+// TestFlipGuard_ConsumeAlsoWantsMaterial — arm (b)'s consume conjunct. An empty
+// carrier on a consume position is as bad as nothing, so "the order finished" is
+// not on its own enough.
+func TestFlipGuard_ConsumeAlsoWantsMaterial(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	_, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	markOrderTerminal(db, parkedOrder)
+
+	// Make the target a CONSUME position with no material on it.
+	_, rErr := db.Exec("UPDATE style_node_claims SET role='consume' WHERE core_node_name='SEQ-B'")
+	testutil.MustNoErr(t, rErr, "make SEQ-B consume")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(parkedNodeID, nil, 0), "no material")
+
+	err := eng.FlipABNode(parkedNodeID, OperatorFlip("op"))
+	if err == nil {
+		t.Fatal("the flip went through onto a consume position holding no material. Its order " +
+			"finished, but an empty carrier at a consume position feeds the line nothing.")
+	}
+	if !strings.Contains(err.Error(), "material") {
+		t.Errorf("warning = %q, want it to say what is missing", err.Error())
+	}
+}
+
+// TestFlipGuard_SteadyStateWantsABinPresent — arm (c). Outside a changeover
+// there is nothing to be ready FOR beyond a bin being there.
+func TestFlipGuard_SteadyStateWantsABinPresent(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, _, _, parkedNodeID, co := seedSequentialScenario(t, db, false)
+
+	// End the changeover so this is ordinary A/B cycling.
+	testutil.MustNoErr(t, db.UpdateProcessChangeoverState(co.ID, domain.ChangeoverCompleted),
+		"close changeover")
+
+	if err := eng.FlipABNode(parkedNodeID, OperatorFlip("op")); err == nil {
+		t.Fatal("steady-state flip onto a position with no bin was allowed; the line would starve")
+	}
+	bin := int64(4242)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(parkedNodeID, nil, &bin, 40), "put a bin on it")
+	if err := eng.FlipABNode(parkedNodeID, OperatorFlip("op")); err != nil {
+		t.Fatalf("steady-state flip onto a position holding a bin was refused: %v", err)
+	}
+}
+
+// TestFlipGuard_PLCCannotConfirm — a PLC bit cannot look at the aisle, so it
+// cannot override. Refused loudly (changeover-53 precedent), never silently.
+func TestFlipGuard_PLCCannotConfirm(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, _, _, parkedNodeID, _ := seedSequentialScenario(t, db, false)
+
+	// Even carrying a confirm, a PLC request must be refused: the field is an
+	// operator's statement that he looked, and a PLC has no eyes.
+	err := eng.FlipABNode(parkedNodeID, FlipRequest{ByPLC: true, Confirm: true, CalledBy: "plc"})
+	if err == nil {
+		t.Fatal("a PLC flip onto an unready position was allowed. A PLC cannot see whether the new " +
+			"carrier arrived; only a person can, and this must land in front of one.")
+	}
+	if activePullOf(t, db, parkedNodeID) {
+		t.Error("the refused PLC flip moved the pull anyway")
+	}
+}
+
+// ── THE PRODUCE REUSE-SKIP ────────────────────────────────────────────────
+//
+// Same answer press-index already gives to the identical question: ask the
+// CATALOG what each style rides and lean on the mode's steady-state invariant,
+// rather than asking the floor what is on deck. A produce press's parked side
+// holds an empty of the running style's carrier; if the carrier does not
+// change, that empty is already the one the new style wants, so swapping it for
+// an identical one is a robot trip that moves nothing.
+func seqReuseDiffs(role protocol.ClaimRole) []ChangeoverNodeDiff {
+	mk := func(own, partner, payload string) processes.NodeClaim {
+		c := fullSwapClaim(own, payload, role)
+		c.SwapMode = protocol.SwapModeSequential
+		c.PairedCoreNode = partner
+		return c
+	}
+	fromA, toA := mk("A_POS", "B_POS", "PART-FROM"), mk("A_POS", "B_POS", "PART-TO")
+	fromB, toB := mk("B_POS", "A_POS", "PART-FROM"), mk("B_POS", "A_POS", "PART-TO")
+	return []ChangeoverNodeDiff{
+		{CoreNodeName: "A_POS", Situation: SituationSwap, FromClaim: &fromA, ToClaim: &toA},
+		{CoreNodeName: "B_POS", Situation: SituationSwap, FromClaim: &fromB, ToClaim: &toB},
+	}
+}
+
+func TestSequentialReuseSkip_SameCarrierProduceSkipsTheParkedSide(t *testing.T) {
+	t.Parallel()
+	// Empty active-pull snapshot → canonical tie-break → A_POS is parked.
+	sameCarrier := map[string]string{"PART-FROM": "STANDARD-SM", "PART-TO": "STANDARD-SM"}
+
+	out := ApplySequentialReuseShortcut(seqReuseDiffs(protocol.ClaimRoleProduce), sameCarrier, nil)
+	got := map[string]ChangeoverSituation{}
+	for _, d := range out {
+		got[d.CoreNodeName] = d.Situation
+	}
+	if got["A_POS"] != SituationUnchanged {
+		t.Errorf("the PARKED side is %q, want unchanged. Both styles ride STANDARD-SM, so the empty "+
+			"already standing there is the one the new style wants — no order, no button, no release.",
+			got["A_POS"])
+	}
+	if got["B_POS"] != SituationSwap {
+		t.Errorf("the ACTIVE side is %q, want swap — it holds the outgoing style's partial full and "+
+			"that has to leave whatever the carrier does", got["B_POS"])
+	}
+}
+
+func TestSequentialReuseSkip_NeverSkipsConsume(t *testing.T) {
+	t.Parallel()
+	sameCarrier := map[string]string{"PART-FROM": "STANDARD-SM", "PART-TO": "STANDARD-SM"}
+	for _, d := range ApplySequentialReuseShortcut(seqReuseDiffs(protocol.ClaimRoleConsume), sameCarrier, nil) {
+		if d.Situation != SituationSwap {
+			t.Errorf("consume position %s was skipped (%q). A consume press's parked side holds a FULL "+
+				"standby of the OUTGOING style — material, not an empty carrier — and material is "+
+				"material: it leaves and is replaced whatever the carrier does.", d.CoreNodeName, d.Situation)
+		}
+	}
+}
+
+func TestSequentialReuseSkip_DifferentCarrierSwapsBothSides(t *testing.T) {
+	t.Parallel()
+	diffCarrier := map[string]string{"PART-FROM": "STANDARD-SM", "PART-TO": "DEEP-LG"}
+	for _, d := range ApplySequentialReuseShortcut(seqReuseDiffs(protocol.ClaimRoleProduce), diffCarrier, nil) {
+		if d.Situation != SituationSwap {
+			t.Errorf("position %s was skipped on a CARRIER CHANGE (%q) — the resident empty is the "+
+				"wrong shape for the incoming style", d.CoreNodeName, d.Situation)
+		}
+	}
+}
+
+// NO CATALOG, NO SKIP — the opposite direction from binTypesDiffer's, and the
+// reason binTypesKnownSame is not its negation. Acting on unknown here means
+// SKIPPING a side; the degraded direction has to be one redundant carrier swap,
+// never a wrong one. press-index can read unknown as "same" because
+// refusePressIndexWhenCoreUnavailable refuses the changeover outright; sequential
+// has no such gate.
+func TestSequentialReuseSkip_NoCatalogAnswerBuildsBothOrders(t *testing.T) {
+	t.Parallel()
+	for name, binTypes := range map[string]map[string]string{
+		"core down":     {},
+		"one side only": {"PART-FROM": "STANDARD-SM"},
+		"blank entries": {"PART-FROM": "", "PART-TO": ""},
+	} {
+		for _, d := range ApplySequentialReuseShortcut(seqReuseDiffs(protocol.ClaimRoleProduce), binTypes, nil) {
+			if d.Situation != SituationSwap {
+				t.Errorf("%s: position %s was skipped without a catalog answer (%q). Unknown must "+
+					"build both orders — a redundant swap is recoverable, a skipped one is a press "+
+					"left on the wrong carrier.", name, d.CoreNodeName, d.Situation)
+			}
+		}
+	}
+}
+
+// TestSequentialReuseSkip_LeavesPressIndexAlone is the Unit 5 inertness proof:
+// HK runs two_robot_press_index, and this pass must be invisible to it. The
+// argument is structural — the predicate's first test is the sequential mode —
+// but HK is a live plant and "structural" is what an assertion is for.
+func TestSequentialReuseSkip_LeavesPressIndexAlone(t *testing.T) {
+	t.Parallel()
+	sameCarrier := map[string]string{"PART-FROM": "STANDARD-SM", "PART-TO": "STANDARD-SM"}
+	diffs := seqReuseDiffs(protocol.ClaimRoleProduce)
+	for i := range diffs {
+		diffs[i].FromClaim.SwapMode = protocol.SwapModeTwoRobotPressIndex
+		diffs[i].ToClaim.SwapMode = protocol.SwapModeTwoRobotPressIndex
+	}
+	for _, d := range ApplySequentialReuseShortcut(diffs, sameCarrier, nil) {
+		if d.Situation != SituationSwap {
+			t.Errorf("press-index position %s was rewritten to %q by the SEQUENTIAL shortcut. HK runs "+
+				"this mode; its own reuse pass is ApplyReuseCompatibleBinsShortcut and it must stay "+
+				"the only thing that touches it.", d.CoreNodeName, d.Situation)
+		}
+	}
+}
+
+// TestFlipGuard_ConsumeWantsTheINCOMINGStylesMaterial is the second half of
+// consume's conjunct, and it is a different question from the first.
+//
+// "The order finished" and "there is material on the position" can both be true
+// while the material is the OUTGOING style's — a full bin of the old part is
+// exactly as useless to a press about to run the new one as an empty carrier is.
+//
+// active_claim_id answers it without a bin table: it names the claim the
+// resident bin was stocked for, so comparing it against the to-style's claim for
+// this node is the whole question, edge-local, no Core call.
+func TestFlipGuard_ConsumeWantsTheIncomingStylesMaterial(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng, _, activeNodeID, parkedNodeID, co := seedSequentialScenario(t, db, false)
+	_, parkedOrder := seqTaskOrders(t, db, co.ID, activeNodeID, parkedNodeID)
+	markOrderTerminal(db, parkedOrder)
+
+	_, rErr := db.Exec("UPDATE style_node_claims SET role='consume' WHERE core_node_name='SEQ-B'")
+	testutil.MustNoErr(t, rErr, "make SEQ-B consume")
+
+	// Material IS present — but stocked for the OUTGOING style's claim.
+	fromClaimID := claimIDFor(t, db, *co.FromStyleID, "SEQ-B")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(parkedNodeID, &fromClaimID, 40), "outgoing material")
+
+	err := eng.FlipABNode(parkedNodeID, OperatorFlip("op"))
+	if err == nil {
+		t.Fatal("the flip went through onto a consume position holding the OUTGOING style's " +
+			"material. Its order finished and there is material on it, and neither fact makes it " +
+			"able to feed a press that is about to run the new part.")
+	}
+	if !strings.Contains(err.Error(), "outgoing") {
+		t.Errorf("warning = %q, want it to say the material is the wrong style", err.Error())
+	}
+
+	// Re-stock it for the INCOMING style and the same click goes through.
+	toClaimID := claimIDFor(t, db, co.ToStyleID, "SEQ-B")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(parkedNodeID, &toClaimID, 40), "incoming material")
+	if err := eng.FlipABNode(parkedNodeID, OperatorFlip("op")); err != nil {
+		t.Fatalf("flip refused with the incoming style's material on the position: %v", err)
+	}
+}
+
+// claimIDFor returns the claim id for one style at one node.
+func claimIDFor(t *testing.T, db *store.DB, styleID int64, coreNode string) int64 {
+	t.Helper()
+	c, err := db.GetStyleNodeClaimByNode(styleID, coreNode)
+	if err != nil || c == nil {
+		t.Fatalf("get claim for style %d at %s: %v", styleID, coreNode, err)
+	}
+	return c.ID
 }

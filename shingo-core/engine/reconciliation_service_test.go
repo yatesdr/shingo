@@ -277,13 +277,18 @@ func TestReconciliationService_Summary_FreshDB(t *testing.T) {
 
 func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
 
-	// Seed a dispatched order and backdate updated_at past the stuck-age
-	// threshold (30 minutes). Must be older than stuckOrderAge in
-	// store/reconciliation.go.
+	// Seed a dispatched order and backdate it past the stuck-age threshold (30
+	// minutes). Must be older than stuckOrderAge in store/reconciliation.go.
+	//
+	// BOTH CLOCKS, and the second one is the one that counts: the detector reads
+	// the last STATUS TRANSITION (an order_history row), falling back to
+	// created_at for an order that has never transitioned, which this is. An
+	// updated_at-only fixture describes an order that has just progressed.
 	order := &orders.Order{
 		EdgeUUID:     "stuck-uuid",
 		StationID:    "line-1",
@@ -293,8 +298,18 @@ func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 		DeliveryNode: "LINE1-IN",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
+	if _, err := db.Exec(
+		`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours',
+		                   created_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
 		t.Fatalf("backdate order: %v", err)
+	}
+	// The birth row too. orders.Create writes one from the INSERT, so the
+	// COALESCE fallback to created_at no longer reaches — an un-backdated birth
+	// row makes the order's newest transition its own creation, a second ago.
+	if _, err := db.Exec(
+		`UPDATE order_history SET created_at = NOW() - INTERVAL '2 hours' WHERE order_id = $1`,
+		order.ID); err != nil {
+		t.Fatalf("backdate birth row: %v", err)
 	}
 
 	summary, err := svc.Summary()
@@ -319,6 +334,7 @@ func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 // abandonOrder callback — production wires it to LifecycleService.CancelOrder.
 func TestAbandonStuckOrders(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -453,6 +469,7 @@ func TestAbandonStuckOperatorGatedStaging(t *testing.T) {
 // moved) is still swept.
 func TestPreDispatchNotSwept(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -642,6 +659,7 @@ func TestReconciliationService_ListAnomalies_Empty(t *testing.T) {
 
 func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -653,8 +671,22 @@ func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 		Status:    "dispatched",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
+	// AGE IS AGE SINCE THE LAST TRANSITION. active_order_stuck keys on an
+	// order_history row now, with orders.created_at as the fallback for one that
+	// has never transitioned — which this is — so backdating updated_at alone
+	// describes an order that has JUST progressed and correctly raises nothing.
+	// Same translation store/reconciliation's own fixtures took; this package was
+	// not run when they did, so these two went red on main unnoticed.
+	if _, err := db.Exec(
+		`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours',
+		                   created_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
 		t.Fatalf("backdate: %v", err)
+	}
+	// And the birth row the INSERT wrote — see the sibling fixture above.
+	if _, err := db.Exec(
+		`UPDATE order_history SET created_at = NOW() - INTERVAL '2 hours' WHERE order_id = $1`,
+		order.ID); err != nil {
+		t.Fatalf("backdate birth row: %v", err)
 	}
 
 	anomalies, err := svc.ListAnomalies()

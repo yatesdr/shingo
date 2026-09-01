@@ -82,12 +82,21 @@ func TestUpsertClaim_ForeignNodeWarnsAndStillSaves(t *testing.T) {
 	// The node exists — on the OTHER process.
 	seedProcessNode(t, otherPID, 0, "WARN-NODE")
 
+	// A COMPLETE sequential claim. It is complete because sequential's routing
+	// is now validated like every other mode's (2026-08-28) — before that arm
+	// existed this fixture saved with none of it, which is exactly the defect,
+	// not a property this test wanted. What it is about is the MEMBERSHIP
+	// warning, so the rest of the claim has to be clean or the warning is buried
+	// under errors about fields nobody is testing.
 	body := processes.NodeClaimInput{
-		StyleID:      sid,
-		CoreNodeName: "WARN-NODE",
-		Role:         "consume",
-		SwapMode:     "sequential",
-		PayloadCode:  "PART-WARN",
+		StyleID:             sid,
+		CoreNodeName:        "WARN-NODE",
+		Role:                "consume",
+		SwapMode:            "sequential",
+		PayloadCode:         "PART-WARN",
+		PairedCoreNode:      "WARN-NODE-B",
+		InboundSource:       "MARKET",
+		OutboundDestination: "DEST",
 	}
 	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
@@ -124,12 +133,16 @@ func TestUpsertClaim_CleanSaveHasNoWarningsKey(t *testing.T) {
 	sid := seedStyle(t, "CleanStyle", pid)
 	seedProcessNode(t, pid, 0, "CLEAN-NODE")
 
+	// Complete sequential routing — see the note in the warning test above.
 	body := processes.NodeClaimInput{
-		StyleID:      sid,
-		CoreNodeName: "CLEAN-NODE",
-		Role:         "consume",
-		SwapMode:     "sequential",
-		PayloadCode:  "PART-CLEAN",
+		StyleID:             sid,
+		CoreNodeName:        "CLEAN-NODE",
+		Role:                "consume",
+		SwapMode:            "sequential",
+		PayloadCode:         "PART-CLEAN",
+		PairedCoreNode:      "CLEAN-NODE-B",
+		InboundSource:       "MARKET",
+		OutboundDestination: "DEST",
 	}
 	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
 	assertStatus(t, resp, http.StatusOK)

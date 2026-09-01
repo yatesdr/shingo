@@ -230,12 +230,29 @@ func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
 	if got.CompletedAt == nil {
 		t.Fatalf("expected completed_at to be set")
 	}
+	// ONE COMPLETION ROW, not one row. The claim here is about the DEDUP: a
+	// replayed receipt must not complete the order twice. Counting every row
+	// answered that question by accident and stopped doing so when orders.Create
+	// began writing a birth row — the order is now born `delivered`, with an
+	// entry saying so, and its completion is the second. Counting the completions
+	// asks the question the test is named for.
 	history, err := db.ListOrderHistory(order.ID)
 	if err != nil {
 		t.Fatalf("list order history: %v", err)
 	}
-	if len(history) != 1 {
-		t.Fatalf("expected 1 history row after replayed receipt (deduped), got %d", len(history))
+	completions := 0
+	for _, h := range history {
+		if h.Status == dispatch.StatusConfirmed {
+			completions++
+		}
+	}
+	if completions != 1 {
+		var got []string
+		for _, h := range history {
+			got = append(got, string(h.Status))
+		}
+		t.Fatalf("expected 1 completion row after the replayed receipt (deduped), got %d; history is %v",
+			completions, got)
 	}
 }
 func (noopEmitter) EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)           {}

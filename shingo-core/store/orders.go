@@ -19,7 +19,25 @@ import (
 	"shingocore/store/reservations"
 )
 
-func (db *DB) CreateOrder(o *orders.Order) error { return orders.Create(db.DB, o) }
+// CreateOrder is the ordinary door onto orders.Create — every creator except the
+// compound one, which has a transaction of its own (CreateCompoundChildren).
+//
+// IT OPENS A TRANSACTION BECAUSE Create WRITES TWO ROWS: the order and its birth
+// history row. Handed a *sql.DB those are separate autocommits, so a failure
+// between them leaves either an order with no birth certificate — nowhere for
+// SetQueueDetail to stamp a cause — or a committed order the caller was told did
+// not get created. Both rows, or neither.
+func (db *DB) CreateOrder(o *orders.Order) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	if err := orders.Create(tx, o); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
 // CompoundChild describes a child order to create in a compound order
 // transaction. Declared here (not in the orders sub-package) because
@@ -55,9 +73,22 @@ type BlockerClaimedError struct {
 	ChildID  int64 // the leg that wanted it
 	ParentID int64 // the compound the leg belongs to
 	HolderID int64 // the order actually holding the claim, or 0 if unreadable
+	// Promised distinguishes the RANKED refusal from the claimed one, and the
+	// distinction is a releaser rather than a nuance. False: the holder has a hard
+	// claim, so a robot is committed and the wait ends when it finishes its drive.
+	// True: the holder has a PROMISE — a pending reservation, no robot — and it
+	// outranked this dig, so the wait ends when that demand takes its bin or ends.
+	// The dispatch caller reads this to pick between two queue causes; telling an
+	// operator to wait for a drive that has not started is the wrong-name defect
+	// class the cause vocabulary exists to prevent.
+	Promised bool
 }
 
 func (e *BlockerClaimedError) Error() string {
+	if e.Promised {
+		return fmt.Sprintf("claim bin %d for child %d: promised to order %d, whose demand outranks "+
+			"compound %d", e.BinID, e.ChildID, e.HolderID, e.ParentID)
+	}
 	if e.HolderID != 0 {
 		return fmt.Sprintf("claim bin %d for child %d: held by order %d, outside compound %d",
 			e.BinID, e.ChildID, e.HolderID, e.ParentID)
@@ -68,14 +99,36 @@ func (e *BlockerClaimedError) Error() string {
 
 func (e *BlockerClaimedError) Unwrap() error { return ErrBlockerClaimed }
 
+// DisplacedByHand names an order the steal took a bin from and DELIBERATELY did
+// not repair: one whose caller is a person at a Core door.
+//
+// The ordinary victim is un-pointed and re-sources, which is a recalculation. A
+// hand-placed one cannot be treated that way — un-pointing it hands it back to
+// the finder, and for a node-local move that means Core silently substituting
+// whatever bin is standing at that node now for the one somebody named. So the
+// store leaves it pointed and REPORTS it, and the dispatch caller ends it out
+// loud once the steal has committed. Ending it here is not available: the
+// terminal chokepoint opens a transaction of its own.
+type DisplacedByHand struct {
+	OrderID  int64  // the hand-placed order that lost its bin
+	BinID    int64  // the bin the dig took
+	DigID    int64  // the compound whose dig took it
+	ParkedAt string // where that dig is putting the bin; "" if the leg named nowhere
+}
+
 // CreateCompoundChildren creates all child orders and claims their payloads
 // in a single transaction. Cross-aggregate (orders ↔ bins).
-func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
+//
+// Returns the hand-placed orders whose bins it took — see DisplacedByHand. Empty
+// on the ordinary path and on every error.
+func (db *DB) CreateCompoundChildren(children []CompoundChild) ([]DisplacedByHand, error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
+	var displaced []DisplacedByHand
+	var stolen []stolenBin
 
 	for _, c := range children {
 		o := c.Order
@@ -85,7 +138,7 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 		// from them. It also owns the clock.Now() timestamps and the o.ID
 		// write-back that the code below depends on.
 		if err := orders.Create(tx, o); err != nil {
-			return fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
+			return nil, fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}
 
 		// Bin-centric claiming: if the child order has a bin, claim it.
@@ -121,12 +174,17 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 			if o.ParentOrderID != nil {
 				parentID = *o.ParentOrderID
 			}
-			// THE STEAL, MADE EXPLICIT. A blocker is positional: the dig has no
-			// choice about which bins are in its way, so it always wins, and a soft
-			// reservation never stops it — the claim CAS below admits any bin whose
-			// claimed_by is NULL, including one another order has softly promised
-			// itself. That has always happened. What has not happened is the
-			// bookkeeping.
+			// THE STEAL, MADE EXPLICIT. A blocker is POSITIONAL — the dig has no
+			// choice about which bins are in its way — and the claim CAS below
+			// admits any bin whose claimed_by is NULL, including one another order
+			// has softly promised itself. That has always happened; what had not
+			// happened is the bookkeeping.
+			//
+			// IT IS NO LONGER UNCONDITIONAL. Positional is an argument about WHICH
+			// bin, never about whose turn, so stealSoftHolds ranks the two demands
+			// first and REFUSES when the holder wins (§7). That refusal is an error
+			// and it aborts this transaction before the claim below — the gate
+			// carries the reasoning.
 			//
 			// The holder's row used to survive the steal and get deleted much later,
 			// at the dig leg's ARRIVAL (ReleaseByBin in ApplyArrival), which left a
@@ -144,9 +202,12 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 			// on claim_failed forever, which is the opposite of recalculating. Cleared
 			// together, the holder re-enters through the finder and re-resolves: it
 			// finds its bin at the shuffle slot the dig parked it in, or a better one.
-			if err := stealSoftHold(tx, *o.BinID, o.ID, parentID); err != nil {
-				return err
+			byHand, took, err := stealSoftHolds(tx, *o.BinID, o.ID, parentID, o.DeliveryNode)
+			if err != nil {
+				return nil, err
 			}
+			displaced = append(displaced, byHand...)
+			stolen = append(stolen, took...)
 			res, err := tx.Exec(`UPDATE bins SET claimed_by=$1
 				WHERE id=$2
 				  AND (claimed_by IS NULL
@@ -154,7 +215,7 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 				       OR claimed_by IN (SELECT id FROM orders WHERE parent_order_id = $3))`,
 				o.ID, *o.BinID, parentID)
 			if err != nil {
-				return fmt.Errorf("claim bin %d for child %d: %w", *o.BinID, o.ID, err)
+				return nil, fmt.Errorf("claim bin %d for child %d: %w", *o.BinID, o.ID, err)
 			}
 			if n, rErr := res.RowsAffected(); rErr == nil && n == 0 {
 				// Refused, not failed-to-write. The bin is held by an order outside
@@ -173,7 +234,7 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 				if qErr := tx.QueryRow(`SELECT claimed_by FROM bins WHERE id=$1`, *o.BinID).Scan(&holder); qErr != nil {
 					holder = sql.NullInt64{}
 				}
-				return &BlockerClaimedError{
+				return nil, &BlockerClaimedError{
 					BinID:    *o.BinID,
 					ChildID:  o.ID,
 					ParentID: parentID,
@@ -196,69 +257,236 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 			// property wiring_completion.go's teleport-guard skip already relies on
 			// for claimed_by.
 			if err := supersedeBinLedger(tx, *o.BinID, o.ID); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	// AFTER THE COMMIT, and only after it. A displaced order is a consequence of
+	// a steal that HAPPENED; reporting one out of a transaction that then rolls
+	// back would have the caller terminate a person's order over a dig that
+	// never took anything. The LOG is the same fact and now keeps the same rule:
+	// a steal reported from inside the transaction is a theft that a later
+	// child's refusal can un-do, and soakstat counts those lines.
+	logSteals(stolen)
+	return displaced, nil
 }
 
-// stealSoftHold releases a FOREIGN soft hold on a bin a dig is about to claim,
-// and clears the holder's pointer to it, so the holder recalculates instead of
-// following a plan that is no longer true.
+// stealSoftHolds releases the FOREIGN soft holds on a bin a dig is about to
+// claim, and clears each holder's pointer to it, so the holders recalculate
+// instead of following a plan that is no longer true.
 //
 // Foreign means: not this compound's. A row belonging to the parent or to a
 // sibling is the same demand holding its own bin across steps, and
 // supersedeBinLedger moves it rather than reporting a theft.
 //
-// THE LOG LINE IS THE POINT of the third return. A steal that leaves no trace is
-// how this behaviour survived unexamined for so long: the holder limped after its
-// bin by id, it usually worked, and nothing anywhere said a dig had taken
-// somebody's bin. Now it says so, by name, once, at the moment it happens.
-func stealSoftHold(tx *sql.Tx, binID, childID, parentID int64) error {
-	var holder sql.NullInt64
-	err := tx.QueryRow(`SELECT order_id FROM reservations
-		WHERE bin_id=$1 AND resource_kind='bin' AND state IN ('pending','confirmed')
-		  AND order_id <> $2
-		  AND order_id <> $3
-		  AND order_id NOT IN (SELECT id FROM orders WHERE parent_order_id = $3)`,
-		binID, childID, parentID).Scan(&holder)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil // nobody else's book on this bin — nothing to supersede
+// ── SET-VALUED, AND IT WAS A COIN FLIP ────────────────────────────
+//
+// This read one holder, with an unordered QueryRow, while supersedeBinLedger a
+// few statements later already deleted the bin's WHOLE book. The two halves
+// agreed only because uq_reservations_bin_active makes one active row per bin
+// structural. The day that index narrows, the singular read leaves every holder
+// but one with a bin_id pointing at a bin the dig owns and no reservation behind
+// it — and dispatchHeldBin never re-acquires, so each of them confirms by id
+// against a row that does not exist, every tick, with no releaser. The pointer
+// and the book are swept by the same rule now, and the rule is "every holder".
+//
+// ── PLANNING, NOT PHYSICS ────────────────────────────────────
+//
+// Only PENDING rows are victims. A confirmed row is a hold that has been acted
+// on — the claim and the confirm move together in one transaction — so a robot
+// is on its way and the hold is physics, not a plan anybody may rewrite. The
+// claim CAS below refuses such a bin outright and rolls the whole compound back,
+// so this scoping changed no outcome the day it was written; it is here because
+// the CAS is a different guard for a different reason, and a set-valued sweep
+// must not rely on being saved by one.
+//
+// ── AND A PERSON'S ORDER IS NOT REPAIRED THIS WAY AT ALL ──────────────
+//
+// Un-pointing an order hands it back to the finder, which is the right answer
+// for a demand Core sourced and the wrong one for a demand a person placed by
+// hand: a node-local move re-sourced from its own node takes whatever bin is
+// standing there now, so the instruction "move THAT bin" quietly becomes "move
+// some bin". Those keep their pointer and come back as DisplacedByHand for the
+// caller to end out loud. It is the same rule redirectStoreOffDugLane already
+// keeps at the destination end — re-aiming a person's order is not a
+// recalculation, it is Core overruling somebody.
+//
+// THE LOG LINE IS THE POINT. A steal that leaves no trace is how this behaviour
+// survived unexamined for so long: the holder limped after its bin by id, it
+// usually worked, and nothing anywhere said a dig had taken somebody's bin. Now
+// it says so, by name, once per victim, at the moment it happens.
+func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string) ([]DisplacedByHand, []stolenBin, error) {
+	type victim struct {
+		orderID    int64
+		handPlaced bool
+		pointsHere bool
 	}
+	rows, err := tx.Query(`SELECT r.order_id, COALESCE(o.origin_class,''), COALESCE(o.bin_id,0)
+		FROM reservations r
+		JOIN orders o ON o.id = r.order_id
+		WHERE r.bin_id=$1 AND r.resource_kind='bin' AND `+reservations.BlockingStateSQL("r.")+`
+		  AND r.order_id <> $2
+		  AND r.order_id <> $3
+		  AND r.order_id NOT IN (SELECT id FROM orders WHERE parent_order_id = $3)
+		ORDER BY r.order_id`, binID, childID, parentID)
 	if err != nil {
-		return fmt.Errorf("read soft hold on bin %d: %w", binID, err)
+		return nil, nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
+	}
+	// READ THE WHOLE SET BEFORE WRITING ANY OF IT. A transaction runs one
+	// statement at a time, so an UPDATE issued while these rows are open kills
+	// the query it is iterating.
+	var victims []victim
+	for rows.Next() {
+		var v victim
+		var originClass string
+		var pointsAt int64
+		if err := rows.Scan(&v.orderID, &originClass, &pointsAt); err != nil {
+			rows.Close()
+			return nil, nil, fmt.Errorf("scan soft hold on bin %d: %w", binID, err)
+		}
+		v.handPlaced = originClass == protocol.OriginClassNoDemand
+		v.pointsHere = pointsAt == binID
+		victims = append(victims, v)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
+	}
+	rows.Close()
+
+	// ── THE RANKED TAKE (§7): A DIG IS NOT A PRIVILEGED MOVE ──────────────
+	//
+	// A blocker is POSITIONAL — the dig has no choice about which bins are in its
+	// way — and that has always been the argument for the steal. It is an argument
+	// about WHICH bin, not about whose turn. So the take goes by the demand
+	// ranking like every other take, and yielding costs less than it looks: a
+	// promise on a bin is always a plan to REMOVE it (stores promise slots, not
+	// bins), so the wait ends with the blocker leaving on the winner's drive.
+	//
+	// BOTH SIDES RESOLVE THROUGH LoadDemandRank, so a leg presents its parent's
+	// demand — its own row is priority 0 and the plant's youngest timestamp, and
+	// would lose every contest (T2).
+	//
+	// A REFUSAL IS AN ERROR, NOT A SKIP (T3). The claim CAS below only refuses
+	// bins whose claimed_by is set, and a promise-holder has none — so a gate that
+	// merely declined to un-point a holder would fall through: the CAS passes and
+	// supersedeBinLedger, three statements later, evicts the whole bin's ledger.
+	// That shreds the book of the order that WON while leaving its pointer
+	// stamped: the pointer wedge, built for the winner. The error aborts the
+	// transaction and everything unwinds on the caller's defer.
+	//
+	// SCOPE: EVERY dig, gate-staged included. The gate sits in the one
+	// compound-creation door — CreateCompoundOrder → writeCompoundChildren → here
+	// (dispatch/compound.go) — and there is no second one, so a robot standing at
+	// a mark digging its own lane open contests its blockers on the same ranking
+	// as a dig planned from scratch. A gate-staged dig that yields parks under
+	// dig-blocker-promised and KEEPS its lane lock, which §R.104 requires: a
+	// corridor with a robot in its mouth is not released.
+	digRank, err := orders.LoadDemandRank(tx, childID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, v := range victims {
+		holderRank, rerr := orders.LoadDemandRank(tx, v.orderID)
+		if rerr != nil {
+			return nil, nil, rerr
+		}
+		if digRank.Outranks(holderRank) {
+			continue
+		}
+		// Outranked, or tied and younger: the incumbent keeps the bin. A tie going
+		// to the challenger would let two demands at one priority take the bin from
+		// each other on alternate passes.
+		log.Printf("dispatch: dig %d YIELDED bin %d to order %d — the holder's demand outranks it "+
+			"(holder priority %d since %s, dig priority %d since %s). Digs are not special: the dig "+
+			"backs out whole and waits, and the holder taking that bin out is what clears the lane "+
+			"for it", parentID, binID, v.orderID,
+			holderRank.Priority, holderRank.CreatedAt.Format(time.RFC3339),
+			digRank.Priority, digRank.CreatedAt.Format(time.RFC3339))
+		return nil, nil, &BlockerClaimedError{
+			BinID:    binID,
+			ChildID:  childID,
+			ParentID: parentID,
+			HolderID: v.orderID,
+			Promised: true,
+		}
 	}
 
-	// THE ROW ITSELF IS NOT DELETED HERE. supersedeBinLedger, three statements
-	// later in this same transaction, is the one writer that clears this bin's
-	// reservations — deleting it here too would be two writers for one fact, which
-	// is the shape this codebase keeps having to unpick. Either both land or the
-	// transaction rolls back, so there is no window where the holder's pointer is
-	// cleared and its row is not.
-	//
-	// Scoped to a holder still pointing AT THIS BIN: an order that has already
-	// moved on to another bin must keep the one it moved to.
-	//
-	// updated_at IS STAMPED FROM THE INJECTED CLOCK, like every other writer of
-	// this column. It was `NOW()` — the one Postgres-clock writer among ~20
-	// Go-clock ones, so the rows a dig took a bin from carried a foreign stamp on
-	// a column whose readers all assume the other domain. Under the rig's clamp
-	// the two agree and nothing showed; the moment the sim clock genuinely runs
-	// ahead they do not, and this row's staleness reads as fresh forever. Two
-	// readers now care: ListAnomalies' runtime-stuck detector, and the stale-dig
-	// disposition's liveness test.
-	if _, err := tx.Exec(
-		`UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2`,
-		holder.Int64, binID, clock.Now().UTC()); err != nil {
-		return fmt.Errorf("clear bin %d off holder %d: %w", binID, holder.Int64, err)
+	var displaced []DisplacedByHand
+	var stolen []stolenBin
+	for _, v := range victims {
+		if v.handPlaced && v.pointsHere {
+			stolen = append(stolen, stolenBin{
+				binID: binID, holderID: v.orderID, digID: parentID, handPlaced: true,
+			})
+			displaced = append(displaced, DisplacedByHand{
+				OrderID: v.orderID, BinID: binID, DigID: parentID, ParkedAt: parkedAt,
+			})
+			continue
+		}
+		// THE ROW ITSELF IS NOT DELETED HERE. supersedeBinLedger, three statements
+		// later in this same transaction, is the one writer that clears this bin's
+		// reservations — deleting it here too would be two writers for one fact, which
+		// is the shape this codebase keeps having to unpick. Either both land or the
+		// transaction rolls back, so there is no window where a holder's pointer is
+		// cleared and its row is not.
+		//
+		// Scoped to a holder still pointing AT THIS BIN: an order that has already
+		// moved on to another bin must keep the one it moved to.
+		//
+		// updated_at IS STAMPED FROM THE INJECTED CLOCK, like every other writer of
+		// this column. It was `NOW()` — the one Postgres-clock writer among ~20
+		// Go-clock ones, so the rows a dig took a bin from carried a foreign stamp on
+		// a column whose readers all assume the other domain. Under the rig's clamp
+		// the two agree and nothing showed; the moment the sim clock genuinely runs
+		// ahead they do not, and this row's staleness reads as fresh forever. Two
+		// readers now care: ListAnomalies' runtime-stuck detector, and the stale-dig
+		// disposition's liveness test.
+		if _, err := tx.Exec(
+			`UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2`,
+			v.orderID, binID, clock.Now().UTC()); err != nil {
+			return nil, nil, fmt.Errorf("clear bin %d off holder %d: %w", binID, v.orderID, err)
+		}
+		stolen = append(stolen, stolenBin{binID: binID, holderID: v.orderID, digID: parentID})
 	}
+	return displaced, stolen, nil
+}
 
-	log.Printf("dispatch: dig %d took bin %d from order %d — the dig always wins on a positional "+
-		"blocker; order %d keeps its demand and re-resolves (the bin is findable at its new home)",
-		parentID, binID, holder.Int64, holder.Int64)
-	return nil
+// stolenBin is one steal, held back for the log that runs AFTER the commit.
+//
+// The log lines used to fire inside the transaction, at the moment of the write,
+// which reported steals that a later rollback un-did — the ranked gate refusing
+// a LATER child is enough, and every one of those printed a theft that never
+// happened. soakstat counts one line per steal, so an over-count there is a
+// measurement of a shape the plant is not in.
+type stolenBin struct {
+	binID      int64
+	holderID   int64
+	digID      int64
+	handPlaced bool
+}
+
+// logSteals emits the steal lines once the transaction they describe has
+// committed. The sentences are unchanged: soakstat matches "outranked the holder
+// on a positional blocker" across both, one line per event.
+func logSteals(stolen []stolenBin) {
+	for _, s := range stolen {
+		if s.handPlaced {
+			log.Printf("dispatch: dig %d took bin %d from HAND-PLACED order %d — the dig outranked "+
+				"the holder on a positional blocker, but a person named this bin, so the order keeps its "+
+				"pointer and is failed by name rather than re-aimed at whatever is standing there "+
+				"next", s.digID, s.binID, s.holderID)
+			continue
+		}
+		log.Printf("dispatch: dig %d took bin %d from order %d — the dig outranked the holder on a "+
+			"positional blocker; order %d keeps its demand and re-resolves (the bin is findable at "+
+			"its new home)",
+			s.digID, s.binID, s.holderID, s.holderID)
+	}
 }
 
 // supersedeBinLedger makes the reservation books say what the claim says: one
@@ -275,9 +503,9 @@ func supersedeBinLedger(tx *sql.Tx, binID, childID int64) error {
 		return fmt.Errorf("clear bin ledger for bin %d: %w", binID, err)
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO reservations (order_id, resource_kind, bin_id, state, reserved_by)
-		 VALUES ($1, 'bin', $2, 'confirmed', 'compound-child')`,
-		childID, binID); err != nil {
+		`INSERT INTO reservations (order_id, resource_kind, bin_id, state, reserved_by, created_at)
+		 VALUES ($1, 'bin', $2, 'confirmed', 'compound-child', $3)`,
+		childID, binID, clock.Now().UTC()); err != nil {
 		return fmt.Errorf("write bin ledger for bin %d child %d: %w", binID, childID, err)
 	}
 	return nil
@@ -441,6 +669,12 @@ func (db *DB) ListOrders(status string, limit int) ([]*orders.Order, error) {
 	return orders.List(db.DB, status, limit)
 }
 
+// CountOrdersForList is ListOrders' unlimited count — how many rows the same
+// status filter matches — so a truncated board can say how much it is not showing.
+func (db *DB) CountOrdersForList(status string) (int, error) {
+	return orders.CountForList(db.DB, status)
+}
+
 func (db *DB) ListActiveOrders() ([]*orders.Order, error) { return orders.ListActive(db.DB) }
 
 // ListActiveBoardOrdersFiltered scopes the board to a set of station IDs.
@@ -567,6 +801,12 @@ func (db *DB) UpdateOrderBinID(orderID, binID int64) error {
 	return orders.UpdateBinID(db.DB, orderID, binID)
 }
 
+// ClearOrderBinID forgets which bin an order was going to take, so the scanner
+// routes it back through the finder instead of the held-bin arm.
+func (db *DB) ClearOrderBinID(orderID int64) error {
+	return orders.ClearBinID(db.DB, orderID)
+}
+
 // ListOrdersByBin returns recent orders involving a specific bin.
 // Cross-aggregate entry point: the query lives in orders/ (returns *orders.Order)
 // but callers reach it via the bins-side delegate name.
@@ -672,7 +912,19 @@ func (db *DB) TerminalizeOrderWithReason(orderID int64, status protocol.Status, 
 	// terminal-volume histogram buckets on COALESCE(completed_at, updated_at),
 	// so a DB-clock stamp here puts a sim order's terminal in a different
 	// (real-time) day from its creation.
-	res, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$5
+	// THE WAIT GOES WITH THE ORDER. queue_reason/code/cause are a LIVE answer to
+	// "what is this order waiting for right now", and nothing cleared them at the
+	// end — so an order cancelled or failed while parked kept its last wait on the
+	// row and every board went on saying a finished order was still waiting for a
+	// slot. Seen in the sim: a dig leg dissolved mid-park, terminal, still reading
+	// "Waiting for a slot". SetQueueDetail refuses to WRITE onto a terminal order;
+	// this is the other half — the reason does not outlive the order.
+	//
+	// The history row keeps it. The order waited for that reason, and ending does
+	// not unmake the fact; what is cleared is only the live column that claims it
+	// is STILL waiting.
+	res, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=$5,
+		queue_reason='', queue_code=NULL, queue_cause=NULL
 		WHERE id=$3 AND status <> ALL($4)`, string(status), errDetail, orderID, terminalNames, clock.Now().UTC())
 	if err != nil {
 		return false, err
@@ -769,38 +1021,65 @@ func (db *DB) ReleaseClaimForBin(binID, orderID int64) error {
 	return tx.Commit()
 }
 
-// ReleaseClaimByOrder is the multi-resource inverse: it clears claimed_by for
-// every bin AND every slot this order holds, deletes its order_bins junction rows,
-// and releases all its reservations (both kinds) in one transaction. The coupled
-// replacement for UnclaimOrderBins on rollback / re-queue paths that abandon an
-// order's claims without going terminal (which would otherwise leak the confirmed
-// reservations). Idempotent.
+// DemoteHoldsAfterFleetRefusal takes the ARMOR off an order and leaves its PAPER
+// standing, in one transaction. It is the store half of the one fleet-refusal
+// door (dispatch.Dispatcher.DemoteAfterFleetRefusal) and has no other caller.
 //
-// Release-set unification: this now releases the SAME set as
-// TerminalizeOrder (minus the terminal-only _TRANSIT anomaly stamp). Before the
-// slot substrate it cleared only bins + reservations; once slots are
-// reservation-backed and hard-claimed via ConfirmSlotClaim, dropping the bin
-// claims without the slot claims + order_bins would strand them — the gap this
-// commit makes real, so it closes it.
-func (db *DB) ReleaseClaimByOrder(orderID int64) error {
+// A release is right for a rollback that ABANDONS an order's claims; a fleet
+// refusal abandons nothing (§8). So the undo removes only what claimed a robot
+// that never came:
+//
+//	ARMOR OFF. A hard claim means "a robot is committed", and keeping one through
+//	a fleet refusal makes the books lie — a rank-proof squatter with no wheels,
+//	and a dead corridor for the length of the outage. Owner-scoped both sides.
+//
+//	PAPER DEMOTED, NEVER DELETED. confirmed → pending, which is exactly what the
+//	re-dispatch's confirm needs (it flips pending → confirmed and refuses without
+//	a pending row). Deleting it while orders.bin_id stays stamped IS the pointer
+//	wedge: the order re-enters through dispatchHeldBin, which confirms by id and
+//	never re-acquires, so it parks under claim-failed and retries forever with a
+//	live owner no sweep will touch. Bin and slot only — a mouth row has no pending
+//	phase and an occupancy row is a measurement, not a promise.
+//
+//	POINTER AND JUNCTION KEPT. orders.bin_id is untouched: the bin is still spoken
+//	for, and on a blip the order re-wins its own uncontested bin seconds later.
+//	order_bins is untouched too — the fourth book. A release deletes those rows;
+//	the re-dispatch reads them to answer which bin a STEP is about
+//	(dispatch/bin_for_step.go), which bin_id cannot answer for a multi-bin order.
+//
+// releaseLanes is the CALLER's answer to "do these lane rows belong to this
+// order", because the store cannot tell: a compound child's mouth rows are held
+// by its PARENT (dispatch.laneOwnerFor), and releasing them on a leg's refusal
+// tears the corridor out from under a live dig. The door asks laneOwnerFor and
+// passes the answer.
+//
+// Occupancy is NOT touched: commitToFleet's failure arm already released it on
+// every arm but a lost CAS, and a lost CAS is refused before this is reached.
+//
+// Idempotent — the plain path invokes the door twice per refusal — and returns
+// the first error rather than logging and continuing, because a half-applied
+// demote is the two-books drift this exists to prevent.
+func (db *DB) DemoteHoldsAfterFleetRefusal(orderID int64, releaseLanes bool) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
-		return err
+		return fmt.Errorf("demote: release bin claims for order %d: %w", orderID, err)
 	}
-	// Slot claims too (store dual of the bin release above).
 	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
-		return err
+		return fmt.Errorf("demote: release slot claims for order %d: %w", orderID, err)
 	}
-	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
-		return err
+	if err := reservations.DemoteConfirmedByOrder(tx, orderID); err != nil {
+		return fmt.Errorf("demote: demote paper for order %d: %w", orderID, err)
 	}
-	// Both reservation kinds — ReleaseByOrder is order-keyed and kind-agnostic.
-	if err := reservations.ReleaseByOrder(tx, orderID); err != nil {
-		return err
+	if releaseLanes {
+		if _, err := tx.Exec(
+			`DELETE FROM reservations WHERE order_id=$1 AND resource_kind=$2`,
+			orderID, string(reservations.KindMouth)); err != nil {
+			return fmt.Errorf("demote: release lane holds for order %d: %w", orderID, err)
+		}
 	}
 	return tx.Commit()
 }

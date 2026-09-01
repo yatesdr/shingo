@@ -133,9 +133,7 @@ function openOrderModal(id, el, evt) {
   content.classList.add('hide');
   errEl.classList.add('hide');
   showModal('order-modal-overlay');
-  // Reflect the open order in the URL so it is linkable and survives a
-  // refresh; /orders/detail?id=N redirects here.
-  try { history.replaceState(null, '', '/orders?open=' + id); } catch (e) { /* non-fatal */ }
+  syncModalURL(id);
 
   apiGet('/api/orders/enriched?id=' + id)
     .then(function(data) {
@@ -152,21 +150,52 @@ function openOrderModal(id, el, evt) {
     });
 }
 
+// syncModalURL is the ONE writer of the ?open= parameter, and it is keyed on
+// state rather than on an event: pass an id when a modal is open, null when none
+// is.
+//
+// ── WHY ONE WRITER ────────────────────────────────────────────────────────
+//
+// The open path used to write `/orders?open=N` as a hardcoded string, which
+// DESTROYED the rest of the query — open a modal from ?status=all and the filter
+// was gone, so closeOrderModal's promise to keep "whatever status filter you
+// were browsing" could not be kept: there was nothing left to keep. It edits the
+// CURRENT url now, so every other parameter survives both ways.
+//
+// And openOrderModal is not only an open — refreshVisibleManifest and the SSE
+// order-update handler both call it to RE-RENDER a modal that is already open.
+// Each of those re-wrote the URL as a side effect of drawing. Whether that ever
+// raced a close (a closed modal coming back with ?open= still on the URL was
+// reported and not reproduced) stops being a question with one writer: a
+// re-render passes the id of a modal that IS open, and the only thing that
+// writes null is the close.
+function syncModalURL(id) {
+  try {
+    var u = new URL(location.href);
+    if (id == null) u.searchParams.delete('open');
+    else u.searchParams.set('open', id);
+    history.replaceState(null, '', u.pathname + (u.search || '') + (u.hash || ''));
+  } catch (e) { /* non-fatal */ }
+}
+
 function closeOrderModal() {
   _orderModalID = null;
   hideModal('order-modal-overlay');
-  // Drop ?open= so a refresh doesn't reopen what you just closed, keeping
-  // whatever status filter you were browsing.
-  try {
-    var u = new URL(location.href);
-    u.searchParams.delete('open');
-    history.replaceState(null, '', u.pathname + (u.search || ''));
-  } catch (e) { /* non-fatal */ }
+  syncModalURL(null);
 }
 
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape' && _orderModalID) closeOrderModal();
 });
+
+// The backdrop dismiss is a CLOSE, not a hide. installBackdropClose strips the
+// overlay's `active` class for every modal that opts in, which is the whole job
+// for a stateless one — this modal also owns _orderModalID and the ?open=
+// parameter, and both have to come down with it.
+(function () {
+  var overlay = document.getElementById('order-modal-overlay');
+  if (overlay) overlay.addEventListener('backdropclose', function () { closeOrderModal(); });
+})();
 
 // The label is NOT bold. It used to be, which inverted the hierarchy on
 // every field in the manifest: the caption "VENDOR ORDER" carried more
@@ -390,49 +419,23 @@ function buildManifest(data, opts) {
 
   // ── TIMELINE ──
   //
-  // ── IT STARTS AT THE ORDER, NOT AT THE FIRST ROW ──────────────────────────
+  // ── THE TIMELINE STARTS AT THE BIRTH ROW, WHICH NOW EXISTS ────────────────
   //
-  // order_history records status CHANGES, and a row is written in the same
-  // transaction as every change — so nothing is ever lost. But an order's
-  // CREATION writes no row, and a gate that parks a blocked order in its ENTRY
-  // status changes nothing, so it writes none either. The result was a panel
-  // that began at whatever happened first and silently dropped everything
-  // before it.
+  // This block used to synthesise a "created" line from orders.created_at, on
+  // the premise that "an order's CREATION writes no row" — true when it was
+  // written, and measured: 34 of 110 Springfield complex orders in two days
+  // began at whatever happened first, average gap 28 MINUTES, worst 7h42m.
   //
-  // Measured at Springfield 2026-08-11: 34 of 110 complex orders in two days had
-  // a gap between created_at and their first history row; the average was 28
-  // MINUTES and the worst 7h42m. Every other order type was a clean zero — which
-  // is why the panel looks trustworthy right up until the order where it isn't,
-  // and the orders it truncates are the interesting ones: the ones that WAITED.
-  //
-  // Both facts are already in the database, so this is a read-side fix and it
-  // works on every order already stored. What is NOT stored is what the order was
-  // DOING in that window — queue_cause is a current-value column that gets
-  // overwritten — so the gap is marked as unaccounted rather than guessed at. A
-  // panel that admits what it does not know beats one that implies nothing
-  // happened.
+  // orders.Create writes a real birth row now ("every order's timeline starts
+  // at its own creation"), in the order's own
+  // transaction, for every door — carrying the same words this synthesised. So
+  // the lead entry printed the creation TWICE, and the unaccounted-gap line
+  // under it was dead by construction: the gap it measures is now the two
+  // statements of one transaction. Both are gone; the row they stood in for is
+  // the first thing the list renders.
   if (data.history && data.history.length > 0) {
     out += '<div class="manifest-section">History</div>';
-    var lead = '';
-    if (o && o.created_at) {
-      lead = h`<li>
-          <span class="tl-time">${{__html:true, value: formatTime(o.created_at)}}</span>
-          <span class="badge badge-xs">created</span>
-          <span class="tl-detail">order created</span>
-        </li>`;
-      var gapSecs = Math.round(
-        (new Date(data.history[0].created_at).getTime() - new Date(o.created_at).getTime()) / 1000);
-      // 60s, matching the threshold the Springfield measurement used. Below that
-      // is transaction timing, not a wait worth a line.
-      if (isFinite(gapSecs) && gapSecs > 60) {
-        lead += h`<li class="tl-unaccounted">
-            <span class="tl-time">—</span>
-            <span class="badge badge-xs">unaccounted</span>
-            <span class="tl-detail">${durationText(gapSecs) + ' before the first recorded change — the order existed and nothing was written for it'}</span>
-          </li>`;
-      }
-    }
-    out += h`<ul class="timeline-list">${{__html:true, value: lead}}${
+    out += h`<ul class="timeline-list">${
       data.history.map(function(ev, i) {
         var extra = timelineExtra(ev, data.history[i + 1]);
         return h`<li>

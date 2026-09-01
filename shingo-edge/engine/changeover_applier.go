@@ -36,6 +36,22 @@ func (e *Engine) applyChangeoverPlan(co *processes.Changeover, plan changeover.P
 func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover.NodeAction) {
 	nodeID := action.NodeID
 
+	// ── A TOOLING EVACUATE STOPS THE PRESS, SO NOTHING IS PULLING ─────────
+	//
+	// An evacuate strips every position and the press goes down for the tool
+	// change. `active_pull` nevertheless kept asserting that the line was still
+	// drawing from one of them, because only FlipABNode ever cleared it — and
+	// that bit is now load-bearing: the release guard refuses to let a robot
+	// strip a position the line is pulling from, which would have made the
+	// tooling-done click unable to release the very legs it exists for.
+	//
+	// The honest fix is the model, not an exception in the guard. The line is
+	// genuinely pulling from nothing here, so say so. Both positions, because an
+	// evacuate takes the whole press and only the claimed side gets an action.
+	if action.Situation == string(SituationEvacuate) {
+		e.clearActivePullForEvacuate(nodeID)
+	}
+
 	// THE CHANGEOVER ALREADY HAS AN EPISODE AND ITS ORDERS DID NOT CARRY IT.
 	// openChangeoverEpisode mints an origin and stamps it back onto the
 	// changeover row, but the legs this applier creates were built through the
@@ -275,4 +291,47 @@ func (e *Engine) changeoverOrigin(processChangeoverID int64) ordermgr.Origin {
 		return ordermgr.Origin{}
 	}
 	return ordermgr.Attached(originID)
+}
+
+// clearActivePullForEvacuate drops the pull bit on a position being evacuated
+// for tooling, and on its A/B partner.
+//
+// Best-effort by design: a failure here must not abort the changeover's order
+// creation, which is the thing the operator is waiting on. A stale bit costs a
+// release warning the operator can confirm through — the guard is a speed bump,
+// not a wall — whereas a refused apply costs the whole changeover.
+func (e *Engine) clearActivePullForEvacuate(nodeID int64) {
+	node, err := e.db.GetProcessNode(nodeID)
+	if err != nil || node == nil {
+		log.Printf("changeover: evacuate could not read node %d to clear active_pull: %v", nodeID, err)
+		return
+	}
+	ids := []int64{nodeID}
+	if claim := findActiveClaim(e.db, node); claim != nil && claim.PairedCoreNode != "" {
+		if nodes, lErr := e.db.ListProcessNodesByProcess(node.ProcessID); lErr == nil {
+			for i := range nodes {
+				if nodes[i].CoreNodeName == claim.PairedCoreNode {
+					ids = append(ids, nodes[i].ID)
+				}
+			}
+		}
+	}
+	for _, id := range ids {
+		e.db.EnsureProcessNodeRuntime(id)
+		if err := e.db.SetActivePull(id, false); err != nil {
+			log.Printf("changeover: evacuate could not clear active_pull on node %d: %v", id, err)
+		}
+	}
+	// BOTH SIDES ARE NOW DARK, AND THEY STAY DARK UNTIL SOMEBODY SAYS OTHERWISE.
+	//
+	// That is correct while the press is down — the line really is pulling from
+	// nothing — and it is deliberate that nothing here schedules the bit's return.
+	// The A/B flip is the canonical writer of active_pull and lights it as part of
+	// moving the line; the operator can also state it outright when the press comes
+	// back up on the side it was already on (SetActivePullSide). Owner ruling
+	// 2026-08-28. Until one of those two clicks lands, the release guard has
+	// nothing to protect here, which is the honest reading of a stopped press.
+	log.Printf("changeover: tooling evacuate at node %s — active_pull cleared on %d position(s); the "+
+		"press is down, so the line is pulling from nothing. It stays dark until the flip or an "+
+		"operator says otherwise", node.CoreNodeName, len(ids))
 }

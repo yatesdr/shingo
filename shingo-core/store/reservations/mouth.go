@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"slices"
+
+	"shingo/protocol/clock"
 )
 
 // Mode is a mouth reservation's work direction — the reservations.mode column
@@ -130,7 +132,11 @@ type MouthHold struct {
 // every dispatch path already implements); any other error is a transient DB
 // failure.
 func AcquireLanes(db *sql.DB, owner int64, mode Mode, reservedBy string, laneIDs ...int64) error {
-	return AcquireLanesFor(db, owner, mode, Anyone, reservedBy, laneIDs...)
+	// NIL IS RIGHT HERE: this is the beneficiary-less form, and a caller with no
+	// order in hand has no basis to exempt anyone either. Anyone and nil are the
+	// same convention twice — keep the owner-blind behaviour, and let only the
+	// sites that thread a real asker change.
+	return AcquireLanesFor(db, owner, mode, Anyone, nil, reservedBy, laneIDs...)
 }
 
 // AcquireLanesFor is AcquireLanes for a hold taken ON BEHALF OF another order:
@@ -193,7 +199,7 @@ func AcquireLanes(db *sql.DB, owner int64, mode Mode, reservedBy string, laneIDs
 // dweller re-asking for its own outbound hold is refused by the dig raised to
 // rescue it. The durable form of the fix is still a beneficiary column on the
 // row, not a second exemption written somewhere else.
-func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, reservedBy string, laneIDs ...int64) error {
+func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, stagedOutside StagedOutsideByLane, reservedBy string, laneIDs ...int64) error {
 	lanes := sortedUniqueLanes(laneIDs)
 	if len(lanes) == 0 {
 		return nil
@@ -210,7 +216,9 @@ func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, r
 		if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, lane); err != nil {
 			return fmt.Errorf("reservations acquire-lanes: lock lane %d: %w", lane, err)
 		}
-		verdict, err := admitMouth(tx, lane, owner, mode, beneficiary)
+		// PER LANE, not once for the call: "standing outside" is true of one
+		// corridor at a time. See StagedOutsideByLane.
+		verdict, err := admitMouth(tx, lane, owner, mode, beneficiary, stagedOutside.On(lane))
 		if err != nil {
 			return err
 		}
@@ -266,9 +274,9 @@ func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, r
 			}
 		case admitFresh:
 			if _, err := tx.Exec(
-				`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode)
-				 VALUES ($1, 'mouth', $2, 'confirmed', $3, $4)`,
-				owner, lane, reservedBy, string(mode),
+				`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode, created_at)
+				 VALUES ($1, 'mouth', $2, 'confirmed', $3, $4, $5)`,
+				owner, lane, reservedBy, string(mode), clock.Now().UTC(),
 			); err != nil {
 				return fmt.Errorf("reservations acquire-lanes: insert lane %d: %w", lane, err)
 			}
@@ -293,7 +301,7 @@ const (
 // for (owner, mode), on behalf of beneficiary. It must be called with the lane's
 // advisory lock held. Pass Anyone for a hold taken for nobody in particular,
 // which is the owner-blind rule this had before beneficiaries existed.
-func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode, beneficiary DigAsker) (mouthVerdict, error) {
+func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode, beneficiary DigAsker, stagedOutside StagedOutside) (mouthVerdict, error) {
 	holders, err := activeMouthRows(tx, laneID)
 	if err != nil {
 		return admitConflict, err
@@ -318,6 +326,29 @@ func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode, beneficiary DigAsker
 			// The order this hold is being taken FOR. Its own row is not an
 			// obstacle to its own rescue — see AcquireLanesFor's header for the
 			// two-cycle this arm exists to break.
+			continue
+		}
+		// ── A ROBOT AT THE MARK IS NOT IN THE CORRIDOR ────────────────────
+		//
+		// An EXCAVATION is not refused by an ordinary row whose owner is parked
+		// at this lane's mark. The row stays and keeps doing its other job (the
+		// release pass reads it as "still coming", so a shallower store cannot
+		// wall the dweller in); what it stops doing is turning away the dig that
+		// would clear the lane the dweller is waiting for. See StagedOutside for
+		// the deadlock this closes and for why it is not a DigAsker field.
+		//
+		// THREE CONDITIONS, ALL NECESSARY. The incoming mode must be dig (an
+		// ordinary order still shares or conflicts by the rule below, unchanged);
+		// the HOLDER's row must not itself be a dig (two excavations never share
+		// a lane, and a dig's owner is inside the corridor by definition); and
+		// the holder must be staged for THIS lane, which is the caller's fact to
+		// establish per-lane and never a property of the order alone.
+		//
+		// It keys on a FACT — where the robot is standing — and on nothing else.
+		// Not on age, not on priority, not on id ordering: the loop above already
+		// records what it cost to let a refusal depend on which row came back
+		// first.
+		if mode == ModeDig && h.Mode != ModeDig && stagedOutside.Has(h.OrderID) {
 			continue
 		}
 		// A different owner holds the lane. dig excludes everyone (either side);
@@ -385,15 +416,23 @@ func admitMouth(tx *sql.Tx, laneID, owner int64, mode Mode, beneficiary DigAsker
 //
 // Pass Anyone for a dig serving nobody in particular: Owns matches no row, so
 // the rule collapses to the len()==0 it was.
-func DigAdmissible(q Queryer, laneID int64, beneficiary DigAsker) (bool, error) {
+func DigAdmissible(q Queryer, laneID int64, beneficiary DigAsker, stagedOutside StagedOutside) (bool, error) {
 	holders, err := activeMouthRows(q, laneID)
 	if err != nil {
 		return false, err
 	}
 	for _, h := range holders {
-		if !beneficiary.Owns(h.OrderID) {
-			return false, nil
+		if beneficiary.Owns(h.OrderID) {
+			continue
 		}
+		// The same mark exemption admitMouth applies, asked off the same rows —
+		// see StagedOutside. It MUST be here too: CanTakeFor's own note records
+		// that a pre-check answering differently from the acquire is the 16,947
+		// runaway, and this is that pair.
+		if h.Mode != ModeDig && stagedOutside.Has(h.OrderID) {
+			continue
+		}
+		return false, nil
 	}
 	return true, nil
 }
@@ -574,9 +613,95 @@ func ListDigHolds(q Queryer) ([]DigHold, error) {
 	return out, rows.Err()
 }
 
+// LanesHeldByHandoff returns the distinct lane nodes carrying an active mouth
+// row tagged ByDigHandoff — the population the lane liveness floor visits.
+//
+// KEYED ON THE ROW, NOT ON WHO IS WAITING, and that is the whole reason it
+// exists rather than the floor reusing its own waiter set. The wedge a stranded
+// handoff produces is a corridor that refuses every inbound comer: the orders
+// queued behind it are `sourcing` demands the resolver turned away, not gate
+// dwellers or held legs, so a waiter-derived lane set does not contain the lane
+// and the floor never looks at it. A row-derived one always does.
+//
+// On a healthy plant this returns zero rows and the sweep costs one indexed
+// query (idx_reservations_kind_node).
+func LanesHeldByHandoff(q Queryer) ([]int64, error) {
+	rows, err := q.Query(
+		`SELECT DISTINCT node_id FROM reservations
+		 WHERE resource_kind='mouth' AND reserved_by=$1 AND state IN ('pending','confirmed')
+		 ORDER BY node_id`, ByDigHandoff)
+	if err != nil {
+		return nil, fmt.Errorf("reservations lanes-held-by-handoff: %w", err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var laneID int64
+		if err := rows.Scan(&laneID); err != nil {
+			return nil, fmt.Errorf("reservations lanes-held-by-handoff scan: %w", err)
+		}
+		out = append(out, laneID)
+	}
+	return out, rows.Err()
+}
+
+// HandOff is what HandOffLaneToPicker did. Three outcomes, and only ONE of them
+// leaves the lane free for anybody else to act on.
+//
+// ── WHY THIS IS NOT A BOOL, AND WHAT THE BOOL COST ────────────────────────
+//
+// It was a bool, and false meant two incompatible things: "the picker is not the
+// collector" and "there was no dig row to take". The one caller reads false as
+// permission to RELEASE, and the release it performs — LaneLock.Unlock →
+// ReleaseLane — matches on owner and resource_kind only. It is MODE-BLIND
+// (deliberately: ending the dig is its job), so it deletes whatever mouth row
+// that owner has on that lane.
+//
+// Put those together with a caller that runs OUTSIDE the lane evaluator's mutex
+// — which maybeReleaseDigOnLastBlockerOut does by design, because waking a lane
+// from inside it is a self-deadlock — and two blocker-out events on one lane can
+// both read the same dig owner and both walk. The first converts. The second's
+// DELETE matches zero rows, reports "not handed", and the caller releases: the
+// outbound row the first one just created, for the same owner, is deleted. The
+// bin the excavation uncovered is then standing at an open mouth with nothing
+// holding the corridor, which is the precise window this whole exception exists
+// to cover.
+//
+// The rescue is not more locking. It is that "there was nothing to convert" is
+// not the same answer as "this lane is yours to release", and the type now says
+// so — decided inside the advisory-locked transaction, so it reports a settled
+// fact and not a snapshot.
+type HandOff int
+
+const (
+	// HandOffNoDigRow: no dig row was there to convert. Somebody else — a
+	// concurrent conversion, or a concurrent release — already resolved this
+	// lane, under this same advisory lock, and did their own waking. The caller
+	// must do nothing at all: not convert, not release, not wake.
+	//
+	// It is the zero value on purpose, so an error return carries the answer that
+	// touches nothing.
+	HandOffNoDigRow HandOff = iota
+	// HandOffConverted: the corridor is now the picker's OUTBOUND hold, and the
+	// picker is a live order whose per-visit release and terminalization both end
+	// it. The lane is not the caller's to release.
+	HandOffConverted
+	// HandOffPickerNotCollector: the dig row is gone, but the picker holds this
+	// lane INBOUND — it is dropping into the lane, not picking from it, so it is
+	// not the bin's collector and this was never its hold to take. Nothing was
+	// converted and nothing must be released: that inbound row is the picker's
+	// own, and a mode-blind release would take it.
+	//
+	// §R.101 makes this unreachable in principle — one owner, one lane, ONE row,
+	// and an acquire upgrades rather than doubles — so it is a defensive arm. The
+	// wake it does not perform costs latency, not correctness: every lane wait has
+	// a periodic floor behind its event releaser.
+	HandOffPickerNotCollector
+)
+
 // HandOffLaneToPicker converts the dig hold on laneID into picker's OUTBOUND
-// hold, in one transaction under the lane's advisory lock. It reports whether
-// the hold moved.
+// hold, in one transaction under the lane's advisory lock. It reports which of
+// the three HandOff outcomes happened.
 //
 // ── WHY THE MODE CHANGES, AND WHY THAT IS THE WHOLE MECHANISM ─────────────
 //
@@ -604,27 +729,54 @@ func ListDigHolds(q Queryer) ([]DigHold, error) {
 // happens to it. There is no state left behind that outlives an order, which is
 // what a hold parked on a finished dig was.
 //
-// Returns false with no error when the dig row is already gone (the release
-// raced this) — the caller has nothing to do, and nothing has been broken.
-func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy string) (bool, error) {
+// ── AND THAT DEPENDS ENTIRELY ON THE CALLER'S GATE ────────────────────────
+//
+// The per-visit release fires "when its bin clears the lane", so it is worth
+// nothing to a picker whose bin cleared the lane BEFORE this row existed. Such a
+// row has one releaser left, terminalization — and a holder waiting at its
+// station for an evac partner that needs to drop into this very lane never
+// reaches it. That was the leak: a corridor shut with nothing inside it, both
+// sides of a swap waiting on each other.
+//
+// So this function is safe because handOffDugLane calls it only for a holder its
+// gate 3 rules NOT COMMITTED — pre-dispatch or mid-dig, minus `faulted`, which
+// releases. Do not widen the caller without re-reading this paragraph: the
+// sentence above is a conclusion about the caller, not a property of the row.
+//
+// (It said "a holder that has NOT yet dispatched", which was never what the gate
+// tested: `faulted` and the terminal statuses all arrive here post-dispatch. Same
+// defect class as the three comments 9f8ea225 corrected — a sentence describing a
+// gate that does not exist.)
+//
+// ── THE THREE ANSWERS ARE THREE DIFFERENT INSTRUCTIONS ────────────────────
+//
+// This returned a bool, and the bool conflated the two ways of not converting.
+// "The dig row was already gone" came back as plain false, and the one caller
+// reads false as PERMISSION TO RELEASE — which is wrong in a way that undoes the
+// work of whoever got here first. See HandOff below.
+func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy string) (HandOff, error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return false, fmt.Errorf("reservations hand-off-lane: begin: %w", err)
+		return HandOffNoDigRow, fmt.Errorf("reservations hand-off-lane: begin: %w", err)
 	}
 	defer tx.Rollback() // no-op once committed
 
 	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, laneID); err != nil {
-		return false, fmt.Errorf("reservations hand-off-lane: lock lane %d: %w", laneID, err)
+		return HandOffNoDigRow, fmt.Errorf("reservations hand-off-lane: lock lane %d: %w", laneID, err)
 	}
 	res, err := tx.Exec(
 		`DELETE FROM reservations
 		  WHERE order_id=$1 AND resource_kind='mouth' AND node_id=$2 AND mode=$3`,
 		digOwner, laneID, string(ModeDig))
 	if err != nil {
-		return false, fmt.Errorf("reservations hand-off-lane: drop dig row: %w", err)
+		return HandOffNoDigRow, fmt.Errorf("reservations hand-off-lane: drop dig row: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return false, nil // the dig no longer holds it: nothing to hand over
+		// SOMEBODY ELSE ALREADY RESOLVED THIS LANE, and this is decided UNDER THE
+		// ADVISORY LOCK, so it is a settled fact rather than a snapshot: whoever
+		// held the lock before us has committed. Not converted, and emphatically
+		// not the caller's to release.
+		return HandOffNoDigRow, tx.Commit()
 	}
 
 	// THE PICKER MAY ALREADY HOLD THIS LANE — it can be gate-staged at the mouth
@@ -633,28 +785,27 @@ func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy 
 	// admitMouth exists to refuse. Reuse whatever is there.
 	holders, err := activeMouthRows(tx, laneID)
 	if err != nil {
-		return false, err
+		return HandOffNoDigRow, err
 	}
 	for _, h := range holders {
 		if h.OrderID != picker {
 			continue
 		}
 		if h.Mode == ModeOutbound {
-			return true, tx.Commit() // already holds it the right way round
+			return HandOffConverted, tx.Commit() // already holds it the right way round
 		}
 		// It holds the lane INBOUND: it is dropping into this lane, not picking
 		// from it, so it is not the bin's collector and this is not its hold to
-		// take. The dig row is gone and the lane is free, which is the honest
-		// outcome — a corridor held for a collector that is not coming.
-		return false, tx.Commit()
+		// take. The dig row is gone; the inbound row is the picker's own and stays.
+		return HandOffPickerNotCollector, tx.Commit()
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode)
-		 VALUES ($1, 'mouth', $2, 'confirmed', $3, $4)`,
-		picker, laneID, reservedBy, string(ModeOutbound)); err != nil {
-		return false, fmt.Errorf("reservations hand-off-lane: insert outbound row: %w", err)
+		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode, created_at)
+		 VALUES ($1, 'mouth', $2, 'confirmed', $3, $4, $5)`,
+		picker, laneID, reservedBy, string(ModeOutbound), clock.Now().UTC()); err != nil {
+		return HandOffNoDigRow, fmt.Errorf("reservations hand-off-lane: insert outbound row: %w", err)
 	}
-	return true, tx.Commit()
+	return HandOffConverted, tx.Commit()
 }
 
 // ── Hold B: who is INSIDE the lane ────────────────────────────────────────
@@ -721,14 +872,14 @@ func HandOffLaneToPicker(db *sql.DB, laneID, digOwner, picker int64, reservedBy 
 // of the row rather than of the interleaving.
 func AcquireOccupancy(db Execer, owner, nodeID int64) (bool, error) {
 	res, err := db.Exec(
-		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by)
-		 SELECT $1, 'occupancy', $2, 'confirmed', $3
+		`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, created_at)
+		 SELECT $1, `+OccupancyKindSQL()+`, $2, 'confirmed', $3, $4
 		 WHERE NOT EXISTS (
 		   SELECT 1 FROM reservations
-		   WHERE order_id=$1 AND resource_kind='occupancy' AND node_id=$2
+		   WHERE order_id=$1 AND resource_kind=`+OccupancyKindSQL()+` AND node_id=$2
 		     AND state IN ('pending','confirmed')
 		 )`,
-		owner, nodeID, "lane-occupancy",
+		owner, nodeID, "lane-occupancy", clock.Now().UTC(),
 	)
 	if err != nil {
 		return false, fmt.Errorf("reservations acquire-occupancy: %w", err)
@@ -745,7 +896,7 @@ func AcquireOccupancy(db Execer, owner, nodeID int64) (bool, error) {
 // entered — is a no-op.
 func ReleaseOccupancy(db Execer, owner, nodeID int64) error {
 	_, err := db.Exec(
-		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind='occupancy' AND node_id=$2`,
+		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind=`+OccupancyKindSQL()+` AND node_id=$2`,
 		owner, nodeID,
 	)
 	if err != nil {
@@ -759,7 +910,7 @@ func ReleaseOccupancy(db Execer, owner, nodeID int64) error {
 // inside any lane, however it got there.
 func ReleaseAllOccupancy(db Execer, owner int64) error {
 	_, err := db.Exec(
-		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind='occupancy'`, owner)
+		`DELETE FROM reservations WHERE order_id=$1 AND resource_kind=`+OccupancyKindSQL(), owner)
 	if err != nil {
 		return fmt.Errorf("reservations release-all-occupancy: %w", err)
 	}
@@ -779,7 +930,7 @@ func ReleaseAllOccupancy(db Execer, owner int64) error {
 func ReleaseOccupancyForLane(db Execer, owner, laneID int64) error {
 	_, err := db.Exec(
 		`DELETE FROM reservations
-		 WHERE order_id=$1 AND resource_kind='occupancy' AND node_id=$2`, owner, laneID)
+		 WHERE order_id=$1 AND resource_kind=`+OccupancyKindSQL()+` AND node_id=$2`, owner, laneID)
 	if err != nil {
 		return fmt.Errorf("reservations release-occupancy-for-lane: %w", err)
 	}
@@ -791,7 +942,7 @@ func ReleaseOccupancyForLane(db Execer, owner, laneID int64) error {
 func OccupantsOf(q Queryer, nodeID int64) ([]int64, error) {
 	rows, err := q.Query(
 		`SELECT order_id FROM reservations
-		 WHERE resource_kind='occupancy' AND node_id=$1 AND state IN ('pending','confirmed')
+		 WHERE resource_kind=`+OccupancyKindSQL()+` AND node_id=$1 AND state IN ('pending','confirmed')
 		 ORDER BY order_id`, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("reservations occupants-of: %w", err)

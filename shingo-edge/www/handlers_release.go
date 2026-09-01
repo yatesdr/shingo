@@ -36,6 +36,11 @@ type releaseRequest struct {
 	PartialCount          *int           `json:"partial_count"`
 	PartialCountSuggested *int           `json:"partial_count_suggested"`
 	CalledBy              string         `json:"called_by"`
+	// ConfirmActivePull acknowledges the "the line is pulling from this
+	// position" warning and releases anyway. Same shape as partial_count: the
+	// first click is refused with a fact, the operator confirms, the second
+	// click carries this.
+	ConfirmActivePull bool `json:"confirm_active_pull,omitempty"`
 	// NodeID optionally scopes a changeover-wide release to ONE node's task.
 	// Zero/absent = every task, the historical behaviour. This is what gives
 	// the per-node release affordance a server path without a second engine

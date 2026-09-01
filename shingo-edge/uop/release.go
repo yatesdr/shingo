@@ -69,6 +69,16 @@ type ReleaseDisposition struct {
 	PartialCount             *int           // operator-entered count for SEND PARTIAL BACK (Phase 0b); supersedes runtime when set
 	PartialCountSuggested    *int           // system-suggested count at modal-open for SEND PARTIAL BACK (Phase 0b)
 	CalledBy                 string         // operator identity for audit
+	// ConfirmActivePull is the operator's explicit override of the
+	// line-is-pulling-from-this-position guard (2026-08-28). Absent, a release
+	// at a position the line is still drawing from is refused with the fact and
+	// the next click; present, it proceeds and is audit-logged.
+	//
+	// It rides here rather than in a new mechanism for the reason PartialCount
+	// does: a release-time operator intent the server cannot infer, carried on
+	// the request that acts on it. `active_pull` is a bit, and bits go stale —
+	// the person at the press outranks it.
+	ConfirmActivePull bool
 }
 
 // ComputeReleaseRemainingUOP returns the *int that should be threaded to

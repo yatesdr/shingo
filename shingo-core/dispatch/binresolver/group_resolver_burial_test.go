@@ -31,11 +31,22 @@ type claimClosedStore struct {
 	closed map[int64]bool
 }
 
-func (c *claimClosedStore) FindStoreSlotInLane(laneID int64) (*nodes.Node, error) {
+// OVERRIDES THE OWNER-AWARE FORM, because that is the one the group resolvers
+// call. It overrode the blind FindStoreSlotInLane until the resolvers started
+// threading asker.OrderID through — at which point the wrapper stopped being
+// consulted at all and every "closed" lane silently answered normally. An
+// embedded-type override that the caller has stopped calling is a fixture that
+// tests nothing while still passing, so the blind form now delegates here rather
+// than to the fake, and there is one place to close a lane.
+func (c *claimClosedStore) FindStoreSlotInLaneExcluding(laneID, excludeOrderID int64) (*nodes.Node, error) {
 	if c.closed[laneID] {
 		return nil, fmt.Errorf("no empty slot in lane %d: %w", laneID, nodes.ErrLaneClosedByClaim)
 	}
-	return c.fakeStore.FindStoreSlotInLane(laneID)
+	return c.fakeStore.FindStoreSlotInLaneExcluding(laneID, excludeOrderID)
+}
+
+func (c *claimClosedStore) FindStoreSlotInLane(laneID int64) (*nodes.Node, error) {
+	return c.FindStoreSlotInLaneExcluding(laneID, 0)
 }
 
 // TestBurialDivert_ClosedLaneFallsToASibling is the property the guard is safe

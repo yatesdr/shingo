@@ -28,6 +28,59 @@ type BinArrivalInstruction struct {
 	ExpiresAt *time.Time
 }
 
+// OrderBinRow is one junction row an allocation wants recorded.
+type OrderBinRow struct {
+	BinID     int64
+	StepIndex int
+	Action    string
+	NodeName  string
+	DestNode  string
+}
+
+// ReplaceOrderBins makes an order's junction rows say exactly what THIS
+// allocation claimed: delete the set, write the new one, one transaction.
+//
+// ── UPSERTING PER BIN MERGED WHERE IT SHOULD HAVE REPLACED ────────────────
+//
+// InsertOrderBin's conflict target is (order_id, bin_id), so re-recording the
+// SAME bin updates its row — which is the duplicate problem it was written for.
+// A retry that claims a DIFFERENT bin does not conflict with anything: it adds a
+// row and leaves the old bin's behind. Nothing deletes junction rows outside
+// delivery and TerminalizeOrder, so a complex order refused at a lane and
+// re-allocated carries the union of every bin it ever considered.
+//
+// That is not cosmetic. applyMultiBinArrivalForOrder walks these rows at
+// delivery and refuses any bin the order does not hold, and the refusal FAILS
+// the order loud (cargo_ledger_mismatch) — so one stale row from an earlier
+// attempt kills an order that arrived carrying exactly what it should. Measured
+// in the sim 2027-11-09: order 45 refused ~40 times at Lane_01 (lane-occupied),
+// re-allocated each time, dispatched holding bin 7, and failed on the junction
+// row for bin 24 that an early attempt had left behind.
+//
+// The set is a fact about the CURRENT allocation, so writing it replaces it.
+// This does not conflict with the fleet-demote door keeping order_bins (§8):
+// that keeps the rows for a re-dispatch which does NOT re-allocate, and this
+// runs only when a new allocation has just decided what the order holds.
+func ReplaceOrderBins(db *sql.DB, orderID int64, rows []OrderBinRow) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("replace order_bins: begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id = $1`, orderID); err != nil {
+		return fmt.Errorf("replace order_bins: clear order %d: %w", orderID, err)
+	}
+	for _, r := range rows {
+		if _, err := tx.Exec(
+			`INSERT INTO order_bins (order_id, bin_id, step_index, action, node_name, dest_node)
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			orderID, r.BinID, r.StepIndex, r.Action, r.NodeName, r.DestNode); err != nil {
+			return fmt.Errorf("replace order_bins: write bin %d for order %d: %w", r.BinID, orderID, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // InsertOrderBin records a claimed bin and its resolved destination for a complex
 // order. Idempotent per (order, bin): re-recording a claim updates the row rather
 // than adding a second one.

@@ -27,7 +27,7 @@
 #   PLK_X1     (CLIP, single-window) ├─→ SYN_SM_Comp (shared, BRKT + CLIP + STUD) ─→ WELD-2 (BRKT), WELD-3 (CLIP), WELD-4 (STUD)
 #   PLK_X2     (STUD, single-window) ┘                                                ↓
 #                                                                                     ↓ SYN_SM_FG (ASSY)
-#                                            UNLOADER-A (drains ASSY) ──────────────→ SYN_MT_Return (empties cycle back)
+#                                            UNLOADER-A (drains ASSY) ──────────────→ SYN_MARKET (empties cycle back, Lane_11-13)
 #
 # Shared markets = shared inventory + dynamic reshuffling: a CLIP retrieve can reshuffle
 # past a buried BRKT bin in the same market, and the multi-payload lanes exercise the
@@ -87,19 +87,82 @@ payloads:
 # Pass 2 walks those empty mouths across the zone. A uniform grid also rides out the 85%
 # downtime variance better than tiny buffers. LKND self-segregates by payload, so a shared
 # market with N lanes cleanly holds N payloads; extra lanes are shared turnover headroom.
-# Empty carriers live in SYN_MT_Return, never in supermarket lanes.
+#
+# EMPTY CARRIERS LIVE IN SYN_MARKET, IN LANES LIKE EVERYTHING ELSE. This said they
+# live in SYN_MT_Return and never in supermarket lanes, and the zone three lines
+# below says the opposite: SYN_MT_Return was FOLDED INTO SYN_MARKET (2026-07-12),
+# empty is one of its payload segments, and Lane_11-13 hold the empties. There is no
+# SYN_MT_Return zone in this file. Anybody reading the old sentence and then looking
+# for a separate empties bank finds nothing and concludes the spec is broken.
+# ── EVERY ZONE CARRIES WAIT POINTS, WHICH IS HOW EVERY LANE GETS AN ORACLE ──
+#
+# `wait_points` reads like a traffic feature and is really two things welded to one
+# switch (gateTargetForLane: "THE MARK IS THE WHOLE ANSWER"):
+#
+#   the WAIT    the robot dwells at the named point before entering the lane
+#   the ORACLE  the order ships UNSEALED, and its dropoff slot is resolved at
+#               release against the lane AS IT STANDS (rebindGatedDropoff)
+#
+# Only the second one is interesting here, and without a spot you cannot have it.
+# An unmarked lane binds its slot at dispatch and drives; by the time the robot
+# arrives, minutes later, the lane has changed and nothing re-asks. That is where
+# `dropoff-occupied` comes from, and it is where an air bubble comes from — three
+# stores each correctly pick the three deepest slots, then ARRIVE in whatever
+# order the fleet gives them, and whoever gets there first seals the rest in.
+#
+# THIS FILE HAD NO MARKS AT ALL, and neither plant does, so the oracle had never
+# run anywhere. It is not a coincidence that this fixture grows bubbles.
+#
+# THE SPOTS BELONG TO THE ZONE, not to each lane, and that move is what lets the
+# release re-ask the whole group: a robot at one of them owns nothing, so it has
+# not committed to a lane by standing there. `gate_point` on a lane still works
+# and still wins, logged as legacy and counted per group by the startup census —
+# it is scheduled for deletion and no new spec should set it.
+#
+# Wait-point VALUES are RDS map point names, handed to the fleet verbatim and
+# never resolved against nodes; under the simulator nothing resolves them, which
+# is what lets them be named freely here. On a real plant each one has to exist
+# in the map — so switching a plant on is a commissioning task, not a config edit,
+# and that cost is the honest reason to measure the benefit here first.
+
 zones:
   # Stamping supermarket — PANEL-A + PANEL-B + 1 turnover lane, all depth-3. The reshuffle zone.
   # COMBINED MARKET (SB 2026-07-12): empties + partials + fulls all live in ONE mixed-fill
   # market, self-segregated by payload under LKND (same mechanism the shared component market
   # already used). Kills the empty/full split that stranded partials in the old SYN_MT_Return.
   # Producers retrieve empties (payload_code=""), consumers retrieve their material -- all from
-  # this one group. UNTESTED (no sim run per SB). Watch: enough lanes for 7 payload segments
-  # (PANEL-A/B, BRKT, CLIP, STUD, ASSY, empty) to self-segregate + leave reshuffle headroom.
+  # this one group. UNTESTED (no sim run per SB). Watch: enough lanes for NINE payload
+  # segments -- the eight declared payloads (PANEL-A, PANEL-B, PANEL-C, BRKT, CLIP, STUD,
+  # SHIM, ASSY) plus empty -- to self-segregate + leave reshuffle headroom. This said
+  # seven and listed six: PANEL-C and SHIM were added later and nobody re-counted, so the
+  # headroom sum a reader would do from this line was short by two whole segments.
   - name: SYN_MARKET
     retrieve_algorithm: FIFO
     store_algorithm: LKND
     reshuffle_restore_blockers: on
+    # ── THE WAITING SPOTS, AND WHY THEY ARE THE ZONE'S AND NOT EACH LANE'S ──
+    #
+    # A robot standing at one of these owns NOTHING — no lane, no slot, no row
+    # that refuses anybody — so the spot never belonged to the lane the plan
+    # happened to name. Tying it there is what stopped the release re-asking the
+    # whole group: a robot parked at Lane_05's own mark had already committed to
+    # Lane_05 before anybody asked whether Lane_05 was the right answer.
+    #
+    # FIFTEEN, one per lane, and the count is deliberate for this migration
+    # rather than a model of anything. It preserves the fixture's total waiting
+    # capacity so a run here stays comparable to the per-lane runs before it —
+    # the sim's position gate treats a wait point as an exclusive place (one
+    # robot at a time, the rest hold), so cutting the count would change
+    # throughput and hide the config move inside a capacity change. Whether a
+    # plant needs fifteen spots for fifteen lanes is the question the three-arm
+    # lane-stress measurement exists to answer; it is not answered here.
+    #
+    # THE NAMES ARE HISTORICAL. `Lane_05-WAIT` no longer means "Lane_05's spot",
+    # it means "the fifth painted spot beside this block", and it keeps the name
+    # it had so runs before and after this migration can be read side by side.
+    # On a real plant these are RDS map points that physically exist and are not
+    # a spec's to rename.
+    wait_points: [Lane_01-WAIT, Lane_02-WAIT, Lane_03-WAIT, Lane_04-WAIT, Lane_05-WAIT, Lane_06-WAIT, Lane_07-WAIT, Lane_08-WAIT, Lane_11-WAIT, Lane_12-WAIT, Lane_13-WAIT, Lane_14-WAIT, Lane_15-WAIT, Lane_16-WAIT, Lane_19-WAIT]
     lanes:
       # Lane_01 = PANEL-A, seeded full (3 bins). Depth-3 bin backdated oldest → FIFO must
       # reshuffle to it once the mouth drains (the headline reshuffle driver).
@@ -124,8 +187,13 @@ zones:
   # so it doesn't need deep buffer — 3 lanes was oversized. Freed nodes go to the tight markets.
       # -- finished-goods ASSY (folded from SYN_SM_FG into SYN_MARKET) --
       - {name: Lane_08, slots: [{name: SMN_022, depth: 1}, {name: SMN_023, depth: 2}, {name: SMN_024, depth: 3}]}
-  # Empty-carrier return bank. Empties cycle unloader→here→press/loader. 4 lanes all depth-3,
-  # DPTH store (fill shallow-first) so the mouth is the next empty picked.
+  # Empty-carrier segment. Empties cycle unloader→here→press/loader. FIVE lanes
+  # (Lane_11-14 plus Lane_19's headroom), all depth-3, and they store LKND like every other
+  # lane in this zone -- this said "4 lanes" and "DPTH store (fill shallow-first)", both
+  # left over from the standalone SYN_MT_Return zone that was folded into SYN_MARKET
+  # (2026-07-12). The store algorithm is a property of the GROUP, and SYN_MARKET's is LKND,
+  # so no lane in it can be DPTH; and Lane_19 was added afterwards without the count above
+  # being touched.
       # -- empties/returns (folded from SYN_MT_Return into SYN_MARKET; now LKND like the rest) --
       - {name: Lane_11, slots: [{name: UTN_001, depth: 1}, {name: UTN_002, depth: 2}, {name: UTN_003, depth: 3}]}
       - {name: Lane_12, slots: [{name: UTN_004, depth: 1}, {name: UTN_005, depth: 2}, {name: UTN_006, depth: 3}]}
@@ -177,6 +245,12 @@ zones:
   - name: SYN_CLEAR
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    # One lane, one spot. Kept as its own zone's point rather than shared with
+    # SYN_MARKET's: a wait point is a physical place beside ONE block of lanes,
+    # and sharing one between two blocks sends a robot to stand in the other
+    # block's aisle. The seeder and the UI both refuse a shared point, and the
+    # startup census names both zones when it finds one.
+    wait_points: [Lane_20-WAIT]
     lanes:
       - {name: Lane_20, slots: [{name: CLR_001, depth: 1}, {name: CLR_002, depth: 2}]}
 
@@ -233,11 +307,44 @@ stations:
   # loop wants the same position the moment it reads empty. Whether the return
   # HOLDS that home or yields it is the whole question the rig exists to answer.
   #
-  # No buffer position, deliberately: seeddev only ever writes home_kind='home'
-  # (UpsertLoaderHome takes no kind), so a yielded home has nowhere to fall back to
-  # and goes straight to drain. That makes the two behaviours maximally distinct.
-  - {name: PLK_H1, kind: loader}     # PLK_HOMES dedicated position 1 (SHIM, pinned)
-  - {name: PLK_H2, kind: loader}     # PLK_HOMES dedicated position 2 (SHIM, pinned)
+  # ONE HOME PER PART. THIS RIG USED TO HAVE TWO HOMES ON THE SAME PART, and
+  # that single fact manufactured a plant-wide deadlock. Read this before adding
+  # a second home for any payload here.
+  #
+  # SPRINGFIELD, loader 7 "Supermarket Dedicated Locations", read live
+  # 2026-08-31 (same layout=dedicated_positions, replenishment=threshold):
+  #
+  #   homes    SMN_014..SMN_035   22 positions, 22 DISTINCT part numbers, one
+  #                               part each, per-part thresholds (350, 800,
+  #                               1201, 4500, 217, 5000, ...)
+  #   buffers  SMN_003..SMN_0013  11 positions, payload '', threshold 0
+  #
+  # Zero duplicate-payload homes, and roughly two homes per buffer. The real
+  # "home loader" IS a supermarket: dedicated locations for named parts plus
+  # free buffer space, feeding weld cells that pull from ~30 spots.
+  #
+  # WHAT THE DUPLICATE DID. With H1 and H2 both pinned to SHIM the two are
+  # interchangeable to the SUPPLY side, which widens across the pool — measured:
+  # "widen: order 16 supply pickup PLK_H1 -> PLK_H2 (pool hit, anchor PLK_H1)".
+  # So pickups drained BOTH homes while returns, which scan HomeKindBuffer only
+  # (loader_place.go), could land in just two places. At SPR that is impossible:
+  # a pickup for part X has exactly ONE home to widen from, so the pool cannot
+  # eat its own return capacity.
+  #
+  # Order 111 hit the moment the return set was empty — H1 held stock, B1 held
+  # stock, B2 was busy for the one second order 110 took to lift from it. It
+  # took loader_place.go's WARN branch, was dispatched onto the occupied home
+  # anyway, and stood at PLK_H1 for 42 sim-hours holding AMR-10. ALN_008 drained
+  # to -3 UOP, the PLC readiness gate took WELD-5 dark, and because that gate is
+  # all-or-nothing per process and a dark line raises no drawdown, five of seven
+  # payloads raised ZERO orders for the rest of the run. One misconfigured home
+  # stopped the plant.
+  #
+  # H2 is therefore a BUFFER: one SHIM home, three buffers, which is Springfield's
+  # shape at this plant's scale. The home-return question the rig exists to answer
+  # is unchanged — a return still finds its home occupied and must yield or hold.
+  - {name: PLK_H1, kind: loader}     # PLK_HOMES home — the ONE dedicated SHIM position
+  - {name: PLK_H2, kind: loader}     # PLK_HOMES buffer 3 (was a second SHIM home — see above)
   - {name: PLK_B1, kind: loader}     # PLK_HOMES buffer 1 (no payload — takes whatever returns)
   - {name: PLK_B2, kind: loader}     # PLK_HOMES buffer 2
   - {name: ALN_008, kind: weld}      # WELD-5 consume SHIM, swaps against PLK_H1
@@ -253,13 +360,43 @@ stations:
   - {name: PLK_X1, kind: loader}     # single-window CLIP loader
   - {name: PLK_X2, kind: loader}     # single-window STUD loader
   # ── Unloaders ──
+  #
+  # ONE, AND ONLY ON THE FINISHED GOOD. An unloader takes product OUT of the
+  # system; the only thing this plant finishes is ASSY, which the weld cells
+  # produce. Anything else here is work-in-progress that a cell consumes, and an
+  # unloader on it competes with the line for its own feedstock rather than
+  # shipping anything. Both of the ones that used to be here did exactly that —
+  # see the removal notes below and in node_claims.
   - {name: FGN_001, kind: unloader}  # drains ASSY finished goods
-  # FGN_002 drains PANEL-A — PRESS-1's OWN payload, and that is the point.
-  # The U1 side-cycle trigger fires when an operator declares a produce-side bin
-  # full (capture_lineside) and asks the unloader that consumes THAT payload for
-  # a replacement. Every unloader in this scenario consumed ASSY, so a press-index
-  # release had no unloader to ask and the trigger was unobservable on any sim run.
-  - {name: FGN_002, kind: unloader, changeover_load_directive: true}  # drains PANEL-A; its card takes the changeover instruction
+  # THERE IS NO FGN_002. It drained PANEL-A purely so the U1 side-cycle trigger had
+  # an unloader to resolve — a test scaffold that moved real material: 16 PANEL-A
+  # carriers against WELD-1's 4 over 81 sim-minutes. Its changeover_load_directive
+  # went with it. To exercise that trigger again, give a press a payload that
+  # genuinely ships and put the unloader on THAT; see node_claims for why.
+  # THERE IS NO FGN_003, AND THE SM FAMINE IT WAS ADDED FOR HAD A DIFFERENT CAUSE.
+  #
+  # The note here read: "A carrier's label is cleared on capture-reduction, on a
+  # release with 0, or by an operator/unloader CLEAR — never by being consumed to
+  # zero (applier.go, and that is deliberate and SME-locked). PANEL-B rides
+  # STANDARD-SM and had no unloader, so every SM carrier PRESS-2 filled was drained
+  # by WELD-2 and then sat labelled PANEL-B at 0 UOP forever." Eleven SM carriers,
+  # all labelled, zero manifest-clears in a whole run, PRESS-2 dead at 05:56
+  # waiting for an empty that could not exist. That famine was real, and it reached
+  # WELD-4 four hops away through a held lane.
+  #
+  # But "release with 0" IS one of the three clear paths, and it was never firing.
+  # ALN_003 (WELD-2, PANEL-B) is this plant's only single_robot CONSUME node, and
+  # the sim operator computed a disposition only inside releaseAsPair — reachable
+  # only when SwapMode.IsTwoRobot(). Every PANEL-B release therefore sent a blank
+  # form, Core never settled the count, and the label stayed on. An unloader was
+  # added to wipe labels instead, and because a drain window must be handed a FULL
+  # carrier (11b935ab), each wipe destroyed a full load: 15 carriers, 450 UOP of
+  # PANEL-B in 81 sim-minutes, while WELD-2 got none.
+  #
+  # The release now declares what is physically in the bin on every swap mode, so
+  # carriers clear themselves and the SM pool is a circle without an unloader in it.
+  # If SM empties ever stop regenerating again, look at the RELEASE PATH first —
+  # this fixture already paid once for treating the symptom.
   # ── PRESS-1 changeover clearance ──
   # SHINGO DOES NOT TOUCH TOOLING. The tool change is human work at the press;
   # what the changeover owes it is floor space and timing. So a marked position is
@@ -285,7 +422,8 @@ stations:
 # Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
 # (incl. A/B parked side + press-index back) seeded with EMPTY active carriers. Consume
 # nodes seeded ABOVE reorder so flow establishes before the first reorder. Empties pool in
-# SYN_MT_Return. Bin LABELS are a separate namespace from node names.
+# SYN_MARKET's empties lanes (Lane_11-14, Lane_19) -- there is no SYN_MT_Return zone in
+# this file. Bin LABELS are a separate namespace from node names.
 bins:
   # --- SYN_SM_Stamp: Lane_01 full (3 PANEL-A), Lane_02 full (3 PANEL-B) ---
   - {name: BIN-PA-01, slot: SMN_001, payload: PANEL-A, uop: 30}                          # Lane_01 mouth
@@ -319,9 +457,9 @@ bins:
   - {name: BIN-ACT-W2-BR, slot: ALN_004, payload: BRKT,     uop: 40}  # WELD-2 BRKT consume
   - {name: BIN-ACT-W3-CL, slot: ALN_006, payload: CLIP,     uop: 40}  # WELD-3 CLIP consume
   - {name: BIN-ACT-W4-ST, slot: ALN_007, payload: STUD,     uop: 40}  # WELD-4 STUD consume
-  # --- The home-return rig: a full carrier on each home, one consuming at the line ---
-  - {name: BIN-SHIM-01, slot: PLK_H1, payload: SHIM, uop: 40}         # PLK_H1 home stock
-  - {name: BIN-SHIM-02, slot: PLK_H2, payload: SHIM, uop: 40}         # PLK_H2 home stock
+  # --- The home-return rig: the home stocked, a spare parked, one at the line ---
+  - {name: BIN-SHIM-01, slot: PLK_H1, payload: SHIM, uop: 40}         # PLK_H1 home stock (the one SHIM home)
+  - {name: BIN-SHIM-02, slot: PLK_H2, payload: SHIM, uop: 40}         # parked on a buffer, as a returned carrier would be
   - {name: BIN-ACT-W5-SH, slot: ALN_008, payload: SHIM,     uop: 40}  # WELD-5 SHIM consume
   # --- The maintained group, seeded AT its declared level (4 STANDARD + 2 SM) ---
   #     Six of eight positions, so the keeper starts settled and the first thing a
@@ -334,7 +472,7 @@ bins:
   - {name: BIN-PEB-04, slot: PEB_004}
   - {name: BIN-PEB-05, slot: PEB_005, bin_type: STANDARD-SM}
   - {name: BIN-PEB-06, slot: PEB_006, bin_type: STANDARD-SM}
-  # --- Empty carriers in SYN_MT_Return (prime the pump: presses + loaders draw from here) ---
+  # --- Empty carriers in SYN_MARKET's empties lanes (prime the pump: presses + loaders draw from here) ---
   - {name: BIN-MT-01, slot: UTN_001}
   - {name: BIN-MT-02, slot: UTN_002}
   - {name: BIN-MT-03, slot: UTN_003}
@@ -347,6 +485,38 @@ bins:
   - {name: BIN-MT-10, slot: UTN_010}
   - {name: BIN-MT-11, slot: UTN_011}
   - {name: BIN-MT-12, slot: UTN_012}
+  # --- STANDARD-SM empties (MG2/sequential): the SM pool was EIGHT carriers for
+  #     two payloads, and only two of those (BIN-PEB-05/06) were ever free. PANEL-B
+  #     round-trips press → market → weld → return in roughly fifteen sim-minutes
+  #     while PRESS-2 fills one every five, so three carriers are in flight at all
+  #     times and the spare pool was one deep. Any consumer hiccup — a wedged WELD-2
+  #     order, an unlucky reshuffle — and PRESS-2 has nothing to fill and stops,
+  #     which is exactly what stalled the box on 2026-08-28. Lane_19 was the free
+  #     return lane; these three make the SM pool eleven and the spare pool five.
+  - {name: BIN-MT-13, slot: UTN_013, bin_type: STANDARD-SM}
+  - {name: BIN-MT-14, slot: UTN_014, bin_type: STANDARD-SM}
+  - {name: BIN-MT-15, slot: UTN_015, bin_type: STANDARD-SM}
+  # TWO MORE, AND WHERE THEY SIT IS THE WHOLE DECISION. `simcalc -carriers` puts
+  # the plant floor at 29 empties against 27 seeded, and the observed shortage is
+  # STANDARD-SM: the 2026-08-31 run ended with 0 blank SM carriers, 11 holding
+  # stock, and two retrieve_empty orders standing 32 and 37 sim-minutes on
+  # finder-no-empty-of-type.
+  #
+  # Lane_16's DEPTH 2 AND 3, mouth left free. Every free slot left in SYN_MARKET
+  # belongs to a lane this fixture deliberately keeps empty for reshuffle room, so
+  # there is no placement here that costs nothing. Lane_15/16's note says what the
+  # room is actually for — "empty MOUTHS let findShuffleSlots Pass 2 unbury
+  # without air bubbles" — so filling behind the mouth and leaving SMN_034 open
+  # preserves the property that comment names while still banking the carriers.
+  #
+  # THIS DOES NOT CURE THE MARKET POOL, and nothing about a count could.
+  # SYN_MARKET reads RATE DEFICIT 0.45/min — it spends empties faster than they
+  # come back — and the tool says so in as many words: "drains regardless of
+  # size". Carriers buy time against that, not a fix. Its floor of 23 against 15
+  # seeded is unreachable anyway without eating the reshuffle headroom above,
+  # which is the trade this comment exists to stop somebody making silently.
+  - {name: BIN-MT-16, slot: SMN_035, bin_type: STANDARD-SM}
+  - {name: BIN-MT-17, slot: SMN_036, bin_type: STANDARD-SM}
 
 processes:
   - {name: PRESS-1, active_style: PRESS-1-RUN}        # two_robot_press_index → PANEL-A
@@ -356,12 +526,11 @@ processes:
   - {name: WELD-3,  active_style: WELD-3-RUN}         # two_robot consume CLIP (single-window loader leg)
   - {name: WELD-4,  active_style: WELD-4-RUN}         # two_robot consume STUD (second single-window loader leg)
   - {name: WELD-5,  active_style: WELD-5-RUN}          # two_robot consume SHIM, swapping against a dedicated loader home
-  - {name: LOADER-SHIM, active_style: LOADER-SHIM-RUN}   # manual_swap DEDICATED-POSITIONS SHIM (PLK_H1+PLK_H2)
+  - {name: LOADER-SHIM, active_style: LOADER-SHIM-RUN}   # manual_swap DEDICATED-POSITIONS SHIM (home PLK_H1 + 3 buffers)
   - {name: LOADER-COMP, active_style: LOADER-COMP-RUN}   # manual_swap multi-window BRKT (no PLC; sim-operator-driven)
   - {name: LOADER-CLIP, active_style: LOADER-CLIP-RUN}   # manual_swap single-window CLIP
   - {name: LOADER-STUD, active_style: LOADER-STUD-RUN}   # manual_swap single-window STUD
   - {name: UNLOADER-A, active_style: UNLOADER-A-RUN}  # drains ASSY (main circle)
-  - {name: UNLOADER-B, active_style: UNLOADER-B-RUN}  # drains PANEL-A (the U1 trigger's target)
   # Loaders have no single station — their windows/positions are per-node operator stations
   # (PLK_W1/2-OPS, PLK_X1-OPS, PLK_X2-OPS), declared via operator_station on the claims below.
 
@@ -397,6 +566,14 @@ styles:
   # (the Hopkinsville 2026-08-27 changeover), which is the one that leaves a bin
   # on the press and therefore forces SituationSwap rather than Add.
   - {name: PRESS-2-ALT,    process: PRESS-2,    payload: PANEL-C}
+  # AND A CARRIER CHANGE, which is the OTHER sequential shape and the only one
+  # that exercises both positions. PANEL-A rides STANDARD where PANEL-B/C ride
+  # STANDARD-SM, so a PRESS-2-ALT → PRESS-2-ALT2 changeover changes WHICH CARRIER
+  # the press asks for: the produce reuse-skip cannot apply (the resident empty is
+  # the wrong shape), both sides get an order, and both wait at their own door
+  # for their own release. PANEL-A has a consumer (WELD-1) and a market lane, so
+  # the carrier has somewhere to go.
+  - {name: PRESS-2-ALT2,   process: PRESS-2,    payload: PANEL-A}
   - {name: WELD-1-RUN,     process: WELD-1,     payload: ASSY}
   - {name: WELD-1-ALT,     process: WELD-1,     payload: ASSY}
   - {name: WELD-2-RUN,     process: WELD-2,     payload: ASSY}
@@ -408,9 +585,8 @@ styles:
   - {name: LOADER-CLIP-RUN, process: LOADER-CLIP, payload: CLIP}
   - {name: LOADER-STUD-RUN, process: LOADER-STUD, payload: STUD}
   - {name: UNLOADER-A-RUN, process: UNLOADER-A, payload: ASSY}
-  - {name: UNLOADER-B-RUN, process: UNLOADER-B, payload: PANEL-A}
 
-operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, WELD-4-OPS, PLK_W1-OPS, PLK_W2-OPS, PLK_X1-OPS, PLK_X2-OPS, UNLOADER-A-OPS, UNLOADER-B-OPS, WELD-5-OPS, PLK_H1-OPS, PLK_H2-OPS, PLK_B1-OPS, PLK_B2-OPS]
+operator_stations: [PRESS-1-OPS, PRESS-2-OPS, WELD-1-OPS, WELD-2-OPS, WELD-3-OPS, WELD-4-OPS, PLK_W1-OPS, PLK_W2-OPS, PLK_X1-OPS, PLK_X2-OPS, UNLOADER-A-OPS, WELD-5-OPS, PLK_H1-OPS, PLK_H2-OPS, PLK_B1-OPS, PLK_B2-OPS]
 
 claims:
   # ── PRESS-1 (two_robot_press_index): one claim on the front node, paired back ──
@@ -594,6 +770,33 @@ claims:
     inbound_source: SYN_PRESS_EMPTIES
     outbound_destination: SYN_MARKET
 
+  # ── PRESS-2-ALT2: the same A/B pair on PANEL-A, i.e. the OTHER carrier ──
+  # Same two positions, same routing; only the payload — and therefore the carrier
+  # type — differs. This is what makes a PRESS-2-ALT → PRESS-2-ALT2 changeover a
+  # two-sided one: the reuse-skip needs the carrier to be unchanged, and here it
+  # is not, so neither position can reuse what is standing on it.
+  - core_node: PLN_003
+    style: PRESS-2-ALT2
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-A
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_004
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+  - core_node: PLN_004
+    style: PRESS-2-ALT2
+    role: produce
+    swap_mode: sequential
+    payload: PANEL-A
+    uop_capacity: 30
+    auto_reorder: true
+    paired_core_node: PLN_003
+    active_pull: false
+    inbound_source: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
+
   # ── WELD-1 (two_robot): consume PANEL-A + produce ASSY ──
   - core_node: ALN_001
     style: WELD-1-RUN
@@ -733,10 +936,15 @@ claims:
     inbound_staging: SLN_016
     outbound_staging: SLN_017
 
-  # ── PLK_HOMES (manual_swap, DEDICATED-POSITIONS): SHIM on two pinned homes ──
-  # home_of groups both positions under one dedicated_positions loader keyed on the
-  # synthetic identity PLK_HOMES. Each position is pinned to SHIM, which is what puts
+  # ── PLK_HOMES (manual_swap, DEDICATED-POSITIONS): SHIM on ONE pinned home ──
+  # home_of groups all four positions under one dedicated_positions loader keyed on
+  # the synthetic identity PLK_HOMES. The HOME is pinned to SHIM, which is what puts
   # it in InSourcePool() — an unpinned home is excluded from the pool entirely.
+  # Buffers are admitted on kind alone, so they need no pin.
+  #
+  # ONE home per payload, matching Springfield (22 homes, 22 distinct parts). A
+  # second SHIM home let the supply pool widen across both and drained the return
+  # capacity with it — see the WELD-5 node block for the run that killed.
   # NO outbound_destination — this is Springfield's shape, and the park side exists
   # to serve it. A produce loader pushes every carrier it fills to its outbound
   # (createLoaderOutbound, unconditional at the tail of LoadBin). A dedicated home
@@ -754,12 +962,24 @@ claims:
   #
   # inbound_source stays SYN_MARKET as a top-up path if a carrier is lost out of the
   # loop; in steady state it should not be needed.
+  # THE ONE SHIM HOME. Springfield has 22 homes on this loader and no two share a
+  # part; a second SHIM home here let the supply pool widen across both and drain
+  # the return capacity with it. See the WELD-5 node block above for the run it
+  # killed. One home per payload — do not add another.
   - {core_node: PLK_H1, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, operator_station: PLK_H1-OPS}
-  - {core_node: PLK_H2, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, operator_station: PLK_H2-OPS}
   # The buffers. home_kind: buffer carries no payload and no threshold — it is
   # spare parking, and it is the fallback placeForLoader walks when a returning
-  # partial finds its home busy. Two of them against two homes, so the loop always
-  # has somewhere to put a carrier that arrives while its home is occupied.
+  # partial finds its home busy.
+  #
+  # THREE, AND THE COUNT IS LOAD-BEARING. This said "two of them against two
+  # homes, so the loop always has somewhere to put a carrier that arrives while
+  # its home is occupied" — and that was simply false. Order 111 arrived with H1
+  # stocked, B1 stocked and B2 busy for the one second order 110 took to lift
+  # from it, found nowhere to go, and pinned the cell for the rest of the run.
+  # Springfield carries eleven buffers against twenty-two homes; three against
+  # one home is that ratio with headroom, and a run that still exhausts them is
+  # reporting a real shortage rather than a fixture artifact.
+  - {core_node: PLK_H2, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, home_kind: buffer, operator_station: PLK_H2-OPS}
   - {core_node: PLK_B1, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, home_kind: buffer, operator_station: PLK_B1-OPS}
   - {core_node: PLK_B2, style: LOADER-SHIM-RUN, role: produce, swap_mode: manual_swap, payload: SHIM, uop_capacity: 40, reorder_point: 2, auto_reorder: true, inbound_source: SYN_MARKET, home_of: PLK_HOMES, home_kind: buffer, operator_station: PLK_B2-OPS}
 
@@ -804,29 +1024,50 @@ claims:
     outbound_destination: SYN_PRESS_EMPTIES
     auto_push: true
 
-  # ── UNLOADER-B: drains PANEL-A, so the U1 trigger has somewhere to go ──
+  # UNLOADER-B IS GONE. It drained PANEL-A, which WELD-1 consumes, and it existed
+  # for a TEST reason rather than a material one: "MaybeCreateUnloaderFullIn
+  # resolves a CONSUME loader for the payload the operator just declared full.
+  # PRESS-1 produces PANEL-A; with only the ASSY unloader above, that lookup
+  # returned nothing and the one live behaviour change on the branch could not be
+  # observed on a sim at all."
   #
-  # MaybeCreateUnloaderFullIn resolves a CONSUME loader for the payload the
-  # operator just declared full. PRESS-1 produces PANEL-A; with only the ASSY
-  # unloader above, that lookup returned nothing and the one live behaviour
-  # change on the branch could not be observed on a sim at all — it looked
-  # identical to the trigger not firing.
+  # A scaffold is fine. A scaffold that MOVES MATERIAL is not. Measured over 81
+  # sim-minutes: FGN_002 pulled 16 PANEL-A carriers while WELD-1 — the cell that
+  # actually eats PANEL-A — got 4. The prop out-consumed the line four to one, on
+  # a payload the plant needs for ASSY.
   #
-  # FGN_002's changeover_load_directive is on its STATION entry, not here: it
-  # describes the station, so putting it on a claim would mean one copy per
-  # style, all required to agree.
-  - core_node: FGN_002
-    style: UNLOADER-B-RUN
-    role: consume
-    swap_mode: manual_swap
-    payload: PANEL-A
-    uop_capacity: 30
-    reorder_point: 0
-    auto_reorder: false
-    inbound_source: SYN_MARKET
-    outbound_destination: SYN_PRESS_EMPTIES
-    auto_push: true
+  # THE U1 TRIGGER NOW HAS NO EXERCISER IN THIS PLANT, and that is a real gap, not
+  # an oversight: MaybeCreateUnloaderFullIn will resolve nothing for PANEL-A again.
+  # The right way back is a payload that genuinely SHIPS — a press part no weld
+  # cell consumes, with an unloader on it — so the trigger has a truthful target
+  # instead of one carved out of WELD-1's feedstock. Re-adding a consume loader on
+  # a payload a cell eats is not that, and this comment is here so the next person
+  # reaching for it knows it was already tried and what it cost.
 
+  # UNLOADER-C IS GONE, AND ITS REASONING WAS A BUG'S SHADOW. It drained PANEL-B,
+  # and the note here argued it "has to exist… arithmetic rather than a feature:
+  # PANEL-B is the only STANDARD-SM payload in steady production, so with no
+  # unloader for it the SM empties are consumed once and never regenerate."
+  #
+  # The observation was right and the cause was wrong. SM carriers did not
+  # regenerate because ALN_003 — WELD-2's PANEL-B consume node — is the plant's
+  # only single_robot CONSUME node, and the sim operator declared a disposition
+  # only on the two-robot path. Its carriers were released with a blank form, so
+  # Core never settled their count, their manifest never cleared, and a labelled
+  # carrier never matches EmptyCarrierWhere again. Fixed in the commit that
+  # removed this: the release now declares what is in the bin on every swap mode.
+  #
+  # What the workaround cost, measured over 81 sim-minutes before the fix: a drain
+  # window must be handed a FULL carrier (11b935ab), so every label reset burned a
+  # full load of PANEL-B. FGN_003 took 15 carriers — 450 UOP — while WELD-2, the
+  # cell that actually eats PANEL-B, received NONE. That is what made the press
+  # look outpaced by the line, and it is why order 65 sat on "waiting for material".
+  #
+  # THE RULE THIS RESTORES: an unloader takes FINISHED GOODS out of the system.
+  # ASSY, which the weld cells produce, is the only correct target in this plant.
+  # PANEL-A and PANEL-B are work-in-progress that a cell consumes; an unloader on
+  # either competes with the line for its own feedstock. UNLOADER-A/FGN_001 is now
+  # the only unloader here, and that is the whole intended population.
 demands:
   # Loader demands key on the loader identity (synthetic PLK_LOADER, or the single-window
   # anchor node). The seed derives demand_registry from the loader aggregate; these
@@ -840,7 +1081,6 @@ demands:
   - {payload: SHIM, node: PLK_HOMES, replenish_uop_threshold: 40}
   # Unloader is event/auto-push driven (informational threshold 0).
   - {payload: ASSY, node: FGN_001, replenish_uop_threshold: 0}
-  - {payload: PANEL-A, node: FGN_002, replenish_uop_threshold: 0}
 
 # Reporting points: one PLC counter per counting process (manual_swap excluded).
 # plc_name/tag_name MUST match sim.processes in shingoedge.dev.yaml. The tick fans
@@ -870,12 +1110,15 @@ cell_configs:
   - {process: WELD-4,  station: WELD-4-OPS}
   - {process: WELD-5,  station: WELD-5-OPS}
   - {process: UNLOADER-A, station: UNLOADER-A-OPS}
-  # UNLOADER-B was declared in operator_stations and never built here, so the
-  # station did not exist: seed_edge creates operator_stations from cell_configs,
-  # FGN_002's process node had operator_station_id NULL, and FGN_002 carries the
-  # plant's ONLY changeover_load_directive — so the LOAD directive card had
-  # nowhere to render and the surface shipped unobservable (N3, sim 2026-08-24).
-  - {process: UNLOADER-B, station: UNLOADER-B-OPS}
+  # A STATION DECLARED IN operator_stations MUST ALSO BE BOUND HERE. seed_edge
+  # creates operator_stations from cell_configs, so a name listed above with no
+  # binding in this block leaves its process node's operator_station_id NULL and
+  # the station simply does not exist. That bit UNLOADER-B: it carried the plant's
+  # only changeover_load_directive, the LOAD directive card had nowhere to render,
+  # and the surface shipped unobservable (N3, sim 2026-08-24). UNLOADER-B is gone
+  # now and no plant here declares a load directive, but the binding rule is the
+  # part worth keeping.
+  #
   # Loaders have no single cell station — their windows are per-node operator stations
   # (PLK_W1/2-OPS, PLK_X1-OPS, PLK_X2-OPS), declared via operator_station above.
 

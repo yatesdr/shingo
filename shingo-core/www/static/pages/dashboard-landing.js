@@ -13,6 +13,7 @@
 // when authenticated — detected from the presence of the auth-gated "+ New"
 // button the template emits.
 
+import { installLiveDurations } from '/static/shared/utils.js';
 import { el, apiGet, apiPost, apiPut, apiDelete, toast, uiConfirm } from '/static/app.js';
 
 // Known kinds. A kind needs a renderer template + dashboard.js branch to display.
@@ -473,3 +474,8 @@ if (document.getElementById('core-strip')) {
     refreshCoreHealth();
     setInterval(refreshCoreHealth, 15000);
 }
+
+// The wait clocks in the order table. Same helper the orders board uses, on the
+// same data-since contract — the overview is a wall display, so a duration that
+// never ticks is worse here than anywhere else.
+installLiveDurations();

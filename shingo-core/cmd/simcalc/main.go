@@ -587,6 +587,40 @@ func (f *flow) verdict(loaderClearsPerMin, unloaderClearsPerMin float64) (string
 		}
 		return "DRAIN-BOUND", false, fmt.Sprintf("unloader only %.0f/min < %.0f/min made", drain, f.produce)
 	}
+	// A TICK CONSUMER AND AN UNLOADER ON THE SAME PAYLOAD. This case used to fall
+	// through to the parity arithmetic below, which subtracts only the tick
+	// consumer — so the unloader vanished from the sum and the payload was
+	// reported on the press-versus-weld balance alone.
+	//
+	// THIS IS A RECORD OF A TOOL DEFECT, NOT OF A LIVE CONFIGURATION. Run of
+	// 2026-08-31 (WALL), 81.2 sim-minutes of SIM-CLOCK, on a demo.yaml that
+	// carried two unloaders this plant no longer has:
+	//
+	//	PANEL-A  press made 13 carriers | WELD-1 took  4 | UNLOADER-B took 16
+	//	PANEL-B  press made 11 carriers | WELD-2 took  0 | UNLOADER-C took 15
+	//
+	// Both unloaders out-consumed their press, and this function reported PANEL-A
+	// "OVERFILL +3.0/min" and PANEL-B "BALANCED, buffer covers 19m" — which is
+	// the blindness being fixed. UNLOADER-B and UNLOADER-C have both since been
+	// deleted for moving material they had no business moving, so the shape is
+	// unreachable on the shipped fixture and this arm is a LINT: demo.yaml now
+	// declares a tick consumer plus an unloader on one payload to be invalid as
+	// policy, and the mistake was made twice in three days. An instrument that
+	// detects a configuration the plant forbids is worth keeping.
+	//
+	// No number is quoted for the drain because there isn't an honest one: an
+	// auto-push unloader pulls whatever exists, so its capacity (uopCap ×
+	// clears/min) is an upper bound it never sustains, and subtracting it would
+	// report catastrophic starvation on every payload that has one. The
+	// STRUCTURAL statement is the true one — the press's surplus over the weld is
+	// not headroom, because the unloader takes it, and any dip below the weld's
+	// draw puts the two in direct competition for the same carriers.
+	if hasProd && hasCons && hasUnloader {
+		net := f.produce - f.consume
+		return "CONTESTED", false, fmt.Sprintf(
+			"%+.1f/min over %s, but %s also drains it — surplus is not headroom",
+			net, strings.Join(f.consumers, ","), strings.Join(f.unloaders, ","))
+	}
 	if hasProd && hasCons { // the core parity case
 		net := f.produce - f.consume
 		switch {
@@ -658,10 +692,25 @@ func sortedKeys(m map[string]*flow) []string {
 }
 
 // sideStr renders a produce/consume side: tick rate + the processes driving it,
-// or the manual_swap label (C-push / drain) when there's no tick rate.
+// AND the manual_swap label (C-push / drain) when both are present.
+//
+// It used to return on the tick rate alone, so a payload with both a tick
+// consumer and an unloader printed only the tick side — PANEL-A read
+// "3 (WELD-1)" while UNLOADER-B, which took four times as many carriers as
+// WELD-1 over the same window, was not on the line at all. A reader cannot
+// weigh a drain the table does not mention.
+//
+// UNLOADER-B WAS DELETED AFTER THAT MEASUREMENT (it drained PANEL-A, which
+// WELD-1 consumes), so this cites a run of 2026-08-31 (WALL) against a fixture
+// the repo no longer ships. The rendering rule stands on its own: any plant
+// that ever pairs a tick consumer with a drain needs both on the line.
 func sideStr(rate float64, tickProcs, manualProcs []string, manualLabel string) string {
 	if rate > 0.01 {
-		return fmt.Sprintf("%.0f (%s)", rate, strings.Join(tickProcs, ","))
+		s := fmt.Sprintf("%.0f (%s)", rate, strings.Join(tickProcs, ","))
+		if len(manualProcs) > 0 {
+			s += fmt.Sprintf(" + %s (%s)", manualLabel, strings.Join(manualProcs, ","))
+		}
+		return s
 	}
 	if len(manualProcs) > 0 {
 		return fmt.Sprintf("%s (%s)", manualLabel, strings.Join(manualProcs, ","))

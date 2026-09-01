@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"shingo/protocol"
 	"shingocore/config"
@@ -364,7 +365,7 @@ func laneShapes(db *store.DB) []laneShape {
 	rows, err := db.DB.Query(`
 		SELECT g.name                                            AS grp,
 		       l.name                                            AS lane,
-		       (p.value IS NOT NULL AND p.value <> '')            AS marked,
+		       (COALESCE(NULLIF(p.value, ''), NULLIF(gp.value, '')) IS NOT NULL) AS marked,
 		       COUNT(s.id)                                        AS depth,
 		       COUNT(b.id)                                        AS occupied,
 		       COALESCE(MAX(s.depth) FILTER (WHERE b.id IS NOT NULL), 0) AS deepest_full
@@ -372,10 +373,16 @@ func laneShapes(db *store.DB) []laneShape {
 		JOIN nodes g            ON g.id = l.parent_id
 		LEFT JOIN nodes s       ON s.parent_id = l.id
 		LEFT JOIN bins  b       ON b.node_id = s.id
-		LEFT JOIN node_properties p ON p.node_id = l.id AND p.key = $1
+		LEFT JOIN node_properties p  ON p.node_id  = l.id AND p.key = $1
+		-- THE GROUP'S LIST IS THE OTHER HALF. The wait points moved to the NGRP;
+		-- the lane key is the legacy override and still wins for its own lane.
+		-- Reading only the lane key reports a group-gated plant as ungated, which
+		-- makes the whole gated-vs-ungated comparison this file exists for read
+		-- zero in the gated column and every lane in the ungated one.
+		LEFT JOIN node_properties gp ON gp.node_id = g.id AND gp.key = $2
 		WHERE l.node_type_id = (SELECT id FROM node_types WHERE code = 'LANE')
 		GROUP BY g.name, l.name, marked
-		ORDER BY g.name, l.name`, dispatch.PropLaneGatePoint)
+		ORDER BY g.name, l.name`, dispatch.PropLaneGatePoint, dispatch.PropGroupWaitPoints)
 	if err != nil {
 		return nil
 	}
@@ -405,11 +412,13 @@ func gatedVsUngated(db *store.DB) map[bool]flowStats {
 			       o.status,
 			       o.queue_cause,
 			       EXTRACT(EPOCH FROM (o.completed_at - o.created_at)) AS cycle_s,
-			       (p.value IS NOT NULL AND p.value <> '')             AS marked
+			       (COALESCE(NULLIF(p.value, ''), NULLIF(gp.value, '')) IS NOT NULL) AS marked
 			FROM orders o
 			JOIN nodes s  ON s.name = COALESCE(NULLIF(o.source_node, ''), o.delivery_node)
 			JOIN nodes l  ON l.id = s.parent_id
-			LEFT JOIN node_properties p ON p.node_id = l.id AND p.key = $1
+			LEFT JOIN node_properties p  ON p.node_id  = l.id AND p.key = $1
+			-- Same two-key read as laneShapes; see the note there.
+			LEFT JOIN node_properties gp ON gp.node_id = l.parent_id AND gp.key = $3
 			WHERE l.node_type_id = (SELECT id FROM node_types WHERE code = 'LANE')
 		)
 		SELECT marked,
@@ -417,7 +426,8 @@ func gatedVsUngated(db *store.DB) map[bool]flowStats {
 		       COUNT(*) FILTER (WHERE queue_cause IS NOT NULL
 		                          AND queue_cause <> '')             AS waits,
 		       COALESCE(AVG(cycle_s) FILTER (WHERE status = $2), 0)  AS avg_cycle
-		FROM touched GROUP BY marked`, dispatch.PropLaneGatePoint, string(protocol.StatusConfirmed))
+		FROM touched GROUP BY marked`, dispatch.PropLaneGatePoint, string(protocol.StatusConfirmed),
+		dispatch.PropGroupWaitPoints)
 	if err != nil {
 		return out
 	}
@@ -565,6 +575,7 @@ var invariantChecks = []struct {
 	{"two legs traversing one lane at once", checkTraversalOverlap},
 	{"a reservation still held by a terminal order", checkTerminalOrderReservations},
 	{"an order queued five minutes with no cause on the row", checkQueuedWithoutCause},
+	{"an order wearing armor the fleet never took", checkArmoredWithNoVendorOrder},
 	{"how orders were freed by the periodic floor release", checkFloorReleaseHistogram},
 	{"orders waiting under a cause nothing declares", checkUndeclaredWaits},
 	{"orders that have not moved for their population's budget", checkStalledOrders},
@@ -645,8 +656,12 @@ func readLog(source string) *logStats {
 			if n, ok := tallyValue(line, "soft-hold burials "); ok {
 				s.softN = n
 			}
-		case strings.Contains(line, "the dig always wins on a positional blocker"):
-			// This one IS per-event — one line per steal, at the steal.
+		case strings.Contains(line, "outranked the holder on a positional blocker"):
+			// This one IS per-event — one line per steal, at the steal. The phrase
+			// is the substring both steal logs share (the ordinary un-point and the
+			// hand-placed one), and it moved with them when the take became ranked:
+			// reaching either log now means the dig WON the rank contest, where
+			// before it always did.
 			s.stealN++
 		}
 	}
@@ -1143,19 +1158,84 @@ func checkTerminalOrderReservations(db *store.DB) []string {
 	return out
 }
 
-// checkQueuedWithoutCause reports an order queued five minutes with no cause on the row.
+// checkQueuedWithoutCause reports an order waiting five minutes with no cause on
+// the row.
+//
+// THE WHOLE ACQUIRING SET, not the `queued` literal it used to name. The fleet
+// demote door parks its refusals in `sourcing` — deliberately, and for the whole
+// of the meaning migration — and its undo-only arm writes no cause at all,
+// leaving the caller to choose one. So the one instrument that asks "is anybody
+// parked with nothing to explain it" was blind to the population most likely to
+// be in that state, and to every other sourcing park besides.
 func checkQueuedWithoutCause(db *store.DB) []string {
 	var out []string
 
 	// A wait with no cause on the row. The operator sentence is the whole point
 	// of parking rather than failing; a parked order nobody can explain is the
 	// shape this stream exists to refuse.
-	if n := scalar(db, `
+	if n := scalar(db, fmt.Sprintf(`
 		SELECT COUNT(*) FROM orders
-		WHERE status = 'queued'
+		WHERE status IN (%s)
 		  AND (queue_cause IS NULL OR queue_cause = '')
-		  AND created_at < now() - interval '5 minutes'`); n > 0 {
-		out = append(out, fmt.Sprintf("%d order(s) queued 5min+ with NO cause on the row", n))
+		  AND created_at < now() - interval '5 minutes'`,
+		protocol.AcquiringStatusSQLList())); n > 0 {
+		out = append(out, fmt.Sprintf("%d order(s) waiting 5min+ with NO cause on the row", n))
+	}
+	return out
+}
+
+// checkArmoredWithNoVendorOrder reports an order wearing armor the fleet never
+// took: the crash sliver.
+//
+// ── THE CASE NOTHING IN THIS FILE ASKED ABOUT ─────────────────────────────
+//
+// Every dispatched-family check above filters for a NON-EMPTY vendor_order_id, and the
+// filter is right for what those checks measure — they judge a leg the fleet is
+// carrying, and a leg with no vendor id is not one. But it means the empty case
+// was never asked anywhere, and nothing else asks it either: the poller's own
+// re-registration query selects non-empty ids only (store/orders/orders.go
+// ListTrackedVendorOrderIDs), so an order in this state is watched by nothing at
+// all.
+//
+// It is reachable. Core writes `dispatched` and then creates the vendor order —
+// the CAS-before-create ordering, kept deliberately because it is the
+// racing-dispatchers lock — so there is a window, and a crash inside it leaves an
+// order armored, claimed, holding its lane, and invisible to the one loop that
+// would have noticed it stopped moving.
+//
+// THE AGE BOUND IS WHAT MAKES IT A FINDING rather than a race report. Inside the
+// window the state is correct and expected; minutes later it is a wedge. Five
+// minutes is the same bound checkQueuedWithoutCause uses for the same reason —
+// long enough that a transient cannot reach it, short enough to catch the wedge
+// inside a shift.
+//
+// Reported with the order id and status, because what to do about one of these
+// is the reader's judgement: the bin and lane it holds have to go somewhere, and
+// no sweep in this house cancels an order on a timer.
+func checkArmoredWithNoVendorOrder(db *store.DB) []string {
+	var out []string
+	rows, err := db.DB.Query(fmt.Sprintf(`
+		SELECT id, status, EXTRACT(EPOCH FROM (now() - updated_at))::bigint
+		FROM orders
+		WHERE status IN (%s)
+		  AND (vendor_order_id IS NULL OR vendor_order_id = '')
+		  AND updated_at < now() - interval '5 minutes'
+		ORDER BY id LIMIT 12`, protocol.VendorActiveStatusSQLList()))
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, ageSec int64
+		var status string
+		if err := rows.Scan(&id, &status, &ageSec); err != nil {
+			continue
+		}
+		out = append(out, fmt.Sprintf(
+			"ARMORED, NO FLEET ORDER: order %d has been %s for %s with an empty vendor_order_id — "+
+				"Core wrote the status and the create never landed, so it holds its claims and its "+
+				"lane while nothing polls it (the poller's re-registration selects non-empty ids only)",
+			id, status, protocol.FormatDuration(time.Duration(ageSec)*time.Second)))
 	}
 	return out
 }

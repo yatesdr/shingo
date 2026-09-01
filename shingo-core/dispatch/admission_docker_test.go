@@ -234,6 +234,7 @@ func TestAdmit_OccupantRefusesAndSelfDoesNot(t *testing.T) {
 // than the check itself.
 func TestAdmit_BuriedRefusesAtThePickupEndOnly(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "the order row is an argument to the admission gate, not a sourcing scenario")
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	_, laneID, _ := gatedLane(t, db, "ADM-BURIED", "")

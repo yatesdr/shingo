@@ -14,15 +14,17 @@ import (
 // TestBinMove_OperatorDoorRecordsItsOwnCreation pins that an operator's bin-move
 // has a first entry in its own history.
 //
-// Order history is written by status TRANSITIONS. The row's status column is set
-// by the INSERT, so an order created directly at pending has the right status
-// and no history entry to say it ever started — its timeline begins at whatever
-// happened next. The engineer's door calls MarkPending for exactly this reason:
-// the status is already pending, and the call is there for the history row.
+// Order history is written by status TRANSITIONS, and the INSERT is not one — so
+// an order created directly at pending had the right status and no entry saying
+// it ever started, and its timeline began at whatever happened next. The
+// engineer's door worked around that with a redundant pending→pending write
+// whose only product was the row; the operator's door did not, so the one order
+// class a person creates by hand was the class whose record did not say when it
+// was created or by which door.
 //
-// The operator's door skipped it. So the one order class a person creates by
-// hand was the class whose record did not say when it was created or by which
-// door — on the surface an operator would go to when asking what happened.
+// orders.Create writes the birth row now, in the order's own transaction, so
+// this holds structurally rather than per door. The assertion is unchanged and
+// still the one that matters: the operator's door records its own creation.
 func TestBinMove_OperatorDoorRecordsItsOwnCreation(t *testing.T) {
 	t.Parallel()
 	sim := simulator.New()

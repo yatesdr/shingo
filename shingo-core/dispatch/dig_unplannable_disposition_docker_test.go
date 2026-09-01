@@ -28,9 +28,9 @@ import (
 //
 // Three are a momentary database stutter with a completely healthy plant; today
 // each one killed the operator's order. The fourth is a genuine configuration
-// fault. The owner's words: "we dont want orders to fail because of a stutter.
-// that demand isnt going away. config error? yeah fail loudly so the engineer can
-// fix."
+// fault. The disposition follows from that split: a stutter must not fail an
+// order, because the demand is not going away; a config error fails loudly, so
+// an engineer can fix it.
 //
 // The three stutters share a disposition but NOT a call site, and per-site pins
 // are the only thing that catches the class this branch keeps paying for — a

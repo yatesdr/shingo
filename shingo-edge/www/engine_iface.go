@@ -148,14 +148,14 @@ type EngineOrchestration interface {
 	PostCutoverFlag(processID int64) (*engine.PostCutoverFlag, bool)
 	// ClearPostCutoverFlag clears that flag — the operator confirmed or resolved it.
 	ClearPostCutoverFlag(processID int64) error
-	SequentialChangeoverCutover(processID, nodeID int64, calledBy string) error
 	StageNodeChangeoverMaterial(processID, nodeID int64) (*domain.Order, error)
 	EvacuateNode(processID, nodeID int64, partialQty int64) (*domain.Order, error)
 	DeliverNewMaterialForChangeover(processID, nodeID int64) (*domain.Order, error)
 	SwitchNodeToTarget(processID, nodeID int64) error
 	SwitchOperatorStationToTarget(processID, stationID int64) error
 	SyncProcessCounter(processID int64) error
-	FlipABNode(nodeID int64) error
+	FlipABNode(nodeID int64, req engine.FlipRequest) error
+	SetActivePullSide(nodeID int64, req engine.FlipRequest) error
 
 	// ── UOP backfill (admin) ───────────────────────────────────────
 	// Item 3: seeds Core's lineside_buckets from Edge state. Auto-fires

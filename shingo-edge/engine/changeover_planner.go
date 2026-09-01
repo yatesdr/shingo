@@ -70,11 +70,25 @@ func directTripChangeoverMode(swapMode protocol.SwapMode) bool {
 }
 
 // resolveSequentialActivePull computes inactive/active node names for a
-// sequential A/B-paired claim using the active-pull snapshot. Tie-break:
-// when neither side reports active=true (initial startup state, or both
-// PLC bits low), use the convention CoreNodeName=inactive,
-// PairedCoreNode=active. Unpaired claims return empty strings; the
-// planner uses that as the misconfiguration signal.
+// sequential A/B-paired claim using the active-pull snapshot. Unpaired claims
+// return empty strings; the planner uses that as the misconfiguration signal.
+//
+// ── THE TIE-BREAK IS BY NAME, NOT BY WHICH CLAIM IS ASKING (per-node) ─────
+//
+// It used to be "CoreNodeName=inactive, PairedCoreNode=active", which reads as
+// a convention and was one while ONE order covered the whole press: only the
+// active-side claim ever called this, so there was only one answer.
+//
+// Per-node, BOTH positions call it — each from its own claim, where core and
+// paired are swapped. Under the old convention the tie-break therefore gave
+// position A "A is parked" and position B "B is parked", and each side built
+// the immediate order: two robots clearing both positions of a running press at
+// once, no cutover wait anywhere, and a cutover click with nothing to release.
+// The snapshot-driven arms were always symmetric; only the tie-break was not.
+//
+// So the tie-break sorts the pair and takes the lower name as parked. Any total
+// order over the two names works — what matters is that it is a function of the
+// PAIR and not of the caller, so both diffs of one press agree.
 func resolveSequentialActivePull(claim *processes.NodeClaim, activePull map[string]bool) (inactive, active string) {
 	if claim == nil || claim.PairedCoreNode == "" {
 		return "", ""
@@ -87,7 +101,11 @@ func resolveSequentialActivePull(claim *processes.NodeClaim, activePull map[stri
 	if activePull[core] && !activePull[paired] {
 		return paired, core // PairedCoreNode is inactive, CoreNodeName is active
 	}
-	// Tie-break: both active or neither active. Convention.
+	// Tie-break: both active or neither active (startup, or both PLC bits low).
+	// Canonical by name so the press's two diffs cannot disagree.
+	if paired < core {
+		return paired, core
+	}
 	return core, paired
 }
 

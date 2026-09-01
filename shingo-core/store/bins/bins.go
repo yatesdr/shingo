@@ -41,12 +41,22 @@ type Bin = domain.Bin
 // Pending-ONLY is sufficient: a confirmed reservation coincides with a hard
 // claimed_by (structural, since the one-tx claim+confirm moves them together),
 // which b.claimed_by already covers — so this projector never needs to see 'confirmed'.
+//
+// ── THE SEAM ──────────────────────────────────────────────────────────────────
+//
+// The column is reservations.BinSpokenForSQL, the same fragment every bin
+// finder composes — carried across a join boundary as a boolean because its
+// only consumer, binresolver.BinUnavailableReason, is a pure function over a
+// scanned row and cannot reach the table. So this projector and that function
+// are the two ends of ONE predicate, and the day BinSpokenForSQL's meaning
+// changes they both change with it without either being edited. That is the
+// whole reason the fragment is named.
 const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node_id, b.status, b.claimed_by, b.staged_at, b.staged_expires_at,
 	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.delta_epoch, b.manifest_confirmed,
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
 	b.loaded_at, b.anomaly_at, COALESCE(b.anomaly_note, ''), b.created_at, b.updated_at,
 	bt.code, COALESCE(n.name, ''), COALESCE(p.uop_capacity, 0),
-	EXISTS(SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending') AS has_pending_reservation
+	` + reservations.BinSpokenForSQL + ` AS has_pending_reservation
 	` + BinFromClause
 
 // BinFromClause is the FROM/JOIN half of every bin-reading query, split out of
@@ -121,7 +131,7 @@ func NotForeignDugArm(modeParam, askerParam, laneOwnerParam int) string {
 		SELECT 1 FROM reservations dig_hold
 		 WHERE dig_hold.resource_kind = 'mouth'
 		   AND dig_hold.node_id = n.parent_id
-		   AND dig_hold.state IN ('pending','confirmed')
+		   AND `+reservations.ActiveStateSQL("dig_hold.")+`
 		   AND dig_hold.mode = $%d
 		   AND %s
 	  )`, modeParam, reservations.DigExclusionSQL("dig_hold.order_id", askerParam, laneOwnerParam))
@@ -291,7 +301,40 @@ func NotFencedArm() string {
 //   - staged and pending-reservation carriers are spoken for;
 //   - claimed and locked ones likewise;
 //   - synthetic and disabled nodes hold nothing anybody can act on;
-//   - anything carrying a payload has left the empty population entirely.
+//   - anything carrying a payload has left the empty population entirely;
+//   - a carrier standing on a CELL'S OWN POSITION is that cell's working stock.
+//
+// ── THE LAST ONE COST A WHOLE PLANT, AND IT IS THE SUBTLE ONE ─────────────
+//
+// A sequential A/B press keeps a fresh EMPTY on its parked side, ready for the
+// next flip. That carrier is unclaimed, unlocked, unstaged, carries no payload
+// and stands at an enabled physical node — so it matched every clause above and
+// the plant-wide empty scan happily harvested it.
+//
+// MEASURED, 2026-08-30 demo.yaml:
+//
+//	order 144  retrieve_empty  PLN_004 -> PEB_003   confirmed
+//
+// PLN_004 is PRESS-2's parked side. Nothing ever delivered to it again — the
+// sequential backfill targets claim.CoreNodeName and only the ACTIVE side
+// carries the claim the backfill is built from — so the cell could never flip
+// again, and it deadlocked the first time the active side filled:
+//
+//	PLN_004 empty  ->  "A/B cutover rejected: PLN_004 has no bin on it"
+//	no flip        ->  "the line is pulling from PLN_003; flip to PLN_004 first"
+//	no evac        ->  PLN_003 stays full, its robot pinned
+//	no place       ->  "HOLDING at PLN_003", a second robot pinned
+//
+// Three robots and the whole PANEL-B chain behind them.
+//
+// The rule is one sentence: A CARRIER ON A CELL'S OWN POSITION BELONGS TO THAT
+// CELL. It is not free inventory, and the cell's own orders are how it leaves —
+// a complex leg naming that node in a `pickup` step, never this scan. The same
+// reasoning covers a consume position holding a just-emptied carrier, which was
+// harvestable for the same reason and is the same mistake.
+//
+// A plant whose claims have not synced has an empty style_claims table and this
+// arm excludes nothing, which is the pre-existing behaviour.
 //
 // It opens the WHERE. Arms append to it; nothing composes in front of it.
 const EmptyCarrierWhere = `
@@ -302,7 +345,8 @@ const EmptyCarrierWhere = `
 	  AND n.enabled = true
 	  AND n.is_synthetic = false
 	  AND COALESCE(b.payload_code, '') = ''
-	  AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.state = 'pending')`
+	  AND NOT EXISTS (SELECT 1 FROM style_claims sc WHERE sc.core_node_name = n.name)
+	  AND NOT ` + reservations.BinSpokenForSQL
 
 // OfTypeArm narrows to ONE carrier type, matched on CODE.
 //
@@ -863,39 +907,6 @@ func move(db *sql.DB, binID, toNodeID int64, clearStaging, clearAnomaly bool) er
 	return tx.Commit()
 }
 
-// ListAvailable returns bins with no payload (empty, available for loading).
-//
-// Empty-bin definition: COALESCE(b.payload_code, ”) = ”. Same NULL-safe
-// form FindEmptyCompatible uses post-2026-04-27. The previous filter
-// `(manifest IS NULL OR payload_code = ”)` was the same bug class as
-// the FindEmptyCompatible bug fixed in 7c274ac/4337344: a bin with
-// payload_code=NULL evaluates `payload_code = ”` to NULL (falsy in
-// WHERE), but the OR-clause `manifest IS NULL` could rescue it. The
-// COALESCE form is unambiguous about the NULL case.
-//
-// SetManifest and ClearManifest always set payload_code and manifest
-// together, so under normal operation the two columns are correlated
-// and the simpler payload_code-only filter produces identical results.
-// In partial-write/legacy states where manifest is NULL but payload_code
-// is non-empty, this filter correctly treats the bin as NOT available
-// (it has a payload, even without a manifest blob).
-func ListAvailable(db *sql.DB) ([]*Bin, error) {
-	// Exclude bins parked at synthetic nodes (notably _TRANSIT). An empty
-	// bin in transit can match COALESCE(payload_code, '') = '' but it is
-	// NOT available — its physical location is mid-flight. Without this
-	// filter, a claim-finding caller could pick an in-flight bin and
-	// double-claim it, the exact failure mode the synthetic node was
-	// introduced to prevent.
-	rows, err := db.Query(fmt.Sprintf(`%s WHERE COALESCE(b.payload_code, '') = ''
-		  AND COALESCE(n.is_synthetic, false) = false
-		ORDER BY b.id`, BinJoinQuery))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanBins(rows)
-}
-
 // binExecer is satisfied by both *sql.DB and *sql.Tx, so the claim primitive can
 // run standalone (Claim) or inside a caller's transaction (ClaimTx) — the latter
 // lets the hard claim commit atomically with the reservation confirm.
@@ -933,7 +944,7 @@ func ClaimTx(tx *sql.Tx, binID, orderID int64) error {
 func claimBin(db binExecer, binID, orderID int64) error {
 	res, err := db.Exec(`UPDATE bins SET claimed_by=$1, updated_at=$3
 		WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
-		  AND EXISTS (SELECT 1 FROM reservations WHERE order_id=$1 AND bin_id=$2 AND state='pending')`,
+		  AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 1, 2),
 		orderID, binID, clock.Now().UTC())
 	if err != nil {
 		return err

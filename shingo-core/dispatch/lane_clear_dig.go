@@ -58,10 +58,10 @@ import (
 //     is about to leave on its own. This code does not re-implement that test; it
 //     asks, and takes the answer. (It also pre-checks the same fact one read
 //     earlier, purely to avoid minting a parent order it is about to cancel.)
-//   - SOFT-HELD BLOCKER → THE GUARD'S POLICY, which is that the dig wins and the
-//     holder recalculates: "a blocker is positional — the dig has no choice about
-//     which bins are in its way" (store/orders.go, stealSoftHold). Unchanged, and
-//     deliberately not special-cased here.
+//   - SOFT-HELD BLOCKER → THE RANKED TAKE DECIDES (§7). Positional is an argument
+//     about WHICH bin, not whose turn, so the dig wins only if its demand outranks
+//     the holder's (store/orders.go, stealSoftHolds). Outranked, it backs out whole
+//     and waits under dig-blocker-promised. Asked, not re-implemented here.
 //   - NO FREE SHUFFLE SLOT → WAIT. ErrNoShuffleSlot is congestion, never a fault.
 //   - A DIG ALREADY OWNS THE LANE → do nothing. Its completion re-drives us.
 //
@@ -245,6 +245,32 @@ type laneClearResult struct {
 	// somebody improves the wording.
 	blockerClaimant int64
 	blockerBin      int64
+	// blockerCause is the CAUSE the refusal parks under, decided HERE, once, by
+	// the arm that read the refusal.
+	//
+	// FOUR ARMS USED TO DECIDE IT AND THEY DECIDED IT FROM THE SAME FACT. The
+	// lane-gate acceptance path, the complex reshuffle path and the planner path
+	// each wrote `if promised { promised } else { claimed }` in their own words,
+	// and digBlockerCause re-derived the same fork from the typed error a fourth
+	// time. Four spellings of one branch is four places to add the next refusal
+	// shape to, and three of them to forget.
+	//
+	// NOT the whole answer at every consumer, and that is deliberate rather than a
+	// gap: parkOnClaimedBlocker narrows `claimed` to dig-blocker-STOPPED when the
+	// holder's order turns out not to be moving. That is a live liveness read
+	// taken at park time, about a fact this producer cannot see, so it stays with
+	// the reader that takes it. What is centralized is the fork this struct
+	// already had the input for.
+	blockerCause QueueCause
+	// blockerPromised says WHICH refusal this was, and the difference is the
+	// releaser. False: the holder has a hard claim, so a robot is driving the
+	// blocker out and the wait is that drive. True: the ranked take (§7) refused
+	// the steal because the holder's demand outranked the dig — the holder has a
+	// PROMISE and no robot, so nothing is moving and the wait ends when that
+	// demand takes its bin or ends. The callers park under different causes on it,
+	// and the stopped-blocker escalation is for claims only: a promise-holder has
+	// no robot to have stopped.
+	blockerPromised bool
 }
 
 // proposeLaneClearDig is THE ONE WRITER of a lane-clear dig: it takes the lane
@@ -318,7 +344,13 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// gets out of it. The requester's own hold is not an obstacle to the
 	// requester's own rescue; everybody else's still is.
 	digFor := digAskerFor(requester)
-	if !d.laneLock.CanTakeFor(lane.ID, digFor) {
+	// AND A ROBOT AT THE MARK IS NOT IN THE CORRIDOR. Rows belonging to orders
+	// parked at this lane's own mark do not refuse the excavation either — they
+	// are standing outside it. This is the pre-check half; the acquire below takes
+	// the SAME set, computed the same way, because a pre-check and an acquire that
+	// disagree is the 16,947 shape (CanTakeFor's own note).
+	atMark := stagedAtMarkOnLane(d.db, lane.ID)
+	if !d.laneLock.CanTakeFor(lane.ID, digFor, atMark) {
 		return laneClearResult{outcome: laneClearLaneBusy}
 	}
 
@@ -480,6 +512,10 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 				err:             fmt.Errorf("blocker bin %d is claimed by order %d", step.BinID, *b.ClaimedBy),
 				blockerClaimant: *b.ClaimedBy,
 				blockerBin:      step.BinID,
+				// A HARD CLAIM, so a robot is carrying the blocker out. The
+				// pre-check only ever catches this shape — binIsUnclaimed reads a
+				// claim, and a promise is not one.
+				blockerCause: CauseDigBlockerClaimed,
 			}
 		}
 	}
@@ -514,13 +550,54 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	// ResumeCompound — Reshuffling → Queued — rather than confirming it. Its own
 	// work is still owed and the scanner re-resolves it against the corridor the
 	// dig just opened. No new status edge: both transitions already exist.
-	if !d.laneLock.TryLockFor(lane.ID, requester.ID, digFor) {
+	// The same exemption the pre-check used, re-read rather than carried: the
+	// two are separated by the parent INSERT above, so a dweller that walked in
+	// between must be seen by this half. Re-reading can only ever REFUSE a dig the
+	// pre-check allowed, which is the safe direction and the one the acquire is
+	// the arbiter of anyway.
+	if !d.laneLock.TryLockFor(lane.ID, requester.ID, digFor, stagedAtMarkOnLane(d.db, lane.ID)) {
 		return laneClearResult{outcome: laneClearLaneBusy}
 	}
 	if err := d.CreateCompoundOrder(requester, plan); err != nil {
-		d.laneLock.Unlock(lane.ID, requester.ID)
+		// A WAITING DIG HOLDS NOTHING — UNLESS ITS ROBOT IS ALREADY IN THE MOUTH.
+		//
+		// Backing out whole is the rule for a dig planned from scratch: it leaves
+		// the corridor so whoever can use it may, and that is what makes waiting
+		// cheaper than squatting. A GATE-STAGED requester cannot obey it. Its robot
+		// is standing at the mark holding a bin, so releasing the lane opens a
+		// corridor that is physically blocked to traffic that will queue behind the
+		// machine and wait on it — the deadlock §R.104 keeps the lock to prevent.
+		//
+		// It reached here on every refusal kind, and the ranked take made it
+		// routine: the plan-time pre-check only catches CLAIMED blockers, so a
+		// promised one (claimed_by NULL) always gets past it and lands on this arm.
+		if !IsGateStaged(requester) {
+			d.laneLock.Unlock(lane.ID, requester.ID)
+		}
+		// CARRY WHO AND WHICH REFUSAL, not just "blocked". The typed error holds
+		// both facts and this arm used to drop them: the callers then had no
+		// claimant to name and no way to tell the ranked refusal (§7) from the
+		// claimed one, so every yield parked under dig-blocker-claimed — a wait
+		// whose sentence promises a robot's drive that is not happening. The
+		// pre-check above populates the same fields for the case it catches.
+		var refused *store.BlockerClaimedError
+		if errors.As(err, &refused) {
+			return laneClearResult{
+				outcome:         laneClearBlockerClaimed,
+				err:             err,
+				blockerClaimant: refused.HolderID,
+				blockerBin:      refused.BinID,
+				blockerPromised: refused.Promised,
+				blockerCause:    digBlockerCause(err),
+			}
+		}
 		if errors.Is(err, store.ErrBlockerClaimed) {
-			return laneClearResult{outcome: laneClearBlockerClaimed, err: err}
+			// The untyped sentinel: a claim refused the dig and nothing said which
+			// kind. digBlockerCause answers `claimed` for it, which is both the
+			// commoner shape and the one whose sentence describes a drive already
+			// under way rather than a queue position.
+			return laneClearResult{outcome: laneClearBlockerClaimed, err: err,
+				blockerCause: digBlockerCause(err)}
 		}
 		return laneClearResult{outcome: laneClearUnplannable, err: err}
 	}

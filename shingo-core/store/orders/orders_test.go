@@ -227,16 +227,20 @@ func TestHistory_AppendAndList(t *testing.T) {
 	o := newPendingOrder("uuid-history")
 	testutil.MustNoErr(t, orders.Create(db, o), "Create")
 
+	// The first entry is the BIRTH row, written by the INSERT itself
+	// (orders.Create) so an order created directly at a status still has a start
+	// to its timeline. The four that follow are the transitions.
 	events := []struct {
 		status string
 		detail string
 	}{
+		{"pending", "order created"},
 		{"sourcing", "picking bin"},
 		{"dispatched", "sent to RDS"},
 		{"in_transit", "robot moving"},
 		{"delivered", "arrived at line"}, // non-terminal; UpdateStatus refuses terminals now
 	}
-	for _, e := range events {
+	for _, e := range events[1:] {
 		if err := orders.UpdateStatus(db, o.ID, e.status, e.detail); err != nil {
 			t.Fatalf("UpdateStatus %s: %v", e.status, err)
 		}

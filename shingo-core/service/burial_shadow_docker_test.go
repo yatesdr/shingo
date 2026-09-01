@@ -62,7 +62,7 @@ func binAt(t *testing.T, db *store.DB, label string, slot *nodes.Node) *bins.Bin
 func softHold(t *testing.T, db *store.DB, b *bins.Bin, age time.Duration) *orders.Order {
 	t.Helper()
 	holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "sourcing" })
-	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, b.ID, "test"), "acquire soft hold")
+	testutil.MustNoErr(t, reservations.Acquire(db.DB, holder.ID, holder.ID, b.ID, "test"), "acquire soft hold")
 	_, err := db.Exec(`UPDATE reservations SET created_at = NOW() - $1::interval WHERE order_id=$2 AND bin_id=$3`,
 		age.String(), holder.ID, b.ID)
 	testutil.MustNoErr(t, err, "backdate hold")
@@ -200,14 +200,85 @@ func commitOrderToFleetAt(t *testing.T, db *store.DB, orderID int64, at time.Tim
 
 // claimHeldSince backdates a bin's hold so the classifier sees a claim that
 // existed before — or arrived after — the placing order was committed.
-// SpokenForBinsBehind reads COALESCE(reservations.created_at, orders.created_at),
-// so both have to move for the answer to be unambiguous.
+//
+// IT MOVES THE HOLDER ORDER AND NOTHING ELSE, because that is now the only
+// source SpokenForBinsBehind reads. It used to move the reservation row too,
+// and that is exactly why this suite passed for months while production
+// misclassified every burial: the fixture put both stamps in the same clock, and
+// the defect was that in the real system they are in two. See
+// TestBurialShadow_ReservationStampCannotDecideTheVerdict.
 func claimHeldSince(t *testing.T, db *store.DB, binID, holderID int64, at time.Time) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE reservations SET created_at=$2 WHERE bin_id=$1`, binID, at.UTC())
-	testutil.MustNoErr(t, err, "backdate reservation")
-	_, err = db.Exec(`UPDATE orders SET created_at=$2 WHERE id=$1`, holderID, at.UTC())
+	_, err := db.Exec(`UPDATE orders SET created_at=$2 WHERE id=$1`, holderID, at.UTC())
 	testutil.MustNoErr(t, err, "backdate holder order")
+	// AND THE HOLDER'S COMMIT-TO-FLEET ROW, because for a HARD claim that is the
+	// moment the hold began — claimed_by is written at ConfirmForDispatch, not at
+	// order creation (hardHoldBeganAt). testdb.CreateOrder writes a history row for
+	// the status it is given, so a holder built `in_transit` already has one
+	// stamped at real-now; leaving it there would date every backdated hold to the
+	// moment the test ran.
+	_, err = db.Exec(`UPDATE order_history SET created_at=$2
+		WHERE order_id=$1 AND status IN ('dispatched','in_transit')`, holderID, at.UTC())
+	testutil.MustNoErr(t, err, "backdate holder commit-to-fleet")
+}
+
+// TestBurialShadow_ReservationStampCannotDecideTheVerdict is the sim's ten
+// false GUARD BYPASSes, in one case.
+//
+// ── WHAT WENT WRONG ───────────────────────────────────────────────────────
+//
+// SpokenForBinsBehind dated a hold with COALESCE(reservations.created_at,
+// orders.created_at). Those are two different clocks. orders.created_at is
+// written explicitly from clock.Now(); reservations.created_at has no explicit
+// write and takes the database default, which is wall time. On a sim running a
+// year and a bit ahead, every bin carrying a reservation row therefore reported
+// a hold that began in 2026 while the placer's destination_resolved_at said
+// 2027 — so "did this hold exist when the selector looked?" answered NO for
+// holds that had plainly arrived afterwards, and the burial went to the
+// should-be-zero bucket.
+//
+// The demo.yaml run of 2026-08-31 printed BYPASS=10 and the run after it
+// BYPASS=7, every event false, each one telling the reader to "find the
+// placement path and route it through nodes.FindStoreSlotInLaneExcluding" —
+// a path that does not exist for any of them. A should-be-zero that is never
+// zero for reasons nobody can act on stops being read.
+//
+// The two clocks here are deliberately fifteen months apart, which is the real
+// gap. With the COALESCE back in place this case reports Bypass=1.
+func TestBurialShadow_ReservationStampCannotDecideTheVerdict(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	slots := burialLane(t, db, "BSCLOCK", 4)
+	svc := newBinSvc(db)
+
+	buried := binAt(t, db, "BSCLOCK-HARD", slots[2])
+	holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+	testdb.ClaimBinForTest(t, db, buried.ID, holder.ID)
+
+	arriving := binAt(t, db, "BSCLOCK-ARRIVE", slots[0])
+	placer := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+	testdb.ClaimBinForTest(t, db, arriving.ID, placer.ID)
+
+	// The order clock. The holder was created a minute AFTER the selector chose
+	// the placer's destination, so this is churn and nothing else.
+	resolveDestinationAt(t, db, placer.ID, time.Now())
+	claimHeldSince(t, db, buried.ID, holder.ID, time.Now().Add(time.Minute))
+
+	// The wall clock, fifteen months behind, on the same bin's reservation row —
+	// which is what a real sim database looks like. It must not be consulted.
+	_, err := db.Exec(`UPDATE reservations SET created_at=$2 WHERE bin_id=$1`,
+		buried.ID, time.Now().AddDate(-1, -3, 0).UTC())
+	testutil.MustNoErr(t, err, "age the reservation into the wall clock")
+
+	_, err = svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, placer.ID)
+	testutil.MustNoErr(t, err, "ApplyArrival")
+
+	got := svc.BurialShadowTally()
+	if got.Churn != 1 || got.Bypass != 0 {
+		t.Fatalf("tally = %+v, want Churn=1 Bypass=0 — the holder was created after the selector "+
+			"looked, so this is churn. A reservation row stamped by a different clock must not be "+
+			"able to turn it into the should-be-zero bucket", got)
+	}
 }
 
 // TestBurialShadow_ApprovedThenInvalidatedIsNotABypass is the PLAN R.4 split,
@@ -624,5 +695,55 @@ func TestBurialShadow_DigLegClassifiedFromCallerNotBinClaim(t *testing.T) {
 	if got.Bypass != 0 {
 		t.Fatalf("tally = %+v, want Bypass=0 — counting the known gap here is what made the "+
 			"expected-zero number unreadable on the rig", got)
+	}
+}
+
+// TestBurialShadow_SoftHoldThatHardensLaterIsNotABypass is the second half of
+// the clock problem, and it took a live run to see it.
+//
+// The guard respects HARD claims only — a soft reservation deeper in the lane is
+// a plan, and findStoreSlot walks past it on purpose. So "would the selector have
+// refused?" is a question about when the claim went HARD, and claimed_by is
+// written at ConfirmForDispatch, immediately before the fleet call.
+//
+// The classifier was asking it of the holder's created_at instead, which is
+// typically minutes earlier. Sim 2026-08-30 run 3: order 243 was created at
+// 10:52:14 and was still `sourcing` — soft — when order 256's destination was
+// resolved. By the time 256 arrived, 243's claim had hardened, so the burial read
+// hold=hard-claim, the comparison used 10:52:14, and the selector was accused of
+// ignoring a hold it was designed to ignore.
+func TestBurialShadow_SoftHoldThatHardensLaterIsNotABypass(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	slots := burialLane(t, db, "BSHARDEN", 4)
+	svc := newBinSvc(db)
+
+	buried := binAt(t, db, "BSHARDEN-HARD", slots[2])
+	holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+	testdb.ClaimBinForTest(t, db, buried.ID, holder.ID)
+
+	arriving := binAt(t, db, "BSHARDEN-ARRIVE", slots[0])
+	placer := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+	testdb.ClaimBinForTest(t, db, arriving.ID, placer.ID)
+
+	// The holder EXISTED an hour before the selector looked — but it was only
+	// sourcing then, holding a soft reservation the guard ignores by design.
+	_, err := db.Exec(`UPDATE orders SET created_at=$2 WHERE id=$1`,
+		holder.ID, time.Now().Add(-time.Hour).UTC())
+	testutil.MustNoErr(t, err, "backdate holder creation")
+	resolveDestinationAt(t, db, placer.ID, time.Now().Add(-30*time.Minute))
+	// Its claim HARDENED just now, half an hour after the selector had chosen.
+	_, err = db.Exec(`UPDATE order_history SET created_at=$2
+		WHERE order_id=$1 AND status IN ('dispatched','in_transit')`, holder.ID, time.Now().UTC())
+	testutil.MustNoErr(t, err, "harden the claim after the resolve")
+
+	_, err = svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, placer.ID)
+	testutil.MustNoErr(t, err, "ApplyArrival")
+
+	got := svc.BurialShadowTally()
+	if got.Churn != 1 || got.Bypass != 0 {
+		t.Fatalf("tally = %+v, want Churn=1 Bypass=0 — the hold was SOFT when the selector looked "+
+			"and the guard is built to walk past a soft hold, so dating it by the holder's creation "+
+			"accuses the selector of ignoring what it was designed to ignore", got)
 	}
 }

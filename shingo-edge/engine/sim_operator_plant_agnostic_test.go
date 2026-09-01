@@ -203,3 +203,69 @@ func TestSimOperator_ReleaseCapIsForgottenWhenTheOrderMovesOn(t *testing.T) {
 		t.Errorf("order 8 is still staged and must keep its count, got %d", op.releaseTries[8])
 	}
 }
+
+// TestSimOperator_ReleaseCapReArmsSoAStationWaitIsNotAbandoned keeps the cap from
+// being a permanent give-up on the population it cannot see.
+//
+// ── THE PREMISE THAT WAS HALF TRUE ────────────────────────────────────────
+//
+// The cap assumed a capped order is CORE's to release: "a lane-waiting order
+// stays staged and stays capped until Core lets it in, at which point it leaves
+// and the count is dropped." True of a LANE wait. False of a STATION wait — Core
+// is explicit that it must never advance one ("the precondition is a fact only
+// the station can observe"), and in the sim the station IS this operator. So a
+// station-waiting order that hit the cap had its only possible releaser go quiet
+// for good.
+//
+// MEASURED, 12e run 2026-08-31: order 91 took three pair-releases inside ONE
+// SECOND, hit the cap, and held AMR-15 for the rest of the run — under a message
+// telling the reader it was "most likely parked on a LANE wait" while its own
+// plan said `wait SLN_010 wait_kind=station`. 24 orders hit the cap that run.
+//
+// MUTATION: drop the re-arm branch in reArmExpiredReleaseCaps. The order stays
+// capped after the window and the operator never pushes again.
+func TestSimOperator_ReleaseCapReArmsSoAStationWaitIsNotAbandoned(t *testing.T) {
+	m := clock.NewManual(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	op := newTestSimOperator(m)
+	op.releaseTries = make(map[int64]int)
+	op.releasing = make(map[int64]bool)
+
+	// Burn the cap, exactly as a refused order does.
+	for i := 0; i < 10; i++ {
+		op.scheduleRelease(99)
+		op.mu.Lock()
+		delete(op.releasing, 99)
+		op.mu.Unlock()
+	}
+	op.mu.Lock()
+	capped := op.releaseTries[99] > maxReleaseTries
+	_, stamped := op.cappedAt[99]
+	op.mu.Unlock()
+	if !capped || !stamped {
+		t.Fatalf("fixture: the order must be capped and stamped (capped=%v stamped=%v)", capped, stamped)
+	}
+
+	// Before the window elapses: still capped. This is the anti-flap half, and it
+	// is the behaviour the 2026-08-10 rig incident bought.
+	op.reArmExpiredReleaseCaps(map[int64]bool{99: true})
+	op.mu.Lock()
+	stillCapped := op.releaseTries[99] > maxReleaseTries
+	op.mu.Unlock()
+	if !stillCapped {
+		t.Fatal("the cap was dropped before its window elapsed — that is the flap the cap exists to " +
+			"stop: 240 refusals in five minutes, 1796 outbox rows for 46 completed orders")
+	}
+
+	// After the window: re-armed, and the operator will push again.
+	m.Advance(releaseCapReArm + time.Second)
+	op.reArmExpiredReleaseCaps(map[int64]bool{99: true})
+	op.mu.Lock()
+	tries := op.releaseTries[99]
+	_, stillStamped := op.cappedAt[99]
+	op.mu.Unlock()
+	if tries != 0 || stillStamped {
+		t.Fatalf("after %s the cap must re-arm (tries=%d stamped=%v). A STATION wait has no other "+
+			"releaser: if this operator stays quiet the order is abandoned holding its robot, which "+
+			"is order 91 and AMR-15.", releaseCapReArm, tries, stillStamped)
+	}
+}

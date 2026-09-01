@@ -104,14 +104,12 @@ func TestGatePair_SameOriginPairSerializesAtTheMouth(t *testing.T) {
 	// stages behind, not a robot inside the corridor.
 	blocker := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = slots[2].Name
-		o.Status = "in_transit"
+		// STILL COMING, NOT YET DISPATCHED. See stageDeeperBlocker: a gated
+		// lane no longer writes a destination mouth row, so a blocker states
+		// itself through stillComingToLane's not-dispatched arm instead of
+		// through a row. Same order, same depth, same Tier-2 wall.
+		o.Status = "queued"
 	})
-	if adm, _, _, aErr := d.AcquireLanesForOrder(blocker, press, slots[2], EntryFreshBin); aErr != nil || !adm {
-		t.Fatalf("blocker mouth row: adm=%v err=%v", adm, aErr)
-	}
-	if err := db.UpdateOrderVendor(blocker.ID, "sg-gpser-blocker", "RUNNING", ""); err != nil {
-		t.Fatalf("blocker vendor: %v", err)
-	}
 
 	// The pair, dispatched exactly as the scanner dispatches: admit, then create.
 	// Both take their inbound mouth rows (same mode shares), both stage behind the
@@ -151,7 +149,7 @@ func TestGatePair_SameOriginPairSerializesAtTheMouth(t *testing.T) {
 
 	// The blocker places. One evaluator pass, and the pair is co-released by the
 	// classifier — so whatever limits the entries to one is not the tiers.
-	d.ReleaseInboundLaneForOrder(blocker.ID, slots[2].Name)
+	placeDeeperBlocker(t, db, d, blocker.ID, slots[2].Name)
 	d.EvaluateLaneReleases(laneID)
 
 	if n := len(backend.ReleaseCalls()); n != 1 {

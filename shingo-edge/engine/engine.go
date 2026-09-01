@@ -210,6 +210,46 @@ type Engine struct {
 	// pendingSiblingReleaseMu so test fixtures that build Engine directly work.
 	pendingSiblingRelease   map[int64]ReleaseDisposition
 	pendingSiblingReleaseMu sync.Mutex
+
+	// survivorReleased records the swap survivors this Edge process has already
+	// auto-released from handleSiblingReleaseRefire's durable re-derivation, so
+	// the re-derivation fires AT MOST ONCE per order. Key = order id; the value
+	// carries nothing.
+	//
+	// ── WHY A BOUND IS REQUIRED AND NOT MERELY TIDY ───────────────────────
+	//
+	// "my sibling terminal-succeeded and I am staged" is a LEVEL-triggered fact:
+	// it stays true. The re-derivation fires on the staged transition, and Core
+	// refuses a release for a wait its own lane evaluator owns
+	// (complex_release.go's fence, error code invalid_state) — which Edge
+	// correctly handles by rolling the leg back to staged
+	// (RollbackReleaseRejection, the ALN_003 divergence). That rollback is
+	// itself a staged transition. Unbounded, the two make the 1.25s refusal flap
+	// measured on the lane-stress rig 2026-08-10: 240 refusals in five minutes,
+	// 1796 outbox rows for 46 completed orders.
+	//
+	// THE POPULATION IS REAL AND WAS IN THE SNAPSHOT. Run 12d order 232 is a
+	// staged leg whose partner (230) confirmed 42 seconds later, and its wait is
+	// a LANE wait (`lane-deeper-pending`, Lane_05) — Core's to advance, not the
+	// station's. It sits beside order 84, whose wait IS the station's. The two
+	// are indistinguishable from here: protocol.OrderStaged carries only a uuid
+	// and a detail string, so the Edge is told an order staged and never told
+	// WHICH wait it staged at. orders.StationOwnsWait exists for exactly this
+	// question and has no caller, because Core sends no wait index to ask it
+	// with. Until it does, the bound is what keeps a lane-waiting survivor to a
+	// single refused envelope instead of a flap.
+	//
+	// ONCE IS ENOUGH FOR THE POPULATION IT SERVES, which is why this is a bound
+	// rather than a compromise: a coordinated leg carries ONE station wait of
+	// its own choreography, and its other waits are lane waits Core spliced in
+	// and Core releases. Order 84 needed exactly one.
+	//
+	// In-memory, and cleared on terminal. On restart a lane-waiting survivor
+	// costs one more refused envelope — bounded, not a flap — and a
+	// station-waiting one gets the re-derivation this map exists to bound, which
+	// is the restart case the re-derivation was built for.
+	survivorReleased   map[int64]struct{}
+	survivorReleasedMu sync.Mutex
 }
 
 // Config holds the parameters needed to create an Engine.

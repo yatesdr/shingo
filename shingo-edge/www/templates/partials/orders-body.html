@@ -62,9 +62,23 @@
             <td class="mono">{{.DeliveryNode}}{{if .StagingNode}} <span style="color:var(--text-muted);font-size:0.75rem">(stg: {{.StagingNode}})</span>{{end}}</td>
             <td>
                 <span class="badge badge-{{.Status}}">{{.Status}}</span>
-                {{/* Reason slot, status-agnostic: queued explains its wait, faulted
-                     explains its fault. The fault line ticks its own clock. */}}
-                {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}</div>{{end}}
+                {{/* Reason slot, status-agnostic: an order still acquiring its
+                     material explains its wait, faulted explains its fault. The
+                     fault line ticks its own clock; the wait ticks this one.
+
+                     THE CLOCK IS THE THIRD PART OF THE SENTENCE — status word,
+                     what it is waiting for, how long. Without it "waiting for
+                     material" reads the same at forty seconds and at four hours,
+                     and those are different days on a line.
+
+                     Its instant is a LOCAL fact: this Edge appends an
+                     order_history row on every transition it applies, Core's
+                     sourcing pushes included, so WaitSince (service.OrderService)
+                     answers it without anything new crossing the wire. Absent for
+                     anything not waiting, which keeps a ticking duration off an
+                     order the fleet is already carrying. data-since is the same
+                     contract the staged countdown and the fault line use. */}}
+                {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}{{with index $.WaitSince .ID}} · <span class="tnum orders-wait-since" data-since="{{.}}"></span>{{end}}</div>{{end}}
                 {{with faultLine .}}<div class="orders-subtext orders-reason">{{.}}</div>{{end}}
             </td>
             <td class="orders-time">{{formatTime .CreatedAt}}</td>

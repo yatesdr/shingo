@@ -147,8 +147,15 @@ func (e *Engine) RecoverCarriedBin(binID int64, actor string) (*orders.Order, st
 		// The pin. See dispatch.pinnedVehicleFor for why the intent and not
 		// robot_id alone is what makes this a pin.
 		SourceIntent: dispatch.SourceIntentOnDeck,
-		RobotID:      robotID,
-		EdgeUUID:     recoveryEdgeUUID(binID, robotID),
+		// NO_DEMAND, stamped at the literal like its siblings at the other
+		// caller-less doors. A recovery is Core reconciling its own books with
+		// the floor — it is not a place asking for material, so there is no
+		// episode and its absence is not a finding. Left blank it landed in the
+		// '' vacuum, which is worse than either honest answer: the no_demand
+		// bucket does not count it and the orphan surface does not show it.
+		OriginClass: protocol.OriginClassNoDemand,
+		RobotID:     robotID,
+		EdgeUUID:    recoveryEdgeUUID(binID, robotID),
 	}
 	// FREE THE UUID A DEAD ATTEMPT IS HOLDING.
 	//
@@ -245,9 +252,11 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 		}
 		return &CarriedBinNotRecoverable{BinID: binID, Reason: detail}
 	}
-	if err := e.dispatcher.Lifecycle().MarkPending(order, "carried-bin recovery"); err != nil {
-		e.dbg("engine: carried bin recovery: mark order %d pending: %v", order.ID, err)
-	}
+	// The creation entry this used to stamp by hand is written by orders.Create,
+	// in the INSERT's own transaction — see the note there. What named this door
+	// on the timeline was never that row's detail anyway: it is the audit row at
+	// the tail of the caller, whose action name says a robot was ASKED to set the
+	// bin down rather than that Core worked out where it probably is.
 	if err := e.binManifest.ReserveForDispatch(binID, order.ID); err != nil {
 		return fail("bin_taken", fmt.Sprintf("bin %d was taken by another order: %v", binID, err), err)
 	}
@@ -261,12 +270,20 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 	// It also SETTLES the destination (group → child, off a dug lane), so the
 	// node it returns is the one to dispatch against and the earlier read is
 	// stale from here on.
-	settled, rerr := e.dispatcher.ReserveStorageDropoff(order)
-	if rerr != nil {
-		return fail("slot_unavailable", fmt.Sprintf("no slot at %s right now: %v", order.DeliveryNode, rerr), rerr)
+	// THE THIRD CALLER OF THIS DOOR, AND IT HAD THE SAME SIN AS THE OTHER TWO —
+	// one door over and OPERATOR-FACING. Every refusal collapsed into
+	// "slot_unavailable / no slot at X right now", so a failed database read told
+	// the person holding the tablet to go and look at a slot that was probably
+	// empty, and an unresolved GROUP told them to look at one slot out of a set.
+	// The verdict names the cause; this maps it to the code and the sentence the
+	// operator sees.
+	dest := e.dispatcher.ReserveStorageDropoff(order)
+	if dest.Refused() {
+		code, sentence := recoveryDropoffRefusal(dest.Cause, order.DeliveryNode)
+		return fail(code, fmt.Sprintf("%s: %v", sentence, dest.Err), dest.Err)
 	}
-	if settled != nil {
-		destNode = settled
+	if dest.Node != nil {
+		destNode = dest.Node
 	}
 	// The lane question, asked for the same reason the bin-move door asks it: a
 	// robot driving to the destination is a robot in a lane. EntryHeldBin
@@ -371,8 +388,16 @@ func (e *Engine) resolveCarriedBinDestination(bin *bins.Bin, robot fleet.RobotSt
 		e.logFn("engine: carried bin recovery: tier 2 storage-slot lookup for %q failed: %v — "+
 			"falling through to tier 3, which is NOT the same as there being no slot",
 			bin.PayloadCode, err)
-	} else if node != nil {
-		return node, "tier 2: a free storage slot for " + bin.PayloadCode, nil
+	} else if usable := e.usableDropPoint(node); usable != nil {
+		// THROUGH THE SAME GATE AS THE OTHER TWO. This tier used to return the
+		// query's answer directly, which made usableDropPoint's "one place so a
+		// tier cannot forget one" false of the tier most likely to need it: the
+		// other two name a node somebody already had in mind, this one picks a
+		// stranger. The query asks the same questions now, so this is
+		// defence-in-depth against the two drifting apart rather than a second
+		// opinion — and it costs two reads on a path that runs when a robot is
+		// already stopped.
+		return usable, "tier 2: a free storage slot for " + bin.PayloadCode, nil
 	}
 	if node := e.tierRobotsCurrentStation(robot); node != nil {
 		return node, "tier 3: the node the robot is parked at", nil
@@ -425,14 +450,47 @@ func (e *Engine) tierRobotsCurrentStation(robot fleet.RobotStatus) *nodes.Node {
 }
 
 // usableDropPoint returns the node if a bin can actually be set down on it, and
-// nil otherwise. One place for the three conditions every tier needs, so a tier
-// added later cannot forget one.
+// nil otherwise. One place for the conditions every tier needs, so a tier added
+// later cannot forget one.
+//
+// ── IT HAD THREE CONDITIONS AND A DEEP LANE NEEDS FIVE ────────────────────
+//
+// "Enabled, not synthetic, unclaimed, empty" is the whole question for a FLAT
+// position and only half of it for a lane slot — and every tier here can return
+// a lane slot, because `STOR` is the class of both (30 of demo.yaml's SMN_*
+// slots carry it). Two things were never asked:
+//
+//	REACHABLE  — a slot with an occupied slot in front of it is a slot no robot
+//	             can lower a bin onto. An unattended recovery sent there ends
+//	             with the robot standing in the aisle holding the bin, which is
+//	             the exact state this whole path exists to end.
+//	UNSPOKEN-FOR — another live order's delivery_node may already name it. Two
+//	             bins, one slot, and the second robot cannot place either.
+//
+// Same two predicates, in the same words, as every other destination reader:
+// IsSlotAccessible and the delivery_node proxy. A flat position answers both
+// trivially, so nothing changes for the population the original three were
+// written against.
+//
+// FAILS CLOSED, and that is not the usual direction for this file. Elsewhere a
+// recovery prefers a worse answer to no answer, because leaving a bin on the
+// deck is the failure. Here an unreadable slot is not a worse answer, it is an
+// unknown one — and the tier below is a real alternative, so a doubt costs a
+// fallback rather than a stranded carrier.
 func (e *Engine) usableDropPoint(node *nodes.Node) *nodes.Node {
 	if node == nil || !node.Enabled || node.IsSynthetic || node.ClaimedBy != nil {
 		return nil
 	}
 	cnt, err := e.db.CountBinsByNode(node.ID)
 	if err != nil || cnt > 0 {
+		return nil
+	}
+	reachable, err := e.db.IsSlotAccessible(node.ID)
+	if err != nil || !reachable {
+		return nil
+	}
+	inbound, err := e.db.CountActiveOrdersByDeliveryNode(node.Name)
+	if err != nil || inbound > 0 {
 		return nil
 	}
 	return node
@@ -462,4 +520,29 @@ func (e *Engine) liveRecoveryOrderForBin(binID int64) (*orders.Order, error) {
 // good error message.
 func recoveryEdgeUUID(binID int64, robotID string) string {
 	return fmt.Sprintf("recovery-bin-%d-%s", binID, robotID)
+}
+
+// recoveryDropoffRefusal turns a ReserveStorageDropoff cause into the code and
+// the sentence the operator recovering a carried bin sees.
+//
+// THREE ANSWERS, THREE DIFFERENT THINGS TO DO. "No slot at X right now" is only
+// true for one of them, and it was printed for all three:
+//
+//	contended   a carrier is in the slot. Go and look; it will clear.
+//	unresolved  the destination is a GROUP and nothing in it can take the bin.
+//	            Looking at any one slot tells them nothing.
+//	unreadable  a read failed. Nothing about the slot is known, and telling
+//	            somebody it is occupied is inventing a fact.
+//
+// The default is the undetermined reading rather than the contended one: an
+// unrecognised cause has not earned a confident sentence.
+func recoveryDropoffRefusal(cause dispatch.QueueCause, deliveryNode string) (code, sentence string) {
+	switch cause {
+	case dispatch.CauseStoreSlotContended:
+		return "slot_unavailable", fmt.Sprintf("no slot at %s right now", deliveryNode)
+	case dispatch.CauseNGRPResolve:
+		return "dest_unresolved", fmt.Sprintf("%s is a set of positions and none of them can take this bin right now", deliveryNode)
+	default:
+		return "dest_check_failed", fmt.Sprintf("could not read whether %s can take this bin", deliveryNode)
+	}
 }

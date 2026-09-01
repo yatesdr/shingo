@@ -105,7 +105,7 @@ func TestWaitKind_FenceHoldsBothWaysOnOneCoordinatedPlan(t *testing.T) {
 	}
 
 	// And the station's own release still works, appending only up to the lane
-	// wait. This is the owner's requirement made concrete: do all the work you
+	// wait. The requirement made concrete: do all the work you
 	// can, stop at the lane.
 	before := len(backend.ReleaseCalls())
 	env := d.syntheticEnvelope(atOperator.StationID)

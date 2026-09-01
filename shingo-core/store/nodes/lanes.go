@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/store/internal/helpers"
+	"shingocore/store/reservations"
 )
 
 // ListLaneSlots returns all child nodes of a lane, ordered by depth (ascending).
@@ -163,7 +164,24 @@ func FindStoreSlotInLaneExcluding(db *sql.DB, laneID, excludeOrderID int64) (*No
 // lane is closed to stores right now" (rare, watchable, and self-clearing when
 // the claim clears). Both are the same disposition — try the next lane — so the
 // sentinel changes reporting, never control flow.
-var ErrLaneClosedByClaim = errors.New("lane closed to stores: a claimed bin sits deeper")
+//
+// ── THE SENTENCE NAMES BOTH SPELLINGS, AND IT USED TO NAME ONE ────────────
+//
+// It read "a claimed bin sits deeper", and the guard has TWO ways of deciding
+// somebody is coming for a bin (see findStoreSlot's burial clause): the bin is
+// CLAIMED, or an order AIMS at it — `holder.bin_id = bin AND holder.source_node
+// = the slot` — with no claim on the bin at all. The aim arm is not an edge
+// case; a demand that has resolved onto a bin and is waiting to dispatch holds
+// no claim for most of its life, which is exactly why the arm was added.
+//
+// The old sentence sent a reader who hit the aim arm to the bins table to find a
+// claim that was never there. Measured cost: one wedge diagnosis on 2026-08-31,
+// Lane_08 — the bin at SMN_023 was unclaimed and the lane was closed by order 23
+// aiming at it. The sentence now says what the guard tests rather than one of
+// the two ways it can be true. Every caller matches with errors.Is, so the text
+// is reporting only.
+var ErrLaneClosedByClaim = errors.New(
+	"lane closed to stores: an order is coming for a bin deeper in this lane (claimed, or aimed at by bin_id+source_node)")
 
 // findStoreSlot is the selector body. `guard` toggles THE BURIAL CLAUSE, and the
 // off form exists only to attribute a miss (see the caller); nothing in
@@ -276,13 +294,7 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		  AND n.is_synthetic = false
 		  AND (n.claimed_by IS NULL OR n.claimed_by = $2)
 		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)
-		  AND NOT EXISTS (
-			SELECT 1 FROM reservations r
-			WHERE r.node_id = n.id
-			  AND r.resource_kind = 'slot'
-			  AND r.state IN ('pending','confirmed')
-			  AND r.order_id <> $2
-		  )
+		  AND NOT `+reservations.SlotSpokenForByStrangerSQL("r", "n.id", "$2")+`
 		  AND NOT EXISTS (
 			SELECT 1 FROM orders o
 			WHERE o.delivery_node = n.name
@@ -303,16 +315,38 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		  -- (TestStoreBurst_FiveAtOneDugLane, TestGateRelease_DeepestFirstAndTier1,
 		  -- eight more).
 		  --
-		  -- SEQUENCING IS ALREADY THIS PATH'S ANSWER. laneEntryCause's tiers hold
-		  -- a shallower store until the deeper one has PLACED, so the ordinary
-		  -- burst never entombs anything — the deep slot is filled first and the
-		  -- shallow one lands behind a bin, not in front of a hole. What produced
-		  -- the rig's bubble was the deeper order DYING mid-sequence (order 7,
-		  -- cancelled by the claim-wipe defect), which no placement rule can see
-		  -- coming.
+		  -- SEQUENCING IS THE ANSWER ON A GATED LANE, AND ON NO OTHER. This
+		  -- paragraph used to say that laneEntryCause's tiers hold a shallower
+		  -- store until the deeper one has PLACED, so the ordinary burst never
+		  -- entombs anything, flat. That is true only where the tiers RUN.
+		  -- laneEntryCause has one production caller — gateEntryVerdict, inside
+		  -- the gated release path — and a lane is gated only when there is
+		  -- somewhere for its robots to stand. NO PLANT SPEC IN THIS REPO CARRIES
+		  -- A PER-LANE gate_point ANY MORE: the waiting spots moved to the group
+		  -- (wait_points on the NGRP — plants/demo.yaml:165 lists fifteen for
+		  -- SYN_MARKET), and the per-lane key survives in Go only as the
+		  -- documented legacy fallback that still wins the resolution where a
+		  -- human sets it through the API. Springfield and Hopkinsville were
+		  -- queried on 2026-08-31 (WALL) and carry zero lane_gate_point rows. So
+		  -- demo.yaml IS gated today, by the group key rather than the lane one;
+		  -- the two real plants are not gated at all.
 		  --
-		  -- The dig's shuffle search has no tiers and no sequencing, which is why
-		  -- it carries the guard instead: see SlotsThatWouldEntombASpokenForSlot.
+		  -- The pre-dispatch tiered park was deleted, so on an ungated lane nothing
+		  -- sequences a burst at all: three stores select the three deepest
+		  -- slots correctly and then ARRIVE in whatever order the fleet gives
+		  -- them, and a mouth-first arrival seals the two behind it.
+		  --
+		  -- So the omission is still a decision — refusing the mirror here
+		  -- refuses the legitimate five-store burst, and that is not negotiable
+		  -- — but the mitigation is NOT plant-wide today. Entombment on an
+		  -- ungated lane is arrival-order, and no clause in this query can see
+		  -- it coming. A deeper order dying mid-sequence (the rig's order 7,
+		  -- cancelled by the claim-wipe defect) is a second way to the same
+		  -- bubble, not the only one.
+		  --
+		  -- The dig's shuffle search has no tiers and no sequencing either,
+		  -- which is why it carries the guard: see
+		  -- SlotsThatWouldEntombASpokenForSlot.
 		  -- Accessibility guard: a slot is only a valid pick if no OCCUPIED slot
 		  -- sits shallower in the same lane. The deepest-empty slot can otherwise
 		  -- be stranded behind a shallow bubble (an occupied slot with empties

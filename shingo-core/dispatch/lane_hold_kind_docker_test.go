@@ -72,7 +72,8 @@ func TestLaneHoldKind_ASourceLockIsNotAnExcavation(t *testing.T) {
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 		demand := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "hkind-src" })
-		admitted, err := d.acquireOrderLanes(demand.ID, []laneHold{{laneID: laneID, mode: reservations.ModeDig}})
+		adm := d.acquireOrderLanes(demand.ID, []laneHold{{laneID: laneID, mode: reservations.ModeDig}})
+		admitted, err := adm.admitted, adm.err
 		if err != nil || !admitted {
 			t.Fatalf("the demand could not take its own source hold: admitted=%v err=%v", admitted, err)
 		}
@@ -134,13 +135,14 @@ func TestLaneHoldKind_ASourceLockIsNotAnExcavation(t *testing.T) {
 
 		demand := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "hkind-self" })
 		// 1. The §R.101 source hold, exactly as resolveOrderLaneHolds takes it.
-		admitted, err := d.acquireOrderLanes(demand.ID, []laneHold{{laneID: laneID, mode: reservations.ModeDig}})
+		adm := d.acquireOrderLanes(demand.ID, []laneHold{{laneID: laneID, mode: reservations.ModeDig}})
+		admitted, err := adm.admitted, adm.err
 		if err != nil || !admitted {
 			t.Fatalf("source hold not admitted: admitted=%v err=%v", admitted, err)
 		}
 		// 2. The bin turns out to be buried and planBuriedReshuffle re-parents the
 		//    demand onto its OWN excavation — the plain dig shape, same order id.
-		if !d.laneLock.TryLockFor(laneID, demand.ID, reservations.AskerFor(demand.ID, demand.ID)) {
+		if !d.laneLock.TryLockFor(laneID, demand.ID, reservations.AskerFor(demand.ID, demand.ID), stagedAtMarkOnLane(d.db, laneID)) {
 			t.Fatal("the demand could not take its own lane for its own dig")
 		}
 
@@ -188,7 +190,7 @@ func TestDigWait_SentenceNamesADigOnlyWhenOneIsDigging(t *testing.T) {
 
 		holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "dwait-src" })
 		if err := reservations.AcquireLanesFor(db.DB, holder.ID, reservations.ModeDig,
-			reservations.Anyone, laneGateReservedBy, laneID); err != nil {
+			reservations.Anyone, nil, laneGateReservedBy, laneID); err != nil {
 			t.Fatalf("plant the source lock: %v", err)
 		}
 
@@ -264,7 +266,7 @@ func TestAdmit_ForeignSourceLockRefusesUnderItsOwnName(t *testing.T) {
 	// A stranger's §R.101 SOURCE hold — the lane gate's tag, not the lock's.
 	stranger := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "adm-src-holder" })
 	if err := reservations.AcquireLanesFor(db.DB, stranger.ID, reservations.ModeDig,
-		reservations.Anyone, laneGateReservedBy, laneID); err != nil {
+		reservations.Anyone, nil, laneGateReservedBy, laneID); err != nil {
 		t.Fatalf("plant a source lock: %v", err)
 	}
 

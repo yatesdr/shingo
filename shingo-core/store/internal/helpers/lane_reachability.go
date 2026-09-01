@@ -1,6 +1,10 @@
 package helpers
 
-import "fmt"
+import (
+	"fmt"
+
+	"shingocore/store/reservations"
+)
 
 // ── Reachability: one definition ──────────────────────────────────────────
 //
@@ -132,10 +136,22 @@ func BuriedSQL(target string) string {
 // claim, by slot reservation, or by another order's delivery_node. All three
 // remove the deeper slot from the candidate pool and say nothing about the
 // shallower ones. So the selector, offered a lane whose deep slot is spoken for,
-// happily fills a shallow one, and the deep slot is now behind a bin. If the
-// order that was coming for it never arrives, that slot is lost for the life of
-// the plant: no robot can reach it, and no dig will ever be raised against it,
-// because the bin in front is not in anybody's way.
+// happily fills a shallow one, and the deep slot is now behind a bin.
+//
+// WHETHER THE HOLE IS PERMANENT DEPENDS ON WHAT SEALS IT, and the difference
+// decides whether anything ever recovers. If the sealing bin is one NOBODY WILL
+// COME FOR — a store parked in a slot no demand names — the deep slot is lost
+// for the life of the plant: no robot can reach it, and no dig will ever be
+// raised against it, because the bin in front is not in anybody's way. That is
+// both of the measured cases below, and it is the shape this predicate exists
+// for.
+//
+// If instead the sealing bin carries live payload that FIFO will eventually
+// pull, the hole is TEMPORARY: the seal leaves when the material is consumed,
+// and the deep slot comes back on its own. It still costs capacity and it still
+// distorts every lane-depth read while it lasts — it is simply not permanent,
+// and a scar that says "for the life of the plant" flat sends somebody hunting
+// for a leak that is going to close by itself.
 //
 // Measured on the lane-stress rig 2026-08-13, both of the run's new bubbles:
 //
@@ -166,17 +182,14 @@ func EntombsASpokenForSlotSQL(candidate, ownerParam, terminalStatusList string) 
 			   AND NOT EXISTS (SELECT 1 FROM bins spoken_bin WHERE spoken_bin.node_id = spoken.id)
 			   AND (
 			        (spoken.claimed_by IS NOT NULL AND spoken.claimed_by <> %[2]s)
-			     OR EXISTS (SELECT 1 FROM reservations spoken_res
-			                 WHERE spoken_res.node_id = spoken.id
-			                   AND spoken_res.resource_kind = 'slot'
-			                   AND spoken_res.state IN ('pending','confirmed')
-			                   AND spoken_res.order_id <> %[2]s)
+			     OR %[4]s
 			     OR EXISTS (SELECT 1 FROM orders spoken_ord
 			                 WHERE spoken_ord.delivery_node = spoken.name
 			                   AND spoken_ord.status NOT IN (%[3]s)
 			                   AND spoken_ord.id <> %[2]s)
 			   )
-		  )`, ShallowerInSameLane(candidate, "spoken"), ownerParam, terminalStatusList)
+		  )`, ShallowerInSameLane(candidate, "spoken"), ownerParam, terminalStatusList,
+		reservations.SlotSpokenForByStrangerSQL("spoken_res", "spoken.id", ownerParam))
 }
 
 // ── ONE SPELLING FOR "DOES THIS ORDER MOVE A BIN OF ITS OWN?" ─────────────

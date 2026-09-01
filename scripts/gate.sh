@@ -41,10 +41,13 @@
 #   bash scripts/gate.sh race             -race over ./engine/... and ./www/...
 #                                         (borrows WSL's cgo on Windows)
 #   bash scripts/gate.sh docker           run the docker suites (no -race)
-#   bash scripts/gate.sh full [BASE]      the four, then race, then docker if scope says so
+#   bash scripts/gate.sh sim              -tags sim tests (edge sim operator, core
+#                                         fleet simulator, simwarlink), with -race
+#   bash scripts/gate.sh full [BASE]      the four, then race, then sim, then docker
+#                                         if scope says so
 #   bash scripts/gate.sh scripts          the scripts/check-*.sh guards
 #   bash scripts/gate.sh modbuild         GOWORK=off go build, per module
-#   bash scripts/gate.sh fmt|vet|modbuild|lint|scripts|test|race  one step
+#   bash scripts/gate.sh fmt|vet|modbuild|lint|scripts|test|race|sim  one step
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -318,6 +321,82 @@ step_test() {
   done
   [ "$failed" -eq 0 ] && echo "ok   tests" || echo "FAIL tests"
   return $failed
+}
+
+# ── The sim step ──────────────────────────────────────────────────────
+#
+# `-tags sim` WAS COMPILED BY NOTHING HERE, AND THAT IS HOW A RACE SHIPPED.
+# The unit step builds untagged and the race step is scoped to shingo-core's
+# ./engine/... and ./www/..., so every file behind `//go:build sim` — the edge
+# sim operator, the core fleet simulator, the simwarlink fake — was written,
+# reviewed and pushed without one line of it ever being run by the gate. Two
+# defects reached origin through that hole: a concurrent map write in the edge
+# sim operator that survived from the commit that introduced it to the commit
+# that fixed it, and a nil-store panic in the same file that broke the
+# plant-agnostic harness for the whole series.
+#
+# THE RACE DETECTOR IS THE POINT, not just compilation. The sim operator is
+# goroutine-driven by construction — timers firing against shared maps — so a
+# plain `go test -tags sim` would have compiled the bug and passed. This runs
+# the detector where cgo is available and falls back to a plain tagged run
+# where it is not, saying which it did rather than reporting a pass it did not
+# earn.
+#
+# PACKAGES, NOT ./... — a tagged run over the whole module re-runs every
+# untagged test with it, which the unit step already did. These are the two
+# packages that carry `//go:build sim` tests.
+SIM_PKGS_CORE="./fleet/simulator/..."
+SIM_PKGS_EDGE="./engine/... ./plc/simwarlink/..."
+
+# sim_cmd builds the two tagged runs for a given root. The root is INLINED
+# rather than passed as a shell variable: this string also crosses the
+# wsl.exe boundary, where an outer `R=...` assignment does not reliably
+# survive Windows argument splitting (it silently produced `cd /shingo-core`).
+sim_cmd() {
+  local r="$1"
+  printf '%s' "cd '$r/shingo-core' && CGO_ENABLED=1 go test -race -count=1 -timeout=15m -tags sim $SIM_PKGS_CORE && cd '$r/shingo-edge' && CGO_ENABLED=1 go test -race -count=1 -timeout=15m -tags sim $SIM_PKGS_EDGE"
+}
+
+step_sim() {
+  local logdir rrc how
+  logdir="$ROOT/.gate"
+  mkdir -p "$logdir" || { echo "FAIL sim — cannot create $logdir"; return 1; }
+
+  if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+    ( eval "$(sim_cmd "$ROOT")" >"$logdir/sim.log" 2>&1 ); rrc=$?
+    how="-race"
+  elif command -v go >/dev/null 2>&1 && [ "${CGO_ENABLED:-}" = "1" ] && command -v gcc >/dev/null 2>&1; then
+    ( eval "$(sim_cmd "$ROOT")" >"$logdir/sim.log" 2>&1 ); rrc=$?
+    how="-race"
+  elif command -v wsl.exe >/dev/null 2>&1; then
+    # Windows: borrow WSL's cgo, exactly as step_race does, and translate the
+    # path rather than assuming /mnt/c — a worktree is not always under it.
+    local wslroot
+    wslroot="$(wsl.exe -d Ubuntu -- wslpath -a "$(pwd -W 2>/dev/null || pwd)" 2>/dev/null | tr -d ' ')"
+    if [ -z "$wslroot" ]; then
+      echo "FAIL sim — could not translate $ROOT into a WSL path"
+      return 1
+    fi
+    ( wsl.exe -d Ubuntu -- bash -lc "$(sim_cmd "$wslroot")" >"$logdir/sim.log" 2>&1 ); rrc=$?
+    how="-race, via WSL"
+  else
+    # NO SILENT DOWNGRADE. A plain `-tags sim` run compiles the sim files and
+    # would have passed with the concurrent map write in place, so reporting it
+    # as a green sim step is the failure this step exists to prevent. Say what
+    # is missing instead.
+    echo "FAIL sim — no cgo toolchain and no WSL to borrow one from"
+    echo "  the detector is the point here; a plain -tags sim run passes with a race in place"
+    return 1
+  fi
+
+  if [ "$rrc" -eq 0 ]; then
+    echo "ok   sim ($how)"
+    return 0
+  fi
+  echo "FAIL sim ($logdir/sim.log)"
+  grep -A 24 'WARNING: DATA RACE' "$logdir/sim.log" | head -40
+  grep -E '^(FAIL|--- FAIL)' "$logdir/sim.log" | head -20
+  return 1
 }
 
 # ── Docker scope ─────────────────────────────────────────────────────
@@ -753,6 +832,7 @@ case "${1:-all}" in
   scripts) if step_scripts; then note_step scripts; else rc=1; fi ;;
   test)  if step_test; then note_step unit; else rc=1; fi ;;
   race)  if step_race; then note_step race; else rc=1; fi ;;
+  sim)   if step_sim;  then note_step sim;  else rc=1; fi ;;
   # EXIT CODE IS THE VERDICT: 0 = docker needed, 1 = not needed. It used to
   # `exit 0` unconditionally, which made the answer readable only by a human
   # reading the text — so nothing could gate on it. `if bash scripts/gate.sh
@@ -781,6 +861,11 @@ case "${1:-all}" in
       echo "     (docker suites skipped — nothing in this diff can reach one)"
     fi
     if step_race; then note_step race; else rc=1; fi
+    # The sim step rides with `full` and not with the bare gate, for the same
+    # reason -race does: it is the slow, thorough half. It is NOT scoped away
+    # with the docker suites — a sim-tagged file is invisible to every other
+    # step, so skipping it is how the hole reopens.
+    if step_sim; then note_step sim; else rc=1; fi
     ;;
   all)
     # Every step runs even after one fails: a gate that stops at the first
@@ -792,7 +877,7 @@ case "${1:-all}" in
     if step_scripts; then note_step scripts; else rc=1; fi
     if step_test; then note_step unit; else rc=1; fi
     ;;
-  *) echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|scope|docker|full] [BASE]" >&2; exit 2 ;;
+  *) echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|scope|docker|full] [BASE]" >&2; exit 2 ;;
 esac
 
 if [ "$rc" -eq 0 ]; then echo "gate: clean"; else echo "gate: FAILED"; fi

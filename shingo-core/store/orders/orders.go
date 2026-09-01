@@ -139,6 +139,38 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 //
 // open_for_children is deliberately NOT bound here: it CHANGES over a compound's
 // life and has exactly one writer for that reason.
+//
+// ── THE BIRTH HISTORY ROW IS WRITTEN HERE, NOT AT THE DOORS ───────────────
+//
+// order_history is written by status TRANSITIONS, and the INSERT is not one. So
+// an order whose first status came from this statement had no row saying it ever
+// began, and its timeline started at whatever happened next. Two doors were in
+// that state: complex intake, which births at `queued` (dispatch/complex_intake.go
+// — every swap leg and every changeover leg), and compound children, which birth
+// at `pending` inside CreateCompoundChildren (every dig leg).
+//
+// It is not cosmetic. SetQueueDetail stamps a wait's cause onto the history row
+// of the episode the order is RESTING IN; an order born into an episode with no
+// row has nowhere for its cause to land, and the stamp went silently nowhere for
+// the order's whole life.
+//
+// Written HERE rather than at each door because doors are counted by a census
+// and a census can be incomplete — this one has been wrong before. There is
+// exactly one INSERT INTO orders statement (TestCensus_OrdersTableInsertStatements
+// pins that), so hanging the birth row off it makes "every order has a start"
+// structural rather than a property of a list somebody keeps up to date.
+//
+// The detail is uniform. Three doors used to write their own words in a
+// redundant pending→pending status write whose only product was this row
+// (bin_move's move description, "order received", "carried-bin recovery"); those
+// calls are gone and nothing an operator reads went with them — the move's
+// description is payload_desc on the order row itself, and carried-bin recovery
+// writes its own audit row naming the action.
+//
+// THE CALLER SUPPLIES THE TRANSACTION, and both do: CreateCompoundChildren
+// passes its own (so a rolled-back compound takes its children's birth rows with
+// it), and db.CreateOrder opens one for every other door. Handed a bare *sql.DB
+// the two inserts are separate autocommits and the invariant is only a hope.
 func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
 	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $24) RETURNING id`,
@@ -154,6 +186,15 @@ func Create(db helpers.QueryRower, o *Order) error {
 		return fmt.Errorf("create order: %w", err)
 	}
 	o.ID = id
+	// InsertID rather than Exec: Create takes a QueryRower so it can run inside
+	// CreateCompoundChildren's transaction, and RETURNING id is how a QueryRower
+	// executes an INSERT. The id is discarded.
+	if _, err := helpers.InsertID(db,
+		`INSERT INTO order_history (order_id, status, detail, created_at)
+		 VALUES ($1, $2, 'order created', $3) RETURNING id`,
+		id, o.Status, now); err != nil {
+		return fmt.Errorf("create order %d birth history: %w", id, err)
+	}
 	return nil
 }
 
@@ -349,35 +390,88 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
 
-	if _, err := tx.Exec(`UPDATE orders SET queue_reason=$1, queue_code=$4, queue_cause=$5, updated_at=$3 WHERE id=$2`,
+	// NOT ONTO A TERMINAL ORDER. The history stamp below already refuses one — a
+	// QueueCode over a TermCode is a category error — but the live columns had no
+	// such guard, so a park racing a cancel could leave a finished order wearing
+	// "waiting for material" on every board that reads the row. The two halves of
+	// one write now answer the same question. Clearing is caught by the same
+	// clause and is a no-op there, which is what it was already worth.
+	if _, err := tx.Exec(fmt.Sprintf(
+		`UPDATE orders SET queue_reason=$1, queue_code=$4, queue_cause=$5, updated_at=$3
+		 WHERE id=$2 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()),
 		reason, id, clock.Now().UTC(), helpers.NullableText(code), helpers.NullableText(cause)); err != nil {
 		return err
 	}
 
-	// Stamp the code onto this queue EPISODE's history row.
+	// ── STAMP THE CODE ONTO THE EPISODE THE ORDER IS RESTING IN ───────────
 	//
 	// orders.queue_code is a live column overwritten in place, so it only ever
 	// answers "why is this order stuck right now" — which is the single reason
 	// starvation-by-cause has been unqueryable. There is no record anywhere of
-	// what an order waited for last Tuesday.
+	// what an order waited for last Tuesday. The history row is what makes the
+	// code a time series, and this is the write that puts it there.
 	//
-	// The code is not known at the moment of the →queued transition (the
-	// scanner discovers the reason on a later pass), so this updates the most
-	// recent queued row rather than inserting a new one. Re-queueing creates a
-	// fresh queued row, so each EPISODE keeps its own reason; successive
-	// updates within one episode overwrite that episode's row, which is
-	// correct — the last known reason is why it was still waiting.
+	// The code is not known at the moment of the transition (the scanner
+	// discovers the reason on a later pass), so this UPDATES the row that opened
+	// the current episode rather than inserting a new one. Each episode keeps its
+	// own reason; successive updates within one episode overwrite that episode's
+	// row, which is correct — the last known reason is why it was still waiting.
+	//
+	// IT USED TO NAME 'queued', which missed in both directions: a complex order
+	// born `queued` matched no row at all, and a `sourcing` park landed its cause
+	// on an earlier queued episode. Fixed by "a wait's cause lands on that
+	// wait's own history row".
+	//
+	// The order's own status is the discriminator, read inside this transaction —
+	// which the UPDATE above has already locked the row for, so a concurrent
+	// transition cannot move the target out from under the stamp.
+	//
+	// TWO GUARDS ON WHERE IT MAY LAND:
+	//
+	//   TERMINAL — never. `code` on a terminal row is a protocol.TermCode, the
+	//   record of how the order ENDED; a QueueCode over it is a category error.
+	//   The old spelling could not reach one because it named 'queued'; aiming at
+	//   the current episode can, so the guard becomes explicit.
+	//
+	//   PENDING — never. Pending is the birth certificate, not a wait: the order
+	//   has not entered the ladder, and the doors that write a reason there are
+	//   about to queue it (planning_service, the bin-move door). Their code rides
+	//   the transition onto the new row via lifecycle.historyReason, so stamping
+	//   the birth row too would put one wait on two rows and read every
+	//   intake-side park twice.
+	//
+	// NO ROW FOR THE CURRENT EPISODE means an order created before the birth row
+	// existed — a plant upgrades with live orders on the board. Rather than drop
+	// the cause the way the old stamp dropped every complex order's, the row is
+	// INSERTED. Its created_at is when the cause was written rather than when the
+	// episode began, so a duration measured from it under-reads for exactly that
+	// population, which empties itself within one order lifetime.
 	//
 	// Clearing (empty code, on successful dispatch) deliberately does NOT wipe
 	// the history row: the order waited for that reason, and it having stopped
 	// waiting does not unmake the fact.
 	if code != "" {
-		if _, err := tx.Exec(
-			`UPDATE order_history SET code = $2
-			 WHERE id = (SELECT id FROM order_history
-			             WHERE order_id = $1 AND status = 'queued'
-			             ORDER BY id DESC LIMIT 1)`, id, code); err != nil {
+		var status string
+		if err := tx.QueryRow(`SELECT status FROM orders WHERE id=$1`, id).Scan(&status); err != nil {
 			return err
+		}
+		if s := protocol.Status(status); !protocol.IsTerminal(s) && s != protocol.StatusPending {
+			res, err := tx.Exec(
+				`UPDATE order_history SET code = $2
+				 WHERE id = (SELECT id FROM order_history
+				             WHERE order_id = $1 AND status = $3
+				             ORDER BY id DESC LIMIT 1)`, id, code, status)
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				if _, err := tx.Exec(
+					`INSERT INTO order_history (order_id, status, detail, code, created_at)
+					 VALUES ($1, $2, $3, $4, $5)`,
+					id, status, reason, code, clock.Now().UTC()); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return tx.Commit()
@@ -559,6 +653,24 @@ func GetByUUID(db *sql.DB, uuid string) (*Order, error) {
 func GetByVendorID(db *sql.DB, vendorOrderID string) (*Order, error) {
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM orders WHERE vendor_order_id=$1 LIMIT 1`, SelectCols), vendorOrderID)
 	return ScanOrder(row)
+}
+
+// CountForList returns how many orders List would return with no limit — the
+// same status filter, without the LIMIT. It exists so the board can say "showing
+// 100 of 213" rather than truncating in silence, and it takes the status the
+// same way List does so the two cannot answer about different sets.
+func CountForList(db *sql.DB, status string) (int, error) {
+	var n int
+	var err error
+	if status != "" {
+		err = db.QueryRow(`SELECT COUNT(*) FROM orders WHERE status=$1`, status).Scan(&n)
+	} else {
+		err = db.QueryRow(`SELECT COUNT(*) FROM orders`).Scan(&n)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("count orders for list: %w", err)
+	}
+	return n, nil
 }
 
 // List returns up to `limit` orders, optionally filtered by status.
@@ -1139,16 +1251,24 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 }
 
 // ListAcquiring returns all orders in an "acquiring" status (queued or
-// sourcing) — the fulfillment scanner's retry set — ordered by priority DESC
-// (highest first) then created_at ASC (FIFO within a priority class).
-// orders.priority is INTEGER NOT NULL DEFAULT 0, so unset orders fall to FIFO
-// naturally.
+// sourcing) — the fulfillment scanner's retry set — IN THE PLANT'S RANKED
+// ORDER. orders.priority is INTEGER NOT NULL DEFAULT 0, so unset orders fall to
+// FIFO naturally.
+//
+// THE ORDER BY IS THE COMPARATOR'S SQL TWIN, not a translation of it. This is
+// one of §9's two callers — the line's ordering — and the other is the steal's
+// under-lock outrank check; they call the same ranking, one in SQL and one in
+// Go, and TestNoThirdSpellingOfTheDemandRanking pins that there is no third.
+// The ranking is expected to become time-to-empty rather than
+// first-come-first-served, and that is a one-spot change only while it is
+// spelled once.
 //
 // Widened from queued-only: the scanner also retries orders sitting in
 // `sourcing`. Once MoveToSourcing moved to the start of the reserve
 // attempt few orders rest there, but the scan set must see them when they do.
 func ListAcquiring(db *sql.DB) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status IN (%s) ORDER BY priority DESC, created_at ASC`, SelectCols, protocol.AcquiringStatusSQLList()))
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status IN (%s) ORDER BY %s`,
+		SelectCols, protocol.AcquiringStatusSQLList(), DemandRankOrderBySQL()))
 	if err != nil {
 		return nil, err
 	}
@@ -1409,6 +1529,18 @@ func CountLiveCarrierRequestsByDeliveryNode(db *sql.DB, deliveryNode string) (in
 // UpdateRobotID rewrites just the robot_id field.
 func UpdateRobotID(db *sql.DB, id int64, robotID string) error {
 	_, err := db.Exec(`UPDATE orders SET robot_id=$1, updated_at=$3 WHERE id=$2`, robotID, id, clock.Now().UTC())
+	return err
+}
+
+// ClearBinID forgets which bin an order was going to take.
+//
+// SEPARATE FROM UpdateBinID because the column is NULLABLE and "no bin" is not
+// bin zero: the plain scanner routes on `order.BinID != nil`, so a 0 would keep
+// the order in the held-bin arm forever, pointed at a bin that does not exist.
+// The one caller is the held-bin path giving up a stale pointer whose
+// reservation has been reaped — see fulfillment.dispatchHeldBin.
+func ClearBinID(db *sql.DB, orderID int64) error {
+	_, err := db.Exec(`UPDATE orders SET bin_id=NULL, updated_at=$2 WHERE id=$1`, orderID, clock.Now().UTC())
 	return err
 }
 

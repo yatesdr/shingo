@@ -1016,10 +1016,9 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 	// the demand never leaves the acquiring set — it stays `queued`, carrying the
 	// cause, and is re-driven by the ordinary scanner when the lane opens."
 	//
-	// The owner's ruling restores the excursion: "all demand that creates a dig
-	// should become the parent." It comes back through ResumeCompound — the path
-	// that was never deleted — because it carries StepsJSON and still owes its own
-	// pickup.
+	// The excursion is restored: demand that creates a dig becomes its parent. It
+	// comes back through ResumeCompound — the path that was never deleted —
+	// because it carries StepsJSON and still owes its own pickup.
 	if o.Status != StatusReshuffling {
 		t.Errorf("parent status = %q, want %q — the demand owns the excavation it caused",
 			o.Status, StatusReshuffling)

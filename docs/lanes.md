@@ -1,8 +1,10 @@
 # Lanes — mouths, digs, admission and liveness
 
 **Source of truth:** `shingo-core/dispatch/` (`admission.go`, `lane_gate*.go`,
-`lane_entry.go`, `lane_floor.go`, `chapter_floor.go`, `dig_*.go`,
-`queue_cause.go`, `queue_releasers.go`), `shingo-core/store/reservations/`
+`lane_entry.go`, `lane_gate_release.go`, `lane_floor.go`, `chapter_floor.go`,
+`dig_*.go`, `queue_cause.go`, `queue_releasers.go`),
+`shingo-core/dispatch/binresolver/lane_lock.go` (`TryLockFor`, `DigOwner`,
+`DigAdmissible`), `shingo-core/store/reservations/`
 (`mouth.go`, `dig_exclusion.go`), and
 `shingo-core/store/internal/helpers/lane_reachability.go`. This document is the
 human-readable rendering; if they diverge, the code wins.
@@ -60,8 +62,15 @@ excluded by every other owner. Any other pair is admitted only on an **exact
 same-mode share**. So two inbound orders can work a lane together; an inbound and
 an outbound cannot; a dig shares with nobody.
 
+Two exemptions pass the gate: a holder re-acquiring a lane it already holds
+(the beneficiary), and — for a dig-mode acquire only — a holder staged at the
+lane group's wait points (the mark's waiting room). See [reservations.md](reservations.md)
+for the full statement of both.
+
 An order holds **one mode per lane**. Holding the lane in a different mode is a
-refusal — but a foreign conflict is the stronger refusal and wins regardless of
+refusal — except the sanctioned upgrade: an order digging the lane for itself
+while holding it in a weaker mode has its row upgraded in place. But a foreign
+conflict is the stronger refusal and wins regardless of
 which row is read first, which is why the verdict is decided after the scan
 rather than inside the loop. Deciding inside made the answer depend on the id
 ordering of unrelated orders.
@@ -101,11 +110,15 @@ of it.
 An `occupancy` row says a robot is physically inside the lane right now, which is
 not the same as holding the claim on the work. It is an idempotent insert keyed
 on `(order_id, node_id)`: it de-dupes one order's repeat takes and says nothing
-about a different order on the same node. Arbitration is the caller's read.
+about a different order on the same node. **This row is the corridor mutex — it
+arbitrates, it does not advise.** `dispatch.admit` reads `OccupantsOf` and
+refuses a leg while a different order is recorded inside, and
+`TakeLaneOccupancy` returns the write's error rather than logging it.
 
-Making the write itself the arbiter would mean a partial unique index on
-`(node_id) WHERE resource_kind='occupancy'`. That is a live option, not a settled
-no — do not read the idempotent-insert shape as a decision against it.
+Making the write itself the arbiter *in SQL* — a partial unique index on
+`(node_id) WHERE resource_kind='occupancy'` — is a live option, not a settled
+no; at-most-one-inside currently rests on the caller's read plus the write
+succeeding. Do not read the idempotent-insert shape as a decision against it.
 
 ## Admission vs. ordering — the distinction to get right
 
@@ -152,14 +165,20 @@ gets depth-gated rather than wrongly co-dispatched. Conservative on purpose.
 A **dig** is an excavation: move the blockers out of the way so a buried bin can
 be reached.
 
-- **The dig row is the lock.** There is no separate lock table — the `mode='dig'`
-  mouth row *is* the exclusive hold.
+- **The dig row is the admission claim; the occupancy row is the corridor
+  mutex.** There is no separate lock table — the `mode='dig'` mouth row is the
+  exclusive admission claim (one dig per lane, one mode per lane). But what
+  serialises the lane physically — at most one bin inside — is the occupancy
+  row, taken at the append. The mouth row says who may enter; the occupancy
+  row is the mutex.
 - **A dig dwells in the lane it is digging**, and **yields to the dig already
   there**. Two digs do not fight over one lane.
-- **Depth-1 lanes are exempt** from the dig rules — the exemption is about the
-  lane a dig excavates, not about the demand.
-- **A capacity group admits only the digs it can feed.** A group with nowhere to
-  put blockers cannot excavate, so admitting a dig against it just parks it.
+- **Every lane takes a dig row.** The old depth-1 exemption is gone — a dig
+  against a depth-1 lane holds the lane the same as any other.
+- **A capacity group refuses what it cannot feed — at plan time, not at
+  admission.** There is no admission ledger counting digs per group (§R.79
+  deleted it). When a group has nowhere to put blockers, planning refuses the
+  reshuffle as transient congestion (`ErrNoShuffleSlot`) and retries later.
 - **Blockers are never restocked.** They lie where the unbury parked them and
   become ordinary findable inventory. See `[[material-flow]]`.
 
@@ -181,6 +200,13 @@ the rule:
   lane-stress rig (2026-08-13) five of them held five lanes, and no live order
   wanted any of the five slots they were holding for.
 
+Two §R.101 nuances in the handoff: the last blocker leaving can trigger a
+*self-handoff* — the lane handed to the dig's own order, no change of hands
+(`handOffDugLane` gate 2) — and a holder that already collected releases
+outright (gate 3). The holder counts as part of the population it would
+otherwise be blocked by (`dig_lock_release.go`), so a lone dig never deadlocks
+on its own shadow.
+
 ### The standoff tripwire
 
 Dig admission is supposed to make a mutual hold unreachable. `SweepMutualDigHolds`
@@ -192,22 +218,27 @@ than a routine event.
 
 ## The gate — where an order waits
 
-A lane is **gated** if and only if it has a point for its robots to dwell at
-(`PropLaneGatePoint` on the LANE). One fact, set by the person who knows the
-aisle, and the thing they set *is* the thing that makes it true.
+A lane is **gated** if and only if its group has a point for its robots to dwell
+at. Wait points live on the node **group** (`group_wait_points`); the per-lane
+`lane_gate_point` (`PropLaneGatePoint`) is a legacy key that still wins when
+set. No plant spec carries one — both real plants are group-configured. One
+fact, set by the person who knows the aisle, and the thing they set *is* the
+thing that makes it true.
 
-The mark chooses **only the waiting room**: park before dispatch, or drive out
-and dwell at a point. Collision safety does not live on it — the physical
-questions (is a foreign dig holding this lane, is a robot inside it, is the
-target reachable) are asked on every lane-entry path unconditionally, and
+The mark chooses the waiting room **and the oracle**: when a gated dropoff is
+refused or stale, release re-resolves it — to the lane's mark first, then to a
+sibling lane in the same group. Collision safety does not live on it — the
+physical questions (is a foreign dig holding this lane, is a robot inside it, is
+the target reachable) are asked on every lane-entry path unconditionally, and
 occupancy rows are written unconditionally.
 
-> **No marks exist at either plant today.** Every lane therefore parks its orders
-> pre-dispatch. A lane goes gated the day a human places its mark; rollback is
+> **No lane-level marks exist at either plant today** (group-level wait points
+> are in use). Every lane therefore parks its orders pre-dispatch. A group goes
+> gated the day a human places a mark at one of its wait points; rollback is
 > clearing it, and robots already dwelling complete under the old rules.
 
-Enablement is per-lane and incremental by design. There is no global switch, and
-gate release has no timer.
+Enablement is per **group** and incremental by design. There is no global
+switch, and gate release has no timer.
 
 ## Chapters
 

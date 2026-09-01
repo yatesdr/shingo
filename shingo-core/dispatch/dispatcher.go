@@ -168,7 +168,7 @@ func (d *Dispatcher) PlanBuriedReshuffle(order *orders.Order, buried *BuriedErro
 	if _, pe := d.planner.planBuriedReshuffle(order, buried); pe != nil {
 		if pe.Transient() {
 			return &ReshuffleWaitError{
-				Cause:  reshuffleWaitCause(pe.Code),
+				Cause:  reshuffleWaitCause(pe),
 				Detail: pe.Detail,
 				// THE PARAMS ARE ATTACHED HERE BECAUSE HERE IS WHERE THEY ARE
 				// KNOWN. The scanner writes this park and holds neither the lane
@@ -179,7 +179,14 @@ func (d *Dispatcher) PlanBuriedReshuffle(order *orders.Order, buried *BuriedErro
 				//
 				// The complex path has named them since it existed
 				// (complex_reshuffle.go). The plain path is what was thin.
-				Params: buriedWaitParams(d.laneLock, order, buried),
+				//
+				// THE HOLDER RIDES HERE TOO, and it has to: the planner's own park
+				// names it directly, but the SCANNER parks from this error and its
+				// write lands on top. Without it the same wait read one way from the
+				// planner and another from the plain path — reopening, one field
+				// over, the split that "the promised cause survives the trip through
+				// the wait error" closed for the CAUSE.
+				Params: buriedWaitParams(d.db, d.laneLock, order, buried).withHolder(promisedHolder(pe.Err)),
 			}
 		}
 		return pe
@@ -212,7 +219,7 @@ type ReshuffleWaitError struct {
 // hold is a demand's, not a dig's. A zero there says "nothing is digging this
 // lane on anybody's behalf", which is exactly the situation the releaser
 // sentence had been lying about.
-func buriedWaitParams(laneLock *LaneLock, order *orders.Order, buried *BuriedError) QueueParams {
+func buriedWaitParams(db *store.DB, laneLock *LaneLock, order *orders.Order, buried *BuriedError) QueueParams {
 	p := QueueParams{}
 	if order != nil {
 		p.Payload = order.PayloadCode
@@ -220,10 +227,19 @@ func buriedWaitParams(laneLock *LaneLock, order *orders.Order, buried *BuriedErr
 	if buried == nil {
 		return p
 	}
-	// BuriedError carries the lane's ID, not its name — so the name comes from
-	// digWaitByLaneName's sibling read rather than off the error. A lane whose
-	// name cannot be read still gets its dig id, because the two facts fail
-	// independently and half an answer beats none.
+	// THE LANE NAME, WHICH THIS DID NOT CARRY. BuriedError holds the lane's ID,
+	// not its name, and the name was simply left out — so every wait the SCANNER
+	// parked read "Rearranging storage to reach PART-A" while the planner's own
+	// park of the same wait read "Rearranging lane LSD_01 to reach PART-A". The
+	// scanner's write lands on top, so the weaker sentence is the one an operator
+	// sees, and the corridor — the single most useful fact in the wait — was
+	// missing from the plain path entirely.
+	//
+	// A lane whose name cannot be read still gets its dig id and its holder: the
+	// facts fail independently and half an answer beats none.
+	if n, err := db.GetNode(buried.LaneID); err == nil && n != nil {
+		p.Lane = n.Name
+	}
 	p.DigOrderID = digWaitFor(laneLock, buried.LaneID)
 	return p
 }
@@ -260,18 +276,61 @@ func ReshuffleWaitParams(err error, fallbackPayload string) QueueParams {
 // on the row. A code with no mapping falls back to the blanket tag rather than
 // writing a blank — but adding a transient code and not adding it here is a gap,
 // not a default.
-func reshuffleWaitCause(code string) QueueCause {
-	switch code {
+func reshuffleWaitCause(pe *planningError) QueueCause {
+	switch pe.Code {
 	case codeLaneLocked:
 		return CauseLaneLocked
 	case codeNoShuffleSlot:
 		return CauseNoShuffleSlot
 	case codeBlockerClaimed:
-		return CauseDigBlockerClaimed
+		// TAKES THE ERROR, NOT JUST THE CODE. One code carries both blocker
+		// refusals, so the code alone cannot answer this — see digBlockerCause.
+		return digBlockerCause(pe.Err)
 	case codeReadFailed:
 		return CauseReadFailed
 	}
 	return CauseReshuffleCongestion
+}
+
+// digBlockerCause picks between the two blocker waits. They share a planning
+// code and differ in the only thing a wait is FOR: its releaser. A CLAIMED
+// blocker has a robot driving it out, so the wait is that drive. A PROMISED one
+// (§7's ranked take) was kept by a holder that outranked the dig and has no
+// robot at all, so the wait ends when that demand takes its bin or ends.
+//
+// THE DISTINCTION TRAVELS ON THE ERROR, not on the code: codeBlockerClaimed is
+// the same string as protocol.TermBlockerClaimed and serializes verbatim into
+// orders.queue_reason, which is a persisted, compared contract — splitting it
+// is a vocabulary change, not a bug fix.
+//
+// ONE SPELLING, TWO CALLERS, and that is the whole reason it is a function.
+// planBuriedReshuffle parks with this cause directly; the scanner parks from the
+// ReshuffleWaitError instead, re-deriving the cause and landing it on top of
+// what the planner wrote. Forking in the planner alone left the plain path
+// overwriting every promised park with dig-blocker-claimed — telling an operator
+// to wait for a drive that had not started, which is exactly the wrong-name
+// defect the cause vocabulary exists to prevent.
+func digBlockerCause(err error) QueueCause {
+	var refused *store.BlockerClaimedError
+	if errors.As(err, &refused) && refused.Promised {
+		return CauseDigBlockerPromised
+	}
+	return CauseDigBlockerClaimed
+}
+
+// promisedHolder is digBlockerCause's other half: WHO the dig is waiting behind,
+// or 0 when this refusal is not the ranked one.
+//
+// Only the promised park names a holder. A claimed blocker's wait is a robot's
+// drive and its sentence says so; naming the claimant there would change a
+// sentence that is already true, for no gain. Zero is "not known", and the
+// clause renders nothing — the same rule DigOrderID follows.
+func promisedHolder(err error) int64 {
+	var refused *store.BlockerClaimedError
+	if errors.As(err, &refused) && refused.Promised {
+		return refused.HolderID
+	}
+	return 0
 }
 
 // ErrReshuffleWait reports planning-time CONGESTION rather than a fault: the
@@ -537,7 +596,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 			plan = buildTransportPlan(sourceNode.Name, destNode.Name, order.SourceIntent == SourceIntentEmpty)
 		}
 	}
-	spliced, target, gated, err := d.spliceLaneWait(plan)
+	spliced, target, gated, err := d.spliceLaneWait(plan, order.ID)
 	if err != nil {
 		return "", err
 	}
@@ -637,6 +696,109 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 // Used for orders created internally (e.g. direct orders from the UI) and
 // from the fulfillment scanner after a bin claim resolves.
 //
+// DemoteAfterFleetRefusal is THE ONE DOOR every fleet refusal goes through.
+//
+// A fleet refusal is a blip: everything fired, the order got all its claims, and
+// the failure landed with RDS. So it is not failed and its paper is not burned —
+// armor off, paper demoted, pointer kept, back in the line under a named cause.
+// On a blip it re-wins its own uncontested bin seconds later; in a real outage
+// the paper yields by rank like everyone else's (§8).
+//
+// It replaced four rollback arms with three release policies between them, one
+// of which built the pointer wedge AssertNoPointerWedge found — see "one door
+// for every fleet refusal, armor off, paper kept".
+//
+// ── THE CLAUSES ───────────────────────────────────────────────────────────
+//
+// LOST CAS TOUCHES NOTHING. IsConcurrentTransition means another caller owns
+// this order and is dispatching it; rolling back its status or releasing its
+// holds would describe the loser's failure on the winner's live row. Same rule,
+// same reason, as the occupancy release in commitToFleet.
+//
+// STATUS FIRST, THEN THE BOOKS, and the order matters. A crash between them
+// leaves an order in `sourcing` still holding its armor and its confirmed paper
+// — legal (a hard claim beside its own live reservation) and re-dispatchable.
+// The other order leaves `dispatched` with no armor at all, which is the state
+// the two-clause assertion exists to call a violation.
+//
+// PARKS IN `sourcing`, NOT `queued`, and this is deliberate rather than
+// inherited. A demoted order KEEPS its confirmed destination slot, and
+// CountInFlightByDeliveryNode excludes `queued` on the stated grounds that a
+// queued order holds no destination. Park the burst in queued today and the gate
+// that stops two orders being sent to one node counts zero: 23-41 double-booked
+// dropoffs the minute the fleet recovers. The rung move rides the meaning
+// migration, after that reader is re-homed onto a fact.
+//
+// IDEMPOTENT, because the plain path invokes it TWICE per refusal —
+// DispatchDirect undoes its own CAS, then the caller parks. MoveToSourcing
+// self-skips on sourcing→sourcing, the store half is idempotent by construction,
+// and setQueueReason short-circuits an unchanged cause. So the second call is a
+// no-op rather than a second wait in the record.
+//
+// THE CAUSE IS THE CALLER'S. An EMPTY cause means "write none", which is what
+// the undo-only caller passes: whether this refusal is a wait or the end of a
+// request is not the undo's to say — the scanner parks and retries, the bin-move
+// door has a person waiting and fails the row itself. A caller that parks passes
+// its own; the scanner's synthetic-destination carve-out passes ngrp-resolve,
+// because a destination that was never resolved must not report a robot-system
+// outage that is not happening.
+//
+// The cause is FLOORED, NOT EVENTED. causeReleasers records a reasoned absence
+// for fleet-error — "the fleet became willing" is not an event — so nothing here
+// subscribes anything, and the releaser is the ordinary scanner pass.
+func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) {
+	if order == nil {
+		return
+	}
+	if order.Status == protocol.StatusDispatched {
+		if err := d.lifecycle.MoveToSourcing(order, "dispatcher", "fleet refused the create"); err != nil {
+			if IsConcurrentTransition(err) {
+				// Another caller owns it now. Nothing of ours to undo.
+				log.Printf("dispatch: order %d — fleet refusal lost the CAS: %v (another caller owns "+
+					"this order; leaving it alone)", order.ID, err)
+				return
+			}
+			log.Printf("dispatch: order %d could not be moved back to sourcing after a fleet refusal: "+
+				"%v (it is `dispatched` with no vendor order; the armor is dropped below and the "+
+				"crash-sliver assertion is the backstop)", order.ID, err)
+		}
+	}
+	// The books, after the status, and only the armor.
+	// FAIL CLOSED ON AN UNREADABLE PARENT. This flag gates a DELETE of the order's
+	// lane rows, and a leg's rows belong to its parent — so an unanswered question
+	// here must mean "keep the lane", not "it must be mine". A kept lane costs the
+	// next pass; a wrong release tears the corridor out from under a live dig.
+	laneOwner, resolved := d.laneOwnerFor(order.ID)
+	if err := d.db.DemoteHoldsAfterFleetRefusal(order.ID, resolved && laneOwner == order.ID); err != nil {
+		log.Printf("dispatch: order %d — could not demote its holds after a fleet refusal: %v "+
+			"(it keeps armor it has no robot for; the acquiring-claim backstop sweeps it)", order.ID, err)
+	}
+	if cause != "" {
+		d.setQueueReason(order, code, cause, params)
+	}
+}
+
+// FleetRefusalCause names the wait a fleet-refused order is about to park under,
+// for a caller that parks. It is the shared spelling of one carve-out.
+//
+// A refusal is `fleet-error` — "Robot system not responding — retrying" — UNLESS
+// THE FLEET WAS NEVER ASKED. A synthetic destination is refused at the commit
+// seam before any create, so fleet_unavailable there would state a robot-system
+// outage that is not happening and send whoever reads the row to the wrong system
+// entirely. That is the blank-wait problem one level up: not an absent cause, a
+// confidently wrong one. It parks under the cause planning already writes for the
+// same fact, so the two cannot drift.
+//
+// It is a function rather than a comment repeated at each park because it WAS a
+// comment repeated at each park — the two scanner arms carried the carve-out
+// separately, and the door's other two callers carried neither.
+func FleetRefusalCause(err error, destination string) (protocol.QueueCode, QueueCause, QueueParams) {
+	if IsSyntheticLocation(err) {
+		return protocol.QueueWaitingForSlot, CauseNGRPResolve, QueueParams{Destination: destination}
+	}
+	return protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{}
+}
+
 // Callers reach this function with the order in one of three states:
 //   - pending  — direct creation paths (engine.CreateBinMove, reached from the
 //     operator's manual-order screen and the /test-orders direct tab) jump
@@ -694,12 +856,16 @@ func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *n
 		// order now; rolling back its status would clobber whatever it is doing.
 		// Same rule, for the same reason, as the occupancy release in
 		// dispatchToFleetCore.
-		if !IsConcurrentTransition(err) && order.Status == protocol.StatusDispatched {
-			if rbErr := d.lifecycle.MoveToSourcing(order, "dispatcher", "fleet refused the create"); rbErr != nil {
-				log.Printf("dispatch: order %d could not be moved back to sourcing after a fleet "+
-					"refusal: %v (it is `dispatched` with no vendor order; the stuck sweep is the backstop)",
-					order.ID, rbErr)
-			}
+		//
+		// THROUGH THE ONE DOOR, AND WITH NO CAUSE. The undo is this function's;
+		// the disposition is the caller's, and the callers differ — the scanner
+		// parks and retries under a cause it chooses, the bin-move door has a
+		// person waiting and fails the row itself. Writing a cause here would put
+		// "robot system not responding" on a row that is about to go terminal for
+		// a person, and would overwrite the scanner's carve-out a moment before it
+		// is written. So: armor off, paper kept, no sentence.
+		if !IsConcurrentTransition(err) {
+			d.DemoteAfterFleetRefusal(order, "", "", QueueParams{})
 		}
 		return "", err
 	}

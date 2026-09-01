@@ -39,12 +39,24 @@ func claimFor(t *testing.T, db *store.DB, binID, orderID int64) {
 	}
 }
 
+// compoundParent is a dig's parent — the order whose demand the excavation
+// serves, and therefore the demand its legs present at a rank comparison.
+//
+// IT CARRIES A PRIORITY, which is not decoration. Since §7 the steal goes by the
+// demand ranking, so "the dig wins this blocker" is a precondition of the tests
+// below rather than a property of digs. Priority is dormant at both plants, so a
+// real contest is settled by age — and these fixtures seed the holder first,
+// making it the older demand. Stating the precondition as a priority makes it
+// visible and independent of seeding order.
+//
+// A test about the losing path sets its own ranks; see the ranked-take suite.
 func compoundParent(t *testing.T, db *store.DB, uuid string) *orders.Order {
 	t.Helper()
 	return testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
 		o.StationID = "line-1"
 		o.Status = protocol.StatusReshuffling
+		o.Priority = 1
 	})
 }
 
@@ -88,7 +100,7 @@ func TestCompoundClaim_RefusesABinHeldOutsideTheCompound(t *testing.T) {
 	claimFor(t, db, bin.ID, stranger.ID)
 
 	parent := compoundParent(t, db, "cas-parent")
-	err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)})
+	_, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)})
 	if err == nil {
 		t.Fatal("CreateCompoundChildren succeeded against a bin held by an unrelated order — the " +
 			"reshuffle would drive to a bin another order is already carrying")
@@ -144,7 +156,7 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 	t.Run("unclaimed", func(t *testing.T) {
 		bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "CAS-FREE")
 		parent := compoundParent(t, db, "cas-free-parent")
-		if err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
+		if _, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
 			t.Fatalf("claiming an unclaimed bin must succeed: %v", err)
 		}
 		assertClaimedByAChildOf(t, db, bin.ID, parent.ID)
@@ -155,7 +167,7 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 		parent := compoundParent(t, db, "cas-parent-holds")
 		claimFor(t, db, bin.ID, parent.ID)
 
-		if err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
+		if _, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
 			t.Fatalf("a child must be able to take a bin its own PARENT holds: %v.\nThe planners emit "+
 				"a retrieve step carrying the buried target — the very bin the parent retrieve exists "+
 				"to fetch — so excluding the parent fails a claim that works today", err)
@@ -169,7 +181,7 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 
 		// Two steps over ONE bin — the unbury-then-retrieve shape.
 		kids := []store.CompoundChild{childFor(parent, bin.ID, 1), childFor(parent, bin.ID, 2)}
-		if err := db.CreateCompoundChildren(kids); err != nil {
+		if _, err := db.CreateCompoundChildren(kids); err != nil {
 			t.Fatalf("a plan that touches one bin twice must be creatable: %v", err)
 		}
 		after, err := db.GetBin(bin.ID)

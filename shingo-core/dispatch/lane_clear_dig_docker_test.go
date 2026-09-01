@@ -130,14 +130,7 @@ func TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking(t *testing.T) {
 
 	// The deeper store: dispatched, holding its inbound mouth row, not yet placed.
 	// This is what puts the dweller at the mark in the first place (Tier 2).
-	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.DeliveryNode = w[2].Name
-		o.Status = "in_transit"
-	})
-	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
-		t.Fatalf("the deeper store must take its mouth row: adm=%v err=%v", adm, err)
-	}
-	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, "hl1-deep", "RUNNING", ""), "deep vendor")
+	deep := stageDeeperBlocker(t, db, d, line, w[2], "hl1-deep")
 
 	dweller := stageGatedStore(t, db, d, line, w[1], nil)
 	if !IsGateStaged(dweller) {
@@ -155,7 +148,7 @@ func TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking(t *testing.T) {
 
 	// The deeper store places. Every ORDERING reason to hold the dweller is now
 	// gone; only the physical wall is left.
-	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
+	placeDeeperBlocker(t, db, d, deep.ID, w[2].Name)
 
 	if d.laneLock.IsLocked(wall.ID) {
 		t.Fatal("precondition: no dig may hold the lane before the heal")
@@ -196,7 +189,7 @@ func TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking(t *testing.T) {
 			parent.Status)
 	}
 
-	// 2. THE DIG CLAIMED THE BLOCKER AT CREATION — the owner's requirement.
+	// 2. THE DIG CLAIMED THE BLOCKER AT CREATION.
 	claimed, err := db.GetBin(blocker.ID)
 	testutil.MustNoErr(t, err, "reload blocker")
 	if claimed.ClaimedBy == nil {
@@ -325,14 +318,7 @@ func TestWindow3_ClaimedBlockerWaitsInsteadOfDigging(t *testing.T) {
 	wall, _, w, _, bp := clearLaneFixture(t, db, "HL2")
 	line := lineNode(t, db, "HL2-LINE")
 
-	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.DeliveryNode = w[2].Name
-		o.Status = "in_transit"
-	})
-	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
-		t.Fatalf("the deeper store must take its mouth row: adm=%v err=%v", adm, err)
-	}
-	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, "hl2-deep", "RUNNING", ""), "deep vendor")
+	deep := stageDeeperBlocker(t, db, d, line, w[2], "hl2-deep")
 
 	dweller := stageGatedStore(t, db, d, line, w[1], nil)
 	if !IsGateStaged(dweller) {
@@ -349,7 +335,7 @@ func TestWindow3_ClaimedBlockerWaitsInsteadOfDigging(t *testing.T) {
 	testutil.MustNoErr(t, execAt(db, `UPDATE bins SET claimed_by=$1 WHERE id=$2`, carrier.ID, blocker.ID),
 		"claim the blocker for the carrier")
 
-	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
+	placeDeeperBlocker(t, db, d, deep.ID, w[2].Name)
 	d.EvaluateLaneReleases(wall.ID)
 
 	if parent := digParentFor(t, db, w[0].Name); parent != nil {
@@ -389,14 +375,7 @@ func TestWindow3_OccupiedSlotIsNotAWallToDigOut(t *testing.T) {
 	wall, _, w, _, bp := clearLaneFixture(t, db, "HL3")
 	line := lineNode(t, db, "HL3-LINE")
 
-	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.DeliveryNode = w[2].Name
-		o.Status = "in_transit"
-	})
-	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
-		t.Fatalf("the deeper store must take its mouth row: adm=%v err=%v", adm, err)
-	}
-	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, "hl3-deep", "RUNNING", ""), "deep vendor")
+	deep := stageDeeperBlocker(t, db, d, line, w[2], "hl3-deep")
 
 	dweller := stageGatedStore(t, db, d, line, w[1], nil)
 	if !IsGateStaged(dweller) {
@@ -408,7 +387,7 @@ func TestWindow3_OccupiedSlotIsNotAWallToDigOut(t *testing.T) {
 	createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-HL3-WALL")
 	createTestBinAtNode(t, db, bp.Code, w[1].ID, "BIN-HL3-SITTING")
 
-	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
+	placeDeeperBlocker(t, db, d, deep.ID, w[2].Name)
 	d.EvaluateLaneReleases(wall.ID)
 
 	if parent := digParentFor(t, db, w[0].Name); parent != nil {
@@ -485,14 +464,7 @@ func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.
 
 	// The Tier-2 blocker that parks the dweller, exactly as the positive test
 	// builds it.
-	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.DeliveryNode = w[2].Name
-		o.Status = "in_transit"
-	})
-	if adm, _, _, err := d.AcquireLanesForOrder(deep, line, w[2], EntryFreshBin); err != nil || !adm {
-		t.Fatalf("the deeper store must take its mouth row: adm=%v err=%v", adm, err)
-	}
-	testutil.MustNoErr(t, db.UpdateOrderVendor(deep.ID, "hl4-deep", "RUNNING", ""), "deep vendor")
+	deep := stageDeeperBlocker(t, db, d, line, w[2], "hl4-deep")
 
 	dweller := stageGatedStore(t, db, d, line, w[1], nil)
 	if !IsGateStaged(dweller) {
@@ -509,7 +481,7 @@ func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.
 
 	// The ordering reason goes, leaving only the wall — the exact state the
 	// positive test digs from.
-	d.ReleaseInboundLaneForOrder(deep.ID, w[2].Name)
+	placeDeeperBlocker(t, db, d, deep.ID, w[2].Name)
 
 	// ── AND NOW THE RIG'S ACTUAL SHAPE: an ORDINARY, non-dig mouth hold on the
 	// same lane.
@@ -527,8 +499,20 @@ func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.
 		o.DeliveryNode = w[0].Name
 		o.Status = "in_transit"
 	})
-	if adm, _, _, err := d.AcquireLanesForOrder(dropper, line, w[0], EntryHeldBin); err != nil || !adm {
-		t.Fatalf("the dropper must take an inbound mouth row on the wall lane: adm=%v err=%v", adm, err)
+	// STATED THROUGH THE ACQUIRE, not produced through AcquireLanesForOrder, and
+	// the difference is the point of this whole round. On a GATED lane the plain
+	// destination hold is deferred to the mark (resolveOrderLaneHolds), so that
+	// door no longer writes an inbound row here — there is no plain-path way left
+	// to arrange one on a gated lane.
+	//
+	// The property under test is not about which door wrote the row. It is that a
+	// pre-check asking about DIGS, while the acquire refuses on ANY row, is the
+	// 16,947 family. So the fixture states the row as a fact and asks the
+	// evaluator what it does with it.
+	if adm := d.acquireOrderLanes(dropper.ID,
+		[]laneHold{{laneID: wall.ID, mode: reservations.ModeInbound}}); adm.err != nil || !adm.admitted {
+		t.Fatalf("the dropper must take an inbound mouth row on the wall lane: adm=%v err=%v",
+			adm.admitted, adm.err)
 	}
 	if d.laneLock.IsLocked(wall.ID) {
 		t.Fatal("precondition: no DIG holds the lane — that is the whole point, the holder is ordinary")
@@ -813,7 +797,15 @@ func TestWindow3_TheRequestersOwnMouthHoldDoesNotRefuseItsOwnRescue(t *testing.T
 	}
 
 	// (d) the pre-check refuses...
-	if d.laneLock.CanTakeFor(wall2.ID, digAskerFor(requester2)) {
+	//
+	// The mark-exemption set is the REAL one, not a hardcoded nil, and that is
+	// deliberate: the stranger above is `in_transit` with no vendor and no plan,
+	// so it is not gate-staged, so the set is empty for this lane and this
+	// assertion means exactly what it meant before. Passing the production value
+	// makes it also pin that the exemption does not leak to an ordinary holder —
+	// if stagedAtMarkOnLane ever started answering for an in-transit robot, this
+	// line goes red, which is where it should go red.
+	if d.laneLock.CanTakeFor(wall2.ID, digAskerFor(requester2), stagedAtMarkOnLane(d.db, wall2.ID)) {
 		t.Error("a lane held by an unrelated order was reported admissible to a dig for a different " +
 			"order — the exemption is meant to be the requester's own holds and nobody else's")
 	}
@@ -880,7 +872,7 @@ func TestWindow3_ADigIsNotStartedIntoALaneWithARobotInIt(t *testing.T) {
 	})
 	_, occErr := reservations.AcquireOccupancy(db.DB, inside.ID, wall.ID)
 	testutil.MustNoErr(t, occErr, "put a robot in the lane")
-	if !d.laneLock.CanTakeFor(wall.ID, digAskerFor(requester)) {
+	if !d.laneLock.CanTakeFor(wall.ID, digAskerFor(requester), stagedAtMarkOnLane(d.db, wall.ID)) {
 		t.Fatal("precondition: the MOUTH is takeable — this test is about the INSIDE, and a mouth-level " +
 			"refusal would let it pass with the fix reverted")
 	}

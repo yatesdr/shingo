@@ -184,6 +184,14 @@ func (f *fakeStore) FindSourceBinInLane(laneID int64, payloadCode string) (*bins
 }
 
 func (f *fakeStore) FindStoreSlotInLane(laneID int64) (*nodes.Node, error) {
+	return f.FindStoreSlotInLaneExcluding(laneID, 0)
+}
+
+// FindStoreSlotInLaneExcluding is the owner-aware form. The fake has no
+// per-order holds to exempt, so the owner makes no difference to its answer —
+// which is the point: these tests are about the group resolvers' RANKING, and
+// the exemption is exercised against a real database in the lane-gate suite.
+func (f *fakeStore) FindStoreSlotInLaneExcluding(laneID, _ int64) (*nodes.Node, error) {
 	s := f.storeSlot[laneID]
 	if s == nil {
 		return nil, errors.New("lane full")

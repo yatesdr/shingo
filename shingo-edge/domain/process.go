@@ -33,15 +33,25 @@ type Process struct {
 	//
 	// ChangeoverAutoArm controls the PLC CATID auto-arm behavior for this
 	// process, a 3-value mode (auto | prompt | off):
-	//   "auto"   — on a STABLE, confirmed CATID change that maps to a configured
-	//              style's expected_catid (differs from the active style, with no
-	//              changeover already in progress), automatically START the
-	//              changeover to that style. The default everywhere; naturally
-	//              inert where no style has an expected_catid (nothing to match ⇒
-	//              nothing to arm), so default-auto is safe on unconfigured plants.
+	//   "auto"   — on a STABLE, confirmed CATID change that has left the ACTIVE
+	//              style's part set, automatically CUT OVER a changeover that is
+	//              already in progress. The default everywhere; naturally inert
+	//              where no style has an expected_catid (nothing to match ⇒
+	//              nothing to act on), so default-auto is safe on unconfigured
+	//              plants.
+	//
+	//              IT NEVER STARTS ONE. This said "automatically START the
+	//              changeover" and the code refuses to: with no changeover in
+	//              progress decideAutoArm returns nothing, because starting one
+	//              dispatches robots and nothing at that seam knows whether the
+	//              material exists (plc_catid_monitor.go). The problem the
+	//              feature exists for is the other end — an operator starts the
+	//              changeover, the material moves, and nobody presses CUTOVER, so
+	//              the press stamps the new part while shingo keeps attributing
+	//              it to the old style for hours.
 	//   "prompt" — only PROMPT the operator to start the changeover (the round-2
 	//              behavior, raiseCATIDChangePrompt); never auto-start.
-	//   "off"    — neither auto-arm nor prompt; silent.
+	//   "off"    — neither arm nor prompt; silent.
 	// Empty/unknown persisted values read as "auto" via NormalizeChangeoverAutoArm.
 	ChangeoverAutoArm string `json:"changeover_auto_arm"`
 	// GroupID is the optional process_groups row this process belongs to.
@@ -53,8 +63,9 @@ type Process struct {
 
 // Changeover auto-arm modes for Process.ChangeoverAutoArm.
 const (
-	// ChangeoverAutoArmAuto auto-starts a changeover on a stable, mapped CATID
-	// change. The global default.
+	// ChangeoverAutoArmAuto auto-CUTS-OVER a changeover already in progress, on a
+	// stable CATID change that has left the active style. It never starts one.
+	// The global default.
 	ChangeoverAutoArmAuto = "auto"
 	// ChangeoverAutoArmPrompt only prompts the operator (round-2 behavior).
 	ChangeoverAutoArmPrompt = "prompt"

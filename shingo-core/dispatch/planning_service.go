@@ -268,28 +268,19 @@ func (s *PlanningService) resolveSource(order *orders.Order, intent Intent) (*bi
 		s.dbg("plan: order %d structural — %s: %s", order.ID, res.TermCode, res.Err)
 		return nil, nil, nil, &planningError{Code: res.TermCode, Detail: res.Err.Error(), Err: res.Err}, false
 	default: // OutcomeWait — the only remaining member
-		s.setQueueReason(order, res.QueueCode, QueueCause(res.QueueCause), res.QueueParams)
+		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
 		return nil, nil, &PlanningResult{Queued: true}, nil, false
 	}
 }
 
-// setQueueReason is the planning side's one door onto the queue-reason columns:
-// it generates the operator sentence from code+params (via the shared formatter)
-// and writes sentence+code+cause together. Mirrors the Dispatcher and Scanner
-// helpers so every intake path parks through the same formatter, never free text.
-// Best-effort: a failed write is logged and swallowed.
+// setQueueReason is the planning side's door onto the queue-reason columns —
+// the package-local name for WriteQueueDetail, which holds the decision.
+//
+// NO BOOL HERE, deliberately: nothing on the planning path asks whether a wait
+// was new. The door returns one and this drops it, rather than every planning
+// call site growing a discard.
 func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) {
-	reason := FormatQueueSentence(code, params)
-	if order.QueueReason == reason && order.QueueCode == string(code) {
-		return
-	}
-	if err := s.db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
-		log.Printf("dispatch: set queue_reason (%s) for order %d: %v", cause, order.ID, err)
-		return
-	}
-	order.QueueReason = reason
-	order.QueueCode = string(code)
-	order.QueueCause = string(cause)
+	WriteQueueDetail(s.db, log.Printf, "dispatch", order, code, cause, params)
 }
 
 // planTransport is the single planner for the three "simple" transport families —
@@ -366,7 +357,7 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 	// compound machinery. Gate first, then resolve.
 	if blocked, cap := CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
 		s.dbg("transport: order %d queued — %s", order.ID, cap.Cause)
-		s.setQueueReason(order, protocol.QueueWaitingForSlot, QueueCause(cap.Cause), cap.Params)
+		s.setQueueReason(order, protocol.QueueWaitingForSlot, cap.Cause, cap.Params)
 		return &PlanningResult{Queued: true}, nil
 	}
 
@@ -430,7 +421,7 @@ func (s *PlanningService) planTransport(order *orders.Order, env *protocol.Envel
 		// NGRPs), so the concrete resolution must land on the order here. On a
 		// still-full group this is a TOCTOU race — re-queue and let the scanner retry.
 		if destNode.IsSynthetic && destNode.NodeTypeCode == protocol.NodeClassNGRP && s.resolver != nil {
-			result, rErr := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, payloadCode, nil, digAskerFor(order))
+			result, rErr := s.resolver.Resolve(destNode, binresolver.ResolveModeStore, payloadCode, nil, digAskerFor(order), nil)
 			if rErr != nil {
 				s.dbg("move: dest group %s unresolved (%v), queuing order %d", order.DeliveryNode, rErr, order.ID)
 				// AND THE ROW SAYS WHY. This queued the order and wrote nothing, so a
@@ -619,7 +610,10 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 	// hold could never dig the lane it was holding, and the answer would never
 	// change. Unreachable while the lane gate yields no holds; reachable the
 	// moment it does (§R.96 stage 2), which is why it is closed first.
-	if !s.laneLock.TryLockFor(buried.LaneID, order.ID, digAskerFor(order)) {
+	// Orders parked at this lane's mark do not refuse the excavation: their robots
+	// are outside the corridor. Same set, same reason as the heal path — see
+	// stagedAtMarkOnLane.
+	if !s.laneLock.TryLockFor(buried.LaneID, order.ID, digAskerFor(order), stagedAtMarkOnLane(s.db, buried.LaneID)) {
 		return nil, &planningError{Code: codeLaneLocked, Detail: "lane locked concurrently"}
 	}
 	if err := s.createCompound(order, plan); err != nil {
@@ -639,8 +633,26 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 		// well. The next scan re-runs findBuriedBlockers against a lane that no
 		// longer contains the bin, and the dig plans clean.
 		if errors.Is(err, store.ErrBlockerClaimed) {
-			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseDigBlockerClaimed,
-				QueueParams{Lane: lane.Name, Payload: order.PayloadCode})
+			// TWO REFUSALS, TWO RELEASERS, and the cause has to say which: a claimed
+			// blocker is waiting out a robot's drive, a promised one (§7's ranked
+			// take) is waiting on a holder that has no robot at all.
+			//
+			// digBlockerCause IS THE ONE PLACE THAT READS THEM APART. It used to be
+			// four: this site, the lane-gate acceptance path, the complex reshuffle
+			// path, and parkOnClaimedBlocker each wrote the same `promised ?
+			// promised : claimed` fork in its own words, off the same fact. The
+			// three that hold a laneClearResult now read the cause the producer
+			// decided (laneClearResult.blockerCause, itself set from this
+			// function); this path has no such result — its input is the typed
+			// error straight from the store — so it calls the decider directly.
+			// One decision, one function, one field carrying it.
+			//
+			// The scanner re-derives this same cause off the wait error and writes
+			// it over the top, so a fork spelled only here is a fork the plain path
+			// undoes.
+			s.setQueueReason(order, protocol.QueueStorageRearranging, digBlockerCause(err),
+				QueueParams{Lane: lane.Name, Payload: order.PayloadCode,
+					HolderOrderID: promisedHolder(err)})
 			return nil, &planningError{
 				Code:   codeBlockerClaimed,
 				Detail: fmt.Sprintf("cannot dig yet: %v", err),

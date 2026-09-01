@@ -4,6 +4,7 @@ package reconciliation_test
 
 import (
 	"testing"
+	"time"
 
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
@@ -123,6 +124,7 @@ func TestCoverage_GetReconciliationSummary(t *testing.T) {
 // executed at all, by the thing that executes it in production.
 func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "this fixture BACKDATES a `dispatched` order with no vendor id on purpose — that state is what the sweep under test is for, so the crash-sliver clause is correctly reporting the thing being arranged")
 	db := testdb.Open(t)
 
 	node := &nodes.Node{Name: "STUCK-LINE", Enabled: true}
@@ -136,9 +138,28 @@ func TestListAnomalies_QueuedGetsTheLongerBound(t *testing.T) {
 		if err := orders.Create(db.DB, o); err != nil {
 			t.Fatalf("create %s: %v", uuid, err)
 		}
-		if _, err := db.DB.Exec(`UPDATE orders SET status=$1, updated_at = NOW() - ($2 * INTERVAL '1 second') WHERE id=$3`,
-			status, ageSeconds, o.ID); err != nil {
+		// AGE IS AGE SINCE THE LAST TRANSITION, not since the last row touch —
+		// the detector's clock is an order_history row, so a fixture that
+		// backdates only updated_at describes an order that HAS progressed
+		// recently and correctly raises nothing.
+		//
+		// THE BIRTH ROW IS BACKDATED TOO. Every order now gets a history row from
+		// the INSERT (orders.Create), so the COALESCE fallback to orders.created_at
+		// no longer reaches — leaving the birth row at NOW would describe an order
+		// created a second ago, which is not the order this fixture is about. In
+		// production the two instants are the same value, which is why this changes
+		// no reading of a real plant.
+		if _, err := db.DB.Exec(`UPDATE orders
+			SET status=$1,
+			    updated_at = NOW() - ($2 * INTERVAL '1 second'),
+			    created_at = NOW() - ($2 * INTERVAL '1 second')
+			WHERE id=$3`, status, ageSeconds, o.ID); err != nil {
 			t.Fatalf("backdate %s: %v", uuid, err)
+		}
+		if _, err := db.DB.Exec(
+			`UPDATE order_history SET created_at = NOW() - ($1 * INTERVAL '1 second') WHERE order_id=$2`,
+			ageSeconds, o.ID); err != nil {
+			t.Fatalf("backdate %s birth row: %v", uuid, err)
 		}
 		return o.ID
 	}
@@ -261,5 +282,148 @@ func TestCompletionAnomalies_ACompoundParentIsNotAMissingBin(t *testing.T) {
 		t.Errorf("order %d completed with no bin and no legs and was NOT reported. That is the defect "+
 			"this anomaly exists for — an order that reached FINISHED with its bin still at source",
 			childless.ID)
+	}
+}
+
+// TestListAnomalies_ARetryingOrderCannotRefreshItsOwnStalenessTimer is the pin
+// on the progress signal.
+//
+// orders.updated_at means TOUCHED, not PROGRESSED. Roughly twenty writers stamp
+// it, and several run on the dispatch retry loop — so an order that re-enters the
+// scanner every tick, is refused, and parks again keeps moving its own updated_at
+// forward. The one order this detector exists to catch is therefore the one it
+// cannot see, and it fails SILENTLY: the board reads "no stuck orders" while a
+// wedged order sits in `sourcing` indefinitely.
+//
+// MEASURED on the sim wedge of 2026-08-28 (main 1a6b6d23): order 143 sat in
+// `sourcing` behind a leaked lane hold for over two hours of sim time. Its last
+// real transition was 19:00:55; its updated_at read 19:16:55 and kept climbing,
+// against a bound it would never reach.
+//
+// The fixture below is that order: a fresh updated_at over an old last
+// transition. Under the updated_at clock it raises nothing.
+func TestListAnomalies_ARetryingOrderCannotRefreshItsOwnStalenessTimer(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	node := &nodes.Node{Name: "RETRY-LINE", Enabled: true}
+	if err := nodes.Create(db.DB, node); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	o := &orders.Order{EdgeUUID: "retry-wedged", StationID: "edge.1", OrderType: "retrieve_empty",
+		Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+	if err := orders.Create(db.DB, o); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	// Born an hour and a bit ago. The INSERT writes a birth history row
+	// (orders.Create), and leaving it at NOW would make the plant's newest
+	// transition this order's own creation — which is not the order under test.
+	if _, err := db.DB.Exec(
+		`UPDATE order_history SET created_at = NOW() - INTERVAL '65 minutes' WHERE order_id=$1`,
+		o.ID); err != nil {
+		t.Fatalf("backdate the birth row: %v", err)
+	}
+	// Parked in `sourcing` an hour ago — that is the last thing that HAPPENED.
+	if _, err := db.DB.Exec(
+		`INSERT INTO order_history (order_id, status, detail, created_at)
+		 VALUES ($1, 'sourcing', 'reserving source bins', NOW() - INTERVAL '1 hour')`, o.ID); err != nil {
+		t.Fatalf("seed the last real transition: %v", err)
+	}
+	// ...and touched one second ago by the retry loop, over and over since.
+	if _, err := db.DB.Exec(
+		`UPDATE orders SET status='sourcing',
+		        created_at = NOW() - INTERVAL '1 hour',
+		        updated_at = NOW() - INTERVAL '1 second'
+		 WHERE id=$1`, o.ID); err != nil {
+		t.Fatalf("touch without progressing: %v", err)
+	}
+
+	anomalies, err := reconciliation.ListAnomalies(db.DB)
+	if err != nil {
+		t.Fatalf("ListAnomalies: %v", err)
+	}
+	for _, a := range anomalies {
+		if a.Issue == "active_order_stuck" && a.OrderID != nil && *a.OrderID == o.ID {
+			if a.ObservedAt == nil || time.Since(*a.ObservedAt) < 30*time.Minute {
+				t.Fatalf("order %d was flagged, but ObservedAt is %v — the row must report the LAST "+
+					"TRANSITION, not the last touch, or the operator reads a fresh timestamp beside a "+
+					"stuck-order alarm and disbelieves the alarm.", o.ID, a.ObservedAt)
+			}
+			return // flagged, and dated honestly
+		}
+	}
+	t.Fatalf("order %d has not changed status in an hour and was NOT flagged. Its updated_at is one "+
+		"second old because the retry loop keeps touching it — which is precisely the order that "+
+		"needs reporting, and precisely the one an updated_at clock cannot see.", o.ID)
+}
+
+// TestListAnomalies_AnOrderThatJustTransitionedIsNotStuck is the pin that makes
+// the LATERAL load-bearing, and without it the join is decoration.
+//
+// The detector's clock is MAX(order_history.created_at), with orders.created_at
+// as the COALESCE fallback for a row that has never transitioned. Every other
+// fixture in this file backdates BOTH — which is right for what those tests
+// assert, and means the fallback alone satisfies all of them. Delete the LATERAL,
+// compare o.created_at directly, and the suite stays green while the change this
+// file exists to protect is gone.
+//
+// That mutation is not contrived. Inside the lateral, `MAX(created_at)` and
+// `order_id` are unqualified while `orders` is also in scope with a created_at of
+// its own; Postgres resolves them to the inner table, which is correct — but an
+// editor "tidying" them to `o.` turns the aggregate into a correlated constant.
+// The query still runs, still returns rows, and every long-lived order reports as
+// stuck from the moment it was created.
+//
+// So this is the other direction: an OLD order that has JUST MOVED. Its birth is
+// two hours behind the bound and its last transition is a second old. It is the
+// busiest possible order, and it must raise nothing.
+func TestListAnomalies_AnOrderThatJustTransitionedIsNotStuck(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	node := &nodes.Node{Name: "MOVING-LINE", Enabled: true}
+	if err := nodes.Create(db.DB, node); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	o := &orders.Order{EdgeUUID: "moving-along", StationID: "edge.1", OrderType: "retrieve_empty",
+		Status: "pending", Quantity: 1, DeliveryNode: node.Name}
+	if err := orders.Create(db.DB, o); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	// Born two hours ago — well past both bounds on the fallback clock.
+	if _, err := db.DB.Exec(
+		`UPDATE orders SET status='in_transit', created_at = NOW() - INTERVAL '2 hours'
+		 WHERE id=$1`, o.ID); err != nil {
+		t.Fatalf("age the order: %v", err)
+	}
+	// ...and progressing normally the whole time, most recently a second ago.
+	for _, h := range []struct {
+		status string
+		ago    string
+	}{
+		{"sourcing", "119 minutes"},
+		{"dispatched", "90 minutes"},
+		{"in_transit", "1 second"},
+	} {
+		if _, err := db.DB.Exec(
+			`INSERT INTO order_history (order_id, status, detail, created_at)
+			 VALUES ($1, $2, 'progressing', NOW() - $3::interval)`, o.ID, h.status, h.ago); err != nil {
+			t.Fatalf("seed transition %s: %v", h.status, err)
+		}
+	}
+
+	anomalies, err := reconciliation.ListAnomalies(db.DB)
+	if err != nil {
+		t.Fatalf("ListAnomalies: %v", err)
+	}
+	for _, a := range anomalies {
+		if a.Issue == "active_order_stuck" && a.OrderID != nil && *a.OrderID == o.ID {
+			t.Fatalf("order %d changed status ONE SECOND ago and was flagged as stuck (observed_at "+
+				"%v). Only its created_at is old. Reporting a moving order teaches operators to "+
+				"ignore the board, and it means the detector is reading the order's birth rather "+
+				"than the order_history row the LATERAL exists to find.", o.ID, a.ObservedAt)
+		}
 	}
 }
