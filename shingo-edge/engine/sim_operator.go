@@ -1221,7 +1221,7 @@ func (op *simOperator) releaseCapDiagnosis(orderID int64) string {
 	// on the cap announcement, where the sole remaining job is to explain a
 	// refusal; an unreadable store is a reason to say less, never to panic.
 	//
-	// b3cb1d82 added this call without the guard, and it has panicked the
+	// The release-cap diagnosis added this call without the guard, and it panicked the
 	// plant-agnostic harness ever since — newTestSimOperator builds an Engine with
 	// no db, which is deliberate (it tests the cap's counting, not its prose), and
 	// scheduleRelease drives straight through here on the twentieth firing.

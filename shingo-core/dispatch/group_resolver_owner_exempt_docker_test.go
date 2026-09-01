@@ -15,8 +15,8 @@ import (
 
 // ── THE OWNER EXEMPTION, AGAINST A REAL DATABASE ──────────────────────────
 //
-// e7db1e60 pointed resolveStoreLKND and resolveStoreDPTH at the OWNER-AWARE
-// selector (FindStoreSlotInLaneExcluding, asker.OrderID) instead of the blind
+// THE OWNER-AWARE CHANGE pointed resolveStoreLKND and resolveStoreDPTH at the
+// owner-aware selector (FindStoreSlotInLaneExcluding, asker.OrderID) instead of the blind
 // one. It shipped with no test of the case that matters, and the reason it had
 // none is worth stating: every unit fixture in binresolver/ passes
 // reservations.Anyone, which carries OrderID 0 and reproduces the blind form
@@ -86,9 +86,8 @@ func testdbCreateStore(t *testing.T, db *store.DB, deliveryNode string) *orders.
 	return o
 }
 
-// TestGroupResolveStore_OwnerGetsItsOwnDeepSlotBack is the case e7db1e60 changed
-// and did not pin. It runs both storage algorithms, because the commit changed
-// both arms and they reach the selector by different routes.
+// TestGroupResolveStore_OwnerGetsItsOwnDeepSlotBack is the case that change made
+// and did not pin. It runs both storage algorithms, because both arms moved and they reach the selector by different routes.
 //
 // Each subtest asserts the fix and the defect in one run:
 //
@@ -97,8 +96,8 @@ func testdbCreateStore(t *testing.T, db *store.DB, deliveryNode string) *orders.
 //
 // The blind arm is not decoration. reservations.Anyone carries OrderID 0 and
 // FindStoreSlotInLaneExcluding documents 0 as reproducing the blind behaviour
-// exactly, so that arm IS the pre-e7db1e60 resolver, exercised through the same
-// production code path. It fails the way the commit says the old code failed,
+// exactly, so that arm IS the pre-change resolver, exercised through the same
+// production code path. It fails the way the old code failed,
 // which means this test cannot pass for the wrong reason if somebody quietly
 // drops asker.OrderID again.
 func TestGroupResolveStore_OwnerGetsItsOwnDeepSlotBack(t *testing.T) {
@@ -129,7 +128,7 @@ func TestGroupResolveStore_OwnerGetsItsOwnDeepSlotBack(t *testing.T) {
 					own.Node.Name, deepest.Name)
 			}
 
-			// 2. BLIND, through the same call path: OrderID 0 is the pre-e7db1e60
+			// 2. BLIND, through the same call path: OrderID 0 is the pre-change
 			//    behaviour, and it must still be broken. If this arm starts agreeing
 			//    with the one above, the fixture has stopped holding the slot and the
 			//    assertion above is passing for free.

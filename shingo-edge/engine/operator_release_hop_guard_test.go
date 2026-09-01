@@ -205,7 +205,8 @@ func arriveAtStaged(t *testing.T, eng *Engine, db *store.DB, orderID int64) {
 }
 
 // TestSwapSurvivor_PartnerConfirmedReleasesWithNoClick is case (a), and it is
-// RED at 7883ad94: the survivor stages, no map entry exists, and before
+// RED before the release-cap re-arm: the survivor stages, no map entry exists,
+// and before
 // releaseSurvivorOfFinishedPartner nothing looked at the partner at all.
 //
 // Order 84 held AMR-15 for the rest of a run in exactly this state while its

@@ -719,7 +719,8 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 			// this asks "is lane c a good place to PARK A BLOCKER", and a lane with a
 			// robot queued at its mark is a worse parking spot whether or not that
 			// robot is in the corridor yet. Exempting here would widen the shuffle
-			// pool, which is e2352c32's subject and carries its own measurement.
+			// pool, which is the subject of the gated-dig blocker-park change and
+			// carries its own measurement there.
 			//
 			// This is NOT the pre-check half of a pre-check/acquire pair, which is
 			// what would make a disagreement the 16,947 shape: the acquire that

@@ -133,7 +133,8 @@ func countOrders(t *testing.T, db *store.DB) int {
 
 // TestConsumeDowngrade_RefusesWhileTheSwapIsStillInFlight is the race case.
 //
-// RED at 771e9b75: the request is ACCEPTED and mints a second plain move
+// RED before the docker suites were carried onto the two verdict signatures:
+// the request is ACCEPTED and mints a second plain move
 // SYN_MARKET → ALN_004 — order 137 in the run above, the one that never moved
 // again.
 func TestConsumeDowngrade_RefusesWhileTheSwapIsStillInFlight(t *testing.T) {

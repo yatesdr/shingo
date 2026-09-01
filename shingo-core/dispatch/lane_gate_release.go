@@ -1193,7 +1193,7 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, en
 //	    every dispatch tick.
 //
 // And it is no longer the only production caller of the owner-aware selector.
-// Since e7db1e60 the group store resolvers pass asker.OrderID through
+// The group store resolvers now pass asker.OrderID through
 // FindStoreSlotInLaneExcluding as well (binresolver/group_resolver.go:500 and
 // :622), which is what makes a group-scoped oracle possible at all. What is
 // still true here: this is the only owner-aware re-ask that happens AT RELEASE,
@@ -1655,8 +1655,8 @@ func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bo
 // ONLY FINAL DROPOFFS, for now. An intermediate staging leg's destination is
 // paired with a later pickup, and the paired-index writer that keeps those two
 // in step does not exist yet — re-aiming one half would send the robot to fetch
-// from a slot it never filled. That is the rule b5e16902 states for the regroup
-// and applyPlanNode states for the step patch, said a third time; when the
+// from a slot it never filled. That is the rule the fungible-dropoff regroup
+// states and applyPlanNode states for the step patch, said a third time; when the
 // paired writer lands, this restriction lifts with it.
 //
 // FOUR RULES, VERBATIM FROM redirectStoreOffDugLane, because they are the same
@@ -1756,8 +1756,8 @@ func (d *Dispatcher) widenDropoffToGroup(order *orders.Order, lane *nodes.Node, 
 //
 // An intermediate staging dropoff is half of a pair: a later pickup fetches from
 // exactly the node this step filled. Re-aiming one half sends the robot to fetch
-// from a slot it never filled, which is the same rule b5e16902 states for the
-// regroup and applyPlanNode states for the step patch.
+// from a slot it never filled, which is the same rule the fungible-dropoff
+// regroup states and applyPlanNode states for the step patch.
 func (d *Dispatcher) entryIsFinalDropoff(order *orders.Order, entryIndex int) bool {
 	var steps []resolvedStep
 	if json.Unmarshal([]byte(order.StepsJSON), &steps) != nil {

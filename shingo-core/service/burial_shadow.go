@@ -356,7 +356,8 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 	// holder's CREATION, which for a hard claim is typically minutes earlier than
 	// the moment claimed_by was written. So the line said "claimed the buried bin
 	// at 10:52:14" about a claim that hardened at 11:20, on exactly the population
-	// ec0cf36f exists to reclassify: an order whose soft hold was still soft when
+	// the hard-claim dating fix exists to reclassify: an order whose soft hold was
+	// still soft when
 	// the selector looked. One instant, read once, used for both.
 	began := s.hardHoldBeganAt(b)
 	if s.burialWasApprovedThenInvalidated(at.placedBy, began) {

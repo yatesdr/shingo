@@ -237,9 +237,9 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 	//
 	// ── WHY THIS IS NOT CLOSED BY GATING THE HOME ─────────────────────────
 	//
-	// It was tried (b4fa8d6e, reverted 2026-08-31): make a loader home part of the
-	// drop-off capacity gate's role test so a leg pointed at an occupied home
-	// queues instead of driving. It makes this worse. Holding the home is what
+	// IT WAS TRIED AND REVERTED, 2026-08-31 (WALL), and never reached origin:
+	// make a loader home part of the drop-off capacity gate's role test, so a leg
+	// pointed at an occupied home queues instead of driving. It makes this worse. Holding the home is what
 	// makes the return leg IN-FLIGHT to it, and in-flight is the only state the
 	// replenishment loop's yield check can see — both in-flight counts carry
 	// `AND status != 'queued'` (store/orders/orders.go:1292, :1303), and the

@@ -39,8 +39,8 @@ import (
 
 // TestDigMarkExemption_StagedDwellerDoesNotRefuseAForeignDig is the deadlock.
 //
-// RED at fc68bda4: the acquire returns ErrReservationConflict and the pre-check
-// returns false, because admitMouth's `mode == ModeDig` arm fires on the
+// RED before the mark exemption: the acquire returns ErrReservationConflict and
+// the pre-check returns false, because admitMouth's `mode == ModeDig` arm fires on the
 // dweller's inbound row and nothing exempts it.
 func TestDigMarkExemption_StagedDwellerDoesNotRefuseAForeignDig(t *testing.T) {
 	t.Parallel()
@@ -377,8 +377,10 @@ func TestDigMarkExemption_AMarkStagesForTheWholeGroup(t *testing.T) {
 // was coming for that bin — storing at the mouth would seal it in. Each was the
 // other's only releaser, and the plant stopped.
 //
-// RED on b0dca8a5: the acquire below returns admitted=false with
-// CauseLaneHeldTraffic, because acquireOrderLanes passed nil.
+// RED with the mark exemption removed: the acquire below returns
+// admitted=false with CauseLaneHeldTraffic, because acquireOrderLanes passed nil.
+// Drop the asker through and it goes green — that mutation is the test's proof,
+// and it does not depend on any particular fixture carrying a mark.
 func TestDigMarkExemption_SourceLockRetrieveIsAdmittedPastAMarkHolder(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

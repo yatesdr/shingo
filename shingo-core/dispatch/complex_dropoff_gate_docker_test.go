@@ -18,8 +18,10 @@ import (
 // ── THE DROPOFF-CAPACITY GATE, END TO END ─────────────────────────────────
 //
 // reserveComplexDestination is Phase C of DispatchPreparedComplex and it is the
-// arm b4fa8d6e widened to cover loader homes. That widening reopened a named
-// Springfield incident and was reverted on 2026-08-31. The next person who wants
+// arm that was once widened to cover loader homes. That widening reopened a
+// named Springfield incident and was reverted on 2026-08-31 (WALL) without ever
+// reaching origin — dispatch/loader_place.go carries the full argument at the
+// place it matters. The next person who wants
 // to widen this predicate should find a harness here rather than discovering,
 // as we did, that the suite stays green either way.
 //
@@ -156,7 +158,8 @@ func TestDispatchPreparedComplex_DropoffOccupiedQueuesThenReleases(t *testing.T)
 	testutil.MustNoErr(t, err, "re-read order before retry")
 	if derr := d.DispatchPreparedComplex(order); derr != nil {
 		t.Fatalf("still refused after the slot freed: %v — the gate is a WAIT and its releaser is the "+
-			"occupant leaving. A gate with no releaser is the defect that reverted b4fa8d6e: the leg "+
+			"occupant leaving. A gate with no releaser is the defect that reverted the "+
+			"loader-home widening: the leg "+
 			"sits queued, goes invisible to every in-flight count (status != 'queued'), and nothing "+
 			"downstream can tell it apart from an order nobody raised", derr)
 	}
