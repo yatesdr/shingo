@@ -57,7 +57,10 @@ func TestOpenUsesAppendMode(t *testing.T) {
 	if strings.ContainsAny(string(after), "\x00") {
 		t.Fatalf("file contains NUL hole after copytruncate-style truncate; got %q", after)
 	}
-	if !strings.HasPrefix(string(after), "after-truncate") {
+	// The file sink prefixes each line with a timestamp ("... [sub] msg"), so
+	// "landed at offset 0" shows up as the marker being the LAST text in the
+	// file — a stale-offset write would leave the marker after the hole.
+	if !strings.HasSuffix(string(after), "after-truncate\n") {
 		t.Fatalf("post-truncate write did not land at offset 0; got %q", after)
 	}
 }
