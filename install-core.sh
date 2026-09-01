@@ -547,6 +547,19 @@ cp "$REPO_ROOT/scripts/alert-on-stop.sh" /opt/shingo/alert-on-stop.sh
 chown shingo:shingo /opt/shingo/alert-on-stop.sh
 chmod 755 /opt/shingo/alert-on-stop.sh
 
+# Rotation for the per-run debug file (--log-debug writes it; truncated on
+# open, so only a months-long run needs the rotation). Idempotent: skipped
+# when the installed copy already matches the repo copy.
+if ! command -v logrotate >/dev/null 2>&1; then
+    echo "WARNING: logrotate not found on PATH; /etc/logrotate.d/shingo-debug will be inert until it is installed"
+fi
+if [ -f /etc/logrotate.d/shingo-debug ] && cmp -s "$REPO_ROOT/deploy/shingo-debug.logrotate" /etc/logrotate.d/shingo-debug; then
+    echo "==> /etc/logrotate.d/shingo-debug already current; leaving in place"
+else
+    echo "==> Installing /etc/logrotate.d/shingo-debug..."
+    cp "$REPO_ROOT/deploy/shingo-debug.logrotate" /etc/logrotate.d/shingo-debug
+fi
+
 # ----------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------

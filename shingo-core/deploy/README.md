@@ -6,6 +6,17 @@ Files installed onto a plant core box.
 |---|---|---|
 | `shingo-core.service` | `/etc/systemd/system/shingo-core.service` | `install-core.sh` |
 | `journald-shingo.conf` | `/etc/systemd/journald.conf.d/10-shingo.conf` | **by hand** — see below |
+| `../deploy/shingo-debug.logrotate` | `/etc/logrotate.d/shingo-debug` | `install-core.sh` (and `install-edge.sh` on edge boxes) |
+
+## Debug-file rotation (`shingo-debug.logrotate`)
+
+Both units run `--log-debug`, so both processes mirror every subsystem to
+`/opt/shingo/shingo-debug.log`. The file is truncated on open
+(`protocol/debuglog`), so each run starts empty — but between deploys it
+grows unbounded, and months-long runs are the goal. logrotate handles it:
+daily at `maxsize 50M`, 14 rotations compressed (`copytruncate`, because the
+process never reopens the fd). The installers keep it current; no manual
+step.
 
 ## Journal retention (`journald-shingo.conf`)
 

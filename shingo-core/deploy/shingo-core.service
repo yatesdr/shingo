@@ -13,7 +13,11 @@ Type=simple
 User=shingo
 Group=shingo
 WorkingDirectory=/opt/shingo
-ExecStart=/opt/shingo/shingocore --config /etc/shingo/shingocore.yaml
+# --log-debug mirrors every subsystem to /opt/shingo/shingo-debug.log
+# (truncated per run; /etc/logrotate.d/shingo-debug bounds it across
+# months-long runs). Both tiers run the same flag — one debugging runbook:
+# journald for history, the file for full-fidelity per-run detail.
+ExecStart=/opt/shingo/shingocore --config /etc/shingo/shingocore.yaml --log-debug
 Restart=always
 RestartSec=5s
 StandardOutput=journal

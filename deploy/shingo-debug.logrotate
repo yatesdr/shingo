@@ -1,0 +1,25 @@
+# Rotation for the shingo per-run debug file (/opt/shingo/shingo-debug.log).
+# Installed by install-core.sh / install-edge.sh as /etc/logrotate.d/shingo-debug.
+#
+# The file is truncated on open by the process (protocol/debuglog: os.Create),
+# so a run starts empty and grows until the next deploy. Daily deploys made
+# that an accidental rotation; months-long runs need a real one.
+#
+# copytruncate is REQUIRED: the process writes through an fd opened by path
+# and never reopens, so a rename would leave it appending to the renamed file
+# and the active path would stay empty forever. The fd is O_APPEND (protocol/
+# debuglog), so the post-truncate offset resets to 0 on the next write —
+# without that, truncation would leave a NUL hole up to the pre-rotation
+# offset and apparent size would never shrink. The copy-vs-truncate gap can
+# lose a few lines — acceptable, the file mirrors journald, it is not the
+# only copy.
+/opt/shingo/shingo-debug.log {
+    daily
+    maxsize 50M
+    rotate 14
+    compress
+    missingok
+    notifempty
+    copytruncate
+    su shingo shingo
+}

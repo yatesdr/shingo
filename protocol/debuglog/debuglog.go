@@ -62,7 +62,11 @@ func New(ringSize int, fileFilter []string) (*Logger, error) {
 	}
 
 	if fileFilter != nil {
-		f, err := os.Create("shingo-debug.log")
+		// O_APPEND matters with logrotate copytruncate: the process never
+		// reopens the file, and truncation does not reset this fd's offset.
+		// Without O_APPEND the next write lands at the pre-rotation offset,
+		// leaving a hole of NUL bytes and an ever-growing apparent size.
+		f, err := os.OpenFile("shingo-debug.log", os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_APPEND, 0644)
 		if err != nil {
 			return nil, fmt.Errorf("open debug log: %w", err)
 		}
