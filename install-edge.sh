@@ -908,6 +908,21 @@ trap - EXIT
 echo "==> Enabling shingo-edge on boot..."
 systemctl enable shingo-edge
 
+# Journal retention is host-wide (journald has no per-unit retention), but it
+# ships with the product: unbounded growth on the Pi's SD card is the failure
+# mode it prevents. Idempotent: skipped when the installed copy already
+# matches. Matches the same block in install-core.sh.
+if [ -f /etc/systemd/journald.conf.d/10-shingo.conf ] && \
+   cmp -s "$REPO_ROOT/deploy/journald-shingo.conf" /etc/systemd/journald.conf.d/10-shingo.conf; then
+    echo "==> /etc/systemd/journald.conf.d/10-shingo.conf already current; leaving in place"
+else
+    echo "==> Installing /etc/systemd/journald.conf.d/10-shingo.conf..."
+    mkdir -p /etc/systemd/journald.conf.d
+    cp "$REPO_ROOT/deploy/journald-shingo.conf" /etc/systemd/journald.conf.d/10-shingo.conf
+    systemctl restart systemd-journald
+    echo "==> journald restarted: $(systemctl is-active systemd-journald)"
+fi
+
 echo ""
 echo "============================================================"
 echo " shingo-edge install complete"

@@ -738,19 +738,19 @@ echo " Config:  /etc/shingo/shingocore.yaml"
 echo " Backup:  $BACKUP_PATH"
 echo " Version: ${BUILD_VERSION} (${BUILD_COMMIT})"
 echo " Logs:    sudo journalctl -u shingo-core -f"
-# Journal retention is host-wide, so the installer points at the drop-in
-# rather than writing it (see shingo-core/deploy/README.md). Unconfigured
-# retention is how Springfield ended up holding ~15 days of journal — less
-# than the age of the incident it was being read for.
-if ! grep -qsE '^\s*(MaxRetentionSec|SystemMaxUse)=' \
-        /etc/systemd/journald.conf /etc/systemd/journald.conf.d/* 2>/dev/null; then
-    echo ""
-    echo " NOTE: journald retention is unconfigured on this host, so it"
-    echo " defaults to a size cap that depends on filesystem size and has"
-    echo " no time bound. To make it explicit (host-wide change):"
-    echo "   sudo cp $REPO_ROOT/shingo-core/deploy/journald-shingo.conf \\"
-    echo "        /etc/systemd/journald.conf.d/10-shingo.conf"
-    echo "   sudo systemctl restart systemd-journald"
+# Journal retention is host-wide (journald has no per-unit retention), but it
+# ships with the product: unconfigured retention is how Springfield ended up
+# holding ~15 days of journal — less than the age of the incident it was being
+# read for. Idempotent: skipped when the installed copy already matches.
+if [ -f /etc/systemd/journald.conf.d/10-shingo.conf ] && \
+   cmp -s "$REPO_ROOT/deploy/journald-shingo.conf" /etc/systemd/journald.conf.d/10-shingo.conf; then
+    echo "==> /etc/systemd/journald.conf.d/10-shingo.conf already current; leaving in place"
+else
+    echo "==> Installing /etc/systemd/journald.conf.d/10-shingo.conf..."
+    mkdir -p /etc/systemd/journald.conf.d
+    cp "$REPO_ROOT/deploy/journald-shingo.conf" /etc/systemd/journald.conf.d/10-shingo.conf
+    systemctl restart systemd-journald
+    echo "==> journald restarted: $(systemctl is-active systemd-journald)"
 fi
 if [ "$MODE" = "FRESH" ]; then
     echo ""

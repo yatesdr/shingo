@@ -5,7 +5,7 @@ Files installed onto a plant core box.
 | File | Installed to | By |
 |---|---|---|
 | `shingo-core.service` | `/etc/systemd/system/shingo-core.service` | `install-core.sh` |
-| `journald-shingo.conf` | `/etc/systemd/journald.conf.d/10-shingo.conf` | **by hand** — see below |
+| `../deploy/journald-shingo.conf` | `/etc/systemd/journald.conf.d/10-shingo.conf` | `install-core.sh` and `install-edge.sh` (both tiers since 2026-09-01; was by-hand before that) |
 | `../deploy/shingo-debug.logrotate` | `/etc/logrotate.d/shingo-debug` | `install-core.sh` (and `install-edge.sh` on edge boxes) |
 
 ## Debug-file rotation (`shingo-debug.logrotate`)
@@ -20,18 +20,20 @@ step.
 
 ## Journal retention (`journald-shingo.conf`)
 
-`install-core.sh` does not install this one. journald has no per-unit
-retention, so the file changes how the whole host keeps logs — including
-whatever else runs on the box. That is an operator's call, not an
-installer's, so the installer only points at it.
+Installed by **both** installers (core and edge) since 2026-09-01, same
+idempotent cmp-skip pattern as the logrotate config: copied to
+`/etc/systemd/journald.conf.d/10-shingo.conf` and `systemd-journald`
+restarted only when the installed copy differs from the repo copy. New
+plants get retention automatically on first install; existing plants get
+it on the next update.
 
-To apply:
-
-```bash
-sudo cp shingo-core/deploy/journald-shingo.conf /etc/systemd/journald.conf.d/10-shingo.conf
-sudo systemctl restart systemd-journald
-journalctl --disk-usage
-```
+It was by-hand until 2026-09-01 — the original reasoning was that a
+host-wide log policy is an operator's call, not an installer's. That lost
+to the other failure mode: every existing plant kept drifting (HK core sat
+at 3.9 GB with no time bound four months in), and a deploy-time reminder
+nobody reads is not automation. The 4G/90day/128M values match what
+systemd's implicit default was already doing on disk size; the drop-in
+makes them explicit and adds the time bound.
 
 To check what a box is doing today:
 
