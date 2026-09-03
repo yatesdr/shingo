@@ -102,6 +102,50 @@ func (e *Engine) StartSimOperator(ctx context.Context, simCfg config.SimConfig, 
 	go op.runReconcileLoop()
 }
 
+// dwell waits out a simulated operator's reaction time and reports whether the
+// worker that called it may still act.
+//
+// THE RE-CHECK AFTER THE WAKE IS THE POINT, and it is what four hand-written
+// copies of this select did not have. `select` picks uniformly at random among
+// ready cases, so a worker whose timer and whose cancellation come due together
+// takes the timer half the time and walks on into an operator that is stopping.
+// Asking op.ctx a second time, after the wait rather than during it, makes
+// cancellation win whenever it has happened at all.
+func (op *simOperator) dwell(d time.Duration) bool {
+	select {
+	case <-op.ctx.Done():
+		return false
+	case <-op.clk.After(d):
+	}
+	return op.ctx.Err() == nil
+}
+
+// hasStore reports whether this operator still has an Edge store to read.
+//
+// ── WHY A WORKER CAN WAKE WITHOUT ONE ──
+//
+// A scheduled worker holds a POINTER TO THE ENGINE across a wait the sim clock
+// can stretch arbitrarily, so what it holds and what still exists are two
+// different questions. newTestSimOperator builds an Engine with no db, which is
+// deliberate — it tests the release cap's counting, not its prose — and the
+// plant-agnostic cap tests advance the manual clock past releaseCapReArm to
+// elapse the backoff window. That advance also fires every release timer
+// scheduleRelease left pending, and those workers wake into the hollow Engine:
+//
+//	panic: runtime error: invalid memory address or nil pointer dereference
+//	shingoedge/store.(*DB).GetOrder(...)
+//	shingoedge/engine.(*simOperator).runRelease(...)  sim_operator.go:913
+//
+// It is `go test -count=20 -tags sim ./engine/` on main, intermittent because
+// the worker has to be scheduled before the binary exits, and it is why the sim
+// step of scripts/gate.sh cannot be relied on to be green.
+//
+// releaseCapDiagnosis already carried this guard, and its note already named
+// the lesson: a diagnostic must not kill the run it is describing. The same
+// holds one frame up — a worker that wakes must re-establish that it still has
+// an engine before it touches one.
+func (op *simOperator) hasStore() bool { return op.e != nil && op.e.db != nil }
+
 func (op *simOperator) loaderDelay() time.Duration {
 	d := 5 * time.Second
 	if op.ops.LoaderAutoLoad > 0 {
@@ -255,10 +299,8 @@ func (op *simOperator) runConfirm(orderID, nodeID int64) {
 		return
 	}
 
-	select {
-	case <-op.ctx.Done():
+	if !op.dwell(confirmDelay) {
 		return
-	case <-op.clk.After(confirmDelay):
 	}
 
 	// Re-read after the dwell — Core's sweep or a sibling may have advanced it.
@@ -336,10 +378,8 @@ func (op *simOperator) run(nodeID int64) {
 	if !ok {
 		return
 	}
-	select {
-	case <-op.ctx.Done():
+	if !op.dwell(delay) {
 		return
-	case <-op.clk.After(delay):
 	}
 
 	// A manual_swap LOAD/CLEAR can land in a transient gap: the empty hasn't been
@@ -365,10 +405,8 @@ func (op *simOperator) run(nodeID int64) {
 			return
 		}
 		op.e.debugFn("[sim] operator auto-%s node %d attempt %d not ready, retrying: %v", label, nodeID, attempt, err)
-		select {
-		case <-op.ctx.Done():
+		if !op.dwell(retryDelay) {
 			return
-		case <-op.clk.After(retryDelay):
 		}
 	}
 }
@@ -879,10 +917,14 @@ func (op *simOperator) runRelease(orderID int64) {
 		delete(op.releasing, orderID)
 		op.mu.Unlock()
 	}()
-	select {
-	case <-op.ctx.Done():
+	if !op.dwell(op.swapReleaseDelay()) {
 		return
-	case <-op.clk.After(op.swapReleaseDelay()):
+	}
+	// AND IT MUST STILL HAVE AN ENGINE TO ACT ON. See dwell's note: the sim
+	// clock can make the wait above arbitrarily long, and this is the only
+	// worker whose first act on waking is to reach into the store.
+	if !op.hasStore() {
+		return
 	}
 	if op.ops.PairRelease {
 		op.releaseAsPair(orderID)
@@ -1230,7 +1272,10 @@ func (op *simOperator) releaseCapDiagnosis(orderID int64) string {
 	// the unit step builds untagged, and the race step is shingo-core only. The
 	// same blind spot hid a concurrent map write on this type. Whatever else
 	// changes, a nil-safe diagnostic is the cheap half of that lesson.
-	if op.e == nil || op.e.db == nil {
+	//
+	// The predicate is shared with runRelease now, which had the same exposure
+	// one frame up and no guard at all; see hasStore.
+	if !op.hasStore() {
 		return "The Edge cannot read the order to say more about what it is waiting on."
 	}
 	order, err := op.e.db.GetOrder(orderID)
