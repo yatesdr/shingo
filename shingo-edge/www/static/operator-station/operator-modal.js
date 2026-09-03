@@ -172,13 +172,14 @@ export function renderModal(entry) {
 
     if (isReplenishing(entry)) {
         const activeOrders = (entry.orders || []).filter(o => isActive(o.status));
-        // The status word stays and the cause is appended to it: an operator
-        // reading "retrieve: queued" cannot tell a capacity gate from a missing
-        // bin, and Core already generated the sentence that distinguishes them.
+        // EVERY non-terminal order is listed, departed ones included — the
+        // control goes, the information stays. orderStatusChip renders a
+        // departed leg as a greyed TO MARKET so the operator can see the tote
+        // leaving without the card pretending the cell is busy.
         const statusText = activeOrders.length > 0
-            ? activeOrders.map(o => withQueueCause(o.order_type + ': ' + o.status, o)).join(', ')
+            ? activeOrders.map(orderStatusChip).join(', ')
             : 'Order in progress';
-        html += '<div class="modal-status">[REP] ' + esc(statusText) + '</div>';
+        html += '<div class="modal-status">[REP] ' + statusText + '</div>';
     } else {
         html += '<div class="modal-status">No active orders</div>';
     }
@@ -490,125 +491,9 @@ export function renderModal(entry) {
                     '/api/process-nodes/' + entry.node.id + '/clear-bin');
             }
         } else {
-            const orders = entry.orders || [];
-            const active = orders.filter(o => isActive(o.status));
-            const staged = active.find(isStationReleasable);
-            const delivered = active.find(o => o.status === 'delivered');
-            const inFlight = active.find(o => !staged && !delivered);
-
-            if (entry.swap_ready) {
-                // Two-robot swap: lineside robot has reached its wait point.
-                // One click releases both legs unconditionally regardless of
-                // Order A's state. swap_ready is the single gate (see
-                // store/station_views.go ComputeSwapReady).
-                html += actionBtn('RELEASE', 'request', true,
-                    'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged');
-            } else if (claim && claim.swap_mode === 'two_robot' && swapPair(active).length >= 2) {
-                // Two-robot swap in progress with BOTH legs still alive but
-                // swap_ready is false — Robot B hasn't reached its wait point.
-                // Show explicit waiting state instead of the per-order RELEASE
-                // branch (would release one leg, bypass disposition prompt) or
-                // idle REQUEST SWAP/REQUEST (don't apply mid-swap).
-                //
-                // COUNT THE PAIR, NOT THE ROOM. This guard is the recovery
-                // surface: when one leg dies the count drops to <=1, this arm
-                // steps aside, and the survivor's own staged/delivered/inFlight
-                // branch offers a working button. Counting every active order at
-                // the node instead of the pair's own legs let ANY unrelated
-                // order pad the count and hold the disabled button up — and a
-                // finished order can linger in that list indefinitely, because
-                // `delivered` is not terminal and a Core-side confirm used to
-                // never reach the Edge. Springfield ALN_001 carried such a row
-                // for 2½ hours. The escape hatch was hostage to a ghost.
-                //
-                // The label carries the REASON (waitingLabel): this arm sits
-                // above the inFlight arm, so without it the operator gets the
-                // one label in this chain that explains nothing. The blocker is
-                // the leg that is not parked — the robot they are waiting on.
-                const pair = swapPair(active);
-                const blocker = pair.find(o => o.status !== 'staged') || null;
-                html += actionBtn(waitingLabel(blocker), 'close', false, '');
-            } else if (staged) {
-                // Sequential / single-robot — single staged, single release.
-                html += actionBtn('RELEASE', 'request', true,
-                    'release-prompt:/api/orders/' + staged.id + '/release');
-            } else if (delivered) {
-                var confirmLabel = 'CONFIRM';
-                var binState = entry.bin_state;
-                if (binState && binState.manifest) {
-                    try {
-                        var mf = JSON.parse(binState.manifest);
-                        if (Array.isArray(mf) && mf.length > 0) {
-                            var totalQty = mf.reduce(function(sum, item) { return sum + (item.quantity || 0); }, 0);
-                            confirmLabel = 'CONFIRM: ' + mf.length + (mf.length === 1 ? ' part' : ' parts') + ', qty ' + totalQty;
-                        }
-                    } catch (err) {
-                        console.error('renderModal manifest parse', err);
-                    }
-                }
-                if (Number.isInteger(delivered.id) && delivered.id > 0) {
-                    html += actionBtn(confirmLabel, 'request', true,
-                        '/api/confirm-delivery/' + delivered.id);
-                } else {
-                    // Same guard as the manual_swap branch above: a
-                    // half-built complex order can carry a delivered status
-                    // with a missing/zero ID. Render disabled so the operator
-                    // refreshes rather than hits the chi 404 path.
-                    html += actionBtn('CONFIRM (refresh)', 'close', false, '');
-                }
-            } else if (inFlight) {
-                // Disabled button when any non-staged/non-delivered active
-                // order exists for this node. Catches the duplicate-order
-                // case (operator presses swap, sees nothing happen because
-                // it's queued, presses again) without any backend dedup —
-                // the HMI just won't let them re-submit while one is in
-                // flight. Backend safety-net dedup is a separate Core
-                // concern; this is the cheap visible-to-the-operator fix.
-                //
-                // Status-aware label so a queued order doesn't pretend a
-                // robot is moving when capacity gating is actually what's
-                // holding it. queue_reason is pushed by Core via OrderUpdate
-                // and stored on the edge order row; show it when available.
-                if (inFlight.status === 'queued') {
-                    var queueLabel = inFlight.queue_reason
-                        ? 'IN QUEUE: ' + inFlight.queue_reason
-                        : 'IN QUEUE';
-                    html += actionBtn(queueLabel, 'close', false, '');
-                } else if (inFlight.status === 'acknowledged') {
-                    // acknowledged is Core's intake ack, pre-sourcing — not a
-                    // moving robot. Show its own label instead of pretending a
-                    // robot is in transit.
-                    html += actionBtn('ACKNOWLEDGED', 'close', false, '');
-                } else if (inFlight.status === 'sourcing') {
-                    // Core is acquiring reservations/confirmations — same
-                    // pre-fleet family as queued; surface the queue_reason when
-                    // Core sent one.
-                    var sourceLabel = inFlight.queue_reason
-                        ? 'SOURCING: ' + inFlight.queue_reason
-                        : 'SOURCING';
-                    html += actionBtn(sourceLabel, 'close', false, '');
-                } else {
-                    html += actionBtn('ROBOT IN TRANSIT', 'close', false, '');
-                }
-            } else {
-                if (claim.role === 'produce' && remaining > 0) {
-                    html += actionBtn('REQUEST SWAP', 'finalize', true,
-                        '/api/process-nodes/' + entry.node.id + '/finalize');
-                } else if (claim.role === 'produce') {
-                    // remaining=0: operator brings an empty bin to the press.
-                    // /request-empty issues a retrieve order for an empty
-                    // compatible with one of the allowed payloads.
-                    var allowed = claim.allowed_payload_codes || (claim.payload_code ? [claim.payload_code] : []);
-                    if (allowed.length > 0) {
-                        html += actionBtn('REQUEST EMPTY', 'request', true,
-                            '/api/process-nodes/' + entry.node.id + '/request-empty|' + allowed[0]);
-                    }
-                } else {
-                    html += actionBtn('REQUEST MATERIAL', 'request', true,
-                        '/api/process-nodes/' + entry.node.id + '/request');
-                }
-                // RELEASE EMPTY and RELEASE PARTIAL removed from operator HMI;
-                // backend endpoints stay for changeover/supervisor use.
+            const btn = cellCardAction(entry, claim, remaining);
+            if (btn) {
+                html += actionBtn(btn.label, btn.cls, btn.enabled, btn.action);
             }
         }
     }
@@ -703,6 +588,178 @@ export function renderModal(entry) {
     });
 }
 
+// cellCardAction decides the ONE button a swap cell's card offers, and returns
+// it as {label, cls, enabled, action} — or null when the cell has nothing to
+// offer at all.
+//
+// ── WHY IT IS A FUNCTION AND NOT AN IF/ELSE INSIDE renderModal ────────────
+//
+// The bug this chain shipped was a HIDDEN BUTTON: the operator wanted REQUEST
+// SWAP, the backend would have accepted it, and the card rendered a disabled
+// ROBOT IN TRANSIT instead. That is a decision, not a rendering, and a decision
+// buried in a DOM-writing function is one nothing can test. Pulled out here it
+// is pure — entry, claim, remaining in, one button description out — and
+// operator-modal-departed.test.js drives the whole ladder through it.
+//
+// The arm order IS the contract. Each arm below carries the incident that put
+// it where it is; moving one moves a fix.
+function cellCardAction(entry, claim, remaining) {
+    const orders = entry.orders || [];
+    // DEPARTED LEGS DRIVE NOTHING HERE, and that is the whole point of this
+    // filter. A departed leg is a robot carrying a bin AWAY from a cell whose
+    // positions are all filled — it is still a live order, it is still LISTED
+    // on the card as TO MARKET, and the operator can still see the tote is on
+    // its way out. What it must not do is decide this button.
+    //
+    // Springfield press trial 2026-09-02: under the flip, R1 clears the press
+    // and drives to the supermarket while R2 puts the fresh carrier on.
+    // `inFlight` picked up the departed R1 and rendered a disabled ROBOT IN
+    // TRANSIT, so the operator watched a balanced cell sit idle for the length
+    // of a supermarket round trip with no button to press. The button they
+    // wanted existed; the card would not show it.
+    //
+    // Three consumers take this list whole — staged, inFlight and swapPair.
+    // `delivered` is the one exception; see below.
+    const active = orders.filter(o => isActive(o.status) && !o.departed);
+    const staged = active.find(isStationReleasable);
+    // DEPARTED IS NOT UNCONFIRMABLE, and this fallback is the exception the
+    // filter above must not swallow. single_robot's one leg places the fresh
+    // bin on the press at step 7, departs at step 8 when it lifts the old bin
+    // off outbound staging, and reaches `delivered` at step 9 — so its CONFIRM,
+    // the cell's only count receipt, would never be offered. A departed leg
+    // still cannot hold the cell BUSY (it stays out of staged / inFlight /
+    // swapPair); it can still be signed for.
+    //
+    // The !auto_confirm term also closes a hazard that predates departure: an
+    // auto-confirm leg passes through `delivered` for about a second on its way
+    // to confirmed, and a card refreshed inside that window used to arm CONFIRM
+    // on the leg going to the supermarket.
+    const delivered = active.find(o => o.status === 'delivered')
+        || orders.find(o => o.status === 'delivered' && !o.auto_confirm);
+    const inFlight = active.find(o => !staged && !delivered);
+
+    if (entry.swap_ready) {
+        // Two-robot swap: lineside robot has reached its wait point.
+        // One click releases both legs unconditionally regardless of
+        // Order A's state. swap_ready is the single gate (see
+        // store/station_views.go ComputeSwapReady).
+        return { label: 'RELEASE', cls: 'request', enabled: true,
+            action: 'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged' };
+    }
+    if (claim && claim.swap_mode === 'two_robot' && swapPair(active).length >= 2) {
+        // Two-robot swap in progress with BOTH legs still alive but
+        // swap_ready is false — Robot B hasn't reached its wait point.
+        // Show explicit waiting state instead of the per-order RELEASE
+        // branch (would release one leg, bypass disposition prompt) or
+        // idle REQUEST SWAP/REQUEST (don't apply mid-swap).
+        //
+        // COUNT THE PAIR, NOT THE ROOM. This guard is the recovery
+        // surface: when one leg dies the count drops to <=1, this arm
+        // steps aside, and the survivor's own staged/delivered/inFlight
+        // branch offers a working button. Counting every active order at
+        // the node instead of the pair's own legs let ANY unrelated
+        // order pad the count and hold the disabled button up — and a
+        // finished order can linger in that list indefinitely, because
+        // `delivered` is not terminal and a Core-side confirm used to
+        // never reach the Edge. Springfield ALN_001 carried such a row
+        // for 2½ hours. The escape hatch was hostage to a ghost.
+        //
+        // A DEPARTED leg is out of `active` before the count is taken, so a
+        // pair whose evac has left the cell no longer reads as two legs in
+        // flight — which is exactly the state the next swap may start from.
+        //
+        // The label carries the REASON (waitingLabel): this arm sits
+        // above the inFlight arm, so without it the operator gets the
+        // one label in this chain that explains nothing. The blocker is
+        // the leg that is not parked — the robot they are waiting on.
+        const pair = swapPair(active);
+        const blocker = pair.find(o => o.status !== 'staged') || null;
+        return { label: waitingLabel(blocker), cls: 'close', enabled: false, action: '' };
+    }
+    if (staged) {
+        // Sequential / single-robot — single staged, single release.
+        return { label: 'RELEASE', cls: 'request', enabled: true,
+            action: 'release-prompt:/api/orders/' + staged.id + '/release' };
+    }
+    if (delivered) {
+        let confirmLabel = 'CONFIRM';
+        const binState = entry.bin_state;
+        if (binState && binState.manifest) {
+            try {
+                const mf = JSON.parse(binState.manifest);
+                if (Array.isArray(mf) && mf.length > 0) {
+                    const totalQty = mf.reduce(function(sum, item) { return sum + (item.quantity || 0); }, 0);
+                    confirmLabel = 'CONFIRM: ' + mf.length + (mf.length === 1 ? ' part' : ' parts') + ', qty ' + totalQty;
+                }
+            } catch (err) {
+                console.error('cellCardAction manifest parse', err);
+            }
+        }
+        if (Number.isInteger(delivered.id) && delivered.id > 0) {
+            return { label: confirmLabel, cls: 'request', enabled: true,
+                action: '/api/confirm-delivery/' + delivered.id };
+        }
+        // Same guard as the manual_swap branch above: a half-built complex
+        // order can carry a delivered status with a missing/zero ID. Render
+        // disabled so the operator refreshes rather than hits the chi 404 path.
+        return { label: 'CONFIRM (refresh)', cls: 'close', enabled: false, action: '' };
+    }
+    if (inFlight) {
+        // Disabled button when any non-staged/non-delivered active
+        // order exists for this node. Catches the duplicate-order
+        // case (operator presses swap, sees nothing happen because
+        // it's queued, presses again) without any backend dedup —
+        // the HMI just won't let them re-submit while one is in
+        // flight. Backend safety-net dedup is a separate Core
+        // concern; this is the cheap visible-to-the-operator fix.
+        //
+        // Status-aware label so a queued order doesn't pretend a
+        // robot is moving when capacity gating is actually what's
+        // holding it. queue_reason is pushed by Core via OrderUpdate
+        // and stored on the edge order row; show it when available.
+        if (inFlight.status === 'queued') {
+            return { label: inFlight.queue_reason ? 'IN QUEUE: ' + inFlight.queue_reason : 'IN QUEUE',
+                cls: 'close', enabled: false, action: '' };
+        }
+        if (inFlight.status === 'acknowledged') {
+            // acknowledged is Core's intake ack, pre-sourcing — not a
+            // moving robot. Show its own label instead of pretending a
+            // robot is in transit.
+            return { label: 'ACKNOWLEDGED', cls: 'close', enabled: false, action: '' };
+        }
+        if (inFlight.status === 'sourcing') {
+            // Core is acquiring reservations/confirmations — same
+            // pre-fleet family as queued; surface the queue_reason when
+            // Core sent one.
+            return { label: inFlight.queue_reason ? 'SOURCING: ' + inFlight.queue_reason : 'SOURCING',
+                cls: 'close', enabled: false, action: '' };
+        }
+        // ROBOT IN TRANSIT is a cell WAITING on a delivery. Its opposite
+        // number is TO MARKET — a cell already balanced, with a robot taking
+        // the old bin away — and a departed leg can never reach this arm.
+        return { label: 'ROBOT IN TRANSIT', cls: 'close', enabled: false, action: '' };
+    }
+    if (claim.role === 'produce' && remaining > 0) {
+        return { label: 'REQUEST SWAP', cls: 'finalize', enabled: true,
+            action: '/api/process-nodes/' + entry.node.id + '/finalize' };
+    }
+    if (claim.role === 'produce') {
+        // remaining=0: operator brings an empty bin to the press.
+        // /request-empty issues a retrieve order for an empty
+        // compatible with one of the allowed payloads.
+        const allowed = claim.allowed_payload_codes || (claim.payload_code ? [claim.payload_code] : []);
+        if (allowed.length === 0) {
+            return null; // nothing configured to ask for
+        }
+        return { label: 'REQUEST EMPTY', cls: 'request', enabled: true,
+            action: '/api/process-nodes/' + entry.node.id + '/request-empty|' + allowed[0] };
+    }
+    // RELEASE EMPTY and RELEASE PARTIAL removed from operator HMI;
+    // backend endpoints stay for changeover/supervisor use.
+    return { label: 'REQUEST MATERIAL', cls: 'request', enabled: true,
+        action: '/api/process-nodes/' + entry.node.id + '/request' };
+}
+
 // swapPair narrows a node's active orders to the two legs that are actually a
 // coordinated pair, following the durable sibling pointer both legs carry
 // (LinkOrderSiblings, stamped at creation by every site that creates a pair).
@@ -794,6 +851,34 @@ function waitingLabel(blocker) {
         default:
             return base;
     }
+}
+
+// TO_MARKET is the label for a DEPARTED leg — one whose last cell step the
+// fleet has confirmed, so every position the cell needs is filled and the robot
+// is driving the old bin to the supermarket.
+//
+// It lives here beside ROBOT IN TRANSIT deliberately: those are the two things
+// a robot carrying this cell's bin can be doing, and they mean opposite things
+// for the button. ROBOT IN TRANSIT is a cell waiting on a delivery and the
+// operator can do nothing. TO MARKET is a cell that is already balanced, and
+// the operator can order the next swap right now.
+const TO_MARKET_LABEL = 'TO MARKET';
+
+// orderStatusChip renders one order for the modal's status line, returning
+// ESCAPED HTML (its caller no longer escapes, because a departed chip carries
+// a span).
+//
+// The status word stays for a live order and the cause is appended to it: an
+// operator reading "retrieve: queued" cannot tell a capacity gate from a
+// missing bin, and Core already generated the sentence that distinguishes them.
+// A departed leg has no cause worth showing and no status the operator can act
+// on — it is leaving — so it collapses to the one word for it, greyed.
+function orderStatusChip(o) {
+    if (o.departed) {
+        return '<span class="os-order-departed" style="color:#777">' +
+            esc(TO_MARKET_LABEL) + '</span>';
+    }
+    return esc(withQueueCause(o.order_type + ': ' + o.status, o));
 }
 
 function actionBtn(label, cls, enabled, action) {

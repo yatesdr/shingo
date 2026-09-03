@@ -7,7 +7,7 @@ import (
 	"shingoedge/store/processes"
 )
 
-// TestEverySwapLegDepartsProvably IS THE STANDARD.
+// TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement IS THE STANDARD.
 //
 // ── THE RULE IT ENFORCES ──────────────────────────────────────────────────
 //
@@ -15,13 +15,15 @@ import (
 // ready to order. A robot carrying a bin AWAY from the cell is not the cell's
 // business, whatever mode built the leg.
 //
-// DEPARTURE IS PROVABLE, derived from a leg's steps against the claim's cell set
-// and never from claim.SwapMode: every leg's last cell step is either a PICKUP
-// (the fleet confirms it via BinPickedUp) or the leg's own final step (terminal
-// covers it). Those are the only two proof events there are.
+// Two consequences, and BOTH are derived from a leg's steps against the claim's
+// cell set — never from claim.SwapMode:
 //
-// The CONFIRM half of the standard — which leg the operator signs for — is
-// added by the commit that derives it.
+//  1. DEPARTURE IS PROVABLE. Every leg's last cell step is either a PICKUP (the
+//     fleet confirms it via BinPickedUp) or the leg's own final step (terminal
+//     covers it). Those are the only two proof events there are.
+//  2. CONFIRM BELONGS TO THE LEG THAT PLACED ON THE PRESS. Exactly the legs that
+//     leave a bin on claim.CoreNodeName are confirm-required — and there is
+//     EXACTLY ONE of them per cycle, in every mode and both flip states.
 //
 // ── WHY A WALKER AND NOT A TABLE ──────────────────────────────────────────
 //
@@ -29,9 +31,9 @@ import (
 // ConfigurableSwapModes × both flip states × 2- and 3-position, so a swap mode
 // added to that list is a mode this test covers on the day it is added — which
 // is the only way "every mode must work" can be a property rather than a
-// promise. The rule this replaces was positional — correct for two_robot and
-// wrong for press-index — and nothing was watching.
-func TestEverySwapLegDepartsProvably(t *testing.T) {
+// promise. The positional confirm literals this replaces were correct for
+// two_robot and wrong for press-index, and nothing was watching.
+func TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement(t *testing.T) {
 	t.Parallel()
 
 	for _, mode := range protocol.ConfigurableSwapModes() {
@@ -62,9 +64,10 @@ func TestEverySwapLegDepartsProvably(t *testing.T) {
 					legs := []struct {
 						label string
 						steps []protocol.ComplexOrderStep
+						auto  bool
 					}{
-						{"leg A", disp.StepsA},
-						{"leg B", disp.StepsB},
+						{"leg A", disp.StepsA, disp.AutoConfirmA},
+						{"leg B", disp.StepsB, disp.AutoConfirmB},
 					}
 					if mode == protocol.SwapModeSequential {
 						// SEQUENTIAL'S OTHER HALF IS NOT IN THE DISPATCH. Its
@@ -73,26 +76,34 @@ func TestEverySwapLegDepartsProvably(t *testing.T) {
 						// through BuildSwapDispatch — so a walker that only read
 						// the dispatch would certify half a cycle. It runs at the
 						// cell like any other leg and is held to the same standard.
+						// createComplexOrder gives it autoConfirm=false.
 						legs = append(legs, struct {
 							label string
 							steps []protocol.ComplexOrderStep
-						}{"backfill leg (auto-created)", BuildSequentialBackfillSteps(claim)})
+							auto  bool
+						}{"backfill leg (auto-created)", BuildSequentialBackfillSteps(claim), false})
 					}
-					places := 0
+					receipts := 0
 					for _, leg := range legs {
 						if len(leg.steps) == 0 {
 							continue
 						}
 						assertDepartureIsProvable(t, leg.label, mode, leg.steps, cell)
+						assertConfirmFollowsPlacement(t, leg.label, leg.steps, claim.CoreNodeName, leg.auto)
 						if legPlacesBinAt(leg.steps, claim.CoreNodeName) {
-							places++
+							receipts++
 						}
 					}
-					if places == 0 {
-						t.Errorf("no leg of this cycle leaves a bin on %s. A swap that puts nothing on the "+
-							"machine is not a swap — either the builder is wrong or the claim's node names "+
-							"are not the ones its steps use.\nA: %v\nB: %v",
-							claim.CoreNodeName, disp.StepsA, disp.StepsB)
+					// EXACTLY ONE, not "at least one". Zero means the cycle puts
+					// nothing on the machine and nobody ever counts a bin in; two
+					// means the operator taps twice for one swap, which is what the
+					// whole-cell rule cost unflipped press-index (R1's index
+					// backfill alongside R2's press placement).
+					if receipts != 1 {
+						t.Errorf("this cycle asks for %d operator receipts; exactly one leg must leave a bin "+
+							"on %s. Zero means nothing lands on the machine; more than one means the operator "+
+							"signs twice for one swap.\nA: %v\nB: %v",
+							receipts, claim.CoreNodeName, disp.StepsA, disp.StepsB)
 					}
 				})
 			}
@@ -100,7 +111,7 @@ func TestEverySwapLegDepartsProvably(t *testing.T) {
 	}
 }
 
-// assertDepartureIsProvable. The message names the builder and
+// assertDepartureIsProvable is consequence 1. The message names the builder and
 // says what the two honest fixes are, because the person who trips this will be
 // writing a new step builder and will not have read this file.
 func assertDepartureIsProvable(t *testing.T, label string, mode protocol.SwapMode,
@@ -148,7 +159,28 @@ func assertDepartureIsProvable(t *testing.T, label string, mode protocol.SwapMod
 	}
 }
 
-// TestEveryChangeoverLegDepartsProvably extends the standard over the OTHER
+// assertConfirmFollowsPlacement is consequence 2, asked about the PROCESS NODE.
+// Not the whole cell: an index backfill leaves a bin on an on-deck position, and
+// nobody signs for a tote that has not reached the machine yet.
+func assertConfirmFollowsPlacement(t *testing.T, label string,
+	steps []protocol.ComplexOrderStep, processNode string, auto bool) {
+	t.Helper()
+
+	places := legPlacesBinAt(steps, processNode)
+	if places && auto {
+		t.Errorf("%s leaves a bin on %s but AUTO-CONFIRMS. CONFIRM is the count receipt for the bin "+
+			"that just went on the machine; auto-confirming it closes the order with nobody having "+
+			"looked at what is in it.\nsteps: %v", label, processNode, steps)
+	}
+	if !places && !auto {
+		t.Errorf("%s leaves no bin on %s but asks for an operator CONFIRM. Nobody at the press can see "+
+			"this tote come to rest — it is going to the supermarket or to an on-deck position — so the "+
+			"tap can only ever be a guess, and until it happens the cell reads as busy.\nsteps: %v",
+			label, processNode, steps)
+	}
+}
+
+// TestEveryChangeoverLegDepartsProvably extends consequence 1 over the OTHER
 // two builders that emit cell legs.
 //
 // The departure stamp fires in HandleBinPickedUp on any order with a process
@@ -157,6 +189,10 @@ func assertDepartureIsProvable(t *testing.T, label string, mode protocol.SwapMod
 // changeover participant guard, so an unprovable one would not wedge a cell;
 // but "a new builder inherits departure for free" is only true if the standard
 // covers every builder that emits a cell leg, and these two do.
+//
+// Confirm is NOT asserted here: the changeover builders still carry positional
+// AutoConfirmA/B literals (material_orders.go), which is a boarded item and not
+// this test's subject.
 func TestEveryChangeoverLegDepartsProvably(t *testing.T) {
 	t.Parallel()
 

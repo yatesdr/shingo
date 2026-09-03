@@ -52,10 +52,10 @@ func TestSimOperator_LegServesNode_ReadsStepsNotDeliveryNode(t *testing.T) {
 		t.Error("press-index R1 must be signed for — it serves the press by clearing it, and nothing else will confirm it")
 	}
 
-	// R2 auto-confirms itself on FINISHED, so the sim must not race it. runConfirm
-	// rejects it on order.AutoConfirm before legServesNode is reached; legServesNode
-	// still recognises it as serving the press, which is what makes that skip a
-	// deliberate one rather than an accident of geometry.
+	// R2 is the leg that PLACES the fresh carrier on the press, so since the
+	// derived confirm policy (2026-09-03) it is the leg the operator signs for
+	// — it no longer auto-confirms. legServesNode must recognise it, and for
+	// the plainest possible reason: the bin it left is sitting on the press.
 	r2 := mkSwapLeg(t, db, nodeID, "sim-r2", disp.StepsB, "")
 	if !op.legServesNode(r2, press) {
 		t.Error("press-index R2 places the bin ON the press — it plainly serves it")

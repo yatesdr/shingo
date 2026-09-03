@@ -35,7 +35,11 @@ type SwapDispatch struct {
 	// A-leg ends at the outbound destination. Storing the press there is what let
 	// wiring_delivered's gate bind the wrong bin (HK 2026-07-14).
 	DeliveryNodeA string
-	AutoConfirmA  bool
+
+	// AutoConfirmA / AutoConfirmB are DERIVED, never positional — see
+	// confirmPolicy. A leg auto-confirms iff it leaves no bin on the process
+	// node; the leg that placed one there is the leg the operator signs for.
+	AutoConfirmA bool
 
 	StepsB       []protocol.ComplexOrderStep
 	AutoConfirmB bool
@@ -138,24 +142,57 @@ func refillCarrierPayload(fromClaim, toClaim *processes.NodeClaim) string {
 	return toClaim.PayloadCode
 }
 
+// confirmPolicy answers "does this leg need a human receipt?" the only way that
+// survives a new swap mode: a leg auto-confirms IFF it leaves no bin ON THE
+// PROCESS NODE — the press itself, not the wider cell.
+//
+// CONFIRM means "a bin is on the machine and I signed for what is in it". The
+// leg that put it there is the one the operator signs; a leg that only backfills
+// an on-deck index position, or only takes a bin away, self-confirms. That is
+// exactly one receipt per cycle in every mode and both flip states — pinned by
+// TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement.
+//
+// AutoConfirmA/AutoConfirmB were positional literals, and position is not what
+// the operator signs for. The IndexRobotSupplies flip moves the supermarket trip
+// between R1 and R2 without moving the press pickup or the press dropoff, so
+// under the flip the leg carrying AutoConfirmA=false became the one ending at
+// the SUPERMARKET. Springfield press trial 2026-09-02: the order landed
+// `delivered` at the market and sat non-terminal until somebody at the press
+// tapped CONFIRM for a tote they could not see, and until they did the card
+// showed CONFIRM where REQUEST SWAP belonged.
+//
+// legPlacesBinAt (swap_leg_role.go) is the same predicate the supply/evac
+// classifier, the delivered gate and Core's two dispatch predicates use, so all
+// of them answer "which leg supplied the press" identically.
+func confirmPolicy(claim *processes.NodeClaim, steps []protocol.ComplexOrderStep) bool {
+	if len(steps) == 0 {
+		return false
+	}
+	return !legPlacesBinAt(steps, claim.CoreNodeName)
+}
+
 func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapDispatch, error) {
 	switch claim.SwapMode {
 	case protocol.SwapModeSequential:
+		stepsA := BuildSequentialRemovalSteps(claim)
 		return &SwapDispatch{
-			CycleMode:    protocol.SwapModeSequential,
-			ProcessNode:  claim.CoreNodeName,
-			StepsA:       BuildSequentialRemovalSteps(claim),
-			AutoConfirmA: true,
+			CycleMode:   protocol.SwapModeSequential,
+			ProcessNode: claim.CoreNodeName,
+			StepsA:      stepsA,
+			// Falls out of the derived rule: the removal leg places nothing.
+			AutoConfirmA: confirmPolicy(claim, stepsA),
 		}, nil
 
 	case protocol.SwapModeSingleRobot:
 		if claim.InboundStaging == "" || claim.OutboundStaging == "" {
 			return nil, fmt.Errorf("node %s: single-robot swap requires inbound and outbound staging nodes", node.Name)
 		}
+		stepsA := BuildSingleSwapSteps(claim)
 		return &SwapDispatch{
-			CycleMode:   protocol.SwapModeSingleRobot,
-			ProcessNode: claim.CoreNodeName,
-			StepsA:      BuildSingleSwapSteps(claim),
+			CycleMode:    protocol.SwapModeSingleRobot,
+			ProcessNode:  claim.CoreNodeName,
+			StepsA:       stepsA,
+			AutoConfirmA: confirmPolicy(claim, stepsA),
 		}, nil
 
 	case protocol.SwapModeTwoRobot:
@@ -190,7 +227,8 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 			ProcessNode:             claim.CoreNodeName,
 			StepsA:                  stepsA,
 			StepsB:                  stepsB,
-			AutoConfirmB:            true,
+			AutoConfirmA:            confirmPolicy(claim, stepsA),
+			AutoConfirmB:            confirmPolicy(claim, stepsB),
 			RequiresActiveSwapGuard: true,
 		}, nil
 
@@ -207,7 +245,8 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 			ProcessNode:             claim.CoreNodeName,
 			StepsA:                  stepsR1,
 			StepsB:                  stepsR2,
-			AutoConfirmB:            true,
+			AutoConfirmA:            confirmPolicy(claim, stepsR1),
+			AutoConfirmB:            confirmPolicy(claim, stepsR2),
 			RequiresActiveSwapGuard: true,
 		}, nil
 	}

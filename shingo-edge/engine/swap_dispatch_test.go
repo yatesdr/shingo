@@ -221,8 +221,14 @@ func TestBuildSwapDispatch_TwoRobotPressIndex_OK(t *testing.T) {
 	if got := finalDropoff(d.StepsB); got != "CORE-NODE" {
 		t.Errorf("R2 final dropoff = %q, want CORE-NODE (R2 indexes the staged bin onto the press)", got)
 	}
-	if !d.AutoConfirmB {
-		t.Errorf("press-index R2 is auto-confirmed; AutoConfirmB = false, want true")
+	// THIS ROW MOVED (2026-09-03, derived confirm policy). It used to read
+	// "R2 is auto-confirmed" — a positional literal. R2 is the leg that puts
+	// the fresh carrier ON the press, so under the derived rule it is the leg
+	// the operator signs for: CONFIRM belongs to the leg that made the cell
+	// balanced, not to the other one. Same one tap per cycle, on the leg it
+	// belongs to. See confirmPolicy.
+	if d.AutoConfirmB {
+		t.Errorf("press-index R2 PLACES the fresh carrier on the press, so it needs the operator's receipt; AutoConfirmB = true, want false")
 	}
 	if !d.RequiresActiveSwapGuard {
 		t.Errorf("press-index must require swap guard")
@@ -255,8 +261,10 @@ func TestBuildSwapDispatch_TwoRobotPressIndex_ThreePosition(t *testing.T) {
 	if legPlacesBinAt(d.StepsA, "CORE-NODE") {
 		t.Errorf("3-position R1 lifts the spent bin OFF the press and never replaces it — it must not read as the supply leg")
 	}
-	if !d.AutoConfirmB {
-		t.Errorf("press-index R2 is auto-confirmed; AutoConfirmB = false, want true")
+	// Moved with the 2-position row above, and for the same reason — the
+	// 3-position R2 still places a bin on the press, mid-sequence.
+	if d.AutoConfirmB {
+		t.Errorf("3-position press-index R2 still PLACES a bin on the press; AutoConfirmB = true, want false")
 	}
 }
 
