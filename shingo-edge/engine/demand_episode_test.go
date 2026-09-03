@@ -686,3 +686,48 @@ func TestBackfillCellOrigin_JoinsTheProduceCellsEpisode(t *testing.T) {
 			"leg name", open.Direction, protocol.ClaimRoleProduce)
 	}
 }
+
+// THE SIBLING OF THE TEST ABOVE, AND THE ONE THAT WAS MISSING.
+//
+// TestEvaluateCellLevel_FallingEdgeStampsOnce passes the same in-memory claim
+// pointer through every call, so claim.BelowReorderSince is always the value
+// the function itself just assigned. That is the ordinary tick shape written
+// down wrongly: production re-derives the claim from the database on every
+// tick (findActiveClaim), so what the evaluator actually reads is whatever
+// survived a write and a read.
+//
+// It did not survive. below_reorder_since is written as RFC3339Nano and was
+// read back through helpers.ScanTime, which parsed only the canonical SQLite
+// layout — so every claim loaded from the database reported nil no matter what
+// the column held. The falling edge re-stamped on every tick, the rising edge
+// never cleared anything, and CellLevelStillBreached answered "still breached"
+// forever, which meant no cell episode could close by either route.
+//
+// A test that never reloads the row cannot see any of that.
+func TestEvaluateCellLevel_EdgeSurvivesAReload(t *testing.T) {
+	eng, db, _, _, claim := episodeFixture(t, "RELOAD-PROC", "ALN_007", 50)
+
+	if below, _ := eng.evaluateCellLevel(claim, 40); !below {
+		t.Fatal("crossing below the level should report below")
+	}
+
+	// Reload exactly the way a tick does.
+	reloaded, err := db.GetStyleNodeClaimByNode(claim.StyleID, claim.CoreNodeName)
+	if err != nil || reloaded == nil {
+		t.Fatalf("reload claim: %v", err)
+	}
+	if reloaded.BelowReorderSince == nil {
+		t.Fatal("the falling edge is set in the column but reads as nil off a reloaded claim — " +
+			"the evaluator can only act on what it can see, so nothing will ever clear it")
+	}
+
+	// The rising edge, taken on the reloaded claim. This is the call that could
+	// never fire before: it clears only a flag it can read.
+	below, shouldClose := eng.evaluateCellLevel(reloaded, 40+eng.cfg.HysteresisMargin(50)+50)
+	if below || !shouldClose {
+		t.Fatalf("rising edge on a reloaded claim: below=%v shouldClose=%v, want false/true", below, shouldClose)
+	}
+	if stamped, err := db.GetClaimBelowReorderSince(claim.ID); err != nil || stamped != nil {
+		t.Errorf("below_reorder_since = %v (err %v), want cleared", stamped, err)
+	}
+}

@@ -36,21 +36,43 @@ type RowScanner interface {
 // on parse error (matches the previous edge-store behaviour: scan
 // helpers never fail on bad timestamp strings, they produce a zero
 // time that the caller is expected to handle).
+//
+// IT ACCEPTS RFC3339 TOO, and that is a fix rather than generosity.
+// TimeLayout is what most of this schema stores, but several columns are
+// deliberately written as RFC3339Nano — demand_origins_open.opened_at,
+// supply_refusals, style_node_claims.below_reorder_since — and each of
+// those grew its own local time.Parse beside its own writer. The moment
+// one such column is read through a GENERIC scan helper instead, the
+// mismatch is silent: ParseInLocation fails, the zero time is returned,
+// and the caller sees a column that is set in the database as unset in
+// Go. That is exactly what happened to below_reorder_since, whose reader
+// is scanNodeClaim: the falling edge was stamped on every tick and never
+// once cleared, because the rising-edge branch only clears a flag it can
+// see. Widening the parse costs one failed attempt on the uncommon
+// layout and removes the whole failure mode.
 func ScanTime(s string) time.Time {
-	t, _ := time.ParseInLocation(TimeLayout, s, time.UTC)
-	return t
+	if t, err := time.ParseInLocation(TimeLayout, s, time.UTC); err == nil {
+		return t
+	}
+	t, _ := time.Parse(time.RFC3339Nano, s)
+	return t.UTC()
 }
 
 // ScanTimePtr parses an optional timestamp from a sql.NullString.
-// Returns nil for a NULL or un-parseable timestamp.
+// Returns nil for a NULL or un-parseable timestamp. Accepts both layouts,
+// for the reason on ScanTime.
 func ScanTimePtr(ns sql.NullString) *time.Time {
 	if !ns.Valid {
 		return nil
 	}
-	t, err := time.ParseInLocation(TimeLayout, ns.String, time.UTC)
+	if t, err := time.ParseInLocation(TimeLayout, ns.String, time.UTC); err == nil {
+		return &t
+	}
+	t, err := time.Parse(time.RFC3339Nano, ns.String)
 	if err != nil {
 		return nil
 	}
+	t = t.UTC()
 	return &t
 }
 
