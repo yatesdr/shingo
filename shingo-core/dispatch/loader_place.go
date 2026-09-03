@@ -58,6 +58,17 @@ import (
 //
 // The buffer read is always full CheckDropoffCapacity — a buffer legitimately holds
 // a parked partial, so its physical occupancy is real and must block.
+//
+// AND BEFORE ANY OF THAT, THE PAYLOAD QUESTION. Everything above answers "is there
+// room?"; a pinned home also asks "room for WHAT?". Both patterns check the carrier
+// against bin_loader_homes.payload_code first (homeAcceptsCarrier), because a home
+// can be genuinely, physically empty and still be the wrong place for the bin in
+// hand — which is exactly how a 74871 carrier reached SMN_029, pinned 63145, on
+// 2026-09-03 and held it for 11h24m. A mismatch routes to the carrier's OWN home,
+// else a buffer (placeMismatchedCarrier). This is a BACKSTOP, not the cause: the
+// destination is authored on the Edge from the style being requested rather than
+// the carrier being lifted, and that is fixed there. Core is simply the only place
+// that holds both facts at once, so it is the only place the question can be asked.
 func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolvedStep) {
 	// Pattern A: SourceNode is a home position (produce-side return).
 	// Pattern B: DeliveryNode is a home position (consume-side removal leg).
@@ -101,6 +112,30 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 			return
 		}
 		homeName := destNode.Name
+		// PAYLOAD BEFORE CAPACITY, because both arms below only ever answer "is
+		// there room?" and room is not the question a pinned home asks.
+		//
+		// Springfield, 2026-09-03 01:40:40: a 74871-6SA0A.06 carrier parked on
+		// SMN_029, which is pinned 63145-6TA1B.10. Every check passed and each
+		// was right on its own terms — the home read CLEAR because the carrier
+		// standing on it was this swap's own supply bin, already being lifted by
+		// the sibling leg, so in-flight was 0 and nothing was physically there.
+		// The home was empty. It just was not empty FOR THIS BIN.
+		//
+		// It sat there 11h24m. Every replenishment pass logged
+		// `held=map[SMN_029:dropoff-occupied] created=0` and nothing else, while
+		// lineside 63145 drained 286 → 152 with no refill creatable.
+		//
+		// The upstream cause is elsewhere (the Edge picked the destination from
+		// the style being REQUESTED rather than the carrier being lifted, after a
+		// changeover completed with this node abandoned) and is fixed on its own
+		// terms. This is the backstop: it is the only place that holds both facts
+		// — what the carrier is, and what the home is for — so it is the only
+		// place that can answer the question at all.
+		if carrier, known := d.carrierPayloadFor(order, steps); !homeAcceptsCarrier(home.PayloadCode, carrier, known) {
+			d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier)
+			return
+		}
 		// A RETURN leg landing on a home whose only occupant this swap is
 		// already lifting takes the in-flight check alone: the bin standing
 		// there is the one leaving, so reading it as a blocker surrenders the
@@ -163,6 +198,15 @@ func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolve
 		return false
 	}
 	homeName := srcNode.Name
+	// Same gate as Pattern B, and inert in the ordinary case: this leg lifts AT
+	// the home, so the carrier it reads is the home's own and matches the pin by
+	// construction. It earns its place in the case where it does NOT — a home
+	// already holding a carrier that does not belong to it. Putting that one back
+	// where it was found is not a repair, and this is the only pass that notices.
+	if carrier, known := d.carrierPayloadFor(order, steps); !homeAcceptsCarrier(home.PayloadCode, carrier, known) {
+		d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier)
+		return true
+	}
 	if !orderDeliversTo(steps, homeName) {
 		inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
 		if ierr == nil && inFlight == 0 {
@@ -172,6 +216,147 @@ func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolve
 	}
 	d.placeForLoader(order, home.LoaderID, homeName)
 	return true
+}
+
+// carrierPayloadFor reports the payload of the carrier THIS LEG IS MOVING, and
+// whether it could be read at all. The two returns are not interchangeable:
+// "" with known=true is an empty carrier, which is a real and common answer;
+// "" with known=false means the question could not be answered and the caller
+// must not act on it.
+//
+// TWO SOURCES, IN THIS ORDER, AND THE SECOND IS THE ONE THAT MATTERS.
+// order.BinID is the direct answer but it is usually nil here:
+// prepareComplexSteps (complex_dispatch.go:133) runs BEFORE
+// acquireComplexSources (:146), so at placement time the bin is resolved but
+// not yet claimed. That is not a defect to route around — placement is a
+// resolution-time read on purpose, so the swap supply leg is never gated — it
+// just means the bin pointer cannot be the only source.
+//
+// So the fallback is the physical one: read what is standing on the node this
+// leg opens its pickup at. That is the same question homeClearForReturn already
+// asks of the destination, through the same call.
+//
+// EXACTLY ONE OCCUPANT, or unknown. Zero means the leg's carrier is not there
+// (in transit, or a plan this function does not understand) and more than one
+// means the node is in a state where "the carrier" does not name anything. Both
+// are honest "cannot say" answers, and homeAcceptsCarrier treats them as such.
+func (d *Dispatcher) carrierPayloadFor(order *orders.Order, steps []resolvedStep) (string, bool) {
+	if order.BinID != nil {
+		b, err := d.db.GetBin(*order.BinID)
+		if err != nil || b == nil {
+			return "", false
+		}
+		return b.PayloadCode, true
+	}
+	pickup := firstPickupNode(steps)
+	if pickup == "" {
+		return "", false
+	}
+	node, err := d.db.GetNodeByDotName(pickup)
+	if err != nil || node == nil {
+		return "", false
+	}
+	occupants, err := d.db.ListBinsByNode(node.ID)
+	if err != nil || len(occupants) != 1 {
+		return "", false
+	}
+	return occupants[0].PayloadCode, true
+}
+
+// firstPickupNode returns the node of this plan's opening pickup — the one that
+// lifts the carrier the leg carries. Blank when no pickup names a node.
+func firstPickupNode(steps []resolvedStep) string {
+	for _, s := range steps {
+		if s.Action == protocol.ActionPickup && s.Node != "" {
+			return s.Node
+		}
+	}
+	return ""
+}
+
+// homeAcceptsCarrier reports whether a home may take this carrier.
+//
+// FAILS OPEN, DELIBERATELY, on all three of its "I do not know" inputs, because
+// every one of them is also the shape of an ordinary correct park:
+//
+//   - homePin == "": a buffer, or an unassigned position. Takes anything, and
+//     always has.
+//   - !known: the carrier could not be read. Refusing here would divert legs on
+//     an unread fact, which trades a rare wrong park for a common wrong one.
+//   - carrierPayload == "": a SPENT carrier, whose payload is cleared on
+//     release. This is the single most common return in the plant and its home
+//     is exactly where it belongs. Diverting these would send every swap return
+//     to buffer and exhaust the pool within a shift — see placeForLoader's WARN,
+//     which already fires at Springfield without any help from this function.
+//
+// The one case it refuses is the one it was written for: a carrier that is known
+// to hold something, and that something is not what this home is for.
+func homeAcceptsCarrier(homePin, carrierPayload string, known bool) bool {
+	if homePin == "" || !known || carrierPayload == "" {
+		return true
+	}
+	return carrierPayload == homePin
+}
+
+// homeForPayload returns the name of the home in this loader pinned to payload
+// and able to take a bin right now, or "" when there is none.
+//
+// Buffers are skipped: they carry no pin, so every one of them would match a
+// blank comparison and the first buffer in sort order would masquerade as "the
+// carrier's own home" in the log line. A buffer is the FALLBACK, and
+// placeMismatchedCarrier says so in different words.
+func (d *Dispatcher) homeForPayload(loaderID int64, payload string, orderID int64) string {
+	if payload == "" {
+		return ""
+	}
+	members, err := d.db.ListLoaderHomes(loaderID)
+	if err != nil {
+		return ""
+	}
+	for _, m := range members {
+		if m.Kind == loaders.HomeKindBuffer || m.PayloadCode != payload {
+			continue
+		}
+		node, nerr := d.db.GetNode(m.PositionNodeID)
+		if nerr != nil || node == nil {
+			continue
+		}
+		if blocked, _ := CheckDropoffCapacity(d.db, node.Name, orderID); blocked {
+			continue
+		}
+		return node.Name
+	}
+	return ""
+}
+
+// placeMismatchedCarrier routes a carrier that does not belong on the home it
+// was pointed at: to its OWN home when that home is free, else to a buffer.
+//
+// ITS OWN HOME FIRST, not straight to buffer. Buffer is where a carrier goes
+// when nothing better is available, and it leaves a bin somebody has to move
+// again later; the Springfield carrier's own home (SMN_031) was occupied that
+// night, but on the FIRST attempt of the same swap — the one that was cancelled
+// — the Edge had authored exactly that destination and Core's buffer fallback
+// handled it correctly. Sending a mismatched carrier home is therefore not a new
+// behaviour, it is the behaviour the cancelled leg would have had.
+//
+// LOUD IN BOTH ARMS. A mismatch means two parts of the system disagreed about
+// what is on a cell, and that is worth a line whether or not the recovery was
+// clean — the recovery hides the disagreement, which is how this one survived a
+// full shift.
+func (d *Dispatcher) placeMismatchedCarrier(order *orders.Order, loaderID int64, homeName, carrierPayload string) {
+	if own := d.homeForPayload(loaderID, carrierPayload, order.ID); own != "" {
+		log.Printf("WARN: order %d carries %s, which does not belong on home %s — routing to %s, "+
+			"the carrier's own home. Something upstream picked this destination from the style being "+
+			"requested rather than the carrier being lifted; the park is corrected but the disagreement is not.",
+			order.ID, carrierPayload, homeName, own)
+		d.setParkDestination(order, own, "home")
+		return
+	}
+	log.Printf("WARN: order %d carries %s, which does not belong on home %s, and its own home is "+
+		"occupied or unconfigured — falling back to a buffer.",
+		order.ID, carrierPayload, homeName)
+	d.placeForLoader(order, loaderID, homeName)
 }
 
 // placeForLoader routes to a free buffer slot for the given loader, or drains.

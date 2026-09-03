@@ -11,6 +11,7 @@ import (
 	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -737,5 +738,130 @@ func TestSpringfieldIncident_ReturnHoldsHome_ReplenishYields(t *testing.T) {
 			home.Name, res.HeldBy)
 	} else {
 		t.Logf("replenish correctly yielded %s: %s", home.Name, cause)
+	}
+}
+
+// mismatchFixture adds a SECOND pinned home (PART-Y) to the park fixture's
+// loader and a line node, so a return can carry a carrier that belongs
+// somewhere other than where it was pointed. Springfield's shape: SMN_029 is
+// PART-X's home, SMN_031 is PART-Y's, and both hang off loader 7.
+func mismatchFixture(t *testing.T, db *store.DB, loaderID int64, lineName string) (ownHome, line *nodes.Node) {
+	t.Helper()
+	if err := db.CreatePayload(&payloads.Payload{Code: "PART-Y", Description: "Y", UOPCapacity: 10}); err != nil {
+		t.Fatalf("create payload PART-Y: %v", err)
+	}
+	ownHome = &nodes.Node{Name: "LX-P2", Enabled: true}
+	if err := db.CreateNode(ownHome); err != nil {
+		t.Fatalf("create PART-Y home: %v", err)
+	}
+	if err := db.UpsertLoaderHome(store.LoaderHome{
+		LoaderID: loaderID, PositionNodeID: ownHome.ID, PayloadCode: "PART-Y", Kind: loaders.HomeKindHome,
+	}); err != nil {
+		t.Fatalf("upsert PART-Y home: %v", err)
+	}
+	line = &nodes.Node{Name: lineName, Enabled: true}
+	if err := db.CreateNode(line); err != nil {
+		t.Fatalf("create line node: %v", err)
+	}
+	return ownHome, line
+}
+
+// THE SPRINGFIELD 2026-09-03 REGRESSION.
+//
+// A changeover completed with this cell's node ABANDONED (the operator cancelled
+// its swap), so the style cut over to PART-X while the PART-Y carrier was still
+// standing on the line. The next routine request authored its evac at PART-X's
+// home, because the destination is read off the claim for the style being
+// REQUESTED and nothing re-reads the carrier.
+//
+// Every capacity check then passed honestly: the home's own carrier was already
+// being lifted by this swap's supply sibling, so homeClearForReturn said CLEAR
+// and in-flight was 0. The home was empty. It was not empty FOR THIS BIN, and a
+// PART-Y carrier parked on PART-X's home for 11h24m.
+func TestPlaceForDedicatedLoader_WrongPayloadCarrier_RoutesToOwnHome(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, _, loaderID := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	ownHome, line := mismatchFixture(t, db, loaderID, "LX-LINE-MM")
+
+	// The carrier standing on the line is the OUTGOING style's.
+	makeLoaderBin(t, db, "PART-Y", line.ID, "outgoing-style-carrier", 72, time.Now().UTC())
+	// And the home holds its own carrier, which the sibling is about to lift —
+	// the exact condition that made the home read clear at Springfield.
+	makeLoaderBin(t, db, "PART-X", home.ID, "sibling-lifts-this", 100, time.Now().UTC())
+
+	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
+	d.placeForDedicatedLoader(ret, retSteps)
+
+	if ret.DeliveryNode == home.Name {
+		t.Fatalf("DeliveryNode = %q — a PART-Y carrier parked on PART-X's pinned home. The home read "+
+			"CLEAR because its own bin was being lifted by the sibling, and nothing asked whether the "+
+			"ARRIVING carrier belonged there. This is SPR 2026-09-03 exactly.", ret.DeliveryNode)
+	}
+	if ret.DeliveryNode != ownHome.Name {
+		t.Fatalf("DeliveryNode = %q, want PART-Y's OWN home %q — buffer (%q) is the fallback for when "+
+			"the carrier's home is unavailable, not the answer when it is free",
+			ret.DeliveryNode, ownHome.Name, buffer.Name)
+	}
+}
+
+// The fallback arm: the carrier does not belong on the home it was pointed at
+// AND its own home is occupied. Springfield's actual state that night — SMN_031
+// held a full 74871 carrier — so the mis-pointed one had nowhere of its own to
+// go and a buffer is the correct answer.
+func TestPlaceForDedicatedLoader_WrongPayloadCarrier_OwnHomeOccupied_RoutesBuffer(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, _, loaderID := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	ownHome, line := mismatchFixture(t, db, loaderID, "LX-LINE-MM2")
+
+	makeLoaderBin(t, db, "PART-Y", line.ID, "outgoing-style-carrier", 72, time.Now().UTC())
+	makeLoaderBin(t, db, "PART-X", home.ID, "sibling-lifts-this", 100, time.Now().UTC())
+	// PART-Y's own home is already taken.
+	makeLoaderBin(t, db, "PART-Y", ownHome.ID, "own-home-occupied", 500, time.Now().UTC())
+
+	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
+	d.placeForDedicatedLoader(ret, retSteps)
+
+	if ret.DeliveryNode != buffer.Name {
+		t.Fatalf("DeliveryNode = %q, want BUFFER %q — the carrier does not belong on %q and its own "+
+			"home %q is occupied, so a buffer is the only correct landing",
+			ret.DeliveryNode, buffer.Name, home.Name, ownHome.Name)
+	}
+}
+
+// THE FAIL-OPEN CASE THAT PROTECTS THE COMMON PATH.
+//
+// A spent carrier's payload is CLEARED on release, so the overwhelmingly normal
+// return carries payload "". Diverting those would send every swap return in the
+// plant to buffer and exhaust the pool within a shift — a worse outage than the
+// one the gate exists to prevent. A blank carrier still holds its home.
+func TestPlaceForDedicatedLoader_SpentCarrier_BlankPayload_HoldsHome(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, buffer, _, loaderID := parkFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	_, line := mismatchFixture(t, db, loaderID, "LX-LINE-SPENT")
+
+	// A carrier with no manifest at all: what a released, spent bin looks like.
+	bt, err := db.GetBinTypeByCode("DEFAULT")
+	if err != nil {
+		t.Fatalf("get DEFAULT bin type: %v", err)
+	}
+	spent := &bins.Bin{BinTypeID: bt.ID, Label: "spent-carrier", NodeID: &line.ID, Status: "available"}
+	if err := db.CreateBin(spent); err != nil {
+		t.Fatalf("create spent carrier: %v", err)
+	}
+	makeLoaderBin(t, db, "PART-X", home.ID, "sibling-lifts-this", 100, time.Now().UTC())
+
+	ret, retSteps := parkSwapPair(t, db, home.Name, line.Name, true)
+	d.placeForDedicatedLoader(ret, retSteps)
+
+	if ret.DeliveryNode != home.Name {
+		t.Fatalf("DeliveryNode = %q, want HOME %q — a spent carrier has a cleared payload and belongs "+
+			"on its home. Treating blank as a mismatch diverts every ordinary return to buffer (%q).",
+			ret.DeliveryNode, home.Name, buffer.Name)
 	}
 }
