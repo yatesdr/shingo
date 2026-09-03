@@ -142,7 +142,8 @@ func TestLifecycle_CancelOrder_PersistsCancelled(t *testing.T) {
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "cancel-1", StatusInTransit)
 
-	lc.CancelOrder(ord, "edge.test", "operator cancel")
+	lc.CancelOrder(ord, "edge.test", "operator cancel",
+		CancelCause{Code: protocol.TermOperatorCancelled, Actor: "stephen"})
 
 	persisted, _ := db.GetOrder(ord.ID)
 	if persisted.Status != StatusCancelled {
@@ -156,13 +157,65 @@ func TestLifecycle_CancelOrder_PersistsCancelled(t *testing.T) {
 	}
 }
 
+// THE HISTORY ROW MUST NAME THE PERSON WHEN A PERSON DID IT.
+//
+// Every cancel in this system wrote Actor: "system:"+stationID, including the
+// ones an operator pressed a button for — the operations page had the name, put
+// it in the prose, and then dropped it one frame down. So "who killed this
+// order" had exactly one answer at every site, and it was wrong at the site
+// that matters most in a post-mortem.
+//
+// The counterpart assertion is on the OTHER side of it: a cause with no actor
+// still records the station, because a machine teardown genuinely is the
+// station. The pair is the whole point — a field that says "person" for
+// everything is no better than one that says "system" for everything.
+func TestLifecycle_CancelOrder_RecordsWhoAndWhy(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	lc, _ := newLifecycleForTest(t, db)
+
+	byHand := makeOrderAt(t, db, "cancel-attr-human", StatusInTransit)
+	lc.CancelOrder(byHand, "edge.test", "cancelled by stephen",
+		CancelCause{Code: protocol.TermOperatorCancelled, Actor: "stephen"})
+
+	h, err := db.LatestOrderHistoryForStatus(byHand.ID, StatusCancelled)
+	testutil.MustNoErr(t, err, "history for the operator cancel")
+	if h == nil {
+		t.Fatal("no cancelled history row")
+	}
+	if h.Actor != "stephen" {
+		t.Errorf("actor = %q, want %q — a person cancelled this and the row has to say so",
+			h.Actor, "stephen")
+	}
+	if h.Code != string(protocol.TermOperatorCancelled) {
+		t.Errorf("code = %q, want %q — without it the only machine-readable signal is prose",
+			h.Code, protocol.TermOperatorCancelled)
+	}
+
+	byMachine := makeOrderAt(t, db, "cancel-attr-machine", StatusInTransit)
+	lc.CancelOrder(byMachine, "edge.test", "peer leg died", CancelCause{Code: protocol.TermPeerTerminal})
+
+	h, err = db.LatestOrderHistoryForStatus(byMachine.ID, StatusCancelled)
+	testutil.MustNoErr(t, err, "history for the machine cancel")
+	if h == nil {
+		t.Fatal("no cancelled history row")
+	}
+	if h.Actor != "system:edge.test" {
+		t.Errorf("actor = %q, want %q — no person did this and it must not claim one",
+			h.Actor, "system:edge.test")
+	}
+	if h.Code != string(protocol.TermPeerTerminal) {
+		t.Errorf("code = %q, want %q", h.Code, protocol.TermPeerTerminal)
+	}
+}
+
 func TestLifecycle_CancelOrder_IdempotentOnTerminal(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "cancel-term-1", StatusConfirmed)
 
-	lc.CancelOrder(ord, "edge.test", "redundant cancel")
+	lc.CancelOrder(ord, "edge.test", "redundant cancel", CancelCause{})
 
 	persisted, _ := db.GetOrder(ord.ID)
 	if persisted.Status != StatusConfirmed {
@@ -202,7 +255,7 @@ func TestLifecycle_StaleCallerCannotResurrectTerminal(t *testing.T) {
 	// Another actor terminalizes the order (recovery op / operator cancel).
 	fresh, err := db.GetOrder(ord.ID)
 	testutil.MustNoErr(t, err, "reload for cancel")
-	lc.CancelOrder(fresh, "edge.test", "cancelled by recovery-op")
+	lc.CancelOrder(fresh, "edge.test", "cancelled by recovery-op", CancelCause{})
 
 	persisted, err := db.GetOrder(ord.ID)
 	testutil.MustNoErr(t, err, "reload after cancel")
@@ -478,7 +531,8 @@ func TestLifecycle_EmitCancelled_PreviousStatusPopulated(t *testing.T) {
 	for _, from := range []protocol.Status{StatusInTransit, StatusStaged, StatusDispatched} {
 		emitter.cancelled = nil
 		ord := makeOrderAt(t, db, "prev-"+string(from), from)
-		lc.CancelOrder(ord, "edge.test", "operator cancel")
+		lc.CancelOrder(ord, "edge.test", "operator cancel",
+			CancelCause{Code: protocol.TermOperatorCancelled, Actor: "stephen"})
 		if len(emitter.cancelled) != 1 {
 			t.Errorf("from=%s: expected 1 emit, got %d", from, len(emitter.cancelled))
 			continue

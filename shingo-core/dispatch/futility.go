@@ -60,6 +60,16 @@
 // SHIPS OBSERVE-ONLY. One log line and one audit_log row. No chip, no alert,
 // no brake. A brake on an unmeasured threshold stops real work; the record
 // comes first and the threshold gets set from it.
+//
+// AND IT RECORDS EVERYWHERE. It used to carry an `enabled` flag, default off,
+// for a plant to opt into — which meant that in the whole time it has been in
+// the tree it recorded nothing at any site, because opting in requires somebody
+// to remember a detector exists. A switch on a thing that only observes has no
+// safety to buy: the cost of running is one map lookup per terminal transition,
+// bounded by (rate × window), and the benefit is the only measurement anybody
+// has of how often a cell asks futilely under normal operation. That number is
+// the precondition for every threshold argument this file makes, including the
+// one it makes against itself.
 
 package dispatch
 
@@ -94,7 +104,6 @@ func (k FutilityKey) incomplete() bool {
 
 // FutilityConfig comes from YAML. Defaults live in config.Defaults().
 type FutilityConfig struct {
-	Enabled       bool
 	Threshold     int
 	Window        time.Duration
 	AlertThrottle time.Duration
@@ -130,10 +139,13 @@ type FutilityDetector struct {
 	lastAlert map[FutilityKey]time.Time
 }
 
-// NewFutilityDetector returns a detector, or nil when disabled — every method
-// is nil-safe, so callers do not branch.
+// NewFutilityDetector returns a detector, or nil when the config cannot
+// describe one — every method is nil-safe, so callers do not branch.
+//
+// A nil here is a MALFORMED config (a threshold or window of zero says nothing
+// countable), not an off switch: there is no off switch. See the header.
 func NewFutilityDetector(cfg FutilityConfig, logFn func(string, ...any), audit AuditAppender) *FutilityDetector {
-	if !cfg.Enabled || cfg.Threshold <= 0 || cfg.Window <= 0 {
+	if cfg.Threshold <= 0 || cfg.Window <= 0 {
 		return nil
 	}
 	return &FutilityDetector{

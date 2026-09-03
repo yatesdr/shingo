@@ -1847,7 +1847,13 @@ func (d *Dispatcher) dissolveCompound(parentOrderID int64, why string) error {
 		if protocol.IsTerminal(child.Status) {
 			continue
 		}
-		d.lifecycle.CancelOrder(child, parent.StationID, reshuffleDissolveDetail)
+		// UNCODED DELIBERATELY. The honest code for a dissolve is
+		// TermReshuffleError, which ClassifyTermCode buckets as FAILED — and
+		// these rows read as cancelled today, because the demand survives and
+		// re-plans. Stamping it would move a dashboard number as a side effect
+		// of an attribution change. That is its own decision, with its own
+		// before/after count. Same at every teardown below.
+		d.lifecycle.CancelOrder(child, parent.StationID, reshuffleDissolveDetail, CancelCause{})
 	}
 
 	// Before the parent can re-plan, and unconditionally: see above. The parent
@@ -1937,7 +1943,7 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 		if protocol.IsTerminal(child.Status) {
 			continue
 		}
-		d.lifecycle.CancelOrder(child, parent.StationID, reshuffleLegFailedDetail)
+		d.lifecycle.CancelOrder(child, parent.StationID, reshuffleLegFailedDetail, CancelCause{})
 		cancelled++
 	}
 
@@ -1989,10 +1995,10 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 // Steps 1 and 2 are in tension — the snapshot must precede the very write that
 // makes step 2 atomic — and reading the lanes inside the cascade got that
 // tension backwards.
-func (d *Dispatcher) CancelOrderWithCascade(order *orders.Order, stationID, reason string) {
+func (d *Dispatcher) CancelOrderWithCascade(order *orders.Order, stationID, reason string, cause CancelCause) {
 	heldLanes := d.digLanesHeld(order.ID)
-	d.lifecycle.CancelOrder(order, stationID, reason)
-	d.cancelCompoundChildren(order, stationID, reason, heldLanes)
+	d.lifecycle.CancelOrder(order, stationID, reason, cause)
+	d.cancelCompoundChildren(order, stationID, reason, cause, heldLanes)
 }
 
 // cancelCompoundChildren cancels all non-terminal children of a compound order.
@@ -2014,7 +2020,12 @@ func (d *Dispatcher) CancelOrderWithCascade(order *orders.Order, stationID, reas
 // its lane — so reading the rows here returns nothing on exactly the paths that
 // matter") and the fix it describes is passing the snapshot in. This is the
 // caller that had not been converted.
-func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, reason string, heldLanes []int64) {
+//
+// THE CAUSE IS THE PARENT'S, unchanged. These legs end because somebody ended
+// the parent, so the person who did that is the person who ended these — that
+// is precisely the question a post-mortem asks of an orphaned leg. The prose
+// still says which is which ("parent order cancelled: ...").
+func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, reason string, cause CancelCause, heldLanes []int64) {
 	children, err := d.db.ListChildOrders(parent.ID)
 	if err != nil {
 		log.Printf("dispatch: cancel compound children for order %d: %v", parent.ID, err)
@@ -2026,7 +2037,7 @@ func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, rea
 		if protocol.IsTerminal(child.Status) {
 			continue
 		}
-		d.lifecycle.CancelOrder(child, stationID, cancelReason)
+		d.lifecycle.CancelOrder(child, stationID, cancelReason, cause)
 	}
 
 	d.unlockLaneForCompound(parent.ID, heldLanes)
@@ -2216,7 +2227,7 @@ func (d *Dispatcher) chapterStoppedShort(
 			if protocol.IsTerminal(c.Status) {
 				continue
 			}
-			d.lifecycle.CancelOrder(c, parent.StationID, reshuffleLegFailedDetail)
+			d.lifecycle.CancelOrder(c, parent.StationID, reshuffleLegFailedDetail, CancelCause{})
 		}
 	}
 

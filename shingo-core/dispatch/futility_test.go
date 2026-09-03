@@ -65,18 +65,29 @@ func testDetector(t *testing.T, cfg FutilityConfig) (*FutilityDetector, *fakeAud
 }
 
 func defaultCfg() FutilityConfig {
-	return FutilityConfig{Enabled: true, Threshold: 20, Window: time.Hour, AlertThrottle: 15 * time.Minute}
+	return FutilityConfig{Threshold: 20, Window: time.Hour, AlertThrottle: 15 * time.Minute}
 }
 
 var testKey = FutilityKey{StationID: "plant-a.line-1", ProcessNode: "ALN_003", PayloadCode: "74577-6SA0A.06"}
 
-func TestFutility_DisabledReturnsNil(t *testing.T) {
+// A config that describes no window to count over yields no detector. This is
+// the ONLY nil the constructor produces — the `enabled` flag it used to have is
+// gone, so a well-formed config always gets a recording detector.
+func TestFutility_MalformedConfigReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	cfg := defaultCfg()
-	cfg.Enabled = false
+	cfg.Threshold = 0
 	if d := NewFutilityDetector(cfg, nil, nil); d != nil {
-		t.Fatal("disabled config must return nil so callers pay nothing")
+		t.Fatal("a zero threshold counts nothing; must return nil so callers pay nothing")
+	}
+	cfg = defaultCfg()
+	cfg.Window = 0
+	if d := NewFutilityDetector(cfg, nil, nil); d != nil {
+		t.Fatal("a zero window measures no rate; must return nil")
+	}
+	if d := NewFutilityDetector(defaultCfg(), func(string, ...any) {}, &fakeAuditor{}); d == nil {
+		t.Fatal("a well-formed config must ALWAYS record — there is no off switch to find")
 	}
 	// Every method is nil-safe — that is what lets the call site skip a branch.
 	var d *FutilityDetector
@@ -267,7 +278,7 @@ func TestFutility_ThrottlesRepeats(t *testing.T) {
 func TestFutility_IgnoresIncompleteTuples(t *testing.T) {
 	t.Parallel()
 
-	d, aud, _ := testDetector(t, FutilityConfig{Enabled: true, Threshold: 1, Window: time.Hour, AlertThrottle: time.Minute})
+	d, aud, _ := testDetector(t, FutilityConfig{Threshold: 1, Window: time.Hour, AlertThrottle: time.Minute})
 
 	for _, k := range []FutilityKey{
 		{StationID: "", ProcessNode: "ALN_003", PayloadCode: "P"},

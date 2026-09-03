@@ -24,7 +24,6 @@ func armDetector(t *testing.T, d *Dispatcher, threshold int, clk *clock.Manual) 
 	t.Helper()
 	aud := &fakeAuditor{}
 	det := NewFutilityDetector(FutilityConfig{
-		Enabled:       true,
 		Threshold:     threshold,
 		Window:        time.Hour,
 		AlertThrottle: 15 * time.Minute,
@@ -63,7 +62,7 @@ func TestFutilityWiring_QueuedCancelCountsAsFutile(t *testing.T) {
 	key := FutilityKey{StationID: "plant-a.line-1", ProcessNode: "ALN_003", PayloadCode: "74577-6SA0A.06"}
 	for i := range 3 {
 		o := seedFutilityOrder(t, db, "fut-q-"+string(rune('a'+i)), key.ProcessNode, key.PayloadCode)
-		d.Lifecycle().CancelOrder(o, o.StationID, "no_source_bin")
+		d.Lifecycle().CancelOrder(o, o.StationID, "no_source_bin", CancelCause{})
 		clk.Advance(time.Minute)
 	}
 
@@ -89,7 +88,8 @@ func TestFutilityWiring_OrderThatMovedIsNotFutile(t *testing.T) {
 		// queued → in_transit is a legal edge; the history row it writes is
 		// what the classifier reads back.
 		testutil.MustNoErr(t, d.Lifecycle().MarkInTransit(o, "AMR-01", "test"), "mark in transit")
-		d.Lifecycle().CancelOrder(o, o.StationID, "operator cancelled mid-flight")
+		d.Lifecycle().CancelOrder(o, o.StationID, "operator cancelled mid-flight",
+			CancelCause{Code: protocol.TermOperatorCancelled, Actor: "operator"})
 		clk.Advance(time.Minute)
 	}
 
@@ -113,7 +113,7 @@ func TestFutilityWiring_InTransitResetsTheTuple(t *testing.T) {
 	// Two futile terminals.
 	for i := range 2 {
 		o := seedFutilityOrder(t, db, "fut-r-"+string(rune('a'+i)), key.ProcessNode, key.PayloadCode)
-		d.Lifecycle().CancelOrder(o, o.StationID, "no_source_bin")
+		d.Lifecycle().CancelOrder(o, o.StationID, "no_source_bin", CancelCause{})
 	}
 	// One order genuinely departs — the reset.
 	moved := seedFutilityOrder(t, db, "fut-r-moved", key.ProcessNode, key.PayloadCode)
@@ -122,7 +122,7 @@ func TestFutilityWiring_InTransitResetsTheTuple(t *testing.T) {
 	// Two more futile terminals: 4 total, but only 2 since the reset.
 	for i := range 2 {
 		o := seedFutilityOrder(t, db, "fut-r-post-"+string(rune('a'+i)), key.ProcessNode, key.PayloadCode)
-		d.Lifecycle().CancelOrder(o, o.StationID, "no_source_bin")
+		d.Lifecycle().CancelOrder(o, o.StationID, "no_source_bin", CancelCause{})
 	}
 
 	if got := len(aud.all()); got != 0 {
@@ -142,7 +142,7 @@ func TestFutilityWiring_NilDetectorIsInert(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	o := seedFutilityOrder(t, db, "fut-nil", "ALN_003", "PART-X")
-	d.Lifecycle().CancelOrder(o, o.StationID, "no_source_bin")
+	d.Lifecycle().CancelOrder(o, o.StationID, "no_source_bin", CancelCause{})
 
 	got, err := db.GetOrder(o.ID)
 	testutil.MustNoErr(t, err, "reload order")

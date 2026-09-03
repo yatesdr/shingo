@@ -79,7 +79,15 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 	// idempotent for a plain order — ListChildOrders returns nothing and the loop
 	// no-ops — so routing every cancel through it costs one SELECT and removes a
 	// whole class of "why is this robot still moving".
-	e.dispatcher.CancelOrderWithCascade(order, order.StationID, "cancelled by "+actor)
+	//
+	// THE ACTOR IS RECORDED AS THE ACTOR, not baked into the prose and dropped.
+	// It was being formatted into "cancelled by X" and then overwritten with
+	// "system:<station>" one frame down, so order_history said the station
+	// cancelled every order a person cancelled — on this door and the
+	// diagnostics CancelStuckOrder door above it. The prose is kept as it was:
+	// classifyCancelByDetail reads it for every row written before now.
+	e.dispatcher.CancelOrderWithCascade(order, order.StationID, "cancelled by "+actor,
+		dispatch.CancelCause{Code: protocol.TermOperatorCancelled, Actor: actor})
 	return nil
 }
 

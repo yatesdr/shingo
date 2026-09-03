@@ -369,14 +369,41 @@ func (s *LifecycleService) noteFutility(ord *orders.Order, from, to protocol.Sta
 
 // ── Public typed methods ────────────────────────────────────────────────
 
+// CancelCause is the machine-readable half of a cancel: WHO ended the order
+// and WHY, in the two order_history columns that already exist for exactly
+// this and were empty on every cancel until 2026-09-01.
+//
+// WHY IT IS A PARAMETER AND NOT DERIVED HERE. CancelOrder cannot tell a person
+// pressing Terminate from swap_peer.go unwinding a partner leg — both arrive as
+// a loaded order and a prose reason — so it wrote Actor: "system:"+stationID
+// for both, and the distinction survived only as English in the detail. That is
+// not a thing a board or a post-mortem can group by. The call site is the only
+// place that knows, so the call site says.
+//
+// Code is optional and empty is a legitimate answer. ClassifyTermCode buckets a
+// coded row and only falls back to reading the prose when the code is empty, so
+// stamping a code CHANGES which bucket a cancel lands in. The codes used here
+// are the ones that classify the same way the prose already did; the machine
+// teardowns whose honest code would move them from cancelled to failed are left
+// uncoded on purpose, and that call is noted at each of them.
+type CancelCause struct {
+	// Code lands in order_history.code. Empty means "no better than the prose",
+	// which is where every cancel was before this existed.
+	Code protocol.TermCode
+	// Actor is the PERSON, when a person did it. Empty means the station itself
+	// did it and lands as "system:"+stationID, which is what every cancel used
+	// to say whether or not it was true.
+	Actor string
+}
+
 // CancelOrder transitions any non-terminal status to Cancelled. Cancels
 // the vendor order if active, then writes the new status atomically (with
 // bin claim release). Caller supplies the loaded order, station ID for
-// the emitter, and a reason string.
+// the emitter, a reason string, and who/why (see CancelCause).
 //
-// Signature preserved from Derek's original. Internals now go through
-// transition().
-func (s *LifecycleService) CancelOrder(ord *orders.Order, stationID, reason string) {
+// Signature preserved from Derek's original but for the cause. Internals now go
+// through transition().
+func (s *LifecycleService) CancelOrder(ord *orders.Order, stationID, reason string, cause CancelCause) {
 	if protocol.IsTerminal(ord.Status) {
 		// Idempotent: already terminal, nothing to do. Mirrors the
 		// behaviour of the previous implementation (which silently
@@ -396,9 +423,14 @@ func (s *LifecycleService) CancelOrder(ord *orders.Order, stationID, reason stri
 		}
 	}
 
+	actor := cause.Actor
+	if actor == "" {
+		actor = "system:" + stationID
+	}
 	if err := s.transition(ord, StatusCancelled, Event{
-		Actor:     "system:" + stationID,
+		Actor:     actor,
 		Reason:    reason,
+		ErrorCode: string(cause.Code),
 		StationID: stationID,
 	}); err != nil {
 		log.Printf("dispatch: cancel order %d: %v", ord.ID, err)

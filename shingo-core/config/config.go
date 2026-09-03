@@ -115,10 +115,19 @@ type DispatchConfig struct {
 // A learned baseline is not on the table: 30 days of history spanning the
 // incident would be trained on it, and the database has a 2.5-week hole
 // (2026-06-27 → 07-15) that mis-baselines anything computed across it.
+//
+// THERE IS NO ENABLED FLAG, and its absence is the point. The detector RECORDS
+// and does not act: one log line and one audit_log row, no chip, no alert, no
+// brake. A switch on a thing that only observes buys nothing and costs the
+// measurement — it shipped off-by-default and no plant ever opted in, so the
+// one question anybody wants answered ("how often does a cell ask futilely,
+// really?") has no data behind it at any site. Recording everywhere is what
+// produces the number, and the number is what a threshold has to be set from.
+//
+// The THRESHOLD stays observe-only for the same reason it always was: a brake
+// on an unmeasured threshold stops real work. Nothing here brakes until the
+// records say where a real one belongs.
 type FutilityConfig struct {
-	// Enabled gates the whole detector. Off by default: it ships observe-only
-	// and a plant opts in.
-	Enabled bool `yaml:"enabled"`
 	// Threshold is how many futile terminals on one
 	// (station, process_node, payload) inside Window trip the record.
 	// Start at 20 — comfortably above the ~4/h worst legitimate case and far
@@ -585,7 +594,6 @@ func Defaults() *Config {
 		},
 		Dispatch: DispatchConfig{
 			Futility: FutilityConfig{
-				Enabled:       false, // observe-only, opt-in per plant
 				Threshold:     20,
 				Window:        60 * time.Minute,
 				AlertThrottle: 15 * time.Minute,

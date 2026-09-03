@@ -193,7 +193,14 @@ func peerIsParkedWaitingForMaterial(peer *orders.Order) bool {
 // unwind.
 func (d *Dispatcher) resolveSwapPeer(peer, dead *orders.Order, reason string) {
 	if !protocol.IsTerminal(peer.Status) {
-		d.lifecycle.CancelOrder(peer, peer.StationID, reason)
+		// TermPeerTerminal is declared for exactly this and had no producer:
+		// "a swap sibling died and this leg was unwound with it". It is already
+		// in ClassifyTermCode's deliberate bucket, so coding it moves nothing —
+		// it just stops this cascade being indistinguishable from a person, which
+		// is the confusion that made a machine-vs-human retry exemption look
+		// implementable.
+		d.lifecycle.CancelOrder(peer, peer.StationID, reason,
+			CancelCause{Code: protocol.TermPeerTerminal})
 		return
 	}
 	// Peer already terminal. If it physically delivered (its bin moved) the

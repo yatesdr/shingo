@@ -346,7 +346,10 @@ func (e *Engine) handleFleetOrderCancelled(order *orders.Order) {
 	// lifecycle.CancelOrder handles fleet-cancel + atomic transition + emit.
 	// PreviousStatus is captured by transition() before the status flip and
 	// passed through to emitCancelled via the Event.
-	e.dispatcher.Lifecycle().CancelOrder(order, order.StationID, "fleet order stopped")
+	// Uncoded: the fleet stopping a vendor order reads as cancelled today and
+	// every code that describes it honestly buckets as failed. See CancelCause.
+	e.dispatcher.Lifecycle().CancelOrder(order, order.StationID, "fleet order stopped",
+		dispatch.CancelCause{})
 }
 func (e *Engine) handleGraceExpired(ev GraceExpiredEvent) {
 	order, err := e.db.GetOrder(ev.OrderID)

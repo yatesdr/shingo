@@ -969,7 +969,17 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 	// reservations that are the lock, then cancels parent-then-children in that
 	// order. See CancelOrderWithCascade for why both orderings matter and why
 	// they are in tension.
-	d.CancelOrderWithCascade(order, stationID, p.Reason)
+	//
+	// CODED AS OPERATOR, WITHOUT A NAME, and the gap is Edge's to close.
+	// protocol.OrderCancel carries {OrderUUID, Reason} and nothing else, so Core
+	// knows a station asked and not who at it. Every Edge sender of this message
+	// is an operator door — the abort button (handlers_api_orders.go), the
+	// changeover abandon / cancel / start paths — so "a person did this" is true
+	// today and the code says so. If Edge ever sends a machine-originated cancel,
+	// this line is the one that becomes a lie, and the fix is an actor field on
+	// OrderCancel rather than a guess here.
+	d.CancelOrderWithCascade(order, stationID, p.Reason,
+		CancelCause{Code: protocol.TermOperatorCancelled})
 	d.replies.SendCancelled(env, p.OrderUUID, p.Reason)
 }
 
@@ -1212,11 +1222,15 @@ func (d *Dispatcher) LaneForNode(nodeID int64) (*nodes.Node, error) {
 // Lifecycle returns the dispatcher's lifecycle service for external use (e.g. auto-confirm).
 func (d *Dispatcher) Lifecycle() *LifecycleService { return d.lifecycle }
 
-// EnableFutilityDetector installs the rate-per-tuple detector (futility.go).
-// A no-op when cfg.Enabled is false. Wired from the composition root after
-// config load, like DebugLog — NewDispatcher takes no config, and the
-// thresholds must come from YAML rather than a constant here.
-func (d *Dispatcher) EnableFutilityDetector(cfg FutilityConfig, logFn func(string, ...any)) *FutilityDetector {
+// InstallFutilityDetector installs the rate-per-tuple detector (futility.go).
+// Wired from the composition root after config load, like DebugLog —
+// NewDispatcher takes no config, and the thresholds must come from YAML rather
+// than a constant here.
+//
+// Named Install rather than Enable since the enabled flag was deleted: there is
+// nothing to turn on, only a detector to hand its numbers to. It returns nil
+// only on a config that describes no window to count over.
+func (d *Dispatcher) InstallFutilityDetector(cfg FutilityConfig, logFn func(string, ...any)) *FutilityDetector {
 	det := NewFutilityDetector(cfg, logFn, d.db)
 	d.lifecycle.futility = det
 	return det

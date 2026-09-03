@@ -153,7 +153,6 @@ which reached a robot, while every surface stayed green.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `false` | Off by default — observe-only, opt in per plant |
 | `threshold` | int | `20` | Futile terminals on one (station, process_node, payload) inside the window |
 | `window` | duration | `60m` | Rolling window the count is taken over |
 | `alert_throttle` | duration | `15m` | Repeat suppression per tuple |
@@ -161,11 +160,16 @@ which reached a robot, while every surface stayed green.
 ```yaml
 dispatch:
     futility:
-        enabled: true
         threshold: 20
         window: 60m
         alert_throttle: 15m
 ```
+
+**There is no `enabled` key.** The detector records at every site, always. It
+carried an `enabled` flag defaulting to `false` until 2026-09-01, which meant
+it recorded at no site at all — opting in requires knowing the detector is
+there. A `threshold` or `window` of zero describes nothing countable and
+disables it by being malformed; that is not a supported way to turn it off.
 
 A "futile" terminal is an order that reached a terminal status without ever
 having reached `in_transit` — planned, then abandoned before a robot moved.
@@ -182,7 +186,9 @@ on the incident, and the database has a 2.5-week hole (2026-06-27 → 07-15)
 that mis-baselines anything computed across it.
 
 **Observe-only.** One log line and one `audit_log` row per trigger. No chip,
-no alert, no brake — a brake on an unmeasured threshold stops real work.
+no alert, no brake — a brake on an unmeasured threshold stops real work. The
+threshold above is a starting guess, and it stays observe-only until the
+records say where a real one belongs.
 
 ### Duration Format
 

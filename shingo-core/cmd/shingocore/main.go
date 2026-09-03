@@ -368,19 +368,23 @@ func main() {
 
 	eng.Dispatcher().DebugLog = dbg.Func("dispatch")
 
-	// Futility detector (observe-only). Logs through the DEFAULT logger, not
-	// debuglog: when this fires it is the loudest thing in the journal by
-	// design, and the debug stream is gated by logging.stderr_subsystems.
-	if fd := cfg.Dispatch.Futility; fd.Enabled {
-		eng.Dispatcher().EnableFutilityDetector(dispatch.FutilityConfig{
-			Enabled:       fd.Enabled,
-			Threshold:     fd.Threshold,
-			Window:        fd.Window,
-			AlertThrottle: fd.AlertThrottle,
-		}, log.Printf)
-		log.Printf("shingocore: futility detector armed (observe-only) — %d futile terminals per tuple in %s, repeats suppressed for %s",
-			fd.Threshold, fd.Window, fd.AlertThrottle)
-	}
+	// Futility detector (observe-only), installed unconditionally. Logs through
+	// the DEFAULT logger, not debuglog: when this fires it is the loudest thing
+	// in the journal by design, and the debug stream is gated by
+	// logging.stderr_subsystems.
+	//
+	// It used to sit behind cfg.Dispatch.Futility.Enabled, default off. Nothing
+	// it does is worth a switch — it records and never brakes — and the switch
+	// cost the measurement everywhere, because opting in requires knowing the
+	// detector is there.
+	fd := cfg.Dispatch.Futility
+	eng.Dispatcher().InstallFutilityDetector(dispatch.FutilityConfig{
+		Threshold:     fd.Threshold,
+		Window:        fd.Window,
+		AlertThrottle: fd.AlertThrottle,
+	}, log.Printf)
+	log.Printf("shingocore: futility detector recording (observe-only) — %d futile terminals per tuple in %s, repeats suppressed for %s",
+		fd.Threshold, fd.Window, fd.AlertThrottle)
 
 	// ── Protocol ingestor (inbound from ShinGo Edge) ───────────────────
 	coreHandler := messaging.NewCoreHandler(db, msgClient, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, eng.Dispatcher())
