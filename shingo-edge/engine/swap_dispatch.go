@@ -171,6 +171,13 @@ func confirmPolicy(claim *processes.NodeClaim, steps []protocol.ComplexOrderStep
 	return !legPlacesBinAt(steps, claim.CoreNodeName)
 }
 
+// claim.OutboundDestination MAY BE AN OVERRIDE, not the claim's own row. Every
+// read of it below is the evac leg's dropoff — "where does the carrier leaving
+// this cell go" — and an Engine caller resolves that from the RESIDENT claim
+// when the cell holds a style other than the one being requested. See
+// withResidentEvacDest / residentEvacDest in swap_evac_dest.go for why, and for
+// the Springfield 2026-09-02 incident that made the distinction load-bearing.
+// InboundSource is untouched: the supply leg still fetches what was asked for.
 func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapDispatch, error) {
 	switch claim.SwapMode {
 	case protocol.SwapModeSequential:

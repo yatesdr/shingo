@@ -68,7 +68,11 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 		return nil, err
 	}
 
-	plan, err := BuildProducePlan(node, runtime, claim, time.Now(), occupancy, primedPositions)
+	// See swap_evac_dest.go: the outgoing carrier goes to ITS home, not the
+	// requested style's. Blank override = today's behaviour.
+	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
+
+	plan, err := BuildProducePlan(node, runtime, swapClaim, time.Now(), occupancy, primedPositions)
 	if err != nil {
 		return nil, err
 	}

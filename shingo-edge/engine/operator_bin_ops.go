@@ -826,7 +826,9 @@ func (e *Engine) requestEmptyForSwapModes(
 	// RequestNodeMaterial / produce uses on Finalize. Robots execute the same
 	// choreography for empty and full bins; the order shape doesn't depend
 	// on contents.
-	dispatch, err := BuildSwapDispatch(node, claim)
+	// See swap_evac_dest.go: the outgoing carrier goes to ITS home, not the
+	// requested style's. Blank override = today's behaviour.
+	dispatch, err := BuildSwapDispatch(node, withResidentEvacDest(claim, e.residentEvacDest(runtime, claim)))
 	if err != nil {
 		return nil, err
 	}

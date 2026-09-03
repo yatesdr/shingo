@@ -123,7 +123,11 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	}
 	occupancy := e.claimOccupancy(claim)
 
-	plan, err := BuildConsumePlan(node, runtime, claim, quantity, occupancy, autoConfirm)
+	// The evac leg lifts whatever is ON the cell, which is not always the style
+	// being requested — see swap_evac_dest.go. Blank override = today's behaviour.
+	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
+
+	plan, err := BuildConsumePlan(node, runtime, swapClaim, quantity, occupancy, autoConfirm)
 	if err != nil {
 		return nil, err
 	}
