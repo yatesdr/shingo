@@ -6,7 +6,6 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
-	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
 
@@ -124,11 +123,22 @@ func (e *Engine) guardPositionSpokenFor(node *processes.Node, runtime *processes
 			"refusing the simple-delivery downgrade", node.Name)
 		return err
 	}
-	active, err := e.db.ListActiveOrdersByProcessNode(node.ID)
+	rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
 	if err != nil {
 		log.Printf("[request-material] node %s: could not read in-flight orders (%v) — "+
 			"refusing the simple-delivery downgrade", node.Name, err)
 		return fmt.Errorf("node %s: cannot tell whether a bin is already on its way (%w) — the next tick will re-ask", node.Name, err)
+	}
+	// THE DURABLE-ROW TWIN OF THE SLOT CHECK, and it must give the same answer.
+	// The query is `status NOT IN (terminal)`; the cell question is
+	// orderWorksTheCell, which also excludes a leg that has departed. Filtering
+	// here rather than in the query keeps the SQL one shape for every caller
+	// and keeps the predicate in one place — see leg_departure.go.
+	var active []domain.Order
+	for _, o := range rows {
+		if orderWorksTheCell(&o) {
+			active = append(active, o)
+		}
 	}
 	if len(active) == 0 {
 		return nil
@@ -291,8 +301,13 @@ func (e *Engine) catidResolutionHint(processID int64) string {
 	}
 }
 
-// hasActiveSwap reports whether the runtime slots reference any non-terminal
-// order. Pure Edge-DB check — no Core round-trip.
+// hasActiveSwap reports whether the runtime slots reference any order that is
+// still working this cell. Pure Edge-DB check — no Core round-trip.
+//
+// It asks orderWorksTheCell, the same predicate CanAcceptOrders and
+// guardPositionSpokenFor's row arm ask, so the three cannot disagree about
+// whether a cell is busy. A departed leg — a robot driving a bin to the
+// supermarket — is live but is not the cell's.
 func hasActiveSwap(e *Engine, runtime *processes.RuntimeState) bool {
 	if runtime == nil {
 		return false
@@ -305,7 +320,7 @@ func hasActiveSwap(e *Engine, runtime *processes.RuntimeState) bool {
 		if err != nil || o == nil {
 			continue
 		}
-		if !orders.IsTerminal(o.Status) {
+		if orderWorksTheCell(o) {
 			return true
 		}
 	}

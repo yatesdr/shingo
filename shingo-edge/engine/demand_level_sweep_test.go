@@ -2,6 +2,7 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -394,5 +395,56 @@ func TestLevelSweep_ReorderPointZeroIsAnOptOut(t *testing.T) {
 	if got := countOrders(t, db); got != 0 {
 		t.Fatalf("an opted-out claim (reorder_point = 0) at zero minted %d orders, want 0 — the old "+
 			"flip tail read remaining <= reorder_point, which is true at 0 <= 0", got)
+	}
+}
+
+// ── 9. THE AUTOMATIC HALF OF "ALWAYS ON" ──────────────────────────────────
+//
+// The sweep's live-order dedup sits ABOVE CanAcceptOrders, so it is its own
+// admission decision and needs its own copy of the cell question. Before this
+// it was the bare `status NOT IN (terminal)` query: a departed leg — a robot
+// driving the old bin to the supermarket with every position at the cell
+// filled — stopped the sweep here and the guards downstream were never asked.
+//
+// That made "always on" true only of the operator's button, on a cell whose
+// whole point is that nobody has to press it. This is the fast press's case.
+func TestLevelSweep_DepartedLegDoesNotHoldTheCellShut(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID, claimID := keeperFixture(t)
+	setLevel(t, db, nodeID, claimID, 0)
+
+	eng.sweepCellLevels()
+	if got := countOrders(t, db); got != 1 {
+		t.Fatalf("first sweep minted %d orders, want 1", got)
+	}
+	var firstID int64
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT id FROM orders`).Scan(&firstID), "read order id")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(firstID, string(orders.StatusInTransit)), "in_transit")
+
+	// UNDEPARTED: a robot is working this cell. Silent, as before.
+	eng.sweepCellLevels()
+	if got := countOrders(t, db); got != 1 {
+		t.Fatalf("order count = %d with an UNDEPARTED leg in flight, want 1 — a robot is still working "+
+			"the cell and the sweep must not stack a second order on it", got)
+	}
+
+	// DEPARTED: same row, still non-terminal, still at this node — and no
+	// longer the cell's.
+	changed, err := db.MarkOrderDeparted(firstID, time.Now().UTC())
+	testutil.MustNoErr(t, err, "mark departed")
+	if !changed {
+		t.Fatal("fixture drift: the stamp did not land")
+	}
+	after, err := db.GetOrder(firstID)
+	testutil.MustNoErr(t, err, "re-read")
+	if protocol.IsTerminal(after.Status) {
+		t.Fatal("fixture drift: the leg must still be non-terminal, or this proves nothing")
+	}
+
+	eng.sweepCellLevels()
+	if got := countOrders(t, db); got != 2 {
+		t.Fatalf("order count = %d with a DEPARTED leg at the node, want 2 — the cell is below its "+
+			"level with every position filled and nothing coming, and the sweep is the only thing that "+
+			"asks for it without an operator", got)
 	}
 }

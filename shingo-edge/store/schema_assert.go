@@ -81,6 +81,7 @@ var requiredColumns = []requiredColumn{
 	{"orders", "fault_deadline"},
 	{"orders", "fault_notice_after_s"},
 	{"orders", "fault_ref"},
+	{"orders", "departed_at"},
 	{"style_node_claims", "mode"},
 	{"style_node_claims", "lineside_soft_threshold"},
 	{"style_node_claims", "second_paired_core_node"},

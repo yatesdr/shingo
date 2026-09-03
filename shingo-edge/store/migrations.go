@@ -796,6 +796,21 @@ func (db *DB) migrate() error {
 	// push. Empty = the fleet gave no reason, which is the common case.
 	db.Exec("ALTER TABLE orders ADD COLUMN fault_ref TEXT NOT NULL DEFAULT ''")
 
+	// v39 (2026-09-03, departed legs): when a leg stopped being its cell's
+	// business, so the two admission guards and the station card can tell "a
+	// robot is working this cell" from "a robot is carrying a bin away from it".
+	//
+	// NULLABLE, and no backfill. Every other instant on this schema that could
+	// not be reconstructed is stored as '' with a NOT NULL default; this one is
+	// NULL because "not departed" is a real, common, permanent state and the
+	// guards read it as such — a leg whose last cell step is its own final step
+	// never departs at all, and terminal is what releases the cell for it.
+	// Inventing a departure for a pre-v39 in-flight row would admit a second
+	// swap into a cell a robot is still standing in, so the honest value for
+	// every existing row is NULL: those legs run out under the old rule and the
+	// next swap starts under the new one.
+	db.Exec("ALTER TABLE orders ADD COLUMN departed_at TEXT")
+
 	return nil
 }
 

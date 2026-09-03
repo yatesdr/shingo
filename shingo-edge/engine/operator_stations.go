@@ -547,12 +547,18 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 		}
 	}
 
+	// orderWorksTheCell, not !IsTerminal: a DEPARTED leg is still a live order
+	// but is no longer this cell's business — it is a robot carrying a bin away
+	// from a cell whose positions are all filled. See leg_departure.go.
+	//
+	// The reason strings are unchanged. An operator refused here is being told
+	// which slot is holding them, and that has not moved.
 	for _, orderID := range []*int64{runtime.ActiveOrderID, runtime.StagedOrderID} {
 		if orderID == nil {
 			continue
 		}
 		order, err := e.db.GetOrder(*orderID)
-		if err == nil && !orders.IsTerminal(order.Status) {
+		if err == nil && orderWorksTheCell(order) {
 			if orderID == runtime.ActiveOrderID {
 				return false, "active order in progress"
 			}

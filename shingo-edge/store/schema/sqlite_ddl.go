@@ -170,6 +170,17 @@ CREATE TABLE IF NOT EXISTS orders (
     -- rendered sentence: the sentence changes when the clock crosses the
     -- threshold, and the board re-renders it without another push.
     fault_ref       TEXT NOT NULL DEFAULT '',
+    -- departed_at (v39): when this leg stopped being its cell's business — the
+    -- instant the fleet confirmed the last step of steps_json whose node is in
+    -- the claim's cell set. NULL is "still working the cell", which is what
+    -- every row starts as and what a leg whose last cell step is its FINAL step
+    -- stays as forever (terminal covers that shape; nothing stamps it).
+    --
+    -- Stamped once and never cleared: it records a physical event, and Core
+    -- re-fires already-FINISHED blocks after a restart, so a second write would
+    -- have to be a no-op anyway. NULL, not '', because the two admission guards
+    -- read it as a three-state answer alongside a status — see MarkDeparted.
+    departed_at     TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

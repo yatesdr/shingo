@@ -214,14 +214,20 @@ func (e *Engine) sweepNodeLevel(node *processes.Node, runtime *processes.Runtime
 	// process-grain, so an episode-scoped count would let two nodes on one
 	// process sharing a payload shadow each other — one served, the other
 	// suppressed indefinitely.
-	active, err := e.db.ListActiveOrdersByProcessNode(node.ID)
+	rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
 	if err != nil {
 		e.logFn("demand_sweep: node %s is below its level but its in-flight orders cannot be read (%v) "+
 			"— asking for nothing this pass; the next one re-decides", node.Name, err)
 		return
 	}
-	if len(active) > 0 {
-		o := active[0]
+	// orderWorksTheCell, not the bare query, and this return is the reason the
+	// AUTOMATIC half of the feature exists for consume cells at all. It sits
+	// above CanAcceptOrders, so without the filter a departed leg stops the
+	// sweep here and the guards downstream never get asked. See leg_departure.go.
+	for _, o := range rows {
+		if !orderWorksTheCell(&o) {
+			continue
+		}
 		e.debugFn("demand_sweep: node %s below its level, but order %d (%s, %s) already points here",
 			node.Name, o.ID, o.OrderType, o.Status)
 		return

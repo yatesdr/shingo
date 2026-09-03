@@ -50,12 +50,16 @@ func TestBinPickedUp_FlushesAccumulator(t *testing.T) {
 		t.Errorf("Flush() not called — BinPickedUp must flush the released bin's accumulator")
 	}
 
-	// Post-condition: ActiveOrderID cleared so subsequent ticks
-	// attribute cleanly to whatever lands next.
+	// Post-condition: ActiveOrderID is LEFT SET. It is the cell-busy pointer the
+	// admission guards read, and no tick, delta or UOP path reads it — the
+	// handler used to null it here for an attribution job that moved to
+	// ActiveBinID at the bin-as-truth flip, and nulling it declared the cell
+	// free five steps before the leg was done with it. orderWorksTheCell frees
+	// it instead, on terminal or departure.
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
-	if rt.ActiveOrderID != nil {
-		t.Errorf("ActiveOrderID = %v, want nil (handler must clear active so next tick attribution is clean)",
-			rt.ActiveOrderID)
+	if rt.ActiveOrderID == nil || *rt.ActiveOrderID != orderID {
+		t.Errorf("ActiveOrderID = %v, want %d — the pickup must not clear the cell-busy pointer",
+			rt.ActiveOrderID, orderID)
 	}
 }
 
@@ -448,6 +452,7 @@ func TestRegression_BinPickedUpWhitespaceLocationMatches(t *testing.T) {
 	bid := binID
 	_ = db.UpdateOrderBinID(orderID, &bid)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
+	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(nodeID, &bid), "bind active bin")
 
 	eng := testEngine(t, db)
 	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
@@ -460,8 +465,15 @@ func TestRegression_BinPickedUpWhitespaceLocationMatches(t *testing.T) {
 	if sink.flushes == 0 {
 		t.Errorf("Flush() not called on whitespace-padded Location — defensive TrimSpace should make the gate pass")
 	}
+	// The at-slot side effect is the BIN pointer, not the order pointer: the bin
+	// physically left, and ticks must stop charging it. ActiveOrderID stays set
+	// — it is the cell-busy pointer, and it is orderWorksTheCell's to release.
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
-	if rt.ActiveOrderID != nil {
-		t.Errorf("ActiveOrderID = %v, want nil (handler must clear active after at-slot pickup)", rt.ActiveOrderID)
+	if rt.ActiveBinID != nil {
+		t.Errorf("ActiveBinID = %v, want nil (the bin left the slot; the at-slot path must clear it)", rt.ActiveBinID)
+	}
+	if rt.ActiveOrderID == nil || *rt.ActiveOrderID != orderID {
+		t.Errorf("ActiveOrderID = %v, want %d — the pickup must not clear the cell-busy pointer",
+			rt.ActiveOrderID, orderID)
 	}
 }

@@ -13,14 +13,14 @@
 //     fleet.
 //  2. The cell keeps cycling — PLC ticks continue against the
 //     released bin's slot until the robot arrives. Each tick
-//     attributes to the released bin (ActiveOrderID still points
-//     at the partial-back order, BinID still points at that bin).
+//     attributes to the released bin (runtime.ActiveBinID still
+//     points at it).
 //  3. Robot arrives, grabs the bin. Core's rds.Poller sees the
 //     pickup-block FINISH and publishes BinPickedUp to Edge.
 //  4. Edge flushes the inventory delta accumulator for the released
-//     bin so any in-flight ticks ship before the active claim
-//     advances. The runtime's ActiveOrderID is then cleared so
-//     subsequent ticks attribute to whatever lands next.
+//     bin so any in-flight ticks ship before the pointer moves, then
+//     clears ActiveBinID so subsequent ticks hold until whatever
+//     lands next binds.
 //
 // SME-accepted small bias: if Edge crashes during the pickup window,
 // a tick or two recorded after the physical pickup but before the
@@ -56,6 +56,19 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 		e.logFn("bin_picked_up: order uuid=%s not found", orderUUID)
 		return
 	}
+
+	// === Departure stamp — ABOVE the location gate, and the only thing above it ===
+	//
+	// Everything below the gate is OUR SLOT's work. The departure stamp is not
+	// slot work: single_robot departs at OutboundStaging, and a 3-position
+	// press's cell pickups can be at the middle or back index position. Gating
+	// it on location == CoreNodeName would stamp exactly the legs that do not
+	// need it and skip the ones that do.
+	//
+	// It reads the order and the claim and writes one column on the order row.
+	// It touches no runtime slot, so it cannot interact with anything below,
+	// and the gate's own early returns stay exactly where they are.
+	e.stampDepartureIfLeftCell(order, location)
 
 	// === Location gate (inverted; fails closed) ===
 	//
@@ -190,47 +203,40 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 		e.logFn("bin_picked_up: flush failed: %v", err)
 	}
 
-	// Advance: clear the runtime's ActiveOrderID for whichever node
-	// the order was tied to so the next tick attribution lands cleanly
-	// against the next claim. ProcessNodeID may be nil (pure-kanban
-	// orders, generic moves); skip in that case.
-	if order.ProcessNodeID != nil {
-		runtime, err := e.db.GetProcessNodeRuntime(*order.ProcessNodeID)
-		if err != nil || runtime == nil {
-			return
-		}
-		// Clear the active-ORDER ref only if the active order is still the
-		// one we just picked up — guards against a race where the next bin's
-		// delivery already advanced the slot.
-		if runtime.ActiveOrderID != nil && *runtime.ActiveOrderID == order.ID {
-			if err := e.db.UpdateProcessNodeRuntimeOrders(*order.ProcessNodeID, nil, runtime.StagedOrderID); err != nil {
-				e.logFn("bin_picked_up: clear active order node=%d: %v", *order.ProcessNodeID, err)
-			}
-		}
-
-		// Clear the active-BIN pointer whenever the bin that just physically
-		// left the slot is the one bound as active — gated on BIN IDENTITY,
-		// independent of the active-order ref above. Two ways the old gating
-		// (ActiveOrderID == order.ID) missed a departed bin, both of which let
-		// PLC consume ticks keep charging a bin that was gone:
-		//   1. Two-robot swap: the EVAC leg carries the old bin out, but the
-		//      evac is usually the staged (not active) order, so its pickup
-		//      never matched ActiveOrderID.
-		//   2. Changeover abort (cancelProcessChangeover) nulls the active-order
-		//      ref *before* the evac's pickup event lands, permanently disarming
-		//      the clear.
-		// Springfield 2026-06-02: ALN_003 RH→LH changeover aborted mid-swap;
-		// bin 18 (RH) departed but active_bin_id stayed = 18, so consume ticks
-		// drained bin 18 while it sat in the supermarket. Tracking the pointer
-		// by physical bin identity makes it follow reality through aborts.
-		if e.inventoryDelta != nil && runtime.ActiveBinID != nil && *runtime.ActiveBinID == binID {
-			if err := e.inventoryDelta.ClearActiveBin(*order.ProcessNodeID); err != nil {
-				e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
-			}
+	// Clear the active-BIN pointer whenever the bin that just physically left
+	// the slot is the one bound as active — gated on BIN IDENTITY, not on the
+	// order. Two ways an order-gated clear missed a departed bin, both of which
+	// let PLC consume ticks keep charging a bin that was gone:
+	//   1. Two-robot swap: the EVAC leg carries the old bin out, but the evac
+	//      is usually the staged (not active) order.
+	//   2. Changeover abort (cancelProcessChangeover) nulls the active-order
+	//      ref *before* the evac's pickup event lands, permanently disarming
+	//      the clear.
+	// Springfield 2026-06-02: ALN_003 RH→LH changeover aborted mid-swap; bin 18
+	// (RH) departed but active_bin_id stayed = 18, so consume ticks drained bin
+	// 18 while it sat in the supermarket. Tracking the pointer by physical bin
+	// identity makes it follow reality through aborts.
+	//
+	// ActiveOrderID IS DELIBERATELY LEFT ALONE. This handler used to null it
+	// here "so the next tick attribution lands cleanly" — a job it lost at the
+	// bin-as-truth flip, where binAtNode (wiring_counter_delta.go) moved to
+	// ActiveBinID and no tick, delta or UOP path has read ActiveOrderID since.
+	// What it still is is the cell-busy pointer the admission guards read, and
+	// clearing it at the press pickup declared the cell free five steps early
+	// (single_robot's 4→8 window). orderWorksTheCell (leg_departure.go) frees
+	// the cell honestly instead: the pointer stays set until the leg is
+	// terminal or departed.
+	runtime, rterr := e.db.GetProcessNodeRuntime(*order.ProcessNodeID)
+	if rterr != nil || runtime == nil {
+		return
+	}
+	if runtime.ActiveBinID != nil && *runtime.ActiveBinID == binID {
+		if err := e.inventoryDelta.ClearActiveBin(*order.ProcessNodeID); err != nil {
+			e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
 		}
 	}
 
-	e.logFn("bin_picked_up: flushed deltas + cleared active for order=%s bin=%d (status=%s)",
+	e.logFn("bin_picked_up: flushed deltas + cleared active bin for order=%s bin=%d (status=%s)",
 		orderUUID, binID, order.Status)
 
 	// Home consolidation: if this was Order A of a ClearLoaderHome sequence,

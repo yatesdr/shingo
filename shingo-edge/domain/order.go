@@ -32,11 +32,10 @@ type Order struct {
 	AutoConfirm    bool               `json:"auto_confirm"`
 	StagedExpireAt *time.Time         `json:"staged_expire_at,omitempty"`
 	// BinID is Core's ID for the bin associated with this order,
-	// snapshot from OrderDelivered. PLC tick attribution at
-	// consume/produce time looks up runtime.ActiveOrderID, reads its
-	// BinID, and emits BinUOPDelta against that bin. Nil for multi-bin
-	// orders; older Core builds leave it nil and Edge skips bin delta
-	// emission.
+	// snapshot from OrderDelivered. Nil for multi-bin orders; older Core
+	// builds leave it nil and Edge skips bin delta emission. PLC tick
+	// attribution does NOT read it — that moved to runtime.ActiveBinID at
+	// the bin-as-truth flip (see binAtNode).
 	BinID       *int64 `json:"bin_id,omitempty"`
 	PayloadCode string `json:"payload_code"`
 	// PayloadDesc is the human sentence behind PayloadCode — what a robot is
@@ -141,7 +140,21 @@ type Order struct {
 	// Unlike AuthoredBy — which is deliberately inert — this one BRANCHES, so it
 	// is computed in the query beside the row it describes rather than being
 	// re-derived by each caller.
-	LaneHeld  bool      `json:"lane_held"`
+	LaneHeld bool `json:"lane_held"`
+	// DepartedAt is when this leg stopped being its cell's business: the
+	// instant the fleet confirmed the last step of its plan whose node is in
+	// the claim's cell set. A departed leg is still a live order — what it
+	// stops being is the CELL's. Nil means it is still working the cell, and
+	// is the permanent answer for a leg whose last cell step is its own final
+	// step (terminal covers that shape; nothing stamps it).
+	//
+	// Derived from steps_json against the claim's cell set, never from
+	// claim.SwapMode. See engine/leg_departure.go.
+	DepartedAt *time.Time `json:"departed_at,omitempty"`
+	// Departed is DepartedAt != nil, rendered for the HMI so the station card
+	// can filter without parsing a timestamp. Set by the scan helpers beside
+	// DepartedAt so the two cannot disagree.
+	Departed  bool      `json:"departed"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	// Joined fields

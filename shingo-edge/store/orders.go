@@ -119,6 +119,14 @@ func (db *DB) UpdateOrderBinID(id int64, binID *int64) error {
 	return orders.UpdateBinID(db.DB, id, binID)
 }
 
+// MarkOrderDeparted stamps the instant a leg stopped being its cell's business
+// and reports whether the stamp landed. Stamp-once: a replayed BinPickedUp
+// (Core re-fires every FINISHED block after a restart) returns changed=false
+// and writes nothing. See orders.MarkDeparted.
+func (db *DB) MarkOrderDeparted(id int64, at time.Time) (bool, error) {
+	return orders.MarkDeparted(db.DB, id, at)
+}
+
 // SetOrderQueueReason writes (or clears) the blocking reason and its structured
 // code on a queued order. Called from the edge handler when Core pushes an
 // OrderUpdate (or boot snapshot) with QueueReason + QueueCode.

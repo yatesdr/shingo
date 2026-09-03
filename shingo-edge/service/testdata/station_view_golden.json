@@ -102,6 +102,7 @@
           "origin_id": "",
           "origin_class": "",
           "lane_held": false,
+          "departed": false,
           "created_at": "<ts>",
           "updated_at": "<ts>",
           "process_name": "GOLD-PROC",
