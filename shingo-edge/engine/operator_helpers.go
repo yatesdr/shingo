@@ -93,6 +93,17 @@ func findActiveClaim(db *store.DB, node *processes.Node) *processes.NodeClaim {
 	if err != nil {
 		return nil
 	}
+	return activeClaimForProcess(db, process, node)
+}
+
+// activeClaimForProcess is findActiveClaim for a caller that already holds the
+// process row. Split out for the level sweep, which walks every node of every
+// process once a period: re-deriving the process per node would turn one read
+// into one per node for an answer it was already holding.
+func activeClaimForProcess(db *store.DB, process *processes.Process, node *processes.Node) *processes.NodeClaim {
+	if process == nil || node == nil {
+		return nil
+	}
 	if process.ActiveStyleID != nil {
 		if claim, cerr := db.GetStyleNodeClaimByNode(*process.ActiveStyleID, node.CoreNodeName); cerr == nil && claim != nil {
 			return claim

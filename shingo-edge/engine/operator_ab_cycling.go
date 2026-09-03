@@ -12,8 +12,7 @@ import (
 
 // FlipABNode switches the active pull point to the specified node and deactivates
 // its paired partner. Used for A/B cycling — operator (or PLC bit) decides when
-// to start pulling from the other side. Triggers auto-reorder on the depleted node
-// if the depleted node's UOP is at or below its reorder point.
+// to start pulling from the other side.
 // FlipRequest says who is asking to flip and whether they have looked.
 //
 // A PLC bit cannot look at the aisle, so it can never carry Confirm — a flip it
@@ -57,11 +56,6 @@ func (e *Engine) FlipABNode(nodeID int64, req FlipRequest) error {
 	if err != nil {
 		return err
 	}
-	process, err := e.db.GetProcess(node.ProcessID)
-	if err != nil {
-		return err
-	}
-
 	// Attribution boundary: A/B cycling has no operator action at the
 	// inactive→active transition — the active-pull state flip IS the
 	// boundary. Without flushing here the inactive node's accumulator
@@ -85,19 +79,21 @@ func (e *Engine) FlipABNode(nodeID int64, req FlipRequest) error {
 
 	log.Printf("A/B flip: node %s now active, node %s inactive", node.Name, pairedNode.Name)
 
-	// Trigger auto-reorder on the depleted partner if needed
-	if process.ActiveStyleID != nil {
-		pairedClaim, _ := e.db.GetStyleNodeClaimByNode(*process.ActiveStyleID, pairedNode.CoreNodeName)
-		pairedRuntime, _ := e.db.GetProcessNodeRuntime(pairedNode.ID)
-		if pairedClaim != nil && pairedRuntime != nil &&
-			pairedClaim.AutoReorder && pairedRuntime.RemainingUOPCached <= pairedClaim.ReorderPoint {
-			if ok, _ := e.CanAcceptOrders(pairedNode.ID); ok {
-				if _, err := e.requestNodeMaterialFor(pairedNode.ID, 1, protocol.EpisodeTriggerAutoreorder); err != nil {
-					log.Printf("A/B flip auto-reorder for depleted node %s: %v", pairedNode.Name, err)
-				}
-			}
-		}
-	}
+	// THE DEPLETED PARTNER IS THE LEVEL SWEEP'S DECISION, TAKEN EARLY HERE.
+	//
+	// A tail used to sit at this line firing its own auto-reorder, and it was
+	// the one order-firing site that answered to nothing: no reorder_point > 0
+	// opt-out, so a claim set to the documented opt-out fired from here anyway;
+	// no check for a bin already inbound; no hysteresis; and it never called
+	// evaluateCellLevel, so it ordered without recording that the cell had gone
+	// below its level. All four now apply, because this is the same decision
+	// the periodic sweep takes and not a second implementation of it.
+	//
+	// It is here at all only for immediacy. A flip is the one moment a parked
+	// side becomes interesting, and waiting a period to notice is a real
+	// regression on the operator-visible path. Drop this line and the sweep
+	// still covers the cell on its next pass — it does not skip parked sides.
+	e.sweepNodeLevelNow(pairedNode.ID)
 
 	return nil
 }

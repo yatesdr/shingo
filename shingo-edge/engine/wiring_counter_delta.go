@@ -1,6 +1,14 @@
-// wiring_counter_delta.go — counter-delta UOP tracking, auto-reorder/relief,
-// A/B paired-node cycling, and the lineside drain that consume ticks
-// run before touching the node counter.
+// wiring_counter_delta.go — counter-delta UOP tracking, A/B paired-node
+// cycling, and the lineside drain that consume ticks run before touching
+// the node counter.
+//
+// IT DECIDES NOTHING ABOUT REPLENISHMENT, and that is the point of the
+// shape. A tick is an accumulator: it moves the count and emits the
+// deltas. Whether a level has been breached, and whether to ask for
+// material, is read off that count once a period by the demand
+// reconciler's level sweep (demand_reconciler.go). The evaluation used to
+// live here, on the edge, which meant it went blind at exactly the moment
+// a cell ran dry and stopped ticking.
 //
 // Subscribed via wireEventHandlers (wiring.go) on EventCounterDelta;
 // dispatches to consume / produce / fallback handlers via handleCounterDelta.
@@ -16,13 +24,13 @@ import (
 )
 
 // handleCounterDelta processes a production counter tick:
-// - For consume nodes: decrement remaining UOP, trigger auto-reorder if at threshold
-// - For produce nodes: increment remaining UOP, trigger auto-relief if at capacity
+// - For consume nodes: decrement remaining UOP
+// - For produce nodes: increment remaining UOP
 //
 // The orchestrator handles validation, per-process node iteration, A/B-pair
-// coordination, and dispatches to role-specific helpers. The actual UOP
-// arithmetic, lineside drain, and auto-reorder/auto-relief decisions live in
-// handleConsumeTick / handleProduceTick / handleABFallthrough.
+// coordination, and dispatches to role-specific helpers. The UOP arithmetic
+// and the lineside drain live in handleConsumeTick / handleProduceTick /
+// handleABFallthrough.
 func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	if delta.ProcessID == 0 || delta.StyleID == 0 || delta.Delta <= 0 {
 		return
@@ -148,10 +156,10 @@ func (e *Engine) applyHoldAndReplay(node *processes.Node, runtime *processes.Run
 }
 
 // handleConsumeTick applies a delta to one active-pull consume node:
-// drain lineside first, decrement node UOP, then trigger auto-reorder
-// if the threshold is crossed and the node accepts orders. Caller is
-// responsible for the A/B inactive-pair check; this is invoked only
-// on the active side.
+// drain lineside first, then decrement node UOP. Caller is responsible
+// for the A/B inactive-pair check; this is invoked only on the active
+// side. The level that count feeds is evaluated by the demand
+// reconciler's sweep, not here.
 //
 // Post-May-4 (commit 6d226d1) Edge is authoritative for the count of
 // any bin physically at one of its nodes. The local UpdateProcessNodeUOP
@@ -186,77 +194,20 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// charged to a departed bin. The lineside drain emits every tick
 	// regardless — parts leaving the rack are independent of which bin is
 	// at the slot.
-	bound, binAttributed, newRemaining := e.applyHoldAndReplay(node, runtime, binRemainder, -1)
+	_, binAttributed, _ := e.applyHoldAndReplay(node, runtime, binRemainder, -1)
 
 	// emitConsumeTickDeltas emits the lineside-drain bucket deltas always,
 	// and a bin delta for binAttributed — which binAtNode skips when no bin
 	// is bound (binID 0), so the held portion isn't double-emitted; it
 	// ships on the bound tick that replays it.
 	e.emitConsumeTickDeltas(node, runtime, claim, drains, binAttributed)
-
-	// Auto-reorder if threshold reached, enabled, and node can accept orders.
-	// During the gap newRemaining is unchanged so the threshold isn't crossed
-	// twice for the same supply event.
-	//
-	// UOP-threshold replenishment (Phase 1): the existing condition
-	// (newRemaining <= ReorderPoint && newRemaining > 0) is logically
-	// unsatisfiable when ReorderPoint = 0, so the path was silent-inert
-	// for plants that never set a value. The explicit `ReorderPoint > 0`
-	// gate makes the opt-in semantic visible without changing behaviour
-	// — any plant with a 0 threshold sees identical behaviour to before.
-	// Diagnostic log line fires on every consume tick where AutoReorder
-	// is on, so engineers can see exactly why nothing fires (gate=insteady
-	// _state_gap during release window, gate=below_floor when the
-	// remaining count is already at 0, etc.).
-	if claim.AutoReorder {
-		if !bound {
-			e.debugFn("autoreorder eval: claim=%d node=%s gate=no_bin_bound (pickup-to-delivery gap; ticks held)",
-				claim.ID, node.Name)
-		} else if claim.ReorderPoint <= 0 {
-			e.debugFn("autoreorder eval: claim=%d node=%s gate=opt_out (reorder_point=0) — legacy silent-inert path",
-				claim.ID, node.Name)
-		} else if newRemaining <= claim.ReorderPoint {
-			// UOP-threshold = a LEVEL trigger: reorder whenever the count is at or
-			// below the threshold, INCLUDING <= 0. Previously a `newRemaining <= 0`
-			// branch short-circuited to a no-op "at_floor" gate, so a node that
-			// overshot the (0, ReorderPoint] window — e.g. a batched/large consume
-			// flush, routine in the sim — drained to empty/negative and NEVER
-			// reordered → starved. A threshold is a level, not an edge; being below
-			// it (even far below) is exactly when you must restock. No double-order
-			// risk: CanAcceptOrders returns false while an active/staged reorder is
-			// in flight, so at most one order fires until it completes.
-			canAccept, reason := e.CanAcceptOrders(node.ID)
-			e.logFn("autoreorder eval: claim=%d node=%s remaining=%d threshold=%d canAccept=%v reason=%s gate=below_threshold",
-				claim.ID, node.Name, newRemaining, claim.ReorderPoint, canAccept, reason)
-			// Record the FALLING EDGE regardless of canAccept. The demand
-			// exists whether or not we are able to act on it right now, and an
-			// episode that only opens when an order can be created cannot
-			// represent the row that matters most: a place that asked and got
-			// nothing.
-			e.evaluateCellLevel(claim, newRemaining)
-			if canAccept {
-				if _, err := e.requestNodeMaterialFor(node.ID, 1, protocol.EpisodeTriggerAutoreorder); err != nil {
-					log.Printf("auto-reorder for node %s: %v", node.Name, err)
-				}
-			}
-		} else {
-			e.debugFn("autoreorder eval: claim=%d node=%s remaining=%d threshold=%d gate=above_threshold",
-				claim.ID, node.Name, newRemaining, claim.ReorderPoint)
-			// RISING EDGE, and only once clear of the hysteresis margin. This
-			// is the only place a healthy cell's episode ends, so it is
-			// evaluated on every tick above the level, not just the first.
-			if _, shouldClose := e.evaluateCellLevel(claim, newRemaining); shouldClose {
-				e.closeCellEpisode(node.ProcessID, string(claim.PayloadCode),
-					claim.Role, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
-			}
-		}
-	}
 }
 
 // handleProduceTick applies a delta to one active-pull produce node:
-// increment node UOP, then trigger auto-relief (manifest + swap) if the
-// claim has a UOP capacity and the new value reaches it. Caller is
-// responsible for the A/B inactive-pair check.
+// increment node UOP. Caller is responsible for the A/B inactive-pair
+// check. Relief at capacity is the demand reconciler's sweep, not this
+// function: a press at capacity STOPS PRESSING, so the tick that would
+// have noticed is the tick that never comes.
 //
 // Phase 1: emits BinUOPDelta(produce_tick, +delta) for the bin being
 // filled. No bucket delta — produce nodes don't drain lineside; they
@@ -267,7 +218,7 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	// produced parts in pending and replay onto the next empty bin when it
 	// binds. The finished-good production tally (EventProducedReport below)
 	// is bin-independent and fires every tick regardless.
-	bound, binAttributed, newRemaining := e.applyHoldAndReplay(node, runtime, delta, +1)
+	_, binAttributed, _ := e.applyHoldAndReplay(node, runtime, delta, +1)
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
 		binID, payload, epoch := e.binAtNode(runtime, claim)
@@ -292,41 +243,6 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 			PayloadCode: claim.PayloadCode,
 			Delta:       int64(delta),
 		}})
-	}
-
-	// Auto-relief at capacity: finalize the produce node (manifest + swap).
-	//
-	// UOP-threshold replenishment (Phase 1) diagnostic: same logging
-	// shape as the consume side so engineers can see produce-tick
-	// evaluation outcomes alongside consume-tick.
-	if claim.AutoReorder && claim.UOPCapacity > 0 {
-		if !bound {
-			e.debugFn("autoreorder eval (produce): claim=%d node=%s gate=no_bin_bound (ticks held)",
-				claim.ID, node.Name)
-		} else if newRemaining < claim.UOPCapacity {
-			e.debugFn("autoreorder eval (produce): claim=%d node=%s remaining=%d capacity=%d gate=below_capacity",
-				claim.ID, node.Name, newRemaining, claim.UOPCapacity)
-			// The evacuate direction's rising edge: the full bin left and the
-			// count has dropped clear of the margin. Same shape as the consume
-			// side's recovery, and evaluated on every tick below capacity
-			// rather than only the first.
-			if _, shouldClose := e.evaluateProduceLevel(claim, newRemaining); shouldClose {
-				e.closeCellEpisode(node.ProcessID, string(claim.PayloadCode),
-					claim.Role, protocol.CloseReasonRecovered, protocol.ClosedByNotification)
-			}
-		} else {
-			canAccept, reason := e.CanAcceptOrders(node.ID)
-			e.logFn("autoreorder eval (produce): claim=%d node=%s remaining=%d capacity=%d canAccept=%v reason=%s gate=produce_tick",
-				claim.ID, node.Name, newRemaining, claim.UOPCapacity, canAccept, reason)
-			// Record the edge regardless of canAccept — a node that is full and
-			// cannot be relieved is precisely the demand worth seeing.
-			e.evaluateProduceLevel(claim, newRemaining)
-			if canAccept {
-				if _, err := e.requestProduceSwapFor(node.ID, protocol.EpisodeTriggerAutoreorder); err != nil {
-					log.Printf("auto-relief for produce node %s: %v", node.Name, err)
-				}
-			}
-		}
 	}
 }
 
