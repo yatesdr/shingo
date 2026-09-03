@@ -33,6 +33,116 @@ import (
 // header used to claim "same question, same answer, both sides of the wire",
 // which would make either one a drop-in for the other. It is not.
 
+// ── THE SIX-MODE CENSUS: WHERE EVERY SWAP LEG LANDS ───────────────────────
+//
+// The per-predicate tables below were verified against THREE modes of six.
+// sequential, simple and manual_swap had never been checked, and the omission
+// hid a third shape neither predicate names. This is all six, across BOTH
+// populations that reach Core as complex orders — steady state and changeover —
+// because a mode's legs differ between them, with file:line per row.
+//
+// T = legTakesLineBin (a pure evac). P = legPlacesLineBin (a pure filler).
+// Every line reference is shingo-edge/engine/material_orders.go unless the row
+// names another file.
+//
+// STEADY STATE — BuildSwapDispatch (swap_dispatch.go:141):
+//
+//	simple                  no complex order at all: swap_dispatch.go:214 returns
+//	                        (nil, nil) and consume_plan.go:185-195 issues a bare
+//	                        move, which carries no ProcessNode.      n/a
+//	manual_swap             same — swap_dispatch.go:214. And the level sweep skips
+//	                        these nodes outright (demand_reconciler.go,
+//	                        sweepNodeLevel): a loader/unloader is forklift-managed
+//	                        staging, not a cell with a level.        n/a
+//	single_robot            pickup(LINE) :220 AND dropoff(LINE) :223
+//	                                                    T=false P=false  <- both
+//	two_robot A (supply)    dropoff(LINE) :264          T=false P=TRUE
+//	two_robot B (evac)      pickup(LINE) :269           T=TRUE  P=false
+//	press-index R1          pickup(LINE) :319           T=TRUE  P=false
+//	press-index R2          dropoff(LINE) :352 / :333   T=false P=TRUE
+//	sequential A (removal)  pickup(LINE) :421           T=TRUE  P=false
+//	sequential B (backfill) dropoff(LINE) :434          T=false P=TRUE
+//
+// Sequential needed no change and that is worth having checked: its removal leg
+// is a pure evac and its backfill a pure filler, so the two predicates already
+// agree about both. The press-index rows hold under BOTH sides of the
+// IndexRobotSupplies flip (:326-342 flipped, :343-358 unflipped) — the flip
+// moves the supermarket fetch between the legs, and neither the line pickup nor
+// the line dropoff moves with it.
+//
+// CHANGEOVER — BuildSwapChangeoverSteps (:556) / BuildEvacuateChangeoverSteps
+// (:597). This is where "simple" and "manual_swap" DO reach Core despite
+// building nothing in steady state: both switches route every unrecognised mode
+// through the default arm (:575, :619) into the single-robot shape.
+//
+//	single_robot | simple | manual_swap | unrecognised — the default arm:
+//	  stage leg             no step at the line at all :180-188
+//	                                                    T=false P=false
+//	  swap/evac leg         pickup(LINE) :630 AND dropoff(LINE) :638
+//	                                                    T=false P=false  <- both
+//	two_robot supply        dropoff(LINE) :667          T=false P=TRUE
+//	two_robot evac          pickup(LINE) :671           T=TRUE  P=false
+//	press-index R1          pickup(LINE) :701, refills the BACK position :712/:715
+//	                                                    T=TRUE  P=false
+//	press-index R2          dropoff(LINE) :722 / :730   T=false P=TRUE
+//	press_position          pickup(pos) :785 AND dropoff(pos) :793; the order's
+//	  (per-position fan-out) ProcessNode IS pos (changeover_planner.go:233 takes
+//	                        diff.CoreNodeName)          T=false P=false  <- both
+//	sequential swap         pickup(pos) :975 AND dropoff(pos) :978
+//	                                                    T=false P=false  <- both
+//	sequential evacuate     buildToolingEvacSteps :843/:847, called at :1030
+//	                                                    T=false P=false  <- both
+//	press tooling evac      the same helper via changeover_tooling.go:560, whose
+//	                        spec is complexSpecWithPayload(position, position, …)
+//	                        :569 — so pos IS the ProcessNode
+//	                                                    T=false P=false  <- both
+//	tooling carry-over      pickup(position) → dropoff(staging) → wait →
+//	                        pickup(staging) → dropoff(position)
+//	                        (changeover_tooling.go:597) T=false P=false  <- both
+//	keep-staged evac        pickup(LINE) :1052          T=TRUE  P=false
+//	keep-staged deliver     dropoff(LINE) :1066         T=false P=TRUE
+//	keep-staged combined    dropoff(LINE) :1081; its pickups are all at staging
+//	                        or the source               T=false P=TRUE
+//
+// ── THE THIRD SHAPE, AND WHAT READS IT ────────────────────────────────────
+//
+// Every "<- both" row is SELF-CONTAINED: one robot lifts the line's bin and
+// sets a fresh one down in the same trip. It is neither a pure evac nor a pure
+// filler, so it answers false to BOTH predicates, and it is not unique to
+// single_robot — five changeover builders produce it, running at both plants.
+//
+// Two sites read that false, and they mean different things by it:
+//
+//   - swap_hold.go:159-160 asks placesLine && !takesLine because it is deciding
+//     whether this leg needs a SIBLING to clear the line first. A self-contained
+//     leg clears it itself, so false is the right answer and the gate is correct
+//     as written.
+//   - allocator.go:345 excludes a leg from "the work is void" with
+//     !legPlacesLineBin, so a self-contained leg is not excluded and a moot
+//     disposition SKIPS it terminally, where a two_robot supply leg in the same
+//     physical situation parks on waiting_for_material.
+//
+// THAT SECOND ONE LOOKS LIKE A DEFECT AND IS NOT, because of what it takes to
+// reach the arm. Every self-contained row has a NON-RELAY pickup at the process
+// node (the line pickup precedes the line dropoff in all of these builders, so
+// complexPickups never marks it potentialRelay), and the arm requires
+// len(assigned) == 0 && !anyMissWithBins — every distinct need missed, at a node
+// holding nothing. So the arm is UNREACHABLE for a self-contained leg unless the
+// line is also empty. With a bin anywhere, the leg reserves it, holds partials,
+// and falls to reserveHolding.
+//
+// In the one state that does reach it — line empty AND every source empty — the
+// skip is both correct and self-healing. There is no bin to lift, so the leg's
+// premise is gone; the skip terminalises, which releases the partials and lets
+// the level keeper ask again on its next sweep; and that next ask re-plans
+// against an empty head position, where consume_plan.go:132 downgrades the swap
+// to a plain delivery move. A park would do the opposite: waiting_for_material
+// is non-terminal, ListActiveByProcessNode counts it, and the keeper's node
+// dedup then goes quiet for as long as the order sits there.
+//
+// TestReserve_SelfContainedLegWithALineBinAlreadyParks pins the reachability
+// half, so the exposure cannot be re-derived larger than it is.
+
 // legTakesLineBin reports whether the leg lifts the line node's bin and does not
 // put one back: a pickup at processNode with no dropoff at processNode. That is
 // the evac shape.
@@ -45,6 +155,9 @@ import (
 //	press-index R2 (2&3)   pickup(B), dropoff(LINE)               → false (supply)
 //	single_robot           pickup(LINE) AND dropoff(LINE)         → false (self-contained)
 //	sequential removal     pickup(LINE), dropoff(OUT)             → TRUE  (evac, but sibling-less)
+//
+// Three modes of six. The census above carries all six, across steady state and
+// changeover both.
 func legTakesLineBin(steps []resolvedStep, processNode string) bool {
 	if processNode == "" {
 		return false
@@ -77,6 +190,9 @@ func legTakesLineBin(steps []resolvedStep, processNode string) bool {
 //	press-index R1 (2&3)   pickup(LINE), dropoff(OUT/IN/B|C)      → false (evac)
 //	two_robot B (evac)     pickup(LINE), no dropoff(LINE)         → false (evac)
 //	single_robot           pickup(LINE) AND dropoff(LINE)         → false (self-contained)
+//
+// Three modes of six. The census above carries all six, and names the two sites
+// that read this predicate's false for different reasons.
 func legPlacesLineBin(steps []resolvedStep, processNode string) bool {
 	if processNode == "" {
 		return false

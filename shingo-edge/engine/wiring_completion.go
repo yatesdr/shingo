@@ -651,8 +651,7 @@ func (e *Engine) handleOrphanedTaskOrderCompleted(order *storeorders.Order) {
 // ── Order failure ───────────────────────────────────────────────────
 
 // handleNodeOrderFailed marks a changeover node task as "error" when one
-// of its tracked orders fails, leaving the order in runtime tracking so
-// auto-reorder doesn't loop. Lives in this file because the failure
+// of its tracked orders fails. Lives in this file because the failure
 // branch reads the same active-changeover / node-task context as the
 // completion handlers above; folding the two negative- and positive-path
 // counterparts together keeps changeover orchestration in one place.
@@ -666,9 +665,13 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 		return
 	}
 
-	// IMPORTANT: Do NOT clear the failed order from runtime tracking.
-	// Keeping the order ID prevents auto-reorder from re-triggering in a loop.
-	// The operator must use the material page to manually clear and retry.
+	// The failed order is left in runtime tracking, and NOT because it holds
+	// anything back. That is what the note here used to claim, and it was never
+	// true: "failed" is terminal, and CanAcceptOrders walks past a terminal
+	// order in the runtime pointer, so the pointer gates nothing. Replenishment
+	// is now bounded at its own grain — the level sweep asks only when no
+	// non-terminal order points at the node — which is where a bound belongs.
+	// The operator clears and retries from the material page.
 
 	// If this order was part of a changeover, mark node task as failed (requires manual retry)
 	changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID)

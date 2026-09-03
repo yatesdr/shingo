@@ -49,12 +49,36 @@ import (
 //
 // ── THE RE-ARM PROXY, STATED HONESTLY ────────────────────────────────────────
 //
-// "Cancelled PRE-DISPATCH" is not directly recordable against this schema.
-// There is no dispatched_at, no cancelled_at, no cancel_reason and no
-// status-history table on `orders` — CONFIRMED against the schema snapshot. A
-// cancelled order's CURRENT status is `cancelled`, so protocol.IsPreDispatch
-// (which classifies pending/sourcing/queued) cannot answer the question either:
-// by the time we look, the order has left every state that predicate names.
+// "Cancelled PRE-DISPATCH" is not recordable from the ORDERS ROW. It carries no
+// dispatched_at, no cancelled_at and no cancel_reason, and a cancelled order's
+// CURRENT status is `cancelled`, so protocol.IsPreDispatch (which classifies
+// pending/sourcing/queued) cannot answer it either: by the time we look, the
+// order has left every state that predicate names.
+//
+// AN EARLIER VERSION OF THIS PARAGRAPH ALSO SAID THERE IS NO STATUS-HISTORY
+// TABLE, "CONFIRMED against the schema snapshot". That was wrong, and it is the
+// first thing a reader of this file would have believed. order_history exists
+// (store/schema/postgres_ddl.go), carries (status, detail, code, actor, ref,
+// created_at), is written by transition() on every status change, and is
+// indexed by order_id. orders.EverReachedStatus asks it this EXACT question for
+// one order — "did this order ever record `dispatched`" — and its own header
+// explains why it has to be asked of history rather than of the current status.
+//
+// So the proxy is a COST choice, not an impossibility, and saying so is the
+// difference between a reader trusting this file and a reader re-deriving the
+// schema. CountChildrenByStatus is one GROUP BY over `orders` returning at most
+// (statuses x 2) rows per episode, for every episode on the page. The history
+// answer is per-ORDER: an EXISTS per child, or a join and a second aggregate
+// over a table that holds every transition of every order ever. That is the
+// shape the aggregate exists to avoid, and the page's cardinality argument
+// above is the whole reason it is shaped this way.
+//
+// What has changed since, and what it is worth: a cancel now writes
+// order_history.code and .actor (protocol.TermOperatorCancelled and the
+// person's name on the operator doors). That does not replace the proxy — it
+// is still per-order — but it means the discriminator this column approximates
+// is now RECORDED rather than inferred, so a future version of this aggregate
+// can group on it instead of on a vendor id.
 //
 // The only discriminator on the row is whether the order ever got a vendor
 // order id. UpdateOrderVendor is called exactly once per order, immediately
