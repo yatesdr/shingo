@@ -630,11 +630,19 @@ function cellCardAction(entry, claim, remaining) {
     // still cannot hold the cell BUSY (it stays out of staged / inFlight /
     // swapPair); it can still be signed for.
     //
-    // The !auto_confirm term also closes a hazard that predates departure: an
-    // auto-confirm leg passes through `delivered` for about a second on its way
-    // to confirmed, and a card refreshed inside that window used to arm CONFIRM
-    // on the leg going to the supermarket.
-    const delivered = active.find(o => o.status === 'delivered')
+    // !auto_confirm IS ON BOTH TERMS, and it closes a hazard that predates
+    // departure entirely. An auto-confirming leg passes through `delivered` for
+    // about a second on its way to confirmed, and a card refreshed inside that
+    // window armed CONFIRM on it — a receipt for a tote nobody at the press can
+    // see, on a leg that was going to close itself. Nothing is lost by refusing:
+    // an auto-confirm leg's receipt is automatic, so there was never a tap for
+    // this arm to take. Unflipped press-index R1 is the case that needs it on
+    // the FIRST term — it auto-confirms and never departs, so the fallback's
+    // copy never sees it.
+    //
+    // Two terms rather than one, and the order is the point: a leg still working
+    // the cell outranks one that has left. They differ only in scope.
+    const delivered = active.find(o => o.status === 'delivered' && !o.auto_confirm)
         || orders.find(o => o.status === 'delivered' && !o.auto_confirm);
     const inFlight = active.find(o => !staged && !delivered);
 

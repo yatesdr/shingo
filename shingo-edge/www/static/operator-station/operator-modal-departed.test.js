@@ -187,6 +187,39 @@ eq(btn.label, 'REQUEST SWAP', 'the cell is balanced, so it offers the next swap 
 btn = card([{ id: 403, status: 'delivered', departed: false, auto_confirm: false }]);
 eq(btn.action, '/api/confirm-delivery/403', 'an undeparted delivered leg is unaffected by the fallback');
 
+// The leg the fallback's copy of !auto_confirm cannot reach: unflipped
+// press-index R1 auto-confirms AND never departs (its last cell step is its own
+// final step), so it arrives at this arm through `active`, not the fallback.
+// For ~1s in its delivered window the card would offer CONFIRM on the leg
+// heading for the supermarket instead of REQUEST SWAP.
+const autoConfirmUndeparted = { id: 404, status: 'delivered', departed: false, auto_confirm: true };
+btn = card([autoConfirmUndeparted]);
+ok(btn.label.indexOf('CONFIRM') < 0,
+    'an UNDEPARTED auto-confirm leg in its delivered window offers no CONFIRM either — the ' +
+    'predicate belongs on both terms, not just the fallback');
+
+// WHERE IT LANDS INSTEAD, and why that is the acceptable answer rather than the
+// ideal one. Unlike its departed twin, this leg is NOT filtered out of `active`
+// — it has not departed — so it reaches the inFlight arm and renders a disabled
+// ROBOT IN TRANSIT for the second before it self-confirms.
+//
+// That is a downgrade from an actionable-but-wrong button to an inert one, on a
+// leg that closes itself: no receipt can be taken against the wrong tote, and
+// the window ends without anyone doing anything. Getting REQUEST SWAP here
+// instead would mean teaching the inFlight arm that a delivered auto-confirm
+// leg is not a robot in transit, which is a real change to what `active` means
+// and not this fix's business.
+eq(btn.label, 'ROBOT IN TRANSIT',
+    'it falls to the inFlight arm — inert for ~1s, not a receipt on the wrong leg');
+eq(btn.enabled, false, 'and it is not tappable, so the window cannot be acted on wrongly');
+
+// And the pair as the plant actually sees it: R1 auto-confirming through its
+// delivered window beside R2, the leg that placed on the press. The receipt
+// must land on R2.
+btn = card([autoConfirmUndeparted, { id: 405, status: 'delivered', departed: false, auto_confirm: false }]);
+eq(btn.action, '/api/confirm-delivery/405',
+    'with both legs delivered, CONFIRM targets the one that needs a receipt, whatever the list order');
+
 // ── THE PAIR COUNT ───────────────────────────────────────────────────────
 //
 // The two_robot waiting arm counts the PAIR. A departed leg leaves `active`
