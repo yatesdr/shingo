@@ -278,6 +278,61 @@ Notes on the Edge machine:
 
 ---
 
+## Departed legs and cell-done
+
+A swap leg goes terminal when its *robot* finishes, often at a supermarket
+minutes after the cell it served was already balanced. So a leg carries a
+second, earlier fact: **it is DEPARTED when the fleet confirms the last step of
+its `steps_json` whose node is in the claim's cell set** — `CoreNodeName`, both
+paired index positions, and both staging nodes (a leg still holding a staging
+slot has not left, however far its robot has driven). `orders.departed_at`
+records it; `engine/leg_departure.go` derives it, from the steps and **never
+from `claim.SwapMode`** — the positional rule this replaced is what broke.
+
+Proof events: `BinPickedUp` and `IsTerminal`. A leg's last cell step is either a
+pickup with steps after it (stamped) or its own final step (terminal covers it;
+`departed_at` stays NULL for life). Any other shape is unprovable — not stamped,
+blocks until terminal, logged as `departure unprovable`. Two Core paths produce
+no stamp at all (`wiring_block_completed.go:259-264`, `:171-174`, where
+`resolvePickupBin` cannot name the bin); fail-closed, the leg waits for terminal.
+`departed_at` is never cleared, which is safe only because a stamped leg has no
+cell step left to replay — the standard's pickup-or-final assertion keeps that
+true.
+
+**Every reader of "is this cell busy"** asks `orderWorksTheCell` (non-terminal
+AND not departed). They must never disagree:
+
+| Reader | Asks about |
+|---|---|
+| `CanAcceptOrders` | the runtime slots |
+| `hasActiveSwap` | the runtime slots |
+| `guardPositionSpokenFor` (row arm) | the durable rows at the node |
+| `sweepNodeLevel` (auto-reorder) | the durable rows at the node |
+| Station card (`cellCardAction`) | the orders it lists, as `!o.departed` |
+
+The card still *lists* a departed leg as `TO MARKET` — control goes, information
+stays. Its one exception is `delivered`, which falls back to a departed
+non-auto-confirm leg: single_robot places on the press at step 7, departs at
+step 8, is `delivered` at step 9, and that CONFIRM is the cycle's only receipt.
+
+**CONFIRM belongs to the leg that placed on the press**: a leg auto-confirms iff
+it leaves no bin on `claim.CoreNodeName`. Exactly one receipt per cycle, every
+mode, both flip states. The positional `AutoConfirmA`/`AutoConfirmB` literals it
+replaced were correct only by accident of which robot carried which half, and
+the `IndexRobotSupplies` flip broke the accident (Springfield press trial,
+2026-09-02: the operator was asked to sign for a tote at the supermarket).
+
+A new swap mode is a new step builder and inherits both rules for free, or it
+fails `TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement`
+(`shingo-edge/engine/swap_leg_standard_test.go`), which walks
+`ConfigurableSwapModes` x both flip states x 2- and 3-position;
+`TestEveryChangeoverLegDepartsProvably` holds the changeover builders to the
+departure half. The honest fixes for a red build there: end the leg at the cell,
+make its last cell step a pickup, or teach `legDepartsAt` a new proof event
+**and add it here**.
+
+---
+
 ## The wire crossing
 
 Core and Edge are two processes (Core on a Proxmox VM, Edge on a Pi at the

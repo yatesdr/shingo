@@ -268,6 +268,14 @@ A node whose destination gates deliberately stand down — reserved by nothing, 
 
 The workflow for switching a production line from one job style to another. Progresses through a fixed sequence: stopping, counting out, storing, delivering, counting in, and ready.
 
+### Departed
+
+A swap leg that has finished with its **cell** but is not finished as an order: the fleet has confirmed the last step of the leg's plan whose node belongs to the cell, and the robot is now carrying a bin away from it.
+
+A departed leg is still live — Core, telemetry, the orders page and swap-peer handling all still own it. What it stops being is the *cell's*: the two admission guards, the station card's action button and the auto-relief tick all treat the cell as free. Rendered on the card as **TO MARKET**, the opposite number of ROBOT IN TRANSIT (a cell *waiting on* a delivery).
+
+Derived from `steps_json` against the claim's cell set, never from the swap mode. See [order-lifecycle.md](order-lifecycle.md#departed-legs-and-cell-done).
+
 ## Naming Conventions
 
 - **Go structs** use Shingo terms: `store.Bin`, `store.Payload`, `store.Node`
