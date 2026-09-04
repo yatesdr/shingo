@@ -49,7 +49,8 @@ type Order struct {
 	// SiblingOrderID is the id of the paired order in a two-robot swap
 	// (supply ↔ evac). Durable linkage so the supply guard and the
 	// release gate don't depend on volatile runtime slot pointers,
-	// which can be nulled by bin-pickup events before release fires.
+	// which cleanup paths (a cancel, a non-success terminal, and —
+	// pre-2026-09-03 — the pickup itself) can drop before release fires.
 	// Nil for non-paired orders (single-robot, simple, manual_swap).
 	SiblingOrderID *int64 `json:"sibling_order_id,omitempty"`
 	// QueueReason holds Core's last blocking signal for this order

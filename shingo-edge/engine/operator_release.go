@@ -499,7 +499,8 @@ func buildProtocolDisposition(disp ReleaseDisposition, runtime *processes.Runtim
 //
 // Pre-2026-05-04, this function read runtime.ActiveOrderID /
 // StagedOrderID to discriminate. That signal decayed: handler_bin_picked_up
-// nulls ActiveOrderID when the supply bin leaves the supermarket, and
+// USED TO null ActiveOrderID when the supply bin left the supermarket
+// (pre-0cc734c3, 2026-09-03 — pickup now leaves it alone), and
 // any subsequent release of the supply order saw the guard return false
 // → manifest cleared at Core → bin arrived empty at the slot → went
 // negative on consume ticks. Plant incident on ALN_002 (bin 12 reached

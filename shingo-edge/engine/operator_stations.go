@@ -278,7 +278,8 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 		e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
 	}
 	// Durable supply ↔ evac linkage. The runtime slots above can be
-	// nulled by handler_bin_picked_up before release fires; the sibling
+	// dropped by completion-time cleanup (per-order terminal clear, or a
+	// changeover cancel) before release fires; the sibling
 	// pointer survives so ReleaseStagedOrders and the supply guard can
 	// still identify the pair.
 	//
@@ -674,9 +675,10 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	task := loadReleaseSwapNodeTask(e.db, node)
 
 	// Resolve the swap pair via durable sibling pointer rather than the
-	// volatile runtime slots. handler_bin_picked_up nulls runtime.ActiveOrderID
-	// when the supply bin leaves the supermarket; pre-2026-05-04 the gate
-	// failed any release attempt after that point. Now we accept any
+	// volatile runtime slots. Cleanup paths (per-order terminal clear, a
+	// changeover cancel, pre-2026-09-03 also the supply pickup itself)
+	// drop runtime.ActiveOrderID while the order is still live; pre-2026-05-04
+	// the gate failed any release attempt after that point. Now we accept any
 	// non-nil runtime slot, follow the sibling pointer to find the other
 	// half, and release both. releaseUnlessTerminal handles already-past-
 	// staged orders gracefully so partial states don't block the click.

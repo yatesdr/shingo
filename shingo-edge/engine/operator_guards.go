@@ -54,9 +54,9 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 // in that window, correctly says empty.
 //
 // SIM 2026-08-31, ALN_004, four cells dead in one run. The swap's own pickup
-// nulled the runtime's ActiveOrderID at 05:51:45 — correct, for its own reasons
-// (handler_bin_picked_up.go). Core's intermediate-store dropoff re-bound a bin
-// at 05:51:50, which re-armed the consume tick's evaluator. At 05:51:52 the
+// made the position read empty at 05:51:45 — Core's intermediate-store
+// dropoff then re-bound a bin at 05:51:50, which re-armed the consume tick's
+// evaluator. At 05:51:52 the
 // cell asked for material with both runtime pointers empty and Core reporting
 // the position free, so Edge downgraded to a bare delivery. Two seconds later
 // the in-flight swap set its own bin down, and the second robot arrived at a
@@ -72,9 +72,11 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 //     unreachable from the one path that causes it. The downgrade returns from
 //     BuildConsumePlan before plan.Dispatch exists, and requestNodeFromClaim
 //     runs the guard only when it does.
-//  2. THE ORDER ROW, NOT THE POINTER. A swap's own pickup nulls ActiveOrderID
-//     mid-cycle, so at the moment that matters most the pointer says nothing
-//     while orders.process_node_id still names this cell. It is also the only
+//  2. THE ORDER ROW, NOT THE POINTER. The pointer is slot-scoped, not
+//     lifecycle-scoped, so at the moments that matter most it says nothing (a
+//     changeover-cancel nils both refs mid-swap; pre-departure cleanup paths
+//     can too), while orders.process_node_id still names this cell. It is also
+//     the only
 //     witness a single_robot swap leaves here: that swap is ONE complex order
 //     whose delivery_node is the supermarket the old carrier ends at, and the
 //     new carrier lands at this position as an intermediate dropoff — so a
