@@ -69,6 +69,60 @@ func testHandlersWithSim(t *testing.T, sim *simulator.SimulatorBackend) (*Handle
 	return h, db
 }
 
+// testHandlersForRendering builds the page handlers over an engine that is
+// constructed but never Started, for tests that assert what the orders board
+// RENDERS rather than what the plant does.
+//
+// Start() launches the fulfillment scanner (`go e.fulfillment.RunOnce()`,
+// engine_lifecycle.go) and does not wait for it. A rendering test seeds order
+// state by writing it straight to the database, so the two race: when the
+// goroutine happens to land after the seeding, the scanner finds the seeded
+// order in the acquiring set, re-derives its wait from a database that holds no
+// bins at all, and rewrites queue_reason to "Waiting for material" via
+// dispatch.WriteQueueDetail. That is the scanner behaving correctly — a wait's
+// cause is meant to say why the order is waiting NOW — against a fixture that
+// asserts a cause nothing in this database supports. It turned CI red on a
+// loaded runner while passing 65 consecutive local runs.
+//
+// Awaiting the boot scan would only sequence the race. Not starting the engine
+// removes it: with no Start there is no scanner, no periodic sweep and no event
+// triggers, so nothing exists that can rewrite a seeded row. New wires
+// orderService and nodeService (engine.go), which is everything the read path
+// through handleOrders touches, so the page renders exactly as it does in
+// production.
+func testHandlersForRendering(t *testing.T) (*Handlers, *store.DB) {
+	t.Helper()
+
+	db := testdb.Open(t)
+
+	cfg := config.Defaults()
+	cfg.Messaging.StationID = "test-www"
+
+	eng := engine.New(engine.Config{
+		AppConfig: cfg,
+		DB:        db,
+		Fleet:     simulator.New(),
+		MsgClient: nil,
+		LogFunc:   t.Logf,
+	})
+
+	hub := NewEventHub()
+	hub.Start()
+	t.Cleanup(func() { hub.Stop() })
+
+	dbgLog, _ := debuglog.New(64, nil)
+
+	h := &Handlers{
+		engine:        eng,
+		orchestration: eng,
+		sessions:      newSessionStore("test-secret"),
+		tmpls:         make(map[string]*template.Template),
+		eventHub:      hub,
+		debugLog:      dbgLog,
+	}
+	return h, db
+}
+
 // makeOrder inserts a pending "move" order with the given vendor_order_id and
 // priority. Returns the persisted order.
 func makeOrder(t *testing.T, db *store.DB, uuid, vendorID string, priority int) *orders.Order {

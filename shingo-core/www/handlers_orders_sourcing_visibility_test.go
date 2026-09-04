@@ -13,7 +13,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
-	"shingocore/fleet/simulator"
 	"shingocore/store"
 	"shingocore/store/orders"
 )
@@ -70,7 +69,7 @@ func parkOrder(t *testing.T, db *store.DB, uuid string, status protocol.Status, 
 // not describe itself as being about only one of them.
 func TestOrdersPage_ASourcingOrderSaysWhyItIsWaiting(t *testing.T) {
 	t.Parallel()
-	h, db := testHandlersWithSim(t, simulator.New())
+	h, db := testHandlersForRendering(t)
 
 	parkOrder(t, db, "sv-queued", protocol.StatusQueued,
 		protocol.QueueStorageRearranging, "Storage is being rearranged at ALN_001")
@@ -107,7 +106,7 @@ func TestOrdersPage_ASourcingOrderSaysWhyItIsWaiting(t *testing.T) {
 // wait rather than of the order.
 func TestOrdersPage_AWaitCarriesItsOwnClock(t *testing.T) {
 	t.Parallel()
-	h, db := testHandlersWithSim(t, simulator.New())
+	h, db := testHandlersForRendering(t)
 
 	o := parkOrder(t, db, "sv-clock", protocol.StatusSourcing,
 		protocol.QueueWaitingForMaterial, "Waiting for material: PART-A")
@@ -133,7 +132,7 @@ func TestOrdersPage_AWaitCarriesItsOwnClock(t *testing.T) {
 // and hanging a ticking duration on it would read as a stall.
 func TestOrdersPage_ADispatchedOrderCarriesNoWaitClock(t *testing.T) {
 	t.Parallel()
-	h, db := testHandlersWithSim(t, simulator.New())
+	h, db := testHandlersForRendering(t)
 
 	o := parkOrder(t, db, "sv-moving", protocol.StatusQueued,
 		protocol.QueueWaitingForMaterial, "Waiting for material: PART-A")
@@ -164,7 +163,7 @@ func TestOrdersPage_ADispatchedOrderCarriesNoWaitClock(t *testing.T) {
 // it does not when the page is complete.
 func TestOrdersPage_ATruncatedBoardSaysSo(t *testing.T) {
 	t.Parallel()
-	h, db := testHandlersWithSim(t, simulator.New())
+	h, db := testHandlersForRendering(t)
 
 	for i := range 5 {
 		parkOrder(t, db, fmt.Sprintf("trunc-%d", i), protocol.StatusQueued,
