@@ -68,6 +68,14 @@ func (db *DB) CloneStyle(srcID int64, name, description, calledBy string) (int64
 	return processes.CloneStyle(db.DB, srcID, name, description, calledBy)
 }
 
+// CopyStyleClaims replaces target's node claims with src's (the clone
+// column list, verbatim). includePayloads=false keeps the target's own
+// payloads on the nodes the two styles share. Callers own the
+// active-style and same-process rules.
+func (db *DB) CopyStyleClaims(srcID, targetID int64, includePayloads bool) error {
+	return processes.CopyStyleClaims(db.DB, srcID, targetID, includePayloads)
+}
+
 // GenerateStyles scaffolds a family of styles from one base style, each a
 // clone of base with per-claim payload overrides applied, in one transaction.
 func (db *DB) GenerateStyles(baseID int64, variants []domain.StyleVariant, calledBy string) ([]int64, error) {

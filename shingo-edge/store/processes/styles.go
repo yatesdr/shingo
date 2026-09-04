@@ -377,6 +377,76 @@ func GenerateStyles(db *sql.DB, baseID int64, variants []domain.StyleVariant, ca
 	return ids, nil
 }
 
+// CopyStyleClaims replaces target's node claims with src's, within one
+// transaction: the clone column list, verbatim. Used by the "Copy Node
+// Claims" action to push one style's choreography onto sibling styles.
+//
+// includePayloads=false preserves the TARGET's payloads: its per-node
+// payload map is snapshotted before the delete and reapplied after the
+// insert, for nodes the two styles share. A target node the source style
+// doesn't have is gone with the rest of the replace; a node new to the
+// target arrives with the source's payload — there was nothing of the
+// target's to preserve. Callers enforce the active-style and same-process
+// rules; this function is the mechanical replace.
+func CopyStyleClaims(db *sql.DB, srcID, targetID int64, includePayloads bool) error {
+	if srcID == targetID {
+		return fmt.Errorf("source and target are the same style")
+	}
+	if _, err := GetStyle(db, srcID); err != nil {
+		return fmt.Errorf("source style: %w", err)
+	}
+	tgt, err := GetStyle(db, targetID)
+	if err != nil {
+		return fmt.Errorf("target style: %w", err)
+	}
+	if tgt == nil {
+		return fmt.Errorf("target style %d not found", targetID)
+	}
+
+	// The target's payloads per node — snapshotted before the replace when
+	// they must survive it. The bulk insert copies the source's payloads
+	// too (full clone column list); the snapshot is then layered back over
+	// the nodes the target owned, so "exclude payloads" means "keep mine",
+	// not "arrive empty".
+	savedPayloads := map[string]string{}
+	if !includePayloads {
+		claims, err := ListClaims(db, targetID)
+		if err != nil {
+			return fmt.Errorf("read target claims: %w", err)
+		}
+		for _, c := range claims {
+			if c.PayloadCode != "" {
+				savedPayloads[c.CoreNodeName] = c.PayloadCode
+			}
+		}
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM style_node_claims WHERE style_id = ?`, targetID); err != nil {
+		return err
+	}
+	// swap_mode is copied verbatim on the same trust as cloneStyleTx: live
+	// claims already hold a configurable mode, nothing stale to re-validate.
+	if _, err := tx.Exec(`INSERT INTO style_node_claims (style_id, `+cloneClaimColumns+`)
+		SELECT ?, `+cloneClaimColumns+` FROM style_node_claims WHERE style_id = ?`,
+		targetID, srcID); err != nil {
+		return err
+	}
+	if !includePayloads {
+		for node, payload := range savedPayloads {
+			if _, err := tx.Exec(`UPDATE style_node_claims SET payload_code = ?
+				WHERE style_id = ? AND core_node_name = ?`, payload, targetID, node); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
 // StyleImpact is what a style is carrying, counted so a confirmation dialog can
 // say it out loud.
 //

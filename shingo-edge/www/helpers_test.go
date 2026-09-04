@@ -452,6 +452,7 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Delete("/styles/{id}", h.apiDeleteStyle)
 			r.Post("/styles/{id}/clone", h.apiCloneStyle)
 			r.Post("/styles/{id}/generate", h.apiGenerateStyles)
+			r.Post("/styles/{id}/claims/copy-to", h.apiCopyStyleClaims)
 
 			r.Get("/styles/{id}/node-claims", h.apiListStyleNodeClaims)
 			r.Post("/style-node-claims", h.apiUpsertStyleNodeClaim)

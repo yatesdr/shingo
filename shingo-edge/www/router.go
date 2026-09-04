@@ -474,6 +474,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Post("/styles/{id}/restore", h.apiRestoreStyle)
 				r.Post("/styles/{id}/clone", h.apiCloneStyle)
 				r.Post("/styles/{id}/generate", h.apiGenerateStyles)
+				// Copy Node Claims: push one style's claims onto sibling
+				// styles. Per-target results; active style refused.
+				r.Post("/styles/{id}/claims/copy-to", h.apiCopyStyleClaims)
 				r.Get("/styles/{id}/node-claims", h.apiListStyleNodeClaims)
 				r.Post("/style-node-claims", h.apiUpsertStyleNodeClaim)
 				r.Delete("/style-node-claims/{id}", h.apiDeleteStyleNodeClaim)

@@ -208,6 +208,51 @@ func (h *Handlers) apiCloneStyle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int64{"id": newID})
 }
 
+// apiCopyStyleClaims copies the source style's node claims onto a selected
+// set of sibling styles — the deep copy Clone Style performs, aimed at
+// EXISTING styles, for a process with tens of styles sharing one layout.
+// Replace semantics: each target's claims are wiped and rewritten. The
+// service enforces the rules (same process, active style refused) and
+// returns per-target results, so the batch never aborts on the first bad
+// style and the operator sees every outcome.
+func (h *Handlers) apiCopyStyleClaims(w http.ResponseWriter, r *http.Request) {
+	srcID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid style ID")
+		return
+	}
+	var req struct {
+		TargetStyleIDs  []int64 `json:"target_style_ids"`
+		IncludePayloads bool    `json:"include_payloads"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(req.TargetStyleIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one target style is required")
+		return
+	}
+	if _, err := h.engine.StyleService().Get(srcID); err != nil {
+		writeError(w, http.StatusBadRequest, "source style not found")
+		return
+	}
+	results := h.engine.StyleService().CopyClaims(srcID, req.TargetStyleIDs, req.IncludePayloads)
+	copied := 0
+	for _, res := range results {
+		if res.Status == "copied" {
+			copied++
+		}
+	}
+	if copied > 0 {
+		// One backup + one coalesced Core sync for the whole batch — a copy
+		// to forty styles is one operator action, not forty.
+		h.requestBackup("claims-copied")
+		h.requestSpecChangePublish()
+	}
+	writeJSON(w, map[string]any{"copied": copied, "results": results})
+}
+
 // apiGenerateStyles scaffolds a whole family of styles from one base style in
 // a single atomic batch — each variant is a clone of the base with its
 // per-claim payload overrides applied. The {id} path param is the base style.

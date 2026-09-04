@@ -92,6 +92,75 @@ func (s *StyleService) GenerateVariants(baseID int64, variants []domain.StyleVar
 	return s.db.GenerateStyles(baseID, variants, calledBy)
 }
 
+// CopyClaimsResult is one target style's outcome in a CopyClaims batch.
+// Status is "copied", "skipped", or "failed" — the batch never aborts on
+// the first bad target, so a 40-style copy reports every outcome.
+type CopyClaimsResult struct {
+	StyleID int64  `json:"style_id"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// CopyClaims replaces each target style's node claims with the source's —
+// the same verbatim copy Clone Style performs, but into EXISTING styles.
+// Per-target results, never abort-on-first-error.
+//
+// Rules enforced here, not just in the UI:
+//   - a target must live in the source's process;
+//   - a target must not be the process's ACTIVE style — copying claims
+//     under a style production is running right now would change live
+//     behavior mid-part, so it is refused outright;
+//   - the source itself is skipped, and duplicate targets collapse.
+//
+// includePayloads=false preserves each target's own payloads (per node,
+// for nodes the two styles share) — the "copy the choreography, keep my
+// payloads" mode.
+func (s *StyleService) CopyClaims(srcID int64, targets []int64, includePayloads bool) []CopyClaimsResult {
+	results := make([]CopyClaimsResult, 0, len(targets))
+	if len(targets) == 0 {
+		return results
+	}
+	src, err := s.db.GetStyle(srcID)
+	if err != nil || src == nil {
+		return []CopyClaimsResult{{Status: "failed", Reason: "source style not found"}}
+	}
+	var activeStyleID int64
+	if proc, err := s.db.GetProcess(src.ProcessID); err == nil && proc != nil && proc.ActiveStyleID != nil {
+		activeStyleID = *proc.ActiveStyleID
+	}
+
+	seen := map[int64]bool{}
+	for _, targetID := range targets {
+		if seen[targetID] {
+			continue
+		}
+		seen[targetID] = true
+		res := CopyClaimsResult{StyleID: targetID}
+		switch {
+		case targetID == srcID:
+			res.Status, res.Reason = "skipped", "is the source style"
+		default:
+			tgt, err := s.db.GetStyle(targetID)
+			switch {
+			case err != nil || tgt == nil:
+				res.Status, res.Reason = "failed", "style not found"
+			case tgt.ProcessID != src.ProcessID:
+				res.Status, res.Reason = "failed", "style belongs to a different process"
+			case tgt.ID == activeStyleID:
+				res.Status, res.Reason = "failed", "active style cannot be a copy target"
+			default:
+				if err := s.db.CopyStyleClaims(srcID, targetID, includePayloads); err != nil {
+					res.Status, res.Reason = "failed", err.Error()
+				} else {
+					res.Status = "copied"
+				}
+			}
+		}
+		results = append(results, res)
+	}
+	return results
+}
+
 // ── Style/node claims ─────────────────────────────────────────────
 
 // ListClaims returns every claim for a style, exactly as stored. It enriches
