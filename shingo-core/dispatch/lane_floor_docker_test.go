@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 )
@@ -102,7 +103,8 @@ func TestFloor_WakesAQuiescedPlantAndRecordsTheDefect(t *testing.T) {
 
 	// (a) THE ROBOT MOVES.
 	if n := appendsTo(backend, dweller.VendorOrderID); n == 0 {
-		after, _ := db.GetOrder(dweller.ID)
+		after, err := db.GetOrder(dweller.ID)
+		testutil.MustNoErr(t, err, "db.GetOrder(dweller.ID)")
 		t.Fatalf("the floor did not free the dweller — status %s, wait_index %d, cause %q. The dig "+
 			"lock is gone and every event that could have re-asked was consumed before it dropped; "+
 			"if the periodic pass does not notice, nothing does. This is F-22",

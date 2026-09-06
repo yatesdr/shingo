@@ -5,6 +5,7 @@ package dispatch
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -140,7 +141,8 @@ func TestOccupancy_ReleasedWhenTheRobotLeavesNotWhenItDrops(t *testing.T) {
 	// that happens in the leaver's visit — every event it emitted fired while the
 	// row was still there.
 	if n := appendsTo(backend, waiter.VendorOrderID); n == 0 {
-		after, _ := db.GetOrder(waiter.ID)
+		after, err := db.GetOrder(waiter.ID)
+		testutil.MustNoErr(t, err, "db.GetOrder(waiter.ID)")
 		t.Fatalf("the waiter never went in after the lane emptied — status %s, cause %q. The "+
 			"corridor is free and the robot at its mark was not told; on a quiet lane nothing else "+
 			"will tell it", after.Status, after.QueueCause)
@@ -239,7 +241,8 @@ func TestOccupancy_ExitReleasesTheLEGsRowNotItsParents(t *testing.T) {
 	// (b) AND THE WAITER GOES IN. The row being gone is bookkeeping; this is the
 	// floor behaviour the whole fix exists for.
 	if n := appendsTo(backend, waiter.VendorOrderID); n == 0 {
-		after, _ := db.GetOrder(waiter.ID)
+		after, err := db.GetOrder(waiter.ID)
+		testutil.MustNoErr(t, err, "db.GetOrder(waiter.ID)")
 		t.Fatalf("the waiter never went in after the dig leg left — status %s, cause %q",
 			after.Status, after.QueueCause)
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -90,7 +91,8 @@ func TestCompound_ChildWaitsForADigOnItsDestinationLane(t *testing.T) {
 		t.Fatalf("advance (baseline): %v", err)
 	}
 	if !inFlight(t, db, child.ID) {
-		fresh, _ := db.GetOrder(child.ID)
+		fresh, err := db.GetOrder(child.ID)
+		testutil.MustNoErr(t, err, "db.GetOrder(child.ID)")
 		t.Fatalf("the leg did not dispatch even with both lanes free (status %s) — the fixture never "+
 			"reaches the check under test", fresh.Status)
 	}
@@ -138,7 +140,8 @@ func TestCompound_ChildWaitsForADigOnItsDestinationLane(t *testing.T) {
 		name string
 		lane int64
 	}{{"source", srcLane2}, {"destination", dstLane2}} {
-		if occ, _ := reservations.OccupantsOf(db.DB, g.lane); len(occ) != 0 {
+		occRaw, err := reservations.OccupantsOf(db.DB, g.lane)
+		if occ := testutil.Must(t, occRaw, err, "reservations.OccupantsOf(db.DB, g.lane)"); len(occ) != 0 {
 			t.Fatalf("%s lane has occupants %v — an occupancy-only read would refuse for the wrong "+
 				"reason and this test would pass without the dig check", g.name, occ)
 		}
@@ -197,7 +200,8 @@ func TestCompound_ChildStillPassesItsOwnParentsDig(t *testing.T) {
 		t.Fatalf("advance: %v", err)
 	}
 	if !inFlight(t, db, child.ID) {
-		fresh, _ := db.GetOrder(child.ID)
+		fresh, err := db.GetOrder(child.ID)
+		testutil.MustNoErr(t, err, "db.GetOrder(child.ID)")
 		t.Fatalf("the leg was held behind its OWN parent's dig (status %s). That dig only clears when "+
 			"this leg completes, so holding it here is a deadlock — the lock exists to let this work "+
 			"run, not to keep it out", fresh.Status)

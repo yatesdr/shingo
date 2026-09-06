@@ -29,8 +29,10 @@ import (
 // the dug lane can legally also touch them.
 func setupGatedDigGroup(t *testing.T, db *store.DB, withOpenLane bool) (grp, dug, gated, open *nodes.Node, dugSlots []*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"NGRP\")")
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"LANE\")")
 
 	bp = &payloads.Payload{Code: "PGD"}
 	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
@@ -51,7 +53,8 @@ func setupGatedDigGroup(t *testing.T, db *store.DB, withOpenLane bool) (grp, dug
 			testutil.MustNoErr(t, db.CreateNode(s), "create slot")
 			slots = append(slots, s)
 		}
-		reloaded, _ := db.GetNode(lane.ID)
+		reloaded, err := db.GetNode(lane.ID)
+		testutil.MustNoErr(t, err, "db.GetNode(lane.ID)")
 		return reloaded, slots
 	}
 	dug, dugSlots = mkLane("GD-DUG", "GD-DUG-WAIT")

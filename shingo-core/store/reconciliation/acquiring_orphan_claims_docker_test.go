@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -253,10 +254,12 @@ func TestAcquiringOrphanClaims_SweepsTheSlotDual(t *testing.T) {
 	if _, err := reconciliation.ReleaseAcquiringOrphanClaims(db.DB); err != nil {
 		t.Fatalf("ReleaseAcquiringOrphanClaims: %v", err)
 	}
-	if n, _ := nodes.Get(db.DB, slot.ID); n.ClaimedBy != nil {
+	nRaw, err := nodes.Get(db.DB, slot.ID)
+	if n := testutil.Must(t, nRaw, err, "nodes.Get(db.DB, slot.ID)"); n.ClaimedBy != nil {
 		t.Errorf("orphaned slot claim survived: claimed_by=%d", *n.ClaimedBy)
 	}
-	if n, _ := nodes.Get(db.DB, healthy.ID); n.ClaimedBy == nil {
+	nRaw, err = nodes.Get(db.DB, healthy.ID)
+	if n := testutil.Must(t, nRaw, err, "nodes.Get(db.DB, healthy.ID)"); n.ClaimedBy == nil {
 		t.Error("the sweep cleared a slot claim that had a live reservation behind it — a destination " +
 			"taken from an order that is on its way there")
 	}

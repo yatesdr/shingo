@@ -35,7 +35,8 @@ func TestLaneEntryTiers_ParksDeeperPending(t *testing.T) {
 		}
 		var s1 *nodes.Node
 		for _, s := range slots {
-			if dpt, _ := db.GetSlotDepth(s.ID); dpt == 1 {
+			dptRaw, err := db.GetSlotDepth(s.ID)
+			if dpt := testutil.Must(t, dptRaw, err, "db.GetSlotDepth(s.ID)"); dpt == 1 {
 				s1 = s
 			}
 		}
@@ -107,7 +108,8 @@ func TestLaneEntryTiers_ReleasesOnPlacement(t *testing.T) {
 	}
 	var s1 *nodes.Node
 	for _, s := range slots {
-		if dpt, _ := db.GetSlotDepth(s.ID); dpt == 1 {
+		dptRaw, err := db.GetSlotDepth(s.ID)
+		if dpt := testutil.Must(t, dptRaw, err, "db.GetSlotDepth(s.ID)"); dpt == 1 {
 			s1 = s
 		}
 	}

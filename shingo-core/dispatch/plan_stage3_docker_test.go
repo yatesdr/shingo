@@ -43,7 +43,8 @@ func TestStage3_IsStorageDropoff(t *testing.T) {
 
 	lane := &nodes.Node{Name: "S3-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
-	lane, _ = db.GetNode(lane.ID)
+	laneRaw, err := db.GetNode(lane.ID)
+	lane = testutil.Must(t, laneRaw, err, "db.GetNode(lane.ID)")
 	laneChild := &nodes.Node{Name: "S3-LANE-SLOT", Enabled: true, ParentID: &lane.ID}
 	testutil.MustNoErr(t, db.CreateNode(laneChild), "create lane child")
 
@@ -73,7 +74,8 @@ func TestStage3_MoveToStorageRace_ExactlyOneWins(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
-	storType, _ := db.GetNodeTypeByCode("STOR")
+	storType, err := db.GetNodeTypeByCode("STOR")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"STOR\")")
 	dest := &nodes.Node{Name: "S3-MV-DEST", Enabled: true, NodeTypeID: &storType.ID}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create STOR dest")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -102,7 +104,8 @@ func TestStage3_MoveVsStore_ExactlyOneWins(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
 	_, _, bp := setupTestData(t, db)
-	storType, _ := db.GetNodeTypeByCode("STOR")
+	storType, err := db.GetNodeTypeByCode("STOR")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"STOR\")")
 	dest := &nodes.Node{Name: "S3-MVST-DEST", Enabled: true, NodeTypeID: &storType.ID}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create STOR dest")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())

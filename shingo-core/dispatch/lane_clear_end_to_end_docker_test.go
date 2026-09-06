@@ -80,7 +80,8 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 	if strings.TrimSpace(parked.QueueReason) == "" {
 		t.Error("queue_reason is blank — this is the sentence on the board while the dig runs")
 	}
-	if kids, _ := db.ListChildOrders(demand.ID); len(kids) == 0 {
+	kidsRaw, err := db.ListChildOrders(demand.ID)
+	if kids := testutil.Must(t, kidsRaw, err, "db.ListChildOrders(demand.ID)"); len(kids) == 0 {
 		t.Fatal("the demand owns no legs — it did not take the excavation, so nothing is digging " +
 			"for it and its wait has no releaser")
 	}
@@ -181,7 +182,8 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 	if after.Status != StatusQueued {
 		t.Fatalf("demand status = %q after the dig, want %q — something moved it", after.Status, StatusQueued)
 	}
-	if kids, _ := db.ListChildOrders(demand.ID); len(kids) == 0 {
+	kidsRaw, err = db.ListChildOrders(demand.ID)
+	if kids := testutil.Must(t, kidsRaw, err, "db.ListChildOrders(demand.ID)"); len(kids) == 0 {
 		t.Fatal("the demand owns no legs — it did not take the excavation")
 	}
 

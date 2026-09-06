@@ -276,14 +276,16 @@ func TestGateDwell_CarriesItsCauseAndClearsItOnEntry(t *testing.T) {
 		o.Status = StatusSourcing
 	})
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	_, dErr := d.DispatchDirect(order, srcNode, mouth)
 	testutil.MustNoErr(t, dErr, "the gated dispatch must create, unsealed")
 
 	// The evaluator passes over a dweller it cannot admit.
 	d.EvaluateLaneReleases(laneID)
 
-	held, _ := db.GetOrder(order.ID)
+	held, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(order.ID)")
 	if held.QueueCause == "" {
 		t.Fatalf("order %d is dwelling at the mark with NO cause on its row. An operator sees a "+
 			"robot parked and nothing that says why — which is how three of these went 77 minutes "+
@@ -298,7 +300,8 @@ func TestGateDwell_CarriesItsCauseAndClearsItOnEntry(t *testing.T) {
 	d.ReleaseLaneOccupancy(blocker.ID) // the blocker leaves the lane
 	d.EvaluateLaneReleases(laneID)
 
-	entered, _ := db.GetOrder(order.ID)
+	entered, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(order.ID)")
 	if entered.QueueCause != "" {
 		t.Errorf("order %d entered the lane still carrying cause %q — a stale wait on a robot that "+
 			"is now driving is the same lie as the blank was, told the other way round",

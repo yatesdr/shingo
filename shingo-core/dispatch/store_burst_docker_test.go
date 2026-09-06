@@ -50,8 +50,10 @@ import (
 // bin more, so the divert boundary lands exactly at store six.
 func storeBurstGroup(t *testing.T, db *store.DB, prefix string, depth int) (grp, laneDug, laneMark *nodes.Node, dugSlots, markSlots []*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"NGRP\")")
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"LANE\")")
 
 	bp = &payloads.Payload{Code: prefix + "-P"}
 	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
@@ -72,13 +74,15 @@ func storeBurstGroup(t *testing.T, db *store.DB, prefix string, depth int) (grp,
 			testutil.MustNoErr(t, db.CreateNode(s), "create slot")
 			slots = append(slots, s)
 		}
-		reloaded, _ := db.GetNode(lane.ID)
+		reloaded, err := db.GetNode(lane.ID)
+		testutil.MustNoErr(t, err, "db.GetNode(lane.ID)")
 		return reloaded, slots
 	}
 	laneDug, dugSlots = mkLane(prefix+"-LANE-DUG", "")
 	laneMark, markSlots = mkLane(prefix+"-LANE-MARK", prefix+"-WAIT")
 
-	grp, _ = db.GetNode(grp.ID)
+	grpRaw, err := db.GetNode(grp.ID)
+	grp = testutil.Must(t, grpRaw, err, "db.GetNode(grp.ID)")
 	return grp, laneDug, laneMark, dugSlots, markSlots, bp
 }
 

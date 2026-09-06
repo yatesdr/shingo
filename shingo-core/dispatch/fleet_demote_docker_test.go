@@ -68,9 +68,11 @@ func armedOrderAwaitingFleet(t *testing.T, db *store.DB, d *Dispatcher, uuid str
 	// same order the plain path runs them in.
 	testutil.MustNoErr(t, d.binManifest.ReserveForDispatch(bin.ID, order.ID), "soft-reserve the bin")
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	testutil.MustNoErr(t, d.ConfirmForDispatch(order, bin.ID, srcNode, lineNode), "confirm at dispatch")
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err = db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	return order, bin.ID
 }
 
@@ -111,7 +113,8 @@ func TestFleetRefusal_TheOrderKeepsItsPaperAndRetries(t *testing.T) {
 	// The plain path in full: DispatchDirect undoes its own CAS with no sentence,
 	// and the caller — which is what knows whether this is a wait or the end of a
 	// request — names it. This is the scanner's half.
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	code, cause, params := FleetRefusalCause(derr, order.DeliveryNode)
 	refusing.DemoteAfterFleetRefusal(order, code, cause, params)
 
@@ -146,10 +149,12 @@ func TestFleetRefusal_TheOrderKeepsItsPaperAndRetries(t *testing.T) {
 
 	// And it goes, uncontested, on the next attempt — the blip's whole point.
 	going, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err = db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	testutil.MustNoErr(t, going.ConfirmForDispatch(order, binID, srcNode, lineNode),
 		"re-confirm the kept paper")
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err = db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	vendorID, err := going.DispatchDirect(order, srcNode, lineNode)
 	testutil.MustNoErr(t, err, "re-dispatch after the blip")
 	if vendorID == "" {
@@ -216,7 +221,8 @@ func TestFleetRefusal_ACompoundLegLeavesItsParentsCorridorAlone(t *testing.T) {
 
 	legRow, gerr := db.GetOrder(leg.ID)
 	testutil.MustNoErr(t, gerr, "read the leg")
-	_, _ = db.DB.Exec(`UPDATE orders SET status=$1 WHERE id=$2`, string(StatusDispatched), leg.ID)
+	_, execErr := db.DB.Exec(`UPDATE orders SET status=$1 WHERE id=$2`, string(StatusDispatched), leg.ID)
+	testutil.MustNoErr(t, execErr, "force the leg row to dispatched")
 	legRow.Status = StatusDispatched
 
 	d.DemoteAfterFleetRefusal(legRow, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
@@ -263,7 +269,8 @@ func TestFleetRefusal_TheDoubleInvocationIsANoOp(t *testing.T) {
 		t.Fatal("the fleet refused the create; DispatchDirect must report it")
 	}
 	// ...and then the caller's park, exactly as the scanner does it.
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	d.DemoteAfterFleetRefusal(order, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
 
 	// One refusal is one WAIT, so one sourcing row carrying the fleet cause. The

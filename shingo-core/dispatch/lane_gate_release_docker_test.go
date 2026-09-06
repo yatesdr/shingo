@@ -182,7 +182,8 @@ func laneSlotsByDepth(t *testing.T, db *store.DB, laneID int64) []*nodes.Node {
 	byDepth := map[int]*nodes.Node{}
 	maxD := -1
 	for _, s := range slots {
-		d, _ := db.GetSlotDepth(s.ID)
+		d, err := db.GetSlotDepth(s.ID)
+		testutil.MustNoErr(t, err, "db.GetSlotDepth(s.ID)")
 		byDepth[d] = s
 		if d > maxD {
 			maxD = d
@@ -238,7 +239,8 @@ func TestGateRelease_ReleasesWhenLaneClears(t *testing.T) {
 
 	// The blocker PLACES. Its order stays non-terminal — only the mouth row goes.
 	placeDeeperBlocker(t, db, d, deep.ID, s1.Name)
-	stillDeep, _ := db.GetOrder(deep.ID)
+	stillDeep, err := db.GetOrder(deep.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(deep.ID)")
 	if protocol.IsTerminal(stillDeep.Status) {
 		t.Fatalf("blocker went terminal (%s) — the test would prove completion-release, not placement-release", stillDeep.Status)
 	}
@@ -260,7 +262,8 @@ func TestGateRelease_ReleasesWhenLaneClears(t *testing.T) {
 		t.Fatalf("append blocks = %v, want [dropoff@%s]", a.Blocks, s0.Name)
 	}
 
-	released, _ := db.GetOrder(shallow.ID)
+	released, err := db.GetOrder(shallow.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(shallow.ID)")
 	if released.WaitIndex != 1 {
 		t.Errorf("wait_index = %d, want 1 after release", released.WaitIndex)
 	}
@@ -340,7 +343,8 @@ func TestGateRelease_StaleCopyCannotDoubleAppend(t *testing.T) {
 	if n := len(backend.ReleaseCalls()) - before; n != 1 {
 		t.Fatalf("appends from two racing passes = %d, want exactly 1 — the stale copy double-appended (duplicate blockId at SEER)", n)
 	}
-	final, _ := db.GetOrder(staged.ID)
+	final, err := db.GetOrder(staged.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(staged.ID)")
 	if final.WaitIndex != 1 {
 		t.Errorf("wait_index = %d, want 1 (advanced once, not twice)", final.WaitIndex)
 	}
@@ -390,7 +394,8 @@ func TestGateRelease_DoubleFireAppendsOnce(t *testing.T) {
 	if n := len(backend.ReleaseCalls()); n != 1 {
 		t.Fatalf("append calls after 5 firings = %d, want exactly 1 — the double-append guard did not hold", n)
 	}
-	released, _ := db.GetOrder(o.ID)
+	released, err := db.GetOrder(o.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(o.ID)")
 	if released.WaitIndex != 1 {
 		t.Errorf("wait_index = %d, want 1 (not advanced per firing)", released.WaitIndex)
 	}
@@ -455,7 +460,8 @@ func TestGateRelease_DeepestFirstAndTier1(t *testing.T) {
 	if len(after)-before != 1 {
 		t.Fatalf("appends on release = %d, want 1", len(after)-before)
 	}
-	rel, _ := db.GetOrder(pairA.ID)
+	rel, err := db.GetOrder(pairA.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(pairA.ID)")
 	if IsGateStaged(rel) {
 		t.Error("the staged order was not released once the lane cleared")
 	}
@@ -536,7 +542,8 @@ func TestGateRelease_RebindKeepsItsOwnSlot(t *testing.T) {
 	if _, err := d.DispatchDirect(deep, line, slots[1]); err != nil {
 		t.Fatalf("DispatchDirect: %v", err)
 	}
-	stagedDeep, _ := db.GetOrder(deep.ID)
+	stagedDeep, err := db.GetOrder(deep.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(deep.ID)")
 	if !IsGateStaged(stagedDeep) {
 		t.Fatalf("fixture: the middle-slot order must stage behind the deeper blocker (wait=%d) — otherwise the re-bind never runs",
 			stagedDeep.WaitIndex)
@@ -545,7 +552,8 @@ func TestGateRelease_RebindKeepsItsOwnSlot(t *testing.T) {
 	placeDeeperBlocker(t, db, d, blocker.ID, slots[2].Name)
 	d.EvaluateLaneReleases(laneID)
 
-	rel, _ := db.GetOrder(deep.ID)
+	rel, err := db.GetOrder(deep.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(deep.ID)")
 	// It must actually have been RELEASED. With an owner-blind resolve this order
 	// can see no slot at all (its own is hidden by its own holds, the other is the
 	// blocker's), so the release is refused and delivery_node stays put for the
@@ -601,7 +609,8 @@ func TestGateRelease_AppendFailureStaysStaged(t *testing.T) {
 		d.EvaluateLaneReleases(laneID)
 	}
 
-	held, _ := db.GetOrder(staged.ID)
+	held, err := db.GetOrder(staged.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(staged.ID)")
 	if held.WaitIndex != 0 {
 		t.Errorf("wait_index = %d after failed appends, want 0 — it must only advance on success", held.WaitIndex)
 	}
@@ -616,7 +625,8 @@ func TestGateRelease_AppendFailureStaysStaged(t *testing.T) {
 	// Fleet recovers: the very next firing releases it, no manual intervention.
 	d.backend = backend
 	d.EvaluateLaneReleases(laneID)
-	recovered, _ := db.GetOrder(staged.ID)
+	recovered, err := db.GetOrder(staged.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(staged.ID)")
 	if IsGateStaged(recovered) {
 		t.Error("once the fleet recovered, the next firing must release the order")
 	}

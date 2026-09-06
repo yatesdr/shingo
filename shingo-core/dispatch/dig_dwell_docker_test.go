@@ -43,8 +43,10 @@ import (
 // waiting position is a real Core node rather than a map-point property.
 func setupDwellGroup(t *testing.T, db *store.DB, prefix string, sibDepth int, withPark bool) (grp, dug, sib, park *nodes.Node, dugSlots, sibSlots []*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"NGRP\")")
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"LANE\")")
 
 	bp = &payloads.Payload{Code: prefix + "-P"}
 	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
@@ -62,7 +64,8 @@ func setupDwellGroup(t *testing.T, db *store.DB, prefix string, sibDepth int, wi
 			testutil.MustNoErr(t, db.CreateNode(s), "create slot")
 			slots = append(slots, s)
 		}
-		reloaded, _ := db.GetNode(lane.ID)
+		reloaded, err := db.GetNode(lane.ID)
+		testutil.MustNoErr(t, err, "db.GetNode(lane.ID)")
 		return reloaded, slots
 	}
 	dug, dugSlots = mkLane(prefix+"-DUG", 3)
@@ -73,7 +76,8 @@ func setupDwellGroup(t *testing.T, db *store.DB, prefix string, sibDepth int, wi
 		park = &nodes.Node{Name: prefix + "-PARK", ParentID: &grp.ID, Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(park), "create parking")
 	}
-	grp, _ = db.GetNode(grp.ID)
+	grpRaw, err := db.GetNode(grp.ID)
+	grp = testutil.Must(t, grpRaw, err, "db.GetNode(grp.ID)")
 	return grp, dug, sib, park, dugSlots, sibSlots, bp
 }
 
@@ -592,7 +596,8 @@ func TestDwell_WalksPastASlotAdmissionRefuses(t *testing.T) {
 	// A THIRD LANE, ungated and empty: the legal answer standing behind the
 	// refused one. Pass 2 fills deepest-first and walks lanes in name order, so
 	// DWWALK-SIB is offered before this one.
-	lanType, _ := db.GetNodeTypeByCode("LANE")
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"LANE\")")
 	open := &nodes.Node{Name: "DWWALK-ZOPEN", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(open), "create the open lane")
 	openDepth := 1
@@ -864,7 +869,8 @@ func TestDwell_ComposesWithTheGatedEntry(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, dug, _, park, dugSlots, _, bp := setupDwellGroup(t, db, "DWGATE", 2, true)
 	testutil.MustNoErr(t, db.SetNodeProperty(dug.ID, PropLaneGatePoint, "DWGATE-MARK"), "mark the dug lane")
-	dug, _ = db.GetNode(dug.ID)
+	dugRaw, err := db.GetNode(dug.ID)
+	dug = testutil.Must(t, dugRaw, err, "db.GetNode(dug.ID)")
 
 	createTestBinAtNode(t, db, bp.Code, dugSlots[0].ID, "DWGATE-BLK")
 	createTestBinAtNode(t, db, bp.Code, dugSlots[1].ID, "DWGATE-TGT")

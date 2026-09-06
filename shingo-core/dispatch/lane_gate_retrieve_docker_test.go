@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -208,7 +209,8 @@ func TestGateChoreo_RetrieveContendedHoldsThenEvaluatorReleases(t *testing.T) {
 	if len(a.Blocks) != 2 || a.Blocks[0].Location != s1.Name || a.Blocks[1].Location != line.Name {
 		t.Errorf("append blocks = %v, want [pickup@%s, dropoff@%s]", a.Blocks, s1.Name, line.Name)
 	}
-	if final, _ := db.GetOrder(order.ID); IsGateStaged(final) || final.WaitIndex != 1 {
+	finalRaw, err := db.GetOrder(order.ID)
+	if final := testutil.Must(t, finalRaw, err, "db.GetOrder(order.ID)"); IsGateStaged(final) || final.WaitIndex != 1 {
 		t.Errorf("after release, order should be sealed (wait_index=1, not staged); got wait_index=%d staged=%v",
 			final.WaitIndex, IsGateStaged(final))
 	}
@@ -283,7 +285,8 @@ func TestGateChoreo_RetrieveOwnDigLegIsNotParked(t *testing.T) {
 	// digging, because that dig is what the leg exists to perform.
 	appends := backend.ReleaseCalls()
 	if len(appends) != 1 {
-		reloaded, _ := db.GetOrder(leg.ID)
+		reloaded, err := db.GetOrder(leg.ID)
+		testutil.MustNoErr(t, err, "db.GetOrder(leg.ID)")
 		t.Fatalf("append calls = %d, want 1 — the leg is parked at the gate by its own parent's dig "+
 			"(leg %d, parent/dig owner %d, gate-staged=%v). Only this leg can end that dig, so nothing "+
 			"clears the lock and the reshuffle never completes",
@@ -293,7 +296,8 @@ func TestGateChoreo_RetrieveOwnDigLegIsNotParked(t *testing.T) {
 	if len(a.Blocks) != 2 || a.Blocks[0].Location != s1.Name || a.Blocks[1].Location != line.Name {
 		t.Errorf("append blocks = %v, want [pickup@%s, dropoff@%s]", a.Blocks, s1.Name, line.Name)
 	}
-	if final, _ := db.GetOrder(leg.ID); IsGateStaged(final) || final.WaitIndex != 1 {
+	finalRaw, err := db.GetOrder(leg.ID)
+	if final := testutil.Must(t, finalRaw, err, "db.GetOrder(leg.ID)"); IsGateStaged(final) || final.WaitIndex != 1 {
 		t.Errorf("the leg should be sealed (wait_index=1, not staged); got wait_index=%d staged=%v",
 			final.WaitIndex, IsGateStaged(final))
 	}
@@ -390,7 +394,8 @@ func TestGateChoreo_RetrieveRebindsWhenItsBinMoved(t *testing.T) {
 	// THE ASSERTION. The retrieve went out, bound to where the bin actually is.
 	appends := backend.ReleaseCalls()
 	if len(appends) != 1 {
-		reloaded, _ := db.GetOrder(order.ID)
+		reloaded, err := db.GetOrder(order.ID)
+		testutil.MustNoErr(t, err, "db.GetOrder(order.ID)")
 		t.Fatalf("append calls = %d, want 1 — the retrieve is still parked with its bin at %s while the "+
 			"order names %s (order %d, source_node %q, gate-staged=%v). Nothing moves the bin back, so "+
 			"every later pass re-evaluates to the same refusal",

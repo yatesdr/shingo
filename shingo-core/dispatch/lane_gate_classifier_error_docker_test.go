@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 )
@@ -131,7 +132,8 @@ func TestLaneGate_ClassifierErrorWritesACause(t *testing.T) {
 	d.EvaluateLaneReleases(lane.ID)
 
 	if n := appendsTo(backend, dweller.VendorOrderID); n == 0 {
-		after, _ := db.GetOrder(dweller.ID)
+		after, err := db.GetOrder(dweller.ID)
+		testutil.MustNoErr(t, err, "db.GetOrder(dweller.ID)")
 		t.Fatalf("the dweller never went in after the outage ended — status %s, cause %q. A wait "+
 			"parked under a read failure has to resume when the read works",
 			after.Status, after.QueueCause)

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/heartbeat"
 )
@@ -55,14 +56,16 @@ func TestCoverage_CellConfig(t *testing.T) {
 	if err := heartbeat.UpsertCellConfig(db.DB, cfg); err != nil {
 		t.Fatalf("UpsertCellConfig update: %v", err)
 	}
-	got, _, _ = heartbeat.GetCellConfig(db.DB, "SNF2")
+	got, _, err = heartbeat.GetCellConfig(db.DB, "SNF2")
+	testutil.MustNoErr(t, err, `heartbeat.GetCellConfig(db.DB, "SNF2")`)
 	if len(got.SubProcessIDs) != 0 {
 		t.Errorf("after update sub_process_ids = %v, want empty", got.SubProcessIDs)
 	}
 	if got.DisplayName != "Assembly NF 2 (simple)" {
 		t.Errorf("after update display_name = %q", got.DisplayName)
 	}
-	if cells, _ := heartbeat.ListCellConfigs(db.DB); len(cells) != 1 {
+	cellsRaw, err := heartbeat.ListCellConfigs(db.DB)
+	if cells := testutil.Must(t, cellsRaw, err, "heartbeat.ListCellConfigs(db.DB)"); len(cells) != 1 {
 		t.Errorf("after update cell count = %d, want 1 (upsert, not insert)", len(cells))
 	}
 
@@ -97,7 +100,9 @@ func TestCoverage_CellConfig(t *testing.T) {
 	if err := heartbeat.DeleteCellConfig(db.DB, "SNF2"); err != nil {
 		t.Fatalf("DeleteCellConfig: %v", err)
 	}
-	if _, ok, _ := heartbeat.GetCellConfig(db.DB, "SNF2"); ok {
+	_, ok, err = heartbeat.GetCellConfig(db.DB, "SNF2")
+	testutil.MustNoErr(t, err, `heartbeat.GetCellConfig(db.DB, "SNF2")`)
+	if ok {
 		t.Error("cell still present after delete")
 	}
 }

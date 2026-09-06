@@ -51,8 +51,10 @@ import (
 // nowhere to go, which is stage 3.
 func stackedLane(t *testing.T, db *store.DB, prefix string) (grp, lane *nodes.Node, slots []*nodes.Node, spare *nodes.Node, bp *payloads.Payload) {
 	t.Helper()
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"NGRP\")")
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"LANE\")")
 
 	bp = &payloads.Payload{Code: prefix + "-P"}
 	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
@@ -71,8 +73,10 @@ func stackedLane(t *testing.T, db *store.DB, prefix string) (grp, lane *nodes.No
 	spare = &nodes.Node{Name: prefix + "-SPARE", ParentID: &grp.ID, Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(spare), "create the shuffle pool")
 
-	grp, _ = db.GetNode(grp.ID)
-	lane, _ = db.GetNode(lane.ID)
+	grpRaw, err := db.GetNode(grp.ID)
+	grp = testutil.Must(t, grpRaw, err, "db.GetNode(grp.ID)")
+	laneRaw, err := db.GetNode(lane.ID)
+	lane = testutil.Must(t, laneRaw, err, "db.GetNode(lane.ID)")
 	return grp, lane, slots, spare, bp
 }
 
@@ -192,7 +196,8 @@ func TestStacked_BuriedIrreplaceableNeed_InALockedLane_InAFullGroup(t *testing.T
 			"three different answers to 'should I go and look at it', and they used to arrive "+
 			"indistinguishable", parked.QueueCause, CauseLaneLocked)
 	}
-	if kids, _ := db.ListChildOrders(order.ID); len(kids) != 0 {
+	kidsRaw, err := db.ListChildOrders(order.ID)
+	if kids := testutil.Must(t, kidsRaw, err, "db.ListChildOrders(order.ID)"); len(kids) != 0 {
 		t.Fatalf("%d compound child/children were written against a lane this order does not own", len(kids))
 	}
 	// The CLASSIFICATION behind this park — codeLaneLocked being Transient() — is
@@ -212,7 +217,8 @@ func TestStacked_BuriedIrreplaceableNeed_InALockedLane_InAFullGroup(t *testing.T
 			"events, and only one of them is something an operator can act on",
 			starved.QueueCause, CauseNoShuffleSlot)
 	}
-	if kids, _ := db.ListChildOrders(order.ID); len(kids) != 0 {
+	kidsRaw, err = db.ListChildOrders(order.ID)
+	if kids := testutil.Must(t, kidsRaw, err, "db.ListChildOrders(order.ID)"); len(kids) != 0 {
 		t.Fatalf("%d compound child/children were written with nowhere to put a blocker", len(kids))
 	}
 	if d.laneLock.IsLocked(lane.ID) {

@@ -23,7 +23,8 @@ func TestSimpleRetrieve_UnsourceableWaits_NeverSkipped(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
-	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	bt, err := db.GetBinTypeByCode("DEFAULT")
+	testutil.MustNoErr(t, err, "db.GetBinTypeByCode(\"DEFAULT\")")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
@@ -77,7 +78,8 @@ func TestSimpleMove_OccupiedDest_Waits(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
-	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	bt, err := db.GetBinTypeByCode("DEFAULT")
+	testutil.MustNoErr(t, err, "db.GetBinTypeByCode(\"DEFAULT\")")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 
 	srcNode := &nodes.Node{Name: "MOVE-SRC", Enabled: true}

@@ -59,7 +59,8 @@ func TestFleetRefusal_ADemotedOrderIsOutOfTheDestructiveSweep(t *testing.T) {
 	if derr == nil {
 		t.Fatal("the fleet refused the create; DispatchDirect must report it")
 	}
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	code, cause, params := FleetRefusalCause(derr, order.DeliveryNode)
 	d.DemoteAfterFleetRefusal(order, code, cause, params)
 

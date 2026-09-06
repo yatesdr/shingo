@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -28,7 +29,8 @@ func gateChoreoLane(t *testing.T, db *store.DB, name, gatePoint string) (laneID 
 		t.Fatalf("list slots: %v", err)
 	}
 	for _, s := range slots {
-		if dpt, _ := db.GetSlotDepth(s.ID); dpt == 1 {
+		dptRaw, err := db.GetSlotDepth(s.ID)
+		if dpt := testutil.Must(t, dptRaw, err, "db.GetSlotDepth(s.ID)"); dpt == 1 {
 			s1 = s
 		}
 	}

@@ -64,7 +64,8 @@ func clearLaneFixture(t *testing.T, db *store.DB, name string) (wall, park *node
 			testutil.MustNoErr(t, db.CreateNode(s), "create slot")
 			slots = append(slots, s)
 		}
-		reloaded, _ := db.GetNode(lane.ID)
+		reloaded, err := db.GetNode(lane.ID)
+		testutil.MustNoErr(t, err, "db.GetNode(lane.ID)")
 		return reloaded, slots
 	}
 	wall, w = mkLane(name+"-WALL", name+"-WALL-WAIT", 3)

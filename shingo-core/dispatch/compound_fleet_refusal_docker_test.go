@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 )
 
@@ -107,7 +108,8 @@ func TestCompound_FleetRefusalParksTheLegAndKeepsTheDemand(t *testing.T) {
 	d.RedriveHeldCompoundLegs(lane)
 
 	if !inFlight(t, db, children[0].ID) {
-		after, _ := db.GetOrder(children[0].ID)
+		after, err := db.GetOrder(children[0].ID)
+		testutil.MustNoErr(t, err, "db.GetOrder(children[0].ID)")
 		t.Fatalf("the parked leg never went out after the fleet became willing — status %s, "+
 			"vendor %q. A leg claimed but unsent is invisible to a re-drive keyed on `pending`",
 			after.Status, after.VendorOrderID)

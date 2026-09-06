@@ -111,7 +111,8 @@ func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *test
 			`{"action":"dropoff","node":"` + mouth.Name + `"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(cplx), "create the complex order")
-	cplx, _ = db.GetOrder(cplx.ID)
+	cplxRaw, err := db.GetOrder(cplx.ID)
+	cplx = testutil.Must(t, cplxRaw, err, "db.GetOrder(cplx.ID)")
 	testutil.MustNoErr(t, d.DispatchPreparedComplex(cplx), "the complex order dispatches")
 
 	if got := committedInLane(t, db, laneID); len(got) != 1 {
@@ -130,7 +131,8 @@ func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *test
 		o.Status = StatusSourcing
 	})
 	testutil.MustNoErr(t, db.UpdateOrderBinID(plain.ID, bin.ID), "stamp the bin")
-	plain, _ = db.GetOrder(plain.ID)
+	plainRaw, err := db.GetOrder(plain.ID)
+	plain = testutil.Must(t, plainRaw, err, "db.GetOrder(plain.ID)")
 
 	admitted, cause, lane, err := d.AcquireLanesForOrder(plain, srcNode, mouth, EntryHeldBin)
 	testutil.MustNoErr(t, err, "the admission ask must not error")
@@ -176,7 +178,8 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 		o.Status = StatusSourcing
 	})
 	testutil.MustNoErr(t, db.UpdateOrderBinID(plain.ID, bin.ID), "stamp the bin")
-	plain, _ = db.GetOrder(plain.ID)
+	plainRaw, err := db.GetOrder(plain.ID)
+	plain = testutil.Must(t, plainRaw, err, "db.GetOrder(plain.ID)")
 	_, dErr := d.DispatchDirect(plain, srcNode, mouth)
 	testutil.MustNoErr(t, dErr, "the plain store dispatches")
 
@@ -189,14 +192,16 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 			`{"action":"dropoff","node":"` + mouth.Name + `"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(cplx), "create the complex order")
-	cplx, _ = db.GetOrder(cplx.ID)
+	cplxRaw, err := db.GetOrder(cplx.ID)
+	cplx = testutil.Must(t, cplxRaw, err, "db.GetOrder(cplx.ID)")
 	_ = d.DispatchPreparedComplex(cplx)
 
 	if got := committedInLane(t, db, laneID); len(got) != 1 || got[0] != plain.ID {
 		t.Fatalf("committed orders in the corridor = %v, want only the plain store (%d) — the "+
 			"complex order was let into a lane a robot is already in", got, plain.ID)
 	}
-	after, _ := db.GetOrder(cplx.ID)
+	after, err := db.GetOrder(cplx.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(cplx.ID)")
 	if protocol.IsTerminal(after.Status) {
 		t.Errorf("the complex order is %q — a busy lane is congestion, so it waits rather than "+
 			"dying of it", after.Status)
@@ -263,7 +268,8 @@ func TestSeamGuard_UnderDeclaringALaneRefusesTheDispatch(t *testing.T) {
 		o.Status = StatusSourcing
 	})
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 
 	// The blocks enter the lane; the declaration does not mention it.
 	req := fleet.CreateOrderRequest{
@@ -274,14 +280,15 @@ func TestSeamGuard_UnderDeclaringALaneRefusesTheDispatch(t *testing.T) {
 			{BlockID: "2", Location: mouth.Name},
 		},
 	}
-	err := d.commitToFleet(order, req, "test") // no entering nodes — the bug, in one argument
+	err = d.commitToFleet(order, req, "test") // no entering nodes — the bug, in one argument
 
 	if err == nil {
 		t.Fatalf("the seam accepted a dispatch into lane %s that declared no lane. That order would "+
 			"execute holding no occupancy row, and the next entrant would be admitted into the "+
 			"corridor lawfully.", mouth.Name)
 	}
-	sent, _ := db.GetOrder(order.ID)
+	sent, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(order.ID)")
 	if sent.VendorOrderID != "" {
 		t.Errorf("a refused commit still reached the fleet as %q — the guard has to run BEFORE the "+
 			"handover or it is a report rather than a guard", sent.VendorOrderID)
@@ -334,7 +341,8 @@ func TestSeamGuard_ASyntheticDestinationNeverReachesTheFleet(t *testing.T) {
 		o.Status = StatusSourcing
 	})
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 
 	req := fleet.CreateOrderRequest{
 		OrderID:    mintVendorOrderID(order.ID),
@@ -355,7 +363,8 @@ func TestSeamGuard_ASyntheticDestinationNeverReachesTheFleet(t *testing.T) {
 			"reason from this; unclassified, the row reads fleet_unavailable and blames a robot "+
 			"system that is not down.", err)
 	}
-	sent, _ := db.GetOrder(order.ID)
+	sent, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(order.ID)")
 	if sent.VendorOrderID != "" {
 		t.Errorf("a refused commit still reached the fleet as %q — the guard has to run BEFORE the "+
 			"handover or it is a report rather than a guard", sent.VendorOrderID)
@@ -384,7 +393,8 @@ func TestSeamGuard_AConcreteDestinationIsUntouched(t *testing.T) {
 		o.Status = StatusSourcing
 	})
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 
 	req := fleet.CreateOrderRequest{
 		OrderID:    mintVendorOrderID(order.ID),
@@ -394,7 +404,7 @@ func TestSeamGuard_AConcreteDestinationIsUntouched(t *testing.T) {
 			{BlockID: "2", Location: lineNode.Name},
 		},
 	}
-	err := d.commitToFleet(order, req, "test", srcNode, lineNode)
+	err = d.commitToFleet(order, req, "test", srcNode, lineNode)
 
 	if IsSyntheticLocation(err) {
 		t.Fatalf("the guard refused %s, a concrete node, as synthetic: %v\nThe predicate is too wide "+

@@ -5,6 +5,7 @@ package dispatch
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -157,11 +158,13 @@ func TestGatePair_SameOriginPairSerializesAtTheMouth(t *testing.T) {
 			"single file: Tier 1 dispatches the pair together, it does not put two robots in one "+
 			"corridor", n)
 	}
-	deepAfter, _ := db.GetOrder(deepPartner.ID)
+	deepAfter, err := db.GetOrder(deepPartner.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(deepPartner.ID)")
 	if IsGateStaged(deepAfter) {
 		t.Error("the deepest admissible partner was not released when the lane opened")
 	}
-	shallowAfter, _ := db.GetOrder(shallowPartner.ID)
+	shallowAfter, err := db.GetOrder(shallowPartner.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(shallowPartner.ID)")
 	if !IsGateStaged(shallowAfter) {
 		t.Fatal("the second partner entered a corridor its partner is already inside")
 	}
@@ -187,7 +190,8 @@ func TestGatePair_SameOriginPairSerializesAtTheMouth(t *testing.T) {
 		t.Fatalf("appends after the first partner placed = %d, want 2 — the gate wait has a "+
 			"releaser or it is a wedge", n)
 	}
-	shallowFinal, _ := db.GetOrder(shallowPartner.ID)
+	shallowFinal, err := db.GetOrder(shallowPartner.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(shallowPartner.ID)")
 	if IsGateStaged(shallowFinal) {
 		t.Error("the second partner never entered, though the lane cleared")
 	}
@@ -265,7 +269,8 @@ func TestGatePair_NeitherPartnerIsHeldBeforeTheFleetCreate(t *testing.T) {
 	if n := len(backend.CreateRequests()); n != 2 {
 		t.Fatalf("fleet creates = %d, want 2 — the pair dispatches together", n)
 	}
-	reloadedSecond, _ := db.GetOrder(second.ID)
+	reloadedSecond, err := db.GetOrder(second.ID)
+	testutil.MustNoErr(t, err, "db.GetOrder(second.ID)")
 	if reloadedSecond.VendorOrderID == "" {
 		t.Fatal("the second partner has no fleet job — no robot went to the press for it")
 	}

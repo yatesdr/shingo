@@ -206,7 +206,8 @@ func TestStrandedTransit_MovingDeckIsNotAnAnswer(t *testing.T) {
 	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
 		t.Errorf("a deck mid-unload must not produce a placement, bin went to %q", got)
 	}
-	b, _ := db.GetBin(bin.ID)
+	b, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "db.GetBin(bin.ID)")
 	if !strings.Contains(b.AnomalyNote, "not at rest") {
 		t.Errorf("the note must say why it declined: %q", b.AnomalyNote)
 	}

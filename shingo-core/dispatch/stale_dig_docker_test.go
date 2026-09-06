@@ -43,8 +43,10 @@ import (
 // and returns the lane plus its slots shallowest-first.
 func staleDigLane(t *testing.T, db *store.DB, prefix string) (grp *nodes.Node, lane *nodes.Node, slots []*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"NGRP\")")
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"LANE\")")
 
 	bp = &payloads.Payload{Code: prefix + "-P"}
 	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
@@ -66,8 +68,10 @@ func staleDigLane(t *testing.T, db *store.DB, prefix string) (grp *nodes.Node, l
 		p := &nodes.Node{Name: fmt.Sprintf("%s-PARK-%d", prefix, i), ParentID: &grp.ID, Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(p), "create parking")
 	}
-	grp, _ = db.GetNode(grp.ID)
-	lane, _ = db.GetNode(lane.ID)
+	grpRaw, err := db.GetNode(grp.ID)
+	grp = testutil.Must(t, grpRaw, err, "db.GetNode(grp.ID)")
+	laneRaw, err := db.GetNode(lane.ID)
+	lane = testutil.Must(t, laneRaw, err, "db.GetNode(lane.ID)")
 	return grp, lane, slots, bp
 }
 
@@ -557,7 +561,8 @@ func TestStaleDig_Window2Dig_DissolvesReplansAndCompletes(t *testing.T) {
 	if d.laneLock.IsLocked(lane.ID) {
 		t.Error("the lane is still locked after the second dig completed")
 	}
-	if occ, _ := reservations.OccupantsOf(db.DB, lane.ID); len(occ) != 0 {
+	occRaw, err := reservations.OccupantsOf(db.DB, lane.ID)
+	if occ := testutil.Must(t, occRaw, err, "reservations.OccupantsOf(db.DB, lane.ID)"); len(occ) != 0 {
 		t.Errorf("lane %s still has occupants %v", lane.Name, occ)
 	}
 }

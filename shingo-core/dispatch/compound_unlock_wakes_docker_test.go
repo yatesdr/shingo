@@ -66,7 +66,8 @@ func TestCompound_UnlockReleasesEveryLaneItHeldAndWakesEachOne(t *testing.T) {
 	laneA, laneB, a, b, _ := clearLaneFixture(t, db, "TWOLANE")
 	testutil.MustNoErr(t,
 		db.SetNodeProperty(laneB.ID, PropLaneGatePoint, "TWOLANE-PARK-WAIT"), "mark laneB")
-	laneB, _ = db.GetNode(laneB.ID)
+	laneBRaw, err := db.GetNode(laneB.ID)
+	laneB = testutil.Must(t, laneBRaw, err, "db.GetNode(laneB.ID)")
 	line := lineNode(t, db, "TWOLANE-LINE")
 
 	// The dig: a compound parent whose children source out of laneA.
@@ -133,7 +134,8 @@ func TestCompound_UnlockReleasesEveryLaneItHeldAndWakesEachOne(t *testing.T) {
 	// lock table cannot make: releasing a lock frees the lane, and only an
 	// evaluation turns that into a robot moving.
 	if n := appendsTo(backend, dweller.VendorOrderID); n == 0 {
-		after, _ := db.GetOrder(dweller.ID)
+		after, err := db.GetOrder(dweller.ID)
+		testutil.MustNoErr(t, err, "db.GetOrder(dweller.ID)")
 		t.Fatalf("the dweller at laneB never got its tail — status %s, wait_index %d. The dig's "+
 			"lock was the only thing refusing it, and the lock dropping is the last event in the "+
 			"dig's life: every bin and order event it emitted was consumed while the lock was "+
@@ -195,7 +197,8 @@ func TestCancelDoor_WakesLanesWhenAnOperatorCancelsADig(t *testing.T) {
 	laneA, laneB, a, b, _ := clearLaneFixture(t, db, "CANCELWAKE")
 	testutil.MustNoErr(t,
 		db.SetNodeProperty(laneB.ID, PropLaneGatePoint, "CANCELWAKE-PARK-WAIT"), "mark laneB")
-	laneB, _ = db.GetNode(laneB.ID)
+	laneBRaw, err := db.GetNode(laneB.ID)
+	laneB = testutil.Must(t, laneBRaw, err, "db.GetNode(laneB.ID)")
 	line := lineNode(t, db, "CANCELWAKE-LINE")
 
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
@@ -249,7 +252,8 @@ func TestCancelDoor_WakesLanesWhenAnOperatorCancelsADig(t *testing.T) {
 	// late snapshot lost: the locks were released either way, and only the
 	// evaluation turns that into a robot moving.
 	if n := appendsTo(backend, dweller.VendorOrderID); n == 0 {
-		after, _ := db.GetOrder(dweller.ID)
+		after, err := db.GetOrder(dweller.ID)
+		testutil.MustNoErr(t, err, "db.GetOrder(dweller.ID)")
 		t.Fatalf("the dweller at laneB never got its tail after the dig was CANCELLED — status %s, "+
 			"wait_index %d. The cancel path terminalizes the parent, which deletes the reservations "+
 			"that are the lane lock; a snapshot taken after that reads empty, and an empty snapshot "+

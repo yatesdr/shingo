@@ -5,6 +5,7 @@ package store_test
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 )
 
@@ -68,14 +69,16 @@ func TestCompoundSealed_OneWriterBothWays(t *testing.T) {
 	if err := db.SetCompoundOpen(parent.ID, true); err != nil {
 		t.Fatalf("open compound: %v", err)
 	}
-	if got, _ := db.GetOrder(parent.ID); !got.OpenForChildren {
+	gotRaw, err := db.GetOrder(parent.ID)
+	if got := testutil.Must(t, gotRaw, err, "db.GetOrder(parent.ID)"); !got.OpenForChildren {
 		t.Fatal("parent did not read back OPEN after SetCompoundOpen(true)")
 	}
 
 	if err := db.SetCompoundOpen(parent.ID, false); err != nil {
 		t.Fatalf("seal compound: %v", err)
 	}
-	if got, _ := db.GetOrder(parent.ID); got.OpenForChildren {
+	gotRaw, err = db.GetOrder(parent.ID)
+	if got := testutil.Must(t, gotRaw, err, "db.GetOrder(parent.ID)"); got.OpenForChildren {
 		t.Fatal("parent did not read back SEALED after SetCompoundOpen(false) — a reshuffle that " +
 			"cannot be sealed never completes")
 	}

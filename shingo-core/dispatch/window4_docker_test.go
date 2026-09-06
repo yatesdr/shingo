@@ -52,8 +52,10 @@ func window4Dispatcher(t *testing.T, db *store.DB) *Dispatcher {
 // returns the pieces a complex need is built from.
 func window4Lane(t *testing.T, db *store.DB, prefix string) (grp, lane *nodes.Node, slots []*nodes.Node, spare *nodes.Node, bp *payloads.Payload) {
 	t.Helper()
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"NGRP\")")
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"LANE\")")
 
 	bp = &payloads.Payload{Code: prefix + "-P"}
 	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
@@ -76,8 +78,10 @@ func window4Lane(t *testing.T, db *store.DB, prefix string) (grp, lane *nodes.No
 	extra := &nodes.Node{Name: prefix + "-SPARE2", ParentID: &grp.ID, Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(extra), "create second spare")
 
-	grp, _ = db.GetNode(grp.ID)
-	lane, _ = db.GetNode(lane.ID)
+	grpRaw, err := db.GetNode(grp.ID)
+	grp = testutil.Must(t, grpRaw, err, "db.GetNode(grp.ID)")
+	laneRaw, err := db.GetNode(lane.ID)
+	lane = testutil.Must(t, laneRaw, err, "db.GetNode(lane.ID)")
 	return grp, lane, slots, spare, bp
 }
 

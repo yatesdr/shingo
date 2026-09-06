@@ -65,8 +65,10 @@ import (
 // admitted) for some other reason entirely.
 func twoDigsOneGroup(t *testing.T, db *store.DB, prefix string) (grp, laneA, laneB, park *nodes.Node, slotsA, slotsB []*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"NGRP\")")
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"LANE\")")
 
 	bp = &payloads.Payload{Code: prefix + "-P"}
 	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
@@ -84,7 +86,8 @@ func twoDigsOneGroup(t *testing.T, db *store.DB, prefix string) (grp, laneA, lan
 			testutil.MustNoErr(t, db.CreateNode(s), "create slot")
 			slots = append(slots, s)
 		}
-		reloaded, _ := db.GetNode(lane.ID)
+		reloaded, err := db.GetNode(lane.ID)
+		testutil.MustNoErr(t, err, "db.GetNode(lane.ID)")
 		return reloaded, slots
 	}
 	laneA, slotsA = mkLane(prefix+"-LANE-A", 2)
@@ -93,7 +96,8 @@ func twoDigsOneGroup(t *testing.T, db *store.DB, prefix string) (grp, laneA, lan
 	park = &nodes.Node{Name: prefix + "-PARK", ParentID: &grp.ID, Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(park), "create parking")
 
-	grp, _ = db.GetNode(grp.ID)
+	grpRaw, err := db.GetNode(grp.ID)
+	grp = testutil.Must(t, grpRaw, err, "db.GetNode(grp.ID)")
 	return grp, laneA, laneB, park, slotsA, slotsB, bp
 }
 
@@ -313,7 +317,8 @@ func TestCrossFlow_TwoDigsOneLane_ANeverStarts(t *testing.T) {
 	// dwell the leg lifts and STAYS, so this is a stronger statement than it used
 	// to be: before, the row was dropped at the lift and the corridor read empty
 	// while the robot was still standing in it.
-	if occ, _ := reservations.OccupantsOf(db.DB, laneB.ID); len(occ) != 1 || occ[0] != legsB[0].ID {
+	occRaw, err := reservations.OccupantsOf(db.DB, laneB.ID)
+	if occ := testutil.Must(t, occRaw, err, "reservations.OccupantsOf(db.DB, laneB.ID)"); len(occ) != 1 || occ[0] != legsB[0].ID {
 		t.Fatalf("lane B occupants = %v, want exactly dig B's first leg (%d), which is dwelling in it",
 			occ, legsB[0].ID)
 	}
@@ -380,7 +385,8 @@ func TestCrossFlow_TwoDigsOneLane_ANeverStarts(t *testing.T) {
 		t.Errorf("dig A's blocker is claimed by order %d after the dig was refused — an unclaimed bin "+
 			"is what lets some other flow use it while A waits", *blkA.ClaimedBy)
 	}
-	if occ, _ := reservations.OccupantsOf(db.DB, laneA.ID); len(occ) != 0 {
+	occRaw, err = reservations.OccupantsOf(db.DB, laneA.ID)
+	if occ := testutil.Must(t, occRaw, err, "reservations.OccupantsOf(db.DB, laneA.ID)"); len(occ) != 0 {
 		t.Errorf("lane A has occupants %v after dig A was refused — nothing was ever dispatched", occ)
 	}
 	waitingA, err := db.GetOrder(demandA.ID)
@@ -505,7 +511,8 @@ func TestCrossFlow_TwoDigsOneLane_ANeverStarts(t *testing.T) {
 		t.Error("lane A is still locked after its dig finished")
 	}
 	for _, lane := range []*nodes.Node{laneA, laneB} {
-		if occ, _ := reservations.OccupantsOf(db.DB, lane.ID); len(occ) != 0 {
+		occRaw, err := reservations.OccupantsOf(db.DB, lane.ID)
+		if occ := testutil.Must(t, occRaw, err, "reservations.OccupantsOf(db.DB, lane.ID)"); len(occ) != 0 {
 			t.Errorf("lane %s still has occupants %v after both flows completed", lane.Name, occ)
 		}
 	}

@@ -51,9 +51,10 @@ func TestRedirect_ReleasesTheOldDestinationsSlot(t *testing.T) {
 	// then confirmed into a hard claim.
 	testutil.MustNoErr(t, db.ReserveSlot(oldDest.ID, order.ID), "reserve the old destination")
 	testutil.MustNoErr(t, db.ConfirmSlotClaim(oldDest.ID, order.ID), "claim the old destination")
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 
-	_, _, err := d.lifecycle.PrepareRedirect(order, newDest.Name)
+	_, _, err = d.lifecycle.PrepareRedirect(order, newDest.Name)
 	testutil.MustNoErr(t, err, "prepare the redirect")
 
 	var claimedBy *int64
@@ -101,9 +102,10 @@ func TestRedirect_ToTheSameNodeKeepsItsSlot(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
 	testutil.MustNoErr(t, db.ReserveSlot(dest.ID, order.ID), "reserve the destination")
 	testutil.MustNoErr(t, db.ConfirmSlotClaim(dest.ID, order.ID), "claim the destination")
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 
-	_, _, err := d.lifecycle.PrepareRedirect(order, dest.Name)
+	_, _, err = d.lifecycle.PrepareRedirect(order, dest.Name)
 	testutil.MustNoErr(t, err, "prepare the no-op redirect")
 
 	var claimedBy *int64

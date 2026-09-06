@@ -27,8 +27,10 @@ import (
 // twoLaneGroup builds an NGRP with two 2-deep lanes, both empty.
 func twoLaneGroup(t *testing.T, db *store.DB, prefix string) (grp *nodes.Node, laneA, laneB *nodes.Node, slotsA, slotsB []*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"NGRP\")")
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"LANE\")")
 
 	bp = &payloads.Payload{Code: prefix + "-P"}
 	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
@@ -46,12 +48,14 @@ func twoLaneGroup(t *testing.T, db *store.DB, prefix string) (grp *nodes.Node, l
 			testutil.MustNoErr(t, db.CreateNode(s), "create slot")
 			slots = append(slots, s)
 		}
-		reloaded, _ := db.GetNode(lane.ID)
+		reloaded, err := db.GetNode(lane.ID)
+		testutil.MustNoErr(t, err, "db.GetNode(lane.ID)")
 		return reloaded, slots
 	}
 	laneA, slotsA = mk(prefix + "-LANE-A")
 	laneB, slotsB = mk(prefix + "-LANE-B")
-	grp, _ = db.GetNode(grp.ID)
+	grpRaw, err := db.GetNode(grp.ID)
+	grp = testutil.Must(t, grpRaw, err, "db.GetNode(grp.ID)")
 	return grp, laneA, laneB, slotsA, slotsB, bp
 }
 
@@ -286,7 +290,8 @@ func TestSettle_ResolvesASyntheticDestinationToAChild(t *testing.T) {
 	})
 	testdb.ReserveBin(t, db, order.ID, bin.ID)
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp bin_id")
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 
 	sd := d.ReserveStorageDropoff(order)
 	settled, rErr := sd.Node, sd.Err
@@ -331,7 +336,8 @@ func TestSettle_AFullGroupIsAWaitNotAFailure(t *testing.T) {
 	})
 	testdb.ReserveBin(t, db, order.ID, bin.ID)
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp bin_id")
-	order, _ = db.GetOrder(order.ID)
+	orderRaw, err := db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 
 	sd := d.ReserveStorageDropoff(order)
 	settled, rErr := sd.Node, sd.Err
