@@ -70,7 +70,7 @@ sim:
   #
   # Reset the data when you change this. The note above about matching core and
   # every edge still applies and is not the same warning.
-  speed: 2.0
+  speed: 5.0
   # Synced RUNNING clock (zero core↔edge drift) — MUST match shingocore.dev.yaml EXACTLY.
   # See that file for the rationale: running-clock mode drifts (boot-skew × speed → expired
   # message drops); epoch + this shared anchor lock both clocks to one timeline, and

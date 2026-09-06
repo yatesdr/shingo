@@ -198,7 +198,7 @@ func TestBuildSimClock_TwoBinariesAgree(t *testing.T) {
 	epoch := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
 	anchor := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 
-	core, _ := BuildSimClock(epoch, anchor, 50, 0) // maxSpeed default 15
+	core, _ := BuildSimClock(epoch, anchor, 50, 0) // maxSpeed defaults to DefaultSimMaxSpeed
 	edge, _ := BuildSimClock(epoch, anchor, 50, 0)
 
 	wall := anchor.Add(60 * time.Second)
@@ -208,8 +208,14 @@ func TestBuildSimClock_TwoBinariesAgree(t *testing.T) {
 	if !core.Now().Equal(edge.Now()) {
 		t.Fatalf("builder produced drifting clocks: core=%v edge=%v", core.Now(), edge.Now())
 	}
-	if want := epoch.Add(900 * time.Second); !core.Now().Equal(want) { // 60s × 15
-		t.Errorf("Now=%v want=%v (epoch + 15×60s)", core.Now(), want)
+	// Derived from the cap rather than hardcoded: the cap is a MEASURED number
+	// (docs/dev-env/sim-speed-ceiling.md) and will move again when the outbox
+	// drain's cadence is split from its dead-letter budget. What this test is
+	// actually guarding is that both binaries clamp identically, not what the
+	// clamp happens to be today.
+	want := epoch.Add(time.Duration(60 * DefaultSimMaxSpeed * float64(time.Second)))
+	if !core.Now().Equal(want) {
+		t.Errorf("Now=%v want=%v (epoch + %vx60s)", core.Now(), want, DefaultSimMaxSpeed)
 	}
 }
 

@@ -147,7 +147,27 @@ func NewRunningClock(speed float64) *SimClock {
 // outruns it makes sim-time timeouts (release/abandon) misfire and the loop wedges.
 // Core and Edge MUST cap at the SAME value or their fast-forward clocks drift —
 // sharing this const through BuildSimClock is what guarantees they can't diverge.
-const DefaultSimMaxSpeed = 15.0
+//
+// ── 5, AND IT IS MEASURED, NOT CHOSEN (2026-09-06) ────────────────────────
+//
+// It was 15, which no run had ever reached or tested. Measured on the dev rig,
+// three speeds, 6-minute windows at steady state, in orders finished per WALL
+// minute — the only rate that says whether the box is keeping up:
+//
+//	2x   9.83/wall-min   backlog +0    9 open   mean life 104 sim-s
+//	5x  21.50/wall-min   backlog +2    9 open   mean life 102 sim-s
+//	10x  4.65/wall-min   backlog +6   33 open   mean life  85 sim-s (survivors only)
+//
+// 10x does not merely fail to help, it is HALF the throughput of 2x, while the
+// box sits at 0.44 load — so the limit is not CPU, it is a wall-bound leg the
+// simulated world is outrunning. 5x is the fastest speed measured to hold the
+// 2x SHAPE: same order lifetime, same queue depth, backlog flat.
+//
+// The cap is the fastest speed actually observed to work, not the fastest that
+// might. 6x through 9x are untested and therefore not permitted: an honest 5x
+// beats a lying 10x. See docs/dev-env/sim-speed-ceiling.md for the per-leg
+// profile and what raising it would cost.
+const DefaultSimMaxSpeed = 5.0
 
 // SimMode is which kind of clock BuildSimClock constructed, returned so the caller
 // can log a binary-appropriate banner without re-deriving (and re-risking) the

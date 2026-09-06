@@ -1,12 +1,23 @@
 # Sim timer census — which periodic loops scale with simulated time
 
 Every direct `time.NewTicker` / `NewTimer` / `After` / `Tick` / `Sleep` /
-`AfterFunc` in `shingo-core` and `shingo-edge`, classified once so the question
-is not re-litigated per site. `integration/` and `shared/` have none.
+`AfterFunc` in `shingo-core`, `shingo-edge` and `protocol`, classified once so
+the question is not re-litigated per site. `integration/` and `shared/` have
+none.
 
-**51 non-test sites.** 15 sim-relevant (converted), 34 legitimately wall-time
-(left alone), 0 unresolved. 96 further sites live in `_test.go` files and are
-out of scope — a test that wants a controllable clock uses `clock.Manual`.
+**51 non-test sites in core and edge.** 15 sim-relevant (converted), 34
+legitimately wall-time (left alone), 0 unresolved. 96 further sites live in
+`_test.go` files and are out of scope — a test that wants a controllable clock
+uses `clock.Manual`.
+
+**Plus two in `protocol/outbox`, and they turned out to set the rig's speed
+limit.** The first census run was scoped to core and edge, which is where the
+loops looked like they lived; the outbox drainer is shared code and sat outside
+it. It was found by measurement rather than by reading — see
+[`sim-speed-ceiling.md`](sim-speed-ceiling.md) — which is the honest order for
+this kind of thing but not the cheap one. **A census is only as good as its
+scope: state the scope, and when a measurement disagrees with it, widen the
+scope rather than the explanation.**
 
 ## The rule
 
@@ -130,7 +141,73 @@ for {
     case <-ticker.C():          // C() is a method on clock.Ticker, not a field
 ```
 
+## `protocol/outbox` — the two sites the first scope missed
+
+| Site | Loop | Bucket |
+|---|---|---|
+| `protocol/outbox/drainer.go:170` | `(*Drainer).run` ticker | **(i) by nature, left wall ON PURPOSE** |
+| `protocol/outbox/drainer.go:204` | wake-settle timer (50 ms) | **(i) by nature, left wall ON PURPOSE** |
+
+The drainer moves every order message across the Kafka seam, so its cadence
+absolutely governs simulated work — it is bucket (i) by the rule above. It is
+still on the wall clock, deliberately, and the reason is in
+`shingo_outbox_interval_three_policies`: **the drain interval is not one policy,
+it is three.** It sets the drain cadence, and the wake-settle coalescing window,
+and — as `MaxRetries x interval` — the dead-letter budget. Scaling the cadence
+with sim speed would divide the REAL budget a REAL broker gets to recover by the
+multiplier: at 10x, a 50-second tolerance becomes 5 seconds, and a normal
+reconnect starts dead-lettering live order messages.
+
+That is the same trap `clock.ScaleTTL` exists to compensate for, approached from
+the other side, and it is why this one is not a mechanical conversion. Splitting
+it — cadence on the sim clock, dead-letter budget on the wall — is the change
+that would raise the ceiling, and it is a designed change, not a sed.
+
 ## The measured ceiling
 
 See [`sim-speed-ceiling.md`](sim-speed-ceiling.md) for what the rig can actually
 sustain after this conversion, and the arithmetic the config refuses above.
+
+## A second clock split, one layer down: the database
+
+Timestamps in Core's Postgres are on TWO clocks, and which one a column gets
+was never a decision — it is whether the Go insert passes `clock.Now()` or lets
+the DDL's `DEFAULT now()` fire. `now()` is the DATABASE SERVER's wall clock.
+
+Measured on the rig at 10x, wall 07:50:03 against sim 09:30:
+
+**Simulated** — `orders.created_at`, `orders.updated_at`,
+`order_history.created_at`, `bins.updated_at`, `mission_events.created_at`,
+`mission_telemetry.created_at`, `sourceability_events.observed_at`,
+`reservations.created_at`.
+
+**Wall** — `bin_uop_ledger.applied_at`, `production_tick_dedup.applied_at`,
+`inventory_delta_dedup.updated_at`, `downtime_event_dedup.applied_at`,
+`outbox.created_at`, `inbox.processed_at`, `audit_log.created_at`,
+`recovery_actions.created_at`, `nodes.updated_at`,
+`edge_lineside_reports.updated_at`.
+
+Several of those are RIGHT on wall and deliberately so — the outbox's retention
+and dead-letter budgets are real-time budgets, `edge_lineside_reports` is the
+wall-paired half the census names, and the dedup tables are plumbing. The
+problem is not the split, it is that the split is invisible and undeclared, so
+nothing stops a query from crossing it.
+
+**`bin_uop_ledger` is the one that bites.** It is the production ledger and the
+natural thing to join against `orders` — "how long after the UOP delta did the
+order confirm?" — and that subtraction returns the clock drift, not a duration.
+It fooled the author of this document during the run that produced it: the
+ledger's newest row read 43 sim-minutes stale, which looked exactly like
+production having stopped. It had not. A wall stamp was being differenced
+against sim-now, which is the defect this whole unit exists to remove, wearing a
+different hat.
+
+Invisible on a plant, where both clocks are wall. It surfaces only on the rig —
+the one place people go to gather evidence about the plant.
+
+Not fixed here. Fixing it means auditing every insert against the 61 columns
+carrying `DEFAULT now()` and deciding each one, which is its own unit of work
+with its own migration; doing it hastily at the end of this one would be
+guessing at ten answers to get one. The detection is cheap and exact, so it can
+be redone in a minute: on a running sim stack compare `max(col)` for every
+timestamp column against `now()` and against `/api/sim/status`.

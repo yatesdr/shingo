@@ -87,7 +87,7 @@ sim:
   #
   # Reset the data when you change this. The note above about matching core and
   # every edge still applies and is not the same warning.
-  speed: 2.0
+  speed: 5.0
   # ── THE ANCHOR IS NOT IN THIS FILE ANY MORE ───────────────────────────────
   #
   # It was a hardcoded 2026-07-12T02:30:00Z here, in shingocore.dev.yaml and in

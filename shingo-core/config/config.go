@@ -260,7 +260,7 @@ type SimConfig struct {
 	Enabled     bool          `yaml:"enabled"`
 	Seed        int64         `yaml:"seed"`         // PRNG seed; 0 = derive from time and log it
 	Speed       float64       `yaml:"speed"`        // time multiplier: 2.0 = twice as fast. Default 1.0
-	MaxSpeed    float64       `yaml:"max_speed"`    // effective-speed cap; <=0 → default (15×). The integration sim can only process the real choreography so fast; past this the clock would outrun it and wedge, so requests are clamped here (honest readout shows asked-vs-running). Set very high to effectively uncap.
+	MaxSpeed    float64       `yaml:"max_speed"`    // effective-speed cap; <=0 → default (5×, the MEASURED ceiling — see clock.DefaultSimMaxSpeed). The integration sim can only process the real choreography so fast; past this the clock would outrun it and wedge, so requests are clamped here (honest readout shows asked-vs-running). Set very high to effectively uncap.
 	Epoch       time.Time     `yaml:"epoch"`        // sim clock start (fast-forward origin). Zero = wall-now
 	AnchorWall  time.Time     `yaml:"anchor_wall"`  // SHARED wall anchor for fast-forward sync: sim-now = epoch + speed×(wallNow−anchor). Set IDENTICALLY in core+edge to the run-start wall time so the two clocks stay in lockstep (no cross-process drift). Zero = per-process boot anchor (drifts — only safe single-process).
 	TransitTime time.Duration `yaml:"transit_time"` // base per-block transit; default 5s

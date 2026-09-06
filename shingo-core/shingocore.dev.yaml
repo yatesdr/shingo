@@ -133,7 +133,35 @@ sim:
   #
   # Reset the data when you change this. The note above about matching core and
   # every edge still applies and is not the same warning.
-  speed: 2.0
+  # ── 5x, AND IT IS MEASURED (2026-09-06) ───────────────────────────────────
+  #
+  # It was 10x, then 2x by owner's call after the 10x loop could not hold steady
+  # state. Neither number had been measured. All three were, on this rig, in
+  # 6-minute windows at steady state, in orders finished per WALL minute -- the
+  # only rate that says whether the box is keeping up:
+  #
+  #     2x    9.83/wall-min   backlog +0   11 open   104 sim-s mean order life
+  #     5x   21.50/wall-min   backlog +2    9 open   102 sim-s   <- shipped
+  #    10x    4.65/wall-min   backlog +6   33 open    (survivors only)
+  #
+  # 10x is not merely no better, it is HALF the throughput of 2x while the box
+  # sits at 0.44 load -- so the limit was never CPU. 5x is the fastest speed that
+  # holds the 2x SHAPE: same order lifetime, same queue depth, backlog flat, and
+  # 2.2x the work per real minute. clock.DefaultSimMaxSpeed refuses more.
+  #
+  # THE BINDING LEG IS THE EDGE OUTBOX DRAIN, and that was measured too: it is 5s
+  # of WALL backstop (protocol/outbox/drainer.go:170), so at Nx it is 5N SIMULATED
+  # seconds per hop. Dropping it to 500ms took 10x from 4.65 to 34.50/wall-min in a
+  # controlled re-run -- the same speed, one value changed. It is NOT lowered here,
+  # because that same interval is also the dead-letter budget (MaxRetries x
+  # interval) and shortening it divides a real broker's recovery window by the
+  # same factor. Splitting the two is the change that raises the ceiling.
+  #
+  # SEPARATELY, AND IT LIMITS EVERY SPEED: a staged bin with no reservation wedges
+  # a robot permanently through the position gate, and the count only ratchets up.
+  # See docs/dev-env/sim-position-hold-deadlock.md. A long run degrades for that
+  # reason, not this one.
+  speed: 5.0
   # SYNCED RUNNING (zero core↔edge drift, and the multiplier is real). In
   # running-clock mode (no epoch) each binary stamps its own boot-now as the clock
   # epoch, so core+edge drift by boot-skew × speed and cross-process coordination
