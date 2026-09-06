@@ -159,8 +159,10 @@ sim:
   #
   # SEPARATELY, AND IT LIMITS EVERY SPEED: a staged bin with no reservation wedges
   # a robot permanently through the position gate, and the count only ratchets up.
-  # See docs/dev-env/sim-position-hold-deadlock.md. A long run degrades for that
-  # reason, not this one.
+  # It is a single_robot swap self-deadlocking against the sim's position gate,
+  # it costs two robots in the first three minutes of every run, and it is
+  # sim-only. Write-up: ISSUE-sim-position-hold-deadlock-2026-09-06.md at the
+  # GitHub root. A long run degrades for that reason, not this one.
   speed: 5.0
   # SYNCED RUNNING (zero core↔edge drift, and the multiplier is real). In
   # running-clock mode (no epoch) each binary stamps its own boot-now as the clock

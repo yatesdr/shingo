@@ -114,10 +114,11 @@ not done.
 ## What limits a long run at ANY speed
 
 Speed is not the only thing bounding this rig, and it is not the worst thing.
-A staged bin with no reservation permanently wedges a robot through the position
-gate, every occurrence is permanent, and the count only ratchets up — so a rig
-left running degrades regardless of multiplier. See
-[`sim-position-hold-deadlock.md`](sim-position-hold-deadlock.md). Raising the
+A `single_robot` swap self-deadlocks against the sim's position gate: two robots
+are lost in the first three minutes of every seeded run, permanently. It is not
+speed-related and it is sim-only (a real fleet gets position physics from the
+floor, not from this gate). Write-up is an issue, not repo reference:
+`ISSUE-sim-position-hold-deadlock-2026-09-06.md` at the GitHub root. Raising the
 speed ceiling without fixing that just reaches the same wall sooner.
 
 ## Reproducing
