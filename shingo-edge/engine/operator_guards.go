@@ -103,7 +103,10 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 // and nothing in this guard will time it out.
 //
 // THAT INCLUDES THE OPERATOR'S OWN REQUEST. This runs on the downgrade path in
-// requestNodeFromClaim regardless of trigger (operator_stations.go:131), so a
+// requestNodeFromClaim regardless of trigger — the call site is the
+// `plan.DowngradedFromSwapMode != ""` arm of requestNodeFromClaim, named rather
+// than cited by line because the line number this carried had already drifted
+// by 28 — so a
 // person pressing REQUEST at the HMI is refused by the same arm, with the same
 // releaser. It is the right refusal — a second carrier into a position a robot
 // is standing at is the failure this exists to stop — but it means the floor's

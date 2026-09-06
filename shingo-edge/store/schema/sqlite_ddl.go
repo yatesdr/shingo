@@ -181,6 +181,20 @@ CREATE TABLE IF NOT EXISTS orders (
     -- have to be a no-op anyway. NULL, not '', because the two admission guards
     -- read it as a three-state answer alongside a status — see MarkDeparted.
     departed_at     TEXT,
+    -- cell_left_at (v40): when the fleet confirmed the last step of steps_json
+    -- whose node is in the claim's cell set — the robot has left the cell's
+    -- NODES. This is what departed_at alone used to mean.
+    --
+    -- departed_at is now the CONJUNCTION: the robot has left AND the leg's own
+    -- placement at the line position has been recorded. The two separate for
+    -- single_robot, which places at step 7 and lifts the spent carrier off
+    -- OutboundStaging at step 8 — so it leaves the cell's nodes one step after
+    -- it has placed and before the placement is on the books.
+    --
+    -- Its one reader is settleCellPlacement (engine/leg_departure.go), which
+    -- completes the departure when the placement lands second. NULL means the
+    -- leg has not left the cell's nodes.
+    cell_left_at    TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

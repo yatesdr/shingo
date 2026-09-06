@@ -311,3 +311,139 @@ func TestTheStandardCoversEveryConfigurableMode(t *testing.T) {
 		}
 	}
 }
+
+// TestOnlySingleRobotDepartsWhileItStillOwesAPlacement is consequence 3, and it
+// is the pin that stops a future builder growing this shape silently.
+//
+// THE HAZARD SHAPE: a leg that leaves a bin on claim.CoreNodeName AND departs by
+// PICKUP. Such a leg stamps its departure at a step that comes AFTER its own
+// placement, so between the two there is an interval in which the cell reads
+// empty to every position question while the leg that just filled it has already
+// been filtered out of the admission readers. That interval is the double-supply
+// race, and the departure conjunction (leg_departure.go) is what closes it.
+//
+// The conjunction is geometry-wide and costs these legs nothing when the record
+// is timely, so this test does not forbid the shape. What it forbids is growing
+// the shape WITHOUT NOTICING: a new builder that lands in this set has to come
+// here and say so, and whoever adds it has to have read why the set is small.
+//
+// Both populations are walked, because the stamp fires in HandleBinPickedUp on
+// any order with a process node and a claim and has no idea which builder made
+// the leg.
+func TestOnlySingleRobotDepartsWhileItStillOwesAPlacement(t *testing.T) {
+	t.Parallel()
+
+	// Steady state: ConfigurableSwapModes × both flip states × 2- and 3-position.
+	steady := map[string]bool{}
+	for _, mode := range protocol.ConfigurableSwapModes() {
+		for _, flipped := range []bool{false, true} {
+			for _, second := range []string{"", "STANDARD-C"} {
+				claim := standardClaim(mode, second, flipped)
+				disp, err := BuildSwapDispatch(&processes.Node{ID: 1, Name: claim.CoreNodeName}, claim)
+				if err != nil || disp == nil {
+					continue
+				}
+				cell := cellSetFor(claim)
+				legs := map[string][]protocol.ComplexOrderStep{
+					"leg A": disp.StepsA,
+					"leg B": disp.StepsB,
+				}
+				if mode == protocol.SwapModeSequential {
+					legs["backfill leg"] = BuildSequentialBackfillSteps(claim)
+				}
+				for label, steps := range legs {
+					if departsWhileOwingAPlacement(steps, cell, claim.CoreNodeName) {
+						steady[string(mode)+" "+label] = true
+					}
+				}
+			}
+		}
+	}
+	assertHazardSet(t, "steady state", steady, map[string]bool{
+		"single_robot leg A": true,
+	})
+
+	// Changeover: the same walk over the two changeover builders. Every mode the
+	// switch does not name falls through to buildSingleRobotChangeoverSwap, so
+	// manual_swap arrives at the same stepsB shape single_robot does — latent
+	// today (guardStyleTransition refuses a material request while a changeover is
+	// armed, so the downgrade is never reached during one) and fixed anyway,
+	// because the conjunction is at the stamp and knows nothing about builders.
+	changeover := map[string]bool{}
+	for _, mode := range append(protocol.ConfigurableSwapModes(), pressPositionSwapMode) {
+		for _, second := range []string{"", "STANDARD-C"} {
+			from := standardClaim(mode, second, false)
+			to := standardClaim(mode, second, false)
+			to.PayloadCode = "WIDGET-B"
+			cell := cellSetFor(from)
+			for _, situation := range []struct {
+				label string
+				disp  ChangeoverDispatch
+			}{
+				{"swap", BuildSwapChangeoverSteps(from, to, from.PairedCoreNode, from.CoreNodeName)},
+				{"evacuate", BuildEvacuateChangeoverSteps(from, to, from.PairedCoreNode, from.CoreNodeName)},
+			} {
+				legs := map[string][]protocol.ComplexOrderStep{
+					"A": situation.disp.StepsA,
+					"B": situation.disp.StepsB,
+				}
+				if r := situation.disp.Roles; r != nil {
+					legs["supply"] = r.supply.steps
+					legs["evac"] = r.evac.steps
+				}
+				for label, steps := range legs {
+					if departsWhileOwingAPlacement(steps, cell, from.CoreNodeName) {
+						changeover[string(mode)+" "+situation.label+" "+label] = true
+					}
+				}
+			}
+		}
+	}
+	// Four entries, one builder: buildSingleRobotChangeoverSwap's stepsB, reached
+	// by single_robot directly and by manual_swap through the default arm, in both
+	// situations.
+	assertHazardSet(t, "changeover", changeover, map[string]bool{
+		"single_robot swap B":     true,
+		"single_robot evacuate B": true,
+		"manual_swap swap B":      true,
+		"manual_swap evacuate B":  true,
+	})
+}
+
+// departsWhileOwingAPlacement reports the hazard shape: this leg leaves a bin on
+// the process node and departs by a PICKUP, so its departure stamp lands after
+// its own placement and can outrun the record of it.
+func departsWhileOwingAPlacement(steps []protocol.ComplexOrderStep, cell map[string]bool, processNode string) bool {
+	if len(steps) == 0 {
+		return false
+	}
+	if !legPlacesBinAt(steps, processNode) {
+		return false
+	}
+	kind, _, ok := legDepartsAt(steps, cell)
+	return ok && kind == departureKindPickup
+}
+
+// assertHazardSet compares the walked set to the expected one and says, on a
+// difference, what the person who tripped it has to do about it.
+func assertHazardSet(t *testing.T, population string, got, want map[string]bool) {
+	t.Helper()
+	for label := range got {
+		if !want[label] {
+			t.Errorf("%s: %q places a bin on the process node AND departs by pickup, which is new.\n"+
+				"That leg stamps its departure at a step AFTER its own placement, so between the two the "+
+				"cell reads empty while the leg that filled it is filtered out of every admission reader. "+
+				"The departure conjunction in leg_departure.go covers it — active_bin_id must be non-nil "+
+				"before the stamp lands — but confirm the cell's step-7 record really is broadcast for this "+
+				"builder, then add it here and to docs/order-lifecycle.md.", population, label)
+		}
+	}
+	for label := range want {
+		if !got[label] {
+			t.Errorf("%s: %q no longer places a bin on the process node while departing by pickup.\n"+
+				"If the builder changed shape deliberately, drop it from this set — but check first that "+
+				"the leg still HAS a departure proof event at all, because the other way to leave this set "+
+				"is to become unprovable, which costs the cell a whole swap cycle of press time.", population, label)
+		}
+	}
+}

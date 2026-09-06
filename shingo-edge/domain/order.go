@@ -152,6 +152,17 @@ type Order struct {
 	// Derived from steps_json against the claim's cell set, never from
 	// claim.SwapMode. See engine/leg_departure.go.
 	DepartedAt *time.Time `json:"departed_at,omitempty"`
+	// CellLeftAt is when the fleet confirmed the last step of this leg's plan
+	// whose node is in the claim's cell set — the robot has left the cell's
+	// NODES. That is what departure used to mean on its own; it is now half of
+	// it, because single_robot leaves the cell's nodes one step AFTER it has
+	// placed a bin on the line and before that placement is recorded.
+	//
+	// json:"-" deliberately. Its only reader is settleCellPlacement, server
+	// side. departed_at is already shipped to a HMI that reads the boolean and
+	// not the instant; a second timestamp nobody asks about would be the same
+	// mistake twice.
+	CellLeftAt *time.Time `json:"-"`
 	// Departed is DepartedAt != nil, rendered for the HMI so the station card
 	// can filter without parsing a timestamp. Set by the scan helpers beside
 	// DepartedAt so the two cannot disagree.

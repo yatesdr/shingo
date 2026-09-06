@@ -282,22 +282,64 @@ Notes on the Edge machine:
 
 A swap leg goes terminal when its *robot* finishes, often at a supermarket
 minutes after the cell it served was already balanced. So a leg carries a
-second, earlier fact: **it is DEPARTED when the fleet confirms the last step of
-its `steps_json` whose node is in the claim's cell set** — `CoreNodeName`, both
-paired index positions, and both staging nodes (a leg still holding a staging
-slot has not left, however far its robot has driven). `orders.departed_at`
-records it; `engine/leg_departure.go` derives it, from the steps and **never
-from `claim.SwapMode`** — the positional rule this replaced is what broke.
+second, earlier fact: **DEPARTED**, meaning it has stopped being the cell's
+business while still being a live order.
 
-Proof events: `BinPickedUp` and `IsTerminal`. A leg's last cell step is either a
-pickup with steps after it (stamped) or its own final step (terminal covers it;
-`departed_at` stays NULL for life). Any other shape is unprovable — not stamped,
-blocks until terminal, logged as `departure unprovable`. Two Core paths produce
-no stamp at all (`wiring_block_completed.go:259-264`, `:171-174`, where
-`resolvePickupBin` cannot name the bin); fail-closed, the leg waits for terminal.
-`departed_at` is never cleared, which is safe only because a stamped leg has no
-cell step left to replay — the standard's pickup-or-final assertion keeps that
-true.
+Departure is a **conjunction of two facts**, and the second one is the part a
+positional rule cannot see:
+
+1. **The robot has left the cell's NODES.** The fleet has confirmed the last
+   step of the leg's `steps_json` whose node is in the claim's cell set —
+   `CoreNodeName`, both paired index positions, and both staging nodes (a leg
+   still holding a staging slot has not left, however far its robot has driven).
+   `orders.cell_left_at` records it.
+2. **The leg's own PLACEMENT at the line position is recorded.** A leg that
+   leaves a bin on `claim.CoreNodeName` (`legPlacesBinAt` — the same predicate
+   that decides the confirm receipt) owes the cell a carrier, and it owes it
+   until the Edge has a bin bound at that cell. `active_bin_id` is the record.
+
+`orders.departed_at` is stamped only when both hold. `engine/leg_departure.go`
+derives all of it from the steps and **never from `claim.SwapMode`** — the
+positional rule this replaced is what broke.
+
+**Why the second fact is not redundant.** For most legs the two land together
+and (2) is already true when (1) fires. They separate for `single_robot`: step 7
+places the fresh carrier on the line, step 8 lifts the spent one off
+OutboundStaging, and step 8 is the *last cell step*. So the leg leaves the
+cell's nodes one step AFTER it has placed and BEFORE that placement is on the
+books. A leg stamped departed in that window disappears from every admission
+reader while the position it just filled still reads empty to Core telemetry —
+the level sweep downgrades to a bare move, and the move arrives at a full
+position and holds forever. That is the double-supply race, re-entered from the
+other side, and closing it is what the conjunction is for.
+
+**Three proof events**, not two:
+
+| Fact | Event | Where |
+|---|---|---|
+| left the cell's nodes | `BinPickedUp` at the departure node | `stampDepartureIfLeftCell` |
+| left the cell's nodes | `IsTerminal` | a leg whose last cell step is its own final step never stamps; terminal covers it |
+| placement recorded | `UOPAdjustment{Bound}` from Core's intermediate dropoff | `settleCellPlacement`, wired in `HandleUOPAdjustment`'s Bound arm |
+
+Whichever of the two facts arrives second completes the departure, so **arrival
+order does not matter**. In the ordinary case the bind lands first (the outbox
+drains `ORDER BY id` onto one partition) and the stamp is immediate; the second
+trigger is the safety net, not the path.
+
+A leg's last cell step is either a pickup with steps after it (stamped) or its
+own final step (terminal covers it; `departed_at` stays NULL for life). Any
+other shape is unprovable — not stamped, blocks until terminal, logged as
+`departure unprovable`. Two Core paths produce no stamp at all
+(`wiring_block_completed.go`, where `resolvePickupBin` cannot name the bin);
+fail-closed, the leg waits for terminal. A leg that left the cell's nodes with
+its placement unrecorded gets its own sentence — *"left the cell at X but its
+own placement at Y is not recorded — the cell stays shut until it lands"* — so a
+cell held by this rule always says what it is waiting for.
+
+Neither stamp is ever cleared. That is safe for `cell_left_at` because a
+replayed `BinPickedUp` is a no-op in the WHERE clause, and for `departed_at`
+because a stamped leg has no cell step left to replay — the standard's
+pickup-or-final assertion keeps that true.
 
 **Every reader of "is this cell busy"** asks `orderWorksTheCell` (non-terminal
 AND not departed). They must never disagree:
@@ -310,10 +352,15 @@ AND not departed). They must never disagree:
 | `sweepNodeLevel` (auto-reorder) | the durable rows at the node |
 | Station card (`cellCardAction`) | the orders it lists, as `!o.departed` |
 
+`cell_left_at` is NOT one of these. It is not an admission answer on its own —
+its only reader is `settleCellPlacement` — and a reader that asked it instead of
+`departed` would be re-opening the window this closes.
+
 The card still *lists* a departed leg as `TO MARKET` — control goes, information
 stays. Its one exception is `delivered`, which falls back to a departed
 non-auto-confirm leg: single_robot places on the press at step 7, departs at
-step 8, is `delivered` at step 9, and that CONFIRM is the cycle's only receipt.
+step 8 once that placement is recorded, is `delivered` at step 9, and that
+CONFIRM is the cycle's only receipt.
 
 **CONFIRM belongs to the leg that placed on the press**: a leg auto-confirms iff
 it leaves no bin on `claim.CoreNodeName`. Exactly one receipt per cycle, every
@@ -322,12 +369,19 @@ replaced were correct only by accident of which robot carried which half, and
 the `IndexRobotSupplies` flip broke the accident (Springfield press trial,
 2026-09-02: the operator was asked to sign for a tote at the supermarket).
 
-A new swap mode is a new step builder and inherits both rules for free, or it
-fails `TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement`
-(`shingo-edge/engine/swap_leg_standard_test.go`), which walks
-`ConfigurableSwapModes` x both flip states x 2- and 3-position;
-`TestEveryChangeoverLegDepartsProvably` holds the changeover builders to the
-departure half. The honest fixes for a red build there: end the leg at the cell,
+A new swap mode is a new step builder and inherits all of it for free, or it
+fails one of three walkers in `shingo-edge/engine/swap_leg_standard_test.go`:
+`TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement` (departure provable +
+exactly one receipt) and `TestEveryChangeoverLegDepartsProvably` walk
+`ConfigurableSwapModes` x both flip states x 2- and 3-position, and
+`TestOnlySingleRobotDepartsWhileItStillOwesAPlacement` pins WHICH legs both
+place at the line and depart by pickup — the shape the conjunction exists for.
+That set is `{single_robot leg A}` in steady state and
+`buildSingleRobotChangeoverSwap`'s leg B (reached by `single_robot` and, through
+the default arm, `manual_swap`) at changeover. A builder that joins the set has
+to come to that test and say so.
+
+The honest fixes for a red build on the departure half: end the leg at the cell,
 make its last cell step a pickup, or teach `legDepartsAt` a new proof event
 **and add it here**.
 

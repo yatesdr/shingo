@@ -849,6 +849,26 @@ func (db *DB) migrate() error {
 	// next swap starts under the new one.
 	db.Exec("ALTER TABLE orders ADD COLUMN departed_at TEXT")
 
+	// v40 (2026-09-06, departure is a conjunction): cell_left_at holds the fact
+	// departed_at used to record on its own — the fleet has confirmed the last
+	// step of steps_json whose node is in the claim's cell set, i.e. the robot
+	// has left the cell's NODES.
+	//
+	// departed_at now means more than that: the robot has left AND the leg's own
+	// placement at the line position has been recorded. single_robot places at
+	// step 7 and lifts the spent carrier off OutboundStaging at step 8, so its
+	// last cell step comes AFTER its placement and before that placement is on
+	// the books — and a leg stamped departed there is filtered out of every
+	// admission reader while the position it just filled still reads empty.
+	//
+	// NULLABLE and no backfill, for v39's reason: "has not left the cell" is a
+	// real, common, permanent state (a leg whose last cell step is its own final
+	// step never leaves before terminal), and inventing an instant for an
+	// in-flight row would admit a second swap into a cell a robot is standing
+	// in. Existing rows run out under the old rule; the next swap starts under
+	// the new one.
+	db.Exec("ALTER TABLE orders ADD COLUMN cell_left_at TEXT")
+
 	return nil
 }
 

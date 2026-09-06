@@ -63,6 +63,12 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		}
 		log.Printf("uop_adjustment: bound bin %d to node %s (remaining=%d epoch=%d, moved in Core)",
 			adj.BinID, adj.CoreNodeName, adj.NewRemaining, adj.Epoch)
+		// THE SECOND HALF OF A DEPARTURE. This bind is the record that a bin is
+		// on the cell, and it is the fact a leg that has already left the cell's
+		// nodes was waiting on. Firing it here rather than only at the pickup is
+		// what makes arrival order irrelevant: whichever of the two facts lands
+		// second completes the departure. See leg_departure.go.
+		e.settleCellPlacement(node.ID)
 		e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
 			ProcessNodeID: node.ID,
 			CoreNodeName:  adj.CoreNodeName,

@@ -127,6 +127,14 @@ func (db *DB) MarkOrderDeparted(id int64, at time.Time) (bool, error) {
 	return orders.MarkDeparted(db.DB, id, at)
 }
 
+// MarkOrderLeftCell stamps the instant the robot left the cell's NODES and
+// reports whether the stamp landed. It is HALF of a departure: the leg is not
+// departed until its own placement at the line position is also recorded. Same
+// stamp-once guard as MarkOrderDeparted. See orders.MarkLeftCell.
+func (db *DB) MarkOrderLeftCell(id int64, at time.Time) (bool, error) {
+	return orders.MarkLeftCell(db.DB, id, at)
+}
+
 // SetOrderQueueReason writes (or clears) the blocking reason and its structured
 // code on a queued order. Called from the edge handler when Core pushes an
 // OrderUpdate (or boot snapshot) with QueueReason + QueueCode.

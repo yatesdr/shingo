@@ -91,6 +91,115 @@ func TestMarkOrderDeparted_SurvivesTheListReads(t *testing.T) {
 	}
 }
 
+// TestMarkOrderLeftCell_IsIndependentOfDeparture pins the v40 column against the
+// mistake it exists to prevent being re-made: cell_left_at is NOT departed_at
+// under a new name.
+//
+// The robot leaving the cell's nodes and the leg's placement being recorded are
+// two facts. cell_left_at carries the first; departed_at is the conjunction. A
+// row that has one and not the other is the whole point — it is a leg that put a
+// carrier on the line and cannot yet prove it, and it must still read as working
+// the cell.
+func TestMarkOrderLeftCell_IsIndependentOfDeparture(t *testing.T) {
+	db := coverageDB(t)
+	id := seedDepartureOrder(t, db, "uuid-left-cell")
+
+	o, err := db.GetOrder(id)
+	if err != nil {
+		t.Fatalf("GetOrder: %v", err)
+	}
+	if o.CellLeftAt != nil {
+		t.Fatalf("a fresh order must not have left the cell: %v", o.CellLeftAt)
+	}
+
+	left := time.Date(2026, 9, 6, 9, 34, 9, 0, time.UTC)
+	changed, err := db.MarkOrderLeftCell(id, left)
+	if err != nil {
+		t.Fatalf("MarkOrderLeftCell: %v", err)
+	}
+	if !changed {
+		t.Fatal("the first stamp must report changed=true — it is what the handler logs on")
+	}
+
+	o, err = db.GetOrder(id)
+	if err != nil {
+		t.Fatalf("GetOrder after the stamp: %v", err)
+	}
+	if o.CellLeftAt == nil || !o.CellLeftAt.Equal(left) {
+		t.Fatalf("cell_left_at = %v, want %v", o.CellLeftAt, left)
+	}
+	if o.Departed || o.DepartedAt != nil {
+		t.Fatal("leaving the cell's NODES stamped a DEPARTURE. The two are independent columns: " +
+			"the departure also needs the leg's placement to be recorded, and collapsing them " +
+			"reintroduces the double-supply race the conjunction closes")
+	}
+
+	// The replay: Core restarts and re-fires the same FINISHED block.
+	changed, err = db.MarkOrderLeftCell(id, left.Add(3*time.Hour))
+	if err != nil {
+		t.Fatalf("MarkOrderLeftCell (replay): %v", err)
+	}
+	if changed {
+		t.Error("a replayed pickup must report changed=false — one stamp, one log line")
+	}
+	o, err = db.GetOrder(id)
+	if err != nil {
+		t.Fatalf("GetOrder after replay: %v", err)
+	}
+	if o.CellLeftAt == nil || !o.CellLeftAt.Equal(left) {
+		t.Errorf("cell_left_at = %v, want %v — the replay moved the instant forward to a time the robot "+
+			"was nowhere near the cell", o.CellLeftAt, left)
+	}
+
+	// The departure lands second, from the placement record. Neither stamp clears
+	// the other.
+	departed := left.Add(30 * time.Second)
+	if _, err := db.MarkOrderDeparted(id, departed); err != nil {
+		t.Fatalf("MarkOrderDeparted: %v", err)
+	}
+	o, err = db.GetOrder(id)
+	if err != nil {
+		t.Fatalf("GetOrder after the departure: %v", err)
+	}
+	if !o.Departed || o.DepartedAt == nil || !o.DepartedAt.Equal(departed) {
+		t.Fatalf("departed_at = %v (departed=%v), want %v", o.DepartedAt, o.Departed, departed)
+	}
+	if o.CellLeftAt == nil || !o.CellLeftAt.Equal(left) {
+		t.Errorf("cell_left_at = %v after the departure, want %v — it records when the robot left and "+
+			"nothing may move it", o.CellLeftAt, left)
+	}
+}
+
+// TestMarkOrderLeftCell_SurvivesTheListReads is the twin of the departed-at list
+// pin. settleCellPlacement reads its candidates from ListActiveOrdersByProcessNode
+// and skips any row whose CellLeftAt is nil — so a scan path that dropped the
+// column would silently make the second trigger a no-op, and every single_robot
+// cell would hold until its leg went terminal.
+func TestMarkOrderLeftCell_SurvivesTheListReads(t *testing.T) {
+	db := coverageDB(t)
+	nodeID := seedDepartureNode(t, db)
+	id := seedDepartureOrderAtNode(t, db, "uuid-left-cell-listed", &nodeID)
+
+	left := time.Date(2026, 9, 6, 9, 34, 9, 0, time.UTC)
+	if _, err := db.MarkOrderLeftCell(id, left); err != nil {
+		t.Fatalf("MarkOrderLeftCell: %v", err)
+	}
+
+	listed, err := db.ListActiveOrdersByProcessNode(nodeID)
+	if err != nil {
+		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("got %d active orders, want 1 (a leg that left the cell is still non-terminal)", len(listed))
+	}
+	if listed[0].CellLeftAt == nil || !listed[0].CellLeftAt.Equal(left) {
+		t.Errorf("the list read lost cell_left_at: %v", listed[0].CellLeftAt)
+	}
+	if listed[0].Departed {
+		t.Error("the list read says departed for a leg that has only left the cell's nodes")
+	}
+}
+
 // seedDepartureNode creates the process/node scaffolding a node-scoped order
 // needs.
 func seedDepartureNode(t *testing.T, db *DB) int64 {

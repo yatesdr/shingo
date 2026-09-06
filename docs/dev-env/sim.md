@@ -99,6 +99,42 @@ make dev-reset    # stop + drop volumes (fresh DBs next up)
 UIs (when bound to `0.0.0.0` via the dev configs): core on `:8083`
 (`/heartbeat`, dashboards), edge on `:8081`.
 
+### Seed with Core STOPPED
+
+`make dev-seed` seeds while Core is running and restarts it afterwards. That is
+fine for a top-up on a live stack and wrong for a clean bring-up you intend to
+measure, because Core's engines are writing to the same tables the seeder is
+rewriting: the startup reconciliation sweep, the threshold monitor and the
+station service all run against a half-seeded topology and record what they find
+— adopted process nodes, orphaned rows, anomalies — which then sits in the run
+you are about to read as if the plant had produced it.
+
+For a clean run, stop Core across the seed:
+
+```sh
+docker compose -f docker-compose.dev.yml down -v
+bash scripts/sim-anchor.sh mint                       # only ever alongside down -v
+docker compose -f docker-compose.dev.yml --profile tools build
+SHINGO_BIND=0.0.0.0 docker compose -f docker-compose.dev.yml up -d postgres kafka core edge edge2
+docker compose -f docker-compose.dev.yml stop core     # <- the rule
+docker compose -f docker-compose.dev.yml run --no-deps --rm seed
+docker compose -f docker-compose.dev.yml run --no-deps --rm seed-edge2
+docker compose -f docker-compose.dev.yml start core
+docker compose -f docker-compose.dev.yml restart edge edge2
+```
+
+Core is brought up FIRST and then stopped rather than never started, because
+Edge migrates `/data/shingoedge.db` at boot and the seeder writes into a
+migrated schema; `--no-deps` is what stops `compose run` restarting Core through
+the dependency chain (seed → edge → core). Restarting Core at the end is the
+same step `dev-seed` already does and for the same reason: the registry and the
+runtime states were written behind the sweeps.
+
+**Observed:** 0 orphan/adoption lines across core, edge and edge2 on the
+2026-09-06 bring-up with Core stopped; the run that produced this rule saw 4
+with Core up. A bring-up rule that lives only in one run's chat log will
+regress, which is why it is here.
+
 ### Reading the Edge database: copy the WAL too
 
 Edge SQLite runs in WAL mode, so **the main database file on its own is a stale

@@ -33,6 +33,7 @@ type stampFixture struct {
 	order   *storeorders.Order
 	logs    *[]string
 	pickups []string // every cell node this leg picks up from, in plan order
+	places  bool     // the leg leaves a bin on claim.CoreNodeName
 }
 
 // newStampFixture seeds the cell, flips the claim if asked, builds the leg's
@@ -80,6 +81,14 @@ func newStampFixture(t *testing.T, mode protocol.SwapMode, secondPaired string, 
 	eng.logFn = func(format string, args ...any) {
 		logs = append(logs, fmt.Sprintf(format, args...))
 	}
+	// A live cell always has a runtime row, and its active_bin_id is nil across
+	// exactly the window these cases drive: cleared by the leg’s own press pickup,
+	// re-set by its step-7 dropoff. Seeding it makes an UNREADABLE runtime a
+	// deliberate case rather than an accident of the fixture — the departure
+	// gate fails closed on one, and a fixture that never had a row would take
+	// that path everywhere without saying so.
+	_, rerr := db.EnsureProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, rerr, "ensure runtime")
 
 	f := &stampFixture{
 		eng: eng, db: db, nodeID: nodeID, claim: claim,
@@ -92,7 +101,46 @@ func newStampFixture(t *testing.T, mode protocol.SwapMode, secondPaired string, 
 			f.pickups = append(f.pickups, s.Node)
 		}
 	}
+	f.places = legPlacesBinAt(steps, claim.CoreNodeName)
 	return f
+}
+
+// placedBinID is the carrier the leg leaves on the machine at its step-7
+// dropoff. Any id will do; it is named so the assertions read as a fact about
+// a bin rather than a magic number.
+const placedBinID = int64(77)
+
+// recordPlacement drives the step-7 record: Core's intermediate dropoff
+// broadcasts UOPAdjustment{Bound} and the Edge binds the arrived bin to the
+// cell. The REAL handler, not a direct runtime write — settleCellPlacement is
+// wired inside it, and a fixture that wrote active_bin_id by hand would
+// exercise the stamp while leaving the second trigger untested.
+func (f *stampFixture) recordPlacement(t *testing.T) {
+	t.Helper()
+	f.eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+		BinID:        placedBinID,
+		CoreNodeName: f.claim.CoreNodeName,
+		NewRemaining: 40,
+		Epoch:        1,
+		Bound:        true,
+	})
+	rt, err := f.db.GetProcessNodeRuntime(f.nodeID)
+	testutil.MustNoErr(t, err, "runtime after the bind")
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != placedBinID {
+		t.Fatalf("the placement did not bind: active_bin_id=%v, want %d", rt.ActiveBinID, placedBinID)
+	}
+}
+
+// heldLogs returns the "left the cell but its placement is not recorded" lines
+// — the sentence a cell held by the conjunction is owed.
+func (f *stampFixture) heldLogs() []string {
+	var out []string
+	for _, l := range *f.logs {
+		if strings.Contains(l, "placement at") && strings.Contains(l, "is not recorded") {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func (f *stampFixture) pickUpAt(t *testing.T, location string) {
@@ -187,6 +235,21 @@ func TestBinPickedUp_StampsOnTheProofStepAndNoEarlierOne(t *testing.T) {
 				}
 			}
 
+			// A leg that leaves a bin on the machine owes the cell a placement,
+			// and departure is now the CONJUNCTION of leaving the cell's nodes
+			// with that placement being recorded. single_robot is the only row
+			// here that places, and its step-7 dropoff falls between the early
+			// pickups and the proof step — so that is where the record goes. The
+			// legs that place nothing need no record and must not be given one,
+			// or the case would stop testing the conjunction at all.
+			if f.places {
+				f.recordPlacement(t)
+				if o := f.departedAt(t); o.Departed {
+					t.Fatal("the leg departed at its own PLACEMENT — the robot is still standing at the " +
+						"cell holding a staging slot; leaving the cell's nodes is the other half")
+				}
+			}
+
 			f.pickUpAt(t, tc.wantAt)
 			o := f.departedAt(t)
 			if !o.Departed || o.DepartedAt == nil {
@@ -262,6 +325,10 @@ func TestBinPickedUp_NeverStampsALegThatEndsAtTheCell(t *testing.T) {
 func TestBinPickedUp_StampIsAboveTheLocationGate(t *testing.T) {
 	t.Parallel()
 	f := newStampFixture(t, protocol.SwapModeSingleRobot, "", false, false)
+	// The step-7 record first: this case is about WHERE the stamp sits relative
+	// to the location gate, and a leg held back by the unrecorded-placement arm
+	// would never reach the question.
+	f.recordPlacement(t)
 
 	f.pickUpAt(t, "OUT-STAGING")
 
@@ -339,5 +406,83 @@ func TestBinPickedUp_KanbanOrderIsSilent(t *testing.T) {
 		if strings.Contains(l, "departure") || strings.Contains(l, "DEPARTED") {
 			t.Errorf("a kanban order produced a departure log line: %q", l)
 		}
+	}
+}
+
+// TestBinPickedUp_HoldsTheCellUntilThePlacementIsRecorded is the case the whole
+// conjunction exists for, and its second half is the escape.
+//
+// single_robot places the fresh carrier on the line at step 7 and lifts the
+// spent one off OutboundStaging at step 8. Step 8 is its last cell step, so the
+// old rule stamped it departed there — hiding the leg from every admission
+// reader while the position it had just filled still read empty to Core, to the
+// level sweep and to the downgrade. The leg has left the cell's NODES; it has
+// not left the cell's BUSINESS until somebody has recorded what it put down.
+//
+// So: no stamp at step 8 with nothing recorded, one sentence saying why, and
+// the departure completed by the bind whenever it lands. One departure log line
+// across both events — the stamp happens once, however it is reached.
+func TestBinPickedUp_HoldsTheCellUntilThePlacementIsRecorded(t *testing.T) {
+	t.Parallel()
+	f := newStampFixture(t, protocol.SwapModeSingleRobot, "", false, false)
+	if !f.places {
+		t.Fatal("fixture drift: single_robot leg A must leave a bin on PRESS, or this case is vacuous")
+	}
+	rt, err := f.db.GetProcessNodeRuntime(f.nodeID)
+	testutil.MustNoErr(t, err, "runtime")
+	if rt.ActiveBinID != nil {
+		t.Fatalf("fixture drift: active_bin_id = %d, want nil — the step-4 press pickup cleared it, and the "+
+			"window under test is exactly the interval where it is nil", *rt.ActiveBinID)
+	}
+
+	// Step 8 with nothing recorded. The robot is driving away; the cell is not
+	// free, because nobody can say a carrier is on it.
+	f.pickUpAt(t, "OUT-STAGING")
+
+	o := f.departedAt(t)
+	if o.Departed {
+		t.Fatal("the leg departed at step 8 with its own step-7 placement unrecorded — that is the " +
+			"double-supply race: the cell reads free, the sweep downgrades to a bare move, and the move " +
+			"arrives at a position this leg has already filled")
+	}
+	if o.CellLeftAt == nil {
+		t.Error("cell_left_at was not stamped — the robot HAS left the cell's nodes, and that half of the " +
+			"departure is unconditional; without it the bind has nothing to complete")
+	}
+	if got := f.heldLogs(); len(got) != 1 {
+		t.Errorf("held-cell log lines = %d, want exactly 1: %v — a cell shut by this rule is owed a "+
+			"sentence naming what it is waiting for", len(got), got)
+	}
+	if got := f.departureLogs(); len(got) != 0 {
+		t.Errorf("departure log lines = %d, want 0: %v", len(got), got)
+	}
+
+	// THE ESCAPE. Core's intermediate dropoff lands and the Edge binds the
+	// carrier. Without this half the fix is replenishment switched off.
+	f.recordPlacement(t)
+
+	o = f.departedAt(t)
+	if !o.Departed || o.DepartedAt == nil {
+		t.Fatalf("the placement was recorded and the leg still has not departed (departed=%v at=%v); logs=%v — "+
+			"the cell would now stay shut for the whole supermarket trip", o.Departed, o.DepartedAt, *f.logs)
+	}
+	if protocol.IsTerminal(o.Status) {
+		t.Fatal("fixture drift: the leg must still be non-terminal — a departure that only arrives with " +
+			"terminal proves nothing")
+	}
+	if got := f.departureLogs(); len(got) != 1 {
+		t.Errorf("departure log lines = %d, want exactly 1 across both events: %v", len(got), got)
+	}
+
+	// A replayed bind (Core restarts and re-fires the FINISHED block) must not
+	// stamp twice or speak twice.
+	first := *o.DepartedAt
+	f.recordPlacement(t)
+	again := f.departedAt(t)
+	if again.DepartedAt == nil || !again.DepartedAt.Equal(first) {
+		t.Errorf("departed_at moved on a replayed bind: %v then %v", first, again.DepartedAt)
+	}
+	if got := f.departureLogs(); len(got) != 1 {
+		t.Errorf("departure log lines after a replayed bind = %d, want 1: %v", len(got), got)
 	}
 }

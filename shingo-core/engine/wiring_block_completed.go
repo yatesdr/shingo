@@ -400,11 +400,21 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 		// UOPAdjustment{Bound} channel the admin-Move fix added (75643f9): the Edge
 		// binds ONLY the process node it owns and no-ops for supermarket / staging /
 		// synthetic dests, so it is safe to fire on every intermediate dropoff.
-		// Single-bin swaps (two_robot / simple) bind via handleNodeOrderDelivered and
-		// have no junction rows, so resolveDropoffBin returns false for them above —
-		// they never reach here. In production this is a dormant correctness add: it
-		// only fires for multi-bin swaps, which previously left the at-node bin
-		// unbound the same way the manual-Move path did before 75643f9.
+		//
+		// NOT DORMANT, and this comment used to say it was. It claimed the broadcast
+		// fires only for multi-bin swaps because "single-bin swaps have no junction
+		// rows, so resolveDropoffBin returns false for them above". resolveDropoffBin
+		// stopped reading the junction (see its own header) — it asks what this order
+		// has at _TRANSIT — and a two_robot supply leg's intermediate dropoff at
+		// InboundStaging resolves fine and reaches this broadcast. Harmless at Edge,
+		// which no-ops for a staging node, but a reader reasoning from "dormant"
+		// would be reasoning from a fact that has not held for some time.
+		//
+		// It is also load-bearing now, and not only for the tile: this is the
+		// PLACEMENT RECORD half of a leg's departure. Edge's settleCellPlacement
+		// hangs off this bind, and a leg that places at a cell stays undeparted —
+		// holding the cell — until it lands. See shingo-edge/engine/leg_departure.go
+		// and docs/order-lifecycle.md § Departed legs and cell-done.
 		if err := e.SendDataToEdge(protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
 			BinID:        binID,
 			CoreNodeName: destNode.Name,
@@ -417,13 +427,16 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	}
 }
 
-// resolveDropoffBin finds the bin this order dropped at `location` via the
-// order_bins junction (dest_node == location). Among matching rows it returns
-// the bin still claimed by the order — the one actually in flight for this
-// leg; a bin already delivered to the same dest is unclaimed and skipped,
-// which makes the caller idempotent against duplicate/replayed block events.
-// Returns false when no junction rows exist (single-bin orders, compound
-// children) or none match.
+// resolveDropoffBin finds the bin this order just set down at `location`: the
+// one bin the order still has claimed at _TRANSIT — what the robot is carrying.
+// A bin already delivered is unclaimed and not at _TRANSIT, which makes the
+// caller idempotent against duplicate/replayed block events. Returns false when
+// the order has no bin in transit under its claim, or more than one.
+//
+// It does NOT read the order_bins junction, and this summary used to say it did
+// (dest_node == location, "returns false when no junction rows exist"). That
+// describes the version this replaced; the paragraphs below document the
+// rewrite and were correct while the summary above them was not.
 // ── IT ASKS WHAT THE ROBOT IS CARRYING, AND IT USED TO ASK SOMETHING ELSE ──
 //
 // A dropoff places the bin the robot has in its forks. That bin is, by

@@ -13,6 +13,7 @@ import (
 	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store"
+	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
 
@@ -244,5 +245,158 @@ func TestConsumeDowngrade_LoaderWindowIsExempt(t *testing.T) {
 
 	if err := eng.guardPositionSpokenFor(node, runtime, claim); err != nil {
 		t.Errorf("loader window refused: %v — manual_swap must stay exempt", err)
+	}
+}
+
+// ── THE REGRESSION: W1'S WITNESS GOES BLIND WHEN THE LEG DEPARTS ──────────
+//
+// Every case above leaves the in-flight leg VISIBLE to orderWorksTheCell, so
+// the guard's row arm always had a row to refuse on. Production's window does
+// not look like that. 0cc734c3 (2026-09-03) rewrote that arm to filter its rows
+// through orderWorksTheCell, and single_robot's step-8 pickup at OutboundStaging
+// stamps the leg DEPARTED while its own step-7 placement is still unrecorded —
+// so the witness row is filtered away at exactly the instant it is needed.
+//
+// The reason this file could not see it: seedInFlightSwap creates a STEPLESS
+// order (CreateOrder, no steps_json), and the departure machinery reads
+// steps_json. A stepless row can never depart, so no case here could ever
+// produce the state the plant runs into. The fix is not defeated by a wrong
+// guard; it is defeated by an input the test never produced.
+
+// mkDepartedSinglePlacer seeds the production state at the instant of the race:
+// a REAL single_robot leg (steps from the shipping builder), driven through the
+// REAL pickup handler at OutboundStaging, on a cell whose runtime holds no bin.
+//
+// It differs from seedInFlightSwap in the four ways that matter:
+//
+//  1. real steps via BuildSingleSwapSteps — the departure machinery reads
+//     steps_json, and a stepless row cannot depart;
+//  2. the departure is driven by eng.HandleBinPickedUp, not by MarkOrderDeparted
+//     — so the case covers the STAMPING RULE as well as the guard, and a future
+//     fix that moves the stamp cannot pass it by accident;
+//  3. active_bin_id is CLEARED and asserted nil — that is what the step-4 press
+//     pickup did, and it is the state the whole defect lives in. spokenForFixture
+//     seeds bin 24 there; left set, the case would pass for the wrong reason;
+//  4. the runtime ORDER pointers stay nil, so the durable-row arm is the only
+//     witness left. TestSingleRobotWindow_… pins the slot arm; this pins the row
+//     arm, which is the one 0cc734c3 blinded.
+func mkDepartedSinglePlacer(t *testing.T, eng *Engine, db *store.DB, nodeID int64) *storeorders.Order {
+	t.Helper()
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "get node")
+	claim := requestedClaimAtNode(db, node)
+	if claim == nil {
+		t.Fatal("no active claim — the fixture seeds one")
+	}
+	steps := BuildSingleSwapSteps(claim)
+	if len(steps) == 0 {
+		t.Fatal("BuildSingleSwapSteps produced nothing — the claim is missing a staging node")
+	}
+	leg := mkSwapLeg(t, db, nodeID, "w1-departed-single", steps, "SYN_MARKET")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(leg.ID, string(orders.StatusInTransit)), "set in_transit")
+
+	// Step 4 already happened: the robot lifted the old carrier off the line and
+	// the runtime lost its bin. Assert it rather than assume it.
+	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(nodeID, nil), "clear active bin")
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "read runtime")
+	if rt.ActiveBinID != nil {
+		t.Fatalf("fixture drift: active_bin_id = %v, want nil — the press pickup cleared it, and the "+
+			"unrecorded-placement window is exactly the interval where it is nil", *rt.ActiveBinID)
+	}
+
+	// Step 8: the outbound-staging pickup, through the real handler.
+	eng.HandleBinPickedUp(leg.UUID, 0, claim.OutboundStaging)
+
+	after, err := db.GetOrder(leg.ID)
+	testutil.MustNoErr(t, err, "re-read leg")
+	if protocol.IsTerminal(after.Status) {
+		t.Fatal("fixture drift: the leg must still be non-terminal — a terminal leg is filtered by the " +
+			"query itself and would prove nothing about the departure filter")
+	}
+	return after
+}
+
+// TestConsumeDowngrade_RefusesWhileTheDepartedSwapHasNotPlacedYet is the
+// regression case, and the one the whole design exists for.
+//
+// The leg has left the cell's nodes but its own step-7 placement at ALN_004 has
+// not been recorded anywhere the Edge can see — active_bin_id is nil and Core's
+// telemetry honestly answers "empty", because the carrier is in the robot's
+// hands. The cell therefore LOOKS bare to every surface that asks a position
+// question, and the only thing that knows better is the order row.
+//
+// RED at the unfixed tree on the file's own failure line: the leg is stamped
+// departed at step 8, orderWorksTheCell filters it out of the guard's row scan,
+// and the downgrade mints a second bare move SYN_MARKET→ALN_004 into a position
+// the leg that just "departed" is about to fill.
+func TestConsumeDowngrade_RefusesWhileTheDepartedSwapHasNotPlacedYet(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID := spokenForFixture(t, false)
+	leg := mkDepartedSinglePlacer(t, eng, db, nodeID)
+
+	before := countOrders(t, db)
+	res, err := eng.requestNodeMaterialFor(nodeID, 1, protocol.EpisodeTriggerAutoreorder)
+	if err == nil {
+		minted := "nothing"
+		if res != nil && res.Order != nil {
+			minted = fmt.Sprintf("order %d (%s %s→%s)", res.Order.ID, res.Order.OrderType,
+				res.Order.SourceNode, res.Order.DeliveryNode)
+		}
+		t.Fatalf("request ACCEPTED while swap %d is in flight; it minted %s — this is the double-supply race",
+			leg.ID, minted)
+	}
+	if !strings.Contains(err.Error(), "already on its way") {
+		t.Errorf("refusal = %q, want the sentence that says a bin is already coming", err)
+	}
+	if after := countOrders(t, db); after != before {
+		t.Errorf("order count %d → %d: a second delivery was minted into a position a robot is already filling",
+			before, after)
+	}
+}
+
+// TestConsumeDowngrade_MintsOncePlacementIsRecorded is the escape, and without it
+// the fix above is just replenishment switched off for single_robot.
+//
+// Same cell, same departed leg, same threshold. The only difference is that
+// Core's intermediate dropoff has landed, so the Edge has a carrier bound at the
+// cell and the leg's departure completes from that second trigger. The row stops
+// being a witness because it has stopped being true, not because a rule stopped
+// asking — and the next request goes through.
+func TestConsumeDowngrade_MintsOncePlacementIsRecorded(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID := spokenForFixture(t, false)
+	leg := mkDepartedSinglePlacer(t, eng, db, nodeID)
+	if leg.Departed {
+		t.Fatal("fixture drift: the leg departed with its placement unrecorded — the case above is what " +
+			"stops that, and this one has nothing left to escape from")
+	}
+
+	// The step-7 record, through the real handler: Core moved the fresh carrier
+	// onto the cell and says so.
+	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+		BinID:        placedBinID,
+		CoreNodeName: "ALN_004",
+		NewRemaining: 40,
+		Epoch:        1,
+		Bound:        true,
+	})
+
+	after, err := db.GetOrder(leg.ID)
+	testutil.MustNoErr(t, err, "re-read leg")
+	if !after.Departed {
+		t.Fatal("the placement was recorded and the leg still has not departed — this cell is now shut " +
+			"until the leg reaches the supermarket and a person confirms it")
+	}
+	if protocol.IsTerminal(after.Status) {
+		t.Fatal("fixture drift: the leg must still be non-terminal, or the reopen is just terminal arriving")
+	}
+
+	before := countOrders(t, db)
+	if _, err := eng.requestNodeMaterialFor(nodeID, 1, protocol.EpisodeTriggerAutoreorder); err != nil {
+		t.Fatalf("request refused after the placement was recorded: %v — the cell can no longer be resupplied", err)
+	}
+	if got := countOrders(t, db); got <= before {
+		t.Errorf("order count %d → %d: nothing was minted for a cell below its reorder point", before, got)
 	}
 }

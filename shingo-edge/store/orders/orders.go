@@ -37,7 +37,7 @@ const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.r
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.payload_desc, o.sibling_order_id, o.queue_reason, o.queue_code, o.authored_by, o.origin_id, o.origin_class,
-	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.created_at, o.updated_at,
+	o.fault_since, o.fault_deadline, o.fault_notice_after_s, o.fault_ref, o.departed_at, o.cell_left_at, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, ''),
 	CASE WHEN o.status = 'staged' AND COALESCE(o.steps_json, '') = '' THEN 1 ELSE 0 END`
 
@@ -149,7 +149,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		var o Order
 		var stagedExpireAt sql.NullString
 		var faultSince, faultDeadline, faultRef sql.NullString
-		var departedAt sql.NullString
+		var departedAt, cellLeftAt sql.NullString
 		var binID, siblingID sql.NullInt64
 		var createdAt, updatedAt string
 		var laneHeld int
@@ -157,13 +157,13 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &createdAt, &updatedAt,
+			&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 			return nil, err
 		}
 		o.LaneHeld = laneHeld == 1
 		applyFaultClock(&o, faultSince, faultDeadline, faultRef)
-		applyDeparture(&o, departedAt)
+		applyDeparture(&o, departedAt, cellLeftAt)
 		if stagedExpireAt.Valid {
 			t := helpers.ScanTime(stagedExpireAt.String)
 			o.StagedExpireAt = &t
@@ -186,7 +186,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 	var stagedExpireAt sql.NullString
 	var faultSince, faultDeadline, faultRef sql.NullString
-	var departedAt sql.NullString
+	var departedAt, cellLeftAt sql.NullString
 	var binID, siblingID sql.NullInt64
 	var createdAt, updatedAt string
 	var laneHeld int
@@ -194,13 +194,13 @@ func scanOrder(o *Order, scanner interface{ Scan(...any) error }) error {
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &o.PayloadDesc, &siblingID, &o.QueueReason, &o.QueueCode, &o.AuthoredBy, &o.OriginID, &o.OriginClass,
-		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &createdAt, &updatedAt,
+		&faultSince, &faultDeadline, &o.FaultNoticeAfterS, &faultRef, &departedAt, &cellLeftAt, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName, &laneHeld); err != nil {
 		return err
 	}
 	o.LaneHeld = laneHeld == 1
 	applyFaultClock(o, faultSince, faultDeadline, faultRef)
-	applyDeparture(o, departedAt)
+	applyDeparture(o, departedAt, cellLeftAt)
 	if stagedExpireAt.Valid {
 		t := helpers.ScanTime(stagedExpireAt.String)
 		o.StagedExpireAt = &t
@@ -461,12 +461,22 @@ func faultInstant(t *time.Time) string {
 	return t.UTC().Format(helpers.TimeLayout)
 }
 
-// applyDeparture puts the scanned departure instant onto the order and derives
-// the boolean the HMI reads. NULL (every row that has not departed, and every
-// pre-v39 row) leaves both zero, which is "still working the cell" — the
+// applyDeparture puts the two scanned instants onto the order and derives the
+// boolean the HMI reads. NULL (every row that has not departed, and every
+// pre-v39 row) leaves them zero, which is "still working the cell" — the
 // fail-closed answer, and today's behaviour for anything the stamp never
 // reaches.
-func applyDeparture(o *Order, departedAt sql.NullString) {
+//
+// The two are INDEPENDENT columns and the derived boolean follows departed_at
+// alone: cell_left_at says the robot has left the cell's nodes, which is only
+// half of what departed means now. A row with cell_left_at set and departed_at
+// NULL is a leg that left the cell without its placement on the books — still
+// the cell's business, and the state settleCellPlacement exists to finish.
+func applyDeparture(o *Order, departedAt, cellLeftAt sql.NullString) {
+	if cellLeftAt.Valid && cellLeftAt.String != "" {
+		t := helpers.ScanTime(cellLeftAt.String)
+		o.CellLeftAt = &t
+	}
 	if !departedAt.Valid || departedAt.String == "" {
 		return
 	}
@@ -490,6 +500,31 @@ func applyDeparture(o *Order, departedAt sql.NullString) {
 func MarkDeparted(db *sql.DB, id int64, at time.Time) (bool, error) {
 	res, err := db.Exec(`UPDATE orders SET departed_at=?, updated_at=datetime('now')
 		WHERE id=? AND departed_at IS NULL`,
+		at.UTC().Format(helpers.TimeLayout), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// MarkLeftCell stamps the instant the robot left the cell's NODES — half of a
+// departure, and on its own no admission answer at all. It reports whether the
+// stamp landed.
+//
+// Stamp-once in the WHERE clause, for MarkDeparted's reason: Core's rds.Poller
+// holds its block states in memory, so a restart re-fires every already-FINISHED
+// block once and the same BinPickedUp arrives again hours later. Last-write-wins
+// would move the instant to a time the robot was nowhere near the cell.
+//
+// changed=false is the normal outcome of a replay, and it is also what keeps the
+// caller's "left the cell, placement not recorded" line to one per leg.
+func MarkLeftCell(db *sql.DB, id int64, at time.Time) (bool, error) {
+	res, err := db.Exec(`UPDATE orders SET cell_left_at=?, updated_at=datetime('now')
+		WHERE id=? AND cell_left_at IS NULL`,
 		at.UTC().Format(helpers.TimeLayout), id)
 	if err != nil {
 		return false, err
