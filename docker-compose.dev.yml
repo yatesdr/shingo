@@ -67,7 +67,17 @@ services:
       kafka:
         condition: service_healthy
 
+  # ── EDGE 1 ──────────────────────────────────────────────────────────────
+  # The rapid-fire regression edge (station devplant.line1, plants/demo.yaml).
+  # Renamed from "the dev edge" to EDGE 1 so the pair reads EDGE 1 / EDGE 2.
+  # LABEL ONLY: its pacing, plant spec and gates are untouched, and the service
+  # key stays `edge` because the seeder, the Makefile and every existing gate
+  # address it by that name — renaming the key would be a behaviour change
+  # wearing a label change's clothes.
   edge:
+    labels:
+      shingo.instance: "EDGE 1"
+      shingo.role: "regression — rapid fire, do not slow"
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -83,6 +93,56 @@ services:
       kafka:
         condition: service_healthy
       core:
+        condition: service_started
+
+  # ── EDGE 2 ──────────────────────────────────────────────────────────────
+  # The observable-window edge (station plant-a.line-2, plants/edge2.yaml). Same
+  # image and same Core as EDGE 1; it differs in station identity and PACING.
+  # See shingo-edge/shingoedge.edge2.yaml for why the clock is shared and the
+  # windows are bought in sim time instead.
+  edge2:
+    labels:
+      shingo.instance: "EDGE 2"
+      shingo.role: "observable windows — changeover seam scenarios S1-S6"
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: ["shingoedge", "--config", "/etc/shingo/shingoedge.edge2.yaml"]
+    environment:
+      SHINGO_ALLOW_SIM: "1"
+    ports:
+      - "${SHINGO_BIND:-127.0.0.1}:8082:8081"
+    volumes:
+      - edge2-data:/data
+    mem_limit: 256m
+    depends_on:
+      kafka:
+        condition: service_healthy
+      core:
+        condition: service_started
+
+  # EDGE 2's seeder. Separate from `seed` because it carries a different plant
+  # AND a different edge SQLite; the two stations coexist in one Core, which is
+  # the real-world shape (one Core, many edges) rather than a hybrid plant.
+  # Node names do not collide by construction — EDGE 1 owns PRESS-1/2 and
+  # WELD-1..5, EDGE 2 owns PRS_010/011 and WLD_010 — which is what makes seeding
+  # a second spec into the same Core safe here and NOT a counterexample to the
+  # warning on `seed` above.
+  seed-edge2:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    profiles: ["tools"]
+    command: ["seeddev", "--config", "/etc/shingo/shingocore.dev.yaml", "--edge-db", "/data/shingoedge.db", "--plant", "/plants/edge2.yaml", "--yes"]
+    environment:
+      SHINGO_ALLOW_SIM: "1"
+    volumes:
+      - edge2-data:/data
+      - ./plants:/plants:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      edge2:
         condition: service_started
 
   # Seed runs as its own service (profile: tools) — it needs BOTH Postgres
@@ -140,4 +200,5 @@ services:
 
 volumes:
   edge-data:
+  edge2-data:
   pgdata:

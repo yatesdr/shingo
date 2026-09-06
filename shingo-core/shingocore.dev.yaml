@@ -23,7 +23,8 @@ messaging:
     group_id: shingocore
   orders_topic: shingo.orders
   dispatch_topic: shingo.dispatch
-  # 500ms (sim): at 10× sim the plant inserts outbox rows far faster than the
+  # 500ms (sim): under a sim multiplier the plant inserts outbox rows far faster
+  # than the
   # PRODUCTION-paced 5s tick (batch 50 → ~10 msg/s ceiling) can drain, so ~150–200
   # time-sensitive order transitions sit pending (sent_at IS NULL) in steady state
   # and publish seconds late, stressing swap choreography. The drainer does one
@@ -89,7 +90,36 @@ staging:
 sim:
   enabled: true
   seed: 1                           # fixed for reproducible dev runs (0 = derive+log)
-  speed: 10.0                       # time multiplier. Change live in the dev top-strip / POST /api/sim/speed.
+  # SLOWED FROM 10x TO 2x (owner's call, 2026-09-05). At 10x the loop could not
+  # hold steady state and the reason is a units mismatch, not a tuning miss: the
+  # delivery pipeline runs on WALL time (Kafka hop, DB writes, the outbox drain,
+  # simulated robot travel), so a ~30-60 s real round trip lands as 300-600 SIM
+  # seconds. Consumption is quoted in sim time — 20 parts x 30 s = 600 s of cover —
+  # so the round trip ate the entire depletion budget and cells drained past zero
+  # while their replenishment was still in flight. At 2x the same real round trip
+  # costs 60-120 sim seconds against the same 600, which is the margin the
+  # arithmetic assumed all along.
+  #
+  # MUST MATCH shingocore.dev.yaml AND every edge, and must be changed HERE rather
+  # than through POST /api/sim/speed: a live SetSpeed re-anchors per process and
+  # breaks the core-edge sync this epoch/anchor pair exists to hold.  #
+  # ── CHANGING THIS NUMBER IS A `down -v`, NOT A RESTART ──────────────────────
+  #
+  # sim-now is epoch + speed*(wallNow-anchor), so changing speed RETIMES THE WHOLE
+  # WORLD while the rows already in the database keep the stamps they were written
+  # with. Going 10x -> 2x divides elapsed sim time by five: sim-now jumped BACKWARDS
+  # about fifteen sim-months, and every order already in flight was left carrying a
+  # created_at in the future. Anything reasoning about age, deadlines or "older
+  # than" treats those rows as not yet due, forever — they never move again and
+  # they look exactly like a wedge.
+  #
+  # Measured 2026-09-05: 413 orders confirmed cleanly on the new clock while six
+  # pre-change survivors sat frozen, and the survivors were read as evidence that
+  # the rig was broken. It was not.
+  #
+  # Reset the data when you change this. The note above about matching core and
+  # every edge still applies and is not the same warning.
+  speed: 2.0
   # SYNCED RUNNING (zero core↔edge drift, and the multiplier is real). In
   # running-clock mode (no epoch) each binary stamps its own boot-now as the clock
   # epoch, so core+edge drift by boot-skew × speed and cross-process coordination

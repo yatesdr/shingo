@@ -49,3 +49,6 @@ COPY --from=build /out/shingocore /out/shingoedge /out/seeddev /out/migrateloade
 # Dev config baked in; rebuild after editing (or mount over /etc/shingo to iterate).
 COPY shingo-core/shingocore.dev.yaml /etc/shingo/shingocore.dev.yaml
 COPY shingo-edge/shingoedge.dev.yaml /etc/shingo/shingoedge.dev.yaml
+# EDGE 2: the second edge instance's config. Same image, different config —
+# the two edges differ in pacing and station identity, not in code.
+COPY shingo-edge/shingoedge.edge2.yaml /etc/shingo/shingoedge.edge2.yaml

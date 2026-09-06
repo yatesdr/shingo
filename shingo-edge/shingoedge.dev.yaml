@@ -41,12 +41,41 @@ messaging:
 sim:
   enabled: true
   seed: 1
-  speed: 10.0                       # running clock: 10× wall. Change live in the dev top-strip / POST /api/sim/speed. Must match core.
+  # SLOWED FROM 10x TO 2x (owner's call, 2026-09-05). At 10x the loop could not
+  # hold steady state and the reason is a units mismatch, not a tuning miss: the
+  # delivery pipeline runs on WALL time (Kafka hop, DB writes, the outbox drain,
+  # simulated robot travel), so a ~30-60 s real round trip lands as 300-600 SIM
+  # seconds. Consumption is quoted in sim time — 20 parts x 30 s = 600 s of cover —
+  # so the round trip ate the entire depletion budget and cells drained past zero
+  # while their replenishment was still in flight. At 2x the same real round trip
+  # costs 60-120 sim seconds against the same 600, which is the margin the
+  # arithmetic assumed all along.
+  #
+  # MUST MATCH shingocore.dev.yaml AND every edge, and must be changed HERE rather
+  # than through POST /api/sim/speed: a live SetSpeed re-anchors per process and
+  # breaks the core-edge sync this epoch/anchor pair exists to hold.  #
+  # ── CHANGING THIS NUMBER IS A `down -v`, NOT A RESTART ──────────────────────
+  #
+  # sim-now is epoch + speed*(wallNow-anchor), so changing speed RETIMES THE WHOLE
+  # WORLD while the rows already in the database keep the stamps they were written
+  # with. Going 10x -> 2x divides elapsed sim time by five: sim-now jumped BACKWARDS
+  # about fifteen sim-months, and every order already in flight was left carrying a
+  # created_at in the future. Anything reasoning about age, deadlines or "older
+  # than" treats those rows as not yet due, forever — they never move again and
+  # they look exactly like a wedge.
+  #
+  # Measured 2026-09-05: 413 orders confirmed cleanly on the new clock while six
+  # pre-change survivors sat frozen, and the survivors were read as evidence that
+  # the rig was broken. It was not.
+  #
+  # Reset the data when you change this. The note above about matching core and
+  # every edge still applies and is not the same warning.
+  speed: 2.0
   # Synced RUNNING clock (zero core↔edge drift) — MUST match shingocore.dev.yaml EXACTLY.
   # See that file for the rationale: running-clock mode drifts (boot-skew × speed → expired
   # message drops); epoch + this shared anchor lock both clocks to one timeline, and
-  # epoch == anchor_wall means no wall clamp, so the 10× is real for Now() as well as for
-  # every ticker (§R.98 — it was not, for every run before that).
+  # epoch == anchor_wall means no wall clamp, so the multiplier is real for Now() as well
+  # as for every ticker (§R.98 — it was not, for every run before that).
   epoch: 2026-07-12T02:30:00Z
   anchor_wall: 2026-07-12T02:30:00Z
   # plc_name/tag_name MUST exactly match the reporting_points the seed tool

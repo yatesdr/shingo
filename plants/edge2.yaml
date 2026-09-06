@@ -1,0 +1,354 @@
+# plants/edge2.yaml — EDGE 2: the observable-window rig for the lineside+CMS integration.
+#
+# WHY THIS EXISTS AND WHY IT IS NOT EDGE 1. EDGE 1 (plants/demo.yaml, station
+# devplant.line1) is rapid-fire by design and stays that way — it is the regression
+# gate. The scenarios this plant serves need observable WINDOWS: a changeover whose
+# material lands minutes before the changeover completes, and a decision taken inside
+# that gap. At EDGE 1's pace the gap is not a window, it is an instant, and a test
+# that cannot see the gap cannot prove anything about what happens inside it.
+#
+# THE SEAM UNDER TEST. Two facts spell themselves as a payload code — what a cell was
+# ASKED FOR (the claim, which follows the active style) and what is physically STANDING
+# on the node (the carrier). A changeover moves the first while the second stays put.
+# Reading one where the other was meant is Springfield SMN_029.
+#
+# ── STYLES ARE LOAD-BEARING HERE, NOT DECORATION ──────────────────────────────
+#
+#   L2-A  claims PRS_010 (PART-W), PRS_011, WLD_010
+#   L2-B  claims PRS_010 (PART-X), PRS_011, WLD_010
+#   L2-C  claims PRS_011 and WLD_010 ONLY — deliberately NOT PRS_010
+#
+# A to B is the mis-binding scenario: the OUTGOING style must still claim the node at
+# delivery time, or the defect cannot fire at all. A to C is the dropped-node case: the
+# incoming style claims PRS_010 not at all, so its runtime pointer must go nil and the
+# node must stop reporting rather than report something invented.
+#
+# PRS_010 is DIRECT (no inbound_staging on any of its claims) because direct delivery
+# is the path that mis-bound. It runs SEQUENTIAL for that reason and no other:
+# single_robot requires both staging nodes and two_robot requires inbound staging,
+# so sequential (A/B, needs neither) is the only mode that can express a direct
+# consume cell at all.
+#
+# THE PAIR IS NOT OPTIONAL, AND THAT IS A FINDING ABOUT THE ASK. A direct-delivery
+# consume cell that COUNTS and can SWAP a drained carrier cannot be expressed
+# without a second position: single_robot requires both staging nodes, two_robot
+# requires inbound staging, and the two modes that need no staging
+# (two_robot_press_index, sequential) are both two-position choreographies. Run
+# once without the pair, the node counted to -1 and stalled there — sequential's
+# rotation IS its swap, so with nowhere to rotate the drained carrier could not
+# leave. Assertions therefore name the ACTIVE PULL position of the pair rather
+# than PRS_010 unconditionally. PRS_011 is STAGED as the contrast: it always advanced
+# correctly, and proving it still does is how we know the fix did not disturb it.
+#
+# WLD_010 produces PART-Y under all three styles: produce continuity across a
+# changeover, and the produce side of the CMS postings.
+#
+# ── CIRCULARITY — THE ARITHMETIC, SO THE NEXT PERSON DOES NOT REDERIVE IT ─────
+#
+# The loop must run indefinitely with no reseeding. For each consume node the
+# depletion time must exceed the replenishment lead time, with a spare in the pool.
+#
+#   Bin capacity        C = 20 parts
+#   Consumption         t = 30 s/part   (30s tick, 1 uop/tick — see shingoedge.edge2.yaml)
+#   Depletion           C*t = 20 * 30 s = 600 s = 10 min
+#   AMR round trip      R  ~ 2-3 min observed on this stack (request to delivery)
+#   Constraint          C*t > R  ->  10 min > 3 min, satisfied with 3.3x margin
+#
+#   CARRIERS ARE CONSERVED AND SHARED, so the pool is counted once for the whole
+#   loop rather than per part. A PART-W carrier drains, returns empty, and the
+#   loader refills it as PART-X if that is what is called for — the identity is on
+#   the carrier, not designed into it.
+#
+#     seats to cover      PRS_010 (1) + PRS_011 (1) + WLD_010 (1)        = 3
+#     in flight           1-2 legs at a time on this small a market      = 2
+#     spare               the one that absorbs a carrier somewhere odd   = 1
+#     total needed                                                      = 6
+#     seeded              2 PART-W + 2 PART-X + 1 PART-Y + 2 empty       = 7
+#
+#   Produce side mirrors it: evac lead time (~R) < fill time C*t = 20 * 30 s = 10 min.
+#
+# POOL SIZE IS NOT OPTIONAL SLACK. Springfield stalled on a pool of 8 with 3
+# permanently in flight — the spare is what absorbs a carrier that is somewhere
+# unexpected, and a loop sized to its own happy path deadlocks the first time one is.
+
+namespace: plant-a
+line_id: line-2
+
+bin_types: [STANDARD]
+
+payloads:
+  - {code: PART-W, uop_capacity: 20, bin_type: STANDARD}
+  - {code: PART-X, uop_capacity: 20, bin_type: STANDARD}
+  - {code: PART-Y, uop_capacity: 20, bin_type: STANDARD}
+
+zones:
+  # One market, self-segregating by payload under LKND.
+  #
+  # LANES SEED PACKED — bins at the BACK, empties at the mouth, no holes. A bin at
+  # depth 1 with an empty depth 2 behind it is an air bubble at birth: nothing can
+  # reach the empty slot and no dig will ever be raised to open it, because the bin
+  # in front is not in anybody's way. The validator refuses it, correctly.
+  #
+  # AND THE GROUP KEEPS ROOM TO DIG. Free slots are not the number that matters —
+  # REACHABLE free slots are, and a slot behind a bin is not room. Seven mouths sit
+  # empty here plus a dedicated buffer position, well over the two-slot minimum, so
+  # an excavation always has somewhere to stand its blockers.
+  - name: SMN_L2
+    retrieve_algorithm: FIFO
+    store_algorithm: LKND
+    wait_points: [L2-WAIT-1, L2-WAIT-2]
+    lanes:
+      - {name: L2_Lane_W1, slots: [{name: SMN_L2_001, depth: 1}, {name: SMN_L2_002, depth: 2}]}
+      - {name: L2_Lane_W2, slots: [{name: SMN_L2_003, depth: 1}, {name: SMN_L2_004, depth: 2}]}
+      - {name: L2_Lane_X1, slots: [{name: SMN_L2_005, depth: 1}, {name: SMN_L2_006, depth: 2}]}
+      - {name: L2_Lane_X2, slots: [{name: SMN_L2_007, depth: 1}, {name: SMN_L2_008, depth: 2}]}
+      - {name: L2_Lane_Y1, slots: [{name: SMN_L2_009, depth: 1}, {name: SMN_L2_010, depth: 2}]}
+      - {name: L2_Lane_MT1, slots: [{name: SMN_L2_011, depth: 1}, {name: SMN_L2_012, depth: 2}]}
+      - {name: L2_Lane_MT2, slots: [{name: SMN_L2_013, depth: 1}, {name: SMN_L2_014, depth: 2}]}
+      # The buffer position: in-flight slack, and a guaranteed place to park a dig.
+      - {name: L2_Lane_BUF, slots: [{name: SMN_L2_015, depth: 1}]}
+
+stations:
+  - {name: PRS_010, kind: press}      # PRESS-10 A — consume, DIRECT delivery (the seam)
+  - {name: PRS_010B, kind: press}     # PRESS-10 B — the other half of the pair
+  - {name: PRS_011, kind: press}      # PRESS-11 — consume, STAGED delivery (the contrast)
+  - {name: SLN_L2_01, kind: staging}  # PRS_011 inbound stage
+  - {name: SLN_L2_02, kind: staging}  # WLD_010 inbound stage
+  - {name: WLD_010, kind: weld}       # WELD-10 — produce PART-Y
+  - {name: SMN_L2_01, kind: loader}   # SMN-10 — loader supplying PART-W
+  - {name: SMN_L2_02, kind: loader}   # SMN-10 — loader supplying PART-X
+  - {name: FGN_L2_01, kind: loader}   # the drain: takes finished PART-Y out
+
+processes:
+  - {name: LINE-2, active_style: L2-A}
+  - {name: SMN-10-W, active_style: SMN-10-W-RUN}
+  - {name: SMN-10-X, active_style: SMN-10-X-RUN}
+  - {name: DRAIN-10, active_style: DRAIN-10-RUN}
+
+styles:
+  - {name: L2-A, process: LINE-2, payload: PART-W}
+  - {name: L2-B, process: LINE-2, payload: PART-X}
+  - {name: L2-C, process: LINE-2, payload: PART-W}
+  - {name: SMN-10-W-RUN, process: SMN-10-W, payload: PART-W}
+  - {name: SMN-10-X-RUN, process: SMN-10-X, payload: PART-X}
+  - {name: DRAIN-10-RUN, process: DRAIN-10, payload: PART-Y}
+
+operator_stations: [LINE-2-OPS, SMN-10-OPS, SMN-10X-OPS, DRAIN-10-OPS]
+
+claims:
+  # ── PRS_010 — the seam. DIRECT: no inbound_staging on either claim. ──
+  # L2-A and L2-B BOTH claim it, with different parts. That pair is the whole
+  # point: at an A to B changeover the outgoing claim is still on the node when
+  # B material lands, which is the only condition under which the defect fires.
+  - core_node: PRS_010
+    style: L2-A
+    role: consume
+    swap_mode: sequential
+    paired_core_node: PRS_010B
+    payload: PART-W
+    uop_capacity: 20
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SMN_L2
+    outbound_destination: SMN_L2
+    operator_station: LINE-2-OPS
+  - core_node: PRS_010
+    style: L2-B
+    role: consume
+    swap_mode: sequential
+    paired_core_node: PRS_010B
+    payload: PART-X
+    uop_capacity: 20
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SMN_L2
+    outbound_destination: SMN_L2
+    operator_station: LINE-2-OPS
+  - core_node: PRS_010B
+    style: L2-A
+    role: consume
+    swap_mode: sequential
+    paired_core_node: PRS_010
+    active_pull: false
+    payload: PART-W
+    uop_capacity: 20
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SMN_L2
+    outbound_destination: SMN_L2
+    operator_station: LINE-2-OPS
+  - core_node: PRS_010B
+    style: L2-B
+    role: consume
+    swap_mode: sequential
+    paired_core_node: PRS_010
+    active_pull: false
+    payload: PART-X
+    uop_capacity: 20
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SMN_L2
+    outbound_destination: SMN_L2
+    operator_station: LINE-2-OPS
+  # L2-C deliberately has NO claim on PRS_010 (or its B position) — that absence IS scenario S2.
+
+  # ── PRS_011 — the contrast. STAGED on every style. ──
+  - core_node: PRS_011
+    style: L2-A
+    role: consume
+    swap_mode: two_robot
+    payload: PART-W
+    uop_capacity: 20
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SMN_L2
+    inbound_staging: SLN_L2_01
+    outbound_destination: SMN_L2
+    operator_station: LINE-2-OPS
+  - core_node: PRS_011
+    style: L2-B
+    role: consume
+    swap_mode: two_robot
+    payload: PART-W
+    uop_capacity: 20
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SMN_L2
+    inbound_staging: SLN_L2_01
+    outbound_destination: SMN_L2
+    operator_station: LINE-2-OPS
+  - core_node: PRS_011
+    style: L2-C
+    role: consume
+    swap_mode: two_robot
+    payload: PART-W
+    uop_capacity: 20
+    reorder_point: 8
+    auto_reorder: true
+    inbound_source: SMN_L2
+    inbound_staging: SLN_L2_01
+    outbound_destination: SMN_L2
+    operator_station: LINE-2-OPS
+
+  # ── WLD_010 — produce PART-Y under all three styles (continuity). ──
+  - core_node: WLD_010
+    style: L2-A
+    role: produce
+    swap_mode: two_robot
+    payload: PART-Y
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SMN_L2
+    inbound_staging: SLN_L2_02
+    outbound_destination: SMN_L2
+    operator_station: LINE-2-OPS
+  - core_node: WLD_010
+    style: L2-B
+    role: produce
+    swap_mode: two_robot
+    payload: PART-Y
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SMN_L2
+    inbound_staging: SLN_L2_02
+    outbound_destination: SMN_L2
+    operator_station: LINE-2-OPS
+  - core_node: WLD_010
+    style: L2-C
+    role: produce
+    swap_mode: two_robot
+    payload: PART-Y
+    uop_capacity: 20
+    auto_reorder: true
+    inbound_source: SMN_L2
+    inbound_staging: SLN_L2_02
+    outbound_destination: SMN_L2
+    operator_station: LINE-2-OPS
+
+  # ── THE ENDS OF THE LOOP. Every payload needs BOTH, or the validator refuses
+  # the plant and it deserves to: a payload with consumers and no producer starves,
+  # one with producers and no consumer fills the market and jams. A LOADER IS A
+  # PRODUCER — it puts material into the market — which reads backwards until you
+  # notice the role is about the material flow, not about the person.
+  - core_node: SMN_L2_01
+    style: SMN-10-W-RUN
+    role: produce
+    swap_mode: manual_swap
+    payload: PART-W
+    uop_capacity: 20
+    reorder_point: 2
+    auto_reorder: true
+    inbound_source: SMN_L2
+    outbound_destination: SMN_L2
+    operator_station: SMN-10-OPS
+  - core_node: SMN_L2_02
+    style: SMN-10-X-RUN
+    role: produce
+    swap_mode: manual_swap
+    payload: PART-X
+    uop_capacity: 20
+    reorder_point: 2
+    auto_reorder: true
+    inbound_source: SMN_L2
+    outbound_destination: SMN_L2
+    operator_station: SMN-10X-OPS
+  # The drain closes the produce side: WLD_010 fills PART-Y carriers, this empties
+  # them back into the pool. Without it the market fills with finished goods and
+  # the loop stops being a loop.
+  - core_node: FGN_L2_01
+    style: DRAIN-10-RUN
+    role: consume
+    swap_mode: manual_swap
+    payload: PART-Y
+    uop_capacity: 20
+    reorder_point: 2
+    auto_reorder: true
+    inbound_source: SMN_L2
+    outbound_destination: SMN_L2
+    operator_station: DRAIN-10-OPS
+
+bins:
+  # PACKED FROM THE BACK — each seeded carrier sits at its lane's DEEPEST slot and
+  # the mouth stays open. See the zone comment for why the other way round is
+  # refused at birth.
+  - {name: L2-BW-01, slot: SMN_L2_002, payload: PART-W, uop: 20}
+  - {name: L2-BW-02, slot: SMN_L2_004, payload: PART-W, uop: 20}
+  # PART-X seeded FULL and waiting: the A to B changeover pulls from here, and the
+  # whole scenario depends on that material being ready to land inside the gap.
+  - {name: L2-BX-01, slot: SMN_L2_006, payload: PART-X, uop: 20}
+  - {name: L2-BX-02, slot: SMN_L2_008, payload: PART-X, uop: 20}
+  # Somewhere for finished PART-Y to go.
+  - {name: L2-BY-01, slot: SMN_L2_010, payload: PART-Y, uop: 20}
+  # Empty carriers — the spares the arithmetic above insists on.
+  - {name: L2-MT-01, slot: SMN_L2_012, payload: "", uop: 0}
+  - {name: L2-MT-02, slot: SMN_L2_014, payload: "", uop: 0}
+
+  # ── CARRIERS AT THE CELLS. Without one, seeddev binds no runtime state for the
+  # node (it needs a bin AT the claim's node), the PLC tick has nothing to
+  # attribute to, and the cell never counts — the loop looks configured and does
+  # nothing. Seeded ABOVE the reorder point so the first tick is not an instant
+  # replenishment against a cell that has just been handed a full carrier.
+  - {name: L2-AT-P10, slot: PRS_010, payload: PART-W, uop: 20}
+  - {name: L2-AT-P11, slot: PRS_011, payload: PART-W, uop: 20}
+  # The produce cell starts with an EMPTY carrier to fill.
+  - {name: L2-AT-W10, slot: WLD_010, payload: "", uop: 0}
+  - {name: L2-AT-P10B, slot: PRS_010B, payload: PART-W, uop: 20}
+
+demands:
+  - {payload: PART-W, node: SMN_L2_01, replenish_uop_threshold: 20}
+  - {payload: PART-X, node: SMN_L2_02, replenish_uop_threshold: 20}
+  - {payload: PART-Y, node: FGN_L2_01, replenish_uop_threshold: 0}
+
+# One PLC counter per counting node. plc_name/tag_name MUST match sim.processes in
+# shingoedge.edge2.yaml — that list and this one are the same names twice, and a
+# mismatch is silent (the tick fans to nothing).
+reporting_points:
+  - {plc_name: PRESS-10, tag_name: PRESS-10_COUNTER, node: PRS_010, style: L2-A}
+  - {plc_name: PRESS-11, tag_name: PRESS-11_COUNTER, node: PRS_011, style: L2-A}
+  - {plc_name: WELD-10,  tag_name: WELD-10_COUNTER,  node: WLD_010, style: L2-A}
+
+cell_configs:
+  - {process: LINE-2, station: LINE-2-OPS}
+  - {process: SMN-10-W, station: SMN-10-OPS}
+  - {process: SMN-10-X, station: SMN-10X-OPS}
+  - {process: DRAIN-10, station: DRAIN-10-OPS}

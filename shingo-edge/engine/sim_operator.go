@@ -1092,9 +1092,11 @@ func (op *simOperator) releaseAsPair(orderID int64) {
 
 // onOrderCreated is the A/B cutover trigger — the headless stand-in for the PLC
 // bit. A real plant's PLC flips active_pull to the partner bin when the active
-// bin's swap fires; the sim has no PLC, so when a produce-side A/B (sequential)
-// node dispatches its swap order, flip active_pull to its paired partner so the
-// line keeps producing on the partner while this bin swaps out. Must not block
+// bin's swap fires; the sim has no PLC, so when an A/B (sequential) node
+// dispatches its swap order, flip active_pull to its paired partner so the line
+// keeps running on the partner while this bin swaps out. Either role — a produce
+// press fills the partner's empty, a consume cell feeds off the partner's
+// material, and the flip is the same move. Must not block
 // (synchronous bus): dedupe and spawn, then return.
 func (op *simOperator) onOrderCreated(ev Event) {
 	d, ok := ev.Payload.(OrderCreatedEvent)
@@ -1127,11 +1129,21 @@ func (op *simOperator) runFlip(nodeID int64) {
 	if err != nil || node == nil || claim == nil || runtime == nil {
 		return
 	}
-	// Only a produce-side A/B (sequential + paired) node that is CURRENTLY the
-	// active-pull side. After we flip it inactive, the backfill order's
-	// EventOrderCreated re-enters here and short-circuits on !ActivePull.
+	// Any A/B (sequential + paired) node that is CURRENTLY the active-pull side.
+	// After we flip it inactive, the backfill order's EventOrderCreated re-enters
+	// here and short-circuits on !ActivePull.
+	//
+	// NOT PRODUCE-ONLY, and the restriction that used to be here was the sim's
+	// and not the product's. Swap modes are agnostic to role — FlipABNode and
+	// flipTargetReady handle a consume A/B pair explicitly, with an extra
+	// conjunct consume needs (the position must hold MATERIAL, and the incoming
+	// style's). This function stands in for the PLC that would flip a real one,
+	// and it only ever learned the produce case because that is the only case
+	// the fixtures had. A consume A/B pair configured here simply never cycled:
+	// its drained carrier could not rotate out, and the cell starved with no
+	// error anywhere.
 	if claim.SwapMode != protocol.SwapModeSequential || claim.PairedCoreNode == "" ||
-		claim.Role != protocol.ClaimRoleProduce || !runtime.ActivePull {
+		!runtime.ActivePull {
 		return
 	}
 	paired := op.pairedNode(node.ProcessID, claim.PairedCoreNode)
