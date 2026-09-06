@@ -46,6 +46,8 @@ type orderProgress struct {
 	queuedSince time.Time // non-zero while waiting for a free robot (G16)
 	staged      bool      // driven to WAITING (status "staged") at a wait dwell
 	heldAt      string    // non-empty while stalled at an occupied position (log-once)
+	heldSince   time.Time // when the current hold began — bounds an unresolvable hold
+	heldWarned  bool      // the unresolvable-hold diagnostic is printed once per hold
 }
 
 // Driver advances simulated orders through their lifecycle on a clock tick,
@@ -574,6 +576,17 @@ func (d *Driver) gcProgress() {
 // found a genuine deadlock — surface it, don't paper over it.
 //
 // No gate installed (unit tests, non-engine callers) = old timer-only behaviour.
+// unresolvableHoldAfter is how long a position hold may run before the driver
+// says out loud that it is not a queue. In SIMULATED time, like every other
+// duration the driver reasons in, so it means the same thing at every speed.
+//
+// Five minutes is chosen against the thing it has to out-wait: a real queue
+// behind a bin another order owns, which is bounded by that order's remaining
+// transit. Transit is 15-20 simulated seconds and the longest observed genuine
+// hold cleared well inside a minute, so five minutes cannot fire on a queue and
+// still names a deadlock long before a human would think to look.
+const unresolvableHoldAfter = 5 * time.Minute
+
 func (d *Driver) holdForPosition(now time.Time, vid, location, binTask string, p *orderProgress) bool {
 	g := d.sim.PositionGate()
 	if g == nil || location == "" {
@@ -591,6 +604,49 @@ func (d *Driver) holdForPosition(now time.Time, vid, location, binTask string, p
 		log.Printf("[sim] order %s HOLDING at %s — %s (a robot cannot place onto an occupied position)",
 			vid, location, blockedBy)
 		p.heldAt = location
+		p.heldSince = now
+		p.heldWarned = false
+	}
+	// ── A HOLD THAT CANNOT RESOLVE IS NOT A QUEUE, AND IT USED TO LOOK LIKE ONE ──
+	//
+	// Every hold this gate was written for is a queue: the position is occupied by
+	// a bin some OTHER order owns, that order finishes, the bin leaves, and the
+	// wait ends. Those clear in seconds and log "resumed".
+	//
+	// A hold behind a bin claimed by NOBODY has no such end. Nothing is scheduled
+	// to move it, so the robot waits for the life of the process — and because
+	// this function silently re-arms a one-second deadline, it did so with no
+	// further output after the single line above. Two robots and two lineside
+	// positions were lost about two and a half minutes into every seeded run of
+	// the demo plant, and the only evidence was one log line from twenty minutes
+	// earlier that read like an ordinary wait.
+	//
+	// THIS DOES NOT UNWEDGE ANYTHING and must not be mistaken for the fix. The
+	// cause is upstream — a bare move dispatched into a single_robot cell whose
+	// incumbent only that same leg was ever going to lift — and it is being
+	// chased separately (ISSUE-sim-position-hold-deadlock-2026-09-06.md). What it
+	// does is stop the sim lying about the shape of the failure: past the bound,
+	// the hold says once, loudly, that it is not a queue and names what it is
+	// waiting on. Behaviour is unchanged deliberately — releasing the robot here
+	// would invent a recovery the plant does not have, and this gate exists to
+	// stop the sim inventing things.
+	//
+	// THE ROBOT IS THE SMALLEST PART OF THE COST, and naming only the robot is
+	// what made this failure look survivable. The order never reaches a terminal
+	// phase, so: the CELL it was serving never swaps again (its runtime slot keeps
+	// pointing at a live order and every admission surface refuses), its LINESIDE
+	// POSITION is gone for the run, and every downstream order that waits on this
+	// one cascades. The robot is held too — releaseRobot is reached only from
+	// markDone and from gcProgress once the simulator has evicted the order, and a
+	// permanently-held order reaches neither — but a fleet is elastic and a cell
+	// is not.
+	if !p.heldWarned && now.Sub(p.heldSince) >= unresolvableHoldAfter {
+		p.heldWarned = true
+		log.Printf("[sim] order %s HAS BEEN HOLDING AT %s FOR %s AND IS NOT A QUEUE — %s. "+
+			"Nothing is scheduled to move that bin, so this order never terminates: the cell it is "+
+			"serving never swaps again, its lineside position is lost for the run, and the robot stays "+
+			"assigned to it. See ISSUE-sim-position-hold-deadlock-2026-09-06.md",
+			vid, location, now.Sub(p.heldSince).Round(time.Second), blockedBy)
 	}
 	// Re-check on the next tick. Deliberately does NOT draw from the PRNG, so the
 	// seeded draw sequence stays identical for any order that never has to hold.
